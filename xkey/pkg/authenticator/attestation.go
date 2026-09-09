@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -69,13 +70,21 @@ func (s *deviceAttestationSource) GenerateAttestationKey() (crypto.Signer, error
 		return nil, ErrKeyGenerationFailed
 	}
 
+	// x509 can only marshal onto the heap; NewBufferFromBytes wipes that copy
+	// as it moves the encoding into protected memory, and the wrap reads it
+	// from there (go-xkms#387).
 	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
 		return nil, ErrCryptoError
 	}
-	defer clearBytes(pkcs8)
+	pkcs8Buf, err := secure.NewBufferFromBytes(pkcs8)
+	if err != nil {
+		clearBytes(pkcs8)
+		return nil, &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
+	}
+	defer pkcs8Buf.Destroy()
 
-	if err := s.auth.keyManager.WrapAttestationKey(pkcs8); err != nil {
+	if err := s.auth.keyManager.WrapAttestationKey(pkcs8Buf); err != nil {
 		return nil, err
 	}
 

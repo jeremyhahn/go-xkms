@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
 
 ## Exported surface
 
@@ -95,6 +95,15 @@ first run and the wrong one for daily use.
   operator's to make honestly.
 - **Credential storage and key material are separate seams.** The DAO stores
   hold credential records; `keybackend` holds key material. Do not merge them.
+- **Key material never transits the ordinary Go heap through the wrapper.**
+  `KeyWrapper` has no method that takes or returns a plaintext slice:
+  `WrapFrom(src *secure.Buffer)` reads from protected memory the caller owns
+  (#387) and `UnwrapInto(wrapped, dst)` writes into a destination the caller
+  sized before any borrow (#291). Protected-buffer borrows must not nest, so a
+  wrap of one protected key under another goes through `wrapFromProtected`,
+  which releases the key borrow before the plaintext borrow is taken. The
+  invariants and the deadlock rule are spelled out in
+  [`fido2/authenticator-security.md`](../fido2/authenticator-security.md).
 - **`--storage memory` loses credentials on exit.** No warning is emitted; it is
   the documented default.
 - **CTAP2 is one command at a time per channel.** The HID adapter serialises.

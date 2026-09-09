@@ -343,7 +343,7 @@ func TestKeyManager_UnlockWithSOPIN(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 		// Don't set WrappedCMKSO
 
@@ -441,7 +441,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 
 		credKey := generateTestCredentialKey(t)
 
-		wrapped, err := km.WrapCredentialKey(credKey)
+		wrapped, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 
 		require.NoError(t, err)
 		require.NotEmpty(t, wrapped)
@@ -455,7 +455,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 
 		credKey := generateTestCredentialKey(t)
 
-		wrapped, err := km.WrapCredentialKey(credKey)
+		wrapped, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 		require.NoError(t, err)
 
 		unwrapped, err := km.UnwrapCredentialKey(wrapped)
@@ -472,7 +472,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 
 		credKey := generateTestCredentialKey(t)
 
-		wrapped, err := km.WrapCredentialKey(credKey)
+		wrapped, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 
 		require.NoError(t, err)
 		require.False(t, bytes.Equal(credKey, wrapped), "Wrapped data should differ from original")
@@ -487,7 +487,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 		km.Lock()
 		credKey := generateTestCredentialKey(t)
 
-		_, err = km.WrapCredentialKey(credKey)
+		_, err = km.WrapCredentialKey(protectedBytes(t, credKey))
 
 		require.ErrorIs(t, err, ErrKeyManagerLocked)
 	})
@@ -499,7 +499,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 		require.NoError(t, err)
 
 		credKey := generateTestCredentialKey(t)
-		wrapped, err := km.WrapCredentialKey(credKey)
+		wrapped, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 		require.NoError(t, err)
 
 		km.Lock()
@@ -517,10 +517,10 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 
 		credKey := generateTestCredentialKey(t)
 
-		wrapped1, err := km.WrapCredentialKey(credKey)
+		wrapped1, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 		require.NoError(t, err)
 
-		wrapped2, err := km.WrapCredentialKey(credKey)
+		wrapped2, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 		require.NoError(t, err)
 
 		require.False(t, bytes.Equal(wrapped1, wrapped2), "Different wraps should produce different ciphertext due to random nonce")
@@ -533,7 +533,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 		require.NoError(t, err)
 
 		credKey := generateTestCredentialKey(t)
-		wrapped, err := km.WrapCredentialKey(credKey)
+		wrapped, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 		require.NoError(t, err)
 
 		// Corrupt the wrapped data
@@ -560,14 +560,14 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 
 		err = km.UnlockWithSOPIN(testSOPIN)
 		require.NoError(t, err)
 
 		credKey := generateTestCredentialKey(t)
-		_, err = km.WrapCredentialKey(credKey)
+		_, err = km.WrapCredentialKey(protectedBytes(t, credKey))
 
 		require.ErrorIs(t, err, ErrKeyManagerNoCMK)
 	})
@@ -581,7 +581,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 		require.NoError(t, err)
 
 		credKey := generateTestCredentialKey(t)
-		wrapped, err := km.WrapCredentialKey(credKey)
+		wrapped, err := km.WrapCredentialKey(protectedBytes(t, credKey))
 		require.NoError(t, err)
 
 		km.Lock()
@@ -598,7 +598,7 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 		state.WrappedCMKSO = nil
 
@@ -751,7 +751,7 @@ func TestKeyManager_AttestationSigner(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 		// Don't set WrappedAttestSO
 
@@ -831,13 +831,13 @@ func TestKeyManager_AttestationSigner(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 
 		// Wrap invalid data as attestation key
 		akWrapperForAttest, err := NewAESGCMKeyWrapper(ak)
 		require.NoError(t, err)
-		state.WrappedAttestSO, err = akWrapperForAttest.Wrap([]byte("not valid pkcs8"))
+		state.WrappedAttestSO, err = wrapForTest(akWrapperForAttest, []byte("not valid pkcs8"))
 		require.NoError(t, err)
 
 		err = km.UnlockWithSOPIN(testSOPIN)
@@ -863,7 +863,7 @@ func TestKeyManager_AttestationSigner(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 
 		// Generate an RSA key and wrap it as attestation key
@@ -874,7 +874,7 @@ func TestKeyManager_AttestationSigner(t *testing.T) {
 
 		akWrapperForAttest, err := NewAESGCMKeyWrapper(ak)
 		require.NoError(t, err)
-		state.WrappedAttestSO, err = akWrapperForAttest.Wrap(rsaPKCS8)
+		state.WrappedAttestSO, err = wrapForTest(akWrapperForAttest, rsaPKCS8)
 		require.NoError(t, err)
 
 		err = km.UnlockWithSOPIN(testSOPIN)
@@ -1229,7 +1229,7 @@ func TestKeyManager_ResetUserPIN(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 
 		// Unlock with SO PIN - will have AK but no CMK
@@ -1416,7 +1416,7 @@ func TestKeyManager_InitializeUserPIN(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 
 		// Unlock with SO PIN - will have AK but no CMK
@@ -1670,7 +1670,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		state.WrappedAttestSO = nil
 		state.WrappedAttestUser = nil
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 
 		require.NoError(t, err)
 		require.NotEmpty(t, state.WrappedAttestSO)
@@ -1691,7 +1691,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(newKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 
 		require.ErrorIs(t, err, ErrKeyManagerLocked)
 	})
@@ -1711,7 +1711,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(newKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 		require.NoError(t, err)
 
 		require.NotEmpty(t, state.WrappedAttestSO)
@@ -1728,7 +1728,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey([]byte("not a valid key"))
+		err = km.WrapAttestationKey(protectedBytes(t, []byte("not a valid key")))
 
 		require.Error(t, err)
 	})
@@ -1751,7 +1751,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(newKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 
 		require.ErrorIs(t, err, ErrKeyManagerNoAK)
 	})
@@ -1772,7 +1772,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		state.WrappedAK, err = akWrapper.Wrap(ak)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
 		require.NoError(t, err)
 
 		err = km.UnlockWithSOPIN(testSOPIN)
@@ -1784,7 +1784,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(newKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 		require.NoError(t, err)
 
 		// Should have SO wrapped but not user wrapped
@@ -1805,7 +1805,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(rsaKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 
 		require.ErrorIs(t, err, ErrKeyManagerInvalidKey)
 	})
@@ -1823,7 +1823,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(edKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 
 		require.ErrorIs(t, err, ErrKeyManagerInvalidKey)
 	})
@@ -1850,7 +1850,7 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(newKey)
 		require.NoError(t, err)
 
-		err = km.WrapAttestationKey(keyPKCS8)
+		err = km.WrapAttestationKey(protectedBytes(t, keyPKCS8))
 
 		require.ErrorIs(t, err, ErrKeyManagerLocked)
 	})
@@ -1868,6 +1868,7 @@ func TestKeyManager_ConcurrentAccess(t *testing.T) {
 		require.NoError(t, err)
 		keyPKCS8, err := x509.MarshalPKCS8PrivateKey(key)
 		require.NoError(t, err)
+		keyBuf := protectedBytes(t, keyPKCS8)
 
 		var wg sync.WaitGroup
 		errChan := make(chan error, 100)
@@ -1876,7 +1877,7 @@ func TestKeyManager_ConcurrentAccess(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				wrapped, err := km.WrapCredentialKey(keyPKCS8)
+				wrapped, err := km.WrapCredentialKey(keyBuf)
 				if err != nil {
 					errChan <- err
 					return

@@ -15,10 +15,14 @@ package authenticator
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // generateRandomKey generates a random key of the specified size.
@@ -28,6 +32,64 @@ func generateRandomKey(t *testing.T, size int) []byte {
 	_, err := rand.Read(key)
 	require.NoError(t, err, "failed to generate random key")
 	return key
+}
+
+// protectedBytes copies b into a protected buffer the test owns, leaving b
+// intact so the test can keep comparing against it. The buffer is destroyed
+// at cleanup.
+func protectedBytes(t *testing.T, b []byte) *secure.Buffer {
+	t.Helper()
+	buf, err := secure.NewBuffer(len(b))
+	require.NoError(t, err)
+	t.Cleanup(buf.Destroy)
+	copy(buf.Bytes(), b)
+	return buf
+}
+
+// wrapForTest stages heap plaintext into protected memory and wraps it
+// through WrapFrom — the heap-accepting wrap the production interface
+// deliberately no longer expresses (go-xkms#387). Tests own the plaintext and
+// may keep comparing against it; production code must never grow an
+// equivalent. An empty plaintext cannot be staged (secure.NewBuffer refuses a
+// zero size) and surfaces as that allocation error.
+func wrapForTest(w KeyWrapper, plaintext []byte) ([]byte, error) {
+	src, err := secure.NewBuffer(len(plaintext))
+	if err != nil {
+		return nil, err
+	}
+	defer src.Destroy()
+	copy(src.Bytes(), plaintext)
+	return w.WrapFrom(src)
+}
+
+// sealForTest produces AES-256-GCM wrapped data in the wrapper's wire format
+// (nonce || ciphertext || tag) directly through crypto/cipher, independent of
+// the KeyWrapper implementation. It pins the format UnwrapInto must accept,
+// and it is the only way a test can build a zero-length payload, which
+// WrapFrom cannot express.
+func sealForTest(t *testing.T, key, plaintext []byte) []byte {
+	t.Helper()
+	block, err := aes.NewCipher(key)
+	require.NoError(t, err)
+	aead, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+	nonce := generateRandomKey(t, AESGCMNonceSize)
+	out := make([]byte, AESGCMNonceSize, AESGCMNonceSize+len(plaintext)+aesGCMTagSize)
+	copy(out, nonce)
+	return aead.Seal(out, nonce, plaintext, nil)
+}
+
+// openForTest decrypts wrapped data in the wire format directly through
+// crypto/cipher, so a test can prove WrapFrom's output is what an independent
+// AES-256-GCM implementation expects rather than only what UnwrapInto accepts.
+func openForTest(t *testing.T, key, wrapped []byte) ([]byte, error) {
+	t.Helper()
+	block, err := aes.NewCipher(key)
+	require.NoError(t, err)
+	aead, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(wrapped), AESGCMNonceSize+aesGCMTagSize)
+	return aead.Open(nil, wrapped[:AESGCMNonceSize], wrapped[AESGCMNonceSize:], nil)
 }
 
 func TestNewAESGCMKeyWrapper(t *testing.T) {
@@ -102,7 +164,7 @@ func TestAESGCMKeyWrapper_WrapUnwrap(t *testing.T) {
 
 		plaintext := []byte("this is test data for wrap/unwrap round-trip")
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 		require.NotNil(t, wrapped)
 		require.NotEqual(t, plaintext, wrapped)
@@ -112,15 +174,14 @@ func TestAESGCMKeyWrapper_WrapUnwrap(t *testing.T) {
 		require.Equal(t, plaintext, unwrapped)
 	})
 
-	t.Run("empty plaintext wraps and unwraps correctly", func(t *testing.T) {
+	t.Run("empty payload in the wire format unwraps to empty", func(t *testing.T) {
 		key := generateRandomKey(t, AESGCMKeySize)
 		wrapper, err := NewAESGCMKeyWrapper(key)
 		require.NoError(t, err)
 
-		plaintext := []byte{}
-
-		wrapped, err := wrapper.Wrap(plaintext)
-		require.NoError(t, err)
+		// WrapFrom cannot express an empty plaintext (a protected buffer has
+		// a size), so the payload is sealed independently in the wire format.
+		wrapped := sealForTest(t, key, []byte{})
 		require.NotNil(t, wrapped)
 		// Minimum size is nonce (12) + tag (16) = 28 bytes
 		require.Len(t, wrapped, AESGCMNonceSize+aesGCMTagSize)
@@ -137,7 +198,7 @@ func TestAESGCMKeyWrapper_WrapUnwrap(t *testing.T) {
 
 		plaintext := []byte{0x42}
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 		require.NotNil(t, wrapped)
 		// Size should be nonce (12) + ciphertext (1) + tag (16) = 29 bytes
@@ -158,7 +219,7 @@ func TestAESGCMKeyWrapper_WrapUnwrap(t *testing.T) {
 		_, err = rand.Read(plaintext)
 		require.NoError(t, err)
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 		require.NotNil(t, wrapped)
 		// Size should be nonce (12) + ciphertext (1MB) + tag (16)
@@ -177,13 +238,13 @@ func TestAESGCMKeyWrapper_WrapUnwrap(t *testing.T) {
 
 		plaintext := []byte("same data wrapped multiple times")
 
-		wrapped1, err := wrapper.Wrap(plaintext)
+		wrapped1, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
-		wrapped2, err := wrapper.Wrap(plaintext)
+		wrapped2, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
-		wrapped3, err := wrapper.Wrap(plaintext)
+		wrapped3, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		// Due to random nonces, all wrapped outputs should be different
@@ -206,33 +267,93 @@ func TestAESGCMKeyWrapper_WrapUnwrap(t *testing.T) {
 	})
 }
 
-func TestAESGCMKeyWrapper_Wrap(t *testing.T) {
-	t.Run("nil plaintext returns ErrKeyWrapFailed", func(t *testing.T) {
+func TestAESGCMKeyWrapper_WrapFrom(t *testing.T) {
+	t.Run("reads plaintext from protected memory and round-trips through UnwrapInto", func(t *testing.T) {
 		key := generateRandomKey(t, AESGCMKeySize)
 		wrapper, err := NewAESGCMKeyWrapper(key)
 		require.NoError(t, err)
 
-		wrapped, err := wrapper.Wrap(nil)
+		plaintext := []byte("plaintext that lives only in protected memory")
+		src := protectedBytes(t, plaintext)
 
-		require.ErrorIs(t, err, ErrKeyWrapFailed)
+		wrapped, err := wrapper.WrapFrom(src)
+		require.NoError(t, err)
+		require.Len(t, wrapped, AESGCMNonceSize+len(plaintext)+aesGCMTagSize)
+
+		dst := make([]byte, len(plaintext))
+		require.NoError(t, wrapper.UnwrapInto(wrapped, dst))
+		require.Equal(t, plaintext, dst)
+	})
+
+	t.Run("output is the wire format an independent AES-256-GCM opens", func(t *testing.T) {
+		key := generateRandomKey(t, AESGCMKeySize)
+		wrapper, err := NewAESGCMKeyWrapper(key)
+		require.NoError(t, err)
+
+		plaintext := generateRandomKey(t, 48)
+		wrapped, err := wrapper.WrapFrom(protectedBytes(t, plaintext))
+		require.NoError(t, err)
+
+		opened, err := openForTest(t, key, wrapped)
+		require.NoError(t, err)
+		require.Equal(t, plaintext, opened)
+	})
+
+	t.Run("source is left intact: the caller keeps ownership", func(t *testing.T) {
+		key := generateRandomKey(t, AESGCMKeySize)
+		wrapper, err := NewAESGCMKeyWrapper(key)
+		require.NoError(t, err)
+
+		plaintext := generateRandomKey(t, 32)
+		src := protectedBytes(t, plaintext)
+
+		_, err = wrapper.WrapFrom(src)
+		require.NoError(t, err)
+
+		require.NoError(t, src.WithBytes(func(b []byte) error {
+			require.Equal(t, plaintext, b)
+			return nil
+		}))
+	})
+
+	t.Run("nil source returns ErrInvalidWrapSource", func(t *testing.T) {
+		key := generateRandomKey(t, AESGCMKeySize)
+		wrapper, err := NewAESGCMKeyWrapper(key)
+		require.NoError(t, err)
+
+		wrapped, err := wrapper.WrapFrom(nil)
+
+		require.ErrorIs(t, err, ErrInvalidWrapSource)
 		require.Nil(t, wrapped)
 	})
 
-	t.Run("output is at least nonce plus tag size for empty input", func(t *testing.T) {
+	t.Run("destroyed source returns ErrInvalidWrapSource with the cause", func(t *testing.T) {
 		key := generateRandomKey(t, AESGCMKeySize)
 		wrapper, err := NewAESGCMKeyWrapper(key)
 		require.NoError(t, err)
 
-		plaintext := []byte{}
-
-		wrapped, err := wrapper.Wrap(plaintext)
-
+		src, err := secure.NewBuffer(32)
 		require.NoError(t, err)
-		require.NotNil(t, wrapped)
-		// Minimum size: nonce (12 bytes) + tag (16 bytes) = 28 bytes
-		minSize := AESGCMNonceSize + aesGCMTagSize
-		require.GreaterOrEqual(t, len(wrapped), minSize)
-		require.Equal(t, minSize, len(wrapped), "empty input should produce exactly nonce + tag")
+		src.Destroy()
+
+		wrapped, err := wrapper.WrapFrom(src)
+
+		require.ErrorIs(t, err, ErrInvalidWrapSource)
+		var nilErr *secure.NilBufferError
+		require.ErrorAs(t, err, &nilErr)
+		require.Nil(t, wrapped)
+	})
+
+	t.Run("an empty plaintext cannot be staged, so no empty payload is expressible", func(t *testing.T) {
+		key := generateRandomKey(t, AESGCMKeySize)
+		wrapper, err := NewAESGCMKeyWrapper(key)
+		require.NoError(t, err)
+
+		wrapped, err := wrapForTest(wrapper, []byte{})
+
+		var sizeErr *secure.InvalidSizeError
+		require.ErrorAs(t, err, &sizeErr)
+		require.Nil(t, wrapped)
 	})
 }
 
@@ -277,7 +398,7 @@ func TestAESGCMKeyWrapper_Unwrap(t *testing.T) {
 
 		plaintext := []byte("sensitive data to be wrapped")
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		// Tamper with the ciphertext portion (after nonce, before tag)
@@ -302,7 +423,7 @@ func TestAESGCMKeyWrapper_Unwrap(t *testing.T) {
 
 		plaintext := []byte("data wrapped with key1")
 
-		wrapped, err := wrapper1.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper1, plaintext)
 		require.NoError(t, err)
 
 		// Try to unwrap with different key
@@ -323,7 +444,7 @@ func TestAESGCMKeyWrapper_Unwrap(t *testing.T) {
 
 		plaintext := []byte("data that should be portable between wrappers")
 
-		wrapped, err := wrapper1.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper1, plaintext)
 		require.NoError(t, err)
 
 		// Unwrap with different wrapper instance using same key
@@ -342,7 +463,7 @@ func TestAESGCMKeyWrapper_TamperDetection(t *testing.T) {
 
 		plaintext := []byte("data for tamper detection test")
 
-		originalWrapped, err := wrapper.Wrap(plaintext)
+		originalWrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		// Test tampering with each byte position
@@ -374,7 +495,7 @@ func TestAESGCMKeyWrapper_TamperDetection(t *testing.T) {
 
 		plaintext := []byte("data to test truncation detection")
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		minSize := AESGCMNonceSize + aesGCMTagSize
@@ -418,7 +539,7 @@ func TestAESGCMKeyWrapper_TamperDetection(t *testing.T) {
 
 		plaintext := []byte("data to test append detection")
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		// Append extra bytes
@@ -440,7 +561,7 @@ func TestAESGCMKeyWrapper_TamperDetection(t *testing.T) {
 
 		plaintext := []byte("data for swap detection test")
 
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		// Create corrupted data by swapping nonce with part of ciphertext
@@ -473,7 +594,7 @@ func TestAESGCMKeyWrapper_Interface(t *testing.T) {
 
 		plaintext := []byte("interface test data")
 
-		wrapped, err := kw.Wrap(plaintext)
+		wrapped, err := kw.WrapFrom(protectedBytes(t, plaintext))
 		require.NoError(t, err)
 
 		unwrapped, err := unwrapForTest(kw, wrapped)
@@ -498,7 +619,6 @@ func TestAESGCMKeyWrapper_Constants(t *testing.T) {
 			name          string
 			plaintextSize int
 		}{
-			{"empty", 0},
 			{"one byte", 1},
 			{"small", 32},
 			{"medium", 256},
@@ -507,13 +627,9 @@ func TestAESGCMKeyWrapper_Constants(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				plaintext := make([]byte, tc.plaintextSize)
-				if tc.plaintextSize > 0 {
-					_, err := rand.Read(plaintext)
-					require.NoError(t, err)
-				}
+				plaintext := generateRandomKey(t, tc.plaintextSize)
 
-				wrapped, err := wrapper.Wrap(plaintext)
+				wrapped, err := wrapForTest(wrapper, plaintext)
 				require.NoError(t, err)
 
 				expectedSize := AESGCMNonceSize + tc.plaintextSize + aesGCMTagSize
@@ -547,7 +663,7 @@ func TestAESGCMKeyWrapper_ConcurrentAccess(t *testing.T) {
 						continue
 					}
 
-					wrapped, err := wrapper.Wrap(plaintext)
+					wrapped, err := wrapForTest(wrapper, plaintext)
 					if err != nil {
 						errChan <- err
 						continue
@@ -608,7 +724,7 @@ func TestAESGCMUnwrappedLen(t *testing.T) {
 		require.NoError(t, err)
 
 		plaintext := []byte("sized without the key")
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		n, err := aesGCMUnwrappedLen(wrapped)
@@ -630,7 +746,7 @@ func TestAESGCMKeyWrapper_UnwrapInto(t *testing.T) {
 		require.NoError(t, err)
 
 		plaintext := []byte("plaintext that must land only in dst")
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		dst := make([]byte, len(plaintext))
@@ -643,7 +759,7 @@ func TestAESGCMKeyWrapper_UnwrapInto(t *testing.T) {
 		wrapper, err := NewAESGCMKeyWrapper(key)
 		require.NoError(t, err)
 
-		wrapped, err := wrapper.Wrap([]byte("some plaintext"))
+		wrapped, err := wrapForTest(wrapper, []byte("some plaintext"))
 		require.NoError(t, err)
 
 		dst := make([]byte, len("some plaintext")-1)
@@ -656,7 +772,7 @@ func TestAESGCMKeyWrapper_UnwrapInto(t *testing.T) {
 		wrapper, err := NewAESGCMKeyWrapper(key)
 		require.NoError(t, err)
 
-		wrapped, err := wrapper.Wrap([]byte("some plaintext"))
+		wrapped, err := wrapForTest(wrapper, []byte("some plaintext"))
 		require.NoError(t, err)
 
 		dst := make([]byte, len("some plaintext")+1)
@@ -678,7 +794,7 @@ func TestAESGCMKeyWrapper_UnwrapInto(t *testing.T) {
 		require.NoError(t, err)
 
 		plaintext := bytes.Repeat([]byte{0xAB}, 48)
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 		// Flip one ciphertext bit so the tag no longer verifies.
 		wrapped[AESGCMNonceSize] ^= 0x01
@@ -689,13 +805,12 @@ func TestAESGCMKeyWrapper_UnwrapInto(t *testing.T) {
 			"dst must hold no plaintext after a failed unwrap")
 	})
 
-	t.Run("empty plaintext round-trips through a zero-length destination", func(t *testing.T) {
+	t.Run("empty payload round-trips through a zero-length destination", func(t *testing.T) {
 		key := generateRandomKey(t, AESGCMKeySize)
 		wrapper, err := NewAESGCMKeyWrapper(key)
 		require.NoError(t, err)
 
-		wrapped, err := wrapper.Wrap([]byte{})
-		require.NoError(t, err)
+		wrapped := sealForTest(t, key, []byte{})
 
 		require.NoError(t, wrapper.UnwrapInto(wrapped, []byte{}))
 	})

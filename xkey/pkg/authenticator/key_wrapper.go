@@ -18,6 +18,8 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Key wrapping constants for AES-256-GCM.
@@ -57,21 +59,35 @@ var (
 	// in-place decrypt invariant fails closed instead of silently leaking
 	// plaintext onto the heap.
 	ErrUnwrapNotInPlace = errors.New("authenticator: unwrap did not decrypt in place")
+
+	// ErrInvalidWrapSource indicates the protected buffer passed to WrapFrom
+	// is nil, destroyed, or otherwise cannot be borrowed.
+	ErrInvalidWrapSource = errors.New("authenticator: wrap source is nil or destroyed")
 )
 
 // KeyWrapper defines the interface for key wrapping operations.
 // Implementations must be safe for concurrent use.
 //
-// Unwrapping deliberately cannot return a plaintext slice: the caller supplies
-// the destination, so decrypted key material lands only in memory the caller
-// owns — typically an mlocked secure.Buffer allocated before any protected-key
-// borrow is taken (go-xkms#291). An implementation must never allocate a
-// plaintext copy the caller cannot wipe.
+// Neither direction can express plaintext on the ordinary Go heap. Wrapping
+// reads its plaintext from a protected secure.Buffer the caller owns
+// (go-xkms#387), and unwrapping cannot return a plaintext slice: the caller
+// supplies the destination, so decrypted key material lands only in memory
+// the caller owns — typically an mlocked secure.Buffer allocated before any
+// protected-key borrow is taken (go-xkms#291). An implementation must never
+// allocate a plaintext copy the caller cannot wipe.
+//
+// WrapFrom borrows src for the duration of the encrypt. Borrows must not nest
+// (go-qrdb pkg/secure), so a caller holding a borrow on the wrapping key —
+// withKeyWrapper — must release it before calling WrapFrom; wrapFromProtected
+// in key_manager.go is the shape that does so.
 type KeyWrapper interface {
-	// Wrap encrypts plaintext and returns the wrapped (encrypted) data.
-	// The output format is implementation-specific but must be deterministically
+	// WrapFrom encrypts the plaintext held in src and returns the wrapped
+	// (encrypted) data, which is ciphertext and safe on the heap. The output
+	// format is implementation-specific but must be deterministically
 	// unwrappable by the corresponding UnwrapInto method.
-	Wrap(plaintext []byte) ([]byte, error)
+	// Returns ErrInvalidWrapSource if src is nil or destroyed.
+	// Returns ErrKeyWrapFailed if nonce generation or encryption fails.
+	WrapFrom(src *secure.Buffer) ([]byte, error)
 
 	// UnwrapInto decrypts wrapped data into dst, which must be exactly the
 	// plaintext length (aesGCMUnwrappedLen for the AES-GCM format). dst is
@@ -127,14 +143,22 @@ func NewAESGCMKeyWrapper(key []byte) (*AESGCMKeyWrapper, error) {
 	}, nil
 }
 
-// Wrap encrypts the plaintext using AES-256-GCM with a random nonce.
-// Output format: nonce (12 bytes) || ciphertext || tag (16 bytes).
+// WrapFrom encrypts the plaintext held in src using AES-256-GCM with a random
+// nonce. Output format: nonce (12 bytes) || ciphertext || tag (16 bytes).
 // The tag is automatically appended by the GCM Seal operation.
 //
-// Returns ErrKeyWrapFailed if nonce generation or encryption fails.
-func (w *AESGCMKeyWrapper) Wrap(plaintext []byte) ([]byte, error) {
-	if plaintext == nil {
-		return nil, ErrKeyWrapFailed
+// The plaintext is read through a WithBytes borrow on src, so the mlocked
+// pages stay mapped for the whole encrypt, and Seal streams it straight into
+// the ciphertext buffer: no copy of the plaintext is made on the ordinary Go
+// heap. Only the nonce and the output are allocated here, and neither is
+// secret. The callback touches nothing in pkg/secure, so the borrow it holds
+// is the only one WrapFrom takes; the caller must not be holding another.
+//
+// Returns ErrInvalidWrapSource if src is nil or has been destroyed.
+// Returns ErrKeyWrapFailed if nonce generation fails.
+func (w *AESGCMKeyWrapper) WrapFrom(src *secure.Buffer) ([]byte, error) {
+	if src == nil {
+		return nil, ErrInvalidWrapSource
 	}
 
 	// Generate random nonce
@@ -143,14 +167,18 @@ func (w *AESGCMKeyWrapper) Wrap(plaintext []byte) ([]byte, error) {
 		return nil, ErrKeyWrapFailed
 	}
 
-	// Encrypt: Seal appends ciphertext+tag to nonce
-	// Pre-allocate output buffer: nonce + ciphertext + tag
-	outputLen := AESGCMNonceSize + len(plaintext) + aesGCMTagSize
-	wrapped := make([]byte, AESGCMNonceSize, outputLen)
-	copy(wrapped, nonce)
-
-	// Seal appends ciphertext+tag to the destination slice
-	wrapped = w.aead.Seal(wrapped, nonce, plaintext, nil)
+	var wrapped []byte
+	if err := src.WithBytes(func(plaintext []byte) error {
+		// Pre-allocate output buffer: nonce + ciphertext + tag. Seal appends
+		// ciphertext+tag to the nonce already in place.
+		outputLen := AESGCMNonceSize + len(plaintext) + aesGCMTagSize
+		wrapped = make([]byte, AESGCMNonceSize, outputLen)
+		copy(wrapped, nonce)
+		wrapped = w.aead.Seal(wrapped, nonce, plaintext, nil)
+		return nil
+	}); err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidWrapSource, Cause: err}
+	}
 
 	return wrapped, nil
 }

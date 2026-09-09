@@ -41,7 +41,7 @@ func TestUnwrapIntoProtected(t *testing.T) {
 		require.NoError(t, err)
 
 		plaintext := generateRandomKey(t, AESGCMKeySize)
-		wrapped, err := wrapper.Wrap(plaintext)
+		wrapped, err := wrapForTest(wrapper, plaintext)
 		require.NoError(t, err)
 
 		out, err := unwrapIntoProtected(keyBuf, wrapped)
@@ -59,7 +59,7 @@ func TestUnwrapIntoProtected(t *testing.T) {
 		_ = keyBuf
 		wrapper, err := NewAESGCMKeyWrapper(heapKey)
 		require.NoError(t, err)
-		wrapped, err := wrapper.Wrap(generateRandomKey(t, AESGCMKeySize))
+		wrapped, err := wrapForTest(wrapper, generateRandomKey(t, AESGCMKeySize))
 		require.NoError(t, err)
 
 		out, err := unwrapIntoProtected(nil, wrapped)
@@ -77,10 +77,7 @@ func TestUnwrapIntoProtected(t *testing.T) {
 
 	t.Run("zero-length plaintext is refused as malformed key material", func(t *testing.T) {
 		keyBuf, heapKey := protectedTestKey(t)
-		wrapper, err := NewAESGCMKeyWrapper(heapKey)
-		require.NoError(t, err)
-		wrapped, err := wrapper.Wrap([]byte{})
-		require.NoError(t, err)
+		wrapped := sealForTest(t, heapKey, []byte{})
 
 		out, err := unwrapIntoProtected(keyBuf, wrapped)
 		require.ErrorIs(t, err, ErrInvalidWrappedData)
@@ -91,7 +88,7 @@ func TestUnwrapIntoProtected(t *testing.T) {
 		keyBuf, heapKey := protectedTestKey(t)
 		wrapper, err := NewAESGCMKeyWrapper(heapKey)
 		require.NoError(t, err)
-		wrapped, err := wrapper.Wrap(generateRandomKey(t, AESGCMKeySize))
+		wrapped, err := wrapForTest(wrapper, generateRandomKey(t, AESGCMKeySize))
 		require.NoError(t, err)
 		wrapped[AESGCMNonceSize] ^= 0x01
 

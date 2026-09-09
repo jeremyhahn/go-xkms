@@ -82,12 +82,28 @@ Consumers borrow the plaintext through `WithBytes`, never `Bytes`. Only
 the process purges every live enclave, and an accessor that has already
 returned cannot keep the pages mapped while the caller reads them.
 
-**The unwrap transit is closed.** `KeyWrapper.UnwrapInto` decrypts into a
+**Both transits are closed.** `KeyWrapper.UnwrapInto` decrypts into a
 caller-supplied destination sized before any protected-key borrow is taken, so
 an unlock writes each unwrapped key directly into mlocked memory — the
 plaintext never exists on the ordinary Go heap (go-xkms#291). The interface no
 longer has a method that can return a plaintext slice the caller does not own.
-`Wrap` still takes heap plaintext; that half is scoped separately.
+`KeyWrapper.WrapFrom(src *secure.Buffer)` is the mirror on the way in
+(go-xkms#387): the plaintext is read through a borrow on a protected buffer
+the caller owns, and Seal streams it straight into the ciphertext, so the
+interface cannot express a wrap of heap plaintext. `InitializeSOPIN` generates
+the AK and CMK directly into protected memory and adopts them as they are;
+`WrapCredentialKey` and `WrapAttestationKey` take a `*secure.Buffer` the
+caller destroys afterwards. The one heap copy that remains is the PKCS#8
+encoding `x509` can only produce on the heap, and `secure.NewBufferFromBytes`
+wipes it as it moves it into protected memory.
+
+Borrows on protected buffers must not nest (go-qrdb `pkg/secure`). Every wrap
+of one protected key under another therefore goes through
+`wrapFromProtected`, which borrows the wrapping key only long enough to expand
+it into the cipher's key schedule, releases that borrow, and only then lets
+`WrapFrom` borrow the plaintext. A re-nested borrow deadlocks against a queued
+purge-class operation rather than erroring, so the regression test drives
+every wrap path under purge-class contention and relies on the test timeout.
 
 `GetCMK` returns a heap copy that is the caller's to wipe. It is not protected
 memory and is not documented as though it were. (It currently has no non-test

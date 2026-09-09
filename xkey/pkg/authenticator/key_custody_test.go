@@ -175,7 +175,7 @@ func TestWithKeyBytesRefusesDestroyedKey(t *testing.T) {
 func TestKeyManagerRefusesCredentialWrapWhenLocked(t *testing.T) {
 	km := NewKeyManager(NewAuthenticatorState(), DefaultConfig())
 
-	_, err := km.WrapCredentialKey([]byte("pkcs8-bytes"))
+	_, err := km.WrapCredentialKey(protectedBytes(t, []byte("pkcs8-bytes")))
 	require.ErrorIs(t, err, ErrKeyManagerLocked)
 
 	_, err = km.UnwrapCredentialKey([]byte("wrapped-bytes"))

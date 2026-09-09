@@ -353,7 +353,7 @@ func TestSerializedState_ContainsNoPlaintextAttestationKey(t *testing.T) {
 	require.NoError(t, err)
 	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
 	require.NoError(t, err)
-	require.NoError(t, auth.keyManager.WrapAttestationKey(pkcs8))
+	require.NoError(t, auth.keyManager.WrapAttestationKey(protectedBytes(t, pkcs8)))
 
 	serializable, err := stateToSerializable(auth.state)
 	require.NoError(t, err)
