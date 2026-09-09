@@ -458,10 +458,19 @@ func TestHandler_Decrypt_OAEPHashArrives(t *testing.T) {
 	})
 	assert.Error(t, err, "a SHA-384 OAEP ciphertext must not decrypt under SHA-256")
 
-	_, err = mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
+	// Decrypting an OAEP ciphertext as PKCS#1 v1.5 yields uniform bytes, and
+	// v1.5 unpadding ACCEPTS uniform bytes whenever they happen to carry its
+	// 00 02 ... 00 frame: measured at 1.4e-3 per attempt (432 of 300,000).
+	// So "must error" was a one-in-700 flake (#474's CI run). What must hold
+	// is that the padding is not interchangeable: a v1.5 decrypt either
+	// fails or returns bytes that are not the plaintext.
+	v15, err := mcpCall(t, server.handleDecrypt, "xkms.decrypt", DecryptParams{
 		KeyID: "mcp-oaep-decrypt", Backend: "software", Ciphertext: ciphertext,
 	})
-	assert.Error(t, err, "an OAEP ciphertext must not decrypt as PKCS#1 v1.5")
+	if err == nil {
+		assert.NotEqual(t, plaintext, v15.(DecryptResult).Plaintext,
+			"an OAEP ciphertext must not decrypt to its plaintext as PKCS#1 v1.5")
+	}
 }
 
 // TestHandler_Decrypt_OAEPLabelArrives proves the OAEP label reaches the
