@@ -411,10 +411,15 @@ jobs:
       #                         the whole set's cost, 1.7x the other forty
       #                         combined. Runs nightly (nightly.yml,
       #                         xkey-pkcs11-unit) instead of on every PR.
-      #   ./cmd/xkey/cmd        8,282 test functions between them, 27 run by
-      #   ./pkg/gui/services    the named-selector steps below. Whole-package
-      #                         runs are #332; gui/services holds pre-existing
-      #                         failures the gate is not about (#104).
+      #   ./cmd/xkey/cmd        run below in the same step under -tags ble
+      #   ./pkg/gui/services    (the CLI's fail-closed fingerprint and the
+      #                         logins harness guard live behind it), as
+      #                         whole packages (#332): 8,282 test functions,
+      #                         of which the named-selector steps this
+      #                         replaces ran 27. The "pre-existing failures"
+      #                         that justified naming were CI running as
+      #                         root (#111); as an unprivileged user both
+      #                         packages are green, measured on #332.
       #   ./test/integration/…  14 dirs behind //go:build integration (+linux,
       #                         pkcs11, tpm_simulator, androidemu): they belong
       #                         to `make integration-test`, not to this job.
@@ -458,13 +463,25 @@ jobs:
           dir="$modcache"
           while [ "$dir" != / ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
           sudo chown -R xkey-ci: "$modcache"
-          sudo --user=xkey-ci --set-home env \
-            PATH="$PATH" \
-            GOTOOLCHAIN=local \
-            GOMODCACHE="$(go env GOMODCACHE)" \
-            GOCACHE=/home/xkey-ci/.cache/go-build \
-            GOPROXY=off \
-          go test -race -tags codec_json -count=1 \
+          # sudo exports SUDO_USER/SUDO_UID/SUDO_GID (root, here) into the
+          # child, and the CLI honours them by design: a command run through
+          # sudo resolves the INVOKING user's home so pair and fido2 share one
+          # config (resolveInvokingUserHome). Under root's sudo that pointed
+          # the tests at /root, unreachable as xkey-ci, and 44 cmd/xkey/cmd
+          # tests failed on "xhome: could not resolve xKey home directory"
+          # (run 14873). A developer's shell is not under sudo, so the
+          # variables are unset: the tests see a plain user environment.
+          as_xkey_ci() {
+            sudo --user=xkey-ci --set-home env \
+              -u SUDO_USER -u SUDO_UID -u SUDO_GID -u SUDO_COMMAND -u SUDO_HOME \
+              PATH="$PATH" \
+              GOTOOLCHAIN=local \
+              GOMODCACHE="$modcache" \
+              GOCACHE=/home/xkey-ci/.cache/go-build \
+              GOPROXY=off \
+            "$@"
+          }
+          as_xkey_ci go test -race -tags codec_json -count=1 \
             ./cmd/e2eprobe ./cmd/xkey \
             ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
             ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
@@ -476,18 +493,14 @@ jobs:
             ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
             ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
             ./pkg/virtualdevice ./pkg/xhome
-
-      # The GUI services step below names its tests individually, because that
-      # package holds pre-existing failures the gate is not about (#104).
-      #
-      # A -run selector that matches nothing exits 0, so naming tests that way
-      # makes the gate only as good as the names staying correct: rename one
-      # and the job goes on passing, having tested nothing. require-tests.sh
-      # asserts every name matches at least one test before it runs any of
-      # them, so a rename is a red job rather than a silent hole.
-      #
-      # The ble step used to be the other one. It no longer names tests -- see
-      # below.
+          # -tags ble: createFIDO2PhoneKeyBackend and the CLI's fail-closed
+          # fingerprint tests are ble-only, and the four *HarnessArgv* tests
+          # are the logins harness guard (#409). Measured as an unprivileged
+          # user (#332): cmd/xkey/cmd 1,761 tests in 35 s, pkg/gui/services
+          # 6,521 tests in 130 s, nothing environment-dependent on a host with
+          # no BLE adapter and no user session.
+          as_xkey_ci go test -race -tags "ble codec_json" -count=1 \
+            ./cmd/xkey/cmd ./pkg/gui/services
 
       # Compile-check EVERY ble-tagged package, tests included.
       #
@@ -524,67 +537,25 @@ jobs:
       # (advertisement lifecycle, connection drain, key release) where they
       # live.
       #
-      # This also removes the reason require-tests.sh guarded this step. That
-      # helper exists because naming tests makes a gate only as good as the
-      # names staying correct -- rename one and the job passes having tested
-      # nothing. Running the package removes that failure mode at the source: a
-      # renamed test still runs. The guard is not weakened here, it is made
-      # unnecessary.
+      # No step in this job names tests any more. A -run selector that matches
+      # nothing exits 0, so a named list is only as good as the names staying
+      # correct, and a helper that asserts the names exist makes a rename loud
+      # but cannot make an addition loud: a new test matches no selector and
+      # arrives dark. Running the package removes that failure mode at the
+      # source. The last two named lists, cmd/xkey/cmd and pkg/gui/services,
+      # went whole in #332, and the helper went with them.
       #
-      # Scoped to ./pkg/phone/ deliberately, NOT -tags ble ./... : cmd/xkey/cmd
-      # carries environment-dependent auth/token-store tests and a 25s BLE-scan
-      # timeout, so widening this would trade a dark corner for a flaky job.
-      # Compile coverage for the rest of the tag set is go vet -tags ble ./...
-      # (#31), which type-checks those tests without running them.
+      # Scoped to ./pkg/phone/: the other ble-tagged suite, cmd/xkey/cmd, runs
+      # whole in the "xkey unit suites" step above as an unprivileged user
+      # (#332), and compile coverage for the rest of the tag set is
+      # go vet -tags ble ./... (#31), which type-checks those tests without
+      # running them.
       #
       # Measured at ~33s on a workstation; if it grows materially, split it
       # rather than going back to naming tests.
       - name: xkey peripheral lifecycle (-race -tags ble)
         working-directory: xkey
         run: go test -race -tags ble ./pkg/phone/ -count=1
-
-      # The CLI's fail-closed fingerprint tests, which were DARK.
-      #
-      # They live in cmd/xkey/cmd behind `//go:build ble`, and the only ble
-      # test step above is scoped to ./pkg/phone/ -- so they compiled under
-      # `go vet -tags ble ./...` and never ran. 116 lines asserting that a
-      # malformed persisted fingerprint cannot start a handshake, executing
-      # nowhere (#62). The tag is not droppable: createFIDO2PhoneKeyBackend
-      # itself is ble-only.
-      #
-      # Named rather than running the package, for the reason the scoping
-      # comment above gives: cmd/xkey/cmd carries environment-dependent
-      # auth/token-store tests and a 25s BLE-scan timeout, so widening this to
-      # the whole package would trade a dark corner for a flaky job. Naming is
-      # what require-tests.sh exists to make safe -- it asserts every name
-      # matches a real test before running any, so a rename is a red job rather
-      # than a silent hole.
-      #
-      # The four *HarnessArgv* tests are the logins harness guard (#409): the
-      # argv test/integration/logins execs to start the virtual authenticator
-      # is resolved against the real fido2 command tree, so a flag removed
-      # from the CLI is a red job here instead of a suite that cannot start
-      # the daemon inside the devcontainer, which no CI job runs.
-      - name: xkey CLI fail-closed fingerprint (-tags ble)
-        working-directory: xkey
-        run: |
-          ../.github/scripts/require-tests.sh ./cmd/xkey/cmd/ ble \
-            TestCreateFIDO2PhoneKeyBackend_BadFingerprintIsRefused \
-            TestFIDO2Cmd_HarnessArgvIsRegistered \
-            TestFIDO2Cmd_HarnessArgvLeavesFlagsUntouched \
-            TestCheckHarnessArgv_RejectsWhatTheBinaryRejects \
-            TestCheckHarnessArgv_AcceptsBareBoolAndInheritedFlags \
-            TestAllowUnattestablePairing_ResolvesTheTwoPlanes \
-            TestAllowUnattestablePairing_DefaultsToRefuseOnAZeroPolicySection \
-            TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone \
-            TestNewPairedDeviceRecord_RecordsAVerifiedAttestation \
-            TestPairThenReconnectThenReattest_Interop \
-            TestReconnectRefusesADeviceThatCannotProveLiveness \
-            TestReconnectEnforcesLivenessBeforeTheSessionIsUsable \
-            TestPairedDeviceBackendConfigCarriesEveryIdentityCheck \
-            TestEnrollmentCertProfileIsRegistered \
-            TestEnrollmentCertProfileSemantics \
-            TestEnrollmentCertProfileFormerNameFailsClosed
 
       # The attestation DECISION's own suite. It used to live in cmd/xkey/cmd
       # behind `//go:build ble`, reachable only through the named list above --
@@ -596,27 +567,6 @@ jobs:
       - name: xkey device attestation decision
         working-directory: xkey
         run: go test ./pkg/attestation/... -count=1
-
-      - name: xkey GUI service teardown
-        working-directory: xkey
-        run: |
-          ../.github/scripts/require-tests.sh ./pkg/gui/services/ "" \
-            TestCloseActiveConnection \
-            TestTeardownLeavesAConnectionPublishedDuringItsDrainReportedConnected \
-            TestTeardownAndPublicationNeverDisagreeAboutTheConnection \
-            TestTeardownReportsDisconnectedWhenNothingReplacedIt \
-            TestUnpairReportsTheRecordRemovalAndSurfacesRetentionInServiceState \
-            TestUnpairSucceedsAndRetainsNothingOnACleanDrain \
-            TestUnpairMarksTheDeviceForTheWholeOfItsTeardown \
-            TestPublishConnectionRefusesWhileTheDeviceIsBeingUnpaired \
-            TestATimedOutDrainOverAnEmptySlotRecordsNoRetainedKey \
-            TestAStatusCallbackMayReEnterTheService \
-            TestARefusedPublicationLeavesAnotherDevicesConnectionAlone \
-            TestAnOlderTransitionCannotOvertakeANewerOneAtEitherSink \
-            TestPublishConnectionRefusesAnUnpairThatBeganDuringItsDrain \
-            TestAutoAttestPropagatesTheTeardownItForces \
-            TestProcessHomeLeaks_ReportsATraversalItCouldNotComplete \
-            TestProcessHomeLeaks_FindsWhatWasWrittenAndReportsNoError
 
   # Job 3: Lint
   lint:

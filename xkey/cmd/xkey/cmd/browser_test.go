@@ -76,14 +76,24 @@ func TestBrowserLaunchCmd_MaxArgs(t *testing.T) {
 		"should accept zero positional arguments")
 }
 
-// --- Error on missing trust store ---
+// --- Error on an unopenable trust store ---
 
-func TestRunBrowserLaunch_MissingTrustStore(t *testing.T) {
-	// Point HOME at an empty temp directory so the trust store path
-	// does not exist. This exercises the error path without touching
-	// the real filesystem.
+// TestRunBrowserLaunch_TrustStoreUnopenable: the trust store is opened before
+// any browser is detected, so a store that cannot be opened must surface as
+// ErrBrowserLaunchFailed carrying the open error, and never as
+// ErrBrowserNoBrowsers, whatever the host has installed. A merely absent
+// store does not exercise this path: NewFileStore creates its directory, so
+// the one way to make the open fail is a parent the user cannot write. (The
+// earlier form of this test pointed HOME at an empty directory and asserted
+// the launch failed, which on a host with no browser failed one step later
+// with ErrBrowserNoBrowsers instead, #332.)
+func TestRunBrowserLaunch_TrustStoreUnopenable(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
+	dataDir := filepath.Join(tmpDir, ".xkey", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0700))
+	require.NoError(t, os.Chmod(dataDir, 0500), "the trust store's parent is read-only")
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0700) })
 
 	var out bytes.Buffer
 	cmd := *browserLaunchCmd
@@ -93,6 +103,8 @@ func TestRunBrowserLaunch_MissingTrustStore(t *testing.T) {
 	err := runBrowserLaunch(&cmd, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBrowserLaunchFailed)
+	assert.ErrorIs(t, err, os.ErrPermission, "the cause is the store that could not be opened")
+	assert.NotErrorIs(t, err, ErrBrowserNoBrowsers, "browser detection must not have been reached")
 }
 
 func TestRunBrowserLaunch_EmptyTrustStoreNoBrowsers(t *testing.T) {

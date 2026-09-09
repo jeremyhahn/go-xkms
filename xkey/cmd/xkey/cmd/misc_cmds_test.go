@@ -85,11 +85,14 @@ func withSharePolicyHome(t *testing.T) string {
 	return home
 }
 
-// TestRunSharePolicySet_FailsWhenXKeyHomeMissing pins the current behaviour
-// so the gap is visible; it will need updating once the store creates its
-// own parent directory.
-func TestRunSharePolicySet_FailsWhenXKeyHomeMissing(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// TestRunSharePolicySet_CreatesTheXKeyHome: the data-dir chain resolves the
+// home through xhome, which creates ~/.xkey (0700) when it is absent, so a
+// missing home is not a state the command can observe any more. The policy
+// lands under the created directory. (This test used to pin the opposite,
+// pre-xhome behaviour and had never run in CI, #332.)
+func TestRunSharePolicySet_CreatesTheXKeyHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	previous := resolvedHome
 	resolvedHome = nil
@@ -97,12 +100,34 @@ func TestRunSharePolicySet_FailsWhenXKeyHomeMissing(t *testing.T) {
 
 	set, _ := sharePolicyCmd(t)
 	require.NoError(t, set.Flags().Set("allow", "true"))
+	require.NoError(t, runSharePolicySet(set, []string{"tpm2", "key-abc"}))
+
+	info, err := os.Stat(filepath.Join(home, ".xkey"))
+	require.NoError(t, err, "the resolved home is created on first use")
+	assert.True(t, info.IsDir())
+	assert.Equal(t, os.FileMode(0700), info.Mode().Perm(), "the home is private to the user")
+	_, err = os.Stat(filepath.Join(home, ".xkey", sharingPoliciesFileName))
+	assert.NoError(t, err, "the policy file is written under the created home")
+}
+
+// TestRunSharePolicySet_FailsWhenXKeyHomeUnwritable: the one way the store
+// can still fail to persist is a home the user cannot write, and that failure
+// surfaces as ErrSharePolicySetFailed carrying the permission error, not as a
+// silently unsaved policy.
+func TestRunSharePolicySet_FailsWhenXKeyHomeUnwritable(t *testing.T) {
+	home := withSharePolicyHome(t)
+	xkeyHome := filepath.Join(home, ".xkey")
+	require.NoError(t, os.Chmod(xkeyHome, 0500))
+	t.Cleanup(func() { _ = os.Chmod(xkeyHome, 0700) })
+
+	set, _ := sharePolicyCmd(t)
+	require.NoError(t, set.Flags().Set("allow", "true"))
 
 	err := runSharePolicySet(set, []string{"tpm2", "key-abc"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSharePolicySetFailed)
-	assert.ErrorIs(t, err, os.ErrNotExist,
-		"the failure is a missing ~/.xkey directory, not a policy problem")
+	assert.ErrorIs(t, err, os.ErrPermission,
+		"the failure is the unwritable ~/.xkey, not a policy problem")
 }
 
 func TestSharePolicy_SetListRemove(t *testing.T) {
