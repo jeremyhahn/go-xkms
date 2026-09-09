@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ## Exported surface — `pkg/tpm2`
 
@@ -188,6 +188,20 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   default: the key store composes its storage key from the CN, and
   `store.FileBackend` refuses an empty one (`ErrEmptyKeyCN`) rather than
   collapsing every nameless key onto the bare extension (#440).
+- **Every configuration-derived field of an identity key is assigned by one
+  function on both paths.** `applyIAKConfig` / `applyIDevIDConfig`
+  (`key.go`) set the CN, key type, store, platform binding, signature
+  algorithm and authValue; `CreateIAK` / `CreateIDevID` call them after the
+  `*AttributesFromConfig` builders, and the cold-cache rebuilds
+  `IAKAttributes` / `IDevIDAttributes` call them over the attributes read
+  back from the TPM. Each time the two paths assigned a field separately it
+  was lost on restart — the CN (#337), PlatformPolicy and KeyType (#466),
+  the password (#467): a key with a configured authValue signed in the
+  process that provisioned it and answered `TPM_RC_BAD_AUTH` from the next
+  boot on. The authValue lives in an enclave (`types.NewPassword`); a value
+  the attributes already hold is cleared before it is replaced. The IAK's
+  self-certification (`TPM2_CertifyCreation`) is authorized by the IAK's own
+  authValue, not the EK's (#467).
 
 ## Error semantics
 

@@ -119,30 +119,14 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 		if err != nil {
 			return nil, err
 		}
-		// KeyAttributes(handle) describes the key the TPM holds and does not
-		// carry a CN, so the CN has to come from configuration -- verbatim,
-		// as IAKAttributesFromConfig (the provisioning path) and the IDevID
-		// sibling below assign it. Fabricating a fallback here made the same
-		// TPM describe its IAK differently after a restart than at
-		// provisioning, so certificate-store lookups keyed on the CN missed
-		// artifacts written by the provisioning path (#337).
-		iakAttrs.CN, err = DevIDCommonName(tpm.config.IAK.CN, devidPlatformFromConfig(tpm.config.IDevID))
-		if err != nil {
+		// KeyAttributes(handle) describes the key the TPM holds: it carries
+		// no CN, labels every key KeyTypeTPM, and knows nothing of the
+		// authValue or platform binding the configuration gave the key. Those
+		// come from applyIAKConfig, the same function the provisioning path
+		// runs, so a restarted process describes and authorizes the key
+		// exactly as the process that provisioned it did.
+		if err := tpm.applyIAKConfig(iakAttrs); err != nil {
 			return nil, err
-		}
-		iakAttrs.KeyType = types.KeyTypeAttestation
-		iakAttrs.StoreType = types.StoreTPM2
-		// PlatformPolicy selects the key's USER-role session (devidKeySession):
-		// with it clear, a key that has no authValue is used with the empty
-		// password regardless of platform state. It comes from the same
-		// configuration field IAKAttributesFromConfig reads at provisioning,
-		// so a restarted process binds the key exactly as provisioning did.
-		iakAttrs.PlatformPolicy = tpm.config.IAK.PlatformPolicy
-
-		// Set signature algorithm from config
-		sigAlgo, err := types.ParseSignatureAlgorithm(tpm.config.IAK.SignatureAlgorithm)
-		if err == nil {
-			iakAttrs.SignatureAlgorithm = sigAlgo
 		}
 
 		// Load parent EK attributes
@@ -155,6 +139,74 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 		tpm.iakAttrs = iakAttrs
 	}
 	return tpm.iakAttrs, nil
+}
+
+// applyIAKConfig assigns to attrs every IAK attribute that comes from
+// configuration rather than from the TPM: the Common Name, the key type and
+// store, platform binding, the signature algorithm and the authValue. It is
+// the ONE place both the provisioning path (CreateIAK) and the restart path
+// (IAKAttributes) take those from, so a field cannot survive one and not the
+// other. Each time the two paths assigned them separately a field was lost on
+// restart: the CN in #337, PlatformPolicy and KeyType in #466, and the
+// password in #467 -- a key with a configured authValue signed in the process
+// that provisioned it and answered TPM_RC_BAD_AUTH from the next boot on.
+func (tpm *TPM2) applyIAKConfig(attrs *types.KeyAttributes) error {
+	cfg := tpm.config.IAK
+	// One naming rule for both DevID keys: an explicit iak.cn, else the
+	// device's model and serial number, else refusal (see DevIDCommonName).
+	cn, err := DevIDCommonName(cfg.CN, devidPlatformFromConfig(tpm.config.IDevID))
+	if err != nil {
+		return err
+	}
+	sigAlgo, err := types.ParseSignatureAlgorithm(cfg.SignatureAlgorithm)
+	if err != nil {
+		return err
+	}
+	applyDevIDConfig(attrs, types.KeyTypeAttestation, cn, sigAlgo, cfg.PlatformPolicy, cfg.Password)
+	return nil
+}
+
+// applyIDevIDConfig is the IDevID half of applyIAKConfig, shared by
+// CreateIDevID and the IDevIDAttributes rebuild.
+func (tpm *TPM2) applyIDevIDConfig(attrs *types.KeyAttributes) error {
+	cfg := tpm.config.IDevID
+	cn, err := DevIDCommonName(cfg.CN, &PlatformAttributes{Model: cfg.Model, Serial: cfg.Serial})
+	if err != nil {
+		return err
+	}
+	sigAlgo, err := types.ParseSignatureAlgorithm(cfg.SignatureAlgorithm)
+	if err != nil {
+		return err
+	}
+	applyDevIDConfig(attrs, types.KeyTypeIDevID, cn, sigAlgo, cfg.PlatformPolicy, cfg.Password)
+	return nil
+}
+
+// applyDevIDConfig writes the configuration-derived fields of a device
+// identity key. The authValue goes into an enclave through types.NewPassword,
+// never a plain string on the heap; a password the attributes already hold --
+// the provisioning builders set one -- is cleared before it is replaced, so
+// applying the configuration twice leaves no enclave behind.
+func applyDevIDConfig(
+	attrs *types.KeyAttributes,
+	keyType types.KeyType,
+	cn string,
+	sigAlgo x509.SignatureAlgorithm,
+	platformPolicy bool,
+	password string) {
+
+	attrs.CN = cn
+	attrs.KeyType = keyType
+	attrs.StoreType = types.StoreTPM2
+	// PlatformPolicy selects the key's USER-role session (devidKeySession):
+	// with it clear, a key that has no authValue is used with the empty
+	// password regardless of platform state.
+	attrs.PlatformPolicy = platformPolicy
+	attrs.SignatureAlgorithm = sigAlgo
+	if attrs.Password != nil {
+		attrs.Password.Clear()
+	}
+	attrs.Password = types.NewPassword([]byte(password))
 }
 
 // Returns the Initial Attestation Key public key
@@ -177,28 +229,15 @@ func (tpm *TPM2) IDevIDAttributes() (*types.KeyAttributes, error) {
 			return nil, ErrIDevIDConfigNil
 		}
 		idevidHandle := tpm2.TPMHandle(tpm.config.IDevID.Handle)
-		signatureAlgorithm, err := types.ParseSignatureAlgorithm(tpm.config.IDevID.SignatureAlgorithm)
-		if err != nil {
-			return nil, err
-		}
 		idevidAttrs, err := tpm.KeyAttributes(idevidHandle)
 		if err != nil {
 			return nil, err
 		}
-		idevidAttrs.CN, err = DevIDCommonName(tpm.config.IDevID.CN,
-			&PlatformAttributes{Model: tpm.config.IDevID.Model, Serial: tpm.config.IDevID.Serial})
-		if err != nil {
+		// See the IAK rebuild above: the configuration-derived fields come
+		// from the one function the provisioning path also runs.
+		if err := tpm.applyIDevIDConfig(idevidAttrs); err != nil {
 			return nil, err
 		}
-		idevidAttrs.SignatureAlgorithm = signatureAlgorithm
-		// KeyAttributes(handle) labels every key KeyTypeTPM. The key type is
-		// what routes an IDevID to its persistent-handle signing path and to
-		// devidKeySession; left generic, a rebuilt IDevID was treated as a
-		// stored key pair with no parent. Both fields come from the same
-		// values IDevIDAttributesFromConfig assigns at provisioning; see the
-		// IAK rebuild above for why PlatformPolicy must survive a restart.
-		idevidAttrs.KeyType = types.KeyTypeIDevID
-		idevidAttrs.PlatformPolicy = tpm.config.IDevID.PlatformPolicy
 		tpm.idevidAttrs = idevidAttrs
 	}
 	return tpm.idevidAttrs, nil
@@ -791,7 +830,7 @@ func (tpm *TPM2) CreateIAK(
 	//   - Attestation Key (restricted)
 	//   - IDevID Key      (un-restricted)
 
-	var hierarchyAuth, ekAuth, iakAuth, signature []byte
+	var hierarchyAuth, iakAuth, signature []byte
 	var err error
 	var isRSAPSS bool
 	var inScheme tpm2.TPMTSigScheme
@@ -803,15 +842,6 @@ func (tpm *TPM2) CreateIAK(
 			return nil, err
 		}
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
-	}
-
-	if ekAttrs.Password != nil {
-		// Check if password is valid (error passwords return error from String())
-		_, err = ekAttrs.Password.String()
-		if err != nil {
-			return nil, err
-		}
-		ekAuth = ekAttrs.Password.Bytes()
 	}
 
 	// Create IAK key attributes from platform configuration file
@@ -828,9 +858,9 @@ func (tpm *TPM2) CreateIAK(
 		return nil, &errs.Detail{Err: ErrIAKConfigFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	iakAttrs.Parent = ekAttrs
-	// One naming rule for both DevID keys: an explicit iak.cn, else the
-	// device's model and serial number, else refusal (see DevIDCommonName).
-	if iakAttrs.CN, err = DevIDCommonName(tpm.config.IAK.CN, devidPlatformFromConfig(tpm.config.IDevID)); err != nil {
+	// The configuration-derived fields are assigned by the same function the
+	// restart path runs, so the two cannot drift (see applyIAKConfig).
+	if err := tpm.applyIAKConfig(iakAttrs); err != nil {
 		return nil, err
 	}
 
@@ -986,12 +1016,16 @@ func (tpm *TPM2) CreateIAK(
 		return nil, err
 	}
 
-	// Certify the new IAK primary key
+	// Certify the new IAK primary key. The IAK signs its own creation, so
+	// the signing handle is authorized by the IAK's authValue (USER role,
+	// userWithAuth SET), not the EK's. Presenting ekAuth here was invisible
+	// while both were empty and failed provisioning outright the moment
+	// iak.password was set (#467).
 	certifyCreation := tpm2.CertifyCreation{
 		SignHandle: tpm2.AuthHandle{
 			Handle: iakHandle,
 			Name:   iakPrimary.Name,
-			Auth:   tpm2.PasswordAuth(ekAuth),
+			Auth:   tpm2.PasswordAuth(iakAuth),
 		},
 		ObjectHandle: tpm2.NamedHandle{
 			Handle: iakHandle,
@@ -1405,6 +1439,10 @@ func (tpm *TPM2) CreateIDevID(
 		return nil, nil, err
 	}
 	idevidAttrs.Parent = ekAttrs
+	// Same function as the IDevIDAttributes rebuild (see applyIAKConfig).
+	if err := tpm.applyIDevIDConfig(idevidAttrs); err != nil {
+		return nil, nil, err
+	}
 
 	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()

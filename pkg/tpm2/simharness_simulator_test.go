@@ -44,9 +44,16 @@ func newSimHarness(t *testing.T, mutate func(*Config)) *simHarness {
 
 	sim, err := OpenSimulator()
 	require.NoError(t, err, "TPM simulator must be available; build with -tags tpm_simulator")
+	// Registered before anything below can fail: go-tpm-tools allows one
+	// simulator per process and hands the next caller a lock that only
+	// Close releases, so a harness that failed in Provision without this
+	// left every later test in the package blocked in simulator.Get until
+	// the -timeout fired, reporting a hang instead of the failure (#467).
+	t.Cleanup(func() { _ = sim.Close() })
 
 	storageFactory, err := store.NewStorageFactory(logger, t.TempDir())
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = storageFactory.Close() })
 
 	config := newSimConfig()
 	if mutate != nil {
@@ -74,13 +81,9 @@ func newSimHarness(t *testing.T, mutate func(*Config)) *simHarness {
 	tpmImpl, ok := tpmIface.(*TPM2)
 	require.True(t, ok, "NewTPM2 must return *TPM2")
 
-	t.Cleanup(func() {
-		// Close() releases TPM-side state; the simulator and the on-disk
-		// store are torn down afterwards so nothing survives the test.
-		_ = tpmIface.Close()
-		_ = sim.Close()
-		_ = storageFactory.Close()
-	})
+	// Cleanups run last-registered first: the TPM releases its state, then
+	// the simulator and the on-disk store registered above are torn down.
+	t.Cleanup(func() { _ = tpmIface.Close() })
 
 	return &simHarness{
 		TPM:     tpmImpl,

@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"strings"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -513,4 +514,89 @@ func TestIAKAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 	}
 	require.Error(t, err, "after a restart the moved platform must still be refused")
 	assert.ErrorIs(t, err, ErrDevIDPolicySession)
+}
+
+// A device identity key provisioned with a configured authValue is used with
+// that value (userWithAuth SET, section 7.2.4). The value comes from
+// configuration, so the cold-cache rebuild has to restore it the way
+// provisioning set it: a rebuild that dropped it presented the empty
+// password and every USER-role command answered TPM_RC_BAD_AUTH from the
+// second boot on (#467). The rebuilt key must sign, and the same key with the
+// password dropped must be refused, which is what proves the value is doing
+// the authorizing.
+func TestIDevIDAttributes_ColdCacheKeepsPassword(t *testing.T) {
+	const authValue = "idevid-auth-value"
+	h := newDelegationHarness(t, func(c *Config) { c.IDevID.Password = authValue })
+	require.Equal(t, []byte(authValue), h.IDevID.Password.Bytes(), "provisioning recorded the authValue")
+
+	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
+	cold, err := h.TPM.IDevIDAttributes()
+	require.NoError(t, err)
+	require.NotNil(t, cold.Password, "a rebuild from configuration must restore the authValue")
+	assert.Equal(t, []byte(authValue), cold.Password.Bytes())
+
+	digest := sha256.Sum256([]byte("signing after a restart"))
+	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: cold, Backend: h.Backend})
+	require.NoError(t, err, "the rebuilt IDevID signs with the configured authValue")
+	assert.NoError(t, rsa.VerifyPKCS1v15(h.IDevIDPublic, crypto.SHA256, digest[:], signature))
+
+	dropped := *cold
+	dropped.Password = nil
+	_, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{KeyAttributes: &dropped, Backend: h.Backend})
+	require.Error(t, err, "without the authValue the TPM must refuse the key")
+	assertTPMAuthRefused(t, err)
+}
+
+// assertTPMAuthRefused accepts either authorization failure the TPM returns
+// for a wrong authValue: TPM_RC_BAD_AUTH from a password session and
+// TPM_RC_AUTH_FAIL from an HMAC session, which is what the key sessions use.
+func assertTPMAuthRefused(t *testing.T, err error) {
+	t.Helper()
+	msg := err.Error()
+	assert.True(t, strings.Contains(msg, "TPM_RC_AUTH_FAIL") || strings.Contains(msg, "TPM_RC_BAD_AUTH"),
+		"expected the TPM to refuse the authorization, got: %v", err)
+}
+
+// The IAK half: IAKAttributes' rebuild restores the configured authValue and
+// CreateKeySession authorizes the rebuilt key with it.
+func TestIAKAttributes_ColdCacheKeepsPassword(t *testing.T) {
+	const authValue = "iak-auth-value"
+	h := newDelegationHarness(t, func(c *Config) { c.IAK.Password = authValue })
+	require.Equal(t, []byte(authValue), h.IAK.Password.Bytes(), "provisioning recorded the authValue")
+
+	h.TPM.iakAttrs = nil // the cold cache a restarted process sees
+	cold, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	require.NotNil(t, cold.Password, "a rebuild from configuration must restore the authValue")
+	assert.Equal(t, []byte(authValue), cold.Password.Bytes())
+
+	quote := func(attrs *types.KeyAttributes) error {
+		session, closer, err := h.TPM.CreateKeySession(attrs)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closer() }()
+		_, err = tpm2.Quote{
+			SignHandle: tpm2.AuthHandle{
+				Handle: attrs.TPMAttributes.Handle,
+				Name:   attrs.TPMAttributes.Name,
+				Auth:   session,
+			},
+			QualifyingData: tpm2.TPM2BData{Buffer: []byte("nonce")},
+			InScheme:       tpm2.TPMTSigScheme{Scheme: tpm2.TPMAlgNull},
+			PCRSelect: tpm2.TPMLPCRSelection{PCRSelections: []tpm2.TPMSPCRSelection{{
+				Hash:      tpm2.TPMAlgSHA256,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(0),
+			}}},
+		}.Execute(h.TPM.transport)
+		return err
+	}
+
+	assert.NoError(t, quote(cold), "the rebuilt IAK quotes with the configured authValue")
+
+	dropped := *cold
+	dropped.Password = nil
+	err = quote(&dropped)
+	require.Error(t, err, "without the authValue the TPM must refuse the key")
+	assertTPMAuthRefused(t, err)
 }
