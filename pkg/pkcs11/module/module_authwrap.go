@@ -470,6 +470,27 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 			"authenticated wrapping requires CKM_AES_GCM mechanism")
 	}
 
+	// CKM_AES_GCM is FIPS-approved (SP 800-38D), but under GODEBUG=fips140=only
+	// Go's crypto/cipher refuses to construct GCM over an externally supplied
+	// IV — and every parameter form of this verb supplies one, including the
+	// token-generated form, which hands cipher.NewGCM an IV from the module's
+	// own RNG. When the runtime withholds that construction the verb cannot be
+	// performed at all, so it is refused here, at the mechanism check, with the
+	// code that says the mechanism is unavailable — not deep in the wrap as
+	// CKR_FUNCTION_FAILED, which reported the regime restriction as an internal
+	// fault (#292). The gate is a runtime probe rather than a FIPS predicate
+	// because no exported predicate distinguishes fips140=only from
+	// fips140=on, where this construction works; see aead.ArbitraryIVGCMUsable.
+	//
+	// The mechanism descriptor is deliberately NOT withheld: CKM_AES_GCM's
+	// C_Encrypt/C_Decrypt/C_WrapKey surface performs its GCM in the service
+	// process, whose own FIPS posture governs it, so only the verbs that build
+	// GCM locally refuse.
+	if !aead.ArbitraryIVGCMUsable() {
+		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
+			"CKM_AES_GCM authenticated wrapping is unavailable: this FIPS 140-only process cannot construct GCM over a caller- or token-supplied IV")
+	}
+
 	// Validate session is read-write
 	if !session.IsReadWrite() {
 		return nil, NewPKCS11Error(CKR_SESSION_READ_ONLY)
@@ -668,6 +689,15 @@ func (m *Module) WrapKeyAuthenticatedSize(sessionHandle SessionHandle, mechanism
 			"authenticated wrapping requires CKM_AES_GCM mechanism")
 	}
 
+	// A size query must answer with the same code the wrap itself would, so
+	// the fips140=only arbitrary-IV GCM gate fires here in the same position
+	// it holds in WrapKeyAuthenticated — see the comment there for why this is
+	// a runtime probe and why the mechanism descriptor is not withheld.
+	if !aead.ArbitraryIVGCMUsable() {
+		return 0, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
+			"CKM_AES_GCM authenticated wrapping is unavailable: this FIPS 140-only process cannot construct GCM over a caller- or token-supplied IV")
+	}
+
 	// The read-write requirement is checked here for the same reason the
 	// attribute checks below are: a size query must answer with the same code
 	// the wrap itself would (v3.2 §5.14.3). WrapKeyAuthenticated rejects a
@@ -858,6 +888,17 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 	if mechanism.Type != CKM_AES_GCM {
 		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
 			"authenticated unwrapping requires CKM_AES_GCM mechanism")
+	}
+
+	// The unwrap side always opens the blob with an externally supplied IV —
+	// whichever parameter form carried it, the IV arrives from outside the
+	// FIPS module boundary — so under GODEBUG=fips140=only the construction is
+	// as unavailable here as it is on the wrap side. Refused at the mechanism
+	// check with the same code and for the reasons given in
+	// WrapKeyAuthenticated (#292).
+	if !aead.ArbitraryIVGCMUsable() {
+		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
+			"CKM_AES_GCM authenticated unwrapping is unavailable: this FIPS 140-only process cannot construct GCM over a caller-supplied IV")
 	}
 
 	// Validate unwrapping key handle exists and is visible to this session.

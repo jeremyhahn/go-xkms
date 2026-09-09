@@ -69,7 +69,10 @@ func (w *wrapTransport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyB
 		nonce = make([]byte, GCMNonceSize)
 	}
 
-	sealed := gcmSealOracleBytes(kek, nonce, req.TargetKeyMaterial, req.AAD)
+	sealed, err := gcmSealOracleBytes(kek, nonce, req.TargetKeyMaterial, req.AAD)
+	if err != nil {
+		return nil, err
+	}
 	blob := make([]byte, 0, len(nonce)+len(sealed))
 	blob = append(blob, nonce...)
 	blob = append(blob, sealed...)
@@ -81,16 +84,23 @@ func (w *wrapTransport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyB
 // transport above. Both seal with crypto/cipher for the same reason: the
 // module's output has to be measured against an implementation that is not the
 // module.
-func gcmSealOracleBytes(key, nonce, plaintext, aad []byte) []byte {
+//
+// A construction failure is returned, not panicked: under GODEBUG=fips140=only
+// crypto/cipher refuses arbitrary-IV GCM, and a panic here aborted the whole
+// test binary before every test after this file ran -- which is how a
+// cipher-mode restriction masqueraded as the package's one remaining panic
+// under activation (#292). Returned, the refusal reaches the test as an
+// ordinary failed assertion and the rest of the suite still runs.
+func gcmSealOracleBytes(key, nonce, plaintext, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return gcm.Seal(nil, nonce, plaintext, aad)
+	return gcm.Seal(nil, nonce, plaintext, aad), nil
 }
 
 // gcmWrapRequest builds the C_WrapKey request the module's WrapKey verb builds

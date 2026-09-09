@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ## Build
 
@@ -114,6 +114,19 @@ sentinel — `CKR_FUNCTION_NOT_SUPPORTED` (`0x00000054`) ↔ `ErrFunctionNotSupp
 **Fail-closed paths:** `C_Initialize` with an unreachable or uncompiled backend;
 any operation before `C_Login` where the mechanism requires it; a CAS conflict
 on token state; an unusable offline key directory.
+
+**`GODEBUG=fips140=only` and authenticated wrapping:** Go's `crypto/cipher`
+refuses arbitrary-IV GCM in the only mode (not under `fips140=on`, where it
+works), and every parameter form of `C_WrapKeyAuthenticated` /
+`C_UnwrapKeyAuthenticated` supplies an IV — the token-generated form included.
+The three verbs (wrap, size query, unwrap) refuse at the mechanism check with
+`CKR_MECHANISM_INVALID` before any handle is resolved, instead of surfacing the
+runtime refusal from inside the wrap as `CKR_FUNCTION_FAILED` (#292). The gate
+is `aead.ArbitraryIVGCMUsable`, a cached runtime probe rather than a FIPS
+predicate, because `fips140.Enabled()` is true under both modes and no exported
+predicate names the only mode. `CKM_AES_GCM` stays in `C_GetMechanismList`: its
+`C_Encrypt` / `C_Decrypt` / `C_WrapKey` surface performs GCM in the service
+process, whose own FIPS posture governs it.
 
 ## Persistence
 

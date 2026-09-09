@@ -171,6 +171,7 @@ The FIPS strategy is consumed by several subsystems:
 | LUKS passphrase derivation | KDF for disk encryption keys |
 | AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../configuration/aead-auto-selection.md)) |
 | Key-ID validation | Filters `pkg/validation` and `pkg/xkms` algorithm allowlists to the approved set |
+| PKCS#11 authenticated wrapping | Refuses `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` with `CKR_MECHANISM_INVALID` when the runtime withholds arbitrary-IV GCM (see [AEAD construction](#aead-construction)) |
 
 ## Error Handling
 
@@ -207,6 +208,26 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   compliant deployment, because SP 800-56A Rev. 3 approves them for KDF use and
   SP 800-131A Rev. 2 bars SHA-1 only from signature generation. See
   [Key Derivation Functions](../crypto/kdf.md).
+
+## AEAD construction
+
+`GODEBUG=fips140=only` refuses `cipher.NewGCM` and `cipher.NewGCMWithTagSize`
+outright -- "use of GCM with arbitrary IVs is not allowed in FIPS 140-only
+mode" -- while `fips140=on` permits the identical construction. AES-GCM itself
+is approved (SP 800-38D); what the only mode forbids is an IV that arrives
+from outside the FIPS module boundary. `cipher.NewGCMWithRandomNonce` is not a
+substitute: it cannot honour a caller-chosen IV and produces a different
+ciphertext framing, so adopting it would leave every existing wrapped blob
+unreadable.
+
+`aead.ArbitraryIVGCMUsable` reports whether *this process* can perform
+arbitrary-IV GCM. It is a runtime probe -- one throwaway seal, cached for the
+life of the process -- for the same reason `types.HashUsable` is: `Available()`
+reports linkage, `fips140.Enabled()` is true under both `on` and `only`, and
+the standard library exports no predicate for the only mode. The PKCS#11
+authenticated wrap verbs gate on it and answer `CKR_MECHANISM_INVALID`, the
+code for a mechanism the token does not offer, rather than reporting the
+regime restriction as an internal fault (#292).
 
 ## See Also
 
