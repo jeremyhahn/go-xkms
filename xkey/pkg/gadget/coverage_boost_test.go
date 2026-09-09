@@ -379,6 +379,11 @@ func TestHIDGadgetTransport_ReadError(t *testing.T) {
 // target lives under a regular file, so mount(2) fails with ENOTDIR for every
 // uid including root. Relying on a permission failure would let this actually
 // mount a filesystem on the host when the tests run as root.
+//
+// Inside a container whose seccomp profile denies mount(2) -- the CI runner,
+// for any uid -- the kernel never resolves the path and the call fails with
+// EPERM instead. Either errno is the syscall refusing, and in both cases
+// nothing was mounted, so both are accepted; a nil error is the only defect.
 func TestOSFileSystem_Mount_Error(t *testing.T) {
 	fs := &OSFileSystem{}
 
@@ -393,8 +398,8 @@ func TestOSFileSystem_Mount_Error(t *testing.T) {
 		_ = fs.Unmount(target, 0)
 		t.Fatal("Mount() succeeded for a target under a regular file, want error")
 	}
-	if !errors.Is(err, syscall.ENOTDIR) {
-		t.Errorf("Mount() error = %v, want ENOTDIR", err)
+	if !errors.Is(err, syscall.ENOTDIR) && !errors.Is(err, syscall.EPERM) {
+		t.Errorf("Mount() error = %v, want ENOTDIR (or EPERM under seccomp)", err)
 	}
 }
 

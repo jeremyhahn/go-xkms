@@ -301,13 +301,18 @@ jobs:
   # the drains, the shutdown latches, the SDK export coverage — could all pass
   # locally while no gate ran a single one of them.
   #
-  # Scoped to packages rather than `./...` ON PURPOSE. Ten packages in the
-  # xkey module fail their tests identically on main and on this branch
-  # (company task #104 covers wiring the whole module up); running everything
-  # here would paint the gate red for defects this job is not about and train
-  # people to ignore it. The list is the packages whose lifecycle behaviour is
-  # under test, and it should grow as #104 lands rather than stay a permanent
-  # carve-out.
+  # Scoped to named packages rather than `./...` ON PURPOSE, and every xkey
+  # package with a _test.go file is accounted for below: either it is in a
+  # `go test` line, or it is named in the exclusion list of the "xkey unit
+  # suites" step with the reason it is not (#147). An exclusion is fine; an
+  # exclusion nobody chose is not.
+  #
+  # This job used to say that "ten packages in the xkey module fail their
+  # tests identically on main". Measured (#147): every one of those reds was
+  # the DAO codec tag being omitted -- `codec "json" is not supported in this
+  # build` -- and with -tags codec_json all 41 of the packages this job had
+  # never run were green. The carve-out was a tag omission, not a body of
+  # broken tests, so the list grew from 6 package trees to 46.
   nested-module-test:
     name: Nested Module Tests (sdk/go, xkey)
     runs-on: ubuntu-latest
@@ -386,6 +391,91 @@ jobs:
       - name: xkey authenticator and oath tests
         working-directory: xkey
         run: go test -race -v -tags codec_json ./pkg/authenticator/... ./pkg/oath/...
+
+      # Every other xkey unit package (#147). Before this step CI executed
+      # 2,483 of the module's 13,725 test functions: the 41 packages below had
+      # tests that `go vet -tags ble ./...` compiled and no job ran, and a test
+      # that is only compiled cannot fail. The set is the security surface of
+      # the product -- truststore, tokenstore, luks, ca, secretservice, nssdb,
+      # pivcert, pkcs11mgr, sshstore, sshlocal, config, audit -- and #182 was
+      # an open defect in truststore while its 266 tests sat dark.
+      #
+      # -tags codec_json for the same reason as the step above: the DAO-backed
+      # packages (tokenstore 49 tests, truststore 20, oath 30) fail without it
+      # on the codec, not on the code. Measured warm at nice 19 on the runner
+      # host: 159 CPU-s for the 40 packages, 1.0-2.2x under -race, so about
+      # three wall-minutes against this job's 20-minute median.
+      #
+      # Deliberately NOT in any `go test` line, with the reason:
+      #   ./pkg/pkcs11          92 CPU-s (267 under -race) for 34 tests, 37% of
+      #                         the whole set's cost, 1.7x the other forty
+      #                         combined. Runs nightly (nightly.yml,
+      #                         xkey-pkcs11-unit) instead of on every PR.
+      #   ./cmd/xkey/cmd        8,282 test functions between them, 27 run by
+      #   ./pkg/gui/services    the named-selector steps below. Whole-package
+      #                         runs are #332; gui/services holds pre-existing
+      #                         failures the gate is not about (#104).
+      #   ./test/integration/…  14 dirs behind //go:build integration (+linux,
+      #                         pkcs11, tpm_simulator, androidemu): they belong
+      #                         to `make integration-test`, not to this job.
+      #   xkey root, frontend, pkg/gui/icon, pkg/staticpw, pkg/yubikey,
+      #   test/e2esupport/sshechod: no test files.
+      # Anything with a _test.go that is in neither list is a gap; add it to
+      # one of them in the same change that adds the tests.
+      #
+      # Runs as an UNPRIVILEGED user, deliberately. The runner is root, and
+      # root ignores file modes: twelve tests in six of these packages
+      # (gadget, gui, ipc, truststore, usb, xhome) assert the permission-denied
+      # path -- a read-only parent, a 0000 socket, a mount that must fail --
+      # and every one of them passed under root's bypass on the first run of
+      # this step, i.e. it asserted nothing. A developer's shell is not root,
+      # so the suites are written for that, and this is the one place the
+      # gate's environment is made to match rather than the tests made to
+      # look away (a root guard is a skip guard). The user shares the module
+      # cache the earlier steps populated, read-only, and gets its own build
+      # cache; GOTOOLCHAIN=local and GOPROXY=off so a missing toolchain or
+      # module fails here, naming itself, instead of trying a download the
+      # user cannot write into that cache.
+      - name: xkey unit suites
+        working-directory: xkey
+        run: |
+          sudo useradd --create-home --shell /bin/bash xkey-ci
+          # The module cache lives under /root, which is 0700, so first grant
+          # traverse -- execute, not read -- on each ancestor of the cache.
+          # Then hand the cache itself to the user: go takes the per-version
+          # .lock file in cache/download even when nothing is downloaded, and
+          # those are root's 0644, so a read-only share fails on "open
+          # ...v0.1.1.lock: permission denied" at the first import (run 14522).
+          # Both changes are inside this job's throwaway container; the steps
+          # after this one run as root and read the cache regardless of owner.
+          # Populate the cache first: the steps above fetch only what their
+          # packages import, and the ble vet step that pulls the whole module
+          # graph runs after this one, so with GOPROXY=off below the six
+          # packages whose deps nobody had fetched yet (wails, gozxing,
+          # go-luks2, sqlite ...) died at setup on the run before this line.
+          go mod download
+          modcache="$(go env GOMODCACHE)"
+          dir="$modcache"
+          while [ "$dir" != / ]; do sudo chmod o+x "$dir"; dir="$(dirname "$dir")"; done
+          sudo chown -R xkey-ci: "$modcache"
+          sudo --user=xkey-ci --set-home env \
+            PATH="$PATH" \
+            GOTOOLCHAIN=local \
+            GOMODCACHE="$(go env GOMODCACHE)" \
+            GOCACHE=/home/xkey-ci/.cache/go-build \
+            GOPROXY=off \
+          go test -race -tags codec_json -count=1 \
+            ./cmd/e2eprobe ./cmd/xkey \
+            ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
+            ./pkg/ca ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
+            ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
+            ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
+            ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
+            ./pkg/pcr_policy ./pkg/pivcert ./pkg/pivcert/file ./pkg/pkcs11mgr \
+            ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
+            ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
+            ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \
+            ./pkg/virtualdevice ./pkg/xhome
 
       # The GUI services step below names its tests individually, because that
       # package holds pre-existing failures the gate is not about (#104).

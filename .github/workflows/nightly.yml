@@ -296,3 +296,40 @@ jobs:
       # pre-suite cleanup rather than reclaimed immediately -- an acceptable
       # trade against deleting a sibling run's or another repository's
       # resources. Daemon-level image/build-cache GC stays a host concern.
+
+  # xkey/pkg/pkcs11's unit suite, on the nightly cadence rather than on every
+  # PR (#147). It is pure Go over the IPC transport and needs nothing from the
+  # host, but it is the one xkey unit package expensive enough to argue about:
+  # 92 CPU-s (268 under -race) for 34 tests, 37% of the cost of the module's
+  # whole dark set and 1.7x the other forty packages combined. ci.yml's "xkey
+  # unit suites" step names it as excluded and points here, so the package is
+  # still executed by a gate, just not by the one on the PR path.
+  #
+  # -tags codec_json for the same reason as ci.yml's xkey steps: the
+  # DAO-backed tests fail on "codec json is not supported in this build"
+  # without it, which is a failure of the invocation and not of the code.
+  xkey-pkcs11-unit:
+    name: xkey pkcs11 unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Same cgo deps ci.yml's nested-module-test job installs, for the same
+      # reason: libicu-dev and libusb-1.0-0-dev are unconditional deps of the
+      # xkey module graph once CGO_ENABLED is 1, which -race requires.
+      - name: Install cgo dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+
+      - name: xkey pkcs11 unit suite
+        working-directory: xkey
+        run: go test -race -tags codec_json -count=1 -timeout 30m ./pkg/pkcs11/...
