@@ -130,7 +130,26 @@ When the SO logs in and HMAC verification fails:
 3. The SO is presented with the changed fields
 4. The SO can re-sign the policy to acknowledge changes or revert
 
-Tamper detection is deferred until SO login. The application loads and runs normally before that point because the SO PIN is required to derive the verification key.
+Tamper detection in the GUI is deferred until SO login. The application loads and runs normally before that point because the SO PIN is required to derive the verification key.
+
+### Verification on the CLI path
+
+A CLI command never reads the `policy:` section straight from the loaded config. It goes through `config.LoadVerifiedPolicy(cfg, configDir, soPIN)`, which returns the section together with its verification state and fails closed whenever the section is sealed but cannot be authenticated:
+
+| Config directory | SO PIN | Result |
+|---|---|---|
+| No HMAC file (personal mode) | ignored | `PolicyUnsealed`: the section is the user's own file |
+| HMAC file present, section verifies | supplied | `PolicySealedVerified`: authenticated enterprise policy, honoured in both directions |
+| HMAC file present, anything else | empty, wrong, file unreadable, HMAC mismatch | `ErrPolicyUnverifiable` joined with the cause; **no policy is returned** |
+
+The third case is an error rather than a state, so an unverified sealed section cannot be consumed by accident. Commands that consult the policy accept the SO PIN through `--so-pin-stdin` (preferred), `XKEY_SO_PIN` or `--so-pin`, and never demand it:
+
+| Command | No SO PIN supplied | SO PIN supplied, verifies | SO PIN supplied, does not verify |
+|---|---|---|---|
+| `xkey device pair` | sealed policy not consulted; an unattestable device is refused whatever `devices.yaml` says | policy honoured in both directions, including `pairing_allow_unattestable_devices` locked open | pairing refused (`ErrPairingPolicyRefused`) |
+| `xkey extension serve` | sealed policy not consulted; `DefaultPolicy()` applied for the extension gates (`--no-auth` and `--no-pairing` are overridden) | policy honoured in both directions | server does not start (`ErrServePolicyRefused`) |
+
+The GUI applies the FIDO2 and extension policy fields at startup, before SO login, from the loaded file; those two readers are not yet routed through `LoadVerifiedPolicy` and are tracked under #118.
 
 The authenticator core enforces its own lock independently of the GUI. When the authenticator opens with a policy integrity provider and the stored HMAC fails to verify, `Authenticator.TamperDetected` is set and every user-mode CTAP command and Go API registration or assertion is refused with `CTAP2_ERR_INTEGRITY_FAILURE` until the SO re-signs the policy and the authenticator is re-opened. `getInfo` and `selection` still answer so the device stays discoverable. See [Tamper Lock](../fido2/authenticator-security.md#tamper-lock).
 

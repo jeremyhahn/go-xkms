@@ -1,6 +1,6 @@
 # Phone as HSM — Architecture
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
 
 ## The problem
 
@@ -114,6 +114,12 @@ phone's attestation fingerprint into the Noise prologue.
   exchanged then; re-pairing is a deliberate act (`--force`).
 - **A lost phone is a lost credential holder.** Unpair it; keys inside it cannot
   be extracted, which is the point and also the recovery constraint.
+- **Enterprise policy is consulted only once authenticated.** The pairing
+  command reads the SO-controlled `policy:` section through
+  `config.LoadVerifiedPolicy`, which returns it only when the config directory
+  is unsealed or the section verifies under the SO PIN, and fails closed
+  otherwise. An unverified sealed policy is a value any local user could have
+  written, and it grants nothing (#118).
 
 ## Known constraint: the cipher suite is fixed and not FIPS-approved
 
@@ -126,6 +132,27 @@ additionally delegates to go-truststrap's `noiseproto`.
 
 Documented here as shipped reality; the remedy is coordinated work, not a
 documentation change.
+
+## Where the SO PIN comes from for policy verification
+
+The policy HMAC is keyed from the SO PIN, so verifying it needs the PIN, and a
+pairing command has no SO at the keyboard. The choice made for #118 is that
+the SO PIN is **supplied at the point of use, never demanded**: through the
+same three sources as the user PIN (`--so-pin-stdin`, `XKEY_SO_PIN`,
+`--so-pin`), and a command run without one fails closed. It is the only source
+that exists in the product today, and it adds no secret at rest.
+
+Rejected, or rather deferred, because each creates a new secret whose custody
+is the open owner question on #290 (where a generated SO PIN may live):
+
+| Alternative | Why not here |
+|---|---|
+| A TPM-sealed policy key (`PolicyHMAC.TPMNVIndex` exists and is unused) | A symmetric key any local process can ask the TPM to release can also forge the HMAC; it needs an authorization policy design of its own. |
+| An SO-signed policy, verified with a public key | Removes the PIN from verification entirely, but replaces the sealing format and every writer of it; an architecture change, not a fix. |
+| An escrowed SO PIN (platform keychain, separate sealed blob) | Exactly #290, and explicitly left to the owner there. |
+
+Nothing in this feature precludes any of them: `LoadVerifiedPolicy` takes the
+SO PIN as a string, so a future source plugs in without changing a consumer.
 
 ## What this feature deliberately does not do
 

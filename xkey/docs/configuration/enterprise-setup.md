@@ -7,7 +7,7 @@ xkey supports two deployment modes:
 - **Personal** -- Single-user, no authentication gate. Barrier unseal is sufficient for daily use.
 - **Enterprise** -- Security Officer (SO) provisions the device first, then users onboard with SO authorization. A policy HMAC ensures configuration integrity.
 
-Enterprise mode is detected by the existence of the HMAC file at `~/.config/xkey/xkey_policy.hmac`, not by a config flag. This allows the application to load policy without requiring the SO PIN at startup.
+Enterprise mode is detected by the existence of the HMAC file at `~/.config/xkey/xkey_policy.hmac`, not by a config flag. This allows the application to load policy without requiring the SO PIN at startup. A CLI command that acts on the policy consults it only through `config.LoadVerifiedPolicy`, which fails closed in enterprise mode until the SO PIN is supplied (see [enterprise-mode.md](enterprise-mode.md#verification-on-the-cli-path)).
 
 ## Deployment Modes
 

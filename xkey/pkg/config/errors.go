@@ -57,6 +57,13 @@ var (
 
 	// ErrPolicyVersionMismatch is returned when the policy version does not match the HMAC version.
 	ErrPolicyVersionMismatch = errors.New("config: policy version does not match HMAC version")
+
+	// ErrPolicyUnverifiable is returned by LoadVerifiedPolicy when the config
+	// directory is sealed (enterprise mode) and the policy section cannot be
+	// authenticated: no SO PIN was supplied, the HMAC file cannot be read, or
+	// the HMAC does not match. The cause is joined and reachable with
+	// errors.Is. A consumer that receives it must not read the section.
+	ErrPolicyUnverifiable = errors.New("config: sealed policy cannot be verified")
 )
 
 // DetailError appends detail text directly after a wrapped error while

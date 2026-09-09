@@ -191,13 +191,22 @@ defect and the shape of the fix is what the current design is for.
    | User | `devices.yaml` | `attestation_policy.allow_unattestable_devices` |
    | Enterprise / SO | the `policy:` section | `pairing_allow_unattestable_devices`, gated by `lock_pairing_attestation_policy` |
 
-   **The enterprise plane is monotone: it may only make the answer stricter.**
-   That is a limitation of what the CLI can honestly enforce, not a design
-   preference. `config` has the integrity machinery (`VerifyPolicyHMAC` over
-   `PolicyCanonicalJSON`, keyed from the SO PIN), but **no CLI path calls it**,
-   and a pairing command has no SO PIN to call it with. Treating the section as
-   authoritative in both directions therefore meant that anyone who could edit
-   `xkey.yaml` could write
+   **The enterprise plane is consulted only once it can be trusted, and is
+   then honoured in both directions.** `allowUnattestablePairing` takes a
+   `config.VerifiedPolicy`, never a raw `*config.Config`, and
+   `resolvePairingPolicy` is the only thing that produces one:
+
+   | Config directory | SO PIN supplied | What the pairing sees | Lock honoured |
+   |---|---|---|---|
+   | Unsealed (personal mode) | — | the section, state `unsealed` | both directions: it is the user's own file, no different from `devices.yaml` |
+   | Sealed, verifies | yes | the section, state `sealed-verified` | both directions: it carries the SO's authority |
+   | Sealed | no | `nil` — the plane exists but is unknown | **refuse**, whatever `devices.yaml` says |
+   | Sealed, does not verify | yes | nothing: `ErrPairingPolicyRefused` | the pairing does not run |
+
+   This is the #118 contract and it replaced the monotone mitigation of #110.
+   That mitigation let an unverified section make the answer stricter and
+   never wider, which closed the fail-open Codex found — anyone who could
+   edit `xkey.yaml` could write
 
    ```yaml
    policy:
@@ -205,22 +214,25 @@ defect and the shape of the fix is what the current design is for.
      pairing_allow_unattestable_devices: true
    ```
 
-   and pair an unattestable device over a `devices.yaml` that refuses — a
-   fail-open reached by editing an unauthenticated file, which is worse than
-   having no enterprise plane at all because it looks like enforcement.
+   and pair an unattestable device over a `devices.yaml` that refuses — but
+   it could not honour a deployment that legitimately locks the setting
+   **open** (a fleet that pairs development handsets). Now the same edit is
+   refused outright when the SO PIN is supplied and ignored when it is not,
+   and a sealed policy that verifies is obeyed in the permissive direction.
 
-   So `lock_pairing_attestation_policy: true` with
-   `pairing_allow_unattestable_devices: false` **refuses**, whatever
-   `devices.yaml` says — the direction no attacker wants, and the same answer an
-   absent section already gives. The permissive direction is **ignored** until
-   the policy can be authenticated, which is **#118**.
+   The SO PIN is never demanded: an ordinary pairing has no SO at the
+   keyboard, and the price of not supplying it is the fail-closed answer.
+   When it is wanted it comes from the same three sources as the user PIN —
+   `--so-pin-stdin`, `XKEY_SO_PIN`, `--so-pin`, in that precedence
+   (`soPINUsage`). Where an SO PIN might live for a command with no operator
+   is an open owner decision on #290 and is not answered here.
 
-   **Every absent value means refuse**, and that is reached by the Go zero
-   value rather than by a defaults table. The reason is measured, not stylistic:
-   a config file carrying a *partial* `policy:` block resolves every key it
-   omits to false rather than to `config.DefaultPolicy()` (#114), so a design
-   whose secure state came from that table would be insecure for exactly the
-   deployments that write a minimal policy file.
+   **Every absent value still means refuse.** Both policy fields are designed
+   so that the zero value is the safe one — "not locked, not allowed" — and a
+   `nil` policy is refuse by construction. That was originally forced by a
+   partial `policy:` block zeroing the keys it omitted (#114); with that
+   fixed it remains the right shape, because a default that means refuse and
+   a zero that means refuse agree.
 
    One migration note that follows from `PolicyCanonicalJSON`: adding fields to
    `PolicySection` changes the canonical encoding, so an enterprise deployment
@@ -290,7 +302,10 @@ defect and the shape of the fix is what the current design is for.
    The decision, the record projection (`recordVerifiedAttestation`, field for
    field the CLI's `recordDeviceAttestation`) and the policy resolution are
    the CLI's; what is the GUI's is which trust store to open and what the
-   frontend is told (an `EventAttestationResult`). A refusal is
+   frontend is told (an `EventAttestationResult`). A GUI pairing supplies no
+   SO PIN, so in a sealed deployment the enterprise plane is not consulted and
+   the shared decision refuses; locking the setting open is proved through
+   `xkey device pair` with the SO PIN (#118). A refusal is
    `ErrPhonePairAttestationRefused`, joined with the cause, and writes
    nothing. No trust store configured, or an `xkey.yaml` that exists but
    cannot be read, both **refuse** rather than admit — absent authorization

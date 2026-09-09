@@ -53,6 +53,7 @@ func newTestServeCmd() *cobra.Command {
 	cmd.Flags().Bool("no-pairing", false, "")
 	cmd.Flags().String("tpm-device", "", "")
 	cmd.Flags().Bool("tpm-simulator", false, "")
+	addSOPINFlags(cmd)
 	return cmd
 }
 

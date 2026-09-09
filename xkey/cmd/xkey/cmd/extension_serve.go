@@ -55,6 +55,13 @@ var (
 	ErrServeStrategyUnsupported     = errors.New("extension serve: barrier strategy not supported in headless mode")
 	ErrServeTPMOpenFailed           = errors.New("extension serve: failed to open TPM for barrier strategy")
 	ErrServeAuthenticatorInitFailed = errors.New("extension serve: authenticator initialization failed")
+
+	// ErrServePolicyRefused indicates the config directory is sealed, an SO
+	// PIN was supplied, and the policy section did not verify under it. The
+	// server refuses to start rather than serve under a policy that may have
+	// been edited; the cause (config.ErrPolicyUnverifiable joined with the
+	// HMAC error) is reachable with errors.Is.
+	ErrServePolicyRefused = errors.New("extension serve: sealed enterprise policy could not be verified")
 )
 
 // extensionServeCmd starts the headless autofill IPC server.
@@ -76,6 +83,11 @@ Examples:
 
   # Start with password from environment
   XKEY_BARRIER_PASSWORD=secret xkey extension serve
+
+  # Honour a sealed enterprise policy (see below)
+  XKEY_SO_PIN=... xkey extension serve
+
+` + soPINUsage + `
 
   # Start without barrier (development/testing)
   xkey extension serve --no-barrier
@@ -110,6 +122,7 @@ func init() {
 	extensionServeCmd.Flags().String("pin-state", "", "PIN state directory path")
 	extensionServeCmd.Flags().Bool("no-auth", false, "Disable CTAP2 authentication for autofill (credentials returned without PIN/touch)")
 	extensionServeCmd.Flags().Bool("no-pairing", false, "Disable extension identity verification (testing only)")
+	addSOPINFlags(extensionServeCmd)
 	extensionServeCmd.Flags().String("tpm-device", "",
 		"TPM device path for the tpm2 barrier strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
 	extensionServeCmd.Flags().Bool("tpm-simulator", false,
@@ -254,13 +267,6 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
 	hashConfig := qrdbsdk.AutoDetectHashConfig()
-	if epDir := config.ConfigDir(); epDir != "" && config.IsEnterpriseMode(epDir) {
-		ucfg, loadErr := config.Load()
-		if loadErr == nil && ucfg.Policy.PINMaxAttempts > 0 {
-			logger.Info("enterprise PIN policy detected, lockout handled by hash backend",
-				"policy_max_attempts", ucfg.Policy.PINMaxAttempts)
-		}
-	}
 	pinBackend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
@@ -304,34 +310,33 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	// 8b. Configure extension pairing verification.
 	noPairing, _ := cmd.Flags().GetBool("no-pairing")
 
-	// 8c. Apply enterprise policy overrides.
-	cfgDir := config.ConfigDir()
-	if config.IsEnterpriseMode(cfgDir) {
-		ucfg, loadErr := config.Load()
-		if loadErr == nil {
-			pol := ucfg.Policy
-			if !pol.ExtensionEnabled {
-				return &DetailError{Err: ErrServeIPCStartFailed, Detail: ": browser extension disabled by enterprise policy"}
-			}
-			if pol.ExtensionRequirePairing && noPairing {
-				logger.Warn("enterprise policy requires pairing, ignoring --no-pairing flag")
-				noPairing = false
-			}
-			if pol.ExtensionRequireAuthentication && noAuth {
-				logger.Warn("enterprise policy requires CTAP2 auth, ignoring --no-auth flag")
-				noAuth = false
-			}
-			autofillSvc.SetEnterprisePolicy(&services.EnterpriseExtensionPolicy{
-				Enabled:               pol.ExtensionEnabled,
-				RequireAuthentication: pol.ExtensionRequireAuthentication,
-				ForceAudit:            pol.ExtensionForceAudit,
-				AllowedDomains:        pol.ExtensionAllowedDomains,
-				BlockedDomains:        pol.ExtensionBlockedDomains,
-				MaxFillsPerMinute:     pol.ExtensionMaxFillsPerMinute,
-			})
-		} else {
-			logger.Warn("failed to load enterprise config for extension policy", "error", loadErr)
+	// 8c. Apply enterprise policy overrides. The section is consulted only
+	// through serveEnterprisePolicy, which never returns an unverified
+	// sealed section (#118).
+	pol, err := serveEnterprisePolicy(cmd, GetConfig(), config.ConfigDir(), logger)
+	if err != nil {
+		return err
+	}
+	if pol != nil {
+		if !pol.ExtensionEnabled {
+			return &DetailError{Err: ErrServeIPCStartFailed, Detail: ": browser extension disabled by enterprise policy"}
 		}
+		if pol.ExtensionRequirePairing && noPairing {
+			logger.Warn("enterprise policy requires pairing, ignoring --no-pairing flag")
+			noPairing = false
+		}
+		if pol.ExtensionRequireAuthentication && noAuth {
+			logger.Warn("enterprise policy requires CTAP2 auth, ignoring --no-auth flag")
+			noAuth = false
+		}
+		autofillSvc.SetEnterprisePolicy(&services.EnterpriseExtensionPolicy{
+			Enabled:               pol.ExtensionEnabled,
+			RequireAuthentication: pol.ExtensionRequireAuthentication,
+			ForceAudit:            pol.ExtensionForceAudit,
+			AllowedDomains:        pol.ExtensionAllowedDomains,
+			BlockedDomains:        pol.ExtensionBlockedDomains,
+			MaxFillsPerMinute:     pol.ExtensionMaxFillsPerMinute,
+		})
 	}
 
 	if noAuth {
@@ -519,6 +524,41 @@ func parseSlogLevel(s string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// serveEnterprisePolicy resolves the enterprise plane for the headless server.
+//
+// It returns nil when the config directory is not sealed: personal mode has
+// no enterprise plane and the user's own settings apply. In a sealed
+// directory it returns the policy section only once it has verified under
+// the SO PIN supplied through the SO PIN sources (soPINUsage). With no SO
+// PIN supplied it returns config.DefaultPolicy — the secure configuration —
+// and says so, because a daemon started by a user session has no SO at the
+// keyboard and the sealed file is a value any local user could have written
+// (#118). With an SO PIN supplied and a section that does not verify it
+// returns ErrServePolicyRefused, and the server does not start.
+func serveEnterprisePolicy(cmd *cobra.Command, unified *config.Config, configDir string, logger *slog.Logger) (*config.PolicySection, error) {
+	if !config.IsEnterpriseMode(configDir) {
+		return nil, nil
+	}
+
+	soPIN, err := resolveSOPINInput(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if soPIN == "" {
+		logger.Warn("sealed enterprise policy not consulted: no SO PIN supplied, applying the default policy",
+			"config_dir", configDir,
+			"hint", "supply the SO PIN (--so-pin-stdin, XKEY_SO_PIN or --so-pin) to honour the sealed policy")
+		return config.DefaultPolicy(), nil
+	}
+
+	policy, err := config.LoadVerifiedPolicy(unified, configDir, soPIN)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrServePolicyRefused, Cause: err}
+	}
+	logger.Info("enterprise policy verified", "state", policy.State.String())
+	return &policy.Policy, nil
 }
 
 // resolveBarrierPassword resolves the barrier password from flags, file,

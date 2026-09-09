@@ -367,6 +367,52 @@ func TestPairRefusesWhenTheUnifiedConfigCannotBeRead(t *testing.T) {
 	require.ErrorIs(t, err, ErrPhonePairAttestationRefused)
 }
 
+// TestPairRefusesWhenTheEnterprisePlaneIsSealedAndUnverified is the #118
+// contract on the GUI surface: the config directory is sealed, the sealed
+// policy even locks the setting OPEN, and the user's devices.yaml says allow;
+// but a GUI pairing has no SO PIN to verify the section with, so the section
+// is not consulted and the pairing is refused. Locking the setting open is
+// proved through `xkey device pair` with the SO PIN, never assumed here.
+func TestPairRefusesWhenTheEnterprisePlaneIsSealedAndUnverified(t *testing.T) {
+	h := newPairingHarness(t)
+	h.trust(attesttest.NewCA(t, "The Root This Desktop Trusts"))
+	rogue := attesttest.NewCA(t, "A Root It Does Not")
+	h.writeDevicesConfig("attestation_policy:\n  allow_unattestable_devices: true\n")
+	h.writeUnifiedConfig("policy:\n  lock_pairing_attestation_policy: true\n  pairing_allow_unattestable_devices: true\n")
+	sealed := &config.PolicySection{LockPairingAttestationPolicy: true, PairingAllowUnattestableDevices: true}
+	require.NoError(t, config.WritePolicyHMAC(sealed, "123456", config.PolicyHMACPath(config.ConfigDir())))
+
+	_, err := h.pair(attesttest.NewPhone(t, healthyDAK(t, rogue)), 2, testPairAddress)
+
+	require.ErrorIs(t, err, ErrPhonePairAttestationRefused)
+	cfg, written := h.savedConfig()
+	require.True(t, written, "the seeded file is still there")
+	require.Empty(t, cfg.Devices, "and nothing was added to it")
+}
+
+// TestPairHonoursAPersonalModePolicyLockedOpen is the other direction #118
+// unblocks: with no HMAC file the policy section is the user's own file, no
+// different in authority from devices.yaml, so a lock in the permissive
+// direction is honoured over a devices.yaml that refuses. The record then
+// carries no verified identity and the frontend is told so.
+func TestPairHonoursAPersonalModePolicyLockedOpen(t *testing.T) {
+	h := newPairingHarness(t)
+	h.trust(attesttest.NewCA(t, "The Root This Desktop Trusts"))
+	rogue := attesttest.NewCA(t, "A Root It Does Not")
+	h.writeDevicesConfig("attestation_policy:\n  allow_unattestable_devices: false\n")
+	h.writeUnifiedConfig("policy:\n  lock_pairing_attestation_policy: true\n  pairing_allow_unattestable_devices: true\n")
+
+	_, err := h.pair(attesttest.NewPhone(t, healthyDAK(t, rogue)), 2, testPairAddress)
+	require.NoError(t, err)
+
+	cfg, _ := h.savedConfig()
+	require.Len(t, cfg.Devices, 1)
+	require.Empty(t, cfg.Devices[0].DeviceFingerprint, "no unverified claim is written down")
+	evts := h.attestationEvents()
+	require.Len(t, evts, 1)
+	require.False(t, evts[0].Success, "the frontend is told the pairing carries no verified identity")
+}
+
 // TestPairPreservesTheUsersAttestationPolicyBlock covers the mirror. The GUI
 // writes devices.yaml back as a whole, and before this change its mirror had
 // no `attestation_policy` field at all, so every GUI save silently erased the

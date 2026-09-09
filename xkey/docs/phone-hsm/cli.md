@@ -1,6 +1,6 @@
 # Phone as HSM — CLI
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
 
 Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 
@@ -9,7 +9,7 @@ Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 | Verb | Flags |
 |---|---|
 | `device scan` | — |
-| `device pair` | `--device` (name or address), `--timeout` (scan timeout), `--force` (re-pair even if already paired) |
+| `device pair` | `--device` (name or address), `--timeout` (scan timeout), `--force` (re-pair even if already paired), `--so-pin-stdin` / `--so-pin` / `XKEY_SO_PIN` (verify a sealed enterprise policy so it is honoured in both directions; see below) |
 | `device list` | — |
 | `device status` | `--device` (check a specific device) |
 | `device unpair <device-name>` | `--force` (skip confirmation) |
@@ -18,12 +18,21 @@ Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 xkey device scan
 xkey device pair
 xkey device pair --device "Pixel-8" --timeout 60s
+echo -n "$SO_PIN" | xkey device pair --so-pin-stdin   # sealed enterprise policy, verified
 xkey device list -o json
 xkey device status --device "Pixel-8"
 ```
 
 Pairing is the moment of trust: both ends exchange and verify static public
 keys, and the phone's attestation fingerprint is bound into the session. Use
+In an enterprise deployment the config directory is sealed (`xkey_policy.hmac`
+is present) and the SO-controlled pairing policy is consulted only after it has
+been verified with the Security Officer PIN. Supply it with `--so-pin-stdin`
+(preferred), `XKEY_SO_PIN` or `--so-pin`; a sealed policy that does not verify
+refuses the pairing (`ErrPairingPolicyRefused`). Without an SO PIN the sealed
+policy is not consulted and an unattestable device is refused whatever
+`devices.yaml` says (#118).
+
 `--force` only when you mean to replace an existing pairing — it discards the
 old binding.
 

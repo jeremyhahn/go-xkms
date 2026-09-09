@@ -56,13 +56,15 @@ policy:
   pairing_allow_unattestable_devices: false  # and use this one instead
 ```
 
-The enterprise plane may only make the answer **stricter**. Setting
-`lock_pairing_attestation_policy: true` with
-`pairing_allow_unattestable_devices: false` refuses whatever `devices.yaml`
-says. Locking it **open** is currently ignored: nothing on a pairing path verifies
-the policy HMAC (verification needs the SO PIN), so honouring that direction
-would let anyone who can edit `xkey.yaml` pair an unattestable device. Tracked
-as issue #118.
+The enterprise plane is honoured in **both directions**, but only once it is
+trusted (#118). With no HMAC file the section is the user's own file and its
+lock is obeyed either way. In a sealed directory the section is consulted
+only after it verifies under the SO PIN, which `xkey device pair` takes
+through `--so-pin-stdin`, `XKEY_SO_PIN` or `--so-pin`; without an SO PIN the
+sealed section is not read and an unattestable device is refused whatever
+`devices.yaml` says, and a sealed section that does not verify refuses the
+pairing outright. The desktop GUI supplies no SO PIN, so in a sealed
+deployment it always takes the refusing branch.
 
 Both settings default to false, so an unconfigured install refuses. Adding
 fields to the sealed policy changes its canonical encoding, so re-seal the

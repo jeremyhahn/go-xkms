@@ -19,56 +19,45 @@ import (
 //
 //   - the USER's setting, devices.yaml `attestation_policy.allow_unattestable_devices`,
 //     which the caller has already read from its own record of that file;
-//   - the ENTERPRISE/SO setting, the HMAC-sealed config.PolicySection, nil when
-//     no unified config is loaded.
+//   - the ENTERPRISE/SO setting, the policy section of xkey.yaml, which
+//     reaches this function only as a config.VerifiedPolicy.
 //
 // It lives here rather than in the command package because there are two
 // pairing surfaces, the CLI's `xkey device pair` and the GUI's
 // PhoneService.Pair, and a policy that resolved differently on each would be
 // the #95 defect one level up (#115). Both consume this one function.
 //
-// The enterprise plane wins only while it says it does. LockPairingAttestationPolicy
-// is what "enterprise config may lock the setting" means concretely: unset, the
-// user's answer is used; set, PairingAllowUnattestableDevices is used and the
-// user's answer is ignored. Nothing else in the resolution consults the user
-// plane, so a locked deployment cannot be widened by editing devices.yaml.
+// The enterprise plane is honoured in BOTH directions, the permissive one
+// included, because it can only arrive here verified (#118): unsealed, the
+// section is the user's own file and carries the user's authority;
+// sealed-and-verified under the SO PIN, it carries the SO's.
+// LockPairingAttestationPolicy is what "enterprise config may lock the
+// setting" means concretely: unset, the user's answer is used; set,
+// PairingAllowUnattestableDevices is used and the user's answer is ignored.
+// Nothing else in the resolution consults the user plane, so a locked
+// deployment cannot be widened by editing devices.yaml.
+//
+// A sealed section that was NOT verified never reaches this function as a
+// policy: it arrives as nil, and nil means the enterprise plane exists but is
+// unknown, so the answer is the fail-closed default -- refuse -- whatever
+// devices.yaml says. That replaced the monotone mitigation of #110, under
+// which an unverified section could make the answer stricter but never wider.
+// It closed the fail-open Codex found (anyone who could edit xkey.yaml could
+// lock the setting open) but could never honour a deployment that legitimately
+// locks it open; a verified policy can, and an unverified one grants nothing.
 //
 // Every absent value resolves to false -- refuse. That is the default the
 // ruling names, and it is reached by the zero value rather than by a defaults
-// table, deliberately: this package cannot rely on config.DefaultPolicy(),
-// because a config file carrying a partial `policy:` block resolves the keys it
-// omits to false rather than to their defaults (measured; #114). A design whose
-// secure state came from that table would be insecure for exactly the
-// deployments that write a minimal policy file.
-func AllowUnattestablePairing(userAllows bool, enterprise *config.PolicySection) bool {
-	// The enterprise plane may only ever make the answer STRICTER.
-	//
-	// This is narrower than "the sealed section decides", and the narrowing is
-	// forced rather than chosen. The section arrives as whatever was loaded
-	// from xkey.yaml; nothing on a pairing path calls config.VerifyPolicyHMAC,
-	// and nothing on it CAN -- verification needs the SO PIN, which a pairing
-	// does not have and must not start demanding. Treating those fields as
-	// authoritative in both directions therefore meant any user who can edit
-	// xkey.yaml could write
-	//
-	//     policy:
-	//       lock_pairing_attestation_policy: true
-	//       pairing_allow_unattestable_devices: true
-	//
-	// and pair an unattestable device, over the top of a devices.yaml that
-	// refuses. That is a fail-open reached by editing an UNAUTHENTICATED file,
-	// and it is worse than having no enterprise plane at all, because it looks
-	// like enforcement.
-	//
-	// Monotone consumption removes it without needing the SO PIN: an
-	// unverified section can only ever REFUSE, which is the direction no
-	// attacker wants, and refusing is already what an absent section gets you.
-	// Locking the setting OPEN needs authenticated policy and is filed as
-	// go-xkms#118; until then this function cannot honour it, and silently
-	// honouring it anyway was the defect.
-	if enterprise != nil && enterprise.LockPairingAttestationPolicy &&
-		!enterprise.PairingAllowUnattestableDevices {
+// table, deliberately: a config file carrying a partial `policy:` block used
+// to resolve the keys it omits to false rather than to their defaults (#114),
+// and a design whose secure state came from that table would have been
+// insecure for exactly the deployments that write a minimal policy file.
+func AllowUnattestablePairing(userAllows bool, policy *config.VerifiedPolicy) bool {
+	if policy == nil {
 		return false
+	}
+	if policy.Policy.LockPairingAttestationPolicy {
+		return policy.Policy.PairingAllowUnattestableDevices
 	}
 	return userAllows
 }

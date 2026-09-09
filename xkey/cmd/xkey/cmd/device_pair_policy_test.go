@@ -19,112 +19,180 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
-// TestAllowUnattestablePairing_ResolvesTheTwoPlanes exercises the whole
-// decision surface of the owner ruling of 2026-08-23 on #95: the user setting
-// in devices.yaml, the enterprise/SO setting in the sealed PolicySection, and
-// the lock that decides whether the second is consulted.
-//
-// The table is exhaustive over the three inputs rather than illustrative,
-// because the interesting cases are the ones where the two planes DISAGREE.
-//
-// The enterprise plane is MONOTONE: it may only make the answer STRICTER. That
-// is not a design preference, it is what this command can honestly enforce.
-// Nothing on the CLI path verifies the policy HMAC -- verification needs the SO
-// PIN, which a pairing command does not have -- so treating the section as
-// authoritative in BOTH directions let anyone who can edit xkey.yaml write
-// lock_pairing_attestation_policy: true beside
-// pairing_allow_unattestable_devices: true and pair an unattestable device over
-// a devices.yaml that refuses. Codex found exactly that. Locking the setting
-// OPEN needs authenticated policy and is tracked as #118.
-func TestAllowUnattestablePairing_ResolvesTheTwoPlanes(t *testing.T) {
-	policy := func(allow, lock bool) *xkeyconfig.Config {
-		return &xkeyconfig.Config{Policy: xkeyconfig.PolicySection{
-			PairingAllowUnattestableDevices: allow,
-			LockPairingAttestationPolicy:    lock,
-		}}
-	}
-	devices := func(allow bool) *DevicesConfig {
-		return &DevicesConfig{AttestationPolicy: &AttestationPolicy{AllowUnattestableDevices: allow}}
-	}
+// TestAllowUnattestablePairing_ProjectsTheUserPlane pins what is genuinely
+// this command's: how devices.yaml becomes the user plane of the shared
+// decision. The decision itself, exhaustive over both planes and the
+// verification state, is attestation.AllowUnattestablePairing's own table.
+func TestAllowUnattestablePairing_ProjectsTheUserPlane(t *testing.T) {
+	unlocked := &xkeyconfig.VerifiedPolicy{State: xkeyconfig.PolicyUnsealed}
+	lockedOpen := &xkeyconfig.VerifiedPolicy{State: xkeyconfig.PolicySealedVerified, Policy: xkeyconfig.PolicySection{
+		LockPairingAttestationPolicy:    true,
+		PairingAllowUnattestableDevices: true,
+	}}
 
 	tests := []struct {
 		name    string
 		devices *DevicesConfig
-		unified *xkeyconfig.Config
+		policy  *xkeyconfig.VerifiedPolicy
 		want    bool
 		why     string
 	}{
 		{
-			name: "nothing configured at all", devices: nil, unified: nil, want: false,
-			why: "the default the ruling names is fail closed, and it must come from " +
-				"the zero value rather than from a defaults table",
+			name: "no devices.yaml, unlocked", devices: nil, policy: unlocked, want: false,
+			why: "an absent user plane is not a permission",
 		},
 		{
-			name: "devices.yaml with no attestation_policy block", devices: &DevicesConfig{}, unified: nil, want: false,
-			why: "an absent policy block is not a permission",
+			name: "devices.yaml with no attestation_policy block, unlocked", devices: &DevicesConfig{}, policy: unlocked, want: false,
+			why: "an absent policy block is not a permission either",
 		},
 		{
-			name: "user says no, nothing enterprise", devices: devices(false), unified: nil, want: false,
+			name: "explicit no, unlocked", devices: devicesAllowing(false), policy: unlocked, want: false,
 		},
 		{
-			name: "user says yes, nothing enterprise", devices: devices(true), unified: nil, want: true,
+			name: "explicit yes, unlocked", devices: devicesAllowing(true), policy: unlocked, want: true,
 			why: "unlocked, the user's own setting is the answer",
 		},
 		{
-			name: "user says yes, enterprise present but not locked", devices: devices(true), unified: policy(false, false), want: true,
-			why: "an enterprise value that has not been locked must not narrow the " +
-				"user's setting; the lock is what makes the section authoritative",
+			name: "explicit yes, sealed and not verified", devices: devicesAllowing(true), policy: nil, want: false,
+			why: "the enterprise plane exists but is unknown, so the answer is the " +
+				"fail-closed default whatever devices.yaml says (#118)",
 		},
 		{
-			name: "user says no, enterprise present but not locked", devices: devices(false), unified: policy(true, false), want: false,
-			why: "and equally must not widen it",
-		},
-		{
-			name: "user says yes, enterprise locks it closed", devices: devices(true), unified: policy(false, true), want: false,
-			why: "this is the case the lock exists for: a locked deployment cannot be " +
-				"widened by editing devices.yaml",
-		},
-		{
-			name: "user says no, enterprise locks it open", devices: devices(false), unified: policy(true, true), want: false,
-			why: "an UNVERIFIED policy section must never widen anything: nothing on " +
-				"the CLI path checks the policy HMAC, so honouring this direction " +
-				"would let anyone who can edit xkey.yaml pair an unattestable " +
-				"device over a devices.yaml that refuses (#118)",
-		},
-		{
-			name: "no user setting, enterprise locks it open", devices: nil, unified: policy(true, true), want: false,
-			why: "same, with the user plane absent rather than refusing",
-		},
-		{
-			name: "no user setting, enterprise locks it closed", devices: devices(true), unified: policy(false, true), want: false,
+			name: "no devices.yaml, verified and locked open", devices: nil, policy: lockedOpen, want: true,
+			why: "a verified policy carries the SO's authority in both directions, " +
+				"with the user plane absent rather than refusing",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, allowUnattestablePairing(tc.devices, tc.unified), tc.why)
+			require.Equal(t, tc.want, allowUnattestablePairing(tc.devices, tc.policy), tc.why)
 		})
 	}
 }
 
-// TestAllowUnattestablePairing_DefaultsToRefuseOnAZeroPolicySection pins the
-// half of the design that a defaults table would have got wrong.
-//
-// config.DefaultPolicy() is NOT what a loaded config carries when its file
-// holds a partial `policy:` block: viper does not merge a struct default key by
-// key, so a file setting only min_pin_length resolves every other policy key to
-// its zero value (measured; filed as #114). Both fields here are therefore
-// designed so that zero means "not locked, not allowed" -- the same answer as
-// no policy at all.
-func TestAllowUnattestablePairing_DefaultsToRefuseOnAZeroPolicySection(t *testing.T) {
-	require.False(t, allowUnattestablePairing(&DevicesConfig{}, &xkeyconfig.Config{}),
-		"a zero PolicySection must read as unlocked and disallowed, because that is "+
-			"what a partially-specified policy file actually produces")
+func devicesAllowing(allow bool) *DevicesConfig {
+	return &DevicesConfig{AttestationPolicy: &AttestationPolicy{AllowUnattestableDevices: allow}}
+}
+
+// newPairingPolicyFixture seals cfg's policy under soPIN into a fresh config
+// directory, points the config package at it, and returns a pair command
+// carrying the SO PIN flags.
+func newPairingPolicyFixture(t *testing.T, cfg *xkeyconfig.Config, soPIN string) *cobra.Command {
+	t.Helper()
+
+	configDir := t.TempDir()
+	xkeyconfig.SetConfigDir(configDir)
+	t.Cleanup(xkeyconfig.ResetConfigDir)
+	if soPIN != "" {
+		require.NoError(t, xkeyconfig.WritePolicyHMAC(&cfg.Policy, soPIN, xkeyconfig.PolicyHMACPath(configDir)))
+	}
+
+	cmd := &cobra.Command{}
+	addSOPINFlags(cmd)
+	return cmd
+}
+
+// lockedOpenConfig is the policy a fleet that pairs development handsets
+// would seal: the setting locked OPEN, which only a verified section may grant.
+func lockedOpenConfig() *xkeyconfig.Config {
+	cfg := xkeyconfig.DefaultConfig()
+	cfg.Policy.LockPairingAttestationPolicy = true
+	cfg.Policy.PairingAllowUnattestableDevices = true
+	return cfg
+}
+
+func TestResolvePairingPolicy_UnsealedNeedsNoPIN(t *testing.T) {
+	cfg := lockedOpenConfig()
+	cmd := newPairingPolicyFixture(t, cfg, "")
+
+	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())
+	require.NoError(t, err)
+	require.NotNil(t, policy)
+	require.Equal(t, xkeyconfig.PolicyUnsealed, policy.State)
+}
+
+// TestResolvePairingPolicy_SealedWithoutPINIsNotConsulted is the ordinary
+// enterprise pairing: no SO at the keyboard, so the sealed section is not read
+// and the caller fails closed. It is not an error, because an ordinary command
+// must not start demanding the SO PIN.
+func TestResolvePairingPolicy_SealedWithoutPINIsNotConsulted(t *testing.T) {
+	cfg := lockedOpenConfig()
+	cmd := newPairingPolicyFixture(t, cfg, testSOPIN)
+
+	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())
+	require.NoError(t, err)
+	require.Nil(t, policy, "a sealed section without the SO PIN must not be consulted")
+	require.False(t, allowUnattestablePairing(&DevicesConfig{AttestationPolicy: &AttestationPolicy{AllowUnattestableDevices: true}}, policy),
+		"and the pairing fails closed whatever devices.yaml says")
+}
+
+// TestResolvePairingPolicy_SealedAndVerifiedIsHonouredOpen is the test that
+// separates #118 from the monotone mitigation: a correctly sealed policy that
+// locks the setting open is obeyed in the permissive direction.
+func TestResolvePairingPolicy_SealedAndVerifiedIsHonouredOpen(t *testing.T) {
+	cfg := lockedOpenConfig()
+	cmd := newPairingPolicyFixture(t, cfg, testSOPIN)
+	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	stubStdin(t, []byte(testSOPIN+"\n"), nil)
+
+	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())
+	require.NoError(t, err)
+	require.NotNil(t, policy)
+	require.Equal(t, xkeyconfig.PolicySealedVerified, policy.State)
+	require.True(t, allowUnattestablePairing(&DevicesConfig{}, policy),
+		"a verified policy locked open permits pairing over a devices.yaml that refuses")
+}
+
+// TestResolvePairingPolicy_SealedTamperedPermissivelyIsRefused is the
+// fail-open Codex found on #110, now refused rather than obeyed: the SO sealed
+// the default (locked closed) policy, a local user edited xkey.yaml to lock it
+// open, and the pairing must be refused outright, not continued.
+func TestResolvePairingPolicy_SealedTamperedPermissivelyIsRefused(t *testing.T) {
+	sealed := xkeyconfig.DefaultConfig()
+	cmd := newPairingPolicyFixture(t, sealed, testSOPIN)
+	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	stubStdin(t, []byte(testSOPIN+"\n"), nil)
+
+	tampered := lockedOpenConfig()
+	policy, err := resolvePairingPolicy(cmd, tampered, discardLogger())
+
+	require.Error(t, err)
+	require.Nil(t, policy)
+	require.ErrorIs(t, err, ErrPairingPolicyRefused)
+	require.ErrorIs(t, err, xkeyconfig.ErrPolicyUnverifiable)
+	require.ErrorIs(t, err, xkeyconfig.ErrPolicyHMACMismatch)
+}
+
+func TestResolvePairingPolicy_SealedWithWrongPINIsRefused(t *testing.T) {
+	cfg := lockedOpenConfig()
+	cmd := newPairingPolicyFixture(t, cfg, testSOPIN)
+	t.Setenv(soPINEnvVar, "not-the-so-pin")
+
+	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())
+
+	require.Error(t, err)
+	require.Nil(t, policy)
+	require.ErrorIs(t, err, ErrPairingPolicyRefused)
+	require.ErrorIs(t, err, xkeyconfig.ErrPolicyHMACMismatch)
+}
+
+func TestResolvePairingPolicy_EmptyStdinIsReported(t *testing.T) {
+	cfg := lockedOpenConfig()
+	cmd := newPairingPolicyFixture(t, cfg, testSOPIN)
+	require.NoError(t, cmd.Flags().Set(soPINFlagStdin, "true"))
+	stubStdin(t, []byte(""), nil)
+
+	policy, err := resolvePairingPolicy(cmd, cfg, discardLogger())
+	require.Error(t, err)
+	require.Nil(t, policy)
+	require.ErrorIs(t, err, ErrSOPINInputStdinEmpty)
 }
 
 // TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone is the

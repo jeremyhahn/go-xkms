@@ -40,6 +40,20 @@ record, and the GUI says so. An enterprise policy can lock that choice closed.
 `--force` re-pairs over an existing pairing. It throws the old binding away —
 use it when you mean to, not to make an error go away.
 
+**Under a sealed enterprise policy.** If your Security Officer sealed the
+device's policy, `xkey device pair` refuses a phone whose attestation cannot be
+verified unless the sealed policy says otherwise — and it reads that policy
+only after verifying it with the SO PIN. A fleet that pairs development
+handsets locks the setting open in the sealed policy and pairs with
+
+```
+echo -n "$SO_PIN" | xkey device pair --so-pin-stdin
+```
+
+Without the SO PIN the sealed policy is not consulted and the refusal stands.
+A sealed policy that does not verify — the file was edited after sealing —
+refuses the pairing outright; ask the SO to re-seal it.
+
 ## Using it
 
 ```

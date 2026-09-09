@@ -778,7 +778,15 @@ func (s *PhoneService) attestForPairing(
 // allowUnattestablePairing projects this surface's two policy planes onto the
 // shared decision, attestation.AllowUnattestablePairing, exactly as the CLI's
 // `device pair` does. The user plane is the devices.yaml this service just
-// read; the enterprise plane is xkey.yaml as config.Load reads it.
+// read; the enterprise plane is xkey.yaml as config.Load reads it, consumed
+// only through config.LoadVerifiedPolicy (#118).
+//
+// A GUI pairing has no SO at the keyboard, so it supplies no SO PIN. In
+// personal mode (no HMAC file) that costs nothing: the section is the user's
+// own and is honoured in both directions. In a sealed deployment the section
+// cannot be verified here, so it is not consulted at all and the shared
+// decision fails closed, whatever devices.yaml says; a fleet that wants the
+// setting locked open proves it with the SO PIN through `xkey device pair`.
 //
 // A unified config that fails to LOAD is not the same as one that is absent.
 // Absent means "no enterprise plane, the user decides". A file that exists and
@@ -790,7 +798,13 @@ func (s *PhoneService) allowUnattestablePairing(cfg *phoneConfig) bool {
 		s.log.Error("pairing policy: unified config unreadable; refusing unattestable devices", "error", err)
 		return false
 	}
-	return xkeyAttestation.AllowUnattestablePairing(cfg.allowsUnattestablePairing(), &unified.Policy)
+	policy, err := config.LoadVerifiedPolicy(unified, config.ConfigDir(), "")
+	if err != nil {
+		s.log.Info("pairing policy: sealed enterprise policy not consulted by a GUI pairing; refusing unattestable devices",
+			"config_dir", config.ConfigDir(), "reason", err)
+		policy = nil
+	}
+	return xkeyAttestation.AllowUnattestablePairing(cfg.allowsUnattestablePairing(), policy)
 }
 
 // Unpair removes pairing information for the named device.

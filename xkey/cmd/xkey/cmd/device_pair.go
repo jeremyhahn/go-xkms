@@ -63,7 +63,12 @@ Examples:
   xkey device pair --timeout 60s
 
   # Force re-pairing if already paired
-  xkey device pair --device "John's Pixel" --force`,
+  xkey device pair --device "John's Pixel" --force
+
+  # Honour a sealed enterprise policy that allows unattestable devices
+  echo -n "$SO_PIN" | xkey device pair --so-pin-stdin
+
+` + soPINUsage,
 	RunE: runDevicePair,
 }
 
@@ -74,6 +79,7 @@ func init() {
 	devicePairCmd.Flags().String("device", "", "Specific device name or address to pair")
 	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout, "Scan timeout duration")
 	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
+	addSOPINFlags(devicePairCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("device.pair.device", devicePairCmd.Flags().Lookup("device"))
@@ -98,6 +104,14 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		cfg = &DevicesConfig{
 			Devices: []PairedDevice{},
 		}
+	}
+
+	// Resolve the enterprise plane before anything is scanned, so an
+	// operator who supplied an SO PIN learns about a policy that does not
+	// verify now rather than after the phone has confirmed.
+	enterprisePolicy, err := resolvePairingPolicy(cmd, GetConfig(), logger)
+	if err != nil {
+		return err
 	}
 
 	// Create BLE transport for scanning
@@ -312,11 +326,15 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	// claim is ever written down. The pairing record is what every later
 	// connection is judged against, so a record whose attestation half was
 	// never checked is worse than no record at all (#95).
-	allowUnattestable := allowUnattestablePairing(cfg, GetConfig())
+	allowUnattestable := allowUnattestablePairing(cfg, enterprisePolicy)
 	attestResult, attestErr := performPairingAttestation(connectCtx, transport, session, logger)
 	if attestErr != nil {
 		if !allowUnattestable {
 			_ = transport.Disconnect()
+			if enterprisePolicy == nil {
+				logger.Warn("unattestable device refused: the config directory is sealed and the enterprise policy was not verified",
+					"hint", "supply the SO PIN (--so-pin-stdin, XKEY_SO_PIN or --so-pin) to honour a sealed policy that allows it")
+			}
 			return attestErr
 		}
 		logger.Warn("pairing continued without a verified attestation",
@@ -464,23 +482,64 @@ func newPairedDeviceRecord(
 	return device
 }
 
+// ErrPairingPolicyRefused indicates the config directory is sealed, an SO
+// PIN was supplied, and the policy section did not verify under it. The
+// pairing is refused outright rather than continued under a policy that may
+// have been edited: the cause (config.ErrPolicyUnverifiable joined with
+// ErrPolicyHMACMismatch or ErrPolicyHMACLoadFailed) is reachable with
+// errors.Is.
+var ErrPairingPolicyRefused = errors.New("device pair: sealed enterprise policy could not be verified")
+
+// resolvePairingPolicy resolves the enterprise plane for one pairing.
+//
+// It returns the policy with its verification state when the plane can be
+// trusted: unsealed (personal mode, the section is the user's own file) or
+// sealed and verified under the SO PIN the operator supplied. It returns
+// (nil, nil) when the directory is sealed and no SO PIN was supplied — the
+// plane exists but is unknown, and allowUnattestablePairing fails closed on
+// it. It returns ErrPairingPolicyRefused when an SO PIN was supplied and the
+// section did not verify, because a sealed section that does not verify is a
+// value anyone may have written and must not be consulted at all (#118).
+//
+// Where the SO PIN comes from is the same three sources as the user PIN
+// (soPINUsage). It is never demanded: an ordinary pairing has no SO at the
+// keyboard, and the price of not supplying it is the fail-closed answer.
+func resolvePairingPolicy(cmd *cobra.Command, unified *xkeyconfig.Config, logger *slog.Logger) (*xkeyconfig.VerifiedPolicy, error) {
+	soPIN, err := resolveSOPINInput(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	configDir := xkeyconfig.ConfigDir()
+	if soPIN == "" && xkeyconfig.IsEnterpriseMode(configDir) {
+		logger.Info("sealed enterprise policy not consulted: no SO PIN supplied",
+			"config_dir", configDir)
+		return nil, nil
+	}
+
+	policy, err := xkeyconfig.LoadVerifiedPolicy(unified, configDir, soPIN)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrPairingPolicyRefused, Cause: err}
+	}
+	if policy.State == xkeyconfig.PolicySealedVerified {
+		logger.Info("enterprise policy verified", "state", policy.State.String())
+	}
+	return policy, nil
+}
+
 // allowUnattestablePairing projects this command's two policy planes onto the
 // shared decision, attestation.AllowUnattestablePairing.
 //
 // What is genuinely this command's is WHERE each plane comes from: the user
-// plane is devices.yaml as this package reads it, the enterprise plane is
-// whatever GetConfig() loaded from xkey.yaml. What is not this command's is
-// how they combine -- the GUI pairs phones too, and a resolution that lived
-// here alone was the #95 defect one level up (#115).
-func allowUnattestablePairing(devices *DevicesConfig, unified *xkeyconfig.Config) bool {
+// plane is devices.yaml as this package reads it, the enterprise plane is the
+// config.VerifiedPolicy resolvePairingPolicy produced, nil when the directory
+// is sealed and no SO PIN was supplied. What is not this command's is how they
+// combine -- the GUI pairs phones too, and a resolution that lived here alone
+// was the #95 defect one level up (#115).
+func allowUnattestablePairing(devices *DevicesConfig, policy *xkeyconfig.VerifiedPolicy) bool {
 	userAllows := devices != nil && devices.AttestationPolicy != nil &&
 		devices.AttestationPolicy.AllowUnattestableDevices
-
-	var enterprise *xkeyconfig.PolicySection
-	if unified != nil {
-		enterprise = &unified.Policy
-	}
-	return attestation.AllowUnattestablePairing(userAllows, enterprise)
+	return attestation.AllowUnattestablePairing(userAllows, policy)
 }
 
 // printUnattestablePairingWarning tells the operator what they now have, in the

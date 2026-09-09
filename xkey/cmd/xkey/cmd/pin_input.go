@@ -57,6 +57,54 @@ const (
 	pinEnvVar    = "XKEY_PIN"
 )
 
+// soPINFlagStdin, soPINFlagValue and soPINEnvVar name the three sources of
+// the Security Officer PIN, which a command needs only to verify a sealed
+// enterprise policy (config.LoadVerifiedPolicy, #118). They mirror the user
+// PIN sources exactly so an operator learns one convention.
+const (
+	soPINFlagStdin = "so-pin-stdin"
+	soPINFlagValue = "so-pin"
+	soPINEnvVar    = "XKEY_SO_PIN"
+)
+
+// ErrSOPINInputStdinEmpty indicates --so-pin-stdin was given but standard
+// input carried no PIN. It is distinct from ErrPINInputStdinEmpty so the
+// operator is told which of the two PINs was expected.
+var ErrSOPINInputStdinEmpty = errors.New("pin: --so-pin-stdin was given but standard input carried no SO PIN")
+
+// pinSource describes one kind of PIN and the three inputs it resolves from.
+// The user PIN and the SO PIN are the two kinds; each is declared once here
+// so their flag names, environment variables and resolution order cannot
+// diverge.
+type pinSource struct {
+	// label names the PIN in flag help ("PIN", "SO PIN").
+	label string
+	// stdinFlag, valueFlag and envVar are the three inputs, in precedence
+	// order: stdin, environment, flag value.
+	stdinFlag string
+	valueFlag string
+	envVar    string
+	// stdinEmpty is returned when stdinFlag was given but stdin was empty.
+	stdinEmpty error
+}
+
+var (
+	userPINSource = pinSource{
+		label:      "PIN",
+		stdinFlag:  pinFlagStdin,
+		valueFlag:  pinFlagValue,
+		envVar:     pinEnvVar,
+		stdinEmpty: ErrPINInputStdinEmpty,
+	}
+	soPINSource = pinSource{
+		label:      "SO PIN",
+		stdinFlag:  soPINFlagStdin,
+		valueFlag:  soPINFlagValue,
+		envVar:     soPINEnvVar,
+		stdinEmpty: ErrSOPINInputStdinEmpty,
+	}
+)
+
 // pinUsage is the operator-facing description of the three PIN sources,
 // embedded verbatim in the long help of every command that accepts one.
 const pinUsage = `The PIN may be supplied three ways, in precedence order:
@@ -66,29 +114,62 @@ const pinUsage = `The PIN may be supplied three ways, in precedence order:
   XKEY_PIN         environment variable
   --pin            flag value (visible in 'ps'; use for local development only)`
 
+// soPINUsage is the operator-facing description of the three SO PIN sources,
+// embedded in the long help of every command that verifies a sealed policy.
+const soPINUsage = `In an enterprise deployment the config directory is sealed (xkey_policy.hmac
+is present) and the SO-controlled policy is honoured only once it has been
+verified with the Security Officer PIN. The SO PIN may be supplied three ways,
+in precedence order:
+
+  --so-pin-stdin   read the SO PIN from standard input (preferred: it keeps
+                   the PIN out of the process list and the shell history)
+  XKEY_SO_PIN      environment variable
+  --so-pin         flag value (visible in 'ps'; use for local development only)
+
+Without it the sealed policy is not consulted and the command fails closed.
+A sealed policy that does not verify is refused, whatever it says.`
+
 // stdinReader reads the whole of standard input. It is a package-level
 // variable so tests can drive the --pin-stdin path without a real pipe.
 var stdinReader = func() ([]byte, error) { return io.ReadAll(os.Stdin) }
 
-// addPINFlags declares the three PIN input flags resolvePINInput reads. Every
-// command that takes a PIN uses it, so the flag names and their help text are
-// identical everywhere.
+// addPINFlags declares the user PIN input flags on cmd. Every command that
+// calls resolvePINInput must call this in its init.
 func addPINFlags(cmd *cobra.Command) {
-	cmd.Flags().String(pinFlagValue, "", "PIN (visible in the process list; prefer --pin-stdin)")
-	cmd.Flags().Bool(pinFlagStdin, false, "Read the PIN from standard input")
+	userPINSource.addFlags(cmd)
 }
 
-// resolvePINInput returns the PIN from the highest-precedence source the
-// command was given: standard input (--pin-stdin), then XKEY_PIN, then --pin.
-// Reading from stdin is preferred because a PIN passed as a flag is visible to
-// every process on the host via /proc.
-//
-// An empty return value means no source supplied a PIN. That is a legitimate
-// state — an authenticator with no PIN configured needs none — so commands
-// that require one reject the empty value themselves rather than having this
-// resolver decide for them.
+// addSOPINFlags declares the SO PIN input flags on cmd. Every command that
+// calls resolveSOPINInput must call this in its init.
+func addSOPINFlags(cmd *cobra.Command) {
+	soPINSource.addFlags(cmd)
+}
+
+// resolvePINInput returns the user PIN from the highest-precedence source
+// that carries one, or "" when none does. Not supplying a PIN is not an
+// error here: whether one is needed is the ceremony's decision.
 func resolvePINInput(cmd *cobra.Command) (string, error) {
-	fromStdin, err := cmd.Flags().GetBool(pinFlagStdin)
+	return userPINSource.resolve(cmd)
+}
+
+// resolveSOPINInput returns the SO PIN from the highest-precedence source
+// that carries one, or "" when none does. An absent SO PIN is not an error:
+// it means a sealed policy is not consulted and the caller fails closed.
+func resolveSOPINInput(cmd *cobra.Command) (string, error) {
+	return soPINSource.resolve(cmd)
+}
+
+// addFlags declares the source's two flags on cmd.
+func (p pinSource) addFlags(cmd *cobra.Command) {
+	cmd.Flags().String(p.valueFlag, "", p.label+" (visible in the process list; prefer --"+p.stdinFlag+")")
+	cmd.Flags().Bool(p.stdinFlag, false, "Read the "+p.label+" from standard input")
+}
+
+// resolve returns the PIN from the highest-precedence source that carries
+// one: stdin when the stdin flag is set, then the environment variable, then
+// the flag value. It returns "" when no source carries a PIN.
+func (p pinSource) resolve(cmd *cobra.Command) (string, error) {
+	fromStdin, err := cmd.Flags().GetBool(p.stdinFlag)
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
 	}
@@ -99,16 +180,16 @@ func resolvePINInput(cmd *cobra.Command) (string, error) {
 		}
 		pin := strings.TrimRight(string(data), "\r\n")
 		if pin == "" {
-			return "", ErrPINInputStdinEmpty
+			return "", p.stdinEmpty
 		}
 		return pin, nil
 	}
 
-	if pin := os.Getenv(pinEnvVar); pin != "" {
+	if pin := os.Getenv(p.envVar); pin != "" {
 		return pin, nil
 	}
 
-	pin, err := cmd.Flags().GetString(pinFlagValue)
+	pin, err := cmd.Flags().GetString(p.valueFlag)
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
 	}

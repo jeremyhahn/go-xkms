@@ -292,4 +292,9 @@ err := config.SaveToPath(cfg, "/path/to/xkey.yaml")
 
 // Run migration (idempotent)
 cfg, migrated, err := config.Migrate()
+
+// Read the policy section with its verification state. Fails closed with
+// ErrPolicyUnverifiable when the directory is sealed and the section cannot
+// be authenticated under soPIN (see enterprise-mode.md).
+policy, err := config.LoadVerifiedPolicy(cfg, config.ConfigDir(), soPIN)
 ```
