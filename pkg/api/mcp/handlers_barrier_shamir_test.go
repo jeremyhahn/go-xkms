@@ -18,65 +18,20 @@ import (
 	"encoding/json"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"log/slog"
-	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	"github.com/jeremyhahn/go-xkms/internal/shamirtest"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// testCaptureDistributor implements seal.CeremonyDistributor for use in unit
-// tests. It splits the secret using the real Shamir library and records the
-// share strings so tests can later call UnsealWithShare / UnsealWithShares /
-// RecoverWithKeys with actual share values.
-type testCaptureDistributor struct {
-	mu     sync.Mutex
-	shares []string
-}
-
-// SealAndDistribute splits secret into total shares with the given threshold,
-// records them, and returns the count.
-func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
-	raw, err := quicraftShamir.Split(secret, threshold, total) //nolint:staticcheck // go-xkms#46: quicraft v0.8.0 deprecates the string-share Split in favour of SplitProtected; migrating share custody is out of scope for a pin bump. Removing this directive is how #46 gets closed.
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "shamir split failed", Err: err}
-	}
-	c.mu.Lock()
-	c.shares = make([]string, len(raw))
-	for i, s := range raw {
-		c.shares[i] = s.Value //nolint:staticcheck // go-xkms#46: Share.Value is the deprecated un-wipeable string field; ProtectedShare replaces it. Test-helper fixture only, no production path. Removing this directive is how #46 gets closed.
-	}
-	c.mu.Unlock()
-	return len(raw), nil
-}
-
-// RekeyAndDistribute destroys the prior round and produces fresh shares.
-func (c *testCaptureDistributor) RekeyAndDistribute(ctx context.Context, newSecret []byte, newThreshold, newTotal int) (int, error) {
-	c.mu.Lock()
-	c.shares = nil
-	c.mu.Unlock()
-	return c.SealAndDistribute(ctx, newSecret, newThreshold, newTotal)
-}
-
-// Shares returns the share strings captured by the last SealAndDistribute call.
-func (c *testCaptureDistributor) Shares() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]string, len(c.shares))
-	copy(out, c.shares)
-	return out
-}
-
 // createTestBarrier creates a barrier with ShamirStrategy for testing.
 // It wires ceremony and recovery distributors, initializes the barrier,
 // and returns the barrier, ceremony distributor, and recovery distributor
 // so tests can retrieve share values.
-func createTestBarrier(t *testing.T) (*seal.Barrier, *testCaptureDistributor, *testCaptureDistributor) {
+func createTestBarrier(t *testing.T) (*seal.Barrier, *shamirtest.CaptureDistributor, *shamirtest.CaptureDistributor) {
 	t.Helper()
 
 	barrierStore := storage.New()
@@ -98,8 +53,8 @@ func createTestBarrier(t *testing.T) (*seal.Barrier, *testCaptureDistributor, *t
 	)
 	require.NoError(t, err)
 
-	dist := &testCaptureDistributor{}
-	recoveryDist := &testCaptureDistributor{}
+	dist := shamirtest.New(t)
+	recoveryDist := shamirtest.New(t)
 	barrier.SetCeremonyDistributor(dist)
 	barrier.SetRecoveryDistributor(recoveryDist)
 
@@ -109,7 +64,7 @@ func createTestBarrier(t *testing.T) (*seal.Barrier, *testCaptureDistributor, *t
 // createTestBarrierServer creates a test server with a barrier attached.
 // It injects the XKMSService into Config so the server has full DI.
 // Returns the server, ceremony distributor, recovery distributor, and barrier.
-func createTestBarrierServer(t *testing.T) (*Server, *testCaptureDistributor, *testCaptureDistributor, *seal.Barrier) {
+func createTestBarrierServer(t *testing.T) (*Server, *shamirtest.CaptureDistributor, *shamirtest.CaptureDistributor, *seal.Barrier) {
 	t.Helper()
 
 	svc := setupTestXKMS(t)

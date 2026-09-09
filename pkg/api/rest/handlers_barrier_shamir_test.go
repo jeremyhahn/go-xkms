@@ -20,54 +20,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	quicraftShamir "github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	"github.com/jeremyhahn/go-xkms/internal/shamirtest"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// testCaptureDistributor implements seal.CeremonyDistributor for unit tests.
-// It splits the secret using the real Shamir library and captures the share strings
-// so tests can call UnsealWithShare / UnsealWithShares / RecoverWithKeys.
-type testCaptureDistributor struct {
-	mu     sync.Mutex
-	shares []string
-}
-
-func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
-	raw, err := quicraftShamir.Split(secret, threshold, total) //nolint:staticcheck // go-xkms#46: quicraft v0.8.0 deprecates the string-share Split in favour of SplitProtected; migrating share custody is out of scope for a pin bump. Removing this directive is how #46 gets closed.
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "shamir split failed", Err: err}
-	}
-	c.mu.Lock()
-	c.shares = make([]string, len(raw))
-	for i, s := range raw {
-		c.shares[i] = s.Value //nolint:staticcheck // go-xkms#46: Share.Value is the deprecated un-wipeable string field; ProtectedShare replaces it. Test-helper fixture only, no production path. Removing this directive is how #46 gets closed.
-	}
-	c.mu.Unlock()
-	return len(raw), nil
-}
-
-func (c *testCaptureDistributor) RekeyAndDistribute(ctx context.Context, newSecret []byte, newThreshold, newTotal int) (int, error) {
-	c.mu.Lock()
-	c.shares = nil
-	c.mu.Unlock()
-	return c.SealAndDistribute(ctx, newSecret, newThreshold, newTotal)
-}
-
-func (c *testCaptureDistributor) Shares() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]string, len(c.shares))
-	copy(out, c.shares)
-	return out
-}
 
 // testShamirBarrierContext creates a HandlerContext with a Shamir-configured barrier
 // using in-memory storage. The barrier is returned so tests can manipulate state.
@@ -100,7 +60,7 @@ func testShamirBarrierContext(t *testing.T) (*HandlerContext, *seal.Barrier) {
 func initializeShamirBarrier(t *testing.T, barrier *seal.Barrier) []string {
 	t.Helper()
 
-	dist := &testCaptureDistributor{}
+	dist := shamirtest.New(t)
 	barrier.SetCeremonyDistributor(dist)
 	_, err := barrier.InitializeShamir(context.Background(), seal.Credentials{})
 	require.NoError(t, err)
@@ -114,7 +74,7 @@ func initializeShamirBarrier(t *testing.T, barrier *seal.Barrier) []string {
 func TestBarrierInitializeShamirHandler(t *testing.T) {
 	t.Run("initializes barrier with shamir shares", func(t *testing.T) {
 		h, barrier := testShamirBarrierContext(t)
-		dist := &testCaptureDistributor{}
+		dist := shamirtest.New(t)
 		barrier.SetCeremonyDistributor(dist)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/barrier/initialize-shamir",
@@ -446,7 +406,7 @@ func TestBarrierGenerateRecoveryKeysHandler(t *testing.T) {
 		initializeShamirBarrier(t, barrier)
 
 		// Wire a recovery distributor so GenerateRecoveryKeys can seal shares.
-		recoveryDist := &testCaptureDistributor{}
+		recoveryDist := shamirtest.New(t)
 		barrier.SetRecoveryDistributor(recoveryDist)
 
 		body := `{"threshold":2,"total":3}`
@@ -522,7 +482,7 @@ func TestBarrierRecoverWithKeysHandler(t *testing.T) {
 		initializeShamirBarrier(t, barrier)
 
 		// Wire a fresh recovery distributor for recovery key generation.
-		recoveryDist := &testCaptureDistributor{}
+		recoveryDist := shamirtest.New(t)
 		barrier.SetRecoveryDistributor(recoveryDist)
 
 		// Generate recovery keys while unsealed
@@ -592,7 +552,7 @@ func TestBarrierDeleteRecoveryKeysHandler(t *testing.T) {
 		initializeShamirBarrier(t, barrier)
 
 		// Wire a recovery distributor so GenerateRecoveryKeys can seal shares.
-		barrier.SetRecoveryDistributor(&testCaptureDistributor{})
+		barrier.SetRecoveryDistributor(shamirtest.New(t))
 
 		// Generate recovery keys first
 		_, err := barrier.GenerateRecoveryKeys(context.Background(), 2, 3)
