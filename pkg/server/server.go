@@ -92,20 +92,31 @@ const noiseBootstrapStopTimeout = 10 * time.Second
 // read as a completed drain — the only state in which the protected pages
 // behind its static key are provably unreferenced.
 //
-// BOTH conditions are necessary, and each was got wrong on its own here.
-// noiseboot.Server.Stop returns nil whether its workers drained or its own
-// deadline expired — it logs the difference and swallows it — so an unexpired
-// context is what distinguishes the two. And Stop returns immediately, without
-// waiting for anything, when it does not consider itself started
-// (ErrServerNotStarted after an earlier externally timed-out stop, for
-// instance); that fast return also leaves the context unexpired, so only a nil
-// error means it took the drain path at all.
+// Since go-truststrap v0.3.0-alpha (go-truststrap#13, pinned here at
+// v0.4.0-alpha) noiseboot.Server.Stop's nil is authoritative: it is returned
+// only after the run's WaitGroup has genuinely emptied, and every other
+// outcome is a non-nil sentinel — ErrShutdownIncomplete when the CALLER's
+// deadline expires first, ErrServerNotStarted before Start. Concurrent callers
+// each wait under their own context and may see different outcomes, but no
+// caller ever receives a nil that is not backed by a real drain, and once
+// drained every later Stop returns nil stably.
+//
+// The error is therefore the whole decision. This function used to also
+// require the caller's context to be unexpired, because the previous pin
+// returned nil on its own timeout path too and the context was the only
+// signal that told the two apart. Against the current contract that conjunct
+// is not merely redundant, it is wrong in one case: a server that finished
+// draining as the deadline expired reports nil — upstream re-checks its
+// drained channel before ever saying ErrShutdownIncomplete, precisely so that
+// a finished server is not reported as incomplete — and reading the expired
+// context over that nil retained a key that was safe to wipe and reported a
+// shutdown incomplete that was not (go-xkms#83).
 //
 // One function rather than the condition written out at each site: the two
-// sites that stop this server reached different answers, which is exactly the
-// failure a shared decision prevents.
-func noiseStopDrained(stopErr error, stopCtx context.Context) bool {
-	return stopErr == nil && stopCtx.Err() == nil
+// sites that stop this server once reached different answers, which is
+// exactly the failure a shared decision prevents.
+func noiseStopDrained(stopErr error) bool {
+	return stopErr == nil
 }
 
 // Server represents the unified xkms server that runs all protocols
@@ -2958,10 +2969,10 @@ func (s *Server) startNoiseBootstrap() {
 	}
 
 	// The same decision Shutdown makes, through the same function. This path
-	// read the context alone, which treats a Stop that never waited for
+	// once read the context alone, which treats a Stop that never waited for
 	// anything as a completed drain and destroys a key whose handshake workers
 	// may still be running.
-	joined := noiseStopDrained(stopErr, stopCtx)
+	joined := noiseStopDrained(stopErr)
 	cancelStop()
 
 	if !joined {
@@ -2969,8 +2980,8 @@ func (s *Server) startNoiseBootstrap() {
 		// the note on retention in Shutdown.
 		published = true
 		s.retainBootstrapKeys(keys)
-		s.logger.Warn("retaining the bootstrap static keys: the stop " +
-			"deadline expired during startup teardown")
+		s.logger.Warn("retaining the bootstrap static keys: Stop did not " +
+			"confirm a drain during startup teardown")
 	}
 }
 
@@ -3289,7 +3300,7 @@ func (s *Server) shutdown() error {
 			s.logger.Error("Error shutting down Noise bootstrap server", slog.Any("error", stopErr))
 		}
 
-		joined := noiseStopDrained(stopErr, noiseCtx)
+		joined := noiseStopDrained(stopErr)
 		cancelNoise()
 
 		if joined {
@@ -3297,8 +3308,8 @@ func (s *Server) shutdown() error {
 		} else {
 			incomplete = append(incomplete, "noise bootstrap handshake workers")
 			s.retainBootstrapKeys(noiseKeys)
-			s.logger.Warn("retaining the bootstrap static keys: the stop " +
-				"deadline expired, so a handshake may still be reading them")
+			s.logger.Warn("retaining the bootstrap static keys: Stop did not " +
+				"confirm a drain, so a handshake may still be reading them")
 		}
 	}
 

@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Jeremy Hahn
-// Copyright (c) 2026 Automate The Things, LLC
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
 //
 // This file is part of go-xkms.
 //
@@ -14,74 +14,59 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"testing"
-	"time"
+
+	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 )
 
 // TestNoiseStopDrained pins the decision that licenses freeing the Noise
-// bootstrap key's protected pages.
+// bootstrap key's protected pages against the Stop contract of the pinned
+// go-truststrap (v0.4.0-alpha, go-truststrap#13): nil is returned only after
+// the run's WaitGroup has emptied, and every other outcome is a non-nil
+// sentinel. The error is the whole decision.
 //
-// Both halves are load-bearing and each was, at some point, the whole
-// condition on one of the two paths that stop this server:
-//
-//   - The context alone: upstream Stop returns immediately with
-//     ErrServerNotStarted when it does not consider itself started, and that
-//     fast return leaves the deadline unexpired. Read as "drained", it frees a
-//     key whose handshake workers may still be running. This was the surviving
-//     reading on the startup-teardown path.
-//   - The error alone: upstream Stop returns nil whether its workers drained
-//     or its own deadline expired. Read as "drained", it frees the key of a
-//     server that timed out.
-//
-// Drop either conjunct and one of the rows below turns green when it must not.
+// The rows name the sentinels upstream actually returns, so a future pin that
+// renames or removes one turns this red instead of silently changing what a
+// retained or destroyed key means. The last row is the one the previous
+// decision got wrong: it also read the caller's context, and a server that
+// drained as the deadline expired was retained and reported incomplete
+// (go-xkms#83).
 func TestNoiseStopDrained(t *testing.T) {
-	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancelExpired()
-
-	live, cancelLive := context.WithTimeout(context.Background(), time.Minute)
-	defer cancelLive()
-
 	tests := []struct {
 		name    string
 		stopErr error
-		ctx     context.Context
 		drained bool
 	}{
 		{
-			name:    "stop returned nil inside its deadline",
+			name:    "stop returned nil: the drain completed",
 			stopErr: nil,
-			ctx:     live,
 			drained: true,
 		},
 		{
-			name:    "stop returned early without waiting",
-			stopErr: errors.New("noise: server not started"),
-			ctx:     live,
+			name:    "stop returned ErrShutdownIncomplete: the caller's deadline expired first",
+			stopErr: noiseboot.ErrShutdownIncomplete,
 			drained: false,
 		},
 		{
-			name:    "stop swallowed its own expired deadline",
-			stopErr: nil,
-			ctx:     expired,
+			name:    "stop returned ErrServerNotStarted: nothing was waited for",
+			stopErr: noiseboot.ErrServerNotStarted,
 			drained: false,
 		},
 		{
-			name:    "stop failed and the deadline expired",
-			stopErr: errors.New("noise: server not started"),
-			ctx:     expired,
+			name:    "stop failed for any other reason",
+			stopErr: errors.New("noise: listener close failed"),
 			drained: false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := noiseStopDrained(tc.stopErr, tc.ctx); got != tc.drained {
-				t.Fatalf("noiseStopDrained(%v, deadline expired=%v) = %v, want %v — "+
-					"a wrong answer here either frees protected pages a handshake "+
-					"is still reading, or retains a key that was safe to wipe",
-					tc.stopErr, tc.ctx.Err() != nil, got, tc.drained)
+			if got := noiseStopDrained(tc.stopErr); got != tc.drained {
+				t.Fatalf("noiseStopDrained(%v) = %v, want %v — a wrong answer here "+
+					"either frees protected pages a handshake is still reading, or "+
+					"retains a key that was safe to wipe",
+					tc.stopErr, got, tc.drained)
 			}
 		})
 	}

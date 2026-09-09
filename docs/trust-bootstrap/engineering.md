@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -120,6 +120,24 @@ that makes an `ModeAuto` failure diagnosable.
 - **`DeriveNoiseAddr` appends `DefaultNoisePort` ("8445") when no explicit
   address is given.** See the port conflict below.
 - **Concurrency.** `Fetch` is safe to call concurrently; it shares no state.
+- **`NoiseServer.Stop`'s nil is authoritative.** The re-exported server
+  (go-truststrap v0.4.0-alpha) returns nil from `Stop` only after every
+  handshake worker has exited, `ErrShutdownIncomplete` when the *caller's*
+  context expires first, and `ErrServerNotStarted` before `Start`. Concurrent
+  callers each wait under their own deadline and may see different outcomes,
+  but none receives a nil unbacked by a real drain, and once drained every
+  later `Stop` returns nil stably. A `NoiseServer` is single-use: `Start`
+  succeeds once and every later call returns `ErrServerAlreadyStarted`. The
+  only condition under which material the workers read — the static keys'
+  protected pages — may be destroyed is that nil; xkmsd's `noiseStopDrained`
+  reads nothing else. It used to also require the caller's deadline to be
+  unexpired, which was the only signal under the previous pin (`Stop` then
+  returned nil on its own timeout path); against the current contract that
+  conjunct retained a key that was safe to wipe whenever the drain completed
+  as the deadline expired, and reported a shutdown incomplete that was not
+  (go-xkms#83). `TestNoiseStop_NilIsAuthoritative` holds the contract against
+  the pinned server, with a live worker and concurrent callers, under
+  `-race -count=200`.
 
 **Fail closed:** an unverifiable anchor, an unresolvable TLSA, a Noise key
 mismatch, an SPKI pin mismatch, or a changed TOFU pin all return an error. None
