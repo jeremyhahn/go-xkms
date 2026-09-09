@@ -1,6 +1,6 @@
 # Phone as HSM — User Guide
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
 
 ## What this does
 
@@ -27,6 +27,15 @@ xkey device pair --device "Pixel-8" --timeout 60s
 Pairing is the moment that matters: both devices exchange and verify each
 other's identity, and the phone's hardware attestation is bound into the
 connection from then on. Everything afterwards rests on it.
+
+That is true whichever way you pair. The desktop GUI's **Pair** button runs the
+same attestation as `xkey device pair` and applies the same policy: a phone
+whose hardware attestation cannot be verified is **refused by default**, and
+nothing is written down. If you have decided to accept such a device anyway,
+set `allow_unattestable_devices: true` under `attestation_policy` in
+`devices.yaml` (see [`../device/README.md`](../device/README.md)); the pairing
+then completes with no security level, boot state or device fingerprint on
+record, and the GUI says so. An enterprise policy can lock that choice closed.
 
 `--force` re-pairs over an existing pairing. It throws the old binding away —
 use it when you mean to, not to make an error go away.
@@ -113,6 +122,7 @@ to change in the same release, so it is coordinated work rather than a setting.
 | **attested key changed since pairing** | `device attest-device` found a different hardware key; the existing binding was left untouched | if you deliberately reset the phone, re-pair with `--force`; if not, treat as suspicious |
 | **the peer did not prove possession of the attested key** | the phone could not sign this connection's challenge — an outdated app, or not the handset you paired with | update the phone app; if it is current, investigate |
 | **device answered with an unsupported attestation protocol version** | the phone app predates challenge-response attestation | update xkey-android |
+| **device attestation could not be verified - pairing refused** (GUI) | the phone's attestation chain does not reach a trusted Android hardware root, it did not sign this pairing's challenge, or the desktop has no trust store to judge it with | check the trust store (`xkey trust list`); update xkey-android; only if you accept an unattested device, set `allow_unattestable_devices: true` |
 | "not connected" after an error | the session ended | reconnect; a Noise session cannot resume mid-stream |
 | commands are slow in parallel | the channel is serialised | run them in sequence |
 | attestation rejected | the Android hardware root is missing or misclassified | add it with purpose `android-hardware` |

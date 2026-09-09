@@ -38,6 +38,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
@@ -76,6 +77,13 @@ var (
 	// bound under challenge-response attestation (#129) and the proof could
 	// not be obtained or did not verify. The session is not published.
 	ErrPhoneAttestationRequired = errors.New("phone_service: device did not prove possession of its attested key - refusing to connect")
+
+	// ErrPhonePairAttestationRefused indicates the device's pairing-time
+	// attestation could not be verified and policy does not allow pairing an
+	// unattestable device (#115). Nothing is written down: the pairing record
+	// is what every later connection is judged against, and a record whose
+	// attestation half was never checked is worse than no record at all.
+	ErrPhonePairAttestationRefused = errors.New("phone_service: device attestation could not be verified - pairing refused")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -197,6 +205,11 @@ type phoneConfigDevice struct {
 	BootStateVerified         bool      `yaml:"boot_state_verified,omitempty"`
 	DeviceFingerprint         string    `yaml:"device_fingerprint,omitempty"`
 
+	// DeviceBootHashHex mirrors the CLI record's field. A verified pairing
+	// attestation records it (#115), and carrying it in the mirror means a
+	// GUI save no longer drops the value a CLI attestation wrote.
+	DeviceBootHashHex string `yaml:"device_boot_hash_hex,omitempty"`
+
 	// AttestationProtocolVersion mirrors the CLI record's field (#129). It is
 	// carried here because this struct is a hand-maintained mirror of the same
 	// devices.yaml the CLI writes: a field missing from the mirror is read as
@@ -204,10 +217,10 @@ type phoneConfigDevice struct {
 	// challenge-response", which would silently drop the liveness requirement
 	// for a device the CLI paired under it.
 	//
-	// The GUI does not yet ENFORCE it — that needs the pairing verifier, which
-	// lives in cmd/xkey/cmd and this package cannot import. Tracked as #130;
-	// carrying the value now means the enforcement lands without a config
-	// migration, and means the mirror is not lying about what the record says.
+	// The GUI enforces it on reconnect (proveDeviceLiveness) and establishes it
+	// at pairing (recordVerifiedAttestation), both through the shared decision
+	// in pkg/attestation. #130 (b) is the open question of whether this mirror
+	// and the CLI record should be one type.
 	AttestationProtocolVersion int                   `yaml:"attestation_protocol_version,omitempty"`
 	LastAttestation            *savedAttestationData `yaml:"last_attestation,omitempty"`
 	AttestationPolicy          *attestationPolicy    `yaml:"attestation_policy,omitempty"`
@@ -227,10 +240,60 @@ func (d *phoneConfigDevice) attestationBinding() xkeyAttestation.DeviceBinding {
 	}
 }
 
+// recordVerifiedAttestation applies a VERIFIED pairing attestation to the
+// record. It mirrors the CLI's recordDeviceAttestation field for field, so a
+// GUI pairing persists exactly what a CLI pairing would (#131); the two
+// projections exist only because the two mirrors do (#130 (b)).
+//
+// It is never called with an unverified result. Whether an unattestable device
+// may pair at all is policy; that no unverified claim is ever written down is
+// not, and the caller enforces it by passing nothing here.
+func (d *phoneConfigDevice) recordVerifiedAttestation(result *xkeyAttestation.Result) {
+	d.LastDeviceAttestationTime = result.AttestationTime
+	d.SecurityLevel = result.SecurityLevel
+	d.BootStateVerified = result.BootStateVerified
+	d.DeviceBootHashHex = result.BootHashHex
+	d.DeviceFingerprint = result.DeviceFingerprint
+
+	// The recorded protocol version only ever moves UP. A successful version 2
+	// attestation upgrades a legacy record; nothing here can walk a record
+	// back to the weaker model, because the version is the anti-downgrade
+	// term and a term an attacker could lower is not one (#129).
+	if result.ProtocolVersion > d.AttestationProtocolVersion {
+		d.AttestationProtocolVersion = result.ProtocolVersion
+	}
+}
+
+// devicesAttestationPolicy mirrors the top-level `attestation_policy` block of
+// devices.yaml, the CLI's AttestationPolicy.
+//
+// Only the key this service consults is named. Every other key the CLI
+// writes there rides in Rest, so a GUI save round-trips the block instead of
+// erasing it — which is what a mirror without this field did: writing
+// devices.yaml back with the block missing, so a user's `xkey device pair`
+// settings vanished the first time the GUI paired or unpaired anything.
+type devicesAttestationPolicy struct {
+	// AllowUnattestableDevices is the USER plane of the owner ruling of
+	// 2026-08-23 on #95: whether a pairing whose attestation cannot be
+	// verified completes. The zero value refuses. See
+	// attestation.AllowUnattestablePairing for how it combines with the
+	// enterprise plane.
+	AllowUnattestableDevices bool `yaml:"allow_unattestable_devices"`
+
+	Rest map[string]any `yaml:",inline"`
+}
+
 // phoneConfig mirrors the CLI PhoneConfig YAML structure.
 type phoneConfig struct {
-	Devices       []phoneConfigDevice `yaml:"devices"`
-	DefaultDevice string              `yaml:"default_device"`
+	Devices           []phoneConfigDevice       `yaml:"devices"`
+	DefaultDevice     string                    `yaml:"default_device"`
+	AttestationPolicy *devicesAttestationPolicy `yaml:"attestation_policy,omitempty"`
+}
+
+// allowsUnattestablePairing is the user plane as devices.yaml states it. An
+// absent block is not a permission.
+func (c *phoneConfig) allowsUnattestablePairing() bool {
+	return c != nil && c.AttestationPolicy != nil && c.AttestationPolicy.AllowUnattestableDevices
 }
 
 // phoneConnectionState tracks the live connection state of a phone device.
@@ -457,6 +520,11 @@ func (s *PhoneService) Scan(timeoutSeconds int) ([]DiscoveredDevice, error) {
 }
 
 // Pair initiates pairing with a discovered device at the given BLE address.
+//
+// It owns what is genuinely this surface's: the BLE transport and the
+// connection. Everything from the handshake on, including the attestation
+// gate and what gets written down, is pairOverTransport, so the decision can
+// be exercised against an in-memory phone rather than a radio.
 func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	if address == "" {
 		return nil, ErrPhonePairFailed
@@ -508,7 +576,24 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		s.log.Error("BLE connection failed", "address", address, "error", err)
 		return nil, ErrPhonePairFailed
 	}
+	// Disconnect after pairing, whatever its outcome (reconnects on demand).
+	defer func() { _ = transport.Disconnect() }()
 
+	return s.pairOverTransport(connectCtx, transport, session, localKey, address)
+}
+
+// pairOverTransport runs the pairing protocol on a connected transport:
+// handshake, pairing confirmation, attestation, and only then the record.
+//
+// The transport's lifetime is the caller's: Pair disconnects it when this
+// returns, and a test hands in an in-memory one with nothing to disconnect.
+func (s *PhoneService) pairOverTransport(
+	ctx context.Context,
+	transport phone.Transport,
+	session *phone.NoiseSession,
+	localKey *phone.StaticKey,
+	address string,
+) (*PairedDevice, error) {
 	// Perform Noise XX handshake. The identity exchange runs on every
 	// connection, pairing included: the phone answers an unknown key with
 	// "new device" and both sides fall back to an empty prologue, so pairing
@@ -522,8 +607,7 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		EnvelopeHeaderSize:   0,
 		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
-	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		_ = transport.Disconnect()
+	if err := phone.PerformHandshake(ctx, handshakeCfg); err != nil {
 		s.log.Error("Noise handshake failed", "error", err)
 		return nil, ErrPhonePairFailed
 	}
@@ -537,49 +621,70 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 	})
 	pairingPlaintext, err := phone.EncodeRequest(pairingReq)
 	if err != nil {
-		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	pairingCiphertext, err := session.Encrypt(pairingPlaintext)
 	if err != nil {
-		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
-	respCiphertext, err := transport.SendAndReceive(connectCtx, pairingCiphertext)
+	respCiphertext, err := transport.SendAndReceive(ctx, pairingCiphertext)
 	if err != nil {
-		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	respPlaintext, err := session.Decrypt(respCiphertext)
 	if err != nil {
-		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	pairingResp, err := phone.DecodeResponse(respPlaintext)
 	if err != nil {
-		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	if pairingResp.Error != nil {
-		_ = transport.Disconnect()
 		s.log.Error("phone rejected pairing", "error", pairingResp.Error.Message)
 		return nil, ErrPhonePairFailed
 	}
 	pairingResult, err := phone.DecodeResult[phone.PairingConfirmResult](pairingResp)
 	if err != nil {
-		_ = transport.Disconnect()
 		return nil, ErrPhonePairFailed
 	}
 	if !pairingResult.Confirmed {
-		_ = transport.Disconnect()
 		return nil, phone.ErrPairingRejected
 	}
 
 	phoneName := pairingResult.DeviceName
 	remotePublicKey := session.RemoteStaticPublicKey()
 
-	// Disconnect after pairing (reconnects on demand).
-	_ = transport.Disconnect()
+	// The record is loaded BEFORE the attestation because the user plane of
+	// the pairing policy lives in it. A file that cannot be read yields an
+	// empty config, which is the same answer as no policy: refuse.
+	cfg, err := s.loadConfig()
+	if err != nil {
+		cfg = &phoneConfig{Devices: []phoneConfigDevice{}}
+	}
+
+	// Attest the device before anything is written down. Whether an
+	// UNATTESTABLE device may still be paired is policy (see
+	// allowUnattestablePairing); what is not policy is that no unverified
+	// claim is ever written down. The pairing record is what every later
+	// connection is judged against, so a record whose attestation half was
+	// never checked is worse than no record at all (#95, #115).
+	allowUnattestable := s.allowUnattestablePairing(cfg)
+	attestResult, attestErr := s.attestForPairing(ctx, transport, session)
+	if attestErr != nil {
+		if !allowUnattestable {
+			s.log.Error("pairing refused: device attestation could not be verified",
+				"device", phoneName, "address", address, "error", attestErr)
+			s.emitAttestationEvent(phoneName, false, "pairing refused: "+attestErr.Error())
+			return nil, errors.Join(ErrPhonePairAttestationRefused, attestErr)
+		}
+		s.log.Warn("pairing continued without a verified attestation",
+			"device", phoneName,
+			"reason", attestErr,
+			"policy", "allow_unattestable_devices")
+		s.emitAttestationEvent(phoneName, false,
+			"paired WITHOUT a verified attestation: policy allows unattestable devices, "+
+				"so the record carries no security level, boot state or device fingerprint")
+	}
 
 	// Save to shared config file.
 	now := time.Now().UTC()
@@ -590,10 +695,9 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(localKey.Private),
 		PairedAt:             now,
 	}
-
-	cfg, err := s.loadConfig()
-	if err != nil {
-		cfg = &phoneConfig{Devices: []phoneConfigDevice{}}
+	if attestResult != nil {
+		cfgDevice.recordVerifiedAttestation(attestResult)
+		s.emitAttestationEvent(phoneName, true, "pairing attestation verified: "+attestResult.SecurityLevel)
 	}
 
 	// Replace existing device with same address, or append.
@@ -617,13 +721,76 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		return nil, ErrPhonePairFailed
 	}
 
-	s.log.Info("pairing complete", "device", phoneName, "address", address)
+	s.log.Info("pairing complete", "device", phoneName, "address", address,
+		"attested", attestResult != nil)
 
 	return &PairedDevice{
 		Name:     phoneName,
 		Address:  address,
 		PairedAt: now,
+		LastSeen: cfgDevice.LastDeviceAttestationTime,
 	}, nil
+}
+
+// attestForPairing attests the device during pairing and returns what was
+// VERIFIED about it.
+//
+// It fails closed: every step — the trust store being configured at all,
+// loading the trust material, the RPC round trip, chain verification, the
+// live challenge signature — returns an error, and no attestation claim is
+// persisted unless it came out of evidence that verified.
+//
+// The decision itself is attestation.AttestOverSession, shared with the CLI's
+// `device pair`, `device attest-device` and the reconnect path. What stays
+// here is what is genuinely this surface's: which trust store to open.
+func (s *PhoneService) attestForPairing(
+	ctx context.Context,
+	transport phone.Transport,
+	session *phone.NoiseSession,
+) (*xkeyAttestation.Result, error) {
+	if s.trustStore == nil {
+		// No trust store means nothing to judge the evidence against, so the
+		// evidence is not even requested. Absent authorization material must
+		// never be less restrictive than the policy it implements.
+		s.log.Error("pairing attestation impossible: no trust store is configured")
+		return nil, ErrPhoneAttestFailed
+	}
+
+	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	if err != nil {
+		s.log.Error("pairing attestation impossible: trust material unavailable", "error", err)
+		return nil, err
+	}
+
+	verified, err := xkeyAttestation.AttestOverSession(
+		ctx, transport, session, trust, phone.AttestPurposePair, s.log)
+	if err != nil {
+		return nil, err
+	}
+
+	s.log.Info("pairing attestation verified",
+		"trust_anchor", verified.TrustAnchor,
+		"security_level", verified.Result.SecurityLevel,
+		"boot_state", verified.BootState)
+	return verified.Result, nil
+}
+
+// allowUnattestablePairing projects this surface's two policy planes onto the
+// shared decision, attestation.AllowUnattestablePairing, exactly as the CLI's
+// `device pair` does. The user plane is the devices.yaml this service just
+// read; the enterprise plane is xkey.yaml as config.Load reads it.
+//
+// A unified config that fails to LOAD is not the same as one that is absent.
+// Absent means "no enterprise plane, the user decides". A file that exists and
+// cannot be read may well be one that locks the setting closed, and the only
+// answer that cannot be wrong in the direction an attacker wants is to refuse.
+func (s *PhoneService) allowUnattestablePairing(cfg *phoneConfig) bool {
+	unified, err := config.Load()
+	if err != nil {
+		s.log.Error("pairing policy: unified config unreadable; refusing unattestable devices", "error", err)
+		return false
+	}
+	return xkeyAttestation.AllowUnattestablePairing(cfg.allowsUnattestablePairing(), &unified.Policy)
 }
 
 // Unpair removes pairing information for the named device.

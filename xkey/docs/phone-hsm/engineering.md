@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-23
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -182,7 +182,9 @@ defect and the shape of the fix is what the current design is for.
    reads as never attested because it has not been, the CLI says so in as many
    words, and the first `device attest-device` is what fills them in.
 
-   The setting resolves across two planes (`allowUnattestablePairing`):
+   The setting resolves across two planes, in ONE function both pairing
+   surfaces call — `attestation.AllowUnattestablePairing` (see *Two pairing
+   surfaces, one gate* below):
 
    | Plane | Where | Key |
    |---|---|---|
@@ -273,6 +275,29 @@ defect and the shape of the fix is what the current design is for.
 
    A device that fails any of those is **unattestable**, which is a policy
    question with the policy answer above — not a silent admission.
+
+   **Two pairing surfaces, one gate (#115, #131).** The desktop GUI pairs
+   phones too, through `PhoneService.Pair` in `xkey/pkg/gui/services`, and
+   until #115 that path ran the handshake, sent `pairing.confirm` and wrote
+   the record without requesting an attestation at all. It was not the
+   pre-#95 defect repeated — it wrote no unverified claim, because it obtained
+   none — but the **gate** was missing: an unattestable device paired from the
+   GUI without anything noticing, and its record carried no fingerprint, so
+   the reconnect fingerprint check was inert for it. `Pair` now splits into
+   the BLE half and `pairOverTransport`, and the latter runs, in order:
+   handshake, `pairing.confirm`, `attestation.AttestOverSession` with purpose
+   `pair` against the GUI's trust store, the policy, and only then the record.
+   The decision, the record projection (`recordVerifiedAttestation`, field for
+   field the CLI's `recordDeviceAttestation`) and the policy resolution are
+   the CLI's; what is the GUI's is which trust store to open and what the
+   frontend is told (an `EventAttestationResult`). A refusal is
+   `ErrPhonePairAttestationRefused`, joined with the cause, and writes
+   nothing. No trust store configured, or an `xkey.yaml` that exists but
+   cannot be read, both **refuse** rather than admit — absent authorization
+   material must never be less restrictive than the policy it implements.
+   Both surfaces are tested against the same in-memory phone,
+   `attesttest.Phone`: a real Noise XX responder with a persistent attested
+   key that derives its own channel binding and lays out its own transcript.
 
    `SecurityLevel`, boot state and the boot hash now come from the parsed
    extension of the **verified** leaf. They used to be copied from the RPC

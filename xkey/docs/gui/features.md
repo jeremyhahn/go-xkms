@@ -172,7 +172,12 @@ Each status card shows:
 3. **Select**: User selects device from list
 4. **Confirm**: Display fingerprint comparison
 5. **Approve**: User confirms on both devices
-6. **Complete**: Show success, run initial attestation
+6. **Attest**: The phone's hardware attestation is requested and verified
+   before anything is saved — the same decision as `xkey device pair`. A device
+   that cannot be verified is refused by default; `devices.yaml`'s
+   `attestation_policy.allow_unattestable_devices` (lockable by enterprise
+   policy) lets it pair with no attestation claim on record
+7. **Complete**: Show success with the verified security level
 
 ### 3.3 Device Detail View
 
