@@ -382,6 +382,15 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (*tr
 		return nil, err
 	}
 
+	// An in-process RSA key signs through crypto/rsa, which under
+	// GODEBUG=fips140=only panics on a PKCS#1 v1.5 signature with no named
+	// digest rather than returning an error. Refuse first with the typed
+	// error. A PKCS#11 or TPM signer is not covered: it builds its own
+	// DigestInfo and the check answers nil for it (go-xkms#486).
+	if err := types.CheckRawPKCS1v15(signer, h); err != nil {
+		return nil, wrapOperationError(ErrSigningFailed, "", err)
+	}
+
 	var opts crypto.SignerOpts = h
 	if isPSS {
 		opts = &rsa.PSSOptions{Hash: h, SaltLength: req.SaltLength}
@@ -544,6 +553,13 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 
 	switch pub := pubKey.(type) {
 	case *rsa.PublicKey:
+		// rsa.VerifyPKCS1v15 has the same fips140=only panic as the signing
+		// side, and verification always runs in this process. The regime
+		// withholding the operation is an error, not a false verdict: a
+		// Valid=false answer would claim the signature was checked.
+		if err := types.CheckRawPKCS1v15(pub, h); err != nil {
+			return nil, &ErrOperationWrap{Sentinel: ErrVerificationFailed, Err: err}
+		}
 		var verifyErr error
 		if isPSS {
 			verifyErr = rsa.VerifyPSS(pub, h, digest, req.Signature, &rsa.PSSOptions{Hash: h, SaltLength: req.SaltLength})

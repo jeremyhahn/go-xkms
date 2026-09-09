@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -95,6 +95,16 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   — an asymmetric `KeyAlgorithm` alongside a `SymmetricAlgorithm`, say — is
   refused by the software backend rather than resolved by precedence. See
   *Contradictory algorithm families are refused* below.
+- **Hash `NONE` on an in-process RSA key is refused under
+  `GODEBUG=fips140=only`, never crashed on.** `Sign` and `Verify` accept the
+  hash name `NONE` to sign or check caller-built bytes verbatim (PKCS#11's raw
+  `CKM_RSA_PKCS`). In the only mode `crypto/rsa` *panics* on `crypto.Hash(0)`
+  instead of returning an error, so the service checks
+  `types.CheckRawPKCS1v15` first and returns `ErrSigningFailed` /
+  `ErrVerificationFailed` wrapping `types.ErrRawPKCS1v15Enforced`. A PKCS#11
+  or TPM signer is not governed by it: it builds its own `DigestInfo` and
+  never reaches `crypto/rsa`. Under `fips140=on` the raw form works and is
+  left alone (#486; see [FIPS: hash selection](../fips/README.md#hash-selection)).
 
 ## Import validates material against its declared type
 

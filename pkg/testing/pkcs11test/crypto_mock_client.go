@@ -42,6 +42,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Compile-time check: CryptoMockClient satisfies module.PKCS11Transport.
@@ -262,6 +263,12 @@ func (c *CryptoMockClient) Sign(ctx context.Context, req *transport.SignRequest)
 	if isPSS && hashAlg == crypto.Hash(0) {
 		return nil, ErrPSSRequiresHash
 	}
+	// Under GODEBUG=fips140=only crypto/rsa panics on a PKCS#1 v1.5 signature
+	// with no named digest instead of returning an error; the real service
+	// makes the same check before the same call (go-xkms#486).
+	if err := types.CheckRawPKCS1v15(key, hashAlg); err != nil {
+		return nil, err
+	}
 
 	var sigOpts crypto.SignerOpts
 	switch key.(type) {
@@ -317,6 +324,10 @@ func (c *CryptoMockClient) Verify(ctx context.Context, req *transport.VerifyRequ
 	}
 	if isPSS && hashAlg == crypto.Hash(0) {
 		return nil, ErrPSSRequiresHash
+	}
+	// rsa.VerifyPKCS1v15 has the same fips140=only panic as the signing side.
+	if err := types.CheckRawPKCS1v15(key, hashAlg); err != nil {
+		return nil, err
 	}
 
 	var valid bool

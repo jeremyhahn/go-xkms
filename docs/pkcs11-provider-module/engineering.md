@@ -160,6 +160,16 @@ not-supported answer, so the behaviour is deliberate. Compliance detail:
 - **Integration** — `test/integration/pkcs11`, driving real consumers.
 - **Compatibility** — the two-call convention and mechanism-parameter
   marshalling are the fragile CGO seams and have dedicated suites.
+- **Conformance under `GODEBUG=fips140=only`** — `TestPKCS11V3Suite` runs the
+  shared `pkg/testing/pkcs11test` suite against a module whose backend is the
+  in-process `CryptoMockClient`. That mock answers a raw `CKM_RSA_PKCS`
+  `C_Sign` / `C_SignRecover` (hash `NONE`) the way the service does: with
+  `types.ErrRawPKCS1v15Enforced`, so the verb fails as `CKR_FUNCTION_FAILED`
+  instead of dying in `crypto/rsa`, which panics on `crypto.Hash(0)` in the
+  only mode and used to abort the whole test binary (#486). Expectations that a
+  non-approved form succeeds — the `SignRecover` happy path among them — are
+  therefore ordinary failures in that mode, not crashes; the mock's own
+  `crypto_mock_client_fips_test.go` re-execs under both modes to hold that.
 
 ## Observability
 

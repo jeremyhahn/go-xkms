@@ -169,6 +169,7 @@ The FIPS strategy is consumed by several subsystems:
 | PlatformStore | Password hashing for stored credentials |
 | User management | Account password hashing |
 | LUKS passphrase derivation | KDF for disk encryption keys |
+| Raw PKCS#1 v1.5 signatures | `Sign` / `Verify` with hash `NONE` on an in-process RSA key refuse with `types.ErrRawPKCS1v15Enforced` under `GODEBUG=fips140=only` (see [Hash selection](#hash-selection)) |
 | AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../configuration/aead-auto-selection.md)) |
 | Key-ID validation | Filters `pkg/validation` and `pkg/xkms` algorithm allowlists to the approved set |
 | PKCS#11 authenticated wrapping | Refuses `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` with `CKR_MECHANISM_INVALID` when the runtime withholds arbitrary-IV GCM (see [AEAD construction](#aead-construction)) |
@@ -203,6 +204,20 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   would fail open precisely for FIPS artifacts. `crypto/sha1` is no longer
   imported by the package. Consumers comparing against
   `openssl x509 -fingerprint` must pass `-sha256`.
+- **Raw PKCS#1 v1.5 signatures (hash `NONE`)** -- `Sign` and `Verify` accept
+  the hash name `NONE` to sign or check caller-built bytes verbatim, which is
+  what PKCS#11's `CKM_RSA_PKCS` sends. Under `GODEBUG=fips140=only`,
+  `crypto/rsa` admits a PKCS#1 v1.5 signature only under a digest it can
+  classify as approved, and it *panics* on `crypto.Hash(0)` rather than
+  returning an error. `types.CheckRawPKCS1v15` refuses first with
+  `types.ErrRawPKCS1v15Enforced`; `pkg/xkms` wraps it in `ErrSigningFailed` /
+  `ErrVerificationFailed`, and the `pkcs11test` mock backend returns it
+  directly. The gate is `crypto/fips140.Enforced` -- the very variable
+  `crypto/rsa` reads at that site, so it cannot disagree with the runtime --
+  not `fips140.Enabled`, which is also true under `fips140=on`, where the raw
+  form works and is left alone. Only in-process `*rsa.PrivateKey` /
+  `*rsa.PublicKey` values are governed: a PKCS#11 or TPM signer builds its own
+  `DigestInfo` and never reaches `crypto/rsa` (#486).
 - **Key derivation** -- the approved set is per construction. The ANSI X9.63 /
   SP 800-56A concatenation KDFs accept SHA-1, SHA-224 and SHA3-224 in a fully
   compliant deployment, because SP 800-56A Rev. 3 approves them for KDF use and
