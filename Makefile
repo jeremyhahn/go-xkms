@@ -129,6 +129,20 @@ else
 endif
 
 # Go parameters
+#
+# The module declares the Go it needs in go.mod's `go` directive, and the
+# fleet pins GOTOOLCHAIN=local on hosts, under which a host go older than that
+# directive refuses every target ("go: go.mod requires go >= 1.26.7 (running
+# go 1.26.4; GOTOOLCHAIN=local)") while the Docker builder, which runs with
+# GOTOOLCHAIN=auto, quietly downloads the right one. Select the declared
+# toolchain explicitly for every recipe: the host go then acts only as the
+# bootstrapper and fetches that exact version once, so `make build` gives the
+# same toolchain on every host and in CI, and a host upgrade is not a
+# prerequisite for building. Exported, so it reaches golangci-lint and every
+# nested go invocation too. Override with `make GOTOOLCHAIN=local ...` if a
+# host deliberately wants its own go.
+GO_MOD_VERSION := $(shell awk '/^go [0-9]/{print $$2; exit}' go.mod)
+export GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
 GO := go
 GOBUILD := $(GO) build -buildvcs=false $(TAG_FLAGS) -ldflags "$(LDFLAGS)"
 GOCLEAN := $(GO) clean
