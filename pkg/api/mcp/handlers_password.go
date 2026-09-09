@@ -165,6 +165,10 @@ var (
 	// ErrPasswordRequired is returned when a password value is required
 	// but not provided.
 	ErrPasswordRequired = errors.New("password is required")
+	// ErrCopyKeyIncomplete is returned when the service reports a copy as
+	// not successful without returning an error, which its contract does
+	// not do; the handler refuses to render that as success.
+	ErrCopyKeyIncomplete = errors.New("mcp: copy key did not complete")
 )
 
 // resolvePasswordStore returns the appropriate store for the request context.

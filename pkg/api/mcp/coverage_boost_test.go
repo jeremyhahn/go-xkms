@@ -122,7 +122,7 @@ func TestHandleCopyKey_NonExistentSourceBackend(t *testing.T) {
 
 	_, err = server.handleCopyKey(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "source backend not found")
+	assertCopyKeyBackendError(t, err, "source")
 }
 
 // TestHandleCopyKey_NonExistentDestBackend verifies that handleCopyKey returns
@@ -150,5 +150,5 @@ func TestHandleCopyKey_NonExistentDestBackend(t *testing.T) {
 
 	_, err = server.handleCopyKey(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "destination backend not found")
+	assertCopyKeyBackendError(t, err, "destination")
 }

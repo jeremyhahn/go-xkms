@@ -348,7 +348,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 
 		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "source backend not found")
+		assertCopyKeyBackendError(t, err, "source")
 	})
 
 	t.Run("fails with invalid dest backend type", func(t *testing.T) {
@@ -370,7 +370,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 
 		_, err := server.handleCopyKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "destination backend not found")
+		assertCopyKeyBackendError(t, err, "destination")
 	})
 }
 

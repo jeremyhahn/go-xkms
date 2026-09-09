@@ -24,7 +24,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -4204,45 +4206,94 @@ func TestHandler_ListKeys_Empty(t *testing.T) {
 	})
 }
 
-// TestHandler_CopyKey_ErrorFlow tests copy key error handling
-func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	// Generate a key (non-exportable by default)
+// copyKeyThroughHandler generates a software key with the given
+// exportability through the MCP generate handler and then asks the copy
+// handler to copy it, returning the copy's error.
+func copyKeyThroughHandler(t *testing.T, server *Server, keyID string, exportable bool) error {
+	t.Helper()
+	// A 32-byte AES key fits in one RSA-OAEP block, so the export's wrap
+	// step cannot fail for a reason unrelated to exportability. (An RSA
+	// private key needs the hybrid RSA+AES algorithm; under it the export
+	// passes the same way and fails at the same import step as below.)
 	genParams := GenerateKeyParams{
-		KeyID:      "test-copy-source",
+		KeyID:      keyID,
 		Backend:    "software",
-		KeyType:    "rsa",
-		KeySize:    2048,
-		Exportable: false,
+		KeyType:    "symmetric",
+		Algorithm:  "aes256-gcm",
+		Exportable: exportable,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
-	t.Run("fails to copy non-exportable key", func(t *testing.T) {
-		params := CopyKeyParams{
-			SourceBackend: "software",
-			SourceKeyID:   "test-copy-source",
-			DestBackend:   "software",
-			DestKeyID:     "test-copy-dest",
-			Algorithm:     "RSAES_OAEP_SHA_256",
-		}
-		paramsJSON, _ := json.Marshal(params)
+	params := CopyKeyParams{
+		SourceBackend: "software",
+		SourceKeyID:   keyID,
+		DestBackend:   "software",
+		DestKeyID:     keyID + "-copy",
+		Algorithm:     string(backend.WrappingAlgorithmRSAES_OAEP_SHA_256),
+	}
+	paramsJSON, _ := json.Marshal(params)
+	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.copyKey", Params: paramsJSON, ID: 1}
+	_, err = server.handleCopyKey(context.Background(), req)
+	return err
+}
 
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "xkms.copyKey",
-			Params:  paramsJSON,
-			ID:      1,
-		}
+// TestHandler_CopyKey_RefusesANonExportableKey: the source key's STORED
+// exportability decides, and a key generated non-exportable is refused at
+// the export step with the backend's typed error.
+func TestHandler_CopyKey_RefusesANonExportableKey(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
 
-		_, err := server.handleCopyKey(context.Background(), req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to export key")
-	})
+	err := copyKeyThroughHandler(t, server, "test-copy-nonexportable", false)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, backend.ErrKeyNotExportable,
+		"a non-exportable key must be refused at the export step, got %v", err)
+}
+
+// TestHandler_CopyKey_ExportsAnExportableKey is the half that was vacuous
+// before #155: the handler built the source attributes by hand with
+// Exportable left false, so EVERY copy was refused at the export step and
+// the refusal test above passed whether or not the key was exportable. The
+// handler now delegates to the service, which resolves the stored
+// attributes, so an exportable key gets past the export step.
+//
+// The copy is not asserted to complete: the software backend's ExportKey
+// wraps under a wrapping key it mints itself while the service replaces the
+// import token with the destination's, so the import step fails on the
+// unwrap. That is #154's remaining half, a contract question for the owner,
+// and it is pinned here by type so that fixing it changes exactly one line.
+func TestHandler_CopyKey_ExportsAnExportableKey(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	err := copyKeyThroughHandler(t, server, "test-copy-exportable", true)
+	assert.NotErrorIs(t, err, backend.ErrKeyNotExportable,
+		"an exportable key must not be refused at the export step")
+	if err != nil {
+		var opErr *xkms.ErrKeyOperation
+		require.ErrorAs(t, err, &opErr, "a residual failure must be a typed key-operation error, got %v", err)
+		assert.Equal(t, "import key", opErr.Operation,
+			"the only step allowed to fail for an exportable key is the import (#154); got %v", err)
+	}
+}
+
+// CopyKeyParams deliberately carries no exportability field: a request
+// must not be able to assert that a key may leave the backend.
+func TestCopyKeyParams_CannotAssertExportability(t *testing.T) {
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(`{"source_backend":"software","source_key_id":"k","dest_backend":"software","dest_key_id":"c","algorithm":"RSAES_OAEP_SHA_256","exportable":true}`), &raw))
+	var params CopyKeyParams
+	require.NoError(t, json.Unmarshal([]byte(`{"exportable":true}`), &params))
+	// Reflect over the struct rather than trusting the decode: an added field
+	// would decode "exportable" and this test must notice.
+	typ := reflect.TypeOf(params)
+	for i := 0; i < typ.NumField(); i++ {
+		assert.NotContains(t, typ.Field(i).Tag.Get("json"), "exportable",
+			"CopyKeyParams must not carry an exportability field")
+	}
 }
 
 // TestHandler_ExportKey_NonExportableKey tests export error for non-exportable key
@@ -5396,7 +5447,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "source backend not found")
+		assertCopyKeyBackendError(t, err, "source")
 	})
 
 	t.Run("invalid dest backend", func(t *testing.T) {
@@ -5418,7 +5469,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		_, err := server.handleCopyKey(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "destination backend not found")
+		assertCopyKeyBackendError(t, err, "destination")
 	})
 }
 
@@ -5754,4 +5805,16 @@ func TestHandler_ListCerts_Success(t *testing.T) {
 		assert.Contains(t, listResult.KeyIDs, "list-test-cert")
 		assert.GreaterOrEqual(t, len(listResult.KeyIDs), 1)
 	})
+}
+
+// assertCopyKeyBackendError asserts that a copy_key failure was the service
+// refusing to resolve the named backend (source or destination), by type
+// rather than by message text: the handler delegates to
+// XKMSService.CopyKey, whose backend errors are *xkms.ErrCopyKeyBackend.
+func assertCopyKeyBackendError(t *testing.T, err error, role string) {
+	t.Helper()
+	require.Error(t, err)
+	var backendErr *xkms.ErrCopyKeyBackend
+	require.ErrorAs(t, err, &backendErr, "expected a copy-key backend error, got %v", err)
+	assert.Equal(t, role, backendErr.Role)
 }

@@ -150,7 +150,7 @@ func TestHandlers_CopyKey_MissingFields(t *testing.T) {
 		req := &JSONRPCRequest{JSONRPC: "2.0", Params: paramsJSON, ID: 1}
 		_, err := server.handleCopyKey(ctx, req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "source backend not found")
+		assertCopyKeyBackendError(t, err, "source")
 	})
 }
 

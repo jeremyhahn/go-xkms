@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -75,6 +75,12 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
 - **`sensitive` is terminal.** A key created `--sensitive` can never be
   exported, by any path, for its whole lifetime. `exportable` is likewise fixed
   at creation.
+- **What a key is decides whether it may leave, never what a request claims.**
+  `CopyKey` resolves the source key's stored attributes from the backend's
+  own listing and passes those to the export; no transport's copy request
+  carries an exportability field, so a caller cannot assert one. The MCP
+  handler used to build the source attributes by hand, which left the flag
+  false and refused every copy (#155).
 - **Wrap/unwrap by ID never materialises plaintext outside the service.**
   `WrapKeyByID` reads the KEK and the target inside the process and returns
   only ciphertext.

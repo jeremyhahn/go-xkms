@@ -1527,67 +1527,42 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 		return nil, &errs.Message{Msg: "algorithm is required"}
 	}
 
-	// Get source and destination backends
-	sourceKS, err := s.xkmsService.LookupBackend(params.SourceBackend)
+	// The copy is the service's, not this handler's. It resolves the source
+	// key's stored attributes -- exportability included -- from the backend's
+	// own listing, so what the key IS decides whether it may leave, never what
+	// a request claims about it. This handler used to build the source
+	// attributes by hand with CN and store type only, which left Exportable
+	// at its zero value and refused every copy at the export step (#155), and
+	// a request field for it would have let a caller assert exportability of
+	// a key that has none.
+	// Tenant scoping rides on the request like every other delegating
+	// handler here: the service resolves both backends through
+	// resolveTenantBackend with this value, so a caller in one tenant cannot
+	// name a key ID that resolves in another tenant's store.
+	resp, err := s.xkmsService.CopyKey(ctx, &transport.CopyKeyRequest{
+		SourceBackend: params.SourceBackend,
+		SourceKeyID:   params.SourceKeyID,
+		DestBackend:   params.DestBackend,
+		DestKeyID:     params.DestKeyID,
+		Algorithm:     params.Algorithm,
+		KeyType:       params.KeyType,
+		KeySize:       params.KeySize,
+		Curve:         params.Curve,
+		TenantID:      callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "source backend not found", Err: err}
+		return nil, &errs.Wrapped{Msg: "failed to copy key", Err: err}
 	}
-	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
-	if !ok {
-		return nil, &errs.Message{Msg: "source backend does not support import/export operations"}
-	}
-
-	destKS, err := s.xkmsService.LookupBackend(params.DestBackend)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "destination backend not found", Err: err}
-	}
-	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
-	if !ok {
-		return nil, &errs.Message{Msg: "destination backend does not support import/export operations"}
-	}
-
-	// Build source key attributes
-	sourceAttrs := &types.KeyAttributes{
-		CN: params.SourceKeyID,
-	}
-	if params.SourceBackend != "" {
-		storeType := types.ParseStoreType(params.SourceBackend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid source backend: %s", params.SourceBackend)}
-		}
-		sourceAttrs.StoreType = storeType
-	}
-
-	// Build destination key attributes
-	destAttrs := &types.KeyAttributes{
-		CN: params.DestKeyID,
-	}
-	if params.DestBackend != "" {
-		storeType := types.ParseStoreType(params.DestBackend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid destination backend: %s", params.DestBackend)}
-		}
-		destAttrs.StoreType = storeType
-	}
-
-	// Parse wrapping algorithm
-	algorithm := backend.WrappingAlgorithm(params.Algorithm)
-
-	// Export from source backend
-	wrapped, err := sourceBackend.ExportKey(ctx, sourceAttrs, algorithm)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to export key", Err: err}
-	}
-
-	// Import to destination backend
-	if err := destBackend.ImportKey(ctx, destAttrs, wrapped); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to import key", Err: err}
+	if !resp.Success {
+		// The service reports failure through its error; a nil error with
+		// Success false is a contract violation and must not read as success.
+		return nil, ErrCopyKeyIncomplete
 	}
 
 	return CopyKeyResult{
 		Success: true,
 		Message: fmt.Sprintf("Key copied from %s/%s to %s/%s successfully",
-			params.SourceBackend, params.SourceKeyID, params.DestBackend, params.DestKeyID),
+			params.SourceBackend, params.SourceKeyID, params.DestBackend, resp.KeyID),
 	}, nil
 }
 
