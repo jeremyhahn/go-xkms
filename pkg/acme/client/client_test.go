@@ -5129,7 +5129,7 @@ func TestCrossSign_ValidationErrors(t *testing.T) {
 	logger := slog.Default()
 	client := &Client{
 		logger: logger,
-		client: &acme.Client{},
+		client: &acme.Client{DirectoryURL: unreachableDirectoryURL},
 	}
 	ctx := context.Background()
 
@@ -5180,7 +5180,7 @@ func TestCrossSign_CSRMismatch(t *testing.T) {
 	logger := slog.Default()
 	client := &Client{
 		logger: logger,
-		client: &acme.Client{},
+		client: &acme.Client{DirectoryURL: unreachableDirectoryURL},
 	}
 	ctx := context.Background()
 
@@ -5241,7 +5241,7 @@ func TestCrossSignWithChallenge_ValidationErrors(t *testing.T) {
 	logger := slog.Default()
 	client := &Client{
 		logger: logger,
-		client: &acme.Client{},
+		client: &acme.Client{DirectoryURL: unreachableDirectoryURL},
 	}
 	ctx := context.Background()
 
@@ -5313,7 +5313,7 @@ func TestCrossSignWithChallenge_CSRMismatch(t *testing.T) {
 	logger := slog.Default()
 	client := &Client{
 		logger: logger,
-		client: &acme.Client{},
+		client: &acme.Client{DirectoryURL: unreachableDirectoryURL},
 	}
 	ctx := context.Background()
 
@@ -5382,7 +5382,7 @@ func TestRequestCertificate_ErrorPaths(t *testing.T) {
 
 	client := &Client{
 		logger:             logger,
-		client:             &acme.Client{},
+		client:             &acme.Client{DirectoryURL: unreachableDirectoryURL},
 		storage:            mockStorage,
 		certificateStorage: mockCertStorage,
 		orderStorage:       mockOrderStorage,
@@ -6655,7 +6655,7 @@ func TestCheckRenewCerts_RenewalFails(t *testing.T) {
 		accountSigner: privateKey,
 		config:        DefaultConfig(),
 		logger:        logger,
-		client:        &acme.Client{Key: privateKey},
+		client:        &acme.Client{Key: privateKey, DirectoryURL: unreachableDirectoryURL},
 	}
 
 	config := &RenewalConfig{
@@ -6716,7 +6716,7 @@ func TestCheckRenewCerts_NotifyOnSuccess(t *testing.T) {
 		accountSigner: privateKey,
 		config:        DefaultConfig(),
 		logger:        logger,
-		client:        &acme.Client{Key: privateKey},
+		client:        &acme.Client{Key: privateKey, DirectoryURL: unreachableDirectoryURL},
 	}
 
 	config := &RenewalConfig{
@@ -9412,7 +9412,8 @@ func TestRequestCertificate_NilCSR_CoverageGaps(t *testing.T) {
 		logger:        logger,
 		config:        DefaultConfig(),
 		client: &acme.Client{
-			Key: key,
+			Key:          key,
+			DirectoryURL: unreachableDirectoryURL,
 		},
 	}
 
@@ -9874,7 +9875,8 @@ func TestCertificateRequest_EmptyAuthzValue(t *testing.T) {
 		logger:        logger,
 		config:        DefaultConfig(),
 		client: &acme.Client{
-			Key: key,
+			Key:          key,
+			DirectoryURL: unreachableDirectoryURL,
 		},
 	}
 
@@ -9902,7 +9904,8 @@ func TestCertificateRequest_InvalidAuthzType(t *testing.T) {
 		logger:        logger,
 		config:        DefaultConfig(),
 		client: &acme.Client{
-			Key: key,
+			Key:          key,
+			DirectoryURL: unreachableDirectoryURL,
 		},
 	}
 
@@ -9950,7 +9953,8 @@ func TestCertificateRequest_EmptyChallengeType(t *testing.T) {
 		logger:        logger,
 		config:        DefaultConfig(),
 		client: &acme.Client{
-			Key: key,
+			Key:          key,
+			DirectoryURL: unreachableDirectoryURL,
 		},
 	}
 

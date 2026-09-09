@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## Exported surface
 
@@ -151,6 +151,13 @@ storage. Changing the storage layout requires a `pkg/migration` step.
   (`account_test.go`, `authorization_test.go`, `challenge_test.go`,
   `certificate_test.go`, `directory_test.go`, `caa_test.go`,
   `rate_limiter_test.go`, `circuit_breaker_test.go`).
+- **Hermetic** — no unit test in `pkg/acme/client` may reach the public
+  internet. `golang.org/x/crypto/acme` substitutes Let's Encrypt production
+  for an empty `DirectoryURL`, so every `acme.Client` literal in the tests
+  sets it: to the test's `httptest.Server`, or to
+  `unreachableDirectoryURL` (loopback port 1, refused immediately) when the
+  test expects to fail before any ACME request. `TestACMEClientLiteralsAreHermetic`
+  scans the test sources and fails the suite on a literal that omits it (#152).
 - **RFC conformance** — `test/integration/rfc8555`.
 - **Integration** — `test/integration/acme-server`, `acme-client`,
   `acme-admin`, `acme-multiprotocol`, `acme-tpm`, `acmeclient`, `acmeserver`,
