@@ -38,7 +38,7 @@ var (
 )
 
 // PKCS11StateClient is the narrow slice of the transport the remote storage
-// backend needs: the five PKCS#11-state RPCs. transport.Client — and each
+// backend needs: the seven PKCS#11-state RPCs. transport.Client — and each
 // concrete network transport (gRPC, Unix, and REST/QUIC once they implement
 // these) — satisfies it structurally, exactly as transport.Client already
 // satisfies PKCS11Transport. Defining it here rather than widening
@@ -48,6 +48,7 @@ type PKCS11StateClient interface {
 	PKCS11StatePut(ctx context.Context, req *transport.PKCS11StatePutRequest) (*transport.PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, req *transport.PKCS11StatePutIfAbsentRequest) (*transport.PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error)
+	PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error)
 	PKCS11StateGet(ctx context.Context, req *transport.PKCS11StateGetRequest) (*transport.PKCS11StateGetResponse, error)
 	PKCS11StateDelete(ctx context.Context, req *transport.PKCS11StateDeleteRequest) (*transport.PKCS11StateDeleteResponse, error)
 	PKCS11StateList(ctx context.Context, req *transport.PKCS11StateListRequest) (*transport.PKCS11StateListResponse, error)
@@ -81,6 +82,13 @@ func newRemoteBackend(client PKCS11StateClient, tenantID, token string) (storage
 // transaction), so it satisfies storage.CompareAndSwapper in addition to
 // storage.Backend. The lockout-counter update path type-asserts for this.
 var _ storage.CompareAndSwapper = (*remoteBackend)(nil)
+
+// remoteBackend also provides the guarded release, storage.CompareAndDeleter,
+// through the PKCS11StateCAD RPC. The guard is evaluated by the server where
+// writes serialise — never emulated locally, because the racing writers of a
+// shared remote token are separate processes on separate hosts and a local
+// lock would guard nothing.
+var _ storage.CompareAndDeleter = (*remoteBackend)(nil)
 
 func (b *remoteBackend) Get(ctx context.Context, key string) ([]byte, error) {
 	resp, err := b.client.PKCS11StateGet(ctx, &transport.PKCS11StateGetRequest{
@@ -137,6 +145,26 @@ func (b *remoteBackend) CompareAndSwap(ctx context.Context, key string, expected
 		return false, nil, &errs.Wrapped{Msg: "remote state compare-and-swap", Err: err}
 	}
 	return resp.Swapped, resp.Current, nil
+}
+
+// CompareAndDelete atomically removes key only if its current value equals
+// expected, reporting whether this call removed it. An absent key or a
+// different value is a refusal (false, nil), not an error, and a nil expected
+// matches a stored empty value only — the storage.CompareAndDeleter contract,
+// which the server's store enforces on its own backend. Because that contract
+// has no "require absent" form there is no flag to send: nil and empty are the
+// same guard, so the wire's inability to tell them apart is harmless.
+func (b *remoteBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	resp, err := b.client.PKCS11StateCAD(ctx, &transport.PKCS11StateCADRequest{
+		TenantID: b.tenantID,
+		Token:    b.token,
+		Key:      key,
+		Expected: expected,
+	})
+	if err != nil {
+		return false, &errs.Wrapped{Msg: "remote state compare-and-delete", Err: err}
+	}
+	return resp.Deleted, nil
 }
 
 func (b *remoteBackend) Delete(ctx context.Context, key string) error {

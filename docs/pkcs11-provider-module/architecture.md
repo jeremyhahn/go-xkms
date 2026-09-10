@@ -74,12 +74,16 @@ token view:
 ```
 OpenSSL / NSS / Java  →  libxkms_pkcs11.so
    → pkg/pkcs11/module: session, object, mechanism handling
-     → token + object state:  PKCS11StatePut / PutIfAbsent / CAS / Get / Delete / List
+     → token + object state:  PKCS11StatePut / PutIfAbsent / CAS / CAD / Get / Delete / List
      → crypto operations:     sdk/go → xkmsd → keystore backend
 ```
 
 `PKCS11StateCAS` is the interesting one: compare-and-swap is what keeps two
-concurrent sessions from clobbering each other's token state.
+concurrent sessions from clobbering each other's token state. `PKCS11StateCAD`
+is its counterpart for release: a delete guarded on the value the caller last
+observed, evaluated by xkmsd where the writes of every host sharing the token
+serialise, so a record one client claimed cannot be removed by another client's
+stale view of it.
 
 **Offline mode** — everything is local:
 

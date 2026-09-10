@@ -98,6 +98,27 @@ func (s *Store) CompareAndSwap(ctx context.Context, tenantID, token, key string,
 	return cas.CompareAndSwap(ctx, storageKey(tenantID, token, key), expected, newValue)
 }
 
+// ErrCompareAndDeleteUnsupported is returned when CompareAndDelete is requested
+// but the underlying backend does not implement storage.CompareAndDeleter.
+// Remote-mode deployments back this store with the embedded qrdb node, which
+// evaluates the guard inside the cluster.
+var ErrCompareAndDeleteUnsupported = errors.New("pkcs11state: backend does not support compare-and-delete")
+
+// CompareAndDelete atomically removes the record only if its current value
+// equals expected, reporting whether this call removed it. An absent key or a
+// different value is an ordinary refusal (false, nil), not an error, exactly
+// as storage.CompareAndDeleter specifies; a nil expected matches a stored empty
+// value only. It is the guarded release that pairs with PutIfAbsent's guarded
+// create for clients sharing one remote token, and the guarantee is the
+// backend's: linearizable across nodes when backed by the qrdb node.
+func (s *Store) CompareAndDelete(ctx context.Context, tenantID, token, key string, expected []byte) (deleted bool, err error) {
+	cad, ok := s.backend.(storage.CompareAndDeleter)
+	if !ok {
+		return false, ErrCompareAndDeleteUnsupported
+	}
+	return cad.CompareAndDelete(ctx, storageKey(tenantID, token, key), expected)
+}
+
 // Get retrieves a record. found distinguishes an absent key from a present
 // empty value, which the module relies on to tell "no persisted state" from
 // "state that is legitimately empty".

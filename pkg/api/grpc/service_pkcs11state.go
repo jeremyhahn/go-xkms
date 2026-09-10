@@ -95,6 +95,25 @@ func (s *Service) PKCS11StateCAS(ctx context.Context, req *pb.PKCS11StateCASRequ
 	return &pb.PKCS11StateCASResponse{Swapped: resp.Swapped, Current: resp.Current}, nil
 }
 
+func (s *Service) PKCS11StateCAD(ctx context.Context, req *pb.PKCS11StateCADRequest) (*pb.PKCS11StateCADResponse, error) {
+	if req == nil || req.Token == "" {
+		return nil, status.Error(codes.InvalidArgument, "token is required")
+	}
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionWrite, req.Token); err != nil {
+		return nil, err
+	}
+	if err := s.pkcs11StateServiceReady(); err != nil {
+		return nil, err
+	}
+	resp, err := s.xkmsService.PKCS11StateCAD(ctx, &transport.PKCS11StateCADRequest{
+		TenantID: req.TenantId, Token: req.Token, Key: req.Key, Expected: req.Expected,
+	})
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &pb.PKCS11StateCADResponse{Deleted: resp.Deleted}, nil
+}
+
 func (s *Service) PKCS11StateGet(ctx context.Context, req *pb.PKCS11StateGetRequest) (*pb.PKCS11StateGetResponse, error) {
 	if req == nil || req.Token == "" {
 		return nil, status.Error(codes.InvalidArgument, "token is required")

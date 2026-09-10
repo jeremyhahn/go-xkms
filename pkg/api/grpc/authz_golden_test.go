@@ -140,6 +140,7 @@ var goldenRPCPermissions = map[string]string{
 	"PKCS11StatePut":         "keys:write",
 	"PKCS11StatePutIfAbsent": "keys:write",
 	"PKCS11StateCAS":         "keys:write",
+	"PKCS11StateCAD":         "keys:write",
 	// The audit chain records who did what to the rest of this API, so
 	// reading it carries its own permission rather than riding on keys:* or
 	// users:*. There is no emit gate because there is no emit RPC.

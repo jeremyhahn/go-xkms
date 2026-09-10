@@ -125,3 +125,42 @@ func TestStore_Isolation_TenantAndTokenNamespacesDoNotAlias(t *testing.T) {
 		assert.Equalf(t, []byte(tc.want), got, "tenant %q must see its own value", tc.tenant)
 	}
 }
+
+// noGuardedDeleteBackend hides every optional capability of the backend it
+// wraps: its method set is exactly storage.Backend's.
+type noGuardedDeleteBackend struct {
+	storage.Backend
+}
+
+func TestStore_CompareAndDelete_ReleasesOnlyTheObservedValue(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.Put(ctx, "t", "tok0", "marker", []byte("holder-A")))
+
+	deleted, err := s.CompareAndDelete(ctx, "t", "tok0", "marker", []byte("holder-B"))
+	require.NoError(t, err)
+	assert.False(t, deleted, "a different value must refuse without an error")
+
+	deleted, err = s.CompareAndDelete(ctx, "t", "tok0", "never-existed", []byte("holder-A"))
+	require.NoError(t, err)
+	assert.False(t, deleted, "an absent key must refuse without an error")
+
+	deleted, err = s.CompareAndDelete(ctx, "t", "tok0", "marker", []byte("holder-A"))
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	_, found, err := s.Get(ctx, "t", "tok0", "marker")
+	require.NoError(t, err)
+	assert.False(t, found, "the record is gone once the guard matched")
+}
+
+func TestStore_CompareAndDelete_UnsupportedBackendIsAnError(t *testing.T) {
+	s, err := NewStore(noGuardedDeleteBackend{Backend: storage.NewMemory()})
+	require.NoError(t, err)
+
+	deleted, err := s.CompareAndDelete(context.Background(), "t", "tok0", "marker", []byte("holder-A"))
+	require.ErrorIs(t, err, ErrCompareAndDeleteUnsupported,
+		"a backend without the capability must refuse with an error, never emulate the guard")
+	assert.False(t, deleted)
+}

@@ -274,6 +274,7 @@ func Routes() []RouteSpec {
 	permIf("POST", "/pkcs11state/put", auth.ResourceKeys, auth.ActionCreate, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.PutHandler })
 	permIf("POST", "/pkcs11state/put-if-absent", auth.ResourceKeys, auth.ActionCreate, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.PutIfAbsentHandler })
 	permIf("POST", "/pkcs11state/compare-and-swap", auth.ResourceKeys, auth.ActionUpdate, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.CASHandler })
+	permIf("POST", "/pkcs11state/compare-and-delete", auth.ResourceKeys, auth.ActionDelete, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.CADHandler })
 	permIf("POST", "/pkcs11state/get", auth.ResourceKeys, auth.ActionGet, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.GetHandler })
 	permIf("POST", "/pkcs11state/delete", auth.ResourceKeys, auth.ActionDelete, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.DeleteHandler })
 	permIf("POST", "/pkcs11state/list", auth.ResourceKeys, auth.ActionList, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.ListHandler })

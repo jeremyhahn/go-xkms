@@ -32,6 +32,7 @@ const (
 	pkcs11StatePutPath         = "/api/v1/pkcs11state/put"
 	pkcs11StatePutIfAbsentPath = "/api/v1/pkcs11state/put-if-absent"
 	pkcs11StateCASPath         = "/api/v1/pkcs11state/compare-and-swap"
+	pkcs11StateCADPath         = "/api/v1/pkcs11state/compare-and-delete"
 	pkcs11StateGetPath         = "/api/v1/pkcs11state/get"
 	pkcs11StateDeletePath      = "/api/v1/pkcs11state/delete"
 	pkcs11StateListPath        = "/api/v1/pkcs11state/list"
@@ -77,6 +78,23 @@ func (t *Transport) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11Sta
 	var resp transport.PKCS11StateCASResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse pkcs11 state compare-and-swap response", Err: err}
+	}
+	return &resp, nil
+}
+
+// PKCS11StateCAD atomically removes a record only if its current value equals
+// Expected; the guard is evaluated by the server.
+func (t *Transport) PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	data, err := t.doRawRequest(ctx, http.MethodPost, pkcs11StateCADPath, req)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.PKCS11StateCADResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse pkcs11 state compare-and-delete response", Err: err}
 	}
 	return &resp, nil
 }

@@ -69,6 +69,21 @@ func (t *Transport) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11Sta
 	return &transport.PKCS11StateCASResponse{Swapped: resp.Swapped, Current: resp.Current}, nil
 }
 
+// PKCS11StateCAD atomically removes a record only if its current value equals
+// Expected; the guard is evaluated by the server.
+func (t *Transport) PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.PKCS11StateCAD(ctx, &pb.PKCS11StateCADRequest{
+		TenantId: req.TenantID, Token: req.Token, Key: req.Key, Expected: req.Expected,
+	})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "unix: pkcs11 state compare-and-delete failed", Err: err}
+	}
+	return &transport.PKCS11StateCADResponse{Deleted: resp.Deleted}, nil
+}
+
 // PKCS11StateGet retrieves a record.
 func (t *Transport) PKCS11StateGet(ctx context.Context, req *transport.PKCS11StateGetRequest) (*transport.PKCS11StateGetResponse, error) {
 	if t.client == nil {

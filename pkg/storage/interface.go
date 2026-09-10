@@ -32,9 +32,9 @@ import "context"
 // method, rather than by shipping one that always errors — the absence is
 // visible at the assertion instead of on the first call in production.
 //
-// Three expansions of the guarded-delete capability are tracked: the hardware
-// certificate adapter (#143), the PKCS#11 module's remote state backend (#142),
-// and execution on qrdb's embedded constructors (go-qrdb #175).
+// Two expansions of the guarded-delete capability are tracked: the hardware
+// certificate adapter (#143) and execution on qrdb's embedded constructors
+// (go-qrdb #175).
 type Backend interface {
 	// Get retrieves the value for the given key.
 	// Returns ErrNotFound if the key does not exist.

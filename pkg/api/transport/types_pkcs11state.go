@@ -116,6 +116,33 @@ type PKCS11StateCASResponse struct {
 	Current []byte `json:"current,omitempty"`
 }
 
+// PKCS11StateCADRequest atomically removes the record only if its current value
+// equals Expected. It backs the storage.CompareAndDeleter primitive over the
+// remote backend: the guarded release that pairs with PKCS11StatePutIfAbsent's
+// guarded create, evaluated where the server serialises writes rather than on
+// the client, since the clients sharing one remote token are separate
+// processes on separate hosts.
+//
+// Unlike PKCS11StateCASRequest there is no absent flag: a nil Expected is not
+// a wildcard and does not mean "require absent". It is equivalent to an empty
+// slice and matches a stored empty value only, exactly as
+// storage.CompareAndDeleter specifies, so JSON's inability to tell a nil byte
+// slice from an empty one changes nothing here.
+type PKCS11StateCADRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Token    string `json:"token"`
+	Key      string `json:"key"`
+	Expected []byte `json:"expected,omitempty"`
+}
+
+// PKCS11StateCADResponse reports whether this call removed the record. Deleted
+// is false, with a successful response, when the key was absent or held a
+// different value; in both cases the store is unchanged. A transport error
+// means the outcome is unknown.
+type PKCS11StateCADResponse struct {
+	Deleted bool `json:"deleted"`
+}
+
 // PKCS11StatePutResponse acknowledges a Put. It carries no payload today but
 // exists so the RPC has a response message to evolve (e.g. a version token).
 type PKCS11StatePutResponse struct{}

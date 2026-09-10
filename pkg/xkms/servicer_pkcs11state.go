@@ -95,6 +95,26 @@ func (s *XKMSService) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11S
 	return &transport.PKCS11StateCASResponse{Swapped: swapped, Current: current}, nil
 }
 
+// PKCS11StateCAD atomically removes a record only if its current value equals
+// Expected. It backs the guarded release over the remote backend; an absent key
+// or a different value is reported as Deleted=false without an error.
+func (s *XKMSService) PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if req.Token == "" {
+		return nil, ErrPKCS11StateTokenRequired
+	}
+	if s.pkcs11StateStore == nil {
+		return nil, ErrPKCS11StateStoreUnavailable
+	}
+	deleted, err := s.pkcs11StateStore.CompareAndDelete(ctx, req.TenantID, req.Token, req.Key, req.Expected)
+	if err != nil {
+		return nil, err
+	}
+	return &transport.PKCS11StateCADResponse{Deleted: deleted}, nil
+}
+
 // PKCS11StateGet retrieves a record.
 func (s *XKMSService) PKCS11StateGet(ctx context.Context, req *transport.PKCS11StateGetRequest) (*transport.PKCS11StateGetResponse, error) {
 	if req == nil {

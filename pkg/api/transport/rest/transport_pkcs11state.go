@@ -37,6 +37,7 @@ type pkcs11StateClient interface {
 	PKCS11StatePut(ctx context.Context, req *transport.PKCS11StatePutRequest) (*transport.PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, req *transport.PKCS11StatePutIfAbsentRequest) (*transport.PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error)
+	PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error)
 	PKCS11StateGet(ctx context.Context, req *transport.PKCS11StateGetRequest) (*transport.PKCS11StateGetResponse, error)
 	PKCS11StateDelete(ctx context.Context, req *transport.PKCS11StateDeleteRequest) (*transport.PKCS11StateDeleteResponse, error)
 	PKCS11StateList(ctx context.Context, req *transport.PKCS11StateListRequest) (*transport.PKCS11StateListResponse, error)
@@ -48,6 +49,7 @@ const (
 	restPKCS11StatePutPath         = "/api/v1/pkcs11state/put"
 	restPKCS11StatePutIfAbsentPath = "/api/v1/pkcs11state/put-if-absent"
 	restPKCS11StateCASPath         = "/api/v1/pkcs11state/compare-and-swap"
+	restPKCS11StateCADPath         = "/api/v1/pkcs11state/compare-and-delete"
 	restPKCS11StateGetPath         = "/api/v1/pkcs11state/get"
 	restPKCS11StateDeletePath      = "/api/v1/pkcs11state/delete"
 	restPKCS11StateListPath        = "/api/v1/pkcs11state/list"
@@ -93,6 +95,23 @@ func (t *Transport) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11Sta
 	var resp transport.PKCS11StateCASResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse pkcs11 state compare-and-swap response", Err: err}
+	}
+	return &resp, nil
+}
+
+// PKCS11StateCAD atomically removes a record only if its current value equals
+// Expected; the guard is evaluated by the server.
+func (t *Transport) PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	data, err := t.DoRawRequest(ctx, http.MethodPost, restPKCS11StateCADPath, req)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.PKCS11StateCADResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse pkcs11 state compare-and-delete response", Err: err}
 	}
 	return &resp, nil
 }

@@ -91,3 +91,44 @@ func TestServicer_PKCS11State_StoreUnavailable(t *testing.T) {
 	_, err := svc.PKCS11StateGet(context.Background(), &transport.PKCS11StateGetRequest{Token: "tok0", Key: "k"})
 	assert.ErrorIs(t, err, ErrPKCS11StateStoreUnavailable)
 }
+
+func TestServicer_PKCS11State_CAD_ReleasesOnlyTheObservedValue(t *testing.T) {
+	svc := newPKCS11StateService(t)
+	ctx := context.Background()
+
+	_, err := svc.PKCS11StatePut(ctx, &transport.PKCS11StatePutRequest{
+		Token: "tok0", Key: "pkcs11/markers/claim", Value: []byte("holder-A"),
+	})
+	require.NoError(t, err)
+
+	resp, err := svc.PKCS11StateCAD(ctx, &transport.PKCS11StateCADRequest{
+		Token: "tok0", Key: "pkcs11/markers/claim", Expected: []byte("holder-B"),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.Deleted, "a guard that does not match refuses without an error")
+
+	resp, err = svc.PKCS11StateCAD(ctx, &transport.PKCS11StateCADRequest{
+		Token: "tok0", Key: "pkcs11/markers/claim", Expected: []byte("holder-A"),
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Deleted)
+
+	got, err := svc.PKCS11StateGet(ctx, &transport.PKCS11StateGetRequest{Token: "tok0", Key: "pkcs11/markers/claim"})
+	require.NoError(t, err)
+	assert.False(t, got.Found)
+}
+
+func TestServicer_PKCS11State_CAD_Validation(t *testing.T) {
+	svc := newPKCS11StateService(t)
+	ctx := context.Background()
+
+	_, err := svc.PKCS11StateCAD(ctx, nil)
+	require.ErrorIs(t, err, ErrNilRequest)
+
+	_, err = svc.PKCS11StateCAD(ctx, &transport.PKCS11StateCADRequest{Key: "pkcs11/markers/claim"})
+	require.ErrorIs(t, err, ErrPKCS11StateTokenRequired)
+
+	unavailable := &XKMSService{}
+	_, err = unavailable.PKCS11StateCAD(ctx, &transport.PKCS11StateCADRequest{Token: "tok0", Key: "pkcs11/markers/claim"})
+	require.ErrorIs(t, err, ErrPKCS11StateStoreUnavailable)
+}

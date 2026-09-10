@@ -90,6 +90,13 @@ naming a backend is this, not a configuration typo.
 - **Remote token state is CAS-guarded.** `PKCS11StateCAS` and
   `PKCS11StatePutIfAbsent` exist so concurrent sessions cannot clobber token
   state. Use them; a plain `Put` in a concurrent path is a defect.
+- **A guarded create is released by a guarded delete.** `PKCS11StateCAD`
+  removes a record only if it still holds the value the caller observed, and
+  the server evaluates the guard; the remote backend therefore claims
+  `storage.CompareAndDeleter` and never emulates the guard with a local lock,
+  which would guard nothing across the hosts sharing one token. An absent key
+  or a different value is a refusal (`deleted=false`, no error); an error means
+  the outcome is unknown, and a caller must not read it as a refusal.
 - **Session and object handles are per-process.** They are not portable across
   processes even in remote mode, where the *state* is shared but the handles are
   not.

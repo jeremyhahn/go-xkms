@@ -700,6 +700,9 @@ service KeystoreService {
   rpc PKCS11StateCAS(PKCS11StateCASRequest) returns (PKCS11StateCASResponse) {
     option (qrdb.v1.permission) = "keys:write";
   }
+  rpc PKCS11StateCAD(PKCS11StateCADRequest) returns (PKCS11StateCADResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
   rpc PKCS11StateGet(PKCS11StateGetRequest) returns (PKCS11StateGetResponse) {
     option (qrdb.v1.permission) = "keys:read";
   }
@@ -3128,6 +3131,19 @@ message PKCS11StateCASRequest {
 message PKCS11StateCASResponse {
   bool swapped = 1;
   bytes current = 2;
+}
+
+// PKCS11StateCADRequest is the guarded delete: the record is removed only if
+// its current value equals expected. A nil/empty expected matches a stored
+// empty value only; it never means "require absent".
+message PKCS11StateCADRequest {
+  string tenant_id = 1;
+  string token = 2;
+  string key = 3;
+  bytes expected = 4;
+}
+message PKCS11StateCADResponse {
+  bool deleted = 1;
 }
 
 message PKCS11StateGetRequest {

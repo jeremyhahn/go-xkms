@@ -152,6 +152,7 @@ const (
 	KeystoreService_PKCS11StatePut_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName      = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateCAS"
+	KeystoreService_PKCS11StateCAD_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateCAD"
 	KeystoreService_PKCS11StateGet_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateGet"
 	KeystoreService_PKCS11StateDelete_FullMethodName           = "/xkms.v1.KeystoreService/PKCS11StateDelete"
 	KeystoreService_PKCS11StateList_FullMethodName             = "/xkms.v1.KeystoreService/PKCS11StateList"
@@ -483,6 +484,7 @@ type KeystoreServiceClient interface {
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
+	PKCS11StateCAD(ctx context.Context, in *PKCS11StateCADRequest, opts ...grpc.CallOption) (*PKCS11StateCADResponse, error)
 	PKCS11StateGet(ctx context.Context, in *PKCS11StateGetRequest, opts ...grpc.CallOption) (*PKCS11StateGetResponse, error)
 	PKCS11StateDelete(ctx context.Context, in *PKCS11StateDeleteRequest, opts ...grpc.CallOption) (*PKCS11StateDeleteResponse, error)
 	PKCS11StateList(ctx context.Context, in *PKCS11StateListRequest, opts ...grpc.CallOption) (*PKCS11StateListResponse, error)
@@ -1842,6 +1844,16 @@ func (c *keystoreServiceClient) PKCS11StateCAS(ctx context.Context, in *PKCS11St
 	return out, nil
 }
 
+func (c *keystoreServiceClient) PKCS11StateCAD(ctx context.Context, in *PKCS11StateCADRequest, opts ...grpc.CallOption) (*PKCS11StateCADResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StateCADResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StateCAD_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StateGet(ctx context.Context, in *PKCS11StateGetRequest, opts ...grpc.CallOption) (*PKCS11StateGetResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StateGetResponse)
@@ -2432,6 +2444,7 @@ type KeystoreServiceServer interface {
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
+	PKCS11StateCAD(context.Context, *PKCS11StateCADRequest) (*PKCS11StateCADResponse, error)
 	PKCS11StateGet(context.Context, *PKCS11StateGetRequest) (*PKCS11StateGetResponse, error)
 	PKCS11StateDelete(context.Context, *PKCS11StateDeleteRequest) (*PKCS11StateDeleteResponse, error)
 	PKCS11StateList(context.Context, *PKCS11StateListRequest) (*PKCS11StateListResponse, error)
@@ -2887,6 +2900,9 @@ func (UnimplementedKeystoreServiceServer) PKCS11StatePutIfAbsent(context.Context
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StateCAS not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StateCAD(context.Context, *PKCS11StateCADRequest) (*PKCS11StateCADResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StateCAD not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StateGet(context.Context, *PKCS11StateGetRequest) (*PKCS11StateGetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PKCS11StateGet not implemented")
@@ -5318,6 +5334,24 @@ func _KeystoreService_PKCS11StateCAS_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_PKCS11StateCAD_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StateCADRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StateCAD(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StateCAD_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StateCAD(ctx, req.(*PKCS11StateCADRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StateGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StateGetRequest)
 	if err := dec(in); err != nil {
@@ -6362,6 +6396,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PKCS11StateCAS",
 			Handler:    _KeystoreService_PKCS11StateCAS_Handler,
+		},
+		{
+			MethodName: "PKCS11StateCAD",
+			Handler:    _KeystoreService_PKCS11StateCAD_Handler,
 		},
 		{
 			MethodName: "PKCS11StateGet",

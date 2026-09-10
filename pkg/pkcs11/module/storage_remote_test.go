@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -30,6 +31,7 @@ import (
 // tested without a live xkmsd. It keys by "tenant/token/key" to prove the
 // backend forwards the namespace fields.
 type fakePKCS11StateClient struct {
+	mu   sync.Mutex
 	data map[string][]byte
 }
 
@@ -42,11 +44,15 @@ func (f *fakePKCS11StateClient) k(tenant, token, key string) string {
 }
 
 func (f *fakePKCS11StateClient) PKCS11StatePut(_ context.Context, req *transport.PKCS11StatePutRequest) (*transport.PKCS11StatePutResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.data[f.k(req.TenantID, req.Token, req.Key)] = append([]byte(nil), req.Value...)
 	return &transport.PKCS11StatePutResponse{}, nil
 }
 
 func (f *fakePKCS11StateClient) PKCS11StatePutIfAbsent(_ context.Context, req *transport.PKCS11StatePutIfAbsentRequest) (*transport.PKCS11StatePutIfAbsentResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	key := f.k(req.TenantID, req.Token, req.Key)
 	if _, ok := f.data[key]; ok {
 		return &transport.PKCS11StatePutIfAbsentResponse{Stored: false}, nil
@@ -56,6 +62,8 @@ func (f *fakePKCS11StateClient) PKCS11StatePutIfAbsent(_ context.Context, req *t
 }
 
 func (f *fakePKCS11StateClient) PKCS11StateCAS(_ context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	key := f.k(req.TenantID, req.Token, req.Key)
 	current, present := f.data[key]
 	if req.ExpectAbsent {
@@ -69,7 +77,23 @@ func (f *fakePKCS11StateClient) PKCS11StateCAS(_ context.Context, req *transport
 	return &transport.PKCS11StateCASResponse{Swapped: true}, nil
 }
 
+// PKCS11StateCAD evaluates the guard the way the server's store does: an
+// absent key or a different value refuses without an error, and a nil expected
+// is the empty slice.
+func (f *fakePKCS11StateClient) PKCS11StateCAD(_ context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	current, ok := f.data[f.k(req.TenantID, req.Token, req.Key)]
+	if !ok || !bytes.Equal(current, req.Expected) {
+		return &transport.PKCS11StateCADResponse{Deleted: false}, nil
+	}
+	delete(f.data, f.k(req.TenantID, req.Token, req.Key))
+	return &transport.PKCS11StateCADResponse{Deleted: true}, nil
+}
+
 func (f *fakePKCS11StateClient) PKCS11StateGet(_ context.Context, req *transport.PKCS11StateGetRequest) (*transport.PKCS11StateGetResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	v, ok := f.data[f.k(req.TenantID, req.Token, req.Key)]
 	if !ok {
 		return &transport.PKCS11StateGetResponse{Found: false}, nil
@@ -78,11 +102,15 @@ func (f *fakePKCS11StateClient) PKCS11StateGet(_ context.Context, req *transport
 }
 
 func (f *fakePKCS11StateClient) PKCS11StateDelete(_ context.Context, req *transport.PKCS11StateDeleteRequest) (*transport.PKCS11StateDeleteResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	delete(f.data, f.k(req.TenantID, req.Token, req.Key))
 	return &transport.PKCS11StateDeleteResponse{}, nil
 }
 
 func (f *fakePKCS11StateClient) PKCS11StateList(_ context.Context, req *transport.PKCS11StateListRequest) (*transport.PKCS11StateListResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	scope := f.k(req.TenantID, req.Token, req.Prefix)
 	var keys []string
 	tokenScope := f.k(req.TenantID, req.Token, "")

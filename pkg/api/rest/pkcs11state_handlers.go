@@ -28,6 +28,7 @@ type pkcs11StateServicer interface {
 	PKCS11StatePut(ctx context.Context, req *transport.PKCS11StatePutRequest) (*transport.PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, req *transport.PKCS11StatePutIfAbsentRequest) (*transport.PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error)
+	PKCS11StateCAD(ctx context.Context, req *transport.PKCS11StateCADRequest) (*transport.PKCS11StateCADResponse, error)
 	PKCS11StateGet(ctx context.Context, req *transport.PKCS11StateGetRequest) (*transport.PKCS11StateGetResponse, error)
 	PKCS11StateDelete(ctx context.Context, req *transport.PKCS11StateDeleteRequest) (*transport.PKCS11StateDeleteResponse, error)
 	PKCS11StateList(ctx context.Context, req *transport.PKCS11StateListRequest) (*transport.PKCS11StateListResponse, error)
@@ -115,6 +116,20 @@ func (h *PKCS11StateHandlers) CASHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	resp, err := h.servicer.PKCS11StateCAS(r.Context(), &req)
+	h.respond(w, resp, err)
+}
+
+// CADHandler atomically removes a record only if its current value equals
+// Expected; an absent key or a different value answers deleted=false.
+func (h *PKCS11StateHandlers) CADHandler(w http.ResponseWriter, r *http.Request) {
+	if !h.ready(w) {
+		return
+	}
+	var req transport.PKCS11StateCADRequest
+	if !h.decode(w, r, &req) {
+		return
+	}
+	resp, err := h.servicer.PKCS11StateCAD(r.Context(), &req)
 	h.respond(w, resp, err)
 }
 

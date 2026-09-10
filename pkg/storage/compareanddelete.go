@@ -46,6 +46,11 @@ var _ CompareAndDeleter = (*qrdb.Backend)(nil)
 // ErrCompareAndDeleteUnsupported when that backend lacks it. All of them are
 // held to this contract by the shared suite in pkg/storage/storagetest.
 //
+// pkcs11/module's remote state backend implements it over the PKCS11StateCAD
+// RPC: the guard is evaluated by xkmsd's pkcs11state.Store on its own backend,
+// where the writes of every host sharing that token serialise, and never
+// emulated on the client. It is held to the same suite.
+//
 // seal.BarrierBackend also implements it, overriding the method it would
 // otherwise promote from go-qrdb's barrier so that an absent key becomes the
 // refusal this contract requires: the barrier recognises only go-qrdb's own
@@ -58,10 +63,6 @@ var _ CompareAndDeleter = (*qrdb.Backend)(nil)
 //     certificate id rather than a record, so it cannot be scoped to the one key
 //     a guarded release names; honouring the request would destroy the sibling
 //     certificate or chain and report success.
-//   - pkcs11/module's remote state backend (#142): no guarded-delete RPC, and by
-//     design no local lock, since several hosts share one server-side token. A
-//     locally emulated guard there would be a guarantee that was never
-//     evaluated.
 //
 // qrdb.Backend implements the capability but the embedded constructors cannot
 // yet execute it (go-qrdb #175, an upstream apply-loop gap); it reports that as
