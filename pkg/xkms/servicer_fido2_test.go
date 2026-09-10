@@ -70,7 +70,7 @@ func TestRegistrationCeremony_EndToEnd(t *testing.T) {
 
 	// Step 1: Begin registration through the XKMSService transport surface.
 	beginResp, err := svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
-		Username:    email,
+		Email:       email,
 		DisplayName: displayName,
 	})
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func registerCredentialForLogin(t *testing.T, svc *XKMSService, waSvc *webauthn.
 	ctx := context.Background()
 
 	beginResp, err := svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
-		Username:    email,
+		Email:       email,
 		DisplayName: displayName,
 	})
 	require.NoError(t, err)

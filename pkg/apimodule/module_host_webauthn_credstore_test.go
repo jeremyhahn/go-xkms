@@ -117,7 +117,7 @@ func registerThroughSDKLane(t *testing.T, routes map[string]http.HandlerFunc, em
 	require.NotNil(t, begin, "the SDK registration lane must be registered")
 	require.NotNil(t, finish, "the SDK registration lane must be registered")
 
-	beginBody, err := json.Marshal(transport.BeginRegistrationRequest{Username: email, DisplayName: email})
+	beginBody, err := json.Marshal(transport.BeginRegistrationRequest{Email: email, DisplayName: email})
 	require.NoError(t, err)
 	beginReq := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/sdk/registration/begin", bytes.NewReader(beginBody))
 	beginReq.Header.Set("Content-Type", "application/json")
@@ -219,7 +219,7 @@ func TestModule_WebAuthnCredentialStoreDecorator_NilStoreFailsClosed(t *testing.
 	begin := routes["POST /api/v1/webauthn/sdk/registration/begin"]
 	require.NotNil(t, begin, "routes are still registered so the failure is reported, not silently 404")
 
-	body, err := json.Marshal(transport.BeginRegistrationRequest{Username: "carol@example.com"})
+	body, err := json.Marshal(transport.BeginRegistrationRequest{Email: "carol@example.com"})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/sdk/registration/begin", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — API
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -35,6 +35,32 @@ design statement.
 The `/sdk/...` variants are the programmatic ceremony for non-browser clients
 (`pkg/webauthn/client`, the xkey virtual authenticator). They exist only on the
 HTTP-shaped transports because that is what those clients speak.
+
+### SDK begin-registration body
+
+`POST /api/v1/webauthn/sdk/registration/begin` decodes
+`transport.BeginRegistrationRequest`:
+
+| Field | Meaning |
+|---|---|
+| `email` | the **canonical tenant-unique login key** of the account the credential is enrolled against; the server resolves it with `GetByEmail` |
+| `display_name` | human-readable name; defaults to the email |
+
+The gRPC and Unix `BeginRegistrationRequest` carry the same field as `email`
+(field 1; the number is unchanged, so the binary encoding is compatible with
+earlier clients).
+
+**Compatibility window.** The field was previously spelled `username` on the
+wire while carrying the email, and a caller that read the name literally
+enrolled the credential against the wrong account. For one release the JSON
+decoder still accepts the login key under the legacy `username` key, and the
+Go client encodes the login key under **both** keys with the same value, so a
+client on this release still registers against a server that reads only the
+legacy key during a rolling upgrade. A body that carries both keys with
+different values is refused with `400` and
+`transport.ErrRegistrationLoginKeyConflict` rather than one value being chosen
+silently. The legacy key is removed from both the decoder and the encoder in
+the release after the rename.
 
 ## Related identity routes
 

@@ -137,7 +137,7 @@ func runRegistrationCeremony(t *testing.T, surface *ceremonySurface, handler *fi
 
 	// Step 1: Begin registration through the XKMSService transport surface.
 	beginResp, err := surface.xkmsSvc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
-		Username:    username,
+		Email:       username,
 		DisplayName: username,
 	})
 	require.NoError(t, err, "BeginRegistration")

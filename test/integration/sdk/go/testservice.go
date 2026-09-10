@@ -600,9 +600,9 @@ func (s *TestXKMSService) BeginRegistration(ctx context.Context, req *xkms.Begin
 	defer s.mu.Unlock()
 
 	// Create user if not exists
-	if _, exists := s.users[req.Username]; !exists {
-		s.users[req.Username] = &testUser{
-			username:    req.Username,
+	if _, exists := s.users[req.Email]; !exists {
+		s.users[req.Email] = &testUser{
+			username:    req.Email,
 			displayName: req.DisplayName,
 			role:        "user",
 			enabled:     true,
@@ -625,11 +625,11 @@ func (s *TestXKMSService) BeginRegistration(ctx context.Context, req *xkms.Begin
 	}
 	optionsJSON := fmt.Sprintf(
 		`{"publicKey":{"challenge":%q,"rp":{"name":%q},"pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}]}}`,
-		base64.RawURLEncoding.EncodeToString(challenge), req.Username,
+		base64.RawURLEncoding.EncodeToString(challenge), req.Email,
 	)
 
 	// Remember which user this ceremony session belongs to.
-	s.regSessions[sessionID] = req.Username
+	s.regSessions[sessionID] = req.Email
 
 	return &xkms.BeginRegistrationResponse{
 		SessionID:   sessionID,

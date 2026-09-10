@@ -84,10 +84,40 @@ func setupFIDO2HandlerTest(t *testing.T, wa *pkgwebauthn.Service) *chi.Mux {
 // handleSDKBeginRegistration
 // ============================================================================
 
+// TestHandleSDKBeginRegistration_LegacyUsernameKey verifies the SDK route
+// still accepts the login key under the previous "username" spelling for the
+// compatibility release, so clients built against it keep registering.
+func TestHandleSDKBeginRegistration_LegacyUsernameKey(t *testing.T) {
+	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin",
+		bytes.NewReader([]byte(`{"username":"alice@example.com","display_name":"Alice"}`))))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp transport.BeginRegistrationResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.SessionID)
+}
+
+// TestHandleSDKBeginRegistration_ConflictingKeysRejected verifies a body that
+// names different login keys under "email" and "username" is a bad request,
+// not a registration against whichever value the decoder happened to pick.
+func TestHandleSDKBeginRegistration_ConflictingKeysRejected(t *testing.T) {
+	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin",
+		bytes.NewReader([]byte(`{"email":"alice@example.com","username":"alice"}`))))
+
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Contains(t, rr.Body.String(), "legacy username key")
+}
+
 func TestHandleSDKBeginRegistration_Success(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
-	body, _ := json.Marshal(transport.BeginRegistrationRequest{Username: "alice@example.com", DisplayName: "Alice"})
+	body, _ := json.Marshal(transport.BeginRegistrationRequest{Email: "alice@example.com", DisplayName: "Alice"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin", bytes.NewReader(body)))
 
@@ -118,7 +148,7 @@ func TestHandleSDKBeginRegistration_RegistrationClosed(t *testing.T) {
 
 	r := setupFIDO2HandlerTest(t, closedRP)
 
-	body, _ := json.Marshal(transport.BeginRegistrationRequest{Username: "stranger@example.com", DisplayName: "Stranger"})
+	body, _ := json.Marshal(transport.BeginRegistrationRequest{Email: "stranger@example.com", DisplayName: "Stranger"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin", bytes.NewReader(body)))
 
@@ -143,7 +173,7 @@ func TestHandleSDKBeginRegistration_NotConfigured(t *testing.T) {
 	// Singleton initialized but no WebAuthn service wired => ErrNotConfigured => 500.
 	r := setupFIDO2HandlerTest(t, nil)
 
-	body, _ := json.Marshal(transport.BeginRegistrationRequest{Username: "alice@example.com"})
+	body, _ := json.Marshal(transport.BeginRegistrationRequest{Email: "alice@example.com"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin", bytes.NewReader(body)))
 
@@ -155,7 +185,7 @@ func TestHandleSDKBeginRegistration_ServiceNotInitialized(t *testing.T) {
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := &Server{}
-	body, _ := json.Marshal(transport.BeginRegistrationRequest{Username: "a@b.c"})
+	body, _ := json.Marshal(transport.BeginRegistrationRequest{Email: "a@b.c"})
 	rr := httptest.NewRecorder()
 	s.handleSDKBeginRegistration(rr, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body)))
 

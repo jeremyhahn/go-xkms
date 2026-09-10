@@ -91,13 +91,11 @@ func (f *fakeDirectoryClient) BeginRegistration(_ context.Context, req *client.B
 		return nil, f.beginRegErr
 	}
 
-	// The Username field carries the canonical email login key; see the field's
-	// own documentation in pkg/api/transport/types.go.
-	if _, found := f.accounts[req.Username]; !found {
+	if _, found := f.accounts[req.Email]; !found {
 		if !f.publicRegistration {
 			return nil, errors.New("user not found and public registration is disabled")
 		}
-		f.accounts[req.Username] = req.Username
+		f.accounts[req.Email] = req.Email
 	}
 
 	return &client.BeginRegistrationResponse{
@@ -163,7 +161,7 @@ func TestWebAuthnRegistration_BeginsCeremonyByEmailNotUsername(t *testing.T) {
 			if len(cl.beginRegReqs) != 1 {
 				t.Fatalf("want exactly one BeginRegistration call, got %d", len(cl.beginRegReqs))
 			}
-			if got := cl.beginRegReqs[0].Username; got != email {
+			if got := cl.beginRegReqs[0].Email; got != email {
 				t.Errorf("BeginRegistration resolved by %q, want the canonical login key %q", got, email)
 			}
 
@@ -217,7 +215,7 @@ func TestWebAuthnRegistration_BeginRegistrationFailureIsWrapped(t *testing.T) {
 	if len(cl.beginRegReqs) != 1 {
 		t.Fatalf("want exactly one BeginRegistration call, got %d", len(cl.beginRegReqs))
 	}
-	if got := cl.beginRegReqs[0].Username; got != email {
+	if got := cl.beginRegReqs[0].Email; got != email {
 		t.Errorf("BeginRegistration resolved by %q, want the canonical login key %q", got, email)
 	}
 }
@@ -252,7 +250,7 @@ func TestUserRegisterCmd_SendsTheEmailFlagToBeginRegistration(t *testing.T) {
 	if len(cl.beginRegReqs) != 1 {
 		t.Fatalf("want exactly one BeginRegistration call, got %d", len(cl.beginRegReqs))
 	}
-	if got := cl.beginRegReqs[0].Username; got != email {
+	if got := cl.beginRegReqs[0].Email; got != email {
 		t.Errorf("BeginRegistration resolved by %q, want the --email value %q", got, email)
 	}
 	if len(cl.accounts) != 1 {

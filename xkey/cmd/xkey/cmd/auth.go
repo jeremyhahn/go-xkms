@@ -638,15 +638,10 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "Server registered: %s\n", serverURL)
 	}
 
-	// WebAuthn registration ceremony.
-	//
-	// The EMAIL goes in the field named Username: the server forwards it to
-	// Service.BeginRegistration(ctx, email, displayName), which resolves with
-	// GetUserByEmail. The field name is the legacy wire spelling from when the
-	// two identifiers were one value; see BeginRegistrationRequest's own
-	// documentation in pkg/api/transport/types.go.
+	// WebAuthn registration ceremony against the account's email, the login
+	// key the server resolves with GetUserByEmail.
 	begin, err := client.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
-		Username:    email,
+		Email:       email,
 		DisplayName: displayName,
 	})
 	if err != nil {

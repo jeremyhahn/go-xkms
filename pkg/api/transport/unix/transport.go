@@ -1550,7 +1550,7 @@ func (t *Transport) BeginRegistration(ctx context.Context, req *transport.BeginR
 		return nil, ErrNotConnected
 	}
 	resp, err := t.client.BeginRegistration(ctx, &pb.BeginRegistrationRequest{
-		Username:    req.Username,
+		Email:       req.Email,
 		DisplayName: req.DisplayName,
 	})
 	if err != nil {

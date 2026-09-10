@@ -3189,7 +3189,10 @@ message PasswordGenerateResponse {
 
 // BeginRegistrationRequest begins a WebAuthn registration ceremony.
 message BeginRegistrationRequest {
-  string username = 1;
+  // email is the canonical tenant-unique login key of the account the
+  // credential is enrolled against. Field 1 used to be spelled "username";
+  // the number is unchanged, so the binary encoding is compatible.
+  string email = 1;
   string display_name = 2;
 }
 

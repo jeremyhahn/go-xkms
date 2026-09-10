@@ -14,6 +14,7 @@
 package transport
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -829,14 +830,55 @@ type ListUserCredentialsResponse struct {
 
 // BeginRegistrationRequest contains parameters to begin a WebAuthn registration.
 type BeginRegistrationRequest struct {
-	// Username carries the canonical EMAIL login key, not a username. The
-	// service signature is BeginRegistration(ctx, email, displayName) and it
-	// resolves the account with GetByEmail; this field name is the legacy wire
-	// spelling from when the two identifiers were one value. The mismatch has
-	// already produced one defect (go-xkms #190) — renaming it, on the wire and
-	// in the TypeScript SDK, is tracked separately.
-	Username    string `json:"username"`
+	// Email is the canonical tenant-unique login key of the account the
+	// credential is enrolled against. The service resolves the account with
+	// GetByEmail; a username is a different identifier and is not accepted.
+	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
+}
+
+// beginRegistrationWire is the JSON shape BeginRegistrationRequest encodes
+// to and decodes from. It carries the legacy "username" key, the field's
+// spelling from when a user had one identifier, so for one release clients
+// built against that spelling keep working against this server and this
+// client keeps working against a server that still reads that spelling.
+type beginRegistrationWire struct {
+	Email       string `json:"email"`
+	Username    string `json:"username,omitempty"`
+	DisplayName string `json:"display_name"`
+}
+
+// MarshalJSON emits the login key under "email" and, for one release, under
+// the legacy "username" key with the same value, so a client on this
+// release registering against a server that still reads the legacy key does
+// not send it an empty login key during a rolling upgrade.
+func (r BeginRegistrationRequest) MarshalJSON() ([]byte, error) {
+	return json.Marshal(beginRegistrationWire{
+		Email:       r.Email,
+		Username:    r.Email,
+		DisplayName: r.DisplayName,
+	})
+}
+
+// UnmarshalJSON accepts the login key under "email" or, for one release,
+// under the legacy "username" key. A body that carries both with different
+// values is refused with ErrRegistrationLoginKeyConflict: the field is a
+// string either way, so a silently chosen value would surface later as
+// "account not found" or as a credential enrolled against the wrong account.
+func (r *BeginRegistrationRequest) UnmarshalJSON(data []byte) error {
+	var wire beginRegistrationWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	if wire.Email != "" && wire.Username != "" && wire.Email != wire.Username {
+		return ErrRegistrationLoginKeyConflict
+	}
+	r.Email = wire.Email
+	if r.Email == "" {
+		r.Email = wire.Username
+	}
+	r.DisplayName = wire.DisplayName
+	return nil
 }
 
 // BeginRegistrationResponse carries the session ID and the JSON-marshaled

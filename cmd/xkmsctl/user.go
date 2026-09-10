@@ -71,18 +71,13 @@ func webAuthnRegistration(
 		return nil, &WrappedError{Sentinel: ErrCreateUserFailed, Err: err}
 	}
 
-	// Begin the server-side registration ceremony.
-	//
-	// The EMAIL goes in, despite the field being named Username: the service
-	// signature is BeginRegistration(ctx, email, displayName) and it resolves
-	// with GetByEmail. Passing the username worked only while the two were the
-	// same value — this command's own example used to be
-	// `user register admin@example.com`. Adding --email made them differ, and
-	// this call would then look up "admin" as an email: closed registration
-	// fails to find the account just created, and open registration enrols the
-	// credential against a SECOND, unintended principal (Codex, go-xkms #190).
+	// Begin the server-side registration ceremony against the account's
+	// email, the login key the service resolves with GetByEmail. The username
+	// is a separate identifier: passing it would fail closed registration for
+	// the account just created and, under open registration, enrol the
+	// credential against a second, unintended principal.
 	beginResp, err := cl.BeginRegistration(ctx, &client.BeginRegistrationRequest{
-		Username:    email,
+		Email:       email,
 		DisplayName: displayName,
 	})
 	if err != nil {

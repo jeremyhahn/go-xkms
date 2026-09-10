@@ -17075,9 +17075,12 @@ func (x *PasswordGenerateResponse) GetLength() int32 {
 
 // BeginRegistrationRequest begins a WebAuthn registration ceremony.
 type BeginRegistrationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	DisplayName   string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// email is the canonical tenant-unique login key of the account the
+	// credential is enrolled against. Field 1 used to be spelled "username";
+	// the number is unchanged, so the binary encoding is compatible.
+	Email         string `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
+	DisplayName   string `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -17112,9 +17115,9 @@ func (*BeginRegistrationRequest) Descriptor() ([]byte, []int) {
 	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{264}
 }
 
-func (x *BeginRegistrationRequest) GetUsername() string {
+func (x *BeginRegistrationRequest) GetEmail() string {
 	if x != nil {
-		return x.Username
+		return x.Email
 	}
 	return ""
 }
@@ -20403,9 +20406,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\asymbols\x18\x05 \x01(\bR\asymbols\"N\n" +
 	"\x18PasswordGenerateResponse\x12\x1a\n" +
 	"\bpassword\x18\x01 \x01(\tR\bpassword\x12\x16\n" +
-	"\x06length\x18\x02 \x01(\x05R\x06length\"Y\n" +
-	"\x18BeginRegistrationRequest\x12\x1a\n" +
-	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
+	"\x06length\x18\x02 \x01(\x05R\x06length\"S\n" +
+	"\x18BeginRegistrationRequest\x12\x14\n" +
+	"\x05email\x18\x01 \x01(\tR\x05email\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\"]\n" +
 	"\x19BeginRegistrationResponse\x12\x1d\n" +
 	"\n" +

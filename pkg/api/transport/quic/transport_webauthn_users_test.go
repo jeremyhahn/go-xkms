@@ -84,7 +84,7 @@ func TestBeginRegistration_Success(t *testing.T) {
 	defer cleanup()
 
 	resp, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{
-		Username:    "alice",
+		Email:       "alice",
 		DisplayName: "Alice",
 	})
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestBeginRegistration_ServerErr(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()
 
-	_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{Username: "alice"})
+	_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{Email: "alice"})
 	require.Error(t, err)
 }
 

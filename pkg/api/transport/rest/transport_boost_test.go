@@ -751,7 +751,7 @@ func TestBeginRegistration_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{
-		Username: "test@example.com",
+		Email: "test@example.com",
 	})
 	require.Error(t, err)
 }
@@ -2472,7 +2472,7 @@ func TestBeginRegistration_Success(t *testing.T) {
 	defer tr.Close()
 
 	resp, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{
-		Username:    "test@example.com",
+		Email:       "test@example.com",
 		DisplayName: "Test User",
 	})
 	require.NoError(t, err)

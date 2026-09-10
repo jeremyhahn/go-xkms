@@ -37,15 +37,15 @@ import (
 // from a missing gate, which is exactly the bug that the SSH surface in
 // service_ssh.go had.
 func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrationRequest) (*pb.BeginRegistrationResponse, error) {
-	if req == nil || req.Username == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
+	if req == nil || req.Email == "" {
+		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
 	svc := s.xkmsService
 	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
-		Username:    req.Username,
+		Email:       req.Email,
 		DisplayName: req.DisplayName,
 	})
 	if cErr != nil {

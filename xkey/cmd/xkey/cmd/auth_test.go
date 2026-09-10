@@ -1339,7 +1339,7 @@ func TestRunAuthRegister_CompletesCeremony(t *testing.T) {
 
 	// The server was asked to begin the ceremony for the canonical login key.
 	require.NotNil(t, client.beginRegistrationReq)
-	assert.Equal(t, "alice@example.com", client.beginRegistrationReq.Username)
+	assert.Equal(t, "alice@example.com", client.beginRegistrationReq.Email)
 	assert.Equal(t, "Alice Example", client.beginRegistrationReq.DisplayName)
 
 	// The authenticator received the server's options and the server origin.

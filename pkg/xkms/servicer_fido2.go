@@ -53,10 +53,10 @@ func (s *XKMSService) BeginRegistration(ctx context.Context, req *transport.Begi
 
 	displayName := req.DisplayName
 	if displayName == "" {
-		displayName = req.Username
+		displayName = req.Email
 	}
 
-	options, sessionID, err := s.webauthnService.BeginRegistration(ctx, req.Username, displayName)
+	options, sessionID, err := s.webauthnService.BeginRegistration(ctx, req.Email, displayName)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "begin registration", Err: err}
 	}

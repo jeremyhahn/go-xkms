@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## Exported surface — `pkg/webauthn`
 
@@ -95,6 +95,12 @@ invalidates every existing credential.
 path has its own suite (`verification_error_test.go`) because these are the
 errors that must never be collapsed into a generic failure internally, even
 though they must be indistinguishable to the client.
+
+**The SDK registration request's login key** is `BeginRegistrationRequest.Email`
+(`pkg/api/transport/types.go`). Its decoder accepts the legacy `username`
+JSON key for one release and refuses a body naming different values under
+both keys with `transport.ErrRegistrationLoginKeyConflict`; see
+[api.md](api.md) §"SDK begin-registration body".
 
 **Fail closed:** unknown session, expired session, origin mismatch, RP id
 mismatch, attestation that does not satisfy policy, invalid signature,

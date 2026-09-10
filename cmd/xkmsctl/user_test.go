@@ -815,12 +815,12 @@ func TestUserRegisterCmd_CeremonyUsesEmailNotUsername(t *testing.T) {
 	if mock.gotBeginReg == nil {
 		t.Fatal("BeginRegistration was never called")
 	}
-	// The field is named Username for wire-compatibility, but the service
-	// resolves it with GetByEmail — so the EMAIL belongs here.
-	if mock.gotBeginReg.Username != "alice@example.com" {
+	// The service resolves the ceremony's account with GetByEmail, so the
+	// email belongs here, not the username.
+	if mock.gotBeginReg.Email != "alice@example.com" {
 		t.Errorf("the ceremony resolved by %q; it must use the canonical email login key %q, "+
 			"or it enrols a credential against the wrong principal",
-			mock.gotBeginReg.Username, "alice@example.com")
+			mock.gotBeginReg.Email, "alice@example.com")
 	}
 }
 

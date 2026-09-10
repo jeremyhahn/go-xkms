@@ -69,7 +69,7 @@ func TestBeginRegistration_DefaultClosedReturnsPermissionDenied(t *testing.T) {
 	svc := newFIDO2PolicyService(t, nil)
 
 	resp, err := svc.BeginRegistration(context.Background(), &pb.BeginRegistrationRequest{
-		Username:    "stranger@example.com",
+		Email:       "stranger@example.com",
 		DisplayName: "Stranger",
 	})
 
@@ -90,7 +90,7 @@ func TestBeginRegistration_ExplicitOpenAllowsUnknownUser(t *testing.T) {
 	svc := newFIDO2PolicyService(t, &open)
 
 	resp, err := svc.BeginRegistration(context.Background(), &pb.BeginRegistrationRequest{
-		Username:    "newcomer@example.com",
+		Email:       "newcomer@example.com",
 		DisplayName: "Newcomer",
 	})
 
