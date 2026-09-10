@@ -44,6 +44,11 @@ type LoginResult struct {
 	Error          string `json:"error,omitempty"`
 }
 
+// VerifiedPolicyHandler receives the enterprise policy section once the SO
+// PIN has authenticated it. The GUI installs one so the consumers that ran on
+// config.DefaultPolicy since startup switch to the verified section.
+type VerifiedPolicyHandler func(policy *config.PolicySection)
+
 // AuthService manages authentication state for the GUI application.
 // In personal mode, no auth gate is shown (barrier unseal is sufficient).
 // In enterprise mode, users must authenticate with their User PIN or
@@ -63,6 +68,10 @@ type AuthService struct {
 
 	// mode stores the current AuthMode.
 	mode atomic.Value
+
+	// verifiedPolicyHandler is called from LoginSO with the policy section
+	// after its HMAC verified under the SO PIN, and never otherwise.
+	verifiedPolicyHandler atomic.Pointer[VerifiedPolicyHandler]
 }
 
 // NewAuthService creates a new AuthService.
@@ -100,6 +109,16 @@ func (s *AuthService) IsPolicyVerified() bool {
 // IsTamperDetected returns whether policy tampering was detected.
 func (s *AuthService) IsTamperDetected() bool {
 	return s.tamperDetected.Load()
+}
+
+// SetVerifiedPolicyHandler installs the handler LoginSO hands the verified
+// policy section to. A nil handler clears it.
+func (s *AuthService) SetVerifiedPolicyHandler(h VerifiedPolicyHandler) {
+	if h == nil {
+		s.verifiedPolicyHandler.Store(nil)
+		return
+	}
+	s.verifiedPolicyHandler.Store(&h)
 }
 
 // LoginUser authenticates a regular user with their User PIN.
@@ -180,6 +199,9 @@ func (s *AuthService) LoginSO(soPIN string) *LoginResult {
 		} else {
 			s.tamperDetected.Store(false)
 			s.log.Info("policy integrity verified")
+			if h := s.verifiedPolicyHandler.Load(); h != nil {
+				(*h)(&cfg.Policy)
+			}
 		}
 	}
 

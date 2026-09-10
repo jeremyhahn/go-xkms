@@ -1302,16 +1302,13 @@ func (a *App) initializeAuthenticator() {
 		}
 	}
 
-	// Apply SO enterprise policy overrides for FIDO2 settings.
-	if a.configDirPath != "" && config.IsEnterpriseMode(a.configDirPath) {
-		ucfg, loadErr := config.Load()
-		if loadErr == nil {
-			pol := ucfg.Policy
-			auth.SetRequireUserPresence(pol.FIDO2RequireUserPresence)
-			auth.SetEnableUserIntentCheck(pol.FIDO2UserIntentCheck)
-			a.log.Info("enterprise FIDO2 policy applied",
-				"require_user_presence", pol.FIDO2RequireUserPresence,
-				"user_intent_check", pol.FIDO2UserIntentCheck)
+	// Apply the enterprise FIDO2 policy the GUI may honour before the SO has
+	// logged in: a sealed section is not yet verified, so only its secure
+	// defaults apply here. The verified section arrives through
+	// applyVerifiedEnterprisePolicy once the SO authenticates.
+	if a.configDirPath != "" {
+		if pol := startupEnterprisePolicy(a.configDirPath, a.log); pol != nil {
+			applyFIDO2Policy(auth, pol, a.log)
 		}
 	}
 
@@ -1911,20 +1908,10 @@ func NewApp(cfg *GUIConfig) *App {
 		_ = autofillSvc.SetPolicy(cfg.AutoFillPolicy)
 	}
 
-	// Apply enterprise extension policy overrides.
-	if config.IsEnterpriseMode(cfgDir) {
-		ucfg, loadErr := config.Load()
-		if loadErr == nil {
-			pol := ucfg.Policy
-			autofillSvc.SetEnterprisePolicy(&services.EnterpriseExtensionPolicy{
-				Enabled:               pol.ExtensionEnabled,
-				RequireAuthentication: pol.ExtensionRequireAuthentication,
-				ForceAudit:            pol.ExtensionForceAudit,
-				AllowedDomains:        pol.ExtensionAllowedDomains,
-				BlockedDomains:        pol.ExtensionBlockedDomains,
-				MaxFillsPerMinute:     pol.ExtensionMaxFillsPerMinute,
-			})
-		}
+	// Apply the enterprise extension policy the GUI may honour before the SO
+	// has logged in; see startupEnterprisePolicy.
+	if pol := startupEnterprisePolicy(cfgDir, log); pol != nil {
+		applyExtensionPolicy(autofillSvc, pol)
 	}
 
 	// Create pairing service for extension identity binding.
@@ -1984,6 +1971,11 @@ func NewApp(cfg *GUIConfig) *App {
 		pairingService:           pairingSvc,
 		backendRegistry:          backendregistry.NewMemoryRegistry(),
 	}
+
+	// Once the SO verifies the sealed policy, the authenticated section
+	// replaces the startup defaults on the authenticator and the autofill
+	// service.
+	authSvc.SetVerifiedPolicyHandler(a.applyVerifiedEnterprisePolicy)
 
 	// Populate backend registry from the unified config. When the backends
 	// section is absent, AutoPopulateBackends creates a single entry from
