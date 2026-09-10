@@ -87,6 +87,50 @@ func init() {
 	_ = viper.BindPFlag("device.pair.force", devicePairCmd.Flags().Lookup("force"))
 }
 
+// pairingTransport is what runDevicePair needs from a transport: discovery,
+// a connection to the selected device, and the encrypted channel. The BLE
+// transport is the production implementation; a test supplies one backed
+// by an in-memory pair so the command can be driven without a phone.
+type pairingTransport interface {
+	phone.Transport
+	Scan(ctx context.Context) ([]phone.ScanResult, error)
+	ScanAll(ctx context.Context) ([]phone.ScanResult, error)
+	Connect(ctx context.Context, address string) error
+	Disconnect() error
+	Close() error
+}
+
+// pairingSeams are runDevicePair's injection points: how it opens its
+// transport, reads and writes the devices file, and loads this machine's
+// attestation trust. Production wires the real implementations; a test
+// replaces them so the abort/allow/save wiring itself can be exercised, not
+// only the helpers it calls.
+type pairingSeams struct {
+	newTransport func(cfg *phone.BLETransportConfig) (pairingTransport, error)
+	loadDevices  func() (*DevicesConfig, error)
+	saveDevices  func(cfg *DevicesConfig) error
+	loadTrust    func() (*attestation.Trust, error)
+}
+
+// newBLEPairingTransport opens the real BLE transport. It returns an
+// untyped nil on failure so the interface value is nil, not a typed nil.
+func newBLEPairingTransport(cfg *phone.BLETransportConfig) (pairingTransport, error) {
+	transport, err := phone.NewBLETransport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return transport, nil
+}
+
+// pairSeams is the production wiring. Tests swap it for the duration of a
+// test and restore it.
+var pairSeams = pairingSeams{
+	newTransport: newBLEPairingTransport,
+	loadDevices:  loadDevicesConfig,
+	saveDevices:  saveDevicesConfig,
+	loadTrust:    loadPairingAttestationTrust,
+}
+
 // runDevicePair executes the phone pairing command.
 func runDevicePair(cmd *cobra.Command, args []string) error {
 	logger := slog.Default()
@@ -96,7 +140,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 
 	// Load existing configuration
-	cfg, err := loadDevicesConfig()
+	cfg, err := pairSeams.loadDevices()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
@@ -115,7 +159,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create BLE transport for scanning
-	transport, err := phone.NewBLETransport(&phone.BLETransportConfig{
+	transport, err := pairSeams.newTransport(&phone.BLETransportConfig{
 		ScanTimeout: scanTimeout,
 		Logger:      logger,
 	})
@@ -386,7 +430,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	}
 
 	// Save configuration
-	if err := saveDevicesConfig(cfg); err != nil {
+	if err := pairSeams.saveDevices(cfg); err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceConfigSaveFailed, Cause: err}
 	}
 
@@ -420,7 +464,7 @@ func performPairingAttestation(
 ) (*attestation.Result, error) {
 	fmt.Println("Verifying device security...")
 
-	trust, err := loadPairingAttestationTrust()
+	trust, err := pairSeams.loadTrust()
 	if err != nil {
 		logger.Error("pairing refused: attestation trust material unavailable", "error", err)
 		return nil, err

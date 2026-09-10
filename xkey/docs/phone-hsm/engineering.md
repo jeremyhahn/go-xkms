@@ -480,6 +480,14 @@ disconnect.
 - **Transport** — `go-xkms/pkg/api/transport/usb/transport_test.go`.
 - **Android compatibility** — the compat suites that fix the cipher suite; these
   are what make a unilateral protocol change fail loudly.
+- **Command flow** — `xkey/cmd/xkey/cmd/device_pair_flow_test.go` (build tag
+  `ble`) drives `runDevicePair` itself against an `attesttest.Phone` on a
+  memory transport, through the command's seams (`pairingSeams`: transport,
+  devices file, attestation trust). It proves the wiring the helper tests
+  cannot: under the default policy a failed attestation returns before the
+  devices file is written; with the user plane opted in, the record is saved
+  with the Noise identity and no attestation claim; a verified attestation
+  is recorded with the phone's own fingerprint.
 - **End to end** — `xkey/docs/testing/phone-e2e.md` in the legacy tree describes
   the manual procedure, which needs real hardware.
 
