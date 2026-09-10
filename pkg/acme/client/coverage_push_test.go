@@ -312,7 +312,7 @@ func TestCoveragePush_GetAuthoritativeNameservers_ValidDomain(t *testing.T) {
 		func(name string) ([]*net.NS, error) {
 			asked = name
 			return []*net.NS{{Host: "ns1.example.test."}, {Host: "ns2.example.test."}}, nil
-		})
+		}, DefaultDNSPort)
 
 	require.NoError(t, err)
 	assert.Equal(t, "example.test", asked,
@@ -324,7 +324,7 @@ func TestCoveragePush_GetAuthoritativeNameservers_InvalidDomain(t *testing.T) {
 	// A domain whose NS lookup fails: the error is returned unwrapped.
 	wantErr := errors.New("no such host")
 	_, err := authoritativeNameservers("_acme-challenge.invalid-domain-xyz-123-abc.",
-		func(string) ([]*net.NS, error) { return nil, wantErr })
+		func(string) ([]*net.NS, error) { return nil, wantErr }, DefaultDNSPort)
 
 	require.ErrorIs(t, err, wantErr)
 }
@@ -333,7 +333,7 @@ func TestCoveragePush_GetAuthoritativeNameservers_NoNameservers(t *testing.T) {
 	// A lookup that succeeds but answers with nothing must be an error, not an
 	// empty list a caller would then query zero servers with.
 	_, err := authoritativeNameservers("_acme-challenge.example.test.",
-		func(string) ([]*net.NS, error) { return nil, nil })
+		func(string) ([]*net.NS, error) { return nil, nil }, DefaultDNSPort)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no nameservers found")

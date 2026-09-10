@@ -404,19 +404,73 @@ func TestGetAuthoritativeNameservers_Success(t *testing.T) {
 	servers, err := authoritativeNameservers("_acme-challenge.example.test.",
 		func(string) ([]*net.NS, error) {
 			return []*net.NS{{Host: "ns1.example.test."}}, nil
-		})
+		}, DefaultDNSPort)
 	require.NoError(t, err)
-	assert.NotEmpty(t, servers)
+	assert.Equal(t, []string{"ns1.example.test.:53"}, servers)
+}
 
-	// Verify servers have the port suffix
-	for _, server := range servers {
-		assert.Contains(t, server, ":53")
+// TestGetAuthoritativeNameservers_UsesTheGivenPort proves the port is the
+// caller's, not a literal: every nameserver host is joined with it (#140).
+func TestGetAuthoritativeNameservers_UsesTheGivenPort(t *testing.T) {
+	servers, err := authoritativeNameservers("_acme-challenge.example.test.",
+		func(string) ([]*net.NS, error) {
+			return []*net.NS{{Host: "ns1.example.test."}, {Host: "ns2.example.test."}}, nil
+		}, "5353")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ns1.example.test.:5353", "ns2.example.test.:5353"}, servers)
+}
+
+// TestCheckDNSFromAuthoritative_NameserverPortReachesTheDefaultLookup proves
+// WithNameserverPort threads through to the addresses the propagation query
+// receives, with DefaultDNSPort when the option is absent or empty.
+func TestCheckDNSFromAuthoritative_NameserverPortReachesTheDefaultLookup(t *testing.T) {
+	resolver := func(string) ([]*net.NS, error) {
+		return []*net.NS{{Host: "ns1.example.test."}}, nil
 	}
+	cases := []struct {
+		name string
+		opts []DNSCheckOption
+		want []string
+	}{
+		{"configured port", []DNSCheckOption{WithNameserverPort("5353")}, []string{"ns1.example.test.:5353"}},
+		{"default port", nil, []string{"ns1.example.test.:53"}},
+		{"empty port keeps the default", []DNSCheckOption{WithNameserverPort("")}, []string{"ns1.example.test.:53"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var queried []string
+			capture := func(_ context.Context, _, _ string, nameservers []string) (bool, error) {
+				queried = nameservers
+				return true, nil
+			}
+			opts := append([]DNSCheckOption{withNSResolver(resolver), WithPropagationQuery(capture)}, tc.opts...)
+			checkFunc := CheckDNSFromAuthoritative(opts...)
+			require.NoError(t, checkFunc(context.Background(), "_acme-challenge.example.test.", "value"))
+			assert.Equal(t, tc.want, queried)
+		})
+	}
+}
+
+// TestCheckDNSFromAuthoritative_ExplicitLookupIgnoresThePort proves that a
+// caller-supplied lookup returns complete addresses and is not re-ported.
+func TestCheckDNSFromAuthoritative_ExplicitLookupIgnoresThePort(t *testing.T) {
+	var queried []string
+	capture := func(_ context.Context, _, _ string, nameservers []string) (bool, error) {
+		queried = nameservers
+		return true, nil
+	}
+	checkFunc := CheckDNSFromAuthoritative(
+		WithNameserverPort("5353"),
+		WithNameserverLookup(staticNameservers("ns1.example.test:8053")),
+		WithPropagationQuery(capture),
+	)
+	require.NoError(t, checkFunc(context.Background(), "_acme-challenge.example.test.", "value"))
+	assert.Equal(t, []string{"ns1.example.test:8053"}, queried)
 }
 
 func TestGetAuthoritativeNameservers_NonExistentDomain(t *testing.T) {
 	_, err := authoritativeNameservers("_acme-challenge.this-domain-definitely-does-not-exist-abc-123.",
-		func(string) ([]*net.NS, error) { return nil, errors.New("no such host") })
+		func(string) ([]*net.NS, error) { return nil, errors.New("no such host") }, DefaultDNSPort)
 	require.Error(t, err)
 }
 

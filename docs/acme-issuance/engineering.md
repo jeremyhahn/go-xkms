@@ -28,7 +28,11 @@
 
 ### Client
 
-- `pkg/acme/client` — the Go client.
+- `pkg/acme/client` — the Go client. Its `dns-01` pre-checks take
+  `DNSCheckOption`s: `WithNameserverLookup`, `WithPropagationQuery`, and
+  `WithNameserverPort`, the port the zone's authoritative nameservers are
+  queried on (`DefaultDNSPort`, `"53"`, when unset; a supplied lookup returns
+  complete addresses and is not re-ported).
 - `sdk/go/acme` — the SDK surface, including `sdk/go/acme/trustedca.go` and
   `sdk/go/acme/transport/quic`.
 - `cmd/acme-client` — the `trusted-acme-client` binary

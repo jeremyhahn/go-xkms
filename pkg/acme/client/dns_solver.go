@@ -426,6 +426,35 @@ type PropagationQuery func(ctx context.Context, fqdn, value string, nameservers 
 type dnsCheckConfig struct {
 	lookupNameservers NameserverLookup
 	queryPropagation  PropagationQuery
+	nameserverPort    string
+	lookupNS          nsLookup
+}
+
+// DefaultDNSPort is the port authoritative nameservers are queried on when
+// WithNameserverPort is not given.
+const DefaultDNSPort = "53"
+
+// WithNameserverPort sets the port the authoritative nameservers found for a
+// domain are queried on, for zones served on a port other than DefaultDNSPort
+// (a test resolver, a split-horizon forwarder). An empty port keeps the
+// default. Only the default lookup consults it: WithNameserverLookup returns
+// complete host:port addresses of its own (#140).
+func WithNameserverPort(port string) DNSCheckOption {
+	return func(c *dnsCheckConfig) {
+		if port != "" {
+			c.nameserverPort = port
+		}
+	}
+}
+
+// withNSResolver replaces the NS-record resolver behind the default lookup,
+// so a test can exercise the default lookup without the network.
+func withNSResolver(lookup nsLookup) DNSCheckOption {
+	return func(c *dnsCheckConfig) {
+		if lookup != nil {
+			c.lookupNS = lookup
+		}
+	}
 }
 
 // DNSCheckOption configures a DNS pre-check function.
@@ -458,12 +487,21 @@ func WithPropagationQuery(query PropagationQuery) DNSCheckOption {
 // newDNSCheckConfig applies opts over the production defaults.
 func newDNSCheckConfig(opts ...DNSCheckOption) dnsCheckConfig {
 	cfg := dnsCheckConfig{
-		lookupNameservers: getAuthoritativeNameservers,
-		queryPropagation:  providers.CheckDNSPropagation,
+		queryPropagation: providers.CheckDNSPropagation,
+		nameserverPort:   DefaultDNSPort,
+		lookupNS:         net.LookupNS,
 	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
+		}
+	}
+	if cfg.lookupNameservers == nil {
+		// The default lookup queries the zone's NS records on the configured
+		// port; it is built after the options so both are in effect.
+		resolver, port := cfg.lookupNS, cfg.nameserverPort
+		cfg.lookupNameservers = func(fqdn string) ([]string, error) {
+			return authoritativeNameservers(fqdn, resolver, port)
 		}
 	}
 	return cfg
@@ -538,12 +576,6 @@ func CheckDNSFromNameservers(nameservers []string, opts ...DNSCheckOption) PreCh
 	}
 }
 
-// getAuthoritativeNameservers queries for the authoritative nameservers
-// for a domain. This is a simplified implementation.
-func getAuthoritativeNameservers(fqdn string) ([]string, error) {
-	return authoritativeNameservers(fqdn, net.LookupNS)
-}
-
 // nsLookup has the signature of net.LookupNS.
 //
 // It is the innermost DNS seam, and it exists so the interesting part of
@@ -554,9 +586,10 @@ func getAuthoritativeNameservers(fqdn string) ([]string, error) {
 // Tests gate came to need egress (go-xkms#243).
 type nsLookup func(name string) ([]*net.NS, error)
 
-// authoritativeNameservers is getAuthoritativeNameservers with its resolver
-// supplied, so callers in tests can provide one that does not use the network.
-func authoritativeNameservers(fqdn string, lookupNS nsLookup) ([]string, error) {
+// authoritativeNameservers finds the zone's nameservers through lookupNS and
+// joins each host with port. The resolver is a parameter so tests can supply
+// one that does not use the network.
+func authoritativeNameservers(fqdn string, lookupNS nsLookup, port string) ([]string, error) {
 	// Extract the base domain from the FQDN
 	// _acme-challenge.example.com. -> example.com.
 	domain := strings.TrimPrefix(fqdn, "_acme-challenge.")
@@ -571,7 +604,7 @@ func authoritativeNameservers(fqdn string, lookupNS nsLookup) ([]string, error) 
 
 	servers := make([]string, 0, len(ns))
 	for _, n := range ns {
-		servers = append(servers, n.Host+":53")
+		servers = append(servers, net.JoinHostPort(n.Host, port))
 	}
 
 	if len(servers) == 0 {
