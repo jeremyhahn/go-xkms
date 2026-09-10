@@ -318,6 +318,20 @@ WantedBy=multi-user.target
 - Incorrect passphrase entered
 - Verify passphrase and try again
 
+**"kernel keyring preflight failed"**
+- Every LUKS2 operation that creates or unlocks a volume (`luks2 seal`,
+  `luks2 unseal`, `luks2 migrate`, `usb create`) needs the kernel keyring
+  syscalls (`add_key`, `keyctl`, `request_key`) that dm-crypt takes the
+  volume key through
+- The preflight runs before anything is created, partitioned or formatted,
+  so a refusal leaves no image file and no partially provisioned device
+- The usual cause is a container seccomp profile that blocks the keyring
+  syscalls (Docker's default profile denies all three, and `--cap-add
+  SYS_ADMIN` does not lift that), or a kernel built without `CONFIG_KEYS`;
+  allow `add_key`, `keyctl` and `request_key` in a narrow custom profile
+  (`--security-opt seccomp=<profile>.json`) or run on the host, and the same
+  command then succeeds unchanged
+
 ### Recovery
 
 If the container is corrupted:

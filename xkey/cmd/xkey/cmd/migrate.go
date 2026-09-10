@@ -101,6 +101,20 @@ func init() {
 	luks2Cmd.AddCommand(migrateCmd)
 }
 
+// luksEnsureKeyring is the kernel keyring preflight the migration runs
+// before it touches the source container; tests replace it.
+var luksEnsureKeyring = luks.EnsureKeyringAvailable
+
+// migrateKeyringPreflight refuses the migration, as a MigrateError that
+// unwraps to the luks package's KeyringError, when the kernel keyring the
+// new container needs is unavailable.
+func migrateKeyringPreflight() error {
+	if err := luksEnsureKeyring(); err != nil {
+		return &MigrateError{Operation: "keyring_preflight", Err: err}
+	}
+	return nil
+}
+
 func runMigrate(cmd *cobra.Command, args []string) error {
 	// Check for root privileges
 	if os.Geteuid() != 0 {
@@ -115,6 +129,13 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 			return ErrMigrateInvalidWipeStandard
 		}
 		wipeStdValue = std
+	}
+
+	// Creating the new container and unlocking both go through the kernel
+	// keyring. Refuse here, before the source container is locked or renamed,
+	// so a blocked keyring leaves the migration untouched.
+	if err := migrateKeyringPreflight(); err != nil {
+		return err
 	}
 
 	// Get source volume

@@ -40,6 +40,7 @@ type savedHooks struct {
 	luksMakeFilesystem func(string, string, string) error
 	luksLock           func(string) error
 	luksIsUnlocked     func(string) bool
+	luksCheckKeyring   func() error
 	readMountsFile     func() ([]byte, error)
 	statPath           func(string) (os.FileInfo, error)
 }
@@ -58,9 +59,15 @@ func saveHooks(t *testing.T) func() {
 		luksMakeFilesystem: luksMakeFilesystem,
 		luksLock:           luksLock,
 		luksIsUnlocked:     luksIsUnlocked,
+		luksCheckKeyring:   luksCheckKeyring,
 		readMountsFile:     readMountsFile,
 		statPath:           statPath,
 	}
+	// The keyring preflight is the one hook that would reach the kernel
+	// from a unit test; stub it so the suite never depends on the host's
+	// seccomp profile. A test that wants a failing probe sets its own.
+	luksCheckKeyring = func() error { return nil }
+
 	return func() {
 		execCommand = saved.execCommand
 		getEUID = saved.getEUID
@@ -71,6 +78,7 @@ func saveHooks(t *testing.T) func() {
 		luksMakeFilesystem = saved.luksMakeFilesystem
 		luksLock = saved.luksLock
 		luksIsUnlocked = saved.luksIsUnlocked
+		luksCheckKeyring = saved.luksCheckKeyring
 		readMountsFile = saved.readMountsFile
 		statPath = saved.statPath
 	}
@@ -87,6 +95,7 @@ func mockAllCommandsSuccess(t *testing.T) {
 	luksMakeFilesystem = func(device, fstype, label string) error { return nil }
 	luksLock = func(name string) error { return nil }
 	luksIsUnlocked = func(name string) bool { return false }
+	luksCheckKeyring = func() error { return nil }
 	readMountsFile = func() ([]byte, error) { return []byte(""), nil }
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 )
 
@@ -653,6 +654,36 @@ func TestMigrateError_Unwrap(t *testing.T) {
 		}
 		assert.Nil(t, err.Unwrap())
 	})
+}
+
+// TestMigrateKeyringPreflight_Refuses verifies a blocked kernel keyring
+// refuses the migration as a MigrateError with the luks package's typed
+// error and the go-luks2 cause reachable, so nothing about the source
+// container has changed when the user reads the refusal.
+func TestMigrateKeyringPreflight_Refuses(t *testing.T) {
+	saved := luksEnsureKeyring
+	defer func() { luksEnsureKeyring = saved }()
+	luksEnsureKeyring = func() error { return &luks.KeyringError{Err: luks2.ErrKeyringBlocked} }
+
+	err := migrateKeyringPreflight()
+	require.Error(t, err)
+
+	var migrateErr *MigrateError
+	require.True(t, errors.As(err, &migrateErr))
+	assert.Equal(t, "keyring_preflight", migrateErr.Operation)
+	assert.True(t, errors.Is(err, luks.ErrKeyringUnavailable))
+	assert.True(t, errors.Is(err, luks2.ErrKeyringBlocked))
+	assert.Contains(t, err.Error(), "migrate: keyring_preflight: luks: kernel keyring preflight failed")
+}
+
+// TestMigrateKeyringPreflight_Passes verifies an available keyring lets the
+// migration proceed.
+func TestMigrateKeyringPreflight_Passes(t *testing.T) {
+	saved := luksEnsureKeyring
+	defer func() { luksEnsureKeyring = saved }()
+	luksEnsureKeyring = func() error { return nil }
+
+	require.NoError(t, migrateKeyringPreflight())
 }
 
 // TestWipeError_Error tests WipeError error formatting.

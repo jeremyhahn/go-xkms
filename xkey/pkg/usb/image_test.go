@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -545,6 +547,45 @@ func TestFormatLUKS_UnlockFails(t *testing.T) {
 	var usbErr *USBError
 	require.True(t, errors.As(err, &usbErr))
 	assert.Equal(t, "unlock_luks", usbErr.Operation)
+}
+
+// TestCreateImage_KeyringUnavailable verifies that a failed keyring
+// preflight refuses before anything destructive runs: no partition table, no
+// filesystem, no LUKS format and no image file, with the luks package's typed
+// error reachable. A container without the keyring syscalls must not be left
+// with a device that was partitioned for a LUKS volume it can never open.
+func TestCreateImage_KeyringUnavailable(t *testing.T) {
+	restore := saveHooks(t)
+	defer restore()
+	mockAllCommandsSuccess(t)
+	mockRootUser()
+
+	var commands []string
+	execCommand = func(name string, args ...string) error {
+		commands = append(commands, name)
+		return nil
+	}
+	formatCalled := false
+	luksFormat = func(opts luks2.FormatOptions) error { formatCalled = true; return nil }
+	luksCheckKeyring = func() error { return &luks.KeyringError{Err: luks2.ErrKeyringBlocked} }
+
+	cfg := ImageConfig{
+		Path:       filepath.Join(t.TempDir(), "test.img"),
+		SizeBytes:  4 * GB,
+		Passphrase: "test-passphrase",
+	}
+	err := CreateImage(cfg)
+	require.Error(t, err)
+
+	var usbErr *USBError
+	require.True(t, errors.As(err, &usbErr))
+	assert.Equal(t, "keyring_preflight", usbErr.Operation)
+	assert.Equal(t, cfg.Path, usbErr.Path)
+	assert.True(t, errors.Is(err, luks.ErrKeyringUnavailable))
+	assert.True(t, errors.Is(err, luks2.ErrKeyringBlocked))
+	assert.Empty(t, commands, "no partitioning or formatting command may run when the volume could never be unlocked")
+	assert.False(t, formatCalled, "the LUKS partition must not be formatted")
+	assert.NoFileExists(t, cfg.Path, "the image file must not be created")
 }
 
 // TestFormatLUKS_MakeFilesystemFails verifies error when mkfs fails

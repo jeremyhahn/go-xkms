@@ -93,6 +93,12 @@ func (v *Volume) Create(sizeBytes int64, passphrase string) error {
 		return ErrVolumeAlreadyExists
 	}
 
+	// The unlock below needs the kernel keyring; refuse before a container
+	// file exists rather than after a format that cannot be opened.
+	if err := EnsureKeyringAvailable(); err != nil {
+		return err
+	}
+
 	// Create parent directory
 	dir := filepath.Dir(v.LUKSPath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -171,6 +177,12 @@ func (v *Volume) Unlock(passphrase string) error {
 
 	if v.IsMounted() {
 		return ErrVolumeAlreadyMounted
+	}
+
+	// Refuse before a loop device is attached: an unlock that cannot place
+	// the volume key in the kernel keyring must not leave one behind.
+	if err := EnsureKeyringAvailable(); err != nil {
+		return err
 	}
 
 	// Setup loop device

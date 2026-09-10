@@ -89,6 +89,14 @@ func CreateImage(cfg ImageConfig) error {
 		}
 	}
 
+	// The LUKS format and every later unlock need the kernel keyring. Refuse
+	// here, before the image file, the partition table or either filesystem
+	// exists, rather than after a real device has been partitioned for a
+	// container that could never be opened.
+	if err := luksCheckKeyring(); err != nil {
+		return &USBError{Operation: "keyring_preflight", Path: cfg.Path, Err: err}
+	}
+
 	isBlock := IsBlockDevice(cfg.Path)
 
 	if isBlock {

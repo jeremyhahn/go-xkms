@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 )
 
 // Package-level function variables allow tests to replace external
@@ -56,6 +58,12 @@ var luksFormat = luks2.Format
 
 // luksUnlock unlocks a LUKS2 partition.
 var luksUnlock = luks2.Unlock
+
+// luksCheckKeyring proves the kernel keyring is usable before a partition is
+// formatted and unlocked. It is the luks package's per-operation preflight, so
+// a USB provisioning run gets the same refusal, with the same cause and remedy,
+// that a volume unlock would.
+var luksCheckKeyring = luks.EnsureKeyringAvailable
 
 // luksMakeFilesystem creates a filesystem on an unlocked LUKS device.
 var luksMakeFilesystem = luks2.MakeFilesystem
