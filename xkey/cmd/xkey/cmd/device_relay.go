@@ -58,7 +58,7 @@ Examples:
 
 func init() {
 	deviceCmd.AddCommand(deviceRelayCmd)
-	deviceRelayCmd.Flags().String("listen", ":8444", "TCP listen address")
+	deviceRelayCmd.Flags().String("listen", "", "TCP listen address as host:port (default: phone.relay_listen_address, :8444)")
 	deviceRelayCmd.Flags().Bool("qr", false, "Show QR code for pairing")
 }
 
@@ -67,7 +67,9 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
-	listenAddr, _ := cmd.Flags().GetString("listen")
+	// The listen address is configuration: --listen over
+	// phone.relay_listen_address over the built-in default.
+	listenAddr := relayListenAddress(cmd)
 	showQR, _ := cmd.Flags().GetBool("qr")
 
 	// Generate or load local Noise static key.

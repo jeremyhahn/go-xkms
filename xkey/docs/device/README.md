@@ -95,8 +95,8 @@ xkey device unpair "John's Pixel"         # Remove a device
 xkey device unpair "Pixel" --force        # Remove without confirmation
 xkey device status                        # Device connection status
 xkey device status --device "Pixel"       # Status of specific device
-xkey device relay                         # Start TCP relay server on :8444
-xkey device relay --listen :9443          # Custom listen address
+xkey device relay                         # Start TCP relay server on phone.relay_listen_address (:8444)
+xkey device relay --listen 10.0.0.5:9443  # Override the listen address
 xkey device relay --qr                    # Start relay with QR code display
 xkey device listen                        # Listen for incoming phone connections
 ```
@@ -107,7 +107,7 @@ The `device` command is aliased as `phone` for backward compatibility.
 
 ```
 xkey agent start --xkmsd-url unix:///var/run/xkmsd.sock   # Start agent gRPC server
-xkey agent start --listen :9443                           # Custom listen address
+xkey agent start --listen 10.0.0.5:9443                   # Override agent.listen_address (:9443)
 xkey agent start --tls-cert server.pem --tls-key server-key.pem  # With mTLS
 xkey agent start --cert-profile client --cert-validity-days 90   # Agent cert issuance
 xkey agent stop                           # Stop the running agent server

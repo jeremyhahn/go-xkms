@@ -40,7 +40,7 @@ func TestDeviceRelayCmd_Flags(t *testing.T) {
 func TestDeviceRelayCmd_FlagDefaults(t *testing.T) {
 	listenFlag := deviceRelayCmd.Flags().Lookup("listen")
 	require.NotNil(t, listenFlag)
-	assert.Equal(t, ":8444", listenFlag.DefValue)
+	assert.Equal(t, "", listenFlag.DefValue, "the flag's zero value means \"from configuration\"; the address defaults in phone.relay_listen_address")
 
 	qrFlag := deviceRelayCmd.Flags().Lookup("qr")
 	require.NotNil(t, qrFlag)

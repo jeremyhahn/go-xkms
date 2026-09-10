@@ -8,13 +8,14 @@ The TCP relay server enables network-based device pairing as an alternative to B
 - Each connection performs a Noise XX handshake (3 messages).
 - After the handshake completes, an encrypted JSON-RPC request/response loop begins.
 - Framing uses 2-byte big-endian length prefixes, matching `pairing.TCPTransport`.
-- Default port: `8444`.
+- Listen address: `phone.relay_listen_address` in the xkey config
+  (`XKEY_PHONE_RELAY_LISTEN_ADDRESS`), default `:8444`; `--listen` overrides it.
 
 ## CLI Usage
 
 ```bash
-xkey device relay                    # Start on default port :8444
-xkey device relay --listen :9443     # Custom port
+xkey device relay                    # Start on phone.relay_listen_address (:8444)
+xkey device relay --listen 10.0.0.5:9443   # Override the listen address
 xkey device relay --qr              # Start + show QR code
 ```
 

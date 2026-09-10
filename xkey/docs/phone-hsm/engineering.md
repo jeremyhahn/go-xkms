@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-10
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -460,7 +460,11 @@ converts a handled failure into an outage.
 
 Pairing keys and the expected device fingerprint, from a completed pairing.
 Transport selection is USB AOA, TCP relay (`tcp_transport.go`) or BLE.
-`transport.Config.Timeout` maps to the USB operation timeout.
+`transport.Config.Timeout` maps to the USB operation timeout. The relay
+server's bind address is `phone.relay_listen_address` in the unified config
+(`pkg/config`, validated as `host:port`; `XKEY_PHONE_RELAY_LISTEN_ADDRESS`),
+resolved by `xkey device relay` as flag (`--listen`) over configuration over
+the built-in `phone.DefaultTCPListenAddr` (`:8444`) (#140).
 
 Device-side policy: `device_enrollment_policy.go`, `sharing_policy.go`.
 

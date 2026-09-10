@@ -14,7 +14,11 @@
 // Package config provides the unified configuration for xKey CLI and GUI.
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+	"strconv"
+)
 
 // Config is the top-level unified configuration for the xKey CLI and GUI
 // applications. It merges all subsystem settings into a single struct that
@@ -28,6 +32,7 @@ type Config struct {
 	Phone              PhoneConfig              `yaml:"phone" json:"phone" mapstructure:"phone"`
 	XKMSD              XKMSDConfig              `yaml:"xkmsd" json:"xkmsd" mapstructure:"xkmsd"`
 	OIDC               OIDCConfig               `yaml:"oidc" json:"oidc" mapstructure:"oidc"`
+	Agent              AgentConfig              `yaml:"agent" json:"agent" mapstructure:"agent"`
 	TPM                TPMConfig                `yaml:"tpm" json:"tpm" mapstructure:"tpm"`
 	PasswordProtection PasswordProtectionConfig `yaml:"password_protection" json:"password_protection" mapstructure:"password_protection"`
 	Trust              TrustConfig              `yaml:"trust" json:"trust" mapstructure:"trust"`
@@ -82,6 +87,11 @@ type PhoneConfig struct {
 	DeviceFilter      string `yaml:"device_filter" json:"device_filter" mapstructure:"device_filter"`
 	AttestationPolicy string `yaml:"attestation_policy" json:"attestation_policy" mapstructure:"attestation_policy"`
 
+	// RelayListenAddress is the host:port `xkey device relay` binds for the
+	// TCP pairing relay; a bare ":port" binds every interface. It is the
+	// defaults-layer value `--listen` overrides.
+	RelayListenAddress string `yaml:"relay_listen_address" json:"relay_listen_address" mapstructure:"relay_listen_address"`
+
 	// TPMEnrollment offers TCG-CSR-IDEVID device enrollment from this host's
 	// TPM over the phone bridge, so a paired phone acting as a Certificate
 	// Authority can enroll this machine's device identity. Off by default:
@@ -113,6 +123,13 @@ type XKMSDConfig struct {
 type OIDCConfig struct {
 	CallbackHost string `yaml:"callback_host" json:"callback_host" mapstructure:"callback_host"`
 	CallbackPort int    `yaml:"callback_port" json:"callback_port" mapstructure:"callback_port"`
+}
+
+// AgentConfig holds the address `xkey agent start` serves enrolled agents
+// on: host:port, where a bare ":port" binds every interface. It is the
+// defaults-layer value `--listen` overrides.
+type AgentConfig struct {
+	ListenAddress string `yaml:"listen_address" json:"listen_address" mapstructure:"listen_address"`
 }
 
 // TPMConfig holds direct TPM access parameters.
@@ -316,6 +333,12 @@ func DefaultConfig() *Config {
 			CallbackHost: "localhost",
 			CallbackPort: 8085,
 		},
+		Agent: AgentConfig{
+			ListenAddress: ":9443",
+		},
+		Phone: PhoneConfig{
+			RelayListenAddress: ":8444",
+		},
 		Log: LogConfig{
 			Level: "info",
 		},
@@ -357,6 +380,24 @@ func (c *Config) Validate() error {
 
 	if c.OIDC.CallbackPort < 1 || c.OIDC.CallbackPort > 65535 {
 		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": oidc.callback_port must be between 1 and 65535, got %d", c.OIDC.CallbackPort)}
+	}
+	for key, addr := range map[string]string{
+		"agent.listen_address":       c.Agent.ListenAddress,
+		"phone.relay_listen_address": c.Phone.RelayListenAddress,
+	} {
+		if addr == "" {
+			continue
+		}
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": %s %q is not host:port: %v", key, addr, err)}
+		}
+		// SplitHostPort accepts an empty port, and a listener given ":" or
+		// "127.0.0.1:" binds an ephemeral port; a typo must fail here, not
+		// bind somewhere random.
+		if n, convErr := strconv.Atoi(port); convErr != nil || n < 1 || n > 65535 {
+			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": %s %q must name a port between 1 and 65535", key, addr)}
+		}
 	}
 	if c.Backend.Default != "" {
 		if _, ok := validBackends[c.Backend.Default]; !ok {

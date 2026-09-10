@@ -90,7 +90,7 @@ defer proxy.Stop()
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `listen_address` | string | `:9443` | Bind address for the agent server |
+| `listen_address` | string | `:9443` | Bind address for the agent server; `xkey agent start` takes it from `agent.listen_address` in the xkey config (`XKEY_AGENT_LISTEN_ADDRESS`), overridden by `--listen` |
 | `tls_cert_file` | string | | Server TLS certificate path |
 | `tls_key_file` | string | | Server TLS private key path |
 | `tls_ca_file` | string | | CA certificate for client verification (enables mTLS) |
@@ -109,7 +109,7 @@ defer proxy.Stop()
 | `tls_cert_file` | string | | Client certificate path (from enrollment) |
 | `tls_key_file` | string | | Client private key path |
 | `tls_ca_file` | string | | CA certificate for server verification |
-| `local_address` | string | `localhost:19443` | Local reverse-proxy bind address |
+| `local_address` | string | `localhost:19443` | Declared as the local reverse-proxy bind address; the client does not yet read it, so it has no config-file, environment or flag path |
 | `reconnect_backoff_max` | duration | `2m` | Maximum reconnection backoff (0 = no reconnect) |
 
 ## GUI Service Integration

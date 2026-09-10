@@ -43,7 +43,7 @@ The desktop CLI has no scan-a-pairing-QR command; `xkey device pair` is the
 BLE pairing path, not the QR path.
 
 ```bash
-# Show QR code for pairing (starts the TCP relay; --listen defaults to :8444):
+# Show QR code for pairing (starts the TCP relay; --listen defaults to phone.relay_listen_address, :8444):
 xkey device relay --qr
 xkey device relay --qr --listen :8444
 ```

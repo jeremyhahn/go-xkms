@@ -1,6 +1,6 @@
 # Phone as HSM — User Guide
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-10
 
 ## What this does
 
@@ -96,8 +96,26 @@ xkey device connect 192.0.2.10:port
 xkey device relay
 ```
 
-The relay only moves already-encrypted frames. It cannot read them — the session
-is end-to-end between the two paired devices.
+The relay listens on `phone.relay_listen_address` from your xkey config,
+`:8444` on every interface unless you set it. To pin it to one interface, set
+it in the config file, in the environment, or for one run on the command line;
+each overrides the one before:
+
+```yaml
+phone:
+  relay_listen_address: "192.0.2.10:8444"
+```
+
+```
+XKEY_PHONE_RELAY_LISTEN_ADDRESS=192.0.2.10:8444 xkey device relay
+xkey device relay --listen 192.0.2.10:8444
+```
+
+The relay is this machine's end of the session, not a blind pipe: it
+performs the Noise XX handshake with the phone, decrypts each request and
+answers it, so it runs only on the trusted xkey host, never on an
+intermediate one. The session is end-to-end between the phone and this
+host; anything on the network in between sees only encrypted frames.
 
 ## One thing at a time
 

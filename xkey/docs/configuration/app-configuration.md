@@ -80,6 +80,7 @@ oath:                    # OATH TOTP/HOTP module
 phone:                   # Phone-as-a-token backend
 xkmsd:                   # xkmsd server connection
 oidc:                    # Local OAuth2 callback listener for OIDC and AWS login
+agent:                   # Agent server bind address
 tpm:                     # Direct TPM access parameters
 password_protection:     # Barrier/encryption at-rest settings
 trust:                   # Root certificates and system trust
@@ -133,6 +134,7 @@ phone:
   backend: ""
   server_address: ""
   server_protocol: ""
+  relay_listen_address: ":8444"  # xkey device relay binds this (host:port); --listen overrides
   server_tls_enabled: false
   device_filter: ""
   attestation_policy: ""
@@ -169,6 +171,15 @@ on `callback_host` at that port (the loopback pair for `localhost`).
 before opening the browser, because AWS's redirect host is fixed at
 `127.0.0.1`. `--callback-host` and `--callback-port` override the section per
 command.
+
+### agent
+
+```yaml
+agent:
+  listen_address: ":9443"   # xkey agent start binds this (host:port; ":port" = every interface)
+```
+
+`--listen` on `xkey agent start` overrides the section for one run.
 
 ### tpm
 

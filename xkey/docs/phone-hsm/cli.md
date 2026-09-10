@@ -1,6 +1,6 @@
 # Phone as HSM — CLI
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-10
 
 Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 
@@ -92,10 +92,20 @@ xkey device device-info "Pixel-8"
 ```
 xkey device listen
 xkey device connect 192.0.2.10:port
+xkey device relay
+xkey device relay --listen 192.0.2.10:8444
 ```
 
-The relay carries an already-encrypted Noise session; it cannot read the
-traffic.
+`device relay` binds `phone.relay_listen_address` from the xkey config
+(`XKEY_PHONE_RELAY_LISTEN_ADDRESS`; default `:8444`, every interface), and
+`--listen` overrides it for one run: flag over environment over file over
+the built-in default. The address must be `host:port`; a bare `:port` binds
+every interface, an address binds that interface.
+
+The relay is the host's end of the Noise session (`pkg/phone/tcp_server.go`
+performs the handshake, decrypts each request and dispatches it), so it is
+a trusted xkey host component that handles plaintext after decryption; only
+the network between the phone and this host sees encrypted frames alone.
 
 ## One operation at a time
 

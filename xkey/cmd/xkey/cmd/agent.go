@@ -124,15 +124,14 @@ Examples:
 // runAgentStart starts the agent server.
 func runAgentStart(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	listenAddr, _ := cmd.Flags().GetString("listen")
 	tlsCert, _ := cmd.Flags().GetString("tls-cert")
 	tlsKey, _ := cmd.Flags().GetString("tls-key")
 	tlsCA, _ := cmd.Flags().GetString("tls-ca")
 
 	cfg := agent.DefaultConfig()
-	if listenAddr != "" {
-		cfg.ListenAddress = listenAddr
-	}
+	// The listen address is configuration: --listen over agent.listen_address
+	// over the built-in default.
+	cfg.ListenAddress = agentListenAddress(cmd)
 	cfg.TLSCertFile = tlsCert
 	cfg.TLSKeyFile = tlsKey
 	cfg.TLSCAFile = tlsCA
@@ -359,7 +358,7 @@ func init() {
 	AgentCmd.AddCommand(agentStatusCmd)
 
 	// Agent start flags.
-	agentStartCmd.Flags().String("listen", "", "Listen address (default: :9443)")
+	agentStartCmd.Flags().String("listen", "", "Listen address as host:port (default: agent.listen_address, :9443)")
 	agentStartCmd.Flags().String("tls-cert", "", "TLS certificate file")
 	agentStartCmd.Flags().String("tls-key", "", "TLS private key file")
 	agentStartCmd.Flags().String("tls-ca", "",
