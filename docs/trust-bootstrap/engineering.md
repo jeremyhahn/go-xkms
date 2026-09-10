@@ -199,6 +199,13 @@ that makes an `ModeAuto` failure diagnosable.
   (go-xkms#83). `TestNoiseStop_NilIsAuthoritative` holds the contract against
   the pinned server, with a live worker and concurrent callers, under
   `-race -count=200`.
+- **The lifecycle sentinels are re-exported.** `ErrNoiseShutdownIncomplete`,
+  `ErrNoiseServerNotStarted` and `ErrNoiseServerAlreadyStarted` are the
+  upstream values (`TestNoiseServerSentinels_AreTheUpstreamValues`), and
+  `sdk/go/bootstrap` aliases them, so a consumer orchestrating `Stop` matches
+  them with `errors.Is` without importing go-truststrap, which only this
+  package composes. `TestSDKNoiseServerLifecycleSentinels` reaches all three
+  through the SDK surface alone (go-xkms#498).
 
 **Fail closed:** an unverifiable anchor, an unresolvable TLSA, a Noise key
 mismatch, an SPKI pin mismatch, or a changed TOFU pin all return an error. None

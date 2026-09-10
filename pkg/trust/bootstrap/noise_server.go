@@ -57,6 +57,22 @@ type NoiseBundleProvider = noiseboot.BundleProvider
 // NewNoiseServer constructs a Noise_NK bootstrap server.
 var NewNoiseServer = noiseboot.NewServer
 
+// The sentinels NoiseServer's lifecycle returns, re-exported so a consumer
+// dispatches on them with errors.Is without importing go-truststrap, which
+// only this package composes (go-xkms#498).
+//
+//   - ErrNoiseShutdownIncomplete: Stop's caller deadline expired before every
+//     handshake worker drained; the static key was retained and a later Stop
+//     may still complete the drain.
+//   - ErrNoiseServerNotStarted: Stop before Start.
+//   - ErrNoiseServerAlreadyStarted: Start on a server that already started;
+//     a NoiseServer is single-use.
+var (
+	ErrNoiseShutdownIncomplete   = noiseboot.ErrShutdownIncomplete
+	ErrNoiseServerNotStarted     = noiseboot.ErrServerNotStarted
+	ErrNoiseServerAlreadyStarted = noiseboot.ErrServerAlreadyStarted
+)
+
 // NoiseServerStaticKey adapts a protected NoiseStaticKey to the key pair
 // NoiseServerConfig.StaticKey takes:
 //

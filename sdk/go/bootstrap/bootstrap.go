@@ -160,6 +160,13 @@ var (
 	// NewNoiseServer constructs a Noise_NK bootstrap server.
 	NewNoiseServer = pkgbootstrap.NewNoiseServer
 
+	// The sentinels NoiseServer.Start and Stop return. A consumer orchestrating
+	// the server dispatches on these with errors.Is; without them it had to
+	// import go-truststrap, which the layer ownership forbids (go-xkms#498).
+	ErrNoiseShutdownIncomplete   = pkgbootstrap.ErrNoiseShutdownIncomplete
+	ErrNoiseServerNotStarted     = pkgbootstrap.ErrNoiseServerNotStarted
+	ErrNoiseServerAlreadyStarted = pkgbootstrap.ErrNoiseServerAlreadyStarted
+
 	// GenerateNoiseStaticKey generates a Curve25519 static key pair.
 	GenerateNoiseStaticKey = pkgbootstrap.GenerateNoiseStaticKey
 
