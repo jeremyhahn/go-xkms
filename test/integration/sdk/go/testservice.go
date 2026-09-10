@@ -108,6 +108,26 @@ func (s *TestXKMSService) ListBackends(ctx context.Context, _ ...transport.ListO
 	}, nil
 }
 
+// Algorithms answers with the algorithm discovery for the one backend this
+// service advertises, built by the same function the daemon uses from the
+// software backend's declared capability set, so the SDK client sees the
+// daemon's shape for a software-only deployment and the discovery agrees
+// with ListBackends. The daemon's global capability lookup needs an
+// initialised backend registry, which this in-process service replaces, so
+// the capabilities are supplied directly.
+func (s *TestXKMSService) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	softwareCapabilities := func(name string) (xkms.Capabilities, error) {
+		if name != string(xkms.ServiceBackendSoftware) {
+			return xkms.Capabilities{}, errors.New("backend not found")
+		}
+		return xkms.NewSoftwareCapabilities(), nil
+	}
+	return xkms.ServiceBuildAlgorithmsResponse(
+		[]xkms.ServiceBackendType{xkms.ServiceBackendSoftware},
+		softwareCapabilities,
+	), nil
+}
+
 func (s *TestXKMSService) GetBackend(ctx context.Context, backendID string) (*xkms.BackendInfo, error) {
 	if backendID != "software" {
 		return nil, errors.New("backend not found")
@@ -1210,8 +1230,29 @@ func (s *TestXKMSService) ListShares(ctx context.Context) (*xkms.ListSharesRespo
 	return nil, ErrNotImplemented
 }
 
+// GetShare returns one submitted share. Share state lives in the embedded
+// go-qrdb node, which this test service does not carry, so it answers the
+// way its share siblings do.
+func (s *TestXKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*xkms.ShareInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+// DeleteShare removes one submitted share; see GetShare.
+func (s *TestXKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	return ErrNotImplemented
+}
+
 // GetShareCollectionStatus returns the collection status for a group.
 func (s *TestXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*xkms.ShareCollectionStatus, error) {
+	return nil, ErrNotImplemented
+}
+
+// Audit operations
+
+// QueryAudit reads the audit chain. The chain lives in the embedded go-qrdb
+// node, which this test service does not carry; the suite exercises the
+// operations that would be audited, not the chain itself.
+func (s *TestXKMSService) QueryAudit(ctx context.Context, filter *xkms.AuditFilter) (*xkms.AuditPage, error) {
 	return nil, ErrNotImplemented
 }
 

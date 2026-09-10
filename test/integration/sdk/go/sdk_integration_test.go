@@ -103,6 +103,41 @@ func TestSDK_Embedded_ListBackends(t *testing.T) {
 	}
 }
 
+// TestSDK_Embedded_Algorithms proves the SDK client's algorithm discovery
+// reaches the service through the embedded transport and agrees with the
+// backends the service lists: every algorithm names the software backend
+// and the classical signing set is present.
+func TestSDK_Embedded_Algorithms(t *testing.T) {
+	client, cleanup := createTestClient(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := client.Algorithms(ctx)
+	if err != nil {
+		t.Fatalf("Algorithms failed: %v", err)
+	}
+	if len(resp.Signing) == 0 {
+		t.Fatal("expected at least one signing algorithm")
+	}
+
+	want := map[string]bool{"RSA": false, "ECDSA": false, "Ed25519": false}
+	for _, alg := range resp.Signing {
+		if _, ok := want[alg.Algorithm]; ok {
+			want[alg.Algorithm] = true
+		}
+		if len(alg.Backends) != 1 || alg.Backends[0] != "software" {
+			t.Errorf("algorithm %s names backends %v, want only the software backend the service lists", alg.Algorithm, alg.Backends)
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("signing algorithm %s missing from discovery", name)
+		}
+	}
+}
+
 // TestSDK_Embedded_KeyLifecycle tests key generation, retrieval, listing, and deletion.
 func TestSDK_Embedded_KeyLifecycle(t *testing.T) {
 	client, cleanup := createTestClient(t)
