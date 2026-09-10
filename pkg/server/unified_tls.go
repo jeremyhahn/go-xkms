@@ -182,11 +182,25 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
 
+	cn := s.config.TLS.ServerCN
+	if cn == "" {
+		cn = "xkmsd-bootstrap"
+	}
+	dnsNames, ips := s.serverCertSANs(cn, true)
+
+	// A persisted certificate is reused only while it still presents exactly
+	// the names configuration asks for. A node whose tls.include_localhost_sans,
+	// server.host or tls.extra_sans changed after first boot must not keep
+	// serving the old set for the rest of the certificate's year (#140).
 	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
 		if leaf, perr := x509.ParseCertificate(cert.Certificate[0]); perr == nil &&
 			time.Now().Before(leaf.NotAfter.Add(-24*time.Hour)) {
-			s.logger.Info("unified API server: serving persisted bootstrap TLS certificate until the CA composes")
-			return &cert, nil
+			if certSANsMatch(leaf, dnsNames, ips) {
+				s.logger.Info("unified API server: serving persisted bootstrap TLS certificate until the CA composes")
+				return &cert, nil
+			}
+			s.logger.Info("unified API server: persisted bootstrap TLS certificate no longer presents the configured SANs; regenerating",
+				"have_dns", leaf.DNSNames, "want_dns", dnsNames)
 		}
 	}
 
@@ -198,13 +212,6 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 	if err != nil {
 		return nil, &ErrTLSCertOp{Operation: "generate bootstrap TLS serial", Err: err}
 	}
-
-	cn := s.config.TLS.ServerCN
-	if cn == "" {
-		cn = "xkmsd-bootstrap"
-	}
-	dnsNames, ips := localCertSANs(cn, s.config.Server.Host,
-		append(s.clusterPeerHosts(), s.config.TLS.ExtraSANs...)...)
 
 	template := &x509.Certificate{
 		SerialNumber: serial,
@@ -247,18 +254,75 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 	return &cert, nil
 }
 
-// localCertSANs builds the SAN set every locally issued server certificate
-// (bootstrap self-signed and CA-issued) must cover: the configured server CN,
-// localhost plus loopback addresses, the machine's own hostname, the
-// configured listen host, and any extra hosts the caller supplies (the
-// cluster peer hostnames — the CA-issued certificate lives in replicated
-// storage keyed by CN, so one shared certificate serves every node and must
-// verify for each node's name). Clients dial nodes by hostname, so a
-// certificate that only covers localhost fails verification for every
-// remote client.
-func localCertSANs(serverCN, host string, extraHosts ...string) (dns []string, ips []net.IP) {
-	dns = []string{"localhost"}
-	ips = []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+// certSANsMatch reports whether leaf presents exactly the DNS and IP SAN sets
+// configuration asks for, as sets: order does not matter, a name the
+// configuration no longer wants or one it now wants and the certificate lacks
+// both mean the certificate must be reissued.
+func certSANsMatch(leaf *x509.Certificate, dns []string, ips []net.IP) bool {
+	if len(leaf.DNSNames) != len(dns) || len(leaf.IPAddresses) != len(ips) {
+		return false
+	}
+	wantDNS := make(map[string]struct{}, len(dns))
+	for _, d := range dns {
+		wantDNS[d] = struct{}{}
+	}
+	for _, d := range leaf.DNSNames {
+		if _, ok := wantDNS[d]; !ok {
+			return false
+		}
+	}
+	for _, have := range leaf.IPAddresses {
+		found := false
+		for _, want := range ips {
+			if have.Equal(want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// serverCertSANs is the SAN set a locally issued server certificate carries,
+// built from configuration alone: the server CN, the loopback names when
+// tls.include_localhost_sans says so, server.host, the cluster peer hosts
+// and tls.extra_sans. Both issuance paths call this so they can never
+// disagree on what configuration asks for.
+//
+// nodeLocal adds the machine's own hostname, and is set only for the
+// bootstrap certificate, which each node generates for itself. The CA-issued
+// certificate lives in replicated storage keyed by CN and is shared by every
+// node, so its SAN set must be identical wherever it is computed: with the
+// hostname in it, each node would judge the shared certificate stale, retire
+// it and reissue it for its own name, and the cluster would churn. A node
+// that clients dial by a name outside server.host and the peer list names it
+// in tls.extra_sans.
+func (s *Server) serverCertSANs(serverCN string, nodeLocal bool) (dns []string, ips []net.IP) {
+	return localCertSANs(serverCN, s.config.Server.Host, s.config.TLS.IncludeLocalhostSANs, nodeLocal,
+		append(s.clusterPeerHosts(), s.config.TLS.ExtraSANs...)...)
+}
+
+// localCertSANs builds the SAN set a locally issued server certificate must
+// cover: the configured server CN, localhost plus the loopback addresses
+// when includeLoopback is set, the machine's own hostname when
+// includeHostname is set, the configured listen host, and any extra hosts
+// the caller supplies (the cluster peer hostnames — the CA-issued
+// certificate lives in replicated storage keyed by CN, so one shared
+// certificate serves every node and must verify for each node's name).
+// Clients dial nodes by hostname, so a certificate that only covers
+// localhost fails verification for every remote client. No name here is a
+// literal the configuration cannot switch off: the loopback set is
+// tls.include_localhost_sans, and a wildcard address is never a SAN (#140).
+func localCertSANs(serverCN, host string, includeLoopback, includeHostname bool, extraHosts ...string) (dns []string, ips []net.IP) {
+	dns = []string{}
+	ips = []net.IP{}
+	if includeLoopback {
+		dns = append(dns, "localhost")
+		ips = append(ips, net.IPv4(127, 0, 0, 1), net.IPv6loopback)
+	}
 	addDNS := func(name string) {
 		if name == "" || net.ParseIP(name) != nil {
 			return
@@ -278,19 +342,30 @@ func localCertSANs(serverCN, host string, extraHosts ...string) (dns []string, i
 		}
 		ips = append(ips, ip)
 	}
-	addDNS(serverCN)
-	if hostname, err := os.Hostname(); err == nil {
-		addDNS(hostname)
-	}
 	addHost := func(h string) {
 		if h == "" {
 			return
 		}
 		if ip := net.ParseIP(h); ip != nil {
+			// A bind host of 0.0.0.0 or :: says "every interface"; it is
+			// not an address a client dials and never a name a certificate
+			// presents.
+			if ip.IsUnspecified() {
+				return
+			}
 			addIP(ip)
 			return
 		}
 		addDNS(h)
+	}
+	// The CN is classified like every other name: an operator who sets
+	// tls.server_cn to an address gets an IP SAN, which is what a client
+	// dialing that address verifies against, not the Common Name.
+	addHost(serverCN)
+	if includeHostname {
+		if hostname, err := os.Hostname(); err == nil {
+			addDNS(hostname)
+		}
 	}
 	addHost(host)
 	for _, h := range extraHosts {

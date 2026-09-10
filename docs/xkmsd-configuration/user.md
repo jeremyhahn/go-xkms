@@ -59,3 +59,24 @@ the key. Fix the value; there is no fallback.
 Quote values that look like numbers but are strings, such as the socket
 permission mode: `socket_mode: "0660"`. An unquoted `0660` is read as the
 number 432.
+
+## Certificate names
+
+The daemon issues its own TLS server certificate (a self-signed bootstrap one
+until the CA composes, then a CA-issued one). Its subject alternative names
+are entirely yours to set:
+
+| Key | Variable | Adds |
+|---|---|---|
+| `tls.server_cn` | `XKMS_TLS_SERVER_CN` | the common name |
+| `tls.extra_sans` | `XKMS_TLS_EXTRA_SANS` | aliases and addresses clients dial |
+| `server.host` | `XKMS_SERVER_HOST` | the bind host, when it is a name or address |
+| `tls.include_localhost_sans` | `XKMS_TLS_INCLUDE_LOCALHOST_SANS` | `localhost`, `127.0.0.1`, `::1` (default `true`) |
+
+The cluster peers' hosts are always included. The machine hostname is covered
+by the bootstrap certificate only; if clients dial a node by a name that is
+not `server.host` or a peer host, list it in `tls.extra_sans`, because the
+CA-issued certificate is shared by every node and carries no node-local
+names. Set `tls.include_localhost_sans: false` on a node that must not
+present loopback names; nothing else adds them. A certificate issued before a
+change to any of these keys is reissued at the next start.

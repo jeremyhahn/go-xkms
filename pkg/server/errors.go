@@ -309,6 +309,11 @@ func (e *ErrCAInit) Unwrap() error {
 
 // ErrTLSCertOp represents a failure during a TLS certificate operation.
 // When Sentinel is set, errors.Is will match both the Sentinel and the wrapped Err.
+// ErrTLSCertChainCAUnavailable is the cause of an ErrTLSCertOp when a
+// reissued TLS server certificate needs its chain stored but the CA
+// certificate that completes the chain cannot be loaded or is absent.
+var ErrTLSCertChainCAUnavailable = errors.New("server: CA certificate unavailable for the TLS certificate chain")
+
 type ErrTLSCertOp struct {
 	Operation string
 	Err       error

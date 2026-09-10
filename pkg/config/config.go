@@ -278,6 +278,13 @@ type TLSConfig struct {
 	// and machine hostname (load-balancer aliases, split-horizon DNS).
 	ExtraSANs []string `yaml:"extra_sans" json:"extra_sans"`
 
+	// IncludeLocalhostSANs adds localhost, 127.0.0.1 and ::1 to the
+	// auto-issued TLS server certificate (bootstrap and CA-issued), so local
+	// clients pass hostname verification. The defaults layer sets it true;
+	// a deployment that must not present loopback names sets it false. It
+	// is the only source of those names: no SAN is ever a literal (#140).
+	IncludeLocalhostSANs bool `yaml:"include_localhost_sans" json:"include_localhost_sans"`
+
 	// Client certificate verification (mTLS)
 	ClientAuth string   `yaml:"client_auth"` // none, request, require, verify, require_and_verify
 	ClientCAs  []string `yaml:"client_cas"`  // Additional client CA certificates

@@ -37,6 +37,9 @@ func Defaults() *Config {
 		Server: ServerConfig{
 			Host: DefaultServerHost,
 		},
+		TLS: TLSConfig{
+			IncludeLocalhostSANs: true,
+		},
 	}
 }
 

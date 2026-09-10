@@ -70,6 +70,16 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
 6. **A value that cannot decode into its field's type fails `Load`**; it is not
    silently dropped. (The legacy ladder still drops an unparsable port for the
    names it owns; that behaviour leaves with the ladder.)
+7. **Every SAN on the auto-issued server certificate is configuration.** The
+   bootstrap and the CA-issued certificate share one builder,
+   `Server.serverCertSANs`: `tls.server_cn`, `tls.extra_sans`, `server.host`,
+   the cluster peers, and the loopback names only while
+   `tls.include_localhost_sans` (defaults-layer `true`) says so. No SAN is a
+   literal, and a wildcard address is never one (#140 cluster 3). The machine
+   hostname is node-local and goes into the bootstrap certificate only: the
+   CA-issued certificate is shared by every node through replicated storage,
+   so its SAN set is deterministic cluster-wide, and a certificate whose set
+   no longer matches is retired and reissued rather than served stale.
 
 ## Decoding notes
 

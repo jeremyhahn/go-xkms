@@ -18,6 +18,8 @@ import (
 	"crypto/x509"
 	"io"
 	"log/slog"
+	"net"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,7 +65,7 @@ func TestBuildUnifiedTLSConfig_BootstrapGeneratedAndPersisted(t *testing.T) {
 	mk := func() *Server {
 		return newTLSTestServer(t, &config.Config{
 			Server:  config.ServerConfig{Host: "127.0.0.1"},
-			TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example"},
+			TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example", IncludeLocalhostSANs: true},
 			Storage: config.StorageConfig{Path: dir},
 		})
 	}
@@ -137,4 +139,201 @@ func TestUnifiedTLSProvider_RotationServesNewCert(t *testing.T) {
 	got, err := p.getCertificate(&tls.ClientHelloInfo{})
 	require.NoError(t, err)
 	assert.Equal(t, first.Certificate[0], got.Certificate[0])
+}
+
+// TestBuildUnifiedTLSConfig_LoopbackSANsAreConfiguration proves the loopback
+// names in the auto-issued certificate come from tls.include_localhost_sans
+// and nowhere else: off, the certificate presents no localhost, 127.0.0.1 or
+// ::1; on, all three. Before this they were literals in localCertSANs that
+// no configuration could switch off, bypassing the knob the owner ruling of
+// 2026-08-26 requires (#140).
+func TestBuildUnifiedTLSConfig_LoopbackSANsAreConfiguration(t *testing.T) {
+	leafFor := func(t *testing.T, include bool) *x509.Certificate {
+		t.Helper()
+		s := newTLSTestServer(t, &config.Config{
+			Server: config.ServerConfig{Host: "192.0.2.10"},
+			TLS: config.TLSConfig{
+				Enabled:              true,
+				ServerCN:             "unit.example",
+				IncludeLocalhostSANs: include,
+			},
+			Storage: config.StorageConfig{Path: t.TempDir()},
+		})
+		cfg, err := s.buildUnifiedTLSConfig()
+		require.NoError(t, err)
+		cert, err := cfg.GetCertificate(&tls.ClientHelloInfo{})
+		require.NoError(t, err)
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		return leaf
+	}
+	hasIP := func(leaf *x509.Certificate, want string) bool {
+		for _, ip := range leaf.IPAddresses {
+			if ip.String() == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("off: no loopback name is presented", func(t *testing.T) {
+		leaf := leafFor(t, false)
+		assert.NotContains(t, leaf.DNSNames, "localhost")
+		assert.False(t, hasIP(leaf, "127.0.0.1"), "IPs: %v", leaf.IPAddresses)
+		assert.False(t, hasIP(leaf, "::1"), "IPs: %v", leaf.IPAddresses)
+		assert.True(t, hasIP(leaf, "192.0.2.10"), "server.host must still be covered: %v", leaf.IPAddresses)
+		assert.Contains(t, leaf.DNSNames, "unit.example")
+	})
+
+	t.Run("on: every loopback name is presented", func(t *testing.T) {
+		leaf := leafFor(t, true)
+		assert.Contains(t, leaf.DNSNames, "localhost")
+		assert.True(t, hasIP(leaf, "127.0.0.1"), "IPs: %v", leaf.IPAddresses)
+		assert.True(t, hasIP(leaf, "::1"), "IPs: %v", leaf.IPAddresses)
+	})
+}
+
+// TestLocalCertSANs pins the builder both issuance paths share: the loopback
+// set is the switch, server.host and extras are added as IP or DNS by shape,
+// duplicates collapse, and a wildcard address is never a SAN.
+func TestLocalCertSANs(t *testing.T) {
+	dns, ips := localCertSANs("node.example", "10.0.0.5", true, true, "alias.example", "10.0.0.5", "node.example")
+	assert.Equal(t, []string{"localhost", "node.example", hostnameForTest(t), "alias.example"}, dedupeKeepOrder(dns))
+	var got []string
+	for _, ip := range ips {
+		got = append(got, ip.String())
+	}
+	assert.Equal(t, []string{"127.0.0.1", "::1", "10.0.0.5"}, got)
+
+	dns, ips = localCertSANs("node.example", "", false, false)
+	assert.NotContains(t, dns, "localhost")
+	assert.Empty(t, ips, "no host, no loopback: no IP SAN at all, and never 0.0.0.0")
+	for _, ip := range ips {
+		assert.NotEqual(t, "0.0.0.0", ip.String())
+	}
+}
+
+// hostnameForTest returns the machine hostname localCertSANs adds, or fails
+// the test if it cannot be read.
+func hostnameForTest(t *testing.T) string {
+	t.Helper()
+	h, err := os.Hostname()
+	require.NoError(t, err)
+	return h
+}
+
+// dedupeKeepOrder returns names in first-seen order, so the assertion holds
+// whether or not the machine hostname equals one of the other names.
+func dedupeKeepOrder(names []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// TestBuildUnifiedTLSConfig_PersistedBootstrapCertFollowsSANConfiguration
+// proves a persisted bootstrap certificate is reissued when the configured
+// SAN set changes: a node that set tls.include_localhost_sans: false after
+// first boot must not keep serving localhost for the rest of the year.
+func TestBuildUnifiedTLSConfig_PersistedBootstrapCertFollowsSANConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(include bool) *Server {
+		return newTLSTestServer(t, &config.Config{
+			Server:  config.ServerConfig{Host: "127.0.0.1"},
+			TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example", IncludeLocalhostSANs: include},
+			Storage: config.StorageConfig{Path: dir},
+		})
+	}
+	leafFor := func(t *testing.T, s *Server) (*x509.Certificate, []byte) {
+		t.Helper()
+		cfg, err := s.buildUnifiedTLSConfig()
+		require.NoError(t, err)
+		cert, err := cfg.GetCertificate(&tls.ClientHelloInfo{})
+		require.NoError(t, err)
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		require.NoError(t, err)
+		return leaf, cert.Certificate[0]
+	}
+
+	first, firstDER := leafFor(t, mk(true))
+	assert.Contains(t, first.DNSNames, "localhost")
+
+	second, secondDER := leafFor(t, mk(false))
+	assert.NotContains(t, second.DNSNames, "localhost", "the persisted certificate must be reissued without the loopback names")
+	assert.NotEqual(t, firstDER, secondDER)
+
+	_, thirdDER := leafFor(t, mk(false))
+	assert.Equal(t, secondDER, thirdDER, "with the configuration unchanged the reissued certificate is reused")
+}
+
+// TestCertSANsMatch pins the set comparison both certificate paths use.
+func TestCertSANsMatch(t *testing.T) {
+	leaf := &x509.Certificate{
+		DNSNames:    []string{"b.example", "a.example"},
+		IPAddresses: []net.IP{net.ParseIP("10.0.0.5"), net.IPv4(127, 0, 0, 1)},
+	}
+	assert.True(t, certSANsMatch(leaf, []string{"a.example", "b.example"}, []net.IP{net.IPv4(127, 0, 0, 1), net.ParseIP("10.0.0.5")}), "order must not matter")
+	assert.False(t, certSANsMatch(leaf, []string{"a.example"}, []net.IP{net.IPv4(127, 0, 0, 1), net.ParseIP("10.0.0.5")}), "a name the configuration dropped")
+	assert.False(t, certSANsMatch(leaf, []string{"a.example", "b.example", "c.example"}, []net.IP{net.IPv4(127, 0, 0, 1), net.ParseIP("10.0.0.5")}), "a name the configuration added")
+	assert.False(t, certSANsMatch(leaf, []string{"a.example", "b.example"}, []net.IP{net.ParseIP("10.0.0.5")}), "an address the configuration dropped")
+}
+
+// TestLocalCertSANs_WildcardHostIsNeverASAN pins that a bind host of every
+// interface -- 0.0.0.0 or :: as server.host, or the same values among the
+// extra hosts -- never reaches the certificate: it is not an address a
+// client dials, and a wildcard is not a name a certificate presents.
+func TestLocalCertSANs_WildcardHostIsNeverASAN(t *testing.T) {
+	for _, host := range []string{"0.0.0.0", "::"} {
+		dns, ips := localCertSANs("node.example", host, false, false, "0.0.0.0", "::", "10.0.0.5")
+		assert.NotContains(t, dns, host)
+		var got []string
+		for _, ip := range ips {
+			got = append(got, ip.String())
+		}
+		assert.Equal(t, []string{"10.0.0.5"}, got, "host %q: only the dialable address survives", host)
+	}
+}
+
+// TestLocalCertSANs_IPLiteralCNIsAnIPSAN pins that a tls.server_cn set to
+// an address becomes an IP SAN rather than being dropped: clients dialing
+// an address verify it against IP SANs, never against the Common Name.
+func TestLocalCertSANs_IPLiteralCNIsAnIPSAN(t *testing.T) {
+	dns, ips := localCertSANs("10.0.0.9", "", false, false)
+	assert.NotContains(t, dns, "10.0.0.9")
+	var got []string
+	for _, ip := range ips {
+		got = append(got, ip.String())
+	}
+	assert.Equal(t, []string{"10.0.0.9"}, got)
+
+	dns, ips = localCertSANs("::", "", false, false)
+	assert.NotContains(t, dns, "::")
+	assert.Empty(t, ips, "a wildcard CN is still never a SAN")
+}
+
+// TestServerCertSANs_CAIssuedSetIsDeterministic pins the cluster invariant
+// codex raised on #504: the CA-issued certificate is shared by every node
+// through replicated storage, so its SAN set must not depend on which node
+// computes it. The machine hostname is node-local and stays in the
+// bootstrap certificate only; a node dialed by another name lists it in
+// tls.extra_sans.
+func TestServerCertSANs_CAIssuedSetIsDeterministic(t *testing.T) {
+	s := newTLSTestServer(t, &config.Config{
+		Server:  config.ServerConfig{Host: "10.0.0.5"},
+		TLS:     config.TLSConfig{Enabled: true, ServerCN: "unit.example", ExtraSANs: []string{"alias.example"}},
+		Storage: config.StorageConfig{Path: t.TempDir()},
+	})
+	hostname := hostnameForTest(t)
+
+	dns, _ := s.serverCertSANs("unit.example", false)
+	assert.NotContains(t, dns, hostname, "the shared CA-issued certificate must not carry node-local material")
+	assert.Equal(t, []string{"unit.example", "alias.example"}, dedupeKeepOrder(dns))
+
+	dns, _ = s.serverCertSANs("unit.example", true)
+	assert.Contains(t, dns, hostname, "the node-local bootstrap certificate covers the machine hostname")
 }

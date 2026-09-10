@@ -83,7 +83,7 @@ func TestStoreTLSCertInBackend_BackendNotFound(t *testing.T) {
 	s.backends = map[string]xkms.Backend{}
 
 	cert := selfSignedCert(t)
-	err := s.storeTLSCertInBackend(context.Background(), &mockTrustedCA{}, "test-cn", "software", cert)
+	err := s.storeTLSCertInBackend(context.Background(), &mockTrustedCA{}, "test-cn", "software", cert, false)
 	require.Error(t, err)
 	var notAvail *ErrBackendNotAvailable
 	assert.True(t, errors.As(err, &notAvail))
@@ -98,7 +98,7 @@ func TestStoreTLSCertInBackend_SaveCertError(t *testing.T) {
 	s.backends = map[string]xkms.Backend{"software": b}
 
 	cert := selfSignedCert(t)
-	err := s.storeTLSCertInBackend(context.Background(), &mockTrustedCA{}, "test-cn", "software", cert)
+	err := s.storeTLSCertInBackend(context.Background(), &mockTrustedCA{}, "test-cn", "software", cert, false)
 	require.Error(t, err)
 	var tlsOp *ErrTLSCertOp
 	assert.True(t, errors.As(err, &tlsOp))
@@ -117,7 +117,7 @@ func TestStoreTLSCertInBackend_Success(t *testing.T) {
 	mock := &mockTrustedCA{caCert: caCert}
 
 	cert := selfSignedCert(t)
-	err := s.storeTLSCertInBackend(context.Background(), mock, "my-cn", "software", cert)
+	err := s.storeTLSCertInBackend(context.Background(), mock, "my-cn", "software", cert, false)
 	require.NoError(t, err)
 	assert.Equal(t, "my-cn", b.savedKeyID)
 }
@@ -1074,14 +1074,8 @@ func (m *mockCAWithCert) CACertificate() (*x509.Certificate, error) {
 // TestEnsureTLSServerCert_CertAlreadyExists verifies that when TLSCertificate
 // succeeds on the first call, ensureTLSServerCert returns without issuing.
 func TestEnsureTLSServerCert_CertAlreadyExists(t *testing.T) {
-	tlsCert, _ := generateSelfSignedCert(t)
-	mock := &mockTrustedCA{
-		initialized: true,
-		tlsCert:     tlsCert,
-	}
-
 	cfg := &config.Config{
-		TLS: config.TLSConfig{Enabled: true, ServerCN: "test-cn"},
+		TLS: config.TLSConfig{Enabled: true, ServerCN: "test-cn", IncludeLocalhostSANs: true},
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{
@@ -1101,8 +1095,128 @@ func TestEnsureTLSServerCert_CertAlreadyExists(t *testing.T) {
 	s := newMinimalServer(t, cfg)
 	s.ctx = context.Background()
 
+	// "Already exists" means it exists WITH the configured SANs; one that
+	// presents a different set is retired and reissued (see the stale test).
+	dns, ips := s.serverCertSANs("test-cn", false)
+	mock := &mockTrustedCA{
+		initialized: true,
+		tlsCert:     selfSignedTLSCertWithSANs(t, "test-cn", dns, ips),
+	}
+
 	err := s.ensureTLSServerCert(mock, types.StoreSoftware)
 	require.NoError(t, err)
+}
+
+// recordingCertStore records deletions; every other method is unreachable
+// in these tests and stays on the nil embedded interface.
+type recordingCertStore struct {
+	certstore.CertStore
+	cert      *x509.Certificate
+	deleted   []string
+	deleteErr error
+}
+
+func (r *recordingCertStore) DeleteCertificate(cn string) error {
+	r.deleted = append(r.deleted, cn)
+	return r.deleteErr
+}
+
+// deletingBackend is minimalBackend plus the DeleteCert the retire path calls.
+type deletingBackend struct {
+	minimalBackend
+	deleted   []string
+	deleteErr error
+}
+
+func (b *deletingBackend) DeleteCert(_ context.Context, keyID string) error {
+	b.deleted = append(b.deleted, keyID)
+	return b.deleteErr
+}
+
+// staleSANCA serves an existing certificate with SANs the configuration no
+// longer wants, records the retire calls, and issues a fresh certificate.
+type staleSANCA struct {
+	mockTrustedCA
+	store  *recordingCertStore
+	issued *x509.Certificate
+	calls  int
+	caErr  error
+}
+
+func (m *staleSANCA) CertStore() certstore.CertStore { return m.store }
+
+func (m *staleSANCA) CACertificate() (*x509.Certificate, error) { return m.caCert, m.caErr }
+
+func (m *staleSANCA) IssueCertificateWithProfile(_ context.Context, req *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
+	m.calls++
+	return &ca.IssuedCertificate{Certificate: m.issued}, nil
+}
+
+// selfSignedTLSCertWithSANs builds a self-signed certificate presenting
+// exactly the given SANs, as a tls.Certificate with its leaf parsed.
+func selfSignedTLSCertWithSANs(t *testing.T, cn string, dns []string, ips []net.IP) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(7),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     dns,
+		IPAddresses:  ips,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}
+}
+
+// TestEnsureTLSServerCert_StaleSANsAreReissued proves a CA-issued server
+// certificate that presents SANs the configuration no longer wants -- here
+// the unconditional loopback names and the 0.0.0.0 wildcard every
+// certificate carried before #140 cluster 3 -- is retired from both the CA
+// certStore and the backend and reissued with the configured set, so the
+// setting reaches an upgraded node.
+func TestEnsureTLSServerCert_StaleSANsAreReissued(t *testing.T) {
+	cfg := &config.Config{
+		TLS: config.TLSConfig{Enabled: true, ServerCN: "test-cn", IncludeLocalhostSANs: false},
+		CA: &ca.MultiIdentityCAConfig{
+			SelectedCA: 0,
+			Identity: []ca.Identity{{
+				Subject:      ca.Subject{CommonName: "Test CA"},
+				KeystoreType: types.StoreSoftware,
+				Keys: []*types.KeyConfig{{
+					KeyAlgorithm: types.AlgorithmECDSA,
+					ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+				}},
+			}},
+		},
+	}
+	s := newMinimalServer(t, cfg)
+	s.ctx = context.Background()
+	backend := &deletingBackend{}
+	s.backends = map[string]xkms.Backend{string(types.StoreSoftware): backend}
+
+	stale := selfSignedTLSCertWithSANs(t, "test-cn",
+		[]string{"test-cn", "localhost"},
+		[]net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback, net.IPv4zero})
+	fresh := selfSignedCert(t)
+	mock := &staleSANCA{
+		mockTrustedCA: mockTrustedCA{initialized: true, tlsCert: stale, caCert: selfSignedCert(t)},
+		store:         &recordingCertStore{},
+		issued:        fresh,
+	}
+
+	require.NoError(t, s.ensureTLSServerCert(mock, types.StoreSoftware))
+
+	assert.Equal(t, []string{"test-cn"}, mock.store.deleted, "the stale certificate must leave the CA certStore first, or the CA refuses to reissue")
+	assert.Equal(t, []string{"test-cn"}, backend.deleted, "and the backend copy TLSCertificate serves")
+	assert.Equal(t, 1, mock.calls, "exactly one reissue")
+	assert.Equal(t, "test-cn", backend.savedKeyID, "the fresh certificate is stored under the CN")
 }
 
 // TestEnsureTLSServerCert_IssueAndStore verifies the full path: cert does not
@@ -4365,17 +4479,11 @@ func (m *mockCAWithAlreadyExists) CertStore() certstore.CertStore {
 // IssueCertificateWithProfile returns ErrCertificateAlreadyExists,
 // ensureTLSServerCert delegates to syncExistingTLSCert (which succeeds).
 func TestEnsureTLSServerCert_AlreadyExistsCallsSync(t *testing.T) {
-	leaf := selfSignedCert(t)
 	caCert := selfSignedCert(t)
-
-	mock := &mockCAWithAlreadyExists{
-		mockTrustedCA: mockTrustedCA{initialized: true, caCert: caCert},
-		storeCert:     leaf,
-	}
 
 	b := &minimalBackend{}
 	cfg := &config.Config{
-		TLS: config.TLSConfig{Enabled: true, ServerCN: "test-cn"},
+		TLS: config.TLSConfig{Enabled: true, ServerCN: "test-cn", IncludeLocalhostSANs: true},
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{
@@ -4396,10 +4504,210 @@ func TestEnsureTLSServerCert_AlreadyExistsCallsSync(t *testing.T) {
 	s.ctx = context.Background()
 	s.backends = map[string]xkms.Backend{"software": b}
 
+	// The certStore copy is synced only because it presents the configured
+	// SANs; a stale one is retired and reissued instead (see below).
+	dns, ips := s.serverCertSANs("test-cn", false)
+	mock := &mockCAWithAlreadyExists{
+		mockTrustedCA: mockTrustedCA{initialized: true, caCert: caCert},
+		storeCert:     selfSignedTLSCertWithSANs(t, "test-cn", dns, ips).Leaf,
+	}
+
 	err := s.ensureTLSServerCert(mock, types.StoreSoftware)
 	require.NoError(t, err)
 	// The cert was synced from the CA cert store into the backend.
 	assert.Equal(t, "test-cn", b.savedKeyID)
+}
+
+// staleStoreCA has no backend copy (TLSCertificate misses), a CA certStore
+// copy with SANs the configuration no longer wants, and a CA that refuses
+// the first issue with ErrCertificateAlreadyExists and grants the second
+// once the stale certificate was retired.
+type staleStoreCA struct {
+	mockTrustedCA
+	store  *recordingCertStore
+	issued *x509.Certificate
+	calls  int
+}
+
+func (m *staleStoreCA) TLSCertificate(_ context.Context, _ *types.KeyAttributes) (tls.Certificate, error) {
+	return tls.Certificate{}, errors.New("key not found")
+}
+
+func (m *staleStoreCA) CertStore() certstore.CertStore { return m.store }
+
+func (m *staleStoreCA) IssueCertificateWithProfile(_ context.Context, _ *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
+	m.calls++
+	if m.calls == 1 {
+		return nil, ca.ErrCertificateAlreadyExists
+	}
+	return &ca.IssuedCertificate{Certificate: m.issued}, nil
+}
+
+func (r *recordingCertStore) GetCertificate(_ string) (*x509.Certificate, error) {
+	return r.cert, nil
+}
+
+// TestEnsureTLSServerCert_StaleCertStoreCopyIsReissued proves the
+// partially-cleaned-volumes fallback does not bypass the SAN check: a CA
+// certStore copy carrying the old literal loopback and wildcard SANs is
+// retired and reissued rather than synced into the backend.
+func TestEnsureTLSServerCert_StaleCertStoreCopyIsReissued(t *testing.T) {
+	cfg := tlsServerCertTestConfig("test-cn", false)
+	s := newMinimalServer(t, cfg)
+	s.ctx = context.Background()
+	backend := &deletingBackend{}
+	s.backends = map[string]xkms.Backend{string(types.StoreSoftware): backend}
+
+	stale := selfSignedTLSCertWithSANs(t, "test-cn",
+		[]string{"test-cn", "localhost"},
+		[]net.IP{net.IPv4(127, 0, 0, 1), net.IPv4zero}).Leaf
+	mock := &staleStoreCA{
+		mockTrustedCA: mockTrustedCA{initialized: true, caCert: selfSignedCert(t)},
+		store:         &recordingCertStore{cert: stale},
+		issued:        selfSignedCert(t),
+	}
+
+	require.NoError(t, s.ensureTLSServerCert(mock, types.StoreSoftware))
+	assert.Equal(t, []string{"test-cn"}, mock.store.deleted, "the stale certStore copy is retired")
+	assert.Equal(t, 2, mock.calls, "refused once, issued once after retirement")
+	assert.Equal(t, "test-cn", backend.savedKeyID)
+}
+
+// TestEnsureTLSServerCert_ReissueRequiresTheChain proves a chain persistence
+// failure after a reissue is fatal: GetTLSCertificate prefers the stored
+// chain, so leaving the old one in place would pair the old leaf with the
+// new key.
+func TestEnsureTLSServerCert_ReissueRequiresTheChain(t *testing.T) {
+	cfg := tlsServerCertTestConfig("test-cn", false)
+	s := newMinimalServer(t, cfg)
+	s.ctx = context.Background()
+	backend := &deletingBackend{minimalBackend: minimalBackend{saveCertChainErr: errors.New("disk full")}}
+	s.backends = map[string]xkms.Backend{string(types.StoreSoftware): backend}
+
+	stale := selfSignedTLSCertWithSANs(t, "test-cn", []string{"test-cn", "localhost"}, nil)
+	mock := &staleSANCA{
+		mockTrustedCA: mockTrustedCA{initialized: true, tlsCert: stale, caCert: selfSignedCert(t)},
+		store:         &recordingCertStore{},
+		issued:        selfSignedCert(t),
+	}
+
+	err := s.ensureTLSServerCert(mock, types.StoreSoftware)
+	require.Error(t, err)
+	var tlsOp *ErrTLSCertOp
+	require.ErrorAs(t, err, &tlsOp)
+	assert.Contains(t, tlsOp.Operation, "chain")
+	assert.Empty(t, backend.savedKeyID, "the chain is replaced before the leaf, so a chain failure writes no leaf")
+}
+
+// TestTLSLeaf_PrefersThePresentedCertificate pins that the health check
+// judges what TLS presents (the first entry of Certificate, assembled from
+// a stored chain) rather than the pre-parsed Leaf the backend sets from the
+// standalone certificate, so a stale chain cannot pass as healthy.
+func TestTLSLeaf_PrefersThePresentedCertificate(t *testing.T) {
+	presented := selfSignedTLSCertWithSANs(t, "presented", []string{"presented"}, nil)
+	standalone := selfSignedTLSCertWithSANs(t, "standalone", []string{"standalone"}, nil)
+
+	got := tlsLeaf(tls.Certificate{Certificate: presented.Certificate, Leaf: standalone.Leaf})
+	require.NotNil(t, got)
+	assert.Equal(t, "presented", got.Subject.CommonName)
+
+	assert.Equal(t, "standalone", tlsLeaf(tls.Certificate{Leaf: standalone.Leaf}).Subject.CommonName, "Leaf is the fallback when nothing is presented")
+	assert.Nil(t, tlsLeaf(tls.Certificate{}))
+}
+
+// TestRetireTLSServerCert_ToleratesAbsence proves retirement treats an
+// already-absent certificate as done in both stores, through the sentinels
+// the real stores return: certstore.ErrCertNotFound from the CA certStore,
+// and storage.ErrNotFound wrapped in xkms.ErrCertOperation from the
+// composite backend. Those are the split-store states this recovery path
+// exists for; failing on them would abort startup instead of reissuing.
+func TestRetireTLSServerCert_ToleratesAbsence(t *testing.T) {
+	s := newMinimalServer(t, tlsServerCertTestConfig("test-cn", false))
+	s.ctx = context.Background()
+
+	t.Run("CA certStore already lacks it", func(t *testing.T) {
+		backend := &deletingBackend{}
+		s.backends = map[string]xkms.Backend{string(types.StoreSoftware): backend}
+		mock := &staleSANCA{store: &recordingCertStore{deleteErr: certstore.ErrCertNotFound}}
+		require.NoError(t, s.retireTLSServerCert(mock, "test-cn", types.StoreSoftware))
+		assert.Equal(t, []string{"test-cn"}, backend.deleted, "the backend copy is still retired")
+	})
+
+	t.Run("backend already lacks it", func(t *testing.T) {
+		backend := &deletingBackend{deleteErr: &xkms.ErrCertOperation{Operation: "delete certificate", Err: storage.ErrNotFound}}
+		s.backends = map[string]xkms.Backend{string(types.StoreSoftware): backend}
+		mock := &staleSANCA{store: &recordingCertStore{}}
+		require.NoError(t, s.retireTLSServerCert(mock, "test-cn", types.StoreSoftware))
+		assert.Equal(t, []string{"test-cn"}, mock.store.deleted)
+	})
+
+	t.Run("any other failure is fatal", func(t *testing.T) {
+		backend := &deletingBackend{deleteErr: &xkms.ErrCertOperation{Operation: "delete certificate", Err: errors.New("disk read-only")}}
+		s.backends = map[string]xkms.Backend{string(types.StoreSoftware): backend}
+		mock := &staleSANCA{store: &recordingCertStore{}}
+		err := s.retireTLSServerCert(mock, "test-cn", types.StoreSoftware)
+		var tlsOp *ErrTLSCertOp
+		require.ErrorAs(t, err, &tlsOp)
+	})
+}
+
+// TestEnsureTLSServerCert_ReissueRequiresTheCACertificate proves the chain
+// requirement after a retirement also fails when the CA certificate that
+// completes the chain is absent or cannot be loaded: skipping the chain
+// would leave the stale one in place, and the backend prefers a stored
+// chain over the new leaf.
+func TestEnsureTLSServerCert_ReissueRequiresTheCACertificate(t *testing.T) {
+	stale := selfSignedTLSCertWithSANs(t, "test-cn", []string{"test-cn", "localhost"}, nil)
+	for name, mock := range map[string]*staleSANCA{
+		"CA certificate absent": {
+			mockTrustedCA: mockTrustedCA{initialized: true, tlsCert: stale},
+			store:         &recordingCertStore{},
+			issued:        selfSignedCert(t),
+		},
+		"CA certificate unreadable": {
+			mockTrustedCA: mockTrustedCA{initialized: true, tlsCert: stale, caCert: selfSignedCert(t)},
+			store:         &recordingCertStore{},
+			issued:        selfSignedCert(t),
+			caErr:         errors.New("keystore sealed"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newMinimalServer(t, tlsServerCertTestConfig("test-cn", false))
+			s.ctx = context.Background()
+			s.backends = map[string]xkms.Backend{string(types.StoreSoftware): &deletingBackend{}}
+
+			err := s.ensureTLSServerCert(mock, types.StoreSoftware)
+			require.Error(t, err)
+			var tlsOp *ErrTLSCertOp
+			require.ErrorAs(t, err, &tlsOp)
+			assert.Contains(t, tlsOp.Operation, "chain")
+			if mock.caErr == nil {
+				assert.ErrorIs(t, err, ErrTLSCertChainCAUnavailable)
+			} else {
+				assert.ErrorIs(t, err, mock.caErr)
+			}
+		})
+	}
+}
+
+// tlsServerCertTestConfig is the daemon configuration the ensureTLSServerCert
+// tests share: TLS on, a software CA identity, and the loopback switch set as
+// given.
+func tlsServerCertTestConfig(cn string, includeLoopback bool) *config.Config {
+	return &config.Config{
+		TLS: config.TLSConfig{Enabled: true, ServerCN: cn, IncludeLocalhostSANs: includeLoopback},
+		CA: &ca.MultiIdentityCAConfig{
+			SelectedCA: 0,
+			Identity: []ca.Identity{{
+				Subject:      ca.Subject{CommonName: "Test CA"},
+				KeystoreType: types.StoreSoftware,
+				Keys: []*types.KeyConfig{{
+					KeyAlgorithm: types.AlgorithmECDSA,
+					ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+				}},
+			}},
+		},
+	}
 }
 
 // ============================================================================
@@ -4757,7 +5065,7 @@ func TestStoreTLSCertInBackend_SaveCertChainError(t *testing.T) {
 	mock := &mockTrustedCA{caCert: caCert}
 
 	cert := selfSignedCert(t)
-	err := s.storeTLSCertInBackend(context.Background(), mock, "my-cn", types.StoreSoftware, cert)
+	err := s.storeTLSCertInBackend(context.Background(), mock, "my-cn", types.StoreSoftware, cert, false)
 	// SaveCertChain failure is only logged; storeTLSCertInBackend returns nil.
 	assert.NoError(t, err)
 }

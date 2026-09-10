@@ -419,3 +419,31 @@ func TestLoad_PointerSectionResolvesFromEnv(t *testing.T) {
 		}
 	})
 }
+
+// TestLoad_IncludeLocalhostSANs pins the defaults-layer value of
+// tls.include_localhost_sans and its environment path: a file that never
+// mentions the key keeps the loopback SANs, one that sets it false drops
+// them, and XKMS_TLS_INCLUDE_LOCALHOST_SANS=false wins over a file that
+// says nothing (#140).
+func TestLoad_IncludeLocalhostSANs(t *testing.T) {
+	t.Run("defaults layer is true", func(t *testing.T) {
+		cfg, err := Load(writeServerConfig(t, ""))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if !cfg.TLS.IncludeLocalhostSANs {
+			t.Fatal("TLS.IncludeLocalhostSANs = false with no file key, want the defaults-layer true")
+		}
+	})
+
+	t.Run("environment disables it", func(t *testing.T) {
+		t.Setenv("XKMS_TLS_INCLUDE_LOCALHOST_SANS", "false")
+		cfg, err := Load(writeServerConfig(t, ""))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.TLS.IncludeLocalhostSANs {
+			t.Fatal("TLS.IncludeLocalhostSANs = true, want the environment's false over the defaults layer")
+		}
+	})
+}

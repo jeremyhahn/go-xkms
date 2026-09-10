@@ -2209,51 +2209,82 @@ func (s *Server) ensureTLSServerCert(xkmsCA tlsBootstrapCA, keystoreType types.S
 		KeyType:   types.KeyTypeTLS,
 	}
 
-	// Check if the cert already exists by trying to retrieve it
-	if _, err := xkmsCA.TLSCertificate(s.ctx, attrs); err == nil {
-		s.logger.Info("TLS server certificate already exists", "cn", serverCN)
-		return nil
+	// Build SANs from configuration alone (serverCertSANs): the server CN,
+	// the loopback names when tls.include_localhost_sans says so, the machine
+	// hostname, server.host and tls.extra_sans, so remote clients that dial
+	// the node by name pass hostname verification. The certificate used to
+	// carry an unconditional 0.0.0.0 IP SAN as well; no client ever dials
+	// that address, and a wildcard is not a name a certificate should
+	// present (#140).
+	dnsNames, ipAddrs := s.serverCertSANs(serverCN, false)
+
+	// An existing certificate is reused only while it presents exactly the
+	// configured SANs. One issued before a configuration change -- or before
+	// the SANs became configuration at all -- is retired and reissued, or the
+	// new setting would never reach an upgraded node.
+	retired := false
+	if existing, err := xkmsCA.TLSCertificate(s.ctx, attrs); err == nil {
+		leaf := tlsLeaf(existing)
+		if leaf != nil && certSANsMatch(leaf, dnsNames, ipAddrs) {
+			s.logger.Info("TLS server certificate already exists", "cn", serverCN)
+			return nil
+		}
+		if leaf == nil {
+			s.logger.Warn("TLS server certificate exists but carries no leaf to inspect; reissuing", "cn", serverCN)
+		} else {
+			s.logger.Info("TLS server certificate no longer presents the configured SANs; reissuing",
+				"cn", serverCN, "have_dns", leaf.DNSNames, "want_dns", dnsNames)
+		}
+		if err := s.retireTLSServerCert(xkmsCA, serverCN, keystoreType); err != nil {
+			return err
+		}
+		retired = true
 	}
 
 	s.logger.Info("Issuing TLS server certificate from CA", "cn", serverCN)
 
-	// Build SANs: the server CN, localhost/loopback, the machine hostname,
-	// the configured listen host, and any configured extra SANs, so remote
-	// clients that dial the node by name pass hostname verification.
-	dnsNames, ipAddrs := localCertSANs(serverCN, s.config.Server.Host,
-		append(s.clusterPeerHosts(), s.config.TLS.ExtraSANs...)...)
-	sanIPs := make([]string, 0, len(ipAddrs)+1)
+	sanIPs := make([]string, 0, len(ipAddrs))
 	for _, ip := range ipAddrs {
 		sanIPs = append(sanIPs, ip.String())
 	}
-	sanIPs = append(sanIPs, "0.0.0.0")
-	sans := &ca.SubjectAlternativeNames{
-		DNS: dnsNames,
-		IPs: sanIPs,
-	}
-
-	// Issue the TLS server certificate
-	issued, err := xkmsCA.IssueCertificateWithProfile(s.ctx, &ca.CertificateRequest{
+	request := &ca.CertificateRequest{
 		Subject: ca.Subject{
 			CommonName:   serverCN,
 			Organization: identity.Subject.Organization,
 			Country:      identity.Subject.Country,
 		},
-		SANS:     sans,
+		SANS:     &ca.SubjectAlternativeNames{DNS: dnsNames, IPs: sanIPs},
 		Valid:    s.config.CA.DefaultValidityDays,
 		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth,
 			x509.ExtKeyUsageClientAuth,
 		},
-	}, "server")
-	if err != nil {
-		// Handle stale state: the CA's certStore has the cert (from a previous run)
-		// but the backend's certStorage doesn't (volumes were partially cleaned).
-		// Retrieve the existing cert from the CA and sync it to the backend.
-		if errors.Is(err, ca.ErrCertificateAlreadyExists) {
+	}
+
+	issued, err := xkmsCA.IssueCertificateWithProfile(s.ctx, request, "server")
+	if errors.Is(err, ca.ErrCertificateAlreadyExists) {
+		// Stale state: the CA's certStore has a certificate the backend lacks
+		// (volumes partially cleaned between runs). It is synced to the
+		// backend only while it presents the configured SANs; otherwise it
+		// is as stale as any other and is retired and reissued, or an
+		// upgraded node would keep the old names through this path too.
+		existing, gerr := xkmsCA.CertStore().GetCertificate(serverCN)
+		if gerr != nil {
+			return &ErrTLSCertOp{Operation: "retrieve existing TLS cert from CA certStore", Err: gerr}
+		}
+		if certSANsMatch(existing, dnsNames, ipAddrs) {
 			return s.syncExistingTLSCert(xkmsCA, serverCN, keystoreType)
 		}
+		s.logger.Info("TLS server certificate in the CA certStore no longer presents the configured SANs; reissuing",
+			"cn", serverCN, "have_dns", existing.DNSNames, "want_dns", dnsNames)
+		if err := s.retireTLSServerCert(xkmsCA, serverCN, keystoreType); err != nil {
+			return err
+		}
+		retired = true
+		issued, err = xkmsCA.IssueCertificateWithProfile(s.ctx, request, "server")
+	}
+	if err != nil {
 		return &ErrTLSCertOp{Operation: "issue TLS server certificate", Err: err}
 	}
 
@@ -2261,11 +2292,53 @@ func (s *Server) ensureTLSServerCert(xkmsCA tlsBootstrapCA, keystoreType types.S
 	// ca.TLSCertificate() → keyStore.GetTLSCertificate() can find it.
 	// The CA stores certs in its own certStore, but GetTLSCertificate
 	// looks in the compositeBackend's certStorage (separate storage).
-	if err := s.storeTLSCertInBackend(s.ctx, xkmsCA, serverCN, keystoreType, issued.Certificate); err != nil {
+	// After a reissue the chain must land too: GetTLSCertificate prefers
+	// the stored chain, and a stale chain would pair the old leaf with the
+	// new key.
+	if err := s.storeTLSCertInBackend(s.ctx, xkmsCA, serverCN, keystoreType, issued.Certificate, retired); err != nil {
 		return err
 	}
 
 	s.logger.Info("TLS server certificate issued", "cn", serverCN)
+	return nil
+}
+
+// tlsLeaf returns the certificate a TLS server would actually present: the
+// first entry of the Certificate slice, which the backend assembles from a
+// stored chain when it has one. The pre-parsed Leaf is only a fallback,
+// because the backend sets it from the standalone certificate, and judging
+// health by it would let a stale chain pass unnoticed.
+func tlsLeaf(cert tls.Certificate) *x509.Certificate {
+	if len(cert.Certificate) > 0 {
+		if leaf, err := x509.ParseCertificate(cert.Certificate[0]); err == nil {
+			return leaf
+		}
+	}
+	return cert.Leaf
+}
+
+// retireTLSServerCert removes a server certificate whose SANs no longer match
+// configuration from both places it lives -- the CA's certStore, which is
+// what makes IssueCertificateWithProfile refuse a second certificate for the
+// CN, and the backend's cert storage, which is what TLSCertificate serves --
+// so the reissue that follows starts clean.
+func (s *Server) retireTLSServerCert(xkmsCA tlsBootstrapCA, serverCN string, keystoreType types.StoreType) error {
+	// Either store may already lack the certificate -- the split-store
+	// states this path recovers from -- and absence is exactly what
+	// retirement wants.
+	if store := xkmsCA.CertStore(); store != nil {
+		if err := store.DeleteCertificate(serverCN); err != nil && !errors.Is(err, certstore.ErrCertNotFound) {
+			return &ErrTLSCertOp{Operation: "retire stale TLS cert from CA certStore", Err: err}
+		}
+	}
+	backend, ok := s.backends[string(keystoreType)]
+	if !ok {
+		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "TLS cert storage"}
+	}
+	if err := backend.DeleteCert(s.ctx, serverCN); err != nil &&
+		!errors.Is(err, xkms.ErrCertNotFound) && !errors.Is(err, storage.ErrNotFound) && !errors.Is(err, os.ErrNotExist) {
+		return &ErrTLSCertOp{Operation: "retire stale TLS cert from backend", Err: err}
+	}
 	return nil
 }
 
@@ -2281,7 +2354,9 @@ func (s *Server) syncExistingTLSCert(xkmsCA tlsBootstrapCA, serverCN string, key
 		return &ErrTLSCertOp{Operation: "retrieve existing TLS cert from CA certStore", Err: err}
 	}
 
-	if err := s.storeTLSCertInBackend(s.ctx, xkmsCA, serverCN, keystoreType, cert); err != nil {
+	// A sync repairs a split state; the chain the backend will prefer has to
+	// land with the leaf, or a stale chain could outlive this repair.
+	if err := s.storeTLSCertInBackend(s.ctx, xkmsCA, serverCN, keystoreType, cert, true); err != nil {
 		return err
 	}
 
@@ -2293,24 +2368,59 @@ func (s *Server) syncExistingTLSCert(xkmsCA tlsBootstrapCA, serverCN string, key
 // cert storage so that ca.TLSCertificate() → keyStore.GetTLSCertificate() can
 // find it. The CA stores certs in its own certStore, but GetTLSCertificate looks
 // in the compositeBackend's certStorage (separate storage).
-func (s *Server) storeTLSCertInBackend(ctx context.Context, xkmsCA tlsBootstrapCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
+//
+// chainRequired makes a chain persistence failure fatal. It is set after a
+// stale certificate was retired: GetTLSCertificate prefers the stored chain,
+// so a chain that failed to update would pair the old leaf with the new key
+// and break every handshake. On a first issuance a missing chain only
+// degrades to serving the leaf alone.
+func (s *Server) storeTLSCertInBackend(ctx context.Context, xkmsCA tlsBootstrapCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate, chainRequired bool) error {
 	backend, ok := s.backends[string(keystoreType)]
 	if !ok {
 		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "TLS cert storage"}
 	}
+
+	// Everything the chain needs is loaded before the backend is touched, so
+	// a required chain that cannot be built leaves the backend exactly as it
+	// was: no half-replaced state for the next start to read as healthy.
+	caCert, caErr := xkmsCA.CACertificate()
+	if caErr != nil || caCert == nil {
+		if chainRequired {
+			cause := caErr
+			if cause == nil {
+				cause = ErrTLSCertChainCAUnavailable
+			}
+			return &ErrTLSCertOp{Operation: "load CA certificate for the reissued TLS cert chain", Err: cause}
+		}
+		// First issuance without a CA certificate: the leaf alone is served.
+		if err := backend.SaveCert(ctx, serverCN, cert); err != nil {
+			return &ErrTLSCertOp{Operation: "store TLS cert in backend", Err: err}
+		}
+		s.logger.Warn("TLS cert chain not stored: CA certificate unavailable", "error", caErr)
+		return nil
+	}
+	chain := []*x509.Certificate{cert, caCert}
+
+	if chainRequired {
+		// The backend prefers a stored chain over the standalone leaf when
+		// it assembles the served certificate, so after a retirement the
+		// chain is replaced FIRST: if that fails nothing has changed, and
+		// the stale chain can never be paired with a new leaf.
+		if err := backend.SaveCertChain(ctx, serverCN, chain); err != nil {
+			return &ErrTLSCertOp{Operation: "store reissued TLS cert chain in backend", Err: err}
+		}
+		if err := backend.SaveCert(ctx, serverCN, cert); err != nil {
+			return &ErrTLSCertOp{Operation: "store reissued TLS cert in backend", Err: err}
+		}
+		return nil
+	}
+
 	if err := backend.SaveCert(ctx, serverCN, cert); err != nil {
 		return &ErrTLSCertOp{Operation: "store TLS cert in backend", Err: err}
 	}
-
-	// Also store the certificate chain (leaf + CA) for proper TLS handshakes
-	caCert, caErr := xkmsCA.CACertificate()
-	if caErr == nil && caCert != nil {
-		chain := []*x509.Certificate{cert, caCert}
-		if chainErr := backend.SaveCertChain(ctx, serverCN, chain); chainErr != nil {
-			s.logger.Warn("Failed to store TLS cert chain in backend", "error", chainErr)
-		}
+	if chainErr := backend.SaveCertChain(ctx, serverCN, chain); chainErr != nil {
+		s.logger.Warn("Failed to store TLS cert chain in backend", "error", chainErr)
 	}
-
 	return nil
 }
 
