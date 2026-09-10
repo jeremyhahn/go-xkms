@@ -189,8 +189,14 @@ XKEY_BUILDER_IMAGE = $(PROJECT_NAME)-xkey-builder:$(IMAGE_TAG)
 # Cross-repo first-party modules resolve from Gitea tags inside containers
 # (dependency-resolution.md §6) — no workspace, no sibling mounts. The
 # read-only fetch token comes from the gitignored .devcontainer/.env
-# (pattern: go-qrdb/.devcontainer/); the host module cache is mounted so a
-# warm host cache serves container builds without refetching the graph.
+# (pattern: go-qrdb/.devcontainer/); for the root builder containers the host
+# module cache is mounted (BUILDER_MODULE_ENV) so a warm host cache serves
+# container builds without refetching the graph. GOMODCACHE is pinned to the
+# mount path inside those containers: the golang base image keeps its cache
+# at /go/pkg/mod, so without the pin the mount sat unused, every container
+# build refetched the graph, and a checkout with no .devcontainer/.env failed
+# on the first private module ("Failed to authenticate user") even with a
+# fully warm host cache.
 GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' .devcontainer/.env 2>/dev/null)
 # Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
 # their environment blocks regardless of which directory compose runs from.
@@ -282,7 +288,14 @@ GITEA_MODULE_ENV := -e GOWORK=off \
                     -e GOPRIVATE='github.com/jeremyhahn/*' \
                     -e GIT_CONFIG_COUNT=1 \
                     -e GIT_CONFIG_KEY_0='url.http://x:$(GITEA_GO_TOKEN)@git.example.internal/jeremyhahn/.insteadOf' \
-                    -e GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/' \
+                    -e GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/'
+# The warm host module cache, for containers that run AS ROOT only: the
+# builder images (Dockerfile.builder, xkey/Dockerfile.builder, Dockerfile.ci)
+# declare no USER. The integration image runs `make test` as testuser
+# (Dockerfile), which cannot traverse /root, so docker-run and docker-test take
+# GITEA_MODULE_ENV alone and resolve modules inside the image as before.
+BUILDER_MODULE_ENV := $(GITEA_MODULE_ENV) \
+                    -e GOMODCACHE=/root/go/pkg/mod \
                     -v $(GOMODCACHE_HOST):/root/go/pkg/mod:cached
 
 # ==============================================================================
@@ -422,7 +435,7 @@ build-server: builder-image
 	@mkdir -p $(BIN_DIR)
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
-		$(GITEA_MODULE_ENV) \
+		$(BUILDER_MODULE_ENV) \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
 		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
@@ -456,7 +469,7 @@ build-xkey:
 	@mkdir -p $(BIN_DIR)
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
-		$(GITEA_MODULE_ENV) \
+		$(BUILDER_MODULE_ENV) \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
 		bash -c "CGO_ENABLED=1 go build -tags 'ble,usb,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
@@ -863,7 +876,7 @@ lib: builder-image
 	@mkdir -p $(LIB_DIR)
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
-		$(GITEA_MODULE_ENV) \
+		$(BUILDER_MODULE_ENV) \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
 		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
@@ -3676,7 +3689,7 @@ docker-ci: docker-ci-build
 	@echo "$(CYAN)$(BOLD)→ Running CI pipeline in Docker container...$(RESET)"
 	@docker run --rm \
 		-v $(PWD):/workspace \
-		$(GITEA_MODULE_ENV) \
+		$(BUILDER_MODULE_ENV) \
 		-w /workspace \
 		$(CI_IMAGE_NAME):latest \
 		bash -c "make ci-local"
