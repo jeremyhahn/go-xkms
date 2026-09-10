@@ -1304,7 +1304,7 @@ func TestRunAuthLogin_DeprecatedUsernameFlagStillCarriesTheLoginKey(t *testing.T
 	assert.ErrorIs(t, err, ErrAuthBeginAuthenticationFailed)
 
 	require.NotNil(t, client.beginAuthenticationReq)
-	assert.Equal(t, "alice@example.com", client.beginAuthenticationReq.Username)
+	assert.Equal(t, "alice@example.com", client.beginAuthenticationReq.Email)
 }
 
 // --- runAuthRegister WebAuthn ceremony tests ---
@@ -1563,13 +1563,13 @@ func TestRunAuthLogin_ObtainsAndStoresToken(t *testing.T) {
 	require.NoError(t, runAuthLogin(cmd, nil))
 
 	require.NotNil(t, client.beginAuthenticationReq)
-	assert.Equal(t, "alice@example.com", client.beginAuthenticationReq.Username)
+	assert.Equal(t, "alice@example.com", client.beginAuthenticationReq.Email)
 	assert.Equal(t, client.beginAuthenticationResp.OptionsJSON, string(ceremony.assertOpts))
 	assert.Equal(t, serverURL, ceremony.origin)
 
 	require.NotNil(t, client.finishAuthenticationReq)
 	assert.Equal(t, "login-session", client.finishAuthenticationReq.SessionID)
-	assert.Equal(t, "alice@example.com", client.finishAuthenticationReq.Username)
+	assert.Equal(t, "alice@example.com", client.finishAuthenticationReq.Email)
 	assert.Equal(t, `{"id":"cred-123"}`, client.finishAuthenticationReq.AssertionJSON)
 
 	tokens, cleanup, err := openTokenStore(slog.Default())

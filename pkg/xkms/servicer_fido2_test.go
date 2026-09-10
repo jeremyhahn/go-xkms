@@ -202,7 +202,7 @@ func TestAuthenticationCeremony_EndToEnd(t *testing.T) {
 
 	// Step 3: Begin authentication through the XKMSService transport surface.
 	beginResp, err := svc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
-		Username: email,
+		Email: email,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, beginResp.SessionID)
@@ -230,7 +230,7 @@ func TestAuthenticationCeremony_EndToEnd(t *testing.T) {
 	// Step 6: Finish authentication and assert success + non-empty token.
 	finishResp, err := svc.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
 		SessionID:     beginResp.SessionID,
-		Username:      email,
+		Email:         email,
 		AssertionJSON: string(assertionJSON),
 	})
 	require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestBeginAuthentication_UnknownUser(t *testing.T) {
 	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
 
 	_, err = svc.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{
-		Username: "nobody@example.com",
+		Email: "nobody@example.com",
 	})
 	require.Error(t, err)
 	var ceremonyErr *ErrWebAuthnCeremony
@@ -267,7 +267,7 @@ func TestFinishAuthentication_InvalidAssertion(t *testing.T) {
 
 	_, err = svc.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
 		SessionID:     "does-not-exist",
-		Username:      "someone@example.com",
+		Email:         "someone@example.com",
 		AssertionJSON: "{not valid assertion json",
 	})
 	require.Error(t, err)

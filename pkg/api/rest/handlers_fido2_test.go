@@ -261,17 +261,44 @@ func TestHandleSDKBeginAuthentication_UnknownUser(t *testing.T) {
 	// Real service, but the user was never registered => resolve-user error => 500.
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
-	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Username: "nobody@example.com"})
+	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Email: "nobody@example.com"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin", bytes.NewReader(body)))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
+// TestHandleSDKBeginAuthentication_LegacyUsernameKey verifies the SDK route
+// still reads the login key from the legacy "username" spelling for the
+// compatibility release: the body reaches the service, which reports the
+// unknown account (500) rather than the decoder refusing the body (400).
+func TestHandleSDKBeginAuthentication_LegacyUsernameKey(t *testing.T) {
+	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin",
+		bytes.NewReader([]byte(`{"username":"nobody@example.com"}`))))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+// TestHandleSDKBeginAuthentication_ConflictingKeysRejected verifies a body
+// naming different login keys under "email" and "username" is a bad request.
+func TestHandleSDKBeginAuthentication_ConflictingKeysRejected(t *testing.T) {
+	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin",
+		bytes.NewReader([]byte(`{"email":"alice@example.com","username":"alice"}`))))
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Contains(t, rr.Body.String(), "legacy username key")
+}
+
 func TestHandleSDKBeginAuthentication_NotConfigured(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, nil)
 
-	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Username: "x@y.z"})
+	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Email: "x@y.z"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin", bytes.NewReader(body)))
 
@@ -283,7 +310,7 @@ func TestHandleSDKBeginAuthentication_ServiceNotInitialized(t *testing.T) {
 	t.Cleanup(func() { xkms.Reset() })
 
 	s := &Server{}
-	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Username: "x@y.z"})
+	body, _ := json.Marshal(transport.BeginAuthenticationRequest{Email: "x@y.z"})
 	rr := httptest.NewRecorder()
 	s.handleSDKBeginAuthentication(rr, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body)))
 
@@ -309,7 +336,7 @@ func TestHandleSDKFinishAuthentication_ParseError(t *testing.T) {
 
 	body, _ := json.Marshal(transport.FinishAuthenticationRequest{
 		SessionID:     "s",
-		Username:      "alice@example.com",
+		Email:         "alice@example.com",
 		AssertionJSON: `{"not":"an-assertion"}`,
 	})
 	rr := httptest.NewRecorder()
@@ -321,7 +348,7 @@ func TestHandleSDKFinishAuthentication_ParseError(t *testing.T) {
 func TestHandleSDKFinishAuthentication_NotConfigured(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, nil)
 
-	body, _ := json.Marshal(transport.FinishAuthenticationRequest{SessionID: "s", Username: "x@y.z", AssertionJSON: "{}"})
+	body, _ := json.Marshal(transport.FinishAuthenticationRequest{SessionID: "s", Email: "x@y.z", AssertionJSON: "{}"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/finish", bytes.NewReader(body)))
 

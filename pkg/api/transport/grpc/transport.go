@@ -2954,7 +2954,7 @@ func (t *Transport) BeginAuthentication(ctx context.Context, req *transport.Begi
 		return nil, ErrNotConnected
 	}
 	resp, err := t.client.BeginAuthentication(ctx, &pb.BeginAuthenticationRequest{
-		Username: req.Username,
+		Email: req.Email,
 	})
 	if err != nil {
 		return nil, err
@@ -2974,7 +2974,7 @@ func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.Fin
 	}
 	resp, err := t.client.FinishAuthentication(ctx, &pb.FinishAuthenticationRequest{
 		SessionId:     req.SessionID,
-		Username:      req.Username,
+		Email:         req.Email,
 		AssertionJson: req.AssertionJSON,
 	})
 	if err != nil {

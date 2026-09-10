@@ -768,10 +768,9 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	logger.Info("connected to server", slog.String("url", serverEntry.URL))
 
-	// WebAuthn authentication ceremony.
-	// As in registration, the EMAIL goes in the field named Username: the
-	// server forwards it to GetUserByEmail.
-	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Username: email})
+	// WebAuthn authentication ceremony against the account's email, the
+	// login key the server resolves with GetUserByEmail.
+	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Email: email})
 	if err != nil {
 		return errors.Join(ErrAuthBeginAuthenticationFailed, err)
 	}
@@ -800,7 +799,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	finish, err := client.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
 		SessionID:     begin.SessionID,
-		Username:      email,
+		Email:         email,
 		AssertionJSON: string(assertion),
 	})
 	if err != nil {

@@ -194,7 +194,7 @@ func (m *MockXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 	return &xkms.FinishAuthenticationResponse{
 		Success:  true,
 		Token:    "mock-jwt-token",
-		Username: req.Username,
+		Username: req.Email,
 	}, nil
 }
 

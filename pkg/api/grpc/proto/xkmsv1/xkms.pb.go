@@ -17328,8 +17328,11 @@ func (x *FinishRegistrationResponse) GetMessage() string {
 
 // BeginAuthenticationRequest begins a WebAuthn authentication (login) ceremony.
 type BeginAuthenticationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// email is the canonical tenant-unique login key of the account whose
+	// credentials are challenged. Field 1 used to be spelled "username"; the
+	// number is unchanged, so the binary encoding is compatible.
+	Email         string `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -17364,9 +17367,9 @@ func (*BeginAuthenticationRequest) Descriptor() ([]byte, []int) {
 	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{268}
 }
 
-func (x *BeginAuthenticationRequest) GetUsername() string {
+func (x *BeginAuthenticationRequest) GetEmail() string {
 	if x != nil {
-		return x.Username
+		return x.Email
 	}
 	return ""
 }
@@ -17427,10 +17430,12 @@ func (x *BeginAuthenticationResponse) GetOptionsJson() string {
 
 // FinishAuthenticationRequest completes a WebAuthn authentication ceremony.
 type FinishAuthenticationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
-	AssertionJson string                 `protobuf:"bytes,3,opt,name=assertion_json,json=assertionJson,proto3" json:"assertion_json,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// email is the login key of the account whose credentials are asserted.
+	// Field 2 used to be spelled "username"; the number is unchanged.
+	Email         string `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
+	AssertionJson string `protobuf:"bytes,3,opt,name=assertion_json,json=assertionJson,proto3" json:"assertion_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -17472,9 +17477,9 @@ func (x *FinishAuthenticationRequest) GetSessionId() string {
 	return ""
 }
 
-func (x *FinishAuthenticationRequest) GetUsername() string {
+func (x *FinishAuthenticationRequest) GetEmail() string {
 	if x != nil {
-		return x.Username
+		return x.Email
 	}
 	return ""
 }
@@ -20448,17 +20453,17 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rcredential_id\x18\x02 \x01(\tR\fcredentialId\x12\x14\n" +
 	"\x05token\x18\x03 \x01(\tR\x05token\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\"8\n" +
-	"\x1aBeginAuthenticationRequest\x12\x1a\n" +
-	"\busername\x18\x01 \x01(\tR\busername\"_\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"2\n" +
+	"\x1aBeginAuthenticationRequest\x12\x14\n" +
+	"\x05email\x18\x01 \x01(\tR\x05email\"_\n" +
 	"\x1bBeginAuthenticationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
-	"\foptions_json\x18\x02 \x01(\tR\voptionsJson\"\x7f\n" +
+	"\foptions_json\x18\x02 \x01(\tR\voptionsJson\"y\n" +
 	"\x1bFinishAuthenticationRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
-	"\busername\x18\x02 \x01(\tR\busername\x12%\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05email\x18\x02 \x01(\tR\x05email\x12%\n" +
 	"\x0eassertion_json\x18\x03 \x01(\tR\rassertionJson\"\x84\x01\n" +
 	"\x1cFinishAuthenticationResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +

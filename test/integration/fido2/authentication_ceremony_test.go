@@ -52,7 +52,7 @@ func runAuthenticationCeremony(t *testing.T, surface *ceremonySurface, handler *
 
 	// Step 1: Begin authentication through the XKMSService transport surface.
 	beginResp, err := surface.xkmsSvc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
-		Username: username,
+		Email: username,
 	})
 	require.NoError(t, err, "BeginAuthentication")
 	require.NotEmpty(t, beginResp.SessionID, "session ID")
@@ -104,7 +104,7 @@ func runAuthenticationCeremony(t *testing.T, surface *ceremonySurface, handler *
 	// or RP/origin mismatch fails here.
 	finishResp, err := surface.xkmsSvc.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
 		SessionID:     beginResp.SessionID,
-		Username:      username,
+		Email:         username,
 		AssertionJSON: string(assertion.PublicKeyCredentialJSON),
 	})
 	require.NoError(t, err, "FinishAuthentication (server-side assertion verification)")

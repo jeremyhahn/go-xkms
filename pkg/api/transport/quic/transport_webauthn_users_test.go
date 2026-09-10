@@ -141,7 +141,7 @@ func TestBeginAuthentication_Success(t *testing.T) {
 	})
 	defer cleanup()
 
-	resp, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{Username: "alice"})
+	resp, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{Email: "alice"})
 	require.NoError(t, err)
 	assert.Equal(t, "sess-2", resp.SessionID)
 	assert.Equal(t, `{"publicKey":{"challenge":"c"}}`, resp.OptionsJSON)
@@ -151,7 +151,7 @@ func TestBeginAuthentication_ServerErr(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()
 
-	_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{Username: "alice"})
+	_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{Email: "alice"})
 	require.Error(t, err)
 }
 
@@ -169,7 +169,7 @@ func TestFinishAuthentication_Success(t *testing.T) {
 
 	resp, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
 		SessionID:     "sess-2",
-		Username:      "alice",
+		Email:         "alice",
 		AssertionJSON: `{"id":"cred-1"}`,
 	})
 	require.NoError(t, err)

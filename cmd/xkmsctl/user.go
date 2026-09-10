@@ -20,8 +20,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net/mail"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -203,6 +205,11 @@ Example:
 			// Run with nothing to report, so the process exits 0 and every
 			// script calling this sees a rejected registration as a success.
 			handleError(ErrEmailRequired)
+			return
+		}
+		email, err := validateLoginKey(email)
+		if err != nil {
+			handleError(err)
 			return
 		}
 
@@ -399,7 +406,14 @@ Example:
   printf '%s' "$PIN" | xkmsctl user login admin@example.com --pin-stdin`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		email := args[0]
+		// The login key is checked before anything reaches the network: a
+		// username here would run the whole ceremony against nothing, and
+		// correcting it should not first cost a round trip.
+		email, err := validateLoginKey(args[0])
+		if err != nil {
+			handleError(err)
+			return
+		}
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
@@ -433,12 +447,12 @@ Example:
 		}
 		printVerbose("Connected to xkms service")
 
-		// Step 1: Begin the server-side authentication ceremony. The server
-		// returns the challenge and the allow-list of registered credentials.
-		// The field is named Username for wire compatibility but carries the
-		// canonical email login key; see BeginAuthenticationRequest.
+		// Step 1: Begin the server-side authentication ceremony against the
+		// account's email, the login key the server resolves with
+		// GetUserByEmail. The server returns the challenge and the allow-list
+		// of registered credentials.
 		beginResp, err := cl.BeginAuthentication(ctx, &client.BeginAuthenticationRequest{
-			Username: email,
+			Email: email,
 		})
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrBeginAuthenticationFailed, Err: err})
@@ -479,11 +493,9 @@ Example:
 
 		// Step 4: Finish the ceremony. The server verifies the assertion
 		// signature and issues a JWT token on success.
-		// Same field-name caveat as BeginAuthentication: FinishAuthentication
-		// also resolves with GetUserByEmail (servicer_fido2.go).
 		finishResp, err := cl.FinishAuthentication(ctx, &client.FinishAuthenticationRequest{
 			SessionID:     beginResp.SessionID,
-			Username:      email,
+			Email:         email,
 			AssertionJSON: string(assertion.PublicKeyCredentialJSON),
 		})
 		if err != nil {
@@ -1189,4 +1201,18 @@ func init() {
 	userBindCertCmd.Flags().String("cert-file", "", "client certificate PEM file (thumbprint and expiry are computed)")
 	userBindCertCmd.Flags().String("thumbprint", "", "precomputed SPKI SHA-256 thumbprint (hex)")
 	userBindCertCmd.Flags().Int64("not-after", 0, "binding expiry as Unix seconds (with --thumbprint)")
+}
+
+// validateLoginKey refuses a login key that is not an email address and
+// returns it trimmed. The server stores the value verbatim as the account's
+// index key, so the address must parse and must be the bare address, not a
+// display-name form; full RFC 5322 conformance is not the goal, telling an
+// email from a username is.
+func validateLoginKey(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	addr, err := mail.ParseAddress(value)
+	if err != nil || addr.Address != value {
+		return "", ErrLoginKeyNotEmail
+	}
+	return value, nil
 }

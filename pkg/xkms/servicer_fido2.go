@@ -120,7 +120,7 @@ func (s *XKMSService) BeginAuthentication(ctx context.Context, req *transport.Be
 		return nil, ErrNotConfigured
 	}
 
-	user, err := s.webauthnService.GetUserByEmail(ctx, req.Username)
+	user, err := s.webauthnService.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "resolve user", Err: err}
 	}
@@ -160,7 +160,7 @@ func (s *XKMSService) FinishAuthentication(ctx context.Context, req *transport.F
 		return nil, &ErrWebAuthnCeremony{Operation: "parse assertion", Err: err}
 	}
 
-	user, err := s.webauthnService.GetUserByEmail(ctx, req.Username)
+	user, err := s.webauthnService.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "resolve user", Err: err}
 	}

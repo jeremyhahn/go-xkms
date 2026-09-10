@@ -3228,7 +3228,10 @@ message FinishRegistrationResponse {
 
 // BeginAuthenticationRequest begins a WebAuthn authentication (login) ceremony.
 message BeginAuthenticationRequest {
-  string username = 1;
+  // email is the canonical tenant-unique login key of the account whose
+  // credentials are challenged. Field 1 used to be spelled "username"; the
+  // number is unchanged, so the binary encoding is compatible.
+  string email = 1;
 }
 
 // BeginAuthenticationResponse carries the session ID and JSON-marshaled WebAuthn
@@ -3241,7 +3244,9 @@ message BeginAuthenticationResponse {
 // FinishAuthenticationRequest completes a WebAuthn authentication ceremony.
 message FinishAuthenticationRequest {
   string session_id = 1;
-  string username = 2;
+  // email is the login key of the account whose credentials are asserted.
+  // Field 2 used to be spelled "username"; the number is unchanged.
+  string email = 2;
   string assertion_json = 3;
 }
 

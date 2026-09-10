@@ -773,7 +773,7 @@ func TestBeginAuthentication_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{
-		Username: "test@example.com",
+		Email: "test@example.com",
 	})
 	require.Error(t, err)
 }
@@ -784,7 +784,7 @@ func TestFinishAuthentication_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
-		SessionID: "sess1", Username: "test",
+		SessionID: "sess1", Email: "test",
 	})
 	require.Error(t, err)
 }
@@ -2509,7 +2509,7 @@ func TestBeginAuthentication_Success(t *testing.T) {
 	defer tr.Close()
 
 	resp, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{
-		Username: "test@example.com",
+		Email: "test@example.com",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "sess-456", resp.SessionID)
@@ -2527,7 +2527,7 @@ func TestFinishAuthentication_Success(t *testing.T) {
 
 	resp, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
 		SessionID:     "sess-456",
-		Username:      "test@example.com",
+		Email:         "test@example.com",
 		AssertionJSON: `{"id":"cred1","type":"public-key"}`,
 	})
 	require.NoError(t, err)

@@ -695,7 +695,7 @@ func (s *TestXKMSService) BeginAuthentication(ctx context.Context, req *xkms.Beg
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	u, ok := s.users[req.Username]
+	u, ok := s.users[req.Email]
 	if !ok {
 		return nil, ErrUserNotFound
 	}
@@ -737,7 +737,7 @@ func (s *TestXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	u, ok := s.users[req.Username]
+	u, ok := s.users[req.Email]
 	if !ok {
 		return nil, ErrUserNotFound
 	}
@@ -763,7 +763,7 @@ func (s *TestXKMSService) FinishAuthentication(ctx context.Context, req *xkms.Fi
 	u.lastLogin = &now
 
 	// Generate mock JWT token
-	token := fmt.Sprintf("test-jwt-token-%s-%d", req.Username, time.Now().Unix())
+	token := fmt.Sprintf("test-jwt-token-%s-%d", req.Email, time.Now().Unix())
 
 	return &xkms.FinishAuthenticationResponse{
 		Success: true,

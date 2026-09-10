@@ -108,15 +108,15 @@ func (s *Service) FinishRegistration(ctx context.Context, req *pb.FinishRegistra
 // from a missing gate, which is exactly the bug that the SSH surface in
 // service_ssh.go had.
 func (s *Service) BeginAuthentication(ctx context.Context, req *pb.BeginAuthenticationRequest) (*pb.BeginAuthenticationResponse, error) {
-	if req == nil || req.Username == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
+	if req == nil || req.Email == "" {
+		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
 	svc := s.xkmsService
 	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
-		Username: req.Username,
+		Email: req.Email,
 	})
 	if cErr != nil {
 		return nil, status.Error(codes.Internal, cErr.Error())
@@ -149,7 +149,7 @@ func (s *Service) FinishAuthentication(ctx context.Context, req *pb.FinishAuthen
 	}
 	resp, cErr := svc.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
 		SessionID:     req.SessionId,
-		Username:      req.Username,
+		Email:         req.Email,
 		AssertionJSON: req.AssertionJson,
 	})
 	if cErr != nil {

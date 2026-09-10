@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — CLI
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-05
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 The relying party is a server component and has **no CLI verbs of its own**.
 What the CLI offers is the client side of its ceremonies.
@@ -42,6 +42,14 @@ same precedence order as the `xkey auth` verbs:
 printf '%s' "$PIN" | xkmsctl user register admin --pin-stdin --email admin@example.com
 printf '%s' "$PIN" | xkmsctl user login admin@example.com --pin-stdin
 ```
+
+The login key is the account's **email**, the key the server resolves the
+account by. `user login <email>` and `user register --email` refuse a value
+that is not a bare email address (a username, or a display-name form such as
+`Alice <alice@example.com>`) before anything reaches the network, so a typo is
+reported locally rather than as a remote authentication failure or a ceremony
+run against a second principal keyed by that string. Surrounding whitespace is
+trimmed.
 
 An authenticator with no PIN configured needs none — supply nothing. A missing
 PIN is reported as missing input naming these sources, and a wrong PIN reports

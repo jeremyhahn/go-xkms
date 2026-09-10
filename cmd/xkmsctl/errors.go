@@ -329,6 +329,11 @@ var (
 	// WebAuthn enrollment resolves by the canonical email login key, so a user
 	// registered without one cannot be enrolled by anybody.
 	ErrEmailRequired = errors.New("--email is required: it is the canonical login key WebAuthn resolves through")
+	// ErrLoginKeyNotEmail is returned when the login key given to a WebAuthn
+	// ceremony is not an email address. The server resolves the account by
+	// its canonical email login key, so a username would run the ceremony
+	// against nothing, or against a second principal keyed by that string.
+	ErrLoginKeyNotEmail = errors.New("the login key must be an email address: the server resolves the account by its canonical email login key")
 
 	// ErrCreateBackendFailed is the sentinel error "failed to create backend".
 	ErrCreateBackendFailed = errors.New("failed to create backend")
