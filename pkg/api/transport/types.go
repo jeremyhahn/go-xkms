@@ -515,6 +515,21 @@ type ImportKeyRequest struct {
 	// struct could not represent it, so every transport routed through here
 	// silently dropped it.
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// Exportable records whether the imported key may leave the backend
+	// again, wrapped or as raw material. Unset means the write-once default
+	// the backend applies: true for symmetric material (PKCS#11 v3.2 Table 30
+	// makes a secret key CKA_EXTRACTABLE by default, and a symmetric key the
+	// backend will not release can neither be read back nor wrapped), false
+	// for asymmetric material, as GenerateKeyRequest's zero value is. It is a
+	// pointer because the default is true and a plain bool cannot say
+	// "unset"; an explicit false imports non-extractable secret material,
+	// which no transport could express before.
+	Exportable *bool `json:"exportable,omitempty"`
+	// Sensitive carries PKCS#11 CKA_SENSITIVE to the backend's key record, as
+	// GenerateKeyRequest does: the key's plaintext may never be released. It is
+	// independent of Exportable; a sensitive key may still be wrapped out, but
+	// ExportKeyMaterial refuses it.
+	Sensitive bool `json:"sensitive,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }

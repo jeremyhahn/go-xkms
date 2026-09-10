@@ -116,6 +116,8 @@ xkmsctl key rotate web-tls --key-type tls
 | `--curve` | string | `""` | required for `ecdsa` |
 | `--hash` | string | `""` | signing hash to associate |
 | `--partition` | string | `""` | backend partition |
+| `--exportable` | bool | server default when omitted | `--exportable=false` imports non-extractable material; omitted, `aes` is exportable and the others are not |
+| `--sensitive` | bool | `false` | CKA_SENSITIVE: the plaintext is never released |
 
 ```
 xkmsctl key get-import-params imported-signer --output params.json

@@ -962,6 +962,8 @@ func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyReque
 		AESKeySize:  req.AESKeySize,
 		Hash:        req.Hash,
 		Partition:   req.Partition,
+		Exportable:  req.Exportable,
+		Sensitive:   req.Sensitive,
 	}
 
 	var result transport.ImportKeyResponse

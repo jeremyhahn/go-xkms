@@ -277,6 +277,76 @@ func TestKeyImportCmd_BadJSON(t *testing.T) {
 	}
 }
 
+// TestKeyImportCmd_ExportabilityFlags proves --exportable and --sensitive
+// reach the request, and that an omitted --exportable sends nothing so the
+// server applies its write-once default.
+func TestKeyImportCmd_ExportabilityFlags(t *testing.T) {
+	writeWrapped := func(t *testing.T) string {
+		t.Helper()
+		data, err := json.Marshal(backend.WrappedKeyMaterial{WrappedKey: []byte("wrapped-bytes"), Algorithm: "RSAES_OAEP_SHA_256"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(t.TempDir(), "wrapped.json")
+		if err := os.WriteFile(p, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	resetFlags := func(t *testing.T) {
+		t.Helper()
+		t.Cleanup(func() {
+			_ = keyImportCmd.Flags().Set("key-type", "")
+			_ = keyImportCmd.Flags().Set("aes-key-size", "0")
+			_ = keyImportCmd.Flags().Set("exportable", "true")
+			_ = keyImportCmd.Flags().Set("sensitive", "false")
+			keyImportCmd.Flags().Lookup("exportable").Changed = false
+			keyImportCmd.Flags().Lookup("sensitive").Changed = false
+		})
+	}
+
+	t.Run("explicit flags are sent", func(t *testing.T) {
+		mock := &mockKeyClient{importKeyResp: &client.ImportKeyResponse{}}
+		withGlobalConfig(t, newKeyRunConfig("text", mock))
+		resetFlags(t)
+		p := writeWrapped(t)
+		for k, v := range map[string]string{"key-type": "aes", "aes-key-size": "256", "exportable": "false", "sensitive": "true"} {
+			if err := keyImportCmd.Flags().Set(k, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = captureStdout(t, func() { keyImportCmd.Run(keyImportCmd, []string{"k1", p}) })
+		if mock.importKeyReq == nil {
+			t.Fatal("ImportKey was never called")
+		}
+		if mock.importKeyReq.Exportable == nil || *mock.importKeyReq.Exportable {
+			t.Errorf("Exportable = %v, want an explicit false", mock.importKeyReq.Exportable)
+		}
+		if !mock.importKeyReq.Sensitive {
+			t.Error("Sensitive must reach the request")
+		}
+	})
+
+	t.Run("omitted --exportable sends nothing", func(t *testing.T) {
+		mock := &mockKeyClient{importKeyResp: &client.ImportKeyResponse{}}
+		withGlobalConfig(t, newKeyRunConfig("text", mock))
+		resetFlags(t)
+		p := writeWrapped(t)
+		for k, v := range map[string]string{"key-type": "aes", "aes-key-size": "256"} {
+			if err := keyImportCmd.Flags().Set(k, v); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = captureStdout(t, func() { keyImportCmd.Run(keyImportCmd, []string{"k1", p}) })
+		if mock.importKeyReq == nil {
+			t.Fatal("ImportKey was never called")
+		}
+		if mock.importKeyReq.Exportable != nil {
+			t.Errorf("Exportable = %v, want nil so the server applies its default", *mock.importKeyReq.Exportable)
+		}
+	})
+}
+
 func TestKeyImportCmd_Success(t *testing.T) {
 	mock := &mockKeyClient{importKeyResp: &client.ImportKeyResponse{}}
 	withGlobalConfig(t, newKeyRunConfig("text", mock))

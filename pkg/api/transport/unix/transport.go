@@ -414,6 +414,10 @@ func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyReque
 		KeySize:     int32(req.KeySize),
 		Curve:       req.Curve,
 		Hash:        req.Hash,
+		Partition:   req.Partition,
+		Metadata:    req.Metadata,
+		Exportable:  req.Exportable,
+		Sensitive:   req.Sensitive,
 	}
 
 	resp, err := t.client.ImportKey(ctx, pbReq)

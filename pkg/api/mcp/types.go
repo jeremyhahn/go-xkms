@@ -508,6 +508,12 @@ type ImportKeyParams struct {
 	// Partition names the sub-namespace the imported key is stored in, as it
 	// does for the generate and gRPC/REST import paths.
 	Partition string `json:"partition,omitempty"`
+	// Exportable records whether the imported key may leave the backend
+	// again; unset keeps the write-once default (symmetric exportable,
+	// asymmetric not). See transport.ImportKeyRequest.
+	Exportable *bool `json:"exportable,omitempty"`
+	// Sensitive carries PKCS#11 CKA_SENSITIVE, as GenerateKeyParams does.
+	Sensitive bool `json:"sensitive,omitempty"`
 }
 
 // ExportKeyParams represents parameters for exporting a key

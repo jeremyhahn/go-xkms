@@ -1197,6 +1197,8 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 		AESKeySize: params.AESKeySize,
 		Hash:       params.Hash,
 		Partition:  params.Partition,
+		Exportable: params.Exportable,
+		Sensitive:  params.Sensitive,
 	}); err != nil {
 		return nil, mapKeyOpError(err)
 	}

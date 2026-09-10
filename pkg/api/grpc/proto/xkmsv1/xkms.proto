@@ -1875,6 +1875,13 @@ message ImportKeyRequest {
   string curve = 9;
   string hash = 10;
   string partition = 11;
+  // exportable records whether the imported key may leave the backend again.
+  // Unset keeps the write-once default: true for symmetric material, false
+  // for asymmetric; an explicit false imports non-extractable secret material.
+  optional bool exportable = 12;
+  // sensitive carries PKCS#11 CKA_SENSITIVE: the plaintext may never be
+  // released. Independent of exportable, as on GenerateKeyRequest.
+  bool sensitive = 13;
 }
 
 // ImportKeyResponse contains the result of key import

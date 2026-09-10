@@ -1686,6 +1686,12 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Build wrapped key material
+	// The request decides whether the key may leave again; the write-once
+	// defaults apply only when it says nothing. This path never set the
+	// flag, so every symmetric key imported over REST was stored
+	// non-exportable while the same import over gRPC or MCP was exportable.
+	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
+
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKey,
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),

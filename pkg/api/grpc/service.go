@@ -1556,6 +1556,12 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported key type: %s", req.KeyType)
 	}
 
+	// The request decides whether the key may leave again; the write-once
+	// defaults (symmetric exportable, asymmetric not) apply only when it
+	// says nothing. This used to be hardcoded true for symmetric material,
+	// so no caller could import a non-extractable secret key.
+	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
+
 	// Create wrapped key material
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKey,

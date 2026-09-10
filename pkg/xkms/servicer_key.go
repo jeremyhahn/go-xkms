@@ -1313,11 +1313,34 @@ func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName strin
 		return nil, err
 	}
 
-	if attrs.IsSymmetric() {
-		attrs.Exportable = true
-	}
+	ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
 
 	return attrs, nil
+}
+
+// ApplyImportExportability records an import request's exportability choice
+// on the key attributes the backend will store. The symmetric metadata record
+// is write-once for Exportable, so the choice made here is the key's for its
+// whole lifetime.
+//
+// An unset choice (nil) keeps the default every import path applied before
+// the request could express one: true for symmetric material, because
+// PKCS#11 v3.2 Table 30 makes a secret key CKA_EXTRACTABLE by default and a
+// symmetric key the backend will not release can neither be read back nor
+// wrapped; false for asymmetric material, as GenerateKeyRequest's zero value
+// is. An explicit choice wins for either kind of material. Sensitive is
+// carried as given; it is independent of Exportable, as it is on generate.
+//
+// The gRPC service and the REST handler build their import attributes
+// themselves and call this so the three paths cannot drift on the one flag
+// that cannot be corrected after the fact.
+func ApplyImportExportability(attrs *types.KeyAttributes, exportable *bool, sensitive bool) {
+	if exportable != nil {
+		attrs.Exportable = *exportable
+	} else {
+		attrs.Exportable = attrs.IsSymmetric()
+	}
+	attrs.Sensitive = sensitive
 }
 
 // parseCurveString converts a curve name string to an elliptic.Curve, or nil

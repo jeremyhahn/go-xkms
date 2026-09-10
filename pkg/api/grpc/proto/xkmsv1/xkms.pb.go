@@ -6644,18 +6644,25 @@ func (x *UnwrapKeyByIDResponse) GetMessage() string {
 
 // ImportKeyRequest requests import of externally generated key material
 type ImportKeyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
-	WrappedKey    []byte                 `protobuf:"bytes,3,opt,name=wrapped_key,json=wrappedKey,proto3" json:"wrapped_key,omitempty"`
-	Algorithm     string                 `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
-	ImportToken   []byte                 `protobuf:"bytes,5,opt,name=import_token,json=importToken,proto3" json:"import_token,omitempty"`
-	Metadata      map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	KeyType       string                 `protobuf:"bytes,7,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "symmetric"
-	KeySize       int32                  `protobuf:"varint,8,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
-	Curve         string                 `protobuf:"bytes,9,opt,name=curve,proto3" json:"curve,omitempty"`
-	Hash          string                 `protobuf:"bytes,10,opt,name=hash,proto3" json:"hash,omitempty"`
-	Partition     string                 `protobuf:"bytes,11,opt,name=partition,proto3" json:"partition,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	KeyId       string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Backend     string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
+	WrappedKey  []byte                 `protobuf:"bytes,3,opt,name=wrapped_key,json=wrappedKey,proto3" json:"wrapped_key,omitempty"`
+	Algorithm   string                 `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	ImportToken []byte                 `protobuf:"bytes,5,opt,name=import_token,json=importToken,proto3" json:"import_token,omitempty"`
+	Metadata    map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	KeyType     string                 `protobuf:"bytes,7,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "symmetric"
+	KeySize     int32                  `protobuf:"varint,8,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
+	Curve       string                 `protobuf:"bytes,9,opt,name=curve,proto3" json:"curve,omitempty"`
+	Hash        string                 `protobuf:"bytes,10,opt,name=hash,proto3" json:"hash,omitempty"`
+	Partition   string                 `protobuf:"bytes,11,opt,name=partition,proto3" json:"partition,omitempty"`
+	// exportable records whether the imported key may leave the backend again.
+	// Unset keeps the write-once default: true for symmetric material, false
+	// for asymmetric; an explicit false imports non-extractable secret material.
+	Exportable *bool `protobuf:"varint,12,opt,name=exportable,proto3,oneof" json:"exportable,omitempty"`
+	// sensitive carries PKCS#11 CKA_SENSITIVE: the plaintext may never be
+	// released. Independent of exportable, as on GenerateKeyRequest.
+	Sensitive     bool `protobuf:"varint,13,opt,name=sensitive,proto3" json:"sensitive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6765,6 +6772,20 @@ func (x *ImportKeyRequest) GetPartition() string {
 		return x.Partition
 	}
 	return ""
+}
+
+func (x *ImportKeyRequest) GetExportable() bool {
+	if x != nil && x.Exportable != nil {
+		return *x.Exportable
+	}
+	return false
+}
+
+func (x *ImportKeyRequest) GetSensitive() bool {
+	if x != nil {
+		return x.Sensitive
+	}
+	return false
 }
 
 // ImportKeyResponse contains the result of key import
@@ -19643,7 +19664,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x18\n" +
 	"\asuccess\x18\x03 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\"\xa5\x03\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\xf7\x03\n" +
 	"\x10ImportKeyRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1f\n" +
@@ -19657,10 +19678,15 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x05curve\x18\t \x01(\tR\x05curve\x12\x12\n" +
 	"\x04hash\x18\n" +
 	" \x01(\tR\x04hash\x12\x1c\n" +
-	"\tpartition\x18\v \x01(\tR\tpartition\x1a;\n" +
+	"\tpartition\x18\v \x01(\tR\tpartition\x12#\n" +
+	"\n" +
+	"exportable\x18\f \x01(\bH\x00R\n" +
+	"exportable\x88\x01\x01\x12\x1c\n" +
+	"\tsensitive\x18\r \x01(\bR\tsensitive\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"^\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\r\n" +
+	"\v_exportable\"^\n" +
 	"\x11ImportKeyResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x15\n" +
@@ -21496,6 +21522,7 @@ func file_pkg_api_grpc_proto_xkmsv1_xkms_proto_init() {
 	if File_pkg_api_grpc_proto_xkmsv1_xkms_proto != nil {
 		return
 	}
+	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[95].OneofWrappers = []any{}
 	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[242].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

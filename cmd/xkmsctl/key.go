@@ -695,6 +695,7 @@ var keyImportCmd = &cobra.Command{
 		importCurve, _ := cmd.Flags().GetString("curve")
 		importHash, _ := cmd.Flags().GetString("hash")
 		importPartition, _ := cmd.Flags().GetString("partition")
+		importSensitive, _ := cmd.Flags().GetBool("sensitive")
 
 		spec := importKeySpec{
 			keyType:    strings.TrimSpace(importKeyType),
@@ -703,6 +704,14 @@ var keyImportCmd = &cobra.Command{
 			curve:      strings.TrimSpace(importCurve),
 			hash:       strings.TrimSpace(importHash),
 			partition:  strings.TrimSpace(importPartition),
+			sensitive:  importSensitive,
+		}
+		// Only an explicit --exportable=... is sent: the server applies the
+		// write-once default (aes exportable, others not) when the request
+		// says nothing, and a plain bool cannot say "nothing".
+		if cmd.Flags().Changed("exportable") {
+			exportable, _ := cmd.Flags().GetBool("exportable")
+			spec.exportable = &exportable
 		}
 		if spec.keyType == "" {
 			handleError(ErrImportKeyTypeRequired)
@@ -724,6 +733,8 @@ type importKeySpec struct {
 	curve      string
 	hash       string
 	partition  string
+	exportable *bool
+	sensitive  bool
 }
 
 // importKey imports a wrapped key using the SDK client
@@ -754,6 +765,8 @@ func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.Wrap
 		Curve:              spec.curve,
 		Hash:               spec.hash,
 		Partition:          spec.partition,
+		Exportable:         spec.exportable,
+		Sensitive:          spec.sensitive,
 	}
 
 	_, err = cl.ImportKey(ctx, req)
@@ -1803,6 +1816,8 @@ func init() {
 	keyImportCmd.Flags().String("curve", "", "ECDSA curve (P-256, P-384, P-521); required for ecdsa")
 	keyImportCmd.Flags().String("hash", "", "Signing hash to associate with the key (e.g. SHA-256)")
 	keyImportCmd.Flags().String("partition", "", "Backend partition to import into")
+	keyImportCmd.Flags().Bool("exportable", true, "Whether the imported key may be exported again; omit to keep the server default (aes: exportable, others: not)")
+	keyImportCmd.Flags().Bool("sensitive", false, "Mark the key CKA_SENSITIVE: its plaintext is never released (export-material is refused)")
 
 	// Flags for export command
 	keyExportCmd.Flags().String("algorithm", "RSAES_OAEP_SHA_256", "Wrapping algorithm")

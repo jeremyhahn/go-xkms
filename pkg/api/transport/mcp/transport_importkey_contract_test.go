@@ -58,7 +58,10 @@ func TestImportKey_ParamsReachTheHandlerStruct(t *testing.T) {
 	defer tr.Close()
 
 	material := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	exportable := false
 	req := &transport.ImportKeyRequest{
+		Exportable:         &exportable,
+		Sensitive:          true,
 		Backend:            "software",
 		KeyID:              "imported.example",
 		KeyType:            "symmetric",
@@ -85,6 +88,9 @@ func TestImportKey_ParamsReachTheHandlerStruct(t *testing.T) {
 	assert.Equal(t, 256, captured.AESKeySize, "aes_key_size must survive the hop")
 	assert.Equal(t, "SHA-256", captured.Hash, "hash must survive the hop")
 	assert.Equal(t, "p1", captured.Partition, "partition must survive the hop")
+	require.NotNil(t, captured.Exportable, "exportable must survive the hop, or the control is present in the contract and unreachable")
+	assert.False(t, *captured.Exportable)
+	assert.True(t, captured.Sensitive, "sensitive must survive the hop")
 
 	// And the fields that already worked must keep working.
 	assert.Equal(t, "software", captured.Backend)

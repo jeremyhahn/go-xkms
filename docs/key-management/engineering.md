@@ -75,6 +75,13 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
 - **`sensitive` is terminal.** A key created `--sensitive` can never be
   exported, by any path, for its whole lifetime. `exportable` is likewise fixed
   at creation.
+- **An import chooses its exportability once.** `ImportKeyRequest.Exportable`
+  (a pointer, because the default is `true` and a plain bool cannot say
+  "unset") and `Sensitive` reach the stored attributes through
+  `xkms.ApplyImportExportability`, which the service, the gRPC service and
+  the REST handler all call. Unset keeps the write-once default: symmetric
+  material exportable, asymmetric not. An explicit `false` imports
+  non-extractable secret material; nothing releases it afterwards.
 - **What a key is decides whether it may leave, never what a request claims.**
   `CopyKey` resolves the source key's stored attributes from the backend's
   own listing and passes those to the export; no transport's copy request

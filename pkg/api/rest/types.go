@@ -361,6 +361,12 @@ type ImportKeyRequest struct {
 	Curve       string `json:"curve,omitempty"`        // For ECDSA keys
 	Hash        string `json:"hash,omitempty"`         // Hash algorithm
 	AESKeySize  int    `json:"aes_key_size,omitempty"` // For AES keys (128, 192, 256)
+	// Exportable records whether the imported key may leave the backend
+	// again; unset keeps the write-once default (symmetric exportable,
+	// asymmetric not). See transport.ImportKeyRequest.
+	Exportable *bool `json:"exportable,omitempty"`
+	// Sensitive carries PKCS#11 CKA_SENSITIVE, as GenerateKeyRequest does.
+	Sensitive bool `json:"sensitive,omitempty"`
 }
 
 // ImportKeyResponse represents the response for importing a key.

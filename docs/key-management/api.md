@@ -111,9 +111,16 @@ Do not confuse it with `algorithm`, which on every import request names the
 
 | Transport | field |
 |---|---|
-| REST | `key_type` in `ImportKeyRequest`, with `key_size`, `curve`, `hash`, `aes_key_size` |
-| gRPC | `key_type` in `ImportKeyRequest`, with `key_size`, `curve` |
-| MCP | `key_type` in `xkms.importKey` params, with `key_size`, `curve`, `hash`, `aes_key_size`, `partition` |
+| REST | `key_type` in `ImportKeyRequest`, with `key_size`, `curve`, `hash`, `aes_key_size`, `exportable`, `sensitive` |
+| gRPC | `key_type` in `ImportKeyRequest`, with `key_size`, `curve`, `hash`, `partition`, `exportable` (optional), `sensitive` |
+| MCP | `key_type` in `xkms.importKey` params, with `key_size`, `curve`, `hash`, `aes_key_size`, `partition`, `exportable`, `sensitive` |
+
+`exportable` and `sensitive` are the same controls `GenerateKeyRequest`
+carries. `exportable` is optional on every transport: absent, the import keeps
+the write-once default (symmetric material exportable, asymmetric not);
+`false` imports non-extractable secret material that `export-material` and
+`export` refuse for the key's whole lifetime. `sensitive` marks the key
+CKA_SENSITIVE independently of `exportable`.
 
 The MCP tool carried no such field until go-xkms#53: it built attributes from
 the key ID alone, so the key was stored describing no algorithm and the
