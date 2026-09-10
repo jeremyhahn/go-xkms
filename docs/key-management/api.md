@@ -98,6 +98,30 @@ Still outstanding: `CopyKeyParams` carries `hash` and `aes_key_size` that
 `transport.CopyKeyRequest` cannot express, so no caller of this transport can
 set them (#155).
 
+### The REST body spells the same fields the same way as MCP
+
+The REST bodies of the ceremony (`POST /api/v1/keys/import-params`, `/wrap`,
+`/unwrap`, `/import`) carry the material as `wrapped_key` and the wrapping key
+as PEM text under `wrapping_public_key_pem`, and the import-parameters response
+returns the wrapping key as PEM. Those bodies are defined once, in
+`pkg/api/rest/wire`, which the REST handlers alias and the REST and QUIC
+client transports build **by name**: `wire.NewImportKeyRequest`,
+`NewWrapKeyRequest`, `NewUnwrapKeyRequest`, `NewGetImportParametersRequest`,
+and `Transport()` on the two responses, which PEM-encode the wrapping key on
+the way out and decode it on the way back. A wrapping key that is not DER
+PKIX is refused locally with `wire.ErrWrappingPublicKeyNotDER` before any
+request is sent. The contract test in that package pins every field of every
+body against `transport.*Request`, so a field one side can express and the
+other drops cannot come back.
+
+Before this the two transports marshalled the contract struct straight onto
+the route: the material arrived under a name the handler did not read, the
+wrapping key arrived as base64 where PEM was expected, the import-parameters
+response came back with no wrapping key, and `partition`, `metadata` and
+`key_spec` were dropped. No import, wrap or unwrap over REST or QUIC could
+have worked; the REST body also now carries `partition`, `metadata` and
+`key_spec`, and `GenerateKeyRequest` carries `partition`.
+
 ### Import names the key's algorithm, on every transport
 
 `ImportKey` takes the algorithm of the key being imported in a `key_type` field

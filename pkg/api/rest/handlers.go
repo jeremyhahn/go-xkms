@@ -325,6 +325,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		SymmetricAlgorithm: symmetricAlgorithm,
 		Exportable:         req.Exportable,
 		Sensitive:          req.Sensitive,
+		Partition:          types.Partition(req.Partition),
 	}
 
 	// Resolve the hash algorithm. An absent name selects SHA-256; a name the
@@ -1439,6 +1440,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	resp := GetImportParametersResponse{
 		WrappingPublicKeyPEM: string(wrappingKeyPEM),
 		Algorithm:            string(params.Algorithm),
+		KeySpec:              params.KeySpec,
 	}
 
 	// Add import token if present
@@ -1523,6 +1525,7 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		WrappingPublicKey: wrappingKey,
 		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken:       req.ImportToken,
+		KeySpec:           req.KeySpec,
 	}
 
 	// Wrap the key material with the caller-named backend.
@@ -1543,6 +1546,7 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		WrappedKey:  wrapped.WrappedKey,
 		Algorithm:   string(wrapped.Algorithm),
 		ImportToken: wrapped.ImportToken,
+		Metadata:    wrapped.Metadata,
 	}
 
 	writeJSON(w, resp, http.StatusOK)
@@ -1590,6 +1594,7 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		WrappedKey:  req.WrappedKey,
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken: req.ImportToken,
+		Metadata:    req.Metadata,
 	}
 
 	// Build import parameters
@@ -1597,6 +1602,7 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		WrappingPublicKey: wrappingKey,
 		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken:       req.ImportToken,
+		KeySpec:           req.KeySpec,
 	}
 
 	// Unwrap the key material with the caller-named backend.
@@ -1691,11 +1697,13 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	// flag, so every symmetric key imported over REST was stored
 	// non-exportable while the same import over gRPC or MCP was exportable.
 	xkms.ApplyImportExportability(attrs, req.Exportable, req.Sensitive)
+	attrs.Partition = types.Partition(req.Partition)
 
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKey,
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken: req.ImportToken,
+		Metadata:    req.Metadata,
 	}
 
 	// Import the key

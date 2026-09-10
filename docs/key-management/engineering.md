@@ -249,6 +249,12 @@ key and certificate are read from it, and the wrapping key and import
 token for `importKeyMaterial` are issued by it. The default backend is used
 only when no name is given.
 
+**REST wire bodies.** The BYOK ceremony's REST request and response bodies
+live in `pkg/api/rest/wire`, a leaf package the REST handlers alias and the
+REST and QUIC client transports build by name, with the DER-to-PEM
+translation of the wrapping key in one place; see [api.md](api.md) §"The
+REST body spells the same fields the same way as MCP".
+
 **Fail-closed paths:** export of a non-exportable key; any operation on a
 sealed barrier; a tenant mismatch; an RBAC denial. Each returns an error
 without touching backend state.

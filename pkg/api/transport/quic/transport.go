@@ -36,6 +36,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	wire "github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/quic-go/quic-go/http3"
@@ -883,7 +884,7 @@ func (t *Transport) CertificateExists(ctx context.Context, backend, keyID string
 
 // ImportKey imports a key.
 func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error) {
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/import", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/import", wire.NewImportKeyRequest(req))
 	if err != nil {
 		return nil, err
 	}
@@ -935,37 +936,47 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 
 // GetImportParameters gets the parameters needed to import a key.
 func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/import-params", req)
+	// The REST body and its response spell the ceremony's fields differently
+	// from the transport contract; see pkg/api/rest/wire_byok.go.
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/import-params", wire.NewGetImportParametersRequest(req))
 	if err != nil {
 		return nil, err
 	}
 
-	var resp transport.GetImportParametersResponse
+	var resp wire.GetImportParametersResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
-	return &resp, nil
+	return resp.Transport()
 }
 
 // WrapKey wraps key material for secure transport.
 func (t *Transport) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) (*transport.WrapKeyResponse, error) {
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/wrap", req)
+	body, err := wire.NewWrapKeyRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/wrap", body)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp transport.WrapKeyResponse
+	var resp wire.WrapKeyResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
 
-	return &resp, nil
+	return resp.Transport(), nil
 }
 
 // UnwrapKey unwraps key material.
 func (t *Transport) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyRequest) (*transport.UnwrapKeyResponse, error) {
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/unwrap", req)
+	body, err := wire.NewUnwrapKeyRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys/unwrap", body)
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	wire "github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,12 +49,12 @@ func mockHandler() http.Handler {
 		case strings.Contains(path, "/keys/unwrap-by-id"):
 			respond(map[string]interface{}{"success": true, "key_id": "key-1"})
 		case strings.Contains(path, "/keys/wrap"):
-			respond(transport.WrapKeyResponse{WrappedKeyMaterial: []byte("wrapped"), Algorithm: "AES"})
+			respond(wire.WrapKeyResponse{WrappedKey: []byte("wrapped"), Algorithm: "AES"})
 		case strings.Contains(path, "/keys/unwrap"):
 			respond(transport.UnwrapKeyResponse{KeyMaterial: []byte("unwrapped")})
 		case strings.Contains(path, "/keys/import-params"):
-			respond(transport.GetImportParametersResponse{
-				WrappingPublicKey: []byte("wpk"), ImportToken: []byte("tok"), Algorithm: "RSA-OAEP",
+			respond(wire.GetImportParametersResponse{
+				WrappingPublicKeyPEM: testWrappingPublicKeyPEM(), ImportToken: []byte("tok"), Algorithm: "RSA-OAEP",
 			})
 		case strings.Contains(path, "/keys/import"):
 			respond(transport.ImportKeyResponse{Success: true, KeyID: "key-1"})

@@ -14,6 +14,7 @@
 package rest
 
 import (
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -49,6 +50,9 @@ type GenerateKeyRequest struct {
 	Algorithm  string `json:"algorithm,omitempty"` // "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
 	Exportable bool   `json:"exportable,omitempty"`
 	Sensitive  bool   `json:"sensitive,omitempty"` // CKA_SENSITIVE: plaintext is never released
+	// Partition names the sub-namespace the key is stored in, as it does on
+	// every other transport; part of the key's identity.
+	Partition string `json:"partition,omitempty"`
 }
 
 // GenerateKeyResponse represents the response for key generation.
@@ -293,89 +297,19 @@ type GetTLSCertificateResponse struct {
 	ChainPEM       []string `json:"chain_pem,omitempty"`
 }
 
-// GetImportParametersRequest represents a request to get import parameters.
-type GetImportParametersRequest struct {
-	Backend    string `json:"backend"`
-	KeyID      string `json:"key_id"`
-	KeyType    string `json:"key_type"`               // "rsa", "ecdsa", "ed25519", "symmetric"
-	Algorithm  string `json:"algorithm"`              // Wrapping algorithm
-	KeySize    int    `json:"key_size,omitempty"`     // For RSA keys
-	Curve      string `json:"curve,omitempty"`        // For ECDSA keys
-	Hash       string `json:"hash,omitempty"`         // Hash algorithm
-	AESKeySize int    `json:"aes_key_size,omitempty"` // For AES keys (128, 192, 256)
-}
-
-// GetImportParametersResponse represents the response for getting import parameters.
-type GetImportParametersResponse struct {
-	WrappingPublicKeyPEM string `json:"wrapping_public_key_pem"`
-	ImportToken          []byte `json:"import_token,omitempty"`
-	Algorithm            string `json:"algorithm"`
-	ExpiresAt            string `json:"expires_at,omitempty"` // RFC3339 format
-}
-
-// WrapKeyRequest represents a request to wrap key material.
-// Backend names the backend whose wrapping semantics are used and is
-// required: wrapping is backend specific, so the caller must state which
-// backend the material is being prepared for.
-type WrapKeyRequest struct {
-	Backend              string `json:"backend"`
-	KeyMaterial          []byte `json:"key_material"`
-	WrappingPublicKeyPEM string `json:"wrapping_public_key_pem"`
-	ImportToken          []byte `json:"import_token,omitempty"`
-	Algorithm            string `json:"algorithm"`
-}
-
-// WrapKeyResponse represents the response for wrapping key material.
-type WrapKeyResponse struct {
-	WrappedKey  []byte `json:"wrapped_key"`
-	Algorithm   string `json:"algorithm"`
-	ImportToken []byte `json:"import_token,omitempty"`
-}
-
-// UnwrapKeyRequest represents a request to unwrap key material.
-// Backend names the backend that performs the unwrap and is required: it
-// must be the same backend that produced the wrapped material, because
-// wrapping semantics differ between backends.
-type UnwrapKeyRequest struct {
-	Backend              string `json:"backend"`
-	WrappedKey           []byte `json:"wrapped_key"`
-	WrappingPublicKeyPEM string `json:"wrapping_public_key_pem"`
-	ImportToken          []byte `json:"import_token,omitempty"`
-	Algorithm            string `json:"algorithm"`
-}
-
-// UnwrapKeyResponse represents the response for unwrapping key material.
-type UnwrapKeyResponse struct {
-	KeyMaterial []byte `json:"key_material"`
-}
-
-// ImportKeyRequest represents a request to import a key.
-type ImportKeyRequest struct {
-	Backend     string `json:"backend"`
-	KeyID       string `json:"key_id"`
-	KeyType     string `json:"key_type"` // "rsa", "ecdsa", "ed25519", "symmetric"
-	WrappedKey  []byte `json:"wrapped_key"`
-	ImportToken []byte `json:"import_token,omitempty"`
-	Algorithm   string `json:"algorithm"`              // Wrapping algorithm
-	KeySize     int    `json:"key_size,omitempty"`     // For RSA keys
-	Curve       string `json:"curve,omitempty"`        // For ECDSA keys
-	Hash        string `json:"hash,omitempty"`         // Hash algorithm
-	AESKeySize  int    `json:"aes_key_size,omitempty"` // For AES keys (128, 192, 256)
-	// Exportable records whether the imported key may leave the backend
-	// again; unset keeps the write-once default (symmetric exportable,
-	// asymmetric not). See transport.ImportKeyRequest.
-	Exportable *bool `json:"exportable,omitempty"`
-	// Sensitive carries PKCS#11 CKA_SENSITIVE, as GenerateKeyRequest does.
-	Sensitive bool `json:"sensitive,omitempty"`
-}
-
-// ImportKeyResponse represents the response for importing a key.
-type ImportKeyResponse struct {
-	Success      bool   `json:"success"`
-	KeyID        string `json:"key_id"`
-	Message      string `json:"message,omitempty"`
-	PublicKeyPEM string `json:"public_key_pem,omitempty"`
-}
+// The BYOK ceremony's request and response bodies are defined in the leaf
+// package wire, so the REST and QUIC client transports can build them by name
+// without importing this server package; they are the same types here.
+type (
+	GetImportParametersRequest  = wire.GetImportParametersRequest
+	GetImportParametersResponse = wire.GetImportParametersResponse
+	WrapKeyRequest              = wire.WrapKeyRequest
+	WrapKeyResponse             = wire.WrapKeyResponse
+	UnwrapKeyRequest            = wire.UnwrapKeyRequest
+	UnwrapKeyResponse           = wire.UnwrapKeyResponse
+	ImportKeyRequest            = wire.ImportKeyRequest
+	ImportKeyResponse           = wire.ImportKeyResponse
+)
 
 // ExportKeyRequest represents a request to export a key.
 type ExportKeyRequest struct {
