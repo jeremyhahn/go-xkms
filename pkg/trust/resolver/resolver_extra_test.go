@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -585,6 +586,29 @@ func TestTLSConfig_ProviderCAIntegration(t *testing.T) {
 	}
 	if tlsCfg.RootCAs == nil {
 		t.Fatal("expected non-nil RootCAs")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Validate: Noise with only the P-256 key
+// ---------------------------------------------------------------------------
+
+// A FIPS client has no Noise_NK key to configure, so the approved suite's key
+// alone must satisfy validation.
+func TestValidate_NoiseP256KeyAlone(t *testing.T) {
+	cfg := &resolver.Config{
+		Scopes: map[string]*resolver.ScopeConfig{
+			"test": {
+				Strategies: []resolver.Strategy{resolver.StrategyNoise},
+				Noise: &resolver.NoiseConfig{
+					ServerAddr:          "noise.example.com:7777",
+					ServerP256StaticKey: "04" + strings.Repeat("00", 64),
+				},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a P-256-only noise scope must validate, got %v", err)
 	}
 }
 

@@ -1107,8 +1107,9 @@ func TestAutoParamsFromResolverScope_FilledScope(t *testing.T) {
 			DNSServer: "8.8.8.8:53",
 		},
 		Noise: &trustresolver.NoiseConfig{
-			ServerStaticKey: "base64key==",
-			ServerAddr:      "xkms.example.com:8444",
+			ServerStaticKey:     "base64key==",
+			ServerP256StaticKey: "04p256key",
+			ServerAddr:          "xkms.example.com:8444",
 		},
 		SPKI: &trustresolver.SPKIConfig{
 			Pin: "sha256/abcdef==",
@@ -1125,6 +1126,9 @@ func TestAutoParamsFromResolverScope_FilledScope(t *testing.T) {
 	}
 	if params.daneDNSServer != "8.8.8.8:53" {
 		t.Errorf("daneDNSServer = %q, want 8.8.8.8:53", params.daneDNSServer)
+	}
+	if params.p256Key != "04p256key" {
+		t.Errorf("p256Key = %q, want 04p256key", params.p256Key)
 	}
 	if params.noiseKey != "base64key==" {
 		t.Errorf("noiseKey = %q, want base64key==", params.noiseKey)

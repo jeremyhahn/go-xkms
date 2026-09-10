@@ -1025,6 +1025,15 @@ test-server-fips:
 	@echo "$(CYAN)→ Testing server package (FIPS build)...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS_FIPS) ./pkg/server/...
 
+.PHONY: test-trust-bootstrap-fips
+## test-trust-bootstrap-fips: Run the trust-bootstrap dispatch tests in a FIPS build (client offers the approved suite only)
+# The client half of go-xkms#269: with Noise_NK compiled out, Fetch(ModeNoise)
+# must skip the Curve25519 key and complete a real P-256 handshake against a
+# real listener. Only this lane compiles that refusal into the dispatch tests.
+test-trust-bootstrap-fips:
+	@echo "$(CYAN)→ Testing trust/bootstrap package (FIPS build)...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS_FIPS) ./pkg/trust/bootstrap/...
+
 .PHONY: test-config
 ## test-config: Run config package unit tests
 test-config:

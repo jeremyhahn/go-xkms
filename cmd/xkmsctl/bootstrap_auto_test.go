@@ -16,6 +16,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,6 +96,36 @@ func TestBuildAutoConfig_Noise(t *testing.T) {
 	assert.Nil(t, cfg.DANE)
 	assert.Nil(t, cfg.SPKI)
 	assert.Nil(t, cfg.Direct)
+}
+
+// TestBuildAutoConfig_P256KeyAlone verifies that the FIPS-approved suite's
+// key alone configures the Noise method: a FIPS client has no Noise_NK key
+// to give, and must not need one.
+func TestBuildAutoConfig_P256KeyAlone(t *testing.T) {
+	params := &autoBootstrapParams{
+		serverURL: "https://kms.example.com:8443",
+		p256Key:   "04" + strings.Repeat("00", 64),
+	}
+	cfg := buildAutoConfig(params)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.Noise)
+	assert.Empty(t, cfg.Noise.ServerStaticKey)
+	assert.Equal(t, params.p256Key, cfg.Noise.ServerP256StaticKey)
+}
+
+// TestBuildAutoConfig_BothNoiseKeys verifies both keys travel together, so
+// the library can offer whichever suite the build runs.
+func TestBuildAutoConfig_BothNoiseKeys(t *testing.T) {
+	params := &autoBootstrapParams{
+		serverURL: "https://kms.example.com:8443",
+		noiseKey:  strings.Repeat("00", 32),
+		p256Key:   "04" + strings.Repeat("00", 64),
+	}
+	cfg := buildAutoConfig(params)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.Noise)
+	assert.Equal(t, params.noiseKey, cfg.Noise.ServerStaticKey)
+	assert.Equal(t, params.p256Key, cfg.Noise.ServerP256StaticKey)
 }
 
 // TestBuildAutoConfig_NoiseExplicitAddr verifies that an explicit noise-addr
@@ -263,6 +294,7 @@ func TestBootstrapAutoCommandFlagParsing(t *testing.T) {
 		"dane-hostname",
 		"dane-dns-server",
 		"noise-key",
+		"p256-key",
 		"noise-addr",
 		"spki-pin",
 		"direct",

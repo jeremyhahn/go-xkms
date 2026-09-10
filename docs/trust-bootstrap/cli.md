@@ -1,6 +1,6 @@
 # Trust Bootstrap — CLI
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 Binary: `xkmsctl`, group `bootstrap`. Sources: `cmd/xkmsctl/bootstrap.go`,
 `bootstrap_dane.go`, `bootstrap_noise.go`, `bootstrap_p256.go`,
@@ -24,7 +24,8 @@ Runs the configured modes in order and returns the first bundle that verifies.
 | `--config` | string | `""` | `xkmsd` config file; its `trust:` section supplies defaults |
 | `--dane-hostname` | string | `""` | hostname for DANE/TLSA verification |
 | `--dane-dns-server` | string | `""` | DNS server for DANE lookups, e.g. `198.51.100.53:53` |
-| `--noise-key` | string | `""` | hex Noise static **public** key of the server |
+| `--noise-key` | string | `""` | hex Noise_NK (Curve25519) static **public** key of the server; skipped where the build cannot run Noise_NK |
+| `--p256-key` | string | `""` | hex P-256 static **public** point of the server for the FIPS-approved suite (what `noise show-p256-key` prints); the key a FIPS client needs |
 | `--noise-addr` | string | `""` | Noise bootstrap server address `host:port` |
 | `--spki-pin` | string | `""` | hex SHA-256 SPKI pin of the server certificate |
 | `--direct` | bool | `false` | enable direct HTTPS fallback using the system trust store |

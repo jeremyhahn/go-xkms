@@ -32,7 +32,7 @@
 //	    PerMethodTimeout: 10 * time.Second,
 //	    Logger:           slog.Default(),
 //	    DANE:             &bootstrap.DANEConfig{Hostname: "kms.example.com", DNSServer: "8.8.8.8:53"},
-//	    Noise:            &bootstrap.NoiseConfig{ServerStaticKey: "abc...", ServerAddr: "kms.example.com:8445"},
+//	    Noise:            &bootstrap.NoiseConfig{ServerStaticKey: "abc...", ServerP256StaticKey: "04...", ServerAddr: "kms.example.com:8445"},
 //	    SPKI:             &bootstrap.SPKIConfig{Pin: "1234..."},
 //	}
 //	bundle, err := bootstrap.Fetch(ctx, cfg)
@@ -68,8 +68,10 @@ const (
 	// server certificate before fetching the bundle over HTTPS.
 	ModeDANE Mode = "dane"
 
-	// ModeNoise establishes a Noise_NK channel pinned by the
-	// server's static public key and fetches the bundle in-band.
+	// ModeNoise establishes an encrypted channel pinned by the
+	// server's static public key and fetches the bundle in-band. The
+	// channel runs Noise_NK, or the FIPS-approved P-256 suite when the
+	// build requires it or the caller pins it; see NoiseConfig.
 	ModeNoise Mode = "noise"
 
 	// ModeSPKI verifies the server certificate against a pre-shared
@@ -175,7 +177,14 @@ type DANEConfig struct {
 	DNSTLSServerName string
 }
 
-// NoiseConfig holds the per-mode inputs the Noise_NK strategy needs.
+// NoiseConfig holds the per-mode inputs the Noise bootstrap transport
+// needs. The transport negotiates one of two suites per connection, and
+// the client offers whichever of them it holds a server key for AND this
+// build can run: Noise_NK (SuiteNoiseNK) needs ServerStaticKey and is
+// unavailable under FIPS; the approved TSBOOT1_P256_AESGCM_SHA256
+// (SuiteP256AESGCM) needs ServerP256StaticKey and runs in every build.
+// A FIPS client therefore needs ServerP256StaticKey to bootstrap over
+// this transport at all.
 type NoiseConfig struct {
 	// ServerAddr is the explicit Noise bootstrap address
 	// ("host:port"). When empty, Fetch derives one from
@@ -183,8 +192,25 @@ type NoiseConfig struct {
 	ServerAddr string
 
 	// ServerStaticKey is the hex-encoded 32-byte Curve25519 public
-	// key of the server.
+	// key of the server, for the Noise_NK suite. Optional when
+	// ServerP256StaticKey is set. In a build that cannot run Noise_NK
+	// it is skipped, unless Suite pins SuiteNoiseNK, which is then an
+	// error rather than a silent fallback.
 	ServerStaticKey string
+
+	// ServerP256StaticKey is the hex-encoded uncompressed P-256 public
+	// point (P256PublicKeySize bytes, 130 hex characters) of the
+	// server, for the approved suite. Optional when ServerStaticKey is
+	// set. It is what `xkmsctl bootstrap noise show-p256-key` prints.
+	ServerP256StaticKey string
+
+	// Suite optionally pins the suite offered: SuiteNoiseNK or
+	// SuiteP256AESGCM. The zero value selects by policy -- the approved
+	// suite whenever FIPS is enforced, otherwise Noise_NK when its key
+	// is configured, else P-256. A pinned suite whose key is missing or
+	// which this build cannot run fails with SuiteError; it never falls
+	// through to the other suite.
+	Suite byte
 }
 
 // SPKIConfig holds the per-mode inputs the SPKI-pin strategy needs.
@@ -374,13 +400,10 @@ func fetchNoise(ctx context.Context, cfg Config) (*CABundle, error) {
 	if addr == "" {
 		return nil, ErrServerURLRequired
 	}
-	bs, err := truststrap.NewNoiseBootstrapper(&truststrap.NoiseConfig{
-		ServerAddr:       addr,
-		ServerStaticKey:  cfg.Noise.ServerStaticKey,
-		ConnectTimeout:   cfg.PerMethodTimeout,
-		OperationTimeout: cfg.PerMethodTimeout,
-		Logger:           cfg.Logger,
-	})
+	// Composed on go-truststrap's suite-negotiating client rather than its
+	// NewNoiseBootstrapper facade, which carries no P-256 key and no suite
+	// selector and so cannot bootstrap under FIPS. See noise_client.go.
+	bs, err := newNoiseClient(addr, cfg.Noise, cfg.PerMethodTimeout, cfg.Logger)
 	if err != nil {
 		return nil, &FetchError{Mode: ModeNoise, Cause: err}
 	}
@@ -451,73 +474,120 @@ func fetchTOFU(ctx context.Context, cfg Config) (*CABundle, error) {
 	return invoke(ctx, ModeTOFU, bs)
 }
 
+// autoArm is one method of the Auto walk: whether cfg arms it, and the
+// single-mode fetcher that runs it.
+//
+// The Auto walk is this package's rather than go-truststrap's AutoFetch
+// because the dispatcher upstream builds its Noise arm from its own facade
+// config, which carries no P-256 key or suite selector (go-truststrap#51).
+// Under that dispatcher a client configured with only ServerP256StaticKey --
+// the only configuration a FIPS client can have -- had no Noise arm at all
+// and failed with a misleading ErrModeNotConfigured. Walking the same order
+// over the same single-mode fetchers Fetch dispatches to means every arm
+// under ModeAuto is exactly the arm the corresponding single mode runs, the
+// suite-negotiating Noise client included.
+//
+// armed says whether the sub-config carries what the method needs to be
+// attempted. A present-but-empty sub-config is skipped, not an error, so a
+// flag typo disables a method rather than failing the whole fetch; the CLI's
+// buildAutoConfig relies on that and applies the same predicates.
+type autoArm struct {
+	armed func(cfg Config) bool
+	fetch func(ctx context.Context, cfg Config) (*CABundle, error)
+}
+
+// autoArms is the Auto walk's dispatch table, keyed by go-truststrap's
+// Method so cfg.TOFUMethodOrder and truststrap.DefaultMethodOrder index it
+// directly.
+var autoArms = map[truststrap.Method]autoArm{
+	truststrap.MethodDANE: {
+		armed: func(cfg Config) bool { return cfg.DANE != nil && cfg.ServerURL != "" },
+		fetch: fetchDANE,
+	},
+	truststrap.MethodNoise: {
+		armed: func(cfg Config) bool {
+			return cfg.Noise != nil && (cfg.Noise.ServerStaticKey != "" || cfg.Noise.ServerP256StaticKey != "")
+		},
+		fetch: fetchNoise,
+	},
+	truststrap.MethodSPKI: {
+		armed: func(cfg Config) bool { return cfg.SPKI != nil && cfg.SPKI.Pin != "" && cfg.ServerURL != "" },
+		fetch: fetchSPKI,
+	},
+	truststrap.MethodDirect: {
+		armed: func(cfg Config) bool { return cfg.Direct != nil && cfg.ServerURL != "" },
+		fetch: fetchDirect,
+	},
+	truststrap.MethodTOFU: {
+		armed: func(cfg Config) bool {
+			return cfg.TOFU != nil && cfg.TOFU.PinStore != nil && cfg.ServerURL != "" && len(cfg.TOFUMethodOrder) > 0
+		},
+		fetch: fetchTOFU,
+	},
+}
+
+// fetchAuto tries the armed methods in order and returns the first bundle.
+//
+// The order is truststrap.DefaultMethodOrder, or cfg.TOFUMethodOrder when
+// TOFU is armed (TOFU is absent from the default order by design). Each
+// attempt runs under cfg.PerMethodTimeout, defaulting as go-truststrap's own
+// dispatcher does. Every failure is recorded and, when nothing succeeds, the
+// result is a FetchError{Mode: ModeAuto} whose cause is go-truststrap's
+// AggregateError, one AttemptError per method tried, so a caller reads the
+// same error shape the upstream dispatcher produced. Nothing armed at all is
+// ErrModeNotConfigured.
 func fetchAuto(ctx context.Context, cfg Config) (*CABundle, error) {
-	autoCfg := &truststrap.AutoConfig{
-		PerMethodTimeout: cfg.PerMethodTimeout,
-		Logger:           cfg.Logger,
+	order := truststrap.DefaultMethodOrder
+	if autoArms[truststrap.MethodTOFU].armed(cfg) {
+		order = cfg.TOFUMethodOrder
 	}
-	if cfg.DANE != nil && cfg.ServerURL != "" {
-		autoCfg.DANE = &truststrap.DANEConfig{
-			ServerURL:        cfg.ServerURL,
-			Hostname:         cfg.DANE.Hostname,
-			DNSServer:        cfg.DANE.DNSServer,
-			DNSOverTLS:       cfg.DANE.DNSOverTLS,
-			DNSTLSServerName: cfg.DANE.DNSTLSServerName,
-			ConnectTimeout:   cfg.PerMethodTimeout,
-			BundlePath:       cfg.BundlePath,
-			Logger:           cfg.Logger,
-		}
+	perMethod := cfg.PerMethodTimeout
+	if perMethod == 0 {
+		perMethod = truststrap.DefaultPerMethodTimeout
 	}
-	if cfg.Noise != nil && cfg.Noise.ServerStaticKey != "" {
-		addr := cfg.Noise.ServerAddr
-		if addr == "" {
-			addr = DeriveNoiseAddr(cfg.ServerURL)
-		}
-		autoCfg.Noise = &truststrap.NoiseConfig{
-			ServerAddr:       addr,
-			ServerStaticKey:  cfg.Noise.ServerStaticKey,
-			ConnectTimeout:   cfg.PerMethodTimeout,
-			OperationTimeout: cfg.PerMethodTimeout,
-			Logger:           cfg.Logger,
-		}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	if cfg.SPKI != nil && cfg.SPKI.Pin != "" && cfg.ServerURL != "" {
-		autoCfg.SPKI = &truststrap.SPKIConfig{
-			ServerURL:      cfg.ServerURL,
-			SPKIPinSHA256:  cfg.SPKI.Pin,
-			ConnectTimeout: cfg.PerMethodTimeout,
-			BundlePath:     cfg.BundlePath,
-			Logger:         cfg.Logger,
+	logger = logger.With("component", "auto_bootstrapper")
+
+	attempts := make([]truststrap.AttemptError, 0, len(order))
+	for _, method := range order {
+		arm, ok := autoArms[method]
+		if !ok || !arm.armed(cfg) {
+			logger.Debug("skipping unconfigured method", "method", method)
+			continue
 		}
-	}
-	if cfg.Direct != nil && cfg.ServerURL != "" {
-		autoCfg.Direct = &truststrap.DirectConfig{
-			ServerURL:      cfg.ServerURL,
-			BundlePath:     cfg.BundlePath,
-			ConnectTimeout: cfg.PerMethodTimeout,
-			Logger:         cfg.Logger,
+		if err := ctx.Err(); err != nil {
+			return nil, &FetchError{Mode: ModeAuto, Cause: err}
 		}
-	}
-	if cfg.TOFU != nil && cfg.TOFU.PinStore != nil && cfg.ServerURL != "" && len(cfg.TOFUMethodOrder) > 0 {
-		autoCfg.TOFU = &truststrap.TOFUConfig{
-			ServerURL:      cfg.ServerURL,
-			PinStore:       cfg.TOFU.PinStore,
-			ConfirmFunc:    cfg.TOFU.ConfirmFunc,
-			ConnectTimeout: cfg.PerMethodTimeout,
-			BundlePath:     cfg.BundlePath,
-			Logger:         cfg.Logger,
+
+		logger.Info("attempting bootstrap method", "method", method)
+		methodCtx, cancel := context.WithTimeout(ctx, perMethod)
+		bundle, err := arm.fetch(methodCtx, cfg)
+		cancel()
+		if err == nil {
+			logger.Info("bootstrap succeeded", "method", method)
+			return bundle, nil
 		}
-		autoCfg.MethodOrder = cfg.TOFUMethodOrder
+		logger.Warn("bootstrap method failed", "method", method, "error", err)
+		attempts = append(attempts, truststrap.AttemptError{Method: method, Err: armCause(err)})
 	}
-	if autoCfg.DANE == nil && autoCfg.Noise == nil && autoCfg.SPKI == nil && autoCfg.Direct == nil && autoCfg.TOFU == nil {
+	if len(attempts) == 0 {
 		return nil, ErrModeNotConfigured
 	}
+	return nil, &FetchError{Mode: ModeAuto, Cause: &truststrap.AggregateError{Attempts: attempts}}
+}
 
-	resp, err := truststrap.AutoFetch(ctx, autoCfg)
-	if err != nil {
-		return nil, &FetchError{Mode: ModeAuto, Cause: err}
+// armCause strips the single-mode FetchError wrapper off an arm's failure so
+// the aggregate names each method once, the way the upstream dispatcher's
+// attempts read; an error that is not a FetchError is recorded as is.
+func armCause(err error) error {
+	var fe *FetchError
+	if errors.As(err, &fe) && fe.Cause != nil {
+		return fe.Cause
 	}
-	return toCABundle(resp), nil
+	return err
 }
 
 // invoke runs FetchCABundle on a constructed bootstrapper and wraps

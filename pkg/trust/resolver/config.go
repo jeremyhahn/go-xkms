@@ -133,10 +133,15 @@ type DANEConfig struct {
 	DNSTLSServerName string `yaml:"dns-tls-server-name" json:"dns_tls_server_name" mapstructure:"dns-tls-server-name"`
 }
 
-// NoiseConfig configures the Noise_NK client used by the noise strategy.
+// NoiseConfig configures the Noise bootstrap client used by the noise
+// strategy. At least one server key is required: ServerStaticKey offers
+// Noise_NK, which a FIPS build cannot run, and ServerP256StaticKey offers the
+// approved P-256 suite, which every build can. A scope that must bootstrap
+// under FIPS needs the P-256 key.
 type NoiseConfig struct {
-	ServerAddr      string `yaml:"server-addr" json:"server_addr" mapstructure:"server-addr"`
-	ServerStaticKey string `yaml:"server-static-key" json:"server_static_key" mapstructure:"server-static-key"`
+	ServerAddr          string `yaml:"server-addr" json:"server_addr" mapstructure:"server-addr"`
+	ServerStaticKey     string `yaml:"server-static-key" json:"server_static_key" mapstructure:"server-static-key"`
+	ServerP256StaticKey string `yaml:"server-p256-static-key" json:"server_p256_static_key" mapstructure:"server-p256-static-key"`
 }
 
 // SPKIConfig configures the SPKI pin used by the spki strategy.
@@ -233,11 +238,11 @@ func (s *ScopeConfig) validate(scope string, hasTOFUStore bool) error {
 	}
 
 	if s.HasStrategy(StrategyNoise) && s.Noise != nil {
-		if s.Noise.ServerStaticKey == "" {
+		if s.Noise.ServerStaticKey == "" && s.Noise.ServerP256StaticKey == "" {
 			return &ErrInvalidConfig{
 				Scope:  scope,
 				Field:  "noise.server-static-key",
-				Reason: "server static key is required for the noise strategy",
+				Reason: "a server static key (server-static-key or server-p256-static-key) is required for the noise strategy",
 			}
 		}
 		if s.Noise.ServerAddr == "" {

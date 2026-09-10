@@ -1,6 +1,6 @@
 # Trust Bootstrap — API
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -92,6 +92,30 @@ Four consumers call it: `xkmsctl`, the xkey GUI, the QuicBaaS SDK, and
 go-trusted-platform through the SDK. `Mode` string values are pinned to the CLI
 verb and the SDK accessor name so those four never diverge.
 
+### The Noise transport, client side
+
+`ModeNoise` composes go-truststrap's suite-negotiating bootstrap client
+(`pkg/trust/bootstrap/noise_client.go`) and offers whichever of the two suites
+above it holds a server key for and this build can run:
+
+```go
+bundle, err := bootstrap.Fetch(ctx, bootstrap.Config{
+	Mode: bootstrap.ModeNoise,
+	Noise: &bootstrap.NoiseConfig{
+		ServerAddr:          "kms.example.com:8447",
+		ServerStaticKey:     "<64 hex>",   // Noise_NK; skipped where the build cannot run it
+		ServerP256StaticKey: "<130 hex>",  // the approved suite; what a FIPS client needs
+	},
+})
+```
+
+A FIPS client holding only a Curve25519 key gets `ErrNoSuite` carrying
+`ErrSuiteUnavailable` before it opens a connection. `NoiseConfig.Suite` pins a
+suite; a pinned suite the build cannot run is refused rather than replaced.
+Under `ModeAuto` the Noise arm is the same suite-negotiating client, so a
+P-256-only configuration bootstraps there too; a failed arm is one
+`AttemptError` in the `AggregateError` a `FetchError{Mode: auto}` wraps.
+
 ## Status and error mapping
 
 The serving route:
@@ -105,6 +129,9 @@ The serving route:
 The client library returns typed errors rather than status codes —
 `ErrInvalidMode`, `ErrModeNotConfigured`, `ErrServerURLRequired`, and
 `ErrFetch`/`*FetchError` carrying the attempted `Mode` and the truststrap cause.
+`ModeNoise` adds `ErrSuiteKeyMissing`, `ErrSuiteKeyInvalid`, `ErrNoSuite` and
+`ErrBundleMalformed`, with `*SuiteError` / `*NoSuiteError` /
+`*BundleCertificateError` carrying the detail.
 See [`engineering.md`](engineering.md) §Errors.
 
 ## Pagination

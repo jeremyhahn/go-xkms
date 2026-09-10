@@ -228,6 +228,43 @@ const (
 // binary cannot run the named suite. Test for it with errors.Is.
 var ErrSuiteUnavailable = pkgbootstrap.ErrSuiteUnavailable
 
+// Client-side suite resolution for ModeNoise. A NoiseConfig may carry a
+// Curve25519 key (Noise_NK), a P-256 key (the approved suite), or both; the
+// client offers whichever the build can run and the caller may pin one with
+// NoiseConfig.Suite. These are the typed refusals, all reached through
+// errors.Is on the FetchError Fetch returns.
+var (
+	// ErrSuiteKeyMissing: a suite was pinned, or is the only one left, but
+	// no server key is configured for it.
+	ErrSuiteKeyMissing = pkgbootstrap.ErrSuiteKeyMissing
+
+	// ErrSuiteKeyInvalid: a configured server key is not hex or is the wrong
+	// length for its suite.
+	ErrSuiteKeyInvalid = pkgbootstrap.ErrSuiteKeyInvalid
+
+	// ErrNoSuite: no suite can be offered -- every one is unconfigured or
+	// unavailable in this build. A FIPS client holding only a Noise key sees
+	// this, carrying ErrSuiteUnavailable as the reason.
+	ErrNoSuite = pkgbootstrap.ErrNoSuite
+
+	// ErrBundleMalformed: the bundle response carried a certificate that does
+	// not decode. The whole response is refused.
+	ErrBundleMalformed = pkgbootstrap.ErrBundleMalformed
+)
+
+// Typed errors of client-side suite resolution.
+type (
+	// SuiteError names the suite a configuration problem belongs to; its
+	// cause is ErrSuiteKeyMissing, ErrSuiteKeyInvalid or ErrSuiteUnavailable.
+	SuiteError = pkgbootstrap.SuiteError
+
+	// NoSuiteError carries the reason each suite was rejected.
+	NoSuiteError = pkgbootstrap.NoSuiteError
+
+	// BundleCertificateError names the bundle entry that failed to decode.
+	BundleCertificateError = pkgbootstrap.BundleCertificateError
+)
+
 // Re-exported P-256 key helpers and the suite availability check.
 var (
 	// GenerateP256StaticKey generates a P-256 static key pair with the private

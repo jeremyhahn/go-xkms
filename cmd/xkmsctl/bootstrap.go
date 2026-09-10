@@ -51,6 +51,7 @@ CA or one installed in the OS trust store.`,
 		daneHostname, _ := cmd.Flags().GetString("dane-hostname")
 		daneDNSServer, _ := cmd.Flags().GetString("dane-dns-server")
 		noiseKey, _ := cmd.Flags().GetString("noise-key")
+		p256Key, _ := cmd.Flags().GetString("p256-key")
 		noiseAddr, _ := cmd.Flags().GetString("noise-addr")
 		spkiPin, _ := cmd.Flags().GetString("spki-pin")
 		directEnabled, _ := cmd.Flags().GetBool("direct")
@@ -69,6 +70,7 @@ CA or one installed in the OS trust store.`,
 			daneHostname:  daneHostname,
 			daneDNSServer: daneDNSServer,
 			noiseKey:      noiseKey,
+			p256Key:       p256Key,
 			noiseAddr:     noiseAddr,
 			spkiPin:       spkiPin,
 			directEnabled: directEnabled,
@@ -97,6 +99,7 @@ type autoBootstrapParams struct {
 	daneHostname  string
 	daneDNSServer string
 	noiseKey      string
+	p256Key       string
 	noiseAddr     string
 	spkiPin       string
 	directEnabled bool
@@ -151,10 +154,11 @@ func buildAutoConfig(params *autoBootstrapParams) *bootstrap.Config {
 		hasMethod = true
 	}
 
-	if params.noiseKey != "" {
+	if params.noiseKey != "" || params.p256Key != "" {
 		cfg.Noise = &bootstrap.NoiseConfig{
-			ServerAddr:      params.noiseAddr,
-			ServerStaticKey: params.noiseKey,
+			ServerAddr:          params.noiseAddr,
+			ServerStaticKey:     params.noiseKey,
+			ServerP256StaticKey: params.p256Key,
 		}
 		hasMethod = true
 	}
@@ -243,7 +247,8 @@ func init() {
 	bootstrapAutoCmd.Flags().String("config", "", "path to xkmsd config file (trust: section used as defaults)")
 	bootstrapAutoCmd.Flags().String("dane-hostname", "", "hostname for DANE/TLSA verification")
 	bootstrapAutoCmd.Flags().String("dane-dns-server", "", "DNS server for DANE lookups (e.g., 8.8.8.8:53)")
-	bootstrapAutoCmd.Flags().String("noise-key", "", "hex-encoded Noise static public key of the server")
+	bootstrapAutoCmd.Flags().String("noise-key", "", "hex-encoded Noise_NK (Curve25519) static public key of the server")
+	bootstrapAutoCmd.Flags().String("p256-key", "", "hex-encoded P-256 static public key of the server for the FIPS-approved suite (from 'bootstrap noise show-p256-key')")
 	bootstrapAutoCmd.Flags().String("noise-addr", "", "Noise bootstrap server address (host:port)")
 	bootstrapAutoCmd.Flags().String("spki-pin", "", "hex-encoded SHA-256 SPKI pin of server certificate")
 	bootstrapAutoCmd.Flags().Bool("direct", false, "enable direct HTTPS fallback using the system trust store")

@@ -54,6 +54,9 @@ func autoParamsFromResolverScope(params *autoBootstrapParams, sc *trustresolver.
 		if params.noiseKey == "" && sc.Noise.ServerStaticKey != "" {
 			params.noiseKey = sc.Noise.ServerStaticKey
 		}
+		if params.p256Key == "" && sc.Noise.ServerP256StaticKey != "" {
+			params.p256Key = sc.Noise.ServerP256StaticKey
+		}
 		if params.noiseAddr == "" && sc.Noise.ServerAddr != "" {
 			params.noiseAddr = sc.Noise.ServerAddr
 		}

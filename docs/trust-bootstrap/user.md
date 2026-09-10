@@ -1,6 +1,6 @@
 # Trust Bootstrap — User Guide
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ## What this is for
 
@@ -18,7 +18,7 @@ something you already have.
 |---|---|---|
 | DNSSEC and control of the server's DNS | **DANE** | `--dane-hostname` |
 | the server's SPKI pin, given to you out of band | **SPKI** | `--spki-pin` |
-| the server's Noise public key, given to you out of band | **Noise** | `--noise-key` |
+| the server's Noise public key, given to you out of band | **Noise** | `--noise-key`, or `--p256-key` for the FIPS-approved suite |
 | a server with a publicly trusted certificate | **direct** | `--direct` |
 | nothing | **TOFU** — read the warning below | opt-in only |
 
@@ -114,6 +114,23 @@ Point `bootstrap.noise.p256_static_key_file` at the file and distribute the
 public point to clients. A non-FIPS server can serve both suites at once by
 configuring both keys; it selects per connection from what the client offers.
 
+**On a FIPS client, pass the P-256 public point:**
+
+```
+xkmsctl bootstrap auto \
+    --server-url https://kms.example.com:8443 \
+    --noise-addr kms.example.com:8447 \
+    --p256-key 04<128 hex chars>
+```
+
+A FIPS-built client cannot run Noise_NK either, so `--noise-key` alone fails
+before it connects with `no bootstrap suite can be offered`, naming the build
+as the reason. Give it `--p256-key` — the output of `show-p256-key` on the
+server — and it completes the approved handshake. A client may carry both keys;
+it offers whichever its build can run, so one configuration serves a mixed
+fleet. In the resolver's config file the same pair is `server-static-key` and
+`server-p256-static-key` under the scope's `noise:` block.
+
 If you configure **neither** key, the server generates an ephemeral one at
 startup and logs a warning. It works, but the key changes on every restart, so
 every client that pinned the previous one stops connecting. Configure the file
@@ -160,6 +177,10 @@ you get a pin-mismatch error and should investigate before clearing the pin
 | DANE breaks after certificate renewal | you published selector 0 | republish with `--selector 1` |
 | SPKI pin mismatch | the certificate changed, or something is in the middle | do not "fix" it by re-pinning without finding out which |
 | Noise connection refused | port collision with MCP (8445) | set `noise_port` explicitly, pass `--noise-addr` |
+| `no bootstrap suite can be offered … suite unavailable in this build` | a FIPS client was given only `--noise-key` | pass `--p256-key` (from `show-p256-key` on the server) |
+| `auto` with only `--p256-key` fails at the handshake | the server serves no P-256 suite (no `p256_static_key_file`), or the point is not the one `show-p256-key` prints | configure the server key (#435) and copy the point verbatim |
+| `suite Noise_NK_25519_ChaChaPoly_SHA256: … suite unavailable` | Noise_NK was pinned on a FIPS client | unpin it, or pin `SuiteP256AESGCM` |
+| `server static key invalid for suite` | the key is not hex or the wrong length for its suite (64 chars Noise, 130 chars P-256) | check which key went into which flag |
 | TOFU pin changed | either a legitimate rotation or an attack | investigate before clearing the pin |
 | 401 from `bootstrap auto` | it used the authenticated bundle route | `--bundle-path /v1/ca/bootstrap` |
 

@@ -420,8 +420,9 @@ func (r *resolver) pemNoise(ctx context.Context, scope *ScopeConfig, _ string) (
 	}
 	cfg := r.fetchConfig(scope, bootstrap.ModeNoise)
 	cfg.Noise = &bootstrap.NoiseConfig{
-		ServerAddr:      scope.Noise.ServerAddr,
-		ServerStaticKey: scope.Noise.ServerStaticKey,
+		ServerAddr:          scope.Noise.ServerAddr,
+		ServerStaticKey:     scope.Noise.ServerStaticKey,
+		ServerP256StaticKey: scope.Noise.ServerP256StaticKey,
 	}
 	return r.fetch(ctx, cfg, StrategyNoise)
 }

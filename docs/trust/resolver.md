@@ -57,7 +57,8 @@ trust:
         dns-over-tls: false
       noise:
         server-addr: "kms.example.com:8445"
-        server-static-key: "<64-hex-chars>"
+        server-static-key: "<64-hex-chars>"          # Noise_NK; not runnable under FIPS
+        server-p256-static-key: "<130-hex-chars>"    # approved suite; required under FIPS
       spki:
         pin: "<64-hex-chars>"
         # -or- pin-file: /etc/xkms/bootstrap-spki-pin

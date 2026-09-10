@@ -57,6 +57,24 @@ design (`bootstrap.go:57-59`). Renaming one without the others is a defect.
 | `TOFU` | `*TOFUConfig` | Required for `ModeTOFU`. Under `ModeAuto`, used only when non-nil **and** `TOFUMethodOrder` contains `ModeTOFU`. |
 | `TOFUMethodOrder` | `[]truststrap.Method` | Overrides the auto order to include TOFU. Nil = truststrap's `DefaultMethodOrder`, which does not include TOFU. Consulted only when `Mode == ModeAuto && TOFU != nil`. |
 
+### `NoiseConfig`
+
+```go
+type NoiseConfig struct {
+	ServerAddr          string // "host:port"; derived from ServerURL via DeriveNoiseAddr when empty
+	ServerStaticKey     string // hex 32-byte Curve25519 point: offers Noise_NK (SuiteNoiseNK)
+	ServerP256StaticKey string // hex uncompressed P-256 point (130 chars): offers TSBOOT1_P256_AESGCM_SHA256
+	Suite               byte   // 0 = by policy; SuiteNoiseNK or SuiteP256AESGCM pins one
+}
+```
+
+At least one key is required. The client offers every suite it holds a key for
+**and** this build can run; `Suite` pins one. The zero value selects by policy:
+the approved suite whenever FIPS is enforced, otherwise Noise_NK when its key
+is configured, else P-256. A FIPS client needs `ServerP256StaticKey` to use
+this transport at all — the value `xkmsctl bootstrap noise show-p256-key`
+prints for the server's key.
+
 ### `CABundle`
 
 ```go
@@ -83,6 +101,26 @@ func (e *FetchError) Error() string
 func (e *FetchError) Is(target error) bool   // matches ErrFetch
 func (e *FetchError) Unwrap() error          // the truststrap-typed cause
 ```
+
+Client-side suite resolution for `ModeNoise` has its own, all reached through
+`errors.Is` on the `FetchError`:
+
+```go
+var ErrSuiteKeyMissing = errors.New("trust bootstrap: no server static key configured for suite")
+var ErrSuiteKeyInvalid = errors.New("trust bootstrap: server static key invalid for suite")
+var ErrNoSuite         = errors.New("trust bootstrap: no bootstrap suite can be offered")
+var ErrBundleMalformed = errors.New("trust bootstrap: malformed certificate in CA bundle response")
+
+type SuiteError struct{ Suite byte; Cause error }   // Cause: ErrSuiteKeyMissing | ErrSuiteKeyInvalid | ErrSuiteUnavailable
+type NoSuiteError struct{ Noise, P256 error }       // Is(ErrNoSuite); Unwrap() []error exposes both reasons
+type BundleCertificateError struct{ Index int; Cause error }
+```
+
+`ErrSuiteUnavailable` (from `suite.go`) is the reason a `NoSuiteError` carries
+when the build cannot run the only configured suite — a FIPS client holding a
+Curve25519 key and nothing else. Handshake and transport failures keep wrapping
+go-truststrap's `ErrFetchFailed`, exactly as the facade this composition
+replaced did.
 
 The TOFU TLS verifier has its own typed errors:
 
@@ -119,6 +157,29 @@ that makes an `ModeAuto` failure diagnosable.
   trust store.
 - **`DeriveNoiseAddr` appends `DefaultNoisePort` ("8445") when no explicit
   address is given.** See the port conflict below.
+- **Client suite resolution fails closed.** An unavailable suite is skipped; a
+  configured key that will not decode is a `SuiteError`, never a fall-through
+  to the other suite; a pinned suite reads only its own key, so the other
+  suite's key, stale or malformed, is never consulted; a pinned suite the
+  build cannot run is a `SuiteError`
+  checked before any key is read; nothing left is a `NoSuiteError`.
+  Availability comes from `EnsureSuiteAvailable`, the same probe the listener
+  uses — never from a build tag, because the released FIPS artifact is built
+  with `GOFIPS140` and no tag.
+- **`ModeAuto` runs the same arms the single modes run.** The Auto walk is
+  this package's: it steps through go-truststrap's `DefaultMethodOrder` (or
+  `TOFUMethodOrder` when TOFU is armed), runs each armed method's own
+  single-mode fetcher under `PerMethodTimeout`, and reports failure as
+  `FetchError{Mode: auto}` wrapping go-truststrap's `AggregateError`, one
+  `AttemptError` per method tried. The Noise arm is therefore the
+  suite-negotiating client above, so a P-256-only configuration bootstraps
+  under `ModeAuto` exactly as under `ModeNoise`. It moved here because
+  go-truststrap's own dispatcher builds its Noise arm from its facade config,
+  which cannot carry the P-256 key (go-truststrap#51); under it a P-256-only
+  client had no Noise arm and died with a misleading `ErrModeNotConfigured`.
+  An arm is skipped, not failed, when its sub-config is present but empty
+  (`Noise` with neither key, `SPKI` with no pin); nothing armed at all is
+  `ErrModeNotConfigured`.
 - **Concurrency.** `Fetch` is safe to call concurrently; it shares no state.
 - **`NoiseServer.Stop`'s nil is authoritative.** The re-exported server
   (go-truststrap v0.4.0-alpha) returns nil from `Stop` only after every
@@ -186,6 +247,19 @@ connect. When no suite survives at all, construction fails with
 `*server.ErrNoBootstrapSuite`, which carries the rejection reason for each suite
 and unwraps to `bootstrap.ErrSuiteUnavailable`.
 
+Client side — the resolver's `noise:` scope
+(`resolver.NoiseConfig`, `trust.scopes.<name>.noise`):
+
+```yaml
+noise:
+  server-addr: "kms.example.com:8447"
+  server-static-key: "<64-hex-chars>"          # Noise_NK; skipped where the build cannot run it
+  server-p256-static-key: "<130-hex-chars>"    # approved suite; required under FIPS
+```
+
+Validation requires at least one of the two keys. `xkmsctl bootstrap auto`
+takes the same pair as `--noise-key` and `--p256-key`.
+
 **Known conflict, as shipped:** `DefaultNoisePort` is `"8445"`
 (`pkg/trust/bootstrap/bootstrap.go:98`), which is the same value the shipped
 configs use for `mcp_port`. `configs/xkmsd-local.yaml` sets `noise_port: 8447`
@@ -222,6 +296,18 @@ non-TOFU modes.
   are the two lanes; the FIPS one is the only target that compiles
   go-truststrap's X25519 refusal, and it runs a real P-256 handshake end to end
   rather than merely asserting the package builds.
+- **Client suite resolution and real handshakes** —
+  `pkg/trust/bootstrap/noise_client_test.go` runs in every build and keys its
+  expectations on what the binary can run: a P-256-only bootstrap completes
+  everywhere, both-keys completes everywhere, and the Curve25519-only
+  configuration completes where Noise is runnable and is the typed `NoSuite`
+  refusal where it is not. The fail-closed branches a fixed build cannot
+  reach are driven by injecting the probe's answer. `noise_client_fips_test.go`
+  (`//go:build fips`) asserts the FIPS claims with the real probe:
+  `make test-trust-bootstrap-fips` is the lane, and it executes a real P-256
+  handshake against a real listener. The package also passes under
+  `GOFIPS140=v1.0.0 GODEBUG=fips140=only`, the mechanism the release
+  artifact actually uses.
 - **Unit** — `bootstrap_test.go`, `bootstrap_fetch_test.go`,
   `bootstrap_tofu_test.go`, `bootstrap_auto_tofu_gaps_test.go` (the auto-chain
   TOFU-exclusion behaviour has its own suite, because that is the rule most

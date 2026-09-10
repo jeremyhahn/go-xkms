@@ -1,6 +1,6 @@
 # Trust Bootstrap — Architecture
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ## The problem
 
@@ -66,6 +66,7 @@ Rejected alternatives:
 |---|---|---|
 | Mode dispatch, config, errors | `pkg/trust/bootstrap/bootstrap.go` | go-xkms |
 | Noise bootstrap server (the serving side) | `pkg/trust/bootstrap/noise_server.go` | go-xkms |
+| Noise bootstrap client (the fetching side, both suites) | `pkg/trust/bootstrap/noise_client.go` | go-xkms |
 | TLS config construction for pinned modes | `pkg/trust/bootstrap/tlsconfig.go` | go-xkms |
 | TOFU pin persistence | `pkg/trust/bootstrap/pinstore_qrdb.go` — through `go-qrdb/sdk/go` | go-xkms (store is qrdb's) |
 | DANE, Noise_NK, SPKI-pinned TLS protocols | **go-truststrap** | go-truststrap |
@@ -91,7 +92,8 @@ client                                              server
   ├─ spki:   TLS handshake, compare SPKI SHA-256 to the pre-shared pin
   │          GET /v1/ca/bootstrap ─────────────────► xkmsd
   │
-  ├─ noise:  Noise_NK handshake pinned to the server's static key
+  ├─ noise:  Noise_NK or P-256 handshake pinned to the server's static key
+  │          (suite chosen from the keys held and what the build can run)
   │          fetch the bundle in-band ─────────────► noise_server.go
   │
   ├─ direct: ordinary system-trust HTTPS ──────────► xkmsd
@@ -161,6 +163,31 @@ build cannot run is skipped silently; a suite that is configured but whose key
 will not load fails the whole listener. Falling through in the second case would
 leave an operator looking at a healthy port while every client provisioned for
 the broken suite failed to connect — a silent downgrade presented as success.
+
+**The client resolves its suites the same way.** `ModeNoise` asks
+`EnsureSuiteAvailable` which of its configured keys it may offer, so a FIPS
+client skips its Curve25519 key and drives the approved handshake, and a client
+with nothing left to offer fails before dialing with a typed error naming the
+build as the constraint. The rules are the listener's, mirrored: unavailable is
+skipped, a broken key is an error, a pinned suite is never swapped for the
+other. go-truststrap's own client applies its FIPS policy on top; the two agree
+by construction because an unavailable suite has no key left to select.
+
+### Composed on go-truststrap's lower layer, deliberately and temporarily
+
+go-truststrap's `NewNoiseBootstrapper` facade carries one Curve25519 key and no
+suite selector, so a client built through it can only ever offer Noise_NK
+(go-xkms#436). Its lower layer, `noiseboot.Client`, already negotiates both
+suites. `ModeNoise` therefore composes the lower layer directly — the same
+primitive the listener side composes — and owns the ~15 lines of response
+decoding the facade used to. This is the one place in the stack that does so.
+The right fix is upstream (go-truststrap#51: give the facade the fields its own
+lower layer has); when it lands, `fetchNoise` returns to pass-through and the
+composition here is deleted. For the same reason `ModeAuto` no longer delegates
+to go-truststrap's Auto dispatcher, whose Noise arm is built from that facade:
+the walk over the method order lives here and runs this package's single-mode
+fetchers, so the Noise arm under `ModeAuto` is the composed client. The order,
+per-method timeout and aggregate error are go-truststrap's own, unchanged.
 
 ### Rejected: a compatibility shim for the old wire
 
