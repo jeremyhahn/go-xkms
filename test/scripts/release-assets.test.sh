@@ -73,11 +73,21 @@ srv = HTTPServer(("127.0.0.1", 0), H)
 print(srv.server_address[1], flush=True)
 srv.serve_forever()
 PY
-python3 "$STUB/server.py" "$ASSETS" "$LOG" v9.9.9-alpha > "$STUB/port" 2>/dev/null &
+python3 "$STUB/server.py" "$ASSETS" "$LOG" v9.9.9-alpha > "$STUB/port" 2> "$STUB/server.err" &
 SRV=$!
 trap 'kill $SRV 2>/dev/null; rm -rf "$STUB"' EXIT
-for _ in $(seq 1 50); do [ -s "$STUB/port" ] && break; sleep 0.1; done
+# The stub prints its port once bound. Python start-up on a loaded CI runner
+# has been measured past the 5 s this wait used to allow, and an empty PORT
+# silently became port 80, failing every assertion below with "Failed to
+# connect to 127.0.0.1 port 80". The wait is now generous, and a server that
+# never comes up fails the suite by name with its own stderr.
+for _ in $(seq 1 600); do [ -s "$STUB/port" ] && break; sleep 0.1; done
 PORT=$(cat "$STUB/port")
+if [ -z "$PORT" ]; then
+    echo "release-assets.test.sh: stub API server did not publish a port within 60s" >&2
+    cat "$STUB/server.err" >&2
+    exit 1
+fi
 export RELEASE_API="http://127.0.0.1:${PORT}/api/v1" RELEASE_REPO="o/r" RELEASE_TAG="v9.9.9-alpha" RELEASE_TOKEN="stub-token"
 V=9.9.9-alpha
 
