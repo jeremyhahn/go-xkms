@@ -326,9 +326,7 @@ jobs:
       # reason: libicu-dev and libusb-1.0-0-dev are unconditional deps of the
       # xkey module graph once CGO_ENABLED is 1, which -race requires.
       - name: Install cgo dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+        run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
       - name: xkey pkcs11 unit suite
         working-directory: xkey
