@@ -323,8 +323,9 @@ breaking change and requires a coordinated release
   `key-sign`, `key-verify`, `backends-list`, `version`.
   **Gap:** `cli.md` documents more verbs than have definitions — see the note
   at the end of `cli.md`.
-- **Fault injection seams** — backend factories in `pkg/server/backend_factory*.go`
-  accept substitutes; `pkg/testutil` and `pkg/testing` hold fixtures.
+- **Fault injection seams** — the per-backend constructors in
+  `pkg/server/backend_<backend>.go` accept substitutes; `pkg/testutil` and
+  `pkg/testing` hold fixtures.
 
 ## Observability
 

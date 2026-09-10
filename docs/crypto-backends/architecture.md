@@ -75,9 +75,15 @@ Rejected alternatives:
 | FROST threshold | `pkg/keyprovider/frost` | `frost` | `register_frost.go` |
 | phone (xkey-android as HSM) | `pkg/backend/phone` | — | `pkg/server/backend_phone.go` |
 
-Backend construction at server start is `pkg/server/backend_factory*.go`; each
-tagged backend has a `_stub.go` sibling so a build without the tag still
-compiles and reports the backend as unavailable rather than failing to link.
+Backend construction at server start is `server.go`'s `initializeBackends`,
+which calls one `initXBackend` per backend in `pkg/server/backend_<backend>.go`
+and registers the result under a fixed name; each tagged backend has a
+`_stub.go` sibling so a build without the tag still compiles and reports the
+backend as unavailable rather than failing to link. There is no other
+registration path: a name-driven factory (`Initialize` over a list of
+`BackendConfig`) once sat beside this one, uncalled, modelling backends with
+operator-supplied names and a randomized default; it was removed because
+readers reasoned from it.
 
 This feature is the implementation half of capability row **"Hardware / cloud
 KMS" (tier 1)**; the operation surface over it is

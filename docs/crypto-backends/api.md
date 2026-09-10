@@ -49,9 +49,9 @@ Standard mapping — see [`../key-management/api.md`](../key-management/api.md)
 
 ## Not on the wire
 
-Backend *construction* — `xkms.Backend`, `BackendConfig`, the
-`pkg/server/backend_factory*` set — is in-process only and deliberately has no
-transport surface. Deciding which backends a deployment runs is configuration,
+Backend *construction* — `xkms.Backend`, `xkms.BackendConfig`, the
+`pkg/server/backend_<backend>.go` set — is in-process only and deliberately has
+no transport surface. Deciding which backends a deployment runs is configuration,
 not an API call. Remote reconfiguration would make a server's crypto posture
 changeable by anyone holding an admin token, which is the opposite of what the
 hardware is for.

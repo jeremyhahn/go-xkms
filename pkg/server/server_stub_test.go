@@ -16,7 +16,6 @@
 package server
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -130,104 +129,4 @@ func TestServer_InitVaultBackend_Stub(t *testing.T) {
 
 	// Vault stub should be called but not add a backend (since it's a stub)
 	assert.NotNil(t, server.backends)
-}
-
-// Test backend factory stub functions
-
-func TestCreateAWSKMSBackend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "awskms",
-		Type:    "awskms",
-		Enabled: true,
-		Config: map[string]interface{}{
-			"region": "us-east-1",
-		},
-	}
-
-	backend, err := createAWSKMSBackend(config)
-	// Stub returns ErrBackendNotCompiled
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
-	assert.Nil(t, backend)
-}
-
-func TestCreateGCPKMSBackend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "gcpkms",
-		Type:    "gcpkms",
-		Enabled: true,
-		Config: map[string]interface{}{
-			"project_id":  "test-project",
-			"location_id": "us-east1",
-			"key_ring_id": "test-ring",
-		},
-	}
-
-	backend, err := createGCPKMSBackend(config)
-	// Stub returns ErrBackendNotCompiled
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
-	assert.Nil(t, backend)
-}
-
-func TestCreateAzureKVBackend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "azurekv",
-		Type:    "azurekv",
-		Enabled: true,
-		Config:  map[string]interface{}{},
-	}
-
-	backend, err := createAzureKVBackend(config)
-	// Stub returns ErrBackendNotCompiled
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
-	assert.Nil(t, backend)
-}
-
-func TestCreateVaultBackend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "vault",
-		Type:    "vault",
-		Enabled: true,
-		Config: map[string]interface{}{
-			"address": "http://localhost:8200",
-		},
-	}
-
-	backend, err := createVaultBackend(config)
-	// Stub returns ErrBackendNotCompiled
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
-	assert.Nil(t, backend)
-}
-
-func TestCreateFrostBackend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "frost",
-		Type:    "frost",
-		Enabled: true,
-		Config:  map[string]interface{}{},
-	}
-
-	backend, err := createFrostBackend(config)
-	// Stub returns ErrBackendNotCompiled
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
-	assert.Nil(t, backend)
-}
-
-func TestCreatePKCS11Backend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "pkcs11",
-		Type:    "pkcs11",
-		Enabled: true,
-		Config:  map[string]interface{}{},
-	}
-
-	backend, err := createPKCS11Backend(config)
-	// Stub returns ErrBackendNotCompiled
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
-	assert.Nil(t, backend)
 }

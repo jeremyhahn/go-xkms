@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## Exported surface
 
@@ -34,8 +34,9 @@ an authorization input.
 
 One file per backend, `pkg/xkms/register_<backend>.go`, each guarded by the
 build tag in the table below. Server-side construction is
-`pkg/server/backend_factory.go` plus `backend_factory_<backend>.go`, each with a
-`_stub.go` sibling for builds without the tag.
+`pkg/server/backend_<backend>.go` (`initXBackend`, called from `server.go`'s
+`initializeBackends`), each with a `_stub.go` sibling for builds without the
+tag.
 
 ## Backend capability matrix
 

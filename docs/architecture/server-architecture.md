@@ -111,7 +111,8 @@ go-xkms/
 │   ├── server/                    # Server orchestration & service layer
 │   │   ├── server.go             # Main server struct, lifecycle
 │   │   ├── reload.go             # Configuration reload
-│   │   └── backend_factory.go    # Backend registration/selection
+│   │   ├── backend_<backend>.go  # Per-backend construction (initXBackend), with _stub.go siblings
+│   │   └── storage_factory.go    # Storage backend selection (memory, pebble, file, qrdb)
 │   │
 │   ├── config/                    # Configuration management
 │   │   ├── config.go             # Configuration structs
@@ -647,25 +648,24 @@ metrics:
   address: :9090
   path: /metrics
 
-# Backends
+# Backends: one fixed section per backend (config.BackendsConfig); a backend
+# is registered under its section name, and default_backend names one of them.
+default_backend: software
+
 backends:
-  - name: software
-    type: software
-    config:
-      key_dir: /var/lib/xkms/keys
-      cert_dir: /var/lib/xkms/certs
+  software:
+    enabled: true
+    path: /var/lib/xkms/keys
 
-  - name: pkcs11
-    type: pkcs11
-    config:
-      library: /usr/lib/softhsm/libsofthsm2.so
-      slot_id: 0
-      pin: "1234"
+  pkcs11:
+    enabled: true
+    library: /usr/lib/softhsm/libsofthsm2.so
+    token: xkms
+    pin: ""
 
-  - name: tpm2
-    type: tpm2
-    config:
-      device: /dev/tpmrm0
+  tpm2:
+    enabled: true
+    device_path: /dev/tpmrm0
 ```
 
 ### Environment Variables
@@ -677,9 +677,15 @@ XKMS_SERVER_LOG_LEVEL=debug
 XKMS_REST_ADDRESS=:8080
 XKMS_GRPC_ADDRESS=:9090
 XKMS_AUTH_ENABLED=true
-XKMS_BACKENDS_0_NAME=software
-XKMS_BACKENDS_0_TYPE=software
+XKMS_DEFAULT_BACKEND=software
+XKMS_BACKENDS_SOFTWARE_ENABLED=true
+XKMS_BACKENDS_SOFTWARE_PATH=/var/lib/xkms/keys
+XKMS_BACKENDS_TPM2_ENABLED=true
+XKMS_BACKENDS_TPM2_DEVICE_PATH=/dev/tpmrm0
 ```
+
+The variable name is `XKMS_<SECTION>_<KEY>` with nested keys joined by `_`;
+there is no indexed form, because backends are fixed sections, not a list.
 
 
 ## Error Handling Strategy
