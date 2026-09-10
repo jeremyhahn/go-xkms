@@ -687,8 +687,11 @@ func TestFileAuditLogger_ProcessEvents(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for background processing
-	time.Sleep(50 * time.Millisecond)
+	// Flush is the synchronisation point: it returns only after the
+	// processor has drained the buffer and the writer has synced, so the
+	// events are on disk when it returns. A wall-clock pause here failed on a
+	// loaded runner before the processor had run at all.
+	require.NoError(t, logger.Flush())
 
 	// Verify events were processed
 	data, err := os.ReadFile(logPath)
