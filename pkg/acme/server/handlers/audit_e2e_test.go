@@ -125,18 +125,24 @@ func (a *auditTrail) events(t *testing.T, rawQuery string) auditListResponse {
 	return page
 }
 
-// awaitEvents queries the trail until it reports want matching events. The
-// logger writes through a buffered background writer, so a record is durable
-// shortly after the request that caused it rather than synchronously with it.
-func (a *auditTrail) awaitEvents(t *testing.T, rawQuery string, want int) auditListResponse {
+// expectEvents queries the trail once and requires exactly want matching
+// events. The logger writes through a buffered background writer, but query
+// flushes first, and Flush is synchronous: it hands the drain to the writer
+// goroutine, waits for it, and syncs the file. Every handler records its event
+// before it answers, so by the time the response has been read the record is
+// durable and one query decides the outcome.
+//
+// This used to poll under a five-second wall-clock budget. Nothing in that
+// loop could turn a wrong answer into a right one; all the budget measured was
+// how long one Flush (an fsync) and one file scan take on a contended runner,
+// and when the first evaluation outlived it the test failed reporting the
+// zero value it never got to replace. A synchronous assertion has no such
+// budget to expire.
+func (a *auditTrail) expectEvents(t *testing.T, rawQuery string, want int) auditListResponse {
 	t.Helper()
 
-	var page auditListResponse
-	require.Eventually(t, func() bool {
-		page = a.events(t, rawQuery)
-		return page.Total == want
-	}, 5*time.Second, 10*time.Millisecond,
-		"expected %d audit events for %q, last saw %d", want, rawQuery, page.Total)
+	page := a.events(t, rawQuery)
+	require.Equal(t, want, page.Total, "expected %d audit events for %q, saw %d", want, rawQuery, page.Total)
 
 	return page
 }
@@ -178,7 +184,7 @@ func TestAuditTrail_RevocationIsRecordedAndQueryable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, common.StatusRevoked, updated.Status)
 
-	page := trail.awaitEvents(t, "event_type=CERTIFICATE_REVOKED", 1)
+	page := trail.expectEvents(t, "event_type=CERTIFICATE_REVOKED", 1)
 	require.Len(t, page.Items, 1)
 
 	event := page.Items[0]
@@ -225,7 +231,7 @@ func TestAuditTrail_AccountCreationIsRecorded(t *testing.T) {
 	accountID, err := AccountIDFromPublicKey(key.PublicKey)
 	require.NoError(t, err)
 
-	page := trail.awaitEvents(t, "event_type=ACCOUNT_CREATED", 1)
+	page := trail.expectEvents(t, "event_type=ACCOUNT_CREATED", 1)
 	require.Len(t, page.Items, 1)
 
 	event := page.Items[0]
@@ -274,7 +280,7 @@ func TestAuditTrail_IssuanceIsRecordedAndQueryable(t *testing.T) {
 	service.OrderFinalizeHandler(resp, req)
 	require.Equal(t, http.StatusOK, resp.Code, "body: %s", resp.Body.String())
 
-	page := trail.awaitEvents(t, "event_type=CERTIFICATE_ISSUED", 1)
+	page := trail.expectEvents(t, "event_type=CERTIFICATE_ISSUED", 1)
 	require.Len(t, page.Items, 1)
 
 	event := page.Items[0]
@@ -317,7 +323,7 @@ func TestAuditTrail_UnauthorizedRevocationIsRecorded(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, common.StatusRevoked, unchanged.Status)
 
-	page := trail.awaitEvents(t, "event_type=AUTHORIZATION_FAILED", 1)
+	page := trail.expectEvents(t, "event_type=AUTHORIZATION_FAILED", 1)
 	require.Len(t, page.Items, 1)
 
 	event := page.Items[0]
@@ -346,7 +352,7 @@ func TestAuditTrail_KeyRolloverIsRecorded(t *testing.T) {
 	service.KeyChangeHandler(resp, req)
 	require.Equal(t, http.StatusOK, resp.Code, "body: %s", resp.Body.String())
 
-	page := trail.awaitEvents(t, "event_type=ACCOUNT_KEY_CHANGED", 1)
+	page := trail.expectEvents(t, "event_type=ACCOUNT_KEY_CHANGED", 1)
 	require.Len(t, page.Items, 1)
 
 	event := page.Items[0]
@@ -382,7 +388,7 @@ func TestAuditTrail_FiltersAndPaging(t *testing.T) {
 	}
 
 	// Filtering by actor returns every event that account caused.
-	byActor := trail.awaitEvents(t, "actor="+auditAccountRef(account.ID), 3)
+	byActor := trail.expectEvents(t, "actor="+auditAccountRef(account.ID), 3)
 	assert.Equal(t, 3, byActor.Total)
 
 	// Paging splits the trail without overlapping or dropping records: each

@@ -166,7 +166,7 @@ func TestAuditTrail_TPMEnrollmentIsRecorded(t *testing.T) {
 	require.Equal(t, idevidSerial.Uint64(), serialNumber)
 	require.NotEmpty(t, pemBytes)
 
-	enrollment := trail.awaitEvents(t, "event_type=TPM_ENROLLMENT", 1)
+	enrollment := trail.expectEvents(t, "event_type=TPM_ENROLLMENT", 1)
 	require.Len(t, enrollment.Items, 1)
 	assert.Equal(t, auditAccountRef(account.ID), enrollment.Items[0].Actor)
 	assert.Equal(t, fmt.Sprintf("device:%s-%s", prodModel, prodSerial), enrollment.Items[0].Resource)
@@ -177,7 +177,7 @@ func TestAuditTrail_TPMEnrollmentIsRecorded(t *testing.T) {
 	require.Equal(t, prodModel+"-"+prodSerial, enrollCA.idevidCN,
 		"the audited common name must be the one the CA was asked to sign")
 
-	issued := trail.awaitEvents(t, "event_type=CERTIFICATE_ISSUED", 1)
+	issued := trail.expectEvents(t, "event_type=CERTIFICATE_ISSUED", 1)
 	require.Len(t, issued.Items, 1)
 	assert.Equal(t, auditAccountRef(account.ID), issued.Items[0].Actor)
 	assert.Equal(t, fmt.Sprintf("order:%d", order.ID), issued.Items[0].Resource)
