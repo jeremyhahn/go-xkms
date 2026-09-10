@@ -845,14 +845,9 @@ func (tpm *TPM2) CreateIAK(
 	}
 
 	// Create IAK key attributes from platform configuration file
-	policyDigest, err := tpm.PlatformPolicyDigest()
-	if err != nil {
-		return nil, err
-	}
 	iakAttrs, err := IAKAttributesFromConfig(
 		ekAttrs.TPMAttributes.HierarchyAuth,
-		tpm.config.IAK,
-		&policyDigest)
+		tpm.config.IAK)
 	if err != nil {
 		tpm.logger.Error("failed to create IAK attributes from config", slog.String("error", err.Error()))
 		return nil, &errs.Detail{Err: ErrIAKConfigFailed, Detail: fmt.Sprintf("%v", err)}
@@ -1429,12 +1424,7 @@ func (tpm *TPM2) CreateIDevID(
 	if tpm.config.IDevID == nil {
 		return nil, nil, ErrNotConfigured
 	}
-	policyDigest, err := tpm.PlatformPolicyDigest()
-	if err != nil {
-		return nil, nil, err
-	}
-	idevidAttrs, err := IDevIDAttributesFromConfig(
-		*tpm.config.IDevID, &policyDigest)
+	idevidAttrs, err := IDevIDAttributesFromConfig(*tpm.config.IDevID)
 	if err != nil {
 		return nil, nil, err
 	}

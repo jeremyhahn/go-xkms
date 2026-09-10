@@ -553,13 +553,12 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 // the zero TPMTPublic: CreateIAK constructs the restricted signing template
 // itself and never reads the field, and the vestigial EK template formerly
 // assigned here misled readers into concluding the IAK was created from an
-// EK template (#355). The policyDigest parameter is retained for signature
-// stability; platform policy is conveyed by the PlatformPolicy field and
-// applied by CreateIAK.
+// EK template (#355). Platform policy is conveyed by the PlatformPolicy
+// field and applied by CreateIAK, which computes the policy digest itself;
+// the builder takes no digest.
 func IAKAttributesFromConfig(
 	soPIN types.Password,
-	config *IAKConfig,
-	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+	config *IAKConfig) (*types.KeyAttributes, error) {
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
@@ -663,11 +662,9 @@ func DevIDCommonName(cn string, platform *PlatformAttributes) (string, error) {
 // attributes from the platform configuration. TPMAttributes.Template is
 // deliberately left as the zero TPMTPublic: CreateIDevID selects the
 // dedicated unrestricted IDevID templates itself and never reads the field
-// (#355). The policyDigest parameter is retained for signature stability;
-// platform policy is conveyed by the PlatformPolicy field.
-func IDevIDAttributesFromConfig(
-	config IDevIDConfig,
-	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+// (#355). Platform policy is conveyed by the PlatformPolicy field; the
+// builder takes no digest.
+func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, error) {
 
 	cn, err := DevIDCommonName(config.CN, &PlatformAttributes{Model: config.Model, Serial: config.Serial})
 	if err != nil {
@@ -740,12 +737,9 @@ func IDevIDAttributesFromConfig(
 // key attributes from the platform configuration. TPMAttributes.Template is
 // deliberately left as the zero TPMTPublic: an LDevID is created through the
 // same CreateIDevID path, which selects its own unrestricted template and
-// never reads the field (#355). The policyDigest parameter is retained for
-// signature stability; platform policy is conveyed by the PlatformPolicy
-// field.
-func LDevIDAttributesFromConfig(
-	config LDevIDConfig,
-	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+// never reads the field (#355). Platform policy is conveyed by the
+// PlatformPolicy field; the builder takes no digest.
+func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, error) {
 
 	if config.CN == "" {
 		config.CN = "ldevid"

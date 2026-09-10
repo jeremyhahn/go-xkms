@@ -147,7 +147,7 @@ func TestIDevIDAttributesFromConfig_AlwaysCarriesANonNilPassword(t *testing.T) {
 				Password:           tc.password,
 				PlatformPolicy:     true,
 				SignatureAlgorithm: x509.SHA256WithRSA.String(),
-			}, nil)
+			})
 			require.NoError(t, err)
 
 			assert.NotNil(t, attrs.Password,
@@ -169,7 +169,7 @@ func TestIDevIDAttributesFromConfig_RejectsAnUnparseableConfiguration(t *testing
 		Hash:               "not-a-hash",
 		KeyAlgorithm:       x509.RSA.String(),
 		SignatureAlgorithm: x509.SHA256WithRSA.String(),
-	}, nil)
+	})
 
 	require.Error(t, err)
 	assert.Nil(t, attrs, "no attributes may be returned alongside an error")

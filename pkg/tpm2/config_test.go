@@ -381,11 +381,10 @@ func TestParseCryptoHashAlgIDComprehensive(t *testing.T) {
 
 func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       IDevIDConfig
-		policyDigest *tpm2.TPM2BDigest
-		expectError  bool
-		validate     func(*testing.T, *types.KeyAttributes)
+		name        string
+		config      IDevIDConfig
+		expectError bool
+		validate    func(*testing.T, *types.KeyAttributes)
 	}{
 		{
 			name: "valid RSA config with model and serial",
@@ -398,8 +397,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, "device1-001", attrs.CN)
 				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -426,8 +424,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, "custom-cn", attrs.CN)
 			},
@@ -443,8 +440,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				ECCConfig:          &store.ECCConfig{Curve: "P-256"},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 				assert.NotNil(t, attrs.ECCAttributes)
@@ -461,9 +457,6 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				PlatformPolicy:     true,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
-			},
-			policyDigest: &tpm2.TPM2BDigest{
-				Buffer: []byte{0x01, 0x02, 0x03},
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
@@ -481,9 +474,8 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "invalid signature algorithm",
@@ -496,9 +488,8 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "invalid key algorithm without fallback",
@@ -510,9 +501,8 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 				Handle:             0x81020000,
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "invalid key algorithm falls back to RSA",
@@ -525,8 +515,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 			},
@@ -542,9 +531,8 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				ECCConfig:          &store.ECCConfig{Curve: "INVALID"},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "config with password",
@@ -558,8 +546,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Password:           "secret",
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.NotNil(t, attrs.Password)
 			},
@@ -568,7 +555,7 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			attrs, err := IDevIDAttributesFromConfig(tc.config, tc.policyDigest)
+			attrs, err := IDevIDAttributesFromConfig(tc.config)
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
@@ -584,11 +571,10 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 
 func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       LDevIDConfig
-		policyDigest *tpm2.TPM2BDigest
-		expectError  bool
-		validate     func(*testing.T, *types.KeyAttributes)
+		name        string
+		config      LDevIDConfig
+		expectError bool
+		validate    func(*testing.T, *types.KeyAttributes)
 	}{
 		{
 			name: "valid config uses default CN",
@@ -599,8 +585,7 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, "ldevid", attrs.CN)
 				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -617,8 +602,7 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, "custom-ldevid", attrs.CN)
 			},
@@ -632,8 +616,7 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				ECCConfig:          &store.ECCConfig{Curve: "P-256"},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 				assert.NotNil(t, attrs.ECCAttributes)
@@ -648,9 +631,8 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "invalid signature algorithm",
@@ -661,9 +643,8 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81020000,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "config with platform policy",
@@ -675,9 +656,6 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				PlatformPolicy:     true,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: &tpm2.TPM2BDigest{
-				Buffer: []byte{0x01, 0x02, 0x03},
-			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.True(t, attrs.PlatformPolicy)
@@ -687,7 +665,7 @@ func TestLDevIDAttributesFromConfigTableDriven(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			attrs, err := LDevIDAttributesFromConfig(tc.config, tc.policyDigest)
+			attrs, err := LDevIDAttributesFromConfig(tc.config)
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
@@ -919,11 +897,10 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 	soPIN := store.NewPassword([]byte("password"))
 
 	tests := []struct {
-		name         string
-		config       *IAKConfig
-		policyDigest *tpm2.TPM2BDigest
-		expectError  bool
-		validate     func(*testing.T, *types.KeyAttributes)
+		name        string
+		config      *IAKConfig
+		expectError bool
+		validate    func(*testing.T, *types.KeyAttributes)
 	}{
 		{
 			name: "valid RSA config",
@@ -935,8 +912,7 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81010002,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, "iak-test", attrs.CN)
 				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -955,8 +931,7 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81010002,
 				ECCConfig:          &store.ECCConfig{Curve: "P-256"},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 				assert.NotNil(t, attrs.ECCAttributes)
@@ -972,9 +947,8 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81010002,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "invalid signature algorithm",
@@ -986,9 +960,8 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:             0x81010002,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "invalid key algorithm without fallback",
@@ -999,9 +972,8 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 				SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 				Handle:             0x81010002,
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
 			name: "config with platform policy",
@@ -1014,9 +986,6 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 				PlatformPolicy:     true,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: &tpm2.TPM2BDigest{
-				Buffer: []byte{0x01, 0x02, 0x03},
-			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.True(t, attrs.PlatformPolicy)
@@ -1026,7 +995,7 @@ func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			attrs, err := IAKAttributesFromConfig(soPIN, tc.config, tc.policyDigest)
+			attrs, err := IAKAttributesFromConfig(soPIN, tc.config)
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
@@ -1901,7 +1870,6 @@ func TestFileIntegritySum_InvalidPCRBank(t *testing.T) {
 // the exact condition that previously baked an AuthPolicy into the dead
 // template.
 func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
-	policyDigest := &tpm2.TPM2BDigest{Buffer: []byte{0xAA, 0xBB, 0xCC}}
 	zeroTemplate := tpm2.TPMTPublic{}
 
 	t.Run("IAK", func(t *testing.T) {
@@ -1915,8 +1883,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 				Handle:             0x81010002,
 				PlatformPolicy:     true,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
-			},
-			policyDigest)
+			})
 		require.NoError(t, err)
 		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
 			"IAKAttributesFromConfig must not populate TPMAttributes.Template; CreateIAK builds its own template")
@@ -1934,8 +1901,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 				Handle:             0x81020000,
 				PlatformPolicy:     true,
 				RSAConfig:          &store.RSAConfig{KeySize: 2048},
-			},
-			policyDigest)
+			})
 		require.NoError(t, err)
 		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
 			"IDevIDAttributesFromConfig must not populate TPMAttributes.Template; CreateIDevID selects the IDevID templates")
@@ -1953,8 +1919,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 				Handle:             0x81020001,
 				PlatformPolicy:     true,
 				ECCConfig:          &store.ECCConfig{Curve: "P-256"},
-			},
-			policyDigest)
+			})
 		require.NoError(t, err)
 		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
 			"LDevIDAttributesFromConfig must not populate TPMAttributes.Template; CreateIDevID selects the LDevID template")
@@ -1966,6 +1931,9 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 	// TPMAttributes.Template), so EKAttributesFromConfig must keep
 	// populating it -- including the platform policy digest.
 	t.Run("EK keeps its template", func(t *testing.T) {
+		// Only the EK builder still takes a digest, so it is the EK
+		// subtest's fixture rather than the function's.
+		policyDigest := &tpm2.TPM2BDigest{Buffer: []byte{0xAA, 0xBB, 0xCC}}
 		attrs, err := EKAttributesFromConfig(
 			EKConfig{
 				CN:             "ek-template-kept",
