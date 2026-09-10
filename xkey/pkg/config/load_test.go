@@ -423,7 +423,7 @@ func TestLoadFromPath_EnvOverride_InvalidValueIsRejected(t *testing.T) {
 // set for a key one variable cannot express (a map, a list of objects) fails
 // the load with a typed error rather than being silently ignored.
 func TestLoadFromPath_EnvOverride_CompositeLeafIsRejected(t *testing.T) {
-	for _, envName := range []string{"XKEY_FIDO2_EXTENSIONS", "XKEY_BACKENDS_LOCAL", "XKEY_BACKENDS_DEFAULTS"} {
+	for _, envName := range []string{"XKEY_FIDO2_EXTENSIONS", "XKEY_BACKENDS_LOCAL", "XKEY_BACKENDS_REMOTE", "XKEY_BACKENDS_DEFAULTS"} {
 		t.Run(envName, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			cfgPath := filepath.Join(tmpDir, "xkey.yaml")

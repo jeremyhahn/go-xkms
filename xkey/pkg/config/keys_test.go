@@ -55,6 +55,7 @@ func TestRegisterConfigKeys_EveryLeafIsKnownToViper(t *testing.T) {
 		"log.level", "backend.default", "backend.tpm2.device", "gui.theme",
 		"gui.server.address", "gui.auto_unseal.pcrs", "tpm.device",
 		"fido2.always_uv", "xkmsd.address", "policy.min_pin_length",
+		"oidc.callback_host", "oidc.callback_port",
 		"backends.local", "backends.remote", "backends.defaults", "fido2.extensions",
 	} {
 		_, ok := leaves[key]

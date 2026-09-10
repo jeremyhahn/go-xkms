@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -44,7 +43,6 @@ import (
 
 // Default OIDC configuration values.
 const (
-	defaultOIDCRedirectURL     = "http://localhost:8085/callback"
 	defaultOIDCScopes          = "openid,profile,email"
 	defaultOIDCTokenStorePath  = "~/.xkey/tokens.json"
 	defaultOIDCCallbackTimeout = 5 * time.Minute
@@ -508,6 +506,16 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// The callback listener is configuration: oidc.callback_host and
+	// oidc.callback_port, overridden by --callback-host and --callback-port.
+	callback, err := resolveOIDCCallback(cmd)
+	if err != nil {
+		return err
+	}
+	if redirectURL == "" {
+		redirectURL = callback.redirectURL()
+	}
+
 	if issuer == "" {
 		return ErrOIDCMissingIssuer
 	}
@@ -542,14 +550,12 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	// Build authorization URL
 	authURL := buildAuthorizationURL(discovery.AuthorizationEndpoint, clientID, redirectURL, scopes, state, codeChallenge)
 
-	// Parse redirect URL to get port
-	parsedRedirect, err := url.Parse(redirectURL)
+	// The listener serves the redirect URL's port on the configured callback
+	// host (both loopback families for localhost), never on every interface
+	// unless the operator configured an empty host.
+	listenAddrs, err := callback.listenAddrs(redirectURL)
 	if err != nil {
-		return &MessageError{Msg: fmt.Sprintf("invalid redirect URL: %v", err)}
-	}
-	port := parsedRedirect.Port()
-	if port == "" {
-		port = "8085"
+		return err
 	}
 
 	// Create context with timeout for callback
@@ -567,17 +573,13 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		handleOIDCCallback(w, r, codeChan, errChan, receivedState)
 	})
 
-	listener, err := net.Listen("tcp", ":"+port)
+	listeners, err := bindCallback(listenAddrs)
 	if err != nil {
 		return &MessageError{Msg: fmt.Sprintf("failed to start callback server: %v", err)}
 	}
 
 	server := &http.Server{Handler: mux}
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			errChan <- serveErr
-		}
-	}()
+	serveCallback(server, listeners, errChan)
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
@@ -1032,6 +1034,14 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 	}
 	if awsSessionStore != "" {
 		awsSessionStore = expandPath(awsSessionStore)
+	}
+
+	if redirectURL == "" && pType != OIDCProviderTypeAWS {
+		callback, err := resolveOIDCCallback(cmd)
+		if err != nil {
+			return err
+		}
+		redirectURL = callback.redirectURL()
 	}
 
 	provider := OIDCProvider{
@@ -2041,6 +2051,11 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 		sessionStore = "~/.xkey/aws-session.json"
 	}
 
+	callback, err := resolveOIDCCallback(cmd)
+	if err != nil {
+		return err
+	}
+
 	// Call the AWS login implementation directly
 	return runAWSLogin(
 		cmd.OutOrStdout(),
@@ -2056,6 +2071,7 @@ func runAWSProviderLogin(cmd *cobra.Command, provider *OIDCProvider) error {
 		background,
 		logFile,
 		provider.Name,
+		callback,
 	)
 }
 
@@ -2082,7 +2098,8 @@ func init() {
 	oidcLoginCmd.Flags().String("issuer", "", "OIDC provider issuer URL")
 	oidcLoginCmd.Flags().String("client-id", "", "OAuth2 client ID")
 	oidcLoginCmd.Flags().String("client-secret", "", "OAuth2 client secret (optional)")
-	oidcLoginCmd.Flags().String("redirect-url", defaultOIDCRedirectURL, "Callback URL")
+	oidcLoginCmd.Flags().String("redirect-url", "", "Callback URL (default: http://localhost:<oidc.callback_port>/callback)")
+	registerOIDCCallbackFlags(oidcLoginCmd.Flags())
 	oidcLoginCmd.Flags().String("scopes", defaultOIDCScopes, "Scopes to request (comma-separated)")
 	oidcLoginCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
 	oidcLoginCmd.Flags().Bool("no-browser", false, "Don't open browser, print URL instead")
@@ -2128,7 +2145,8 @@ func init() {
 	oidcProvidersAddCmd.Flags().String("issuer", "", "OIDC provider issuer URL (required for type=oidc)")
 	oidcProvidersAddCmd.Flags().String("client-id", "", "OAuth2 client ID (required for type=oidc)")
 	oidcProvidersAddCmd.Flags().String("client-secret", "", "OAuth2 client secret (optional)")
-	oidcProvidersAddCmd.Flags().String("redirect-url", defaultOIDCRedirectURL, "Callback URL")
+	oidcProvidersAddCmd.Flags().String("redirect-url", "", "Callback URL (default: http://localhost:<oidc.callback_port>/callback)")
+	registerOIDCCallbackFlags(oidcProvidersAddCmd.Flags())
 	oidcProvidersAddCmd.Flags().String("scopes", "", "Scopes to request (comma-separated)")
 
 	// AWS-specific flags

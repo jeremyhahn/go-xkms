@@ -19,9 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -124,12 +122,17 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 	background, _ := cmd.Flags().GetBool("background")
 	logFile, _ := cmd.Flags().GetString("log-file")
 
-	return runAWSLogin(cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "")
+	callback, err := resolveOIDCCallback(cmd)
+	if err != nil {
+		return err
+	}
+
+	return runAWSLogin(cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "", callback)
 }
 
 // runAWSLogin is the core AWS login implementation that can be called from both
 // the aws subcommand and from provider-based login.
-func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string) error {
+func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string, callback oidcCallback) error {
 	if region == "" {
 		return ErrAWSMissingRegion
 	}
@@ -147,11 +150,12 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 	}
 
 	// Create AWS client
-	// AWS signin requires 127.0.0.1 (not localhost) and /oauth/callback path
+	// AWS signin requires 127.0.0.1 (not localhost) and /oauth/callback path;
+	// the port is oidc.callback_port.
 	clientConfig := &aws.ClientConfig{
 		Region:      region,
 		CrossDevice: crossDevice,
-		RedirectURL: "http://127.0.0.1:8085/oauth/callback",
+		RedirectURL: callback.awsRedirectURL(),
 	}
 
 	client, err := aws.NewClient(clientConfig, dpopKey)
@@ -179,11 +183,12 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 		return &WrappedError{Msg: "failed to build auth URL", Err: err}
 	}
 
-	// Parse redirect URL to get port
-	parsedRedirect, _ := url.Parse(clientConfig.RedirectURL)
-	port := parsedRedirect.Port()
-	if port == "" {
-		port = "8085"
+	// AWS sends the browser to 127.0.0.1, so the listener serves 127.0.0.1
+	// on the callback port; a configured host that cannot serve it is
+	// refused here, before any browser opens.
+	listenAddrs, err := callback.awsListenAddrs()
+	if err != nil {
+		return err
 	}
 
 	// Create context with timeout
@@ -201,17 +206,13 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 		handleAWSCallback(w, r, codeChan, errChan, receivedState)
 	})
 
-	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
+	listeners, err := bindCallback(listenAddrs)
 	if err != nil {
 		return &WrappedError{Msg: "failed to start callback server", Err: err}
 	}
 
 	server := &http.Server{Handler: mux}
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			errChan <- serveErr
-		}
-	}()
+	serveCallback(server, listeners, errChan)
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
@@ -675,9 +676,13 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create AWS client with restored DPoP key
+	callback, err := resolveOIDCCallback(cmd)
+	if err != nil {
+		return err
+	}
 	clientConfig := &aws.ClientConfig{
 		Region:      region,
-		RedirectURL: "http://127.0.0.1:8085/oauth/callback",
+		RedirectURL: callback.awsRedirectURL(),
 	}
 
 	client, err := aws.NewClient(clientConfig, dpopKey)
@@ -757,6 +762,8 @@ func init() {
 	oidcAWSCmd.Flags().String("provider-name", "", "Internal: provider name for PID file")
 	_ = oidcAWSCmd.Flags().MarkHidden("background-worker")
 	_ = oidcAWSCmd.Flags().MarkHidden("provider-name")
+
+	registerOIDCCallbackFlags(oidcAWSCmd.Flags())
 
 	// Mark region as required
 	_ = oidcAWSCmd.MarkFlagRequired("region")

@@ -127,6 +127,8 @@ xkey oidc aws [flags]
 | `--session-store` | `~/.config/xkey/aws-session.json` | Path to session store |
 | `--background` | `false` | Run auto-refresh in background |
 | `--log-file` | (auto-generated) | Log file for background refresh |
+| `--callback-host` | `oidc.callback_host` (`localhost`) | Host the local callback listener binds; AWS redirects to `127.0.0.1`, so only `localhost`, `127.0.0.1` or `""` can serve it |
+| `--callback-port` | `oidc.callback_port` (`8085`) | Port of the `http://127.0.0.1:<port>/oauth/callback` redirect URL (1-65535) |
 
 ### Examples
 
@@ -220,8 +222,37 @@ Any OpenID Connect-compliant identity provider with discovery support.
 
 **Optional fields:**
 - `--client-secret` - For confidential clients
-- `--redirect-url` - Callback URL (default: `http://localhost:8085/callback`)
+- `--redirect-url` - Callback URL (default: `http://localhost:<oidc.callback_port>/callback`)
+- `--callback-host` - Host the local callback listener binds (default: `oidc.callback_host`, `localhost`: both loopback families)
+- `--callback-port` - Port of the default redirect URL (default: `oidc.callback_port`, `8085`)
 - `--scopes` - Scopes to request (default: `openid,profile,email`)
+
+### Callback listener
+
+Both flows receive the authorization code on a local HTTP listener. Where it
+binds is configuration, never a literal: the `oidc` section of the xkey config
+(`oidc.callback_host`, `oidc.callback_port`; environment
+`XKEY_OIDC_CALLBACK_HOST`, `XKEY_OIDC_CALLBACK_PORT`), overridden per command
+by `--callback-host` and `--callback-port`. The listener binds the callback
+host on the port of the redirect URL the browser is sent to, so an explicit
+`--redirect-url` (or a saved provider's) decides the port and the callback
+port only shapes the default redirect URL. The default host, `localhost`,
+binds both loopback families (`127.0.0.1` and `::1` where present), because
+the browser resolves the redirect host `localhost` to either; an address
+binds that address; an empty string binds every interface. The default
+redirect URL follows the host: `http://localhost:<port>/callback` for
+`localhost` and the empty host, `http://<callback_host>:<port>/callback`
+otherwise, so the browser is always sent where the listener is. An explicit
+`--redirect-url` (or a saved provider's) must be plain `http`, because the
+listener does not serve TLS, and the callback host must be able to serve its
+host: a `localhost` redirect needs `localhost`, a loopback address or the
+empty host; an IP redirect needs that address or the empty host; any other
+name needs an explicit address or the empty host, never loopback. A
+combination that cannot serve the redirect is refused before the browser
+opens, as is a `--callback-port` outside 1-65535. AWS always sends
+the browser to `127.0.0.1`, so `xkey oidc aws` serves `127.0.0.1` for
+`localhost`, `127.0.0.1` and the empty host, and refuses any other callback
+host before opening the browser.
 
 ### AWS Provider (`--type aws`)
 
@@ -375,7 +406,9 @@ xkey oidc login [flags]
 | `--issuer` | | OIDC provider issuer URL |
 | `--client-id` | | OAuth2 client ID |
 | `--client-secret` | | OAuth2 client secret (optional) |
-| `--redirect-url` | `http://localhost:8085/callback` | Local callback URL |
+| `--redirect-url` | `http://localhost:<oidc.callback_port>/callback` | Local callback URL; an explicit value keeps its own port |
+| `--callback-host` | `oidc.callback_host` (`localhost`) | Host the local callback listener binds; `localhost` is both loopback families |
+| `--callback-port` | `oidc.callback_port` (`8085`) | Port of the default redirect URL |
 | `--scopes` | `openid,profile,email` | Scopes to request |
 | `--token-store` | `~/.config/xkey/tokens.json` | Path to token store |
 | `--no-browser` | `false` | Print URL instead of opening browser |
@@ -495,7 +528,9 @@ xkey oidc providers add [flags]
 | `--issuer` | (required) | OIDC provider issuer URL |
 | `--client-id` | (required) | OAuth2 client ID |
 | `--client-secret` | | OAuth2 client secret |
-| `--redirect-url` | `http://localhost:8085/callback` | Callback URL |
+| `--redirect-url` | `http://localhost:<oidc.callback_port>/callback` | Callback URL saved with the provider |
+| `--callback-host` | `oidc.callback_host` (`localhost`) | Host the local callback listener binds; `localhost` is both loopback families |
+| `--callback-port` | `oidc.callback_port` (`8085`) | Port of the default redirect URL |
 | `--scopes` | | Scopes to request |
 
 **AWS flags (`--type aws`):**
@@ -529,7 +564,7 @@ Aliases: `rm`, `delete`
 2. Generates cryptographic state parameter (32 bytes)
 3. Discovers endpoints via `/.well-known/openid-configuration`
 4. Opens browser to authorization endpoint
-5. Starts local callback server
+5. Starts the local callback server on `oidc.callback_host` at the redirect URL's port
 6. Receives authorization code and validates state
 7. Exchanges code for tokens
 8. Validates ID token and extracts claims
@@ -541,7 +576,7 @@ Aliases: `rm`, `delete`
 2. Generates PKCE code verifier and challenge (trimmed of `=` padding per AWS spec)
 3. Generates cryptographic state parameter
 4. Opens browser to `https://{region}.signin.aws.amazon.com/v1/authorize`
-5. Starts local callback server at `http://127.0.0.1:8085/oauth/callback`
+5. Starts the local callback server on `oidc.callback_host` for `http://127.0.0.1:<oidc.callback_port>/oauth/callback` (AWS requires the literal `127.0.0.1` host and `/oauth/callback` path; the port is configuration)
 6. Receives authorization code
 7. Generates DPoP proof JWT signed with private key
 8. Exchanges code for tokens (includes DPoP header)

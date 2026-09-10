@@ -237,7 +237,7 @@ func TestRunOIDCAWS_RequiresRegion(t *testing.T) {
 
 func TestRunAWSLogin_RequiresRegion(t *testing.T) {
 	var buf bytes.Buffer
-	err := runAWSLogin(&buf, "", "", false, false, "", "", "", 0, "", false, "", "")
+	err := runAWSLogin(&buf, "", "", false, false, "", "", "", 0, "", false, "", "", oidcCallback{})
 	assert.ErrorIs(t, err, ErrAWSMissingRegion)
 }
 

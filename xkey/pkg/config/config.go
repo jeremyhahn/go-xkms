@@ -27,6 +27,7 @@ type Config struct {
 	OATH               OATHConfig               `yaml:"oath" json:"oath" mapstructure:"oath"`
 	Phone              PhoneConfig              `yaml:"phone" json:"phone" mapstructure:"phone"`
 	XKMSD              XKMSDConfig              `yaml:"xkmsd" json:"xkmsd" mapstructure:"xkmsd"`
+	OIDC               OIDCConfig               `yaml:"oidc" json:"oidc" mapstructure:"oidc"`
 	TPM                TPMConfig                `yaml:"tpm" json:"tpm" mapstructure:"tpm"`
 	PasswordProtection PasswordProtectionConfig `yaml:"password_protection" json:"password_protection" mapstructure:"password_protection"`
 	Trust              TrustConfig              `yaml:"trust" json:"trust" mapstructure:"trust"`
@@ -98,6 +99,20 @@ type XKMSDConfig struct {
 	TLSCAFile     string `yaml:"tls_ca_file" json:"tls_ca_file" mapstructure:"tls_ca_file"`
 	TLSCertFile   string `yaml:"tls_cert_file" json:"tls_cert_file" mapstructure:"tls_cert_file"`
 	TLSKeyFile    string `yaml:"tls_key_file" json:"tls_key_file" mapstructure:"tls_key_file"`
+}
+
+// OIDCConfig holds the local OAuth2 callback listener shared by the OIDC and
+// AWS login flows. The listener binds CallbackHost: "localhost" (the default)
+// binds both loopback families, since the browser may resolve the redirect
+// host localhost to either; an address binds that address; "" binds every
+// interface. CallbackPort is the port of the default redirect URL
+// (http://localhost:<port>/callback, and http://127.0.0.1:<port>/oauth/callback
+// for AWS, whose fixed 127.0.0.1 host the callback host must be able to
+// serve), which is the URL registered with the provider, so an explicit
+// --redirect-url keeps its own port.
+type OIDCConfig struct {
+	CallbackHost string `yaml:"callback_host" json:"callback_host" mapstructure:"callback_host"`
+	CallbackPort int    `yaml:"callback_port" json:"callback_port" mapstructure:"callback_port"`
 }
 
 // TPMConfig holds direct TPM access parameters.
@@ -297,6 +312,10 @@ func DefaultConfig() *Config {
 			EncryptSessions: true,
 			PlatformPCRBank: "sha256",
 		},
+		OIDC: OIDCConfig{
+			CallbackHost: "localhost",
+			CallbackPort: 8085,
+		},
 		Log: LogConfig{
 			Level: "info",
 		},
@@ -336,6 +355,9 @@ func (c *Config) Validate() error {
 		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": gui.window_height must be > 0, got %d", c.GUI.WindowHeight)}
 	}
 
+	if c.OIDC.CallbackPort < 1 || c.OIDC.CallbackPort > 65535 {
+		return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": oidc.callback_port must be between 1 and 65535, got %d", c.OIDC.CallbackPort)}
+	}
 	if c.Backend.Default != "" {
 		if _, ok := validBackends[c.Backend.Default]; !ok {
 			return &DetailError{Err: ErrConfigInvalid, Detail: fmt.Sprintf(": backend.default %q is not one of software, tpm2, pkcs11, phone", c.Backend.Default)}

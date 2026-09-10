@@ -79,6 +79,7 @@ fido2:                   # FIDO2/WebAuthn authenticator settings
 oath:                    # OATH TOTP/HOTP module
 phone:                   # Phone-as-a-token backend
 xkmsd:                   # xkmsd server connection
+oidc:                    # Local OAuth2 callback listener for OIDC and AWS login
 tpm:                     # Direct TPM access parameters
 password_protection:     # Barrier/encryption at-rest settings
 trust:                   # Root certificates and system trust
@@ -149,6 +150,25 @@ xkmsd:
   tls_cert_file: ""
   tls_key_file: ""
 ```
+
+### oidc
+
+```yaml
+oidc:
+  callback_host: "localhost"   # "localhost" = both loopback families; an address = that address; "" = every interface
+  callback_port: 8085          # Port of the default redirect URL (1-65535)
+```
+
+`xkey oidc login` sends the browser to `http://localhost:<callback_port>/callback`
+(`http://<callback_host>:<callback_port>/callback` for an address other than
+`localhost` or `""`) and `xkey oidc aws` to
+`http://127.0.0.1:<callback_port>/oauth/callback`. `xkey oidc login` listens
+on `callback_host` at that port (the loopback pair for `localhost`).
+`xkey oidc aws` serves `127.0.0.1:<callback_port>` for `localhost` or
+`127.0.0.1`, every interface for `""`, and refuses any other callback host
+before opening the browser, because AWS's redirect host is fixed at
+`127.0.0.1`. `--callback-host` and `--callback-port` override the section per
+command.
 
 ### tpm
 
