@@ -744,6 +744,7 @@ type RaftACMEEnrollmentConfig struct {
 	// ChallengePort is the local HTTP port this node serves the enroll-01
 	// credential-activation exchange on while enrolling; the ACME server
 	// dials back to it. Defaults to "8080", matching the server default.
+	// The listener binds server.host, like every other daemon listener.
 	ChallengePort string `yaml:"challenge_port"`
 }
 

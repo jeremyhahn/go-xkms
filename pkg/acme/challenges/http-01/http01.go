@@ -176,7 +176,9 @@ func Verify(
 // its listener.
 //
 // Parameters:
-//   - port: Port number to listen on (e.g., "80", "8080")
+//   - port: the address to listen on, as ResponderConfig.Addr takes it: a
+//     host:port ("127.0.0.1:80") binds that host, a bare port ("80") every
+//     interface. Which host to bind is the caller's configuration (go-xkms#140).
 //   - keyAuth: Key authorization to serve in response to challenge requests
 func Setup(port, keyAuth string) {
 

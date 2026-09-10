@@ -63,6 +63,9 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 	if opts.ACME.ChallengePort != defaultClusterACMEChallengePort {
 		t.Errorf("ACME.ChallengePort = %q, want %q", opts.ACME.ChallengePort, defaultClusterACMEChallengePort)
 	}
+	if opts.ACME.ChallengeHost != s.config.Server.Host {
+		t.Errorf("ACME.ChallengeHost = %q, want the daemon's server.host %q", opts.ACME.ChallengeHost, s.config.Server.Host)
+	}
 	if opts.Advertise.NoisePort != clusterenroll.DefaultNoisePort {
 		t.Errorf("Advertise.NoisePort = %d, want %d", opts.Advertise.NoisePort, clusterenroll.DefaultNoisePort)
 	}
@@ -88,6 +91,7 @@ func TestBuildClusterACMEOptions_Defaults(t *testing.T) {
 func TestBuildClusterACMEOptions_ExplicitOverrides(t *testing.T) {
 	dir := t.TempDir()
 	s := &Server{config: &config.Config{
+		Server:  config.ServerConfig{Host: "10.0.0.5"},
 		Storage: config.StorageConfig{Path: dir},
 		Cluster: config.ClusterConfig{
 			NodeID:      2,
@@ -122,5 +126,8 @@ func TestBuildClusterACMEOptions_ExplicitOverrides(t *testing.T) {
 	}
 	if opts.ACME.ChallengePort != "9090" {
 		t.Errorf("ACME.ChallengePort = %q, want 9090", opts.ACME.ChallengePort)
+	}
+	if opts.ACME.ChallengeHost != "10.0.0.5" {
+		t.Errorf("ACME.ChallengeHost = %q, want server.host 10.0.0.5: the enroll-01 listener binds what every daemon listener binds (#140)", opts.ACME.ChallengeHost)
 	}
 }

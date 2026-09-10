@@ -407,10 +407,11 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 	enrollment, err := client.EnrollDevice(ctx, &acmeclient.EnrollmentConfig{
-		Challenge: string(acmeclient.ChallengeTypeEnroll01),
-		IPAddress: host,
-		Port:      p.opts.ACME.ChallengePort,
-		TPMModule: acmeclient.NewXKMSTPMAdapter(tpm),
+		Challenge:  string(acmeclient.ChallengeTypeEnroll01),
+		IPAddress:  host,
+		Port:       p.opts.ACME.ChallengePort,
+		ListenHost: p.opts.ACME.ChallengeHost,
+		TPMModule:  acmeclient.NewXKMSTPMAdapter(tpm),
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "clusterca: acme enrollment", Err: err}

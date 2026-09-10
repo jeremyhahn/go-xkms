@@ -72,6 +72,7 @@ func setDefaults() {
 	viper.SetDefault("logging.format", defaults.Logging.Format)
 	viper.SetDefault("logging.output", defaults.Logging.Output)
 
+	viper.SetDefault("challenge.http01.host", defaults.Challenge.HTTP01.Host)
 	viper.SetDefault("challenge.http01.port", defaults.Challenge.HTTP01.Port)
 	viper.SetDefault("challenge.dns01.ttl", defaults.Challenge.DNS01.TTL)
 }

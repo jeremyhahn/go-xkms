@@ -49,19 +49,20 @@ func freePort(t *testing.T) string {
 // the correct token, keyAuth, port, and logger fields.
 func TestNewChallengeServer(t *testing.T) {
 	logger := testLogger()
-	cs := NewChallengeServer("8080", "test-token", "test-key-auth", logger)
+	cs := NewChallengeServer("", "8080", "test-token", "test-key-auth", logger)
 
 	require.NotNil(t, cs)
 	assert.Equal(t, "test-token", cs.token)
 	assert.Equal(t, "test-key-auth", cs.keyAuth)
 	assert.Equal(t, "8080", cs.port)
+	assert.Empty(t, cs.host, "the defaults-layer host is empty: every interface")
 	assert.Equal(t, logger, cs.logger)
 	assert.Nil(t, cs.server, "server must be nil before Start is called")
 }
 
 // TestNewChallengeServer_EmptyFields verifies construction with empty values.
 func TestNewChallengeServer_EmptyFields(t *testing.T) {
-	cs := NewChallengeServer("", "", "", testLogger())
+	cs := NewChallengeServer("", "", "", "", testLogger())
 
 	require.NotNil(t, cs)
 	assert.Empty(t, cs.token)
@@ -73,7 +74,7 @@ func TestNewChallengeServer_EmptyFields(t *testing.T) {
 // port and shuts down cleanly.
 func TestChallengeServer_StartAndShutdown(t *testing.T) {
 	port := freePort(t)
-	cs := NewChallengeServer(port, "tok", "keyauth", testLogger())
+	cs := NewChallengeServer("", port, "tok", "keyauth", testLogger())
 
 	err := cs.Start()
 	require.NoError(t, err)
@@ -94,7 +95,7 @@ func TestChallengeServer_Start_PortInUse(t *testing.T) {
 	require.NoError(t, err)
 	defer listener.Close()
 
-	cs := NewChallengeServer(port, "tok", "ka", testLogger())
+	cs := NewChallengeServer("", port, "tok", "ka", testLogger())
 	err = cs.Start()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to listen")
@@ -107,7 +108,7 @@ func TestChallengeServer_HandleChallenge_Success(t *testing.T) {
 	token := "challenge-token-abc"
 	keyAuth := "challenge-token-abc.thumbprint123"
 
-	cs := NewChallengeServer(port, token, keyAuth, testLogger())
+	cs := NewChallengeServer("", port, token, keyAuth, testLogger())
 	require.NoError(t, cs.Start())
 	defer cs.Shutdown()
 
@@ -128,7 +129,7 @@ func TestChallengeServer_HandleChallenge_Success(t *testing.T) {
 // a non-matching token returns 404.
 func TestChallengeServer_HandleChallenge_WrongToken(t *testing.T) {
 	port := freePort(t)
-	cs := NewChallengeServer(port, "expected-token", "ka", testLogger())
+	cs := NewChallengeServer("", port, "expected-token", "ka", testLogger())
 	require.NoError(t, cs.Start())
 	defer cs.Shutdown()
 
@@ -143,7 +144,7 @@ func TestChallengeServer_HandleChallenge_WrongToken(t *testing.T) {
 // TestChallengeServer_ShutdownWithoutStart verifies that calling Shutdown
 // on a server that was never started does not panic.
 func TestChallengeServer_ShutdownWithoutStart(t *testing.T) {
-	cs := NewChallengeServer("0", "tok", "ka", testLogger())
+	cs := NewChallengeServer("", "0", "tok", "ka", testLogger())
 	// Must not panic
 	cs.Shutdown()
 }
@@ -391,7 +392,7 @@ func TestChallengeServer_ConcurrentRequests(t *testing.T) {
 	token := "concurrent-token"
 	keyAuth := "concurrent-ka"
 
-	cs := NewChallengeServer(port, token, keyAuth, testLogger())
+	cs := NewChallengeServer("", port, token, keyAuth, testLogger())
 	require.NoError(t, cs.Start())
 	defer cs.Shutdown()
 
@@ -419,4 +420,40 @@ func TestChallengeServer_ConcurrentRequests(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		<-done
 	}
+}
+
+// TestChallengeServer_BindsConfiguredHost pins that the configured host
+// reaches the listener: with Host set the server binds that address only,
+// joined with net.JoinHostPort so an IPv6 host is bracketed. Before this the
+// address was ":"+port for every configuration, the wildcard decision the
+// owner ruling of 2026-08-26 forbids as a literal (go-xkms#140).
+func TestChallengeServer_BindsConfiguredHost(t *testing.T) {
+	port := freePort(t)
+	cs := NewChallengeServer("127.0.0.1", port, "tok", "ka", testLogger())
+	require.NoError(t, cs.Start())
+	defer cs.Shutdown()
+
+	assert.Equal(t, net.JoinHostPort("127.0.0.1", port), cs.server.Addr)
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/.well-known/acme-challenge/tok", port)) // nolint:gosec
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestSetupHTTP01Challenge_UsesConfiguredHost pins the config-to-listener
+// path: challenge.http01.host is what the started server binds.
+func TestSetupHTTP01Challenge_UsesConfiguredHost(t *testing.T) {
+	port := freePort(t)
+	cfg := DefaultConfig()
+	cfg.Challenge.HTTP01.Host = "127.0.0.1"
+	cfg.Challenge.HTTP01.Port = port
+
+	srv, err := SetupHTTP01Challenge(cfg, testLogger(), "tok", "ka")
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	defer srv.Shutdown()
+
+	assert.Equal(t, "127.0.0.1", srv.host)
+	assert.Equal(t, net.JoinHostPort("127.0.0.1", port), srv.server.Addr)
 }

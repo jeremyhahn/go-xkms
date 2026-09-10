@@ -155,6 +155,7 @@ func TestNew_Validation(t *testing.T) {
 	_, err = New(opts, logger)
 	require.NoError(t, err)
 	assert.Equal(t, "8080", opts.ACME.ChallengePort)
+	assert.Empty(t, opts.ACME.ChallengeHost, "the default bind host is every interface; the composition root supplies the daemon's")
 
 	// Hardware mode requires the Backends seam.
 	_, err = New(&Options{

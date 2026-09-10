@@ -40,17 +40,20 @@ type ChallengeServer struct {
 	server       *http.Server
 	keyAuth      string
 	token        string
+	host         string
 	port         string
 	shutdownOnce sync.Once
 	mu           sync.Mutex
 	logger       *slog.Logger
 }
 
-// NewChallengeServer creates a new HTTP-01 challenge server.
-func NewChallengeServer(port, token, keyAuth string, logger *slog.Logger) *ChallengeServer {
+// NewChallengeServer creates a new HTTP-01 challenge server bound to host and
+// port. An empty host, the defaults-layer value, binds every interface.
+func NewChallengeServer(host, port, token, keyAuth string, logger *slog.Logger) *ChallengeServer {
 	return &ChallengeServer{
 		token:   token,
 		keyAuth: keyAuth,
+		host:    host,
 		port:    port,
 		logger:  logger,
 	}
@@ -64,7 +67,7 @@ func (cs *ChallengeServer) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(wellKnownChallenge, cs.handleChallenge)
 
-	addr := fmt.Sprintf(":%s", cs.port)
+	addr := net.JoinHostPort(cs.host, cs.port)
 	cs.server = &http.Server{
 		Addr:         addr,
 		Handler:      mux,
@@ -147,7 +150,7 @@ func SetupHTTP01Challenge(config *Config, logger *slog.Logger, token, keyAuth st
 	}
 
 	// Start HTTP server to serve challenge
-	server := NewChallengeServer(port, token, keyAuth, logger)
+	server := NewChallengeServer(config.Challenge.HTTP01.Host, port, token, keyAuth, logger)
 	if err := server.Start(); err != nil {
 		return nil, ErrChallengeSetupFailed{
 			ChallengeType: "http-01",

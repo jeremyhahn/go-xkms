@@ -1570,3 +1570,21 @@ func BenchmarkVerify(b *testing.B) {
 		_ = Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
 	}
 }
+
+// TestListenAddress pins what Setup does with its address argument: a
+// host:port or ":port" reaches net.Listen verbatim, and a bare port keeps
+// its historical meaning of every interface, so no literal here decides
+// which host is bound (go-xkms#140).
+func TestListenAddress(t *testing.T) {
+	tests := map[string]string{
+		"8080":           ":8080",
+		":8080":          ":8080",
+		"127.0.0.1:8080": "127.0.0.1:8080",
+		"[::1]:8080":     "[::1]:8080",
+	}
+	for in, want := range tests {
+		if got := listenAddress(in); got != want {
+			t.Errorf("listenAddress(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

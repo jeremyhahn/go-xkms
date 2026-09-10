@@ -117,7 +117,11 @@ cluster:
   node**, which issues in-process from the local `TrustedCA`.
 - `challenge_port` is the local HTTP port the joining node serves the
   `enroll-01` credential-activation exchange on; the ACME server dials back to
-  it. Defaults to `"8080"`.
+  it. Defaults to `"8080"`. The listener binds `server.host`, like every other
+  daemon listener: the composition root passes it as
+  `clusterca.ACMEOptions.ChallengeHost`, which becomes
+  `acmeclient.EnrollmentConfig.ListenHost` and is joined with the port through
+  `net.JoinHostPort` (#140).
 - `Validate(keyBackend)` currently accepts any backend. The doc comment states
   why: in-process issuance on the first node stamps a key-provenance OID for any
   backend, and a joining node's challenge is selected by backend at runtime

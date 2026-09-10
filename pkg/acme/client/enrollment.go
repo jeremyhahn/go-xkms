@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -80,6 +81,13 @@ type EnrollmentConfig struct {
 	// Port specifies the HTTP port for challenge communication (default: 8080)
 	Port string `yaml:"port,omitempty" json:"port,omitempty" mapstructure:"port"`
 
+	// ListenHost is the host every challenge listener this enrollment opens
+	// (enroll-01, endorse-01, device-attest-01) binds, joined with Port
+	// through net.JoinHostPort. Empty, the defaults-layer value, binds every
+	// interface. xkmsd passes its server.host here so the exchange binds
+	// exactly what every other daemon listener binds (go-xkms#140).
+	ListenHost string `yaml:"listen-host,omitempty" json:"listen_host,omitempty" mapstructure:"listen-host"`
+
 	// CommonName specifies the certificate common name
 	CommonName string `yaml:"common-name,omitempty" json:"common_name,omitempty" mapstructure:"common-name"`
 
@@ -91,6 +99,13 @@ type EnrollmentConfig struct {
 }
 
 // Validate validates the enrollment configuration
+// listenAddr is the address a challenge listener binds: ListenHost and Port
+// through net.JoinHostPort, so an IPv6 host is bracketed and the empty
+// default host binds every interface.
+func (ec *EnrollmentConfig) listenAddr() string {
+	return net.JoinHostPort(ec.ListenHost, ec.Port)
+}
+
 func (ec *EnrollmentConfig) Validate() error {
 	if ec.Challenge == "" {
 		return ErrInvalidChallenge
@@ -412,7 +427,7 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 		_, _ = w.Write(secret)
 	})
 
-	addr := fmt.Sprintf(":%s", config.Port)
+	addr := config.listenAddr()
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
@@ -683,7 +698,7 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 		_, _ = w.Write(secret)
 	})
 
-	addr := fmt.Sprintf(":%s", config.Port)
+	addr := config.listenAddr()
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
@@ -921,7 +936,7 @@ func (c *Client) startAttestServer(config *EnrollmentConfig, attestStmt []byte, 
 		_, _ = w.Write(jsonData)
 	})
 
-	addr := fmt.Sprintf(":%s", config.Port)
+	addr := config.listenAddr()
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,

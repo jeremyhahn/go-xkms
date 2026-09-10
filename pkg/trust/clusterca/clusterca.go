@@ -87,6 +87,11 @@ type ACMEOptions struct {
 	// credential exchange (the ACME server dials back to it). Defaults to
 	// "8080", matching the server default.
 	ChallengePort string
+
+	// ChallengeHost is the host the enroll-01 listener binds. Empty binds
+	// every interface; the composition root passes the daemon's own bind
+	// host so this listener binds what every other daemon listener binds.
+	ChallengeHost string
 }
 
 // Options holds the provisioning parameters. The composition root populates

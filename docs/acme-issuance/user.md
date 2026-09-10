@@ -74,7 +74,7 @@ Reason `1` is key compromise, `4` is superseded, `0` is unspecified.
 
 | Challenge | Use it when | What it needs from you |
 |---|---|---|
-| `http-01` | the name resolves to a host you control on port 80 | that port reachable from the server |
+| `http-01` | the name resolves to a host you control on port 80 | that port reachable from the server; `challenge.http01.host` (env `ACME_CLIENT_CHALLENGE_HTTP01_HOST`) binds one interface, empty binds all |
 | `dns-01` | you control DNS, or the host is not publicly reachable | a DNS provider the client can write TXT records to |
 | `device-attest-01` | the key is in a device that can attest to it | the device |
 | `enroll-01` | the thing being certified is a TPM | the TPM, and its EK chain trusted by the CA |
@@ -123,7 +123,8 @@ cluster:
 Two things surprise people: `directory_url` is **required on joining nodes and
 ignored on the first node** (which issues in-process), and `challenge_port` is a
 port the *server dials back to on the joining node* — so it has to be reachable
-from the server, not just open locally.
+from the server, not just open locally. The listener binds `server.host`, so a
+node pinned to one interface serves the exchange on that interface only.
 
 ## Troubleshooting
 

@@ -186,6 +186,9 @@ func (s *Server) buildClusterACMEOptions(members map[uint64]string, backends fun
 		ACME: &clusterca.ACMEOptions{
 			DirectoryURL:  enr.ACME.DirectoryURL,
 			ChallengePort: challengePort,
+			// The enroll-01 exchange is a daemon listener: it binds
+			// server.host like every other one (#140).
+			ChallengeHost: s.config.Server.Host,
 		},
 		KeyBackend: enr.KeyBackend,
 		Bootstrap: clusterenroll.BootstrapOptions{

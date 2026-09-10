@@ -513,7 +513,7 @@ func TestDeploy_DeployerFailure(t *testing.T) {
 // TestChallengeServer_HandleChallenge_TokenMismatch verifies a mismatched
 // token returns 404.
 func TestChallengeServer_HandleChallenge_TokenMismatch(t *testing.T) {
-	cs := NewChallengeServer("0", "expected-token", "keyauth", testLogger())
+	cs := NewChallengeServer("", "0", "expected-token", "keyauth", testLogger())
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/wrong-token", nil)
 	cs.handleChallenge(w, r)
@@ -523,7 +523,7 @@ func TestChallengeServer_HandleChallenge_TokenMismatch(t *testing.T) {
 // TestChallengeServer_HandleChallenge_TokenMatch verifies correct token
 // returns 200 with the key authorization.
 func TestChallengeServer_HandleChallenge_TokenMatch(t *testing.T) {
-	cs := NewChallengeServer("0", "my-token", "my-keyauth", testLogger())
+	cs := NewChallengeServer("", "0", "my-token", "my-keyauth", testLogger())
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/my-token", nil)
 	cs.handleChallenge(w, r)
@@ -534,7 +534,7 @@ func TestChallengeServer_HandleChallenge_TokenMatch(t *testing.T) {
 // TestChallengeServer_Shutdown_NoServer verifies Shutdown is safe when no
 // HTTP server was ever started.
 func TestChallengeServer_Shutdown_NoServer(t *testing.T) {
-	cs := NewChallengeServer("0", "tok", "key", testLogger())
+	cs := NewChallengeServer("", "0", "tok", "key", testLogger())
 	cs.Shutdown() // must not panic
 }
 
@@ -806,7 +806,7 @@ func (fw *failWriter) Write(_ []byte) (int, error) {
 // TestHandleChallenge_WriteError verifies the error-logging branch triggered
 // when the ResponseWriter.Write call fails.
 func TestHandleChallenge_WriteError(t *testing.T) {
-	cs := NewChallengeServer("0", "my-token", "my-keyauth", testLogger())
+	cs := NewChallengeServer("", "0", "my-token", "my-keyauth", testLogger())
 	w := &failWriter{}
 	r := httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/my-token", nil)
 	// Must not panic even when Write returns an error.

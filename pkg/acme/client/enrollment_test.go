@@ -7141,3 +7141,50 @@ func TestEnrollmentConfig_DefaultTimeout(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 30*time.Second, config.Timeout) // Should be set to default
 }
+
+// TestEnrollmentConfig_ListenAddr pins the address every enrollment
+// challenge listener binds: ListenHost joined with Port, so the empty
+// defaults-layer host binds every interface, an IPv4 host binds that
+// interface, and an IPv6 host is bracketed. Before this the three listeners
+// (enroll-01, endorse-01, device-attest-01) were ":"+port unconditionally,
+// a wildcard literal the owner ruling of 2026-08-26 forbids (go-xkms#140).
+func TestEnrollmentConfig_ListenAddr(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		port string
+		want string
+	}{
+		{name: "empty host binds every interface", host: "", port: "8080", want: ":8080"},
+		{name: "IPv4 host", host: "10.0.0.5", port: "8080", want: "10.0.0.5:8080"},
+		{name: "IPv6 host is bracketed", host: "::1", port: "8080", want: "[::1]:8080"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ec := &EnrollmentConfig{ListenHost: tc.host, Port: tc.port}
+			if got := ec.listenAddr(); got != tc.want {
+				t.Fatalf("listenAddr() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEnrollmentConfig_Validate_KeepsListenHost proves Validate defaults the
+// port without touching a configured host.
+func TestEnrollmentConfig_Validate_KeepsListenHost(t *testing.T) {
+	ec := &EnrollmentConfig{
+		Challenge:  string(ChallengeTypeEnroll01),
+		IPAddress:  "10.0.0.5",
+		ListenHost: "10.0.0.5",
+		TPMModule:  &mockTPMModule{},
+	}
+	if err := ec.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if ec.Port != "8080" || ec.ListenHost != "10.0.0.5" {
+		t.Fatalf("after Validate port=%q host=%q, want 8080 and 10.0.0.5", ec.Port, ec.ListenHost)
+	}
+	if got := ec.listenAddr(); got != "10.0.0.5:8080" {
+		t.Fatalf("listenAddr() = %q", got)
+	}
+}

@@ -168,6 +168,10 @@ type ChallengeConfig struct {
 
 // HTTP01Config holds settings for the HTTP-01 ACME challenge solver.
 type HTTP01Config struct {
+	// Host is the address the challenge server binds, joined with Port
+	// through net.JoinHostPort. Empty, the defaults-layer value, binds every
+	// interface; set it to bind one interface only (go-xkms#140).
+	Host     string `yaml:"host" json:"host" mapstructure:"host"`
 	Port     string `yaml:"port" json:"port" mapstructure:"port"`
 	WebRoot  string `yaml:"webRoot" json:"webRoot" mapstructure:"webRoot"`
 	UseProxy bool   `yaml:"useProxy" json:"useProxy" mapstructure:"useProxy"`

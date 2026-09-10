@@ -43,6 +43,10 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
    on the daemon path consumes `config.Server.Host`; `pkg/api/grpc` consumes
    `ServerConfig.Host`. Address strings are built by `Server.listenAddr`
    (`net.JoinHostPort`), so an IPv6 host is bracketed for every listener.
+   The enroll-01 credential-activation listener a joining node serves during
+   ACME enrollment is a daemon listener too: `server.host` reaches it as
+   `clusterca.ACMEOptions.ChallengeHost` → `acmeclient.EnrollmentConfig.ListenHost`
+   (#140 cluster 2).
 2. **Precedence is flags > env > file > defaults**, and a flag participates only
    when set. A SIGHUP resolves the new configuration through the same layers
    (`resolveReloadConfig` in `cmd/xkmsd`), so a flag set at start-up survives

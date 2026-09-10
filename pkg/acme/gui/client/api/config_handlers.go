@@ -29,6 +29,7 @@ type configResponseBody struct {
 	Timeout             string `json:"timeout"`
 	RequestServerBundle bool   `json:"requestServerBundle"`
 	ChallengeType       string `json:"challengeType"`
+	ChallengeHost       string `json:"challengeHost"`
 	ChallengePort       string `json:"challengePort"`
 	ChallengeWebRoot    string `json:"challengeWebRoot"`
 	StorageBackend      string `json:"storageBackend"`
@@ -43,6 +44,7 @@ type configUpdateBody struct {
 	AccountEmail        *string `json:"accountEmail,omitempty"`
 	Timeout             *string `json:"timeout,omitempty"`
 	RequestServerBundle *bool   `json:"requestServerBundle,omitempty"`
+	ChallengeHost       *string `json:"challengeHost,omitempty"`
 	ChallengePort       *string `json:"challengePort,omitempty"`
 	ChallengeWebRoot    *string `json:"challengeWebRoot,omitempty"`
 	LogLevel            *string `json:"logLevel,omitempty"`
@@ -60,6 +62,7 @@ func (h *handlers) getConfig(w http.ResponseWriter, r *http.Request) {
 		AccountEmail:        cfg.Client.AccountEmail,
 		Timeout:             cfg.Client.Timeout.String(),
 		RequestServerBundle: cfg.Client.RequestServerBundle,
+		ChallengeHost:       cfg.Challenge.HTTP01.Host,
 		ChallengePort:       cfg.Challenge.HTTP01.Port,
 		ChallengeWebRoot:    cfg.Challenge.HTTP01.WebRoot,
 		StorageBackend:      cfg.Storage.Backend,
@@ -100,6 +103,9 @@ func (h *handlers) updateConfig(w http.ResponseWriter, r *http.Request) {
 	if req.RequestServerBundle != nil {
 		cfg.Client.RequestServerBundle = *req.RequestServerBundle
 	}
+	if req.ChallengeHost != nil {
+		cfg.Challenge.HTTP01.Host = *req.ChallengeHost
+	}
 	if req.ChallengePort != nil {
 		cfg.Challenge.HTTP01.Port = *req.ChallengePort
 	}
@@ -118,6 +124,7 @@ func (h *handlers) updateConfig(w http.ResponseWriter, r *http.Request) {
 		AccountEmail:        cfg.Client.AccountEmail,
 		Timeout:             cfg.Client.Timeout.String(),
 		RequestServerBundle: cfg.Client.RequestServerBundle,
+		ChallengeHost:       cfg.Challenge.HTTP01.Host,
 		ChallengePort:       cfg.Challenge.HTTP01.Port,
 		ChallengeWebRoot:    cfg.Challenge.HTTP01.WebRoot,
 		StorageBackend:      cfg.Storage.Backend,

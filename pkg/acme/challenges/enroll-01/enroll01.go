@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -261,7 +262,9 @@ func Verify(
 // 3. Returns packed CSR for transmission to ACME server
 //
 // Parameters:
-//   - port: HTTP port to listen on
+//   - listenAddr: the address the challenge server binds, passed to
+//     net.Listen verbatim ("127.0.0.1:8080", ":8080"); a bare port ("8080")
+//     is accepted and binds every interface, as earlier callers expect
 //   - keyAuth: Key authorization (used as qualifying data in CSR)
 //   - tpm: Trusted Platform Module for key creation and activation
 //
@@ -273,7 +276,7 @@ func Verify(
 // - GET /.well-known/acme-challenge/{token}: Returns packed CSR
 // - POST /.well-known/acme-activation/{token}: Activates credential and returns secret
 func Setup(
-	port, keyAuth string,
+	listenAddr, keyAuth string,
 	tpm TrustedPlatformModule) ([]byte, error) {
 
 	ekCert, err := tpm.EKCertificate()
@@ -303,17 +306,26 @@ func Setup(
 		return nil, err
 	}
 
-	startServer(port, tpm, packedCSR)
+	startServer(listenAddress(listenAddr), tpm, packedCSR)
 
 	return packedCSR, nil
 }
 
+// listenAddress normalises what Setup was given: a host:port (or ":port")
+// is passed to net.Listen verbatim; a bare port keeps the historical
+// meaning of every interface. Which host to bind is the caller's
+// configuration, never a literal here (go-xkms#140).
+func listenAddress(listenAddr string) string {
+	if strings.Contains(listenAddr, ":") {
+		return listenAddr
+	}
+	return ":" + listenAddr
+}
+
 // startServer initializes the HTTP server and starts listening for incoming requests.
-func startServer(port string, tpm TrustedPlatformModule, packedCSR []byte) {
+func startServer(addr string, tpm TrustedPlatformModule, packedCSR []byte) {
 	// Create local server and shutdown state to avoid race conditions
 	var shutdownOnce sync.Once
-
-	addr := fmt.Sprintf(":%s", port)
 
 	// Create server first so handlers can reference it
 	server := &http.Server{
@@ -332,7 +344,6 @@ func startServer(port string, tpm TrustedPlatformModule, packedCSR []byte) {
 	// Start the HTTP server in a separate goroutine
 	go func() {
 		log.Printf("Starting HTTP server on %s for enroll-01 challenge", addr)
-		// Listen on all interfaces
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
 			log.Printf("ERROR: Failed to listen on %s: %v", addr, err)
