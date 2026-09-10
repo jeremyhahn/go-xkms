@@ -339,6 +339,22 @@ type PIVLoginConfig struct {
 	// distinguished names are accepted (exact string match on the issuer DN).
 	// Empty means any issuer the TLS layer verified.
 	TrustedIssuers []string `yaml:"trusted_issuers,omitempty"`
+
+	// AttestationRoots is the PEM bundle of the PIV attestation CA(s) a
+	// login must prove its key against (for YubiKeys, the Yubico PIV
+	// Attestation root). A login is hardware-backed only when a certificate
+	// the client presents chains to this bundle and carries the login
+	// certificate's public key. Required when enabled, unless
+	// allow_unattested is set.
+	AttestationRoots string `yaml:"attestation_roots,omitempty"`
+
+	// AttestationIntermediates optionally lists PEM files of vendor
+	// intermediates the device does not present itself.
+	AttestationIntermediates []string `yaml:"attestation_intermediates,omitempty"`
+
+	// AllowUnattested accepts logins whose key nothing attests; the minted
+	// token records attest_level "unattested". Off by default.
+	AllowUnattested bool `yaml:"allow_unattested,omitempty"`
 }
 
 // SessionConfig tunes issued token lifetimes and login rate limiting.
@@ -1637,6 +1653,13 @@ func (c *Config) Validate() error {
 		}
 		if !c.TLS.Enabled {
 			return &errs.Message{Msg: "auth.piv_login.enabled requires tls.enabled"}
+		}
+		// A login that cannot prove a smartcard must not be assumed to be
+		// one: without an anchor the exchange has nothing to verify against,
+		// so the operator either supplies the vendor's attestation CA or says
+		// explicitly that software keys are accepted on this route.
+		if c.Auth.PIVLogin.AttestationRoots == "" && !c.Auth.PIVLogin.AllowUnattested {
+			return &errs.Message{Msg: "auth.piv_login.enabled requires attestation_roots (the PIV attestation CA bundle) or allow_unattested: true"}
 		}
 	}
 

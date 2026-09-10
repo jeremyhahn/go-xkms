@@ -126,7 +126,9 @@ func TestPIVLogin_RequiresClientCertificate(t *testing.T) {
 
 func TestPIVLogin_Success(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
-		c.PIVLogin = &PIVLoginOptions{Enabled: true}
+		// No attestation anchor: the deployment must say so explicitly, and
+		// the token then records that nothing proved a smartcard.
+		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
 			Username:    "alice",
 			DisplayName: "Alice Admin",
@@ -149,11 +151,13 @@ func TestPIVLogin_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.RefreshToken)
 	assert.Equal(t, "Bearer", resp.TokenType)
 	assert.Positive(t, resp.ExpiresIn)
+	assert.Equal(t, PIVAttestLevelUnattested, accessClaims(t, resp.AccessToken)["attest_level"],
+		"an accepted login that proved no hardware must say so on the token")
 }
 
 func TestPIVLogin_DisabledUserRejected(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
-		c.PIVLogin = &PIVLoginOptions{Enabled: true}
+		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{Username: "mallory", Enabled: false}}
 	})
 
@@ -168,8 +172,9 @@ func TestPIVLogin_DisabledUserRejected(t *testing.T) {
 func TestPIVLogin_UntrustedIssuerRejected(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
 		c.PIVLogin = &PIVLoginOptions{
-			Enabled:        true,
-			TrustedIssuers: []string{"CN=Some Other CA"},
+			Enabled:         true,
+			TrustedIssuers:  []string{"CN=Some Other CA"},
+			AllowUnattested: true,
 		}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{Username: "alice", Enabled: true}}
 	})

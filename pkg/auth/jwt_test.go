@@ -793,3 +793,69 @@ func TestJWTAuthenticator_EmailClaimAbsentOrEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestJWTAuthenticator_AttestLevelClaim proves the attestation level the PIV
+// login minted reaches the identity a handler sees behind bearer auth, and
+// that a token without the claim leaves the key absent.
+func TestJWTAuthenticator_AttestLevelClaim(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	for _, level := range []string{"hardware", "unattested"} {
+		token := createTestToken(t, privateKey, jwt.MapClaims{
+			"sub":          "user123",
+			"attest_level": level,
+			"exp":          time.Now().Add(time.Hour).Unix(),
+		})
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		identity, err := auth.AuthenticateHTTP(req)
+		require.NoError(t, err)
+		assert.Equal(t, level, identity.Metadata["attest_level"])
+	}
+
+	for name, claims := range map[string]jwt.MapClaims{
+		"absent": {"sub": "user123", "exp": time.Now().Add(time.Hour).Unix()},
+		"empty":  {"sub": "user123", "attest_level": "", "exp": time.Now().Add(time.Hour).Unix()},
+		"wrong":  {"sub": "user123", "attest_level": 1, "exp": time.Now().Add(time.Hour).Unix()},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer "+createTestToken(t, privateKey, claims))
+		identity, err := auth.AuthenticateHTTP(req)
+		require.NoError(t, err, name)
+		_, present := identity.Metadata["attest_level"]
+		assert.False(t, present, "%s: attest_level must be absent, got %q", name, identity.Metadata["attest_level"])
+	}
+}
+
+// TestJWTAuthenticator_RejectsRefreshTokens proves a token carrying the
+// refresh marker is refused as a bearer credential even though it is validly
+// signed and carries a subject: its lifetime is the refresh endpoint's, not a
+// protected route's.
+func TestJWTAuthenticator_RejectsRefreshTokens(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	refresh := createTestToken(t, privateKey, jwt.MapClaims{
+		"sub":          "user123",
+		"typ":          RefreshTokenType,
+		"attest_level": "hardware",
+		"exp":          time.Now().Add(8 * time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+refresh)
+	_, err = auth.AuthenticateHTTP(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "refresh token")
+
+	access := createTestToken(t, privateKey, jwt.MapClaims{
+		"sub": "user123",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+access)
+	_, err = auth.AuthenticateHTTP(req)
+	require.NoError(t, err, "a token without the marker is an access token")
+}

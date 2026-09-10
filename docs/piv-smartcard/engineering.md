@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## Exported surface — `pkg/pivcert`
 
@@ -149,6 +149,12 @@ attestation is evidence of nothing.
 with no vendor root configured keeps the presence check it already has
 (`Attestation.HasAttestationExtensions`) instead of choosing between a full
 verdict and none.
+
+The PIV login exchange (`POST /api/v1/auth/login/piv`) is the in-repo consumer:
+it runs `VerifyAttestation` over each certificate the client presents with the
+anchors from `auth.piv_login.attestation_roots`, and treats a verified chain as
+proof only when its subject key equals the login certificate's, so a chain
+that verifies for some other key proves nothing about this login.
 
 ### A verified chain is not a satisfied policy
 

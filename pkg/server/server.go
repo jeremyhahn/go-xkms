@@ -2704,8 +2704,22 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 
 		if s.config.Auth.PIVLogin != nil {
 			restConfig.PIVLogin = &rest.PIVLoginOptions{
-				Enabled:        s.config.Auth.PIVLogin.Enabled,
-				TrustedIssuers: s.config.Auth.PIVLogin.TrustedIssuers,
+				Enabled:         s.config.Auth.PIVLogin.Enabled,
+				TrustedIssuers:  s.config.Auth.PIVLogin.TrustedIssuers,
+				AllowUnattested: s.config.Auth.PIVLogin.AllowUnattested,
+			}
+			// The attestation anchors load here, at composition, and only for
+			// an enabled exchange: a bundle that does not load fails the daemon
+			// with the cause rather than mounting an exchange that would refuse
+			// every card, while a stale path under a disabled block is inert,
+			// exactly as validation treats it.
+			if s.config.Auth.PIVLogin.Enabled {
+				roots, intermediates, err := config.LoadPIVAttestationPools(s.config.Auth.PIVLogin)
+				if err != nil {
+					return nil, &ErrServiceInit{Service: "piv login attestation anchors", Err: err}
+				}
+				restConfig.PIVLogin.AttestationRoots = roots
+				restConfig.PIVLogin.AttestationIntermediates = intermediates
 			}
 		}
 	}

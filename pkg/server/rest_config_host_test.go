@@ -71,3 +71,31 @@ func TestBuildRESTConfig_DefaultHostBindsAllInterfaces(t *testing.T) {
 		t.Fatalf("rest.Config.Host = %q, want the defaults-layer host %q", restCfg.Host, config.DefaultServerHost)
 	}
 }
+
+// TestBuildRESTConfig_DisabledPIVLoginLeavesItsAnchorsUnloaded proves a
+// disabled cert-login block is inert, as validation treats it: a stale or bad
+// attestation_roots path under piv_login.enabled=false must not fail the
+// daemon's composition, and an enabled block with a bad path must.
+func TestBuildRESTConfig_DisabledPIVLoginLeavesItsAnchorsUnloaded(t *testing.T) {
+	newServer := func(enabled bool) *Server {
+		srv := newTestServerForRESTConfig(t, config.ServerConfig{Host: "127.0.0.1", RESTPort: 8443})
+		srv.tokenIssuer = newTestTokenIssuer(t)
+		srv.config.Auth.PIVLogin = &config.PIVLoginConfig{
+			Enabled:          enabled,
+			AttestationRoots: "/nonexistent/piv-attestation-root.pem",
+		}
+		return srv
+	}
+
+	restCfg, err := newServer(false).buildRESTConfig()
+	if err != nil {
+		t.Fatalf("buildRESTConfig() with piv_login disabled: %v", err)
+	}
+	if restCfg.PIVLogin == nil || restCfg.PIVLogin.Enabled || restCfg.PIVLogin.AttestationRoots != nil {
+		t.Fatalf("disabled piv_login must be carried disabled with no anchors, got %+v", restCfg.PIVLogin)
+	}
+
+	if _, err := newServer(true).buildRESTConfig(); err == nil {
+		t.Fatal("buildRESTConfig() with piv_login enabled and an unloadable bundle must fail")
+	}
+}

@@ -86,6 +86,9 @@ auth:
   piv_login:             # browser cert-login exchange (POST /api/v1/auth/login/piv)
     enabled: false       # requires tls.client_auth to request client certs
     trusted_issuers: []  # optional issuer-DN allowlist
+    attestation_roots: /etc/xkms/piv-attestation-root.pem  # vendor PIV attestation CA; required unless allow_unattested
+    attestation_intermediates: []  # optional vendor intermediates
+    allow_unattested: false        # true accepts software keys and mints attest_level "unattested"
   session:
     access_token_ttl: "15m"
     refresh_token_ttl: "8h"

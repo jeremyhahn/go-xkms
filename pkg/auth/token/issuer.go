@@ -43,7 +43,7 @@ const (
 
 	// refreshTokenType is the typ claim distinguishing refresh tokens from
 	// access tokens, so one can never be presented as the other.
-	refreshTokenType = "refresh"
+	refreshTokenType = auth.RefreshTokenType
 )
 
 // Pair is one issued access/refresh token pair.
@@ -310,6 +310,9 @@ func addIdentityClaims(claims jwt.MapClaims, id *auth.Identity) {
 	if email := id.Metadata["email"]; email != "" {
 		claims["email"] = email
 	}
+	if level := id.Metadata["attest_level"]; level != "" {
+		claims["attest_level"] = level
+	}
 }
 
 // sign signs claims with the configured crypto.Signer.
@@ -370,6 +373,9 @@ func identityFromClaims(claims jwt.MapClaims) *auth.Identity {
 	}
 	if email, ok := claims["email"].(string); ok && email != "" {
 		id.Metadata["email"] = email
+	}
+	if level, ok := claims["attest_level"].(string); ok && level != "" {
+		id.Metadata["attest_level"] = level
 	}
 	return id
 }

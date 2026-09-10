@@ -47,11 +47,18 @@ tls:
 auth:
   enabled: true
   type: "composite"
-  # Enables POST /api/v1/auth/login/piv: any client certificate the TLS
+  # Enables POST /api/v1/auth/login/piv: a client certificate the TLS
   # layer verified (PIV slot cert or mTLS identity) whose SPKI thumbprint
-  # binds to an enrolled user may exchange it for a session token pair.
+  # binds to an enrolled user may exchange it for a session token pair,
+  # once it has proven its key is on a smartcard or the deployment has
+  # opted out of that proof below.
   piv_login:
     enabled: true
+    # The login verification matrix presents software test certificates with
+    # no attestation chain, so this fixture opts out of the smartcard proof
+    # explicitly; the tokens it mints record attest_level "unattested". A
+    # production deployment sets attestation_roots instead.
+    allow_unattested: true
 
 # WebAuthn/FIDO2 login ceremonies for the login verification matrix
 # (integration-test-logins): xkey drives "auth register" / "auth login"

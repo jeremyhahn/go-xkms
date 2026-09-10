@@ -1,6 +1,6 @@
 # Auth Factors — API
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -43,6 +43,23 @@ The WebAuthn routes sit in `GroupWebAuthn` and are `RouteAuthPublic` — they ar
 **unauthenticated because they are the authentication**. `POST
 /api/v1/auth/login/piv` is likewise `RouteAuthPublic` in `GroupAuthSession`.
 Both groups sit behind the login rate limiter.
+
+**PIV login proves hardware, or says it did not.** The exchange accepts a TLS
+client certificate as smartcard-backed only when some certificate the client
+presents both chains to the operator-configured PIV attestation anchor
+(`auth.piv_login.attestation_roots`, for a YubiKey the Yubico PIV Attestation
+root, plus optional `attestation_intermediates`) and carries the same
+SubjectPublicKeyInfo as the login certificate. The binding is on the key, so
+a genuine attestation borrowed from another card attests nothing here, and
+certificates the client presents are chain material, never anchors. An issuer
+DN (`trusted_issuers`) remains an additional allowlist, not evidence. With no
+anchor configured the exchange refuses every login unless
+`allow_unattested: true` is set explicitly. The minted token carries
+`attest_level`: `hardware` when the key was proven, `unattested` when the
+deployment accepted it without proof, so the two are never indistinguishable.
+A refusal answers `401` with `client certificate is not hardware-attested`;
+the operator-facing reason (no anchor, no chain, or a different key) is on the
+audit record for `auth.login.piv`.
 
 `GET /api/v1/users/{username}/credentials` and the cert-binding route are in
 `GroupUsers`: authenticated, permission-gated (`users:read`, `users:update`),

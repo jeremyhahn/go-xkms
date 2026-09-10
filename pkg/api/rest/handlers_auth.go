@@ -14,7 +14,9 @@
 package rest
 
 import (
+	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -25,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 )
 
 // PIVLoginOptions configures the TLS-client-certificate login exchange.
@@ -36,6 +39,88 @@ type PIVLoginOptions struct {
 	// distinguished names (exact match). Empty accepts any issuer the TLS
 	// layer verified.
 	TrustedIssuers []string
+
+	// AttestationRoots anchors the proof that the login key lives on a
+	// smartcard: the PIV attestation CA of the vendor (for a YubiKey, the
+	// Yubico PIV Attestation root). A login is treated as hardware-backed
+	// only when some certificate the client presents chains to this pool
+	// AND carries the same SubjectPublicKeyInfo as the login certificate.
+	// Certificates the client presents are chain material, never anchors.
+	//
+	// Nil means no anchor is configured, and then the exchange refuses
+	// every login unless AllowUnattested is set: a DN is not evidence, and
+	// a login that cannot prove hardware must not be recorded as hardware.
+	AttestationRoots *x509.CertPool
+
+	// AttestationIntermediates optionally carries vendor intermediates the
+	// device does not present itself.
+	AttestationIntermediates *x509.CertPool
+
+	// AllowUnattested accepts a login whose key no presented certificate
+	// attests, minting a token whose attest_level says so. The zero value
+	// is strict; set it only for deployments that knowingly accept software
+	// keys on this route.
+	AllowUnattested bool
+}
+
+// Attestation levels recorded on the token minted by the PIV login exchange,
+// in the attest_level claim, so an unattested login is representable rather
+// than indistinguishable from a proven one.
+const (
+	// PIVAttestLevelHardware means a presented certificate chained to a
+	// configured attestation anchor and attests the login key.
+	PIVAttestLevelHardware = "hardware"
+	// PIVAttestLevelUnattested means nothing proved the key is on a
+	// smartcard and the deployment accepted the login anyway.
+	PIVAttestLevelUnattested = "unattested"
+)
+
+// attestLevelMetadataKey is the identity metadata key the token issuer maps
+// to the attest_level claim.
+const attestLevelMetadataKey = "attest_level"
+
+// attestationLevel decides what the presented certificates prove about the
+// login key, peers[0]. It returns the level to record, or an empty level
+// with the operator-facing reason the login is refused.
+func (o *PIVLoginOptions) attestationLevel(peers []*x509.Certificate) (level, reason string) {
+	if o.AttestationRoots == nil {
+		if o.AllowUnattested {
+			return PIVAttestLevelUnattested, ""
+		}
+		return "", "no attestation anchor is configured and unattested logins are not allowed"
+	}
+
+	login := peers[0]
+	anchoredForAnotherKey := false
+	for i, candidate := range peers {
+		// Every other presented certificate is path-building material for
+		// this candidate; the anchors come only from the configuration.
+		chain := make([]*x509.Certificate, 0, len(peers))
+		chain = append(chain, candidate)
+		for j, other := range peers {
+			if j != i {
+				chain = append(chain, other)
+			}
+		}
+		if _, err := pivcert.VerifyAttestation(chain, &pivcert.AttestationVerifyOptions{
+			TrustedRoots:  o.AttestationRoots,
+			Intermediates: o.AttestationIntermediates,
+		}); err != nil {
+			continue
+		}
+		if bytes.Equal(candidate.RawSubjectPublicKeyInfo, login.RawSubjectPublicKeyInfo) {
+			return PIVAttestLevelHardware, ""
+		}
+		anchoredForAnotherKey = true
+	}
+
+	if o.AllowUnattested {
+		return PIVAttestLevelUnattested, ""
+	}
+	if anchoredForAnotherKey {
+		return "", "the presented attestation chains to a trusted anchor but attests a different key than the login certificate"
+	}
+	return "", "no presented certificate chains to a configured attestation anchor"
 }
 
 // authTokenResponse is the JSON body returned by the login and refresh
@@ -146,6 +231,17 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Prove hardware before touching the user store: a certificate that
+	// cannot show its key is on a smartcard is refused with the reason on
+	// the audit record, where the operator reads it, and a generic answer
+	// on the wire.
+	attestLevel, refusal := s.pivLogin.attestationLevel(r.TLS.PeerCertificates)
+	if refusal != "" {
+		s.auditAuthEvent(r.Context(), cert.Subject.CommonName, "auth.login.piv", audit.OutcomeDeny, "attestation: "+refusal)
+		writeErrorWithMessage(w, ErrUnauthorized, "client certificate is not hardware-attested", http.StatusUnauthorized)
+		return
+	}
+
 	if s.authUsers == nil {
 		s.auditAuthEvent(r.Context(), cert.Subject.CommonName, "auth.login.piv", audit.OutcomeDeny, "no user store")
 		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
@@ -171,9 +267,10 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 		Subject:  user.Username,
 		TenantID: user.TenantID,
 		Metadata: map[string]string{
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"auth_method":  "piv",
+			"username":             user.Username,
+			"display_name":         user.DisplayName,
+			"auth_method":          "piv",
+			attestLevelMetadataKey: attestLevel,
 		},
 	}
 	if user.Email != "" {
@@ -190,7 +287,7 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.auditAuthEvent(r.Context(), user.Username, "auth.login.piv", audit.OutcomeAllow, "")
+	s.auditAuthEvent(r.Context(), user.Username, "auth.login.piv", audit.OutcomeAllow, "attest_level="+attestLevel)
 	writeJSON(w, authTokenResponse{
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,

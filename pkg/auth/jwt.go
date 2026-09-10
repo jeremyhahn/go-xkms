@@ -148,6 +148,13 @@ func (a *JWTAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD)
 //   - name       → Identity.Metadata["display_name"]
 //   - email      → Identity.Metadata["email"] (the canonical login key;
 //     absent for principals that have none)
+//
+// RefreshTokenType is the typ claim the token issuer stamps on refresh
+// tokens and the marker bearer authentication refuses: a refresh token is
+// exchanged at the refresh endpoint only, never presented to a protected
+// route.
+const RefreshTokenType = "refresh"
+
 func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) {
 	// Parse token with verification
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -164,6 +171,15 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, &errs.Message{Msg: "invalid claims type"}
+	}
+
+	// A refresh token is signed by the same key and carries the same
+	// identity snapshot as its access token, but it lives for hours rather
+	// than minutes and is meant for one endpoint. Presenting it as a bearer
+	// credential would bypass the access token's lifetime, so bearer
+	// authentication fails closed on the refresh marker.
+	if typ, _ := claims["typ"].(string); typ == RefreshTokenType {
+		return nil, &errs.Message{Msg: "refresh token presented as a bearer token"}
 	}
 
 	// Validate issuer if configured
@@ -215,6 +231,14 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	// Extract tenant_id if present
 	if tenantID, ok := claims["tenant_id"].(string); ok {
 		identity.TenantID = tenantID
+	}
+
+	// Extract the attestation level the PIV login recorded, so a handler or
+	// authorizer behind bearer auth can tell a login that proved a smartcard
+	// from one the deployment accepted without proof. A token minted by any
+	// other flow carries no claim, and the metadata key stays absent.
+	if level, ok := claims["attest_level"].(string); ok && level != "" {
+		identity.Metadata["attest_level"] = level
 	}
 
 	return identity, nil

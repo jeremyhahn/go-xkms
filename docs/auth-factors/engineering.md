@@ -1,6 +1,6 @@
 # Auth Factors — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## Exported surface — `pkg/factor`
 
@@ -102,6 +102,31 @@ capability. The four knobs are `factor.Config` above. What to set in practice:
   `CKM_ECDSA_SHA256` is the safe choice.
 - **`ChallengeTTLSeconds`** — shorter is safer. The five-minute default is
   already generous for interactive use.
+
+### PIV login attestation (`auth.piv_login`)
+
+The cert-login exchange is configured by file (`auth.piv_login`) and, in
+process, by `rest.PIVLoginOptions` (`ServiceModulePIVLoginOptions` on the
+SDK). Beyond `enabled` and `trusted_issuers`:
+
+- **`attestation_roots`** (`AttestationRoots *x509.CertPool`) — the PIV
+  attestation CA bundle a login must prove its key against. Required when the
+  exchange is enabled, unless the opt-out below is set; the config refuses to
+  validate otherwise, and a bundle that names a file that does not load fails
+  the daemon at composition rather than mounting an exchange that refuses
+  every card.
+- **`attestation_intermediates`** (`AttestationIntermediates`) — vendor
+  intermediates the device does not present itself. Optional.
+- **`allow_unattested`** (`AllowUnattested`) — accept logins nothing attests,
+  minting `attest_level: unattested`. Off by default; the zero value is
+  strict.
+
+The proof is evaluated by `pivcert.VerifyAttestation` over every certificate
+the client presents, with the others as path-building material and the anchors
+only from configuration, and a chain that verifies counts only if its subject
+key equals the login certificate's `RawSubjectPublicKeyInfo`. The result is
+recorded on the token (`attest_level`, carried through refresh) and on the
+audit event.
 
 ## Persistence
 

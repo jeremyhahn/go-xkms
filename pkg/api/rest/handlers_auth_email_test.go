@@ -50,7 +50,7 @@ func newSessionAuthServer(t *testing.T, user auth.MTLSUser) (*Server, *token.Iss
 	server := newAuthTestServer(t, func(c *Config) {
 		c.TokenIssuer = issuer
 		c.Authenticator = jwtAuth
-		c.PIVLogin = &PIVLoginOptions{Enabled: true}
+		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: user}
 	})
 	return server, issuer

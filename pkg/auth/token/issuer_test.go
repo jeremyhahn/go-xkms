@@ -372,3 +372,56 @@ func TestMemoryRefreshStore_ExpiryIsRevocation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got, "expired records must read as absent")
 }
+
+// TestMint_CarriesAttestLevelClaimAndRefreshPreservesIt proves the PIV
+// login's attestation level rides on both tokens and survives a rotation, so
+// an unattested login stays representable for the token's whole lineage; a
+// principal without one mints no attest_level claim at all.
+func TestMint_CarriesAttestLevelClaimAndRefreshPreservesIt(t *testing.T) {
+	issuer := newTestIssuer(t)
+	ctx := context.Background()
+	id := testIdentity()
+	id.Metadata["attest_level"] = "hardware"
+
+	pair, err := issuer.Mint(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "hardware", unverifiedClaims(t, pair.AccessToken)["attest_level"])
+	assert.Equal(t, "hardware", unverifiedClaims(t, pair.RefreshToken)["attest_level"])
+
+	rotated, err := issuer.Refresh(ctx, pair.RefreshToken)
+	require.NoError(t, err)
+	assert.Equal(t, "hardware", unverifiedClaims(t, rotated.AccessToken)["attest_level"])
+	assert.Equal(t, "hardware", identityFromClaims(unverifiedClaims(t, rotated.RefreshToken)).Metadata["attest_level"])
+
+	plain, err := issuer.Mint(ctx, testIdentity())
+	require.NoError(t, err)
+	_, present := unverifiedClaims(t, plain.AccessToken)["attest_level"]
+	assert.False(t, present, "a login that recorded no level must not mint an empty claim")
+}
+
+// TestMintedRefreshTokenIsNotABearerCredential proves the pair's two halves
+// are not interchangeable in the other direction either: the refresh token
+// the issuer mints is refused by the JWT authenticator that trusts the
+// issuer's key, while the access token is accepted with its identity.
+func TestMintedRefreshTokenIsNotABearerCredential(t *testing.T) {
+	issuer := newTestIssuer(t)
+	id := testIdentity()
+	id.Metadata["attest_level"] = "hardware"
+	pair, err := issuer.Mint(context.Background(), id)
+	require.NoError(t, err)
+
+	authenticator, err := auth.NewJWTAuthenticator(&auth.JWTConfig{PublicKey: issuer.PublicKey()})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.RefreshToken)
+	_, err = authenticator.AuthenticateHTTP(req)
+	require.Error(t, err, "the refresh token must not authenticate a protected route")
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	got, err := authenticator.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	assert.Equal(t, "user-123", got.Subject)
+	assert.Equal(t, "hardware", got.Metadata["attest_level"])
+}

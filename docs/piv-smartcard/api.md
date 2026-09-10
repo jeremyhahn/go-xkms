@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -30,7 +30,11 @@ which is an authentication route rather than a slot operation.
 
 `POST /api/v1/auth/login/piv` sits in `GroupAuthSession`, is `RouteAuthPublic`
 (it *is* the authentication), is gated on `hasIssuer`, and runs behind the login
-rate limiter.
+rate limiter. It accepts a certificate as smartcard-backed only when a presented
+certificate chains to the configured PIV attestation anchor and carries the
+login key's SubjectPublicKeyInfo; the token it mints records `attest_level`
+(`hardware` or `unattested`). The contract is in
+[`../auth-factors/api.md`](../auth-factors/api.md).
 
 ## `{slot}` is a closed set
 
