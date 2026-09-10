@@ -63,7 +63,7 @@ Rejected alternatives:
 | Challenge implementations | `pkg/acme/challenges/{http-01,dns-01,device-attest-01,enroll-01,endorse-01}` |
 | Issuance | `pkg/acme/issuance` → `pkg/ca` |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
-| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/ratelimits`, `pkg/acme/server/{circuitbreaker,ratelimit,degradation}` |
+| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/ratelimits`, `pkg/acme/server/{circuitbreaker,degradation}` |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
