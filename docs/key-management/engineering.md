@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -224,6 +224,23 @@ every wire: `pkg/api/rest/errors_keyops.go`, `pkg/api/grpc/errors_keyops.go`,
 `pkg/api/mcp/errors_keyops.go`, `pkg/xkms/errors_keyops.go`. Wrapping across
 the SDK boundary uses `pkg/errs` (`errs.Message`, `errs.Detail`), and the SDK
 side re-renders in `sdk/go/errors.go`.
+
+Five MCP handlers (`getTLSCertificate`, `getImportParameters`,
+`importKeyMaterial`, `asymmetricEncrypt`, `asymmetricDecrypt`) refuse a
+backend name before the operation runs. The name is resolved through the
+service's `LookupBackend`, the same mechanism every other handler uses: a
+backend name is a registry key, so a configured name that is not a
+store-type keyword (`token-a`) is accepted, and a spelling the name
+validation rejects (`SOFTWARE`) or a name that is not registered is refused.
+That refusal is one typed error, `mcp.InvalidBackendError`: `errors.Is`
+finds `mcp.ErrInvalidBackend`, it unwraps to the service's reason
+(`xkms.ErrBackendNotFound` or `xkms.ErrBackendNameValidation`), it renders
+as `invalid backend: <name>: <reason>`, and it is carried as a `KeyOpError`
+with the JSON-RPC invalid-params code. A name that resolves is the backend
+the operation runs against, viewed through the caller's tenant: the TLS
+key and certificate are read from it, and the wrapping key and import
+token for `importKeyMaterial` are issued by it. The default backend is used
+only when no name is given.
 
 **Fail-closed paths:** export of a non-exportable key; any operation on a
 sealed barrier; a tenant mismatch; an RBAC denial. Each returns an error

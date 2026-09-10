@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## How the six transports are shaped
 
@@ -178,6 +178,7 @@ shared type set.
 | unknown method | 404 | `Unimplemented` | JSON-RPC `-32601` |
 | backend failure | 500 | `Internal` | error object |
 | subsystem not configured | 501 | `Unimplemented` | error object |
+| backend name not registered, or failing name validation (MCP-side check) | — | — | JSON-RPC `-32602`, `ErrInvalidBackend` |
 
 The mapping is implemented once per transport in `errors_keyops.go`
 (`pkg/api/rest`, `pkg/api/grpc`, `pkg/api/mcp`, `pkg/xkms`).

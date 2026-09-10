@@ -910,27 +910,32 @@ func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Validate backend first if provided
-	var storeType types.StoreType
-	if params.Backend != "" {
-		storeType = types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
+	// Refuse a backend the service does not resolve before the key lookup,
+	// so the refusal names the backend rather than the key.
+	if err := s.refuseUnknownBackend(params.Backend); err != nil {
+		return nil, err
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(ctx, params.KeyID)
+	// The key and its certificate are read from the named backend, viewed
+	// through the caller's tenant, or from the default backend when none is
+	// named. Looking the key up in the default backend and then reading the
+	// certificate from it would ignore the name for any backend that is not
+	// the default, and could answer with the default backend's material for
+	// the same common name.
+	ks, err := s.operationBackend(ctx, params.Backend)
+	if err != nil {
+		return nil, err
+	}
+	// The attributes keep the store type the backend recorded for the key.
+	// Replacing it with a parse of the backend name would turn a configured
+	// name that is not a store-type keyword into StoreUnknown, and a
+	// composite backend dispatches the private-key retrieval on that field.
+	attrs, err := keyByCN(ctx, ks, params.KeyID)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
-	// Apply backend override if provided
-	if params.Backend != "" {
-		attrs.StoreType = storeType
-	}
-
-	tlsCert, err := s.keystore.GetTLSCertificate(ctx, params.KeyID, attrs)
+	tlsCert, err := ks.GetTLSCertificate(ctx, params.KeyID, attrs)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get TLS certificate", Err: err}
 	}
@@ -983,18 +988,20 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 		CN: params.KeyID,
 	}
 
+	if err := s.refuseUnknownBackend(params.Backend); err != nil {
+		return nil, err
+	}
 	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
-		attrs.StoreType = storeType
+		attrs.StoreType = types.ParseStoreType(params.Backend)
 	}
 
-	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
-	if !ok {
-		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
+	// The wrapping key and import token come from the named backend, the
+	// one importKeyMaterial will import into, exactly as wrap and unwrap
+	// resolve theirs. Taking them from the default backend would hand a
+	// caller naming a hardware backend the software backend's ceremony.
+	importExportBackend, err := s.importExportBackend(ctx, params.Backend)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse wrapping algorithm
@@ -1168,11 +1175,10 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// The backend name is validated here, against this transport's own
-	// vocabulary, before the service is asked to resolve it. Which mechanism
-	// should own that resolution is go-xkms#172 and is not settled here.
-	if params.Backend != "" && types.ParseStoreType(params.Backend) == types.StoreUnknown {
-		return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
+	// The backend name is refused here, through the service's own lookup,
+	// so the refusal is classifiable before the import is attempted.
+	if err := s.refuseUnknownBackend(params.Backend); err != nil {
+		return nil, err
 	}
 
 	if _, err := s.xkmsService.ImportKey(ctx, &transport.ImportKeyRequest{
@@ -1265,6 +1271,72 @@ func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (inte
 // The field is refused rather than ignored, because a caller that believes it
 // is acting on one tenant and is quietly served another has no way to tell.
 var ErrTenantIDNotAccepted = errors.New("tenant_id is not accepted in the request params; the tenant is taken from the authenticated identity")
+
+// ErrInvalidBackend is the sentinel behind every "invalid backend: <name>"
+// refusal on this transport, so a caller can classify the refusal with
+// errors.Is rather than by matching the message text (#176).
+var ErrInvalidBackend = errors.New("invalid backend")
+
+// InvalidBackendError is the refusal for a backend name the service does not
+// resolve. It is ErrInvalidBackend to errors.Is, and it unwraps to the
+// service's own error, so a caller can also tell a name that failed
+// validation (xkms.ErrBackendNameValidation) from one that is not registered
+// (xkms.ErrBackendNotFound).
+type InvalidBackendError struct {
+	// Name is the backend name as the request carried it.
+	Name string
+	// Cause is the service's refusal.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *InvalidBackendError) Error() string {
+	return "invalid backend: " + e.Name + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the service's refusal.
+func (e *InvalidBackendError) Unwrap() error { return e.Cause }
+
+// Is reports ErrInvalidBackend as this error's identity.
+func (e *InvalidBackendError) Is(target error) bool { return target == ErrInvalidBackend }
+
+// operationBackend returns the backend an operation runs against: the named
+// one viewed through the caller's tenant, or the default backend scoped to
+// that tenant when none is named.
+func (s *Server) operationBackend(ctx context.Context, backendName string) (xkms.Backend, error) {
+	if backendName != "" {
+		ks, err := s.tenantBackend(ctx, backendName)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
+		}
+		return ks, nil
+	}
+	ks, err := xkms.ScopeBackendToTenant(s.keystore, callerTenantID(ctx))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to scope keystore to the caller's tenant", Err: err}
+	}
+	return ks, nil
+}
+
+// refuseUnknownBackend returns nil when name is empty (the default backend)
+// or names a backend the service resolves, and otherwise the one refusal
+// every handler returns: an InvalidBackendError carried as a KeyOpError with
+// the JSON-RPC invalid-params code, since the fault is in the request.
+//
+// The name is resolved through the service's LookupBackend, the mechanism
+// every other handler uses, rather than types.ParseStoreType: a backend name
+// is a registry key, not a store-type keyword, and a configured name such as
+// "token-a" that is not a keyword is a valid backend the transport must not
+// refuse on its own.
+func (s *Server) refuseUnknownBackend(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, err := s.xkmsService.LookupBackend(name); err != nil {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &InvalidBackendError{Name: name, Cause: err}}
+	}
+	return nil
+}
 
 // tenantForRequest returns the tenant the operation must run under, which is
 // the one carried by the authenticated identity. It refuses a request that
@@ -1419,16 +1491,15 @@ func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// The key is resolved here so a missing key keeps this transport's
-	// "failed to find key" report rather than the service's own wording.
-	if _, err := s.findKeyByCN(ctx, params.KeyID); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
+	if err := s.refuseUnknownBackend(params.Backend); err != nil {
+		return nil, err
 	}
 
-	if params.Backend != "" {
-		if storeType := types.ParseStoreType(params.Backend); storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
+	// The key is resolved here, in the backend the request names, so a
+	// missing key keeps this transport's "failed to find key" report rather
+	// than the service's own wording.
+	if err := s.requireKey(ctx, params.KeyID, params.Backend); err != nil {
+		return nil, err
 	}
 
 	// The OAEP construction belongs to the service layer, which owns the
@@ -1462,14 +1533,12 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	if _, err := s.findKeyByCN(ctx, params.KeyID); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
+	if err := s.refuseUnknownBackend(params.Backend); err != nil {
+		return nil, err
 	}
 
-	if params.Backend != "" {
-		if storeType := types.ParseStoreType(params.Backend); storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
+	if err := s.requireKey(ctx, params.KeyID, params.Backend); err != nil {
+		return nil, err
 	}
 
 	// The padding scheme and its digest used to be constants here. They are
