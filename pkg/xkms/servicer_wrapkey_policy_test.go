@@ -260,11 +260,17 @@ func TestLegacyWrapGate_ClosesTheKeyInjectionPrimitive(t *testing.T) {
 //
 // The loop is bounded and runs entirely in memory over a software AES key, so
 // it is a fast arithmetic check rather than a search.
+//
+// The sample size is chosen against the false-failure rate, not the run time:
+// at 1 in 256 the chance that NO blob of n is accepted is (255/256)^n, which
+// is 4e-4 for 2,000 blobs — once in a few thousand CI jobs, and this test runs
+// in three jobs per pull request — and 1e-14 for 8,192, which is never. A
+// clean run at 2,000 proved nothing about the rate that a lucky run does not.
 func TestLegacyWrapGate_PaddingOracleIsMeasurable(t *testing.T) {
 	ctx := context.Background()
 	store, attrs := newAESWrappingBackend(t)
 
-	const attempts = 2000
+	const attempts = 8192
 	blobs := make([][]byte, attempts)
 	for i := range blobs {
 		blobs[i] = make([]byte, 48)
