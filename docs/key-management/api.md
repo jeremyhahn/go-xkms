@@ -139,6 +139,18 @@ Do not confuse it with `algorithm`, which on every import request names the
 | gRPC | `key_type` in `ImportKeyRequest`, with `key_size`, `curve`, `hash`, `partition`, `exportable` (optional), `sensitive` |
 | MCP | `key_type` in `xkms.importKey` params, with `key_size`, `curve`, `hash`, `aes_key_size`, `partition`, `exportable`, `sensitive` |
 
+The first half of the ceremony takes the same vocabulary: `key_type` (with
+`key_size` and `curve`) on `POST /api/v1/keys/import-params`, gRPC
+`GetImportParametersRequest` and the `xkms.getImportParameters` params tells
+the backend what the caller intends to import, and the response's `key_spec`
+names what it will accept (`RSA_2048`, `AES_256`, `ECC_NIST_P256`, ...). A
+request that declares nothing gets `UNKNOWN`, and the caller learns the
+intended algorithm only at import time. The MCP params carried no such field
+until now, so every MCP answer was `UNKNOWN`; the MCP handler now resolves
+the request through the service, as the import does, and the MCP client
+transport builds the params by name and decodes the PEM wrapping key in the
+result back to the DER the contract carries.
+
 `exportable` and `sensitive` are the same controls `GenerateKeyRequest`
 carries. `exportable` is optional on every transport: absent, the import keeps
 the write-once default (symmetric material exportable, asymmetric not);

@@ -1008,12 +1008,81 @@ func (t *Transport) RotateKey(ctx context.Context, req *transport.RotateKeyReque
 }
 
 // GetImportParameters gets the parameters needed to import a key.
+// GetImportParameters asks the backend what it will accept for an import.
+//
+// Params are built by name into the handler's own struct, and the result is
+// decoded from the handler's own struct: the two sides carry the wrapping
+// key in different encodings (PEM text here, DER bytes on the contract), so
+// marshalling req and decoding into the contract's response sent the
+// caller's key type nowhere and brought the wrapping key back empty.
 func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
-	var result transport.GetImportParametersResponse
-	if err := t.rpcCall(ctx, "xkms.getImportParameters", req, &result); err != nil {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	params := &xkmsmcp.GetImportParametersParams{
+		KeyID:     req.KeyID,
+		Backend:   req.Backend,
+		Algorithm: req.Algorithm,
+		KeyType:   req.KeyType,
+		KeySize:   req.KeySize,
+		Curve:     req.Curve,
+	}
+
+	var result xkmsmcp.GetImportParametersResult
+	if err := t.rpcCall(ctx, "xkms.getImportParameters", params, &result); err != nil {
 		return nil, err
 	}
-	return &result, nil
+
+	der, err := pkixDERFromPEM(result.WrappingPublicKeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	resp := &transport.GetImportParametersResponse{
+		WrappingPublicKey: der,
+		ImportToken:       result.ImportToken,
+		Algorithm:         result.Algorithm,
+		KeySpec:           result.KeySpec,
+	}
+	if result.ExpiresAt != nil {
+		resp.ExpiresAt = *result.ExpiresAt
+	}
+	return resp, nil
+}
+
+// ErrWrappingPublicKeyNotPEM is returned when the import parameters carry a
+// wrapping public key that is not a PEM PKIX public key.
+var ErrWrappingPublicKeyNotPEM = errors.New("mcp: wrapping public key in the import parameters is not a PEM PKIX public key")
+
+// WrappingPublicKeyError carries the decode failure behind
+// ErrWrappingPublicKeyNotPEM.
+type WrappingPublicKeyError struct {
+	Err error
+}
+
+func (e *WrappingPublicKeyError) Error() string {
+	return ErrWrappingPublicKeyNotPEM.Error() + ": " + e.Err.Error()
+}
+
+func (e *WrappingPublicKeyError) Unwrap() error { return e.Err }
+
+func (e *WrappingPublicKeyError) Is(target error) bool { return target == ErrWrappingPublicKeyNotPEM }
+
+// pkixDERFromPEM is the inverse of pemEncodePKIXPublicKey: the PEM text the
+// handler returns becomes the DER bytes the contract carries, and no key at
+// all stays no key.
+func pkixDERFromPEM(pemText string) ([]byte, error) {
+	if pemText == "" {
+		return nil, nil
+	}
+	block, _ := pem.Decode([]byte(pemText))
+	if block == nil {
+		return nil, &WrappingPublicKeyError{Err: errors.New("no PEM block")}
+	}
+	if _, err := x509.ParsePKIXPublicKey(block.Bytes); err != nil {
+		return nil, &WrappingPublicKeyError{Err: err}
+	}
+	return block.Bytes, nil
 }
 
 // pemEncodePKIXPublicKey renders a DER-encoded PKIX public key as the PEM text

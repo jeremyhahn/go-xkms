@@ -984,64 +984,43 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
-	}
-
 	if err := s.refuseUnknownBackend(params.Backend); err != nil {
 		return nil, err
 	}
-	if params.Backend != "" {
-		attrs.StoreType = types.ParseStoreType(params.Backend)
-	}
 
-	// The wrapping key and import token come from the named backend, the
-	// one importKeyMaterial will import into, exactly as wrap and unwrap
-	// resolve theirs. Taking them from the default backend would hand a
-	// caller naming a hardware backend the software backend's ceremony.
-	importExportBackend, err := s.importExportBackend(ctx, params.Backend)
+	// The service resolves the backend through the caller's tenant and
+	// builds the attributes the backend mints its parameters for, from the
+	// same key-type vocabulary the import takes, so the spec the backend
+	// names here is the one the import will check the material against.
+	// This handler used to build a common name and nothing else, so the
+	// backend could only ever answer key_spec UNKNOWN.
+	resp, err := s.xkmsService.GetImportParameters(ctx, &transport.GetImportParametersRequest{
+		Backend:   params.Backend,
+		KeyID:     params.KeyID,
+		Algorithm: params.Algorithm,
+		KeyType:   params.KeyType,
+		KeySize:   params.KeySize,
+		Curve:     params.Curve,
+		TenantID:  callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, err
+		return nil, mapKeyOpError(err)
 	}
-
-	// Parse wrapping algorithm
-	algorithm := backend.WrappingAlgorithm(params.Algorithm)
-
-	// Get import parameters
-	importParams, err := importExportBackend.GetImportParameters(ctx, attrs, algorithm)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get import parameters", Err: err}
-	}
-
-	// Encode public key to PEM
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(importParams.WrappingPublicKey)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal public key", Err: err}
-	}
-
-	pemBlock := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubKeyBytes,
-	}
-	pubKeyPEM := string(pem.EncodeToMemory(pemBlock))
 
 	result := GetImportParametersResult{
-		WrappingPublicKeyPEM: pubKeyPEM,
-		ImportToken:          importParams.ImportToken,
-		Algorithm:            string(importParams.Algorithm),
-		KeySpec:              importParams.KeySpec,
+		WrappingPublicKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: resp.WrappingPublicKey})),
+		ImportToken:          resp.ImportToken,
+		Algorithm:            resp.Algorithm,
+		KeySpec:              resp.KeySpec,
 	}
-
-	// Add expiration time if present
-	if importParams.ExpiresAt != nil {
-		expiresAt := importParams.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
+	if resp.ExpiresAt != "" {
+		expiresAt := resp.ExpiresAt
 		result.ExpiresAt = &expiresAt
 	}
 
 	return result, nil
 }
 
-// handleWrapKey handles wrapping key material for secure transport
 func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params WrapKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {

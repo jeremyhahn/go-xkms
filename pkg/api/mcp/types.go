@@ -398,6 +398,18 @@ type GetImportParametersParams struct {
 	KeyID     string `json:"key_id"`
 	Backend   string `json:"backend"`
 	Algorithm string `json:"algorithm"` // Wrapping algorithm
+	// KeyType names the ALGORITHM of the key the caller intends to import,
+	// with the vocabulary ImportKeyParams.KeyType takes ("rsa", "ecdsa",
+	// "ed25519", "symmetric" or "aes"), so the backend can say in key_spec
+	// what it will accept. Distinct from Algorithm, the WRAPPING algorithm.
+	// Absent, the backend cannot name a spec and answers UNKNOWN, and the
+	// caller learns the intended algorithm only at import time.
+	KeyType string `json:"key_type,omitempty"`
+	// KeySize is the modulus size in bits for RSA, or the key length in bits
+	// for symmetric material, as on ImportKeyParams.
+	KeySize int `json:"key_size,omitempty"`
+	// Curve names the EC curve for an "ecdsa" key, as on ImportKeyParams.
+	Curve string `json:"curve,omitempty"`
 }
 
 // GetImportParametersResult represents the import parameters response
