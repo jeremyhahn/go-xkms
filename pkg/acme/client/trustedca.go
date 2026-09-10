@@ -56,11 +56,10 @@ import (
 // Version is the library version.
 const Version = "0.1.0"
 
-// Default network addresses and URL prefixes.
+// Default network addresses.
 const (
-	DefaultACMEAddr          = ":8443"
-	DefaultExternalURLPrefix = "https://localhost"
-	DefaultAdminAddr         = ":9443"
+	DefaultACMEAddr  = ":8443"
+	DefaultAdminAddr = ":9443"
 )
 
 // Common errors.
@@ -283,7 +282,14 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		externalURL = tca.config.ACME.ExternalURL
 	}
 	if externalURL == "" {
-		externalURL = DefaultExternalURLPrefix + acmeListenAddr
+		// No advertised URL was configured: derive one from the listen
+		// address so a wildcard bind advertises localhost and a named bind
+		// advertises its name, never a host glued to a raw bind address.
+		derived, deriveErr := AdvertisedURL("https", acmeListenAddr)
+		if deriveErr != nil {
+			return caerrors.InternalServerError("failed to derive external URL: %v", deriveErr)
+		}
+		externalURL = derived
 	}
 
 	// Get TLS config from CA (TLS 1.3 enforced)

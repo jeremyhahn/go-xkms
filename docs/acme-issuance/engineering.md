@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ## Exported surface
 
@@ -71,6 +71,14 @@ once, to the externally visible base.
   order; it does not queue it.
 - **Under pressure the circuit breaker refuses new orders.** Degradation never
   means "issue without validating".
+- **An advertised URL is configured or derived, never glued to a bind
+  address.** `TrustedCA.Serve` advertises `acme.external_url` (or
+  `WithExternalURL`) as given; with neither set it derives the URL from the
+  listen address through `acmeclient.AdvertisedURL`, which splits host and
+  port, so `0.0.0.0:9443` advertises `https://localhost:9443` and
+  `ca.example.com:8443` advertises itself. The standalone client's
+  `serve.api_base_url` follows the same rule. Deriving from an address with no
+  port is an `AdvertisedURLError` (#140).
 
 ## Error semantics
 
@@ -131,6 +139,18 @@ cluster:
 
 `RaftACMEConfigError` (`Field`, `Reason`) renders as
 `cluster: raft_enrollment.acme.<field>: <reason>`.
+
+The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`) carries its
+own advertised URL, `acme.external_url`; `Validate` requires it, and a caller
+that skips validation gets the derived default described under Invariants.
+The standalone client's browser UI is told the origin the API is reachable at
+by `serve.api_base_url` (`--api-base-url`, `ACME_CLIENT_SERVE_API_BASE_URL`),
+derived from `serve.addr` when empty. The UI appends `/api/v1` and the
+endpoint path itself, so the origin never carries `/api/v1` (a configured
+value ending in it is refused), and the same contract holds for the Wails
+desktop binding `GetApiBaseUrl`. `pkg/webui` renders the value into
+`index.html` as a JSON-encoded JavaScript string literal, so it cannot
+terminate the injected script.
 
 Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
 which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See

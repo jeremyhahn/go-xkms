@@ -104,7 +104,8 @@ func (a *App) Run(assets fs.FS) error {
 // The Svelte app calls this once at startup to discover the embedded
 // REST API endpoint.
 func (a *App) GetApiBaseUrl() string {
-	return fmt.Sprintf("http://localhost:%d/api/v1", a.apiPort)
+	// The origin only: the frontend appends /api/v1 and the endpoint path.
+	return fmt.Sprintf("http://localhost:%d", a.apiPort)
 }
 
 // Port returns the port the embedded API server is listening on.

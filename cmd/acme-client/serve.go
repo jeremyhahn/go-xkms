@@ -32,16 +32,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/webui"
 )
 
-// ErrServeConfig indicates a missing or invalid serve command configuration.
-type ErrServeConfig struct {
-	Detail string
-}
-
-// Error returns the error message.
-func (e *ErrServeConfig) Error() string {
-	return "serve: invalid configuration: " + e.Detail
-}
-
 // ErrServeStart indicates the serve command failed to start the HTTP server.
 type ErrServeStart struct {
 	Detail string
@@ -65,21 +55,18 @@ Examples:
   # Start without TLS for development
   trusted-acme-client serve --no-tls --addr :8080
 
-  # Custom bind address
-  trusted-acme-client serve --addr 0.0.0.0:9443 --tls-cert cert.pem --tls-key key.pem`,
+  # Custom bind address; the browser UI is told to reach the API at localhost
+  trusted-acme-client serve --addr 0.0.0.0:9443 --tls-cert cert.pem --tls-key key.pem
+
+  # Bind every interface but advertise the name clients use to reach the API
+  trusted-acme-client serve --addr 0.0.0.0:9443 --api-base-url https://acme.example.com:9443 \
+    --tls-cert cert.pem --tls-key key.pem`,
 	RunE: runServe,
 }
 
 func init() {
-	serveCmd.Flags().String("addr", ":8443", "Listen address (host:port)")
-	serveCmd.Flags().String("tls-cert", "", "TLS certificate file path")
-	serveCmd.Flags().String("tls-key", "", "TLS private key file path")
-	serveCmd.Flags().Bool("no-tls", false, "Disable TLS (development/testing only)")
-
-	_ = viper.BindPFlag("serve.addr", serveCmd.Flags().Lookup("addr"))
-	_ = viper.BindPFlag("serve.tls_cert", serveCmd.Flags().Lookup("tls-cert"))
-	_ = viper.BindPFlag("serve.tls_key", serveCmd.Flags().Lookup("tls-key"))
-	_ = viper.BindPFlag("serve.no_tls", serveCmd.Flags().Lookup("no-tls"))
+	registerServeFlags(serveCmd.Flags())
+	bindServeFlags(serveCmd.Flags())
 
 	rootCmd.AddCommand(serveCmd)
 }
@@ -108,12 +95,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	router := clientapi.NewRouter(nil, svc, cfg, logger)
 
-	// Build the API base URL that the frontend needs to find the API.
-	scheme := "https"
-	if noTLS {
-		scheme = "http"
+	// The API base URL the frontend dials is configuration; derived from the
+	// listen address only when the operator left it unset.
+	apiBaseURL, urlErr := advertisedAPIBaseURL(viper.GetString("serve.api_base_url"), noTLS, addr)
+	if urlErr != nil {
+		return urlErr
 	}
-	apiBaseURL := scheme + "://localhost" + addr + "/api/v1"
 
 	// Mount client SPA at /ui/client/ using the embedded frontend assets.
 	if err := webui.RegisterSPA(router, webui.ClientAssets, "/ui/client/", logger, webui.WithAPIBaseURL(apiBaseURL)); err != nil {
@@ -150,7 +137,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	go func() {
 		logger.Info("serving ACME client",
 			slog.String("addr", addr),
-			slog.String("url", scheme+"://"+addr+"/ui/client/"),
+			slog.String("api_base_url", apiBaseURL),
 			slog.Bool("tls", !noTLS),
 		)
 		if noTLS {

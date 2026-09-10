@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -39,7 +39,10 @@ URL is `https://<host>:<rest_port>/api/v1/acme/directory` — that is the form t
 cluster enrollment config uses (`pkg/config/config.go:710`). Setting
 `baseRESTURI` wrong yields doubled prefixes such as
 `https://host/api/v1/api/v1/acme/new-account`; the code comments this at
-`pkg/acme/server/handlers/service.go:581`.
+`pkg/acme/server/handlers/service.go:581`. The standalone `TrustedCA` takes
+`baseRESTURI` from `acme.external_url`, and derives it from the listen address
+when that is empty (`acmeclient.AdvertisedURL`): a wildcard bind advertises
+`https://localhost:<port>`, a named bind advertises its name.
 
 `POST-as-GET` is used throughout, per RFC 8555 §6.3: reads are POSTs with an
 empty payload, signed by the account key. There are no unauthenticated reads of

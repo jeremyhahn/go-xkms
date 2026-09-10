@@ -14,6 +14,7 @@
 package webui
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -183,6 +184,45 @@ func TestWithAPIBaseURL_InjectsBeforeHead(t *testing.T) {
 	}
 	if !strings.Contains(body, `<div id="app"></div>`) {
 		t.Error("the SPA shell was corrupted by the injection")
+	}
+}
+
+// TestWithAPIBaseURL_EscapesTheInjectedValue proves that a base URL carrying
+// a quote and a closing script tag is rendered as one JavaScript string
+// literal: the raw text never appears in the page, so it cannot end the
+// injected script and run as markup, and the literal decodes back to the
+// configured value.
+func TestWithAPIBaseURL_EscapesTheInjectedValue(t *testing.T) {
+	const hostile = `https://acme.example.com/";</script><script>alert(1)</script>`
+	h, err := NewHandler(distFS(), slog.Default(), WithAPIBaseURL(hostile))
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	rec := get(t, h, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `";</script><script>alert(1)</script>`) {
+		t.Fatalf("the configured value was injected unescaped:\n%s", body)
+	}
+	if strings.Count(body, "</script>") != 1 {
+		t.Fatalf("the page carries %d closing script tags, want the injected one only:\n%s", strings.Count(body, "</script>"), body)
+	}
+
+	start := strings.Index(body, "window.__API_BASE_URL__=")
+	if start < 0 {
+		t.Fatalf("no injection in:\n%s", body)
+	}
+	literal := body[start+len("window.__API_BASE_URL__="):]
+	literal = literal[:strings.Index(literal, ";</script>")]
+	var decoded string
+	if err := json.Unmarshal([]byte(literal), &decoded); err != nil {
+		t.Fatalf("the injected literal %s is not a JSON string: %v", literal, err)
+	}
+	if decoded != hostile {
+		t.Fatalf("the literal decodes to %q, want the configured value %q", decoded, hostile)
 	}
 }
 

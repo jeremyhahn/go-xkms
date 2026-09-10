@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1666,4 +1667,81 @@ func TestTrustedCA_Initialize_NilLoggerPath(t *testing.T) {
 	err := tca.initialize()
 	require.NoError(t, err)
 	assert.True(t, tca.initialized)
+}
+
+// TestTrustedCA_Serve_DerivesExternalURLFromListenAddress proves that a
+// TrustedCA with no configured external URL advertises the address it is bound
+// to: the directory document served to ACME clients carries
+// https://<bind host>:<port>, not a literal host glued to the raw bind address
+// (#140, item 12).
+func TestTrustedCA_Serve_DerivesExternalURLFromListenAddress(t *testing.T) {
+	acmePort := getAvailablePort(t)
+	listenAddr := fmt.Sprintf("127.0.0.1:%d", acmePort)
+
+	cfg := &TrustedCAConfig{
+		ACME: TCAACMEConfig{
+			HTTPSAddr: listenAddr,
+		},
+		Admin: AdminConfig{
+			Enabled: false,
+		},
+	}
+
+	tca, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(cfg),
+	)
+	require.NoError(t, err)
+	assert.Empty(t, tca.externalURL)
+	assert.Empty(t, cfg.ACME.ExternalURL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- tca.Serve(ctx)
+	}()
+	waitForListener(t, listenAddr)
+
+	// Verify the listener against the test CA's own certificate: the mock
+	// CA serves a self-signed certificate for "localhost", so the client
+	// trusts exactly that certificate and checks that name.
+	serverTLS, err := tca.CA().TLSConfig(ctx, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, serverTLS.Certificates)
+	serverCert, err := x509.ParseCertificate(serverTLS.Certificates[0].Certificate[0])
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(serverCert)
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:    roots,
+				ServerName: "localhost",
+				MinVersion: tls.VersionTLS13,
+			},
+		},
+		Timeout: 5 * time.Second,
+	}
+	resp, err := httpClient.Get("https://" + listenAddr + "/acme/directory")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var directory struct {
+		NewNonce   string `json:"newNonce"`
+		NewAccount string `json:"newAccount"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&directory))
+	assert.Equal(t, "https://"+listenAddr+"/acme/new-nonce", directory.NewNonce)
+	assert.Equal(t, "https://"+listenAddr+"/acme/new-account", directory.NewAccount)
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return after context cancellation")
+	}
 }

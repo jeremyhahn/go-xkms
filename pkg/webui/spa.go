@@ -14,6 +14,7 @@
 package webui
 
 import (
+	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -179,7 +180,7 @@ func (s *spaFileServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		injection := `<script>window.__API_BASE_URL__="` + s.apiBaseURL + `";</script>`
+		injection := "<script>window.__API_BASE_URL__=" + jsStringLiteral(s.apiBaseURL) + ";</script>"
 		html := strings.Replace(string(data), "</head>", injection+"</head>", 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(html))
@@ -203,4 +204,19 @@ func (s *spaFileServer) serveContent(w http.ResponseWriter, r *http.Request, sta
 		return
 	}
 	http.ServeContent(w, r, stat.Name(), stat.ModTime(), seeker)
+}
+
+// jsStringLiteral renders value as a JavaScript string literal that cannot
+// break out of the script it is embedded in. JSON encoding escapes quotes,
+// backslashes and control characters, and Go's encoder also escapes <, > and &
+// as \u003c, \u003e and \u0026, so "</script>" inside the value never closes
+// the injected tag. The value is operator configuration (the advertised API
+// base URL), not user input, but it is still rendered into every viewer's page.
+func jsStringLiteral(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		// A string never fails to encode; keep the page safe if it ever does.
+		return `""`
+	}
+	return string(encoded)
 }

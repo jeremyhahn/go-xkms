@@ -1,6 +1,6 @@
 # ACME Issuance — CLI
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
 
 Binary: **`trusted-acme-client`** (`cmd/acme-client`). Command groups:
 `account`, `cert`, `device`, `service`, plus `serve` and `version`.
@@ -143,13 +143,35 @@ callbacks).
 | Flag | Type | Default |
 |---|---|---|
 | `--addr` | string | `:8443` |
+| `--api-base-url` | string | `""` — derived from `--addr` when empty |
 | `--tls-cert` | string | `""` |
 | `--tls-key` | string | `""` |
 | `--no-tls` | bool | `false` — **development and testing only** |
 
+Every flag is also `serve.<key>` in the config file and `ACME_CLIENT_SERVE_<KEY>`
+in the environment (`serve.api_base_url` / `ACME_CLIENT_SERVE_API_BASE_URL`),
+flag over environment over file.
+
 ```
 trusted-acme-client serve --addr :8443 --tls-cert client.crt --tls-key client.key
 ```
+
+`--api-base-url` is the origin the browser UI is told to reach the REST API
+at, advertised verbatim: an absolute `http` or `https` URL, optionally with a
+mount prefix, and never ending in `/api/v1`, because the UI appends `/api/v1`
+and the endpoint path itself (a value ending in it is refused). When it is
+empty the origin is derived from the listen address: a wildcard bind (`:8443`,
+`0.0.0.0:8443`, `[::]:8443`) advertises `https://localhost:8443`, and a named
+or literal bind advertises that host. Bind every interface but publish the
+name clients use:
+
+```
+trusted-acme-client serve --addr 0.0.0.0:9443 --api-base-url https://acme.example.com:9443 \
+    --tls-cert client.crt --tls-key client.key
+```
+
+The value is rendered into the served page as a JavaScript string literal, so
+a quote or a closing tag in it cannot break out of the injected script.
 
 Never run `--no-tls` anywhere real. It is in the flag set for local test loops.
 
