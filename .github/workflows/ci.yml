@@ -189,12 +189,11 @@ jobs:
 
       - name: Install and configure SoftHSM2
         run: |
-          sudo apt-get update
           # libicu-dev/libusb-1.0-0-dev: unconditional cgo deps of the module
           # graph (dolthub/go-icu-regex, google/gousb via go-qrdb) -- needed
           # even for the default (non-hardware) build tags, because
           # CGO_ENABLED defaults to 1 whenever a C toolchain is present.
-          sudo apt-get install -y libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
           # Create token directory
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           # Create SoftHSM2 config
@@ -347,8 +346,7 @@ jobs:
       # of inheriting it.
       - name: Install cgo dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
       # The whole module, not a hand-picked subset. sdk/go is the public SDK
       # contract every downstream consumer compiles against, and it re-exports
@@ -609,8 +607,7 @@ jobs:
       # tags this job cares about.
       - name: Install cgo dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
       # These call the Make targets rather than reimplementing them in YAML,
       # so what CI enforces and what a developer runs locally cannot drift.
@@ -634,6 +631,13 @@ jobs:
       # formats; no network, no host mutation, under a second.
       - name: Test the pinned-version gate
         run: .github/scripts/require-tool-test.sh
+
+      # Same reasoning for the apt step every cgo job runs (#342): the script
+      # must skip present packages, retry a bounded number of times, and
+      # trust dpkg over apt's exit status. Fakes on a replaced PATH; no
+      # network, no host mutation, under a second.
+      - name: Test the apt dependency step
+        run: .github/scripts/apt-deps-test.sh
 
       # NO NETWORK INSTALL (#189). golangci-lint is baked into the self-hosted
       # runner image at GOLANGCI_LINT_VERSION, in /usr/local/bin. The step this
@@ -696,8 +700,7 @@ jobs:
 
       - name: Install cgo dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
       - name: Verify module integrity
         run: go mod verify
@@ -788,7 +791,6 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
           # libicu-dev: github.com/dolthub/go-icu-regex (pulled in transitively
           # via go-qrdb's embedded go-mysql-server) needs unicode/uregex.h to
           # compile under CGO. libusb-1.0-0-dev: github.com/google/gousb
@@ -796,7 +798,7 @@ jobs:
           # unconditional dependencies of the module graph, not gated by any
           # of this job's build tags, so every CGO_ENABLED=1 build here needs
           # them regardless of which backend tags are requested.
-          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
 
       - name: Build ${{ matrix.binary }} with all backends
         env:
@@ -849,7 +851,7 @@ jobs:
       - name: acme-client GUI toolchain
         if: matrix.binary == 'xkmsctl'
         run: |
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo .github/scripts/apt-deps.sh libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: acme-client compiles with the production GUI tags
         if: matrix.binary == 'xkmsctl'
@@ -908,8 +910,7 @@ jobs:
       # CGO_ENABLED defaults to 1.
       - name: Install cgo dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
       - name: Build all packages (tags="${{ matrix.tags }}")
         run: go build -tags "${{ matrix.tags }}" ./...
@@ -1157,12 +1158,11 @@ jobs:
 
       - name: Install dependencies for hardware backends
         run: |
-          sudo apt-get update
           # libicu-dev/libusb-1.0-0-dev: see the "build" job's comment --
           # unconditional cgo deps of the module graph (dolthub/go-icu-regex,
           # google/gousb via go-qrdb), needed for any CGO_ENABLED=1 build
           # regardless of tags.
-          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
 
       - name: Configure SoftHSM2
         run: |
@@ -1235,11 +1235,10 @@ jobs:
 
       - name: Install simulator build dependencies
         run: |
-          sudo apt-get update
           # libssl-dev: go-tpm-tools/simulator compiles the reference TPM
           # with cgo and links it against -lcrypto. libicu-dev and
           # libusb-1.0-0-dev: see the "build" job's comment.
-          sudo apt-get install -y libssl-dev libicu-dev libusb-1.0-0-dev
+          sudo .github/scripts/apt-deps.sh libssl-dev libicu-dev libusb-1.0-0-dev
 
       - name: Run pkg/tpm2 on the simulator
         env:
