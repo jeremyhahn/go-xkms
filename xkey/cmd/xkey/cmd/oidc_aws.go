@@ -132,7 +132,7 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 
 // runAWSLogin is the core AWS login implementation that can be called from both
 // the aws subcommand and from provider-based login.
-func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string, callback oidcCallback) error {
+func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string, callback oidc.Callback) error {
 	if region == "" {
 		return ErrAWSMissingRegion
 	}
@@ -155,7 +155,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 	clientConfig := &aws.ClientConfig{
 		Region:      region,
 		CrossDevice: crossDevice,
-		RedirectURL: callback.awsRedirectURL(),
+		RedirectURL: callback.AWSRedirectURL(),
 	}
 
 	client, err := aws.NewClient(clientConfig, dpopKey)
@@ -186,7 +186,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 	// AWS sends the browser to 127.0.0.1, so the listener serves 127.0.0.1
 	// on the callback port; a configured host that cannot serve it is
 	// refused here, before any browser opens.
-	listenAddrs, err := callback.awsListenAddrs()
+	listener, err := callback.AWSListenAddrs()
 	if err != nil {
 		return err
 	}
@@ -202,17 +202,17 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 
 	// Start callback server
 	mux := http.NewServeMux()
-	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/", oidc.ExactPathHandler(listener.Path, func(w http.ResponseWriter, r *http.Request) {
 		handleAWSCallback(w, r, codeChan, errChan, receivedState)
-	})
+	}))
 
-	listeners, err := bindCallback(listenAddrs)
+	listeners, err := oidc.BindCallback(ctx, nil, listener.Addrs)
 	if err != nil {
 		return &WrappedError{Msg: "failed to start callback server", Err: err}
 	}
 
 	server := &http.Server{Handler: mux}
-	serveCallback(server, listeners, errChan)
+	oidc.ServeCallback(server, listeners, errChan)
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
@@ -682,7 +682,7 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 	}
 	clientConfig := &aws.ClientConfig{
 		Region:      region,
-		RedirectURL: callback.awsRedirectURL(),
+		RedirectURL: callback.AWSRedirectURL(),
 	}
 
 	client, err := aws.NewClient(clientConfig, dpopKey)

@@ -249,7 +249,10 @@ host: a `localhost` redirect needs `localhost`, a loopback address or the
 empty host; an IP redirect needs that address or the empty host; any other
 name needs an explicit address or the empty host, never loopback. A
 combination that cannot serve the redirect is refused before the browser
-opens, as is a `--callback-port` outside 1-65535. AWS always sends
+opens, as is a `--callback-port` outside 1-65535. The listener answers on the
+redirect URL's path, whatever path the provider was registered with. The desktop GUI's OIDC
+login uses the same `oidc` section and the same rules; it has no flags, so
+the section is its only path. AWS always sends
 the browser to `127.0.0.1`, so `xkey oidc aws` serves `127.0.0.1` for
 `localhost`, `127.0.0.1` and the empty host, and refuses any other callback
 host before opening the browser.

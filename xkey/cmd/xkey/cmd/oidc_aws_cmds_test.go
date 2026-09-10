@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bytes"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -237,7 +238,7 @@ func TestRunOIDCAWS_RequiresRegion(t *testing.T) {
 
 func TestRunAWSLogin_RequiresRegion(t *testing.T) {
 	var buf bytes.Buffer
-	err := runAWSLogin(&buf, "", "", false, false, "", "", "", 0, "", false, "", "", oidcCallback{})
+	err := runAWSLogin(&buf, "", "", false, false, "", "", "", 0, "", false, "", "", oidc.Callback{})
 	assert.ErrorIs(t, err, ErrAWSMissingRegion)
 }
 

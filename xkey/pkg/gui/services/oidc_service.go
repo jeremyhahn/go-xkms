@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +33,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/pkg/browser"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -41,8 +41,6 @@ import (
 
 // Default OIDC service configuration values.
 const (
-	oidcCallbackPort    = "8085"
-	oidcCallbackPath    = "/callback"
 	oidcCallbackTimeout = 5 * time.Minute
 	oidcProvidersFile   = "oidc-providers.json"
 	oidcTokensFile      = "tokens.json"
@@ -194,6 +192,8 @@ type OIDCService struct {
 	refreshProcs  map[string]*refreshProcess
 	refreshMu     sync.Mutex
 	browserOpen   BrowserOpenFunc
+	callback      oidc.Callback
+	callbackErr   error
 }
 
 // NewOIDCService creates a new OIDCService.
@@ -201,12 +201,48 @@ func NewOIDCService(log *slog.Logger) *OIDCService {
 	if log == nil {
 		log = slog.Default()
 	}
+	defaults := xkeyconfig.DefaultConfig().OIDC
 	return &OIDCService{
 		log:          log.With("service", "oidc"),
 		providers:    make(map[string]*OIDCProviderEntry),
 		refreshProcs: make(map[string]*refreshProcess),
 		browserOpen:  browser.OpenURL,
+		callback:     oidc.Callback{Host: defaults.CallbackHost, Port: defaults.CallbackPort},
 	}
+}
+
+// SetCallback configures the local callback listener from the oidc section
+// of the unified config: the host the listener binds and the port of the
+// default redirect URL. Unset, the built-in defaults apply (#140, item 8).
+func (s *OIDCService) SetCallback(host string, port int) {
+	s.providersMu.Lock()
+	defer s.providersMu.Unlock()
+	s.callback = oidc.Callback{Host: host, Port: port}
+	s.callbackErr = nil
+}
+
+// SetCallbackUnavailable records that the oidc section could not be loaded,
+// so Login fails closed with the cause instead of binding the built-in
+// defaults in place of whatever the operator configured. SetCallback clears
+// it.
+func (s *OIDCService) SetCallbackUnavailable(err error) {
+	s.providersMu.Lock()
+	defer s.providersMu.Unlock()
+	s.callbackErr = err
+}
+
+// Callback returns the local callback listener configuration.
+func (s *OIDCService) Callback() oidc.Callback {
+	s.providersMu.RLock()
+	defer s.providersMu.RUnlock()
+	return s.callback
+}
+
+// callbackReady returns the error recorded by SetCallbackUnavailable, if any.
+func (s *OIDCService) callbackReady() error {
+	s.providersMu.RLock()
+	defer s.providersMu.RUnlock()
+	return s.callbackErr
 }
 
 // SetDataDir initializes the token store and loads providers from the
@@ -375,7 +411,7 @@ func (s *OIDCService) AddProvider(entry *OIDCProviderEntry) error {
 		entry.Type = OIDCProviderTypeStandard
 	}
 	if entry.RedirectURL == "" {
-		entry.RedirectURL = fmt.Sprintf("http://localhost:%s%s", oidcCallbackPort, oidcCallbackPath)
+		entry.RedirectURL = s.callback.RedirectURL()
 	}
 
 	cpy := *entry
@@ -507,6 +543,13 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		return &OIDCLoginResult{Success: false, Error: "AWS login is not yet supported in the GUI"}, nil
 	}
 
+	// A configuration that failed to load is not replaced by the built-in
+	// callback: the login fails closed with the cause.
+	if cfgErr := s.callbackReady(); cfgErr != nil {
+		s.log.Warn("login refused: OIDC callback configuration unavailable", "provider", providerName, "error", cfgErr)
+		return &OIDCLoginResult{Success: false, Error: "OIDC callback configuration unavailable: " + cfgErr.Error()}, nil
+	}
+
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -567,15 +610,15 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		return &OIDCLoginResult{Success: false, Error: err.Error()}, nil
 	}
 
-	// Parse redirect URL for port.
-	parsedRedirect, err := url.Parse(entry.RedirectURL)
+	// The listener serves the redirect URL's port on the configured
+	// callback host (the loopback pair for localhost), never every
+	// interface unless configured so; a callback host that cannot serve the
+	// redirect host, or a redirect the plain-http listener cannot serve, is
+	// refused here rather than waiting out the callback timeout.
+	listener, err := s.Callback().ListenAddrs(entry.RedirectURL)
 	if err != nil {
-		s.log.Warn("login failed: invalid redirect URL", "provider", providerName, "error", err)
-		return &OIDCLoginResult{Success: false, Error: "invalid redirect URL: " + err.Error()}, nil
-	}
-	port := parsedRedirect.Port()
-	if port == "" {
-		port = oidcCallbackPort
+		s.log.Warn("login failed: callback listener", "provider", providerName, "error", err)
+		return &OIDCLoginResult{Success: false, Error: err.Error()}, nil
 	}
 
 	// Start local callback server.
@@ -587,7 +630,9 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 	var receivedState atomic.Value
 
 	mux := http.NewServeMux()
-	mux.HandleFunc(oidcCallbackPath, func(w http.ResponseWriter, r *http.Request) {
+	// The handler answers on exactly the redirect URL's path, so a provider
+	// registered with any path reaches it and nothing else does.
+	mux.Handle("/", oidc.ExactPathHandler(listener.Path, func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 
 		if errParam := query.Get("error"); errParam != "" {
@@ -610,23 +655,16 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html><body><h1>Authentication Successful</h1><p>You may close this window.</p></body></html>"))
 		codeChan <- code
-	})
+	}))
 
-	lc := net.ListenConfig{
-		Control: setReuseAddr,
-	}
-	listener, err := lc.Listen(ctx, "tcp", ":"+port)
+	listeners, err := oidc.BindCallback(ctx, &net.ListenConfig{Control: setReuseAddr}, listener.Addrs)
 	if err != nil {
-		s.log.Warn("login failed: callback server", "provider", providerName, "port", port, "error", err)
-		return &OIDCLoginResult{Success: false, Error: "failed to start callback server on port " + port + ": " + err.Error()}, nil
+		s.log.Warn("login failed: callback server", "provider", providerName, "error", err)
+		return &OIDCLoginResult{Success: false, Error: "failed to start callback server: " + err.Error()}, nil
 	}
 
 	server := &http.Server{Handler: mux}
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			errChan <- serveErr
-		}
-	}()
+	oidc.ServeCallback(server, listeners, errChan)
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()

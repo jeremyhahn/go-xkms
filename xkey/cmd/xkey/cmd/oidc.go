@@ -39,6 +39,8 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 )
 
 // Default OIDC configuration values.
@@ -513,7 +515,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if redirectURL == "" {
-		redirectURL = callback.redirectURL()
+		redirectURL = callback.RedirectURL()
 	}
 
 	if issuer == "" {
@@ -553,7 +555,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	// The listener serves the redirect URL's port on the configured callback
 	// host (both loopback families for localhost), never on every interface
 	// unless the operator configured an empty host.
-	listenAddrs, err := callback.listenAddrs(redirectURL)
+	listener, err := callback.ListenAddrs(redirectURL)
 	if err != nil {
 		return err
 	}
@@ -569,17 +571,19 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 
 	// Start callback server
 	mux := http.NewServeMux()
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+	// The handler answers on exactly the redirect URL's path, so a provider
+	// registered with any path reaches it and nothing else does.
+	mux.Handle("/", oidc.ExactPathHandler(listener.Path, func(w http.ResponseWriter, r *http.Request) {
 		handleOIDCCallback(w, r, codeChan, errChan, receivedState)
-	})
+	}))
 
-	listeners, err := bindCallback(listenAddrs)
+	listeners, err := oidc.BindCallback(ctx, nil, listener.Addrs)
 	if err != nil {
 		return &MessageError{Msg: fmt.Sprintf("failed to start callback server: %v", err)}
 	}
 
 	server := &http.Server{Handler: mux}
-	serveCallback(server, listeners, errChan)
+	oidc.ServeCallback(server, listeners, errChan)
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
@@ -1041,7 +1045,7 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		redirectURL = callback.redirectURL()
+		redirectURL = callback.RedirectURL()
 	}
 
 	provider := OIDCProvider{

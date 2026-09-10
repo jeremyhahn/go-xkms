@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 )
 
 // withLoadedConfig installs cfg as the loaded configuration for the test.
@@ -52,7 +53,7 @@ func callbackTestCmd() *cobra.Command {
 }
 
 // mustResolve resolves the callback for cmd, failing the test on error.
-func mustResolve(t *testing.T, cmd *cobra.Command) oidcCallback {
+func mustResolve(t *testing.T, cmd *cobra.Command) oidc.Callback {
 	t.Helper()
 	callback, err := resolveOIDCCallback(cmd)
 	require.NoError(t, err)
@@ -65,20 +66,20 @@ func mustResolve(t *testing.T, cmd *cobra.Command) oidcCallback {
 // (#140, items 7 and 13).
 func TestResolveOIDCCallback_ConfigurationThenFlags(t *testing.T) {
 	withLoadedConfig(t, nil)
-	assert.Equal(t, oidcCallback{Host: "localhost", Port: 8085}, mustResolve(t, callbackTestCmd()))
+	assert.Equal(t, oidc.Callback{Host: "localhost", Port: 8085}, mustResolve(t, callbackTestCmd()))
 
 	cfg := xkeyconfig.DefaultConfig()
 	cfg.OIDC.CallbackHost = "10.0.0.5"
 	cfg.OIDC.CallbackPort = 9090
 	withLoadedConfig(t, cfg)
-	assert.Equal(t, oidcCallback{Host: "10.0.0.5", Port: 9090}, mustResolve(t, callbackTestCmd()))
+	assert.Equal(t, oidc.Callback{Host: "10.0.0.5", Port: 9090}, mustResolve(t, callbackTestCmd()))
 
 	cmd := callbackTestCmd()
 	require.NoError(t, cmd.Flags().Set("callback-host", "::1"))
-	assert.Equal(t, oidcCallback{Host: "::1", Port: 9090}, mustResolve(t, cmd), "the host flag overrides the section, the port keeps the section")
+	assert.Equal(t, oidc.Callback{Host: "::1", Port: 9090}, mustResolve(t, cmd), "the host flag overrides the section, the port keeps the section")
 
 	require.NoError(t, cmd.Flags().Set("callback-port", "9191"))
-	assert.Equal(t, oidcCallback{Host: "::1", Port: 9191}, mustResolve(t, cmd))
+	assert.Equal(t, oidc.Callback{Host: "::1", Port: 9191}, mustResolve(t, cmd))
 }
 
 // TestResolveOIDCCallback_RejectsAPortOutsideTheRange proves that an explicit
@@ -95,7 +96,7 @@ func TestResolveOIDCCallback_RejectsAPortOutsideTheRange(t *testing.T) {
 		require.True(t, errors.As(err, &portErr))
 		assert.Equal(t, value, portErr.Value)
 		assert.Contains(t, err.Error(), value)
-		assert.Equal(t, oidcCallback{}, callback)
+		assert.Equal(t, oidc.Callback{}, callback)
 	}
 	for _, value := range []string{"1", "65535"} {
 		cmd := callbackTestCmd()
@@ -113,152 +114,7 @@ func TestResolveOIDCCallback_ToleratesCommandsWithoutTheFlags(t *testing.T) {
 	cfg := xkeyconfig.DefaultConfig()
 	cfg.OIDC.CallbackPort = 7777
 	withLoadedConfig(t, cfg)
-	assert.Equal(t, oidcCallback{Host: "localhost", Port: 7777}, mustResolve(t, &cobra.Command{Use: "bare"}))
-}
-
-// TestOIDCCallback_RedirectURLs proves the default OIDC redirect URL sends
-// the browser to a host the listener serves: localhost for the loopback pair
-// and the every-interface host, the callback host itself otherwise (IPv6
-// bracketed); and that the AWS redirect keeps its fixed host with the
-// configured port.
-func TestOIDCCallback_RedirectURLs(t *testing.T) {
-	for host, want := range map[string]string{
-		"localhost": "http://localhost:9090/callback",
-		"":          "http://localhost:9090/callback",
-		"127.0.0.1": "http://127.0.0.1:9090/callback",
-		"10.0.0.5":  "http://10.0.0.5:9090/callback",
-		"::1":       "http://[::1]:9090/callback",
-	} {
-		assert.Equal(t, want, oidcCallback{Host: host, Port: 9090}.redirectURL(), "host %q", host)
-	}
-	assert.Equal(t, "http://127.0.0.1:9090/oauth/callback", oidcCallback{Host: "10.0.0.5", Port: 9090}.awsRedirectURL())
-}
-
-// TestOIDCCallback_ListenAddrs proves the listener binds, on the redirect
-// URL's port, addresses that serve the redirect URL's host: the loopback
-// pair for a localhost redirect, the literal for an IP redirect, the
-// configured address for a named redirect, every interface for an empty
-// callback host; and that the port comes from the redirect URL.
-func TestOIDCCallback_ListenAddrs(t *testing.T) {
-	pair := func(port string) []callbackAddr { return loopbackPair(port) }
-	cases := []struct {
-		name     string
-		host     string
-		redirect string
-		want     []callbackAddr
-	}{
-		{"localhost redirect, localhost host: loopback pair", "localhost", "http://localhost:8085/callback", pair("8085")},
-		{"localhost redirect, loopback address host: loopback pair", "127.0.0.1", "http://localhost:8085/callback", pair("8085")},
-		{"localhost redirect, ipv6 loopback host: loopback pair", "::1", "http://localhost:8085/callback", pair("8085")},
-		{"redirect port wins over the callback port", "localhost", "http://localhost:9000/callback", pair("9000")},
-		{"http default port", "localhost", "http://localhost/callback", pair("80")},
-		{"ip redirect, same host", "10.0.0.5", "http://10.0.0.5:8085/callback", []callbackAddr{{Addr: "10.0.0.5:8085"}}},
-		{"ipv6 redirect, same host, bracketed", "fd00::1", "http://[fd00::1]:8085/callback", []callbackAddr{{Addr: "[fd00::1]:8085"}}},
-		{"loopback ip redirect, localhost host", "localhost", "http://127.0.0.1:9000/callback", []callbackAddr{{Addr: "127.0.0.1:9000"}}},
-		{"named redirect, configured address", "10.0.0.5", "http://callbacks.example.com:8085/callback", []callbackAddr{{Addr: "10.0.0.5:8085"}}},
-		{"empty host binds every interface for any redirect", "", "http://callbacks.example.com:8085/callback", []callbackAddr{{Addr: ":8085"}}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := oidcCallback{Host: tc.host, Port: 8085}.listenAddrs(tc.redirect)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
-}
-
-// TestOIDCCallback_ListenAddrs_RefusesHostsThatCannotServeTheRedirect proves
-// that a callback host the browser would never reach for the redirect URL's
-// host is a typed refusal naming both hosts, before any browser opens.
-func TestOIDCCallback_ListenAddrs_RefusesHostsThatCannotServeTheRedirect(t *testing.T) {
-	cases := []struct {
-		name     string
-		host     string
-		redirect string
-	}{
-		{"localhost redirect from a lan address", "10.0.0.5", "http://localhost:8085/callback"},
-		{"ip redirect from localhost", "localhost", "http://10.0.0.5:8085/callback"},
-		{"ip redirect from another address", "10.0.0.6", "http://10.0.0.5:8085/callback"},
-		{"named redirect from localhost", "localhost", "http://callbacks.example.com:8085/callback"},
-		{"named redirect from a loopback address", "127.0.0.1", "http://callbacks.example.com:8085/callback"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := oidcCallback{Host: tc.host, Port: 8085}.listenAddrs(tc.redirect)
-			require.Error(t, err)
-			assert.Nil(t, got)
-			var hostErr *OIDCCallbackHostError
-			require.True(t, errors.As(err, &hostErr))
-			assert.Equal(t, tc.host, hostErr.Host)
-			assert.Contains(t, err.Error(), tc.host)
-			assert.Contains(t, err.Error(), hostErr.RedirectHost)
-		})
-	}
-}
-
-// TestOIDCCallback_ListenAddrs_RejectsUnservableRedirects proves that a
-// redirect URL that does not parse, names no host, or is not plain http (the
-// listener cannot answer TLS) is a typed error naming the URL.
-func TestOIDCCallback_ListenAddrs_RejectsUnservableRedirects(t *testing.T) {
-	for _, redirect := range []string{
-		"://broken", "ftp://localhost/callback", "localhost/callback",
-		"https://localhost:8443/callback", "https://localhost/callback", "http:///callback",
-	} {
-		t.Run(redirect, func(t *testing.T) {
-			got, err := oidcCallback{Host: "localhost", Port: 8085}.listenAddrs(redirect)
-			require.Error(t, err)
-			assert.Nil(t, got)
-			var redirectErr *OIDCRedirectURLError
-			require.True(t, errors.As(err, &redirectErr))
-			assert.Equal(t, redirect, redirectErr.URL)
-			assert.Contains(t, err.Error(), redirect)
-		})
-	}
-}
-
-// TestOIDCCallback_AWSListenAddrs proves that the AWS listener always serves
-// the fixed 127.0.0.1 redirect host: localhost and 127.0.0.1 bind it, an
-// empty host binds every interface, and any other host is a typed refusal
-// naming both hosts, before a browser could be sent somewhere unserved.
-func TestOIDCCallback_AWSListenAddrs(t *testing.T) {
-	for host, want := range map[string]string{"localhost": "127.0.0.1:8085", "127.0.0.1": "127.0.0.1:8085", "": ":8085"} {
-		got, err := oidcCallback{Host: host, Port: 8085}.awsListenAddrs()
-		require.NoError(t, err, "host %q", host)
-		assert.Equal(t, []callbackAddr{{Addr: want}}, got, "host %q", host)
-	}
-	for _, host := range []string{"::1", "10.0.0.5", "callbacks.example.com"} {
-		got, err := oidcCallback{Host: host, Port: 8085}.awsListenAddrs()
-		require.Error(t, err, "host %q", host)
-		assert.Nil(t, got)
-		var hostErr *OIDCCallbackHostError
-		require.True(t, errors.As(err, &hostErr))
-		assert.Equal(t, host, hostErr.Host)
-		assert.Equal(t, "127.0.0.1", hostErr.RedirectHost)
-		assert.Contains(t, err.Error(), host)
-	}
-}
-
-// TestBindCallback_LoopbackPair proves the loopback pair binds and serves on
-// both families where available, and that a taken required address fails
-// the bind and releases the optional one that was already opened.
-func TestBindCallback_LoopbackPair(t *testing.T) {
-	port := strconv.Itoa(occupyLoopbackPort(t))
-	free := freeLoopbackPort(t)
-
-	listeners, err := bindCallback([]callbackAddr{{Addr: "127.0.0.1:" + free}, {Addr: "[::1]:" + free, Optional: true}})
-	require.NoError(t, err)
-	require.NotEmpty(t, listeners)
-	for _, listener := range listeners {
-		require.NoError(t, listener.Close())
-	}
-
-	listeners, err = bindCallback([]callbackAddr{{Addr: "[::1]:" + free, Optional: true}, {Addr: "127.0.0.1:" + port}})
-	require.Error(t, err)
-	assert.Nil(t, listeners)
-	assert.Contains(t, err.Error(), "127.0.0.1:"+port)
-	released, err := net.Listen("tcp", "127.0.0.1:"+free)
-	require.NoError(t, err, "the optional listener must be released when the required bind fails")
-	require.NoError(t, released.Close())
+	assert.Equal(t, oidc.Callback{Host: "localhost", Port: 7777}, mustResolve(t, &cobra.Command{Use: "bare"}))
 }
 
 // freeLoopbackPort returns a loopback port that is currently free.
@@ -455,7 +311,7 @@ func TestRunOIDCLogin_RejectsAnUnservableRedirectURL(t *testing.T) {
 		cmd, _ := oidcLoginTestCmd(t, fakeIssuer(t).URL)
 		require.NoError(t, cmd.Flags().Set("redirect-url", redirect))
 		err := runOIDCLogin(cmd, nil)
-		var redirectErr *OIDCRedirectURLError
+		var redirectErr *oidc.RedirectURLError
 		require.True(t, errors.As(err, &redirectErr), "%s: got %T: %v", redirect, err, err)
 	}
 
@@ -463,7 +319,7 @@ func TestRunOIDCLogin_RejectsAnUnservableRedirectURL(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("callback-host", "10.0.0.5"))
 	require.NoError(t, cmd.Flags().Set("redirect-url", "http://localhost:8085/callback"))
 	err := runOIDCLogin(cmd, nil)
-	var hostErr *OIDCCallbackHostError
+	var hostErr *oidc.CallbackHostError
 	require.True(t, errors.As(err, &hostErr), "got %T: %v", err, err)
 	assert.NotContains(t, out.String(), "redirect_uri", "no authorization URL may be shown before the refusal")
 }
@@ -479,7 +335,7 @@ func TestRunAWSLogin_BindsTheConfiguredCallbackHostAndPort(t *testing.T) {
 	err := loginError(t, func() error {
 		return runAWSLogin(&buf, "us-east-1", "default", false, true, "none",
 			filepath.Join(dir, "credentials"), "", 0, filepath.Join(dir, "session.json"), false, "", "",
-			oidcCallback{Host: "127.0.0.1", Port: port})
+			oidc.Callback{Host: "127.0.0.1", Port: port})
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to start callback server")
@@ -495,9 +351,9 @@ func TestRunAWSLogin_RefusesAHostThatCannotServeTheAWSRedirect(t *testing.T) {
 	err := loginError(t, func() error {
 		return runAWSLogin(&buf, "us-east-1", "default", false, true, "none",
 			filepath.Join(dir, "credentials"), "", 0, filepath.Join(dir, "session.json"), false, "", "",
-			oidcCallback{Host: "::1", Port: 8085})
+			oidc.Callback{Host: "::1", Port: 8085})
 	})
-	var hostErr *OIDCCallbackHostError
+	var hostErr *oidc.CallbackHostError
 	require.True(t, errors.As(err, &hostErr), "got %T: %v", err, err)
 	assert.NotContains(t, buf.String(), "http", "no authorization URL may be shown before the refusal")
 }
@@ -523,4 +379,63 @@ func TestRunOIDCProvidersAdd_DefaultsTheRedirectURLFromTheCallbackPort(t *testin
 	require.NoError(t, err)
 	require.Len(t, config.Providers, 1)
 	assert.Equal(t, "http://localhost:9090/callback", config.Providers[0].RedirectURL)
+}
+
+// TestRunOIDCLogin_AnswersOnTheRedirectURLPath proves the CLI callback
+// handler answers exactly the redirect URL's path: with an explicit
+// --redirect-url on a provider-specific path, the authorization URL carries
+// it, requests to a subtree, sibling or root get 404 without ending the
+// login, and a request to exactly that path ends it.
+func TestRunOIDCLogin_AnswersOnTheRedirectURLPath(t *testing.T) {
+	withLoadedConfig(t, nil)
+	port := freeLoopbackPort(t)
+	cmd, _, _ := oidcTestCmd(t)
+	registerOIDCCallbackFlags(cmd.Flags())
+	cmd.Flags().Bool("no-browser", false, "")
+	out := &lockedBuffer{}
+	cmd.SetOut(out)
+	setOIDCFlags(t, cmd, map[string]string{
+		"issuer":       fakeIssuer(t).URL,
+		"client-id":    "client",
+		"no-browser":   "true",
+		"scopes":       "openid",
+		"redirect-url": "http://127.0.0.1:" + port + "/oauth/cb",
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- runOIDCLogin(cmd, nil) }()
+
+	wantRedirect := "redirect_uri=http%3A%2F%2F127.0.0.1%3A" + port + "%2Foauth%2Fcb"
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(out.String(), wantRedirect) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the authorization URL never carried %s; output:\n%s", wantRedirect, out.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	for _, other := range []string{"/oauth/cb/", "/oauth/cb/x", "/oauth/other", "/"} {
+		stray, err := http.Get("http://127.0.0.1:" + port + other + "?error=access_denied")
+		require.NoError(t, err)
+		require.NoError(t, stray.Body.Close())
+		require.Equal(t, http.StatusNotFound, stray.StatusCode, "%s must not reach the callback handler", other)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("a request to another path ended the login: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	resp, err := http.Get("http://127.0.0.1:" + port + "/oauth/cb?error=access_denied&error_description=declined")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusOK, resp.StatusCode, "the handler must answer on the redirect path, not 404")
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "access_denied")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the callback did not end the login")
+	}
 }

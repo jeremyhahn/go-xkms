@@ -922,6 +922,18 @@ func (a *App) initializeDataDir() error {
 		}
 	}
 
+	// OIDC callback listener — the oidc section of the unified config, so
+	// the GUI login binds the same host and port the CLI does. Load returns
+	// the defaults when no file exists, so an error means the operator's
+	// configuration is broken; the login then fails closed rather than
+	// binding the built-in callback in its place.
+	if ucfg, cfgErr := config.Load(); cfgErr == nil {
+		a.oidcService.SetCallback(ucfg.OIDC.CallbackHost, ucfg.OIDC.CallbackPort)
+	} else {
+		a.log.Error("unified config failed to load; OIDC login is disabled until it is fixed", "error", cfgErr)
+		a.oidcService.SetCallbackUnavailable(cfgErr)
+	}
+
 	// OIDC storage — encrypted via barrier or plain file fallback.
 	if barrierBackend != nil {
 		if oidcErr := a.oidcService.SetBackend(barrierBackend, "oidc/"); oidcErr != nil {

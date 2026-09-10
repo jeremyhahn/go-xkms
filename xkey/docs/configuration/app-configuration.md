@@ -170,7 +170,17 @@ on `callback_host` at that port (the loopback pair for `localhost`).
 `127.0.0.1`, every interface for `""`, and refuses any other callback host
 before opening the browser, because AWS's redirect host is fixed at
 `127.0.0.1`. `--callback-host` and `--callback-port` override the section per
-command.
+command. The desktop GUI's OIDC login reads the same section (it has no
+flags) and binds the same way.
+
+### agent
+
+```yaml
+agent:
+  listen_address: ":9443"   # xkey agent start binds this (host:port; ":port" = every interface)
+```
+
+`--listen` on `xkey agent start` overrides the section for one run.
 
 ### agent
 
