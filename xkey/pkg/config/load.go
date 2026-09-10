@@ -17,6 +17,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 
@@ -93,12 +94,10 @@ func Load() (*Config, error) {
 			if !isConfigNotFoundError(sysErr) {
 				return nil, errors.Join(ErrConfigLoadFailed, sysErr)
 			}
-			// Neither file found; return defaults (valid first-run state).
-			cfg := DefaultConfig()
-			if err := cfg.Validate(); err != nil {
-				return nil, errors.Join(ErrConfigInvalid, err)
-			}
-			return cfg, nil
+			// Neither file found: the valid first-run state. The defaults
+			// and the environment still come through viper, so an
+			// XKEY_ variable applies, and is validated, with no file.
+			return unmarshalAndValidate(v)
 		}
 	}
 
@@ -136,12 +135,8 @@ func LoadFromHome(h *xhome.Home) (*Config, error) {
 			if !isConfigNotFoundError(sysErr) {
 				return nil, errors.Join(ErrConfigLoadFailed, sysErr)
 			}
-			// Neither file found; return defaults.
-			cfg := DefaultConfig()
-			if err := cfg.Validate(); err != nil {
-				return nil, errors.Join(ErrConfigInvalid, err)
-			}
-			return cfg, nil
+			// Neither file found: defaults and environment through viper.
+			return unmarshalAndValidate(v)
 		}
 	}
 
@@ -154,11 +149,6 @@ func newViperInstance() *viper.Viper {
 	v := viper.New()
 	v.SetConfigType("yaml")
 
-	// Set defaults from DefaultConfig so that missing keys resolve to
-	// sensible values after unmarshal.
-	defaults := DefaultConfig()
-	setViperDefaults(v, defaults)
-
 	// Bind environment variables with the XKEY_ prefix.
 	// XKEY_LOG_LEVEL maps to log.level, XKEY_BACKEND_DEFAULT maps to
 	// backend.default, etc.
@@ -166,25 +156,83 @@ func newViperInstance() *viper.Viper {
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 
+	// Register every leaf key with its default and its environment binding,
+	// so that environment variables and partial YAML files merge correctly.
+	registerConfigKeys(v, DefaultConfig())
+
 	return v
 }
 
-// setViperDefaults registers default values for all top-level config keys
-// so that environment variables and partial YAML files merge correctly.
-func setViperDefaults(v *viper.Viper, defaults *Config) {
-	v.SetDefault("policy", defaults.Policy)
-	v.SetDefault("backend", defaults.Backend)
-	v.SetDefault("fido2", defaults.FIDO2)
-	v.SetDefault("oath", defaults.OATH)
-	v.SetDefault("phone", defaults.Phone)
-	v.SetDefault("xkmsd", defaults.XKMSD)
-	v.SetDefault("tpm", defaults.TPM)
-	v.SetDefault("password_protection", defaults.PasswordProtection)
-	v.SetDefault("trust", defaults.Trust)
-	v.SetDefault("attestation", defaults.Attestation)
-	v.SetDefault("log", defaults.Log)
-	v.SetDefault("gui", defaults.GUI)
-	v.SetDefault("state", defaults.State)
+// registerConfigKeys walks cfg and registers each leaf key on v with the
+// field's value as the key's default.
+//
+// Registering leaves rather than whole sections is what makes the environment
+// reachable. AutomaticEnv only consults the environment for keys viper already
+// knows, and a section registered as one opaque struct default teaches viper
+// the section's name and nothing below it, so XKEY_XKMSD_ADDRESS was never
+// looked up (#140). A leaf default also keeps the merge deterministic: viper
+// assembles its settings from a flat key set, and a struct default sitting
+// beside a nested key for the same section is resolved in map order.
+//
+// Every registered key reads XKEY_<KEY>. A map or a list of objects
+// (backends.local, backends.remote, backends.defaults, fido2.extensions)
+// cannot be expressed by one variable, so a variable set for one of them
+// fails the load with ErrConfigLoadFailed instead of being ignored.
+func registerConfigKeys(v *viper.Viper, cfg *Config) {
+	walkConfigKeys(reflect.ValueOf(cfg).Elem(), "", func(key string, value reflect.Value) {
+		v.SetDefault(key, value.Interface())
+	})
+}
+
+// walkConfigKeys calls visit for every leaf field under value, with the key
+// built from the mapstructure tags joined by dots. Nested structs, embedded
+// or named, are descended; a nil pointer to a struct is descended through its
+// type with a zero value so its keys are still registered.
+func walkConfigKeys(value reflect.Value, prefix string, visit func(key string, value reflect.Value)) {
+	valueType := value.Type()
+	for i := range valueType.NumField() {
+		field := valueType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		name := configKeyName(field)
+		if name == "" {
+			continue
+		}
+		key := name
+		if prefix != "" {
+			key = prefix + "." + name
+		}
+		fieldValue := value.Field(i)
+		if fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct {
+			if fieldValue.IsNil() {
+				fieldValue = reflect.New(fieldValue.Type().Elem())
+			}
+			fieldValue = fieldValue.Elem()
+		}
+		if fieldValue.Kind() == reflect.Struct {
+			walkConfigKeys(fieldValue, key, visit)
+			continue
+		}
+		visit(key, fieldValue)
+	}
+}
+
+// configKeyName returns the key a struct field is decoded from: its
+// mapstructure tag without options, or "" for a field tagged "-".
+func configKeyName(field reflect.StructField) string {
+	tag, ok := field.Tag.Lookup("mapstructure")
+	if !ok {
+		return strings.ToLower(field.Name)
+	}
+	name, _, _ := strings.Cut(tag, ",")
+	if name == "-" {
+		return ""
+	}
+	if name == "" {
+		return strings.ToLower(field.Name)
+	}
+	return name
 }
 
 // unmarshalAndValidate decodes the viper state onto a DefaultConfig-initialised

@@ -8,9 +8,13 @@ xKey uses a single YAML configuration file that merges all subsystem settings (C
 |----------|------|-------------|
 | 1 | `~/.config/xkey/xkey.yaml` | User config (XDG standard) |
 | 2 | `/etc/xkey/xkey.yaml` | System-wide fallback |
-| 3 | Built-in defaults | Applied when no file exists |
+| 3 | Built-in defaults | The base every load starts from |
 
-If neither file exists, `DefaultConfig()` is returned. This is a valid first-run state.
+If neither file exists, the built-in defaults are loaded and the `XKEY_`
+environment overrides are still applied and validated on top of them, exactly
+as they would be over a file. This is a valid first-run state: the active
+configuration is defaults plus environment, never a file-less `DefaultConfig()`
+that ignores the environment.
 
 ## Partial Sections Merge Over Defaults
 
@@ -42,15 +46,29 @@ Three consequences worth knowing:
 
 ## Environment Variable Overrides
 
-All config fields can be overridden via environment variables with the `XKEY_` prefix. Nested keys use underscores:
+Every scalar key, and every list of scalars, can be set by an environment
+variable with the `XKEY_` prefix: the key path in upper case with `_` for `.`.
+The environment wins over the file, and the file wins over the default. An
+empty variable is the same as an absent one. Lists split on commas.
 
 ```bash
 XKEY_LOG_LEVEL=debug
 XKEY_BACKEND_DEFAULT=tpm2
+XKEY_BACKEND_TPM2_DEVICE=/dev/tpmrm0
 XKEY_GUI_THEME=dark
+XKEY_GUI_SERVER_ADDRESS=xkmsd.example.com:8443
 XKEY_TPM_DEVICE=/dev/tpmrm0
 XKEY_FIDO2_ALWAYS_UV=true
+XKEY_TRUST_ROOTS=/etc/xkey/root-a.pem,/etc/xkey/root-b.pem
+XKEY_POLICY_PLATFORM_PCRS=0,7
 ```
+
+A value from the environment is validated exactly like one from the file.
+
+Four keys cannot be set from the environment, because one variable cannot
+express a map or a list of objects: `backends.local`, `backends.remote`,
+`backends.defaults`, and `fido2.extensions`. A variable set for one of them
+fails the load rather than being ignored.
 
 ## Config Sections
 

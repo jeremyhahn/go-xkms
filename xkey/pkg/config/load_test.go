@@ -23,6 +23,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 func TestConfigDir_ReturnsNonEmptyStringEndingWithXkey(t *testing.T) {
@@ -340,33 +342,101 @@ state:
 // are applied when loading a config file. LoadFromPath creates its own viper
 // instance with XKEY_ env prefix binding, so setting XKEY_LOG_LEVEL should
 // override the value from the file.
+// TestLoadFromPath_EnvOverride proves that an XKEY_ environment variable
+// reaches its leaf whether the section is present in the file, absent from
+// it, or defaulted, and whatever the leaf's type (#140).
 func TestLoadFromPath_EnvOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
 
-	yamlContent := `log:
+	yamlContent := `xkmsd:
+  protocol: grpc
+  address: file.example.com:9443
+log:
   level: info
 `
 	require.NoError(t, os.WriteFile(cfgPath, []byte(yamlContent), 0600))
 
-	// Set env override. Viper's env key replacer maps "." to "_", so
-	// XKEY_LOG_LEVEL should map to log.level.
+	t.Setenv("XKEY_XKMSD_ADDRESS", "env.example.com:9443")
 	t.Setenv("XKEY_LOG_LEVEL", "debug")
+	t.Setenv("XKEY_TPM_DEVICE", "/dev/env-tpm")
+	t.Setenv("XKEY_FIDO2_ALWAYS_UV", "true")
+	t.Setenv("XKEY_GUI_CLIPBOARD_TIMEOUT", "5")
+	t.Setenv("XKEY_TRUST_ROOTS", "a.pem,b.pem")
+	t.Setenv("XKEY_GUI_SERVER_ADDRESS", "gui.example.com:8443")
+	t.Setenv("XKEY_BACKEND_TPM2_DEVICE", "/dev/env-backend-tpm")
+	t.Setenv("XKEY_POLICY_MIN_PIN_LENGTH", "8")
+	t.Setenv("XKEY_POLICY_PLATFORM_PCRS", "0,7")
 
 	cfg, err := LoadFromPath(cfgPath)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	// Viper binds XKEY_LOG_LEVEL to the flat key "log_level", not "log.level",
-	// because AutomaticEnv + SetEnvPrefix replaces the env prefix and uses
-	// underscore-delimited keys. For nested struct fields accessed via
-	// mapstructure, the env binding may not override the nested YAML value.
-	// If the env override does not take effect, this is a known viper
-	// limitation with nested structs and AutomaticEnv; in that case we
-	// accept the file value.
-	level := cfg.Log.Level
-	assert.True(t, level == "debug" || level == "info",
-		"expected log level to be 'debug' (env override) or 'info' (file value), got %q", level)
+	assert.Equal(t, "env.example.com:9443", cfg.XKMSD.Address, "environment must win over the file")
+	assert.Equal(t, "grpc", cfg.XKMSD.Protocol, "a file key the environment does not name keeps its file value")
+	assert.Equal(t, "debug", cfg.Log.Level, "environment must win over the file in a present section")
+	assert.Equal(t, "/dev/env-tpm", cfg.TPM.Device, "environment must win over the default in an absent section")
+	assert.True(t, cfg.FIDO2.AlwaysUV, "a bool leaf is settable")
+	assert.Equal(t, 5, cfg.GUI.ClipboardTimeout, "an int leaf is settable")
+	assert.Equal(t, []string{"a.pem", "b.pem"}, cfg.Trust.Roots, "a list of scalars splits on commas")
+	assert.Equal(t, "gui.example.com:8443", cfg.GUI.Server.Address, "a leaf two sections deep is settable")
+	assert.Equal(t, "/dev/env-backend-tpm", cfg.Backend.TPM2.Device, "a nested sub-section leaf is settable")
+	assert.Equal(t, 8, cfg.Policy.MinPINLength, "a policy leaf is settable")
+	assert.Equal(t, []int{0, 7}, cfg.Policy.PlatformPCRs, "a list of ints splits on commas")
+
+	assert.Equal(t, "/dev/tpmrm0", DefaultConfig().TPM.Device, "the probe value must differ from the default")
+}
+
+// TestLoadFromPath_EnvOverride_EmptyValueIsUnset proves that an environment
+// variable set to the empty string does not clobber the file value: an empty
+// variable is the same as an absent one.
+func TestLoadFromPath_EnvOverride_EmptyValueIsUnset(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("xkmsd:\n  address: file.example.com:9443\n"), 0600))
+
+	t.Setenv("XKEY_XKMSD_ADDRESS", "")
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "file.example.com:9443", cfg.XKMSD.Address)
+}
+
+// TestLoadFromPath_EnvOverride_InvalidValueIsRejected proves that a value
+// supplied by the environment goes through the same validation as one from
+// the file.
+func TestLoadFromPath_EnvOverride_InvalidValueIsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("log:\n  level: info\n"), 0600))
+
+	t.Setenv("XKEY_LOG_LEVEL", "shouting")
+
+	cfg, err := LoadFromPath(cfgPath)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrConfigInvalid)
+	assert.Contains(t, err.Error(), "log.level")
+}
+
+// TestLoadFromPath_EnvOverride_CompositeLeafIsRejected proves that a variable
+// set for a key one variable cannot express (a map, a list of objects) fails
+// the load with a typed error rather than being silently ignored.
+func TestLoadFromPath_EnvOverride_CompositeLeafIsRejected(t *testing.T) {
+	for _, envName := range []string{"XKEY_FIDO2_EXTENSIONS", "XKEY_BACKENDS_LOCAL", "XKEY_BACKENDS_DEFAULTS"} {
+		t.Run(envName, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			cfgPath := filepath.Join(tmpDir, "xkey.yaml")
+			require.NoError(t, os.WriteFile(cfgPath, []byte("log:\n  level: info\n"), 0600))
+
+			t.Setenv(envName, "not-a-map")
+
+			cfg, err := LoadFromPath(cfgPath)
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.ErrorIs(t, err, ErrConfigLoadFailed)
+		})
+	}
 }
 
 func TestIsConfigNotFoundError_WithOsErrNotExist(t *testing.T) {
@@ -443,6 +513,54 @@ func TestLoad_NoConfigFilesReturnsDefaults(t *testing.T) {
 	assert.Equal(t, defaults.Log.Level, cfg.Log.Level)
 	assert.Equal(t, defaults.GUI.WindowWidth, cfg.GUI.WindowWidth)
 	assert.Equal(t, defaults.GUI.WindowHeight, cfg.GUI.WindowHeight)
+}
+
+// TestLoad_NoConfigFiles_EnvironmentStillApplies proves that with no user
+// and no system config file, an XKEY_ variable still overrides the default:
+// the first-run path goes through viper like every other path.
+func TestLoad_NoConfigFiles_EnvironmentStillApplies(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, ".config"))
+	t.Setenv("XKEY_LOG_LEVEL", "debug")
+	t.Setenv("XKEY_XKMSD_ADDRESS", "env.example.com:9443")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "debug", cfg.Log.Level)
+	assert.Equal(t, "env.example.com:9443", cfg.XKMSD.Address)
+	assert.Equal(t, DefaultConfig().TPM.Device, cfg.TPM.Device, "an unset leaf keeps its default")
+}
+
+// TestLoad_NoConfigFiles_InvalidEnvironmentIsRejected proves that the
+// first-run path validates an environment value like a file value.
+func TestLoad_NoConfigFiles_InvalidEnvironmentIsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, ".config"))
+	t.Setenv("XKEY_LOG_LEVEL", "shouting")
+
+	cfg, err := Load()
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrConfigInvalid)
+}
+
+// TestLoadFromHome_NoConfigFiles_EnvironmentStillApplies proves the same for
+// the home-directory loader, valid and invalid.
+func TestLoadFromHome_NoConfigFiles_EnvironmentStillApplies(t *testing.T) {
+	home := &xhome.Home{Root: t.TempDir()}
+	t.Setenv("XKEY_LOG_LEVEL", "debug")
+
+	cfg, err := LoadFromHome(home)
+	require.NoError(t, err)
+	assert.Equal(t, "debug", cfg.Log.Level)
+
+	t.Setenv("XKEY_LOG_LEVEL", "shouting")
+	cfg, err = LoadFromHome(home)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorIs(t, err, ErrConfigInvalid)
 }
 
 // TestLoad_UserConfigExists verifies that Load() reads the user config file
