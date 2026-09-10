@@ -222,6 +222,7 @@ jobs:
     name: Create Release
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       # The commit actually being released. NOT github.sha: on a recovery
@@ -319,7 +320,20 @@ jobs:
     name: Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }})
     needs: create-release
     runs-on: ubuntu-latest
+    # A leg that hangs must fail loudly, not hold the run open. Without a
+    # limit a leg runs into the runner's default of three hours: v0.9.5-alpha's
+    # two arm64 legs sat from 13:23 to 16:23 after the docker socket stopped
+    # answering, the run showed in_progress for hours, and the release shipped
+    # amd64 only with no master checksums. The arm64 legs build under QEMU
+    # and take 20-33 minutes when healthy (v0.10.0-alpha, v0.11.0-alpha), so
+    # 75 minutes is generous for a slow runner and still a fraction of the
+    # default.
+    timeout-minutes: 75
     strategy:
+      # Every leg uploads its own assets and the checksums job verifies the
+      # complete set, so one leg's failure must not cancel the others: the
+      # more legs that finish, the smaller the recovery run.
+      fail-fast: false
       matrix:
         include:
           # Standard builds
@@ -570,6 +584,7 @@ jobs:
     name: Build Docker Server Image
     needs: create-release
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -807,6 +822,7 @@ jobs:
     name: Build Docker CLI Image
     needs: create-release
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -924,18 +940,40 @@ jobs:
   create-checksums:
     name: Create Master Checksums
     needs: [create-release, build-binaries]
-    if: always() && needs.create-release.result == 'success'
+    # This is the run's terminal state: it runs whatever happened to the
+    # build matrix and FAILS naming every expected asset the release lacks,
+    # so a release with a missing leg is a red run, never a green-looking
+    # page with binaries silently absent. The gate is a bare always(): the
+    # one shape this Gitea has been observed to honour after a failed
+    # dependency (ci.yml's CI Gate runs after failed jobs on every red PR).
+    # The compound `always() && needs.x.result == 'success'` form has never
+    # been exercised by a failing release run here -- both failing runs
+    # predate it and had no gate at all, so the job was skipped -- and a
+    # terminal state must not rest on an untested expression. The
+    # create-release check moves into the first step for that reason.
+    if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RELEASE_API: ${{ github.server_url }}/api/v1
       RELEASE_REPO: ${{ github.repository }}
       RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Require the release object
+        run: |
+          if [ "${{ needs.create-release.result }}" != "success" ]; then
+            echo "::error::create-release did not succeed (${{ needs.create-release.result }}); there is no release to verify or to publish checksums to."
+            exit 1
+          fi
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # verify exits 1 naming each absent asset, and only when every asset
+      # is present are the master checksums built, so a partial release
+      # never publishes a checksums.txt that vouches for less than the set.
       - name: Verify the release carries every matrix asset
         run: scripts/release-assets.sh verify "${{ needs.create-release.outputs.version }}"
 
@@ -959,6 +997,7 @@ jobs:
     # the release is verified complete (#447).
     needs: [create-release, create-checksums, build-docker, build-docker-cli]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: >-
       always() &&
       needs.create-checksums.result == 'success' &&
