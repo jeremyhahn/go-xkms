@@ -39,6 +39,15 @@ var (
 	// ErrStorageClosed indicates storage has been closed
 	ErrStorageClosed = errors.New("storage has been closed")
 
+	// ErrIDReservedForChain is returned when a certificate id has a shape the
+	// chain encoding reserves: <id>-chain, which is what the storage key
+	// certs/<id>-chain.pem and the PKCS#11 label prefix of <id>'s chain spell,
+	// or <id>-chain-<n>, the CKA_ID of a chain member. Refusing both on every
+	// path that accepts an id keeps the key space unambiguous by
+	// construction: a key or object of those shapes can only ever name a
+	// chain record.
+	ErrIDReservedForChain = errors.New("certificate id has a shape reserved for chain records (<id>-chain or <id>-chain-<n>)")
+
 	// ErrInvalidCertificate indicates certificate is invalid or corrupted
 	ErrInvalidCertificate = errors.New("invalid or corrupted certificate")
 

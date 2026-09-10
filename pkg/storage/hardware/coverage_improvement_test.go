@@ -180,7 +180,7 @@ func TestTPM2CertStorage_SaveCertChain_AfterClose(t *testing.T) {
 	cert := generateCoverageTestCert(t, "test")
 	chain := []*x509.Certificate{cert}
 
-	err = store.SaveCertChain("test-chain", chain)
+	err = store.SaveCertChain("chaintest", chain)
 	require.Error(t, err)
 	assert.Equal(t, ErrStorageClosed, err)
 }
@@ -210,7 +210,7 @@ func TestTPM2CertStorage_GetCertChain_AfterClose(t *testing.T) {
 	err = store.Close()
 	require.NoError(t, err)
 
-	_, err = store.GetCertChain("test-chain")
+	_, err = store.GetCertChain("chaintest")
 	require.Error(t, err)
 	assert.Equal(t, ErrStorageClosed, err)
 }
@@ -379,11 +379,11 @@ func TestHybridCertStorage_GetCertChain_HardwareUnavailable(t *testing.T) {
 
 	cert := generateCoverageTestCert(t, "test")
 	chain := []*x509.Certificate{cert}
-	err = ext.SaveCertChain("test-chain", chain)
+	err = ext.SaveCertChain("chaintest", chain)
 	require.NoError(t, err)
 
 	// Should fall back to external
-	retrieved, err := hybrid.GetCertChain("test-chain")
+	retrieved, err := hybrid.GetCertChain("chaintest")
 	require.NoError(t, err)
 	assert.Len(t, retrieved, 1)
 }
@@ -401,11 +401,11 @@ func TestHybridCertStorage_SaveCertChain_HardwareUnavailable(t *testing.T) {
 	chain := []*x509.Certificate{cert}
 
 	// Should fall back to external
-	err = hybrid.SaveCertChain("test-chain", chain)
+	err = hybrid.SaveCertChain("chaintest", chain)
 	require.NoError(t, err)
 
 	// Verify stored in external
-	retrieved, err := ext.GetCertChain("test-chain")
+	retrieved, err := ext.GetCertChain("chaintest")
 	require.NoError(t, err)
 	assert.Len(t, retrieved, 1)
 }
@@ -527,7 +527,7 @@ func TestHybridCertStorage_GetCertChain_ExternalError_NotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	// Not in hardware, external fails
-	_, err = hybrid.GetCertChain("test-chain")
+	_, err = hybrid.GetCertChain("chaintest")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "external storage failed")
 }
@@ -601,7 +601,7 @@ func TestTPM2CertStorage_SaveCertChain_TooLarge(t *testing.T) {
 	cert2 := generateCoverageTestCert(t, "cert2")
 	chain := []*x509.Certificate{cert1, cert2}
 
-	err = store.SaveCertChain("test-chain", chain)
+	err = store.SaveCertChain("chaintest", chain)
 	// Two certs will likely exceed 512 bytes when PEM encoded
 	if err != nil {
 		assert.True(t, errors.Is(err, ErrCertificateTooLarge) || err != nil)
@@ -635,7 +635,7 @@ func TestHardwareBackendAdapter_PutCertificateChain(t *testing.T) {
 	chainData := append(cert1.Raw, cert2.Raw...)
 
 	// Put as chain
-	err := adapter.Put(context.Background(), "certs/test-chain-chain.pem", chainData)
+	err := adapter.Put(context.Background(), "certs/chaintest-chain.pem", chainData)
 	// Due to parseDERChain limitations with concatenated DER, this may fail
 	// The test exercises the code path
 	if err != nil {

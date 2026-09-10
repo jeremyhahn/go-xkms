@@ -16,10 +16,13 @@
 package hardware
 
 import (
+	"crypto/x509"
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/miekg/pkcs11"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeSOProvider is a minimal PKCS11SessionProvider + PKCS11SOSessionProvider
@@ -210,4 +213,32 @@ func TestPKCS11CertStorage_ErrDeleteNotSupportedOnToken_IsSentinel(t *testing.T)
 	if !errors.Is(ErrDeleteNotSupportedOnToken, ErrDeleteNotSupportedOnToken) {
 		t.Fatal("ErrDeleteNotSupportedOnToken must match itself via errors.Is")
 	}
+}
+
+// A primary id of the reserved chain-member shape is refused before any
+// token operation, so the listing's classification stays exact by
+// construction; the check precedes session use, so a bare store suffices.
+func TestPKCS11CertStorage_RefusesReservedChainIDs(t *testing.T) {
+	p := &PKCS11CertStorage{}
+	cert := &x509.Certificate{Raw: []byte{0x30}}
+	require.ErrorIs(t, p.SaveCert("foo-chain-0", cert), ErrIDReservedForChain)
+	require.ErrorIs(t, p.SaveCertChain("foo-chain-7", []*x509.Certificate{cert}), ErrIDReservedForChain)
+	require.ErrorIs(t, p.SaveCert("", cert), storage.ErrInvalidID, "the empty-id check still comes first")
+	require.ErrorIs(t, p.SaveCert("foo-chain", cert), ErrIDReservedForChain,
+		"the -chain suffix is the chain encoding's own, so it cannot name a certificate")
+
+	// The certificate-facing reads and deletes refuse the shape too, so a
+	// chain member is reachable only through the chain methods: a generic
+	// caller addressing certs/foo-chain-0.pem cannot destroy one member of
+	// foo's chain under the name of a certificate delete.
+	_, err := p.GetCert("foo-chain-0")
+	require.ErrorIs(t, err, ErrIDReservedForChain)
+	require.ErrorIs(t, p.DeleteCert("foo-chain-0"), ErrIDReservedForChain)
+	_, err = p.CertExists("foo-chain-0")
+	require.ErrorIs(t, err, ErrIDReservedForChain)
+	// The chain-facing paths refuse the shapes too, so foo-chain-0 cannot be
+	// addressed as the base of a chain foo-chain-0-chain-<n>.
+	_, err = p.GetCertChain("foo-chain-0")
+	require.ErrorIs(t, err, ErrIDReservedForChain)
+	require.ErrorIs(t, p.DeleteCertChain("foo-chain"), ErrIDReservedForChain)
 }

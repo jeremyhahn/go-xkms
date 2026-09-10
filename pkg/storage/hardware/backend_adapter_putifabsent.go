@@ -16,10 +16,12 @@ package hardware
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // PutIfAbsent stores certificate data for key only when no certificate already
@@ -40,12 +42,12 @@ func (a *HardwareBackendAdapter) PutIfAbsent(_ context.Context, key string, valu
 		id := strings.TrimPrefix(key, "certs/")
 		id = strings.TrimSuffix(id, "-chain.pem")
 
-		exists, err := a.hardware.CertExists(id)
-		if err != nil {
-			return false, err
-		}
-		if exists {
+		// The chain record is probed as a chain: CertExists answers for the
+		// certificate object, which is a different record of the pair.
+		if _, err := a.hardware.GetCertChain(id); err == nil {
 			return false, nil
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return false, err
 		}
 
 		chain, err := parseDERChain(value)

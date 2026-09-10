@@ -19,11 +19,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/cespare/xxhash/v2"
 
@@ -172,6 +171,9 @@ func (t *TPM2CertStorage) SaveCert(id string, cert *x509.Certificate) error {
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 	if cert == nil {
 		return storage.ErrInvalidData
 	}
@@ -233,6 +235,9 @@ func (t *TPM2CertStorage) GetCert(id string) (*x509.Certificate, error) {
 	if id == "" {
 		return nil, storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return nil, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -248,6 +253,13 @@ func (t *TPM2CertStorage) GetCert(id string) (*x509.Certificate, error) {
 			return nil, storage.ErrNotFound
 		}
 		return nil, NewOperationError("read certificate from NV RAM", err)
+	}
+	// The index holds one record and it says which kind it is; a chain
+	// record is not the certificate record, so a certificate read of it is
+	// absence, exactly as the two-record stores answer for a missing
+	// certificate object beside a stored chain.
+	if recordIsChain(payload) {
+		return nil, storage.ErrNotFound
 	}
 
 	// Decode PEM
@@ -270,6 +282,9 @@ func (t *TPM2CertStorage) DeleteCert(id string) error {
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -278,22 +293,72 @@ func (t *TPM2CertStorage) DeleteCert(id string) error {
 		return ErrStorageClosed
 	}
 
-	// Resolve the ID to the NV index that actually holds it. Deletion is
-	// idempotent: an ID that is not stored is not an error.
-	index, _, err := t.lookupCert(id)
+	return t.releaseRecordLocked(id, false, "delete certificate from NV RAM")
+}
+
+// releaseRecordLocked releases the record stored under id when it is of the
+// kind the caller addresses: a certificate record for DeleteCert, a chain
+// record for DeleteCertChain. An id's NV index holds whichever of SaveCert
+// and SaveCertChain wrote last, and the record says which it is, so the
+// method whose kind it is not answers ErrNotFound and leaves it in place,
+// exactly as the two-record stores leave the sibling. Callers hold the write
+// lock.
+func (t *TPM2CertStorage) releaseRecordLocked(id string, wantChain bool, op string) error {
+	index, payload, err := t.lookupCert(id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil
+			return storage.ErrNotFound
 		}
-		return NewOperationError("delete certificate from NV RAM", err)
+		return NewOperationError(op, err)
 	}
-
-	// Delete NV index
+	if recordIsChain(payload) != wantChain {
+		return storage.ErrNotFound
+	}
 	if err := t.deleteNVIndex(index); err != nil {
-		return NewOperationError("delete certificate from NV RAM", err)
+		return NewOperationError(op, err)
+	}
+	return nil
+}
+
+// recordIsChain reports whether an NV payload is a chain record: one whose
+// PEM blocks carry the chain marker, or, for a record written before the
+// marker existed, one holding more than one certificate. A single unmarked
+// block is a certificate record; a one-member chain written before the marker
+// is indistinguishable from it and is treated as the certificate it also is.
+func recordIsChain(payload []byte) bool {
+	block, rest := pem.Decode(payload)
+	if block == nil {
+		return false
+	}
+	if block.Headers[recordKindHeader] == recordKindChain {
+		return true
+	}
+	next, _ := pem.Decode(rest)
+	return next != nil
+}
+
+// DeleteCertChain removes the chain stored under id. TPM2 keeps the
+// certificate and the chain of one id in ONE NV record, holding whichever of
+// SaveCert and SaveCertChain wrote last, so there is no sibling to leave in
+// place: this releases that record exactly as DeleteCert does, and a caller
+// addressing the chain record releases what the id holds. Absent, it is a
+// no-op, as DeleteCert is.
+func (t *TPM2CertStorage) DeleteCertChain(id string) error {
+	if id == "" {
+		return storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 
-	return nil
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed {
+		return ErrStorageClosed
+	}
+
+	return t.releaseRecordLocked(id, true, "delete certificate chain from NV RAM")
 }
 
 // SaveCertChain stores a certificate chain as a PEM-encoded bundle.
@@ -301,6 +366,9 @@ func (t *TPM2CertStorage) DeleteCert(id string) error {
 func (t *TPM2CertStorage) SaveCertChain(id string, chain []*x509.Certificate) error {
 	if id == "" {
 		return storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 	if len(chain) == 0 {
 		return storage.ErrInvalidData
@@ -313,12 +381,15 @@ func (t *TPM2CertStorage) SaveCertChain(id string, chain []*x509.Certificate) er
 		return ErrStorageClosed
 	}
 
-	// Concatenate PEM-encoded certificates
+	// Concatenate PEM-encoded certificates. Every block carries the chain
+	// marker, so the record's kind survives in the NV blob itself and a
+	// one-member chain is never mistaken for a certificate.
 	var pemData []byte
 	for _, cert := range chain {
 		pemBlock := pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert.Raw,
+			Type:    "CERTIFICATE",
+			Headers: map[string]string{recordKindHeader: recordKindChain},
+			Bytes:   cert.Raw,
 		})
 		pemData = append(pemData, pemBlock...)
 	}
@@ -330,6 +401,9 @@ func (t *TPM2CertStorage) SaveCertChain(id string, chain []*x509.Certificate) er
 func (t *TPM2CertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 	if id == "" {
 		return nil, storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return nil, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 
 	t.mu.Lock()
@@ -346,6 +420,13 @@ func (t *TPM2CertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 			return nil, storage.ErrNotFound
 		}
 		return nil, NewOperationError("read certificate chain from NV RAM", err)
+	}
+	// A certificate record is not a chain: answering it as a one-member
+	// chain would let a TPM2 certificate hide a chain that overflowed to the
+	// external side, and resurrect itself as a phantom chain after that
+	// chain was released.
+	if !recordIsChain(payload) {
+		return nil, storage.ErrNotFound
 	}
 
 	// Parse all PEM blocks
@@ -395,6 +476,9 @@ func (t *TPM2CertStorage) CertExists(id string) (bool, error) {
 	if id == "" {
 		return false, storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return false, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -403,15 +487,17 @@ func (t *TPM2CertStorage) CertExists(id string) (bool, error) {
 		return false, ErrStorageClosed
 	}
 
-	// Resolve the ID to the NV index that actually holds it
-	if _, _, err := t.lookupCert(id); err != nil {
+	// Resolve the ID to the NV index that actually holds it; a chain record
+	// under the id is not the certificate, so it does not count.
+	_, payload, err := t.lookupCert(id)
+	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return false, nil
 		}
 		return false, NewOperationError("check certificate in NV RAM", err)
 	}
 
-	return true, nil
+	return !recordIsChain(payload), nil
 }
 
 // Close releases TPM resources (NV handles are persistent, no cleanup needed).
@@ -555,6 +641,16 @@ func (t *TPM2CertStorage) indexFromNVHandle(id string) (uint32, bool) {
 func formatNVHandle(index uint32) string {
 	return fmt.Sprintf("0x%08x", index)
 }
+
+// recordKindHeader is the PEM header SaveCertChain stamps on every block of
+// a chain record, with recordKindChain as its value. A certificate record
+// carries no such header. The kind therefore lives in the NV blob itself,
+// which is what lets DeleteCert and DeleteCertChain each release only the
+// record they address although an id has one NV index.
+const (
+	recordKindHeader = "Record"
+	recordKindChain  = "chain"
+)
 
 // encodeCertRecord serializes a certificate ID and its PEM payload into the NV
 // record format.
@@ -855,7 +951,15 @@ func (t *TPM2CertStorage) listCertsUnlocked() ([]string, error) {
 			continue
 		}
 
-		if recordID, _, ok := decodeCertRecord(data); ok {
+		// A chain record is not a certificate: the certificate reads treat
+		// it as absent, so listing it would hand a caller a key it cannot
+		// read. ListCerts lists certificate records only, as it does on
+		// every other store.
+		recordID, payload, ok := decodeCertRecord(data)
+		if recordIsChain(payload) {
+			continue
+		}
+		if ok {
 			certIDs = append(certIDs, recordID)
 			continue
 		}

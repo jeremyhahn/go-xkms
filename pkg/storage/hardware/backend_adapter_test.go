@@ -92,11 +92,11 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		chain := []*x509.Certificate{cert1, cert2}
 
 		// Store chain in hardware storage
-		err := hw.SaveCertChain("test-chain", chain)
+		err := hw.SaveCertChain("chaintest", chain)
 		require.NoError(t, err)
 
 		// Get through adapter
-		data, err := adapter.Get(context.Background(), "certs/test-chain-chain.pem")
+		data, err := adapter.Get(context.Background(), "certs/chaintest-chain.pem")
 		require.NoError(t, err)
 
 		// Verify concatenated DER data
@@ -168,11 +168,11 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 
 		// Put single cert data through adapter using chain format
 		// This tests the parseDERChain with a single valid cert
-		err := adapter.Put(context.Background(), "certs/test-chain-chain.pem", cert.Raw)
+		err := adapter.Put(context.Background(), "certs/chaintest-chain.pem", cert.Raw)
 		require.NoError(t, err)
 
 		// Verify stored in hardware
-		retrieved, err := hw.GetCertChain("test-chain")
+		retrieved, err := hw.GetCertChain("chaintest")
 		require.NoError(t, err)
 		assert.Len(t, retrieved, 1)
 		assert.True(t, cert.Equal(retrieved[0]))
@@ -235,27 +235,27 @@ func TestHardwareBackendAdapter_Delete(t *testing.T) {
 	})
 
 	t.Run("DeleteWithChainSuffix", func(t *testing.T) {
-		// The Delete function processes: "certs/test-chain-chain.pem"
-		// 1. TrimPrefix "certs/" -> "test-chain-chain.pem"
-		// 2. TrimSuffix ".pem" -> "test-chain-chain"
-		// 3. TrimSuffix "-chain.pem" -> "test-chain-chain" (no change, doesn't end with "-chain.pem")
-		// So the ID used for deletion is "test-chain-chain"
+		// A key ending in -chain.pem names the CHAIN record of the id before
+		// the suffix, exactly as Get and Put read it: "certs/chaintest-chain.pem"
+		// is the chain of "chaintest", never the certificate of
+		// "chaintest-chain". Delete used to strip ".pem" first and so resolved
+		// the same key to a different record than Get and Put did.
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
 		cert := generateTestCertForAdapter(t, "test")
+		require.NoError(t, hw.SaveCert("chaintest-chain", cert))
+		require.NoError(t, hw.SaveCert("chaintest", cert))
+		require.NoError(t, hw.SaveCertChain("chaintest", []*x509.Certificate{cert}))
 
-		// Save cert with ID "test-chain-chain" to match what Delete will look for
-		err := hw.SaveCert("test-chain-chain", cert)
-		require.NoError(t, err)
+		require.NoError(t, adapter.Delete(context.Background(), "certs/chaintest-chain.pem"))
 
-		// Delete using chain format key
-		err = adapter.Delete(context.Background(), "certs/test-chain-chain.pem")
-		require.NoError(t, err)
-
-		// Verify deleted
-		_, err = hw.GetCert("test-chain-chain")
-		assert.Equal(t, storage.ErrNotFound, err)
+		_, err := hw.GetCertChain("chaintest")
+		assert.ErrorIs(t, err, storage.ErrNotFound, "the chain of chaintest is what the key names")
+		_, err = hw.GetCert("chaintest")
+		require.NoError(t, err, "the certificate of chaintest is a separate record")
+		_, err = hw.GetCert("chaintest-chain")
+		require.NoError(t, err, "the certificate of chaintest-chain was never addressed")
 	})
 
 	t.Run("InvalidKeyPrefix", func(t *testing.T) {
@@ -380,21 +380,28 @@ func TestHardwareBackendAdapter_Exists(t *testing.T) {
 	})
 
 	t.Run("ExistsWithChainKeySuffix", func(t *testing.T) {
-		// The Exists function processes: "certs/test-chain-chain.pem"
-		// 1. TrimPrefix "certs/" -> "test-chain-chain.pem"
-		// 2. TrimSuffix ".pem" -> "test-chain-chain"
-		// 3. TrimSuffix "-chain.pem" -> "test-chain-chain" (no change)
-		// So it looks for ID "test-chain-chain"
+		// A -chain.pem key names the chain record, as Get, Put and Delete read
+		// it: it is true for a chain-only record and false for an id that has
+		// only a certificate, and "certs/chaintest-chain.pem" asks about the
+		// chain of "chaintest", not the certificate of "chaintest-chain".
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
-
 		cert := generateTestCertForAdapter(t, "test")
-		// Save with the ID that will be extracted
-		err := hw.SaveCert("test-chain-chain", cert)
-		require.NoError(t, err)
 
-		// Check existence using chain format key
-		exists, err := adapter.Exists(context.Background(), "certs/test-chain-chain.pem")
+		require.NoError(t, hw.SaveCertChain("chain-only", []*x509.Certificate{cert}))
+		exists, err := adapter.Exists(context.Background(), "certs/chain-only-chain.pem")
+		require.NoError(t, err)
+		assert.True(t, exists, "a chain-only record exists under its chain key")
+		exists, err = adapter.Exists(context.Background(), "certs/chain-only.pem")
+		require.NoError(t, err)
+		assert.False(t, exists, "and not under its certificate key")
+
+		require.NoError(t, hw.SaveCert("chaintest-chain", cert))
+		exists, err = adapter.Exists(context.Background(), "certs/chaintest-chain.pem")
+		require.NoError(t, err)
+		assert.False(t, exists, "the key names the chain of chaintest, which does not exist")
+		require.NoError(t, hw.SaveCertChain("chaintest", []*x509.Certificate{cert}))
+		exists, err = adapter.Exists(context.Background(), "certs/chaintest-chain.pem")
 		require.NoError(t, err)
 		assert.True(t, exists)
 	})
@@ -443,19 +450,67 @@ func TestParseDERChain(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("ConcatenatedCertsReturnsTrailingDataError", func(t *testing.T) {
-		// Note: The current parseDERChain implementation uses x509.ParseCertificate
-		// which fails with "trailing data" when there are multiple concatenated certs.
-		// This is a known limitation - the function returns the error for multi-cert chains.
+	t.Run("ConcatenatedCertsParseAsAChain", func(t *testing.T) {
+		// The chain key's value is the members' DER concatenated, exactly
+		// what Get emits for it, so Put must accept what Get produces.
 		cert1 := generateTestCertForAdapter(t, "cert1")
 		cert2 := generateTestCertForAdapter(t, "cert2")
-		data := append(cert1.Raw, cert2.Raw...)
+		data := append(append([]byte{}, cert1.Raw...), cert2.Raw...)
 
-		_, err := parseDERChain(data)
-		// With concatenated valid DER certs, x509.ParseCertificate returns trailing data error
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "trailing data")
+		chain, err := parseDERChain(data)
+		require.NoError(t, err)
+		require.Len(t, chain, 2)
+		assert.Equal(t, cert1.Raw, chain[0].Raw)
+		assert.Equal(t, cert2.Raw, chain[1].Raw)
 	})
+
+	t.Run("TrailingGarbageIsAnError", func(t *testing.T) {
+		cert1 := generateTestCertForAdapter(t, "cert1")
+		data := append(append([]byte{}, cert1.Raw...), []byte("not a certificate")...)
+		_, err := parseDERChain(data)
+		require.Error(t, err, "bytes after the last certificate are not silently dropped")
+	})
+}
+
+// TestHardwareBackendAdapter_ChainRoundTripsThroughTheAdapter proves a
+// generic storage caller can write a multi-member chain through the adapter,
+// read it back, and write what it read: the value Get emits for
+// certs/{id}-chain.pem is the value Put accepts for it.
+func TestHardwareBackendAdapter_ChainRoundTripsThroughTheAdapter(t *testing.T) {
+	ctx := context.Background()
+	hw := newMockHardwareCertStorage(10)
+	adapter := NewHardwareBackendAdapter(hw)
+	cert1 := generateTestCertForAdapter(t, "rt-1")
+	cert2 := generateTestCertForAdapter(t, "rt-2")
+	data := append(append([]byte{}, cert1.Raw...), cert2.Raw...)
+
+	require.NoError(t, adapter.Put(ctx, "certs/rt-chain.pem", data))
+	got, err := adapter.Get(ctx, "certs/rt-chain.pem")
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+	require.NoError(t, adapter.Put(ctx, "certs/rt-chain.pem", got), "what Get emits, Put accepts")
+	chain, err := hw.GetCertChain("rt")
+	require.NoError(t, err)
+	require.Len(t, chain, 2)
+}
+
+// TestHardwareBackendAdapter_DeleteRefusesUnsupportedKeys proves Delete
+// dispatches only the two key shapes Get and Put accept: certs/test does not
+// fall through to the certificate certs/test.pem.
+func TestHardwareBackendAdapter_DeleteRefusesUnsupportedKeys(t *testing.T) {
+	ctx := context.Background()
+	hw := newMockHardwareCertStorage(10)
+	adapter := NewHardwareBackendAdapter(hw)
+	cert := generateTestCertForAdapter(t, "keep")
+	require.NoError(t, hw.SaveCert("test", cert))
+
+	for _, key := range []string{"certs/test", "certs/test.pem.bak", "certs/test.der"} {
+		err := adapter.Delete(ctx, key)
+		require.Error(t, err, key)
+		assert.Contains(t, err.Error(), "unsupported key format", key)
+	}
+	_, err := hw.GetCert("test")
+	require.NoError(t, err, "the certificate a malformed key resembled is untouched")
 }
 
 // TestHardwareBackendAdapter_InterfaceCompliance verifies interface implementation

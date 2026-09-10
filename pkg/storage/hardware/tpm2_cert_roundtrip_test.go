@@ -156,18 +156,20 @@ func TestTPM2CertStorage_ListThenGetChainRoundTrip(t *testing.T) {
 		t.Fatalf("SaveCertChain() error = %v", err)
 	}
 
+	// A chain record is not a certificate: ListCerts names certificate
+	// records only, so the chain is absent from it and is read back under
+	// the id it was stored under.
 	ids, err := store.ListCerts()
 	if err != nil {
 		t.Fatalf("ListCerts() error = %v", err)
 	}
-
-	if len(ids) != 1 || ids[0] != "chain-id" {
-		t.Fatalf("ListCerts() = %v, want [chain-id]", ids)
+	if len(ids) != 0 {
+		t.Fatalf("ListCerts() = %v, want no certificate records for a chain-only store", ids)
 	}
 
-	got, err := store.GetCertChain(ids[0])
+	got, err := store.GetCertChain("chain-id")
 	if err != nil {
-		t.Fatalf("GetCertChain(%q) error = %v", ids[0], err)
+		t.Fatalf("GetCertChain(%q) error = %v", "chain-id", err)
 	}
 
 	if len(got) != 1 || got[0].Subject.CommonName != "Chain Leaf" {
@@ -238,8 +240,8 @@ func TestTPM2CertStorage_LookupMissingID(t *testing.T) {
 		t.Error("CertExists(missing) = true, want false")
 	}
 
-	if err := store.DeleteCert("missing"); err != nil {
-		t.Errorf("DeleteCert(missing) error = %v, want nil (idempotent)", err)
+	if err := store.DeleteCert("missing"); !errors.Is(err, storagepkg.ErrNotFound) {
+		t.Errorf("DeleteCert(missing) error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -383,8 +385,8 @@ func TestTPM2CertStorage_HashCollisionIsolation(t *testing.T) {
 	}
 
 	// Deleting the colliding ID must leave the occupant intact.
-	if err := store.DeleteCert(collidingID); err != nil {
-		t.Fatalf("DeleteCert(%q) error = %v", collidingID, err)
+	if err := store.DeleteCert(collidingID); !errors.Is(err, storagepkg.ErrNotFound) {
+		t.Fatalf("DeleteCert(%q) error = %v, want ErrNotFound: the colliding index belongs to another id", collidingID, err)
 	}
 
 	ids, err := store.ListCerts()
@@ -689,12 +691,11 @@ func TestTPM2CertStorage_GetByNVHandle(t *testing.T) {
 		t.Errorf("CommonName = %q, want By Handle", cert.Subject.CommonName)
 	}
 
-	chain, err := store.GetCertChain(handle)
-	if err != nil {
-		t.Fatalf("GetCertChain(%q) error = %v", handle, err)
-	}
-	if len(chain) != 1 || chain[0].Subject.CommonName != "By Handle" {
-		t.Errorf("GetCertChain(handle) returned %d certs, want the stored certificate", len(chain))
+	// The record is a certificate, so addressing it as a chain, by handle
+	// as by id, is absence: the kind rule does not depend on how the record
+	// was named.
+	if _, err := store.GetCertChain(handle); !errors.Is(err, storagepkg.ErrNotFound) {
+		t.Fatalf("GetCertChain(%q) error = %v, want ErrNotFound for a certificate record", handle, err)
 	}
 }
 

@@ -259,8 +259,10 @@ func TestTPM2CertStorage_DeleteCert(t *testing.T) {
 	}
 }
 
-// TestTPM2CertStorage_DeleteCert_Idempotent tests idempotent deletion
-func TestTPM2CertStorage_DeleteCert_Idempotent(t *testing.T) {
+// TestTPM2CertStorage_DeleteCert_AbsentIsNotFound pins the interface contract:
+// releasing a record that is not there is ErrNotFound, which the hybrid
+// store relies on to know the hardware did not hold the record.
+func TestTPM2CertStorage_DeleteCert_AbsentIsNotFound(t *testing.T) {
 	tpm := newMockTPM(t)
 	defer func() { _ = tpm.Close() }()
 
@@ -270,10 +272,9 @@ func TestTPM2CertStorage_DeleteCert_Idempotent(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	// Delete non-existent certificate (should not error)
 	err = store.DeleteCert("nonexistent")
-	if err != nil {
-		t.Errorf("DeleteCert() should be idempotent, got error: %v", err)
+	if !errors.Is(err, storagepkg.ErrNotFound) {
+		t.Errorf("DeleteCert(nonexistent) error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -298,13 +299,13 @@ func TestTPM2CertStorage_SaveAndGetCertChain(t *testing.T) {
 	chain := []*x509.Certificate{leaf}
 
 	// Save chain
-	err = store.SaveCertChain("test-chain", chain)
+	err = store.SaveCertChain("chaintest", chain)
 	if err != nil {
 		t.Fatalf("SaveCertChain() error = %v", err)
 	}
 
 	// Retrieve chain
-	retrieved, err := store.GetCertChain("test-chain")
+	retrieved, err := store.GetCertChain("chaintest")
 	if err != nil {
 		t.Fatalf("GetCertChain() error = %v", err)
 	}
@@ -333,7 +334,7 @@ func TestTPM2CertStorage_SaveCertChain_Empty(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	err = store.SaveCertChain("test-chain", []*x509.Certificate{})
+	err = store.SaveCertChain("chaintest", []*x509.Certificate{})
 	if err == nil {
 		t.Error("Expected error for empty chain, got nil")
 	}
@@ -698,4 +699,44 @@ func generateTestCert(t *testing.T) *x509.Certificate {
 	}
 
 	return cert
+}
+
+// TestTPM2CertStorage_DeleteCertChain pins TPM2's one-record model: the chain
+// and the certificate of an id are the same NV record, so releasing the chain
+// releases what the id holds, and an absent id is a no-op as DeleteCert is.
+func TestTPM2CertStorage_DeleteCertChain(t *testing.T) {
+	tpm := newMockTPM(t)
+	defer func() { _ = tpm.Close() }()
+
+	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
+	if err != nil {
+		t.Fatalf("NewTPM2CertStorage() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	cert := generateTestCert(t)
+	if err := store.SaveCertChain("chain-cert", []*x509.Certificate{cert}); err != nil {
+		t.Fatalf("SaveCertChain() error = %v", err)
+	}
+	if _, err := store.GetCertChain("chain-cert"); err != nil {
+		t.Fatalf("GetCertChain() error = %v", err)
+	}
+
+	if err := store.DeleteCertChain("chain-cert"); err != nil {
+		t.Fatalf("DeleteCertChain() error = %v", err)
+	}
+	exists, err := store.CertExists("chain-cert")
+	if err != nil {
+		t.Fatalf("CertExists() error = %v", err)
+	}
+	if exists {
+		t.Error("the record must be gone after DeleteCertChain")
+	}
+
+	if err := store.DeleteCertChain("chain-cert"); !errors.Is(err, storagepkg.ErrNotFound) {
+		t.Errorf("DeleteCertChain() on an absent id must be ErrNotFound, got %v", err)
+	}
+	if err := store.DeleteCertChain(""); err == nil {
+		t.Error("DeleteCertChain() with an empty id must be refused")
+	}
 }

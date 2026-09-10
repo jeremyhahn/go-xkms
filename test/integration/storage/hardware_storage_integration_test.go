@@ -150,7 +150,7 @@ func TestHardwareStorageIntegration_CertChainSupport(t *testing.T) {
 	chain := []*x509.Certificate{cert1, cert2, cert3}
 
 	// Save chain
-	chainID := "test-chain"
+	chainID := "chaintest"
 	err = hwStorage.SaveCertChain(chainID, chain)
 	if err != nil {
 		// If it fails due to size, skip the test
@@ -171,9 +171,12 @@ func TestHardwareStorageIntegration_CertChainSupport(t *testing.T) {
 		assert.Equal(t, chain[i].Raw, retrievedChain[i].Raw)
 	}
 
-	// Delete chain
-	err = hwStorage.DeleteCert(chainID)
+	// Delete the chain record; it is its own record, released by its own
+	// method, and DeleteCert would report the certificate record absent.
+	err = hwStorage.DeleteCertChain(chainID)
 	require.NoError(t, err)
+	_, err = hwStorage.GetCertChain(chainID)
+	assert.ErrorIs(t, err, storage.ErrNotFound)
 }
 
 // isTransientSimulatorError reports whether err is a transient PKCS#11
@@ -426,7 +429,7 @@ func TestHardwareStorageIntegration_ErrorHandling(t *testing.T) {
 	assert.Error(t, err)
 
 	// Test save chain with empty chain
-	err = hwStorage.SaveCertChain("empty-chain", []*x509.Certificate{})
+	err = hwStorage.SaveCertChain("emptychain", []*x509.Certificate{})
 	assert.Error(t, err)
 }
 

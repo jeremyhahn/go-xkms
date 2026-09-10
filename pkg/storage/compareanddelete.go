@@ -57,12 +57,14 @@ var _ CompareAndDeleter = (*qrdb.Backend)(nil)
 // ErrSecretNotFound, and an xkms backend reports a missing key as ErrNotFound.
 // It is held to the same suite as the rest.
 //
-// Backends that deliberately do NOT implement it, with the expansion tracked:
-//
-//   - hardware.HardwareBackendAdapter (#143): its delete addresses a
-//     certificate id rather than a record, so it cannot be scoped to the one key
-//     a guarded release names; honouring the request would destroy the sibling
-//     certificate or chain and report success.
+// hardware.HardwareBackendAdapter deliberately does NOT implement it. Its
+// delete now releases the one record a key names, so scope is no longer the
+// obstacle; the obstacle is where the guard would be evaluated. The adapter's
+// lock serialises only this process's callers, while a PKCS#11 token or a TPM
+// NV index has other writers (another process, another module, an
+// administrator's tool) and no guarded primitive of its own, so the record
+// can be replaced between the compare here and the delete there. Absence is
+// the honest signal; pkg/storage/hardware pins it.
 //
 // qrdb.Backend implements the capability but the embedded constructors cannot
 // yet execute it (go-qrdb #175, an upstream apply-loop gap); it reports that as

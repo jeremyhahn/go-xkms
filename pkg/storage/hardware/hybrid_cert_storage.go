@@ -16,11 +16,11 @@ package hardware
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"strings"
 	"sync"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -54,6 +54,9 @@ func (a *BackendCertStorageAdapter) SaveCert(id string, cert *x509.Certificate) 
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 	if cert == nil {
 		return storage.ErrInvalidData
 	}
@@ -72,6 +75,9 @@ func (a *BackendCertStorageAdapter) GetCert(id string) (*x509.Certificate, error
 
 	if id == "" {
 		return nil, storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return nil, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 
 	certData, err := storage.GetCert(context.Background(), a.backend, id)
@@ -99,8 +105,30 @@ func (a *BackendCertStorageAdapter) DeleteCert(id string) error {
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	return storage.DeleteCert(context.Background(), a.backend, id)
+}
+
+// DeleteCertChain removes only the chain record, certs/{id}-chain.pem.
+func (a *BackendCertStorageAdapter) DeleteCertChain(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.closed {
+		return ErrStorageClosed
+	}
+
+	if id == "" {
+		return storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
+
+	return storage.DeleteCertChain(context.Background(), a.backend, id)
 }
 
 // SaveCertChain stores a certificate chain by concatenating DER-encoded certificates.
@@ -114,6 +142,9 @@ func (a *BackendCertStorageAdapter) SaveCertChain(id string, chain []*x509.Certi
 
 	if id == "" {
 		return storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 	if len(chain) == 0 {
 		return storage.ErrInvalidData
@@ -142,6 +173,9 @@ func (a *BackendCertStorageAdapter) GetCertChain(id string) ([]*x509.Certificate
 
 	if id == "" {
 		return nil, storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return nil, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 
 	chainData, err := storage.GetCertChain(context.Background(), a.backend, id)
@@ -179,14 +213,18 @@ func (a *BackendCertStorageAdapter) ListCerts() ([]string, error) {
 		return nil, err
 	}
 
-	// Extract IDs from paths (certs/ID.pem -> ID)
+	// Extract IDs from paths (certs/ID.pem -> ID). A chain record lives at
+	// certs/ID-chain.pem, a key that names no certificate: listing it would
+	// surface a phantom id of the reserved shape that no read can address.
 	ids := make([]string, 0, len(keys))
 	for _, key := range keys {
-		// Remove "certs/" prefix and ".pem" suffix
-		if strings.HasPrefix(key, "certs/") && strings.HasSuffix(key, ".pem") {
-			id := key[6 : len(key)-4] // Strip "certs/" and ".pem"
-			ids = append(ids, id)
+		if !strings.HasPrefix(key, "certs/") || !strings.HasSuffix(key, ".pem") {
+			continue
 		}
+		if strings.HasSuffix(key, "-chain.pem") {
+			continue
+		}
+		ids = append(ids, key[6:len(key)-4]) // strip "certs/" and ".pem"
 	}
 
 	return ids, nil
@@ -203,6 +241,9 @@ func (a *BackendCertStorageAdapter) CertExists(id string) (bool, error) {
 
 	if id == "" {
 		return false, storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return false, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
 	}
 
 	return storage.CertExists(context.Background(), a.backend, id)
@@ -429,25 +470,47 @@ func (h *HybridCertStorage) DeleteCert(id string) error {
 		return storage.ErrInvalidID
 	}
 
-	// Try to delete from both storages
-	hwErr := h.hardware.DeleteCert(id)
-	extErr := h.external.DeleteCert(id)
+	return combineDeleteResults("delete", h.hardware.DeleteCert(id), h.external.DeleteCert(id))
+}
 
-	// Check if both report not found
-	hwNotFound := hwErr == storage.ErrNotFound
-	extNotFound := extErr == storage.ErrNotFound
-
-	if hwNotFound && extNotFound {
+// combineDeleteResults folds the two sides' results of a delete into one
+// answer. A real error on either side is returned, whatever the other side
+// reported: the record may still exist on the failing side, so the outcome is
+// unknown and must not be reported as success. Only when neither side failed
+// does absence count: both absent is ErrNotFound, otherwise the record was
+// released. op names the verb in the error ("delete", "chain delete").
+func combineDeleteResults(op string, hwErr, extErr error) error {
+	hwFailed := hwErr != nil && !errors.Is(hwErr, storage.ErrNotFound)
+	extFailed := extErr != nil && !errors.Is(extErr, storage.ErrNotFound)
+	switch {
+	case hwFailed && extFailed:
+		return &errs.Affix{Prefix: "hardware " + op + " failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external %s failed: %v", op, extErr)}
+	case hwFailed:
+		return &errs.Affix{Prefix: "hardware " + op + " failed: ", Err: hwErr}
+	case extFailed:
+		return &errs.Affix{Prefix: "external " + op + " failed: ", Err: extErr}
+	case hwErr != nil && extErr != nil:
 		return storage.ErrNotFound
 	}
+	return nil
+}
 
-	// At least one succeeded or reported not found
-	if hwErr == nil || hwNotFound || extErr == nil || extNotFound {
-		return nil
+// DeleteCertChain removes the chain from both storages, leaving each
+// storage's certificate in place, with the same not-found and partial-failure
+// rules as DeleteCert.
+func (h *HybridCertStorage) DeleteCertChain(id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.closed {
+		return ErrStorageClosed
 	}
 
-	// Both failed with real errors
-	return &errs.Affix{Prefix: "hardware delete failed: ", Err: hwErr, Suffix: fmt.Sprintf("; external delete failed: %v", extErr)}
+	if id == "" {
+		return storage.ErrInvalidID
+	}
+
+	return combineDeleteResults("chain delete", h.hardware.DeleteCertChain(id), h.external.DeleteCertChain(id))
 }
 
 // SaveCertChain saves a certificate chain by trying hardware storage first,

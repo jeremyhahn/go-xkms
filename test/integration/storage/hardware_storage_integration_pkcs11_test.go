@@ -113,6 +113,10 @@ func (w *pkcs11StorageWrapper) DeleteCert(id string) error {
 	return w.storage.DeleteCert(id)
 }
 
+func (w *pkcs11StorageWrapper) DeleteCertChain(id string) error {
+	return w.storage.DeleteCertChain(id)
+}
+
 func (w *pkcs11StorageWrapper) CertExists(id string) (bool, error) {
 	return w.storage.CertExists(id)
 }

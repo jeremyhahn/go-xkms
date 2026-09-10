@@ -107,7 +107,7 @@ func TestPKCS11CertStorage_HelperFunctions(t *testing.T) {
 		assert.Equal(t, expected, storage.chainID(id))
 	})
 
-	t.Run("isChainCertificate", func(t *testing.T) {
+	t.Run("isChainMemberID", func(t *testing.T) {
 		tests := []struct {
 			name string
 			id   string
@@ -117,12 +117,12 @@ func TestPKCS11CertStorage_HelperFunctions(t *testing.T) {
 			{"chain certificate 2", "test-chain-1", true},
 			{"regular certificate", "test-cert", false},
 			{"short ID", "test", false},
+			{"infix without a decimal index is a certificate", "test-chain-a", false},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				got := storage.isChainCertificate(tt.id)
-				assert.Equal(t, tt.want, got)
+				assert.Equal(t, tt.want, isChainMemberID(tt.id))
 			})
 		}
 	})
@@ -329,34 +329,6 @@ func TestPKCS11CertStorage_ChainIDHelper(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			result := storage.chainID(tt.input)
 			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// Test: isChainCertificate helper function
-func TestPKCS11CertStorage_IsChainCertificateHelper(t *testing.T) {
-	storage := &PKCS11CertStorage{}
-
-	tests := []struct {
-		id       string
-		expected bool
-	}{
-		{"test-chain-0", true},
-		{"test-chain-1", true},
-		{"test-chain-999", true},
-		{"test-chain-", false}, // Has chain but no digit after
-		{"test-cert", false},
-		{"chain-test", false}, // Chain not followed by dash
-		{"test", false},
-		{"", false},
-		{"test-chai", false},       // Incomplete chain suffix
-		{"myapp-chain-id-0", true}, // Multiple dashes with chain pattern
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.id, func(t *testing.T) {
-			result := storage.isChainCertificate(tt.id)
-			assert.Equal(t, tt.expected, result, "ID: %s", tt.id)
 		})
 	}
 }

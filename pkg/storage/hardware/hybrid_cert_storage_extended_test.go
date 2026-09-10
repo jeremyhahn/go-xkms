@@ -261,7 +261,7 @@ func TestHybridCertStorage_SaveCertChain_NonCapacityHardwareError(t *testing.T) 
 	cert := generateTestCertForHybrid(t, "test")
 	chain := []*x509.Certificate{cert}
 
-	err = hybrid.SaveCertChain("test-chain", chain)
+	err = hybrid.SaveCertChain("chaintest", chain)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hardware storage failed")
 }
@@ -301,7 +301,7 @@ func TestHybridCertStorage_GetCertChain_HardwareError(t *testing.T) {
 	hybrid, err := NewHybridCertStorage(hw, ext)
 	require.NoError(t, err)
 
-	_, err = hybrid.GetCertChain("test-chain")
+	_, err = hybrid.GetCertChain("chaintest")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hardware storage failed")
 }
@@ -315,7 +315,7 @@ func TestHybridCertStorage_GetCertChain_ExternalError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Not in hardware
-	_, err = hybrid.GetCertChain("test-chain")
+	_, err = hybrid.GetCertChain("chaintest")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "external storage failed")
 }
@@ -332,7 +332,7 @@ func TestHybridCertStorage_SaveCertChain_BothFail(t *testing.T) {
 	cert := generateTestCertForHybrid(t, "test")
 	chain := []*x509.Certificate{cert}
 
-	err = hybrid.SaveCertChain("test-chain", chain)
+	err = hybrid.SaveCertChain("chaintest", chain)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hardware storage failed")
 	assert.Contains(t, err.Error(), "external storage failed")
@@ -451,7 +451,7 @@ func TestHybridCertStorage_FullWorkflow(t *testing.T) {
 
 	// Save chain
 	chain := []*x509.Certificate{cert1, cert2}
-	err = hybrid.SaveCertChain("my-chain", chain)
+	err = hybrid.SaveCertChain("mychain", chain)
 	require.NoError(t, err)
 
 	// Check existence
@@ -470,7 +470,7 @@ func TestHybridCertStorage_FullWorkflow(t *testing.T) {
 	assert.True(t, cert1.Equal(retrieved))
 
 	// Get chain
-	retrievedChain, err := hybrid.GetCertChain("my-chain")
+	retrievedChain, err := hybrid.GetCertChain("mychain")
 	require.NoError(t, err)
 	assert.Len(t, retrievedChain, 2)
 

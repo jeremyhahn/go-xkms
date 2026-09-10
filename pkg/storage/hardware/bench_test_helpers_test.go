@@ -243,6 +243,16 @@ func (m *benchMockExternalStorage) DeleteCert(id string) error {
 	return nil
 }
 
+func (m *benchMockExternalStorage) DeleteCertChain(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.certs[id]; !ok {
+		return storage.ErrNotFound
+	}
+	delete(m.certs, id)
+	return nil
+}
+
 func (m *benchMockExternalStorage) SaveCertChain(id string, chain []*x509.Certificate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -334,6 +344,16 @@ func (m *benchMockHardwareStorage) GetCert(id string) (*x509.Certificate, error)
 }
 
 func (m *benchMockHardwareStorage) DeleteCert(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.certs[id]; !ok {
+		return storage.ErrNotFound
+	}
+	delete(m.certs, id)
+	return nil
+}
+
+func (m *benchMockHardwareStorage) DeleteCertChain(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.certs[id]; !ok {

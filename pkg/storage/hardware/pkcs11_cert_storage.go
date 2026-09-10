@@ -18,6 +18,7 @@ package hardware
 import (
 	"crypto/x509"
 	"fmt"
+	"sort"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -129,6 +130,9 @@ func (p *PKCS11CertStorage) SaveCert(id string, cert *x509.Certificate) error {
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	if cert == nil {
 		return storage.ErrInvalidData
@@ -182,6 +186,9 @@ func (p *PKCS11CertStorage) GetCert(id string) (*x509.Certificate, error) {
 	if id == "" {
 		return nil, storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return nil, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	var cert *x509.Certificate
 	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
@@ -231,56 +238,81 @@ func (p *PKCS11CertStorage) DeleteCert(id string) error {
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
+	// Only the certificate object (CKA_ID == id) is released. The chain
+	// objects (CKA_ID == id-chain-<n>) are a separate record of the pair and
+	// have their own release, DeleteCertChain; this method used to take them
+	// too, so a caller addressing one record destroyed the other.
+	//
+	// After C_DestroyObject returns success, the CKA_ID is searched again:
+	// some tokens (YubiKey PIV) accept the call and keep the object, and that
+	// must surface as a refusal rather than a delete that did nothing.
 	return p.runWrite(func(session pkcs11.SessionHandle) error {
-		deleted := false
-
 		handle, err := p.findCertificateHandle(session, id)
 		if err != nil {
 			return NewOperationError("find certificate", err)
 		}
-
 		if handle == 0 {
-			// Check chain form.
-			chainID := p.chainID(id)
-			chainHandles, chainErr := p.findAllCertificatesWithPrefix(session, chainID)
-			if chainErr != nil || len(chainHandles) == 0 {
-				return storage.ErrNotFound
-			}
-			for _, h := range chainHandles {
-				if err := p.pool.Ctx().DestroyObject(session, h); err != nil {
-					return NewOperationError("delete chain certificate", err)
-				}
-				deleted = true
-			}
-			// Verify chain actually gone.
-			remaining, _ := p.findAllCertificatesWithPrefix(session, chainID)
-			if len(remaining) > 0 {
-				return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("chain %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", id)}
-			}
-		} else {
-			if err := p.pool.Ctx().DestroyObject(session, handle); err != nil {
-				return NewOperationError("delete certificate", err)
-			}
-			deleted = true
+			return storage.ErrNotFound
+		}
 
-			// Verify primary cert actually gone.
-			if verifyHandle, verr := p.findCertificateHandle(session, id); verr == nil && verifyHandle != 0 {
-				return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("cert %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", id)}
-			}
+		if err := p.pool.Ctx().DestroyObject(session, handle); err != nil {
+			return NewOperationError("delete certificate", err)
+		}
 
-			// Also delete chain certificates if they exist (best effort).
-			chainID := p.chainID(id)
-			chainHandles, err := p.findAllCertificatesWithPrefix(session, chainID)
-			if err == nil {
-				for _, h := range chainHandles {
-					p.pool.Ctx().DestroyObject(session, h)
-				}
+		verifyHandle, err := p.findCertificateHandle(session, id)
+		if err != nil {
+			return NewOperationError("verify certificate deletion", err)
+		}
+		if verifyHandle != 0 {
+			return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("cert %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", id)}
+		}
+
+		return nil
+	})
+}
+
+// DeleteCertChain removes the chain objects stored under id (CKA_ID
+// id-chain-<n>) and leaves the certificate object in place.
+func (p *PKCS11CertStorage) DeleteCertChain(id string) error {
+	if p.closed {
+		return ErrStorageClosed
+	}
+
+	if id == "" {
+		return storage.ErrInvalidID
+	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
+
+	return p.runWrite(func(session pkcs11.SessionHandle) error {
+		chainHandles, err := p.findChainMemberHandles(session, id)
+		if err != nil {
+			return NewOperationError("find certificate chain", err)
+		}
+		if len(chainHandles) == 0 {
+			return storage.ErrNotFound
+		}
+
+		for _, h := range chainHandles {
+			if err := p.pool.Ctx().DestroyObject(session, h); err != nil {
+				return NewOperationError("delete chain certificate", err)
 			}
 		}
 
-		if !deleted {
-			return storage.ErrNotFound
+		// The verification search is the only evidence of the outcome, so a
+		// failure there is an unknown outcome and must surface as an error,
+		// never fall through to a delete reported as done.
+		remaining, err := p.findChainMemberHandles(session, id)
+		if err != nil {
+			return NewOperationError("verify chain deletion", err)
+		}
+		if len(remaining) > 0 {
+			return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("chain %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", id)}
 		}
 
 		return nil
@@ -296,6 +328,9 @@ func (p *PKCS11CertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 	if id == "" {
 		return storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	if len(chain) == 0 {
 		return storage.ErrInvalidData
@@ -308,14 +343,31 @@ func (p *PKCS11CertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 	}
 
 	return p.runWrite(func(session pkcs11.SessionHandle) error {
-		chainID := p.chainID(id)
-		existingHandles, _ := p.findAllCertificatesWithPrefix(session, chainID)
+		// An overwrite releases the previous members first, and it must know
+		// they are gone before it writes the replacements: a member it could
+		// not see, or could not destroy, would survive next to the new ones
+		// and later reads would return a chain mixed from two writes.
+		existingHandles, err := p.findChainMemberHandles(session, id)
+		if err != nil {
+			return NewOperationError("find existing certificate chain", err)
+		}
 		for _, h := range existingHandles {
-			p.pool.Ctx().DestroyObject(session, h)
+			if err := p.pool.Ctx().DestroyObject(session, h); err != nil {
+				return NewOperationError("delete existing chain certificate", err)
+			}
+		}
+		if len(existingHandles) > 0 {
+			remaining, err := p.findChainMemberHandles(session, id)
+			if err != nil {
+				return NewOperationError("verify chain replacement", err)
+			}
+			if len(remaining) > 0 {
+				return &errs.Detail{Err: ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("chain %q still present after DestroyObject -- the token did not release the previous members, so the replacement was not written", id)}
+			}
 		}
 
 		for i, cert := range chain {
-			certID := fmt.Sprintf("%s-%d", chainID, i)
+			certID := fmt.Sprintf("%s-%d", p.chainID(id), i)
 			template := []*pkcs11.Attribute{
 				pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 				pkcs11.NewAttribute(pkcs11.CKA_CERTIFICATE_TYPE, pkcs11.CKC_X_509),
@@ -351,11 +403,13 @@ func (p *PKCS11CertStorage) GetCertChain(id string) ([]*x509.Certificate, error)
 	if id == "" {
 		return nil, storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return nil, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	var chain []*x509.Certificate
 	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
-		chainID := p.chainID(id)
-		handles, err := p.findAllCertificatesWithPrefix(session, chainID)
+		handles, err := p.findChainMemberHandles(session, id)
 		if err != nil {
 			return err
 		}
@@ -408,7 +462,7 @@ func (p *PKCS11CertStorage) ListCerts() ([]string, error) {
 		}
 		defer p.pool.Ctx().FindObjectsFinal(session)
 
-		handles, _, err := p.pool.Ctx().FindObjects(session, 1000)
+		handles, err := p.findAllObjects(session)
 		if err != nil {
 			return NewOperationError("find certificates", err)
 		}
@@ -418,12 +472,17 @@ func (p *PKCS11CertStorage) ListCerts() ([]string, error) {
 			attrs, err := p.pool.Ctx().GetAttributeValue(session, handle, []*pkcs11.Attribute{
 				pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
 			})
-			if err != nil || len(attrs) == 0 {
+			if err != nil {
+				// A certificate whose id cannot be read is a listing that is
+				// not known to be complete, not one that is shorter.
+				return NewOperationError("read certificate id", err)
+			}
+			if len(attrs) == 0 {
 				continue
 			}
 
 			id := string(attrs[0].Value)
-			if !p.isChainCertificate(id) {
+			if !isChainMemberID(id) {
 				ids[id] = true
 			}
 		}
@@ -448,18 +507,27 @@ func (p *PKCS11CertStorage) CertExists(id string) (bool, error) {
 	if id == "" {
 		return false, storage.ErrInvalidID
 	}
+	if isReservedChainID(id) {
+		return false, &errs.Detail{Err: ErrIDReservedForChain, Detail: fmt.Sprintf("%q", id)}
+	}
 
 	var exists bool
 	err := p.pool.WithSession(func(session pkcs11.SessionHandle) error {
 		handle, err := p.findCertificateHandle(session, id)
 		if err != nil {
-			return nil
+			// A search that failed did not establish absence. Callers such
+			// as the adapter's PutIfAbsent treat false as authoritative, so
+			// the failure must reach them as an unknown outcome.
+			return NewOperationError("find certificate", err)
 		}
 		exists = handle != 0
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
 
-	return exists, err
+	return exists, nil
 }
 
 // Close marks the storage as closed.
@@ -537,60 +605,80 @@ func (p *PKCS11CertStorage) findCertificateHandle(session pkcs11.SessionHandle, 
 	return handles[0], nil
 }
 
-// findAllCertificatesWithPrefix finds all certificate handles with IDs starting with prefix.
+// findAllObjects drains an object search opened with FindObjectsInit,
+// requesting pages until the token returns an empty one. C_FindObjects hands
+// back at most the requested count per call, so a single call with a large
+// count is still one page: a token holding more objects than that would hide
+// the rest, and a chain member on a later page would be invisible to both
+// the delete and its verification. Must be called between FindObjectsInit
+// and FindObjectsFinal.
+func (p *PKCS11CertStorage) findAllObjects(session pkcs11.SessionHandle) ([]pkcs11.ObjectHandle, error) {
+	const pageSize = 256
+	var all []pkcs11.ObjectHandle
+	for {
+		page, _, err := p.pool.Ctx().FindObjects(session, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			return all, nil
+		}
+		all = append(all, page...)
+	}
+}
+
+// findChainMemberHandles returns the handles of the members of id's chain,
+// the objects whose CKA_ID is exactly id-chain-<n>, ordered by n. Objects
+// that merely start with id-chain (a certificate named id-chain, the chain
+// of id-chain2) belong to other records and are never returned.
 // Must be called from within a WithSession callback.
-func (p *PKCS11CertStorage) findAllCertificatesWithPrefix(session pkcs11.SessionHandle, prefix string) ([]pkcs11.ObjectHandle, error) {
+func (p *PKCS11CertStorage) findChainMemberHandles(session pkcs11.SessionHandle, id string) ([]pkcs11.ObjectHandle, error) {
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 	}
-
 	if err := p.pool.Ctx().FindObjectsInit(session, template); err != nil {
 		return nil, NewOperationError("init object search", err)
 	}
 	defer p.pool.Ctx().FindObjectsFinal(session)
 
-	allHandles, _, err := p.pool.Ctx().FindObjects(session, 1000)
+	allHandles, err := p.findAllObjects(session)
 	if err != nil {
 		return nil, NewOperationError("find objects", err)
 	}
 
-	var result []pkcs11.ObjectHandle
+	type member struct {
+		index  int
+		handle pkcs11.ObjectHandle
+	}
+	var members []member
 	for _, handle := range allHandles {
 		attrs, err := p.pool.Ctx().GetAttributeValue(session, handle, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
 		})
-		if err != nil || len(attrs) == 0 {
+		if err != nil {
+			// The delete selects its objects here and verifies its outcome
+			// here; a member whose id could not be read would be invisible
+			// to both, so the failure is an unknown outcome, never a
+			// shorter chain.
+			return nil, NewOperationError("read certificate id", err)
+		}
+		if len(attrs) == 0 {
 			continue
 		}
-
-		id := string(attrs[0].Value)
-		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
-			result = append(result, handle)
+		if index, ok := chainMemberIndex(id, string(attrs[0].Value)); ok {
+			members = append(members, member{index: index, handle: handle})
 		}
 	}
+	sort.Slice(members, func(i, j int) bool { return members[i].index < members[j].index })
 
+	result := make([]pkcs11.ObjectHandle, len(members))
+	for i, m := range members {
+		result[i] = m.handle
+	}
 	return result, nil
 }
 
 // chainID returns the chain ID prefix for a given certificate ID.
 func (p *PKCS11CertStorage) chainID(id string) string {
 	return id + "-chain"
-}
-
-// isChainCertificate returns true if the ID represents a chain certificate.
-func (p *PKCS11CertStorage) isChainCertificate(id string) bool {
-	chainSuffix := "-chain-"
-	chainIdx := len(id) - len(chainSuffix) - 1
-	if chainIdx < 0 {
-		return false
-	}
-	if len(id) >= len(chainSuffix)+1 {
-		for i := 0; i < len(id)-len(chainSuffix); i++ {
-			substr := id[i : i+len(chainSuffix)]
-			if substr == chainSuffix && i+len(chainSuffix) < len(id) {
-				return true
-			}
-		}
-	}
-	return false
 }

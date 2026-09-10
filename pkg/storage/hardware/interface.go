@@ -32,9 +32,24 @@ type HardwareCertStorage interface {
 	// Returns ErrNotFound if the certificate does not exist.
 	GetCert(id string) (*x509.Certificate, error)
 
-	// DeleteCert removes a certificate by ID.
-	// Returns ErrNotFound if the certificate does not exist.
+	// DeleteCert removes the certificate stored under id and leaves any
+	// chain stored under the same id in place. Returns ErrNotFound if the
+	// certificate does not exist.
+	//
+	// The certificate and its chain are two records of a pair that share an
+	// id; each is released by its own method so a caller can address one
+	// record without taking its sibling. Hardware that keeps one NV index
+	// per id (TPM2 holds whichever of SaveCert and SaveCertChain wrote last)
+	// records the kind in the record itself, and every method addresses
+	// the record only when it is of its kind: DeleteCert, GetCert and
+	// CertExists on an index that holds a chain answer ErrNotFound, absence
+	// and false, and leave it, exactly as they would a stored sibling.
 	DeleteCert(id string) error
+
+	// DeleteCertChain removes the certificate chain stored under id and
+	// leaves the certificate stored under the same id in place. Returns
+	// ErrNotFound if no chain is stored under id.
+	DeleteCertChain(id string) error
 
 	// SaveCertChain stores a certificate chain by ID.
 	// If a chain with the same ID exists, it will be overwritten.

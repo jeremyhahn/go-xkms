@@ -16,6 +16,7 @@ package hardware
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -59,6 +60,12 @@ func (a *HardwareBackendAdapter) Get(_ context.Context, key string) ([]byte, err
 		return nil, &errs.Message{Msg: fmt.Sprintf("hardware storage only supports certificate keys (certs/*): got %s", key)}
 	}
 
+	return a.readRecord(key)
+}
+
+// readRecord returns the DER bytes of the one record key names; the caller
+// holds a.mu.
+func (a *HardwareBackendAdapter) readRecord(key string) ([]byte, error) {
 	// Check if it's a chain request
 	if strings.HasSuffix(key, "-chain.pem") {
 		id := strings.TrimPrefix(key, "certs/")
@@ -142,12 +149,25 @@ func (a *HardwareBackendAdapter) Delete(_ context.Context, key string) error {
 		return &errs.Message{Msg: fmt.Sprintf("hardware storage only supports certificate keys (certs/*): got %s", key)}
 	}
 
-	// Extract ID from key
-	id := strings.TrimPrefix(key, "certs/")
-	id = strings.TrimSuffix(id, ".pem")
-	id = strings.TrimSuffix(id, "-chain.pem")
+	return a.deleteRecord(key)
+}
 
-	return a.hardware.DeleteCert(id)
+// deleteRecord releases the one record the key names: certs/{id}-chain.pem is
+// the chain, certs/{id}.pem the certificate. The two used to collapse onto
+// DeleteCert, which on PKCS#11 destroyed both records of the pair, so a
+// release of either key took the other with it. The caller holds a.mu.
+func (a *HardwareBackendAdapter) deleteRecord(key string) error {
+	id := strings.TrimPrefix(key, "certs/")
+	if strings.HasSuffix(id, "-chain.pem") {
+		return a.hardware.DeleteCertChain(strings.TrimSuffix(id, "-chain.pem"))
+	}
+	if strings.HasSuffix(id, ".pem") {
+		return a.hardware.DeleteCert(strings.TrimSuffix(id, ".pem"))
+	}
+	// The same two shapes Get and Put accept, and nothing else: a key that
+	// names no record must not fall through to the certificate whose key
+	// it resembles.
+	return &errs.Message{Msg: fmt.Sprintf("unsupported key format: %s", key)}
 }
 
 // List returns all certificate keys with the given prefix.
@@ -212,12 +232,22 @@ func (a *HardwareBackendAdapter) Exists(_ context.Context, key string) (bool, er
 		return false, nil
 	}
 
-	// Extract ID from key
+	// The chain record is probed as a chain, the way Get, Put and Delete
+	// read the key; stripping ".pem" first resolved certs/{id}-chain.pem to
+	// the certificate of "{id}-chain", a different record.
 	id := strings.TrimPrefix(key, "certs/")
-	id = strings.TrimSuffix(id, ".pem")
-	id = strings.TrimSuffix(id, "-chain.pem")
+	if strings.HasSuffix(id, "-chain.pem") {
+		_, err := a.hardware.GetCertChain(strings.TrimSuffix(id, "-chain.pem"))
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}
 
-	return a.hardware.CertExists(id)
+	return a.hardware.CertExists(strings.TrimSuffix(id, ".pem"))
 }
 
 // Close closes the underlying hardware storage.
@@ -236,32 +266,19 @@ func (a *HardwareBackendAdapter) GetHardwareStorage() HardwareCertStorage {
 
 // parseDERChain parses concatenated DER-encoded certificates.
 func parseDERChain(data []byte) ([]*x509.Certificate, error) {
-	var chain []*x509.Certificate
-	remaining := data
-
-	for len(remaining) > 0 {
-		cert, err := x509.ParseCertificate(remaining)
-		if err != nil {
-			// Try parsing what we have so far
-			if len(chain) > 0 {
-				return chain, nil
-			}
-			return nil, err
-		}
-
-		chain = append(chain, cert)
-
-		// Move past this certificate
-		if len(remaining) <= len(cert.Raw) {
-			break
-		}
-		remaining = remaining[len(cert.Raw):]
+	if len(data) == 0 {
+		return nil, &errs.Message{Msg: "no certificates found in data"}
 	}
-
+	// The chain key's value is the concatenation of the members' DER, which
+	// is exactly what Get emits for it; ParseCertificates walks that
+	// sequence and rejects trailing bytes that are not a certificate.
+	chain, err := x509.ParseCertificates(data)
+	if err != nil {
+		return nil, err
+	}
 	if len(chain) == 0 {
 		return nil, &errs.Message{Msg: "no certificates found in data"}
 	}
-
 	return chain, nil
 }
 

@@ -227,11 +227,11 @@ func TestBackendCertStorageAdapter_SaveCertChain(t *testing.T) {
 		cert2 := generateTestCertForBackendAdapter(t, "cert2")
 		chain := []*x509.Certificate{cert1, cert2}
 
-		err := adapter.SaveCertChain("test-chain", chain)
+		err := adapter.SaveCertChain("chaintest", chain)
 		require.NoError(t, err)
 
 		// Verify stored
-		retrieved, err := adapter.GetCertChain("test-chain")
+		retrieved, err := adapter.GetCertChain("chaintest")
 		require.NoError(t, err)
 		assert.Len(t, retrieved, 2)
 	})
@@ -252,7 +252,7 @@ func TestBackendCertStorageAdapter_SaveCertChain(t *testing.T) {
 		backend := storage.NewMemory()
 		adapter := NewBackendCertStorageAdapter(backend)
 
-		err := adapter.SaveCertChain("test-chain", []*x509.Certificate{})
+		err := adapter.SaveCertChain("chaintest", []*x509.Certificate{})
 		require.Error(t, err)
 		assert.Equal(t, storage.ErrInvalidData, err)
 	})
@@ -264,7 +264,7 @@ func TestBackendCertStorageAdapter_SaveCertChain(t *testing.T) {
 		cert := generateTestCertForBackendAdapter(t, "test")
 		chain := []*x509.Certificate{cert, nil}
 
-		err := adapter.SaveCertChain("test-chain", chain)
+		err := adapter.SaveCertChain("chaintest", chain)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "certificate at index 1 is nil")
 	})
@@ -279,7 +279,7 @@ func TestBackendCertStorageAdapter_SaveCertChain(t *testing.T) {
 		err := adapter.Close()
 		require.NoError(t, err)
 
-		err = adapter.SaveCertChain("test-chain", chain)
+		err = adapter.SaveCertChain("chaintest", chain)
 		require.Error(t, err)
 		assert.Equal(t, ErrStorageClosed, err)
 	})
@@ -295,10 +295,10 @@ func TestBackendCertStorageAdapter_GetCertChain(t *testing.T) {
 		cert2 := generateTestCertForBackendAdapter(t, "cert2")
 		chain := []*x509.Certificate{cert1, cert2}
 
-		err := adapter.SaveCertChain("test-chain", chain)
+		err := adapter.SaveCertChain("chaintest", chain)
 		require.NoError(t, err)
 
-		retrieved, err := adapter.GetCertChain("test-chain")
+		retrieved, err := adapter.GetCertChain("chaintest")
 		require.NoError(t, err)
 		assert.Len(t, retrieved, 2)
 		assert.True(t, cert1.Equal(retrieved[0]))
@@ -330,7 +330,7 @@ func TestBackendCertStorageAdapter_GetCertChain(t *testing.T) {
 		err := adapter.Close()
 		require.NoError(t, err)
 
-		_, err = adapter.GetCertChain("test-chain")
+		_, err = adapter.GetCertChain("chaintest")
 		require.Error(t, err)
 		assert.Equal(t, ErrStorageClosed, err)
 	})
@@ -340,10 +340,10 @@ func TestBackendCertStorageAdapter_GetCertChain(t *testing.T) {
 		adapter := NewBackendCertStorageAdapter(backend)
 
 		// Store invalid data directly
-		err := backend.Put(context.Background(), "certs/test-chain-chain.pem", []byte("invalid chain data"))
+		err := backend.Put(context.Background(), "certs/chaintest-chain.pem", []byte("invalid chain data"))
 		require.NoError(t, err)
 
-		_, err = adapter.GetCertChain("test-chain")
+		_, err = adapter.GetCertChain("chaintest")
 		require.Error(t, err)
 		// Should be wrapped in OperationError
 		assert.Contains(t, err.Error(), "parse certificate chain")
@@ -354,10 +354,10 @@ func TestBackendCertStorageAdapter_GetCertChain(t *testing.T) {
 		adapter := NewBackendCertStorageAdapter(backend)
 
 		// Store empty data directly
-		err := backend.Put(context.Background(), "certs/test-chain-chain.pem", []byte{})
+		err := backend.Put(context.Background(), "certs/chaintest-chain.pem", []byte{})
 		require.NoError(t, err)
 
-		_, err = adapter.GetCertChain("test-chain")
+		_, err = adapter.GetCertChain("chaintest")
 		require.Error(t, err)
 		assert.Equal(t, ErrInvalidCertificate, err)
 	})

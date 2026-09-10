@@ -99,6 +99,13 @@ type HardwareCertStorage interface {
     // GetCapacity returns (total slots, available slots, error)
     GetCapacity() (total int, available int, err error)
 
+    // DeleteCert releases the certificate stored under id and leaves the
+    // chain stored under the same id; DeleteCertChain releases the chain and
+    // leaves the certificate. The two are separate records of a pair that
+    // share an id, each with its own release.
+    DeleteCert(id string) error
+    DeleteCertChain(id string) error
+
     // SupportsChains returns true if hardware supports certificate chains
     SupportsChains() bool
 
@@ -234,7 +241,8 @@ func (t *TPM2CertStorage) Compact() error // TPM 2.0 spec optional
 // Storage Strategy:
 //   - SaveCert: Writes to hardware, falls back to external on error
 //   - GetCert: Tries hardware first, falls back to external
-//   - DeleteCert: Deletes from both hardware and external
+//   - DeleteCert: Deletes the certificate from both hardware and external
+//   - DeleteCertChain: Deletes the chain from both, leaving each certificate
 //   - ListCerts: Merges IDs from both storages (deduplicated)
 //
 // Use Cases:
@@ -559,3 +567,46 @@ All changes are opt-in via configuration. Existing code continues to work unchan
 | TPMA_NV_NO_DA | 1 | Not DA-protected |
 | TPMA_NV_OWNERWRITE | 1 | Owner can write |
 | TPMA_NV_OWNERREAD | 1 | Owner can read |
+
+## Deleting one record of a cert/chain pair
+
+A certificate and its chain share an id and are two records of a pair. Each
+has its own release: `DeleteCert(id)` removes the certificate and leaves the
+chain, `DeleteCertChain(id)` removes the chain and leaves the certificate.
+`DeleteCert` on PKCS#11 used to take the chain objects with it, so a caller
+addressing one record destroyed the other, and the storage adapter could not
+honour a guarded delete of `certs/{id}-chain.pem` without releasing
+`certs/{id}.pem`, whose bytes were never compared.
+
+| Backend | Records per id | `DeleteCert` | `DeleteCertChain` |
+|---|---|---|---|
+| PKCS#11 | two: the object `CKA_ID = id` and the objects `CKA_ID = id-chain-<n>` | the certificate object only | the chain objects only |
+| TPM2 | one NV index per id holding whichever of `SaveCert` and `SaveCertChain` wrote last; chain records carry a `Record: chain` PEM header | the record, only if it is a certificate record (else `ErrNotFound`) | the record, only if it is a chain record (else `ErrNotFound`) |
+| external (`BackendCertStorageAdapter`) | `certs/{id}.pem` and `certs/{id}-chain.pem` | the certificate file | the chain file |
+| hybrid | both storages | both storages' certificate | both storages' chain |
+
+An id of the form `<id>-chain` or `<id>-chain-<n>` is reserved for chain
+records and refused on every path that accepts a certificate id, on every
+store (`ErrIDReservedForChain`): `certs/<id>-chain.pem` can only ever name
+`<id>`'s chain, and on PKCS#11 a listing can tell a chain member from a
+certificate by its id alone.
+
+On TPM2 the kind lives in the record: `SaveCertChain` stamps every PEM block
+with `Record: chain`, so a one-member chain is never mistaken for a
+certificate, and a record written before the marker existed classifies by
+member count (more than one is a chain). Every method addresses the record
+only when it is of its kind: `GetCert`/`CertExists`/`DeleteCert` treat a
+chain record as an absent certificate and `GetCertChain`/`DeleteCertChain`
+treat a certificate record as an absent chain, which is what lets the hybrid
+store treat TPM2 like any two-record backend: each side answers for the
+record it holds, a chain that overflowed to the external side is read and
+released there while the hardware certificate stays, and a hardware
+certificate can neither hide that chain nor resurface as a phantom chain
+after it is released.
+
+`HardwareBackendAdapter.Delete` routes `certs/{id}-chain.pem` to
+`DeleteCertChain` and `certs/{id}.pem` to `DeleteCert`. The adapter does not
+implement `storage.CompareAndDeleter`: its lock serialises only this
+process's callers, and a token or NV index has other writers and no guarded
+primitive of its own, so a guard evaluated here would not be evaluated where
+the hardware's writes serialise. The absence is pinned by a test.

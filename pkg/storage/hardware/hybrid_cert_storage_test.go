@@ -135,22 +135,33 @@ func (m *mockHardwareCertStorage) DeleteCert(id string) error {
 		return storage.ErrInvalidID
 	}
 
-	_, certExists := m.certs[id]
-	_, chainExists := m.chains[id]
-
-	if !certExists && !chainExists {
+	if _, certExists := m.certs[id]; !certExists {
 		return storage.ErrNotFound
 	}
+	delete(m.certs, id)
+	m.available++
 
-	if certExists {
-		delete(m.certs, id)
-		m.available++
-	}
-	if chainExists {
-		delete(m.chains, id)
-		m.available++
-	}
+	return nil
+}
 
+func (m *mockHardwareCertStorage) DeleteCertChain(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return ErrStorageClosed
+	}
+	if m.failDelete {
+		return errors.New("mock delete error")
+	}
+	if id == "" {
+		return storage.ErrInvalidID
+	}
+	if _, ok := m.chains[id]; !ok {
+		return storage.ErrNotFound
+	}
+	delete(m.chains, id)
+	m.available++
 	return nil
 }
 
@@ -270,9 +281,10 @@ func (m *mockHardwareCertStorage) CertExists(id string) (bool, error) {
 		return false, storage.ErrInvalidID
 	}
 
+	// Record-scoped, as PKCS#11's CertExists is: a chain-only id has no
+	// certificate. The chain is probed through GetCertChain.
 	_, certExists := m.certs[id]
-	_, chainExists := m.chains[id]
-	return certExists || chainExists, nil
+	return certExists, nil
 }
 
 func (m *mockHardwareCertStorage) Close() error {
@@ -389,6 +401,32 @@ func (m *mockExternalCertStorage) DeleteCert(id string) error {
 	}
 
 	delete(m.certs, id)
+	delete(m.chains, id)
+	return nil
+}
+
+func (m *mockExternalCertStorage) DeleteCertChain(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return storage.ErrClosed
+	}
+	if m.failDelete {
+		return errors.New("mock external delete error")
+	}
+	if id == "" {
+		return storage.ErrInvalidID
+	}
+
+	_, certExists := m.chains[id]
+	_, chainExists := m.chains[id]
+
+	if !certExists && !chainExists {
+		return storage.ErrNotFound
+	}
+
+	delete(m.chains, id)
 	delete(m.chains, id)
 	return nil
 }
@@ -1277,4 +1315,122 @@ func TestHybridCertStorage_Concurrent(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestHybridCertStorage_DeleteCertChain proves the chain is released from
+// both storages while each storage's certificate stays, and that an id with
+// no chain anywhere is not found.
+func TestHybridCertStorage_DeleteCertChain(t *testing.T) {
+	t.Run("DeleteFromBothStoragesLeavesTheCertificates", func(t *testing.T) {
+		hw := newMockHardwareCertStorage(10)
+		ext := newMockExternalCertStorage()
+		hybrid, _ := NewHybridCertStorage(hw, ext)
+
+		cert, err := createTestCertificate("test")
+		require.NoError(t, err)
+		require.NoError(t, hw.SaveCert("test", cert))
+		require.NoError(t, ext.SaveCert("test", cert))
+		require.NoError(t, hw.SaveCertChain("test", []*x509.Certificate{cert}))
+		require.NoError(t, ext.SaveCertChain("test", []*x509.Certificate{cert}))
+
+		require.NoError(t, hybrid.DeleteCertChain("test"))
+
+		_, err = hw.GetCertChain("test")
+		assert.ErrorIs(t, err, storage.ErrNotFound)
+		_, err = ext.GetCertChain("test")
+		assert.ErrorIs(t, err, storage.ErrNotFound)
+		_, err = hw.GetCert("test")
+		require.NoError(t, err)
+		_, err = ext.GetCert("test")
+		require.NoError(t, err)
+	})
+
+	t.Run("NotFoundInBothStorages", func(t *testing.T) {
+		hw := newMockHardwareCertStorage(10)
+		ext := newMockExternalCertStorage()
+		hybrid, _ := NewHybridCertStorage(hw, ext)
+		assert.ErrorIs(t, hybrid.DeleteCertChain("nonexistent"), storage.ErrNotFound)
+	})
+
+	t.Run("InvalidIDAndClosed", func(t *testing.T) {
+		hw := newMockHardwareCertStorage(10)
+		ext := newMockExternalCertStorage()
+		hybrid, _ := NewHybridCertStorage(hw, ext)
+		assert.Equal(t, storage.ErrInvalidID, hybrid.DeleteCertChain(""))
+		_ = hybrid.Close()
+		assert.Equal(t, ErrStorageClosed, hybrid.DeleteCertChain("test"))
+	})
+}
+
+// A delete that fails on one side is an unknown outcome, whatever the other
+// side reported: the record may still exist where the failure happened.
+func TestHybridCertStorage_DeleteCertChain_RealErrorIsNotMaskedByAbsence(t *testing.T) {
+	hw := newMockHardwareCertStorage(10)
+	ext := newMockExternalCertStorage()
+	hybrid, err := NewHybridCertStorage(hw, ext)
+	require.NoError(t, err)
+	chain := []*x509.Certificate{generateTestCertForAdapter(t, "chain-leaf")}
+
+	// Hardware absent, external failing: the external chain may still exist.
+	require.NoError(t, ext.SaveCertChain("only-external", chain))
+	ext.failDelete = true
+	err = hybrid.DeleteCertChain("only-external")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, storage.ErrNotFound)
+	assert.Contains(t, err.Error(), "external chain delete failed")
+	ext.failDelete = false
+	_, err = ext.GetCertChain("only-external")
+	require.NoError(t, err, "the failing side kept its record")
+
+	// Hardware released, external failing: still an error, not a success.
+	require.NoError(t, hw.SaveCertChain("both", chain))
+	require.NoError(t, ext.SaveCertChain("both", chain))
+	ext.failDelete = true
+	err = hybrid.DeleteCertChain("both")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "external chain delete failed")
+	ext.failDelete = false
+
+	// Hardware failing, external absent.
+	require.NoError(t, hw.SaveCertChain("only-hardware", chain))
+	hw.failDelete = true
+	err = hybrid.DeleteCertChain("only-hardware")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hardware chain delete failed")
+	hw.failDelete = false
+
+	// Both failing: both named.
+	hw.failDelete, ext.failDelete = true, true
+	err = hybrid.DeleteCertChain("only-hardware")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hardware chain delete failed")
+	assert.Contains(t, err.Error(), "external chain delete failed")
+	hw.failDelete, ext.failDelete = false, false
+
+	// Both absent is the one absence that is reported as absence.
+	assert.ErrorIs(t, hybrid.DeleteCertChain("never-stored"), storage.ErrNotFound)
+
+	// One side released and the other absent is a success.
+	require.NoError(t, hybrid.DeleteCertChain("only-hardware"))
+	_, err = hw.GetCertChain("only-hardware")
+	assert.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+func TestHybridCertStorage_DeleteCert_RealErrorIsNotMaskedByAbsence(t *testing.T) {
+	hw := newMockHardwareCertStorage(10)
+	ext := newMockExternalCertStorage()
+	hybrid, err := NewHybridCertStorage(hw, ext)
+	require.NoError(t, err)
+	cert := generateTestCertForAdapter(t, "cert")
+
+	require.NoError(t, ext.SaveCert("only-external", cert))
+	ext.failDelete = true
+	err = hybrid.DeleteCert("only-external")
+	require.Error(t, err, "hardware absent plus external failure is not a success")
+	assert.NotErrorIs(t, err, storage.ErrNotFound)
+	assert.Contains(t, err.Error(), "external delete failed")
+	ext.failDelete = false
+
+	assert.ErrorIs(t, hybrid.DeleteCert("never-stored"), storage.ErrNotFound)
+	require.NoError(t, hybrid.DeleteCert("only-external"))
 }

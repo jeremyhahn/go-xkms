@@ -145,6 +145,10 @@ func (w *realTPM2StorageWrapper) DeleteCert(id string) error {
 	return w.storage.DeleteCert(id)
 }
 
+func (w *realTPM2StorageWrapper) DeleteCertChain(id string) error {
+	return w.storage.DeleteCertChain(id)
+}
+
 func (w *realTPM2StorageWrapper) CertExists(id string) (bool, error) {
 	return w.storage.CertExists(id)
 }

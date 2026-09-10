@@ -70,6 +70,8 @@ func (f *fakeCertStorage) DeleteCert(id string) error {
 	return nil
 }
 
+func (f *fakeCertStorage) DeleteCertChain(id string) error { return f.DeleteCert(id) }
+
 func (f *fakeCertStorage) SaveCertChain(id string, chain []*x509.Certificate) error {
 	if f.saveErr != nil {
 		return f.saveErr

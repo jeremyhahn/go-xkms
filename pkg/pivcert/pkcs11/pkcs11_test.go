@@ -84,6 +84,16 @@ func (m *mockHWCertStorage) DeleteCert(id string) error {
 	return nil
 }
 
+func (m *mockHWCertStorage) DeleteCertChain(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.chains[id]; !ok {
+		return storage.ErrNotFound
+	}
+	delete(m.chains, id)
+	return nil
+}
+
 func (m *mockHWCertStorage) SaveCertChain(id string, chain []*x509.Certificate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
