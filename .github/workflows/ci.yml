@@ -350,13 +350,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libicu-dev libusb-1.0-0-dev
 
-      # ./acme/transport/grpc/... is here because the connection pool's
-      # health check lives there and nothing else in CI compiles or runs it:
-      # the root coverage job cannot traverse a separate module, and this step
-      # used to select two package trees that do not include it.
+      # The whole module, not a hand-picked subset. sdk/go is the public SDK
+      # contract every downstream consumer compiles against, and it re-exports
+      # internal types by alias, so a change that looks internal can alter the
+      # contract with no test here noticing. This step used to run three
+      # package trees (130 of its ~1,000 test functions); the other 23 test
+      # directories were dark. The root coverage job cannot reach any of it,
+      # because sdk/go is a separate Go module.
+      #
+      # Cost, measured before widening: the full suite under -race is 26
+      # packages, all green with no build tags, about one minute of wall time
+      # on a development host (the largest package, client/ssh, takes ~17 s),
+      # so it is cheaper than the xkey steps below. Nothing is excluded; if a
+      # package must be, name it here with the reason.
       - name: sdk/go tests
         working-directory: sdk/go
-        run: go test -race -v ./bootstrap/... ./transport/usb/... ./acme/transport/grpc/...
+        run: go test -race -v ./...
 
       # web/desktop is its own module, so neither the root coverage job nor
       # the steps above reach it. Without this step its tests could fail, or
