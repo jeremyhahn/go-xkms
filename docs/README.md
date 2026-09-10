@@ -36,6 +36,7 @@ the folder in the same commit that changes the behavior.
 | [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
 | [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
 | [webauthn](webauthn/) | The canonical WebAuthn relying party |
+| [xkmsd-configuration](xkmsd-configuration/) | How the daemon resolves its configuration: defaults, file, `XKMS_*` environment, flags, and the listeners that consume the result |
 
 xkey has its own feature folders under [xkey/docs/](../xkey/docs/).
 
@@ -104,6 +105,7 @@ by five and reports unconverted folders as converted.
 | [platform-secrets](platform-secrets/) | `platform-store/` |
 | [audit-log](audit-log/) | — |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
+| [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 
 Two of these need a note rather than a row:
 

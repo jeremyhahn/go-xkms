@@ -240,18 +240,6 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		expected Config
 	}{
 		{
-			name: "override host",
-			env: map[string]string{
-				"XKMS_HOST": "0.0.0.0",
-			},
-			initial: Config{
-				Server: ServerConfig{Host: "localhost"},
-			},
-			expected: Config{
-				Server: ServerConfig{Host: "0.0.0.0"},
-			},
-		},
-		{
 			name: "override REST port",
 			env: map[string]string{
 				"XKMS_REST_PORT": "9000",
@@ -290,7 +278,6 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		{
 			name: "override multiple server settings",
 			env: map[string]string{
-				"XKMS_HOST":      "127.0.0.1",
 				"XKMS_REST_PORT": "8080",
 				"XKMS_GRPC_PORT": "9090",
 			},
@@ -303,7 +290,7 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 			},
 			expected: Config{
 				Server: ServerConfig{
-					Host:     "127.0.0.1",
+					Host:     "localhost",
 					RESTPort: 8080,
 					GRPCPort: 9090,
 				},
@@ -1581,18 +1568,6 @@ func TestApplyEnvOverrides_NewBackendEnvVars(t *testing.T) {
 		initial  Config
 		expected Config
 	}{
-		{
-			name: "XKMS_HOST override",
-			env: map[string]string{
-				"XKMS_HOST": "192.168.1.1",
-			},
-			initial: Config{
-				Server: ServerConfig{Host: "localhost"},
-			},
-			expected: Config{
-				Server: ServerConfig{Host: "192.168.1.1"},
-			},
-		},
 		{
 			name: "XKMS_REST_PORT override",
 			env: map[string]string{

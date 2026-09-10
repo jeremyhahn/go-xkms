@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +43,7 @@ type Server struct {
 	service       *Service
 	grpcSrv       *grpc.Server
 	listener      net.Listener
+	host          string
 	port          atomic.Int32
 	tlsConfig     *tls.Config
 	authenticator auth.Authenticator
@@ -51,6 +53,9 @@ type Server struct {
 
 // ServerConfig contains configuration for the gRPC server
 type ServerConfig struct {
+	// Host is the bind host of the listener. It comes from the daemon's
+	// resolved server.host; empty binds all interfaces, dual-stack.
+	Host           string
 	Port           int
 	TLSConfig      *tls.Config
 	Authenticator  auth.Authenticator
@@ -90,6 +95,7 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Create server instance for interceptor access
 	server := &Server{
 		service:       service,
+		host:          cfg.Host,
 		tlsConfig:     cfg.TLSConfig,
 		authenticator: authenticator,
 		logger:        log,
@@ -163,15 +169,10 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	return server, nil
 }
 
-// Start starts the gRPC server
+// Start starts the gRPC server on the configured host and port. Port 0
+// selects an ephemeral port, which Port reports once the listener is bound.
 func (s *Server) Start() error {
-	// Use default port 9090 if no port was specified
-	port := s.port.Load()
-	if port == 0 {
-		port = 0 // Keep 0 for ephemeral port assignment
-	}
-
-	addr := fmt.Sprintf(":%d", port)
+	addr := net.JoinHostPort(s.host, strconv.Itoa(int(s.port.Load())))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return &errs.Wrapped{Msg: fmt.Sprintf("failed to listen on %s", addr), Err: err}

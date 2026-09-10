@@ -4,6 +4,10 @@
 
 # Server configuration
 server:
+  # Bind host for every network listener (REST/HTTP3, gRPC, MCP, metrics,
+  # Noise) and the embedded qrdb node's unified API server. Empty binds all
+  # interfaces, dual-stack. Overridden by XKMS_SERVER_HOST, then by
+  # `xkmsd --host` (flags > env > file > defaults).
   host: "127.0.0.1"
   rest_port: 8443
   grpc_port: 9443

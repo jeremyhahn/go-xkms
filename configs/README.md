@@ -73,6 +73,8 @@ xkmsd [OPTIONS]
 
 Options:
   -c, --config PATH        Path to configuration file (default: /etc/xkms/xkmsd.yaml)
+  --host HOST              Bind host for every network listener (server.host);
+                           wins over XKMS_SERVER_HOST and the file, "" binds all interfaces
   -d, --daemon             Run as daemon (deprecated - use systemd instead)
   --pid-file PATH          Write PID to file
   --version                Show version information
@@ -80,11 +82,18 @@ Options:
 
 ## Environment Variables
 
-The following environment variables can override configuration file settings:
+Precedence is flags > environment > file > defaults
+([docs/xkmsd-configuration/](../docs/xkmsd-configuration/)). Every key in the
+file resolves from `XKMS_<SECTION>_<KEY>` — the key's path joined by
+underscores and uppercased, e.g. `server.host` → `XKMS_SERVER_HOST`,
+`server.rest_port` → `XKMS_SERVER_REST_PORT`. The names below predate that
+rule and keep working; where both forms are set the canonical form wins. A
+variable that is present but empty is a value: `XKMS_SERVER_HOST=` binds
+every interface even when the file pins a host.
 
 ### Server Configuration
 - `XKMS_CONFIG` - Configuration file path
-- `XKMS_HOST` - Server host address
+- `XKMS_HOST` - Server host address (legacy alias of `XKMS_SERVER_HOST`)
 - `XKMS_REST_PORT` - REST API port
 - `XKMS_GRPC_PORT` - gRPC server port
 - `XKMS_QUIC_PORT` - QUIC server port

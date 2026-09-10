@@ -78,6 +78,7 @@ func run() int {
 	pidFile := flag.String("pid-file", "", "Path to PID file")
 	showVersion := flag.Bool("version", false, "Show version information")
 	sealPassphrase := flag.String("seal-passphrase", "", "Barrier auto-unseal passphrase (prefer XKMS_SEAL_PASSPHRASE env or a credential:// reference; passing a secret on the command line is discouraged)")
+	srvFlags := registerServerFlags(flag.CommandLine)
 	flag.Parse()
 
 	// Handle short flag aliases
@@ -119,9 +120,15 @@ func run() int {
 		return 1
 	}
 
+	// Flags are the top of the precedence order (flags > env > file >
+	// defaults): config.Load resolved the lower three, and only a flag the
+	// operator actually set is written over that result.
+	srvFlags.apply(cfg, flag.CommandLine)
+
 	logger.Info("Configuration loaded successfully",
 		slog.Any("backends", cfg.GetEnabledBackends()),
-		slog.String("default_backend", string(cfg.Default)))
+		slog.String("default_backend", string(cfg.Default)),
+		slog.String("host", cfg.Server.Host))
 
 	// The --seal-passphrase flag takes precedence over XKMS_SEAL_PASSPHRASE and
 	// the config file (CLI > env > config), giving an operator an explicit
@@ -186,7 +193,7 @@ func run() int {
 	// Handle config reload
 	go func() {
 		for range configReloadCh {
-			if err := reloadConfiguration(srv, *configPath, logger); err != nil {
+			if err := reloadConfiguration(srv, *configPath, srvFlags, flag.CommandLine, logger); err != nil {
 				logger.Error("Failed to reload configuration", slog.Any("error", err))
 			} else {
 				logger.Info("Configuration reloaded successfully")
@@ -260,15 +267,30 @@ func setupSignalHandler(logger *slog.Logger) (context.Context, chan os.Signal) {
 	return ctx, reloadCh
 }
 
-// reloadConfiguration attempts to reload the server configuration. It re-applies
-// the secure-by-default gate so a SIGHUP cannot quietly drop the daemon to a
-// non-compliant posture (no encryption-at-rest / TLS / authentication / CA).
-// The refusal is unconditional, mirroring startup.
-func reloadConfiguration(srv *server.Server, configPath string, logger *slog.Logger) error {
-	// Load new configuration (config.Load validates before returning).
+// resolveReloadConfig loads the configuration for a reload exactly as start-up
+// resolves it: config.Load settles defaults, file and environment, then the
+// flags the operator set on the command line are written over the result.
+// Without the second step a SIGHUP silently dropped every flag -- a daemon
+// started as `xkmsd --host 10.0.0.5` re-resolved server.host from the file
+// and, on its next planned restart, bound every interface.
+func resolveReloadConfig(configPath string, flags *serverFlags, fs *flag.FlagSet) (*config.Config, error) {
 	newCfg, err := config.Load(configPath)
 	if err != nil {
-		return &WrappedError{Sentinel: ErrConfigLoad, Err: err}
+		return nil, &WrappedError{Sentinel: ErrConfigLoad, Err: err}
+	}
+	flags.apply(newCfg, fs)
+	return newCfg, nil
+}
+
+// reloadConfiguration attempts to reload the server configuration. It
+// resolves the new configuration through the same layers as start-up (flags
+// included) and re-applies the secure-by-default gate so a SIGHUP cannot
+// quietly drop the daemon to a non-compliant posture (no encryption-at-rest /
+// TLS / authentication / CA). The refusal is unconditional, mirroring startup.
+func reloadConfiguration(srv *server.Server, configPath string, flags *serverFlags, fs *flag.FlagSet, logger *slog.Logger) error {
+	newCfg, err := resolveReloadConfig(configPath, flags, fs)
+	if err != nil {
+		return err
 	}
 
 	// Secure-by-default gate, mirrored from startup: never swap in a
@@ -284,7 +306,8 @@ func reloadConfiguration(srv *server.Server, configPath string, logger *slog.Log
 
 	logger.Info("Configuration reloaded",
 		slog.Any("backends", newCfg.GetEnabledBackends()),
-		slog.String("default_backend", string(newCfg.Default)))
+		slog.String("default_backend", string(newCfg.Default)),
+		slog.String("host", newCfg.Server.Host))
 
 	return nil
 }

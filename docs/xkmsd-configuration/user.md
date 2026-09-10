@@ -1,0 +1,61 @@
+# xkmsd Configuration — User Guide
+
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-09
+
+## Where a setting comes from
+
+A setting is resolved from four places. The highest one that says anything
+wins:
+
+1. a command-line flag you passed (`--host 10.0.0.5`)
+2. an environment variable (`XKMS_SERVER_HOST=10.0.0.5`)
+3. the configuration file (`server: {host: "10.0.0.5"}`)
+4. the built-in default
+
+A flag counts only when you pass it, so leaving `--host` off never undoes an
+environment variable.
+
+## Environment variable names
+
+Take the key's path in the file, join it with underscores, uppercase it and
+prefix `XKMS_`:
+
+| File key | Variable |
+|---|---|
+| `server.host` | `XKMS_SERVER_HOST` |
+| `server.rest_port` | `XKMS_SERVER_REST_PORT` |
+| `server.grpc_port` | `XKMS_SERVER_GRPC_PORT` |
+| `logging.level` | `XKMS_LOGGING_LEVEL` |
+
+This works for every key in the file, whether or not your file mentions it;
+a hyphen in a key becomes an underscore (`trust.server-url` →
+`XKMS_TRUST_SERVER_URL`). An optional section such as `acme` or
+`backends.awskms` comes into being when either the file or the environment
+sets a key in it. Older names such as `XKMS_HOST`, `XKMS_REST_PORT` and `XKMS_LOG_LEVEL` still
+work (see `configs/README.md`); where both the old and the new name are set,
+the new name wins.
+
+## Choosing the bind host
+
+`server.host` is the address every network listener binds: REST (and HTTP/3
+on the same port), gRPC, MCP, the metrics endpoint and the Noise bootstrap
+listener. The embedded qrdb node's unified API server uses the same value.
+
+- Leave it empty to listen on every interface, IPv4 and IPv6. This is the
+  default.
+- Set it to one address to listen only there, for example `127.0.0.1` for a
+  host-local deployment or the machine's LAN address behind a firewall.
+
+The shipped example pins `127.0.0.1`; open it up deliberately.
+
+## A value that will not decode
+
+If an environment variable or file value cannot be read as the field's type,
+for example a port that is not a number, `xkmsd` refuses to start and names
+the key. Fix the value; there is no fallback.
+
+## Quoting
+
+Quote values that look like numbers but are strings, such as the socket
+permission mode: `socket_mode: "0660"`. An unquoted `0660` is read as the
+number 432.

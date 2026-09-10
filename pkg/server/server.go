@@ -29,6 +29,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -2528,6 +2529,7 @@ func (s *Server) ModuleRESTServer() *rest.Server {
 // (pkg/apimodule), so both surfaces are built from identical wiring.
 func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
+		Host:              s.config.Server.Host,
 		Port:              s.config.Server.RESTPort,
 		Backends:          s.backends,
 		Version:           getBuildVersion(),
@@ -2704,11 +2706,21 @@ func (s *Server) initializeMetrics() error {
 	return nil
 }
 
+// listenAddr joins the configured bind host with a listener's port the way
+// net.Listen expects it: an IPv6 host is bracketed ("[::1]:9090"), the empty
+// default host binds every interface (":9090"). Every daemon listener that
+// takes an address string builds it here, so server.host is consumed the same
+// way by all of them; building it with "%s:%d" produced "::1:9090" for an
+// IPv6 host, which net.Listen rejects (#140, review on #492).
+func (s *Server) listenAddr(port int) string {
+	return net.JoinHostPort(s.config.Server.Host, strconv.Itoa(port))
+}
+
 // startMetrics starts the Prometheus metrics server
 func (s *Server) startMetrics() {
 	defer s.wg.Done()
 
-	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Metrics.Port)
+	addr := s.listenAddr(s.config.Metrics.Port)
 
 	mux := http.NewServeMux()
 	mux.Handle(s.config.Metrics.Path, promhttp.Handler())
@@ -2758,7 +2770,7 @@ func (s *Server) buildMCPConfig() (*mcp.Config, error) {
 		return nil, &MCPConfigError{Reason: "no keystore available"}
 	}
 
-	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.MCPPort)
+	addr := s.listenAddr(s.config.Server.MCPPort)
 
 	return &mcp.Config{
 		Addr:        addr,
@@ -2825,7 +2837,7 @@ func (s *Server) ModuleMCPServer() *mcp.Server {
 func (s *Server) startNoiseBootstrap() {
 	defer s.wg.Done()
 
-	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.NoisePort)
+	addr := s.listenAddr(s.config.Server.NoisePort)
 
 	// Get CA bundler
 	bundler := grpcinternal.GetCABundler()
