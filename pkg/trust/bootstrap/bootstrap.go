@@ -44,6 +44,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
+	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -340,25 +343,33 @@ func Fetch(ctx context.Context, cfg Config) (*CABundle, error) {
 	}
 }
 
-// DeriveNoiseAddr extracts the host portion of serverURL and appends
-// the default Noise bootstrap port (DefaultNoisePort). It accepts
-// either a full URL ("https://kms.example.com:8443") or a bare host.
-// Returns an empty string if the input is empty.
+// DeriveNoiseAddr extracts the host of serverURL and joins it with the
+// default Noise bootstrap port (DefaultNoisePort). It accepts a full URL
+// ("https://kms.example.com:8443/api"), a bare host, a bare host:port, or a
+// bare IP literal (an IPv6 one with or without brackets); the URL's own
+// port, path and userinfo are dropped, and an IPv6 literal comes out
+// bracketed. Returns an empty string if the input is empty or names no host.
 func DeriveNoiseAddr(serverURL string) string {
 	if serverURL == "" {
 		return ""
 	}
-	addr := serverURL
-	if idx := strings.Index(addr, "://"); idx >= 0 {
-		addr = addr[idx+3:]
+	raw := serverURL
+	if addr, err := netip.ParseAddr(raw); err == nil {
+		// A bare IP literal. An unbracketed IPv6 address would otherwise
+		// read as host:port ("fd00::1" is "fd00:" on port 1), so it is
+		// joined whole; JoinHostPort brackets it.
+		return net.JoinHostPort(addr.String(), DefaultNoisePort)
 	}
-	if idx := strings.Index(addr, "/"); idx >= 0 {
-		addr = addr[:idx]
+	if !strings.Contains(raw, "://") {
+		// A bare host or host:port parses as a URL only with an authority
+		// marker; without one "kms.example.com:8443" reads as a scheme.
+		raw = "//" + raw
 	}
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		addr = addr[:idx]
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return ""
 	}
-	return addr + ":" + DefaultNoisePort
+	return net.JoinHostPort(parsed.Hostname(), DefaultNoisePort)
 }
 
 // =============================================================================

@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -155,8 +155,13 @@ that makes an `ModeAuto` failure diagnosable.
   hazard. Do not add it to the default order.
 - **The bundle is returned, never installed.** This package does not write to a
   trust store.
-- **`DeriveNoiseAddr` appends `DefaultNoisePort` ("8445") when no explicit
-  address is given.** See the port conflict below.
+- **`DeriveNoiseAddr` joins the server URL's host with `DefaultNoisePort`
+  ("8445") when no explicit address is given.** It parses the URL, so the
+  URL's own port, path and userinfo are dropped and an IPv6 literal stays
+  bracketed (`https://[fd00::1]` and the bare `fd00::1` both derive
+  `[fd00::1]:8445`); a URL with no
+  host derives nothing, which `fetchNoise` reports as `ErrServerURLRequired`.
+  See the port conflict below.
 - **Client suite resolution fails closed.** An unavailable suite is skipped; a
   configured key that will not decode is a `SuiteError`, never a fall-through
   to the other suite; a pinned suite reads only its own key, so the other

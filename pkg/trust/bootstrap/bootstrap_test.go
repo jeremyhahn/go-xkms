@@ -156,14 +156,25 @@ func TestFetch_AutoIgnoresUnconfiguredModes(t *testing.T) {
 
 func TestDeriveNoiseAddr(t *testing.T) {
 	cases := map[string]struct{ in, want string }{
-		"empty input":         {in: "", want: ""},
-		"https with port":     {in: "https://kms.example.com:8443", want: "kms.example.com:" + DefaultNoisePort},
-		"https without port":  {in: "https://kms.example.com", want: "kms.example.com:" + DefaultNoisePort},
-		"http with port":      {in: "http://kms.example.com:80", want: "kms.example.com:" + DefaultNoisePort},
-		"bare host with port": {in: "kms.example.com:8443", want: "kms.example.com:" + DefaultNoisePort},
-		"bare host no port":   {in: "kms.example.com", want: "kms.example.com:" + DefaultNoisePort},
-		"with path":           {in: "https://kms.example.com:8443/api/v1", want: "kms.example.com:" + DefaultNoisePort},
-		"ipv4":                {in: "https://10.0.0.5:8443", want: "10.0.0.5:" + DefaultNoisePort},
+		"empty input":                            {in: "", want: ""},
+		"https with port":                        {in: "https://kms.example.com:8443", want: "kms.example.com:" + DefaultNoisePort},
+		"https without port":                     {in: "https://kms.example.com", want: "kms.example.com:" + DefaultNoisePort},
+		"http with port":                         {in: "http://kms.example.com:80", want: "kms.example.com:" + DefaultNoisePort},
+		"bare host with port":                    {in: "kms.example.com:8443", want: "kms.example.com:" + DefaultNoisePort},
+		"bare host no port":                      {in: "kms.example.com", want: "kms.example.com:" + DefaultNoisePort},
+		"with path":                              {in: "https://kms.example.com:8443/api/v1", want: "kms.example.com:" + DefaultNoisePort},
+		"ipv4":                                   {in: "https://10.0.0.5:8443", want: "10.0.0.5:" + DefaultNoisePort},
+		"ipv6 with port":                         {in: "https://[fd00::1]:8443", want: "[fd00::1]:" + DefaultNoisePort},
+		"ipv6 without port":                      {in: "https://[fd00::1]", want: "[fd00::1]:" + DefaultNoisePort},
+		"bare ipv6 with port":                    {in: "[fd00::1]:8443", want: "[fd00::1]:" + DefaultNoisePort},
+		"bare ipv6 unbracketed":                  {in: "fd00::1", want: "[fd00::1]:" + DefaultNoisePort},
+		"bare ipv6 unbracketed non-numeric tail": {in: "fd00::a", want: "[fd00::a]:" + DefaultNoisePort},
+		"bare ipv6 bracketed no port":            {in: "[fd00::1]", want: "[fd00::1]:" + DefaultNoisePort},
+		"bare ipv4":                              {in: "10.0.0.5", want: "10.0.0.5:" + DefaultNoisePort},
+		"ipv6 with path":                         {in: "https://[fd00::1]/api/v1", want: "[fd00::1]:" + DefaultNoisePort},
+		"userinfo dropped":                       {in: "https://admin@kms.example.com:8443", want: "kms.example.com:" + DefaultNoisePort},
+		"no host":                                {in: "https:///api", want: ""},
+		"scheme only":                            {in: "https://", want: ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
