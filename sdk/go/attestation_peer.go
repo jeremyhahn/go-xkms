@@ -78,6 +78,13 @@ type PeerContextError = peer.ContextError
 // PeerChannelBindingError reports a TLS connection that yields no binding.
 type PeerChannelBindingError = peer.ChannelBindingError
 
+// PeerFailureClassError reports a failure-class name that is not one of
+// "none", "absence" or "cryptographic". It is the error PeerFailureClass's
+// UnmarshalText returns, so a consumer that persists a verdict's class as text
+// (JSON, a database column) parses it back through the alias type's own
+// method and can errors.As the rejection to this type.
+type PeerFailureClassError = peer.FailureClassError
+
 // NewPeerAttestationVerifier constructs a PeerAttestationVerifier.
 var NewPeerAttestationVerifier = peer.NewVerifier
 

@@ -63,3 +63,38 @@ func TestPeerAttestationSurface(t *testing.T) {
 		t.Fatal("failure class names drifted")
 	}
 }
+
+// TestPeerFailureClassRoundTrip proves a persisted failure class parses back
+// through the alias type's own MarshalText/UnmarshalText, and that an unknown
+// name is rejected with the aliased typed error rather than a string.
+func TestPeerFailureClassRoundTrip(t *testing.T) {
+	for _, class := range []PeerFailureClass{PeerFailureNone, PeerFailureAbsence, PeerFailureCryptographic} {
+		text, err := class.MarshalText()
+		if err != nil {
+			t.Fatalf("MarshalText(%v): %v", class, err)
+		}
+		if string(text) != class.String() {
+			t.Fatalf("MarshalText(%v) = %q, want %q", class, text, class.String())
+		}
+		var parsed PeerFailureClass
+		if err := parsed.UnmarshalText(text); err != nil {
+			t.Fatalf("UnmarshalText(%q): %v", text, err)
+		}
+		if parsed != class {
+			t.Fatalf("round trip of %q = %v, want %v", text, parsed, class)
+		}
+	}
+
+	var garbage PeerFailureClass
+	err := garbage.UnmarshalText([]byte("quarantine"))
+	var fce *PeerFailureClassError
+	if !errors.As(err, &fce) {
+		t.Fatalf("err = %v, want *PeerFailureClassError", err)
+	}
+	if fce.Text != "quarantine" {
+		t.Fatalf("rejected text = %q, want %q", fce.Text, "quarantine")
+	}
+	if garbage != PeerFailureNone {
+		t.Fatalf("a rejected parse must leave the value untouched, got %v", garbage)
+	}
+}

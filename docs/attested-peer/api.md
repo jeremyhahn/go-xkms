@@ -1,6 +1,6 @@
 # Attested Peer — API
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-05
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## No transport surface of its own, deliberately
 
@@ -33,7 +33,10 @@ Constants: `PeerFailureNone`, `PeerFailureAbsence`, `PeerFailureCryptographic`,
 `PeerChannelBindingExporterLabel`, `PeerChannelBindingLength`.
 Functions: `NewPeerAttestationVerifier`, `WithPeerVerifierClock`,
 `PeerQualifyingData`, `PeerChannelBinding`.
-Errors: `PeerPolicyError`, `PeerContextError`, `PeerChannelBindingError`.
+Errors: `PeerPolicyError`, `PeerContextError`, `PeerChannelBindingError`,
+`PeerFailureClassError`. A persisted class parses back through
+`PeerFailureClass`'s own `UnmarshalText`; an unknown name is rejected with
+`*PeerFailureClassError`, which carries the rejected text.
 
 ## The wire shape a consumer carries
 

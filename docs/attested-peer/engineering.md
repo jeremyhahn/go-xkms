@@ -1,6 +1,6 @@
 # Attested Peer — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-05
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-10
 
 ## Exported surface — `pkg/attestation/peer`
 
@@ -24,7 +24,8 @@ SDK aliases in `sdk/go/attestation_peer.go` carry a `Peer` prefix
 `PeerChecks`, `PeerFailureClass` and constants, `NewPeerAttestationVerifier`,
 `WithPeerVerifierClock`, `PeerQualifyingData`, `PeerChannelBinding`,
 `PeerChannelBindingExporterLabel`, `PeerChannelBindingLength`,
-`PeerPolicyError`, `PeerContextError`, `PeerChannelBindingError`) because
+`PeerPolicyError`, `PeerContextError`, `PeerChannelBindingError`,
+`PeerFailureClassError`) because
 `Evidence`, `Verifier` and `VerifyOptions` already name the x509
 key-attestation surface in the flat `xkms` namespace.
 
