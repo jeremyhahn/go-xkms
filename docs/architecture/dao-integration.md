@@ -36,6 +36,33 @@ The two interfaces have different error and iteration semantics. The adapter tra
 
 All adapter errors are typed (`PutError`, `GetError`, `DeleteError`, `ScanError`, `ListError`, `ExistsError`) and implement `Unwrap()` for error chain inspection.
 
+### Guarded operations, and why the returned type varies
+
+go-qrdb's DAO layer discovers the guarded operations — `PutIfAbsent`, `CompareAndDelete`, `CompareAndSwap` — by asserting `AtomicKVStore` on the store it was given, and fails closed when the assertion does not hold. The assertion is therefore the capability contract: a type that satisfies it is claiming all three work.
+
+`kvadapter.New` returns `qrdbsdk.KVStore`, and the concrete type behind it depends on the wrapped backend:
+
+| Wrapped backend | Returned store | Effect on a DAO |
+|---|---|---|
+| implements `CompareAndSwapper` **and** `CompareAndDeleter`, and reports its guarded writes available (the engine backends behind `NewMemory`/`NewFile`, and any of those behind `PrefixBackend`) | satisfies `AtomicKVStore` | guarded writes available |
+| implements neither, or only one | satisfies `KVStore` only | the DAO takes its non-atomic path instead of failing at call time |
+| implements both but reports them **unavailable** — the QRDB backends from `pkg/storage/qrdb`'s embedded constructors, whose transport carries no transaction service (#125) | satisfies `KVStore` only | same: the DAO does not take a guarded path that would fail on the first write |
+
+Declaring the methods is not the same as being able to perform them, which is why the last row exists. `storage.GuardedWriteReporter` is the optional interface a backend implements to answer the question, and `storage.GuardedWritesUsable(b)` is how a caller asks: it requires both halves, the two guarded interfaces and the report. A backend that does not implement the reporter is taken at its word, so an in-process store needs no change.
+
+`PrefixBackend` is the case that needs both halves. It declares `CompareAndSwap` and `CompareAndDelete` unconditionally — a decorator cannot add a method depending on what it wraps — and answers `ErrCompareAndSwapUnsupported` when the inner backend has neither, so its own method set says nothing about whether a guarded write will work. Its report is therefore the inner backend's usability, not merely the inner backend's availability.
+
+Two contract differences are handled rather than forwarded:
+
+| Operation | `storage.Backend` | `kvstore.AtomicKVStore` | Adapter behaviour |
+|---|---|---|---|
+| `CompareAndSwap` with a nil `expected` | requires the key to be **absent** and writes it (a guarded create) | never creates: an absent key reports `swapped=false` | Reports `swapped=false` and writes nothing. A guarded create is `PutIfAbsent`, on the same interface. |
+| `CompareAndSwap` return | `(swapped, current, error)` | `(swapped, error)` | The observed `current` value is dropped; a caller that needs it reads the store. |
+
+An `expected` that is non-nil but empty is a real stored value and is forwarded normally.
+
+A decorator over a `KVStore` inherits this rule. `pkg/acme/storage/objstore`'s tenant-scoped wrapper namespaces keys and adds no writer of its own, so it forwards the three guarded operations under the prefixed key when the inner store offers them, and does not claim `AtomicKVStore` when the inner store does not.
+
 ## Entity Store Pattern
 
 To create a DAO-backed entity store in go-xkms:

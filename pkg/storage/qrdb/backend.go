@@ -38,20 +38,53 @@ var followerRead = transport.WithConsistency(transport.ConsistencyFollower)
 type Backend struct {
 	client transport.KVClient
 	closer io.Closer // nil when backend doesn't own client lifecycle
+
+	// guardedWrites records whether PutIfAbsent, CompareAndSwap and
+	// CompareAndDelete can execute against this client. It is set by the
+	// constructor rather than derived on each call, because the answer is a
+	// property of how the backend was built.
+	//
+	// The zero value is false, so a Backend assembled as a struct literal
+	// claims nothing: a capability claim that defaults to "yes" is the defect
+	// this field exists to report.
+	guardedWrites bool
 }
 
 // NewBackend creates a new QRDB storage backend that delegates all
 // operations to the given KVClient. The backend does not own the client;
 // callers are responsible for managing the client lifecycle.
 func NewBackend(client transport.KVClient) *Backend {
-	return &Backend{client: client}
+	// A caller-supplied client is taken at the only signal that exists before
+	// a write: whether it can carry a transaction at all. That is the same
+	// assertion the guarded methods make, hoisted to construction so a caller
+	// can ask instead of discovering.
+	_, transactional := client.(transport.TransactionClient)
+	return &Backend{client: client, guardedWrites: transactional}
 }
 
 // newOwnedBackend creates a backend that owns the client lifecycle.
 // Close() will close the closer, tearing down the SDK client and any
 // embedded engine resources.
-func newOwnedBackend(client transport.KVClient, closer io.Closer) *Backend {
-	return &Backend{client: client, closer: closer}
+func newOwnedBackend(client transport.KVClient, closer io.Closer, guardedWrites bool) *Backend {
+	return &Backend{client: client, closer: closer, guardedWrites: guardedWrites}
+}
+
+// GuardedWritesAvailable reports whether this backend's PutIfAbsent,
+// CompareAndSwap and CompareAndDelete can execute.
+//
+// It is false for every backend the embedded constructors in factory.go build:
+// newEmbedded wires its transport with embedded.New(kvSvc, adminSvc) and no
+// transaction service, so all three fail identically with "embedded:
+// TransactionServicer must not be nil" — measured through the constructors for
+// memory, file and pebble alike (#125). The methods are declared and the
+// operations are unavailable, and without this a caller reading the method set
+// would take the guarded path and fail on the first write.
+//
+// It is true for a caller-supplied client that can carry a transaction. Flip
+// the embedded answer when #125 lands, in the same change that wires the
+// service — not before, and the characterization test will say when.
+func (b *Backend) GuardedWritesAvailable() bool {
+	return b.guardedWrites
 }
 
 // ErrNotFound is returned when a key is not found in the QRDB cluster.

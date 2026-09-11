@@ -21,6 +21,12 @@ func init() {
 	qrdb.SetNotFoundError(ErrNotFound)
 }
 
+// The QRDB backend reports whether its guarded writes can execute, and the
+// embedded constructors below build backends that answer false. The assertion
+// lives here rather than in that package because the dependency runs one way:
+// this package imports qrdb, never the reverse.
+var _ GuardedWriteReporter = (*qrdb.Backend)(nil)
+
 // THE EMBEDDED CONSTRUCTORS BELOW DIVERGE FROM THE Backend CONTRACT IN TWO
 // WAYS. One fails loudly; the other is silent and is the dangerous one.
 //

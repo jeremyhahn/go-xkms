@@ -44,13 +44,38 @@ type KVStoreAdapter struct {
 // Compile-time interface compliance check.
 var _ qrdbsdk.KVStore = (*KVStoreAdapter)(nil)
 
-// New creates a new KVStoreAdapter wrapping the given storage.Backend.
-// Returns NilBackendError if backend is nil.
-func New(backend storage.Backend) (*KVStoreAdapter, error) {
+// New adapts backend to go-qrdb's KVStore interface. Returns NilBackendError
+// if backend is nil.
+//
+// The returned store ALSO satisfies qrdbsdk.AtomicKVStore — go-qrdb's guarded
+// PutIfAbsent, CompareAndDelete and CompareAndSwap — when, and only when, the
+// wrapped backend can perform all three (go-xkms#89). go-qrdb's DAO layer
+// discovers that by type assertion and fails closed when it does not hold, so
+// a backend that cannot serialise those writes must not be made to look as
+// though it can; see atomic.go.
+//
+// Declaring the methods is not sufficient, and asking for them is not either:
+// the QRDB backend implements all three and, built through the embedded
+// constructors, fails every one at run time for want of a transaction service
+// (#125). So the capability is taken from the backend's own report
+// (storage.GuardedWritesAvailable), not from its method set — otherwise this
+// adapter would hand the DAO layer a store that passes the assertion and then
+// fails on the first guarded write, which is the defect it exists to remove.
+//
+// The return type is the interface rather than *KVStoreAdapter for that
+// reason: the concrete type varies with the backend's capability.
+func New(backend storage.Backend) (qrdbsdk.KVStore, error) {
 	if backend == nil {
 		return nil, NilBackendError{}
 	}
-	return &KVStoreAdapter{backend: backend}, nil
+	base := &KVStoreAdapter{backend: backend}
+
+	swapper, _ := backend.(storage.CompareAndSwapper)
+	deleter, _ := backend.(storage.CompareAndDeleter)
+	if storage.GuardedWritesUsable(backend) {
+		return &atomicKVStoreAdapter{KVStoreAdapter: base, swapper: swapper, deleter: deleter}, nil
+	}
+	return base, nil
 }
 
 // Put stores a key-value pair by delegating to the underlying storage.Backend.

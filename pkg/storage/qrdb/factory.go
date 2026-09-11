@@ -143,7 +143,10 @@ func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
 		return nil, &FactoryError{Engine: engine, Err: err}
 	}
 
-	return newOwnedBackend(client.KV(), &embeddedCloser{client: client, fsm: fsm, store: store}), nil
+	// guardedWrites is false: this transport carries no transaction service
+	// (see the file comment and #125), so PutIfAbsent, CompareAndSwap and
+	// CompareAndDelete are declared by Backend and cannot execute here.
+	return newOwnedBackend(client.KV(), &embeddedCloser{client: client, fsm: fsm, store: store}, false), nil
 }
 
 // embeddedCloser tears down the embedded stack in dependency order: the client

@@ -952,6 +952,22 @@ var QRDBLoadOpenSSLConfig = qrdb.LoadOpenSSLConfig
 // QRDBKVStore is the core key-value store interface.
 type QRDBKVStore = qrdb.KVStore
 
+// QRDBAtomicKVStore is a QRDBKVStore that also offers the three guarded
+// operations: PutIfAbsent, CompareAndDelete and CompareAndSwap.
+//
+// A store declares the capability by satisfying this interface, and a caller
+// discovers it by type assertion — which is also how go-qrdb's DAO layer
+// discovers it, and that layer fails closed when the assertion does not hold.
+// So a store that cannot serialise those writes must NOT satisfy this
+// interface; NewKVStoreAdapter returns a store that does only when the wrapped
+// backend can perform all three.
+//
+//	if atomic, ok := store.(xkms.QRDBAtomicKVStore); ok {
+//		stored, err := atomic.PutIfAbsent(ctx, key, value)
+//		...
+//	}
+type QRDBAtomicKVStore = qrdb.AtomicKVStore
+
 // QRDBEntity is the base entity interface for all DAO entities.
 type QRDBEntity = qrdb.Entity
 

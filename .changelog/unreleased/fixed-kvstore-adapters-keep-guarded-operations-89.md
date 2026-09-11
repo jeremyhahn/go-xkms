@@ -1,0 +1,3 @@
+### Fixed
+
+- The go-qrdb KVStore adapter and the ACME tenant-scoped store no longer drop the guarded operations. Both forward `PutIfAbsent`, `CompareAndDelete` and `CompareAndSwap` when the store they wrap can perform them, and neither claims the capability when it cannot, so a DAO built over them no longer loses atomic conditional writes at run time while still compiling. A backend now reports whether its guarded writes can execute (`storage.GuardedWriteReporter`), because declaring the methods is not the same as performing them: the QRDB backends from the embedded constructors declare all three and fail every one for want of a transaction service. (#89)

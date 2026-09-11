@@ -149,11 +149,57 @@ type prefixedKVStore struct {
 }
 
 // newPrefixedKVStore creates a KVStore that prefixes all keys.
+//
+// The returned store also offers the three guarded operations — PutIfAbsent,
+// CompareAndDelete and CompareAndSwap — when the inner store does
+// (go-xkms#89). go-qrdb's DAO layer discovers atomicity by asserting
+// AtomicKVStore and fails closed when the assertion does not hold, so a
+// decorator that dropped those methods made every tenant-scoped DAO
+// non-atomic at run time while still building. It is prefixing keys, not
+// writing, so it neither adds nor removes an atomicity guarantee: it must pass
+// the inner store's capability through unchanged, and must not claim it when
+// the inner store lacks it.
 func newPrefixedKVStore(inner xkmssdk.QRDBKVStore, prefix string) xkmssdk.QRDBKVStore {
-	return &prefixedKVStore{
+	base := &prefixedKVStore{
 		inner:  inner,
 		prefix: prefix + "/",
 	}
+	if atomic, ok := inner.(qrdbsdk.AtomicKVStore); ok {
+		return &prefixedAtomicKVStore{prefixedKVStore: base, inner: atomic}
+	}
+	return base
+}
+
+// prefixedAtomicKVStore is the prefixed store an atomic inner store gets: the
+// same key namespacing, with the guarded operations forwarded under the
+// prefixed key.
+type prefixedAtomicKVStore struct {
+	*prefixedKVStore
+
+	// inner is the same store *prefixedKVStore holds, typed to its guarded
+	// surface. Keeping one field per view rather than asserting on each call
+	// makes the capability a construction-time decision, which is where the
+	// AtomicKVStore claim is made.
+	inner qrdbsdk.AtomicKVStore
+}
+
+// Compile-time interface compliance check.
+var _ qrdbsdk.AtomicKVStore = (*prefixedAtomicKVStore)(nil)
+
+// PutIfAbsent prefixes the key and delegates. The atomicity guarantee is
+// exactly the inner store's: this wrapper adds no writer of its own.
+func (p *prefixedAtomicKVStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return p.inner.PutIfAbsent(ctx, p.prefix+key, value)
+}
+
+// CompareAndDelete prefixes the key and delegates.
+func (p *prefixedAtomicKVStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return p.inner.CompareAndDelete(ctx, p.prefix+key, expected)
+}
+
+// CompareAndSwap prefixes the key and delegates.
+func (p *prefixedAtomicKVStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return p.inner.CompareAndSwap(ctx, p.prefix+key, expected, next)
 }
 
 func (p *prefixedKVStore) Put(ctx context.Context, key string, value []byte) error {
