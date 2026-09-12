@@ -70,6 +70,31 @@ type AppLockStatus struct {
 	LockOnScreenLock bool `json:"lock_on_screen_lock"`
 }
 
+// unsealFailedBeforeTheCredential reports whether an Unseal error means the
+// configured seal strategy could not be assembled or resolved, so the unseal
+// stopped before the password was ever tested.
+//
+// It exists because that fault arrives in TWO shapes and matching only one
+// leaves the reported bug in place for the other:
+//
+//   - go-qrdb's registry sentinels, when the strategy is not registered in the
+//     seal registry ("qrdb/seal: requested strategy not registered"); and
+//   - the GUI's own *ErrBarrierStrategyUnavailable, which BarrierService.Unseal
+//     returns from assembleStrategy when tpmSealerFn is nil or the sealer says
+//     CanSeal() is false. That type carries no wrapped cause, so errors.Is
+//     against the qrdb sentinels does NOT see it -- it needs errors.As.
+//
+// Keeping both in one predicate is what stops the two from drifting apart
+// again; callers ask this question, never the individual sentinels.
+func unsealFailedBeforeTheCredential(err error) bool {
+	var strategyUnavailable *ErrBarrierStrategyUnavailable
+	if errors.As(err, &strategyUnavailable) {
+		return true
+	}
+	return errors.Is(err, qrdbsdk.ErrStrategyNotFound) ||
+		errors.Is(err, qrdbsdk.ErrStrategyMismatch)
+}
+
 // barrierUnsealer is the subset of BarrierService that AppLockService
 // needs for the seal-aware unlock path. Using an interface here allows
 // test doubles without embedding the full BarrierService.
@@ -316,6 +341,22 @@ func (s *AppLockService) Unlock(pin string) error {
 		// Barrier is sealed: PIN is the barrier password.
 		s.log.Debug("app unlock: using barrier unseal path")
 		if err := s.barrierSvc.Unseal(pin, s.barrierStrategy); err != nil {
+			// Not every unseal failure is a bad PIN. Two of them never reach
+			// the credential at all, so reporting "invalid PIN" states a fact
+			// that was never established -- and invites the operator to retry
+			// a PIN that is correct (#510).
+			switch {
+			case errors.Is(err, qrdbsdk.ErrCorruptRootKey):
+				// The stored root key would not parse. No PIN repairs that,
+				// and the rest of the stack already calls it data loss.
+				s.log.Error("app unlock: barrier root key is corrupt - the PIN was not checked",
+					"strategy", s.barrierStrategy, "error", err)
+				return ErrAppLockStorageCorrupt
+			case unsealFailedBeforeTheCredential(err):
+				s.log.Error("app unlock: barrier seal strategy unavailable - the PIN was not checked",
+					"strategy", s.barrierStrategy, "error", err)
+				return ErrAppLockUnsealUnavailable
+			}
 			s.log.Warn("app unlock: barrier unseal failed", "error", err)
 			return ErrAppLockPINInvalid
 		}

@@ -404,6 +404,31 @@ var (
 	// never set. The user should reset their config and re-run the wizard.
 	ErrAppLockSetupIncomplete = errors.New("app_lock: setup incomplete - please reset config and re-run setup wizard")
 
+	// ErrAppLockUnsealUnavailable indicates the barrier could not be unsealed
+	// because the configured seal strategy is not available in this build --
+	// the credential was never checked.
+	//
+	// It exists because the alternative is worse than unhelpful. Reporting a
+	// strategy-registry failure as ErrAppLockPINInvalid tells an operator
+	// their PIN is wrong when no PIN check ran: the retry counter does not
+	// move, so they retry a correct PIN and can drive a backend that DOES
+	// count attempts into a lockout, over a fault that no PIN could fix
+	// (#510). "The lock is broken" and "your key is wrong" are different
+	// facts and the operator can only act on the first one.
+	ErrAppLockUnsealUnavailable = errors.New("app_lock: barrier seal strategy unavailable in this build - the PIN was not checked")
+
+	// ErrAppLockStorageCorrupt indicates the barrier's stored root key could
+	// not be parsed, so the unlock failed on the DATA rather than on the
+	// credential -- which the PIN, right or wrong, cannot repair.
+	//
+	// Every other transport already classifies this as data loss: gRPC maps
+	// seal.ErrCorruptRootKey to codes.DataLoss
+	// (pkg/api/grpc/service_barrier_pin.go:53) and REST to 500
+	// (pkg/api/rest/handlers_barrier_pin.go:499). Reporting it here as an
+	// invalid PIN both contradicts them and hides storage corruption behind
+	// credential retries.
+	ErrAppLockStorageCorrupt = errors.New("app_lock: encrypted storage is corrupt - the PIN was not checked")
+
 	// ErrAppLockBarrierInitFailed indicates that the barrier could not be
 	// initialized during unlock. This is a critical error that prevents
 	// data from being stored securely.

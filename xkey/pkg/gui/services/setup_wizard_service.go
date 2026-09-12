@@ -690,7 +690,12 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			"has_barrier_pw", barrierPW != "",
 			"has_user_pin", choices.UserPin != "")
 		barrierErrCount := len(result.Errors)
-		barrierInitialized, barrierStrategy = s.initBarrier(
+		// Plain assignment, not :=. barrierInitialized and barrierStrategy are
+		// declared in the enclosing scope and read after this block; a short
+		// declaration here would shadow them and leave those later reads on the
+		// zero values.
+		var barrierSealedShut bool
+		barrierInitialized, barrierStrategy, barrierSealedShut = s.initBarrier(
 			barrierPW, choices.SealerBackend, result)
 
 		// Graceful hardware->software fallback. When a hardware sealing strategy
@@ -705,13 +710,24 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		// the install unconfigured. The original hardware-attempt errors are
 		// discarded; the fallback attempt decides success. The downgrade is
 		// surfaced as a warning by the block below (barrierStrategy == "passphrase").
+		//
+		// It must NOT fire when a barrier already exists and would not unseal
+		// (barrierSealedShut). That barrier's data is sealed under the strategy
+		// it was created with, so a passphrase retry cannot open it; it only
+		// fails again, and this block discards the real error
+		// (result.Errors[:barrierErrCount]) on its way past. The operator then
+		// sees "invalid credentials" for a credential that was never wrong,
+		// the run ends with setup_complete false, and the next launch re-runs
+		// the wizard and mints a NEW User PIN -- pushing a new hash to the
+		// authenticator and stranding the enrolled passkeys. That is #510, and
+		// it cost a real authenticator PIN.
 		hardwareStrategy := choices.SealerBackend == "tpm2" || choices.SealerBackend == "pkcs11"
-		if !barrierInitialized && hardwareStrategy {
+		if !barrierInitialized && hardwareStrategy && !barrierSealedShut {
 			slog.Warn("wizard: hardware barrier init failed, falling back to passphrase",
 				"strategy", choices.SealerBackend)
 			result.Errors = result.Errors[:barrierErrCount]
 			result.Success = true
-			barrierInitialized, barrierStrategy = s.initBarrier(
+			barrierInitialized, barrierStrategy, _ = s.initBarrier(
 				barrierPW, "passphrase", result)
 			if barrierInitialized {
 				// Persist the actual strategy so downstream config, seal-default
@@ -1024,13 +1040,25 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 // go back and select a different strategy. No automatic fallback is
 // performed.
 //
-// Returns (initialized bool, strategy string).
+// Returns (initialized bool, strategy string, sealedShut bool).
+//
+// sealedShut distinguishes the two ways this can fail, which are not
+// interchangeable and must not be treated alike (#510):
+//
+//   - Initialize failed and NO barrier exists. Nothing is stored yet, so
+//     retrying with another strategy is free and is what the caller's
+//     hardware->passphrase fallback is for.
+//   - A barrier EXISTS and would not unseal (sealedShut). Its data is already
+//     encrypted under the strategy it was sealed with. Retrying with a
+//     different strategy cannot open it -- it can only fail a second time, and
+//     the second failure reads as "invalid credentials", which sends the
+//     operator looking for a wrong password that does not exist.
 func (s *SetupWizardService) initBarrier(
 	password, strategyID string, result *SetupResult,
-) (bool, string) {
+) (bool, string, bool) {
 
 	if err := s.barrierSvc.Initialize(password, strategyID); err == nil {
-		return true, strategyID
+		return true, strategyID, false
 	} else if errors.Is(err, ErrBarrierAlreadyInit) {
 		// Barrier was initialized in a prior run. Unseal instead.
 		slog.Info("wizard: barrier already initialized, unsealing existing barrier",
@@ -1040,16 +1068,16 @@ func (s *SetupWizardService) initBarrier(
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("barrier unseal failed: %v", unsealErr))
 			result.Success = false
-			return false, ""
+			return false, "", true
 		}
-		return true, strategyID
+		return true, strategyID, false
 	} else {
 		slog.Error("wizard: barrier initialization failed",
 			"strategy", strategyID, "error", err)
 		result.Errors = append(result.Errors,
 			fmt.Sprintf("barrier %s initialization failed: %v", strategyID, err))
 		result.Success = false
-		return false, ""
+		return false, "", false
 	}
 }
 
@@ -1389,6 +1417,11 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 	s.emitUserOnboardingProgress(3, "Initializing encrypted storage")
 	barrierInitialized := false
 	barrierStrategy := ""
+	// barrierRequired records that a barrier service is configured, so
+	// "not initialized" means it FAILED rather than "there is none". Without
+	// the distinction an install with no barrier at all would be refused
+	// completion alongside one whose barrier would not open.
+	barrierRequired := s.barrierSvc != nil
 	if s.barrierSvc != nil {
 		// Determine the barrier password: prefer the explicit barrier password,
 		// fall back to the user PIN.
@@ -1417,11 +1450,44 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 		// Try unseal first (SO provisioning may have already created the barrier).
 		if err := s.barrierSvc.Unseal(barrierPW, barrierStrategy); err != nil {
 			// Unseal failed; attempt fresh initialization with software fallback.
-			barrierInitialized, barrierStrategy = s.initBarrier(
+			var sealedShut bool
+			barrierInitialized, barrierStrategy, sealedShut = s.initBarrier(
 				barrierPW, barrierStrategy, result)
+			if sealedShut {
+				slog.Error("onboarding: existing barrier would not unseal",
+					"strategy", barrierStrategy)
+			}
 		} else {
 			barrierInitialized = true
 		}
+	}
+
+	// An onboarding run that could not open the barrier is not a completed
+	// setup, and must not be recorded as one.
+	//
+	// Every write below this point is a completion write -- SetupComplete in
+	// the GUI config and in the unified config, result.SetupComplete, and the
+	// UserOnboarded event. They ran unconditionally, so a run whose barrier
+	// failed still left the install marked complete with its encrypted storage
+	// unusable. Step 2 has already changed the User PIN by this point, so the
+	// combination strands the new PIN behind a barrier that was never opened
+	// and reports success on the way out -- the same class of harm #510
+	// reports for ApplySetup, on the enterprise path.
+	//
+	// Returning here leaves SetupComplete false, so the wizard runs again and
+	// the operator can retry rather than being told an unusable install is
+	// finished. result.Errors already carries the unseal or initialization
+	// failure from initBarrier; this adds what it means.
+	if barrierRequired && !barrierInitialized {
+		result.Success = false
+		result.SetupComplete = false
+		result.Errors = append(result.Errors,
+			"setup not marked complete: encrypted storage could not be opened, "+
+				"so the User PIN change is not yet backed by a usable barrier - "+
+				"resolve the barrier error above and run onboarding again")
+		slog.Error("onboarding: refusing to mark setup complete with an unusable barrier",
+			"strategy", barrierStrategy, "errors", result.Errors)
+		return result, nil
 	}
 
 	// Step 4: Mark setup as complete and save configuration.

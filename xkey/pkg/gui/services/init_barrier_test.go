@@ -30,7 +30,8 @@ func TestInitBarrier_Success(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier("test-password-123", "passphrase", result)
+	ok, strategy, sealedShut := tw.svc.initBarrier("test-password-123", "passphrase", result)
+	assert.False(t, sealedShut, "a fresh Initialize that succeeded is not sealedShut")
 
 	assert.True(t, ok, "initBarrier should return true on successful initialization")
 	assert.Equal(t, "passphrase", strategy, "returned strategy should match the requested strategy")
@@ -59,7 +60,8 @@ func TestInitBarrier_AlreadyInit_UnsealSucceeds(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier(password, "passphrase", result)
+	ok, strategy, sealedShut := tw.svc.initBarrier(password, "passphrase", result)
+	assert.False(t, sealedShut, "an existing barrier that DID unseal is not sealedShut")
 
 	assert.True(t, ok, "initBarrier should return true when unseal succeeds after ErrBarrierAlreadyInit")
 	assert.Equal(t, "passphrase", strategy, "returned strategy should match the requested strategy")
@@ -87,7 +89,7 @@ func TestInitBarrier_AlreadyInit_UnsealFails(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier(wrongPassword, "passphrase", result)
+	ok, strategy, sealedShut := tw.svc.initBarrier(wrongPassword, "passphrase", result)
 
 	assert.False(t, ok, "initBarrier should return false when unseal fails")
 	assert.Empty(t, strategy, "returned strategy should be empty on failure")
@@ -95,6 +97,10 @@ func TestInitBarrier_AlreadyInit_UnsealFails(t *testing.T) {
 	require.NotEmpty(t, result.Errors, "result.Errors should contain the unseal failure")
 	assert.True(t, containsSubstring(result.Errors, "barrier unseal failed"),
 		"error message should mention 'barrier unseal failed', got: %v", result.Errors)
+	// A barrier that EXISTS and would not unseal must say so, so the caller's
+	// hardware->passphrase fallback does not retry a strategy that cannot open
+	// it and discard this error on the way past (#510).
+	assert.True(t, sealedShut, "an existing barrier that would not unseal must report sealedShut")
 }
 
 // TestInitBarrier_TPM2Fails_ReturnsError verifies that when Initialize
@@ -109,7 +115,8 @@ func TestInitBarrier_TPM2Fails_ReturnsError(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier("test-password-123", "tpm2", result)
+	ok, strategy, sealedShut := tw.svc.initBarrier("test-password-123", "tpm2", result)
+	assert.False(t, sealedShut, "a failed Initialize with no existing barrier is not sealedShut")
 
 	assert.False(t, ok, "initBarrier should return false when strategy is unavailable")
 	assert.Empty(t, strategy, "returned strategy should be empty on failure")
@@ -129,7 +136,10 @@ func TestInitBarrier_TPM2Fails_NoSilentFallback(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier("", "tpm2", result)
+	ok, strategy, sealedShut := tw.svc.initBarrier("", "tpm2", result)
+
+	// No barrier existed, so this is the free-retry case the fallback is for.
+	assert.False(t, sealedShut, "a failed Initialize with no existing barrier is not sealedShut")
 
 	assert.False(t, ok, "initBarrier should return false when strategy fails")
 	assert.Empty(t, strategy, "returned strategy should be empty on failure")
@@ -165,7 +175,7 @@ func TestInitBarrier_TPM2AlreadyInit_UnsealFails_NoFallbackToSoftware(t *testing
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier(wrongPassword, "tpm2", result)
+	ok, strategy, sealedShut := tw.svc.initBarrier(wrongPassword, "tpm2", result)
 
 	assert.False(t, ok, "initBarrier should return false when unseal fails")
 	assert.Empty(t, strategy, "returned strategy should be empty on failure")
@@ -173,6 +183,10 @@ func TestInitBarrier_TPM2AlreadyInit_UnsealFails_NoFallbackToSoftware(t *testing
 	require.NotEmpty(t, result.Errors, "result.Errors should contain the unseal failure")
 	assert.True(t, containsSubstring(result.Errors, "barrier unseal failed"),
 		"error should mention 'barrier unseal failed', got: %v", result.Errors)
+	// A barrier that EXISTS and would not unseal must say so, so the caller's
+	// hardware->passphrase fallback does not retry a strategy that cannot open
+	// it and discard this error on the way past (#510).
+	assert.True(t, sealedShut, "an existing barrier that would not unseal must report sealedShut")
 	// Crucially, no fallback warning should appear because ErrBarrierAlreadyInit
 	// does not trigger the software fallback path.
 	assert.Empty(t, result.Warnings,
