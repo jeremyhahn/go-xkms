@@ -6684,6 +6684,18 @@ func (m *Module) GenerateKeyPair(sessionHandle SessionHandle, mechanism *Mechani
 				return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle),
 					CKR_CURVE_NOT_SUPPORTED
 			}
+			// An ECDSA key pair can only be generated on a curve an ECDSA key
+			// can live on. The Edwards and Montgomery OIDs are recognised so
+			// they can name their OWN key types, so this is gated on the
+			// mechanism rather than applied to every CKA_EC_PARAMS -- gating on
+			// the curve alone would refuse CKM_EC_EDWARDS_KEY_PAIR_GEN, which
+			// is exactly the curve it is supposed to name. Shares
+			// curveUsableForECDSA with C_UnwrapKey so the two verbs agree by
+			// construction (#161).
+			if mechanismToKeyTypeMap[mechanism.Type] == "ECDSA" && !curveUsableForECDSA(curve) {
+				return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle),
+					CKR_CURVE_NOT_SUPPORTED
+			}
 			ecParams = copyBytes(attr.Value)
 		case CKA_ID:
 			ckaID = attr.Value
@@ -7244,11 +7256,23 @@ func (m *Module) UnwrapKey(sessionHandle SessionHandle, mechanism *Mechanism, un
 	// attribute that cannot affect its result.
 	var targetCurve string
 	if targetType == "ecdsa" {
-		var curveRV CK_RV
-		targetCurve, curveRV = templateCurveName(template)
+		name, present, curveRV := templateCurveName(template)
 		if curveRV != CKR_OK {
 			return ObjectHandle(InvalidHandle), curveRV
 		}
+		// Gate on the presence flag, never on the name alone. An absent
+		// CKA_EC_PARAMS is the case Table 13 footnote 6 requires for an
+		// unwrapped EC private key, so it must reach the backend and take the
+		// service's default -- refusing it here would break the spec's own
+		// shape of the call (#161).
+		if present && !curveUsableForECDSA(name) {
+			// Recognised, but not a curve an ECDSA key can live on. Refusing
+			// here gives the caller CKR_CURVE_NOT_SUPPORTED, which PKCS#11
+			// defines for exactly this, instead of the generic "invalid curve"
+			// the service returns several layers down.
+			return ObjectHandle(InvalidHandle), CKR_CURVE_NOT_SUPPORTED
+		}
+		targetCurve = name
 	}
 
 	newKeyID, unwrapErr := m.cryptoManager.UnwrapKeyByID(ctx, &UnwrapKeyByIDRequest{
@@ -7990,30 +8014,54 @@ func templateBoolIsTrue(template []Attribute, attrType AttributeType, fallback b
 }
 
 // templateCurveName returns the canonical name of the curve the template's
-// CKA_EC_PARAMS names, and CKR_OK.
+// CKA_EC_PARAMS names, whether the attribute was present at all, and CKR_OK.
 //
-// A template naming no curve returns "" rather than an error. PKCS#11 v3.2
-// Table 13 footnote 6 says CKA_EC_PARAMS must NOT be specified when an EC
-// private key is unwrapped -- the wrapped PKCS#8 blob carries the curve -- so
-// the attribute is legitimately absent, and the service's own default stands
-// for those callers. Reading it when it IS present is what lets a caller that
-// names a curve have the key stored describing that curve.
+// A template naming no curve returns present=false rather than an error.
+// PKCS#11 v3.2 Table 13 footnote 6 says CKA_EC_PARAMS must NOT be specified
+// when an EC private key is unwrapped -- the wrapped PKCS#8 blob carries the
+// curve -- so the attribute is legitimately absent, and the service's own
+// default stands for those callers. Reading it when it IS present is what lets
+// a caller that names a curve have the key stored describing that curve.
 //
 // A curve the module does not recognise is REFUSED rather than reported as
 // absent. Returning "" there would let the service substitute P-256 for it,
 // which is the silent substitution this function exists to close, and it
 // matches what C_GenerateKeyPair already does with an unrecognised
 // CKA_EC_PARAMS.
-func templateCurveName(template []Attribute) (string, CK_RV) {
+//
+// The present flag exists because "" is the honest answer to two different
+// questions -- the attribute was omitted, and the attribute named something
+// unusable -- and a caller that gates on the name alone refuses the omitted
+// case too. That is not hypothetical: it is the defect this signature closes
+// (#161). The CK_RV separates error from success; present separates the two
+// successes.
+func templateCurveName(template []Attribute) (name string, present bool, rv CK_RV) {
 	params, ok := templateAttribute(template, CKA_EC_PARAMS)
 	if !ok {
-		return "", CKR_OK
+		return "", false, CKR_OK
 	}
 	name, recognized := extractCurveFromParams(params)
 	if !recognized {
-		return "", CKR_CURVE_NOT_SUPPORTED
+		return "", true, CKR_CURVE_NOT_SUPPORTED
 	}
-	return name, CKR_OK
+	return name, true, CKR_OK
+}
+
+// curveUsableForECDSA reports whether an ECDSA key can be produced on the named
+// curve. It is the one predicate C_UnwrapKey and C_GenerateKeyPair share, so
+// the two verbs cannot drift into answering the same question differently --
+// which is what #161 reports.
+//
+// The name must already have come from extractCurveFromParams: an unrecognised
+// CKA_EC_PARAMS is refused before this is reached, and an unknown name here is
+// not usable either.
+func curveUsableForECDSA(name string) bool {
+	for _, curve := range ecCurves {
+		if curve.name == name {
+			return curve.ecdsa
+		}
+	}
+	return false
 }
 
 // templateValueLenBits reads CKA_VALUE_LEN, which PKCS#11 expresses in bytes,
@@ -8270,6 +8318,15 @@ type ecCurve struct {
 	// aliases are the other encodings a caller may supply for this curve.
 	aliases [][]byte
 
+	// ecdsa reports whether this curve can carry an ECDSA key. The module
+	// recognises the Edwards and Montgomery OIDs so that CKA_EC_PARAMS
+	// identifies their own key types, but an ECDSA key cannot be generated or
+	// unwrapped on them: types.ParseCurve, which every backend resolves an
+	// ECDSA curve through, names only the NIST prime curves. Recognising a
+	// curve and being able to produce an ECDSA key on it are two different
+	// questions, and this field is the second one.
+	ecdsa bool
+
 	// fieldLen is the byte width of one field element -- ceil(bits(n)/8) for
 	// the curve's order n. PKCS#11 v3.2 §6.3.1 defines the ECDSA signature as
 	// raw r || s with each half exactly this wide, so it is the one number that
@@ -8286,16 +8343,19 @@ var ecCurves = []ecCurve{
 	{
 		name:      "P-256",
 		fieldLen:  32,
+		ecdsa:     true,
 		canonical: []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07},
 	},
 	{
 		name:      "P-384",
 		fieldLen:  48,
+		ecdsa:     true,
 		canonical: []byte{0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22},
 	},
 	{
 		name:      "P-521",
 		fieldLen:  66,
+		ecdsa:     true,
 		canonical: []byte{0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23},
 	},
 	{
