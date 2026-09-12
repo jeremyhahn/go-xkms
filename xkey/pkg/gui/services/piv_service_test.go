@@ -58,6 +58,13 @@ type mockPIVClient struct {
 
 	generatePIVCSRResp *transport.GeneratePIVCSRResponse
 	generatePIVCSRErr  error
+
+	// listKeysResp/listKeysErr make the key listing expressible. Before #313
+	// ListKeys always failed here, so DeleteCertificate's success path could
+	// not be reached at all -- the only reachable outcome was the one where the
+	// listing error was discarded and success reported anyway.
+	listKeysResp *transport.ListKeysResponse
+	listKeysErr  error
 }
 
 var errMockNotImplemented = errors.New("mock: not implemented")
@@ -89,6 +96,9 @@ func (m *mockPIVClient) GenerateKey(_ context.Context, _ *transport.GenerateKeyR
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) ListKeys(_ context.Context, _ string, _ ...transport.ListOption) (*transport.ListKeysResponse, error) {
+	if m.listKeysResp != nil || m.listKeysErr != nil {
+		return m.listKeysResp, m.listKeysErr
+	}
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) GetKey(_ context.Context, _, _ string) (*transport.GetKeyResponse, error) {
@@ -928,8 +938,14 @@ func TestPIVService_DeleteCertificate_NilClient_NoLocal(t *testing.T) {
 }
 
 func TestPIVService_DeleteCertificate_NoCert(t *testing.T) {
+	// The shape the server actually sends for a missing certificate: the error
+	// message reaches the client in the response body, carrying the sentinel's
+	// own text. This used to read `errors.New("not found")`, which is the
+	// fail-open #313 removes -- a bare "not found" is now a real failure,
+	// pinned by the converse case below.
 	client := &mockPIVClient{
-		deletePIVCertErr: errors.New("not found"),
+		deletePIVCertErr: errors.New("pivcert: Delete slot 9a: " + xkms.ErrPIVCertificateNotFound.Error()),
+		listKeysResp:     &transport.ListKeysResponse{},
 	}
 	svc := NewPIVService(client, "software")
 	svc.SetContext(context.Background())
@@ -938,8 +954,29 @@ func TestPIVService_DeleteCertificate_NoCert(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrPIVNoCertificate))
 }
 
+// TestPIVService_DeleteCertificate_BareNotFoundIsARealFailure is the converse:
+// an error that merely contains "not found" -- a missing backend, a missing
+// key, a permission error naming a path -- must not be read as "the slot held
+// no certificate, carry on deleting the key" (#313).
+func TestPIVService_DeleteCertificate_BareNotFoundIsARealFailure(t *testing.T) {
+	client := &mockPIVClient{
+		deletePIVCertErr: errors.New("backend not found: tpm2"),
+		listKeysResp:     &transport.ListKeysResponse{},
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	err := svc.DeleteCertificate("9a")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrPIVNoCertificate),
+		"a backend failure is not an absent certificate")
+}
+
 func TestPIVService_DeleteCertificate_Success(t *testing.T) {
-	client := &mockPIVClient{}
+	// listKeysResp is what makes this a success test. Without it the mock's
+	// ListKeys fails, and before #313 the failure was discarded and nil
+	// returned -- so this asserted the defect rather than the success path.
+	client := &mockPIVClient{listKeysResp: &transport.ListKeysResponse{}}
 	svc := NewPIVService(client, "software")
 	svc.SetContext(context.Background())
 
@@ -1172,11 +1209,16 @@ func TestPIVService_LocalDeleteCertificate(t *testing.T) {
 	_, err := svc.GenerateKey("9a", "ECCP256")
 	require.NoError(t, err)
 
-	// Delete the certificate.
+	// Delete the certificate. initTestPIVManager provisions the PIV certificate
+	// store but not the key store, so the key listing that follows the
+	// certificate delete fails with "keystore: not initialized". That is now
+	// reported instead of discarded: the certificate is gone but the key was
+	// never inspected, and DeleteCertificate's contract covers both (#313).
 	err = svc.DeleteCertificate("9a")
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the key may remain")
 
-	// Verify it is gone.
+	// The certificate half did happen.
 	_, err = svc.GetCertificate("9a")
 	assert.True(t, errors.Is(err, ErrPIVNoCertificate))
 }

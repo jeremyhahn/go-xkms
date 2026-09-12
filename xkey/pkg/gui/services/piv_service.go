@@ -565,6 +565,88 @@ func (s *PIVService) GenerateCSR(slot string, subject *CSRSubject) (string, erro
 	return "", ErrPIVClientNotSet
 }
 
+// certificateAbsent reports whether a failed certificate delete means the slot
+// simply held no certificate -- the expected case for a key-only slot, which
+// must not block deleting the key.
+//
+// The question it answers used to be asked as
+// strings.Contains(err.Error(), "not found"), which is a fail-open: a
+// permission error, a backend path error or a missing BACKEND all contain that
+// phrase, so any of them read as "no certificate, carry on" and
+// DeleteCertificate reported success having deleted the key and left the
+// certificate in place -- the opposite of its contract (#313, shape 4).
+//
+// Every local backend produces the real sentinel: pkg/pivcert/file wraps
+// xkms.ErrPIVCertificateNotFound in a PIVStorageError, and the tpm2 backend
+// maps storage.ErrNotFound onto the same sentinel. PIVStorageError implements
+// Unwrap and Is, so errors.Is sees through it. That covers the local path and
+// the embedded transport, which runs the same code in process.
+//
+// remoteMessage is the documented gap. A genuinely remote transport (REST,
+// gRPC, QUIC, unix) carries the failure as text, and pkg/api/transport's
+// ErrorCode vocabulary is about the CONNECTION -- NotConnected, Timeout,
+// TLSHandshakeFailed -- with no code meaning "the resource was absent". So
+// error identity does not survive the wire for this call and the caller cannot
+// ask the typed question at all. Narrowing the remote arm here without a way
+// to verify the wire text would risk refusing a legitimate key-only delete
+// over a remote transport, so the loose test is kept for that case ONLY, and
+// logged when it decides, rather than silently widened to every path.
+func certificateAbsent(err error, remoteMessage bool) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, xkms.ErrPIVCertificateNotFound) {
+		return true
+	}
+	if !remoteMessage {
+		return false
+	}
+	// The sentinel's OWN rendered text, and nothing looser. The server puts the
+	// error's message in the response body (pkg/api/rest/handlers_piv.go's
+	// handlePIVError -> writeError), and a missing certificate renders as
+	// "pivcert: ... : pivcert: certificate not found", so this matches the real
+	// remote shape while "backend not found: tpm2", "key not found: piv-9a" and
+	// a permission error naming a path do not.
+	//
+	// Anything else fails CLOSED: the caller reports the delete rather than
+	// deleting the key and calling the slot empty. That is the right default
+	// for a control whose contract is "the slot is now empty".
+	return strings.Contains(err.Error(), xkms.ErrPIVCertificateNotFound.Error())
+}
+
+// keyListingFailure decides what DeleteCertificate returns when the key listing
+// fails after the certificate step.
+//
+// Both the remote and the in-process path reach this with the same two facts
+// and must answer identically, so they ask one function rather than repeating
+// the decision (#313).
+//
+// It exists because the `certNotFound == false` branch used to `return nil`:
+// the certificate was deleted, the key was never even INSPECTED, and the
+// method -- whose contract is that the slot now holds neither -- reported
+// success. A post-operation step whose error is discarded reports an unknown
+// outcome as a good one.
+func keyListingFailure(slot string, certNotFound bool, listErr error) error {
+	if certNotFound {
+		// BOTH causes, joined. Wrapping only ErrPIVNoCertificate would leave the
+		// listing failure in the message and nowhere else, so a caller asking
+		// errors.Is sees a benign "the slot held no certificate" and the fact
+		// that the key was never inspected -- and may remain -- is lost. The
+		// listing failure is the more actionable of the two and must survive
+		// errors.Is as well.
+		return &WrappedError{
+			Msg: fmt.Sprintf("pivcert: delete slot %s: cert absent, key listing failed, "+
+				"the key may remain", slot),
+			Err: errors.Join(ErrPIVNoCertificate, listErr),
+		}
+	}
+	return &WrappedError{
+		Msg: fmt.Sprintf("pivcert: delete slot %s: certificate deleted but key listing failed, "+
+			"the key may remain", slot),
+		Err: listErr,
+	}
+}
+
 // DeleteCertificate removes BOTH the certificate (if present) and the key
 // material from the specified PIV slot. For key-only slots (created via the
 // public-key or CSR output formats), the certificate deletion is a no-op
@@ -582,7 +664,9 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		})
 		// A "certificate not found" error is expected for key-only slots and
 		// must not block key deletion. Any other error is a real failure.
-		certNotFound := certErr != nil && strings.Contains(certErr.Error(), "not found")
+		// remoteMessage=true: this client may be a wire transport, where the
+		// sentinel does not survive (see certificateAbsent).
+		certNotFound := certificateAbsent(certErr, true)
 		if certErr != nil && !certNotFound {
 			slog.Error("PIV delete certificate failed", "slot", slot, "backend", s.backend, "error", certErr)
 			return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s", slot), Err: certErr}
@@ -596,10 +680,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		listResp, listErr := s.client.ListKeys(s.ctx, s.backend)
 		if listErr != nil {
 			slog.Error("PIV delete: remote list keys failed", "slot", slot, "backend", s.backend, "error", listErr)
-			if certNotFound {
-				return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s: cert absent, key listing failed: %v", slot, listErr), Err: ErrPIVNoCertificate}
-			}
-			return nil
+			return keyListingFailure(slot, certNotFound, listErr)
 		}
 		keyDeleted := false
 		for _, k := range listResp.Keys {
@@ -632,7 +713,9 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		})
 		// A "certificate not found" error is expected for key-only slots and
 		// must not block key deletion. Any other error is a real failure.
-		certNotFound := certErr != nil && strings.Contains(certErr.Error(), "not found")
+		// remoteMessage=false: this path calls xkms in process, so the
+		// sentinel is always reachable and no text matching is warranted.
+		certNotFound := certificateAbsent(certErr, false)
 		if certErr != nil && !certNotFound {
 			slog.Error("PIV delete certificate failed", "slot", slot, "backend", backend, "error", certErr)
 			return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s", slot), Err: certErr}
@@ -643,11 +726,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		keys, listErr := xkms.ListKeys(s.ctx, backend)
 		if listErr != nil {
 			slog.Error("PIV delete: list keys failed", "slot", slot, "backend", backend, "error", listErr)
-			// If the cert was deleted but we cannot list keys, surface partial success.
-			if certNotFound {
-				return &WrappedError{Msg: fmt.Sprintf("pivcert: delete slot %s: cert absent, key listing failed: %v", slot, listErr), Err: ErrPIVNoCertificate}
-			}
-			return nil
+			return keyListingFailure(slot, certNotFound, listErr)
 		}
 		keyDeleted := false
 		for _, ka := range keys {
