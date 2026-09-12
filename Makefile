@@ -201,6 +201,34 @@ GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' .devcontainer/.env 2>/d
 # Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
 # their environment blocks regardless of which directory compose runs from.
 export GITEA_GO_TOKEN
+# The Gitea server itself (host:port of its HTTP API) is never written into
+# this tree: scripts/gitea-host.sh derives it from the environment, from
+# .devcontainer/.env, or from this checkout's own origin remote (an SSH origin
+# maps its port to the HTTP port), and prints nothing for a GitHub origin --
+# the public resolution path, in which no insteadOf rewrite is emitted at
+# all. `make gitea-host` shows the resolved value. Exported for the same
+# reason as the token: every compose file interpolates ${GITEA_HOST}.
+GITEA_HOST ?= $(shell scripts/gitea-host.sh 2>/dev/null)
+export GITEA_HOST
+# How many GIT_CONFIG_* entries the compose services should read: ONE when we
+# have a Gitea host to rewrite to, NONE for a GitHub origin. Git reads exactly
+# GIT_CONFIG_COUNT entries, so an empty or zero count leaves KEY_0/VALUE_0
+# inert rather than emitting a rewrite with an empty host in it.
+#
+# The compose files do NOT depend on this being exported. They read
+# `${GITEA_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}`, deriving the count from
+# GITEA_HOST when make is not in the picture -- .devcontainer/devcontainer.json
+# loads the compose file DIRECTLY, so a devcontainer whose .devcontainer/.env
+# supplies GITEA_HOST must still get the rewrite. This export is the override
+# for the make path, not the only source.
+#
+# A required `${GITEA_HOST:?...}` cannot serve here: compose evaluates it when
+# the file is LOADED, so it fails a public checkout before any service starts,
+# which is the opposite of the public-resolution path this exists to provide.
+GITEA_GIT_CONFIG_COUNT = $(if $(GITEA_HOST),1,0)
+export GITEA_GIT_CONFIG_COUNT
+# The insteadOf rewrite that resolves github.com/jeremyhahn/* against Gitea.
+GITEA_INSTEADOF_KEY = url.http://x:$(GITEA_GO_TOKEN)@$(GITEA_HOST)/jeremyhahn/.insteadOf
 
 # ==============================================================================
 # Compose project namespacing
@@ -284,11 +312,16 @@ IMAGE_TAG = $(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),latest)
 # compose file's `${XKMS_IMAGE_TAG:-dev}` so lookups find what compose built.
 XKMS_SERVER_IMAGE = go-xkms-server:$(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),dev)
 GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/mod)
+ifneq ($(GITEA_HOST),)
 GITEA_MODULE_ENV := -e GOWORK=off \
                     -e GOPRIVATE='github.com/jeremyhahn/*' \
                     -e GIT_CONFIG_COUNT=1 \
-                    -e GIT_CONFIG_KEY_0='url.http://x:$(GITEA_GO_TOKEN)@git.example.internal/jeremyhahn/.insteadOf' \
+                    -e GIT_CONFIG_KEY_0='$(GITEA_INSTEADOF_KEY)' \
                     -e GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/'
+else
+# No Gitea host: a GitHub-origin checkout resolves every module publicly.
+GITEA_MODULE_ENV := -e GOWORK=off
+endif
 # The warm host module cache, for containers that run AS ROOT only: the
 # builder images (Dockerfile.builder, xkey/Dockerfile.builder, Dockerfile.ci)
 # declare no USER. The integration image runs `make test` as testuser
@@ -3108,14 +3141,19 @@ stage-gomodauth:
 			printf 'export GIT_CONFIG_KEY_0=%s\n' "$$GIT_CONFIG_KEY_0"; \
 			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$$GIT_CONFIG_VALUE_0"; \
 		} > $(GOMODAUTH_FILE); \
-	elif [ -n "$(GITEA_GO_TOKEN)" ]; then \
+	elif [ -n "$(GITEA_GO_TOKEN)" ] && [ -n "$(GITEA_HOST)" ]; then \
 		{ \
 			printf 'export GOPRIVATE=%s\n' 'github.com/jeremyhahn/*'; \
 			printf 'export GIT_CONFIG_COUNT=1\n'; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' 'url.http://x:$(GITEA_GO_TOKEN)@git.example.internal/jeremyhahn/.insteadOf'; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' '$(GITEA_INSTEADOF_KEY)'; \
 			printf 'export GIT_CONFIG_VALUE_0=%s\n' 'https://github.com/jeremyhahn/'; \
 		} > $(GOMODAUTH_FILE); \
 	fi
+
+.PHONY: gitea-host
+## gitea-host: Print the resolved in-house Gitea host (GITEA_HOST override, .devcontainer/.env, or the origin remote; empty for a GitHub origin)
+gitea-host:
+	@if [ -n "$(GITEA_HOST)" ]; then echo "$(GITEA_HOST)"; else echo "$(YELLOW)(none: modules resolve publicly)$(RESET)"; fi
 
 .PHONY: docker-build
 ## docker-build: Build Docker container for integration testing

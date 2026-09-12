@@ -6,8 +6,8 @@ services:
     environment:
       - GOWORK=off
       - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@git.example.internal/jeremyhahn/.insteadOf
+      - GIT_CONFIG_COUNT=${GITEA_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf
       - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GO_TEST_TIMEOUT=10m
     volumes:

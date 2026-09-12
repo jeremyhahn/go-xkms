@@ -423,6 +423,11 @@ jobs:
         if: github.server_url != 'https://github.com' && steps.guard.outputs.skip == ''
         env:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # The model catalogue endpoint is a knob, not a literal: the
+          # repository's OLLAMA_URL Actions variable, or an OLLAMA_URL the
+          # runner injects into the job environment. Neither configured is a
+          # clear failure naming the variable, not a silent default.
+          OLLAMA_URL_VAR: ${{ vars.OLLAMA_URL }}
           ROUTED_AGENT: ${{ contains(github.event.pull_request.labels.*.name, 'agent:codex') && 'codex' || contains(github.event.pull_request.labels.*.name, 'agent:claude') && 'claude' || contains(github.event.pull_request.labels.*.name, 'agent:opencode') && 'opencode' || contains(github.event.pull_request.labels.*.name, 'model:codex') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:codex:') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:gpt-') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:o3') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:o4') && 'codex' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:opus') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:sonnet') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:haiku') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:fable') && 'claude' || contains(join(github.event.pull_request.labels.*.name, ','), 'model:claude-') && 'claude' || 'opencode' }}
         run: |
           set -euo pipefail
@@ -447,7 +452,12 @@ jobs:
 
           OPENCODE_DEFAULT_MODEL="review-q8"
           CODEX_DEFAULT_MODEL="gpt-5.5"
-          OLLAMA="${OLLAMA_URL:-http://198.51.100.91:11434}"
+          # Resolved here, REQUIRED only in the opencode branch below. codex and
+          # claude never call ollama_models, so demanding an endpoint before the
+          # agent is even known fails those reviews on a runner that has no
+          # ollama -- before checkout, with no verdict posted. The requirement
+          # belongs where the value is used.
+          OLLAMA="${OLLAMA_URL:-${OLLAMA_URL_VAR:-}}"
 
           ollama_models() { curl -sS --max-time 10 "$OLLAMA/api/tags" | jq -r '.models[].name' | sort -u; }
           label_exists() { printf '%s' "$LABELS" | jq -e --arg n "$1" 'index($n) != null' >/dev/null 2>&1; }
@@ -535,6 +545,10 @@ jobs:
           case "$agent" in
             opencode)
               model=${model:-$OPENCODE_DEFAULT_MODEL}
+              if [ -z "$OLLAMA" ]; then
+                echo "::error::OLLAMA_URL is not configured: set the OLLAMA_URL Actions variable on the repository, or inject OLLAMA_URL into the runner environment."
+                exit 1
+              fi
               avail=$(ollama_models || true)
               [ -n "$avail" ] || { echo "::error::could not read the model list from $OLLAMA."; echo "::error::Refusing to run: an unvalidated model fails 20 minutes later inside the reviewer."; exit 1; }
 
