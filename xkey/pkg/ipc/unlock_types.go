@@ -21,13 +21,20 @@ type UnlockPayload struct {
 // UnlockResult carries unlock-specific response data.
 //
 // Success alone is not a report an automated caller can act on: an unlock
-// that released nothing used to answer with a well-formed message whose
-// only signal was Success=false, and callers that looked no further than the
-// envelope status reported "Unlocked" for it. Unlocked and StillLocked name
-// the subsystems the daemon observed after the attempt, so the result says
-// what actually happened rather than only whether a call was made.
+// that left half of the daemon locked used to answer with a well-formed
+// message whose only signal was Success=false, and callers that looked no
+// further than the envelope status reported "Unlocked" for it. Unlocked and
+// StillLocked name the subsystems the daemon observed after the attempt, so
+// the result says what actually happened rather than only whether a call was
+// made.
+//
+// Unlock is a convergence, not a transition: Success states that nothing the
+// daemon governs is locked, which is what a caller acts on. An unlock with
+// nothing left to do is therefore a success with an empty Unlocked, and a
+// caller that needs "did anything change?" reads Unlocked rather than
+// Success.
 type UnlockResult struct {
-	Success bool   `json:"success"`         // true only if something was unlocked and nothing it governs stayed locked
+	Success bool   `json:"success"`         // true when nothing the daemon governs is locked afterwards
 	Error   string `json:"error,omitempty"` // error message on failure
 
 	// Unlocked names the subsystems this unlock released, e.g.

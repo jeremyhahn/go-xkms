@@ -1077,9 +1077,10 @@ func TestCoverageBoostPhase3_AppLockService_Unlock_EmptyPIN(t *testing.T) {
 
 func TestCoverageBoostPhase3_AppLockService_Unlock_AlreadyUnlocked(t *testing.T) {
 	svc := NewAppLockService(nil, nil)
-	// Starts unlocked by default.
+	// Starts unlocked by default, and owns no barrier, so there is nothing
+	// left to converge.
 	err := svc.Unlock("1234")
-	assert.ErrorIs(t, err, ErrAppLockAlreadyUnlocked)
+	assert.NoError(t, err)
 }
 
 func TestCoverageBoostPhase3_AppLockService_Unlock_BarrierSealed_Success(t *testing.T) {

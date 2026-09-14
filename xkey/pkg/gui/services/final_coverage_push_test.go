@@ -767,10 +767,11 @@ func TestFinalCoveragePush_AppLockService_Unlock_EmptyPIN(t *testing.T) {
 func TestFinalCoveragePush_AppLockService_Unlock_NotLocked(t *testing.T) {
 	svc := NewAppLockService(nil, nil)
 	svc.SetContext(context.Background())
-	// Not locked by default.
+	// Not locked by default, and no barrier is wired.
 
 	err := svc.Unlock("test-pin")
-	assert.ErrorIs(t, err, ErrAppLockAlreadyUnlocked)
+	assert.NoError(t, err)
+	assert.False(t, svc.IsLocked())
 }
 
 func TestFinalCoveragePush_AppLockService_Lock_EmitFunc(t *testing.T) {

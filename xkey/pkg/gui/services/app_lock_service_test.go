@@ -222,13 +222,17 @@ func TestAppLockService_Unlock_WithValidPIN(t *testing.T) {
 	assert.False(t, svc.IsLocked())
 }
 
+// An unlock against a service that is already fully unlocked has nothing to
+// converge, so it succeeds without touching the credential backend. It used
+// to be an error, which is what stranded a sealed barrier behind an open app
+// lock.
 func TestAppLockService_Unlock_AlreadyUnlocked(t *testing.T) {
 	svc := newTestAppLockService(t, nil)
 	assert.False(t, svc.IsLocked())
 
 	err := svc.Unlock("123456")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrAppLockAlreadyUnlocked))
+	require.NoError(t, err)
+	assert.False(t, svc.IsLocked())
 }
 
 func TestAppLockService_Unlock_EmptyPIN(t *testing.T) {
@@ -1177,17 +1181,19 @@ func TestAppLockService_HandleUnlock_RejectedIsNotSuccess(t *testing.T) {
 	assert.Empty(t, result.Unlocked)
 }
 
-// An unlock against a service that was never locked unlocks nothing, so it is
-// not a success either — this is the shape the headless daemon reports when
-// no PIN was ever initialised.
-func TestAppLockService_HandleUnlock_AlreadyUnlockedIsNotSuccess(t *testing.T) {
+// An unlock against a service with nothing locked releases nothing and is
+// still a success: the caller asked for an unlocked daemon and that is what
+// it has. Unlocked stays empty so the report does not claim work it did not
+// do.
+func TestAppLockService_HandleUnlock_AlreadyUnlockedIsIdempotentSuccess(t *testing.T) {
 	svc := newTestAppLockService(t, nil)
 
 	result := svc.HandleUnlock("123456")
 	require.NotNil(t, result)
-	assert.False(t, result.Success)
+	assert.True(t, result.Success)
+	assert.Empty(t, result.Error)
 	assert.Empty(t, result.Unlocked)
-	assert.Contains(t, result.Error, "already unlocked")
+	assert.Empty(t, result.StillLocked)
 }
 
 // A genuine unlock is a success that names what it released.
