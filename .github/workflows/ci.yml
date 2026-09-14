@@ -102,8 +102,8 @@ on:
 #     `git show <sha>:.github/workflows/ci.yml | grep -c '^concurrency:'`
 #     before concluding a supersession failed.
 #   - release.yml deliberately does NOT get this: cancelling a release
-#     mid-publish is destructive. nightly.yml, coverage.yml, docker-tests.yml,
-#     opencode-review.yml and claude-review.yml are out of scope here too.
+#     mid-publish is destructive. nightly.yml, coverage.yml and
+#     docker-tests.yml are out of scope here too.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
