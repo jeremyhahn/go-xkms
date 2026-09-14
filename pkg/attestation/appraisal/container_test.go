@@ -369,7 +369,14 @@ func (r *recordingRuntime) RunInteractive(_ context.Context, spec *ContainerSpec
 	return &InteractiveProcess{ContainerID: "container-1"}, nil
 }
 
-func (r *recordingRuntime) Stop(context.Context, string) error   { return nil }
+func (r *recordingRuntime) Stop(context.Context, string) error { return nil }
+
+// Exec satisfies the runtime seam. Nothing in this test runs a command
+// inside a container; a call would be a test asserting behaviour it never
+// arranged, so it refuses rather than answering.
+func (r *recordingRuntime) Exec(context.Context, string, *ExecSpec) (*ExecResult, error) {
+	return nil, &ContainerExecError{ContainerID: "fake", Cause: errNoExecInThisTest}
+}
 func (r *recordingRuntime) Remove(context.Context, string) error { return nil }
 func (r *recordingRuntime) Logs(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(nil)), nil
