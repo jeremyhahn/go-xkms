@@ -91,5 +91,12 @@ func TestFinalizeTCGCSR_IAKDERReachesHooksAndClientUnchanged(t *testing.T) {
 	second, rest := pem.Decode(rest)
 	require.NotNil(t, second, "the response carries a second PEM block")
 	assert.Equal(t, idevidDER, second.Bytes, "the IDevID certificate is the second PEM block")
-	assert.Empty(t, rest, "exactly two certificates are returned")
+
+	// Everything after the two end-entity certificates is the CA's issuing
+	// chain, which RFC 8555 §7.4.2 requires under the
+	// application/pem-certificate-chain media type this body is served as.
+	// The enrolled device needs it to resolve the issuer of its own
+	// certificate, whose CA is remote to it (go-trusted-platform#653).
+	assert.Equal(t, []byte("mock-bundle"), rest,
+		"the issuing chain follows the two end-entity certificates")
 }

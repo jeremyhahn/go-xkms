@@ -324,9 +324,11 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 		return nil, caerrors.InternalServerError("enrollment failed: order finalization failed: %v", err)
 	}
 
-	// The server returns both IAK and IDevID certificates in the chain
-	// certChain[0] = IAK certificate
-	// certChain[1] = IDevID certificate
+	// The server returns both IAK and IDevID certificates, followed by the
+	// issuing chain (RFC 8555 §7.4.2):
+	// certChain[0]  = IAK certificate
+	// certChain[1]  = IDevID certificate
+	// certChain[2:] = the issuing chain, leaf-ward first
 	if len(certChain) < 2 {
 		return nil, caerrors.InternalServerError("enrollment failed: expected 2 certificates (IAK and IDevID), got %d", len(certChain))
 	}
@@ -343,6 +345,11 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 		return nil, caerrors.MalformedError("enrollment failed: failed to parse IDevID certificate: %v", err)
 	}
 
+	chain, err := parseIssuingChain(certChain[2:])
+	if err != nil {
+		return nil, err
+	}
+
 	c.logger.Info("device enrollment completed successfully",
 		"cert_url", certURL,
 		"iak_subject", iakCert.Subject.CommonName,
@@ -355,6 +362,7 @@ func (c *Client) EnrollDevice(ctx context.Context, config *EnrollmentConfig) (*E
 	return &EnrollmentResult{
 		IAKCertificate:    iakCert,
 		IDevIDCertificate: idevidCert,
+		Chain:             chain,
 	}, nil
 }
 
@@ -950,4 +958,26 @@ func (c *Client) startAttestServer(config *EnrollmentConfig, attestStmt []byte, 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		c.logger.Error("HTTP server error", "error", err)
 	}
+}
+
+// parseIssuingChain parses the certificates a server appended after the
+// end-entity certificate(s), per RFC 8555 §7.4.2. Order is preserved:
+// leaf-ward first, root last.
+//
+// An unparseable entry is an error rather than a silent skip. The chain is
+// what lets a caller resolve the issuer of its own certificate, and a
+// partial chain would fail later and further from the cause. A server that
+// sends no chain yields an empty result, which is tolerated so an older
+// enrollment server still works.
+func parseIssuingChain(ders [][]byte) ([]*x509.Certificate, error) {
+	var chain []*x509.Certificate
+	for i, der := range ders {
+		issuer, err := x509.ParseCertificate(der)
+		if err != nil {
+			return nil, caerrors.MalformedError(
+				"enrollment failed: failed to parse issuing chain certificate %d: %v", i, err)
+		}
+		chain = append(chain, issuer)
+	}
+	return chain, nil
 }
