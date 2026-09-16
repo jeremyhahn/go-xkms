@@ -402,7 +402,7 @@ bootstrap:
 bootstrap:
   noise:
     enabled: true
-    server_addr: "kms.internal:8445"
+    server_addr: "kms.example.com:8445"
     server_static_key: "a1b2c3d4..."  # Distributed via secure provisioning
 ```
 

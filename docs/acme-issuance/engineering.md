@@ -63,7 +63,9 @@ once, to the externally visible base.
 - **Every POST is JWS-signed by the account key** (or, for `new-account`, by the
   key being registered). The signature, not a session, is the authorization.
 - **An order's state machine is one-way**: `pending → ready → processing →
-  valid`, or `invalid`. There is no path back from `invalid`.
+  valid`, or `invalid`. There is no path back from `invalid`. Orders failing
+  during finalize transition to `invalid` with an error; they never remain
+  stranded in `processing`.
 - **Challenge validation is server-initiated.** The client says "ready"; the
   server does the fetching, resolving or credential activation. Nothing the
   client sends about its own state is trusted.
@@ -83,6 +85,33 @@ once, to the externally visible base.
   `ca.example.com:8443` advertises itself. The standalone client's
   `serve.api_base_url` follows the same rule. Deriving from an address with no
   port is an `AdvertisedURLError` (#140).
+- **A CSR's complete identity set must correspond exactly to the order's
+  authorized identifiers.** The CSR's Common Name (if present) and every DNS and
+  IP Subject Alternative Name must cover the authorized set completely: a name
+  the order authorized but the CSR omits is rejected, as is a name the CSR
+  carries that the order did not authorize. Email and URI SANs in the CSR are
+  rejected outright (the CA has no order-identifier type to authorize them
+  against). This rule applies to both the standard finalize path and the
+  endorse-01 flow. Prior to this, only the Common Name was compared, which
+  allowed unauthorized SANs through.
+- **Revocation requires byte-equality with the stored certificate.** The
+  submitted certificate's serial number is looked up, but because the returned
+  record's identities must authorize the revocation and the submitted bytes are
+  entirely attacker-controlled, every authorization decision uses the stored
+  certificate's identities, not the submitted one's. A self-signed certificate
+  forged with a victim's serial number cannot bypass this check.
+- **Revocation calls canonical CA revocation,** ensuring OCSP and CRL agree on
+  the revoked set.
+- **Tenant-bound issuance fails closed.** If issuance is configured to bind to a
+  specific tenant's CA and that CA is not available, the issuance fails; there
+  is no fallback to the global CA. The signer certificate and issuer certificate
+  must match.
+- **Sessions are claimed atomically before validation.** A WebAuthn ceremony
+  session is single-use. The ceremony finish path claims the session with `Take`
+  (an atomic claim-and-remove operation) BEFORE validating the authenticator
+  response, not after. A non-atomic path where validation completes first leaves
+  a window in which two concurrent finish requests can both validate the same
+  challenge and both succeed.
 
 ## Error semantics
 

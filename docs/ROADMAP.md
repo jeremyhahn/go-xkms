@@ -12,7 +12,6 @@ This document tracks the development progress of go-xkms.
 - [x] **HashiCorp Vault Backend** - Transit engine integration (`pkg/backend/vault/`)
 - [x] **Symmetric Encryption KeyProvider** - AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305 (`pkg/keyprovider/symmetric/`)
 - [x] **FROST Threshold Signatures** - Multi-party Schnorr signatures (RFC 9591) (`pkg/keyprovider/frost/`)
-- [x] **Threshold Cryptography** - Shamir Secret Sharing (`pkg/keyprovider/threshold/`)
 - [x] **Quantum-Safe Cryptography** - ML-DSA (Dilithium2), ML-KEM (Kyber768) (`pkg/keyprovider/quantum/`)
 - [x] **Hardware Certificate Storage** - X.509 certificate management on hardware (`pkg/storage/hardware/`)
 

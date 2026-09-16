@@ -16,10 +16,12 @@ the folder in the same commit that changes the behavior.
 | Feature | What it covers |
 |---------|----------------|
 | [acme-issuance](acme-issuance/) | ACME RFC 8555 server and client, ARI, DNS-01/HTTP-01, TPM enrollment |
+| [attested-peer](attested-peer/) | Is the other end of a connection a currently attested system? The quote→verdict primitive, IDevID/IAK credential validation, and TLS channel binding |
 | [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
+| [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
 | [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
@@ -101,6 +103,7 @@ by five and reports unconverted folders as converted.
 | [init-ceremony](init-ceremony/) | `init/`, `auth/bootstrap.md` |
 | [share-custody](share-custody/) | `custodian/`, `sharestore/` |
 | [multi-tenancy](multi-tenancy/) | `architecture/multi-tenant.md`, `seal/tenant-barriers.md`, `acme/multi-tenancy.md` |
+| [escrow](escrow/) | `escrow/README.md` — **absorbed and deleted** |
 | [password-vault](password-vault/) | `staticpw/` |
 | [platform-secrets](platform-secrets/) | `platform-store/` |
 | [audit-log](audit-log/) | — |
@@ -128,7 +131,6 @@ Ordered "under active development first, then most often read":
 | FROST threshold signatures | [`frost/`](frost/) | 8 files; full CLI, REST, gRPC and MCP surface |
 | SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage. **Agent-only sessions are already converted** — [`ssh-agent-sessions/`](ssh-agent-sessions/) is NORMATIVE for that capability; the rest of `ssh/` is still legacy |
 | PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
-| Key escrow | [`escrow/`](escrow/) | `pkg/escrow` is implemented (KMIP + xkms federation) with **no SDK or CLI surface** |
 | Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
 | Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
 | Web console | [`web/`](web/) | 5 files |
@@ -136,6 +138,8 @@ Ordered "under active development first, then most often read":
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
 | Key migration | — | `pkg/migration`, `xkmsctl migrate`; no legacy doc exists |
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
+| Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
+| Storage engines | [`storage/`](storage/) | File, PebbleDB, memory, and object storage backends |
 
 ### Cross-cutting, and never getting a folder
 

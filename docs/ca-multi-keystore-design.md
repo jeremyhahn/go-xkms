@@ -735,10 +735,10 @@ software when the TPM is unavailable — same as today.
 
 | File | Change Type | Description |
 |---|---|---|
-| `/home/jhahn/sources/go-xkms/pkg/ca/config.go` | Modify | Add `CAKeystoresConfig`, `CAKeystoreSoftwareConfig`, `CAKeystoreTPM2Config`, `CAKeystorePKCS11Config`; add `Keystores *CAKeystoresConfig` to `Identity` after line 103 |
-| `/home/jhahn/sources/go-xkms/pkg/ca/constructors.go` | Modify | Add `BackendForStoreFunc` type after line 63 |
-| `/home/jhahn/sources/go-xkms/pkg/ca/ca.go` | Modify | Add `keystoreMap` to `CA` struct (after line 248); add `BackendForStore` to `Params` (after line 165) and `MultiIdentityParams` (after line 465); add `buildKeystoreMap`, `resolveKeyBackend`, `initSecondaryKeys` helpers; update `getOrGenerateCAKey` (line 908), `getSigner` (line 873), `Load()` (lines 615, 637), `New()` (line 392), `Init()` (line 562) |
-| `/home/jhahn/sources/go-xkms/sdk/go/ca.go` | Modify | Add type aliases for new CA keystore config types and `TrustedCABackendForStoreFunc` |
-| `/home/jhahn/sources/go-quicbaas/sdk/go/xkms/ca/ca.go` | Modify (Phase 3) | Add re-exports for new CA keystore config types and `BackendForStoreFunc` |
-| `/home/jhahn/sources/go-trusted-platform/pkg/app/app.go` | Modify (Phase 4) | Wire `BackendForStore` in `InitCA()` and `LoadCA()` |
-| `/home/jhahn/sources/go-trusted-platform/pkg/app/ca_factory.go` | Modify (Phase 4) | Add `buildCABackendForStore` helper |
+| `pkg/ca/config.go` | Modify | Add `CAKeystoresConfig`, `CAKeystoreSoftwareConfig`, `CAKeystoreTPM2Config`, `CAKeystorePKCS11Config`; add `Keystores *CAKeystoresConfig` to `Identity` after line 103 |
+| `pkg/ca/constructors.go` | Modify | Add `BackendForStoreFunc` type after line 63 |
+| `pkg/ca/ca.go` | Modify | Add `keystoreMap` to `CA` struct (after line 248); add `BackendForStore` to `Params` (after line 165) and `MultiIdentityParams` (after line 465); add `buildKeystoreMap`, `resolveKeyBackend`, `initSecondaryKeys` helpers; update `getOrGenerateCAKey` (line 908), `getSigner` (line 873), `Load()` (lines 615, 637), `New()` (line 392), `Init()` (line 562) |
+| `sdk/go/ca.go` | Modify | Add type aliases for new CA keystore config types and `TrustedCABackendForStoreFunc` |
+| `../go-quicbaas/sdk/go/xkms/ca/ca.go` | Modify (Phase 3) | Add re-exports for new CA keystore config types and `BackendForStoreFunc` |
+| `../go-trusted-platform/pkg/app/app.go` | Modify (Phase 4) | Wire `BackendForStore` in `InitCA()` and `LoadCA()` |
+| `../go-trusted-platform/pkg/app/ca_factory.go` | Modify (Phase 4) | Add `buildCABackendForStore` helper |

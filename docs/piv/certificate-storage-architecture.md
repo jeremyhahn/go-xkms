@@ -1004,14 +1004,14 @@ func BenchmarkTPM2Backend_Retrieve(b *testing.B) { /* ... */ }
 ---
 
 **File Paths Referenced:**
-- Interface definitions: `/home/jhahn/sources/go-xkms/pkg/pivcert/interface.go`
-- File backend: `/home/jhahn/sources/go-xkms/pkg/pivcert/file/backend.go`
-- TPM2 backend: `/home/jhahn/sources/go-xkms/pkg/pivcert/tpm2/backend.go`
-- PKCS11 backend: `/home/jhahn/sources/go-xkms/pkg/pivcert/pkcs11/backend.go`
-- Factory: `/home/jhahn/sources/go-xkms/pkg/pivcert/factory.go`
-- CLI integration: `/home/jhahn/sources/go-xkms/cmd/xkey/cmd/piv_cert.go`
-- Configuration: `/home/jhahn/sources/go-xkms/cmd/xkey/cmd/config.go` (updated)
-- Tests: `/home/jhahn/sources/go-xkms/pkg/pivcert/*_test.go`
+- Interface definitions: `pkg/pivcert/interface.go`
+- File backend: `pkg/pivcert/file/backend.go`
+- TPM2 backend: `pkg/pivcert/tpm2/backend.go`
+- PKCS11 backend: `pkg/pivcert/pkcs11/backend.go`
+- Factory: `pkg/pivcert/factory.go`
+- CLI integration: `cmd/xkey/cmd/piv_cert.go`
+- Configuration: `cmd/xkey/cmd/config.go` (updated)
+- Tests: `pkg/pivcert/*_test.go`
 
 **Next Steps:**
 1. Review and approve this architecture design

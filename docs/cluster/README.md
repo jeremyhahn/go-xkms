@@ -438,7 +438,7 @@ xkmsctl cluster add 2 10.0.0.2:63001
 # Remove a replica
 xkmsctl cluster remove 2
 
-xkmsctl cluster add 3 node3.internal:63001 --output json
+xkmsctl cluster add 3 node3.example.com:63001 --output json
 ```
 
 These map to `POST /api/v1/cluster/members` and

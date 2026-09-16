@@ -74,7 +74,7 @@ The storage abstraction layer provides pluggable persistence for xkms backends w
 
 General-purpose key-value storage abstraction. All methods accept a `context.Context` for cancellation and deadline propagation.
 
-**Location**: `/home/jhahn/sources/go-xkms/pkg/storage/interface.go`
+**Location**: `pkg/storage/interface.go`
 
 ```go
 type Backend interface {
@@ -109,7 +109,7 @@ type Backend interface {
 
 Store TPM binary blobs (private/public keys, contexts).
 
-**Location**: `/home/jhahn/sources/go-xkms/pkg/tpm2/store/interfaces.go`
+**Location**: `pkg/tpm2/store/interfaces.go`
 
 ```go
 type BlobStorer interface {
@@ -131,7 +131,7 @@ type BlobStorer interface {
 
 Comprehensive certificate management.
 
-**Location**: `/home/jhahn/sources/go-xkms/pkg/certstore/certstore.go`
+**Location**: `pkg/certstore/certstore.go`
 
 ```go
 type CertStore interface {

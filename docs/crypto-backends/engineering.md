@@ -101,6 +101,23 @@ can be stricter than the backend's ceiling.
   requires on re-import), and an algorithm the backend does not produce is
   listed with `KeyAlgorithm` unset. It used to default both to RSA-2048
   (#154).
+- **Vault keys are non-exportable,** and the versioned ciphertext envelope is
+  preserved across operations; Vault key names use an injective (one-to-one)
+  escape to avoid name collision. Wrapped export is not supported; callers
+  requiring material export must use `ExportKeyMaterial` on keys stored in a
+  backend that declares `Export` capability.
+- **GCP resolves the live primary key version** at backend initialization, and
+  Azure, Vault and GCP signers **pin the resolved version** at construction time
+  so version rotations do not cause unexpected signing key changes mid-request.
+- **AWS signers honour per-call hash and padding configuration,** including PKCS#1
+  v1.5 (non-OAEP padding), because the calling code may have explicit algorithm
+  requirements.
+- **PKCS#11 gained CBC, CBC-pad and ECB cipher modes** and discards sessions
+  whose authentication state cannot be restored after a PIN-entry failure or
+  token reset.
+- **Import and export capabilities are split.** A backend can implement `Import`
+  independently from `Export`. Vault gained a real BYOK (Bring Your Own Key)
+  import ceremony in place of simpler paste operations.
 
 ## Error semantics
 

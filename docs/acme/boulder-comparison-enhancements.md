@@ -16,7 +16,7 @@ This document compares go-xkms against Boulder (Let's Encrypt's production CA) t
 
 ### P0-1: Key Validation Framework (goodkey)
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/goodkey/good_key.go`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/goodkey/good_key.go`
 
 **Current State:** go-xkms performs basic key validation but lacks comprehensive checks.
 
@@ -59,7 +59,7 @@ type KeyPolicy struct {
 
 ### P0-2: Certificate Linting Integration (zlint)
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/issuance/cert.go:290-373`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/issuance/cert.go:290-373`
 
 **Current State:** go-xkms does not lint certificates before signing.
 
@@ -95,7 +95,7 @@ func (l *CertLinter) LintTBS(tbsBytes []byte) (*LintResult, error)
 
 ### P0-3: TBS Determinism Verification
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/ca/ca.go:533-588`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/ca/ca.go:533-588`
 
 **Current State:** go-xkms does not verify TBS determinism.
 
@@ -132,7 +132,7 @@ func VerifyTBSDeterminism(lintCertDER, actualCertDER []byte) error {
 
 ### P0-4: Private Key Verification (Anti-Key-Smuggling)
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/privatekey/privatekey.go:17-81`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/privatekey/privatekey.go:17-81`
 
 **Current State:** the ACME CA relies on the xkms key backends but doesn't verify private keys.
 
@@ -169,7 +169,7 @@ func VerifyPrivateKey(signer crypto.Signer) (crypto.PublicKey, error) {
 
 ### P1-1: Multi-Tier Domain Blocklisting
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/policy/pa.go:32-154`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/policy/pa.go:32-154`
 
 **Current State:** go-xkms may have basic domain validation but lacks comprehensive blocklisting.
 
@@ -208,7 +208,7 @@ func (b *Blocklist) IsIPBlocked(ip netip.Addr) (bool, string)
 
 ### P1-2: Certificate Transparency Multi-Operator Policy
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/ctpolicy/ctpolicy.go:105-213`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/ctpolicy/ctpolicy.go:105-213`
 
 **Current State:** go-xkms likely has basic CT submission but lacks policy enforcement.
 
@@ -247,7 +247,7 @@ func (p *CTPolicy) GetSCTs(ctx context.Context, precert []byte, expiry time.Time
 
 ### P1-3: GCRA Token Bucket Rate Limiting
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/ratelimits/gcra.go:9-107`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/ratelimits/gcra.go:9-107`
 
 **Current State:** go-xkms uses simple token bucket in `pkg/acme/server/rate_limiter.go`.
 
@@ -278,7 +278,7 @@ func (g *GCRA) Allow(now, tat time.Time, cost time.Duration) (newTAT time.Time, 
 
 ### P1-4: Redis-Based Distributed Rate Limiting
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/ratelimits/source_redis.go`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/ratelimits/source_redis.go`
 
 **Current State:** go-xkms uses in-memory rate limiting (single node only).
 
@@ -311,7 +311,7 @@ func (r *RedisLimiter) BatchSpend(ctx context.Context, txns []Transaction) ([]De
 
 ### P1-5: Nonce Encryption for Stateless Generation
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/nonce/nonce.go:184-208`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/nonce/nonce.go:184-208`
 
 **Current State:** go-xkms likely stores nonces in database/memory.
 
@@ -344,7 +344,7 @@ func (s *EncryptedNonceService) Generate() (string, error) {
 
 ### P2-1: Retry-After Jitter
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/ratelimits/limiter.go:100-102`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/ratelimits/limiter.go:100-102`
 
 **Current State:** go-xkms likely returns exact Retry-After values.
 
@@ -364,7 +364,7 @@ func jitteredRetryAfter(d time.Duration) time.Duration {
 
 ### P2-2: gRPC Deadline Management
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/grpc/interceptors.go:99-122`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/grpc/interceptors.go:99-122`
 
 **Current State:** go-xkms may not subtract return overhead from deadlines.
 
@@ -396,7 +396,7 @@ func DeadlineInterceptor(returnOverhead time.Duration) grpc.UnaryServerIntercept
 
 ### P1-6: Two-Phase Issuance with Precert
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/ca/ca.go:314-456`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/ca/ca.go:314-456`
 
 **Current State:** go-xkms may sign certificates directly.
 
@@ -428,7 +428,7 @@ func DeadlineInterceptor(returnOverhead time.Duration) grpc.UnaryServerIntercept
 
 ### P1-7: Typed Error System for gRPC Boundaries
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/errors/errors.go:33-159`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/errors/errors.go:33-159`
 
 **Current State:** go-xkms uses standard errors that may lose type information across gRPC.
 
@@ -471,7 +471,7 @@ func (e *TrustedCAError) ACMEProblem() *acme.Problem
 
 ### P2-3: Audit Log Checksums
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/log/log.go:163-220`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/log/log.go:163-220`
 
 **Current State:** go-xkms has structured audit logging but may lack integrity verification.
 
@@ -500,7 +500,7 @@ func (l *Logger) formatWithChecksum(msg string) string {
 
 ### P2-4: Multi-Perspective Domain Validation
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/va/va.go:84-289`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/va/va.go:84-289`
 
 **Current State:** go-xkms validates from single perspective.
 
@@ -535,7 +535,7 @@ func maxAllowedFailures(perspectiveCount int) int {
 
 ### P2-5: Sharded CRL Generation
 
-**Boulder Implementation:** `/home/jhahn/sources/boulder/crl/updater/updater.go`
+**Boulder Implementation:** `github.com/letsencrypt/boulder/crl/updater/updater.go`
 
 **Current State:** go-xkms may generate monolithic CRLs.
 
@@ -625,7 +625,7 @@ func serialToShard(serial *big.Int, numShards int) int {
 
 ## References
 
-- Boulder Source: `/home/jhahn/sources/boulder/`
+- Boulder Source: `github.com/letsencrypt/boulder/`
 - CABF Baseline Requirements: https://cabforum.org/baseline-requirements/
 - RFC 8555 (ACME): https://tools.ietf.org/html/rfc8555
 - NIST SP800-56A: https://csrc.nist.gov/publications/detail/sp/800-56a/rev-3/final

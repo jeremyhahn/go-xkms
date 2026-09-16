@@ -33,6 +33,41 @@ neither is deprecated.
 [`architecture.md`](architecture.md). Implementations: `memory_stores.go`,
 `qrdb_userstore.go`, `backend_stores.go`.
 
+**`SessionStore` contract change:** The interface now defines an atomic `Take`
+method that claims a session in one indivisible operation:
+
+```go
+type SessionStore interface {
+    // ... other methods ...
+
+    // Take atomically claims a session: it returns the session data AND
+    // removes it in one indivisible operation, so exactly one caller can ever
+    // observe a given session.
+    //
+    // A WebAuthn ceremony session is single-use. Finishing a ceremony must
+    // claim it with Take BEFORE validating the authenticator response;
+    // validating first and deleting afterwards leaves a window in which two
+    // concurrent finish requests both validate against the same challenge and
+    // both succeed.
+    //
+    // Returns ErrSessionNotFound when no session was claimed (missing, or
+    // already taken by a concurrent caller) and ErrSessionExpired when the
+    // claimed session had aged out. An expired session is consumed all the
+    // same, so it cannot be retried.
+    //
+    // Implementations that cannot make this atomic must not be used: a
+    // non-atomic take is the defect this method exists to remove.
+    Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
+}
+```
+
+This is a **load-bearing safety invariant** — session replay and concurrent
+ceremony exploitation depends on atomicity. Implementors must use a backend
+capable of compare-and-swap, or fail construction rather than serve a weaker
+guarantee. The certification ceremony finish path calls `Take` BEFORE validating
+the authenticator's response, ensuring exactly one caller observes a given
+session.
+
 ### Token generation
 
 ```go

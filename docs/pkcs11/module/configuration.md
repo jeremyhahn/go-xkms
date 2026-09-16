@@ -176,7 +176,7 @@ credentials whenever TLS is disabled. `Validate` refuses a remote target with `t
 (`ErrInsecureRemoteTarget`) unless the operator explicitly sets `allow_insecure_transport`:
 
 ```ini
-target = xkms-dev.internal:9443
+target = kms-dev.example.com:9443
 tls_enabled = false
 allow_insecure_transport = true
 ```
@@ -272,7 +272,7 @@ timeout = 5s
 ### Production (Remote with mTLS)
 
 ```ini
-target = xkms.prod.internal:9443
+target = kms-prod.example.com:9443
 tls_enabled = true
 tls_cert = /etc/xkms/client.crt
 tls_key = /etc/xkms/client.key

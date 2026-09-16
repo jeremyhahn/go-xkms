@@ -1,6 +1,6 @@
 # Attested Peer — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
 
 ## Exported surface — `pkg/attestation/peer`
 
@@ -17,7 +17,14 @@
 | `QualifyingData(nonce, channelBinding []byte) []byte` | `SHA-256(nonce ‖ binding)`, or a copy of the nonce when the binding is empty. Used by both the quoting and the verifying side. |
 | `ChannelBinding(*tls.ConnectionState) ([]byte, error)` | 32 bytes of exported keying material under `ExporterLabel`. |
 | `ExporterLabel`, `ChannelBindingLength` | `"EXPORTER-attested-peer"`, `32`. |
-| `*PolicyError`, `*ContextError`, `*ChannelBindingError`, `*FailureClassError` | The typed errors. |
+| `VerifyIDevID(ctx, *x509.Certificate, DevIDPolicy) error` | Is this certificate a usable TCG device identity credential? Validity, chain, key usage, class assertion, device names. |
+| `VerifyIAK(ctx, *x509.Certificate, DevIDPolicy) error` | The same for the attestation credential: Restricted asserted, Fixed refused. |
+| `IsIDevID(*x509.Certificate) bool`, `IsIAK(*x509.Certificate) bool` | Shape only — class assertion and the two §8.1 otherNames. No chain, no clock. For routing, never for admission. |
+| `DevIDPolicy` | `Anchors`, `Intermediates`, `CurrentTime` (zero means `time.Now().UTC()`). |
+| `EvidenceFromTLS(*tls.ConnectionState, Evidence) (TLSEvidence, error)` | Copies the reported evidence and pairs it with the connection's channel binding. Fails closed with `*ChannelBindingError`. |
+| `TLSEvidence` | `Evidence`, `ChannelBinding`, and `BindPolicy(Policy) Policy`, which returns a copy of the policy carrying this connection's binding. |
+| `QualifyingDataFromTLS(*tls.ConnectionState, nonce []byte) ([]byte, error)` | The quoting side: binding plus `QualifyingData` in one call, so binding cannot be half-performed. |
+| `*PolicyError`, `*ContextError`, `*ChannelBindingError`, `*FailureClassError`, `*DevIDError`, `*DevIDPolicyError` | The typed errors. |
 
 SDK aliases in `sdk/go/attestation_peer.go` carry a `Peer` prefix
 (`PeerAttestationVerifier`, `PeerEvidence`, `PeerPolicy`, `PeerVerdict`,
@@ -25,7 +32,9 @@ SDK aliases in `sdk/go/attestation_peer.go` carry a `Peer` prefix
 `WithPeerVerifierClock`, `PeerQualifyingData`, `PeerChannelBinding`,
 `PeerChannelBindingExporterLabel`, `PeerChannelBindingLength`,
 `PeerPolicyError`, `PeerContextError`, `PeerChannelBindingError`,
-`PeerFailureClassError`) because
+`PeerFailureClassError`, `PeerVerifyIDevID`, `PeerVerifyIAK`, `PeerIsIDevID`,
+`PeerIsIAK`, `PeerDevIDPolicy`, `PeerDevIDError`, `PeerDevIDPolicyError`,
+`PeerEvidenceFromTLS`, `PeerTLSEvidence`, `PeerQualifyingDataFromTLS`) because
 `Evidence`, `Verifier` and `VerifyOptions` already name the x509
 key-attestation surface in the flat `xkms` namespace.
 
@@ -51,6 +60,23 @@ key-attestation surface in the flat `xkms` namespace.
 7. **Constant-time comparison** for qualifying data, PCR digest and baseline
    values (`crypto/subtle`).
 8. **No `fmt.Errorf`, no ignored errors, no `time.Sleep`, no stubs.**
+9. **A credential is answered with an error, not a verdict.** Evidence can be
+   partially absent, and absent-versus-wrong decides whether a peer may be
+   quarantined; a certificate cannot be partial. `VerifyIDevID`/`VerifyIAK`
+   return `*DevIDError` for the certificate, `*DevIDPolicyError` for the
+   caller's configuration, `*ContextError` for a done context, and `nil` only
+   when every check held.
+10. **The two credential classes refuse each other.** TCG DevID §8.2 forbids
+    combining `verifiedTPMFixed` and `verifiedTPMRestricted`, so each class
+    requires its own assertion *and* rejects the other's. An IAK presented as
+    an IDevID fails.
+11. **The validator cannot drift from the issuer.** Every TCG OID
+    `pkg/attestation/peer` recognises is pinned by test to the value `pkg/ca`
+    stamps. They are declared separately so verification does not link the CA.
+12. **Binding is all-or-nothing.** `EvidenceFromTLS` and
+    `QualifyingDataFromTLS` return an error and no data when the connection
+    cannot export keying material. Neither inspects the evidence, so a caller
+    never receives an error about the peer from them.
 
 ## Fail-closed paths, by condition
 
@@ -87,10 +113,36 @@ key-attestation surface in the flat `xkms` namespace.
 | `*ContextError` | `ctx.Err() != nil` before verification | `Cause` (unwraps to the context error) |
 | `*ChannelBindingError` | nil state; handshake not complete; the TLS stack refuses to export (TLS 1.2 without extended master secret) | `Reason`, `Cause` |
 | `*FailureClassError` | `FailureClass.UnmarshalText` on an unknown name; `MarshalText` on an out-of-range value | `Text` |
+| `*DevIDError` | `VerifyIDevID` / `VerifyIAK` rejected the certificate | `Credential`, `Reason`, `Cause` (unwraps to the `crypto/x509` chain error where there is one) |
+| `*DevIDPolicyError` | `DevIDPolicy` with no `Anchors` | `Field`, `Reason` |
 
 A required PCR beside an **empty** baseline is not a `PolicyError`: the empty
 baseline is a verdict-level absence and the required-PCR check is evaluated
 against the quote's selection alone.
+
+## Fail-closed paths: device credentials
+
+Every row is a `*DevIDError` carrying `Credential` ("IDevID" or "IAK") and a
+`Reason`, except where noted. The order is the order they are checked, and the
+first failure is returned.
+
+| Condition | Error |
+|---|---|
+| Context done | `*ContextError` |
+| `cert` nil | `*DevIDError` "no certificate" |
+| `DevIDPolicy.Anchors` nil | `*DevIDPolicyError` on `Anchors` |
+| `CurrentTime` before `NotBefore` / after `NotAfter` | "not valid until" / "expired at" — checked before the chain so expiry is named as itself |
+| Does not chain to the anchors | "does not chain to a trusted anchor"; `Cause` unwraps to the `crypto/x509` error |
+| No `digitalSignature` key usage | names §8.1 Table 22 |
+| `IsCA`, or a certificate/CRL-signing key usage | a device credential is an end entity and signs neither |
+| Class assertion absent (neither a certificate policy nor an extended key usage carries it) | names the missing assertion |
+| The other class's assertion present | names it and §8.2's prohibition |
+| No subjectAltName, or it does not decode | names the two §8.1 otherNames |
+| No hardwareModuleName, or `hwType` ≠ 2.23.133.1.2, or empty `hwSerialNum` | the credential names no TPM 2.0 |
+| No permanentIdentifier, empty `identifierValue`, missing assigner, or assigner ≠ 2.23.133.12.1 | §8.1 requires both fields |
+
+`IsIDevID` / `IsIAK` run the class-assertion and device-name rows only and
+return `false` for any of them, including a nil certificate.
 
 ## Tests
 
@@ -108,6 +160,32 @@ in-memory `net.Pipe` TLS pair, no host modification:
   incomplete-handshake states are refused.
 - The Restricted OID is pinned to `pkg/ca`'s `OIDTCGVerifiedTPMRestricted` /
   `TCGVerifiedTPMRestrictedPolicy` so issuer and verifier cannot drift.
+- Device credentials: a canonical IDevID and a canonical IAK are accepted;
+  each class refuses the other's certificate. Rejected: no TCG assertion at
+  all, the other class's assertion, every wrong key usage (no
+  `digitalSignature`, certificate signer, CRL signer, CA), expired and
+  not-yet-valid, a foreign CA, a missing intermediate, a self-issued
+  certificate, and each of the eight device-name defects (no SAN, no
+  hardwareModuleName, no permanentIdentifier, non-TPM `hwType`, empty
+  `hwSerialNum`, empty `identifierValue`, missing assigner, wrong assigner).
+  The assertion is proven to be accepted in **both** TCG encodings — as a
+  certificate policy and as an extended key usage alone.
+- Every TCG OID the validator recognises is pinned to the `pkg/ca` constant
+  that issues it, so the validator cannot drift into rejecting its own CA's
+  credentials.
+- `DevIDPolicy.CurrentTime` zero means now, proven against a CA and credential
+  minted at the real clock — the zero instant would reject everything as not
+  yet valid.
+- Connection binding, end to end over a real TLS 1.3 `net.Pipe` pair: the
+  quoting end computes qualifying data from its own `ConnectionState`, the
+  verifying end builds evidence and policy from the other, and the verdict
+  passes with all eight checks. A quote bound to a **different** connection
+  and a quote carrying the **bare nonce** both fail `ChannelBinding` as
+  cryptographic failures while the rest of the verdict is unaffected.
+- `EvidenceFromTLS` returns no evidence at all on a nil state or an
+  incomplete handshake, does not alias any caller buffer or map, and
+  `BindPolicy` neither writes into the provisioned policy nor lets two
+  connections produce the same bound policy.
 - **Mutation-checked** (each mutant applied by hand and the suite run): drop
   the Restricted requirement; drop chain verification; accept the bare nonce
   under a binding policy; drop the binding from the expected qualifying data;
@@ -116,10 +194,11 @@ in-memory `net.Pipe` TLS pair, no host modification:
   divergence as absence; drop required-PCR coverage. Every mutant is killed
   by at least one named test.
 
-Coverage: 98% of statements. The uncovered lines are the TLS exporter
-refusal (Go's TLS stack always negotiates extended master secret, so it
-cannot be provoked in-process) and two defensive branches that the preceding
-checks make unreachable.
+Coverage: 96.3% of statements across the package. The uncovered lines are the
+TLS exporter refusal (Go's TLS stack always negotiates extended master secret,
+so it cannot be provoked in-process), the ASN.1 decoding failures inside the
+subjectAltName walk that `x509.ParseCertificate` rejects before this code sees
+them, and defensive branches the preceding checks make unreachable.
 
 Run with the repo's unit tag set:
 

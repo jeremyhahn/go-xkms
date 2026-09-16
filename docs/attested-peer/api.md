@@ -1,6 +1,6 @@
 # Attested Peer — API
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
 
 ## No transport surface of its own, deliberately
 
@@ -9,6 +9,12 @@ It is not exposed on REST, gRPC, QUIC, MCP, Unix or the embedded transport by
 this repo, and it should not be. Its purpose is to sit **inside** a transport
 gate and decide whether a request is admitted; a remote endpoint that answered
 "is this evidence good?" would itself need the very gate it implements.
+
+The same holds for the device-trust primitives beside it. `VerifyIDevID`,
+`VerifyIAK`, `EvidenceFromTLS` and `QualifyingDataFromTLS` take a
+`*x509.Certificate` or a `*tls.ConnectionState` and return an answer; none
+reads a header, a metadata map or a request, and none decides what happens to
+a request next.
 
 | Transport | Status |
 |---|---|
@@ -28,15 +34,64 @@ verdict, err := verifier.Verify(ctx, xkms.PeerEvidence{...}, xkms.PeerPolicy{...
 ```
 
 Types: `PeerAttestationVerifier`, `PeerVerifierOption`, `PeerEvidence`,
-`PeerPolicy`, `PeerVerdict`, `PeerChecks`, `PeerClockInfo`, `PeerFailureClass`.
+`PeerPolicy`, `PeerVerdict`, `PeerChecks`, `PeerClockInfo`, `PeerFailureClass`,
+`PeerDevIDPolicy`, `PeerTLSEvidence`.
 Constants: `PeerFailureNone`, `PeerFailureAbsence`, `PeerFailureCryptographic`,
 `PeerChannelBindingExporterLabel`, `PeerChannelBindingLength`.
 Functions: `NewPeerAttestationVerifier`, `WithPeerVerifierClock`,
-`PeerQualifyingData`, `PeerChannelBinding`.
+`PeerQualifyingData`, `PeerChannelBinding`, `PeerVerifyIDevID`,
+`PeerVerifyIAK`, `PeerIsIDevID`, `PeerIsIAK`, `PeerEvidenceFromTLS`,
+`PeerQualifyingDataFromTLS`.
 Errors: `PeerPolicyError`, `PeerContextError`, `PeerChannelBindingError`,
-`PeerFailureClassError`. A persisted class parses back through
-`PeerFailureClass`'s own `UnmarshalText`; an unknown name is rejected with
-`*PeerFailureClassError`, which carries the rejected text.
+`PeerFailureClassError`, `PeerDevIDError`, `PeerDevIDPolicyError`. A persisted
+class parses back through `PeerFailureClass`'s own `UnmarshalText`; an unknown
+name is rejected with `*PeerFailureClassError`, which carries the rejected
+text.
+
+The `Peer` prefix is the existing convention of this flat namespace, not a
+statement about scope: `Evidence`, `Verifier` and `VerifyOptions` already name
+the x509 key-attestation surface in `sdk/go`.
+
+## Device credential validation
+
+```go
+err := xkms.PeerVerifyIDevID(ctx, cert, xkms.PeerDevIDPolicy{
+    Anchors:       deviceRoots,          // provisioned, never from the peer
+    Intermediates: deviceIntermediates,
+})
+```
+
+| Outcome | Meaning | Suggested mapping |
+|---|---|---|
+| `nil` | The certificate is a device identity credential valid under the policy | proceed to the attestation verdict |
+| `*PeerDevIDError` | The certificate is not that credential; `Credential` names the class checked ("IDevID"/"IAK") and `Reason` the check that failed | deny (REST 403, gRPC `PermissionDenied`), audit as an ordinary refusal |
+| `*PeerDevIDPolicyError` | The **verifier** is misconfigured — no trust anchors | deny, alert the operator (REST 500 class, gRPC `Internal`) |
+| `*PeerContextError` | The request is already gone | — |
+
+A chain failure unwraps: `errors.As(err, &x509.UnknownAuthorityError{})` holds
+through `*PeerDevIDError`.
+
+`PeerIsIDevID` / `PeerIsIAK` return a bool for the shape alone — no chain, no
+clock. Use them to route a credential to a handler, never to admit one.
+
+## Binding evidence to the connection it arrived on
+
+```go
+bound, err := xkms.PeerEvidenceFromTLS(state, reported)   // *tls.ConnectionState
+if err != nil {
+    return deny(err)                                      // *PeerChannelBindingError
+}
+verdict, err := verifier.Verify(ctx, bound.Evidence, bound.BindPolicy(basePolicy))
+```
+
+`bound.BindPolicy` takes and returns a `PeerPolicy` by value, so one
+provisioned policy binds many connections and the caller's copy is never
+written to. On the quoting side, `PeerQualifyingDataFromTLS(state, nonce)`
+returns the value to hand to `TPM2.Quote`.
+
+Neither function inspects the evidence: a missing quote or a wrong nonce is
+still answered in the verdict, so these return an error only when the
+connection itself cannot yield a binding.
 
 ## The wire shape a consumer carries
 

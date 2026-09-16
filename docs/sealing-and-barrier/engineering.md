@@ -128,6 +128,26 @@ The `SealedRootKey` blob is persisted by **go-qrdb**; go-xkms produces and
 consumes it. `pkg/sealblobstore` holds sealed blobs for the secret-sealing
 paths, and `pkg/seal/platform_store.go` holds platform secrets.
 
+The seal store is **fully implemented** across all transports:
+- **Embedded** (`BarrierService`, `SealService` in `pkg/seal`)
+- **REST** (`/api/v1/barrier/*`, `/api/v1/seal`) with RBAC on every route
+  (permissions: `seal:bootstrap`, `seal:unseal`, `seal:seal`, `seal:status`,
+  `seal:initialize-shamir`, `barrier:unseal-share`, `seal:rekey`,
+  `seal:generate-recovery`, `seal:recover-with-keys`, `seal:rotate-root-key`,
+  `seal:enable-encryption`, `keys:encrypt`, `keys:decrypt`, `keys:get`)
+- **gRPC / Unix** (`xkmsv1.KeystoreService.Barrier*` and `Seal*` methods)
+- **QUIC** (same routes as REST)
+- **MCP** (`barrier.initialize`, `barrier.unseal`, `barrier.seal`,
+  `barrier.status`, `barrier.initializeShamir`, `barrier.unsealShare`,
+  `barrier.unsealShares`, `barrier.rekey`, `barrier.generateRecoveryKeys`,
+  `barrier.recoverWithKeys`, `barrier.deleteRecoveryKeys`,
+  `barrier.hasRecoveryKeys`, `barrier.generateRootToken`,
+  `barrier.enableEncryption`, `xkms.seal`, `xkms.unseal`, `xkms.canSeal`)
+- **USB** — documented structural exception; not a native transport.
+
+RBAC is applied on every route: barrier operations require `seal:*` and
+`barrier:*` permissions; data sealing requires `keys:encrypt`/`keys:decrypt`.
+
 Migration: bump `sealedRootKeyVersion` for any format change and handle the old
 version on read. A root key that cannot be unsealed is unrecoverable data loss,
 so this is the one compatibility rule in the repo with no workaround.

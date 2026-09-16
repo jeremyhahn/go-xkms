@@ -39,6 +39,29 @@ The interfaces implemented — `qrdbsdk.AuthFactorPlugin`,
 `qrdbsdk.AuthFactorRegistry`, `qrdbsdk.NewFactorRegistry` — belong to go-qrdb
 and are reached through `go-qrdb/sdk/go` only. Never `go-qrdb/pkg/*`.
 
+## SessionStore interface (`pkg/webauthn/interfaces.go`)
+
+The `SessionStore` interface (`pkg/webauthn/interfaces.go:47`) has a critical
+`Take` method that implements atomic session claiming:
+
+```go
+// Take atomically claims a session: it returns the session data AND
+// removes it in one indivisible operation, so exactly one caller can ever
+// observe a given session.
+Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
+```
+
+**Implementors must make this atomic.** A WebAuthn ceremony session is
+single-use, and the finish handler must call `Take` BEFORE validating the
+authenticator response. Validating first and deleting afterwards leaves a window
+in which two concurrent finish requests both validate against the same challenge
+and both succeed. A non-atomic implementation that cannot guarantee this must not
+be used.
+
+`Take` returns `ErrSessionNotFound` when no session was claimed (missing or
+already taken) and `ErrSessionExpired` when the claimed session had aged out. An
+expired session is consumed all the same (cannot be retried).
+
 ## Invariants
 
 - **`DefaultFactors` is the only place the factor set is enumerated.** Adding a

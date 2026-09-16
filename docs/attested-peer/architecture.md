@@ -1,6 +1,6 @@
 # Attested Peer — Architecture
 
-> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-05
+> **Status: NORMATIVE** · Feature: `attested-peer` · Repo: `go-xkms` · Last verified: 2026-09-16
 
 ## The question this answers
 
@@ -20,6 +20,8 @@ every consumer reaches the same code (go-xkms#273).
 | Half | Owner | Where |
 |---|---|---|
 | Verification primitive: quote → verdict | **go-xkms** (this feature) | `pkg/attestation/peer`, aliased in `sdk/go/attestation_peer.go` |
+| Device credential validation: is this certificate an IDevID/IAK? | **go-xkms** (this feature) | `VerifyIDevID`, `VerifyIAK`, `IsIDevID`, `IsIAK` |
+| Turning a TLS connection into bound evidence | **go-xkms** (this feature) | `EvidenceFromTLS`, `QualifyingDataFromTLS` |
 | Transport middleware that calls it and fails closed on every transport | go-qrdb | go-qrdb#278 |
 | Collector, cache, TTL, policy provisioning, quarantine action | go-trusted-platform | go-trusted-platform#226 |
 | Producing the quote | go-xkms `pkg/tpm2` | `TPM2.Quote(pcrs, qualifyingData)` |
@@ -145,6 +147,65 @@ are accepted as RSASSA or RSA-PSS (a raw TPM signature does not say which);
 ECDSA as ASN.1 DER (what `TPM2.Quote` returns) or raw `r‖s` (what a TPM emits).
 Only single-bank SHA-256/384/512 selections are compared; SHA-1 is not
 acceptable evidence of state.
+
+## Device credential validation
+
+A quote answers "is this system in a good state". It does not answer "is this
+certificate a device credential at all", and a relying party needs both: a
+certificate a trusted CA issued to a laptop is not an IDevID, and an
+attestation key presented as an identity is the spoofing TCG marks the two
+classes to prevent.
+
+`VerifyIDevID` and `VerifyIAK` answer that, over the certificate the CA in
+`pkg/ca` issues from a TCG-CSR-IDEVID:
+
+| Check | What must hold |
+|---|---|
+| Validity | The certificate is within its own window at `DevIDPolicy.CurrentTime` (zero means now). Checked before the chain so an expired credential says so. |
+| Chain | It chains to `DevIDPolicy.Anchors` through `Intermediates`. There is no anchorless mode: a nil pool is a `*DevIDPolicyError`, never a pass. |
+| Key usage | `digitalSignature` is present (§8.1 Table 22); the certificate is not a CA and signs neither certificates nor CRLs. |
+| Class | An IDevID asserts `tcg-cap-verifiedTPMFixed` and **not** `tcg-cap-verifiedTPMRestricted`; an IAK asserts the reverse. §8.2 forbids combining them, so each class refuses the other's marker. |
+| Device names | subjectAltName carries the two §8.1 otherNames: an RFC 4108 hardwareModuleName whose `hwType` is the TPM 2.0 OID 2.23.133.1.2 with a non-empty `hwSerialNum`, and an RFC 4043 permanentIdentifier with a non-empty `identifierValue` assigned by `tcg-on-ekPermIdSha256` (2.23.133.12.1). |
+
+Both encodings TCG defines for the class assertion are accepted — a
+certificate policy (§8.2) and an extended key usage (§8.1) — because `pkg/ca`
+stamps both and a conformant issuer may stamp either. The object identifiers
+are declared in `pkg/attestation/peer` rather than imported from `pkg/ca`, so
+that verifying a credential does not link the certificate authority; a test
+pins each one to the value `pkg/ca` issues, because a validator that drifts
+from its own issuer rejects every device it enrolled.
+
+Unlike `Verify`, these return an **error**, not a verdict. A verdict exists
+because evidence can be partially absent and the difference between absent and
+wrong decides whether a peer may be quarantined. A certificate is not partial:
+it either is this credential or it is not.
+
+`IsIDevID` and `IsIAK` answer the shape question alone — no chain, no clock —
+for routing a credential to a handler. They are documented as predicates and
+must never be the authorization decision.
+
+## Binding evidence to a connection, without owning the middleware
+
+The binding derivation was already here; what was missing was the step that
+uses it. A consumer had to call `ChannelBinding`, remember to put the same
+value in `Policy.ChannelBinding`, and remember to fail closed when the
+exporter refused. Each of those is a silent downgrade when forgotten: evidence
+bound to a connection verified under an unbound policy accepts a relayed
+quote.
+
+`EvidenceFromTLS(state, reported)` returns the evidence **and** the binding as
+one value whose `BindPolicy` installs it, so the pair cannot drift, and
+returns `*ChannelBindingError` with no evidence when the connection cannot
+export. `QualifyingDataFromTLS(state, nonce)` is the same closure on the
+quoting side: a connection that yields no binding yields no qualifying data,
+so a quoter cannot perform half of the binding.
+
+Both are library calls over `*tls.ConnectionState`. Nothing here is HTTP- or
+gRPC-shaped, nothing reads a header, and neither decides what a request does
+next: that is still the consumer's middleware (go-qrdb#278). They say nothing
+about the evidence either — missing or wrong quote fields stay the verdict's
+business — so a middleware gets an error from them only when its own
+connection is unusable.
 
 ## What is deliberately not here
 
