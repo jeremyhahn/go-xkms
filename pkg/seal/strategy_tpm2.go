@@ -80,8 +80,12 @@ func (t *TPM2Strategy) SealRootKey(
 	}
 	var opts *types.SealOptions
 	if len(creds.Secret) != 0 {
+		pw, pwErr := types.NewPasswordFromString(string(creds.Secret))
+		if pwErr != nil {
+			return nil, pwErr
+		}
 		opts = &types.SealOptions{
-			Password: types.NewPasswordFromString(string(creds.Secret)),
+			Password: pw,
 		}
 	}
 	sealed, err := t.sealer.Seal(ctx, rootKey, opts)
@@ -130,8 +134,12 @@ func (t *TPM2Strategy) UnsealRootKey(
 
 	var opts *types.UnsealOptions
 	if len(creds.Secret) != 0 {
+		pw, pwErr := types.NewPasswordFromString(string(creds.Secret))
+		if pwErr != nil {
+			return nil, pwErr
+		}
 		opts = &types.UnsealOptions{
-			Password: types.NewPasswordFromString(string(creds.Secret)),
+			Password: pw,
 		}
 	}
 	return t.sealer.Unseal(ctx, &sd, opts)

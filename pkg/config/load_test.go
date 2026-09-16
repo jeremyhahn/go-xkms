@@ -406,8 +406,8 @@ func TestLoad_PointerSectionResolvesFromEnv(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
-		if cfg.Backends.AWSKMS != nil || cfg.ACME != nil || cfg.Trust != nil {
-			t.Fatalf("pointer sections must stay nil when neither the file nor the environment sets a key in them: awskms=%v acme=%v trust=%v", cfg.Backends.AWSKMS, cfg.ACME, cfg.Trust)
+		if cfg.Backends.AWSKMS != nil || cfg.ACME != nil || cfg.Trust != nil || cfg.Escrow != nil {
+			t.Fatalf("pointer sections must stay nil when neither the file nor the environment sets a key in them: awskms=%v acme=%v trust=%v escrow=%v", cfg.Backends.AWSKMS, cfg.ACME, cfg.Trust, cfg.Escrow)
 		}
 	})
 
