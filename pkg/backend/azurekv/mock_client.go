@@ -234,7 +234,10 @@ func (m *MockKeyVaultClient) CreateKey(ctx context.Context, name string, params 
 	return response, nil
 }
 
-// GetKey retrieves a key from the mock vault.
+// GetKey retrieves a key from the mock vault. When version is non-empty, the
+// response reports that specific version's public key and KID instead of
+// the current one, mirroring how Azure Key Vault serves historical versions
+// so tests can verify a Signer/Decrypter stays pinned across a rotation.
 func (m *MockKeyVaultClient) GetKey(ctx context.Context, name, version string, options *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error) {
 	if m.getErr != nil {
 		return azkeys.GetKeyResponse{}, m.getErr
@@ -248,11 +251,22 @@ func (m *MockKeyVaultClient) GetKey(ctx context.Context, name, version string, o
 		return azkeys.GetKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
 	}
 
+	resolvedVersion := mock.version
+	publicKey := mock.publicKey
+	if version != "" {
+		ver, ok := mock.versions[version]
+		if !ok {
+			return azkeys.GetKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key version not found: %s/%s", name, version)}
+		}
+		resolvedVersion = version
+		publicKey = ver.publicKey
+	}
+
 	// For symmetric keys, we skip public key encoding (oct keys have no public component)
 	// Return the response with the key ID and type information
-	if mock.publicKey == nil {
+	if publicKey == nil {
 		// This is a symmetric key - build response without public key bytes
-		keyID := azkeys.ID(fmt.Sprintf("https://mock-vault.vault.azure.net/keys/%s/%s", name, mock.version))
+		keyID := azkeys.ID(fmt.Sprintf("https://mock-vault.vault.azure.net/keys/%s/%s", name, resolvedVersion))
 		enabled := true
 		return azkeys.GetKeyResponse{
 			KeyBundle: azkeys.KeyBundle{
@@ -271,7 +285,7 @@ func (m *MockKeyVaultClient) GetKey(ctx context.Context, name, version string, o
 	var pubKeyBytes []byte
 	var err error
 
-	switch pub := mock.publicKey.(type) {
+	switch pub := publicKey.(type) {
 	case *rsa.PublicKey:
 		pubKeyBytes, err = x509.MarshalPKIXPublicKey(pub)
 	case *ecdsa.PublicKey:
@@ -285,7 +299,7 @@ func (m *MockKeyVaultClient) GetKey(ctx context.Context, name, version string, o
 	}
 
 	// Build response
-	keyID := azkeys.ID(fmt.Sprintf("https://mock-vault.vault.azure.net/keys/%s/%s", name, mock.version))
+	keyID := azkeys.ID(fmt.Sprintf("https://mock-vault.vault.azure.net/keys/%s/%s", name, resolvedVersion))
 	enabled := true
 
 	response := azkeys.GetKeyResponse{
@@ -339,7 +353,10 @@ func (m *MockKeyVaultClient) DeleteKey(ctx context.Context, name string, options
 	return response, nil
 }
 
-// Sign signs a digest using a key from the mock vault.
+// Sign signs a digest using a key from the mock vault. When keyVersion is
+// non-empty, signing uses that specific version's private key instead of
+// the current one, mirroring how Azure Key Vault serves historical versions
+// so tests can verify a Signer stays pinned across a rotation.
 func (m *MockKeyVaultClient) Sign(ctx context.Context, keyName, keyVersion string, params azkeys.SignParameters, options *azkeys.SignOptions) (azkeys.SignResponse, error) {
 	if m.signErr != nil {
 		return azkeys.SignResponse{}, m.signErr
@@ -353,11 +370,20 @@ func (m *MockKeyVaultClient) Sign(ctx context.Context, keyName, keyVersion strin
 		return azkeys.SignResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
+	signingKey := mock.privateKey
+	if keyVersion != "" {
+		ver, ok := mock.versions[keyVersion]
+		if !ok {
+			return azkeys.SignResponse{}, &errs.Message{Msg: fmt.Sprintf("key version not found: %s/%s", keyName, keyVersion)}
+		}
+		signingKey = ver.privateKey
+	}
+
 	// Perform signing based on key type
 	var signature []byte
 	var err error
 
-	switch priv := mock.privateKey.(type) {
+	switch priv := signingKey.(type) {
 	case *rsa.PrivateKey:
 		// Determine hash algorithm from digest size
 		var hashType crypto.Hash
@@ -521,7 +547,9 @@ func (m *MockKeyVaultClient) Verify(ctx context.Context, keyName, keyVersion str
 	return response, nil
 }
 
-// GetPublicKey retrieves the public key in PEM format.
+// GetPublicKey retrieves the public key in PEM format. When version is
+// non-empty, it returns that specific version's public key instead of the
+// current one, mirroring how Azure Key Vault serves historical versions.
 func (m *MockKeyVaultClient) GetPublicKey(ctx context.Context, name, version string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -531,13 +559,22 @@ func (m *MockKeyVaultClient) GetPublicKey(ctx context.Context, name, version str
 		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
 	}
 
+	publicKey := mock.publicKey
+	if version != "" {
+		ver, ok := mock.versions[version]
+		if !ok {
+			return nil, &errs.Message{Msg: fmt.Sprintf("key version not found: %s/%s", name, version)}
+		}
+		publicKey = ver.publicKey
+	}
+
 	// Symmetric keys do not have a public key component
-	if mock.publicKey == nil {
+	if publicKey == nil {
 		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric keys do not have public keys: %s", name)}
 	}
 
 	// Marshal public key to PKIX format
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(mock.publicKey)
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -576,7 +613,11 @@ func decodeECDSASignature(signature []byte) (*big.Int, *big.Int, error) {
 	return sig.R, sig.S, nil
 }
 
-// Decrypt decrypts ciphertext using a key from the mock vault.
+// Decrypt decrypts ciphertext using a key from the mock vault. When
+// keyVersion is non-empty, decryption uses that specific version's private
+// key instead of the current one, mirroring how Azure Key Vault serves
+// historical versions so tests can verify a Decrypter stays pinned across a
+// rotation.
 func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion string, params azkeys.KeyOperationParameters, options *azkeys.DecryptOptions) (azkeys.DecryptResponse, error) {
 	if m.decryptErr != nil {
 		return azkeys.DecryptResponse{}, m.decryptErr
@@ -590,11 +631,20 @@ func (m *MockKeyVaultClient) Decrypt(ctx context.Context, keyName, keyVersion st
 		return azkeys.DecryptResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyName)}
 	}
 
+	decryptKey := mock.privateKey
+	if keyVersion != "" {
+		ver, ok := mock.versions[keyVersion]
+		if !ok {
+			return azkeys.DecryptResponse{}, &errs.Message{Msg: fmt.Sprintf("key version not found: %s/%s", keyName, keyVersion)}
+		}
+		decryptKey = ver.privateKey
+	}
+
 	// Perform decryption based on key type and algorithm
 	var plaintext []byte
 	var err error
 
-	switch priv := mock.privateKey.(type) {
+	switch priv := decryptKey.(type) {
 	case *rsa.PrivateKey:
 		// Determine decryption algorithm from params
 		if params.Algorithm == nil {

@@ -149,6 +149,17 @@ type Backend struct {
 	client  KMSClient
 	tracker types.AEADSafetyTracker // AEAD safety tracker for nonce/bytes tracking
 	mu      sync.RWMutex
+
+	// versionCache maps a key's CN to the full resource name of its current
+	// primary crypto key version. It is populated lazily by
+	// resolvePrimaryVersionName and kept current by RotateKey and by key
+	// creation, so sign/decrypt/public-key operations track rotations
+	// instead of remaining pinned to the version created at generation
+	// time. Signers and Decrypters capture the resolved name at
+	// construction and never consult this cache again, so they stay
+	// pinned to the version whose public key they reported.
+	versionCache sync.Map
+
 	types.KeyProvider
 }
 
@@ -254,7 +265,10 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 	}
 
 	ctx := context.Background()
-	keyName := b.cryptoKeyVersionName(attrs.CN)
+	keyName, err := b.resolvePrimaryVersionName(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &kmspb.GetPublicKeyRequest{
 		Name: keyName,
@@ -286,13 +300,16 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 	}
 
 	ctx := context.Background()
-	keyName := b.cryptoKeyVersionName(attrs.CN)
+	keyName, err := b.resolvePrimaryVersionName(ctx, attrs.CN)
+	if err != nil {
+		return err
+	}
 
 	req := &kmspb.DestroyCryptoKeyVersionRequest{
 		Name: keyName,
 	}
 
-	_, err := b.client.DestroyCryptoKeyVersion(ctx, req)
+	_, err = b.client.DestroyCryptoKeyVersion(ctx, req)
 	if err != nil {
 		return &errs.Wrapped{Msg: fmt.Sprintf("failed to destroy key %s", attrs.CN), Err: err}
 	}
@@ -426,12 +443,20 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 		return nil, &errs.Wrapped{Msg: "failed to create RSA key", Err: err}
 	}
 
-	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state)
-	keyVersionName := b.cryptoKeyVersionName(attrs.CN)
+	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state).
+	// A freshly created key's primary version is version 1, reported directly
+	// on the CreateCryptoKey response, so cache it rather than re-deriving a
+	// hardcoded name.
+	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
+		b.mu.Unlock()
+		return nil, &errs.Detail{Err: ErrNoPrimaryVersion, Detail: attrs.CN}
+	}
+	keyVersionName := cryptoKey.Primary.Name
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		b.mu.Unlock()
 		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
+	b.versionCache.Store(attrs.CN, keyVersionName)
 
 	// Store metadata
 	metadata := map[string]interface{}{
@@ -509,12 +534,20 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 		return nil, &errs.Wrapped{Msg: "failed to create ECDSA key", Err: err}
 	}
 
-	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state)
-	keyVersionName := b.cryptoKeyVersionName(attrs.CN)
+	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state).
+	// A freshly created key's primary version is version 1, reported directly
+	// on the CreateCryptoKey response, so cache it rather than re-deriving a
+	// hardcoded name.
+	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
+		b.mu.Unlock()
+		return nil, &errs.Detail{Err: ErrNoPrimaryVersion, Detail: attrs.CN}
+	}
+	keyVersionName := cryptoKey.Primary.Name
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		b.mu.Unlock()
 		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
+	b.versionCache.Store(attrs.CN, keyVersionName)
 
 	// Store metadata
 	metadata := map[string]interface{}{
@@ -601,8 +634,14 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to create symmetric key", Err: err}
 	}
 
-	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state)
-	keyVersionName := b.cryptoKeyVersionName(attrs.CN)
+	// Wait for the key to be enabled (GCP KMS keys start in PENDING_GENERATION state).
+	// A freshly created key's primary version is version 1, reported directly
+	// on the CreateCryptoKey response, so use it rather than re-deriving a
+	// hardcoded name.
+	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
+		return nil, &errs.Detail{Err: ErrNoPrimaryVersion, Detail: attrs.CN}
+	}
+	keyVersionName := cryptoKey.Primary.Name
 	if err := b.waitForKeyEnabled(ctx, keyVersionName, 30*time.Second); err != nil {
 		return nil, &errs.Wrapped{Msg: "key creation failed", Err: err}
 	}
@@ -727,8 +766,13 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, ErrNotInitialized
 	}
 
-	// Get the public key to create the signer
-	keyName := b.cryptoKeyVersionName(attrs.CN)
+	// Resolve the current primary key version and pin the signer to it, so
+	// Public() always matches the exact version Sign() uses even if the key
+	// is rotated later.
+	keyName, err := b.resolvePrimaryVersionName(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &kmspb.GetPublicKeyRequest{
 		Name: keyName,
@@ -767,8 +811,20 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.Si
 	}
 
 	ctx := context.Background()
-	keyName := b.cryptoKeyVersionName(attrs.CN)
+	keyName, err := b.resolvePrimaryVersionName(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
+	return b.signWithVersion(ctx, keyName, digest, opts)
+}
+
+// signWithVersion performs an asymmetric signing operation against an
+// already-resolved GCP KMS crypto key version resource name. Callers that
+// must stay pinned to a specific version (e.g. kmsSigner, which reports a
+// Public() key resolved at construction time) call this directly instead of
+// going through Sign, which always re-resolves the current primary version.
+func (b *Backend) signWithVersion(ctx context.Context, keyName string, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	// Build the digest structure based on the hash algorithm
 	var digestMsg *kmspb.Digest
 	if opts != nil {
@@ -1073,8 +1129,13 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: "only RSA keys support decryption in GCP KMS"}
 	}
 
-	// Get the public key to verify the key exists and get key details
-	keyName := b.cryptoKeyVersionName(attrs.CN)
+	// Resolve the current primary key version and pin the decrypter to it,
+	// so Public() always matches the exact version Decrypt() uses even if
+	// the key is rotated later.
+	keyName, err := b.resolvePrimaryVersionName(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &kmspb.GetPublicKeyRequest{
 		Name: keyName,
@@ -1147,9 +1208,20 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 		CryptoKeyVersionId: extractVersionID(newVersion.Name),
 	}
 
-	_, err = b.client.UpdateCryptoKeyPrimaryVersion(ctx, updateReq)
+	updatedKey, err := b.client.UpdateCryptoKeyPrimaryVersion(ctx, updateReq)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to set new version as primary", Err: err}
+	}
+
+	// Advance the cached primary version immediately so subsequent sign,
+	// decrypt, and public-key operations use the newly promoted version
+	// instead of the one resolved before rotation. Signers/Decrypters
+	// already constructed keep the version name they captured at
+	// construction and are unaffected by this update.
+	if updatedKey.Primary != nil && updatedKey.Primary.Name != "" {
+		b.versionCache.Store(attrs.CN, updatedKey.Primary.Name)
+	} else {
+		b.versionCache.Store(attrs.CN, newVersion.Name)
 	}
 
 	// Reset AEAD tracking after successful rotation
@@ -1172,11 +1244,35 @@ func (b *Backend) Client() KMSClient {
 	return b.client
 }
 
-// cryptoKeyVersionName constructs the full resource name for a crypto key version.
-// Format: projects/{project}/locations/{location}/keyRings/{keyRing}/cryptoKeys/{key}/cryptoKeyVersions/1
-func (b *Backend) cryptoKeyVersionName(keyID string) string {
-	return fmt.Sprintf("%s/cryptoKeys/%s/cryptoKeyVersions/1",
-		b.config.KeyRingName(), keyID)
+// resolvePrimaryVersionName resolves the full resource name of keyID's
+// current primary crypto key version, consulting a per-key cache before
+// calling GetCryptoKey. The cache is populated here and kept current by
+// RotateKey (and by key creation, which already knows its own primary
+// version), so callers observe rotations instead of a version pinned
+// forever at key-creation time.
+//
+// Callers that must stay pinned to a specific version regardless of later
+// rotations (e.g. a previously constructed Signer or Decrypter) must not
+// call this method again after construction; they hold the resolved name
+// directly instead.
+func (b *Backend) resolvePrimaryVersionName(ctx context.Context, keyID string) (string, error) {
+	if cached, ok := b.versionCache.Load(keyID); ok {
+		return cached.(string), nil
+	}
+
+	cryptoKey, err := b.client.GetCryptoKey(ctx, &kmspb.GetCryptoKeyRequest{
+		Name: b.cryptoKeyName(keyID),
+	})
+	if err != nil {
+		return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", keyID, err)}
+	}
+
+	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {
+		return "", &errs.Detail{Err: ErrNoPrimaryVersion, Detail: keyID}
+	}
+
+	b.versionCache.Store(keyID, cryptoKey.Primary.Name)
+	return cryptoKey.Primary.Name, nil
 }
 
 // cryptoKeyName constructs the full resource name for a crypto key.
@@ -1220,9 +1316,23 @@ func (s *kmsSigner) Public() crypto.PublicKey {
 	return s.publicKey
 }
 
-// Sign signs the digest using GCP KMS.
+// Sign signs the digest using GCP KMS. It always targets the key version
+// resolved when this signer was constructed, so the signature is always
+// verifiable with the key returned by Public(), even if the key has since
+// been rotated to a new primary version.
 func (s *kmsSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return s.backend.Sign(s.attrs, digest, opts)
+	s.backend.mu.RLock()
+	defer s.backend.mu.RUnlock()
+
+	if s.backend.client == nil {
+		return nil, ErrNotInitialized
+	}
+
+	if len(digest) == 0 {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "digest is empty"}
+	}
+
+	return s.backend.signWithVersion(context.Background(), s.keyName, digest, opts)
 }
 
 // kmsDecrypter implements crypto.Decrypter for GCP KMS keys.

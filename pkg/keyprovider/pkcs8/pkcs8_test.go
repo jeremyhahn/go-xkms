@@ -3239,7 +3239,11 @@ func TestGenerateKey_WithPassword_ProducesEncryptedPKCS8(t *testing.T) {
 
 	const password = "correct-horse-battery-staple"
 	attrs := createEd25519Attrs("encrypted-key-test")
-	attrs.Password = types.NewPasswordFromString(password)
+	pw, err := types.NewPasswordFromString(password)
+	if err != nil {
+		t.Fatalf("NewPasswordFromString: %v", err)
+	}
+	attrs.Password = pw
 
 	_, err = be.GenerateKey(context.Background(), attrs)
 	if err != nil {
@@ -3257,7 +3261,11 @@ func TestGenerateKey_WithPassword_ProducesEncryptedPKCS8(t *testing.T) {
 
 	// (b) Wrong password must fail decryption.
 	wrongAttrs := *attrs
-	wrongAttrs.Password = types.NewPasswordFromString("wrong-password")
+	wrongPw, err := types.NewPasswordFromString("wrong-password")
+	if err != nil {
+		t.Fatalf("NewPasswordFromString: %v", err)
+	}
+	wrongAttrs.Password = wrongPw
 	if _, getErr := be.GetKey(context.Background(), &wrongAttrs); getErr == nil {
 		t.Error("GetKey with wrong password should fail")
 	}

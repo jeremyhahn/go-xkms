@@ -35,4 +35,27 @@ var (
 
 	// ErrInvalidResponse is returned when Vault returns an unexpected response
 	ErrInvalidResponse = errors.New("vault: invalid response")
+
+	// ErrAsymmetricImportNotSupported is returned by GetImportParameters and
+	// ImportKey for a key whose attributes describe an asymmetric algorithm.
+	// Vault Transit's BYOK ceremony this backend implements is wired for
+	// aes256-gcm96 symmetric keys only; asymmetric import would need a
+	// different "type" value and public-key handling this backend does not
+	// yet send, so it is refused with this typed error rather than attempted.
+	ErrAsymmetricImportNotSupported = errors.New("vault: BYOK import is implemented for symmetric keys only")
+
+	// ErrWrappingKeyNotRSA is returned when Vault's transit/wrapping_key
+	// endpoint returns a public key that does not parse as RSA. Every Vault
+	// release has used an RSA-4096 wrapping key for Transit's BYOK ceremony;
+	// this guards the type assertion WrapKey depends on rather than assuming
+	// it silently.
+	ErrWrappingKeyNotRSA = errors.New("vault: wrapping key is not RSA")
+
+	// ErrWrappedExportNotSupported is returned by ExportKey. Vault Transit's
+	// wrapping_key exists to receive BYOK material, not to hand key material
+	// out wrapped for an arbitrary third-party recipient -- there is no
+	// server-side primitive to wrap FROM Vault the way there is one to wrap
+	// INTO it. A key created with Exportable=true can still be read directly
+	// with ExportKeyMaterial; this error names that alternative.
+	ErrWrappedExportNotSupported = errors.New("vault: wrapped export has no Vault-native equivalent; use ExportKeyMaterial for exportable keys")
 )

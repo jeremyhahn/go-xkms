@@ -95,11 +95,19 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
-	// Create symmetric key in Vault Transit engine
+	// Create symmetric key in Vault Transit engine. Unlike GenerateKey's
+	// asymmetric keys -- which are hardcoded exportable:false because H8
+	// found no legitimate use for exporting a private key whose public half
+	// is already available through the ordinary read-key endpoint -- a
+	// symmetric key has no such alternative: attrs.Exportable is the caller's
+	// only way to opt into ExportKeyMaterial ever working for this key, the
+	// same CKA_EXTRACTABLE-equivalent convention every other backend in this
+	// project honors. The default stays secure: an attrs.Exportable left
+	// unset creates a non-exportable key, exactly as before.
 	path := fmt.Sprintf("%s/keys/%s", b.config.TransitPath, keyName)
 	data := map[string]interface{}{
 		"type":                   "aes256-gcm96", // Vault's AES-256-GCM with 96-bit nonce
-		"exportable":             false,          // Don't allow key export (keep in Vault)
+		"exportable":             attrs.Exportable,
 		"allow_plaintext_backup": false,
 		"deletion_allowed":       true, // Allow key deletion (required for cleanup)
 	}
@@ -119,6 +127,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		"vault_name":          keyName,
 		"key_size":            256,
 		"symmetric":           true,
+		"exportable":          attrs.Exportable,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)

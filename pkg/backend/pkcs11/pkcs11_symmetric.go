@@ -17,6 +17,7 @@ package pkcs11
 
 import (
 	"context"
+	"crypto/aes"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -81,24 +82,104 @@ var (
 	ErrNilEncryptedData = errors.New("pkcs11: encrypted data is nil")
 
 	// ErrUnsupportedCipherMode is returned when a caller requests a
-	// types.CipherMode this encrypter does not implement. Silently encrypting
+	// types.CipherMode this encrypter does not implement at all (anything
+	// other than the AEAD default, CBC, CBC-Pad or ECB). Silently encrypting
 	// in a different mode than the caller asked for is worse than failing:
 	// encrypt and decrypt would agree with each other while producing
 	// unauthenticated output the caller believed was authenticated, or the
 	// reverse.
 	ErrUnsupportedCipherMode = errors.New("pkcs11: unsupported cipher mode")
+
+	// ErrMechanismNotSupported is returned when a cipher mode this encrypter
+	// implements in general is not available on the connected token, because
+	// the token's mechanism list does not advertise the CKM_* mechanism the
+	// mode requires. It is always joined with backend.ErrOperationNotSupported
+	// (see requireCipherMechanism) so the service layer classifies it as a
+	// capability boundary -- reported as 501 / Unimplemented -- rather than a
+	// fault.
+	ErrMechanismNotSupported = errors.New("pkcs11: mechanism not supported by token")
+
+	// ErrAdditionalDataNotSupported is returned when AdditionalData is
+	// supplied for a non-AEAD cipher mode (CBC, CBC-Pad or ECB). None of the
+	// three authenticate anything, so silently accepting and ignoring
+	// additional data would misrepresent the operation actually performed.
+	ErrAdditionalDataNotSupported = errors.New("pkcs11: additional data is not supported for this cipher mode")
+
+	// ErrTagSizeNotSupported is returned when a tag length is requested of a
+	// non-AEAD cipher mode. CBC, CBC-Pad and ECB produce no authentication
+	// tag at all.
+	ErrTagSizeNotSupported = errors.New("pkcs11: this cipher mode produces no authentication tag")
+
+	// ErrIVNotSupported is returned when an IV accompanies AES-ECB. ECB
+	// enciphers every block independently (PKCS#11 v3.2 6.10.4 gives
+	// CKM_AES_ECB no mechanism parameter at all), so an IV can only mean the
+	// caller expects a chained mode.
+	ErrIVNotSupported = errors.New("pkcs11: an IV is not supported for this cipher mode")
+
+	// ErrInvalidIVSize is returned when a caller-supplied AES-CBC / AES-CBC-Pad
+	// IV is not exactly one AES block (16 bytes), which is what
+	// CK_MECHANISM.pParameter must carry for CKM_AES_CBC and CKM_AES_CBC_PAD
+	// (PKCS#11 v3.2 6.10.3). Validating here turns a malformed caller-supplied
+	// IV into a typed error instead of a token-dependent CKR_MECHANISM_PARAM_INVALID.
+	ErrInvalidIVSize = errors.New("pkcs11: invalid IV size")
+
+	// ErrPlaintextNotBlockAligned is returned by unpadded AES-CBC
+	// (types.CipherModeCBC) encryption when the plaintext length is zero or
+	// not a whole number of AES blocks, and by AES-ECB encryption for the
+	// same reason. Unpadded CBC and ECB have no way to encode a partial final
+	// block.
+	ErrPlaintextNotBlockAligned = errors.New("pkcs11: plaintext is not a whole number of AES blocks")
+
+	// ErrCiphertextNotBlockAligned is returned by AES-CBC (padded or
+	// unpadded) and AES-ECB decryption when the ciphertext length is zero or
+	// not a whole number of AES blocks.
+	ErrCiphertextNotBlockAligned = errors.New("pkcs11: ciphertext is not a whole number of AES blocks")
+
+	// ErrInvalidPadding is returned when the token reports a padding failure
+	// while decrypting AES-CBC-Pad ciphertext. PKCS#7 padding removal runs
+	// inside the HSM for CKM_AES_CBC_PAD (PKCS#11 v3.2 6.10.3), so this
+	// package never inspects the padding bytes itself; it only reclassifies
+	// the token's failure under one typed sentinel, matching the software
+	// symmetric provider's ErrInvalidPadding so both backends answer a
+	// padding-oracle probe identically at the API layer.
+	ErrInvalidPadding = errors.New("pkcs11: invalid padding")
 )
 
-// requireAEADMode rejects any cipher mode other than the key's native AEAD
-// mode. AES-CBC (CKM_AES_CBC / CKM_AES_CBC_PAD) is not implemented by this
-// encrypter, so a request for it must fail rather than silently return
-// AES-GCM output.
-func requireAEADMode(mode types.CipherMode) error {
-	if mode == "" {
-		return nil
+// cbcIVSize is the AES-CBC and AES-CBC-Pad IV length PKCS#11 v3.2 6.10.3
+// requires: exactly one AES block.
+const cbcIVSize = aes.BlockSize
+
+// requireCipherMechanism maps a non-AEAD types.CipherMode onto the CKM_*
+// mechanism that implements it, refusing a mode this encrypter does not
+// implement at all with ErrUnsupportedCipherMode and a mode the connected
+// token does not advertise with an error that joins
+// backend.ErrOperationNotSupported -- so a genuinely unavailable mechanism is
+// classified as a capability boundary (501 / Unimplemented) at the service
+// layer rather than surfacing as a 500 or an opaque CKR_MECHANISM_INVALID.
+func (b *Backend) requireCipherMechanism(mode types.CipherMode) (uint, error) {
+	var mechanism uint
+	var mechanismName string
+	var supported bool
+
+	switch mode {
+	case types.CipherModeCBC:
+		mechanism, mechanismName, supported = pkcs11.CKM_AES_CBC, "CKM_AES_CBC", b.supportsAESCBC
+	case types.CipherModeCBCPad:
+		mechanism, mechanismName, supported = pkcs11.CKM_AES_CBC_PAD, "CKM_AES_CBC_PAD", b.supportsAESCBCPad
+	case types.CipherModeECB:
+		mechanism, mechanismName, supported = pkcs11.CKM_AES_ECB, "CKM_AES_ECB", b.supportsAESECB
+	default:
+		return 0, &errs.Detail{Err: ErrUnsupportedCipherMode, Detail: fmt.Sprintf("%q", mode)}
 	}
-	return &errs.Detail{Err: ErrUnsupportedCipherMode, Detail: fmt.Sprintf(
-		"%q; the PKCS#11 backend implements only the native AEAD mode", mode)}
+
+	if !supported {
+		return 0, &errs.Joined{
+			Lead:   backend.ErrOperationNotSupported,
+			Detail: fmt.Sprintf("token does not advertise %s (cipher mode %q)", mechanismName, mode),
+			Cause:  ErrMechanismNotSupported,
+		}
+	}
+	return mechanism, nil
 }
 
 // requireGCMNonce validates a caller-supplied AEAD nonce length.
@@ -198,12 +279,25 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		opts = &types.EncryptOptions{}
 	}
 
-	// STEP 0: Reject a malformed request before it can consume any of the
+	// STEP 0: Route non-AEAD cipher modes to their own implementation before
+	// any of the AEAD-specific validation below runs -- CBC, CBC-Pad and ECB
+	// take a different code path entirely (no tag, no AEAD nonce/AAD, no AEAD
+	// safety tracking, since the NIST SP 800-38D nonce-reuse and byte-limit
+	// rules are specific to GCM and do not apply to them).
+	switch opts.Mode {
+	case "":
+		// Fall through to the AEAD path below (existing default behavior).
+	case types.CipherModeCBC, types.CipherModeCBCPad:
+		return e.encryptCBC(plaintext, opts)
+	case types.CipherModeECB:
+		return e.encryptECB(plaintext, opts)
+	default:
+		return nil, &errs.Detail{Err: ErrUnsupportedCipherMode, Detail: fmt.Sprintf("%q", opts.Mode)}
+	}
+
+	// STEP 0b: Reject a malformed request before it can consume any of the
 	// key's AEAD byte budget or reach the token. A caller-supplied nonce is
 	// untrusted input all the way from the wire.
-	if err := requireAEADMode(opts.Mode); err != nil {
-		return nil, err
-	}
 	if opts.Nonce != nil {
 		if err := requireGCMNonce(opts.Nonce); err != nil {
 			return nil, err
@@ -379,9 +473,20 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	if data == nil {
 		return nil, ErrNilEncryptedData
 	}
-	if err := requireAEADMode(opts.Mode); err != nil {
-		return nil, err
+
+	// Route non-AEAD cipher modes to their own implementation, mirroring
+	// Encrypt's dispatch above.
+	switch opts.Mode {
+	case "":
+		// Fall through to the AEAD path below (existing default behavior).
+	case types.CipherModeCBC, types.CipherModeCBCPad:
+		return e.decryptCBC(data, opts)
+	case types.CipherModeECB:
+		return e.decryptECB(data, opts)
+	default:
+		return nil, &errs.Detail{Err: ErrUnsupportedCipherMode, Detail: fmt.Sprintf("%q", opts.Mode)}
 	}
+
 	if err := requireGCMNonce(data.Nonce); err != nil {
 		return nil, err
 	}
@@ -478,6 +583,267 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 	}
 
+	return plaintext, nil
+}
+
+// withKeySession opens a session on the token's resolved slot, logs in, finds
+// the object handle for e.attrs' key, and calls fn with the session and
+// handle. The session is closed when this returns. It exists so the
+// open/login/find-object sequence -- and the rule that this backend never
+// calls C_Logout, because that affects every session on the token, not just
+// this one -- is written once for the three non-AEAD cipher modes, instead of
+// once per mode as Encrypt and Decrypt do for AES-GCM above.
+func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error) error {
+	if e.backend.p11ctx == nil {
+		return &errs.Message{Msg: "PKCS#11 context not initialized"}
+	}
+
+	slot, err := e.backend.resolveSlot()
+	if err != nil {
+		return err
+	}
+
+	session, err := e.backend.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to open session", Err: err}
+	}
+	defer e.backend.p11ctx.CloseSession(session)
+
+	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, e.backend.config.PIN); err != nil {
+		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			return &errs.Wrapped{Msg: "failed to login", Err: err}
+		}
+	}
+
+	label := createKeyID(e.attrs)
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+	}
+
+	if err := e.backend.p11ctx.FindObjectsInit(session, template); err != nil {
+		return &errs.Wrapped{Msg: "failed to init object search", Err: err}
+	}
+
+	handles, _, err := e.backend.p11ctx.FindObjects(session, 1)
+	if err != nil {
+		e.backend.p11ctx.FindObjectsFinal(session) // Clean up even on error
+		return &errs.Wrapped{Msg: "failed to find objects", Err: err}
+	}
+
+	if err := e.backend.p11ctx.FindObjectsFinal(session); err != nil {
+		return &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
+	}
+
+	if len(handles) == 0 {
+		return &errs.Message{Msg: fmt.Sprintf("key not found: %s", e.attrs.CN)}
+	}
+
+	return fn(session, handles[0])
+}
+
+// encryptCBC implements types.CipherModeCBC (unpadded, CKM_AES_CBC) and
+// types.CipherModeCBCPad (PKCS#7-padded, CKM_AES_CBC_PAD) on the HSM. Neither
+// is an AEAD mode: they produce no authentication tag and accept no
+// additional authenticated data. Padding for CipherModeCBCPad is applied by
+// the token itself (PKCS#11 v3.2 6.10.3), never in this process, matching the
+// property that the key material and its plaintext never leave the HSM.
+func (e *pkcs11SymmetricEncrypter) encryptCBC(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	mechanism, err := e.backend.requireCipherMechanism(opts.Mode)
+	if err != nil {
+		return nil, err
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	// AES-CBC and AES-CBC-Pad produce no authentication tag, so a tag length
+	// is not something either mode can honour.
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+
+	iv := opts.IV
+	if len(iv) == 0 {
+		iv = make([]byte, cbcIVSize)
+		if _, err := rand.Read(iv); err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to generate IV", Err: err}
+		}
+	} else if len(iv) != cbcIVSize {
+		return nil, &errs.Detail{Err: ErrInvalidIVSize, Detail: fmt.Sprintf("got %d bytes, want %d", len(iv), cbcIVSize)}
+	}
+
+	// Unpadded CBC requires block-aligned plaintext; CKM_AES_CBC_PAD pads on
+	// the token and accepts any length, including zero.
+	if opts.Mode == types.CipherModeCBC && (len(plaintext) == 0 || len(plaintext)%aes.BlockSize != 0) {
+		return nil, ErrPlaintextNotBlockAligned
+	}
+
+	var ciphertext []byte
+	err = e.withKeySession(func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error {
+		mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(mechanism, iv)}
+		if err := e.backend.p11ctx.EncryptInit(session, mech, handle); err != nil {
+			return &errs.Wrapped{Msg: "failed to initialize encryption", Err: err}
+		}
+		var encErr error
+		ciphertext, encErr = e.backend.p11ctx.Encrypt(session, plaintext)
+		if encErr != nil {
+			return &errs.Wrapped{Msg: "encryption failed", Err: encErr}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.EncryptedData{
+		Ciphertext: ciphertext,
+		IV:         iv,
+		Algorithm:  string(e.attrs.SymmetricAlgorithm),
+	}, nil
+}
+
+// decryptCBC implements types.CipherModeCBC and types.CipherModeCBCPad
+// decryption, the inverse of encryptCBC. PKCS#7 padding removal for
+// CipherModeCBCPad runs inside the HSM; a padding failure is reported by the
+// token as a decryption error and reclassified here as ErrInvalidPadding.
+func (e *pkcs11SymmetricEncrypter) decryptCBC(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	mechanism, err := e.backend.requireCipherMechanism(opts.Mode)
+	if err != nil {
+		return nil, err
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	if len(data.Tag) > 0 {
+		return nil, &errs.Message{Msg: "pkcs11: tag is not supported for AES-CBC modes"}
+	}
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+	if len(data.IV) != cbcIVSize {
+		return nil, &errs.Detail{Err: ErrInvalidIVSize, Detail: fmt.Sprintf("got %d bytes, want %d", len(data.IV), cbcIVSize)}
+	}
+	if len(data.Ciphertext) == 0 || len(data.Ciphertext)%aes.BlockSize != 0 {
+		return nil, ErrCiphertextNotBlockAligned
+	}
+
+	var plaintext []byte
+	err = e.withKeySession(func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error {
+		mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(mechanism, data.IV)}
+		if err := e.backend.p11ctx.DecryptInit(session, mech, handle); err != nil {
+			return &errs.Wrapped{Msg: "failed to initialize decryption", Err: err}
+		}
+		var decErr error
+		plaintext, decErr = e.backend.p11ctx.Decrypt(session, data.Ciphertext)
+		if decErr != nil {
+			if opts.Mode == types.CipherModeCBCPad {
+				return &errs.Detail{Err: ErrInvalidPadding, Detail: decErr.Error()}
+			}
+			return &errs.Wrapped{Msg: "decryption failed", Err: decErr}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return plaintext, nil
+}
+
+// encryptECB implements types.CipherModeECB (CKM_AES_ECB) on the HSM. Each
+// 16-byte block is enciphered independently: there is no IV, no chaining and
+// no authentication tag.
+//
+// SECURITY: ECB is deterministic -- two identical plaintext blocks produce
+// two identical ciphertext blocks under the same key, the structure leak the
+// mode is known for. It is implemented because PKCS#11 v3.2 6.10.4 defines
+// the mechanism and this backend now advertises every cipher mode the
+// software symmetric provider does; a mechanism that is advertised and then
+// quietly served by some other mode is worse than either offering it or
+// refusing it, because the ciphertext no peer can reproduce still looks like
+// success.
+func (e *pkcs11SymmetricEncrypter) encryptECB(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	mechanism, err := e.backend.requireCipherMechanism(opts.Mode)
+	if err != nil {
+		return nil, err
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+	if len(opts.IV) > 0 {
+		return nil, ErrIVNotSupported
+	}
+	if len(plaintext) == 0 || len(plaintext)%aes.BlockSize != 0 {
+		return nil, ErrPlaintextNotBlockAligned
+	}
+
+	var ciphertext []byte
+	err = e.withKeySession(func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error {
+		mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(mechanism, nil)}
+		if err := e.backend.p11ctx.EncryptInit(session, mech, handle); err != nil {
+			return &errs.Wrapped{Msg: "failed to initialize encryption", Err: err}
+		}
+		var encErr error
+		ciphertext, encErr = e.backend.p11ctx.Encrypt(session, plaintext)
+		if encErr != nil {
+			return &errs.Wrapped{Msg: "encryption failed", Err: encErr}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.EncryptedData{
+		Ciphertext: ciphertext,
+		Algorithm:  string(e.attrs.SymmetricAlgorithm),
+	}, nil
+}
+
+// decryptECB implements types.CipherModeECB decryption, the inverse of
+// encryptECB.
+func (e *pkcs11SymmetricEncrypter) decryptECB(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	mechanism, err := e.backend.requireCipherMechanism(opts.Mode)
+	if err != nil {
+		return nil, err
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	if len(data.Tag) > 0 {
+		return nil, &errs.Message{Msg: "pkcs11: tag is not supported for AES-ECB"}
+	}
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+	// An IV on the wire means the ciphertext was produced by some other mode,
+	// or the caller believes ECB uses one. Either way, decrypting it as ECB
+	// would return plausible-looking garbage rather than an error.
+	if len(data.IV) > 0 {
+		return nil, ErrIVNotSupported
+	}
+	if len(data.Ciphertext) == 0 || len(data.Ciphertext)%aes.BlockSize != 0 {
+		return nil, ErrCiphertextNotBlockAligned
+	}
+
+	var plaintext []byte
+	err = e.withKeySession(func(session pkcs11.SessionHandle, handle pkcs11.ObjectHandle) error {
+		mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(mechanism, nil)}
+		if err := e.backend.p11ctx.DecryptInit(session, mech, handle); err != nil {
+			return &errs.Wrapped{Msg: "failed to initialize decryption", Err: err}
+		}
+		var decErr error
+		plaintext, decErr = e.backend.p11ctx.Decrypt(session, data.Ciphertext)
+		if decErr != nil {
+			return &errs.Wrapped{Msg: "decryption failed", Err: decErr}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return plaintext, nil
 }
 

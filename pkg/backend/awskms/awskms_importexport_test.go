@@ -452,6 +452,89 @@ func TestExportKey(t *testing.T) {
 	}
 }
 
+// TestExportKeyMaterial_AsymmetricRefused verifies ExportKeyMaterial refuses
+// an asymmetric key before reaching the "no export" refusal every key gets,
+// matching every other backend's ordering (asymmetric keys are refused by
+// ErrAsymmetricKeyExportNotAllowed, not the backend's general export
+// capability sentinel).
+func TestExportKeyMaterial_AsymmetricRefused(t *testing.T) {
+	config := &Config{
+		Region:      "us-east-1",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() error = %v", err)
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-key",
+		KeyAlgorithm: x509.RSA,
+	}
+
+	_, err = b.ExportKeyMaterial(context.Background(), attrs)
+	if !errors.Is(err, backend.ErrAsymmetricKeyExportNotAllowed) {
+		t.Errorf("ExportKeyMaterial() error = %v, want ErrAsymmetricKeyExportNotAllowed", err)
+	}
+}
+
+// TestExportKeyMaterial_SymmetricNotSupported verifies that a symmetric key
+// -- which has no asymmetric-key refusal to hit first -- still gets the
+// correct, typed capability refusal instead of a nil-dereference or an
+// untyped error: AWS KMS's HSM boundary never releases plaintext key
+// material, imported or generated, for any key type.
+func TestExportKeyMaterial_SymmetricNotSupported(t *testing.T) {
+	config := &Config{
+		Region:      "us-east-1",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() error = %v", err)
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-symmetric-key",
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err = b.ExportKeyMaterial(context.Background(), attrs)
+	if !errors.Is(err, backend.ErrExportNotSupported) {
+		t.Errorf("ExportKeyMaterial() error = %v, want ErrExportNotSupported", err)
+	}
+}
+
+// TestBackend_SatisfiesImportBackend verifies AWS KMS satisfies
+// backend.ImportBackend on its own, independent of ExportBackend -- the
+// interface-satisfaction property the missing ExportKeyMaterial method
+// used to break at the whole-interface level via ImportExportBackend, taking
+// the real GetImportParameters/WrapKey/UnwrapKey/ImportKey implementations
+// below with it.
+func TestBackend_SatisfiesImportBackend(t *testing.T) {
+	config := &Config{
+		Region:      "us-east-1",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() error = %v", err)
+	}
+
+	var provider types.KeyProvider = b
+	if _, ok := provider.(backend.ImportBackend); !ok {
+		t.Error("AWS KMS backend must satisfy backend.ImportBackend")
+	}
+	if _, ok := provider.(backend.ImportExportBackend); !ok {
+		t.Error("AWS KMS backend must satisfy backend.ImportExportBackend (with typed refusals for the export half)")
+	}
+}
+
 // TestImportKeyRoundTrip tests the complete import flow with real wrapping/unwrapping.
 func TestImportKeyRoundTrip(t *testing.T) {
 	// Generate a test RSA key pair for wrapping

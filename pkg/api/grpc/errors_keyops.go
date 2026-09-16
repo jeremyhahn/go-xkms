@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -81,6 +82,41 @@ func mapKeyOpError(ctx context.Context, xkmsService *xkms.XKMSService, err error
 	}
 
 	return status.Error(codes.Internal, err.Error())
+}
+
+// importExportSentinelCodes maps the backend-layer capability sentinels a
+// direct backend.ImportBackend / backend.ExportBackend call can return onto
+// gRPC status codes. WrapKey, UnwrapKey, GetImportParameters, ImportKey,
+// ExportKey and CopyKey call these backend methods directly rather than
+// through the xkms service layer (their own doc comments explain why: the
+// service layer's versions drop fields these RPCs need), so mapKeyOpError's
+// xkms.* sentinel table does not apply to them. Without this table, every
+// backend refusal from these calls -- including the exact capability
+// boundaries this project asks a backend to report precisely, such as AWS
+// KMS's ErrExportNotSupported -- was flattened to codes.Internal.
+var importExportSentinelCodes = []struct {
+	sentinel error
+	code     codes.Code
+}{
+	{backend.ErrExportNotSupported, codes.Unimplemented},
+	{backend.ErrImportNotSupported, codes.Unimplemented},
+	{backend.ErrAsymmetricKeyExportNotAllowed, codes.InvalidArgument},
+	{backend.ErrKeyNotExportable, codes.PermissionDenied},
+}
+
+// mapImportExportError converts an error returned directly by a
+// backend.ImportBackend / backend.ExportBackend method into a gRPC status
+// error, classifying the capability sentinels in importExportSentinelCodes
+// and falling back to codes.Internal (with msg as a prefix, matching the
+// %v-formatted messages these call sites used before this existed) for
+// anything else.
+func mapImportExportError(msg string, err error) error {
+	for _, entry := range importExportSentinelCodes {
+		if errors.Is(err, entry.sentinel) {
+			return status.Errorf(entry.code, "%s: %v", msg, err)
+		}
+	}
+	return status.Errorf(codes.Internal, "%s: %v", msg, err)
 }
 
 // validationMessage renders a service-layer validation error for the wire. The

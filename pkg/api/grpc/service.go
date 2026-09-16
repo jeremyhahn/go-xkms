@@ -1212,11 +1212,14 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
-	// Check if backend supports import/export
+	// Check if the backend supports the import half of the ceremony. Asserts
+	// backend.ImportBackend, not the full ImportExportBackend union: a
+	// backend that genuinely cannot export (AWS KMS, by hardware design)
+	// must still be reachable for GetImportParameters.
 	backendImpl := ks.KeyProvider()
-	importExportBackend, ok := backendImpl.(backend.ImportExportBackend)
+	importBackend, ok := backendImpl.(backend.ImportBackend)
 	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import/export operations", req.Backend)
+		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import operations", req.Backend)
 	}
 
 	// Parse key type and build attributes
@@ -1279,7 +1282,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
 
 	// Get import parameters from backend
-	params, err := importExportBackend.GetImportParameters(ctx, attrs, wrappingAlg)
+	params, err := importBackend.GetImportParameters(ctx, attrs, wrappingAlg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get import parameters: %v", err)
 	}
@@ -1337,7 +1340,7 @@ func (s *Service) WrapKey(ctx context.Context, req *pb.WrapKeyRequest) (*pb.Wrap
 	// The named backend, and only the named backend. The service layer's
 	// WrapKey is deliberately not used here: it drops KeySpec and the response
 	// Metadata, both of which the cloud-KMS import ceremonies read.
-	importExportBackend, err := s.importExportBackend(req.Backend)
+	importBackend, err := s.importBackend(req.Backend)
 	if err != nil {
 		return nil, err
 	}
@@ -1349,9 +1352,9 @@ func (s *Service) WrapKey(ctx context.Context, req *pb.WrapKeyRequest) (*pb.Wrap
 		KeySpec:           req.KeySpec,
 	}
 
-	wrapped, err := importExportBackend.WrapKey(ctx, req.KeyMaterial, params)
+	wrapped, err := importBackend.WrapKey(ctx, req.KeyMaterial, params)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to wrap key with backend %s: %v", req.Backend, err)
+		return nil, mapImportExportError(fmt.Sprintf("failed to wrap key with backend %s", req.Backend), err)
 	}
 
 	return &pb.WrapKeyResponse{
@@ -1416,14 +1419,14 @@ func (s *Service) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.
 	// The named backend, and only the named backend. The service layer's
 	// UnwrapKey is deliberately not used here: it drops KeySpec, Metadata and
 	// the wrapping public key, all of which the import ceremonies read.
-	importExportBackend, err := s.importExportBackend(req.Backend)
+	importBackend, err := s.importBackend(req.Backend)
 	if err != nil {
 		return nil, err
 	}
 
-	keyMaterial, err := importExportBackend.UnwrapKey(ctx, wrapped, params)
+	keyMaterial, err := importBackend.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to unwrap key with backend %s: %v", req.Backend, err)
+		return nil, mapImportExportError(fmt.Sprintf("failed to unwrap key with backend %s", req.Backend), err)
 	}
 
 	return &pb.UnwrapKeyResponse{
@@ -1431,19 +1434,24 @@ func (s *Service) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.
 	}, nil
 }
 
-// importExportBackend resolves a named backend to its import/export interface.
-// An unknown backend is NotFound and a backend that cannot import or export is
-// Unimplemented; neither is allowed to fall back to another backend.
-func (s *Service) importExportBackend(name string) (backend.ImportExportBackend, error) {
+// importBackend resolves a named backend to its import interface. An unknown
+// backend is NotFound and a backend that cannot import is Unimplemented;
+// neither is allowed to fall back to another backend.
+//
+// This asserts backend.ImportBackend, not the full ImportExportBackend union:
+// WrapKey and UnwrapKey (this function's only two callers) are both half of
+// the import ceremony, so a backend that cannot export (AWS KMS, by hardware
+// design) must still be reachable for them.
+func (s *Service) importBackend(name string) (backend.ImportBackend, error) {
 	ks, err := s.lookupBackend(name)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %s", name)
 	}
-	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
 	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import/export operations", name)
+		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import operations", name)
 	}
-	return importExportBackend, nil
+	return importBackend, nil
 }
 
 // ImportKey imports externally generated key material into the backend
@@ -1473,11 +1481,13 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
-	// Check if backend supports import/export
+	// Check if the backend supports the import half of the ceremony. Asserts
+	// backend.ImportBackend, not the full ImportExportBackend union, for the
+	// same reason as GetImportParameters above.
 	backendImpl := ks.KeyProvider()
-	importExportBackend, ok := backendImpl.(backend.ImportExportBackend)
+	importBackend, ok := backendImpl.(backend.ImportBackend)
 	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import/export operations", req.Backend)
+		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import operations", req.Backend)
 	}
 
 	// Build key attributes
@@ -1571,9 +1581,9 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 	}
 
 	// Import the key
-	err = importExportBackend.ImportKey(ctx, attrs, wrapped)
+	err = importBackend.ImportKey(ctx, attrs, wrapped)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to import key: %v", err)
+		return nil, mapImportExportError("failed to import key", err)
 	}
 
 	return &pb.ImportKeyResponse{
@@ -1604,11 +1614,15 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
 
-	// Check if backend supports import/export
+	// Check if the backend supports the export half of the ceremony. Asserts
+	// backend.ExportBackend, not the full ImportExportBackend union: a
+	// backend that only supports import (AWS KMS, by hardware design) must
+	// still report the export-specific refusal here rather than an
+	// undifferentiated "neither" message.
 	backendImpl := ks.KeyProvider()
-	importExportBackend, ok := backendImpl.(backend.ImportExportBackend)
+	exportBackend, ok := backendImpl.(backend.ExportBackend)
 	if !ok {
-		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support import/export operations", req.Backend)
+		return nil, status.Errorf(codes.Unimplemented, "backend %s does not support export operations", req.Backend)
 	}
 
 	// Find key attributes
@@ -1621,9 +1635,9 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 	wrappingAlg := backend.WrappingAlgorithm(req.WrappingAlgorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(ctx, attrs, wrappingAlg)
+	wrapped, err := exportBackend.ExportKey(ctx, attrs, wrappingAlg)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to export key: %v", err)
+		return nil, mapImportExportError("failed to export key", err)
 	}
 
 	return &pb.ExportKeyResponse{
@@ -1796,16 +1810,22 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 		return nil, status.Errorf(codes.NotFound, "destination backend not found: %v", err)
 	}
 
-	// Verify source backend supports export
+	// Verify source backend supports export. Asserts backend.ExportBackend,
+	// not the full ImportExportBackend union: the source backend below is
+	// only ever asked to ExportKey.
 	sourceBackend := sourceKs.KeyProvider()
-	sourceImportExport, ok := sourceBackend.(backend.ImportExportBackend)
+	sourceImportExport, ok := sourceBackend.(backend.ExportBackend)
 	if !ok {
 		return nil, status.Errorf(codes.Unimplemented, "source backend %s does not support export operations", req.SourceBackend)
 	}
 
-	// Verify destination backend supports import
+	// Verify destination backend supports import. Asserts
+	// backend.ImportBackend, not the full ImportExportBackend union: the
+	// destination backend below is only ever asked to ImportKey, so AWS
+	// KMS -- which genuinely cannot export but does support import -- is a
+	// valid destination even though it would never be a valid source.
 	destBackend := destKs.KeyProvider()
-	destImportExport, ok := destBackend.(backend.ImportExportBackend)
+	destImportExport, ok := destBackend.(backend.ImportBackend)
 	if !ok {
 		return nil, status.Errorf(codes.Unimplemented, "destination backend %s does not support import operations", req.DestBackend)
 	}
@@ -1822,7 +1842,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	// Step 1: Export the key from source backend
 	wrapped, err := sourceImportExport.ExportKey(ctx, sourceAttrs, wrappingAlg)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to export key from source backend: %v", err)
+		return nil, mapImportExportError("failed to export key from source backend", err)
 	}
 
 	// Step 2: Create destination key attributes (copy from source but with new ID)
@@ -1843,7 +1863,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	// Step 3: Import the key into destination backend
 	err = destImportExport.ImportKey(ctx, destAttrs, wrapped)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to import key into destination backend: %v", err)
+		return nil, mapImportExportError("failed to import key into destination backend", err)
 	}
 
 	return &pb.CopyKeyResponse{

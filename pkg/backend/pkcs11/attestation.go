@@ -622,12 +622,11 @@ func (b *Backend) getPublicKeyFromObject(obj *tokenKeyObjects) (crypto.PublicKey
 		return pub, nil
 
 	case CKK_EC_EDWARDS:
-		// The Ed25519 signer owns the CKA_EC_POINT decoding for Edwards keys;
-		// reusing it keeps one decoder for the token's point encoding.
-		pub := (&pkcs11Ed25519Signer{pool: b.pool, publicHandle: obj.public}).Public()
-		edPub, ok := pub.(ed25519.PublicKey)
-		if !ok || len(edPub) != ed25519.PublicKeySize {
-			return nil, &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "could not read Ed25519 CKA_EC_POINT"}
+		// exportEd25519PublicKey owns the CKA_EC_POINT decoding for Edwards
+		// keys; reusing it keeps one decoder for the token's point encoding.
+		edPub, err := exportEd25519PublicKey(b.pool, obj.public)
+		if err != nil {
+			return nil, err
 		}
 		return edPub, nil
 

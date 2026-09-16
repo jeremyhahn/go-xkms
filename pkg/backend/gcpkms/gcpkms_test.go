@@ -1223,11 +1223,4 @@ func TestBackend_CryptoKeyNames(t *testing.T) {
 	if keyName != expected {
 		t.Errorf("cryptoKeyName() = %v, want %v", keyName, expected)
 	}
-
-	// Test cryptoKeyVersionName
-	versionName := b.cryptoKeyVersionName("my-key")
-	expected = "projects/test-project/locations/us-central1/keyRings/test-keyring/cryptoKeys/my-key/cryptoKeyVersions/1"
-	if versionName != expected {
-		t.Errorf("cryptoKeyVersionName() = %v, want %v", versionName, expected)
-	}
 }

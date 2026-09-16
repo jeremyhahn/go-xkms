@@ -52,6 +52,20 @@ const (
 	WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256 WrappingAlgorithm = "RSA_OAEP_3072_SHA256_AES_256"
 	WrappingAlgorithmRSA_OAEP_4096_SHA256_AES_256 WrappingAlgorithm = "RSA_OAEP_4096_SHA256_AES_256"
 	WrappingAlgorithmRSA_OAEP_4096_SHA256         WrappingAlgorithm = "RSA_OAEP_4096_SHA256"
+
+	// WrappingAlgorithmVaultTransitBYOK identifies HashiCorp Vault Transit's
+	// own "bring your own key" wrapping format, used to import key material
+	// into Vault: an ephemeral AES-256 key wrapped with RSA-OAEP-SHA256 under
+	// the public half of Vault's own wrapping key (obtained from
+	// transit/wrapping_key), concatenated with the target key material
+	// encrypted under that ephemeral key with AES-256-GCM and an all-zero
+	// 96-bit nonce -- safe only because the ephemeral key is used exactly
+	// once. This is Vault's own defined wire format (see HashiCorp's Transit
+	// "Importing Keys" documentation), not a construction this project
+	// invented, and it stays declared here rather than in pkg/backend/vault
+	// for the same reason the GCP constants above do: every wrapping
+	// algorithm this project speaks shares one vocabulary and one type.
+	WrappingAlgorithmVaultTransitBYOK WrappingAlgorithm = "VAULT_TRANSIT_BYOK_RSA_OAEP_SHA256_AES256_GCM96"
 )
 
 // ImportParameters contains the parameters needed to import a key into a backend.
@@ -104,17 +118,18 @@ type WrappedKeyMaterial struct {
 	Metadata map[string]string
 }
 
-// ImportExportBackend extends Backend with key import/export capabilities.
-// This interface enables secure key transport between systems, such as:
-//   - Importing externally generated keys into an HSM/KMS
-//   - Exporting keys from one HSM/KMS to another (if supported)
-//   - Migrating keys between cloud providers
-//
-// Not all backends support all operations:
-//   - AWS KMS supports import but not export
-//   - Cloud HSMs typically support both import and export
-//   - Software backends may support both for testing/development
-type ImportExportBackend interface {
+// ImportBackend extends Backend with the key-import half of the ceremony:
+// obtaining wrapping parameters, wrapping and unwrapping key material for
+// transport, and importing it. It is split out from ExportBackend because
+// import and export are genuinely independent capabilities on real hardware
+// and cloud services -- AWS KMS is the canonical example: it supports
+// importing externally generated key material into an HSM-backed key, but
+// the HSM boundary that makes the import meaningful also makes exporting the
+// material back out impossible by design, not by omission. A caller that
+// only needs the import half must be able to reach it without a backend's
+// inability to export blocking the whole ceremony (see ImportExportBackend's
+// interface-satisfaction rule below).
+type ImportBackend interface {
 	types.KeyProvider
 
 	// GetImportParameters retrieves the parameters needed to import a key.
@@ -179,6 +194,15 @@ type ImportExportBackend interface {
 	//   - A key with the same attributes already exists
 	//   - The backend doesn't support import
 	ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *WrappedKeyMaterial) error
+}
+
+// ExportBackend extends Backend with the key-export half of the ceremony:
+// wrapping a key for transport out, and reading raw material for keys that
+// are marked extractable. See ImportBackend's doc comment for why this is a
+// separate interface rather than folded into one that only a subset of
+// backends could satisfy in full.
+type ExportBackend interface {
+	types.KeyProvider
 
 	// ExportKey exports a key in wrapped form for secure transport.
 	// This allows migrating keys from one backend to another while maintaining security.
@@ -213,4 +237,20 @@ type ImportExportBackend interface {
 	//
 	// For secure key transport between backends, prefer ExportKey which wraps the material.
 	ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
+}
+
+// ImportExportBackend is the union of ImportBackend and ExportBackend, for a
+// backend that supports the full ceremony in both directions -- the software
+// backend, PKCS#11 HSMs, and most cloud KMS providers among them. It is
+// declared as the embedding of the two halves, not as its own independent
+// method list, so every existing type assertion against it
+// (`provider.(backend.ImportExportBackend)`) keeps meaning exactly what it
+// always did: every caller that only needs one half should assert
+// ImportBackend or ExportBackend instead, so a backend missing the other half
+// -- AWS KMS is the one that exists today; a future backend may be
+// import-only or export-only for its own hardware reasons -- does not block
+// the half it does support.
+type ImportExportBackend interface {
+	ImportBackend
+	ExportBackend
 }

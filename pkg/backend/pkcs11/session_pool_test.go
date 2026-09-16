@@ -694,6 +694,82 @@ func TestSessionPool_WithSOSession_UserLoginRestoreFails(t *testing.T) {
 	}))
 }
 
+// TestSessionPool_WithSOSession_UserLoginRestoreFails_DiscardsSession verifies
+// the M4 fix: a session whose CKU_USER restore fails after the SO operation
+// must not recirculate through plain release. It must instead be closed and
+// replaced, exactly like the operation-poisoned session in
+// TestSessionPool_WithSession_DiscardsSessionPoisonedByPanic, because its
+// login state could not be driven back to known-good.
+func TestSessionPool_WithSOSession_UserLoginRestoreFails_DiscardsSession(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-so-restore-fails-discard")
+	pool := newTestPool(t, b, 1)
+
+	var poisoned pkcs11.SessionHandle
+	err := pool.WithSOSession(b.config.SOPIN, "0000", func(session pkcs11.SessionHandle) error {
+		poisoned = session
+		return nil
+	})
+	require.ErrorIs(t, err, ErrSessionPoolLogin)
+	require.NotZero(t, poisoned)
+
+	require.Len(t, pool.pool, 1, "the pool must keep its size by replacing the discarded session")
+
+	var next pkcs11.SessionHandle
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		next = session
+		return nil
+	}))
+	require.NotEqual(t, poisoned, next,
+		"a session whose login-state restore failed must not recirculate")
+
+	_, infoErr := b.p11ctx.GetSessionInfo(poisoned)
+	require.Error(t, infoErr,
+		"the discarded session must have been closed, not merely pushed back into circulation")
+
+	// Put the token back in the user state so the backend cleanup and any
+	// later operations on this token behave normally.
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
+	}))
+}
+
+// TestSessionPool_WithSOSession_SOLoginAndRestoreBothFail_DiscardsSession
+// covers the other M4 failure branch: the SO login itself fails, and the
+// attempt to restore CKU_USER before returning also fails. The session's
+// login state is now unknown on both sides of the swap, so it must be
+// discarded rather than released.
+func TestSessionPool_WithSOSession_SOLoginAndRestoreBothFail_DiscardsSession(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-so-login-and-restore-fail")
+	pool := newTestPool(t, b, 1)
+
+	original := <-pool.pool
+	pool.pool <- original
+
+	var ran bool
+	err := pool.WithSOSession("00000000", "0000", func(pkcs11.SessionHandle) error {
+		ran = true
+		return nil
+	})
+	require.False(t, ran, "the callback must not run without Security Officer authentication")
+	require.ErrorIs(t, err, ErrSessionPoolLogin)
+
+	require.Len(t, pool.pool, 1, "the pool must keep its size by replacing the discarded session")
+
+	replacement := <-pool.pool
+	pool.pool <- replacement
+	require.NotEqual(t, original, replacement,
+		"a session whose login state could not be restored after a failed SO login must not recirculate")
+
+	_, infoErr := b.p11ctx.GetSessionInfo(original)
+	require.Error(t, infoErr, "the discarded session must have been closed")
+
+	// Put the token back in the user state so the backend cleanup and any
+	// later operations on this token behave normally.
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
+	}))
+}
+
 // mustNotBlock runs fn on its own goroutine and fails t if it has not returned
 // within the bound.
 //

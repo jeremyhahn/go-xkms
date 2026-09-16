@@ -232,13 +232,14 @@ func TestBackend_GenerateEd25519_Rejected(t *testing.T) {
 }
 
 // TestPkcs11Ed25519Signer_Errors proves the Ed25519 signer degrades safely
-// when it has no pool or its public handle is unreadable, rather than
-// returning a zero-value key or an empty signature.
+// when it has no pool, and that a public key that cannot be read from the HSM
+// fails signer construction loudly rather than being deferred to a silent nil
+// from Public() later (M4).
 func TestPkcs11Ed25519Signer_Errors(t *testing.T) {
 	t.Run("no-pool", func(t *testing.T) {
 		signer := &pkcs11Ed25519Signer{label: "orphan"}
 
-		assert.Nil(t, signer.Public(), "a signer with no pool cannot produce a public key")
+		assert.Nil(t, signer.Public(), "an unconstructed signer reports no public key")
 
 		signature, err := signer.Sign(rand.Reader, []byte("message"), crypto.Hash(0))
 		require.Error(t, err)
@@ -248,12 +249,13 @@ func TestPkcs11Ed25519Signer_Errors(t *testing.T) {
 		assert.Nil(t, signature)
 	})
 
-	t.Run("unreadable-public-handle", func(t *testing.T) {
+	t.Run("construction-fails-on-unreadable-public-handle", func(t *testing.T) {
 		b := newProvisionedBackend(t, "ed25519-bad-handle")
-		signer := &pkcs11Ed25519Signer{pool: b.Pool(), publicHandle: 0, label: "bogus"}
 
-		assert.Nil(t, signer.Public(),
-			"an unreadable CKA_EC_POINT must yield no key rather than a truncated one")
+		signer, err := newEd25519Signer(b.Pool(), 0, 0, []byte("bogus"))
+		require.Error(t, err,
+			"a signer must not be constructed when its public key cannot be read from the HSM")
+		assert.Nil(t, signer)
 	})
 
 	t.Run("sign-with-non-signing-handle", func(t *testing.T) {

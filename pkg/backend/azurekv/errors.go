@@ -53,4 +53,8 @@ var (
 
 	// ErrUnsupportedOperation is returned when an operation is not supported.
 	ErrUnsupportedOperation = errors.New("azurekv: unsupported operation")
+
+	// ErrInvalidKeyID is returned when a key identifier returned by Azure Key
+	// Vault cannot be parsed to extract its version.
+	ErrInvalidKeyID = errors.New("azurekv: invalid key identifier")
 )

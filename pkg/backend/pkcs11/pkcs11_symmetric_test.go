@@ -883,7 +883,7 @@ func TestSymmetricEncrypter_Decrypt_NilData(t *testing.T) {
 // available: encrypt and decrypt agree with each other, the round trip passes,
 // and the caller's EncryptedData carries a Nonce and Tag where it expected an
 // IV.
-func TestSymmetricEncrypter_RejectsNonAEADModes(t *testing.T) {
+func TestSymmetricEncrypter_RejectsUnknownCipherMode(t *testing.T) {
 	b := newProvisionedBackend(t, "sym-mode")
 
 	key := make([]byte, 32)
@@ -894,7 +894,7 @@ func TestSymmetricEncrypter_RejectsNonAEADModes(t *testing.T) {
 	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
 	require.NoError(t, err)
 
-	for _, mode := range []types.CipherMode{types.CipherModeCBC, types.CipherModeCBCPad, "ctr"} {
+	for _, mode := range []types.CipherMode{"ctr", "ofb", "unknown"} {
 		t.Run(string(mode), func(t *testing.T) {
 			_, err := encrypter.Encrypt([]byte("payload"), &types.EncryptOptions{Mode: mode})
 			assert.ErrorIs(t, err, ErrUnsupportedCipherMode)
@@ -907,6 +907,200 @@ func TestSymmetricEncrypter_RejectsNonAEADModes(t *testing.T) {
 			assert.ErrorIs(t, err, ErrUnsupportedCipherMode)
 		})
 	}
+}
+
+// TestSymmetricEncrypter_CBCRoundTrip verifies that CKM_AES_CBC and
+// CKM_AES_CBC_PAD round-trip on the token and, for CBC-Pad, match a software
+// AES-CBC-PKCS7 oracle byte-for-byte -- CBC has no oracle to compare against
+// here because unpadded CBC requires block-aligned input and this test uses a
+// non-aligned payload to also exercise CBC-Pad's padding.
+func TestSymmetricEncrypter_CBCRoundTrip(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-cbc")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-cbc-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name      string
+		mode      types.CipherMode
+		plaintext []byte
+	}{
+		{"CBC-block-aligned", types.CipherModeCBC, bytes.Repeat([]byte("A"), 32)},
+		{"CBC-Pad-aligned", types.CipherModeCBCPad, bytes.Repeat([]byte("B"), 32)},
+		{"CBC-Pad-unaligned", types.CipherModeCBCPad, []byte("not a block multiple")},
+		{"CBC-Pad-empty", types.CipherModeCBCPad, []byte{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encrypted, err := encrypter.Encrypt(tc.plaintext, &types.EncryptOptions{Mode: tc.mode})
+			require.NoError(t, err)
+			require.Len(t, encrypted.IV, cbcIVSize)
+			require.Empty(t, encrypted.Tag)
+
+			decrypted, err := encrypter.Decrypt(&types.EncryptedData{
+				Ciphertext: encrypted.Ciphertext,
+				IV:         encrypted.IV,
+			}, &types.DecryptOptions{Mode: tc.mode})
+			require.NoError(t, err)
+			assert.Equal(t, tc.plaintext, decrypted)
+
+			if tc.mode == types.CipherModeCBCPad {
+				block, err := aes.NewCipher(key)
+				require.NoError(t, err)
+				padded := pkcs7Pad(tc.plaintext, aes.BlockSize)
+				want := make([]byte, len(padded))
+				cipher.NewCBCEncrypter(block, encrypted.IV).CryptBlocks(want, padded)
+				assert.Equal(t, want, encrypted.Ciphertext, "CBC-Pad ciphertext must match software PKCS#7 CBC")
+			}
+		})
+	}
+}
+
+// TestSymmetricEncrypter_ECBRoundTrip verifies that CKM_AES_ECB round-trips
+// on the token and matches a software AES-ECB oracle (each block enciphered
+// independently under the raw block cipher, since crypto/cipher has no ECB
+// BlockMode of its own).
+func TestSymmetricEncrypter_ECBRoundTrip(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-ecb")
+
+	key := make([]byte, 16)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-ecb-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	plaintext := bytes.Repeat([]byte("Z"), 48)
+
+	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{Mode: types.CipherModeECB})
+	require.NoError(t, err)
+	require.Empty(t, encrypted.IV)
+	require.Empty(t, encrypted.Tag)
+
+	block, err := aes.NewCipher(key)
+	require.NoError(t, err)
+	want := make([]byte, len(plaintext))
+	for offset := 0; offset < len(plaintext); offset += aes.BlockSize {
+		block.Encrypt(want[offset:offset+aes.BlockSize], plaintext[offset:offset+aes.BlockSize])
+	}
+	assert.Equal(t, want, encrypted.Ciphertext, "ECB ciphertext must match software AES-ECB")
+
+	decrypted, err := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: encrypted.Ciphertext,
+	}, &types.DecryptOptions{Mode: types.CipherModeECB})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
+}
+
+// TestSymmetricEncrypter_CBC_RejectsNonAEADInputMisuse verifies each mode
+// refuses the inputs that belong to a different mode, rather than silently
+// ignoring them and reporting success for an operation the caller did not
+// get.
+func TestSymmetricEncrypter_CBC_RejectsNonAEADInputMisuse(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-cbc-misuse")
+
+	key := make([]byte, 16)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-cbc-misuse-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	t.Run("CBC-additional-data-refused", func(t *testing.T) {
+		_, err := encrypter.Encrypt([]byte("0123456789abcdef"), &types.EncryptOptions{
+			Mode: types.CipherModeCBC, AdditionalData: []byte("aad"),
+		})
+		assert.ErrorIs(t, err, ErrAdditionalDataNotSupported)
+	})
+
+	t.Run("CBC-tag-size-refused", func(t *testing.T) {
+		_, err := encrypter.Encrypt([]byte("0123456789abcdef"), &types.EncryptOptions{
+			Mode: types.CipherModeCBC, TagSize: 16,
+		})
+		assert.ErrorIs(t, err, ErrTagSizeNotSupported)
+	})
+
+	t.Run("CBC-unaligned-plaintext-refused", func(t *testing.T) {
+		_, err := encrypter.Encrypt([]byte("not aligned"), &types.EncryptOptions{Mode: types.CipherModeCBC})
+		assert.ErrorIs(t, err, ErrPlaintextNotBlockAligned)
+	})
+
+	t.Run("CBC-wrong-iv-size-refused", func(t *testing.T) {
+		_, err := encrypter.Encrypt([]byte("0123456789abcdef"), &types.EncryptOptions{
+			Mode: types.CipherModeCBC, IV: make([]byte, 8),
+		})
+		assert.ErrorIs(t, err, ErrInvalidIVSize)
+	})
+
+	t.Run("ECB-iv-refused", func(t *testing.T) {
+		_, err := encrypter.Encrypt([]byte("0123456789abcdef"), &types.EncryptOptions{
+			Mode: types.CipherModeECB, IV: make([]byte, 16),
+		})
+		assert.ErrorIs(t, err, ErrIVNotSupported)
+	})
+
+	t.Run("ECB-unaligned-plaintext-refused", func(t *testing.T) {
+		_, err := encrypter.Encrypt([]byte("not aligned"), &types.EncryptOptions{Mode: types.CipherModeECB})
+		assert.ErrorIs(t, err, ErrPlaintextNotBlockAligned)
+	})
+
+	t.Run("CBC-Pad-invalid-padding-refused", func(t *testing.T) {
+		encrypted, err := encrypter.Encrypt([]byte("valid plaintext"), &types.EncryptOptions{Mode: types.CipherModeCBCPad})
+		require.NoError(t, err)
+
+		tampered := append([]byte(nil), encrypted.Ciphertext...)
+		tampered[len(tampered)-1] ^= 0xFF
+
+		_, err = encrypter.Decrypt(&types.EncryptedData{
+			Ciphertext: tampered,
+			IV:         encrypted.IV,
+		}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
+		assert.ErrorIs(t, err, ErrInvalidPadding)
+	})
+}
+
+// TestRequireCipherMechanism_UnsupportedMechanismIsCapabilityError verifies
+// that a cipher mode this encrypter implements, but that the token does not
+// advertise, is classified as a capability boundary
+// (backend.ErrOperationNotSupported) rather than surfacing as a fault -- the
+// same distinction pkg/xkms/servicer_crypto.go's isBackendCapabilityRefusal
+// makes to choose between a 501/Unimplemented and a 500 at the API layer.
+func TestRequireCipherMechanism_UnsupportedMechanismIsCapabilityError(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-mech")
+	// The provisioned SoftHSM token advertises CKM_AES_CBC, CKM_AES_CBC_PAD
+	// and CKM_AES_ECB; force each flag off individually to exercise the
+	// refusal path without depending on a token that lacks one of them.
+	b.supportsAESCBC = false
+	b.supportsAESCBCPad = false
+	b.supportsAESECB = false
+
+	for _, mode := range []types.CipherMode{types.CipherModeCBC, types.CipherModeCBCPad, types.CipherModeECB} {
+		t.Run(string(mode), func(t *testing.T) {
+			_, err := b.requireCipherMechanism(mode)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, backend.ErrOperationNotSupported)
+			assert.ErrorIs(t, err, ErrMechanismNotSupported)
+		})
+	}
+}
+
+// pkcs7Pad appends PKCS#7 padding (RFC 5652 section 6.3), matching the
+// padding CKM_AES_CBC_PAD applies inside the token so a test can build the
+// software side of the CBC-Pad oracle.
+func pkcs7Pad(data []byte, blockSize int) []byte {
+	padLen := blockSize - (len(data) % blockSize)
+	padded := make([]byte, len(data)+padLen)
+	copy(padded, data)
+	for i := len(data); i < len(padded); i++ {
+		padded[i] = byte(padLen)
+	}
+	return padded
 }
 
 // TestSymmetricEncrypter_DecryptDoesNotMutateInput verifies Decrypt leaves the

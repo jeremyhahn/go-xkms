@@ -385,17 +385,42 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	if err != nil {
 		return err
 	}
-	defer p.release(session)
+
+	// discard tracks whether this session's PKCS#11 login state could not be
+	// driven back to a known-good state (CKU_USER, or logged out when no
+	// userPin was supplied). Such a session must not recirculate through a
+	// plain release: like the operation-poisoned session WithSession
+	// discards after a panic, its state is unknown, so it is closed and a
+	// fresh replacement takes its place rather than being handed to the next
+	// borrower with the token possibly still authenticated as SO, or not
+	// authenticated at all.
+	discard := false
+	defer func() {
+		if discard {
+			p.discardAndReplace(session)
+			return
+		}
+		p.release(session)
+	}()
 
 	// Logout current user (CKU_USER)
-	_ = p.ctx.Logout(session)
+	if err := p.ctx.Logout(session); err != nil && err != pkcs11.Error(pkcs11.CKR_USER_NOT_LOGGED_IN) {
+		discard = true
+		return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("logout before SO login: %v", err)}
+	}
 
 	// Login as Security Officer
 	if err := p.ctx.Login(session, pkcs11.CKU_SO, soPin); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-			// Restore user login before returning
-			_ = p.ctx.Login(session, pkcs11.CKU_USER, userPin)
-			return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("SO login: %v", err)}
+			// Restore user login before returning. If the restore itself
+			// fails, the token's login state is unknown, so the session is
+			// discarded on the way out.
+			detail := fmt.Sprintf("SO login: %v", err)
+			if restoreErr := p.ctx.Login(session, pkcs11.CKU_USER, userPin); restoreErr != nil && restoreErr != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+				discard = true
+				detail = fmt.Sprintf("%s (user login restore also failed: %v)", detail, restoreErr)
+			}
+			return &errs.Detail{Err: ErrSessionPoolLogin, Detail: detail}
 		}
 	}
 
@@ -403,10 +428,14 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	fnErr := fn(session)
 
 	// Restore user login: logout SO, then login as user
-	_ = p.ctx.Logout(session)
+	if err := p.ctx.Logout(session); err != nil && err != pkcs11.Error(pkcs11.CKR_USER_NOT_LOGGED_IN) {
+		discard = true
+		return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("logout after SO operation: %v (original: %v)", err, fnErr)}
+	}
 	if userPin != "" {
 		if err := p.ctx.Login(session, pkcs11.CKU_USER, userPin); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+				discard = true
 				return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("user login restore: %v (original: %v)", err, fnErr)}
 			}
 		}

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"strings"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -869,18 +870,55 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 	return allKeys, nil
 }
 
-// azurekvSigner implements crypto.Signer using Azure Key Vault.
+// azurekvSigner implements crypto.Signer using Azure Key Vault. It pins the
+// key version resolved when the Signer was constructed, so Public() always
+// matches the exact version Sign() uses even if the key is rotated later.
 type azurekvSigner struct {
 	backend   *Backend
 	attrs     *types.KeyAttributes
 	publicKey crypto.PublicKey
+	version   string
 }
 
-// azurekvDecrypter implements crypto.Decrypter using Azure Key Vault.
+// azurekvDecrypter implements crypto.Decrypter using Azure Key Vault. It
+// pins the key version resolved when the Decrypter was constructed, so
+// Public() always matches the exact version Decrypt() uses even if the key
+// is rotated later.
 type azurekvDecrypter struct {
 	backend   *Backend
 	attrs     *types.KeyAttributes
 	publicKey crypto.PublicKey
+	version   string
+}
+
+// resolveKeyVersion returns the current version identifier of the named
+// key, parsed from the key identifier (KID) Azure Key Vault reports for its
+// latest version. Callers that must stay pinned to a specific version
+// regardless of later rotations (Signer and Decrypter) resolve it once at
+// construction and pass it explicitly on every subsequent operation instead
+// of the empty string, which Azure would otherwise resolve to whatever is
+// latest at call time.
+func (b *Backend) resolveKeyVersion(ctx context.Context, name string) (string, error) {
+	resp, err := b.client.GetKey(ctx, name, "", nil)
+	if err != nil {
+		return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+	}
+	if resp.Key == nil || resp.Key.KID == nil {
+		return "", &errs.Detail{Err: ErrKeyNotFound, Detail: name}
+	}
+	return parseKeyVersion(*resp.Key.KID)
+}
+
+// parseKeyVersion extracts the version segment from an Azure Key Vault key
+// identifier, which has the form
+// "https://{vault}.vault.azure.net/keys/{name}/{version}".
+func parseKeyVersion(kid azkeys.ID) (string, error) {
+	s := string(kid)
+	idx := strings.LastIndex(s, "/")
+	if idx < 0 || idx == len(s)-1 {
+		return "", &errs.Detail{Err: ErrInvalidKeyID, Detail: s}
+	}
+	return s[idx+1:], nil
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.
@@ -893,8 +931,16 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, err
 	}
 
-	// Get the public key
-	pubKeyBytes, err := b.client.GetPublicKey(ctx, attrs.CN, "")
+	// Resolve the current key version and pin the signer to it, so Public()
+	// always matches the exact version Sign() uses even if the key is
+	// rotated later.
+	version, err := b.resolveKeyVersion(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the public key for that exact version
+	pubKeyBytes, err := b.client.GetPublicKey(ctx, attrs.CN, version)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
@@ -909,6 +955,7 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		backend:   b,
 		attrs:     attrs,
 		publicKey: publicKey,
+		version:   version,
 	}, nil
 }
 
@@ -927,8 +974,16 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		return nil, err
 	}
 
-	// Get the public key
-	pubKeyBytes, err := b.client.GetPublicKey(ctx, attrs.CN, "")
+	// Resolve the current key version and pin the decrypter to it, so
+	// Public() always matches the exact version Decrypt() uses even if the
+	// key is rotated later.
+	version, err := b.resolveKeyVersion(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the public key for that exact version
+	pubKeyBytes, err := b.client.GetPublicKey(ctx, attrs.CN, version)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
@@ -943,6 +998,7 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		backend:   b,
 		attrs:     attrs,
 		publicKey: publicKey,
+		version:   version,
 	}, nil
 }
 
@@ -992,8 +1048,10 @@ func (s *azurekvSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOp
 		Value:     digest,
 	}
 
-	// Perform signing
-	resp, err := s.backend.client.Sign(ctx, s.attrs.CN, "", params, nil)
+	// Sign against the version pinned at construction, not the latest
+	// version, so this call always uses the same key whose public half
+	// Public() reports.
+	resp, err := s.backend.client.Sign(ctx, s.attrs.CN, s.version, params, nil)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "Azure Key Vault sign operation failed", Err: err}
 	}
@@ -1046,8 +1104,10 @@ func (d *azurekvDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypt
 		Value:     ciphertext,
 	}
 
-	// Perform decryption
-	resp, err := d.backend.client.Decrypt(ctx, d.attrs.CN, "", params, nil)
+	// Decrypt against the version pinned at construction, not the latest
+	// version, so this call always uses the same key whose public half
+	// Public() reports.
+	resp, err := d.backend.client.Decrypt(ctx, d.attrs.CN, d.version, params, nil)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "Azure Key Vault decrypt operation failed", Err: err}
 	}

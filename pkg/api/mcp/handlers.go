@@ -46,8 +46,8 @@ func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Ba
 	return s.xkmsService.LookupTenantBackend(backendName, callerTenantID(ctx))
 }
 
-// importExportBackend resolves the backend a wrap or unwrap runs against and
-// asserts it supports the import/export ceremony.
+// importBackend resolves the backend a wrap or unwrap runs against and
+// asserts it supports the import half of the ceremony.
 //
 // A named backend is resolved through the tenant-scoped lookup, so a caller
 // naming one gets that backend viewed through its own tenant. An unnamed one
@@ -59,7 +59,12 @@ func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Ba
 // and the params struct could not represent it, so every wrap and unwrap ran
 // against the process default whatever the caller asked for. Resolving it here
 // is what makes that field a control rather than a decoration.
-func (s *Server) importExportBackend(ctx context.Context, backendName string) (backend.ImportExportBackend, error) {
+//
+// This asserts backend.ImportBackend, not the full ImportExportBackend union:
+// WrapKey and UnwrapKey are both half of the import ceremony, so a backend
+// that cannot export (AWS KMS, by hardware design) must still be reachable
+// for them.
+func (s *Server) importBackend(ctx context.Context, backendName string) (backend.ImportBackend, error) {
 	provider := s.keystore.KeyProvider()
 
 	if backendName != "" {
@@ -70,11 +75,11 @@ func (s *Server) importExportBackend(ctx context.Context, backendName string) (b
 		provider = ks.KeyProvider()
 	}
 
-	importExport, ok := provider.(backend.ImportExportBackend)
+	importBackend, ok := provider.(backend.ImportBackend)
 	if !ok {
-		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
+		return nil, &KeyOpError{Code: ErrCodeMethodNotFound, Err: backend.ErrImportNotSupported}
 	}
-	return importExport, nil
+	return importBackend, nil
 }
 
 // keyByCN returns the attributes of the key whose common name is keyID, out of
@@ -1028,7 +1033,7 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, err := s.importExportBackend(ctx, params.Backend)
+	importBackend, err := s.importBackend(ctx, params.Backend)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,7 +1058,7 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	// Wrap the key material
-	wrapped, err := importExportBackend.WrapKey(ctx, params.KeyMaterial, importParams)
+	wrapped, err := importBackend.WrapKey(ctx, params.KeyMaterial, importParams)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to wrap key", Err: err}
 	}
@@ -1084,7 +1089,7 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, err := s.importExportBackend(ctx, params.Backend)
+	importBackend, err := s.importBackend(ctx, params.Backend)
 	if err != nil {
 		return nil, err
 	}
@@ -1116,7 +1121,7 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 		KeySpec:           params.KeySpec,
 	}
 
-	keyMaterial, err := importExportBackend.UnwrapKey(ctx, wrapped, importParams)
+	keyMaterial, err := importBackend.UnwrapKey(ctx, wrapped, importParams)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to unwrap key", Err: err}
 	}
@@ -1221,17 +1226,21 @@ func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (inte
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
 
-	// Check if backend supports import/export
-	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	// Check if the backend supports the export half of the ceremony. Asserts
+	// backend.ExportBackend, not the full ImportExportBackend union, so a
+	// backend that only supports import (AWS KMS, by hardware design) does
+	// not report the same undifferentiated refusal as one that supports
+	// neither direction.
+	exportBackend, ok := ks.KeyProvider().(backend.ExportBackend)
 	if !ok {
-		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
+		return nil, &KeyOpError{Code: ErrCodeMethodNotFound, Err: backend.ErrExportNotSupported}
 	}
 
 	// Parse wrapping algorithm
 	algorithm := backend.WrappingAlgorithm(params.Algorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(ctx, attrs, algorithm)
+	wrapped, err := exportBackend.ExportKey(ctx, attrs, algorithm)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to export key", Err: err}
 	}

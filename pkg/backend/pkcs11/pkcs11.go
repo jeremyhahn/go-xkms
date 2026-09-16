@@ -98,10 +98,21 @@ type Backend struct {
 	pool          *SessionPool
 	ownsP11ctx    bool // tracks if this backend owns the PKCS#11 context (should Finalize/Destroy)
 	tracker       types.AEADSafetyTracker
-	supportsMLDSA bool              // dynamically detected ML-DSA mechanism support
-	supportsMLKEM bool              // dynamically detected ML-KEM mechanism support
-	slotModel     pivcert.SlotModel // nil for generic (non-PIV) tokens
-	mu            sync.RWMutex
+	supportsMLDSA bool // dynamically detected ML-DSA mechanism support
+	supportsMLKEM bool // dynamically detected ML-KEM mechanism support
+
+	// supportsAESCBC, supportsAESCBCPad and supportsAESECB record whether the
+	// token advertised CKM_AES_CBC, CKM_AES_CBC_PAD and CKM_AES_ECB in its
+	// mechanism list (see probeQuantumMechanisms, which despite its name is
+	// this backend's single mechanism-detection pass). A cipher mode whose
+	// mechanism the token does not advertise is refused with a typed,
+	// capability-classified error instead of reaching C_EncryptInit /
+	// C_DecryptInit and failing with CKR_MECHANISM_INVALID.
+	supportsAESCBC    bool
+	supportsAESCBCPad bool
+	supportsAESECB    bool
+	slotModel         pivcert.SlotModel // nil for generic (non-PIV) tokens
+	mu                sync.RWMutex
 	types.KeyProvider
 }
 
@@ -178,10 +189,12 @@ func (b *Backend) Capabilities() types.Capabilities {
 	return caps
 }
 
-// probeQuantumMechanisms queries the token's mechanism list to detect
-// support for PKCS#11 v3.2 post-quantum mechanisms (ML-DSA and ML-KEM).
-// Results are stored in supportsMLDSA and supportsMLKEM fields.
-// This method is safe to call when p11ctx is nil (no-op).
+// probeQuantumMechanisms queries the token's mechanism list to detect support
+// for PKCS#11 v3.2 post-quantum mechanisms (ML-DSA and ML-KEM), and for the
+// AES cipher-mode mechanisms (CKM_AES_CBC, CKM_AES_CBC_PAD, CKM_AES_ECB) the
+// symmetric encrypter's non-AEAD modes need. Results are stored in
+// supportsMLDSA, supportsMLKEM, supportsAESCBC, supportsAESCBCPad and
+// supportsAESECB. This method is safe to call when p11ctx is nil (no-op).
 func (b *Backend) probeQuantumMechanisms() {
 	if b.p11ctx == nil {
 		return
@@ -210,6 +223,12 @@ func (b *Backend) probeQuantumMechanisms() {
 			b.supportsMLDSA = true
 		case CKM_ML_KEM_KEY_PAIR_GEN:
 			b.supportsMLKEM = true
+		case pkcs11.CKM_AES_CBC:
+			b.supportsAESCBC = true
+		case pkcs11.CKM_AES_CBC_PAD:
+			b.supportsAESCBCPad = true
+		case pkcs11.CKM_AES_ECB:
+			b.supportsAESECB = true
 		}
 	}
 }
@@ -1203,12 +1222,9 @@ func (b *Backend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Signer, er
 		return nil, &errs.Wrapped{Msg: "failed to generate Ed25519 key pair", Err: err}
 	}
 
-	signer := &pkcs11Ed25519Signer{
-		pool:           b.pool,
-		publicHandle:   pubKey,
-		privateHandle:  privKey,
-		label:          string(label),
-		publicKeyBytes: nil,
+	signer, err := newEd25519Signer(b.pool, pubKey, privKey, label)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to read generated Ed25519 public key", Err: err}
 	}
 
 	return signer, nil
@@ -1691,14 +1707,60 @@ func newECDSASigner(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle
 }
 
 // newEd25519Signer builds the wrapper for an Edwards key pair. The public key
-// is read lazily from CKA_EC_POINT, so only the handles are captured here.
+// is read off the token here, like newRSASigner and newECDSASigner do for
+// their key types, so a construction failure is reported to the caller
+// instead of being deferred to a later, error-swallowing Public() call.
 func newEd25519Signer(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error) {
+	pub, err := exportEd25519PublicKey(pool, pubHandle)
+	if err != nil {
+		return nil, err
+	}
 	return &pkcs11Ed25519Signer{
-		pool:          pool,
-		publicHandle:  pubHandle,
-		privateHandle: privHandle,
-		label:         string(id),
+		pool:           pool,
+		publicHandle:   pubHandle,
+		privateHandle:  privHandle,
+		label:          string(id),
+		publicKeyBytes: pub,
 	}, nil
+}
+
+// exportEd25519PublicKey reads CKA_EC_POINT off a PKCS#11 Ed25519 public key
+// object and decodes it to the raw 32-byte Ed25519 public key.
+func exportEd25519PublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (ed25519.PublicKey, error) {
+	var pub ed25519.PublicKey
+	err := pool.WithSession(func(session pkcs11.SessionHandle) error {
+		attrs, err := pool.Ctx().GetAttributeValue(session, pubHandle, []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_EC_POINT, nil),
+		})
+		if err != nil {
+			return &errs.Wrapped{Msg: "pkcs11: get Ed25519 public key attributes", Err: err}
+		}
+		if len(attrs) == 0 || len(attrs[0].Value) == 0 {
+			return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "missing EC point"}
+		}
+
+		ecPoint := attrs[0].Value
+
+		// CKA_EC_POINT is DER-encoded: an OCTET STRING wrapping the raw
+		// 32-byte point, i.e. 0x04 0x20 <32 bytes>. Some tokens report the
+		// bare point instead; both are accepted, anything else is not.
+		switch {
+		case len(ecPoint) == 34 && ecPoint[0] == 0x04 && ecPoint[1] == 0x20:
+			pub = ed25519.PublicKey(append([]byte(nil), ecPoint[2:34]...))
+		case len(ecPoint) == ed25519.PublicKeySize:
+			pub = ed25519.PublicKey(append([]byte(nil), ecPoint...))
+		default:
+			return &errs.Detail{
+				Err:    ErrInvalidKeyAttributes,
+				Detail: fmt.Sprintf("CKA_EC_POINT has unexpected length %d for Ed25519", len(ecPoint)),
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pub, nil
 }
 
 // quantumSignerFactory builds the signerFactory for one post-quantum family,
@@ -1898,47 +1960,25 @@ func createSlotID(slot uint) []byte {
 
 // pkcs11Ed25519Signer implements crypto.Signer for Ed25519 keys stored in PKCS#11.
 // It wraps the PKCS#11 key handles and performs signing operations using the HSM.
+//
+// publicKeyBytes is populated once, at construction, by exportEd25519PublicKey
+// (see newEd25519Signer). Unlike the RSA and ECDSA wrappers, which have always
+// read their public key eagerly, this one used to defer the HSM read to the
+// first call to Public() and swallow any error, so a read failure surfaced as
+// a silent nil rather than a construction error. Reading it up front, like
+// the other key types, means Public() can be a total function.
 type pkcs11Ed25519Signer struct {
 	pool           *SessionPool
 	publicHandle   pkcs11.ObjectHandle
 	privateHandle  pkcs11.ObjectHandle
 	label          string
 	publicKeyBytes ed25519.PublicKey
-	mu             sync.RWMutex
 }
 
-// Public returns the public key corresponding to the opaque private key.
+// Public returns the public key corresponding to the opaque private key. It
+// never touches the HSM: the key was read and validated once, when this
+// signer was constructed, so this is a pure accessor.
 func (s *pkcs11Ed25519Signer) Public() crypto.PublicKey {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.publicKeyBytes != nil {
-		return s.publicKeyBytes
-	}
-
-	if s.pool == nil {
-		return nil
-	}
-
-	_ = s.pool.WithSession(func(session pkcs11.SessionHandle) error {
-		attrs, err := s.pool.Ctx().GetAttributeValue(session, s.publicHandle, []*pkcs11.Attribute{
-			pkcs11.NewAttribute(pkcs11.CKA_EC_POINT, nil),
-		})
-		if err != nil || len(attrs) == 0 || len(attrs[0].Value) == 0 {
-			return err
-		}
-
-		ecPoint := attrs[0].Value
-
-		// Skip DER encoding: typical format is 0x04 <length> <32 bytes>
-		if len(ecPoint) >= 34 && ecPoint[0] == 0x04 {
-			s.publicKeyBytes = ed25519.PublicKey(ecPoint[2:34])
-		} else if len(ecPoint) == 32 {
-			s.publicKeyBytes = ed25519.PublicKey(ecPoint)
-		}
-		return nil
-	})
-
 	return s.publicKeyBytes
 }
 

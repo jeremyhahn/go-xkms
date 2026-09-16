@@ -62,4 +62,9 @@ var (
 
 	// ErrInvalidDigest is returned when the digest is invalid or has an incorrect length.
 	ErrInvalidDigest = errors.New("gcpkms: invalid digest")
+
+	// ErrNoPrimaryVersion is returned when a crypto key has no primary
+	// version, so no key version can be resolved for signing, decryption,
+	// or public key retrieval.
+	ErrNoPrimaryVersion = errors.New("gcpkms: crypto key has no primary version")
 )

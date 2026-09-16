@@ -119,11 +119,15 @@ func provisionEd25519DeviceKey(t *testing.T, b *Backend) crypto.Signer {
 		return err
 	}), "the token must accept an Ed25519 device attestation key")
 
+	pub, err := exportEd25519PublicKey(b.pool, publicHandle)
+	require.NoError(t, err, "reading the Ed25519 device attestation public key")
+
 	return &pkcs11Ed25519Signer{
-		pool:          b.pool,
-		publicHandle:  publicHandle,
-		privateHandle: privateHandle,
-		label:         DeviceAttestationKeyLabel,
+		pool:           b.pool,
+		publicHandle:   publicHandle,
+		privateHandle:  privateHandle,
+		label:          DeviceAttestationKeyLabel,
+		publicKeyBytes: pub,
 	}
 }
 

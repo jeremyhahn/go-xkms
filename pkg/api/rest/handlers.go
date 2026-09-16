@@ -1403,10 +1403,14 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Check if backend supports import/export
-	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	// Check if the backend supports the import half of the ceremony. This
+	// asserts backend.ImportBackend, not the full ImportExportBackend union: a
+	// backend that cannot export (AWS KMS, by hardware design) must still be
+	// reachable here, since GetImportParameters is unrelated to whether the
+	// same backend can later export a key.
+	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
 	if !ok {
-		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
+		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
 		return
 	}
 
@@ -1421,7 +1425,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Get import parameters
-	params, err := importExportBackend.GetImportParameters(r.Context(), attrs, wrappingAlg)
+	params, err := importBackend.GetImportParameters(r.Context(), attrs, wrappingAlg)
 	if err != nil {
 		log.Printf("Failed to get import parameters: %v", err)
 		handleError(w, err)
@@ -1456,15 +1460,21 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// resolveImportExportBackend resolves the named backend and asserts that it
-// implements backend.ImportExportBackend. It writes the mapped error response
-// and reports false when resolution fails, so callers only need to return.
+// resolveImportBackend resolves the named backend and asserts that it
+// implements backend.ImportBackend. It writes the mapped error response and
+// reports false when resolution fails, so callers only need to return.
 //
 // The backend is always named explicitly by the caller and is never inferred:
 // wrapping is backend specific (AWS KMS, GCP KMS and PKCS#11 each define their
 // own wrapping semantics and import tokens), so material wrapped by one
 // backend cannot be unwrapped or imported by another.
-func (h *HandlerContext) resolveImportExportBackend(w http.ResponseWriter, name string) (backend.ImportExportBackend, bool) {
+//
+// This asserts backend.ImportBackend, not the full ImportExportBackend union.
+// WrapKey and UnwrapKey are both half of the import ceremony -- wrapping
+// material to hand to ImportKey, and unwrapping material previously produced
+// by WrapKey -- so a backend that cannot export (AWS KMS, by hardware design)
+// must still be reachable through this resolver.
+func (h *HandlerContext) resolveImportBackend(w http.ResponseWriter, name string) (backend.ImportBackend, bool) {
 	if err := ValidateBackendName(name); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return nil, false
@@ -1476,12 +1486,40 @@ func (h *HandlerContext) resolveImportExportBackend(w http.ResponseWriter, name 
 		return nil, false
 	}
 
-	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
 	if !ok {
-		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
+		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
 		return nil, false
 	}
-	return importExportBackend, true
+	return importBackend, true
+}
+
+// resolveExportBackend resolves the named backend and asserts that it
+// implements backend.ExportBackend. It writes the mapped error response and
+// reports false when resolution fails, so callers only need to return.
+//
+// This asserts backend.ExportBackend, not the full ImportExportBackend union,
+// for the same reason resolveImportBackend asserts ImportBackend: export is a
+// genuinely independent capability from import, and a backend missing the
+// other half must not block this one.
+func (h *HandlerContext) resolveExportBackend(w http.ResponseWriter, name string) (backend.ExportBackend, bool) {
+	if err := ValidateBackendName(name); err != nil {
+		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
+		return nil, false
+	}
+
+	ks, err := h.lookupBackend(name)
+	if err != nil {
+		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		return nil, false
+	}
+
+	exportBackend, ok := ks.KeyProvider().(backend.ExportBackend)
+	if !ok {
+		writeError(w, backend.ErrExportNotSupported, http.StatusNotImplemented)
+		return nil, false
+	}
+	return exportBackend, true
 }
 
 // WrapKeyHandler handles POST /api/v1/keys/wrap requests. The request must
@@ -1529,12 +1567,12 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Wrap the key material with the caller-named backend.
-	importExportBackend, ok := h.resolveImportExportBackend(w, req.Backend)
+	importBackend, ok := h.resolveImportBackend(w, req.Backend)
 	if !ok {
 		return
 	}
 
-	wrapped, err := importExportBackend.WrapKey(r.Context(), req.KeyMaterial, params)
+	wrapped, err := importBackend.WrapKey(r.Context(), req.KeyMaterial, params)
 	if err != nil {
 		log.Printf("Failed to wrap key: %v", err)
 		handleError(w, err)
@@ -1606,12 +1644,12 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Unwrap the key material with the caller-named backend.
-	importExportBackend, ok := h.resolveImportExportBackend(w, req.Backend)
+	importBackend, ok := h.resolveImportBackend(w, req.Backend)
 	if !ok {
 		return
 	}
 
-	keyMaterial, err := importExportBackend.UnwrapKey(r.Context(), wrapped, params)
+	keyMaterial, err := importBackend.UnwrapKey(r.Context(), wrapped, params)
 	if err != nil {
 		log.Printf("Failed to unwrap key: %v", err)
 		handleError(w, err)
@@ -1677,10 +1715,17 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if backend supports import/export
-	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	// Check if the backend supports the import half of the ceremony. Asserts
+	// backend.ImportBackend, not the full ImportExportBackend union: a
+	// backend that genuinely cannot export (AWS KMS, by hardware design)
+	// must not be blocked from importing because of that unrelated
+	// limitation. Before this assertion was split, a missing export method
+	// on any backend failed this check and every import through this
+	// handler returned "backend does not support import/export operations"
+	// regardless of whether import itself worked.
+	importBackend, ok := ks.KeyProvider().(backend.ImportBackend)
 	if !ok {
-		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
+		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
 		return
 	}
 
@@ -1707,7 +1752,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Import the key
-	if err := importExportBackend.ImportKey(r.Context(), attrs, wrapped); err != nil {
+	if err := importBackend.ImportKey(r.Context(), attrs, wrapped); err != nil {
 		log.Printf("Failed to import key: %v", err)
 		handleError(w, err)
 		return
@@ -1769,10 +1814,14 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if backend supports import/export
-	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	// Check if the backend supports the export half of the ceremony. Asserts
+	// backend.ExportBackend, not the full ImportExportBackend union, for the
+	// same reason ImportKeyHandler asserts backend.ImportBackend: export and
+	// import are independent capabilities, and a backend that only supports
+	// one must not be unreachable for it because of the other.
+	exportBackend, ok := ks.KeyProvider().(backend.ExportBackend)
 	if !ok {
-		writeError(w, &errs.Message{Msg: "backend does not support import/export operations"}, http.StatusBadRequest)
+		writeError(w, backend.ErrExportNotSupported, http.StatusNotImplemented)
 		return
 	}
 
@@ -1801,7 +1850,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
 
 	// Export the key
-	wrapped, err := importExportBackend.ExportKey(r.Context(), targetAttr, wrappingAlg)
+	wrapped, err := exportBackend.ExportKey(r.Context(), targetAttr, wrappingAlg)
 	if err != nil {
 		log.Printf("Failed to export key: %v", err)
 		handleError(w, err)
@@ -1864,10 +1913,14 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if source backend supports import/export
-	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
+	// Check if source backend supports export. This asserts
+	// backend.ExportBackend rather than the full ImportExportBackend union:
+	// the source backend below is only ever asked to ExportKey, so a backend
+	// that cannot import (but can export) must not be refused here for a
+	// capability this handler never calls on it.
+	sourceBackend, ok := sourceKS.KeyProvider().(backend.ExportBackend)
 	if !ok {
-		writeError(w, &errs.Message{Msg: "source backend does not support export operations"}, http.StatusBadRequest)
+		writeError(w, backend.ErrExportNotSupported, http.StatusNotImplemented)
 		return
 	}
 
@@ -1878,10 +1931,15 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if destination backend supports import/export
-	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
+	// Check if destination backend supports import. This asserts
+	// backend.ImportBackend rather than the full ImportExportBackend union:
+	// the destination backend below is only ever asked to ImportKey, so AWS
+	// KMS -- which genuinely cannot export but does support import -- is a
+	// valid destination for CopyKey even though it would never be a valid
+	// source.
+	destBackend, ok := destKS.KeyProvider().(backend.ImportBackend)
 	if !ok {
-		writeError(w, &errs.Message{Msg: "destination backend does not support import operations"}, http.StatusBadRequest)
+		writeError(w, backend.ErrImportNotSupported, http.StatusNotImplemented)
 		return
 	}
 

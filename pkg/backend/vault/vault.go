@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -50,11 +51,15 @@ type Backend struct {
 	mu      sync.RWMutex
 }
 
-// vaultSigner implements crypto.Signer interface for Vault keys.
+// vaultSigner implements crypto.Signer interface for Vault keys. It pins
+// the key version resolved when the Signer was constructed, so Public()
+// always matches the exact version Sign() uses even if the key is rotated
+// later.
 type vaultSigner struct {
 	backend   *Backend
 	attrs     *types.KeyAttributes
 	publicKey crypto.PublicKey
+	version   string
 }
 
 // vaultDecrypter implements crypto.Decrypter interface for Vault keys.
@@ -141,6 +146,20 @@ func (b *Backend) Type() types.BackendType {
 // Capabilities returns the features this backend supports.
 // SecurityLevel is Medium - keys are protected by Vault's Transit engine.
 // Note: While Vault is software-based by default, it can use HSM for master keys.
+//
+// Import and Export are both true, but neither is unconditional:
+//   - Import (GetImportParameters/WrapKey/ImportKey) supports Vault Transit's
+//     own BYOK ceremony for symmetric (aes256-gcm96) keys only; UnwrapKey and
+//     asymmetric import are genuinely unsupported and say so with a typed
+//     error rather than pretending. See vault_importexport.go.
+//   - Export means ExportKeyMaterial, for symmetric keys created with
+//     Exportable=true. ExportKey (the wrapped-for-a-third-party form) has no
+//     genuine Vault-native equivalent -- Transit's wrapping key exists only
+//     to receive material, not to hand it out to an arbitrary recipient --
+//     and refuses with a typed, correctly classified error. Asymmetric keys
+//     are never exportable in either form (H8): GenerateKey always creates
+//     them with exportable:false, since the public half is already available
+//     through the ordinary read-key endpoint.
 func (b *Backend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
@@ -148,9 +167,9 @@ func (b *Backend) Capabilities() types.Capabilities {
 		Signing:             true,
 		Decryption:          true,
 		KeyRotation:         true,
-		SymmetricEncryption: true,  // Vault Transit engine supports symmetric encryption
-		Import:              false, // Key import not implemented in current version
-		Export:              false, // Key export not implemented in current version
+		SymmetricEncryption: true, // Vault Transit engine supports symmetric encryption
+		Import:              true,
+		Export:              true,
 		SecurityLevel:       types.SecurityLevelMedium,
 	}
 }
@@ -169,11 +188,14 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		return nil, err
 	}
 
-	// Create key in Vault
+	// Create key in Vault. exportable is false: Capabilities() advertises
+	// Export: false, and Vault's transit read-key endpoint already returns
+	// the public key without it (see getPublicKey), so setting it true only
+	// enables private key export that this backend never uses.
 	path := fmt.Sprintf("%s/keys/%s", b.config.TransitPath, keyName)
 	data := map[string]interface{}{
 		"type":                   vaultKeyType,
-		"exportable":             true, // Allow exporting public key
+		"exportable":             false,
 		"allow_plaintext_backup": false,
 		"deletion_allowed":       true, // Allow key deletion (required for cleanup)
 	}
@@ -386,7 +408,10 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 
 	keyName := b.sanitizeKeyName(attrs.CN)
 
-	publicKey, err := b.getPublicKey(ctx, keyName, attrs)
+	// Resolve the current key version and pin the signer to it, so
+	// Public() always matches the exact version Sign() uses even if the
+	// key is rotated later.
+	publicKey, version, err := b.getPublicKeyVersion(ctx, keyName, attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -395,6 +420,7 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		backend:   b,
 		attrs:     attrs,
 		publicKey: publicKey,
+		version:   version,
 	}, nil
 }
 
@@ -472,18 +498,20 @@ func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plain
 		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid ciphertext format"}
 	}
 
-	// Vault returns ciphertext in "vault:v1:base64..." format
-	// The Decrypter.Decrypt() expects just the base64 portion
-	// So we need to extract and decode it
-	parts := strings.Split(ciphertextStr, ":")
-	if len(parts) < 3 {
+	// Vault returns ciphertext in "vault:v<version>:base64..." format. The
+	// version identifies which key version produced it, and Vault needs
+	// that same prefix back on decrypt to pick the right version -- so the
+	// full envelope is the opaque payload this function returns, not just
+	// the base64 portion. Stripping it here (and reconstructing a
+	// hardcoded "vault:v1:" prefix on decrypt, as this backend used to)
+	// made ciphertext from any version other than 1 permanently
+	// undecryptable after a rotation. Only the shape is validated; nothing
+	// is discarded.
+	if parts := strings.SplitN(ciphertextStr, ":", 3); len(parts) != 3 || parts[0] != "vault" {
 		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid ciphertext format"}
 	}
 
-	ciphertext, err := base64.StdEncoding.DecodeString(parts[2])
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decode ciphertext", Err: err}
-	}
+	ciphertext := []byte(ciphertextStr)
 
 	return ciphertext, nil
 }
@@ -515,19 +543,45 @@ func (b *Backend) Close() error {
 
 // Helper methods
 
+// sanitizeKeyName derives a Vault Transit key name from cn using an
+// injective escaping scheme: every byte that is not a lowercase ASCII
+// letter or digit -- including uppercase letters, so case differences are
+// preserved -- is replaced with "_" followed by its two-digit uppercase hex
+// value. Because every literal '_' in cn is itself escaped (to "_5F"), a
+// leading '_' in the output is unambiguous evidence of an escape sequence,
+// so the transform is losslessly reversible by desanitizeKeyName. This
+// keeps CNs that a naive scheme would collapse together -- "a.b", "a_b",
+// "a b", and "a-b" -- mapped to four distinct Vault keys.
 func (b *Backend) sanitizeKeyName(cn string) string {
-	// Vault key names must be lowercase and use hyphens instead of special characters
-	name := strings.ToLower(cn)
-	name = strings.ReplaceAll(name, " ", "-")
-	name = strings.ReplaceAll(name, "_", "-")
-	name = strings.ReplaceAll(name, ".", "-")
-	return name
+	var sb strings.Builder
+	sb.Grow(len(cn))
+	for i := 0; i < len(cn); i++ {
+		c := cn[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			sb.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&sb, "_%02X", c)
+	}
+	return sb.String()
 }
 
+// desanitizeKeyName reverses sanitizeKeyName exactly, recovering the
+// original CN from a Vault Transit key name.
 func (b *Backend) desanitizeKeyName(keyName string) string {
-	// For now, just return as-is since we can't perfectly reverse the sanitization
-	// This is acceptable because we store the original CN in metadata
-	return keyName
+	var sb strings.Builder
+	sb.Grow(len(keyName))
+	for i := 0; i < len(keyName); i++ {
+		if keyName[i] == '_' && i+2 < len(keyName) {
+			if v, err := strconv.ParseUint(keyName[i+1:i+3], 16, 8); err == nil {
+				sb.WriteByte(byte(v))
+				i += 2
+				continue
+			}
+		}
+		sb.WriteByte(keyName[i])
+	}
+	return sb.String()
 }
 
 func (b *Backend) getVaultKeyType(attrs *types.KeyAttributes) (string, error) {
@@ -569,55 +623,69 @@ func (b *Backend) getVaultKeyType(attrs *types.KeyAttributes) (string, error) {
 	}
 }
 
+// getPublicKey returns the public key of keyName's current (latest) Transit
+// version. It is a thin wrapper over getPublicKeyVersion for callers that
+// have no need to pin a specific version.
 func (b *Backend) getPublicKey(ctx context.Context, keyName string, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	pub, _, err := b.getPublicKeyVersion(ctx, keyName, attrs)
+	return pub, err
+}
+
+// getPublicKeyVersion returns the public key of keyName's current (latest)
+// Transit version along with that version's identifier, so a caller that
+// must stay pinned to it (a Signer, whose Public() must always match the
+// key material Sign() actually uses) can resolve both in one read and hold
+// the version for every subsequent operation instead of letting Vault
+// re-resolve "latest" on every call.
+func (b *Backend) getPublicKeyVersion(ctx context.Context, keyName string, attrs *types.KeyAttributes) (crypto.PublicKey, string, error) {
 	path := fmt.Sprintf("%s/keys/%s", b.config.TransitPath, keyName)
 	logical := b.client.Logical()
 	secret, err := logical.ReadWithContext(ctx, path)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read key from vault", Err: err}
+		return nil, "", &errs.Wrapped{Msg: "failed to read key from vault", Err: err}
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyName)}
+		return nil, "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", keyName)}
 	}
 
 	// Get the latest key version
 	keysInterface, ok := secret.Data["keys"]
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no keys data"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "no keys data"}
 	}
 
 	keysMap, ok := keysInterface.(map[string]interface{})
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid keys format"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid keys format"}
 	}
 
 	// Get latest version
 	latestVersionInterface, ok := secret.Data["latest_version"]
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no latest_version"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "no latest_version"}
 	}
 
 	latestVersion := fmt.Sprintf("%v", latestVersionInterface)
 	keyDataInterface, ok := keysMap[latestVersion]
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: fmt.Sprintf("version %s not found", latestVersion)}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: fmt.Sprintf("version %s not found", latestVersion)}
 	}
 
 	keyData, ok := keyDataInterface.(map[string]interface{})
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid key data format"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid key data format"}
 	}
 
 	// Get public key in PEM format
 	publicKeyPEMInterface, ok := keyData["public_key"]
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "no public key in response"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "no public key in response"}
 	}
 
 	publicKeyPEM, ok := publicKeyPEMInterface.(string)
 	if !ok {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid public key format"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid public key format"}
 	}
 
 	// Check if this is Ed25519 (Vault returns base64, not PEM for Ed25519)
@@ -627,28 +695,28 @@ func (b *Backend) getPublicKey(ctx context.Context, keyName string, attrs *types
 			// Ed25519 public key is returned as base64, not PEM
 			pubKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyPEM)
 			if err != nil {
-				return nil, &errs.Wrapped{Msg: "failed to decode ed25519 public key", Err: err}
+				return nil, "", &errs.Wrapped{Msg: "failed to decode ed25519 public key", Err: err}
 			}
 			if len(pubKeyBytes) != 32 {
-				return nil, &errs.Message{Msg: fmt.Sprintf("invalid ed25519 public key length: %d", len(pubKeyBytes))}
+				return nil, "", &errs.Message{Msg: fmt.Sprintf("invalid ed25519 public key length: %d", len(pubKeyBytes))}
 			}
-			return ed25519.PublicKey(pubKeyBytes), nil
+			return ed25519.PublicKey(pubKeyBytes), latestVersion, nil
 		}
 	}
 
 	// Parse PEM for RSA and ECDSA keys
 	block, _ := pem.Decode([]byte(publicKeyPEM))
 	if block == nil {
-		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "failed to decode PEM"}
+		return nil, "", &errs.Detail{Err: ErrInvalidResponse, Detail: "failed to decode PEM"}
 	}
 
 	// Parse public key
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
+		return nil, "", &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
-	return pubKey, nil
+	return pubKey, latestVersion, nil
 }
 
 func (b *Backend) getHashAlgorithm(attrs *types.KeyAttributes) (string, crypto.Hash, error) {
@@ -683,6 +751,16 @@ func (s *vaultSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	ctx := context.Background()
 	keyName := s.backend.sanitizeKeyName(s.attrs.CN)
 
+	// Pin every sign request to the version resolved at construction via
+	// Vault's key_version parameter, instead of leaving it unset (which
+	// Vault resolves to whatever is latest at call time). Without this, a
+	// Signer's Public() could silently disagree with the version Sign()
+	// actually used as soon as the key was rotated.
+	keyVersion, err := strconv.Atoi(s.version)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: fmt.Sprintf("invalid key version %q", s.version)}
+	}
+
 	var path string
 	var data map[string]interface{}
 
@@ -692,8 +770,9 @@ func (s *vaultSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		input := base64.StdEncoding.EncodeToString(digest)
 		path = fmt.Sprintf("%s/sign/%s", s.backend.config.TransitPath, keyName)
 		data = map[string]interface{}{
-			"input":     input,
-			"prehashed": false,
+			"input":       input,
+			"prehashed":   false,
+			"key_version": keyVersion,
 		}
 	} else {
 		// For RSA and ECDSA, use prehashed digest
@@ -708,6 +787,7 @@ func (s *vaultSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 			"input":               input,
 			"prehashed":           true,
 			"signature_algorithm": s.getSignatureAlgorithm(opts),
+			"key_version":         keyVersion,
 		}
 	}
 
@@ -769,14 +849,19 @@ func (d *vaultDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.
 	ctx := context.Background()
 	keyName := d.backend.sanitizeKeyName(d.attrs.CN)
 
-	// Encode ciphertext as base64 and add Vault prefix
-	// Vault expects ciphertext in "vault:v1:base64..." format
-	encodedCiphertext := base64.StdEncoding.EncodeToString(ciphertext)
-	input := fmt.Sprintf("vault:v1:%s", encodedCiphertext)
+	// ciphertext is the opaque "vault:v<version>:base64..." envelope this
+	// backend's own Encrypt() returns; Vault reads the key version to
+	// decrypt with from that embedded prefix, so it must be forwarded
+	// verbatim rather than rewrapped with a hardcoded "vault:v1:" prefix,
+	// which made anything encrypted after a rotation undecryptable.
+	envelope := string(ciphertext)
+	if parts := strings.SplitN(envelope, ":", 3); len(parts) != 3 || parts[0] != "vault" {
+		return nil, &errs.Detail{Err: ErrInvalidResponse, Detail: "invalid ciphertext format"}
+	}
 
 	path := fmt.Sprintf("%s/decrypt/%s", d.backend.config.TransitPath, keyName)
 	data := map[string]interface{}{
-		"ciphertext": input,
+		"ciphertext": envelope,
 	}
 
 	logical := d.backend.client.Logical()

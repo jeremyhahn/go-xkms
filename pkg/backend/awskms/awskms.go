@@ -50,11 +50,10 @@ type Backend struct {
 
 // kmsSigner implements the crypto.Signer interface using AWS KMS.
 type kmsSigner struct {
-	backend    *Backend
-	attrs      *types.KeyAttributes
-	publicKey  crypto.PublicKey
-	keyID      string
-	signingAlg awstypes.SigningAlgorithmSpec
+	backend   *Backend
+	attrs     *types.KeyAttributes
+	publicKey crypto.PublicKey
+	keyID     string
 }
 
 // kmsDecrypter implements the crypto.Decrypter interface using AWS KMS.
@@ -700,18 +699,11 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
 	}
 
-	// Get signing algorithm
-	signingAlg, err := b.getSigningAlgorithm(attrs)
-	if err != nil {
-		return nil, err
-	}
-
 	return &kmsSigner{
-		backend:    b,
-		attrs:      attrs,
-		publicKey:  publicKey,
-		keyID:      keyID,
-		signingAlg: signingAlg,
+		backend:   b,
+		attrs:     attrs,
+		publicKey: publicKey,
+		keyID:     keyID,
 	}, nil
 }
 
@@ -799,9 +791,21 @@ func (s *kmsSigner) Public() crypto.PublicKey {
 
 // Sign signs the given digest using AWS KMS.
 // The digest must be pre-hashed according to the key's hash algorithm.
+// Unlike the fixed algorithm captured at Signer construction, Sign honors the
+// hash and padding requested by opts on every call: an *rsa.PSSOptions
+// selects RSASSA-PSS, any other crypto.SignerOpts on an RSA key selects
+// RSASSA-PKCS1-v1_5, and the hash is taken from opts.HashFunc() in both
+// cases. This lets a single Signer correctly serve callers that request
+// different padding/hash combinations, and rejects combinations AWS KMS
+// cannot serve instead of silently signing with the wrong algorithm.
 func (s *kmsSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	ctx := context.Background()
 	if err := s.backend.initClient(ctx); err != nil {
+		return nil, err
+	}
+
+	signingAlg, err := awsSigningAlgorithm(s.attrs.KeyAlgorithm, opts)
+	if err != nil {
 		return nil, err
 	}
 
@@ -809,13 +813,68 @@ func (s *kmsSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) 
 		KeyId:            aws.String(s.keyID),
 		Message:          digest,
 		MessageType:      awstypes.MessageTypeDigest,
-		SigningAlgorithm: s.signingAlg,
+		SigningAlgorithm: signingAlg,
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "KMS sign operation failed", Err: err}
 	}
 
 	return output.Signature, nil
+}
+
+// awsSigningAlgorithm resolves the AWS KMS signing algorithm for a signing
+// key algorithm and a per-call crypto.SignerOpts, honoring the requested
+// hash and padding instead of an algorithm fixed at construction time.
+//
+// For RSA keys, an *rsa.PSSOptions selects RSASSA-PSS at its Hash; any other
+// SignerOpts (including a bare crypto.Hash, which is how PKCS#1 v1.5 is
+// conventionally requested) selects RSASSA-PKCS1-v1_5 at opts.HashFunc().
+// For ECDSA keys, only the hash varies. AWS KMS serves SHA-256, SHA-384, and
+// SHA-512 for every combination; any other hash, or an unsupported key
+// algorithm, is a typed error rather than a silently wrong signature.
+func awsSigningAlgorithm(keyAlgorithm x509.PublicKeyAlgorithm, opts crypto.SignerOpts) (awstypes.SigningAlgorithmSpec, error) {
+	if opts == nil {
+		return "", &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "signer options are required"}
+	}
+
+	switch keyAlgorithm {
+	case x509.RSA:
+		if pssOpts, ok := opts.(*rsa.PSSOptions); ok {
+			switch pssOpts.Hash {
+			case crypto.SHA256:
+				return awstypes.SigningAlgorithmSpecRsassaPssSha256, nil
+			case crypto.SHA384:
+				return awstypes.SigningAlgorithmSpecRsassaPssSha384, nil
+			case crypto.SHA512:
+				return awstypes.SigningAlgorithmSpecRsassaPssSha512, nil
+			default:
+				return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("AWS KMS does not support RSASSA-PSS with hash %s", pssOpts.Hash)}
+			}
+		}
+		switch opts.HashFunc() {
+		case crypto.SHA256:
+			return awstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha256, nil
+		case crypto.SHA384:
+			return awstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha384, nil
+		case crypto.SHA512:
+			return awstypes.SigningAlgorithmSpecRsassaPkcs1V15Sha512, nil
+		default:
+			return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("AWS KMS does not support RSASSA-PKCS1-v1_5 with hash %s", opts.HashFunc())}
+		}
+	case x509.ECDSA:
+		switch opts.HashFunc() {
+		case crypto.SHA256:
+			return awstypes.SigningAlgorithmSpecEcdsaSha256, nil
+		case crypto.SHA384:
+			return awstypes.SigningAlgorithmSpecEcdsaSha384, nil
+		case crypto.SHA512:
+			return awstypes.SigningAlgorithmSpecEcdsaSha512, nil
+		default:
+			return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("AWS KMS does not support ECDSA with hash %s", opts.HashFunc())}
+		}
+	default:
+		return "", &errs.Detail{Err: ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", keyAlgorithm)}
+	}
 }
 
 // Public returns the public key corresponding to the KMS decryption key.
@@ -1056,6 +1115,40 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 
 	return nil, backend.ErrExportNotSupported
 }
+
+// ExportKeyMaterial is not supported by AWS KMS, for the same reason as
+// ExportKey: AWS KMS never releases plaintext key material -- imported or
+// generated -- outside the service boundary, so there is no raw-bytes
+// equivalent of ExportKey to offer either.
+//
+// This method exists so *Backend fully satisfies backend.ImportExportBackend
+// (it already implements every ImportBackend method for real, since AWS KMS
+// genuinely supports the BYOK import ceremony). Before this method existed,
+// the missing method made the interface assertion
+// `provider.(backend.ImportExportBackend)` fail outright, which blocked the
+// working import path along with the always-absent export one: the same API
+// call that succeeded on a backend supporting both directions returned a
+// generic 400/500 on AWS KMS. See backend.ExportBackend, which now lets a
+// caller that only needs the import half reach it directly instead of
+// depending on this refusal succeeding as a method call.
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if !attrs.IsSymmetric() {
+		return nil, backend.ErrAsymmetricKeyExportNotAllowed
+	}
+	return nil, backend.ErrExportNotSupported
+}
+
+// Verify interface compliance at compile time. *Backend implements the full
+// ImportBackend ceremony genuinely; the ExportBackend half above always
+// refuses with a typed, correctly classified error, which is what a hardware
+// security boundary that admits import but not export looks like -- not a
+// stub, since there is no incomplete-but-someday version of "extract key
+// material AWS KMS's HSM will never release."
+var _ backend.ImportBackend = (*Backend)(nil)
+var _ backend.ImportExportBackend = (*Backend)(nil)
 
 // mapWrappingAlgorithm maps backend.WrappingAlgorithm to AWS types.AlgorithmSpec.
 // AWS KMS uses AlgorithmSpec to specify the wrapping algorithm for import operations.

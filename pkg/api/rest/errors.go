@@ -144,12 +144,27 @@ func mapErrorToStatusCode(err error) int {
 		errors.Is(err, ErrMissingCiphertext),
 		errors.Is(err, backend.ErrInvalidKeyType),
 		errors.Is(err, backend.ErrInvalidKeyPartition),
+		errors.Is(err, backend.ErrAsymmetricKeyExportNotAllowed),
 		errors.Is(err, ErrSealingNotSupported):
 		return http.StatusBadRequest
 	case errors.Is(err, storage.ErrAlreadyExists):
 		return http.StatusConflict
 	case errors.Is(err, ErrServiceUnavailable):
 		return http.StatusServiceUnavailable
+	// A backend that categorically cannot import or export -- the assertion
+	// against backend.ImportBackend / backend.ExportBackend failed outright,
+	// so no key or operation on this backend was ever going to succeed here
+	// -- is a capability boundary, not a fault: 501, matching how
+	// xkms.ErrOperationNotSupported is reported by mapKeyOpError for the same
+	// reason on the crypto RPCs.
+	case errors.Is(err, backend.ErrExportNotSupported),
+		errors.Is(err, backend.ErrImportNotSupported):
+		return http.StatusNotImplemented
+	// A specific key that exists but was not created with Exportable=true is
+	// a policy refusal on that key, not a missing backend capability: 403,
+	// distinct from the 501 above.
+	case errors.Is(err, backend.ErrKeyNotExportable):
+		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
 	}

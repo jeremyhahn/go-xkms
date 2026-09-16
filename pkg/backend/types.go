@@ -67,16 +67,15 @@ const (
 // StoreType constant re-exports
 const (
 	// STORE_SW is an alias for software-based key storage
-	STORE_SW        = types.StoreSoftware
-	STORE_TPM2      = types.StoreTPM2
-	STORE_PKCS11    = types.StorePKCS11
-	STORE_AWSKMS    = types.StoreAWSKMS
-	STORE_GCPKMS    = types.StoreGCPKMS
-	STORE_AZUREKV   = types.StoreAzureKV
-	STORE_VAULT     = types.StoreVault
-	STORE_QUANTUM   = types.StoreQuantum
-	STORE_THRESHOLD = types.StoreThreshold
-	STORE_FROST     = types.StoreFrost
+	STORE_SW      = types.StoreSoftware
+	STORE_TPM2    = types.StoreTPM2
+	STORE_PKCS11  = types.StorePKCS11
+	STORE_AWSKMS  = types.StoreAWSKMS
+	STORE_GCPKMS  = types.StoreGCPKMS
+	STORE_AZUREKV = types.StoreAzureKV
+	STORE_VAULT   = types.StoreVault
+	STORE_QUANTUM = types.StoreQuantum
+	STORE_FROST   = types.StoreFrost
 )
 
 // BackendType constant re-exports
@@ -90,7 +89,6 @@ const (
 	BackendTypeAzureKV      = types.BackendTypeAzureKV
 	BackendTypeVault        = types.BackendTypeVault
 	BackendTypeQuantum      = types.BackendTypeQuantum
-	BackendTypeThreshold    = types.BackendTypeThreshold
 	BackendTypeFrost        = types.BackendTypeFrost
 	BackendTypePhone        = types.BackendTypePhone
 	BackendTypeSmartCardHSM = types.BackendTypeSmartCardHSM
