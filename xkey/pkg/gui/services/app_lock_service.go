@@ -267,14 +267,28 @@ func (s *AppLockService) sealBarrier() error {
 	return nil
 }
 
-// Unlock verifies the provided credential and, on success, transitions the
-// app to the unlocked state. When a barrier is configured and sealed — which
-// is every locked state on an installation that has one, because Lock seals
-// it — the credential is the barrier password. The first unseal of a process
-// also fires the post-unseal hook that initializes data-dependent services;
-// later unlocks reopen the barrier the stores are already bound to and skip
-// it. When there is no barrier at all, verification is delegated to
-// PINService.
+// Unlock converges the app on the fully unlocked state: the app lock open
+// and, on an installation that has one, the barrier unsealed. It is the only
+// credential-bearing entry point the front ends have, so it has to leave
+// nothing it governs locked — opening one half and returning strands the
+// other with no way back short of restarting the daemon.
+//
+// When a barrier is configured and sealed — which is every locked state on an
+// installation that has one, because Lock seals it — the credential is the
+// barrier password. The first unseal of a process also fires the post-unseal
+// hook that initializes data-dependent services; later unlocks reopen the
+// barrier the stores are already bound to and skip it. When there is no
+// barrier at all, verification is delegated to PINService.
+//
+// An app lock that is already open is not an error and never short-circuits
+// the barrier. The two halves are held independently — the barrier can be
+// sealed on its own, and the barrier is the half that gates credential
+// storage — so an unlock that saw an open app lock and returned left the
+// operator's PIN doing nothing at all.
+//
+// An unlock with nothing left to converge succeeds without spending a
+// credential check: there is no lock for the PIN to open, and a backend that
+// counts attempts must not be walked toward its lockout by a no-op.
 func (s *AppLockService) Unlock(pin string) error {
 	if pin == "" {
 		return ErrAppLockPINRequired
@@ -283,10 +297,28 @@ func (s *AppLockService) Unlock(pin string) error {
 	s.transitionMu.Lock()
 	defer s.transitionMu.Unlock()
 
-	if !s.locked.Load() {
-		return ErrAppLockAlreadyUnlocked
+	if s.locked.Load() {
+		return s.releaseAppLock(pin)
+	}
+	if !s.barrierIsSealed() {
+		return nil
 	}
 
+	s.log.Info("app unlock: app lock is already open, unsealing the barrier that stayed sealed")
+	if err := s.unsealBarrier(pin); err != nil {
+		return err
+	}
+	// The app is open and now so is the barrier, so the inactivity timer that
+	// will re-seal it has to be running again.
+	s.resetAutoLockTimer()
+	s.log.Info("barrier unsealed with the app lock already open")
+	return nil
+}
+
+// releaseAppLock performs the locked -> unlocked transition, choosing the
+// credential the current barrier state calls for. The caller holds
+// transitionMu and has established that the app lock is engaged.
+func (s *AppLockService) releaseAppLock(pin string) error {
 	// Determine barrier state:
 	// - barrierConfigured: barrier service is wired
 	// - barrierInitialized: barrier storage directory exists (Initialize was called)
@@ -340,25 +372,8 @@ func (s *AppLockService) Unlock(pin string) error {
 	case barrierSealed:
 		// Barrier is sealed: PIN is the barrier password.
 		s.log.Debug("app unlock: using barrier unseal path")
-		if err := s.barrierSvc.Unseal(pin, s.barrierStrategy); err != nil {
-			// Not every unseal failure is a bad PIN. Two of them never reach
-			// the credential at all, so reporting "invalid PIN" states a fact
-			// that was never established -- and invites the operator to retry
-			// a PIN that is correct (#510).
-			switch {
-			case errors.Is(err, qrdbsdk.ErrCorruptRootKey):
-				// The stored root key would not parse. No PIN repairs that,
-				// and the rest of the stack already calls it data loss.
-				s.log.Error("app unlock: barrier root key is corrupt - the PIN was not checked",
-					"strategy", s.barrierStrategy, "error", err)
-				return ErrAppLockStorageCorrupt
-			case unsealFailedBeforeTheCredential(err):
-				s.log.Error("app unlock: barrier seal strategy unavailable - the PIN was not checked",
-					"strategy", s.barrierStrategy, "error", err)
-				return ErrAppLockUnsealUnavailable
-			}
-			s.log.Warn("app unlock: barrier unseal failed", "error", err)
-			return ErrAppLockPINInvalid
+		if err := s.unsealBarrier(pin); err != nil {
+			return err
 		}
 	default:
 		// Barrier already unsealed or not configured: verify via PINService.
@@ -390,6 +405,44 @@ func (s *AppLockService) Unlock(pin string) error {
 	s.log.Info("app unlocked")
 
 	return nil
+}
+
+// barrierIsSealed reports whether a barrier exists and is currently closed.
+// A barrier that was never initialized is absent rather than sealed, so there
+// is nothing for an unlock to converge — the recovery that initializes one
+// from a verified PIN belongs to the app-lock transition, not here.
+func (s *AppLockService) barrierIsSealed() bool {
+	snap := s.snapshot()
+	return snap.barrierPresent && snap.barrierSealed
+}
+
+// unsealBarrier opens the sealed barrier with the supplied credential and
+// reports the failures that never reached the credential as themselves. The
+// caller holds transitionMu and has established that the barrier is sealed.
+//
+// Not every unseal failure is a bad PIN. Two of them never reach the
+// credential at all, so reporting "invalid PIN" states a fact that was never
+// established — and invites the operator to retry a PIN that is correct
+// (#510).
+func (s *AppLockService) unsealBarrier(pin string) error {
+	err := s.barrierSvc.Unseal(pin, s.barrierStrategy)
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, qrdbsdk.ErrCorruptRootKey):
+		// The stored root key would not parse. No PIN repairs that, and the
+		// rest of the stack already calls it data loss.
+		s.log.Error("app unlock: barrier root key is corrupt - the PIN was not checked",
+			"strategy", s.barrierStrategy, "error", err)
+		return ErrAppLockStorageCorrupt
+	case unsealFailedBeforeTheCredential(err):
+		s.log.Error("app unlock: barrier seal strategy unavailable - the PIN was not checked",
+			"strategy", s.barrierStrategy, "error", err)
+		return ErrAppLockUnsealUnavailable
+	}
+	s.log.Warn("app unlock: barrier unseal failed", "error", err)
+	return ErrAppLockPINInvalid
 }
 
 // snapshot observes the current state of every subsystem the app lock
@@ -438,8 +491,12 @@ func (s *AppLockService) UnlockVerified(pin string) (*UnlockOutcome, error) {
 // native host). Rendering the outcome here keeps one truthful report rather
 // than one per transport.
 //
-// Success is reported only when the attempt released something and left
-// nothing it governs locked.
+// Success means the daemon ended with nothing it governs locked, which is
+// what the caller asked for and what it will act on. It is therefore reported
+// for an unlock that had nothing left to do as well as for one that released
+// both halves; Unlocked names the halves that actually changed, so a caller
+// that needs the distinction still has it. Anything the PIN left locked is a
+// failure regardless of what else it opened.
 func (s *AppLockService) HandleUnlock(pin string) *ipc.UnlockResult {
 	outcome, err := s.UnlockVerified(pin)
 	result := &ipc.UnlockResult{
@@ -453,7 +510,8 @@ func (s *AppLockService) HandleUnlock(pin string) *ipc.UnlockResult {
 	case len(outcome.StillLocked) > 0:
 		result.Error = "still locked: " + strings.Join(outcome.StillLocked, ", ")
 	case len(outcome.Unlocked) == 0:
-		result.Error = "nothing was unlocked"
+		result.Success = true
+		s.log.Info("unlock via IPC had nothing to unlock")
 	default:
 		result.Success = true
 		s.log.Info("app unlocked via IPC", "unlocked", strings.Join(outcome.Unlocked, ", "))

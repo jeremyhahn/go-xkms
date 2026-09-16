@@ -368,6 +368,16 @@ type EnrollmentResult struct {
 
 	// IDevIDCertificate is the Initial Device IDentifier certificate
 	IDevIDCertificate *x509.Certificate
+
+	// Chain is the issuing chain the server returned after the end-entity
+	// certificates, ordered leaf-ward first (intermediate, then root) per
+	// RFC 8555 §7.4.2. It is what lets an enrolled device resolve the issuer
+	// of its own certificate: the issuer is the ENROLLMENT SERVER's CA, which
+	// a device's local certificate store does not otherwise hold.
+	//
+	// Empty when the server sent only end-entity certificates, so a caller
+	// must treat it as best-effort and not assume a path can be built.
+	Chain []*x509.Certificate
 }
 
 // AccountStatus represents the status of an ACME account

@@ -768,8 +768,10 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Encode the certificate to PEM
-	pem = encodeCertificatePEM(cert.Raw)
+	// Encode the certificate to PEM, followed by the issuing chain so the
+	// body matches the application/pem-certificate-chain media type it is
+	// served under (RFC 8555 §7.4.2).
+	pem = s.appendIssuingChain(encodeCertificatePEM(cert.Raw))
 
 	// The CA has signed: the certificate exists in the world from here on, so
 	// it is audited now rather than after delivery. A finalization hook or a
@@ -1210,8 +1212,11 @@ func (s *RestService) finalizeTCGCSR(
 	// Encode the IDevID certificate to PEM
 	idevidPEM := encodeCertificatePEM(idevidDER)
 
-	// Append the IDevID certificate to the IAK certificate
+	// Append the IDevID certificate to the IAK certificate, then the issuing
+	// chain: enroll-01 delivers two end-entity certificates, and RFC 8555
+	// §7.4.2 puts the chain after them.
 	pem = append(pem, idevidPEM...)
+	pem = s.appendIssuingChain(pem)
 
 	// Parse EK certificate for hook context
 	ekcert, err := x509.ParseCertificate(tcgCSR.CsrContents.EkCert)
@@ -1301,6 +1306,35 @@ func (s *RestService) finalizeTCGCSR(
 }
 
 // encodeCertificatePEM encodes DER-encoded certificate data to PEM format.
+// appendIssuingChain appends the CA's issuing chain (intermediate, then root)
+// after the end-entity certificate(s) already in pem.
+//
+// RFC 8555 §7.4.2 defines application/pem-certificate-chain as the end-entity
+// certificate FOLLOWED BY THE CHAIN, and the certificate resource serves this
+// body verbatim under that media type. Without the chain a client that is not
+// already provisioned with this CA cannot build a path to a trust anchor, and
+// an enrolled device cannot resolve the issuer of its own certificate at all
+// (go-trusted-platform#653: every enroll-01 node compiled a caller-admission
+// policy that admitted nobody, because CA.RootCertificate walks only the
+// LOCAL store and the issuer is remote).
+//
+// A CA that cannot produce a bundle is not fatal to issuance: the certificate
+// is already signed at this point, and withholding it would be worse than
+// serving a leaf-only body. The omission is logged instead.
+func (s *RestService) appendIssuingChain(pem []byte) []byte {
+	bundle, err := s.ca.CABundle()
+	if err != nil {
+		s.logger.Warn("ACME: serving a certificate with no issuing chain; the CA bundle is unavailable",
+			"error", err)
+		return pem
+	}
+	if len(bundle) == 0 {
+		s.logger.Warn("ACME: serving a certificate with no issuing chain; the CA bundle is empty")
+		return pem
+	}
+	return append(pem, bundle...)
+}
+
 func encodeCertificatePEM(derBytes []byte) []byte {
 	block := &pem.Block{
 		Type:  "CERTIFICATE",

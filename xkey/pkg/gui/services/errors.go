@@ -390,9 +390,6 @@ var (
 	// ErrAppLockAlreadyLocked indicates the app is already locked.
 	ErrAppLockAlreadyLocked = errors.New("app_lock: already locked")
 
-	// ErrAppLockAlreadyUnlocked indicates the app is already unlocked.
-	ErrAppLockAlreadyUnlocked = errors.New("app_lock: already unlocked")
-
 	// ErrAppLockPINRequired indicates a PIN is required to unlock the app.
 	ErrAppLockPINRequired = errors.New("app_lock: PIN required")
 
