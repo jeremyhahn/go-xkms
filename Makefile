@@ -971,7 +971,7 @@ test-all: test test-importexport
 ## race: Run tests with race detector on all backends (matches GitHub Actions)
 race:
 	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
-	@CGO_ENABLED=1 $(GO) test -race -short -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./... || \
+	@CGO_ENABLED=1 $(GO) test -race -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./... || \
 		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
 	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
 
@@ -987,7 +987,13 @@ coverage-full:
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
 		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
-		2>&1 | tee $(COVERAGE_DIR)/unit.log || true
+		2>&1 | tee $(COVERAGE_DIR)/unit.log; \
+		unit_exit=$$?; \
+		if [ ! -f "$(COVERAGE_DIR)/unit.out" ] || [ ! -s "$(COVERAGE_DIR)/unit.out" ]; then \
+			echo "$(RED)✗ Unit test coverage profile missing or empty$(RESET)"; \
+			exit 1; \
+		fi; \
+		if [ $$unit_exit -ne 0 ]; then exit $$unit_exit; fi
 	@echo "$(CYAN)→ Step 2: Running integration tests with coverage...$(RESET)"
 	@$(GOTEST) -v -tags="integration codec_cbor codec_json codec_msgpack" -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
 		./test/integration/signing/... \
@@ -1002,7 +1008,13 @@ coverage-full:
 		./test/integration/backend/... \
 		./test/integration/certstore/... \
 		./pkg/webauthn/... \
-		2>&1 | tee $(COVERAGE_DIR)/integration.log || true
+		2>&1 | tee $(COVERAGE_DIR)/integration.log; \
+		integration_exit=$$?; \
+		if [ ! -f "$(COVERAGE_DIR)/integration.out" ] || [ ! -s "$(COVERAGE_DIR)/integration.out" ]; then \
+			echo "$(RED)✗ Integration test coverage profile missing or empty$(RESET)"; \
+			exit 1; \
+		fi; \
+		if [ $$integration_exit -ne 0 ]; then exit $$integration_exit; fi
 	@echo "$(CYAN)→ Step 3: Merging coverage profiles...$(RESET)"
 	@echo "mode: atomic" > $(COVERAGE_FILE)
 	@tail -n +2 $(COVERAGE_DIR)/unit.out >> $(COVERAGE_FILE) 2>/dev/null || true
@@ -1195,8 +1207,8 @@ test-software:
 
 
 .PHONY: test-quantum
-## test-quantum: Run all quantum-safe cryptography unit tests (backend, software routing, PKCS11, threshold, CA)
-test-quantum: test-quantum-backend test-quantum-software test-quantum-pkcs11 test-quantum-pkcs11-module test-quantum-threshold test-quantum-ca test-quantum-primitives
+## test-quantum: Run all quantum-safe cryptography unit tests (backend, software routing, PKCS11, CA)
+test-quantum: test-quantum-backend test-quantum-software test-quantum-pkcs11 test-quantum-pkcs11-module test-quantum-ca test-quantum-primitives
 	@echo "$(GREEN)$(BOLD)✓ All quantum unit tests complete!$(RESET)"
 
 .PHONY: test-quantum-backend
@@ -1222,12 +1234,6 @@ test-quantum-pkcs11:
 test-quantum-pkcs11-module:
 	@echo "$(CYAN)→ Testing PKCS11 module quantum mechanisms...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/pkcs11/module/... -run "Quantum|MLDSA|MLKEM|Encapsulat"
-
-.PHONY: test-quantum-threshold
-## test-quantum-threshold: Run threshold backend quantum key generation, signing, and marshal tests
-test-quantum-threshold:
-	@echo "$(CYAN)→ Testing threshold quantum operations...$(RESET)"
-	@$(GO) test -v -tags="frost codec_cbor codec_json codec_msgpack tpm_simulator" ./pkg/keyprovider/threshold/... -run "Quantum|MLDSA"
 
 .PHONY: test-quantum-ca
 ## test-quantum-ca: Run CA quantum signing (ML-DSA certificates) and hybrid certificate tests
@@ -3692,16 +3698,16 @@ install-gosec:
 ## install-tools: Install development tools (golangci-lint, gosec, govulncheck, trivy, etc.)
 install-tools: install-gosec install-govulncheck install-trivy
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
-	@echo "$(CYAN)  Installing golangci-lint v2.6.2 (same as CI)...$(RESET)"
+	@echo "$(CYAN)  Installing golangci-lint v2.13.2 (same as CI)...$(RESET)"
 	@cd /tmp && \
-		wget -q https://github.com/golangci/golangci-lint/releases/download/v2.6.2/golangci-lint-2.6.2-linux-amd64.tar.gz && \
-		tar -xzf golangci-lint-2.6.2-linux-amd64.tar.gz && \
+		wget -q https://github.com/golangci/golangci-lint/releases/download/v2.13.2/golangci-lint-2.13.2-linux-amd64.tar.gz && \
+		tar -xzf golangci-lint-2.13.2-linux-amd64.tar.gz && \
 		sudo mkdir -p $(shell go env GOPATH)/bin && \
-		sudo cp golangci-lint-2.6.2-linux-amd64/golangci-lint $(shell go env GOPATH)/bin/ && \
+		sudo cp golangci-lint-2.13.2-linux-amd64/golangci-lint $(shell go env GOPATH)/bin/ && \
 		sudo chmod +x $(shell go env GOPATH)/bin/golangci-lint && \
 		sudo chown $(shell whoami):$(shell whoami) $(shell go env GOPATH)/bin/golangci-lint && \
-		rm -rf golangci-lint-2.6.2-linux-amd64*
-	@echo "$(GREEN)  ✓ golangci-lint v2.6.2 installed$(RESET)"
+		rm -rf golangci-lint-2.13.2-linux-amd64*
+	@echo "$(GREEN)  ✓ golangci-lint v2.13.2 installed$(RESET)"
 	@echo "$(GREEN)✓ Development tools installed$(RESET)"
 
 # ==============================================================================

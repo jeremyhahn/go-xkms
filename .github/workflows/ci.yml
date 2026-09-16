@@ -872,6 +872,24 @@ jobs:
           # without needing a display or a webview at runtime.
           go test -run '^$' -tags "gui production webkit2_41" ./cmd/acme-client
 
+      # The step above only typechecks (`-run '^$'`); it has never executed a
+      # single gui-tagged test body, so the suites in cmd/acme-client and
+      # pkg/acme/gui/... -- including the ones asserting the desktop apps
+      # (admin and client) mount their router in-process via the Wails asset
+      # handler and open no TCP listener of their own -- have never run in
+      # CI. `production` and `webkit2_41` are dropped here: without the
+      # `production` tag Wails selects its no-op unix stub (app_default_unix.go),
+      # so these tests exercise the App/router construction directly without
+      # needing libgtk/libwebkit at all, and adding those tags back would
+      # require a real webview for no benefit. `codec_json` is required
+      # instead: acme-client's DAO layer resolves accounts through go-qrdb's
+      # codec registry, and without it service construction fails at runtime
+      # with `codec "json" is not supported in this build`.
+      - name: acme-client and GUI-tagged suites run
+        if: matrix.binary == 'xkmsctl'
+        run: |
+          go test -tags "gui codec_json" ./cmd/acme-client/... ./pkg/acme/gui/...
+
       - name: Upload build artifacts
         if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6
@@ -1199,7 +1217,7 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -short -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
+        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
 
   # Job 7b: pkg/tpm2 on the in-process TPM simulator
   #

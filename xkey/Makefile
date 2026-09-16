@@ -644,11 +644,23 @@ coverage-full:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-		./cmd/... ./pkg/... 2>&1 | tee $(COVERAGE_DIR)/unit.log || true
+		./cmd/... ./pkg/... 2>&1 | tee $(COVERAGE_DIR)/unit.log; \
+		unit_exit=$$?; \
+		if [ ! -f "$(COVERAGE_DIR)/unit.out" ] || [ ! -s "$(COVERAGE_DIR)/unit.out" ]; then \
+			echo "$(RED)✗ Unit test coverage profile missing or empty$(RESET)"; \
+			exit 1; \
+		fi; \
+		if [ $$unit_exit -ne 0 ]; then exit $$unit_exit; fi
 	@echo "$(CYAN)Step 2: Running integration tests with coverage...$(RESET)"
 	@$(GO) test $(INTEGRATION_TEST_FLAGS) -race \
 		-coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
-		./test/integration/... 2>&1 | tee $(COVERAGE_DIR)/integration.log || true
+		./test/integration/... 2>&1 | tee $(COVERAGE_DIR)/integration.log; \
+		integration_exit=$$?; \
+		if [ ! -f "$(COVERAGE_DIR)/integration.out" ] || [ ! -s "$(COVERAGE_DIR)/integration.out" ]; then \
+			echo "$(RED)✗ Integration test coverage profile missing or empty$(RESET)"; \
+			exit 1; \
+		fi; \
+		if [ $$integration_exit -ne 0 ]; then exit $$integration_exit; fi
 	@echo "$(CYAN)Step 3: Merging coverage profiles...$(RESET)"
 	@echo "mode: atomic" > $(COVERAGE_FILE)
 	@tail -n +2 $(COVERAGE_DIR)/unit.out >> $(COVERAGE_FILE) 2>/dev/null || true
