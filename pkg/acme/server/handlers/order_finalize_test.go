@@ -29,8 +29,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -411,6 +413,101 @@ func TestOrderFinalizeHandler_CSRIdentifierMismatch(t *testing.T) {
 	service.OrderFinalizeHandler(resp, req)
 
 	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
+
+	// M2 regression: identifier validation happens before the order is ever
+	// moved to "processing", so a mismatched CSR must leave it retryable.
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusReady, updated.Status)
+}
+
+// TestOrderFinalizeHandler_MalformedCSRLeavesOrderReady is the M2
+// regression test: a CSR that is neither a valid x509 CertificateRequest
+// nor a valid TCG-CSR-IDEVID must leave the order retryable in "ready"
+// rather than stranded in "processing" with no path back to a usable
+// state.
+func TestOrderFinalizeHandler_MalformedCSRLeavesOrderReady(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
+	payload := OrderFinalizeRequest{
+		CSR: base64.RawURLEncoding.EncodeToString([]byte("this is not a valid CSR of any kind")),
+	}
+
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
+
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusReady, updated.Status,
+		"a malformed CSR must not strand the order in \"processing\"")
+}
+
+// TestOrderFinalizeHandler_CNLessCSRWithAuthorizedSANsSucceeds is the C1
+// regression test for the "CN-less CSR" requirement: a CSR with no
+// CommonName must still finalize successfully when its DNS SAN alone
+// covers the order's authorized identifier exactly.
+func TestOrderFinalizeHandler_CNLessCSRWithAuthorizedSANsSucceeds(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+	order.Identifiers = []entities.ACMEIdentifier{
+		{Type: common.AuthzTypeDNS, Value: "example.com"},
+	}
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	// No CommonName - the DNS SAN alone must satisfy the order.
+	template := &x509.CertificateRequest{
+		DNSNames: []string{"example.com"},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	payload := OrderFinalizeRequest{
+		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+	}
+
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var orderResp entities.ACMEOrder
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&orderResp))
+	assert.Equal(t, common.StatusValid, orderResp.Status)
 }
 
 func TestOrderFinalizeHandler_SignCSRFailure(t *testing.T) {
@@ -458,6 +555,14 @@ func TestOrderFinalizeHandler_SignCSRFailure(t *testing.T) {
 	service.OrderFinalizeHandler(resp, req)
 
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+
+	// M2 regression: a failure occurring after the order has moved to
+	// "processing" must drive it to the terminal "invalid" state with its
+	// error populated, not leave it stuck in "processing" forever.
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusInvalid, updated.Status)
+	require.NotNil(t, updated.Error)
 }
 
 func TestOrderFinalizeHandler_VerifyFailure(t *testing.T) {
@@ -504,6 +609,11 @@ func TestOrderFinalizeHandler_VerifyFailure(t *testing.T) {
 	service.OrderFinalizeHandler(resp, req)
 
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusInvalid, updated.Status)
+	require.NotNil(t, updated.Error)
 }
 
 func TestOrderFinalizeHandler_TCGCSRNotImplemented(t *testing.T) {
@@ -806,11 +916,14 @@ func TestMatchesIdentifier_MultipleIdentifiers(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// A CSR must cover the order's COMPLETE set of authorized identifiers,
+	// not merely intersect with it: CN + SANs together account for both
+	// "different.com" and "example.com" below.
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			CommonName: "example.com",
 		},
-		DNSNames: []string{"example.com"},
+		DNSNames: []string{"example.com", "different.com"},
 	}
 
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
@@ -819,7 +932,6 @@ func TestMatchesIdentifier_MultipleIdentifiers(t *testing.T) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
-	// Order with multiple identifiers where one matches
 	order := &entities.ACMEOrder{
 		Identifiers: []entities.ACMEIdentifier{
 			{Type: common.AuthzTypeDNS, Value: "different.com"},
@@ -830,6 +942,289 @@ func TestMatchesIdentifier_MultipleIdentifiers(t *testing.T) {
 	matches, err := matchesIdentifier(csr, order)
 	require.NoError(t, err)
 	assert.True(t, matches)
+}
+
+// TestMatchesIdentifier_UnauthorizedSAN is the C1 regression test: a CSR
+// whose CommonName is authorized but which also carries an unauthorized
+// DNS SAN must be rejected. Before the fix, matchesIdentifier only ever
+// compared the CommonName, so "evil.com" here would have been silently
+// copied into the issued certificate.
+func TestMatchesIdentifier_UnauthorizedSAN(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "example.com",
+		},
+		DNSNames: []string{"example.com", "evil.com"},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.NoError(t, err)
+	assert.False(t, matches, "CSR carrying an unauthorized SAN must not match the order")
+}
+
+// TestMatchesIdentifier_UnauthorizedIPSAN covers the same C1 gap for IP SANs.
+func TestMatchesIdentifier_UnauthorizedIPSAN(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "example.com",
+		},
+		IPAddresses: []net.IP{net.ParseIP("203.0.113.5")},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.NoError(t, err)
+	assert.False(t, matches, "CSR carrying an unauthorized IP SAN must not match the order")
+}
+
+// TestMatchesIdentifier_CNLessWithAuthorizedSANs verifies that a CSR with no
+// CommonName is still valid when its SANs alone cover the authorized
+// identifier set exactly.
+func TestMatchesIdentifier_CNLessWithAuthorizedSANs(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		DNSNames: []string{"example.com"},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.NoError(t, err)
+	assert.True(t, matches)
+}
+
+// TestMatchesIdentifier_MissingAuthorizedIdentifier verifies that a CSR
+// which omits one of the order's authorized identifiers is rejected: the
+// two sets must correspond exactly, in both directions.
+func TestMatchesIdentifier_MissingAuthorizedIdentifier(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "example.com",
+		},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+			{Type: common.AuthzTypeDNS, Value: "other.example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.NoError(t, err)
+	assert.False(t, matches)
+}
+
+// TestMatchesIdentifier_EmailSANRejected verifies that a CSR carrying an
+// email address SAN is rejected outright, regardless of whether its other
+// identifiers are authorized.
+func TestMatchesIdentifier_EmailSANRejected(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "example.com",
+		},
+		EmailAddresses: []string{"attacker@example.com"},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.Error(t, err)
+	assert.False(t, matches)
+	acmeErr, ok := err.(*entities.Error)
+	require.True(t, ok)
+	assert.Contains(t, acmeErr.Type, common.ErrTypeMalformedError)
+}
+
+// TestMatchesIdentifier_URISANRejected verifies that a CSR carrying a URI
+// SAN is rejected outright.
+func TestMatchesIdentifier_URISANRejected(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	uri, err := url.Parse("https://example.com/attacker")
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "example.com",
+		},
+		URIs: []*url.URL{uri},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.Error(t, err)
+	assert.False(t, matches)
+	acmeErr, ok := err.(*entities.Error)
+	require.True(t, ok)
+	assert.Contains(t, acmeErr.Type, common.ErrTypeMalformedError)
+}
+
+// TestMatchesEndorse01Identifier_RejectsUnauthorizedSAN verifies that the
+// endorse-01 matching path - which intentionally does not compare the CSR's
+// CommonName against the order's permanent identifier - still enforces
+// exact correspondence for any DNS/IP SAN the CSR carries.
+func TestMatchesEndorse01Identifier_RejectsUnauthorizedSAN(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "device-123",
+		},
+		DNSNames: []string{"evil.example.com"},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "irrelevant-ek-pubkey-b64"},
+		},
+	}
+
+	matches, err := matchesEndorse01Identifier(csr, order)
+	require.NoError(t, err)
+	assert.False(t, matches)
+}
+
+// TestMatchesEndorse01Identifier_NoSANsMatches verifies the common
+// endorse-01 case: no DNS/IP SANs requested, none authorized, and the CN is
+// not checked against the permanent identifier.
+func TestMatchesEndorse01Identifier_NoSANsMatches(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "device-123",
+		},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "irrelevant-ek-pubkey-b64"},
+		},
+	}
+
+	matches, err := matchesEndorse01Identifier(csr, order)
+	require.NoError(t, err)
+	assert.True(t, matches)
+}
+
+// TestMatchesEndorse01Identifier_EmailSANRejected verifies the endorse-01
+// path also rejects email SANs outright.
+func TestMatchesEndorse01Identifier_EmailSANRejected(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "device-123",
+		},
+		EmailAddresses: []string{"attacker@example.com"},
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "irrelevant-ek-pubkey-b64"},
+		},
+	}
+
+	matches, err := matchesEndorse01Identifier(csr, order)
+	require.Error(t, err)
+	assert.False(t, matches)
 }
 
 func TestMatchesIdentifier_PermanentIdentifierError(t *testing.T) {
@@ -1071,6 +1466,9 @@ func TestOrderFinalizeHandler_PermanentIdentifierEKCertificate(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// No DNS/IP/email SANs: the order's only authorized identifier is the
+	// permanent-identifier (the EK public key), so matchesEndorse01Identifier
+	// requires the CSR to carry no other names.
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			CommonName:         "device-123",
@@ -1080,8 +1478,6 @@ func TestOrderFinalizeHandler_PermanentIdentifierEKCertificate(t *testing.T) {
 			Locality:           []string{"Test City"},
 			Province:           []string{"Test State"},
 		},
-		DNSNames:       []string{"device.example.com"},
-		EmailAddresses: []string{"test@example.com"},
 	}
 
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
@@ -1105,6 +1501,68 @@ func TestOrderFinalizeHandler_PermanentIdentifierEKCertificate(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&orderResp)
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusValid, orderResp.Status)
+}
+
+// TestOrderFinalizeHandler_EndorseEKCertificateRejectsUnauthorizedSAN is the
+// end-to-end C1 regression test for the endorse-01 flow: a CSR that pairs a
+// permanent-identifier order with a DNS SAN the order never authorized must
+// be rejected rather than have that SAN copied into the issued EK
+// certificate (see pkg/ca.CA.IssueEKCertificate).
+func TestOrderFinalizeHandler_EndorseEKCertificateRejectsUnauthorizedSAN(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	ekKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	ekPubKeyBytes, err := x509.MarshalPKIXPublicKey(&ekKey.PublicKey)
+	require.NoError(t, err)
+	ekPubKeyB64 := base64.RawURLEncoding.EncodeToString(ekPubKeyBytes)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+	order.Identifiers = []entities.ACMEIdentifier{
+		{Type: common.AuthzTypePermanentIdentifier, Value: ekPubKeyB64},
+	}
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "device-123",
+		},
+		// Not authorized by the order: only the permanent identifier is.
+		DNSNames: []string{"unauthorized.example.com"},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	payload := OrderFinalizeRequest{
+		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+	}
+
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
+
+	// The order must remain retryable, not stranded in "processing" (M2):
+	// identifier validation happens before the order ever transitions.
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusReady, updated.Status)
 }
 
 func TestOrderFinalizeHandler_IssueEKCertificateFailure(t *testing.T) {

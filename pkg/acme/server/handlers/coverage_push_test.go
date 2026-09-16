@@ -1636,7 +1636,8 @@ func TestCoveragePush_ResolveTenantSigningCA_NoTenantID(t *testing.T) {
 		TenantID: "",
 	}
 
-	result := service.resolveTenantSigningCA(context.Background(), account, "general")
+	result, err := service.resolveTenantSigningCA(context.Background(), account, "general")
+	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -1649,8 +1650,10 @@ func TestCoveragePush_ResolveTenantSigningCA_NonTenantAwareFactory(t *testing.T)
 		TenantID: "tenant-123",
 	}
 
-	// Standard storage factory doesn't support TenantAwareFactory
-	result := service.resolveTenantSigningCA(context.Background(), account, "general")
+	// Standard storage factory doesn't support TenantAwareFactory: a
+	// tenant-bound account fails closed rather than using the global CA.
+	result, err := service.resolveTenantSigningCA(context.Background(), account, "general")
+	assert.ErrorIs(t, err, ErrTenantStorageUnsupported)
 	assert.Nil(t, result)
 }
 
@@ -1662,7 +1665,8 @@ func TestCoveragePush_GetTenantCASigner_NilSigningCAInfo(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	signer := service.getTenantCASigner(context.Background(), nil)
+	signer, err := service.getTenantCASigner(context.Background(), nil)
+	assert.NoError(t, err)
 	assert.Nil(t, signer)
 }
 
@@ -1674,7 +1678,8 @@ func TestCoveragePush_GetTenantCASigner_UseGlobalDefault(t *testing.T) {
 		UseGlobalDefault: true,
 	}
 
-	signer := service.getTenantCASigner(context.Background(), signingCAInfo)
+	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
+	assert.NoError(t, err)
 	assert.Nil(t, signer)
 }
 
@@ -1690,7 +1695,8 @@ func TestCoveragePush_GetTenantCASigner_NoKMSService(t *testing.T) {
 		Type:             entities.SigningCATypeIntermediate,
 	}
 
-	signer := service.getTenantCASigner(context.Background(), signingCAInfo)
+	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
+	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
 	assert.Nil(t, signer)
 }
 
@@ -1707,7 +1713,8 @@ func TestCoveragePush_GetTenantCASigner_UnknownType(t *testing.T) {
 		Type:             "unknown-type", // Invalid type
 	}
 
-	signer := service.getTenantCASigner(context.Background(), signingCAInfo)
+	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
+	assert.ErrorIs(t, err, ErrTenantCATypeUnsupported)
 	assert.Nil(t, signer)
 }
 

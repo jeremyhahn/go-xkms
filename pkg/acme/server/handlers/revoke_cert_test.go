@@ -29,6 +29,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,11 +66,15 @@ func createTestCertificateWithSerial(t *testing.T, service *RestService, account
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 
-	// Create ACME certificate entity
+	// Create ACME certificate entity. PEM mirrors the certificate the "CA"
+	// just issued: revocation now requires the submitted certificate to
+	// byte-match the stored PEM record (see RevokeCertHandler), so a test
+	// fixture with an empty PEM would make every revocation attempt fail as
+	// an unauthorized mismatch regardless of what the test intends to check.
 	acmeCert := &entities.ACMECertificate{
 		ID:        serialNumber.Uint64(),
 		CertURL:   "",
-		PEM:       "",
+		PEM:       string(encodeCertificatePEM(certDER)),
 		IssuedAt:  time.Now(),
 		Status:    common.StatusValid,
 		ExpiresAt: time.Now().Add(365 * 24 * time.Hour),
@@ -114,11 +120,12 @@ func createTestCertificateWithAuthorization(t *testing.T, service *RestService, 
 	certificateDAO, err := service.storageFactory.CertificateDAO()
 	require.NoError(t, err)
 
-	// Create ACME certificate entity
+	// Create ACME certificate entity with the stored PEM matching the
+	// certificate under test (see createTestCertificateWithSerial for why).
 	acmeCert := &entities.ACMECertificate{
 		ID:        serialNumber.Uint64(),
 		CertURL:   "",
-		PEM:       "",
+		PEM:       string(encodeCertificatePEM(certDER)),
 		IssuedAt:  time.Now(),
 		Status:    common.StatusValid,
 		ExpiresAt: time.Now().Add(365 * 24 * time.Hour),
@@ -623,6 +630,237 @@ func TestRevokeCertHandler_UnauthorizedRevocation(t *testing.T) {
 	// Should return 401 Unauthorized because no authorization exists
 	require.Equal(t, http.StatusUnauthorized, resp.Code)
 	assert.Contains(t, resp.Body.String(), "unauthorized")
+}
+
+// mockRevokeCA wraps MockCA to observe and control RevokeCert behavior for
+// regression tests covering H2 (CA revocation must actually be invoked).
+type mockRevokeCA struct {
+	MockCA
+	revokeCertCalled bool
+	revokeCertCert   *x509.Certificate
+	revokeCertOpts   ca.RevokeOptions
+	revokeCertErr    error
+}
+
+func (m *mockRevokeCA) RevokeCert(_ context.Context, cert *x509.Certificate, opts ca.RevokeOptions) error {
+	m.revokeCertCalled = true
+	m.revokeCertCert = cert
+	m.revokeCertOpts = opts
+	return m.revokeCertErr
+}
+
+// TestRevokeCertHandler_ForgedCertificateWithVictimSerial verifies H1: a
+// self-signed certificate forged with a victim's serial number, carrying no
+// authorized identifiers of its own, must not be able to revoke the
+// victim's certificate merely because the serial numbers collide.
+func TestRevokeCertHandler_ForgedCertificateWithVictimSerial(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	victimKey := generateTestKey(t)
+	victimAccount := createTestAccount(t, service, victimKey)
+
+	// The victim's real, issued certificate with a valid authorization.
+	acmeCert, victimCert := createTestCertificateWithAuthorization(t, service, victimKey, victimAccount.ID)
+
+	// The attacker has its own account and crafts a self-signed certificate
+	// that reuses the victim's serial number. It carries no CN/SAN, so it
+	// would previously satisfy the buggy "authorize from submitted cert"
+	// logic (empty domain list => nothing to check).
+	attackerKey := generateTestKey(t)
+	attackerAccount := createTestAccount(t, service, attackerKey)
+
+	forgedTemplate := &x509.Certificate{
+		SerialNumber:          victimCert.SerialNumber,
+		Subject:               pkix.Name{},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	forgedDER, err := x509.CreateCertificate(rand.Reader, forgedTemplate, forgedTemplate,
+		attackerKey.PublicKey, attackerKey.PrivateKey)
+	require.NoError(t, err)
+
+	payload := RevokeCertRequest{
+		Certificate: base64.RawURLEncoding.EncodeToString(forgedDER),
+		Reason:      RevocationReasonKeyCompromise,
+	}
+
+	url := service.baseRESTURI + "/acme/revoke-cert"
+	req := createJWSRequest(t, service, attackerKey, url, payload, true, attackerAccount.ID)
+
+	resp := httptest.NewRecorder()
+	service.RevokeCertHandler(resp, req)
+
+	require.Equal(t, http.StatusUnauthorized, resp.Code)
+
+	// The victim's stored certificate must remain untouched.
+	ctx := context.Background()
+	certificateDAO, err := service.storageFactory.CertificateDAO()
+	require.NoError(t, err)
+	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusValid, stored.Status)
+}
+
+// TestRevokeCertHandler_StoredCertificateWithNoIdentifiers verifies H1's
+// "require at least one identity" rule: a stored certificate with neither a
+// CommonName nor DNS SANs has nothing to authorize revocation against and
+// must be rejected even though the submitted certificate byte-matches.
+func TestRevokeCertHandler_StoredCertificateWithNoIdentifiers(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               pkix.Name{}, // No CommonName
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, key.PublicKey, key.PrivateKey)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	certificateDAO, err := service.storageFactory.CertificateDAO()
+	require.NoError(t, err)
+	acmeCert := &entities.ACMECertificate{
+		ID:        serialNumber.Uint64(),
+		PEM:       string(encodeCertificatePEM(certDER)),
+		IssuedAt:  time.Now(),
+		Status:    common.StatusValid,
+		ExpiresAt: time.Now().Add(365 * 24 * time.Hour),
+	}
+	require.NoError(t, certificateDAO.Save(ctx, acmeCert))
+
+	payload := RevokeCertRequest{
+		Certificate: base64.RawURLEncoding.EncodeToString(certDER),
+		Reason:      RevocationReasonKeyCompromise,
+	}
+	url := service.baseRESTURI + "/acme/revoke-cert"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.RevokeCertHandler(resp, req)
+
+	require.Equal(t, http.StatusUnauthorized, resp.Code)
+}
+
+// TestRevokeCertHandler_InvokesCARevocation verifies H2: revoking a
+// certificate through the ACME endpoint must call the canonical CA
+// revocation entry point (ca.RevokeCert), not just flip the ACME DAO's
+// status field.
+func TestRevokeCertHandler_InvokesCARevocation(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	mockCA := &mockRevokeCA{}
+	service.ca = mockCA
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+	acmeCert, x509Cert := createTestCertificateWithAuthorization(t, service, key, account.ID)
+
+	payload := RevokeCertRequest{
+		Certificate: base64.RawURLEncoding.EncodeToString(x509Cert.Raw),
+		Reason:      RevocationReasonKeyCompromise,
+	}
+	url := service.baseRESTURI + "/acme/revoke-cert"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.RevokeCertHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.True(t, mockCA.revokeCertCalled, "RevokeCertHandler must call the CA's RevokeCert")
+	assert.Equal(t, x509Cert.SerialNumber, mockCA.revokeCertCert.SerialNumber)
+	assert.Equal(t, RevocationReasonKeyCompromise, mockCA.revokeCertOpts.Reason)
+
+	ctx := context.Background()
+	certificateDAO, err := service.storageFactory.CertificateDAO()
+	require.NoError(t, err)
+	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusRevoked, stored.Status)
+}
+
+// TestRevokeCertHandler_CARevocationFailureBlocksACMERecord verifies that
+// when the canonical CA revocation fails for a reason other than "already
+// revoked", the ACME record is not updated to "revoked": the two stores
+// must not be allowed to disagree about whether the certificate is actually
+// revoked.
+func TestRevokeCertHandler_CARevocationFailureBlocksACMERecord(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	mockCA := &mockRevokeCA{revokeCertErr: caerrors.InternalServerError("hardware key store unavailable")}
+	service.ca = mockCA
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+	acmeCert, x509Cert := createTestCertificateWithAuthorization(t, service, key, account.ID)
+
+	payload := RevokeCertRequest{
+		Certificate: base64.RawURLEncoding.EncodeToString(x509Cert.Raw),
+		Reason:      RevocationReasonKeyCompromise,
+	}
+	url := service.baseRESTURI + "/acme/revoke-cert"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.RevokeCertHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+
+	ctx := context.Background()
+	certificateDAO, err := service.storageFactory.CertificateDAO()
+	require.NoError(t, err)
+	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusValid, stored.Status)
+}
+
+// TestRevokeCertHandler_CAAlreadyRevokedIsSuccess verifies that a CA
+// reporting ca.ErrAlreadyRevoked is treated as a successful revocation: the
+// desired end state already holds, so the ACME record still moves to
+// "revoked" rather than surfacing an error to the client.
+func TestRevokeCertHandler_CAAlreadyRevokedIsSuccess(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	mockCA := &mockRevokeCA{revokeCertErr: ca.ErrAlreadyRevoked}
+	service.ca = mockCA
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+	acmeCert, x509Cert := createTestCertificateWithAuthorization(t, service, key, account.ID)
+
+	payload := RevokeCertRequest{
+		Certificate: base64.RawURLEncoding.EncodeToString(x509Cert.Raw),
+		Reason:      RevocationReasonKeyCompromise,
+	}
+	url := service.baseRESTURI + "/acme/revoke-cert"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.RevokeCertHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	ctx := context.Background()
+	certificateDAO, err := service.storageFactory.CertificateDAO()
+	require.NoError(t, err)
+	stored, err := certificateDAO.Get(ctx, acmeCert.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusRevoked, stored.Status)
 }
 
 // Helper function to convert reason code to string for test names

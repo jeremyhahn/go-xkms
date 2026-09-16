@@ -972,10 +972,17 @@ func TestOrderFinalizeHandler_EKCertWithIPAddresses(t *testing.T) {
 	require.NoError(t, err)
 	ekPubKeyB64 := base64.RawURLEncoding.EncodeToString(ekPubKeyBytes)
 
+	// The order authorizes both the permanent identifier (the EK public key
+	// being certified) and the two IP SANs the CSR below requests: since
+	// matchesEndorse01Identifier requires exact correspondence for DNS/IP
+	// SANs, an unauthorized IP would otherwise be rejected before the EK
+	// certificate issuance path this test exercises is ever reached.
 	order := createTestOrderSimple(t, service, account.ID)
 	order.Status = common.StatusReady
 	order.Identifiers = []entities.ACMEIdentifier{
 		{Type: common.AuthzTypePermanentIdentifier, Value: ekPubKeyB64},
+		{Type: common.AuthzTypeIP, Value: "192.168.1.100"},
+		{Type: common.AuthzTypeIP, Value: "10.0.0.1"},
 	}
 
 	ctx := context.Background()

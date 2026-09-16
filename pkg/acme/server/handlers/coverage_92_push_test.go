@@ -758,6 +758,7 @@ func TestCov92_RevokeCertHandler_CNAlreadyInDNSNames(t *testing.T) {
 
 	acmeCert := &entities.ACMECertificate{
 		ID:        serialNumber.Uint64(),
+		PEM:       string(encodeCertificatePEM(certDER)),
 		Status:    common.StatusValid,
 		IssuedAt:  time.Now(),
 		ExpiresAt: time.Now().Add(365 * 24 * time.Hour),
@@ -1107,6 +1108,9 @@ func TestCov92_OrderFinalizeHandler_EKCertWithOrgFields(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// No DNS/email SANs: the order's only authorized identifier is the
+	// permanent-identifier (the EK public key), so the CSR must not carry
+	// any other names (see matchesEndorse01Identifier).
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{
 			CommonName:         "test-ek-device-full",
@@ -1116,8 +1120,6 @@ func TestCov92_OrderFinalizeHandler_EKCertWithOrgFields(t *testing.T) {
 			Locality:           []string{"San Francisco"},
 			Province:           []string{"California"},
 		},
-		DNSNames:       []string{"device.example.com"},
-		EmailAddresses: []string{"device@example.com"},
 	}
 
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)

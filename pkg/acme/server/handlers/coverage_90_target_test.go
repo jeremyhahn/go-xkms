@@ -483,7 +483,8 @@ func TestResolveTenantSigningCA_NoTenantIDCoverage(t *testing.T) {
 		TenantID: "",
 	}
 
-	result := service.resolveTenantSigningCA(ctx, account, "general")
+	result, err := service.resolveTenantSigningCA(ctx, account, "general")
+	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -497,8 +498,10 @@ func TestResolveTenantSigningCA_NonTenantAwareFactoryCoverage(t *testing.T) {
 		TenantID: "tenant-1",
 	}
 
-	// Default storage factory is not tenant-aware
-	result := service.resolveTenantSigningCA(ctx, account, "general")
+	// Default storage factory is not tenant-aware: a tenant-bound account
+	// fails closed rather than using the global CA.
+	result, err := service.resolveTenantSigningCA(ctx, account, "general")
+	assert.ErrorIs(t, err, ErrTenantStorageUnsupported)
 	assert.Nil(t, result)
 }
 
@@ -507,7 +510,8 @@ func TestGetTenantCASigner_NilSigningCAInfoCoverage(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	result := service.getTenantCASigner(ctx, nil)
+	result, err := service.getTenantCASigner(ctx, nil)
+	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
 
@@ -520,7 +524,8 @@ func TestGetTenantCASigner_UseGlobalDefaultCoverage(t *testing.T) {
 		UseGlobalDefault: true,
 	}
 
-	result := service.getTenantCASigner(ctx, signingCAInfo)
+	result, err := service.getTenantCASigner(ctx, signingCAInfo)
+	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
 

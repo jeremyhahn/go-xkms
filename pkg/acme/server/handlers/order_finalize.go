@@ -45,61 +45,106 @@ type OrderFinalizeRequest struct {
 	CSR string `json:"csr"`
 }
 
+// Tenant CA resolution errors. These are returned by resolveTenantSigningCA,
+// getTenantCASigner, and tenantIssuerCertificate whenever a tenant-bound
+// account's signing CA cannot be safely resolved. Per the fail-closed
+// policy, none of these conditions may fall back to the global CA: a
+// tenant-bound order whose CA cannot be resolved is rejected outright. The
+// only legitimate way to sign a tenant-bound order with the global CA is an
+// explicit SigningCAInfo.UseGlobalDefault, which entities.Tenant.GetSigningCA
+// returns when the tenant has no root or intermediate CA configured at all.
+var (
+	// ErrTenantStorageUnsupported is returned when a tenant-bound account's
+	// storage factory does not implement storage.TenantAwareFactory, so the
+	// tenant's CA configuration cannot be looked up at all.
+	ErrTenantStorageUnsupported = errors.New("handlers: tenant-bound issuance requires a tenant-aware storage factory")
+
+	// ErrTenantDAOUnavailable is returned when the tenant-aware storage
+	// factory cannot produce a TenantDAO.
+	ErrTenantDAOUnavailable = errors.New("handlers: tenant DAO unavailable")
+
+	// ErrTenantSignerUnavailable is returned when the tenant's CA signer
+	// cannot be obtained from KMS, including when no KMSService is configured.
+	ErrTenantSignerUnavailable = errors.New("handlers: tenant CA signer unavailable")
+
+	// ErrTenantCATypeUnsupported is returned when a resolved SigningCAInfo
+	// carries a CA type other than intermediate or root.
+	ErrTenantCATypeUnsupported = errors.New("handlers: unsupported tenant signing CA type")
+
+	// ErrTenantIssuerCertUnavailable is returned when the tenant's own
+	// issuer certificate cannot be retrieved or parsed from KMS.
+	ErrTenantIssuerCertUnavailable = errors.New("handlers: tenant CA issuer certificate unavailable")
+
+	// ErrTenantSignerIssuerMismatch is returned when a tenant CA signer's
+	// public key does not match the issuer certificate it would be paired
+	// with, which would produce a certificate chain that never verifies.
+	ErrTenantSignerIssuerMismatch = errors.New("handlers: tenant CA signer does not match issuer certificate")
+)
+
 // resolveTenantSigningCA determines which CA should sign certificates for the given account.
 // For multi-tenant deployments, this looks up the tenant and uses GetSigningCA to determine
-// the signing authority. For single-tenant deployments or when tenant lookup fails,
-// falls back to the global CA.
+// the signing authority. For single-tenant deployments (account.TenantID == ""), it returns
+// (nil, nil) to indicate the global CA should be used.
+//
+// Tenant-bound accounts fail closed: if the tenant cannot be resolved, or is
+// suspended/inactive, this returns a non-nil error rather than silently
+// falling back to the global CA. The global CA is only used for a
+// tenant-bound account when GetSigningCA explicitly reports
+// SigningCAInfo.UseGlobalDefault, which reflects the tenant's own
+// configuration rather than a resolution failure.
 //
 // Parameters:
 //   - ctx: the request context
 //   - account: the ACME account requesting certificate issuance
 //   - purpose: the intended purpose (e.g., "tpm-endorsement", "general")
 //
-// Returns the SigningCAInfo indicating which CA should sign, or nil to use global default.
-func (s *RestService) resolveTenantSigningCA(ctx context.Context, account *entities.ACMEAccount, purpose string) *entities.SigningCAInfo {
+// Returns the SigningCAInfo indicating which CA should sign, (nil, nil) to
+// use the global default for a non-tenant account, or a non-nil error if a
+// tenant-bound account's signing CA could not be resolved.
+func (s *RestService) resolveTenantSigningCA(ctx context.Context, account *entities.ACMEAccount, purpose string) (*entities.SigningCAInfo, error) {
 	// If no tenant ID, use global CA
 	if account.TenantID == "" {
 		s.logger.Debug("Account has no tenant ID, using global CA",
 			"account_id", account.ID)
-		return nil
+		return nil, nil
 	}
 
 	// Check if storage factory supports tenant-aware operations
 	tenantAwareFactory, ok := s.storageFactory.(storage.TenantAwareFactory)
 	if !ok {
-		s.logger.Debug("Storage factory does not support TenantAwareFactory, using global CA",
+		s.logger.Error("Storage factory does not support tenant-aware operations, refusing tenant-bound issuance",
 			"account_id", account.ID,
 			"tenant_id", account.TenantID)
-		return nil
+		return nil, ErrTenantStorageUnsupported
 	}
 
 	// Get TenantDAO
 	tenantDAO, err := tenantAwareFactory.TenantDAO()
 	if err != nil {
-		s.logger.Warn("Failed to get TenantDAO, using global CA",
+		s.logger.Error("Failed to get TenantDAO, refusing tenant-bound issuance",
 			"error", err,
 			"account_id", account.ID,
 			"tenant_id", account.TenantID)
-		return nil
+		return nil, ErrTenantDAOUnavailable
 	}
 
 	// Look up the tenant by string ID
 	tenant, err := tenantDAO.Get(ctx, entities.StringToEntityID(account.TenantID))
 	if err != nil {
-		s.logger.Warn("Failed to get tenant, using global CA",
+		s.logger.Error("Failed to get tenant, refusing tenant-bound issuance",
 			"error", err,
 			"account_id", account.ID,
 			"tenant_id", account.TenantID)
-		return nil
+		return nil, ErrTenantNotFound
 	}
 
 	// Check if tenant is active
 	if !tenant.IsActive() {
-		s.logger.Warn("Tenant is not active, using global CA",
+		s.logger.Error("Tenant is not active, refusing tenant-bound issuance",
 			"account_id", account.ID,
 			"tenant_id", account.TenantID,
 			"tenant_status", tenant.Status)
-		return nil
+		return nil, ErrTenantInactive
 	}
 
 	// Get the signing CA for this tenant
@@ -112,29 +157,38 @@ func (s *RestService) resolveTenantSigningCA(ctx context.Context, account *entit
 		"purpose", purpose,
 		"use_global_default", signingCA.UseGlobalDefault)
 
-	return signingCA
+	return signingCA, nil
 }
 
 // getTenantCASigner retrieves the appropriate signer for tenant CA operations.
-// Returns a crypto.Signer from KMS if tenant-specific CA is configured, or nil
-// to indicate the global CA should be used.
+// Returns a crypto.Signer from KMS if tenant-specific CA is configured, or
+// (nil, nil) when signingCAInfo is nil or explicitly configured to use the
+// global default.
+//
+// A tenant-bound SigningCAInfo whose signer cannot be obtained from KMS -
+// including when no KMSService is configured at all - fails closed with a
+// non-nil error rather than falling back to the global CA.
 //
 // Parameters:
 //   - ctx: the request context
 //   - signingCAInfo: the resolved signing CA info from resolveTenantSigningCA
 //
-// Returns crypto.Signer for tenant signing, or nil to use global CA.
-func (s *RestService) getTenantCASigner(ctx context.Context, signingCAInfo *entities.SigningCAInfo) crypto.Signer {
-	// If no signing CA info or using global default, use global CA
+// Returns the crypto.Signer for tenant signing, (nil, nil) to use the global
+// CA when explicitly configured, or a non-nil error if the tenant signer
+// could not be resolved.
+func (s *RestService) getTenantCASigner(ctx context.Context, signingCAInfo *entities.SigningCAInfo) (crypto.Signer, error) {
+	// If no signing CA info or explicitly configured to use the global
+	// default, use the global CA.
 	if signingCAInfo == nil || signingCAInfo.UseGlobalDefault {
-		return nil
+		return nil, nil
 	}
 
-	// If KMS service is not configured, use global CA
+	// A tenant-bound signing CA with no KMS service configured cannot be
+	// resolved: fail closed rather than silently using the global CA.
 	if s.kmsService == nil {
-		s.logger.Debug("KMSService not configured, using global CA",
+		s.logger.Error("KMSService not configured, refusing tenant-bound issuance",
 			"tenant_id", signingCAInfo.TenantID)
-		return nil
+		return nil, ErrTenantSignerUnavailable
 	}
 
 	// Determine the key purpose based on signing CA type
@@ -145,20 +199,20 @@ func (s *RestService) getTenantCASigner(ctx context.Context, signingCAInfo *enti
 	case entities.SigningCATypeRoot:
 		purpose = kms.KeyPurposeTenantRootCA
 	default:
-		s.logger.Warn("Unknown signing CA type, using global CA",
+		s.logger.Error("Unsupported signing CA type, refusing tenant-bound issuance",
 			"type", signingCAInfo.Type,
 			"tenant_id", signingCAInfo.TenantID)
-		return nil
+		return nil, ErrTenantCATypeUnsupported
 	}
 
 	// Get the signer from KMS
 	signer, err := s.kmsService.GetSigningKey(ctx, signingCAInfo.TenantID, purpose)
 	if err != nil {
-		s.logger.Warn("Failed to get tenant CA signer from KMS, using global CA",
+		s.logger.Error("Failed to get tenant CA signer from KMS, refusing tenant-bound issuance",
 			"error", err,
 			"tenant_id", signingCAInfo.TenantID,
 			"purpose", purpose)
-		return nil
+		return nil, ErrTenantSignerUnavailable
 	}
 
 	s.logger.Info("Using tenant CA signer from KMS",
@@ -166,7 +220,82 @@ func (s *RestService) getTenantCASigner(ctx context.Context, signingCAInfo *enti
 		"purpose", purpose,
 		"signing_ca_type", signingCAInfo.Type)
 
-	return signer
+	return signer, nil
+}
+
+// tenantIssuerCertificate retrieves and parses the tenant's own issuing
+// certificate from KMS for the CA type described by signingCAInfo. It never
+// falls back to the global CA's certificates: a tenant-specific signer must
+// only ever be paired with that same tenant's issuer certificate, since
+// x509.CreateCertificate signs with the supplied signer but stamps the
+// issuer identity from the supplied certificate. Pairing a tenant key with
+// a different CA's certificate produces a certificate whose signature does
+// not verify against its stated issuer.
+func (s *RestService) tenantIssuerCertificate(ctx context.Context, signingCAInfo *entities.SigningCAInfo) (*x509.Certificate, error) {
+	if s.kmsService == nil {
+		return nil, ErrTenantIssuerCertUnavailable
+	}
+
+	purpose := kms.KeyPurposeTenantIntermediateCA
+	if signingCAInfo.Type == entities.SigningCATypeRoot {
+		purpose = kms.KeyPurposeTenantRootCA
+	}
+
+	certDER, err := s.kmsService.GetCertificate(ctx, signingCAInfo.TenantID, purpose)
+	if err != nil {
+		s.logger.Error("Failed to get tenant CA certificate from KMS, refusing tenant-bound issuance",
+			"error", err,
+			"tenant_id", signingCAInfo.TenantID)
+		return nil, ErrTenantIssuerCertUnavailable
+	}
+	if len(certDER) == 0 {
+		s.logger.Error("Tenant CA certificate from KMS is empty, refusing tenant-bound issuance",
+			"tenant_id", signingCAInfo.TenantID)
+		return nil, ErrTenantIssuerCertUnavailable
+	}
+
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		s.logger.Error("Failed to parse tenant CA certificate from KMS, refusing tenant-bound issuance",
+			"error", err,
+			"tenant_id", signingCAInfo.TenantID)
+		return nil, ErrTenantIssuerCertUnavailable
+	}
+
+	s.logger.Info("Using tenant CA certificate from KMS",
+		"tenant_id", signingCAInfo.TenantID,
+		"signing_ca_type", signingCAInfo.Type)
+
+	return cert, nil
+}
+
+// signerMatchesIssuer reports whether signer's public key matches the
+// issuer certificate's public key. x509.CreateCertificate signs the new
+// certificate with signer but populates the issuer name and Authority Key
+// Identifier from issuerCert; if the two keys do not correspond to the same
+// private key, the resulting signature will never verify against
+// issuerCert, so a mismatch here must never be allowed to reach signing.
+func signerMatchesIssuer(signer crypto.Signer, issuerCert *x509.Certificate) bool {
+	type publicKeyEqualer interface {
+		Equal(x crypto.PublicKey) bool
+	}
+	pub, ok := signer.Public().(publicKeyEqualer)
+	if !ok {
+		return false
+	}
+	return pub.Equal(issuerCert.PublicKey)
+}
+
+// tenantSigningCAProblem converts a tenant CA resolution failure into the
+// RFC 8555 problem document returned to the client. Every case here is a
+// rejection, never a fallback to the global CA: a suspended or inactive
+// tenant is the account's own fault (unauthorized), while every other cause
+// is a server-side CA resolution failure the client cannot correct.
+func tenantSigningCAProblem(err error) *entities.Error {
+	if errors.Is(err, ErrTenantInactive) {
+		return common.Unauthorized("Tenant is not active")
+	}
+	return common.ServerInternal("Failed to resolve tenant signing CA")
 }
 
 // resolveTenantComplianceConfig retrieves the effective compliance configuration
@@ -274,12 +403,10 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Set the order status to processing
-	order.Status = common.StatusProcessing
-	if err := orderDAO.Save(ctx, order); err != nil {
-		writeError(w, common.ServerInternal("Failed to update order status"))
-		return
-	}
+	// The order is not moved to "processing" until the payload, the CSR and
+	// the identifiers it carries have all been validated: a malformed
+	// submission must leave the order retryable in "ready", not stranded in
+	// "processing" forever with no path back to a usable state.
 
 	var finalizeRequest OrderFinalizeRequest
 
@@ -336,25 +463,47 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// Encode the CSR to PEM
 	csrPEM := encodeCSRToPEM(csrDER)
 
-	// Check if this is an endorse-01 order (x509 CSR + permanent-identifier)
-	// For endorse-01, the identifier is the IP address but the CSR contains the EK public key.
-	// Skip strict identifier matching for endorse-01 since the validation was done during
-	// the challenge phase (via EAB/server policy). The CSR public key will be certified.
+	// Determine whether this is an endorse-01 order (x509 CSR + permanent-identifier
+	// whose value is the EK public key being certified, not a name in the CSR). The
+	// permanent identifier itself was already authorized when the endorse-01
+	// challenge was validated (via EAB/server policy), so it is not re-checked
+	// against the CSR here - only the CSR's DNS/IP SANs (and the blanket
+	// email/URI rejection) are still enforced, via matchesEndorse01Identifier.
 	isEndorse01 := len(order.Identifiers) > 0 &&
-		order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier &&
-		csr.PublicKey != nil
+		order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier
+	if isEndorse01 {
+		if _, ok := decodeEndorse01PublicKey(order.Identifiers[0].Value); !ok {
+			isEndorse01 = false
+		}
+	}
 
-	// For non-endorse-01 orders (DNS type), ensure the CSR matches the order identifiers
-	if !isEndorse01 {
-		matches, err := matchesIdentifier(csr, order)
-		if err != nil {
-			writeError(w, err.(*entities.Error))
-			return
-		}
-		if !matches {
-			writeError(w, common.MalformedError("CSR does not match order identifiers", nil))
-			return
-		}
+	// Ensure the CSR's identity set corresponds exactly to the order's
+	// authorized identifiers per RFC 8555 Section 7.4 before any certificate
+	// work begins.
+	var matches bool
+	var matchErr error
+	if isEndorse01 {
+		matches, matchErr = matchesEndorse01Identifier(csr, order)
+	} else {
+		matches, matchErr = matchesIdentifier(csr, order)
+	}
+	if matchErr != nil {
+		writeError(w, matchErr.(*entities.Error))
+		return
+	}
+	if !matches {
+		writeError(w, common.MalformedError("CSR does not match order identifiers", nil))
+		return
+	}
+
+	// The CSR and its identifiers are now validated: only from this point can
+	// the order meaningfully move to "processing". Any failure past this line
+	// must drive the order to a terminal "invalid" state via failOrder rather
+	// than leave it stranded.
+	order.Status = common.StatusProcessing
+	if err := orderDAO.Save(ctx, order); err != nil {
+		writeError(w, common.ServerInternal("Failed to update order status"))
+		return
 	}
 
 	// Perform CAA validation for DNS identifiers before certificate issuance
@@ -384,12 +533,12 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				// Check if this is a CAA validation failure
 				var caaErr *server.ErrCAAValidationFailed
 				if errors.As(err, &caaErr) {
-					writeError(w, common.CAAError(err.Error()))
+					s.failOrder(ctx, orderDAO, order, w, common.CAAError(err.Error()))
 					return
 				}
 
 				// Other errors (DNS errors, etc.) - return as CAA error per RFC
-				writeError(w, common.CAAError(fmt.Sprintf("CAA validation error: %v", err)))
+				s.failOrder(ctx, orderDAO, order, w, common.CAAError(fmt.Sprintf("CAA validation error: %v", err)))
 				return
 			}
 
@@ -410,55 +559,46 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	if len(order.Identifiers) > 0 && order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier {
 		purpose = entities.CAPurposeTPMEndorsement
 	}
-	signingCAInfo = s.resolveTenantSigningCA(ctx, account, purpose)
+	signingCAInfo, err = s.resolveTenantSigningCA(ctx, account, purpose)
+	if err != nil {
+		s.logger.Error("Failed to resolve tenant signing CA",
+			"error", err, "account_id", account.ID, "tenant_id", account.TenantID)
+		s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+		return
+	}
 
-	// Get the appropriate signer based on tenant CA configuration
-	// If KMSService is configured and we have a tenant-specific CA, use that signer
-	// Otherwise, fall back to the global CA
-	tenantSigner := s.getTenantCASigner(ctx, signingCAInfo)
+	// Get the appropriate signer based on tenant CA configuration. A nil
+	// signer means the account is not tenant-bound, or the tenant is
+	// explicitly configured (SigningCAInfo.UseGlobalDefault) to use the
+	// global CA - never a fallback from an unresolved tenant CA.
+	tenantSigner, err := s.getTenantCASigner(ctx, signingCAInfo)
+	if err != nil {
+		s.logger.Error("Failed to get tenant CA signer",
+			"error", err, "tenant_id", account.TenantID)
+		s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+		return
+	}
 
-	// Get issuer certificate for tenant signing (if available)
+	// Resolve the tenant's own issuer certificate when a tenant-specific
+	// signer is in play. The tenant key must never be paired with the
+	// global CA's issuer certificate, so there is no fallback here: if the
+	// tenant's certificate cannot be retrieved, or its key does not match
+	// the tenant signer, issuance fails closed.
 	var issuerCert *x509.Certificate
-	if tenantSigner != nil && signingCAInfo != nil {
-		// Try to get the tenant's CA certificate from KMS
-		if s.kmsService != nil {
-			purpose := kms.KeyPurposeTenantIntermediateCA
-			if signingCAInfo.Type == entities.SigningCATypeRoot {
-				purpose = kms.KeyPurposeTenantRootCA
-			}
-			certDER, kmsErr := s.kmsService.GetCertificate(ctx, signingCAInfo.TenantID, purpose)
-			if kmsErr == nil && len(certDER) > 0 {
-				parsedCert, parseErr := x509.ParseCertificate(certDER)
-				if parseErr == nil {
-					issuerCert = parsedCert
-					s.logger.Info("Using tenant CA certificate from KMS",
-						"tenant_id", signingCAInfo.TenantID,
-						"signing_ca_type", signingCAInfo.Type)
-				} else {
-					s.logger.Warn("Failed to parse tenant CA certificate from KMS",
-						"error", parseErr,
-						"tenant_id", signingCAInfo.TenantID)
-				}
-			}
+	if tenantSigner != nil {
+		issuerCert, err = s.tenantIssuerCertificate(ctx, signingCAInfo)
+		if err != nil {
+			s.logger.Error("Failed to resolve tenant CA issuer certificate",
+				"error", err, "tenant_id", signingCAInfo.TenantID)
+			s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(err))
+			return
 		}
 
-		// Fall back to global CA's issuer certificate if tenant cert not available
-		if issuerCert == nil {
-			issuerCert, err = s.ca.TrustedIntermediate()
-			if err != nil || issuerCert == nil {
-				// No intermediate, try root
-				issuerCert, err = s.ca.TrustedRoot()
-			}
-			if err != nil || issuerCert == nil {
-				s.logger.Warn("Failed to get issuer certificate, falling back to global CA",
-					"error", err,
-					"tenant_id", signingCAInfo.TenantID)
-				tenantSigner = nil
-			} else {
-				s.logger.Info("Using tenant CA with global issuer certificate",
-					"tenant_id", signingCAInfo.TenantID,
-					"signing_ca_type", signingCAInfo.Type)
-			}
+		if !signerMatchesIssuer(tenantSigner, issuerCert) {
+			s.logger.Error("Tenant CA signer does not match issuer certificate",
+				"error", ErrTenantSignerIssuerMismatch, "tenant_id", signingCAInfo.TenantID)
+			s.failOrder(ctx, orderDAO, order, w, tenantSigningCAProblem(ErrTenantSignerIssuerMismatch))
+			return
 		}
 	}
 
@@ -471,67 +611,62 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	if len(order.Identifiers) > 0 &&
 		order.Identifiers[0].Type == common.AuthzTypePermanentIdentifier {
 
-		// Try to decode the permanent identifier as a base64url-encoded PKIX public key
-		// This distinguishes endorse-01 (base64 public key) from device-attest-01 (IP/hostname)
-		ekPubKeyBytes, err := base64.RawURLEncoding.DecodeString(order.Identifiers[0].Value)
-		if err == nil {
-			// Successfully decoded base64 - try to parse as PKIX public key
-			ekPubKey, parseErr := x509.ParsePKIXPublicKey(ekPubKeyBytes)
-			if parseErr == nil {
-				// This is an endorse-01 order - issue EK certificate with TCG/TP extensions
-				isEndorse01Order = true
+		// Distinguish endorse-01 (identifier is a base64url-encoded PKIX
+		// public key) from device-attest-01 (identifier is an IP/hostname).
+		if ekPubKey, ok := decodeEndorse01PublicKey(order.Identifiers[0].Value); ok {
+			// This is an endorse-01 order - issue EK certificate with TCG/TP extensions
+			isEndorse01Order = true
 
-				ekRequest := &ca.CertificateRequest{
-					Subject: ca.Subject{
-						CommonName: csr.Subject.CommonName,
-					},
-					PermanentID: order.Identifiers[0].Value,
-				}
+			ekRequest := &ca.CertificateRequest{
+				Subject: ca.Subject{
+					CommonName: csr.Subject.CommonName,
+				},
+				PermanentID: order.Identifiers[0].Value,
+			}
 
-				// Copy organization info from CSR if available
-				if len(csr.Subject.Organization) > 0 {
-					ekRequest.Subject.Organization = csr.Subject.Organization[0]
-				}
-				if len(csr.Subject.OrganizationalUnit) > 0 {
-					ekRequest.Subject.OrganizationalUnit = csr.Subject.OrganizationalUnit[0]
-				}
-				if len(csr.Subject.Country) > 0 {
-					ekRequest.Subject.Country = csr.Subject.Country[0]
-				}
-				if len(csr.Subject.Locality) > 0 {
-					ekRequest.Subject.Locality = csr.Subject.Locality[0]
-				}
-				if len(csr.Subject.Province) > 0 {
-					ekRequest.Subject.Province = csr.Subject.Province[0]
-				}
+			// Copy organization info from CSR if available
+			if len(csr.Subject.Organization) > 0 {
+				ekRequest.Subject.Organization = csr.Subject.Organization[0]
+			}
+			if len(csr.Subject.OrganizationalUnit) > 0 {
+				ekRequest.Subject.OrganizationalUnit = csr.Subject.OrganizationalUnit[0]
+			}
+			if len(csr.Subject.Country) > 0 {
+				ekRequest.Subject.Country = csr.Subject.Country[0]
+			}
+			if len(csr.Subject.Locality) > 0 {
+				ekRequest.Subject.Locality = csr.Subject.Locality[0]
+			}
+			if len(csr.Subject.Province) > 0 {
+				ekRequest.Subject.Province = csr.Subject.Province[0]
+			}
 
-				// Add SANs from CSR
-				if len(csr.DNSNames) > 0 || len(csr.IPAddresses) > 0 || len(csr.EmailAddresses) > 0 {
-					ekRequest.SANS = &ca.SubjectAlternativeNames{
-						DNS:   csr.DNSNames,
-						Email: csr.EmailAddresses,
-					}
-					for _, ip := range csr.IPAddresses {
-						ekRequest.SANS.IPs = append(ekRequest.SANS.IPs, ip.String())
-					}
+			// Add SANs from CSR. matchesEndorse01Identifier has already
+			// rejected email/URI SANs and any DNS/IP SAN not present in the
+			// order's authorized identifiers, so every name copied here was
+			// already authorized.
+			if len(csr.DNSNames) > 0 || len(csr.IPAddresses) > 0 {
+				ekRequest.SANS = &ca.SubjectAlternativeNames{
+					DNS: csr.DNSNames,
 				}
-
-				// Issue EK certificate using tenant CA if available
-				if tenantSigner != nil && issuerCert != nil {
-					ekRequest.Signer = tenantSigner
-					ekRequest.IssuerCert = issuerCert
-				}
-				cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
-				if err != nil {
-					s.logger.Error("Failed to issue EK certificate", "error", err)
-					writeError(w, common.ServerInternal("Failed to issue EK certificate"))
-					return
+				for _, ip := range csr.IPAddresses {
+					ekRequest.SANS.IPs = append(ekRequest.SANS.IPs, ip.String())
 				}
 			}
-		}
 
-		// If not endorse-01, log that we're treating this as device-attest-01 or standard cert
-		if !isEndorse01Order {
+			// Issue EK certificate using tenant CA if available
+			if tenantSigner != nil && issuerCert != nil {
+				ekRequest.Signer = tenantSigner
+				ekRequest.IssuerCert = issuerCert
+			}
+			cert, err = s.ca.IssueEKCertificate(r.Context(), ekRequest, ekPubKey)
+			if err != nil {
+				s.logger.Error("Failed to issue EK certificate", "error", err)
+				s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to issue EK certificate"))
+				return
+			}
+		} else {
+			// Not endorse-01: treat this as device-attest-01 or a standard cert.
 			s.logger.Debug("Permanent identifier is not base64 public key, treating as device-attest-01",
 				"identifier", order.Identifiers[0].Value)
 		}
@@ -563,7 +698,8 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					"error", err,
 					"order_id", order.ID,
 					"account_id", account.ID)
-				writeError(w, common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err)))
+				s.failOrder(ctx, orderDAO, order, w,
+					common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err)))
 				return
 			}
 		}
@@ -591,7 +727,8 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					"error", hookErr,
 					"order_id", order.ID,
 					"account_id", account.ID)
-				writeError(w, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr)))
+				s.failOrder(ctx, orderDAO, order, w,
+					common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr)))
 				return
 			}
 			signOpts.ExtraExtensions = append(signOpts.ExtraExtensions, extraExts...)
@@ -599,7 +736,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 
 		cert, err = s.ca.SignCSR(r.Context(), csrPEM, signOpts)
 		if err != nil {
-			writeError(w, common.ServerInternal("Failed to sign CSR"))
+			s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to sign CSR"))
 			return
 		}
 	}
@@ -608,7 +745,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// X.509 serial numbers can be up to 20 bytes, but we store as uint64
 	// If the serial number is too large, extract only the lower 64 bits
 	if cert.SerialNumber == nil {
-		writeError(w, common.ServerInternal("Certificate serial number is nil"))
+		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Certificate serial number is nil"))
 		return
 	}
 	if cert.SerialNumber.IsUint64() {
@@ -627,7 +764,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// the client. We pass nil for the signer since we don't have access
 	// to the client's private key and we're just validating the chain.
 	if _, err := s.ca.Verify(cert, nil); err != nil {
-		writeError(w, common.ServerInternal("Failed to verify certificate"))
+		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to verify certificate"))
 		return
 	}
 
@@ -663,7 +800,8 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			"client_ip", r.RemoteAddr)
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
-			writeError(w, common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err)))
+			s.failOrder(ctx, orderDAO, order, w,
+				common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err)))
 			return
 		}
 	} else {
@@ -715,40 +853,173 @@ func (s *RestService) sendFinalizeResponse(
 	s.orderResponse(w, order)
 }
 
-// Check if the identifiers in the CSR match the order identifiers
+// matchesIdentifier verifies that a CSR's complete identity set - its
+// Subject Common Name together with every DNS and IP Subject Alternative
+// Name - corresponds exactly to the order's authorized identifiers, per
+// RFC 8555 Section 7.4. Both directions are checked: a name the CSR carries
+// that the order did not authorize is rejected (this is what previously let
+// unauthorized SAN issuance through, since only the CommonName was ever
+// compared), and an authorized identifier the CSR omits is also rejected. A
+// CSR with no CommonName is valid as long as its SANs alone cover the
+// authorized set exactly.
+//
+// Email address and URI SANs are never permitted in an ACME CSR and are
+// rejected outright, since the CA has no order-identifier type to authorize
+// them against and RFC 8555 orders only ever carry "dns" or "ip"
+// identifiers (aside from the permanent-identifier extension handled
+// below).
+//
+// Orders authorizing a permanent-identifier (enroll-01, device-attest-01)
+// are matched by comparing the permanent identifier embedded in the CSR
+// against the order's identifier value, preserving the pre-existing
+// permanent-identifier semantics unchanged. The endorse-01 flow, where the
+// order's permanent identifier is the EK public key being certified rather
+// than a name the CSR carries, uses matchesEndorse01Identifier instead.
 func matchesIdentifier(
 	csr *x509.CertificateRequest,
 	order *entities.ACMEOrder) (bool, error) {
 
-	// Ensure the identifier matches
-	matchesIdentifier := false
+	if len(csr.EmailAddresses) > 0 {
+		return false, common.MalformedError("CSR must not contain email address SANs", nil)
+	}
+	if len(csr.URIs) > 0 {
+		return false, common.MalformedError("CSR must not contain URI SANs", nil)
+	}
+
 	for _, identifier := range order.Identifiers {
-
-		switch identifier.Type {
-
-		case common.AuthzTypePermanentIdentifier:
+		if identifier.Type == common.AuthzTypePermanentIdentifier {
 			permanentID, err := parseCertificateRequestPermanentIdentifier(csr)
 			if err != nil {
 				return false, common.MalformedError("Failed to parse permanent-identifier", nil)
 			}
-			if identifier.Value == permanentID {
-				matchesIdentifier = true
-				goto found
-			}
-		case common.AuthzTypeDNS:
-			if identifier.Value == csr.Subject.CommonName {
-				matchesIdentifier = true
-				goto found
-			}
+			return identifier.Value == permanentID, nil
+		}
+	}
 
+	authorized := make(map[string]bool, len(order.Identifiers))
+	for _, identifier := range order.Identifiers {
+		switch identifier.Type {
+		case common.AuthzTypeDNS, common.AuthzTypeIP:
+			authorized[identifier.Value] = true
 		default:
 			return false,
 				common.UnsupportedIdentifier(fmt.Sprintf("Invalid identifier: %s", identifier.Type))
 		}
 	}
 
-found:
-	return matchesIdentifier, nil
+	requested := make(map[string]bool, len(csr.DNSNames)+len(csr.IPAddresses)+1)
+	if csr.Subject.CommonName != "" {
+		requested[csr.Subject.CommonName] = true
+	}
+	for _, name := range csr.DNSNames {
+		requested[name] = true
+	}
+	for _, ip := range csr.IPAddresses {
+		requested[ip.String()] = true
+	}
+
+	if len(requested) == 0 || len(requested) != len(authorized) {
+		return false, nil
+	}
+	for name := range requested {
+		if !authorized[name] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// matchesEndorse01Identifier validates a permanent-identifier order's CSR
+// for the endorse-01 flow, where the order's identifier is the EK public
+// key being certified rather than a name the CSR is expected to carry. The
+// permanent-identifier comparison performed by matchesIdentifier is
+// intentionally left out here - that identity was already authorized when
+// the endorse-01 challenge was validated - but every other identity the CSR
+// carries must still correspond exactly to the order's authorized DNS/IP
+// identifiers, and email/URI SANs remain forbidden, exactly as in
+// matchesIdentifier.
+func matchesEndorse01Identifier(
+	csr *x509.CertificateRequest,
+	order *entities.ACMEOrder) (bool, error) {
+
+	if len(csr.EmailAddresses) > 0 {
+		return false, common.MalformedError("CSR must not contain email address SANs", nil)
+	}
+	if len(csr.URIs) > 0 {
+		return false, common.MalformedError("CSR must not contain URI SANs", nil)
+	}
+
+	authorized := make(map[string]bool, len(order.Identifiers))
+	for _, identifier := range order.Identifiers {
+		switch identifier.Type {
+		case common.AuthzTypeDNS, common.AuthzTypeIP:
+			authorized[identifier.Value] = true
+		case common.AuthzTypePermanentIdentifier:
+			// The permanent identifier is the EK public key authorized during
+			// the endorse-01 challenge, not a name the CSR carries. It is
+			// intentionally excluded from the CSR name comparison below.
+		default:
+			return false,
+				common.UnsupportedIdentifier(fmt.Sprintf("Invalid identifier: %s", identifier.Type))
+		}
+	}
+
+	requested := make(map[string]bool, len(csr.DNSNames)+len(csr.IPAddresses))
+	for _, name := range csr.DNSNames {
+		requested[name] = true
+	}
+	for _, ip := range csr.IPAddresses {
+		requested[ip.String()] = true
+	}
+
+	if len(requested) != len(authorized) {
+		return false, nil
+	}
+	for name := range requested {
+		if !authorized[name] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// decodeEndorse01PublicKey attempts to decode a permanent-identifier order's
+// identifier value as a base64url-encoded PKIX public key. This is what
+// distinguishes an endorse-01 order - where the identifier IS the EK public
+// key being certified - from a device-attest-01 order, where the identifier
+// is an IP address or hostname. Returns the parsed key and true on success.
+func decodeEndorse01PublicKey(identifierValue string) (crypto.PublicKey, bool) {
+	ekPubKeyBytes, err := base64.RawURLEncoding.DecodeString(identifierValue)
+	if err != nil {
+		return nil, false
+	}
+	ekPubKey, err := x509.ParsePKIXPublicKey(ekPubKeyBytes)
+	if err != nil {
+		return nil, false
+	}
+	return ekPubKey, true
+}
+
+// failOrder transitions an order to the terminal "invalid" status with the
+// given error and writes the error response. It must be used for every
+// failure that occurs once the order has moved to "processing": per RFC
+// 8555 Section 7.1.6, an order the CA cannot fulfill must reach a terminal
+// state with its error field populated, never remain stranded in
+// "processing" indefinitely.
+func (s *RestService) failOrder(
+	ctx context.Context,
+	orderDAO qrdbsdk.GenericDAO[*entities.ACMEOrder],
+	order *entities.ACMEOrder,
+	w http.ResponseWriter,
+	acmeErr *entities.Error) {
+
+	order.Status = common.StatusInvalid
+	order.Error = acmeErr
+	if saveErr := orderDAO.Save(ctx, order); saveErr != nil {
+		s.logger.Error("Failed to persist invalid order status",
+			"error", saveErr, "order_id", order.ID)
+	}
+	writeError(w, acmeErr)
 }
 
 // Finalize a TCG-CSR-IDEVID for a successful enroll-01 challenge verification

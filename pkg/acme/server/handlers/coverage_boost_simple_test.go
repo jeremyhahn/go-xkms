@@ -392,7 +392,8 @@ func TestResolveTenantSigningCA_DAOErrorSimple(t *testing.T) {
 	service, cleanup := setupServiceWithTenantFactory(t, dao)
 	defer cleanup()
 
-	result := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	assert.ErrorIs(t, err, ErrTenantNotFound)
 	assert.Nil(t, result)
 }
 
@@ -401,7 +402,8 @@ func TestResolveTenantSigningCA_TenantInactiveSimple(t *testing.T) {
 	service, cleanup := setupServiceWithTenantFactory(t, dao)
 	defer cleanup()
 
-	result := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	assert.ErrorIs(t, err, ErrTenantInactive)
 	assert.Nil(t, result)
 }
 
@@ -412,7 +414,8 @@ func TestResolveTenantSigningCA_WithIntermediateSimple(t *testing.T) {
 	service, cleanup := setupServiceWithTenantFactory(t, dao)
 	defer cleanup()
 
-	result := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, entities.SigningCATypeIntermediate, result.Type)
 }
@@ -422,7 +425,8 @@ func TestResolveTenantSigningCA_FallbackGlobalSimple(t *testing.T) {
 	service, cleanup := setupServiceWithTenantFactory(t, dao)
 	defer cleanup()
 
-	result := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
+	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.UseGlobalDefault)
 }
@@ -435,7 +439,8 @@ func TestGetTenantCASigner_NilKMSSimple(t *testing.T) {
 	service, _, cleanup := setupTestServiceWithMockCA(t)
 	defer cleanup()
 
-	result := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
+	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
+	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
 	assert.Nil(t, result)
 }
 
@@ -444,7 +449,8 @@ func TestGetTenantCASigner_UnknownTypeSimple(t *testing.T) {
 	defer cleanup()
 	service.kmsService = &mockKMSServiceSimple{signers: make(map[string]crypto.Signer)}
 
-	result := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: "unknown", TenantID: "t1"})
+	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: "unknown", TenantID: "t1"})
+	assert.ErrorIs(t, err, ErrTenantCATypeUnsupported)
 	assert.Nil(t, result)
 }
 
@@ -453,7 +459,8 @@ func TestGetTenantCASigner_KMSErrorSimple(t *testing.T) {
 	defer cleanup()
 	service.kmsService = &mockKMSServiceSimple{signers: make(map[string]crypto.Signer), getSignerErr: errors.New("kms fail")}
 
-	result := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
+	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
+	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
 	assert.Nil(t, result)
 }
 
@@ -466,7 +473,8 @@ func TestGetTenantCASigner_IntermediateSuccessSimple(t *testing.T) {
 		"t1-" + string(kms.KeyPurposeTenantIntermediateCA): key,
 	}}
 
-	result := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
+	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
+	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 
@@ -479,7 +487,8 @@ func TestGetTenantCASigner_RootSuccessSimple(t *testing.T) {
 		"t1-" + string(kms.KeyPurposeTenantRootCA): key,
 	}}
 
-	result := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeRoot, TenantID: "t1"})
+	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeRoot, TenantID: "t1"})
+	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 

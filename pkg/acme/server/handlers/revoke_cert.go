@@ -14,9 +14,12 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -24,6 +27,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // Revocation statuses (for /revoke-cert)
@@ -95,23 +100,67 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The submitted certificate only carries a serial number that was used
+	// to look up the stored record above; its other fields (subject, SANs,
+	// signature) are entirely attacker-controlled. A self-signed certificate
+	// forged with a victim's serial number would otherwise sail through
+	// authorization using names the attacker chose. Requiring byte-equality
+	// with the certificate this server actually issued closes that gap, and
+	// every authorization decision below uses the STORED certificate's
+	// identities, never the submitted one's.
+	storedCert, err := parseStoredCertificatePEM(entity.PEM)
+	if err != nil {
+		s.logger.Error("Failed to parse stored certificate record",
+			slog.Uint64("account_id", account.ID),
+			slog.String("serial", cert.SerialNumber.String()),
+			slog.String("error", err.Error()))
+		writeError(w, common.ServerInternal("Failed to parse stored certificate"))
+		return
+	}
+	if !bytes.Equal(cert.Raw, storedCert.Raw) {
+		s.logger.Warn("Revocation request certificate does not match stored record",
+			slog.Uint64("account_id", account.ID),
+			slog.String("serial", cert.SerialNumber.String()))
+
+		s.recordAudit(s.auditLog.LogWithContext(auditContext(r),
+			audit.EventAuthorizationFailed,
+			auditAccountRef(account.ID),
+			"certificate:"+cert.SerialNumber.String(),
+			"revoke",
+			audit.ResultFailure,
+			map[string]interface{}{
+				"serial_number":     cert.SerialNumber.String(),
+				"unauthorized_kind": "submitted certificate does not match stored record",
+			}))
+		writeError(w, common.Unauthorized("Certificate does not match the certificate on record"))
+		return
+	}
+
 	// RFC 8555 Section 7.6: Authorization for revocation
 	// An account can revoke a certificate if it has valid authorizations
-	// for all identifiers in the certificate.
-	// Extract DNS names from certificate (CN and SANs)
-	dnsNames := cert.DNSNames
-	if cert.Subject.CommonName != "" {
+	// for all identifiers in the certificate. Extract DNS names from the
+	// STORED certificate (CN and SANs) - never the submitted one.
+	dnsNames := storedCert.DNSNames
+	if storedCert.Subject.CommonName != "" {
 		// Check if CN is already in DNSNames
 		found := false
 		for _, name := range dnsNames {
-			if name == cert.Subject.CommonName {
+			if name == storedCert.Subject.CommonName {
 				found = true
 				break
 			}
 		}
 		if !found {
-			dnsNames = append(dnsNames, cert.Subject.CommonName)
+			dnsNames = append(dnsNames, storedCert.Subject.CommonName)
 		}
+	}
+
+	if len(dnsNames) == 0 {
+		s.logger.Warn("Certificate has no identifiers to authorize revocation against",
+			slog.Uint64("account_id", account.ID),
+			slog.String("serial", cert.SerialNumber.String()))
+		writeError(w, common.Unauthorized("Certificate has no identifiers to authorize revocation"))
+		return
 	}
 
 	// Verify the account has valid authorizations for all domains
@@ -171,6 +220,22 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 		slog.Uint64("account_id", account.ID),
 		slog.String("serial", cert.SerialNumber.String()))
 
+	// Revoke the certificate with the canonical CA revocation entry point
+	// (mirroring pkg/acme/admin/service.go's RevokeCertificate) before
+	// touching the ACME record, so the CA's revocation list and any CRL it
+	// publishes actually reflect the revocation instead of only the ACME
+	// bookkeeping. An already-revoked certificate is treated as success:
+	// the desired end state - revoked - already holds.
+	if err := s.ca.RevokeCert(ctx, storedCert, ca.RevokeOptions{Reason: reason}); err != nil {
+		if !errors.Is(err, ca.ErrAlreadyRevoked) {
+			s.logger.Error("Failed to revoke certificate with CA",
+				slog.String("serial", cert.SerialNumber.String()),
+				slog.String("error", err.Error()))
+			writeError(w, common.ServerInternal("Failed to revoke certificate"))
+			return
+		}
+	}
+
 	entity.Status = common.StatusRevoked
 
 	if err := certificateDAO.Save(ctx, entity); err != nil {
@@ -178,14 +243,21 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.logger.Debug("Revoking certificate", slog.String("serial", cert.SerialNumber.String()))
+	s.logger.Debug("Revoked certificate", slog.String("serial", cert.SerialNumber.String()))
 	s.recordAudit(audit.LogCertificateRevoked(auditContext(r), s.auditLog,
 		auditAccountID(account.ID), cert.SerialNumber.String(), reason))
 
-	// Revoke the certificate
-	// Note: The CA interface doesn't expose a Revoke method
-	// The certificate status has already been updated in the database above
-	// If the CA needs to publish a CRL, that should happen automatically via a background process
-
 	w.WriteHeader(http.StatusOK)
+}
+
+// parseStoredCertificatePEM decodes the PEM-encoded certificate stored on an
+// ACMECertificate record back into an *x509.Certificate, so revocation
+// authorization and CA revocation can be performed against the certificate
+// this server actually issued rather than one supplied by the caller.
+func parseStoredCertificatePEM(pemData string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(pemData))
+	if block == nil {
+		return nil, caerrors.SerializationFailureError("no PEM block found in stored certificate record")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }

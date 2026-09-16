@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build local && iam && codec_json
+//go:build codec_json
 
 package handlers
 
@@ -34,8 +34,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/server/degradation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -291,7 +289,17 @@ func TestNewAccountHandler_ExternalAccountBindingProvided_OptionalPath(t *testin
 	assert.Equal(t, http.StatusCreated, resp.Code)
 }
 
-// TestNewAccountHandler_AccountExistsNotOnlyReturnExisting tests when account exists and OnlyReturnExisting is false
+// TestNewAccountHandler_AccountExistsNotOnlyReturnExisting tests when account exists and OnlyReturnExisting is false.
+//
+// Per RFC 8555 Section 7.3: "if the server receives a newAccount request
+// signed with a key for which it already has an account registered with
+// the provided account key, then it MUST return a response with a 200 (OK)
+// status code and provide the URL of that account in the Location header
+// field." This applies regardless of onlyReturnExisting; that flag only
+// changes behavior when NO account exists for the key (Section 7.3.1: the
+// server MUST reply 400 accountDoesNotExist rather than creating one).
+// "accountExists" is not among the error types RFC 8555 Section 6.7
+// defines, so the original assertion here was never RFC-conformant.
 func TestNewAccountHandler_AccountExistsNotOnlyReturnExisting(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
@@ -311,14 +319,16 @@ func TestNewAccountHandler_AccountExistsNotOnlyReturnExisting(t *testing.T) {
 	resp := httptest.NewRecorder()
 	service.NewAccountHandler(resp, req)
 
-	assert.Equal(t, http.StatusConflict, resp.Code)
+	assert.Equal(t, http.StatusOK, resp.Code)
 
-	var acmeErr entities.Error
-	err := json.NewDecoder(resp.Body).Decode(&acmeErr)
+	// Per RFC 8555 Section 7.1.2, the account object body carries no "id"
+	// field; the account's identity is conveyed via the Location header.
+	assert.Equal(t, service.accountURL(existingAccount), resp.Header().Get("Location"))
+
+	var returned entities.ACMEAccount
+	err := json.NewDecoder(resp.Body).Decode(&returned)
 	require.NoError(t, err)
-	// Account exists returns accountExists error
-	assert.Contains(t, acmeErr.Type, "accountExists")
-	_ = existingAccount
+	assert.Equal(t, existingAccount.Status, returned.Status)
 }
 
 // TestKeyChangeHandler_MissingInnerJWSSignatures tests KeyChangeHandler when inner JWS has no signatures

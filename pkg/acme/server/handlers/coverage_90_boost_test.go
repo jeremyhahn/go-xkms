@@ -1,3 +1,5 @@
+//go:build codec_json
+
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
@@ -10,8 +12,6 @@
 //
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
-
-//go:build local
 
 package handlers
 

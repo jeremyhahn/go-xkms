@@ -955,23 +955,25 @@ func TestResolveTenantSigningCA_Paths(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("No tenant ID returns nil", func(t *testing.T) {
+	t.Run("No tenant ID returns nil, nil", func(t *testing.T) {
 		account := &entities.ACMEAccount{
 			ID:       12345,
 			TenantID: "",
 		}
 
-		result := service.resolveTenantSigningCA(ctx, account, "general")
+		result, err := service.resolveTenantSigningCA(ctx, account, "general")
+		assert.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
-	t.Run("Non-tenant aware factory returns nil", func(t *testing.T) {
+	t.Run("Non-tenant aware factory fails closed", func(t *testing.T) {
 		account := &entities.ACMEAccount{
 			ID:       12345,
 			TenantID: "tenant1",
 		}
 
-		result := service.resolveTenantSigningCA(ctx, account, "general")
+		result, err := service.resolveTenantSigningCA(ctx, account, "general")
+		assert.ErrorIs(t, err, ErrTenantStorageUnsupported)
 		assert.Nil(t, result)
 	})
 }
@@ -986,32 +988,35 @@ func TestGetTenantCASigner_Paths(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("Nil signing CA info returns nil", func(t *testing.T) {
-		result := service.getTenantCASigner(ctx, nil)
+	t.Run("Nil signing CA info returns nil, nil", func(t *testing.T) {
+		result, err := service.getTenantCASigner(ctx, nil)
+		assert.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
-	t.Run("UseGlobalDefault returns nil", func(t *testing.T) {
+	t.Run("UseGlobalDefault returns nil, nil", func(t *testing.T) {
 		info := &entities.SigningCAInfo{
 			UseGlobalDefault: true,
 		}
 
-		result := service.getTenantCASigner(ctx, info)
+		result, err := service.getTenantCASigner(ctx, info)
+		assert.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
-	t.Run("No KMS service returns nil", func(t *testing.T) {
+	t.Run("No KMS service fails closed", func(t *testing.T) {
 		info := &entities.SigningCAInfo{
 			UseGlobalDefault: false,
 			TenantID:         "tenant1",
 			Type:             entities.SigningCATypeIntermediate,
 		}
 
-		result := service.getTenantCASigner(ctx, info)
+		result, err := service.getTenantCASigner(ctx, info)
+		assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
 		assert.Nil(t, result)
 	})
 
-	t.Run("Unknown signing CA type returns nil", func(t *testing.T) {
+	t.Run("Unknown signing CA type fails closed", func(t *testing.T) {
 		service.kmsService = &mockKMSService90{}
 
 		info := &entities.SigningCAInfo{
@@ -1020,7 +1025,8 @@ func TestGetTenantCASigner_Paths(t *testing.T) {
 			Type:             "unknown",
 		}
 
-		result := service.getTenantCASigner(ctx, info)
+		result, err := service.getTenantCASigner(ctx, info)
+		assert.ErrorIs(t, err, ErrTenantCATypeUnsupported)
 		assert.Nil(t, result)
 	})
 }
