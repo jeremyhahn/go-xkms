@@ -16,6 +16,8 @@ package server
 import (
 	"log/slog"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -29,6 +31,31 @@ func (s *Server) CA() ca.TrustedCA {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ca
+}
+
+// QRDBClient returns the embedded qrdb node's SDK client, or nil before the
+// node has been constructed. It is the same client type (*qrdbsdk.Client)
+// that already structurally satisfies pkg/acme/qrdb.Service (KV, Admin,
+// Watch, Lease, Batch, Transaction, Index, Users, Roles, Certs all match by
+// method signature), so a composing binary can pass it directly wherever
+// that interface is required — e.g. the ACME admin surface's tenant role and
+// user delegation to qrdb RBAC — without a bespoke adapter.
+func (s *Server) QRDBClient() *qrdbsdk.Client {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.qrdbClient
+}
+
+// TenantService returns go-qrdb's canonical TenantServicer composed on the
+// embedded node, or nil when the node barrier flip is not engaged
+// (nodeSealEnabled false) or the node has not finished constructing yet. It
+// mirrors CA() and Backend(name): a thin accessor for state pkg/server
+// already owns, used by composing binaries (e.g. cmd/xkmsd's admin surface)
+// that delegate tenant CRUD to qrdb instead of keeping a parallel model.
+func (s *Server) TenantService() qrdbsdk.ServiceTenantServicer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tenantService
 }
 
 // Backend returns the keystore-backed xkms.Backend registered under the given

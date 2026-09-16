@@ -277,6 +277,14 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithModule(xkmsModule))
 
+	// Additional ServiceModules supplied by the composing binary via
+	// WithExtraModules (e.g. cmd/xkmsd's admin-surface module). Registered on
+	// the same unified server as the xkms module, never on a second embedded
+	// node.
+	for _, mod := range s.extraModules {
+		serverOpts = append(serverOpts, qrdbsdk.WithModule(mod))
+	}
+
 	// Node-barrier flip: feed the resolved seal material so the node builds and
 	// auto-unseals its own barrier (encrypting the data-plane KV), and owns the
 	// barrier registry + tenant service. Mirrors go-quicbaas's embedded-node
@@ -310,14 +318,29 @@ func (s *Server) initEmbeddedQRDBNode() error {
 
 	s.qrdbNode = node
 
-	// Node-barrier flip: adopt the node's barrier + registry + tenant service as
-	// xkms's own, replacing the hand-rolled barrier subsystem (initializeBarrier
-	// / initializeBarrierRegistry / buildVolumePool skip themselves when
-	// nodeSealEnabled). We gated on auto-unseal credentials, so the node must be
-	// unsealed here; if it is not, the supplied credentials did not unlock it
-	// (wrong passphrase or a TPM PCR mismatch) — fail closed rather than proceed
-	// with a nil client.
+	// Node-barrier flip: we gated construction on auto-unseal credentials
+	// being available, so auto-unseal is normally unattended. It can still
+	// fail (wrong boot passphrase, a rotated TPM PCR state) and leave the
+	// node sealed. Rather than treat that as fatal, serve the node's own
+	// pre-boot sealed-window listener — a qrdb-native, browser-drivable API
+	// exposing only barrier status/initialize/unseal, ceremony, and
+	// credential endpoints — and block here until an operator completes the
+	// unseal (or the configured timeout / server shutdown ends the wait).
+	// serveSealedWindow is a documented no-op when the node is not sealed,
+	// so this runs unconditionally without a redundant IsSealed guard.
+	//
+	// What follows adopts the node's barrier + registry + tenant service as
+	// xkms's own, replacing the hand-rolled barrier subsystem
+	// (initializeBarrier / initializeBarrierRegistry / buildVolumePool skip
+	// themselves when nodeSealEnabled). serveSealedWindow only returns nil
+	// once the barrier itself reports unsealed and the pending boot has
+	// completed, so a still-sealed node here means that post-unseal
+	// completion left the barrier state ambiguous — fail closed rather than
+	// proceed with a nil client.
 	if s.nodeSealEnabled {
+		if err := s.serveSealedWindow(node); err != nil {
+			return &QRDBNodeError{Stage: "sealed window", Err: err}
+		}
 		if node.IsSealed() {
 			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &NodeSealError{
 				Reason: "barrier did not auto-unseal with the supplied credentials (check the passphrase or TPM PCR state)"}}

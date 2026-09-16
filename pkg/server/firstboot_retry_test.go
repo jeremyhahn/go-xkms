@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"testing"
 
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,7 +46,7 @@ func TestFirstBootWithLeaderRetry_RetriesNotLeaderThenSucceeds(t *testing.T) {
 	swapFirstBootInitialize(t, func(context.Context, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
 		calls++
 		if calls < 3 {
-			return nil, &qrdbservice.NotLeaderError{ShardID: 1}
+			return nil, &qrdbsdk.NotLeaderError{ShardID: 1}
 		}
 		return &qrdbsdk.FirstBootResult{}, nil
 	})
@@ -79,7 +78,7 @@ func TestFirstBootWithLeaderRetry_NonLeaderErrorFailsImmediately(t *testing.T) {
 // interrupts the backoff wait.
 func TestFirstBootWithLeaderRetry_ContextCancelStopsWaiting(t *testing.T) {
 	swapFirstBootInitialize(t, func(context.Context, qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
-		return nil, &qrdbservice.NotLeaderError{ShardID: 1}
+		return nil, &qrdbsdk.NotLeaderError{ShardID: 1}
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,7 +89,7 @@ func TestFirstBootWithLeaderRetry_ContextCancelStopsWaiting(t *testing.T) {
 
 // TestIsNotLeaderErr proves classification through wrapped chains.
 func TestIsNotLeaderErr(t *testing.T) {
-	wrapped := &FirstBootError{Op: "x", Cause: &qrdbservice.NotLeaderError{ShardID: 2}}
+	wrapped := &FirstBootError{Op: "x", Cause: &qrdbsdk.NotLeaderError{ShardID: 2}}
 	assert.True(t, isNotLeaderErr(wrapped))
 	assert.False(t, isNotLeaderErr(errors.New("other")))
 	assert.False(t, isNotLeaderErr(nil))

@@ -1,0 +1,286 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package server
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+)
+
+// sealedWindowTestConfig builds the minimal qrdb DaemonConfig needed to
+// construct a real, node-owned barrier over a Pebble data plane: exactly the
+// shape buildXKMSQRDBConfig produces for a node-seal-enabled deployment, kept
+// separate here so the fixture does not depend on a *Server.
+func sealedWindowTestConfig(dataDir string) *qrdbsdk.DaemonConfig {
+	return &qrdbsdk.DaemonConfig{
+		Raft: qrdbsdk.DaemonRaftConfig{DataDir: dataDir},
+		Databases: []qrdbsdk.DaemonDatabaseConfig{
+			{Name: "default", Engine: "mvcc", Backend: "pebble"},
+		},
+		Seal: qrdbsdk.DaemonSealConfig{Enabled: true, Strategy: "passphrase"},
+	}
+}
+
+// newSealedTestNode constructs a real qrdb standalone node whose barrier
+// already exists on disk (initialized with rightPassphrase by an earlier
+// construction) and attempts auto-unseal with attemptPassphrase. Supplying
+// the wrong passphrase reproduces the documented failure mode this feature
+// handles: auto-unseal does not succeed, and the node is returned sealed
+// rather than as a constructor error.
+func newSealedTestNode(t *testing.T, dataDir, rightPassphrase, attemptPassphrase string) *qrdbnode.Node {
+	t.Helper()
+	ctx := context.Background()
+
+	// First boot: initializes the barrier on disk with the right passphrase.
+	bootstrap, err := qrdbnode.NewStandaloneNode(ctx, sealedWindowTestConfig(dataDir), nil,
+		qrdbnode.WithLogger(slog.Default()),
+		qrdbnode.WithSealPassphrase([]byte(rightPassphrase)))
+	require.NoError(t, err)
+	require.False(t, bootstrap.IsSealed(), "fixture setup: first boot must auto-unseal")
+	require.NoError(t, bootstrap.Close())
+
+	// Second boot against the same data dir: the attempt passphrase decides
+	// whether this node comes up sealed or unsealed.
+	node, err := qrdbnode.NewStandaloneNode(ctx, sealedWindowTestConfig(dataDir), nil,
+		qrdbnode.WithLogger(slog.Default()),
+		qrdbnode.WithSealPassphrase([]byte(attemptPassphrase)))
+	require.NoError(t, err)
+	return node
+}
+
+// testSealedWindowServer builds a *Server with just enough state for
+// serveSealedWindow: config, logger, and an independently cancelable ctx.
+func testSealedWindowServer(t *testing.T, cfg *config.Config) *Server {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return &Server{
+		config: cfg,
+		logger: slog.Default(),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+}
+
+// TestServeSealedWindow_UnsealedNodeIsNoOp verifies the ESTABLISHED FACT this
+// feature depends on directly against the SDK: a node that auto-unsealed at
+// construction is unaffected by serveSealedWindow — no listener is started
+// and the call returns immediately.
+func TestServeSealedWindow_UnsealedNodeIsNoOp(t *testing.T) {
+	dataDir := t.TempDir()
+	node := newSealedTestNode(t, dataDir, "correct-horse-battery-staple", "correct-horse-battery-staple")
+	defer func() { _ = node.Close() }()
+	require.False(t, node.IsSealed(), "fixture: node must be unsealed for this test")
+
+	cfg := createMinimalConfig(t)
+	s := testSealedWindowServer(t, cfg)
+
+	done := make(chan error, 1)
+	go func() { done <- s.serveSealedWindow(node) }()
+
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveSealedWindow must return immediately for an unsealed node")
+	}
+	assert.False(t, node.IsSealed(), "an already-unsealed node must be unaffected")
+}
+
+// TestServeSealedWindow_SealedNodeProceedsAfterUnseal verifies the core
+// behavior change: a sealed node opens the sealed window and, once an
+// operator drives the barrier unsealed (here, directly — "any other path"
+// per the SDK's own documented contract, exercising the same
+// node.Unseal/completeBoot tail the REST listener would drive), the call
+// completes the node's boot instead of failing fatally.
+func TestServeSealedWindow_SealedNodeProceedsAfterUnseal(t *testing.T) {
+	dataDir := t.TempDir()
+	node := newSealedTestNode(t, dataDir, "correct-horse-battery-staple", "wrong-passphrase")
+	defer func() { _ = node.Close() }()
+	require.True(t, node.IsSealed(), "fixture: node must be sealed for this test")
+	require.Nil(t, node.Client(), "a sealed node must not expose a data-plane client")
+
+	cfg := createMinimalConfig(t) // Server.Host is loopback; no allow-remote needed
+	s := testSealedWindowServer(t, cfg)
+
+	done := make(chan error, 1)
+	go func() { done <- s.serveSealedWindow(node) }()
+
+	// Give ServeSealedWindow's listener/poll loop a moment to start, then
+	// unseal "any other path": directly against the barrier service the
+	// listener itself would serve (service.BarrierServicer.BarrierUnseal),
+	// NOT node.Unseal — that call also completes the boot, and only
+	// serveSealedWindow is meant to make it, exactly once, after the window
+	// observes the unseal.
+	time.Sleep(100 * time.Millisecond)
+	svcNode := node.Services()
+	require.NotNil(t, svcNode, "a sealed node must still expose the seal-layer services")
+	require.NotNil(t, svcNode.Barrier)
+	require.NoError(t, svcNode.Barrier.BarrierUnseal(context.Background(), "correct-horse-battery-staple"))
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("serveSealedWindow did not return after the barrier was unsealed")
+	}
+
+	assert.False(t, node.IsSealed())
+	assert.NotNil(t, node.Client(), "boot must complete once the sealed window closes")
+}
+
+// TestServeSealedWindow_RefusesNonLoopbackByDefault verifies the default-safe
+// bind policy: a sealed node with a non-loopback Server.Host is refused
+// without ever starting a listener, unless the operator opts in via
+// barrier.sealed_window_allow_remote.
+func TestServeSealedWindow_RefusesNonLoopbackByDefault(t *testing.T) {
+	dataDir := t.TempDir()
+	node := newSealedTestNode(t, dataDir, "correct-horse-battery-staple", "wrong-passphrase")
+	defer func() { _ = node.Close() }()
+	require.True(t, node.IsSealed())
+
+	cfg := createMinimalConfig(t)
+	cfg.Server.Host = "0.0.0.0"
+
+	s := testSealedWindowServer(t, cfg)
+
+	done := make(chan error, 1)
+	go func() { done <- s.serveSealedWindow(node) }()
+
+	select {
+	case err := <-done:
+		var bindErr *SealedWindowBindError
+		require.Error(t, err)
+		require.True(t, errors.As(err, &bindErr), "expected *SealedWindowBindError, got %T: %v", err, err)
+		assert.Equal(t, "0.0.0.0", bindErr.Host)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a non-loopback bind must be refused immediately, not left to time out")
+	}
+	assert.True(t, node.IsSealed(), "a refused bind must leave the node sealed")
+
+	// The escape hatch: explicit operator opt-in is honored (the call now
+	// proceeds to open the window instead of refusing).
+	cfg.Barrier.SealedWindowAllowRemote = true
+	s2 := testSealedWindowServer(t, cfg)
+	proceeded := make(chan error, 1)
+	go func() { proceeded <- s2.serveSealedWindow(node) }()
+	// Cancel quickly: this test only asserts the bind check was bypassed
+	// (no *SealedWindowBindError), not that unseal completes.
+	time.Sleep(50 * time.Millisecond)
+	s2.cancel()
+	select {
+	case err := <-proceeded:
+		var bindErr *SealedWindowBindError
+		require.Error(t, err)
+		assert.False(t, errors.As(err, &bindErr), "allow-remote must bypass the bind refusal")
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled sealed window must return promptly")
+	}
+}
+
+// TestServeSealedWindow_CancellationClosesCleanly verifies that canceling the
+// server context (the same path SIGTERM/SIGINT drive via Server.Shutdown)
+// closes the sealed-window listener and returns promptly instead of hanging,
+// leaving the node sealed rather than partially booted.
+func TestServeSealedWindow_CancellationClosesCleanly(t *testing.T) {
+	dataDir := t.TempDir()
+	node := newSealedTestNode(t, dataDir, "correct-horse-battery-staple", "wrong-passphrase")
+	defer func() { _ = node.Close() }()
+	require.True(t, node.IsSealed())
+
+	cfg := createMinimalConfig(t)
+	s := testSealedWindowServer(t, cfg)
+
+	done := make(chan error, 1)
+	go func() { done <- s.serveSealedWindow(node) }()
+
+	time.Sleep(100 * time.Millisecond)
+	s.cancel()
+
+	select {
+	case err := <-done:
+		var canceled *qrdbsdk.SealedWindowCanceledError
+		require.Error(t, err)
+		assert.True(t, errors.As(err, &canceled), "expected *qrdbsdk.SealedWindowCanceledError, got %T: %v", err, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancellation must close the sealed-window listener promptly")
+	}
+	assert.True(t, node.IsSealed(), "cancellation must not leave a half-completed boot")
+}
+
+// TestIsLoopbackHost documents the bind-address policy isolated from any
+// node/listener machinery.
+func TestIsLoopbackHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"", false},
+		{"0.0.0.0", false},
+		{"::", false},
+		{"10.0.0.5", false},
+		{"example.com", false},
+		{"127.0.0.1", true},
+		{"::1", true},
+		{"localhost", true},
+		{"LOCALHOST", true},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, isLoopbackHost(c.host), "host=%q", c.host)
+	}
+}
+
+// TestBarrierConfig_SealedWindowTimeoutDuration exercises the config-level
+// parsing the sealed window relies on for its wait bound.
+func TestBarrierConfig_SealedWindowTimeoutDuration(t *testing.T) {
+	t.Run("empty defaults", func(t *testing.T) {
+		d, err := (config.BarrierConfig{}).SealedWindowTimeoutDuration()
+		require.NoError(t, err)
+		assert.Equal(t, config.DefaultSealedWindowTimeout, d)
+	})
+	t.Run("zero disables", func(t *testing.T) {
+		d, err := (config.BarrierConfig{SealedWindowTimeout: "0"}).SealedWindowTimeoutDuration()
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(0), d)
+	})
+	t.Run("none disables", func(t *testing.T) {
+		d, err := (config.BarrierConfig{SealedWindowTimeout: "none"}).SealedWindowTimeoutDuration()
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(0), d)
+	})
+	t.Run("parses a duration", func(t *testing.T) {
+		d, err := (config.BarrierConfig{SealedWindowTimeout: "10m"}).SealedWindowTimeoutDuration()
+		require.NoError(t, err)
+		assert.Equal(t, 10*time.Minute, d)
+	})
+	t.Run("rejects garbage", func(t *testing.T) {
+		_, err := (config.BarrierConfig{SealedWindowTimeout: "not-a-duration"}).SealedWindowTimeoutDuration()
+		assert.Error(t, err)
+	})
+	t.Run("rejects negative", func(t *testing.T) {
+		_, err := (config.BarrierConfig{SealedWindowTimeout: "-1m"}).SealedWindowTimeoutDuration()
+		assert.Error(t, err)
+	})
+}

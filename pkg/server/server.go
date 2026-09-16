@@ -54,6 +54,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/escrow"
+	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
+	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
@@ -318,6 +321,10 @@ type Server struct {
 	// Credential service for managing backend credentials
 	credentialService *credentialspkg.Service
 
+	// escrowRegistry holds the configured external key-escrow agents
+	// (pkg/escrow). Nil when config.Escrow is nil or disabled.
+	escrowRegistry *escrow.Registry
+
 	// Ceremony service for init ceremony
 	ceremonyService *initialize.CeremonyService
 
@@ -377,6 +384,15 @@ type Server struct {
 	// published (desktop loopback-token composite). Set via
 	// WithAuthenticatorDecorator.
 	authDecorator func(auth.Authenticator) auth.Authenticator
+
+	// extraModules holds additional qrdb ServiceModules to register on the
+	// embedded node's unified server alongside xkms's own module (the "xkms"
+	// ModuleName in pkg/apimodule). Set via WithExtraModules; consumed by
+	// initEmbeddedQRDBNode, which appends them into the same qrdbsdk.WithModule
+	// option list as xkmsModule. A composing binary (e.g. cmd/xkmsd mounting
+	// the admin surface) supplies its own ServiceModule this way instead of
+	// xkms hosting a second embedded node.
+	extraModules []qrdbsdk.ServiceModule
 
 	// restListener, when non-nil, is handed to the REST transport so it
 	// serves a pre-bound listener (loopback launcher: 127.0.0.1:0) instead of
@@ -459,6 +475,18 @@ type Option func(*Server)
 // chain; it cannot disable the underlying authenticator.
 func WithAuthenticatorDecorator(fn func(auth.Authenticator) auth.Authenticator) Option {
 	return func(s *Server) { s.authDecorator = fn }
+}
+
+// WithExtraModules registers additional qrdb ServiceModules on the embedded
+// node's unified server, alongside xkms's own "xkms" module. It is additive:
+// the composing binary supplies modules built against its own resolvers (for
+// example an admin-surface module mounted on the unified mTLS listener), and
+// initEmbeddedQRDBNode appends them into the same qrdbsdk.WithModule option
+// list it builds for the xkms module. Registering a module under a name that
+// collides with an existing one fails node construction, exactly as
+// qrdbsdk.WithModule does for any other duplicate.
+func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
+	return func(s *Server) { s.extraModules = append(s.extraModules, mods...) }
 }
 
 func New(cfg *config.Config, opts ...Option) (*Server, error) {
@@ -661,6 +689,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "policy manager", Err: err}
 	}
 
+	// Initialize external key escrow agents (optional)
+	if err := s.initializeEscrow(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "escrow", Err: err, Sentinel: ErrEscrowRegistryFailed}
+	}
+
 	// Initialize health checker
 	if err := s.initializeHealth(); err != nil {
 		cancel()
@@ -745,6 +780,9 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 		if s.policyManager != nil {
 			svc.SetPolicyManager(s.policyManager)
+		}
+		if s.escrowRegistry != nil {
+			svc.SetEscrowRegistry(s.escrowRegistry)
 		}
 		if s.qrdbClient != nil {
 			svc.SetCustodianClient(s.qrdbClient.CustodianGroups())
@@ -1744,6 +1782,32 @@ func (s *Server) initializePolicyManager() error {
 	// Policy manager is optional, only for TPM-equipped servers
 	s.logger.Info("Policy manager initialization deferred (requires TPM PCR reader)")
 	return nil
+}
+
+// initializeEscrow builds the external key-escrow agent registry
+// (pkg/escrow) from config.Escrow. Escrow is optional: when the section is
+// nil or Enabled is false, NewRegistryFromConfig returns a nil registry and
+// this is a no-op, leaving the escrow servicer methods returning
+// xkms.ErrNotConfigured.
+func (s *Server) initializeEscrow() error {
+	registry, err := escrow.NewRegistryFromConfig(s.config.Escrow)
+	if err != nil {
+		return err
+	}
+	if registry == nil {
+		s.logger.Info("Escrow disabled: no agents configured")
+		return nil
+	}
+
+	s.escrowRegistry = registry
+	s.logger.Info("Escrow registry initialized", "agents", registry.Agents())
+	return nil
+}
+
+// EscrowRegistry returns the external key-escrow agent registry, or nil if
+// escrow is not configured.
+func (s *Server) EscrowRegistry() *escrow.Registry {
+	return s.escrowRegistry
 }
 
 // initializeFactorRegistry composes the canonical go-xkms hardware auth
@@ -3474,6 +3538,13 @@ func (s *Server) shutdown() error {
 	if s.auditLogger != nil {
 		if err := s.auditLogger.Close(); err != nil {
 			s.logger.Error("Failed to close audit logger", slog.Any("error", err))
+		}
+	}
+
+	// Close escrow agents
+	if s.escrowRegistry != nil {
+		if err := s.escrowRegistry.Close(); err != nil {
+			s.logger.Error("Failed to close escrow registry", slog.Any("error", err))
 		}
 	}
 

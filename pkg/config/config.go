@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 )
 
@@ -54,6 +55,10 @@ type Config struct {
 	Credentials CredentialsConfig         `yaml:"credentials"`
 	CA          *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
 	ACME        *ACMEConfig               `yaml:"acme,omitempty"`
+	// Escrow configures the optional external key escrow subsystem
+	// (pkg/escrow). When nil or Enabled is false, no escrow agents are
+	// constructed and the escrow servicer methods return ErrNotConfigured.
+	Escrow *escrow.Config `yaml:"escrow,omitempty"`
 	// Attestation configures the hardware-attestation trust anchors used to
 	// verify attestation chains presented with a CSR. When nil, attestation-
 	// gated CSR signing fails closed.
@@ -152,6 +157,56 @@ type BarrierConfig struct {
 	// PreferenceOrder retains the hardware-strategy ordering used when resolving
 	// which configured hardware backend seals the barrier. Optional.
 	PreferenceOrder []string `yaml:"preference_order,omitempty"`
+
+	// SealedWindowAllowRemote permits the node's pre-boot sealed-window
+	// listener (opened when node-owned auto-unseal does not succeed at
+	// startup — a wrong boot passphrase or a TPM PCR mismatch) to bind a
+	// non-loopback Server.Host. It defaults to false: while the barrier is
+	// sealed, the listener's allowlisted init verbs (barrier status,
+	// initialize, unseal, ceremony, credentials) are DELIBERATELY
+	// unauthenticated — possession of the unseal credential is the
+	// authorization, Vault-style — so binding that window to a public
+	// interface exposes barrier status and an unseal race to anyone who can
+	// reach it. Set this only when Server.Host is already restricted to a
+	// trusted management network and remote init is required; the same
+	// Server.Host also serves the full API once unsealed.
+	SealedWindowAllowRemote bool `yaml:"sealed_window_allow_remote,omitempty"`
+
+	// SealedWindowTimeout bounds how long the sealed-window listener waits
+	// for an operator to complete unseal before node construction fails and
+	// the daemon exits (SIGTERM/SIGINT during the window also ends it — see
+	// pkg/server's ServeSealedWindow caller). Empty defaults to
+	// DefaultSealedWindowTimeout; "0" (or "none"/"disabled") waits
+	// indefinitely, matching the qrdb daemon's own unseal listener. Any
+	// other value is parsed by time.ParseDuration (e.g. "10m", "1h").
+	SealedWindowTimeout string `yaml:"sealed_window_timeout,omitempty"`
+}
+
+// DefaultSealedWindowTimeout is the sealed-window listener's default wait
+// bound: long enough for an operator to be paged and drive the unseal
+// ceremony by hand, short enough that a forgotten init does not hold the
+// process (and the port) open indefinitely.
+const DefaultSealedWindowTimeout = 15 * time.Minute
+
+// SealedWindowTimeoutDuration resolves SealedWindowTimeout to a
+// time.Duration: DefaultSealedWindowTimeout when unset, zero (no deadline)
+// for "0"/"none"/"disabled", or the parsed duration otherwise. It returns an
+// error for a value time.ParseDuration rejects or a negative duration.
+func (b BarrierConfig) SealedWindowTimeoutDuration() (time.Duration, error) {
+	switch strings.ToLower(strings.TrimSpace(b.SealedWindowTimeout)) {
+	case "":
+		return DefaultSealedWindowTimeout, nil
+	case "0", "none", "disabled":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(b.SealedWindowTimeout)
+	if err != nil {
+		return 0, &errs.Message{Msg: fmt.Sprintf("barrier.sealed_window_timeout: %q is not a valid duration: %s", b.SealedWindowTimeout, err)}
+	}
+	if d < 0 {
+		return 0, &errs.Message{Msg: fmt.Sprintf("barrier.sealed_window_timeout: %q must not be negative", b.SealedWindowTimeout)}
+	}
+	return d, nil
 }
 
 // SealStrategy returns the configured strategy, defaulting to "passphrase" when
@@ -1609,6 +1664,10 @@ func (c *Config) Validate() error {
 		return &errs.Message{Msg: fmt.Sprintf("invalid Noise port: %d", c.Server.NoisePort)}
 	}
 
+	if _, err := c.Barrier.SealedWindowTimeoutDuration(); err != nil {
+		return err
+	}
+
 	// Validate at least one protocol is enabled (Unix socket counts as a protocol)
 	if !c.Protocols.Unix && !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP && !c.Protocols.Noise {
 		return &errs.Message{Msg: "at least one protocol must be enabled"}
@@ -1809,6 +1868,11 @@ func (c *Config) Validate() error {
 
 	// Validate ACME configuration (no-op unless acme.enabled is true).
 	if err := c.ACME.Validate(); err != nil {
+		return err
+	}
+
+	// Validate escrow configuration (no-op unless escrow.enabled is true).
+	if err := c.Escrow.Validate(); err != nil {
 		return err
 	}
 

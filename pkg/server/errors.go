@@ -80,6 +80,10 @@ var (
 	// ErrCredentialServiceFailed indicates the credential service failed to initialize.
 	ErrCredentialServiceFailed = errors.New("server: failed to initialize credential service")
 
+	// ErrEscrowRegistryFailed indicates the external key-escrow agent
+	// registry failed to initialize from config.Escrow.
+	ErrEscrowRegistryFailed = errors.New("server: failed to initialize escrow registry")
+
 	// ErrBackendNotCompiled indicates a backend was requested but not compiled in.
 	ErrBackendNotCompiled = errors.New("server: backend not compiled in")
 

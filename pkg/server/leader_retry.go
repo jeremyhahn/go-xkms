@@ -19,10 +19,7 @@ import (
 	"log/slog"
 	"time"
 
-	// Documented wire bridge: NotLeaderError is not yet SDK-re-exported
-	// (tracked SDK exposure gap; the re-export is staged for the next
-	// go-qrdb release).
-	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // leaderWait bounds how long boot-time operations wait for the cluster to
@@ -66,6 +63,6 @@ func retryNotLeader(ctx context.Context, logger *slog.Logger, what string, op fu
 // isNotLeaderErr reports whether err is the qrdb service layer's not-leader
 // condition, through any wrapping.
 func isNotLeaderErr(err error) bool {
-	var notLeader *qrdbservice.NotLeaderError
+	var notLeader *qrdbsdk.NotLeaderError
 	return errors.As(err, &notLeader)
 }
