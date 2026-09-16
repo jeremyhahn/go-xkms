@@ -6,10 +6,14 @@ The same Svelte bundle works in two environments without code changes. The trans
 
 ### Desktop Mode (Wails)
 
-1. Go binary starts an embedded HTTP server on `127.0.0.1:0` (random port)
-2. Wails opens a native webview and serves the pre-built Svelte assets
-3. On startup, the frontend calls the `GetApiBaseUrl()` Wails binding to discover `http://localhost:{port}/api/v1`
-4. All subsequent API calls use `fetch()` against that URL
+1. Wails opens a native webview and serves the pre-built Svelte assets
+2. The REST API router is mounted in that same asset server as `assetserver.Options.Handler`, so it shares the frontend's origin
+3. On startup, the frontend calls the `GetApiBaseUrl()` Wails binding, which returns an empty, same-origin base
+4. All subsequent API calls use `fetch('/api/v1/...')` against the window's own origin
+
+The desktop apps open **no network listener**. There is no port to discover, no
+token to carry and no cross-origin negotiation, because nothing outside the
+process can reach a route.
 
 ### Web Mode (Server-hosted)
 
@@ -29,12 +33,12 @@ export function isWailsAvailable(): boolean {
     (!!(window as any).runtime || !!(window as any).go);
 }
 
-// Returns absolute URL in desktop mode, relative /api/v1 in web mode
+// Same-origin in both modes: the base is a prefix, empty unless configured
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined' && (window as any).__API_BASE_URL__) {
     return (window as any).__API_BASE_URL__;
   }
-  return '/api/v1';
+  return '';
 }
 ```
 
@@ -49,15 +53,17 @@ The frontend communicates exclusively through REST API calls rather than Wails G
 - **Testability** -- API endpoints are testable with standard HTTP tools
 - **Decoupling** -- frontend has zero compile-time dependency on Go types
 
-## Embedded HTTP Server Pattern
+## In-Process API Pattern
 
-Both desktop apps (`pkg/gui/admin/app.go` and `pkg/gui/client/app.go`) follow the same pattern:
+Both desktop apps (`pkg/acme/gui/admin/app.go` and `pkg/acme/gui/client/app.go`) follow the same pattern:
 
-1. Bind a TCP listener on `127.0.0.1:0` (OS-assigned port)
-2. Create a `gorilla/mux` router with `/api/v1` routes and CORS middleware
-3. Start `http.Server.Serve()` in a goroutine
-4. Launch Wails with `AssetServer` pointing to the embedded `dist/` filesystem
-5. On shutdown, gracefully stop the HTTP server with a 5-second timeout
+1. Create a `gorilla/mux` router with the `/api/v1` routes
+2. Launch Wails with an `AssetServer` carrying both the embedded `dist/` filesystem as `Assets` and that router as `Handler`
+3. Wails serves a GET from `Assets` first and falls back to `Handler` when the file does not exist; every non-GET goes straight to `Handler`
+
+So the SPA keeps loading from `Assets`, `/api/v1` lands on the router, and no
+socket is bound under either. Nothing needs shutting down because nothing was
+started: closing the window ends the process.
 
 The admin app uses an `AdapterFactory` to create protocol adapters per request. The client app injects the ACME client `Service` directly.
 
@@ -79,14 +85,14 @@ Build commands:
 ```
 pkg/gui/
   admin/
-    app.go          # Wails app, embedded HTTP server
+    app.go          # Wails app, API mounted in the asset server
     config.go       # GUIConfig struct with defaults
     errors.go       # Typed errors
     api/
       router.go     # gorilla/mux routes for admin API
       handlers.go   # HTTP handler implementations
   client/
-    app.go          # Wails app, embedded HTTP server
+    app.go          # Wails app, API mounted in the asset server
     config.go       # GUIConfig struct with defaults
     errors.go       # Typed errors
     api/

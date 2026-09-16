@@ -1,6 +1,6 @@
 # Client Embedded API
 
-The ACME client desktop app runs an embedded HTTP server on `127.0.0.1:{random_port}`. All endpoints are under `/api/v1`.
+The ACME client desktop app mounts these endpoints in the Wails asset server, in-process and same-origin with the frontend; no port is bound. The same router is served over TCP by `trusted-acme-client serve`. All endpoints are under `/api/v1`.
 
 ## Endpoints
 

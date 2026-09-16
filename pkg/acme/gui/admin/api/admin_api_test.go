@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/guard"
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	sdkadmin "github.com/jeremyhahn/go-xkms/sdk/go/acme/client/admin"
 	sdkerrors "github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
@@ -408,8 +409,23 @@ func (f *fakeClient) Close() error { return nil }
 // Test helpers
 // =============================================================================
 
-// newTestRouter creates a router backed by a fully configured fake client.
+// newTestRouter creates a router backed by a fully configured fake client,
+// wired the way the admin desktop app wires it: in-process, behind the Wails
+// AssetServer Handler, with no listener under it.
 func newTestRouter(
+	t *testing.T,
+	admin *fakeAdminClient,
+) http.Handler {
+	t.Helper()
+	cli := &fakeClient{adminClient: admin}
+	return NewRouter(cli, slog.Default(), WithInProcessTransport())
+}
+
+// networkTestRouter creates a router backed by the default, network-mode
+// guard.Guard — the configuration the admin router does not ship today, but
+// is wired through nonetheless, since it shares pkg/acme/gui/guard with the
+// ACME client GUI API's "trusted-acme-client serve" deployment.
+func networkTestRouter(
 	t *testing.T,
 	admin *fakeAdminClient,
 ) http.Handler {
@@ -543,41 +559,111 @@ func TestParseInt(t *testing.T) {
 }
 
 // =============================================================================
-// CORS middleware
+// Cross-origin guard
+//
+// The admin router installs the same guard.Guard the ACME client GUI API
+// uses (pkg/acme/gui/guard); see pkg/acme/gui/client/api/security_test.go
+// for the equivalent coverage on that router. The admin desktop app always
+// supplies WithInProcessTransport (pkg/acme/gui/admin/app.go); the
+// network-mode cases below exercise the shared guard's other branch, which
+// the admin router does not ship today but is wired through rather than a
+// separate code path.
 // =============================================================================
 
-// TestCORSMiddleware_SetsCORSHeaders verifies that CORS headers are set on
-// requests that match a registered route and method. The admin router registers
-// routes without OPTIONS; gorilla/mux middlewares only run on matched routes,
-// so OPTIONS requests receive 405 without middleware headers.
-func TestCORSMiddleware_SetsCORSHeaders(t *testing.T) {
+// TestGuard_InProcessSetsPermissiveCORSHeaders verifies that CORS headers are
+// set on requests that match a registered route and method, mirroring the
+// ACME client GUI API's in-process policy.
+func TestGuard_InProcessSetsPermissiveCORSHeaders(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("Origin", "wails://wails")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("missing CORS origin header on matched GET route")
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != guard.AnyOrigin {
+		t.Errorf("expected the wildcard CORS origin in-process, got %q", got)
 	}
 	if rec.Header().Get("Access-Control-Allow-Methods") == "" {
 		t.Error("missing Access-Control-Allow-Methods header")
 	}
 }
 
-// TestCORSMiddleware_UnmatchedOPTIONS verifies that OPTIONS on a path without
-// an OPTIONS route registration returns a non-2xx status. The admin router
-// does not register OPTIONS on any routes; gorilla/mux subrouters bypass the
-// parent middleware chain when no route matches, so CORS headers are not set.
-func TestCORSMiddleware_UnmatchedOPTIONS(t *testing.T) {
+// TestGuard_InProcessAcceptsEveryWebviewOrigin covers the reason the origin
+// check is dropped in-process: a webview's own origin varies by platform and
+// may be opaque, and every form, including a request with no Origin header
+// at all, must still reach the admin API.
+func TestGuard_InProcessAcceptsEveryWebviewOrigin(t *testing.T) {
+	router := newTestRouter(t, defaultFakeAdmin())
+	origins := []string{"wails://wails", "http://wails.localhost", "https://wails.localhost", "null", ""}
+	for _, origin := range origins {
+		t.Run(origin, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+			if origin != "" {
+				req.Header.Set("Origin", origin)
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200 for Origin %q, got %d: %s", origin, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestGuard_UnmatchedOPTIONSNotAnswered verifies that OPTIONS on a path
+// without an OPTIONS route registration returns a non-2xx status. The admin
+// router registers routes without OPTIONS; gorilla/mux applies router
+// middleware, including the guard, only once a route and method have
+// matched, so an unmatched OPTIONS request never reaches it.
+func TestGuard_UnmatchedOPTIONSNotAnswered(t *testing.T) {
 	router := newTestRouter(t, defaultFakeAdmin())
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	// gorilla/mux subrouters return 404 or 405 for unregistered methods;
-	// the parent middleware is bypassed in both cases.
 	if rec.Code == http.StatusOK {
 		t.Errorf("OPTIONS should not return 200 when not registered: got %d", rec.Code)
+	}
+}
+
+// TestGuard_NetworkModeRejectsCrossOrigin proves the admin router is wired to
+// the same guard.Guard the ACME client GUI API uses: given the default,
+// network-mode guard, it rejects a cross-origin caller exactly as the client
+// router does.
+func TestGuard_NetworkModeRejectsCrossOrigin(t *testing.T) {
+	router := networkTestRouter(t, defaultFakeAdmin())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a cross-origin caller, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("a rejected origin must not be granted CORS access, got %q", got)
+	}
+	resp := decodeResponse(t, rec)
+	if resp.Error == nil || resp.Error.Code != "FORBIDDEN_ORIGIN" {
+		t.Errorf("expected a FORBIDDEN_ORIGIN error envelope, got %+v", resp.Error)
+	}
+}
+
+// TestGuard_NetworkModeAcceptsSameOrigin proves the same default guard
+// serves a same-origin caller normally.
+func TestGuard_NetworkModeAcceptsSameOrigin(t *testing.T) {
+	router := networkTestRouter(t, defaultFakeAdmin())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	req.Host = "ca.example.com:8443"
+	req.Header.Set("Origin", "https://ca.example.com:8443")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a same-origin caller, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://ca.example.com:8443" {
+		t.Errorf("expected the origin to be echoed, got %q", got)
 	}
 }
 

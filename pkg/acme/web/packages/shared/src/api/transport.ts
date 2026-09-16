@@ -1,11 +1,17 @@
 /**
  * Transport layer for detecting Wails desktop mode vs browser mode.
  *
- * In Wails mode, an embedded HTTP server runs on a dynamic port and the
- * Go backend exposes a GetApiBaseUrl() binding so the frontend can discover it.
+ * In Wails mode the REST API is mounted in-process as the AssetServer handler
+ * of the desktop app, same-origin with the frontend it serves. The Go backend
+ * exposes a GetApiBaseUrl() binding that returns the base to prefix, which is
+ * the empty string: there is no port to discover, no listener to reach and
+ * therefore no credential to carry.
  *
  * In browser/web mode, relative URLs (/api/v1) are used so the browser
  * proxies through the same origin.
+ *
+ * Both modes end up calling fetch('/api/v1/...') against the window's own
+ * origin.
  */
 
 /** Returns true when running inside a Wails desktop window. */
@@ -21,18 +27,18 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined' && (window as any).__API_BASE_URL__) {
     return (window as any).__API_BASE_URL__;
   }
-  // In browser mode, return empty string so admin-api.ts can use full paths.
-  // The admin server has routes at both /admin/* and /api/v1/tenants/*.
-  // Wails desktop mode sets __API_BASE_URL__ via the Go binding.
+  // Empty so admin-api.ts can use full paths. The admin server has routes at
+  // both /admin/* and /api/v1/tenants/*. A server-hosted deployment may set
+  // __API_BASE_URL__ to a prefix; the desktop app reports the empty string,
+  // because the API shares the webview's origin.
   return '';
 }
 
 /**
  * Initialise the transport layer.
  *
- * When running inside Wails this calls the Go-side GetApiBaseUrl() binding
- * and stores the result so that every subsequent fetch uses the correct
- * embedded server port.
+ * When running inside Wails this calls the Go-side GetApiBaseUrl() binding and
+ * stores the base every subsequent request is prefixed with.
  *
  * In browser mode this is a no-op.
  */

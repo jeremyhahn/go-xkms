@@ -27,17 +27,24 @@ import (
 	"github.com/gorilla/mux"
 
 	svc "github.com/jeremyhahn/go-xkms/pkg/acme/client/service"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/guard"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/workflow"
 )
 
 // NewRouter creates a gorilla/mux router with all ACME client GUI API routes.
 // The wf parameter may be nil when no SDK client is configured; handlers that
 // support the workflow will fall back to the service layer automatically.
-func NewRouter(wf workflow.Workflow, service *svc.Service, cfg *svc.Config, logger *slog.Logger) *mux.Router {
+//
+// The router is transport-agnostic: it is mounted in-process behind the Wails
+// AssetServer by the desktop application and on a TCP listener by
+// "trusted-acme-client serve". Every route runs behind the request guard built
+// from opts, which by default serves same-origin callers only. A caller that
+// mounts the router in-process passes WithInProcessTransport.
+func NewRouter(wf workflow.Workflow, service *svc.Service, cfg *svc.Config, logger *slog.Logger, opts ...Option) *mux.Router {
 	r := mux.NewRouter()
 	h := newHandlers(wf, service, cfg, logger)
 
-	r.Use(corsMiddleware)
+	r.Use(guard.New(logger, denyOrigin, opts...).Middleware)
 
 	api := r.PathPrefix("/api/v1").Subrouter()
 
@@ -74,20 +81,4 @@ func NewRouter(wf workflow.Workflow, service *svc.Service, cfg *svc.Config, logg
 	api.HandleFunc("/renewal/config", h.updateRenewalConfig).Methods(http.MethodPut, http.MethodOptions)
 
 	return r
-}
-
-// corsMiddleware adds CORS headers for the embedded Wails webview.
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
 }

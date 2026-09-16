@@ -22,11 +22,11 @@ The SPA uses relative URLs (`/api/v1`) for API calls, which resolve against the 
 
 | Aspect | Desktop | Web |
 |--------|---------|-----|
-| API base URL | `http://localhost:{random}/api/v1` | `/api/v1` (same origin) |
+| API base URL | `/api/v1` (same origin, in-process) | `/api/v1` (same origin) |
 | Transport detection | Wails runtime detected | No Wails, uses defaults |
 | Connection Settings view | Available | Not shown (server is the CA) |
 | Authentication | Token from config | Browser session/token via server auth |
-| TLS | Embedded server is plain HTTP on loopback | Server's TLS configuration |
+| TLS | None needed: the API is in-process, with no socket | Server's TLS configuration |
 
 ## Authentication
 

@@ -90,6 +90,8 @@ export class ApiClient {
       Accept: 'application/json',
     };
 
+    // The desktop API is in-process and same-origin, so it carries no token;
+    // a server-hosted deployment sets one through setAuthToken().
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }

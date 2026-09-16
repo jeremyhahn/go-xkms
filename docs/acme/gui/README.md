@@ -2,7 +2,7 @@
 
 go-xkms provides a dual-mode GUI for both the ACME client and the CA admin interface. A single Svelte 4 frontend bundle runs identically in two environments:
 
-- **Desktop mode** -- Wails v2 wraps the SPA in a native webview with an embedded HTTP server on a random port
+- **Desktop mode** -- Wails v2 wraps the SPA in a native webview and serves the REST API from the same in-process asset server, opening no network listener
 - **Web mode** -- The ACME server hosts the admin SPA at `/ui/admin/`, using the server's existing REST API
 
 ```

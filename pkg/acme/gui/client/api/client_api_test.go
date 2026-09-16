@@ -194,20 +194,32 @@ func TestWriteError_SetsErrorField(t *testing.T) {
 }
 
 // =============================================================================
-// corsMiddleware
+// guard middleware, router built without options (browser deployment)
 // =============================================================================
 
-func TestCORSMiddleware_Options_Returns204(t *testing.T) {
+func TestUnguardedRouter_Options_Returns204(t *testing.T) {
 	rec := doRequest(emptyRouter(), http.MethodOptions, "/api/v1/accounts", nil)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("OPTIONS: expected 204, got %d", rec.Code)
 	}
 }
 
-func TestCORSMiddleware_AllowOriginStar(t *testing.T) {
+func TestUnguardedRouter_SendsNoWildcardCORSHeader(t *testing.T) {
 	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/accounts", nil)
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Errorf("expected *, got %q", got)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("expected no CORS grant for a request without an Origin, got %q", got)
+	}
+}
+
+func TestUnguardedRouter_RejectsCrossOrigin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/certificate/request",
+		bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example.com")
+	rec := httptest.NewRecorder()
+	emptyRouter().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for a cross-origin request, got %d", rec.Code)
 	}
 }
 

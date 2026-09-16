@@ -18,19 +18,23 @@ package api
 
 import (
 	"log/slog"
-	"net/http"
 
 	"github.com/gorilla/mux"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/guard"
 	trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 )
 
 // NewRouter creates a gorilla/mux router with all admin GUI API routes.
-func NewRouter(client trustedca.Client, logger *slog.Logger) *mux.Router {
+// The router is reachable only through the Wails AssetServer Handler of the
+// admin desktop application; opts must include WithInProcessTransport for
+// that deployment, matching the ACME client GUI API's policy in
+// pkg/acme/gui/client/api.
+func NewRouter(client trustedca.Client, logger *slog.Logger, opts ...Option) *mux.Router {
 	r := mux.NewRouter()
 	h := newHandlers(client, logger)
 
-	r.Use(corsMiddleware)
+	r.Use(guard.New(logger, denyOrigin, opts...).Middleware)
 
 	v1 := r.PathPrefix("/api/v1").Subrouter()
 
@@ -90,17 +94,4 @@ func NewRouter(client trustedca.Client, logger *slog.Logger) *mux.Router {
 	v1.HandleFunc("/tenants/{id}/users/{userId}", h.deleteUser).Methods("DELETE")
 
 	return r
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID")
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }

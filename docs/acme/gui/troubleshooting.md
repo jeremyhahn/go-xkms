@@ -40,11 +40,11 @@ make frontend-build
 
 ### Desktop app shows blank window
 
-The embedded HTTP server may have failed to start. Check stderr for port binding errors. Ensure no firewall is blocking loopback connections.
+The frontend assets may be missing from the build. The desktop app binds no port, so there is no listener to fail and no firewall rule to check: verify the SPA was built and embedded (`make frontend-build`), then check stderr for asset server errors.
 
 ### API calls fail with CORS errors in desktop mode
 
-The embedded server includes CORS middleware allowing all origins. If you see CORS errors, verify the transport layer initialized correctly by checking the browser console for the `__API_BASE_URL__` value.
+In desktop mode the API shares the webview's origin, so CORS should never come into play. If you see CORS errors, the frontend is calling an absolute URL instead of a relative one: check the browser console for the `__API_BASE_URL__` value, which must be empty in the desktop app.
 
 ### "Failed to get API base URL from Wails" warning
 
