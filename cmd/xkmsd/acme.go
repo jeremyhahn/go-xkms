@@ -38,6 +38,7 @@ import (
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -95,6 +96,13 @@ type acmeServer struct {
 	// auditLog is the ACME audit trail. It is flushed and closed during
 	// Shutdown so no recorded event is lost on a clean stop.
 	auditLog audit.AuditLogger
+
+	// tcgCA and storageFactory are the same TCG-capable CA and ACME storage
+	// factory the ACME protocol listener issues from and persists to.
+	// Exposed via accessors so the admin surface (admin.go) administers the
+	// identical CA and storage state instead of standing up a second copy.
+	tcgCA          nativeca.TCGCA
+	storageFactory storage.Factory
 
 	// doneCh is closed when the server goroutine exits.
 	doneCh chan struct{}
@@ -278,11 +286,13 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 
 	as := &acmeServer{
-		httpServer: httpSrv,
-		listener:   ln,
-		logger:     logger,
-		auditLog:   auditLogger,
-		doneCh:     make(chan struct{}),
+		httpServer:     httpSrv,
+		listener:       ln,
+		logger:         logger,
+		auditLog:       auditLogger,
+		tcgCA:          tcgCA,
+		storageFactory: storageFactory,
+		doneCh:         make(chan struct{}),
 	}
 	started = true
 
@@ -298,6 +308,27 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}()
 
 	return as, nil
+}
+
+// CA returns the TCG-capable certificate authority the ACME server issues
+// from, or nil for a nil *acmeServer (ACME disabled). The admin surface
+// (admin.go) administers this same CA rather than standing up a second one.
+func (a *acmeServer) CA() nativeca.TCGCA {
+	if a == nil {
+		return nil
+	}
+	return a.tcgCA
+}
+
+// StorageFactory returns the ACME storage factory the ACME server persists
+// accounts, orders, and authorizations through, or nil for a nil
+// *acmeServer (ACME disabled). The admin surface (admin.go) reads and writes
+// the same storage rather than a second copy.
+func (a *acmeServer) StorageFactory() storage.Factory {
+	if a == nil {
+		return nil
+	}
+	return a.storageFactory
 }
 
 // Shutdown gracefully terminates the ACME HTTPS server and releases

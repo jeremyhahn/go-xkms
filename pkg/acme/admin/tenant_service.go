@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -73,7 +74,33 @@ type TenantAwareAdminService struct {
 	tenantCAs   map[string]*tenantCAEntry
 	mu          sync.RWMutex
 	barrierSvc  BarrierService
-	setupSvc    SetupService
+
+	// tenantSvc is go-qrdb's canonical TenantServicer (qrdbsdk.ServiceTenantServicer),
+	// wired via SetTenantService by the composing binary (cmd/xkmsd, through
+	// server.Server.TenantService()). When set, tenant identity lifecycle —
+	// create/get/update/delete/list — is a thin pass-through to it, per the
+	// owner decision that xkms inherits qrdb's multi-tenant model instead of
+	// keeping a parallel one. The local entities.Tenant record (tenantDAO)
+	// stops being authoritative for tenant existence and becomes a linkage
+	// row keyed by the same tenant ID for what xkms genuinely owns: per-tenant
+	// CA material (already stored here), EAB tokens, and the ACME-operational
+	// active/suspended/deleted status qrdb has no concept of.
+	//
+	// When unset (nil — no composing binary has wired a live qrdb node, e.g.
+	// most existing unit tests), the tenant CRUD methods fall back to the
+	// tenantDAO-only behavior this type has always had, so callers that never
+	// call SetTenantService are unaffected.
+	tenantSvc qrdbsdk.ServiceTenantServicer
+}
+
+// SetTenantService wires the qrdb TenantServicer the tenant lifecycle
+// methods (CreateTenant, GetTenant, UpdateTenant, DeleteTenant, ListTenants)
+// delegate to. Mirrors SetBarrierService's post-construction wiring: the
+// composing binary calls this once the embedded qrdb node (and its
+// TenantServicer) has been constructed, which happens after
+// NewTenantAwareAdminService in xkmsd's start-up sequence.
+func (s *TenantAwareAdminService) SetTenantService(svc qrdbsdk.ServiceTenantServicer) {
+	s.tenantSvc = svc
 }
 
 // NewTenantAwareAdminService creates a new tenant-aware admin service.
@@ -109,18 +136,75 @@ func (s *TenantAwareAdminService) SetBarrierService(svc BarrierService) {
 	s.barrierSvc = svc
 }
 
-// SetupSvc returns the setup service for first-run initialization.
-func (s *TenantAwareAdminService) SetupSvc() SetupService {
-	return s.setupSvc
-}
-
-// SetSetupService sets the setup service on the tenant-aware admin service.
-func (s *TenantAwareAdminService) SetSetupService(svc SetupService) {
-	s.setupSvc = svc
-}
-
-// CreateTenant creates a new tenant with default policies.
+// CreateTenant creates a new tenant with default policies. Tenant identity
+// and existence are delegated to qrdb's TenantServicer when SetTenantService
+// has wired one (createTenantQRDB); otherwise it falls back to the
+// entities.Tenant-only behavior this type has always had (createTenantLocal).
 func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTenantRequest) (*TenantInfo, error) {
+	if s.tenantSvc != nil {
+		return s.createTenantQRDB(ctx, req)
+	}
+	return s.createTenantLocal(ctx, req)
+}
+
+// createTenantQRDB creates the tenant's canonical identity record in qrdb
+// (the multi-tenant model xkms inherits) and a subordinate entities.Tenant
+// linkage row for the CA/EAB/status state xkms genuinely owns, keyed by the
+// same tenant ID. qrdb is authoritative for ID, Name, and existence; a
+// tenantDAO save failure is logged but non-fatal, mirroring how CA/EAB
+// bookkeeping already degrades elsewhere in this file — the tenant still
+// exists in qrdb even if the local linkage row could not be written.
+func (s *TenantAwareAdminService) createTenantQRDB(ctx context.Context, req CreateTenantRequest) (*TenantInfo, error) {
+	if req.ID == "" {
+		return nil, wrapInputError("id", "tenant ID is required")
+	}
+	if req.Name == "" {
+		return nil, wrapInputError("name", "tenant name is required")
+	}
+
+	if _, err := s.tenantSvc.GetTenant(ctx, req.ID); err == nil {
+		return nil, ErrTenantAlreadyExists
+	} else if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
+		return nil, caerrors.StorageFailureError("admin: failed to check tenant existence: %s", err)
+	}
+
+	qt, err := s.tenantSvc.CreateTenant(ctx, req.ID, req.Name, "")
+	if err != nil {
+		if errors.Is(err, qrdbsdk.ErrTenantExists) {
+			return nil, ErrTenantAlreadyExists
+		}
+		return nil, caerrors.StorageFailureError("admin: failed to create tenant: %s", err)
+	}
+
+	now := time.Now()
+	tenant := &entities.Tenant{
+		ID:        qt.ID,
+		Name:      qt.Name,
+		Status:    entities.TenantStatusActive,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if req.Settings != nil {
+		tenant.Settings = tenantSettingsInfoToEntity(req.Settings)
+	}
+	if s.tenantDAO != nil {
+		if err := s.tenantDAO.Save(ctx, tenant); err != nil {
+			s.logger.Warn("failed to save tenant linkage record",
+				slog.String("tenant_id", req.ID),
+				slog.String("error", err.Error()))
+		}
+	}
+
+	s.logger.Info("tenant created",
+		slog.String("id", req.ID),
+		slog.String("name", req.Name))
+
+	return tenantEntityToInfo(tenant), nil
+}
+
+// createTenantLocal is the pre-unification implementation, retained as the
+// fallback for callers that have not wired a qrdb TenantServicer.
+func (s *TenantAwareAdminService) createTenantLocal(ctx context.Context, req CreateTenantRequest) (*TenantInfo, error) {
 	if req.ID == "" {
 		return nil, wrapInputError("id", "tenant ID is required")
 	}
@@ -180,8 +264,55 @@ func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTe
 	return tenantEntityToInfo(tenant), nil
 }
 
-// GetTenant retrieves a tenant by ID.
+// GetTenant retrieves a tenant by ID, delegating existence to qrdb when
+// wired and enriching the result with the local CA/EAB/status linkage row.
 func (s *TenantAwareAdminService) GetTenant(ctx context.Context, tenantID string) (*TenantInfo, error) {
+	if s.tenantSvc != nil {
+		return s.getTenantQRDB(ctx, tenantID)
+	}
+	return s.getTenantLocal(ctx, tenantID)
+}
+
+// getTenantQRDB resolves existence, ID, name, and timestamps from qrdb, then
+// overlays the local linkage row's CA/EAB/settings/status fields when one
+// exists. A missing linkage row is not an error: it means no CA/EAB
+// operations have happened yet for an otherwise-real qrdb tenant.
+func (s *TenantAwareAdminService) getTenantQRDB(ctx context.Context, tenantID string) (*TenantInfo, error) {
+	if tenantID == "" {
+		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+
+	qt, err := s.tenantSvc.GetTenant(ctx, tenantID)
+	if err != nil {
+		if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+			return nil, ErrTenantNotFound
+		}
+		return nil, caerrors.StorageFailureError("admin: failed to get tenant: %s", err)
+	}
+
+	info := &TenantInfo{
+		ID:        qt.ID,
+		Name:      qt.Name,
+		Status:    entities.TenantStatusActive,
+		CreatedAt: qt.CreatedAt,
+		UpdatedAt: qt.UpdatedAt,
+	}
+	if s.tenantDAO != nil {
+		if local, lerr := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID)); lerr == nil &&
+			local.Status != entities.TenantStatusDeleted {
+			info = tenantEntityToInfo(local)
+			info.ID = qt.ID
+			info.Name = qt.Name
+			info.CreatedAt = qt.CreatedAt
+			info.UpdatedAt = qt.UpdatedAt
+		}
+	}
+	return info, nil
+}
+
+// getTenantLocal is the pre-unification implementation, retained as the
+// fallback for callers that have not wired a qrdb TenantServicer.
+func (s *TenantAwareAdminService) getTenantLocal(ctx context.Context, tenantID string) (*TenantInfo, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
@@ -204,8 +335,70 @@ func (s *TenantAwareAdminService) GetTenant(ctx context.Context, tenantID string
 	return nil, ErrTenantNotFound
 }
 
-// UpdateTenant updates tenant configuration.
+// UpdateTenant updates tenant configuration, delegating the name change to
+// qrdb when wired and applying settings to the local linkage row.
 func (s *TenantAwareAdminService) UpdateTenant(ctx context.Context, tenantID string, req UpdateTenantRequest) (*TenantInfo, error) {
+	if s.tenantSvc != nil {
+		return s.updateTenantQRDB(ctx, tenantID, req)
+	}
+	return s.updateTenantLocal(ctx, tenantID, req)
+}
+
+// updateTenantQRDB applies the name patch through qrdb (the canonical
+// identity record) and persists Settings on the local linkage row.
+func (s *TenantAwareAdminService) updateTenantQRDB(ctx context.Context, tenantID string, req UpdateTenantRequest) (*TenantInfo, error) {
+	if tenantID == "" {
+		return nil, wrapInputError("tenant_id", "tenant ID is required")
+	}
+
+	qt, err := s.tenantSvc.UpdateTenant(ctx, tenantID, qrdbsdk.TenantPatch{Name: req.Name})
+	if err != nil {
+		if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+			return nil, ErrTenantNotFound
+		}
+		return nil, caerrors.StorageFailureError("admin: failed to update tenant: %s", err)
+	}
+
+	info := &TenantInfo{
+		ID:        qt.ID,
+		Name:      qt.Name,
+		Status:    entities.TenantStatusActive,
+		CreatedAt: qt.CreatedAt,
+		UpdatedAt: qt.UpdatedAt,
+	}
+	if s.tenantDAO != nil {
+		local, lerr := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
+		if lerr != nil {
+			if !isNotFoundError(lerr) {
+				return nil, caerrors.StorageFailureError("admin: failed to load tenant linkage record: %s", lerr)
+			}
+			local = &entities.Tenant{ID: qt.ID, Status: entities.TenantStatusActive, CreatedAt: qt.CreatedAt}
+		}
+		if local.Status == entities.TenantStatusDeleted {
+			return nil, ErrTenantDeleted
+		}
+		local.Name = qt.Name
+		if req.Settings != nil {
+			local.Settings = tenantSettingsInfoToEntity(req.Settings)
+		}
+		local.UpdatedAt = time.Now()
+		if err := s.tenantDAO.Save(ctx, local); err != nil {
+			s.logger.Warn("failed to update tenant linkage record",
+				slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
+		} else {
+			info = tenantEntityToInfo(local)
+			info.CreatedAt = qt.CreatedAt
+			info.UpdatedAt = qt.UpdatedAt
+		}
+	}
+
+	s.logger.Info("tenant updated", slog.String("id", tenantID))
+	return info, nil
+}
+
+// updateTenantLocal is the pre-unification implementation, retained as the
+// fallback for callers that have not wired a qrdb TenantServicer.
+func (s *TenantAwareAdminService) updateTenantLocal(ctx context.Context, tenantID string, req UpdateTenantRequest) (*TenantInfo, error) {
 	if tenantID == "" {
 		return nil, wrapInputError("tenant_id", "tenant ID is required")
 	}
@@ -288,14 +481,23 @@ func (s *TenantAwareAdminService) UpdateTenantStatus(ctx context.Context, tenant
 	return nil
 }
 
-// DeleteTenant deletes a tenant and all associated resources.
+// DeleteTenant deletes a tenant and all associated resources, delegating
+// existence and canonical deletion to qrdb when wired.
 func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return wrapInputError("tenant_id", "tenant ID is required")
 	}
 
-	// Verify tenant exists
-	if s.tenantDAO != nil {
+	if s.tenantSvc != nil {
+		if _, err := s.tenantSvc.GetTenant(ctx, tenantID); err != nil {
+			if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+				return ErrTenantNotFound
+			}
+			return caerrors.StorageFailureError("admin: failed to check tenant existence: %s", err)
+		}
+	} else if s.tenantDAO != nil {
+		// Verify tenant exists (fallback path: local linkage row is
+		// authoritative when no qrdb TenantServicer is wired).
 		_, err := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
 		if err != nil {
 			if isNotFoundError(err) {
@@ -342,16 +544,33 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 		_ = s.qrdbService.KV().Delete(ctx, defaultCAKey)
 	}
 
-	// Soft delete tenant entity: Get -> Delete(entity)
+	// Canonical deletion: qrdb when wired (hard delete of the tenant's
+	// identity record), local entities.Tenant linkage row otherwise.
+	if s.tenantSvc != nil {
+		if err := s.tenantSvc.DeleteTenant(ctx, tenantID); err != nil {
+			if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+				return ErrTenantNotFound
+			}
+			return caerrors.StorageFailureError("admin: failed to delete tenant: %s", err)
+		}
+	}
+
+	// Remove the local linkage row (best-effort when qrdb is canonical: the
+	// tenant is already gone from qrdb at this point regardless of whether
+	// this succeeds).
 	if s.tenantDAO != nil {
 		tenant, err := s.tenantDAO.Get(ctx, entities.StringToEntityID(tenantID))
 		if err != nil {
-			if !isNotFoundError(err) {
+			if !isNotFoundError(err) && s.tenantSvc == nil {
 				return caerrors.StorageFailureError("admin: failed to get tenant for deletion: %s", err)
 			}
 		} else {
 			if err := s.tenantDAO.Delete(ctx, tenant); err != nil {
-				return caerrors.StorageFailureError("admin: failed to delete tenant: %s", err)
+				if s.tenantSvc == nil {
+					return caerrors.StorageFailureError("admin: failed to delete tenant: %s", err)
+				}
+				s.logger.Warn("failed to delete tenant linkage record",
+					slog.String("tenant_id", tenantID), slog.String("error", err.Error()))
 			}
 		}
 	}
@@ -372,6 +591,10 @@ func (s *TenantAwareAdminService) ListTenants(ctx context.Context, req ListTenan
 	}
 	if req.PerPage > 100 {
 		req.PerPage = 100
+	}
+
+	if s.tenantSvc != nil {
+		return s.listTenantsQRDB(ctx, req)
 	}
 
 	// List tenants from QRDB KV storage
@@ -420,6 +643,63 @@ func (s *TenantAwareAdminService) ListTenants(ctx context.Context, req ListTenan
 	}
 
 	return result, &Pagination{
+		Page:    req.Page,
+		PerPage: req.PerPage,
+		Total:   total,
+	}, nil
+}
+
+// listTenantsQRDB lists tenants from qrdb's TenantServicer (the canonical
+// set) and overlays each with its local linkage row when one exists. A
+// tenant soft-deleted only in the local row (legacy state) is excluded, since
+// qrdb has no soft-delete concept and its presence there means the tenant is
+// live.
+func (s *TenantAwareAdminService) listTenantsQRDB(ctx context.Context, req ListTenantsRequest) ([]*TenantInfo, *Pagination, error) {
+	all, err := s.tenantSvc.ListTenants(ctx)
+	if err != nil {
+		return nil, nil, caerrors.StorageFailureError("admin: failed to list tenants: %s", err)
+	}
+
+	infos := make([]*TenantInfo, 0, len(all))
+	for i := range all {
+		qt := all[i]
+		info := &TenantInfo{
+			ID:        qt.ID,
+			Name:      qt.Name,
+			Status:    entities.TenantStatusActive,
+			CreatedAt: qt.CreatedAt,
+			UpdatedAt: qt.UpdatedAt,
+		}
+		if s.tenantDAO != nil {
+			if local, lerr := s.tenantDAO.Get(ctx, entities.StringToEntityID(qt.ID)); lerr == nil &&
+				local.Status != entities.TenantStatusDeleted {
+				info = tenantEntityToInfo(local)
+				info.ID = qt.ID
+				info.Name = qt.Name
+				info.CreatedAt = qt.CreatedAt
+				info.UpdatedAt = qt.UpdatedAt
+			}
+		}
+		if req.Status == "" || info.Status == req.Status {
+			infos = append(infos, info)
+		}
+	}
+
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].CreatedAt.After(infos[j].CreatedAt)
+	})
+
+	total := len(infos)
+	start := (req.Page - 1) * req.PerPage
+	end := start + req.PerPage
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	return infos[start:end], &Pagination{
 		Page:    req.Page,
 		PerPage: req.PerPage,
 		Total:   total,

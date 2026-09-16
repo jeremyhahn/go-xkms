@@ -1,4 +1,4 @@
-//go:build local
+//go:build codec_json
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -28,13 +28,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -331,7 +332,7 @@ func TestCreateTenantUser_Success(t *testing.T) {
 	service := &mockTenantService{
 		createTenantUserFunc: func(ctx context.Context, tenantID string, req *db.CreateUserRequest) (*db.User, error) {
 			return &db.User{
-				ID:       "user-1",
+				ID:       uint64(1),
 				TenantID: tenantID,
 				Username: req.Username,
 			}, nil
@@ -396,7 +397,7 @@ func TestGetTenantUser_Success(t *testing.T) {
 	service := &mockTenantService{
 		getTenantUserFunc: func(ctx context.Context, tenantID string, userID string) (*db.User, error) {
 			return &db.User{
-				ID:       userID,
+				ID:       uint64(1),
 				TenantID: tenantID,
 				Username: "testuser",
 			}, nil
@@ -459,8 +460,8 @@ func TestUpdateTenantUser_Success(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	body := `{"username": "updated-user"}`
-	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/user-1", bytes.NewBufferString(body))
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "user-1"})
+	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/1", bytes.NewBufferString(body))
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantUser(w, req)
@@ -500,8 +501,8 @@ func TestUpdateTenantUser_ServiceError(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	body := `{"username": "updated"}`
-	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/user-1", bytes.NewBufferString(body))
-	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "user-1"})
+	req := httptest.NewRequest("PUT", "/api/v1/tenants/tenant-1/users/1", bytes.NewBufferString(body))
+	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1", "userID": "1"})
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantUser(w, req)
@@ -558,8 +559,8 @@ func TestListTenantUsers_Success(t *testing.T) {
 		listTenantUsersFunc: func(ctx context.Context, tenantID string, req *db.ListUsersRequest) (*db.ListUsersResponse, error) {
 			return &db.ListUsersResponse{
 				Users: []*db.User{
-					{ID: "user-1", TenantID: tenantID, Username: "alice"},
-					{ID: "user-2", TenantID: tenantID, Username: "bob"},
+					{ID: uint64(1), TenantID: tenantID, Username: "alice"},
+					{ID: uint64(2), TenantID: tenantID, Username: "bob"},
 				},
 				Total: 2,
 			}, nil
@@ -802,7 +803,7 @@ func TestTenantService_UpdateTenantUser_EmptyTenantID(t *testing.T) {
 	qrdbSvc := qrdb.NewTestService()
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
 
-	_, err := service.UpdateTenantUser(context.Background(), "", &db.UpdateUserRequest{ID: "user-1"})
+	_, err := service.UpdateTenantUser(context.Background(), "", &db.UpdateUserRequest{ID: uint64(1)})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
 }
 
@@ -810,7 +811,7 @@ func TestTenantService_UpdateTenantUser_NilQRDB(t *testing.T) {
 	logger := slog.Default()
 	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
 
-	_, err := service.UpdateTenantUser(context.Background(), "tenant-1", &db.UpdateUserRequest{ID: "user-1"})
+	_, err := service.UpdateTenantUser(context.Background(), "tenant-1", &db.UpdateUserRequest{ID: uint64(1)})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
 }
 
@@ -1407,7 +1408,7 @@ func TestTenantService_GetTenantUser_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	retrieved, err := service.GetTenantUser(context.Background(), "tenant-1", user.ID)
+	retrieved, err := service.GetTenantUser(context.Background(), "tenant-1", strconv.FormatUint(user.ID, 10))
 	require.NoError(t, err)
 	assert.Equal(t, user.ID, retrieved.ID)
 }
@@ -1442,7 +1443,7 @@ func TestTenantService_DeleteTenantUser_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = service.DeleteTenantUser(context.Background(), "tenant-1", user.ID)
+	err = service.DeleteTenantUser(context.Background(), "tenant-1", strconv.FormatUint(user.ID, 10))
 	require.NoError(t, err)
 }
 

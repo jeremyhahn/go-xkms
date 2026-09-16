@@ -231,11 +231,13 @@ is denied.
 
 ## First-run setup
 
-`/admin/setup/*` is deliberately unauthenticated: it is the first-run bootstrap
-that exists before any credential does. It is bounded by
-`setupService.requirePending`, which returns `SetupAlreadyCompleteError` once
-setup has completed — the state is persisted in the KV store, so the window does
-not reopen on restart.
+The ACME Admin API has no unauthenticated first-run bootstrap route. The
+`/admin/setup/*` endpoints and their `SetupSvc` seam were removed: they were
+unreachable dead code that carried a latent privilege risk (an unauthenticated
+path with no route registration guarding it). First-boot bootstrap is owned by
+go-qrdb (`pkg/firstboot` / `pkg/bootstrap`), consumed through the seams
+described in the project's SDK boundary; the ACME admin surface does not
+provide its own first-boot path.
 
 ## Tenant role provisioning
 

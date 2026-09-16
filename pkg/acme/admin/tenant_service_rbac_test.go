@@ -40,7 +40,7 @@ func newNilQRDBTenantService(t *testing.T) *TenantAwareAdminService {
 }
 
 // ==========================================================================
-// TenantAwareAdminService — BarrierSvc / SetupSvc accessors
+// TenantAwareAdminService — BarrierSvc accessors
 // ==========================================================================
 
 func TestTenantAwareAdminService_BarrierSvc_GetterSetter(t *testing.T) {
@@ -50,15 +50,6 @@ func TestTenantAwareAdminService_BarrierSvc_GetterSetter(t *testing.T) {
 	stub := NewBarrierService(BarrierModeEmbedded, nil, slog.Default())
 	svc.SetBarrierService(stub)
 	assert.Equal(t, stub, svc.BarrierSvc())
-}
-
-func TestTenantAwareAdminService_SetupSvc_GetterSetter(t *testing.T) {
-	svc := newNilQRDBTenantService(t)
-	assert.Nil(t, svc.SetupSvc())
-
-	stub := NewSetupService(BarrierModeEmbedded, nil, nil, nil, slog.Default())
-	svc.SetSetupService(stub)
-	assert.Equal(t, stub, svc.SetupSvc())
 }
 
 // ==========================================================================

@@ -161,8 +161,20 @@ func run() int {
 		defer removePIDFile(*pidFile, logger)
 	}
 
+	// Build the ACME admin ServiceModule ahead of server.New: module
+	// registration happens during embedded qrdb node construction (inside
+	// New itself), before the admin service, its ACME CA/storage, or the
+	// node's TenantService exist. Its router resolver stays nil (every
+	// admin route answers 503) until finalizeAdminModule publishes the
+	// assembled router below, after both srv and the ACME subsystem are up.
+	adminModule, err := newAdminModule()
+	if err != nil {
+		logger.Error("Failed to construct admin ServiceModule", slog.Any("error", err))
+		return 1
+	}
+
 	// Create server
-	srv, err := server.New(cfg)
+	srv, err := server.New(cfg, server.WithExtraModules(adminModule))
 	if err != nil {
 		logger.Error("Failed to create server", slog.Any("error", err))
 		return 1
@@ -214,6 +226,16 @@ func run() int {
 		logger.Error("Failed to start ACME server", slog.Any("error", err))
 		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
 			logger.Error("Error during shutdown after ACME failure", slog.Any("error", shutdownErr))
+		}
+		return 1
+	}
+
+	// Publish the admin surface's router now that both srv and the ACME
+	// subsystem (or its absence, when acme.enabled is false) are settled.
+	if err := finalizeAdminModule(srv, acme, logger); err != nil {
+		logger.Error("Failed to finalize admin ServiceModule", slog.Any("error", err))
+		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
+			logger.Error("Error during shutdown after admin module failure", slog.Any("error", shutdownErr))
 		}
 		return 1
 	}

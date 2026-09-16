@@ -89,9 +89,6 @@ type TenantAwareService interface {
 
 	// BarrierSvc returns the barrier service for seal/unseal operations.
 	BarrierSvc() BarrierService
-
-	// SetupSvc returns the setup service for first-run initialization.
-	SetupSvc() SetupService
 }
 
 // Ensure AdminService implements Service interface
