@@ -200,7 +200,7 @@ func TestNonceSession(t *testing.T) {
 	t.Run("WithClearPassword", func(t *testing.T) {
 		// Note: NonceSession uses PolicySecret with Endorsement hierarchy
 		// The password must match the Endorsement hierarchy auth (empty by default)
-		password := types.NewPassword([]byte("")) // Empty password matches TPM default
+		password := mustPassword([]byte("")) // Empty password matches TPM default
 		session, closer, err := tpmInstance.NonceSession(password)
 		require.NoError(t, err)
 		require.NotNil(t, session)

@@ -487,7 +487,7 @@ func TestIntegration_Session_PasswordAuth(t *testing.T) {
 		}
 
 		// Create key attributes with password
-		password := types.NewPassword([]byte("test-password"))
+		password := mustPassword([]byte("test-password"))
 		keyAttrs := &types.KeyAttributes{
 			CN:       "test-password-session",
 			Parent:   srkAttrs,

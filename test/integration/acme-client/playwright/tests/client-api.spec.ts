@@ -209,9 +209,35 @@ test.describe('Response Format', () => {
     expect(body).toHaveProperty('error');
   });
 
-  test('CORS headers are present', async ({ request }) => {
-    const res = await request.get(`${API}/config`);
+  // The client REST API is served either in-process behind the Wails asset
+  // handler (every origin accepted, wildcard echoed) or on a TCP listener via
+  // "trusted-acme-client serve" (only a same-origin caller served). Playwright
+  // always drives the networked `serve` binary (see start-server.sh), so
+  // these specs exercise the network-mode contract implemented by
+  // pkg/acme/gui/guard.
+  test('same-origin request echoes Access-Control-Allow-Origin', async ({ request, baseURL }) => {
+    const res = await request.get(`${API}/config`, {
+      headers: { Origin: baseURL! },
+    });
+    expect(res.status()).toBe(200);
     const headers = res.headers();
-    expect(headers['access-control-allow-origin']).toBeDefined();
+    expect(headers['access-control-allow-origin']).toBe(baseURL);
+    expect(headers['vary']).toContain('Origin');
+  });
+
+  test('cross-origin request is rejected', async ({ request }) => {
+    const res = await request.get(`${API}/config`, {
+      headers: { Origin: 'http://evil.example.com' },
+    });
+    expect(res.status()).toBe(403);
+    const headers = res.headers();
+    expect(headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  test('request with no Origin header gets no CORS header', async ({ request }) => {
+    const res = await request.get(`${API}/config`);
+    expect(res.status()).toBe(200);
+    const headers = res.headers();
+    expect(headers['access-control-allow-origin']).toBeUndefined();
   });
 });

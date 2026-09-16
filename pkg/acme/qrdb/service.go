@@ -20,7 +20,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // service is the production implementation of the Service interface.
@@ -72,7 +71,7 @@ func New(opts ...ServiceOption) (Service, error) {
 	if sc.config.Protocol == ProtocolEmbedded {
 		serverCfg := &embedded.ServerConfig{
 			DataDir: sc.config.DataDir,
-			Backend: xkmssdk.QRDBBackendPebble,
+			Backend: qrdbsdk.BackendPebble,
 		}
 
 		// Pass barrier config if enabled.

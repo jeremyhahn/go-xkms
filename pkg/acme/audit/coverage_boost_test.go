@@ -1,4 +1,4 @@
-//go:build local
+//go:build codec_json
 
 package audit
 

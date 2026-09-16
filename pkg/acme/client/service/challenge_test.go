@@ -14,6 +14,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -28,6 +29,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/azure"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/clouddns"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/cloudflare"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers/route53"
 )
 
 func testLogger() *slog.Logger {
@@ -333,9 +339,10 @@ func TestSetupHTTP01Challenge_WebrootInvalidPath(t *testing.T) {
 	assert.Nil(t, server)
 }
 
-// TestSetupDNS01Challenge verifies that SetupDNS01Challenge returns nil error
-// and does not panic.
-func TestSetupDNS01Challenge(t *testing.T) {
+// TestSetupDNS01Challenge_ManualMode verifies that SetupDNS01Challenge
+// returns a nil challenge and no error when no provider is configured -
+// the record must be created manually.
+func TestSetupDNS01Challenge_ManualMode(t *testing.T) {
 	config := &Config{
 		Challenge: ChallengeConfig{
 			DNS01: DNS01Config{
@@ -344,23 +351,243 @@ func TestSetupDNS01Challenge(t *testing.T) {
 		},
 	}
 
-	err := SetupDNS01Challenge(config, testLogger(), "example.com", "tok", "ka")
-	assert.NoError(t, err)
+	challenge, err := SetupDNS01Challenge(context.Background(), config, testLogger(), "example.com", "tok", "ka")
+	require.NoError(t, err)
+	assert.Nil(t, challenge)
+
+	// Cleanup must be safe to call unconditionally, even on a nil challenge.
+	assert.NoError(t, challenge.Cleanup(context.Background()))
 }
 
-// TestSetupDNS01Challenge_WithProvider verifies the provider log path.
-func TestSetupDNS01Challenge_WithProvider(t *testing.T) {
+// TestSetupDNS01Challenge_UnsupportedProvider verifies that an unrecognized
+// provider name fails fast with a typed error instead of silently doing
+// nothing and letting ACME validation fail later.
+func TestSetupDNS01Challenge_UnsupportedProvider(t *testing.T) {
 	config := &Config{
 		Challenge: ChallengeConfig{
 			DNS01: DNS01Config{
 				TTL:      60,
-				Provider: "cloudflare",
+				Provider: "no-such-provider",
 			},
 		},
 	}
 
-	err := SetupDNS01Challenge(config, testLogger(), "example.com", "tok", "ka")
-	assert.NoError(t, err)
+	challenge, err := SetupDNS01Challenge(context.Background(), config, testLogger(), "example.com", "tok", "ka")
+	require.Error(t, err)
+	assert.Nil(t, challenge)
+
+	var unsupportedErr ErrUnsupportedDNSProvider
+	require.ErrorAs(t, err, &unsupportedErr)
+	assert.Equal(t, "no-such-provider", unsupportedErr.Provider)
+}
+
+// TestSetupDNS01Challenge_InvalidAmbientCredential verifies that a
+// non-boolean "ambient" credential fails fast with a typed error rather than
+// silently defaulting.
+func TestSetupDNS01Challenge_InvalidAmbientCredential(t *testing.T) {
+	config := &Config{
+		Challenge: ChallengeConfig{
+			DNS01: DNS01Config{
+				Provider:    "route53",
+				Credentials: map[string]string{"ambient": "not-a-bool"},
+			},
+		},
+	}
+
+	challenge, err := SetupDNS01Challenge(context.Background(), config, testLogger(), "example.com", "tok", "ka")
+	require.Error(t, err)
+	assert.Nil(t, challenge)
+
+	var credErr ErrInvalidDNSProviderCredential
+	require.ErrorAs(t, err, &credErr)
+	assert.Equal(t, "ambient", credErr.Key)
+}
+
+// fakeDNSProvider is a Provider test double that records Present/CleanUp
+// calls and lets tests exercise success and failure paths without a real
+// DNS API.
+type fakeDNSProvider struct {
+	presentErr error
+	cleanUpErr error
+
+	presented []fakeDNSRecord
+	cleanedUp []fakeDNSRecord
+}
+
+type fakeDNSRecord struct {
+	domain string
+	fqdn   string
+	value  string
+}
+
+func (f *fakeDNSProvider) Present(_ context.Context, domain, fqdn, value string) error {
+	f.presented = append(f.presented, fakeDNSRecord{domain: domain, fqdn: fqdn, value: value})
+	return f.presentErr
+}
+
+func (f *fakeDNSProvider) CleanUp(_ context.Context, domain, fqdn, value string) error {
+	f.cleanedUp = append(f.cleanedUp, fakeDNSRecord{domain: domain, fqdn: fqdn, value: value})
+	return f.cleanUpErr
+}
+
+// TestNewDNS01Challenge_Success verifies that a DNS-01 record is presented
+// through the provider and that Cleanup later removes it.
+func TestNewDNS01Challenge_Success(t *testing.T) {
+	provider := &fakeDNSProvider{}
+
+	challenge, err := newDNS01Challenge(context.Background(), provider, "example.com", "_acme-challenge.example.com.", "response-value", testLogger())
+	require.NoError(t, err)
+	require.NotNil(t, challenge)
+
+	require.Len(t, provider.presented, 1)
+	assert.Equal(t, "example.com", provider.presented[0].domain)
+	assert.Equal(t, "_acme-challenge.example.com.", provider.presented[0].fqdn)
+	assert.Equal(t, "response-value", provider.presented[0].value)
+
+	require.NoError(t, challenge.Cleanup(context.Background()))
+	require.Len(t, provider.cleanedUp, 1)
+	assert.Equal(t, provider.presented[0], provider.cleanedUp[0])
+}
+
+// TestNewDNS01Challenge_PresentFails verifies that a provider failure during
+// record creation surfaces as a typed error and returns no challenge to
+// clean up.
+func TestNewDNS01Challenge_PresentFails(t *testing.T) {
+	provider := &fakeDNSProvider{presentErr: assert.AnError}
+
+	challenge, err := newDNS01Challenge(context.Background(), provider, "example.com", "_acme-challenge.example.com.", "response-value", testLogger())
+	require.Error(t, err)
+	assert.Nil(t, challenge)
+
+	var setupErr ErrChallengeSetupFailed
+	require.ErrorAs(t, err, &setupErr)
+	assert.Equal(t, "dns-01", setupErr.ChallengeType)
+}
+
+// TestDNS01Challenge_CleanupFails verifies that a provider failure during
+// cleanup surfaces as a typed error.
+func TestDNS01Challenge_CleanupFails(t *testing.T) {
+	provider := &fakeDNSProvider{cleanUpErr: assert.AnError}
+
+	challenge, err := newDNS01Challenge(context.Background(), provider, "example.com", "_acme-challenge.example.com.", "response-value", testLogger())
+	require.NoError(t, err)
+	require.NotNil(t, challenge)
+
+	err = challenge.Cleanup(context.Background())
+	require.Error(t, err)
+
+	var cleanupErr ErrChallengeCleanupFailed
+	require.ErrorAs(t, err, &cleanupErr)
+	assert.Equal(t, "dns-01", cleanupErr.ChallengeType)
+}
+
+// TestBuildDNS01ProviderConfig_Route53 verifies that credentials are mapped
+// into the route53 provider's Config struct by field name.
+func TestBuildDNS01ProviderConfig_Route53(t *testing.T) {
+	cfg := DNS01Config{
+		Provider: "route53",
+		TTL:      120,
+		Credentials: map[string]string{
+			"accessKeyId":     "AKIA...",
+			"secretAccessKey": "secret",
+			"region":          "us-east-1",
+			"hostedZoneId":    "Z123",
+		},
+	}
+
+	providerConfig, err := buildDNS01ProviderConfig(cfg)
+	require.NoError(t, err)
+
+	route53Config, ok := providerConfig.(route53.Config)
+	require.True(t, ok)
+	assert.Equal(t, "AKIA...", route53Config.AccessKeyID)
+	assert.Equal(t, "secret", route53Config.SecretAccessKey)
+	assert.Equal(t, "us-east-1", route53Config.Region)
+	assert.Equal(t, "Z123", route53Config.HostedZoneID)
+	assert.Equal(t, 120, route53Config.TTL)
+	assert.False(t, route53Config.Ambient)
+}
+
+// TestBuildDNS01ProviderConfig_Cloudflare verifies that credentials are
+// mapped into the cloudflare provider's Config struct by field name.
+func TestBuildDNS01ProviderConfig_Cloudflare(t *testing.T) {
+	cfg := DNS01Config{
+		Provider: "cloudflare",
+		TTL:      60,
+		Credentials: map[string]string{
+			"apiToken": "token-value",
+			"zoneId":   "zone-123",
+		},
+	}
+
+	providerConfig, err := buildDNS01ProviderConfig(cfg)
+	require.NoError(t, err)
+
+	cloudflareConfig, ok := providerConfig.(cloudflare.Config)
+	require.True(t, ok)
+	assert.Equal(t, "token-value", cloudflareConfig.APIToken)
+	assert.Equal(t, "zone-123", cloudflareConfig.ZoneID)
+	assert.Equal(t, 60, cloudflareConfig.TTL)
+}
+
+// TestBuildDNS01ProviderConfig_Azure verifies that credentials are mapped
+// into the azure provider's Config struct by field name, including the
+// ambient boolean flag.
+func TestBuildDNS01ProviderConfig_Azure(t *testing.T) {
+	cfg := DNS01Config{
+		Provider: "azure",
+		TTL:      90,
+		Credentials: map[string]string{
+			"subscriptionId":    "sub-1",
+			"resourceGroupName": "rg-1",
+			"ambient":           "true",
+		},
+	}
+
+	providerConfig, err := buildDNS01ProviderConfig(cfg)
+	require.NoError(t, err)
+
+	azureConfig, ok := providerConfig.(azure.Config)
+	require.True(t, ok)
+	assert.Equal(t, "sub-1", azureConfig.SubscriptionID)
+	assert.Equal(t, "rg-1", azureConfig.ResourceGroupName)
+	assert.True(t, azureConfig.Ambient)
+	assert.Equal(t, int64(90), azureConfig.TTL)
+}
+
+// TestBuildDNS01ProviderConfig_CloudDNS verifies that credentials are mapped
+// into the clouddns provider's Config struct by field name.
+func TestBuildDNS01ProviderConfig_CloudDNS(t *testing.T) {
+	cfg := DNS01Config{
+		Provider: "clouddns",
+		TTL:      45,
+		Credentials: map[string]string{
+			"project":            "my-project",
+			"serviceAccountJson": `{"type":"service_account"}`,
+		},
+	}
+
+	providerConfig, err := buildDNS01ProviderConfig(cfg)
+	require.NoError(t, err)
+
+	cloudDNSConfig, ok := providerConfig.(clouddns.Config)
+	require.True(t, ok)
+	assert.Equal(t, "my-project", cloudDNSConfig.Project)
+	assert.Equal(t, `{"type":"service_account"}`, string(cloudDNSConfig.ServiceAccountJSON))
+	assert.Equal(t, int64(45), cloudDNSConfig.TTL)
+}
+
+// TestBuildDNS01ProviderConfig_UnsupportedProvider verifies the fail-fast
+// typed error for a provider name this project does not implement.
+func TestBuildDNS01ProviderConfig_UnsupportedProvider(t *testing.T) {
+	cfg := DNS01Config{Provider: "unknown-dns-provider"}
+
+	_, err := buildDNS01ProviderConfig(cfg)
+	require.Error(t, err)
+
+	var unsupportedErr ErrUnsupportedDNSProvider
+	require.ErrorAs(t, err, &unsupportedErr)
+	assert.Equal(t, "unknown-dns-provider", unsupportedErr.Provider)
 }
 
 // TestSetupDeviceAttest01Challenge verifies that SetupDeviceAttest01Challenge

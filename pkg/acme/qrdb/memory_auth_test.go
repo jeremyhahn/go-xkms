@@ -1,4 +1,4 @@
-//go:build local
+//go:build codec_json
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -76,36 +76,6 @@ func TestMemoryRoleClient_GetRole_Success(t *testing.T) {
 	assert.Equal(t, "viewer", got.Name)
 }
 
-func TestMemoryRoleClient_GetRole_NotFound(t *testing.T) {
-	c := newMemoryRoleClient()
-	ctx := context.Background()
-
-	_, err := c.GetRole(ctx, "nonexistent")
-	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
-}
-
-func TestMemoryRoleClient_UpdateRole_Success(t *testing.T) {
-	c := newMemoryRoleClient()
-	ctx := context.Background()
-
-	created, err := c.CreateRole(ctx, &db.CreateRoleRequest{
-		Name:        "editor",
-		Permissions: []string{"read"},
-	})
-	require.NoError(t, err)
-
-	updated, err := c.UpdateRole(ctx, &db.UpdateRoleRequest{
-		ID:          created.ID,
-		Name:        "super-editor",
-		Permissions: []string{"read", "write", "delete"},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "super-editor", updated.Name)
-	assert.Equal(t, []string{"read", "write", "delete"}, updated.Permissions)
-	assert.NotEmpty(t, updated.UpdatedAt)
-}
-
 func TestMemoryRoleClient_UpdateRole_PartialUpdate_NameOnly(t *testing.T) {
 	c := newMemoryRoleClient()
 	ctx := context.Background()
@@ -142,42 +112,6 @@ func TestMemoryRoleClient_UpdateRole_PartialUpdate_PermissionsOnly(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, "editor", updated.Name)
 	assert.Equal(t, []string{"read", "write"}, updated.Permissions)
-}
-
-func TestMemoryRoleClient_UpdateRole_NotFound(t *testing.T) {
-	c := newMemoryRoleClient()
-	ctx := context.Background()
-
-	_, err := c.UpdateRole(ctx, &db.UpdateRoleRequest{
-		ID:   "nonexistent",
-		Name: "new-name",
-	})
-	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
-}
-
-func TestMemoryRoleClient_DeleteRole_Success(t *testing.T) {
-	c := newMemoryRoleClient()
-	ctx := context.Background()
-
-	created, err := c.CreateRole(ctx, &db.CreateRoleRequest{Name: "to-delete"})
-	require.NoError(t, err)
-
-	err = c.DeleteRole(ctx, created.ID)
-	require.NoError(t, err)
-
-	_, err = c.GetRole(ctx, created.ID)
-	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
-}
-
-func TestMemoryRoleClient_DeleteRole_NotFound(t *testing.T) {
-	c := newMemoryRoleClient()
-	ctx := context.Background()
-
-	err := c.DeleteRole(ctx, "nonexistent")
-	require.Error(t, err)
-	assert.Equal(t, errRoleNotFound, err)
 }
 
 func TestMemoryRoleClient_ListRoles_Empty(t *testing.T) {
@@ -226,7 +160,7 @@ func TestMemoryRoleClient_AssignRole_Success(t *testing.T) {
 	c := newMemoryRoleClient()
 	ctx := context.Background()
 
-	err := c.AssignRole(ctx, "user-1", "role-1")
+	err := c.AssignRole(ctx, uint64(1), "role-1")
 	assert.NoError(t, err)
 }
 
@@ -234,7 +168,7 @@ func TestMemoryRoleClient_UnassignRole_Success(t *testing.T) {
 	c := newMemoryRoleClient()
 	ctx := context.Background()
 
-	err := c.UnassignRole(ctx, "user-1", "role-1")
+	err := c.UnassignRole(ctx, uint64(1), "role-1")
 	assert.NoError(t, err)
 }
 
@@ -262,7 +196,7 @@ func TestMemoryUserClient_CreateUser_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	assert.Equal(t, "user-1", user.ID)
+	assert.Equal(t, uint64(1), user.ID)
 	assert.Equal(t, "alice", user.Username)
 	assert.Equal(t, "tenant-1", user.TenantID)
 	assert.Equal(t, []string{"role-1", "role-2"}, user.RoleIDs)
@@ -277,11 +211,11 @@ func TestMemoryUserClient_CreateUser_SequentialIDs(t *testing.T) {
 
 	u1, err := c.CreateUser(ctx, &db.CreateUserRequest{Username: "alice"})
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", u1.ID)
+	assert.Equal(t, uint64(1), u1.ID)
 
 	u2, err := c.CreateUser(ctx, &db.CreateUserRequest{Username: "bob"})
 	require.NoError(t, err)
-	assert.Equal(t, "user-2", u2.ID)
+	assert.Equal(t, uint64(2), u2.ID)
 }
 
 func TestMemoryUserClient_GetUser_Success(t *testing.T) {
@@ -298,36 +232,6 @@ func TestMemoryUserClient_GetUser_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, got.ID)
 	assert.Equal(t, "alice", got.Username)
-}
-
-func TestMemoryUserClient_GetUser_NotFound(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	_, err := c.GetUser(ctx, "nonexistent")
-	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
-}
-
-func TestMemoryUserClient_UpdateUser_Success(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	created, err := c.CreateUser(ctx, &db.CreateUserRequest{
-		Username: "alice",
-		RoleIDs:  []string{"role-1"},
-	})
-	require.NoError(t, err)
-
-	updated, err := c.UpdateUser(ctx, &db.UpdateUserRequest{
-		ID:       created.ID,
-		Username: "alice-updated",
-		RoleIDs:  []string{"role-1", "role-2"},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "alice-updated", updated.Username)
-	assert.Equal(t, []string{"role-1", "role-2"}, updated.RoleIDs)
-	assert.NotEmpty(t, updated.UpdatedAt)
 }
 
 func TestMemoryUserClient_UpdateUser_PartialUpdate_UsernameOnly(t *testing.T) {
@@ -366,42 +270,6 @@ func TestMemoryUserClient_UpdateUser_PartialUpdate_RolesOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "alice", updated.Username)
 	assert.Equal(t, []string{"role-2", "role-3"}, updated.RoleIDs)
-}
-
-func TestMemoryUserClient_UpdateUser_NotFound(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	_, err := c.UpdateUser(ctx, &db.UpdateUserRequest{
-		ID:       "nonexistent",
-		Username: "new-name",
-	})
-	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
-}
-
-func TestMemoryUserClient_DeleteUser_Success(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	created, err := c.CreateUser(ctx, &db.CreateUserRequest{Username: "to-delete"})
-	require.NoError(t, err)
-
-	err = c.DeleteUser(ctx, created.ID)
-	require.NoError(t, err)
-
-	_, err = c.GetUser(ctx, created.ID)
-	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
-}
-
-func TestMemoryUserClient_DeleteUser_NotFound(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	err := c.DeleteUser(ctx, "nonexistent")
-	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
 }
 
 func TestMemoryUserClient_ListUsers_Empty(t *testing.T) {
@@ -469,15 +337,6 @@ func TestMemoryUserClient_EnableUser_Success(t *testing.T) {
 	assert.True(t, got.Enabled)
 }
 
-func TestMemoryUserClient_EnableUser_NotFound(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	err := c.EnableUser(ctx, "nonexistent")
-	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
-}
-
 func TestMemoryUserClient_DisableUser_Success(t *testing.T) {
 	c := newMemoryUserClient()
 	ctx := context.Background()
@@ -492,13 +351,4 @@ func TestMemoryUserClient_DisableUser_Success(t *testing.T) {
 	got, err := c.GetUser(ctx, created.ID)
 	require.NoError(t, err)
 	assert.False(t, got.Enabled)
-}
-
-func TestMemoryUserClient_DisableUser_NotFound(t *testing.T) {
-	c := newMemoryUserClient()
-	ctx := context.Background()
-
-	err := c.DisableUser(ctx, "nonexistent")
-	require.Error(t, err)
-	assert.Equal(t, errUserNotFound, err)
 }

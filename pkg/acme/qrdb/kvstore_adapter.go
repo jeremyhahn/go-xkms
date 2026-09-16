@@ -19,7 +19,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // kvStoreAdapter adapts a db.KVClient to the qrdbsdk.KVStore
@@ -133,7 +132,7 @@ func (e *remoteIndexUnsupportedError) Is(target error) bool {
 // RegisterEntityIndexes registers index definitions for an entity type.
 // Remote transports do not currently support index registration; this returns
 // an error if called, indicating the caller should use a local KVStore.
-func (a *kvStoreAdapter) RegisterEntityIndexes(entityType string, indexes []xkmssdk.QRDBEntityIndex) error {
+func (a *kvStoreAdapter) RegisterEntityIndexes(entityType string, indexes []qrdbsdk.EntityIndex) error {
 	return &remoteIndexUnsupportedError{Op: "RegisterEntityIndexes", Name: entityType}
 }
 

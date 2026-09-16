@@ -1,12 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build and start the trusted-acme-client in serve mode for Playwright testing.
+# Build and start the acme-client (trusted-acme-client) in serve mode for
+# Playwright testing. The desktop GUI apps have no TCP listener of their own
+# (their routers mount in-process via the Wails asset handler); only
+# `acme-client serve` listens on a real address, so that is the mode
+# Playwright must target.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 CLIENT_BIN="${SCRIPT_DIR}/trusted-acme-client"
+CLIENT_PKG="./cmd/acme-client"
 CLIENT_PORT="${CLIENT_PORT:-18443}"
 WORK_DIR=$(mktemp -d)
 
@@ -64,13 +69,15 @@ logging:
   format: json
 YAML
 
-# Build the client with GUI tag (needed for SPA embed)
-echo "Building trusted-acme-client..." >&2
+# Build the client with the gui tag (needed to embed the client SPA that
+# `serve` mounts at /ui/client/; the REST API under /api/v1 is what the
+# specs actually exercise).
+echo "Building acme-client (${CLIENT_PKG})..." >&2
 cd "$PROJECT_DIR"
 go build -tags "gui,local,iam,codec_json,codec_yaml,codec_cbor,codec_msgpack" \
-    -o "$CLIENT_BIN" ./cmd/trusted-acme-client
+    -o "$CLIENT_BIN" "$CLIENT_PKG"
 
-echo "Starting trusted-acme-client serve on port $CLIENT_PORT..." >&2
+echo "Starting acme-client serve on port $CLIENT_PORT..." >&2
 
 # Start in serve mode (no TLS for testing)
 exec "$CLIENT_BIN" serve \

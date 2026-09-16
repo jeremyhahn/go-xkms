@@ -1151,6 +1151,24 @@ func (s *TestXKMSService) SealStoreStatus(ctx context.Context) (*xkms.SealStoreS
 	return nil, ErrNotImplemented
 }
 
+// Escrow operations
+
+func (s *TestXKMSService) EscrowKey(ctx context.Context, req *xkms.EscrowRequest) ([]*xkms.EscrowReceipt, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) RecoverKey(ctx context.Context, req *xkms.RecoverRequest) (*xkms.RecoverResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) ListEscrowed(ctx context.Context) ([]xkms.EscrowRecord, error) {
+	return nil, ErrNotImplemented
+}
+
+func (s *TestXKMSService) RevokeEscrow(ctx context.Context, escrowID string) error {
+	return ErrNotImplemented
+}
+
 // Policy operations
 
 func (s *TestXKMSService) PolicyCreate(ctx context.Context, req *xkms.PolicyCreateRequest) (*xkms.PolicyCreateResponse, error) {

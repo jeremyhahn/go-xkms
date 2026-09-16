@@ -554,7 +554,7 @@ func TestIntegration_SealUnseal(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewPassword(nil),
+		Password:     mustPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
@@ -606,7 +606,7 @@ func TestIntegration_RSASignVerify(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewPassword(nil),
+		Password:     mustPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
@@ -656,7 +656,7 @@ func TestIntegration_ECDSASignVerify(t *testing.T) {
 		KeyAlgorithm: x509.ECDSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewPassword(nil),
+		Password:     mustPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,

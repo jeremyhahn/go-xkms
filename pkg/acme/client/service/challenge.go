@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	dns01providers "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
 
@@ -203,39 +204,57 @@ func ComputeDNS01Response(keyAuth string) string {
 	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
-// SetupDNS01Challenge displays the DNS TXT record that must be created
-// for DNS-01 challenge validation. This function does not automatically
-// create the DNS record - that must be done manually or via DNS API.
-func SetupDNS01Challenge(config *Config, logger *slog.Logger, domain, token, keyAuth string) error {
+// SetupDNS01Challenge provisions the DNS TXT record required for DNS-01
+// challenge validation.
+//
+// When config.Challenge.DNS01.Provider names a supported provider (route53,
+// cloudflare, azure, or clouddns), the record is created automatically
+// through that provider and the returned DNS01Challenge must be cleaned up
+// by calling Cleanup once ACME validation completes. When Provider is empty,
+// the record must be created manually (or by an external DNS API) and the
+// details are printed for the operator; the returned DNS01Challenge is nil
+// since there is nothing for this process to clean up. An unrecognized
+// Provider fails fast with ErrUnsupportedDNSProvider rather than printing
+// manual instructions and proceeding to a validation that can never succeed.
+func SetupDNS01Challenge(ctx context.Context, config *Config, logger *slog.Logger, domain, token, keyAuth string) (*DNS01Challenge, error) {
 	dnsResponse := ComputeDNS01Response(keyAuth)
 	recordName := fmt.Sprintf("%s%s", acmeChallengePrefix, domain)
 
-	logger.Info("DNS-01 challenge setup required",
-		slog.String("action", "Create the following DNS TXT record"))
+	if config.Challenge.DNS01.Provider == "" {
+		logger.Info("DNS-01 challenge setup required",
+			slog.String("action", "Create the following DNS TXT record"))
 
-	fmt.Println()
-	fmt.Println("=== DNS-01 Challenge Setup ===")
-	fmt.Println()
-	fmt.Printf("Create a DNS TXT record with the following details:\n\n")
-	fmt.Printf("  Record Name:  %s\n", recordName)
-	fmt.Printf("  Record Type:  TXT\n")
-	fmt.Printf("  Record Value: %s\n", dnsResponse)
-	fmt.Printf("  TTL:          %d seconds\n", config.Challenge.DNS01.TTL)
-	fmt.Println()
-	fmt.Println("Example DNS zone entry:")
-	fmt.Printf("  %s. %d IN TXT \"%s\"\n", recordName, config.Challenge.DNS01.TTL, dnsResponse)
-	fmt.Println()
-	fmt.Println("Wait for DNS propagation before continuing.")
-	fmt.Println("You can verify with: dig TXT " + recordName)
-	fmt.Println()
+		fmt.Println()
+		fmt.Println("=== DNS-01 Challenge Setup ===")
+		fmt.Println()
+		fmt.Printf("Create a DNS TXT record with the following details:\n\n")
+		fmt.Printf("  Record Name:  %s\n", recordName)
+		fmt.Printf("  Record Type:  TXT\n")
+		fmt.Printf("  Record Value: %s\n", dnsResponse)
+		fmt.Printf("  TTL:          %d seconds\n", config.Challenge.DNS01.TTL)
+		fmt.Println()
+		fmt.Println("Example DNS zone entry:")
+		fmt.Printf("  %s. %d IN TXT \"%s\"\n", recordName, config.Challenge.DNS01.TTL, dnsResponse)
+		fmt.Println()
+		fmt.Println("Wait for DNS propagation before continuing.")
+		fmt.Println("You can verify with: dig TXT " + recordName)
+		fmt.Println()
 
-	if config.Challenge.DNS01.Provider != "" {
-		logger.Info("DNS provider configured",
-			slog.String("provider", config.Challenge.DNS01.Provider),
-			slog.String("note", "Automatic DNS record creation not implemented - manual setup required"))
+		return nil, nil
 	}
 
-	return nil
+	provider, err := buildDNS01Provider(ctx, config.Challenge.DNS01)
+	if err != nil {
+		return nil, err
+	}
+
+	fqdn := dns01providers.ToFQDN(recordName)
+
+	logger.Info("DNS-01 challenge provisioning record",
+		slog.String("provider", config.Challenge.DNS01.Provider),
+		slog.String("record", fqdn))
+
+	return newDNS01Challenge(ctx, provider, domain, fqdn, dnsResponse, logger)
 }
 
 // SetupDeviceAttest01Challenge sets up a device-attest-01 challenge using TPM attestation.

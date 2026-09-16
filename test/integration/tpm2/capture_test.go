@@ -34,7 +34,7 @@ func TestTPMSessionEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewPassword(nil),
+		Password:     mustPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001, // TPM_RH_OWNER
@@ -104,7 +104,7 @@ func TestTPMSessionNoEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewPassword(nil),
+		Password:     mustPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001, // TPM_RH_OWNER
@@ -159,7 +159,7 @@ func TestTPMMultipleOperationsEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewPassword(nil),
+		Password:     mustPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001,

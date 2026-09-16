@@ -38,6 +38,41 @@ func (e ErrUnsupportedChallengeType) Error() string {
 	return fmt.Sprintf("acme-client-service: unsupported challenge type: %s", e.ChallengeType)
 }
 
+// ErrChallengeCleanupFailed indicates that removing a previously provisioned
+// ACME challenge record failed.
+type ErrChallengeCleanupFailed struct {
+	ChallengeType string
+	Reason        string
+}
+
+func (e ErrChallengeCleanupFailed) Error() string {
+	return fmt.Sprintf("acme-client-service: challenge cleanup failed for %s: %s", e.ChallengeType, e.Reason)
+}
+
+// ErrUnsupportedDNSProvider indicates that DNS01Config.Provider named a
+// provider this project does not implement. It is returned at configuration
+// time so a doomed DNS-01 validation is never attempted.
+type ErrUnsupportedDNSProvider struct {
+	Provider string
+}
+
+func (e ErrUnsupportedDNSProvider) Error() string {
+	return fmt.Sprintf("acme-client-service: unsupported dns-01 provider %q (supported: route53, cloudflare, azure, clouddns)", e.Provider)
+}
+
+// ErrInvalidDNSProviderCredential indicates that a DNS01Config.Credentials
+// entry for the named provider could not be parsed into the type its
+// provider Config field requires.
+type ErrInvalidDNSProviderCredential struct {
+	Provider string
+	Key      string
+	Reason   string
+}
+
+func (e ErrInvalidDNSProviderCredential) Error() string {
+	return fmt.Sprintf("acme-client-service: invalid %q credential for dns-01 provider %q: %s", e.Key, e.Provider, e.Reason)
+}
+
 // ErrTPMModuleRequired indicates that a TPM module is required but not configured.
 type ErrTPMModuleRequired struct{}
 
