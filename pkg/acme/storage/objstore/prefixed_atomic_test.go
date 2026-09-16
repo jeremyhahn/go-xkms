@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,12 +28,12 @@ import (
 // the honesty half of this change: a tenant wrapper over a store that cannot
 // perform guarded writes must not look as though it can.
 type plainKVStore struct {
-	xkmssdk.QRDBKVStore
+	qrdbsdk.KVStore
 }
 
 // scopedAtomic returns the tenant-scoped store as the interface go-qrdb's DAO
 // layer asserts, failing the test if the assertion does not hold.
-func scopedAtomic(t *testing.T, inner xkmssdk.QRDBKVStore, prefix string) qrdbsdk.AtomicKVStore {
+func scopedAtomic(t *testing.T, inner qrdbsdk.KVStore, prefix string) qrdbsdk.AtomicKVStore {
 	t.Helper()
 	atomic, ok := newPrefixedKVStore(inner, prefix).(qrdbsdk.AtomicKVStore)
 	require.True(t, ok, "an atomic inner store must produce an atomic tenant-scoped store")
@@ -49,7 +48,7 @@ func TestPrefixedKVStore_AtomicInnerStoreKeepsTheCapability(t *testing.T) {
 }
 
 func TestPrefixedKVStore_NonAtomicInnerStoreIsNotClaimedAtomic(t *testing.T) {
-	_, ok := newPrefixedKVStore(&plainKVStore{QRDBKVStore: newSharedKV(t)}, "acme/tenants/alpha").(qrdbsdk.AtomicKVStore)
+	_, ok := newPrefixedKVStore(&plainKVStore{KVStore: newSharedKV(t)}, "acme/tenants/alpha").(qrdbsdk.AtomicKVStore)
 
 	assert.False(t, ok,
 		"the wrapper namespaces keys; it cannot add an atomicity guarantee the inner store lacks")

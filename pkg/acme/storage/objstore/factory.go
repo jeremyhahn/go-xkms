@@ -19,22 +19,21 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Factory implements the storage.Factory interface over a go-qrdb KVStore. All DAO instances are created through qrdb's built-in
 // GenericDAO, which handles codec selection and entity serialization internally.
 type Factory struct {
-	kvStore xkmssdk.QRDBKVStore
+	kvStore qrdbsdk.KVStore
 }
 
 // NewFactoryFromKVStore creates a Factory over a go-qrdb KVStore directly. This
 // is the datastore path: callers wrap any storage.Backend (file, pebble, qrdb)
 // with kvadapter.New and pass it here, so ACME persistence shares the server's
 // configured datastore instead of a separate object store.
-func NewFactoryFromKVStore(kv xkmssdk.QRDBKVStore) (storage.Factory, error) {
+func NewFactoryFromKVStore(kv qrdbsdk.KVStore) (storage.Factory, error) {
 	if kv == nil {
-		return nil, xkmssdk.QRDBDAOInvalidConfigError{
+		return nil, qrdbsdk.DAOInvalidConfigError{
 			Field:  "kvStore",
 			Reason: "kv store not configured",
 		}
@@ -73,7 +72,7 @@ func (f *Factory) AccountDAO() (qrdbsdk.GenericDAO[*entities.ACMEAccount], error
 // OrderDAO returns a GenericDAO for ACME orders scoped to a specific account.
 func (f *Factory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEOrder], error) {
 	if accountID == 0 {
-		return nil, xkmssdk.QRDBDAOInvalidEntityIDError{
+		return nil, qrdbsdk.DAOInvalidEntityIDError{
 			EntityType: "order",
 			Reason:     "account ID must be non-zero",
 		}
@@ -85,7 +84,7 @@ func (f *Factory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEO
 // AuthorizationDAO returns a GenericDAO for ACME authorizations scoped to a specific account.
 func (f *Factory) AuthorizationDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEAuthorization], error) {
 	if accountID == 0 {
-		return nil, xkmssdk.QRDBDAOInvalidEntityIDError{
+		return nil, qrdbsdk.DAOInvalidEntityIDError{
 			EntityType: "authorization",
 			Reason:     "account ID must be non-zero",
 		}
@@ -97,7 +96,7 @@ func (f *Factory) AuthorizationDAO(accountID uint64) (qrdbsdk.GenericDAO[*entiti
 // ChallengeDAO returns a GenericDAO for ACME challenges scoped to a specific account.
 func (f *Factory) ChallengeDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEChallenge], error) {
 	if accountID == 0 {
-		return nil, xkmssdk.QRDBDAOInvalidEntityIDError{
+		return nil, qrdbsdk.DAOInvalidEntityIDError{
 			EntityType: "challenge",
 			Reason:     "account ID must be non-zero",
 		}

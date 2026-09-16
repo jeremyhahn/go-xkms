@@ -21,7 +21,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Compile-time interface checks.
@@ -38,9 +37,9 @@ type TenantAwareFactory struct {
 // NewTenantAwareFactoryFromKVStore creates a TenantAwareFactory over a go-qrdb
 // KVStore directly (the datastore path). Callers wrap any storage.Backend —
 // including the object-storage engine — with kvadapter.New and pass it here.
-func NewTenantAwareFactoryFromKVStore(kv xkmssdk.QRDBKVStore) (*TenantAwareFactory, error) {
+func NewTenantAwareFactoryFromKVStore(kv qrdbsdk.KVStore) (*TenantAwareFactory, error) {
 	if kv == nil {
-		return nil, xkmssdk.QRDBDAOInvalidConfigError{
+		return nil, qrdbsdk.DAOInvalidConfigError{
 			Field:  "kvStore",
 			Reason: "kv store not configured",
 		}
@@ -59,7 +58,7 @@ func (f *TenantAwareFactory) TenantDAO() (qrdbsdk.GenericDAO[*entities.Tenant], 
 // specified tenant's data namespace.
 func (f *TenantAwareFactory) ForTenant(tenantID string) (storage.Factory, error) {
 	if tenantID == "" {
-		return nil, xkmssdk.QRDBDAOInvalidConfigError{
+		return nil, qrdbsdk.DAOInvalidConfigError{
 			Field:  "tenantID",
 			Reason: "tenant ID is required",
 		}
@@ -78,7 +77,7 @@ func (f *TenantAwareFactory) GetTenantID() string {
 
 // tenantScopedFactory is a Factory that operates within a tenant's key namespace.
 type tenantScopedFactory struct {
-	kvStore  xkmssdk.QRDBKVStore
+	kvStore  qrdbsdk.KVStore
 	tenantID string
 }
 
@@ -91,7 +90,7 @@ func (f *tenantScopedFactory) AccountDAO() (qrdbsdk.GenericDAO[*entities.ACMEAcc
 // OrderDAO returns a tenant-scoped GenericDAO for ACME orders.
 func (f *tenantScopedFactory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEOrder], error) {
 	if accountID == 0 {
-		return nil, xkmssdk.QRDBDAOInvalidEntityIDError{
+		return nil, qrdbsdk.DAOInvalidEntityIDError{
 			EntityType: "order",
 			Reason:     "account ID must be non-zero",
 		}
@@ -103,7 +102,7 @@ func (f *tenantScopedFactory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*en
 // AuthorizationDAO returns a tenant-scoped GenericDAO for ACME authorizations.
 func (f *tenantScopedFactory) AuthorizationDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEAuthorization], error) {
 	if accountID == 0 {
-		return nil, xkmssdk.QRDBDAOInvalidEntityIDError{
+		return nil, qrdbsdk.DAOInvalidEntityIDError{
 			EntityType: "authorization",
 			Reason:     "account ID must be non-zero",
 		}
@@ -115,7 +114,7 @@ func (f *tenantScopedFactory) AuthorizationDAO(accountID uint64) (qrdbsdk.Generi
 // ChallengeDAO returns a tenant-scoped GenericDAO for ACME challenges.
 func (f *tenantScopedFactory) ChallengeDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEChallenge], error) {
 	if accountID == 0 {
-		return nil, xkmssdk.QRDBDAOInvalidEntityIDError{
+		return nil, qrdbsdk.DAOInvalidEntityIDError{
 			EntityType: "challenge",
 			Reason:     "account ID must be non-zero",
 		}
@@ -144,7 +143,7 @@ func (f *tenantScopedFactory) ExternalAccountBindingDAO() (qrdbsdk.GenericDAO[*e
 
 // prefixedKVStore wraps a KVStore and prefixes all keys with a namespace.
 type prefixedKVStore struct {
-	inner  xkmssdk.QRDBKVStore
+	inner  qrdbsdk.KVStore
 	prefix string
 }
 
@@ -159,7 +158,7 @@ type prefixedKVStore struct {
 // writing, so it neither adds nor removes an atomicity guarantee: it must pass
 // the inner store's capability through unchanged, and must not claim it when
 // the inner store lacks it.
-func newPrefixedKVStore(inner xkmssdk.QRDBKVStore, prefix string) xkmssdk.QRDBKVStore {
+func newPrefixedKVStore(inner qrdbsdk.KVStore, prefix string) qrdbsdk.KVStore {
 	base := &prefixedKVStore{
 		inner:  inner,
 		prefix: prefix + "/",
@@ -242,7 +241,7 @@ func (p *prefixedKVStore) Exists(ctx context.Context, key string) (bool, error) 
 	return p.inner.Exists(ctx, p.prefix+key)
 }
 
-func (p *prefixedKVStore) RegisterEntityIndexes(entityType string, indexes []xkmssdk.QRDBEntityIndex) error {
+func (p *prefixedKVStore) RegisterEntityIndexes(entityType string, indexes []qrdbsdk.EntityIndex) error {
 	return p.inner.RegisterEntityIndexes(entityType, indexes)
 }
 

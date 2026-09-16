@@ -23,9 +23,9 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +38,7 @@ var errRecorded = errors.New("recorded store failure")
 // newSharedKV returns a single in-memory KVStore that several tenant-scoped
 // wrappers can share, which is the configuration that makes cross-tenant
 // leakage possible and therefore the one worth testing.
-func newSharedKV(t *testing.T) xkmssdk.QRDBKVStore {
+func newSharedKV(t *testing.T) qrdbsdk.KVStore {
 	t.Helper()
 	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestPrefixedKVStore_ExistsAndDeleteAreTenantScoped(t *testing.T) {
 	assert.Equal(t, []byte("alpha"), alphaVal)
 	assert.Equal(t, []byte("beta"), betaVal)
 
-	for _, s := range []xkmssdk.QRDBKVStore{alpha, beta} {
+	for _, s := range []qrdbsdk.KVStore{alpha, beta} {
 		exists, err := s.Exists(ctx, "nonces/n1")
 		require.NoError(t, err)
 		assert.True(t, exists)
@@ -139,7 +139,7 @@ func TestPrefixedKVStore_ScanIsIsolatedAndStripsPrefix(t *testing.T) {
 	// A global (unscoped) row that shares the leading path segment.
 	require.NoError(t, inner.Put(ctx, "acme/tenants/alphabet/orders/7", []byte("other-tenant")))
 
-	collect := func(s xkmssdk.QRDBKVStore, prefix string) map[string]string {
+	collect := func(s qrdbsdk.KVStore, prefix string) map[string]string {
 		out := map[string]string{}
 		require.NoError(t, s.Scan(ctx, prefix, func(key string, value []byte) error {
 			out[key] = string(value)
@@ -223,7 +223,7 @@ type recordingKVStore struct {
 	failList error
 
 	registeredEntity  string
-	registeredIndexes []xkmssdk.QRDBEntityIndex
+	registeredIndexes []qrdbsdk.EntityIndex
 	failRegister      error
 
 	queryIndexName  string
@@ -270,7 +270,7 @@ func (r *recordingKVStore) List(_ context.Context, _ string) ([]string, error) {
 
 func (r *recordingKVStore) Exists(context.Context, string) (bool, error) { return false, nil }
 
-func (r *recordingKVStore) RegisterEntityIndexes(entityType string, indexes []xkmssdk.QRDBEntityIndex) error {
+func (r *recordingKVStore) RegisterEntityIndexes(entityType string, indexes []qrdbsdk.EntityIndex) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.registeredEntity = entityType
@@ -328,7 +328,7 @@ func TestPrefixedKVStore_IndexOperationsDelegateUnprefixed(t *testing.T) {
 	}
 	scoped := newPrefixedKVStore(rec, "acme/tenants/alpha")
 
-	indexes := []xkmssdk.QRDBEntityIndex{{FieldName: "Status", JSONFieldName: "status", Unique: false}}
+	indexes := []qrdbsdk.EntityIndex{{FieldName: "Status", JSONFieldName: "status", Unique: false}}
 	require.NoError(t, scoped.RegisterEntityIndexes("account", indexes))
 	assert.Equal(t, "account", rec.registeredEntity, "entity type must be forwarded unchanged")
 	assert.Equal(t, indexes, rec.registeredIndexes)
@@ -411,7 +411,7 @@ func TestPrefixedKVStore_ConcurrentTenantWritesStayIsolated(t *testing.T) {
 		tenants = 4
 		rows    = 25
 	)
-	stores := make([]xkmssdk.QRDBKVStore, tenants)
+	stores := make([]qrdbsdk.KVStore, tenants)
 	for i := range stores {
 		stores[i] = newPrefixedKVStore(inner, "acme/tenants/t"+strconv.Itoa(i))
 	}
