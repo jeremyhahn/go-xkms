@@ -33,12 +33,11 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.3-alpha
 	github.com/jeremyhahn/go-quicraft v0.9.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.11.0-alpha
-	github.com/jeremyhahn/go-xkms/xkey v0.11.0-alpha
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/miekg/dns v1.1.72
 	github.com/miekg/pkcs11 v1.1.2
+	github.com/ovh/kmip-go v0.9.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.61.0
 	github.com/spf13/cobra v1.10.2
@@ -229,6 +228,8 @@ require (
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.11.0-alpha
+	github.com/jeremyhahn/go-xkms/xkey v0.11.0-alpha
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect

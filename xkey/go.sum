@@ -359,8 +359,6 @@ github.com/jeremyhahn/go-enclave v0.4.0-alpha h1:eOvaLklyLvRXV0rPpsccWiwuTcoR27u
 github.com/jeremyhahn/go-enclave v0.4.0-alpha/go.mod h1:LQHzUbjvUy3Q6BI2Gvaia8JwcGtOcOjufaCxKgw98VU=
 github.com/jeremyhahn/go-frost v0.1.8-alpha h1:VS2X0v4jNAZkHBO0VhWymDu7a/XGdHfAkZwizXAgwwE=
 github.com/jeremyhahn/go-frost v0.1.8-alpha/go.mod h1:Vi6mpuFab3p+XiK9oJ47qRIsbrk2TKIx484T2zAppXQ=
-github.com/jeremyhahn/go-luks2 v0.1.7-alpha h1:RzgLh5+naELKAAo5XNl0d7Mg/UzRT1TLqjZ24AlpUfo=
-github.com/jeremyhahn/go-luks2 v0.1.7-alpha/go.mod h1:PZnzlZKAGEGKrGX0fhc8cQuFz5q+2Mk8loRqvIONvyE=
 github.com/jeremyhahn/go-luks2 v0.1.10-alpha h1:28jqsEy0S5BT4TTEvy7lCKAueqdQ1jByPS+SUH540rE=
 github.com/jeremyhahn/go-luks2 v0.1.10-alpha/go.mod h1:0KROmXZOqRe7pO0jGbIJXPypPtWkjSv8d9UV3rRuYF4=
 github.com/jeremyhahn/go-objstore v0.3.0-alpha h1:G/KiZBLcojP9rFnH+UuqyTk1CM8ogM2ZRfrt0Ps3WcI=

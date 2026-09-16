@@ -345,10 +345,14 @@ github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo
 github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
 github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 h1:njuLRcjAuMKr7kI3D85AXWkw6/+v9PwtV6M6o11sWHQ=
 github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1/go.mod h1:alcuEEnZsY1WQsagKhZDsoPCRoOijYqhZvPwLG0kzVs=
+github.com/jeremyhahn/go-codec v1.3.0 h1:ajRH4ecojapSSBO14At6UbsSNXlS+v9bP87IwThdliM=
+github.com/jeremyhahn/go-codec v1.3.0/go.mod h1:lCPl8GiUIxMVxFdwAtOjicSquf2+QVLSbN9yhOwPvT0=
 github.com/jeremyhahn/go-codec v1.4.0 h1:ORbXlqpzg5RDlYGKyqKmbVNdF7TFjabO/7lVgpJ96W8=
 github.com/jeremyhahn/go-codec v1.4.0/go.mod h1:WsKvb0GxD0jRyLQRCpNCb5RsXBg4GY1LfwqK3kbIqF4=
 github.com/jeremyhahn/go-enclave v0.4.0-alpha h1:eOvaLklyLvRXV0rPpsccWiwuTcoR27uS/NyxaOlyMtE=
 github.com/jeremyhahn/go-enclave v0.4.0-alpha/go.mod h1:LQHzUbjvUy3Q6BI2Gvaia8JwcGtOcOjufaCxKgw98VU=
+github.com/jeremyhahn/go-frost v0.1.6-alpha h1:NGuyDB1B+r+UqKWdeWca6Nrcc7zogJ/PL3/3P38fCXI=
+github.com/jeremyhahn/go-frost v0.1.6-alpha/go.mod h1:UbVkgXJW4YoLkFOk93eiPHBBWalJasIH7z7Ix+c9TcE=
 github.com/jeremyhahn/go-frost v0.1.8-alpha h1:VS2X0v4jNAZkHBO0VhWymDu7a/XGdHfAkZwizXAgwwE=
 github.com/jeremyhahn/go-frost v0.1.8-alpha/go.mod h1:Vi6mpuFab3p+XiK9oJ47qRIsbrk2TKIx484T2zAppXQ=
 github.com/jeremyhahn/go-objstore v0.3.0-alpha h1:G/KiZBLcojP9rFnH+UuqyTk1CM8ogM2ZRfrt0Ps3WcI=
@@ -445,6 +449,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/neilotoole/slogt v1.1.0 h1:c7qE92sq+V0yvCuaxph+RQ2jOKL61c4hqS1Bv9W7FZE=
 github.com/neilotoole/slogt v1.1.0/go.mod h1:RCrGXkPc/hYybNulqQrMHRtvlQ7F6NktNVLuLwk6V+w=
+github.com/ovh/kmip-go v0.9.2 h1:gGzDJZxHptnZSidDPeQNKil9UJmNuRsVfukmN7TStKw=
+github.com/ovh/kmip-go v0.9.2/go.mod h1:vZDmUCBchiQzWWr1v7EmotrKwQkpGATikl/zNgonjDo=
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=
 github.com/pelletier/go-toml/v2 v2.4.3/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
