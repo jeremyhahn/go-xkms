@@ -18,9 +18,11 @@
 // or RSA-OAEP. The escrow agent never sees unwrapped key material.
 //
 // The package defines the EscrowAgent interface that implementations must satisfy,
-// along with request/response types for escrow operations. Two implementations
-// are provided: XKMS federation (pkg/escrow/xkms) for xkms-to-xkms replication,
-// and a KMIP stub (pkg/escrow/kmip) awaiting the ovh/kmip-go dependency.
+// along with request/response types for escrow operations, and a factory
+// (factory.go) that constructs an agent from an AgentConfig. Two
+// implementations are provided: XKMS federation (pkg/escrow/xkms) for
+// xkms-to-xkms replication, and KMIP (pkg/escrow/kmip) backed by
+// github.com/ovh/kmip-go.
 package escrow
 
 import (

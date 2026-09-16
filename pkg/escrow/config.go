@@ -13,6 +13,8 @@
 
 package escrow
 
+import "time"
+
 // Config holds the top-level escrow configuration.
 type Config struct {
 	// Enabled controls whether key escrow is active.
@@ -20,6 +22,24 @@ type Config struct {
 
 	// Agents configures the individual escrow agents.
 	Agents []AgentConfig `json:"agents" yaml:"agents"`
+}
+
+// Validate checks the escrow configuration for consistency. When c is nil or
+// Enabled is false, Validate is a no-op: escrow is off and its configuration
+// is never consulted.
+func (c *Config) Validate() error {
+	if c == nil || !c.Enabled {
+		return nil
+	}
+	if len(c.Agents) == 0 {
+		return ErrNoAgentsConfigured
+	}
+	for i := range c.Agents {
+		if err := c.Agents[i].Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AgentConfig configures a single escrow agent.
@@ -44,8 +64,14 @@ type AgentConfig struct {
 	// Authentication is the authentication method (e.g., "mtls").
 	Authentication string `json:"authentication,omitempty" yaml:"authentication,omitempty"`
 
-	// Name is a human-readable name for this agent instance.
+	// Name is a human-readable name for this agent instance. It uniquely
+	// identifies the agent within Registry when set; otherwise Type is used,
+	// which only works when a single agent of that type is configured.
 	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+
+	// Timeout overrides the agent's default per-request round-trip timeout.
+	// Zero uses the agent implementation's own default.
+	Timeout time.Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 }
 
 // Validate checks the agent configuration for required fields.

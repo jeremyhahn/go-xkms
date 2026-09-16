@@ -435,6 +435,59 @@ func TestRegistry_Close_WithErrors(t *testing.T) {
 	assert.Empty(t, r.Agents())
 }
 
+func TestRegistry_RevokeEscrowAll_Success(t *testing.T) {
+	r := NewRegistry()
+	a1 := newMockAgent("xkms")
+	a2 := newMockAgent("kmip")
+	require.NoError(t, r.Register("xkms", a1))
+	require.NoError(t, r.Register("kmip", a2))
+
+	err := r.RevokeEscrowAll(context.Background(), "escrow-1")
+	require.NoError(t, err)
+}
+
+func TestRegistry_RevokeEscrowAll_EmptyEscrowID(t *testing.T) {
+	r := NewRegistry()
+	require.NoError(t, r.Register("xkms", newMockAgent("xkms")))
+
+	err := r.RevokeEscrowAll(context.Background(), "")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrEmptyKeyID))
+}
+
+func TestRegistry_RevokeEscrowAll_EmptyRegistry(t *testing.T) {
+	r := NewRegistry()
+	err := r.RevokeEscrowAll(context.Background(), "escrow-1")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRegistryEmpty))
+}
+
+func TestRegistry_RevokeEscrowAll_PartialFailure(t *testing.T) {
+	r := NewRegistry()
+	a1 := newMockAgent("xkms")
+	a2 := newMockAgent("kmip")
+	a2.revokeErr = ErrKeyNotFound
+	require.NoError(t, r.Register("xkms", a1))
+	require.NoError(t, r.Register("kmip", a2))
+
+	err := r.RevokeEscrowAll(context.Background(), "escrow-1")
+	require.NoError(t, err)
+}
+
+func TestRegistry_RevokeEscrowAll_AllFail(t *testing.T) {
+	r := NewRegistry()
+	a1 := newMockAgent("xkms")
+	a1.revokeErr = ErrKeyNotFound
+	a2 := newMockAgent("kmip")
+	a2.revokeErr = ErrAgentUnavailable
+	require.NoError(t, r.Register("xkms", a1))
+	require.NoError(t, r.Register("kmip", a2))
+
+	err := r.RevokeEscrowAll(context.Background(), "escrow-1")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRevokeFailed))
+}
+
 func TestRegistry_Close_EmptyRegistry(t *testing.T) {
 	r := NewRegistry()
 	err := r.Close()

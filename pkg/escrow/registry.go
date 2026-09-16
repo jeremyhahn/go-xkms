@@ -199,6 +199,50 @@ func (r *Registry) ListAll(ctx context.Context) ([]EscrowRecord, error) {
 	return allRecords, nil
 }
 
+// RevokeEscrowAll sends the revoke request to ALL registered agents, mirroring
+// the belt-and-suspenders semantics of EscrowKeyAll: since EscrowKeyAll
+// replicates a key to every agent, revocation must reach every agent too, or
+// a copy silently survives on whichever agent was not asked. Returns an
+// error only if every agent's revoke fails; a NotFound on agents that never
+// held the key is expected and not itself a failure reported here (agent
+// implementations return escrow.ErrKeyNotFound for that case, which callers
+// can inspect via errors.Is on the joined error).
+func (r *Registry) RevokeEscrowAll(ctx context.Context, escrowID string) error {
+	if escrowID == "" {
+		return ErrEmptyKeyID
+	}
+
+	r.mu.RLock()
+	agentsCopy := make(map[string]EscrowAgent, len(r.agents))
+	for k, v := range r.agents {
+		agentsCopy[k] = v
+	}
+	r.mu.RUnlock()
+
+	if len(agentsCopy) == 0 {
+		return ErrRegistryEmpty
+	}
+
+	var (
+		succeeded int
+		errs      []error
+	)
+
+	for name, agent := range agentsCopy {
+		if err := agent.RevokeEscrow(ctx, escrowID); err != nil {
+			errs = append(errs, &xerrs.Wrapped{Msg: fmt.Sprintf("agent %s", name), Err: err})
+			continue
+		}
+		succeeded++
+	}
+
+	if succeeded == 0 {
+		return &xerrs.Joined{Lead: ErrRevokeFailed, Cause: errors.Join(errs...)}
+	}
+
+	return nil
+}
+
 // Close closes all registered agents and clears the registry.
 func (r *Registry) Close() error {
 	r.mu.Lock()

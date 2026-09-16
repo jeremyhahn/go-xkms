@@ -78,4 +78,12 @@ var (
 
 	// ErrAgentClosed is returned when operations are attempted on a closed agent.
 	ErrAgentClosed = errors.New("escrow: agent is closed")
+
+	// ErrUnknownAgentType is returned by the agent factory when AgentConfig.Type
+	// does not match any registered agent implementation.
+	ErrUnknownAgentType = errors.New("escrow: unknown agent type")
+
+	// ErrNoAgentsConfigured is returned when a Config with escrow enabled
+	// declares no agents.
+	ErrNoAgentsConfigured = errors.New("escrow: no agents configured")
 )
