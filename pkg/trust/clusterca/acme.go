@@ -377,8 +377,12 @@ func (p *Provisioner) enrollJoiner(ctx context.Context) (*Result, error) {
 	}
 	backendName := p.keyBackendName()
 	if backendName != "tpm2" {
-		// The software/pkcs11 CSR enrollment variant is tracked separately;
-		// only the TPM-attested path is implemented.
+		// Not a missing code path: the cluster CA's ACME server offers only
+		// TPM-attested challenges (enroll-01/endorse-01/device-attest-01) for
+		// the IP/permanent-identifier authorization a joining node presents,
+		// and none of them is satisfiable without a real TPM. See
+		// ErrACMEBackendUnsupported's doc comment for the security property
+		// this loses and the join modes that do not require it.
 		return nil, &ErrACMEBackendUnsupported{KeyBackend: backendName}
 	}
 

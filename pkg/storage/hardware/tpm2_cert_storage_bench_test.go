@@ -125,19 +125,11 @@ func BenchmarkTPM2_SaveCertChain(b *testing.B) {
 				totalSize += int64(len(cert.Raw))
 			}
 
-			// Skip if chain is too large
-			var pemSize int
-			for _, cert := range chain {
-				pemBlock := pem.EncodeToMemory(&pem.Block{
-					Type:  "CERTIFICATE",
-					Bytes: cert.Raw,
-				})
-				pemSize += len(pemBlock)
-			}
-			if pemSize > storage.maxSize {
-				b.Skipf("Chain too large (%d bytes) for TPM NV RAM (%d bytes)", pemSize, storage.maxSize)
-			}
-
+			// chainSizes and generateBenchCert(1) are both fixed above, so the
+			// encoded chain (~4-6KB for 2-3 1KB certs) stays well under
+			// storage.maxSize (8KB). If that invariant is ever broken,
+			// SaveCertChain's ErrCertificateTooLarge below surfaces it as a
+			// benchmark failure rather than a silently skipped case.
 			b.ResetTimer()
 			b.ReportAllocs()
 

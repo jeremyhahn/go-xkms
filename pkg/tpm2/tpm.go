@@ -546,6 +546,26 @@ func OpenUnixSocketTransport(socketPath string) (transport.TPM, error) {
 	return linuxudstpm.Open(socketPath)
 }
 
+// OpenDeviceTransport opens a raw command channel to a TPM 2.0 device or Unix
+// domain socket, without the EK discovery NewTPM2 performs. It is the seam
+// for consumers that only need a transport.TPMCloser to drive TPM commands
+// directly — such as NV-RAM-backed certificate storage — and must not pay for
+// (or fail on) EK/SRK provisioning state.
+//
+// A path ending in ".sock" opens a Unix domain socket (e.g. swtpm); anything
+// else opens the path as a character device file. The caller owns the
+// returned transport and must Close it when done.
+func OpenDeviceTransport(device string) (transport.TPMCloser, error) {
+	if strings.HasSuffix(device, ".sock") {
+		return linuxudstpm.Open(device)
+	}
+	f, err := os.OpenFile(device, os.O_RDWR, 0)
+	if err != nil {
+		return nil, ErrOpeningDevice
+	}
+	return transport.FromReadWriteCloser(f), nil
+}
+
 // OpenTCPTransport opens a connection to a TPM over TCP (e.g. swtpm).
 // commandAddress is "host:port" for the TPM command channel.
 // platformAddress is "host:port" for the TPM platform (control) channel;

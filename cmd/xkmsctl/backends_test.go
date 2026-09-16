@@ -934,6 +934,22 @@ func (m *mockBackendsClient) SealStoreStatus(ctx context.Context) (*transport.Se
 	return nil, nil
 }
 
+func (m *mockBackendsClient) EscrowKey(ctx context.Context, req *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) RecoverKey(ctx context.Context, req *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) RevokeEscrow(ctx context.Context, escrowID string) error {
+	return nil
+}
+
 // PolicyService stub implementations
 func (m *mockBackendsClient) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	return nil, nil

@@ -252,10 +252,15 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 
 	// Determine the authorization password
 	var soPIN xkms.Password
-	if installHierarchyAuth != "" {
-		soPIN = xkms.NewTPMStorePassword([]byte(installHierarchyAuth))
-	} else if tpmCfg.hierarchyAuth != "" {
-		soPIN = xkms.NewTPMStorePassword([]byte(tpmCfg.hierarchyAuth))
+	var pinErr error
+	switch {
+	case installHierarchyAuth != "":
+		soPIN, pinErr = xkms.NewTPMStorePassword([]byte(installHierarchyAuth))
+	case tpmCfg.hierarchyAuth != "":
+		soPIN, pinErr = xkms.NewTPMStorePassword([]byte(tpmCfg.hierarchyAuth))
+	}
+	if pinErr != nil {
+		return &SentinelCauseError{Sentinel: ErrProvisioningFailed, Cause: pinErr}
 	}
 
 	// Run Install (safe provisioning)
@@ -335,10 +340,15 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 
 	// Determine the authorization password
 	var soPIN xkms.Password
-	if provisionHierarchyAuth != "" {
-		soPIN = xkms.NewTPMStorePassword([]byte(provisionHierarchyAuth))
-	} else if tpmCfg.hierarchyAuth != "" {
-		soPIN = xkms.NewTPMStorePassword([]byte(tpmCfg.hierarchyAuth))
+	var pinErr error
+	switch {
+	case provisionHierarchyAuth != "":
+		soPIN, pinErr = xkms.NewTPMStorePassword([]byte(provisionHierarchyAuth))
+	case tpmCfg.hierarchyAuth != "":
+		soPIN, pinErr = xkms.NewTPMStorePassword([]byte(tpmCfg.hierarchyAuth))
+	}
+	if pinErr != nil {
+		return &SentinelCauseError{Sentinel: ErrProvisioningFailed, Cause: pinErr}
 	}
 
 	// Run full Provision (destructive)

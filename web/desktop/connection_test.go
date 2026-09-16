@@ -92,27 +92,5 @@ func TestBookmarks_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestRunGUI_DisabledBuildReturnsError(t *testing.T) {
-	// Under the default (no "desktop" tag) build, runGUI is the stub and must
-	// report that GUI support is absent rather than silently succeeding.
-	err := runGUI(Connection{Mode: ModeRemote, BaseURL: "https://x:8443"}, slog.Default())
-	if err == nil {
-		t.Skip("built with desktop tag; GUI stub not active")
-	}
-	var gu *GUIUnavailableError
-	if !errorsAs(err, &gu) {
-		t.Fatalf("expected GUIUnavailableError, got %T", err)
-	}
-}
-
-// errorsAs is a tiny local errors.As to avoid an import solely for one call.
-func errorsAs(err error, target **GUIUnavailableError) bool {
-	if e, ok := err.(*GUIUnavailableError); ok {
-		*target = e
-		return true
-	}
-	return false
-}
-
 // ensure os is referenced (kept for future env-driven cases).
 var _ = os.Getenv

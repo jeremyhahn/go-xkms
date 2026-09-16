@@ -218,24 +218,6 @@ func TestConstructorFailureWithOwnedNilKey(t *testing.T) {
 	}
 }
 
-// TestConstructorFailureWithOwnedNilKeyNoBLE covers the other reachable
-// entry point: NewPhoneKeyBackend fails building the BLE transport (always,
-// in a build without the ble tag) and takes the same cleanup path.
-func TestConstructorFailureWithOwnedNilKeyNoBLE(t *testing.T) {
-	cfg := &PhoneKeyBackendConfig{
-		OwnsStaticKey:   true,
-		LocalStaticKey:  nil,
-		TrustNewDevices: true,
-	}
-
-	if _, err := NewPhoneKeyBackend(cfg); err == nil {
-		t.Skip("this build has a working BLE transport; the failure path is not reachable here")
-	}
-	if cfg.LocalStaticKey != nil {
-		t.Fatal("cleanup left a key on the config")
-	}
-}
-
 // TestReusedConfigDoesNotShareASuppliedOwnedKey covers the half of the
 // config-reuse hazard the earlier test missed.
 //

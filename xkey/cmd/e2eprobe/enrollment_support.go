@@ -24,7 +24,6 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"math/big"
 	"strconv"
@@ -133,6 +132,6 @@ func probeStaticKey() (*pairing.StaticKey, error) {
 	}
 	// LoadStaticKey copies the scalar into protected memory, so the decoded
 	// heap copy can go.
-	defer noiseproto.WipeBytes(raw)
+	defer pairing.WipeBytes(raw)
 	return pairing.LoadStaticKey(raw)
 }

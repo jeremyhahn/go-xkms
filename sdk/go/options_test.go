@@ -334,6 +334,22 @@ func (m *mockService) SealStoreStatus(ctx context.Context) (*SealStoreStatusResp
 	return nil, nil
 }
 
+func (m *mockService) EscrowKey(ctx context.Context, req *EscrowRequest) ([]*EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockService) RecoverKey(ctx context.Context, req *RecoverRequest) (*RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListEscrowed(ctx context.Context) ([]EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockService) RevokeEscrow(ctx context.Context, escrowID string) error {
+	return nil
+}
+
 // Policy methods
 
 func (m *mockService) PolicyCreate(ctx context.Context, req *PolicyCreateRequest) (*PolicyCreateResponse, error) {

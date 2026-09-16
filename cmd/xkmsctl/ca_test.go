@@ -405,6 +405,22 @@ func (m *mockCAClient) SealStoreStatus(_ context.Context) (*transport.SealStoreS
 	return nil, nil
 }
 
+func (m *mockCAClient) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) RevokeEscrow(_ context.Context, _ string) error {
+	return nil
+}
+
 // Policy stubs
 func (m *mockCAClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	return nil, nil

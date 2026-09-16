@@ -1892,6 +1892,22 @@ func (m *mockTransportClient) SealStoreStatus(_ context.Context) (*transport.Sea
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) RevokeEscrow(_ context.Context, _ string) error {
+	return errNotImplemented
+}
+
 // Policy operations
 
 func (m *mockTransportClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {

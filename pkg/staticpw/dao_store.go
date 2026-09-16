@@ -175,16 +175,22 @@ func (s *DAOStore) Update(pw *StaticPassword) error {
 
 	if newID != pw.ID {
 		// Name or folder changed. Check for collision at the new location,
-		// then delete the old entity and save under the new key.
+		// then save under the new key BEFORE deleting the old entity: if the
+		// conflict check or the save fails, the original entity must still
+		// be there. Deleting first would destroy the password on either
+		// failure.
 		if err := s.checkNameConflict(ctx, pw.Name, pw.FolderPath, 0); err != nil {
+			return err
+		}
+		pw.ID = newID
+		entity := passwordToEntity(pw)
+		if err := s.dao.Save(ctx, entity); err != nil {
 			return err
 		}
 		if err := s.dao.Delete(ctx, existing); err != nil {
 			return ErrPasswordNotFound
 		}
-		pw.ID = newID
-		entity := passwordToEntity(pw)
-		return s.dao.Save(ctx, entity)
+		return nil
 	}
 
 	// Name and folder unchanged. Check for name collision excluding self.
@@ -313,23 +319,28 @@ func (s *DAOStore) MoveToFolder(idOrName string, folderPath string) error {
 		return ErrMoveToSameFolder
 	}
 
-	// Delete old entity.
-	if err := s.dao.Delete(ctx, entity); err != nil {
-		return ErrPasswordNotFound
-	}
-
 	// Update folder and regenerate ID.
 	pw.FolderPath = folderPath
 	pw.ID = generateID(pw.Name, pw.FolderPath)
 	pw.UpdatedAt = time.Now()
 
-	// Check for duplicate at new location.
+	// Check for a duplicate at the new location, then save the moved entry
+	// BEFORE deleting the source: a conflict or a failed save must never
+	// destroy the password. The source is only removed once the move has
+	// durably succeeded.
 	if err := s.checkNameConflict(ctx, pw.Name, pw.FolderPath, 0); err != nil {
 		return err
 	}
 
 	newEntity := passwordToEntity(pw)
-	return s.dao.Save(ctx, newEntity)
+	if err := s.dao.Save(ctx, newEntity); err != nil {
+		return err
+	}
+
+	if err := s.dao.Delete(ctx, entity); err != nil {
+		return ErrPasswordNotFound
+	}
+	return nil
 }
 
 // CreateFolder persists an empty folder marker so the folder survives

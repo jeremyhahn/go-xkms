@@ -121,6 +121,12 @@ func (a *Authenticator) handleGetInfo() ([]byte, error) {
 	// 0x0A: algorithms - Supported algorithms
 	response[getInfoKeyAlgorithms] = a.getAlgorithms()
 
+	// 0x0B: maxSerializedLargeBlobArray - required whenever the largeBlobs
+	// option is present (CTAP 2.1 §6.4).
+	if a.config.EnableLargeBlobs {
+		response[getInfoKeyMaxSerializedLargeBlobArray] = uint(a.config.MaxLargeBlobArray)
+	}
+
 	// 0x0D: minPINLength - Minimum PIN length
 	if a.config.EnablePIN {
 		response[getInfoKeyMinPINLength] = uint(a.config.PINMinLength)
@@ -265,6 +271,12 @@ func (a *Authenticator) getOptions() map[string]bool {
 	// Only include when enterprise attestation is enabled.
 	if a.config.EnableEnterpriseAttestation {
 		options["ep"] = true
+	}
+
+	// largeBlobs - authenticatorLargeBlobs command support (CTAP 2.1 §6.10).
+	// Only include when true (absent means unsupported, per spec default).
+	if a.config.EnableLargeBlobs {
+		options["largeBlobs"] = true
 	}
 
 	// policyTamperLocked - vendor option: the SO-signed policy failed

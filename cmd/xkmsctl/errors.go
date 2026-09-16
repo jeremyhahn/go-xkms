@@ -527,9 +527,6 @@ var (
 	// ErrFROSTVerifyFailed is the sentinel error "signature verification FAILED".
 	ErrFROSTVerifyFailed = errors.New("signature verification FAILED")
 
-	// ErrFileSecretBackendUnsupported is the sentinel error "not implemented for file secret backend".
-	ErrFileSecretBackendUnsupported = errors.New("not implemented for file secret backend")
-
 	// ErrFinishAuthenticationFailed is the sentinel error "failed to finish authentication".
 	ErrFinishAuthenticationFailed = errors.New("failed to finish authentication")
 
@@ -538,6 +535,18 @@ var (
 
 	// ErrFromToFlagsRequired is the sentinel error "both --from and --to flags are required".
 	ErrFromToFlagsRequired = errors.New("both --from and --to flags are required")
+
+	// ErrFrostAttributesRequired is the sentinel error returned by the
+	// file-backed FROST secret store's Signer/Decrypter when attrs carries no
+	// FrostAttributes: without the group's ciphersuite and M-of-N parameters
+	// it cannot build the ceremony-aware backend those operations delegate to.
+	ErrFrostAttributesRequired = errors.New("FROST attributes (algorithm, threshold, total) are required to build a signer or decrypter for a file-backed secret")
+
+	// ErrFrostPublicStorageRequired is the sentinel error returned by the
+	// file-backed FROST secret store's Signer/Decrypter when it was
+	// constructed without access to the group's public storage (group public
+	// key, verification shares): a secret share alone cannot produce either.
+	ErrFrostPublicStorageRequired = errors.New("file-backed FROST secret store has no public storage configured, required to build a signer or decrypter")
 
 	// ErrGenerateCAFailed is the sentinel error "failed to generate CA".
 	ErrGenerateCAFailed = errors.New("failed to generate CA")

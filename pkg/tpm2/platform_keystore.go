@@ -209,14 +209,22 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 	// Create SRK first with user PIN as auth value. The SRK must exist
 	// before the TPM2Backend can verify PINs against it.
 	srkAttrs := *pks.srkAttrs
-	srkAttrs.Password = store.NewPassword([]byte(userPIN))
+	userAuth, err := store.NewPassword([]byte(userPIN))
+	if err != nil {
+		return err
+	}
+	srkAttrs.Password = userAuth
 	// Creating a persistent SRK is an owner-hierarchy operation, so it needs the
 	// owner hierarchy's auth when one is set. ensureSRKAuth already applies the
 	// SO PIN this way on its evict/recreate path; this path did not, so a
 	// caller supplying an SO PIN still hit TPM_RC_BAD_AUTH on a TPM whose owner
 	// hierarchy ProvisionOwner had given an auth value.
 	if soPIN != "" {
-		srkAttrs.TPMAttributes.HierarchyAuth = store.NewPassword([]byte(soPIN))
+		soAuth, err := store.NewPassword([]byte(soPIN))
+		if err != nil {
+			return err
+		}
+		srkAttrs.TPMAttributes.HierarchyAuth = soAuth
 	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
 		// TPM_RC_NV_DEFINED (0x14c) means the persistent handle is already
@@ -315,7 +323,11 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 
 	evictAttrs := *pks.srkAttrs
 	if soPIN != "" {
-		evictAttrs.TPMAttributes.HierarchyAuth = store.NewPassword([]byte(soPIN))
+		soAuth, err := store.NewPassword([]byte(soPIN))
+		if err != nil {
+			return err
+		}
+		evictAttrs.TPMAttributes.HierarchyAuth = soAuth
 	}
 	name, _, readErr := pks.tpm.ReadHandle(evictAttrs.TPMAttributes.Handle)
 	if readErr != nil {
@@ -336,9 +348,17 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 	}
 
 	srkAttrs := *pks.srkAttrs
-	srkAttrs.Password = store.NewPassword([]byte(userPIN))
+	userAuth, err := store.NewPassword([]byte(userPIN))
+	if err != nil {
+		return err
+	}
+	srkAttrs.Password = userAuth
 	if soPIN != "" {
-		srkAttrs.TPMAttributes.HierarchyAuth = store.NewPassword([]byte(soPIN))
+		soAuth, err := store.NewPassword([]byte(soPIN))
+		if err != nil {
+			return err
+		}
+		srkAttrs.TPMAttributes.HierarchyAuth = soAuth
 	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
 		return errors.Join(ErrPlatformKeyStoreCreateSRK, err)
@@ -364,7 +384,11 @@ func (pks *PlatformKeyStore) InitializeWithDefaults() error {
 
 	// Create SRK with empty auth (TPM default).
 	srkAttrs := *pks.srkAttrs
-	srkAttrs.Password = store.NewPassword(nil)
+	emptyAuth, err := store.NewPassword(nil)
+	if err != nil {
+		return err
+	}
+	srkAttrs.Password = emptyAuth
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
 		// TPM_RC_NV_DEFINED (0x14c) means the persistent handle is already
 		// occupied - the SRK exists from a prior provisioning attempt.

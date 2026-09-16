@@ -162,8 +162,7 @@ func (tpm *TPM2) applyIAKConfig(attrs *types.KeyAttributes) error {
 	if err != nil {
 		return err
 	}
-	applyDevIDConfig(attrs, types.KeyTypeAttestation, cn, sigAlgo, cfg.PlatformPolicy, cfg.Password)
-	return nil
+	return applyDevIDConfig(attrs, types.KeyTypeAttestation, cn, sigAlgo, cfg.PlatformPolicy, cfg.Password)
 }
 
 // applyIDevIDConfig is the IDevID half of applyIAKConfig, shared by
@@ -178,8 +177,7 @@ func (tpm *TPM2) applyIDevIDConfig(attrs *types.KeyAttributes) error {
 	if err != nil {
 		return err
 	}
-	applyDevIDConfig(attrs, types.KeyTypeIDevID, cn, sigAlgo, cfg.PlatformPolicy, cfg.Password)
-	return nil
+	return applyDevIDConfig(attrs, types.KeyTypeIDevID, cn, sigAlgo, cfg.PlatformPolicy, cfg.Password)
 }
 
 // applyDevIDConfig writes the configuration-derived fields of a device
@@ -193,7 +191,12 @@ func applyDevIDConfig(
 	cn string,
 	sigAlgo x509.SignatureAlgorithm,
 	platformPolicy bool,
-	password string) {
+	password string) error {
+
+	pw, err := types.NewPassword([]byte(password))
+	if err != nil {
+		return err
+	}
 
 	attrs.CN = cn
 	attrs.KeyType = keyType
@@ -206,7 +209,8 @@ func applyDevIDConfig(
 	if attrs.Password != nil {
 		attrs.Password.Clear()
 	}
-	attrs.Password = types.NewPassword([]byte(password))
+	attrs.Password = pw
+	return nil
 }
 
 // Returns the Initial Attestation Key public key

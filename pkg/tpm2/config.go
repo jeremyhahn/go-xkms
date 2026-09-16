@@ -412,11 +412,17 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 	// wrong PlatformPolicySession branch on restart (see SRKAttributesFromConfig).
 	var ekPassword types.Password
 	if config.Password != "" {
-		ekPassword = types.NewPassword([]byte(config.Password))
+		ekPassword, err = types.NewPassword([]byte(config.Password))
+		if err != nil {
+			return nil, err
+		}
 	}
 	var ekHierarchyAuth types.Password
 	if config.HierarchyAuth != "" {
-		ekHierarchyAuth = types.NewPassword([]byte(config.HierarchyAuth))
+		ekHierarchyAuth, err = types.NewPassword([]byte(config.HierarchyAuth))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	attrs := &types.KeyAttributes{
@@ -503,14 +509,20 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 	// mismatching the SRK's actual UserAuth and producing TPM_RC_BAD_AUTH.
 	var srkPassword types.Password
 	if config.Password != "" {
-		srkPassword = types.NewPassword([]byte(config.Password))
+		srkPassword, err = types.NewPassword([]byte(config.Password))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Same guard for HierarchyAuth: leave nil when the config value is empty
 	// so that downstream TPM2_CreatePrimary uses empty auth (TPM default).
 	var hierarchyAuth types.Password
 	if config.HierarchyAuth != "" {
-		hierarchyAuth = types.NewPassword([]byte(config.HierarchyAuth))
+		hierarchyAuth, err = types.NewPassword([]byte(config.HierarchyAuth))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	attrs := &types.KeyAttributes{
@@ -584,13 +596,18 @@ func IAKAttributesFromConfig(
 		return nil, ErrInvalidHashFunction
 	}
 
+	password, err := types.NewPassword([]byte(config.Password))
+	if err != nil {
+		return nil, err
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:                 config.CN,
 		Debug:              config.Debug,
 		Hash:               hash,
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeAttestation,
-		Password:           types.NewPassword([]byte(config.Password)),
+		Password:           password,
 		PlatformPolicy:     config.PlatformPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
@@ -696,13 +713,18 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 		return nil, ErrInvalidHashFunction
 	}
 
+	password, err := types.NewPassword([]byte(config.Password))
+	if err != nil {
+		return nil, err
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:                 config.CN,
 		Debug:              config.Debug,
 		Hash:               hash,
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeIDevID,
-		Password:           types.NewPassword([]byte(config.Password)),
+		Password:           password,
 		PlatformPolicy:     config.PlatformPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
@@ -769,13 +791,18 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 		return nil, ErrInvalidHashFunction
 	}
 
+	password, err := types.NewPassword([]byte(config.Password))
+	if err != nil {
+		return nil, err
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:                 config.CN,
 		Debug:              config.Debug,
 		Hash:               hash,
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeIDevID,
-		Password:           types.NewPassword([]byte(config.Password)),
+		Password:           password,
 		PlatformPolicy:     config.PlatformPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,

@@ -149,6 +149,22 @@ func (m *mockSealStoreClient) SealStoreStatus(_ context.Context) (*transport.Sea
 	}, nil
 }
 
+func (m *mockSealStoreClient) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockSealStoreClient) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockSealStoreClient) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockSealStoreClient) RevokeEscrow(_ context.Context, _ string) error {
+	return nil
+}
+
 // resetSealStoreFlags resets all platform-store subcommand flags to their
 // default values. This prevents test pollution from Cobra retaining flag state
 // across RootCmd.Execute() calls within the same process.

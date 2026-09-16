@@ -59,6 +59,21 @@ func (e ErrNilMigrationDAOStore) Error() string {
 	return "staticpw: nil DAO store for migration"
 }
 
+// ErrMigrationConflict is returned when a legacy entry's name collides with
+// an entry already migrated to the DAOStore whose content differs. The
+// legacy entry is left in the source backend rather than deleted, so no
+// data is lost silently; the conflict must be resolved manually before the
+// legacy entry can be retired.
+type ErrMigrationConflict struct {
+	Key  string
+	Name string
+}
+
+// Error implements the error interface.
+func (e ErrMigrationConflict) Error() string {
+	return fmt.Sprintf("staticpw: migration conflict for key %q: an entry named %q already exists with different content", e.Key, e.Name)
+}
+
 // MigrateEntry populates Title from Name if Title is empty.
 // Returns true if the entry was modified.
 func MigrateEntry(pw *StaticPassword) bool {
@@ -180,9 +195,13 @@ func MigrateFromBackend(ctx context.Context, backend storage.Backend, prefix str
 		if strings.Contains(key, folderMarkerSuffix) {
 			folder := extractFolderFromMarkerKey(key, prefix)
 			if folder != "" {
-				_ = daoStore.CreateFolder(folder)
+				if createErr := daoStore.CreateFolder(folder); createErr != nil {
+					return ErrMigrationFailed{Key: key, Cause: createErr}
+				}
 			}
-			_ = backend.Delete(ctx, key)
+			if delErr := backend.Delete(ctx, key); delErr != nil {
+				return ErrMigrationFailed{Key: key, Cause: delErr}
+			}
 			continue
 		}
 
@@ -199,10 +218,25 @@ func MigrateFromBackend(ctx context.Context, backend storage.Backend, prefix str
 			return ErrMigrationFailed{Key: key, Cause: unmarshalErr}
 		}
 
-		// Attempt to add; skip if duplicate (already migrated).
+		// Attempt to add; a duplicate name means this key may already have
+		// been migrated in a prior run.
 		if addErr := daoStore.Add(&pw); addErr != nil {
 			if errors.Is(addErr, ErrPasswordExists) {
-				_ = backend.Delete(ctx, key)
+				existing, getExistingErr := daoStore.Get(pw.Name)
+				if getExistingErr != nil {
+					return ErrMigrationFailed{Key: key, Cause: getExistingErr}
+				}
+				if !staticPasswordContentEqual(existing, &pw) {
+					// The destination entry differs from the legacy one.
+					// Keep the legacy entry rather than silently discarding
+					// data the destination does not actually hold.
+					return ErrMigrationConflict{Key: key, Name: pw.Name}
+				}
+				// Identical content: this key was already migrated, safe
+				// to retire the legacy copy.
+				if delErr := backend.Delete(ctx, key); delErr != nil {
+					return ErrMigrationFailed{Key: key, Cause: delErr}
+				}
 				continue
 			}
 			return ErrMigrationFailed{Key: key, Cause: addErr}
@@ -215,6 +249,34 @@ func MigrateFromBackend(ctx context.Context, backend storage.Backend, prefix str
 	}
 
 	return nil
+}
+
+// staticPasswordContentEqual reports whether two StaticPassword entries
+// carry identical user-visible content, ignoring the generated ID and the
+// timestamps Add() stamps fresh on every call (CreatedAt/UpdatedAt), which
+// are not part of the entry's semantic content.
+func staticPasswordContentEqual(a, b *StaticPassword) bool {
+	if a.Name != b.Name ||
+		a.Title != b.Title ||
+		a.Username != b.Username ||
+		a.Password != b.Password ||
+		a.URL != b.URL ||
+		a.Notes != b.Notes ||
+		a.FolderPath != b.FolderPath ||
+		a.OwnerID != b.OwnerID ||
+		a.Shared != b.Shared ||
+		!a.ExpiresAt.Equal(b.ExpiresAt) {
+		return false
+	}
+	if len(a.MatchPatterns) != len(b.MatchPatterns) {
+		return false
+	}
+	for i := range a.MatchPatterns {
+		if a.MatchPatterns[i] != b.MatchPatterns[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // extractFolderFromMarkerKey extracts the folder path from a legacy

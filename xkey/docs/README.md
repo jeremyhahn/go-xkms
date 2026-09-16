@@ -38,8 +38,8 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `autofill/`, `ble/`, `device/`, `gui/`, `luks/`, `oath/`,
-`oidc/`, `password/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
+Still owed a folder: `agent/`, `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
+`oidc/`, `password/`, `phone/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
 

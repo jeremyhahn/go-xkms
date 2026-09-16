@@ -318,7 +318,11 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		// otherwise assume empty auth for fresh TPMs.
 		var currentAuth types.Password
 		if tpm.config.EK != nil && tpm.config.EK.HierarchyAuth != "" {
-			currentAuth = store.NewPassword([]byte(tpm.config.EK.HierarchyAuth))
+			auth, err := store.NewPassword([]byte(tpm.config.EK.HierarchyAuth))
+			if err != nil {
+				return err
+			}
+			currentAuth = auth
 		}
 
 		if err := tpm.SetHierarchyAuth(currentAuth, soPIN, nil); err != nil {
@@ -374,7 +378,11 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 					return err
 				}
 				ssrkAttrs.Parent = ekAttrs
-				ssrkAttrs.Password = store.NewPassword(nil)
+				emptyAuth, authErr := store.NewPassword(nil)
+				if authErr != nil {
+					return authErr
+				}
+				ssrkAttrs.Password = emptyAuth
 				ssrkAttrs.TPMAttributes.HierarchyAuth = soPIN
 				if err := tpm.CreateSRK(ssrkAttrs); err != nil {
 					return err

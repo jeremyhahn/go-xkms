@@ -13,7 +13,8 @@ import (
 func TestClearPassword_NewPassword(t *testing.T) {
 	password := []byte("test-password")
 
-	p := NewPassword(password)
+	p, err := NewPassword(password)
+	require.NoError(t, err)
 	require.NotNil(t, p)
 
 	// Verify Bytes returns the password
@@ -28,7 +29,8 @@ func TestClearPassword_NewPassword(t *testing.T) {
 func TestClearPassword_NewPassword_DifferentValue(t *testing.T) {
 	password := []byte("clear-password")
 
-	p := NewPassword(password)
+	p, err := NewPassword(password)
+	require.NoError(t, err)
 	require.NotNil(t, p)
 
 	// Verify Bytes returns the password
@@ -43,7 +45,8 @@ func TestClearPassword_NewPassword_DifferentValue(t *testing.T) {
 func TestClearPassword_Empty(t *testing.T) {
 	password := []byte{}
 
-	p := NewPassword(password)
+	p, err := NewPassword(password)
+	require.NoError(t, err)
 	require.NotNil(t, p)
 
 	// Verify Bytes returns empty slice
@@ -58,7 +61,8 @@ func TestClearPassword_Empty(t *testing.T) {
 func TestClearPassword_Nil(t *testing.T) {
 	var password []byte
 
-	p := NewPassword(password)
+	p, err := NewPassword(password)
+	require.NoError(t, err)
 	require.NotNil(t, p)
 
 	// Verify Bytes returns nil
@@ -75,7 +79,8 @@ func TestClearPassword_Clear(t *testing.T) {
 	passwordCopy := make([]byte, len(password))
 	copy(passwordCopy, password)
 
-	p := NewPassword(password)
+	p, err := NewPassword(password)
+	require.NoError(t, err)
 	require.NotNil(t, p)
 
 	// Verify password is present
@@ -93,7 +98,8 @@ func TestClearPassword_Clear(t *testing.T) {
 func TestClearPassword_ClearEmpty(t *testing.T) {
 	password := []byte{}
 
-	p := NewPassword(password)
+	p, err := NewPassword(password)
+	require.NoError(t, err)
 	require.NotNil(t, p)
 
 	// Clear should not panic on empty password

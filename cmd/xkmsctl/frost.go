@@ -441,7 +441,7 @@ Example:
 			return
 		}
 
-		secretBackend := newFileSecretBackend(secretStorage)
+		secretBackend := newFileSecretBackend(secretStorage, publicStorage)
 
 		// Create KeyStore and store package
 		ks := client.NewFrostKeyStore(publicStorage, secretBackend)
@@ -1126,8 +1126,9 @@ func createFrostBackend(cfg *Config, algorithm client.FrostAlgorithm, participan
 		return nil, &WrappedError{Sentinel: ErrCreateSecretStorageFailed, Err: err}
 	}
 
-	// Create a simple file-based secret backend
-	secretBackend := newFileSecretBackend(secretStorage)
+	// Create a simple file-based secret backend. publicStorage is passed
+	// through so Signer/Decrypter can build the ceremony-aware FrostBackend.
+	secretBackend := newFileSecretBackend(secretStorage, publicStorage)
 
 	frostConfig := &client.FrostBackendConfig{
 		PublicStorage:       publicStorage,
@@ -1150,9 +1151,28 @@ const frostSecretPrefix = "frost/secrets/"
 // frostSecretSuffix is the storage key suffix of a FROST secret share.
 const frostSecretSuffix = ".secret"
 
-// fileSecretBackend is a simple file-based backend for storing FROST secrets
+// fileSecretBackend is a simple file-based backend for storing FROST secrets.
+//
+// It holds only the secret share: the raw scalar RFC 9591 Appendix C's
+// trusted dealer produced for one participant. That alone can never satisfy
+// Signer or Decrypter — a single share is one Shamir point on the group
+// secret, not a usable key on its own, and this type has no view of the
+// group's public components (public key, verification shares) needed to run
+// the ceremony that turns a share into a signature. publicStorage, when set,
+// gives it that view so Signer can delegate to client.FrostBackend — the
+// same canonical, already-implemented ceremony-aware signer createFrostBackend
+// wires up elsewhere in this file — rather than reimplement any part of it
+// here. See Signer's doc comment for what happens when publicStorage or the
+// group parameters are unavailable.
 type fileSecretBackend struct {
 	storage client.StorageBackend
+
+	// publicStorage holds the FROST group's public components (metadata,
+	// group public key, verification shares) alongside this backend's secret
+	// share. Required by Signer/Decrypter; not needed for the plain
+	// key-storage methods (GenerateKey/GetKey/DeleteKey/ListKeys), so callers
+	// that only need those (e.g. frostImportCmd) may pass nil.
+	publicStorage client.StorageBackend
 }
 
 // frostSecretPath returns the storage key holding the secret share for cn.
@@ -1160,8 +1180,12 @@ func frostSecretPath(cn string) string {
 	return frostSecretPrefix + cn + frostSecretSuffix
 }
 
-func newFileSecretBackend(storage client.StorageBackend) *fileSecretBackend {
-	return &fileSecretBackend{storage: storage}
+// newFileSecretBackend returns a fileSecretBackend over storage for its
+// secret share. publicStorage supplies the FROST group's public components
+// so Signer/Decrypter can build the full ceremony-aware backend; pass nil
+// when only the plain key-storage methods are needed.
+func newFileSecretBackend(storage, publicStorage client.StorageBackend) *fileSecretBackend {
+	return &fileSecretBackend{storage: storage, publicStorage: publicStorage}
 }
 
 func (b *fileSecretBackend) Type() client.BackendType {
@@ -1253,12 +1277,64 @@ func frostSecretCN(key string) (string, bool) {
 	return cn, true
 }
 
+// Signer returns a crypto.Signer for the FROST key identified by attrs.
+//
+// A file-stored secret share is one Shamir point on the group secret, not a
+// usable key by itself, so Signer cannot sign from b.storage alone. It
+// builds the same ceremony-aware client.FrostBackend createFrostBackend
+// constructs elsewhere in this file — over b.publicStorage for the group's
+// public components and b itself for the secret share — and delegates to its
+// already-implemented, round-based Signer. attrs.FrostAttributes must carry
+// the group's ciphersuite and M-of-N parameters (as frostKeygenCmd sets them
+// when generating a key); GetKey never receives them, only Signer's caller
+// can supply them.
 func (b *fileSecretBackend) Signer(ctx context.Context, attrs *client.KeyAttributes) (crypto.Signer, error) {
-	return nil, ErrFileSecretBackendUnsupported
+	backend, err := b.frostBackendFor(attrs)
+	if err != nil {
+		return nil, err
+	}
+	return backend.Signer(ctx, attrs)
 }
 
+// Decrypter returns a crypto.Decrypter for the FROST key identified by attrs.
+// It delegates to the same ceremony-aware client.FrostBackend as Signer,
+// whose Decrypter correctly rejects the request: FROST is a signing-only
+// protocol (RFC 9591) and holds no decryption capability regardless of
+// where its secret share is stored.
 func (b *fileSecretBackend) Decrypter(ctx context.Context, attrs *client.KeyAttributes) (crypto.Decrypter, error) {
-	return nil, ErrFileSecretBackendUnsupported
+	backend, err := b.frostBackendFor(attrs)
+	if err != nil {
+		return nil, err
+	}
+	return backend.Decrypter(ctx, attrs)
+}
+
+// frostBackendFor builds the ceremony-aware client.FrostBackend Signer and
+// Decrypter delegate to, wiring b.publicStorage (the group's public
+// components) and b (this secret share) together with the ciphersuite and
+// M-of-N parameters from attrs.FrostAttributes.
+func (b *fileSecretBackend) frostBackendFor(attrs *client.KeyAttributes) (*client.FrostBackend, error) {
+	if b.publicStorage == nil {
+		return nil, ErrFrostPublicStorageRequired
+	}
+	if attrs == nil || attrs.FrostAttributes == nil {
+		return nil, ErrFrostAttributesRequired
+	}
+	fa := attrs.FrostAttributes
+	backend, err := client.NewFrostBackend(&client.FrostBackendConfig{
+		PublicStorage:       b.publicStorage,
+		SecretBackend:       b,
+		Algorithm:           fa.Algorithm,
+		ParticipantID:       fa.ParticipantID,
+		DefaultThreshold:    fa.Threshold,
+		DefaultTotal:        fa.Total,
+		Participants:        fa.Participants,
+		EnableNonceTracking: true,
+	})
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrCreateFROSTBackendFailed, Err: err}
+	}
+	return backend, nil
 }
 
 func (b *fileSecretBackend) RotateKey(ctx context.Context, attrs *client.KeyAttributes) error {

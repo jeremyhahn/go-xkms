@@ -616,6 +616,24 @@ func (m *MockXKMSService) SealStoreStatus(ctx context.Context) (*transport.SealS
 	return nil, &mockUnsupportedError{capability: "platform store"}
 }
 
+// Escrow operations
+
+func (m *MockXKMSService) EscrowKey(ctx context.Context, req *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, &mockUnsupportedError{capability: "escrow"}
+}
+
+func (m *MockXKMSService) RecoverKey(ctx context.Context, req *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, &mockUnsupportedError{capability: "escrow"}
+}
+
+func (m *MockXKMSService) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
+	return nil, &mockUnsupportedError{capability: "escrow"}
+}
+
+func (m *MockXKMSService) RevokeEscrow(ctx context.Context, escrowID string) error {
+	return &mockUnsupportedError{capability: "escrow"}
+}
+
 // Policy operations
 
 func (m *MockXKMSService) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {

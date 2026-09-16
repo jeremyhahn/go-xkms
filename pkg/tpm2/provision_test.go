@@ -168,7 +168,7 @@ func TestHierarchyAuthSetup(t *testing.T) {
 	hierarchyAuth := ekAttrs.TPMAttributes.HierarchyAuth
 
 	// Test setting new hierarchy auth
-	newPassword := store.NewPassword([]byte("new-hierarchy-pass"))
+	newPassword := mustPassword([]byte("new-hierarchy-pass"))
 	err = tpm.SetHierarchyAuth(hierarchyAuth, newPassword, nil)
 	assert.NoError(t, err)
 }
@@ -188,7 +188,7 @@ func TestKeyHierarchyCreation(t *testing.T) {
 		KeyAlgorithm:   x509.RSA,
 		KeyType:        types.KeyTypeStorage,
 		Parent:         ekAttrs,
-		Password:       store.NewPassword([]byte("srk-test")),
+		Password:       mustPassword([]byte("srk-test")),
 		PlatformPolicy: true,
 		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -208,7 +208,7 @@ func TestKeyHierarchyCreation(t *testing.T) {
 		KeyAlgorithm:   x509.RSA,
 		KeyType:        types.KeyTypeCA,
 		Parent:         srkAttrs,
-		Password:       store.NewPassword([]byte("rsa-test")),
+		Password:       mustPassword([]byte("rsa-test")),
 		PlatformPolicy: true,
 		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -393,7 +393,7 @@ func TestClearWithInvalidAuthCoverage(t *testing.T) {
 
 	// First set a non-empty lockout auth
 	lockoutHierarchy := tpm2.TPMRHLockout
-	newAuth := store.NewPassword([]byte("lockout-auth"))
+	newAuth := mustPassword([]byte("lockout-auth"))
 	err := tpm.SetHierarchyAuth(nil, newAuth, &lockoutHierarchy)
 	require.NoError(t, err)
 
@@ -757,7 +757,7 @@ func TestSetHierarchyAuthSpecificHierarchyCoverage(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	newPassword := store.NewPassword([]byte("new-hierarchy-auth"))
+	newPassword := mustPassword([]byte("new-hierarchy-auth"))
 
 	// Test setting Owner hierarchy auth
 	ownerHierarchy := tpm2.TPMRHOwner
@@ -826,7 +826,7 @@ func TestFactoryReset_Success(t *testing.T) {
 	tpmImpl.config.IAK.Handle = uint32(iakKey)
 
 	// Install provisions EK, SRK, IAK, and IDevID
-	soPIN := store.NewPassword([]byte(store.DEFAULT_PASSWORD))
+	soPIN := mustPassword([]byte(store.DEFAULT_PASSWORD))
 	err := tpmImpl.Install(soPIN, nil)
 	require.NoError(t, err)
 

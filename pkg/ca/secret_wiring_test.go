@@ -22,7 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/secret"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	pkcs8backend "github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"

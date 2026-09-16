@@ -27,7 +27,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -80,12 +80,12 @@ var (
 	ErrTrustUninstallFailed = errors.New("trust: failed to uninstall certificate from OS store")
 )
 
-// methodParser maps bootstrap method name strings to truststrap.Method values.
-var methodParser = map[string]truststrap.Method{
-	"dane":   truststrap.MethodDANE,
-	"noise":  truststrap.MethodNoise,
-	"spki":   truststrap.MethodSPKI,
-	"direct": truststrap.MethodDirect,
+// methodParser maps bootstrap method name strings to bootstrap.Mode values.
+var methodParser = map[string]bootstrap.Mode{
+	"dane":   bootstrap.ModeDANE,
+	"noise":  bootstrap.ModeNoise,
+	"spki":   bootstrap.ModeSPKI,
+	"direct": bootstrap.ModeDirect,
 }
 
 // trustCmd is the parent command for trust store management.
@@ -737,12 +737,12 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Bootstrapping trust store...\n")
 
-	resp, err := truststrap.AutoFetch(ctx, autoCfg)
+	resp, err := bootstrap.Fetch(ctx, *autoCfg)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustBootstrapFailed, Cause: err}
 	}
 
-	if len(resp.BundlePEM) == 0 {
+	if len(resp.PEM) == 0 {
 		fmt.Fprintf(os.Stderr, "No certificates returned from bootstrap server.\n")
 		return nil
 	}
@@ -756,7 +756,7 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 	// Report skips for the same reason `trust add` does: re-running a
 	// bootstrap against an already-trusted CA is the common case, and
 	// "imported: 0" on its own reads as a failure.
-	result, err := store.ImportPEM(resp.BundlePEM, nil)
+	result, err := store.ImportPEM(resp.PEM, nil)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
@@ -768,10 +768,10 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// buildBootstrapConfig constructs an AutoConfig from viper configuration
+// buildBootstrapConfig constructs a bootstrap.Config from viper configuration
 // and command-line flags.
-func buildBootstrapConfig(cmd *cobra.Command) (*truststrap.AutoConfig, error) {
-	cfg := &truststrap.AutoConfig{}
+func buildBootstrapConfig(cmd *cobra.Command) (*bootstrap.Config, error) {
+	cfg := &bootstrap.Config{Mode: bootstrap.ModeAuto}
 
 	// Determine method order from flag or config.
 	methods, err := cmd.Flags().GetStringSlice("method")
@@ -804,8 +804,7 @@ func buildBootstrapConfig(cmd *cobra.Command) (*truststrap.AutoConfig, error) {
 	// DANE configuration.
 	daneServerURL := viper.GetString("trust.bootstrap.dane.server_url")
 	if daneServerURL != "" {
-		cfg.DANE = &truststrap.DANEConfig{
-			ServerURL: daneServerURL,
+		cfg.DANE = &bootstrap.DANEConfig{
 			Hostname:  viper.GetString("trust.bootstrap.dane.hostname"),
 			DNSServer: viper.GetString("trust.bootstrap.dane.dns_server"),
 		}
@@ -814,7 +813,7 @@ func buildBootstrapConfig(cmd *cobra.Command) (*truststrap.AutoConfig, error) {
 	// Noise configuration.
 	noiseServerAddr := viper.GetString("trust.bootstrap.noise.server_addr")
 	if noiseServerAddr != "" {
-		cfg.Noise = &truststrap.NoiseConfig{
+		cfg.Noise = &bootstrap.NoiseConfig{
 			ServerAddr:      noiseServerAddr,
 			ServerStaticKey: viper.GetString("trust.bootstrap.noise.server_key"),
 		}
@@ -823,27 +822,35 @@ func buildBootstrapConfig(cmd *cobra.Command) (*truststrap.AutoConfig, error) {
 	// SPKI configuration.
 	spkiServerURL := viper.GetString("trust.bootstrap.spki.server_url")
 	if spkiServerURL != "" {
-		cfg.SPKI = &truststrap.SPKIConfig{
-			ServerURL:     spkiServerURL,
-			SPKIPinSHA256: viper.GetString("trust.bootstrap.spki.pin_sha256"),
+		cfg.SPKI = &bootstrap.SPKIConfig{
+			Pin: viper.GetString("trust.bootstrap.spki.pin_sha256"),
 		}
 	}
 
 	// Direct configuration.
 	directServerURL := viper.GetString("trust.bootstrap.direct.server_url")
 	if directServerURL != "" {
-		cfg.Direct = &truststrap.DirectConfig{
-			ServerURL: directServerURL,
-		}
+		cfg.Direct = &bootstrap.DirectConfig{}
+	}
+
+	// bootstrap.Config carries one ServerURL shared by every mode, where the
+	// legacy go-truststrap AutoConfig this replaced carried one per sub-config
+	// (in practice always the same host — every mode bootstraps the same
+	// xkms server). Prefer an explicit top-level setting; otherwise take the
+	// first per-mode URL configured, in DANE/SPKI/Direct priority, so a
+	// config written before this change keeps working unchanged.
+	cfg.ServerURL = viper.GetString("trust.bootstrap.server_url")
+	if cfg.ServerURL == "" {
+		cfg.ServerURL = firstNonEmpty(daneServerURL, spkiServerURL, directServerURL)
 	}
 
 	return cfg, nil
 }
 
-// parseMethodOrder converts a slice of method name strings to truststrap.Method
+// parseMethodOrder converts a slice of method name strings to bootstrap.Mode
 // values using map-based dispatch for O(1) lookup per method.
-func parseMethodOrder(names []string) ([]truststrap.Method, error) {
-	methods := make([]truststrap.Method, 0, len(names))
+func parseMethodOrder(names []string) ([]bootstrap.Mode, error) {
+	methods := make([]bootstrap.Mode, 0, len(names))
 	for _, name := range names {
 		m, ok := methodParser[strings.ToLower(strings.TrimSpace(name))]
 		if !ok {

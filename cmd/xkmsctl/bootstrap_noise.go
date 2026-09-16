@@ -26,7 +26,7 @@ import (
 	"github.com/awnumar/memguard"
 	"github.com/spf13/cobra"
 
-	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // noiseCmd represents the noise command group
@@ -90,7 +90,7 @@ func generateNoiseKey(outputFile string) {
 		return
 	}
 
-	key, err := noiseproto.GenerateStaticKey()
+	key, err := bootstrap.GenerateNoiseStaticKey()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})
 		return
@@ -103,15 +103,15 @@ func generateNoiseKey(outputFile string) {
 	// protected destination, and an ordinary make([]byte) cannot honour it —
 	// wiping afterwards does nothing about the copies the GC may already have
 	// made, or about the page reaching swap in between.
-	buf := memguard.NewBuffer(noiseproto.HexKeySize + 1)
+	buf := memguard.NewBuffer(bootstrap.NoiseHexKeySize + 1)
 	defer buf.Destroy()
 	encoded := buf.Bytes()
 
-	if err := noiseproto.EncodeStaticKey(encoded, key); err != nil {
+	if err := bootstrap.EncodeNoiseStaticKey(encoded, key); err != nil {
 		handleError(&WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err})
 		return
 	}
-	encoded[noiseproto.HexKeySize] = '\n'
+	encoded[bootstrap.NoiseHexKeySize] = '\n'
 
 	publicHex := hex.EncodeToString(key.Public)
 
@@ -233,7 +233,7 @@ func showNoiseKey(keyFile, keyHex string) {
 		}
 		// The file bytes are ours to wipe once decoded; TrimSpace returns a
 		// subslice of the same backing array, so wiping data covers both.
-		defer noiseproto.WipeBytes(data)
+		defer bootstrap.WipeNoiseBytes(data)
 		hexKey = bytes.TrimSpace(data)
 	case keyHex != "":
 		// --key-hex came in on the command line and is already visible in the
@@ -245,7 +245,7 @@ func showNoiseKey(keyFile, keyHex string) {
 		return
 	}
 
-	key, err := noiseproto.DecodeStaticKey(hexKey)
+	key, err := bootstrap.DecodeNoiseStaticKey(hexKey)
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrDecodeKeyFailed, Err: err})
 		return

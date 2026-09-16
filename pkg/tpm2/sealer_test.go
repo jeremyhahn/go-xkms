@@ -11,7 +11,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -281,7 +280,7 @@ func TestSealWithNilData(t *testing.T) {
 		KeyAttributes: &types.KeyAttributes{
 			CN:       "test-seal-nil-data",
 			Parent:   ssrkAttrs,
-			Password: store.NewPassword([]byte("test-pass")),
+			Password: mustPassword([]byte("test-pass")),
 		},
 	}
 
@@ -307,7 +306,7 @@ func TestUnsealWithProvidedBlobs(t *testing.T) {
 		KeyAttributes: &types.KeyAttributes{
 			CN:       "test-unseal-blobs",
 			Parent:   ssrkAttrs,
-			Password: store.NewPassword([]byte("test-pass")),
+			Password: mustPassword([]byte("test-pass")),
 		},
 	}
 
@@ -319,7 +318,7 @@ func TestUnsealWithProvidedBlobs(t *testing.T) {
 		KeyAttributes: &types.KeyAttributes{
 			CN:       "test-unseal-blobs",
 			Parent:   ssrkAttrs,
-			Password: store.NewPassword([]byte("test-pass")),
+			Password: mustPassword([]byte("test-pass")),
 		},
 	}
 

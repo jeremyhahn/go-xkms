@@ -108,9 +108,34 @@ func (e *ErrSPIFFEMismatch) Error() string {
 		e.Expected, e.Got)
 }
 
-// ErrACMEBackendUnsupported is returned when ACME-attested mode is configured
-// with a key backend that has no enrollment path yet (only tpm2 enroll-01 is
-// implemented; the software/pkcs11 CSR variant is tracked separately).
+// ErrACMEBackendUnsupported is returned when a JOINING node in ACME-attested
+// mode is configured with a key backend that cannot satisfy the attestation
+// the cluster CA's ACME server requires of a joining node's identity. For an
+// IP or permanent-identifier authorization — what a Raft node's address maps
+// to — the ACME server offers only the enroll-01, endorse-01, and
+// device-attest-01 challenges (see pkg/acme/server/handlers/new_order.go
+// createChallenges), and every one of them is satisfiable only by a backend
+// that exposes a real TPM 2.0: an Endorsement Key certificate, an
+// Attestation Identity Key, and PCR quote / credential-activation. Software
+// keys and PKCS#11 tokens can sign and decrypt but cannot produce any of
+// that, so there is no challenge on this server's directory a non-tpm2
+// backend can complete — this is a protocol boundary, not a missing code
+// path.
+//
+// The security property lost without it is hardware-bound proof of node
+// identity: with TPM attestation, the cluster CA confirms the joining key
+// is non-exportable and resident in a specific, previously-known physical
+// device. Without it, the CA can confirm only that some private key signed
+// the join CSR — it cannot tell a legitimate operator's software or
+// PKCS#11 key apart from one created by an attacker who obtained network
+// access to the join listener, cloned a disk image, or briefly touched a
+// key store. Any of those lets an impostor obtain a valid Raft mTLS
+// certificate and join as a peer.
+//
+// A software or PKCS#11 node joins a cluster today through one of the two
+// modes that do not depend on ACME attestation: hardware-resident node-key
+// mode (set Options.KeyBackend, leave Options.ACME nil) or the default
+// software auto-enrollment mode (leave both unset).
 type ErrACMEBackendUnsupported struct {
 	// KeyBackend is the configured backend name.
 	KeyBackend string
@@ -118,8 +143,14 @@ type ErrACMEBackendUnsupported struct {
 
 // Error implements the error interface.
 func (e *ErrACMEBackendUnsupported) Error() string {
-	return "clusterca: ACME-attested enrollment for key backend " + e.KeyBackend +
-		" is not implemented (tpm2 enroll-01 only)"
+	return "clusterca: ACME-attested cluster join requires TPM attestation (enroll-01/endorse-01/" +
+		"device-attest-01 — the only challenges the cluster CA offers for a joining node's identity); " +
+		"key backend " + e.KeyBackend + " has no Endorsement Key, Attestation Identity Key, or quote/" +
+		"credential-activation capability to satisfy any of them, so the CA cannot verify the joining " +
+		"key is non-exportable and bound to a known device — anyone who can run the joiner with a " +
+		e.KeyBackend + " key could otherwise impersonate a cluster member; join instead with " +
+		"KeyBackend set and ACME unset (hardware-resident node-key mode), or with the default " +
+		"software auto-enrollment mode"
 }
 
 // ErrNoTPM is returned when the tpm2 enrollment path cannot obtain a

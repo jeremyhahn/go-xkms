@@ -894,7 +894,7 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 }
 
 func TestIAKAttributesFromConfigTableDriven(t *testing.T) {
-	soPIN := store.NewPassword([]byte("password"))
+	soPIN := mustPassword([]byte("password"))
 
 	tests := []struct {
 		name        string
@@ -1874,7 +1874,7 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 
 	t.Run("IAK", func(t *testing.T) {
 		attrs, err := IAKAttributesFromConfig(
-			store.NewPassword([]byte("so-pin")),
+			mustPassword([]byte("so-pin")),
 			&IAKConfig{
 				CN:                 "iak-template-zero",
 				Hash:               "SHA-256",

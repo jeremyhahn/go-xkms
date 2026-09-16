@@ -48,19 +48,26 @@ const (
 	DefaultMaxResidentCredentials = 25
 	DefaultPINMinLength           = 4
 	DefaultPINMaxRetries          = 8
+
+	// DefaultMaxLargeBlobArray is the default cap, in bytes, on the
+	// serialized large-blob array (CBOR array + trailing checksum) an
+	// authenticatorLargeBlobs Set may store. 4096 matches common hardware
+	// security key large-blob capacities.
+	DefaultMaxLargeBlobArray = 4096
 )
 
 // Configuration errors
 var (
-	ErrNilConfig               = errors.New("authenticator: config is nil")
-	ErrInvalidAAGUID           = errors.New("authenticator: AAGUID must be exactly 16 bytes")
-	ErrNoAlgorithms            = errors.New("authenticator: at least one algorithm must be supported")
-	ErrUnsupportedAlgorithm    = errors.New("authenticator: unsupported algorithm specified")
-	ErrInvalidMaxCredentials   = errors.New("authenticator: max credentials must be positive")
-	ErrInvalidMaxResidentCreds = errors.New("authenticator: max resident credentials must be positive and not exceed max credentials")
-	ErrInvalidPINMinLength     = errors.New("authenticator: PIN min length must be at least 4")
-	ErrInvalidPINMaxRetries    = errors.New("authenticator: PIN max retries must be positive")
-	ErrNilStorage              = errors.New("authenticator: storage backend is required")
+	ErrNilConfig                = errors.New("authenticator: config is nil")
+	ErrInvalidAAGUID            = errors.New("authenticator: AAGUID must be exactly 16 bytes")
+	ErrNoAlgorithms             = errors.New("authenticator: at least one algorithm must be supported")
+	ErrUnsupportedAlgorithm     = errors.New("authenticator: unsupported algorithm specified")
+	ErrInvalidMaxCredentials    = errors.New("authenticator: max credentials must be positive")
+	ErrInvalidMaxResidentCreds  = errors.New("authenticator: max resident credentials must be positive and not exceed max credentials")
+	ErrInvalidPINMinLength      = errors.New("authenticator: PIN min length must be at least 4")
+	ErrInvalidPINMaxRetries     = errors.New("authenticator: PIN max retries must be positive")
+	ErrNilStorage               = errors.New("authenticator: storage backend is required")
+	ErrInvalidMaxLargeBlobArray = errors.New("authenticator: max large blob array size must be large enough to hold the initial empty array")
 )
 
 // CredentialStorage defines the interface for credential persistence.
@@ -341,9 +348,17 @@ type Config struct {
 	// Default: false
 	EnableEnterpriseAttestation bool `yaml:"enable-enterprise-attestation" json:"enable_enterprise_attestation" mapstructure:"enable-enterprise-attestation"`
 
-	// EnableLargeBlobs advertises largeBlob extension support in GetInfo.
-	// Default: false (future implementation)
+	// EnableLargeBlobs advertises the largeBlobKey extension and the
+	// largeBlobs option in GetInfo, and enables the authenticatorLargeBlobs
+	// command (CTAP 2.1 §6.10).
+	// Default: false
 	EnableLargeBlobs bool `yaml:"enable-large-blobs" json:"enable_large_blobs" mapstructure:"enable-large-blobs"`
+
+	// MaxLargeBlobArray caps the size, in bytes, of the serialized large-blob
+	// array (CBOR array + trailing checksum) authenticatorLargeBlobs will
+	// store. Only meaningful when EnableLargeBlobs is true.
+	// Default: DefaultMaxLargeBlobArray (4096)
+	MaxLargeBlobArray int `yaml:"max-large-blob-array" json:"max_large_blob_array" mapstructure:"max-large-blob-array"`
 
 	// FirmwareVersion is an unsigned integer reported in the CTAP2 GetInfo
 	// response (key 0x0E). The encoding scheme is device-specific; xkey uses
@@ -360,6 +375,7 @@ func DefaultConfig() *Config {
 		SupportedAlgorithms:        []int{COSEAlgES256},
 		MaxCredentials:             DefaultMaxCredentials,
 		MaxResidentCredentials:     DefaultMaxResidentCredentials,
+		MaxLargeBlobArray:          DefaultMaxLargeBlobArray,
 		PINMinLength:               DefaultPINMinLength,
 		PINMaxRetries:              DefaultPINMaxRetries,
 		EnablePIN:                  true,
@@ -399,6 +415,10 @@ func (c *Config) SetDefaults() {
 
 	if c.PINMaxRetries <= 0 {
 		c.PINMaxRetries = DefaultPINMaxRetries
+	}
+
+	if c.MaxLargeBlobArray <= 0 {
+		c.MaxLargeBlobArray = DefaultMaxLargeBlobArray
 	}
 
 	// A zero or negative window would either disable initialization entirely or
@@ -454,6 +474,10 @@ func (c *Config) Validate() error {
 
 	if c.PINMaxRetries <= 0 {
 		return ErrInvalidPINMaxRetries
+	}
+
+	if c.EnableLargeBlobs && c.MaxLargeBlobArray < minSerializedLargeBlobArray {
+		return ErrInvalidMaxLargeBlobArray
 	}
 
 	if c.Storage == nil {

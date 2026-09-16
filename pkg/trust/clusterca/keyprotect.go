@@ -115,14 +115,22 @@ func (k *KeyProtection) Resolve(ctx context.Context) (types.Password, bool, erro
 
 	case KeyProtectPassphrase:
 		logger.Info("cluster CA keystore protected by operator passphrase")
-		return types.NewPasswordFromString(k.Passphrase), false, nil
+		pw, err := types.NewPasswordFromString(k.Passphrase)
+		if err != nil {
+			return nil, false, err
+		}
+		return pw, false, nil
 
 	case KeyProtectNone:
 		if !k.AllowInsecure {
 			return nil, false, &ErrNoSecureCAKeyProtection{}
 		}
 		logger.Warn("cluster CA keystore is UNPROTECTED (plaintext keys) — development/testing only")
-		return types.NewPassword(nil), true, nil
+		pw, err := types.NewPassword(nil)
+		if err != nil {
+			return nil, false, err
+		}
+		return pw, true, nil
 
 	default:
 		return nil, false, &ErrNoSecureCAKeyProtection{}
@@ -173,7 +181,7 @@ func (k *KeyProtection) resolveSealed(ctx context.Context) (types.Password, erro
 		if unsealErr != nil {
 			return nil, unsealErr
 		}
-		return types.NewPassword(plaintext), nil
+		return types.NewPassword(plaintext)
 	}
 
 	// First boot: generate a random 32-byte keystore password and seal it.
@@ -195,7 +203,7 @@ func (k *KeyProtection) resolveSealed(ctx context.Context) (types.Password, erro
 	if err := os.WriteFile(blobPath, blob, 0o600); err != nil {
 		return nil, err
 	}
-	return types.NewPassword(secret), nil
+	return types.NewPassword(secret)
 }
 
 // sealStrategyLabel returns a human label for the active hardware strategy.

@@ -128,7 +128,7 @@ func createKey(
 		KeyAlgorithm:   x509.RSA,
 		KeyType:        types.KeyTypeTPM,
 		Parent:         ekAttrs,
-		Password:       store.NewPassword([]byte("srk-pass")),
+		Password:       mustPassword([]byte("srk-pass")),
 		PlatformPolicy: platformPolicy,
 		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -150,7 +150,7 @@ func createKey(
 		KeyType:        types.KeyTypeCA,
 		Parent:         srkAttrs,
 		PlatformPolicy: platformPolicy,
-		Password:       store.NewPassword([]byte("key-pass")),
+		Password:       mustPassword([]byte("key-pass")),
 		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
@@ -387,7 +387,7 @@ func TestSign_RSAKeyCreationAndSigning(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     store.NewPassword([]byte("key-pass")),
+		Password:     mustPassword([]byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -426,7 +426,7 @@ func TestSign_ECDSAKeyCreationAndSigning(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     store.NewPassword([]byte("key-pass")),
+		Password:     mustPassword([]byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -470,7 +470,7 @@ func TestSign_WithInvalidHashFuncMD5(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     store.NewPassword([]byte("key-pass")),
+		Password:     mustPassword([]byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -512,7 +512,7 @@ func TestSign_WithCustomKeyBackend(t *testing.T) {
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreTPM2,
 		Parent:       srkAttrs,
-		Password:     store.NewPassword([]byte("key-pass")),
+		Password:     mustPassword([]byte("key-pass")),
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -777,7 +777,7 @@ func TestHashSequence_WithHierarchyAuthPath(t *testing.T) {
 		CN: "test",
 		TPMAttributes: &types.TPMAttributes{
 			HashAlg:       tpm2.TPMAlgSHA256,
-			HierarchyAuth: store.NewPassword([]byte("test-auth")),
+			HierarchyAuth: mustPassword([]byte("test-auth")),
 		},
 	}
 
@@ -801,7 +801,7 @@ func TestHashSequence_WithParentHierarchyAuthPath(t *testing.T) {
 	parentAttrs := &types.KeyAttributes{
 		CN: "parent",
 		TPMAttributes: &types.TPMAttributes{
-			HierarchyAuth: store.NewPassword([]byte("parent-auth")),
+			HierarchyAuth: mustPassword([]byte("parent-auth")),
 		},
 	}
 
@@ -1090,6 +1090,36 @@ func TestParsePublicKey_Invalid(t *testing.T) {
 func TestOpenUnixSocketTransport(t *testing.T) {
 	// Try to open a non-existent socket - should fail
 	_, err := OpenUnixSocketTransport("/tmp/nonexistent-tpm-socket.sock")
+	assert.Error(t, err)
+}
+
+// TestOpenDeviceTransport_DevicePath proves OpenDeviceTransport opens a
+// character-device-style path directly, without the EK discovery NewTPM2
+// performs, and that the returned transport can be closed.
+func TestOpenDeviceTransport_DevicePath(t *testing.T) {
+	dir := t.TempDir()
+	devicePath := dir + "/fake-tpm-device"
+	require.NoError(t, os.WriteFile(devicePath, nil, 0600))
+
+	transport, err := OpenDeviceTransport(devicePath)
+	require.NoError(t, err)
+	require.NotNil(t, transport)
+	assert.NoError(t, transport.Close())
+}
+
+// TestOpenDeviceTransport_MissingDevice proves OpenDeviceTransport reports
+// ErrOpeningDevice rather than panicking or leaking a partially opened
+// handle when the device path does not exist.
+func TestOpenDeviceTransport_MissingDevice(t *testing.T) {
+	_, err := OpenDeviceTransport("/nonexistent/tpm-device-path")
+	assert.ErrorIs(t, err, ErrOpeningDevice)
+}
+
+// TestOpenDeviceTransport_SocketPath proves OpenDeviceTransport routes a
+// ".sock"-suffixed path through the Unix domain socket opener instead of
+// treating it as a character device.
+func TestOpenDeviceTransport_SocketPath(t *testing.T) {
+	_, err := OpenDeviceTransport("/tmp/nonexistent-tpm-socket.sock")
 	assert.Error(t, err)
 }
 

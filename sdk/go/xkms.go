@@ -487,6 +487,13 @@ type (
 	SealStoreResealRequest  = transport.SealStoreResealRequest
 	SealStoreStatusResponse = transport.SealStoreStatusResponse
 
+	// Escrow Operations
+	EscrowRequest   = transport.EscrowRequest
+	EscrowReceipt   = transport.EscrowReceipt
+	RecoverRequest  = transport.RecoverRequest
+	RecoverResponse = transport.RecoverResponse
+	EscrowRecord    = transport.EscrowRecord
+
 	// Policy Operations
 	PolicyCreateRequest  = transport.PolicyCreateRequest
 	PolicyCreateResponse = transport.PolicyCreateResponse

@@ -85,6 +85,10 @@ func (a *Authenticator) handleReset() ([]byte, error) {
 	// Clear credential management enumeration state
 	a.clearCredMgmtState()
 
+	// Discard any in-progress authenticatorLargeBlobs Set: a reset must not
+	// let a write started before it complete afterward.
+	a.largeBlobPending = nil
+
 	// Lock the KeyManager to clear all cached keys
 	if a.keyManager != nil {
 		a.keyManager.Lock()

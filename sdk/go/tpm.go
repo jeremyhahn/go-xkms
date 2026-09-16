@@ -517,6 +517,12 @@ var NewTPM2 = tpm2.NewTPM2
 // OpenUnixSocketTransport opens a connection to a TPM via Unix domain socket.
 var OpenUnixSocketTransport = tpm2.OpenUnixSocketTransport
 
+// OpenDeviceTransport opens a raw TPM command channel to a device path or
+// Unix domain socket, without the EK discovery NewTPM2 performs. Callers that
+// only need a transport.TPMCloser — such as TPM2 NV-backed PIV certificate
+// storage — use this instead of standing up a full TrustedPlatformModule.
+var OpenDeviceTransport = tpm2.OpenDeviceTransport
+
 // OpenSimulator opens a TPM simulator for testing.
 var OpenSimulator = tpm2.OpenSimulator
 

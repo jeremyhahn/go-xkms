@@ -39,7 +39,7 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 
 			_, tpm := createSim(encryptOpt, false)
 
-			userPIN := store.NewPassword([]byte("user-pin"))
+			userPIN := mustPassword([]byte("user-pin"))
 			secret := []byte("secret")
 
 			ekAttrs, err := tpm.EKAttributes()
@@ -55,7 +55,7 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 
 			keyAttrs := &types.KeyAttributes{
 				Parent:         ekAttrs,
-				Password:       store.NewPassword([]byte("test")),
+				Password:       mustPassword([]byte("test")),
 				PlatformPolicy: policyOpt,
 				SealData:       types.NewSealData(secret),
 				TPMAttributes: &types.TPMAttributes{
@@ -78,17 +78,17 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 			assert.Equal(t, secret, nvSecret)
 
 			// providing invalid hierarchy auth - should fail
-			keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewPassword([]byte("test"))
+			keyAttrs.Parent.TPMAttributes.HierarchyAuth = mustPassword([]byte("test"))
 			err = tpm.NVWrite(keyAttrs)
 			assert.NotNil(t, err)
 
 			// // providing invalid key auth - should fail
-			// keyAttrs.Password = store.NewPassword([]byte{})
+			// keyAttrs.Password = mustPassword([]byte{})
 			// err = tpm.NVWrite(keyAttrs)
 			// assert.NotNil(t, err)
 
 			keyAttrs.Parent.TPMAttributes.HierarchyAuth = userPIN
-			keyAttrs.Password = store.NewPassword([]byte{})
+			keyAttrs.Password = mustPassword([]byte{})
 			if policyOpt {
 
 				// invalid key auth with platform policy - should succeed
@@ -803,7 +803,7 @@ func TestNVCounterWithHierarchyAuth(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	userPIN := store.NewPassword([]byte("user-pin"))
+	userPIN := mustPassword([]byte("user-pin"))
 
 	ekAttrs, err := tpm.EKAttributes()
 	require.NoError(t, err)
@@ -841,7 +841,7 @@ func TestNVCounterWithHierarchyAuth(t *testing.T) {
 	assert.Equal(t, value1, value2)
 
 	// Try with wrong auth - should fail
-	keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewPassword([]byte("wrong-pin"))
+	keyAttrs.Parent.TPMAttributes.HierarchyAuth = mustPassword([]byte("wrong-pin"))
 	_, err = tpm.NVIncrement(keyAttrs)
 	assert.Error(t, err)
 
@@ -856,7 +856,7 @@ func TestNVExtendWithHierarchyAuth(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	userPIN := store.NewPassword([]byte("user-pin"))
+	userPIN := mustPassword([]byte("user-pin"))
 
 	ekAttrs, err := tpm.EKAttributes()
 	require.NoError(t, err)
@@ -893,7 +893,7 @@ func TestNVExtendWithHierarchyAuth(t *testing.T) {
 	assert.Len(t, digest, 32)
 
 	// Try with wrong auth - should fail
-	keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewPassword([]byte("wrong-pin"))
+	keyAttrs.Parent.TPMAttributes.HierarchyAuth = mustPassword([]byte("wrong-pin"))
 	err = tpm.NVExtend(keyAttrs, []byte("more data"))
 	assert.Error(t, err)
 
@@ -1011,7 +1011,7 @@ func TestNVReadAuthReadWithNonEmptyOwnerAuth(t *testing.T) {
 
 	tpm := tpmIface.(*TPM2)
 
-	ownerPIN := store.NewPassword([]byte("owner-secret"))
+	ownerPIN := mustPassword([]byte("owner-secret"))
 
 	// Set owner hierarchy auth to a non-empty value on the SIMULATOR ONLY.
 	ownerHandle := tpm2.TPMHandle(tpm2.TPMRHOwner)
@@ -1074,7 +1074,7 @@ func TestNVReadAuthReadWithNonEmptyOwnerAuth(t *testing.T) {
 	keyAttrs := &types.KeyAttributes{
 		Parent: &types.KeyAttributes{
 			TPMAttributes: &types.TPMAttributes{
-				HierarchyAuth: store.NewPassword(nil), // empty — no owner auth
+				HierarchyAuth: mustPassword(nil), // empty — no owner auth
 			},
 		},
 		TPMAttributes: &types.TPMAttributes{
@@ -1110,7 +1110,7 @@ func TestNVReadOwnerReadWithOwnerAuth(t *testing.T) {
 
 	tpm := tpmIface.(*TPM2)
 
-	ownerPIN := store.NewPassword([]byte("owner-read-test"))
+	ownerPIN := mustPassword([]byte("owner-read-test"))
 
 	ownerHandle := tpm2.TPMHandle(tpm2.TPMRHOwner)
 	ekAttrs, err := tpmIface.EKAttributes()
@@ -1263,7 +1263,7 @@ func TestNVReadNotAuthorizedError(t *testing.T) {
 	keyAttrs := &types.KeyAttributes{
 		Parent: &types.KeyAttributes{
 			TPMAttributes: &types.TPMAttributes{
-				HierarchyAuth: store.NewPassword(nil),
+				HierarchyAuth: mustPassword(nil),
 			},
 		},
 		TPMAttributes: &types.TPMAttributes{

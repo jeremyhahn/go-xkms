@@ -16,6 +16,7 @@ package staticpw
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -58,6 +59,48 @@ func testPasswordInFolder(name, password, folder string) *StaticPassword {
 	pw := testPassword(name, password)
 	pw.FolderPath = folder
 	return pw
+}
+
+// errInjectedSaveFailure is returned by failingSaveDAO for entities matched
+// by its predicate, simulating a durable-write failure (e.g. a Raft quorum
+// loss or disk error) independent of any application-level conflict check.
+var errInjectedSaveFailure = errors.New("staticpw: injected save failure for test")
+
+// failingSaveDAO wraps a real GenericDAO and fails Save for entities that
+// match shouldFail, while delegating every other operation unchanged. It
+// lets tests exercise "the destination write fails" without needing a real
+// storage backend that can be forced into a failure mode.
+type failingSaveDAO struct {
+	qrdbsdk.GenericDAO[*PasswordEntity]
+	shouldFail func(*PasswordEntity) bool
+}
+
+func (f *failingSaveDAO) Save(ctx context.Context, entity *PasswordEntity) error {
+	if f.shouldFail(entity) {
+		return errInjectedSaveFailure
+	}
+	return f.GenericDAO.Save(ctx, entity)
+}
+
+// newFailingSaveDAOStore creates a DAOStore backed by in-memory storage
+// whose Save fails for any entity matching shouldFail, leaving every other
+// DAO operation (Get, Delete, paging) working against the real store.
+func newFailingSaveDAOStore(t *testing.T, shouldFail func(*PasswordEntity) bool) *DAOStore {
+	t.Helper()
+	backend := storage.NewMemory()
+	t.Cleanup(func() { require.NoError(t, backend.Close()) })
+
+	kvStore, err := kvadapter.New(backend)
+	require.NoError(t, err)
+
+	realDAO, err := qrdbsdk.NewDAO[*PasswordEntity](
+		kvStore,
+		"static_passwords",
+		func() *PasswordEntity { return &PasswordEntity{} },
+	)
+	require.NoError(t, err)
+
+	return &DAOStore{dao: &failingSaveDAO{GenericDAO: realDAO, shouldFail: shouldFail}}
 }
 
 // --- Constructor tests ---
@@ -324,6 +367,48 @@ func TestDAOStore_Update_Closed(t *testing.T) {
 	require.ErrorIs(t, err, ErrStoreClosed)
 }
 
+// TestDAOStore_Update_RenameConflictPreservesSource guards against H15: a
+// rename that collides with an existing entry at the destination must leave
+// the source entry untouched rather than deleting it before the conflict is
+// discovered.
+func TestDAOStore_Update_RenameConflictPreservesSource(t *testing.T) {
+	store := newTestDAOStore(t)
+	src := testPassword("GitHub", "p1")
+	require.NoError(t, store.Add(src))
+	require.NoError(t, store.Add(testPassword("GitLab", "p2")))
+
+	renamed := *src
+	renamed.Name = "GitLab" // collides with the existing "GitLab" entry
+	err := store.Update(&renamed)
+	require.ErrorIs(t, err, ErrPasswordExists)
+
+	// The source entry must still be intact under its original name.
+	got, err := store.Get("GitHub")
+	require.NoError(t, err)
+	assert.Equal(t, "p1", got.Password)
+}
+
+// TestDAOStore_Update_RenameSaveFailurePreservesSource guards against H15:
+// if writing the renamed entity fails, the original entity must not have
+// been deleted.
+func TestDAOStore_Update_RenameSaveFailurePreservesSource(t *testing.T) {
+	store := newFailingSaveDAOStore(t, func(e *PasswordEntity) bool {
+		return e.Name == "GitLab"
+	})
+
+	pw := testPassword("GitHub", "p1")
+	require.NoError(t, store.Add(pw))
+
+	renamed := *pw
+	renamed.Name = "GitLab"
+	err := store.Update(&renamed)
+	require.Error(t, err)
+
+	got, err := store.Get("GitHub")
+	require.NoError(t, err)
+	assert.Equal(t, "p1", got.Password)
+}
+
 // --- Delete tests ---
 
 func TestDAOStore_Delete_ByName(t *testing.T) {
@@ -522,6 +607,45 @@ func TestDAOStore_MoveToFolder_Closed(t *testing.T) {
 
 	err := store.MoveToFolder("Email", "Work")
 	require.ErrorIs(t, err, ErrStoreClosed)
+}
+
+// TestDAOStore_MoveToFolder_ConflictPreservesSource guards against H15: a
+// move whose destination collides with an existing entry must leave the
+// source entry in place instead of deleting it before the conflict check.
+func TestDAOStore_MoveToFolder_ConflictPreservesSource(t *testing.T) {
+	store := newTestDAOStore(t)
+	src := testPasswordInFolder("Email", "p1", "Work")
+	require.NoError(t, store.Add(src))
+	require.NoError(t, store.Add(testPasswordInFolder("Email", "p2", "Personal")))
+
+	err := store.MoveToFolder(src.ID, "Personal")
+	require.ErrorIs(t, err, ErrPasswordExists)
+
+	// The source entry must still be intact in its original folder.
+	got, err := store.Get(src.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Work", got.FolderPath)
+	assert.Equal(t, "p1", got.Password)
+}
+
+// TestDAOStore_MoveToFolder_SaveFailurePreservesSource guards against H15:
+// if writing the moved entity fails, the source entity must not have been
+// deleted.
+func TestDAOStore_MoveToFolder_SaveFailurePreservesSource(t *testing.T) {
+	store := newFailingSaveDAOStore(t, func(e *PasswordEntity) bool {
+		return e.FolderPath == "Personal"
+	})
+
+	src := testPasswordInFolder("Email", "p1", "Work")
+	require.NoError(t, store.Add(src))
+
+	err := store.MoveToFolder(src.ID, "Personal")
+	require.Error(t, err)
+
+	got, err := store.Get(src.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Work", got.FolderPath)
+	assert.Equal(t, "p1", got.Password)
 }
 
 // --- CreateFolder / RemoveFolder tests ---
@@ -821,6 +945,65 @@ func TestDAOStore_MigrateFromBackend_CorruptData(t *testing.T) {
 	require.Error(t, err)
 	var migErr ErrMigrationFailed
 	require.ErrorAs(t, err, &migErr)
+}
+
+// TestDAOStore_MigrateFromBackend_NameCollisionDifferentContent guards
+// against M3: a legacy entry whose name collides with a differently-valued
+// entry already present in the destination must be reported as a conflict
+// and left in the legacy backend, never silently deleted.
+func TestDAOStore_MigrateFromBackend_NameCollisionDifferentContent(t *testing.T) {
+	legacyBackend := storage.NewMemory()
+	t.Cleanup(func() { require.NoError(t, legacyBackend.Close()) })
+
+	legacyStore := NewStore(legacyBackend)
+	require.NoError(t, legacyStore.Add(testPassword("GitHub", "legacy-pass")))
+
+	daoStore := newTestDAOStore(t)
+	require.NoError(t, daoStore.Add(testPassword("GitHub", "current-pass")))
+
+	ctx := context.Background()
+	err := MigrateFromBackend(ctx, legacyBackend, defaultKeyPrefix, daoStore)
+	require.Error(t, err)
+	var conflictErr ErrMigrationConflict
+	require.ErrorAs(t, err, &conflictErr)
+	assert.Equal(t, "GitHub", conflictErr.Name)
+
+	// The destination entry must be unchanged.
+	got, err := daoStore.Get("GitHub")
+	require.NoError(t, err)
+	assert.Equal(t, "current-pass", got.Password)
+
+	// The legacy entry must NOT have been deleted.
+	keys, err := legacyBackend.List(ctx, defaultKeyPrefix)
+	require.NoError(t, err)
+	assert.NotEmpty(t, keys)
+}
+
+// TestDAOStore_MigrateFromBackend_FolderCreationFailure guards against M3:
+// a failed folder-marker creation must be propagated rather than silently
+// discarded, and the legacy marker key must survive so migration can be
+// retried.
+func TestDAOStore_MigrateFromBackend_FolderCreationFailure(t *testing.T) {
+	legacyBackend := storage.NewMemory()
+	t.Cleanup(func() { require.NoError(t, legacyBackend.Close()) })
+
+	legacyStore := NewStore(legacyBackend)
+	require.NoError(t, legacyStore.CreateFolder("Work"))
+
+	daoStore := newFailingSaveDAOStore(t, func(e *PasswordEntity) bool {
+		return e.Name == folderMarkerName
+	})
+
+	ctx := context.Background()
+	err := MigrateFromBackend(ctx, legacyBackend, defaultKeyPrefix, daoStore)
+	require.Error(t, err)
+	var migErr ErrMigrationFailed
+	require.ErrorAs(t, err, &migErr)
+
+	// The legacy marker key must still be present since it was not migrated.
+	keys, err := legacyBackend.List(ctx, defaultKeyPrefix)
+	require.NoError(t, err)
+	assert.NotEmpty(t, keys)
 }
 
 // --- Error type tests ---

@@ -467,7 +467,8 @@ func TestEnrollJoiner_RequiresDirectoryURLAndTPM(t *testing.T) {
 	require.ErrorAs(t, err, &missing)
 	assert.Equal(t, "ACME.DirectoryURL", missing.Field)
 
-	// Non-tpm2 backend: the CSR variant is not implemented yet.
+	// Non-tpm2 backend: the cluster CA's ACME server offers no challenge a
+	// software-backed key can complete for a joining node's identity.
 	opts := base()
 	opts.ACME.DirectoryURL = "https://node1:8443/api/v1/acme/directory"
 	p, err = New(opts, testLogger())
@@ -476,4 +477,32 @@ func TestEnrollJoiner_RequiresDirectoryURLAndTPM(t *testing.T) {
 	var unsupported *ErrACMEBackendUnsupported
 	require.ErrorAs(t, err, &unsupported)
 	assert.Equal(t, "software", unsupported.KeyBackend)
+	assert.Contains(t, unsupported.Error(), "TPM attestation")
+	assert.Contains(t, unsupported.Error(), "non-exportable and bound to a known device")
+}
+
+// TestEnrollJoiner_PKCS11BackendUnsupported asserts the same TPM-attestation
+// boundary applies to a PKCS#11-backed joiner: the cluster CA's ACME server
+// offers no challenge type a PKCS#11 token can complete either, so it gets
+// the same precise typed error as software, naming its own backend.
+func TestEnrollJoiner_PKCS11BackendUnsupported(t *testing.T) {
+	opts := &Options{
+		RaftAddress: "127.0.0.1:8302",
+		TrustDomain: "test.cluster",
+		DataDir:     t.TempDir(),
+		ACME: &ACMEOptions{
+			DirectoryURL: "https://node1:8443/api/v1/acme/directory",
+		},
+		KeyBackend: "pkcs11",
+		Backends:   softwareBackends(t),
+		Bootstrap:  clusterenrollBootstrap(),
+	}
+
+	p, err := New(opts, testLogger())
+	require.NoError(t, err)
+	_, err = p.Provision(context.Background())
+	var unsupported *ErrACMEBackendUnsupported
+	require.ErrorAs(t, err, &unsupported)
+	assert.Equal(t, "pkcs11", unsupported.KeyBackend)
+	assert.Contains(t, unsupported.Error(), "TPM attestation")
 }

@@ -35,6 +35,12 @@ const (
 	DefaultTPMEnrollerHash = "SHA-256"
 )
 
+// defaultTPMEnrollerDevice is DefaultTPMEnrollerDevice by default. It is a
+// variable, rather than a direct reference to the constant, so tests can
+// exercise the zero-value Device path deterministically instead of depending
+// on whether the test host happens to have a real TPM node at that path.
+var defaultTPMEnrollerDevice = DefaultTPMEnrollerDevice
+
 // TPMEnrollerCloser is a TPMEnroller that owns an open TPM device handle.
 // OpenTPMEnroller returns one; close it when the bridge it was opened for
 // shuts down.
@@ -98,7 +104,7 @@ func OpenTPMEnroller(config *TPMEnrollerConfig) (TPMEnrollerCloser, error) {
 	}
 	device := config.Device
 	if device == "" {
-		device = DefaultTPMEnrollerDevice
+		device = defaultTPMEnrollerDevice
 	}
 	hash := config.Hash
 	if hash == "" {

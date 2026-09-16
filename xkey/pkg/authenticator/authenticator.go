@@ -139,6 +139,13 @@ type Authenticator struct {
 	// credMgmtState holds enumeration state for CredentialManagement operations.
 	credMgmtState *credMgmtEnumerationState
 
+	// largeBlobPending holds an in-progress authenticatorLargeBlobs Set
+	// operation assembled across possibly several CTAP2 messages. It is
+	// intentionally never persisted: an interrupted multi-fragment write is
+	// discarded rather than resumed, so a partial array can never be mistaken
+	// for a complete, checksum-valid one. Guarded by mu.
+	largeBlobPending *largeBlobPendingWrite
+
 	// attestation is the device attestation identity: the Security
 	// Officer-provisioned key and certificate chain that sign packed
 	// attestation statements.
@@ -997,6 +1004,28 @@ func errorToStatus(err error) byte {
 		return StatusNoCredentials
 	case errors.Is(err, ErrUVBlocked):
 		return StatusUVBlocked
+	case errors.Is(err, ErrLargeBlobsGetSetConflict):
+		return StatusInvalidParameter
+	// CTAP 2.1 §6.10.2 maps a missing offset or a missing length to
+	// CTAP1_ERR_INVALID_PARAMETER, not CTAP2_ERR_MISSING_PARAMETER.
+	case errors.Is(err, ErrLargeBlobsMissingOffset):
+		return StatusInvalidParameter
+	case errors.Is(err, ErrLargeBlobsMissingLength):
+		return StatusInvalidParameter
+	case errors.Is(err, ErrLargeBlobsInvalidLength):
+		return StatusInvalidLength
+	case errors.Is(err, ErrLargeBlobsSetExceedsLength):
+		return StatusInvalidParameter
+	case errors.Is(err, ErrLargeBlobsMissingPinUvAuthProtocol):
+		return StatusMissingParameter
+	case errors.Is(err, ErrLargeBlobsInvalidOffset):
+		return StatusInvalidParameter
+	case errors.Is(err, ErrLargeBlobsInvalidSeq):
+		return StatusInvalidSeq
+	case errors.Is(err, ErrLargeBlobsStorageFull):
+		return StatusLargeBlobStorageFull
+	case errors.Is(err, ErrLargeBlobsChecksumInvalid):
+		return StatusIntegrityFailure
 	default:
 		return StatusOtherError
 	}
@@ -1024,9 +1053,7 @@ func (a *Authenticator) handleBioEnrollment(data []byte) ([]byte, error) {
 	return nil, ErrNotImplemented
 }
 
-func (a *Authenticator) handleLargeBlobs(data []byte) ([]byte, error) {
-	return nil, ErrNotImplemented
-}
+// handleLargeBlobs is implemented in cmd_largeblobs.go.
 
 // ctap2EncMode is the CBOR encoder configured for CTAP2 compliance.
 // CTAP2 requires canonical CBOR encoding with keys sorted in ascending order.

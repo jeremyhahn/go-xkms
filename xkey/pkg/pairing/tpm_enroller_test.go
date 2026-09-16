@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -190,13 +189,25 @@ func TestOpenTPMEnroller_UnreachableIsDistinguishableFromAbsent(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrTPMNotConfigured)
 }
 
+// withAbsentDefaultTPMEnrollerDevice points defaultTPMEnrollerDevice at a
+// path guaranteed not to exist for the duration of the test, so the
+// zero-value Device path is exercised deterministically regardless of
+// whether the test host has a real TPM node at DefaultTPMEnrollerDevice.
+func withAbsentDefaultTPMEnrollerDevice(t *testing.T) string {
+	t.Helper()
+
+	original := defaultTPMEnrollerDevice
+	absent := filepath.Join(t.TempDir(), "no-such-tpm")
+	defaultTPMEnrollerDevice = absent
+	t.Cleanup(func() { defaultTPMEnrollerDevice = original })
+	return absent
+}
+
 // TestOpenTPMEnroller_Defaults covers the zero-value config path: no device
 // means the platform TPM node, and no logger means the default logger rather
 // than a nil dereference.
 func TestOpenTPMEnroller_Defaults(t *testing.T) {
-	if _, err := os.Stat(DefaultTPMEnrollerDevice); err == nil {
-		t.Skipf("this host has %s; the default path is exercised by hardware runs", DefaultTPMEnrollerDevice)
-	}
+	absent := withAbsentDefaultTPMEnrollerDevice(t)
 
 	var buf bytes.Buffer
 
@@ -206,15 +217,13 @@ func TestOpenTPMEnroller_Defaults(t *testing.T) {
 
 	rec, ok := findLog(decodeLogs(t, &buf), "no TPM on this host")
 	require.True(t, ok)
-	assert.Equal(t, DefaultTPMEnrollerDevice, rec.Device)
+	assert.Equal(t, absent, rec.Device)
 }
 
 // TestOpenTPMEnroller_NilConfig proves a nil config is usable rather than a
 // panic; callers that have nothing to configure should not have to say so.
 func TestOpenTPMEnroller_NilConfig(t *testing.T) {
-	if _, err := os.Stat(DefaultTPMEnrollerDevice); err == nil {
-		t.Skipf("this host has %s; the default path is exercised by hardware runs", DefaultTPMEnrollerDevice)
-	}
+	withAbsentDefaultTPMEnrollerDevice(t)
 
 	enroller, err := OpenTPMEnroller(nil)
 	assert.Nil(t, enroller)

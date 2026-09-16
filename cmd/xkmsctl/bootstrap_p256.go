@@ -22,7 +22,7 @@ import (
 	"github.com/awnumar/memguard"
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/p256proto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // Operator-side key management for the FIPS-approved bootstrap suite,
@@ -86,7 +86,7 @@ func generateP256Key(outputFile string) {
 		return
 	}
 
-	key, err := p256proto.GenerateStaticKey()
+	key, err := bootstrap.GenerateP256StaticKey()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})
 		return
@@ -94,18 +94,18 @@ func generateP256Key(outputFile string) {
 	defer key.Destroy()
 
 	// The hex encoding is as sensitive as the scalar it encodes, so it gets a
-	// guard-paged, swap-locked buffer outside the Go heap. p256proto's encoder
+	// guard-paged, swap-locked buffer outside the Go heap. The SDK's encoder
 	// takes the LockedBuffer itself rather than a slice of it, which is why
 	// this differs from the Noise path in shape but not in intent.
-	buf := memguard.NewBuffer(p256proto.HexKeySize + 1)
+	buf := memguard.NewBuffer(bootstrap.P256HexKeySize + 1)
 	defer buf.Destroy()
 
-	if err := p256proto.EncodeStaticKey(buf, key); err != nil {
+	if err := bootstrap.EncodeP256StaticKey(buf, key); err != nil {
 		handleError(&WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err})
 		return
 	}
 	encoded := buf.Bytes()
-	encoded[p256proto.HexKeySize] = '\n'
+	encoded[bootstrap.P256HexKeySize] = '\n'
 
 	publicHex := hex.EncodeToString(key.PublicBytes())
 
@@ -143,10 +143,10 @@ func showP256Key(keyFile, keyHex string) {
 		return
 	}
 
-	if len(hexKey) != p256proto.HexKeySize {
+	if len(hexKey) != bootstrap.P256HexKeySize {
 		handleError(&WrappedError{
 			Sentinel: ErrDecodeKeyFailed,
-			Err:      fmt.Errorf("key is %d hex characters, want %d", len(hexKey), p256proto.HexKeySize),
+			Err:      fmt.Errorf("key is %d hex characters, want %d", len(hexKey), bootstrap.P256HexKeySize),
 		})
 		return
 	}
@@ -155,7 +155,7 @@ func showP256Key(keyFile, keyHex string) {
 	protected := memguard.NewBufferFromBytes(hexKey)
 	defer protected.Destroy()
 
-	key, err := p256proto.DecodeStaticKey(protected)
+	key, err := bootstrap.DecodeP256StaticKey(protected)
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrDecodeKeyFailed, Err: err})
 		return

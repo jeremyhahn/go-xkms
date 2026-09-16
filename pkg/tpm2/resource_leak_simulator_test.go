@@ -55,7 +55,7 @@ func TestUnsealKey_WrongPassword_LeaksNoResources(t *testing.T) {
 	h := newSimHarness(t, nil)
 
 	secret := []byte("pin-protected-secret")
-	correct := types.NewPassword([]byte("correct-pin-0000"))
+	correct := mustPassword([]byte("correct-pin-0000"))
 	keyAttrs := sealedKeyAttrs(t, h, "leak-check-sealed", false, correct)
 	keyAttrs.SealData = types.NewSealData(secret)
 
@@ -72,7 +72,7 @@ func TestUnsealKey_WrongPassword_LeaksNoResources(t *testing.T) {
 	const attempts = 20
 	for i := 0; i < attempts; i++ {
 		wrong := sealedKeyAttrs(t, h, "leak-check-sealed", false,
-			types.NewPassword([]byte("wrong-pin")))
+			mustPassword([]byte("wrong-pin")))
 		out, err := h.TPM.UnsealKey(wrong, h.Backend)
 		require.Error(t, err, "attempt %d: a wrong PIN must fail", i)
 		require.Nil(t, out)
@@ -111,7 +111,7 @@ func TestUnsealKey_FewWrongPasswords_TPMStaysUsable(t *testing.T) {
 		"precondition: the TPM must tolerate more than one auth failure")
 
 	secret := []byte("pin-protected-secret")
-	correct := types.NewPassword([]byte("correct-pin-0000"))
+	correct := mustPassword([]byte("correct-pin-0000"))
 	keyAttrs := sealedKeyAttrs(t, h, "few-failures-sealed", false, correct)
 	keyAttrs.SealData = types.NewSealData(secret)
 
@@ -120,7 +120,7 @@ func TestUnsealKey_FewWrongPasswords_TPMStaysUsable(t *testing.T) {
 
 	// Stay strictly below the lockout threshold.
 	wrong := sealedKeyAttrs(t, h, "few-failures-sealed", false,
-		types.NewPassword([]byte("wrong-pin")))
+		mustPassword([]byte("wrong-pin")))
 	out, err := h.TPM.UnsealKey(wrong, h.Backend)
 	require.Error(t, err, "a wrong PIN must fail")
 	require.Nil(t, out)

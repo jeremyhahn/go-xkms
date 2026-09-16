@@ -258,7 +258,7 @@ func TestKeyAttributeValidation(t *testing.T) {
 		parentAttrs := &types.KeyAttributes{
 			CN: "parent",
 			TPMAttributes: &types.TPMAttributes{
-				HierarchyAuth: store.NewPassword([]byte("password")),
+				HierarchyAuth: mustPassword([]byte("password")),
 			},
 		}
 		attrs := &types.KeyAttributes{
@@ -289,7 +289,7 @@ func TestKeyAttributeValidation(t *testing.T) {
 	})
 
 	t.Run("key attributes with password", func(t *testing.T) {
-		password := store.NewPassword([]byte("test-password"))
+		password := mustPassword([]byte("test-password"))
 		attrs := &types.KeyAttributes{
 			CN:       "test",
 			Password: password,
@@ -300,7 +300,7 @@ func TestKeyAttributeValidation(t *testing.T) {
 	})
 
 	t.Run("key attributes with empty password", func(t *testing.T) {
-		password := store.NewPassword([]byte{})
+		password := mustPassword([]byte{})
 		attrs := &types.KeyAttributes{
 			CN:       "test",
 			Password: password,
@@ -325,7 +325,7 @@ func TestTPMAttributesCreation(t *testing.T) {
 			HandleType:    tpm2.TPMHTPersistent,
 			Hierarchy:     tpm2.TPMRHOwner,
 			HashAlg:       tpm2.TPMAlgSHA256,
-			HierarchyAuth: store.NewPassword([]byte("auth")),
+			HierarchyAuth: mustPassword([]byte("auth")),
 			Template:      RSASSATemplate,
 		}
 		assert.NotNil(t, tpmAttrs)
@@ -540,7 +540,7 @@ func TestParentChildRelationship(t *testing.T) {
 			TPMAttributes: &types.TPMAttributes{
 				Handle:        tpm2.TPMHandle(0x81010001),
 				Hierarchy:     tpm2.TPMRHEndorsement,
-				HierarchyAuth: store.NewPassword([]byte("auth")),
+				HierarchyAuth: mustPassword([]byte("auth")),
 			},
 		}
 		iakAttrs := &types.KeyAttributes{
@@ -556,7 +556,7 @@ func TestParentChildRelationship(t *testing.T) {
 		parent := &types.KeyAttributes{
 			CN: "parent",
 			TPMAttributes: &types.TPMAttributes{
-				HierarchyAuth: store.NewPassword([]byte("hierarchy-auth")),
+				HierarchyAuth: mustPassword([]byte("hierarchy-auth")),
 			},
 		}
 		child := &types.KeyAttributes{

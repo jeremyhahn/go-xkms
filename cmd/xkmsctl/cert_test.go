@@ -3033,6 +3033,22 @@ func (m *mockCertClient) SealStoreStatus(ctx context.Context) (*transport.SealSt
 	return nil, nil
 }
 
+func (m *mockCertClient) EscrowKey(ctx context.Context, req *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) RecoverKey(ctx context.Context, req *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) RevokeEscrow(ctx context.Context, escrowID string) error {
+	return nil
+}
+
 // PolicyService stub implementations
 func (m *mockCertClient) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	return nil, nil

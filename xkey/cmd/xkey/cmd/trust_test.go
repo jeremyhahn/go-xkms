@@ -32,7 +32,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
@@ -1122,53 +1122,53 @@ func TestParseMethodOrder_ValidMethods(t *testing.T) {
 	tests := []struct {
 		name  string
 		input []string
-		want  []truststrap.Method
+		want  []bootstrap.Mode
 	}{
 		{
 			name:  "single dane",
 			input: []string{"dane"},
-			want:  []truststrap.Method{truststrap.MethodDANE},
+			want:  []bootstrap.Mode{bootstrap.ModeDANE},
 		},
 		{
 			name:  "single noise",
 			input: []string{"noise"},
-			want:  []truststrap.Method{truststrap.MethodNoise},
+			want:  []bootstrap.Mode{bootstrap.ModeNoise},
 		},
 		{
 			name:  "single spki",
 			input: []string{"spki"},
-			want:  []truststrap.Method{truststrap.MethodSPKI},
+			want:  []bootstrap.Mode{bootstrap.ModeSPKI},
 		},
 		{
 			name:  "single direct",
 			input: []string{"direct"},
-			want:  []truststrap.Method{truststrap.MethodDirect},
+			want:  []bootstrap.Mode{bootstrap.ModeDirect},
 		},
 		{
 			name:  "all methods",
 			input: []string{"dane", "noise", "spki", "direct"},
-			want: []truststrap.Method{
-				truststrap.MethodDANE,
-				truststrap.MethodNoise,
-				truststrap.MethodSPKI,
-				truststrap.MethodDirect,
+			want: []bootstrap.Mode{
+				bootstrap.ModeDANE,
+				bootstrap.ModeNoise,
+				bootstrap.ModeSPKI,
+				bootstrap.ModeDirect,
 			},
 		},
 		{
 			name:  "mixed case",
 			input: []string{"DANE", "Noise", "SPKI"},
-			want: []truststrap.Method{
-				truststrap.MethodDANE,
-				truststrap.MethodNoise,
-				truststrap.MethodSPKI,
+			want: []bootstrap.Mode{
+				bootstrap.ModeDANE,
+				bootstrap.ModeNoise,
+				bootstrap.ModeSPKI,
 			},
 		},
 		{
 			name:  "with whitespace",
 			input: []string{"  dane  ", " noise "},
-			want: []truststrap.Method{
-				truststrap.MethodDANE,
-				truststrap.MethodNoise,
+			want: []bootstrap.Mode{
+				bootstrap.ModeDANE,
+				bootstrap.ModeNoise,
 			},
 		},
 	}
@@ -1221,9 +1221,9 @@ func TestBuildBootstrapConfig_MethodFromFlag(t *testing.T) {
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
 
-	assert.Equal(t, []truststrap.Method{
-		truststrap.MethodDANE,
-		truststrap.MethodNoise,
+	assert.Equal(t, []bootstrap.Mode{
+		bootstrap.ModeDANE,
+		bootstrap.ModeNoise,
 	}, cfg.MethodOrder)
 }
 
@@ -1238,9 +1238,9 @@ func TestBuildBootstrapConfig_MethodFromViper(t *testing.T) {
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
 
-	assert.Equal(t, []truststrap.Method{
-		truststrap.MethodSPKI,
-		truststrap.MethodDirect,
+	assert.Equal(t, []bootstrap.Mode{
+		bootstrap.ModeSPKI,
+		bootstrap.ModeDirect,
 	}, cfg.MethodOrder)
 }
 
@@ -1257,7 +1257,7 @@ func TestBuildBootstrapConfig_FlagOverridesViper(t *testing.T) {
 	require.NoError(t, err)
 
 	// Flag should take precedence over viper config.
-	assert.Equal(t, []truststrap.Method{truststrap.MethodDANE}, cfg.MethodOrder)
+	assert.Equal(t, []bootstrap.Mode{bootstrap.ModeDANE}, cfg.MethodOrder)
 }
 
 func TestBuildBootstrapConfig_InvalidMethodFromFlag(t *testing.T) {
@@ -1325,7 +1325,7 @@ func TestBuildBootstrapConfig_DANEConfig(t *testing.T) {
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.DANE)
-	assert.Equal(t, "https://dane.example.com", cfg.DANE.ServerURL)
+	assert.Equal(t, "https://dane.example.com", cfg.ServerURL)
 	assert.Equal(t, "example.com", cfg.DANE.Hostname)
 	assert.Equal(t, "8.8.8.8:53", cfg.DANE.DNSServer)
 }
@@ -1381,8 +1381,8 @@ func TestBuildBootstrapConfig_SPKIConfig(t *testing.T) {
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.SPKI)
-	assert.Equal(t, "https://spki.example.com", cfg.SPKI.ServerURL)
-	assert.Equal(t, "abc123pin", cfg.SPKI.SPKIPinSHA256)
+	assert.Equal(t, "https://spki.example.com", cfg.ServerURL)
+	assert.Equal(t, "abc123pin", cfg.SPKI.Pin)
 }
 
 func TestBuildBootstrapConfig_NoSPKIWithoutServerURL(t *testing.T) {
@@ -1407,7 +1407,7 @@ func TestBuildBootstrapConfig_DirectConfig(t *testing.T) {
 	cfg, err := buildBootstrapConfig(cmd)
 	require.NoError(t, err)
 	require.NotNil(t, cfg.Direct)
-	assert.Equal(t, "https://direct.example.com", cfg.Direct.ServerURL)
+	assert.Equal(t, "https://direct.example.com", cfg.ServerURL)
 }
 
 func TestBuildBootstrapConfig_NoDirectWithoutServerURL(t *testing.T) {
@@ -1611,11 +1611,11 @@ func TestTrustErrorSentinels(t *testing.T) {
 // --- methodParser map tests ---
 
 func TestMethodParser_AllEntries(t *testing.T) {
-	expected := map[string]truststrap.Method{
-		"dane":   truststrap.MethodDANE,
-		"noise":  truststrap.MethodNoise,
-		"spki":   truststrap.MethodSPKI,
-		"direct": truststrap.MethodDirect,
+	expected := map[string]bootstrap.Mode{
+		"dane":   bootstrap.ModeDANE,
+		"noise":  bootstrap.ModeNoise,
+		"spki":   bootstrap.ModeSPKI,
+		"direct": bootstrap.ModeDirect,
 	}
 
 	assert.Equal(t, len(expected), len(methodParser))

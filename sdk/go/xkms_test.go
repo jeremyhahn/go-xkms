@@ -1168,6 +1168,22 @@ func (m *mockXKMSService) SealStoreStatus(ctx context.Context) (*transport.SealS
 	return nil, nil
 }
 
+func (m *mockXKMSService) EscrowKey(ctx context.Context, req *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) RecoverKey(ctx context.Context, req *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) RevokeEscrow(ctx context.Context, escrowID string) error {
+	return nil
+}
+
 // Policy methods
 
 func (m *mockXKMSService) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {

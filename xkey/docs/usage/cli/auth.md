@@ -146,7 +146,7 @@ Registered Servers (2):
   Last Connected: 2025-06-15T14:22:00Z
   Token:          valid (webauthn, expires in 23h45m)
 
-  Server:         grpc://kms-dev.internal:9090
+  Server:         grpc://kms-dev.example.com:9090
   Protocol:       grpc
   Registered:     2025-06-10T08:00:00Z
   Last Connected: never

@@ -71,6 +71,22 @@ func (m *mockPlatformClient) SealStoreStatus(_ context.Context) (*transport.Seal
 	return m.statusResp, m.statusErr
 }
 
+func (m *mockPlatformClient) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+
+func (m *mockPlatformClient) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+
+func (m *mockPlatformClient) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+
+func (m *mockPlatformClient) RevokeEscrow(_ context.Context, _ string) error {
+	return nil
+}
+
 func newPlatformConfig(mock *mockPlatformClient) *Config {
 	return &Config{
 		OutputFormat: "text",

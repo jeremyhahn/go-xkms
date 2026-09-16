@@ -280,7 +280,11 @@ func (p *PlatformPassword) Create() error {
 
 	var passwd []byte
 	if p.keyAttrs.Password == nil {
-		p.keyAttrs.Password = store.NewPassword(nil)
+		pw, err := store.NewPassword(nil)
+		if err != nil {
+			return err
+		}
+		p.keyAttrs.Password = pw
 		return nil
 	} else {
 		// Check if password is valid (error passwords return error from String())
@@ -295,7 +299,11 @@ func (p *PlatformPassword) Create() error {
 			if _, err := rng.Read(passwd); err != nil {
 				return err
 			}
-			p.keyAttrs.Password = store.NewPassword(passwd)
+			pw, err := store.NewPassword(passwd)
+			if err != nil {
+				return err
+			}
+			p.keyAttrs.Password = pw
 		}
 	}
 	if _, err := p.tpm.SealKey(p.keyAttrs, p.backend, false); err != nil {

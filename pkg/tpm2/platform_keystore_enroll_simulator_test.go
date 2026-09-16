@@ -10,8 +10,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
 
 // This file covers first-boot Platform SRK enrollment: the moment an operator's
@@ -337,12 +335,12 @@ func TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller(t *testing.T) {
 
 	ownerHierarchy := tpm2.TPMRHOwner
 	require.NoError(t,
-		h.TPM.SetHierarchyAuth(nil, store.NewPassword([]byte(ownerAuth)), &ownerHierarchy),
+		h.TPM.SetHierarchyAuth(nil, mustPassword([]byte(ownerAuth)), &ownerHierarchy),
 		"precondition: the owner hierarchy must carry an auth value")
 	t.Cleanup(func() {
 		// Hand the hierarchy back unauthenticated so the harness teardown and
 		// any simulator-wide state observe the value they started with.
-		_ = h.TPM.SetHierarchyAuth(store.NewPassword([]byte(ownerAuth)), nil, &ownerHierarchy)
+		_ = h.TPM.SetHierarchyAuth(mustPassword([]byte(ownerAuth)), nil, &ownerHierarchy)
 	})
 
 	pks := newPlatformKeyStore(t, h)

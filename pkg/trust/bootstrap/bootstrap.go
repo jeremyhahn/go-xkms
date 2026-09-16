@@ -160,6 +160,16 @@ type Config struct {
 	// (which does not include TOFU). Only consulted when Mode == ModeAuto
 	// and TOFU != nil.
 	TOFUMethodOrder []truststrap.Method
+
+	// MethodOrder selects and orders the non-TOFU methods fetchAuto walks
+	// under ModeAuto, expressed in this package's own Mode type so a caller
+	// (an operator-facing "--method dane,noise" flag, say) never needs to
+	// import go-truststrap for its Method type. Leave nil to use
+	// truststrap.DefaultMethodOrder. A ModeTOFU entry is ignored here —
+	// TOFUMethodOrder is the one gate that arms a TOFU fallback, and this
+	// field must not become a second way to bypass it. Ignored when
+	// TOFUMethodOrder already arms TOFU (TOFUMethodOrder takes precedence).
+	MethodOrder []Mode
 }
 
 // DANEConfig holds the per-mode inputs the DANE/TLSA strategy needs.
@@ -537,18 +547,51 @@ var autoArms = map[truststrap.Method]autoArm{
 	},
 }
 
+// modeToMethod translates this package's Mode constants to go-truststrap's
+// Method type, the key autoArms and cfg.TOFUMethodOrder are indexed by. It
+// exists so Config.MethodOrder can be expressed in Mode — the type every
+// other Config field already uses — without a caller reaching past this
+// package for truststrap.Method.
+var modeToMethod = map[Mode]truststrap.Method{
+	ModeDANE:   truststrap.MethodDANE,
+	ModeNoise:  truststrap.MethodNoise,
+	ModeSPKI:   truststrap.MethodSPKI,
+	ModeDirect: truststrap.MethodDirect,
+}
+
+// translateMethodOrder converts a Config.MethodOrder value to the
+// truststrap.Method order fetchAuto walks. A ModeTOFU entry, or any entry
+// modeToMethod does not recognize, is dropped rather than erroring: an
+// unarmed or unknown method is already skipped by fetchAuto's arming check,
+// so silently dropping it here and leaving it unrecognized there behave
+// identically, and TOFUMethodOrder remains the only way to arm ModeTOFU.
+func translateMethodOrder(order []Mode) []truststrap.Method {
+	methods := make([]truststrap.Method, 0, len(order))
+	for _, mode := range order {
+		if method, ok := modeToMethod[mode]; ok {
+			methods = append(methods, method)
+		}
+	}
+	return methods
+}
+
 // fetchAuto tries the armed methods in order and returns the first bundle.
 //
-// The order is truststrap.DefaultMethodOrder, or cfg.TOFUMethodOrder when
-// TOFU is armed (TOFU is absent from the default order by design). Each
-// attempt runs under cfg.PerMethodTimeout, defaulting as go-truststrap's own
-// dispatcher does. Every failure is recorded and, when nothing succeeds, the
-// result is a FetchError{Mode: ModeAuto} whose cause is go-truststrap's
+// The order is truststrap.DefaultMethodOrder, cfg.MethodOrder translated to
+// truststrap.Method when set, or cfg.TOFUMethodOrder when TOFU is armed
+// (TOFU is absent from the default order by design, and TOFUMethodOrder
+// takes precedence over MethodOrder when both are set). Each attempt runs
+// under cfg.PerMethodTimeout, defaulting as go-truststrap's own dispatcher
+// does. Every failure is recorded and, when nothing succeeds, the result is
+// a FetchError{Mode: ModeAuto} whose cause is go-truststrap's
 // AggregateError, one AttemptError per method tried, so a caller reads the
 // same error shape the upstream dispatcher produced. Nothing armed at all is
 // ErrModeNotConfigured.
 func fetchAuto(ctx context.Context, cfg Config) (*CABundle, error) {
 	order := truststrap.DefaultMethodOrder
+	if len(cfg.MethodOrder) > 0 {
+		order = translateMethodOrder(cfg.MethodOrder)
+	}
 	if autoArms[truststrap.MethodTOFU].armed(cfg) {
 		order = cfg.TOFUMethodOrder
 	}

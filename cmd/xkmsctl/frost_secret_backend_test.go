@@ -52,7 +52,7 @@ func storeFrostSecret(t *testing.T, b *fileSecretBackend, cn string, secret []by
 }
 
 func TestFileSecretBackend_ListKeys_ReturnsStoredShares(t *testing.T) {
-	backend := newFileSecretBackend(client.NewStorageMemory())
+	backend := newFileSecretBackend(client.NewStorageMemory(), nil)
 	storeFrostSecret(t, backend, "alpha", []byte("share-alpha"))
 	storeFrostSecret(t, backend, "bravo", []byte("share-bravo"))
 
@@ -73,7 +73,7 @@ func TestFileSecretBackend_ListKeys_ReturnsStoredShares(t *testing.T) {
 // that a listed entry is directly usable by the sibling operations.
 func TestFileSecretBackend_ListKeys_RoundTripsToGetAndDelete(t *testing.T) {
 	ctx := context.Background()
-	backend := newFileSecretBackend(client.NewStorageMemory())
+	backend := newFileSecretBackend(client.NewStorageMemory(), nil)
 	storeFrostSecret(t, backend, "charlie", []byte("share-charlie"))
 
 	keys, err := backend.ListKeys(ctx)
@@ -92,7 +92,7 @@ func TestFileSecretBackend_ListKeys_RoundTripsToGetAndDelete(t *testing.T) {
 }
 
 func TestFileSecretBackend_ListKeys_EmptyStore(t *testing.T) {
-	backend := newFileSecretBackend(client.NewStorageMemory())
+	backend := newFileSecretBackend(client.NewStorageMemory(), nil)
 
 	keys, err := backend.ListKeys(context.Background())
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestFileSecretBackend_ListKeys_EmptyStore(t *testing.T) {
 func TestFileSecretBackend_ListKeys_SkipsForeignKeys(t *testing.T) {
 	ctx := context.Background()
 	store := client.NewStorageMemory()
-	backend := newFileSecretBackend(store)
+	backend := newFileSecretBackend(store, nil)
 
 	storeFrostSecret(t, backend, "delta", []byte("share-delta"))
 	require.NoError(t, store.Put(ctx, frostSecretPrefix+"notes.txt", []byte("not a share")))
@@ -118,13 +118,157 @@ func TestFileSecretBackend_ListKeys_SkipsForeignKeys(t *testing.T) {
 }
 
 func TestFileSecretBackend_ListKeys_StorageFailure(t *testing.T) {
-	backend := newFileSecretBackend(&listFailingStorage{StorageBackend: client.NewStorageMemory()})
+	backend := newFileSecretBackend(&listFailingStorage{StorageBackend: client.NewStorageMemory()}, nil)
 
 	keys, err := backend.ListKeys(context.Background())
 	assert.Nil(t, keys)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrListKeysFailed)
 	assert.ErrorIs(t, err, errListSecrets)
+}
+
+// storeFrostGroupPackage generates a real 2-of-2 FROST key package via the
+// trusted dealer, stores participant 1's package through the same
+// client.NewFrostKeyStore path frostImportCmd uses, and returns the backend
+// plus the group's public key so callers can verify a round-tripped Signer
+// reports the correct group identity.
+func storeFrostGroupPackage(t *testing.T, keyID string) (backend *fileSecretBackend, groupPublicKey []byte) {
+	t.Helper()
+	ctx := context.Background()
+
+	td := client.NewFrostTrustedDealer()
+	packages, pubPkg, err := td.Generate(client.FrostConfig{
+		Threshold: 2,
+		Total:     2,
+		Algorithm: client.FrostAlgorithmEd25519,
+	})
+	require.NoError(t, err)
+	require.Len(t, packages, 2)
+
+	publicStorage := client.NewStorageMemory()
+	secretStorage := client.NewStorageMemory()
+	backend = newFileSecretBackend(secretStorage, publicStorage)
+
+	ks := client.NewFrostKeyStore(publicStorage, backend)
+	require.NoError(t, ks.StoreKeyPackage(ctx, keyID, packages[0], &client.FrostKeyMetadata{
+		KeyID:         keyID,
+		Algorithm:     client.FrostAlgorithmEd25519,
+		Threshold:     2,
+		Total:         2,
+		ParticipantID: packages[0].ParticipantID,
+	}))
+
+	return backend, pubPkg.GroupPublicKey
+}
+
+func TestFileSecretBackend_Signer_ReturnsGroupSigner(t *testing.T) {
+	backend, groupPublicKey := storeFrostGroupPackage(t, "signer-key")
+
+	signer, err := backend.Signer(context.Background(), &client.KeyAttributes{
+		CN:        "signer-key",
+		StoreType: client.StoreFrost,
+		FrostAttributes: &client.FrostAttributes{
+			Algorithm:     client.FrostAlgorithmEd25519,
+			Threshold:     2,
+			Total:         2,
+			ParticipantID: 1,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+
+	pub, ok := signer.Public().([]byte)
+	require.True(t, ok, "FrostSigner.Public() must return the group public key bytes")
+	assert.Equal(t, groupPublicKey, pub)
+}
+
+// TestFileSecretBackend_Signer_ThresholdSigningNotOrchestrated pins the
+// upstream, already-accepted limitation this fix delegates to rather than
+// hides: client.FrostBackend's Signer only orchestrates a single-shot
+// crypto.Signer.Sign for a 1-of-1 key. For a genuine M-of-N group (any real
+// key this stack can generate, since the dealer itself rejects threshold < 2)
+// Sign reports that distributed signing needs the explicit round API, instead
+// of silently producing an invalid signature from one participant's share.
+func TestFileSecretBackend_Signer_ThresholdSigningNotOrchestrated(t *testing.T) {
+	backend, _ := storeFrostGroupPackage(t, "signer-key")
+
+	signer, err := backend.Signer(context.Background(), &client.KeyAttributes{
+		CN:        "signer-key",
+		StoreType: client.StoreFrost,
+		FrostAttributes: &client.FrostAttributes{
+			Algorithm:     client.FrostAlgorithmEd25519,
+			Threshold:     2,
+			Total:         2,
+			ParticipantID: 1,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = signer.Sign(nil, []byte("digest-to-sign-1234567890123456"), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "distributed signing")
+}
+
+func TestFileSecretBackend_Signer_RequiresPublicStorage(t *testing.T) {
+	backend := newFileSecretBackend(client.NewStorageMemory(), nil)
+
+	_, err := backend.Signer(context.Background(), &client.KeyAttributes{
+		CN: "any-key",
+		FrostAttributes: &client.FrostAttributes{
+			Algorithm: client.FrostAlgorithmEd25519,
+			Threshold: 2,
+			Total:     2,
+		},
+	})
+	require.ErrorIs(t, err, ErrFrostPublicStorageRequired)
+}
+
+func TestFileSecretBackend_Signer_RequiresFrostAttributes(t *testing.T) {
+	backend := newFileSecretBackend(client.NewStorageMemory(), client.NewStorageMemory())
+
+	_, err := backend.Signer(context.Background(), &client.KeyAttributes{CN: "any-key"})
+	require.ErrorIs(t, err, ErrFrostAttributesRequired)
+}
+
+// TestFileSecretBackend_Decrypter_NotSupported confirms Decrypter reaches
+// the same ceremony-aware backend as Signer and gets FROST's own signing-only
+// answer, rather than this file's own generic "unsupported" stand-in.
+func TestFileSecretBackend_Decrypter_NotSupported(t *testing.T) {
+	backend, _ := storeFrostGroupPackage(t, "decrypt-key")
+
+	_, err := backend.Decrypter(context.Background(), &client.KeyAttributes{
+		CN:        "decrypt-key",
+		StoreType: client.StoreFrost,
+		FrostAttributes: &client.FrostAttributes{
+			Algorithm:     client.FrostAlgorithmEd25519,
+			Threshold:     2,
+			Total:         2,
+			ParticipantID: 1,
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decryption not supported")
+}
+
+func TestFileSecretBackend_Decrypter_RequiresPublicStorage(t *testing.T) {
+	backend := newFileSecretBackend(client.NewStorageMemory(), nil)
+
+	_, err := backend.Decrypter(context.Background(), &client.KeyAttributes{
+		CN: "any-key",
+		FrostAttributes: &client.FrostAttributes{
+			Algorithm: client.FrostAlgorithmEd25519,
+			Threshold: 2,
+			Total:     2,
+		},
+	})
+	require.ErrorIs(t, err, ErrFrostPublicStorageRequired)
+}
+
+func TestFileSecretBackend_Decrypter_RequiresFrostAttributes(t *testing.T) {
+	backend := newFileSecretBackend(client.NewStorageMemory(), client.NewStorageMemory())
+
+	_, err := backend.Decrypter(context.Background(), &client.KeyAttributes{CN: "any-key"})
+	require.ErrorIs(t, err, ErrFrostAttributesRequired)
 }
 
 func TestFrostSecretCN(t *testing.T) {

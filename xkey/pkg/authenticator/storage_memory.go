@@ -477,6 +477,9 @@ func stateToSerializable(state *AuthenticatorState) (*SerializableState, error) 
 		s.SignedPolicyFields = &pf
 	}
 
+	// Copy the large-blob array
+	s.LargeBlobArray = copyBytes(state.LargeBlobArray)
+
 	return s, nil
 }
 
@@ -563,6 +566,9 @@ func serializableToState(s *SerializableState) (*AuthenticatorState, error) {
 		pf := *s.SignedPolicyFields
 		state.SignedPolicyFields = &pf
 	}
+
+	// Copy the large-blob array
+	state.LargeBlobArray = copyBytes(s.LargeBlobArray)
 
 	return state, nil
 }

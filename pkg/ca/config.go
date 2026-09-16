@@ -576,7 +576,11 @@ func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 		id.Keystores != nil &&
 		id.Keystores.Software != nil &&
 		id.Keystores.Software.Password != "" {
-		attrs.Password = types.NewPasswordFromString(id.Keystores.Software.Password)
+		pw, err := types.NewPasswordFromString(id.Keystores.Software.Password)
+		if err != nil {
+			return nil, err
+		}
+		attrs.Password = pw
 	}
 
 	return attrs, nil

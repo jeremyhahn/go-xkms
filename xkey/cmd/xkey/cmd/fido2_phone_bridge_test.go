@@ -517,6 +517,22 @@ func (b *baseSDKClient) SealStoreStatus(_ context.Context) (*transport.SealStore
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) RevokeEscrow(_ context.Context, _ string) error {
+	return errNotImplemented
+}
+
 // Policy operations
 
 func (b *baseSDKClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {

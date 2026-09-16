@@ -177,6 +177,13 @@ type AuthenticatorState struct {
 	// the HMAC was computed. Used for diagnostics on mismatch to identify
 	// exactly which fields were modified.
 	SignedPolicyFields *PolicyFields
+
+	// LargeBlobArray is the current serialized large-blob array for the
+	// authenticatorLargeBlobs command (CTAP 2.1 §6.10): the CBOR-encoded
+	// large-blob array followed by the leftmost 16 bytes of its SHA-256
+	// hash. Nil means no Set has completed yet; reads fall back to the
+	// spec-defined initial (empty) array in that case.
+	LargeBlobArray []byte
 }
 
 // NewAuthenticatorState creates a new AuthenticatorState with default values.

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"testing"
 	"time"
@@ -96,5 +97,50 @@ func TestPeerFailureClassRoundTrip(t *testing.T) {
 	}
 	if garbage != PeerFailureNone {
 		t.Fatalf("a rejected parse must leave the value untouched, got %v", garbage)
+	}
+}
+
+// TestPeerDeviceTrustSurface proves the device-trust aliases reach the
+// canonical primitives and fail closed: a consumer that reaches them through
+// the SDK gets the same typed refusals, and can tell a rejected device
+// (*PeerDevIDError) from its own misconfiguration (*PeerDevIDPolicyError).
+func TestPeerDeviceTrustSurface(t *testing.T) {
+	anchored := PeerDevIDPolicy{Anchors: x509.NewCertPool()}
+
+	var de *PeerDevIDError
+	if err := PeerVerifyIDevID(context.Background(), nil, anchored); !errors.As(err, &de) {
+		t.Fatalf("err = %v, want *PeerDevIDError", err)
+	}
+	if de.Credential != "IDevID" {
+		t.Fatalf("credential = %q, want IDevID", de.Credential)
+	}
+	if err := PeerVerifyIAK(context.Background(), nil, anchored); !errors.As(err, &de) || de.Credential != "IAK" {
+		t.Fatalf("err = %v, want an IAK *PeerDevIDError", err)
+	}
+
+	// No anchors is the caller's mistake, not the device's, and must never be
+	// answered by accepting the certificate.
+	var pe *PeerDevIDPolicyError
+	err := PeerVerifyIDevID(context.Background(), &x509.Certificate{}, PeerDevIDPolicy{})
+	if !errors.As(err, &pe) || pe.Field != "Anchors" {
+		t.Fatalf("err = %v, want *PeerDevIDPolicyError on Anchors", err)
+	}
+
+	if PeerIsIDevID(nil) || PeerIsIAK(nil) {
+		t.Fatal("a nil certificate is not a device credential")
+	}
+
+	// The TLS helpers refuse a connection that yields no binding rather than
+	// producing unbound evidence.
+	var cbe *PeerChannelBindingError
+	bound, err := PeerEvidenceFromTLS(nil, PeerEvidence{Nonce: []byte("nonce")})
+	if !errors.As(err, &cbe) {
+		t.Fatalf("err = %v, want *PeerChannelBindingError", err)
+	}
+	if bound.ChannelBinding != nil || bound.Evidence.Nonce != nil {
+		t.Fatalf("a refused connection produced evidence: %+v", bound)
+	}
+	if _, err := PeerQualifyingDataFromTLS(nil, []byte("nonce")); !errors.As(err, &cbe) {
+		t.Fatalf("err = %v, want *PeerChannelBindingError", err)
 	}
 }

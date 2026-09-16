@@ -751,6 +751,18 @@ func (n *noopClient) SealStoreReseal(context.Context, *transport.SealStoreReseal
 func (n *noopClient) SealStoreStatus(context.Context) (*transport.SealStoreStatusResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) EscrowKey(context.Context, *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, nil
+}
+func (n *noopClient) RecoverKey(context.Context, *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) ListEscrowed(context.Context) ([]transport.EscrowRecord, error) {
+	return nil, nil
+}
+func (n *noopClient) RevokeEscrow(context.Context, string) error {
+	return nil
+}
 func (n *noopClient) PolicyCreate(context.Context, *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	return nil, nil
 }

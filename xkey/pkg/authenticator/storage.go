@@ -148,4 +148,8 @@ type SerializableState struct {
 
 	// SignedPolicyFields is the snapshot of policy fields when HMAC was computed.
 	SignedPolicyFields *PolicyFields `json:"signed_policy_fields,omitempty"`
+
+	// LargeBlobArray is the current serialized large-blob array. See
+	// AuthenticatorState.LargeBlobArray for its format.
+	LargeBlobArray []byte `json:"large_blob_array,omitempty"`
 }

@@ -99,3 +99,65 @@ var PeerChannelBinding = peer.ChannelBinding
 // TPM2.Quote and the verifier expects: SHA-256(nonce || channelBinding), or
 // the bare nonce when there is no binding.
 var PeerQualifyingData = peer.QualifyingData
+
+// Device-trust primitives. The same package owns two more pieces a consumer
+// needs before it can gate on a verdict: recognising the peer's device
+// credential, and turning the TLS connection a request arrived on into
+// evidence bound to that connection. Both are library calls with no transport
+// shape; the middleware that calls them on each transport stays with the
+// consumer (go-qrdb#278).
+
+// PeerDevIDPolicy is what a TCG device credential is checked against: the
+// anchors it must chain to, any intermediates, and the clock (zero means now).
+type PeerDevIDPolicy = peer.DevIDPolicy
+
+// PeerTLSEvidence pairs a peer's evidence with the channel binding of the TLS
+// connection it arrived on, so the two cannot drift apart.
+type PeerTLSEvidence = peer.TLSEvidence
+
+// PeerDevIDError reports a certificate that is not a usable TCG device
+// credential, naming the credential class and the check it failed.
+type PeerDevIDError = peer.DevIDError
+
+// PeerDevIDPolicyError reports a PeerDevIDPolicy that cannot be evaluated,
+// such as one with no trust anchors. It is kept apart from PeerDevIDError so
+// a gate can tell a misconfigured verifier from a rejected device.
+type PeerDevIDPolicyError = peer.DevIDPolicyError
+
+// PeerVerifyIDevID reports whether a certificate is a usable TCG device
+// identity credential (IDevID/LDevID): in its validity window, chained to the
+// policy's anchors, carrying the digitalSignature key usage and not a CA,
+// asserting tcg-cap-verifiedTPMFixed but not tcg-cap-verifiedTPMRestricted,
+// and naming a TPM 2.0 through the two TCG DevID §8.1 subjectAltName
+// otherNames. It returns *PeerDevIDError, *PeerDevIDPolicyError or
+// *PeerContextError.
+var PeerVerifyIDevID = peer.VerifyIDevID
+
+// PeerVerifyIAK is PeerVerifyIDevID for the attestation class: an IAK/LAK
+// MUST assert tcg-cap-verifiedTPMRestricted and MUST NOT assert
+// tcg-cap-verifiedTPMFixed. This is the credential whose certificate
+// PeerEvidence carries as AKCertificatePEM.
+var PeerVerifyIAK = peer.VerifyIAK
+
+// PeerIsIDevID reports whether a certificate has the shape of a device
+// identity credential. It builds no chain and consults no clock: it is for
+// routing a credential to the right handler, never for authorization, which
+// is PeerVerifyIDevID.
+var PeerIsIDevID = peer.IsIDevID
+
+// PeerIsIAK reports whether a certificate has the shape of an attestation key
+// credential. Like PeerIsIDevID it is a predicate, not an authorization
+// decision.
+var PeerIsIAK = peer.IsIAK
+
+// PeerEvidenceFromTLS pairs reported evidence with the channel binding of the
+// TLS connection it arrived on, returning a PeerTLSEvidence whose BindPolicy
+// installs that binding in a PeerPolicy. It fails closed with
+// *PeerChannelBindingError on a connection that cannot export keying
+// material; there is no unbound fall-back.
+var PeerEvidenceFromTLS = peer.EvidenceFromTLS
+
+// PeerQualifyingDataFromTLS is the quoting side of the same pair: it derives
+// the connection's binding and returns the qualifying data to hand to
+// TPM2.Quote, so the quoting side cannot perform half of the binding.
+var PeerQualifyingDataFromTLS = peer.QualifyingDataFromTLS

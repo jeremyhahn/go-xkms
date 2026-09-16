@@ -14,6 +14,7 @@
 package store
 
 import (
+	pwenclave "github.com/jeremyhahn/go-xkms/pkg/password"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -38,26 +39,26 @@ type ClearPassword struct {
 
 // NewPassword creates a new password for TPM key authentication,
 // sealing the bytes into a memguard enclave. An empty or nil input
-// produces a ClearPassword with no enclave backing — TPM2 interprets
-// that as "no UserAuth required". The input slice is copied into the
-// enclave; the caller's slice is NOT wiped by this constructor.
-func NewPassword(password []byte) types.Password {
+// produces a ClearPassword with no enclave backing and a nil error —
+// TPM2 interprets that as "no UserAuth required", which is intentional
+// and distinct from an allocation failure. The input slice is copied
+// into the enclave; the caller's slice is NOT wiped by this
+// constructor.
+//
+// The enclave allocation for a non-empty password is delegated to
+// pkg/password, the canonical enclave-backed Password implementation,
+// so this store never carries its own copy of that logic. A non-empty
+// password whose enclave cannot be allocated returns an error instead
+// of silently downgrading to an empty (passwordless) UserAuth.
+func NewPassword(password []byte) (types.Password, error) {
 	if len(password) == 0 {
-		return &ClearPassword{}
+		return &ClearPassword{}, nil
 	}
-	buf, err := secure.NewBuffer(len(password))
+	pw, err := pwenclave.NewPassword(password)
 	if err != nil {
-		// secure.NewBuffer only fails on non-positive size (guarded
-		// above) or on an underlying memguard allocation failure,
-		// which is a hard process-level condition. Fall back to the
-		// empty ClearPassword so the factory always returns a usable
-		// value — callers that depend on non-empty content will fail
-		// downstream on the TPM handshake.
-		_ = err
-		return &ClearPassword{}
+		return nil, err
 	}
-	copy(buf.Bytes(), password)
-	return &ClearPassword{buf: buf}
+	return pw, nil
 }
 
 // Bytes returns a defensive copy of the password bytes. Returns nil
