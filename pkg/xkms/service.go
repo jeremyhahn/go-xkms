@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
@@ -118,6 +119,11 @@ type XKMSService struct {
 	// Logger seam instead, so an API caller can never write to the chain.
 	audit             qrdbtransport.AuditClient
 	credentialService *credentialspkg.Service
+
+	// escrow holds the configured external key-escrow agents (pkg/escrow).
+	// Nil when escrow is not configured, in which case every EscrowServicer
+	// method returns ErrNotConfigured.
+	escrow *escrow.Registry
 
 	// cluster is the embedded go-qrdb node's cluster client, used to resolve
 	// the leader's dialable API endpoint for not-leader write redirects
@@ -255,6 +261,10 @@ func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore =
 
 // SetPolicyManager sets the PCR policy management subsystem.
 func (s *XKMSService) SetPolicyManager(p *policy.Manager) { s.policyManager = p }
+
+// SetEscrowRegistry wires the external key-escrow agent registry
+// (pkg/escrow) into the service.
+func (s *XKMSService) SetEscrowRegistry(r *escrow.Registry) { s.escrow = r }
 
 // SetWebAuthn sets the WebAuthn/FIDO2 subsystem.
 func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }

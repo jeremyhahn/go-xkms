@@ -168,6 +168,11 @@ func TestKeyType_String(t *testing.T) {
 }
 
 func TestKeyAttributes_String(t *testing.T) {
+	debugPassword, err := types.NewPassword([]byte("test-password"))
+	if err != nil {
+		t.Fatalf("NewPassword: %v", err)
+	}
+
 	tests := []struct {
 		name  string
 		attrs KeyAttributes
@@ -230,7 +235,7 @@ func TestKeyAttributes_String(t *testing.T) {
 				KeyType:            KeyTypeEncryption,
 				SignatureAlgorithm: x509.SHA256WithRSA,
 				StoreType:          StoreSoftware,
-				Password:           types.NewPassword([]byte("test-password")),
+				Password:           debugPassword,
 				SealData:           NewSealData([]byte("test-seal-data")),
 				TPMAttributes:      &TPMAttributes{},
 				RSAAttributes: &RSAAttributes{

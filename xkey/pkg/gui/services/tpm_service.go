@@ -1504,12 +1504,17 @@ func (s *TPMService) Provision(opts *ProvisionOptions) (retErr error) {
 	}
 	defer s.tpmAccessor.Release()
 
+	ownerAuth, err := xkms.NewPassword([]byte(opts.OwnerAuth))
+	if err != nil {
+		return err
+	}
+
 	var opErr error
 	switch opts.Mode {
 	case ProvisionModeInstall:
-		opErr = tpm.Install(xkms.NewPassword([]byte(opts.OwnerAuth)), nil)
+		opErr = tpm.Install(ownerAuth, nil)
 	case ProvisionModeProvision, "":
-		opErr = tpm.Provision(xkms.NewPassword([]byte(opts.OwnerAuth)))
+		opErr = tpm.Provision(ownerAuth)
 	default:
 		return ErrTPMInvalidProvisionMode
 	}
@@ -1552,7 +1557,10 @@ func (s *TPMService) Install(ownerAuth string) (retErr error) {
 	// SetHierarchyAuth and just provisions keys.
 	var auth xkms.Password
 	if ownerAuth != "" {
-		auth = xkms.NewPassword([]byte(ownerAuth))
+		auth, err = xkms.NewPassword([]byte(ownerAuth))
+		if err != nil {
+			return err
+		}
 	}
 	if err := tpm.Install(auth, nil); err != nil {
 		if isTPMAuthError(err) {
@@ -1668,7 +1676,11 @@ func (s *TPMService) ProvisionIAK(ownerAuth string) (retErr error) {
 		return ErrTPMProvisionIAKFailed
 	}
 
-	ekAttrs.TPMAttributes.HierarchyAuth = xkms.NewPassword([]byte(ownerAuth))
+	ekAuth, err := xkms.NewPassword([]byte(ownerAuth))
+	if err != nil {
+		return err
+	}
+	ekAttrs.TPMAttributes.HierarchyAuth = ekAuth
 
 	if _, err := tpm.CreateIAK(ekAttrs, nil); err != nil {
 		if isTPMAuthError(err) {
@@ -1701,7 +1713,11 @@ func (s *TPMService) ProvisionIDevID(ownerAuth string) (retErr error) {
 		return ErrTPMProvisionIDevIDFailed
 	}
 
-	iakAttrs.TPMAttributes.HierarchyAuth = xkms.NewPassword([]byte(ownerAuth))
+	iakAuth, err := xkms.NewPassword([]byte(ownerAuth))
+	if err != nil {
+		return err
+	}
+	iakAttrs.TPMAttributes.HierarchyAuth = iakAuth
 
 	// Get EK certificate for IDevID CSR (optional, may not exist)
 	ekCert, _ := tpm.EKCertificate()
@@ -2560,10 +2576,16 @@ func (s *TPMService) changeHierarchyAuth(oldAuth, newAuth string, hierarchy tpm2
 
 	var oldPwd, newPwd xkms.Password
 	if oldAuth != "" {
-		oldPwd = xkms.NewPassword([]byte(oldAuth))
+		oldPwd, err = xkms.NewPassword([]byte(oldAuth))
+		if err != nil {
+			return err
+		}
 	}
 	if newAuth != "" {
-		newPwd = xkms.NewPassword([]byte(newAuth))
+		newPwd, err = xkms.NewPassword([]byte(newAuth))
+		if err != nil {
+			return err
+		}
 	}
 
 	h := hierarchy
@@ -2663,8 +2685,16 @@ func (s *TPMService) DefineNVOrdinary(handle uint32, size int, ownerAuth string)
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
-	keyAttrs.SealData = xkms.NewPassword(make([]byte, size))
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
+	sealData, err := xkms.NewPassword(make([]byte, size))
+	if err != nil {
+		return err
+	}
+	keyAttrs.SealData = sealData
 
 	return tpm.NVWrite(keyAttrs)
 }
@@ -2684,7 +2714,11 @@ func (s *TPMService) DefineNVCounter(handle uint32, ownerAuth string) (retErr er
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	return tpm.NVDefineCounter(keyAttrs)
 }
 
@@ -2703,7 +2737,11 @@ func (s *TPMService) DefineNVExtend(handle uint32, ownerAuth string) (retErr err
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	return tpm.NVDefineExtend(keyAttrs)
 }
 
@@ -2739,7 +2777,11 @@ func (s *TPMService) ReadNVData(handle uint32, size int, ownerAuth string) (retV
 		}
 	}
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	data, readErr := tpm.NVRead(keyAttrs, uint16(size))
 	if readErr != nil {
 		return "", &WrappedError{Msg: "tpm_service: read NV data", Err: readErr}
@@ -2771,8 +2813,16 @@ func (s *TPMService) WriteNVData(handle uint32, hexData string, ownerAuth string
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
-	keyAttrs.SealData = xkms.NewPassword(data)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
+	sealData, err := xkms.NewPassword(data)
+	if err != nil {
+		return err
+	}
+	keyAttrs.SealData = sealData
 
 	return tpm.NVWrite(keyAttrs)
 }
@@ -2792,7 +2842,11 @@ func (s *TPMService) IncrementNVCounter(handle uint32, ownerAuth string) (retVal
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	return tpm.NVIncrement(keyAttrs)
 }
 
@@ -2811,7 +2865,11 @@ func (s *TPMService) ReadNVCounter(handle uint32, ownerAuth string) (retVal uint
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	return tpm.NVReadCounter(keyAttrs)
 }
 
@@ -2838,7 +2896,11 @@ func (s *TPMService) ExtendNV(handle uint32, hexData string, ownerAuth string) (
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	return tpm.NVExtend(keyAttrs, data)
 }
 
@@ -2857,7 +2919,11 @@ func (s *TPMService) ReadNVExtend(handle uint32, ownerAuth string) (retVal strin
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	data, readErr := tpm.NVReadExtend(keyAttrs)
 	if readErr != nil {
 		return "", &WrappedError{Msg: "tpm_service: read NV extend", Err: readErr}
@@ -2881,15 +2947,23 @@ func (s *TPMService) DeleteNVIndex(handle uint32, ownerAuth string) (retErr erro
 	}
 	defer s.tpmAccessor.Release()
 
-	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	keyAttrs, err := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
+	if err != nil {
+		retErr = err
+		return
+	}
 	return tpm.NVUndefine(keyAttrs)
 }
 
 // buildNVKeyAttributes constructs KeyAttributes for NV index operations.
-func (s *TPMService) buildNVKeyAttributes(handle uint32, ownerAuth string, hashAlg tpm2.TPMIAlgHash) *xkms.KeyAttributes {
+func (s *TPMService) buildNVKeyAttributes(handle uint32, ownerAuth string, hashAlg tpm2.TPMIAlgHash) (*xkms.KeyAttributes, error) {
 	var hierarchyAuth xkms.Password
 	if ownerAuth != "" {
-		hierarchyAuth = xkms.NewPassword([]byte(ownerAuth))
+		auth, err := xkms.NewPassword([]byte(ownerAuth))
+		if err != nil {
+			return nil, err
+		}
+		hierarchyAuth = auth
 	}
 
 	return &xkms.KeyAttributes{
@@ -2904,7 +2978,7 @@ func (s *TPMService) buildNVKeyAttributes(handle uint32, ownerAuth string, hashA
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-	}
+	}, nil
 }
 
 // --- Phase 2E: Manufacturer CA Verification ---

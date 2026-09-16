@@ -83,6 +83,14 @@ var (
 
 	// ErrInvalidPermanentIdentifier is returned when an invalid permanent identifier is provided.
 	ErrInvalidPermanentIdentifier = errors.New("invalid permanent identifier")
+
+	// ErrEnclaveUnavailable is returned when memguard fails to allocate an
+	// mlocked region for a non-empty password. This is a hard system
+	// condition (RLIMIT_MEMLOCK exhausted, no swap, etc.); callers MUST
+	// treat it as fatal to the requested operation rather than silently
+	// substituting an empty password, which for TPM UserAuth would
+	// otherwise produce passwordless authentication.
+	ErrEnclaveUnavailable = errors.New("types: secure enclave unavailable")
 )
 
 // =============================================================================
@@ -183,18 +191,17 @@ type StoreType string
 
 const (
 	// Store type constants
-	StoreSoftware  StoreType = "software"
-	StorePKCS11    StoreType = "pkcs11"
-	StoreTPM2      StoreType = "tpm2"
-	StoreAWSKMS    StoreType = "awskms"
-	StoreGCPKMS    StoreType = "gcpkms"
-	StoreAzureKV   StoreType = "azurekv"
-	StoreVault     StoreType = "vault"
-	StoreQuantum   StoreType = "quantum"
-	StoreThreshold StoreType = "threshold"
-	StoreFrost     StoreType = "frost"
-	StorePhone     StoreType = "phone"
-	StoreUnknown   StoreType = "unknown"
+	StoreSoftware StoreType = "software"
+	StorePKCS11   StoreType = "pkcs11"
+	StoreTPM2     StoreType = "tpm2"
+	StoreAWSKMS   StoreType = "awskms"
+	StoreGCPKMS   StoreType = "gcpkms"
+	StoreAzureKV  StoreType = "azurekv"
+	StoreVault    StoreType = "vault"
+	StoreQuantum  StoreType = "quantum"
+	StoreFrost    StoreType = "frost"
+	StorePhone    StoreType = "phone"
+	StoreUnknown  StoreType = "unknown"
 )
 
 // String returns the string representation of the store type.
@@ -205,7 +212,7 @@ func (st StoreType) String() string {
 // IsValid returns true if the store type is recognized.
 func (st StoreType) IsValid() bool {
 	switch st {
-	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreThreshold, StoreFrost:
+	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreFrost:
 		return true
 	default:
 		return false
@@ -233,8 +240,6 @@ func ParseStoreType(s string) StoreType {
 		return StoreVault
 	case "quantum":
 		return StoreQuantum
-	case "threshold":
-		return StoreThreshold
 	case "frost":
 		return StoreFrost
 	default:
@@ -259,7 +264,6 @@ const (
 	BackendTypeAzureKV      BackendType = "azurekv"      // Azure Key Vault
 	BackendTypeVault        BackendType = "vault"        // HashiCorp Vault
 	BackendTypeQuantum      BackendType = "quantum"      // Quantum-safe cryptography (ML-DSA, ML-KEM)
-	BackendTypeThreshold    BackendType = "threshold"    // Threshold cryptography (Shamir, threshold ECDSA)
 	BackendTypeFrost        BackendType = "frost"        // FROST threshold signatures (RFC 9591)
 	BackendTypePhone        BackendType = "phone"        // Android phone as HSM via BLE/USB (TEE/StrongBox)
 	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM (Nitrokey HSM, CardContact)
@@ -540,67 +544,6 @@ type QuantumAttributes struct {
 }
 
 // =============================================================================
-// Threshold Cryptography Types
-// =============================================================================
-
-// ThresholdAlgorithm identifies the threshold signature or encryption scheme.
-type ThresholdAlgorithm string
-
-const (
-	// ThresholdAlgorithmShamir uses Shamir Secret Sharing for threshold operations
-	// Split/combine for symmetric keys and secrets
-	ThresholdAlgorithmShamir ThresholdAlgorithm = "SHAMIR"
-)
-
-// ThresholdAttributes contains threshold cryptography configuration for M-of-N operations.
-// This enables distributed key management where M participants out of N total must
-// collaborate to perform cryptographic operations (signing, decryption, etc.).
-type ThresholdAttributes struct {
-	// Threshold is the minimum number of shares required for operations (M)
-	// Must be: 2 <= Threshold <= Total <= 255
-	Threshold int
-
-	// Total is the total number of shares to generate (N)
-	// Must be: Threshold <= Total <= 255
-	Total int
-
-	// Algorithm specifies the threshold scheme to use
-	Algorithm ThresholdAlgorithm
-
-	// Participants contains identifiers for each share holder
-	// Length must equal Total. Each participant gets one share.
-	// Example: ["node1", "node2", "node3", "node4", "node5"]
-	Participants []string
-
-	// ShareID identifies which share this node owns (1 to Total)
-	// Only used when loading a key that already has shares distributed
-	ShareID int
-}
-
-// Validate checks if the threshold attributes are valid
-func (ta *ThresholdAttributes) Validate() error {
-	if ta.Threshold < 2 {
-		return &errs.Message{Msg: fmt.Sprintf("threshold must be at least 2, got %d", ta.Threshold)}
-	}
-	if ta.Total < ta.Threshold {
-		return &errs.Message{Msg: fmt.Sprintf("total (%d) must be >= threshold (%d)", ta.Total, ta.Threshold)}
-	}
-	if ta.Threshold > 255 {
-		return &errs.Message{Msg: fmt.Sprintf("threshold cannot exceed 255, got %d", ta.Threshold)}
-	}
-	if ta.Total > 255 {
-		return &errs.Message{Msg: fmt.Sprintf("total cannot exceed 255, got %d", ta.Total)}
-	}
-	if len(ta.Participants) > 0 && len(ta.Participants) != ta.Total {
-		return &errs.Message{Msg: fmt.Sprintf("participants length (%d) must match total (%d)", len(ta.Participants), ta.Total)}
-	}
-	if ta.ShareID != 0 && (ta.ShareID < 1 || ta.ShareID > ta.Total) {
-		return &errs.Message{Msg: fmt.Sprintf("shareID (%d) must be between 1 and total (%d)", ta.ShareID, ta.Total)}
-	}
-	return nil
-}
-
-// =============================================================================
 // FROST Threshold Signature Types (RFC 9591)
 // =============================================================================
 
@@ -802,39 +745,44 @@ type ClearPassword struct {
 // Use this for key authentication values that will be passed to TPM
 // operations as UserAuth. For sealed arbitrary data, use NewSealData.
 // An empty or nil input returns a ClearPassword with no enclave backing
-// (empty UserAuth).
-func NewPassword(password []byte) Password {
+// (empty UserAuth) and a nil error — this is the intentional "no
+// authentication" case, not a failure.
+//
+// A non-empty input that fails to allocate its enclave returns
+// ErrEnclaveUnavailable rather than a usable Password: silently
+// downgrading a non-empty password to an empty one would turn a
+// caller-supplied UserAuth into passwordless TPM authentication.
+func NewPassword(password []byte) (Password, error) {
 	if len(password) == 0 {
-		return &ClearPassword{}
+		return &ClearPassword{}, nil
 	}
 	buf, err := secure.NewBuffer(len(password))
 	if err != nil {
-		// Only occurs if memguard cannot allocate an mlocked region.
-		// Fall back to an empty ClearPassword so the factory always
-		// returns a non-nil Password; downstream TPM calls will fail
-		// explicitly on an empty-when-required auth check.
-		_ = err
-		return &ClearPassword{}
+		return nil, ErrEnclaveUnavailable
 	}
 	copy(buf.Bytes(), password)
-	return &ClearPassword{buf: buf}
+	return &ClearPassword{buf: buf}, nil
 }
 
 // NewPasswordFromString creates a new password from a string literal.
 // The string bytes are copied into an enclave. Note: the input string
 // itself lives on the Go heap until GC reclaims it; prefer NewPassword
 // for sources the caller can wipe.
-func NewPasswordFromString(password string) Password {
+//
+// An empty string returns a ClearPassword with no enclave backing and a
+// nil error (intentional "no authentication"). A non-empty string that
+// fails to allocate its enclave returns ErrEnclaveUnavailable — see
+// NewPassword for why an empty fallback is never substituted here.
+func NewPasswordFromString(password string) (Password, error) {
 	if len(password) == 0 {
-		return &ClearPassword{}
+		return &ClearPassword{}, nil
 	}
 	buf, err := secure.NewBuffer(len(password))
 	if err != nil {
-		_ = err
-		return &ClearPassword{}
+		return nil, ErrEnclaveUnavailable
 	}
 	copy(buf.Bytes(), password)
-	return &ClearPassword{buf: buf}
+	return &ClearPassword{buf: buf}, nil
 }
 
 // String returns the password as a Go string. Returns "" for an
@@ -1023,9 +971,6 @@ type KeyAttributes struct {
 
 	// QuantumAttributes contains quantum-safe algorithm configuration (ML-DSA, ML-KEM)
 	QuantumAttributes *QuantumAttributes
-
-	// ThresholdAttributes contains threshold cryptography configuration (M-of-N signatures)
-	ThresholdAttributes *ThresholdAttributes
 
 	// FrostAttributes contains FROST threshold signature configuration (RFC 9591)
 	// Used for M-of-N threshold signing where the private key is never reconstructed
@@ -3382,7 +3327,11 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	// encrypted-at-rest keys. When config.Password is empty, attrs.Password
 	// stays nil and the pkcs8 backend enforces its AllowPlaintextKeys policy.
 	if config.Password != "" {
-		attrs.Password = NewPasswordFromString(config.Password)
+		pw, err := NewPasswordFromString(config.Password)
+		if err != nil {
+			return nil, err
+		}
+		attrs.Password = pw
 	}
 
 	// Parse algorithm-specific config from nested structs

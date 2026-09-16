@@ -2147,9 +2147,10 @@ func NewApp(cfg *GUIConfig) *App {
 				}
 
 				// Register the PKCS#11 token as a FIDO2 key backend by wrapping the
-				// go-xkms PKCS#11 KeyProvider via the BackendAdapter.
-				// For YubiKey tokens (libykcs11), wrap with the YubiKey provider
-				// to handle SO login for key generation.
+				// go-xkms PKCS#11 KeyProvider via the BackendAdapter. YubiKey PIV's
+				// SO-authenticated key generation is handled inside the PKCS#11
+				// backend itself (see pkg/backend/pkcs11 IsYubiKeyPIV/SOPIN), so no
+				// GUI-side wrapper is needed here.
 				if a.fido2KeyBackend != nil {
 					// The xkms backend is registered under "pkcs11" (see
 					// registerPKCS11XKMSBackend), not the module ID.
@@ -2157,13 +2158,6 @@ func NewApp(cfg *GUIConfig) *App {
 					if p11Err == nil && p11Backend != nil {
 						bt := xkmssdk.BackendType(moduleID)
 						provider := p11Backend.KeyProvider()
-						if isYubiKeyLibrary(libraryPath) && wrapYubiKeyProvider != nil {
-							if wrapped := wrapYubiKeyProvider(provider); wrapped != nil {
-								provider = wrapped
-								a.log.Info("FIDO2 adapter: using YubiKey provider",
-									"module_id", moduleID)
-							}
-						}
 						adapter := keybackend.NewBackendAdapter(provider, bt)
 						adapter.SetLogger(a.log)
 						// Attach PIV slot model if the backend supports it.
@@ -3795,12 +3789,6 @@ func loadTPMConfig(logger *slog.Logger) xkmssdk.TPMConfig {
 	logger.Info("loaded TPM config from file", "path", configPath)
 	return merged
 }
-
-// mergeTPMConfig overlays non-zero fields from file onto defaults.
-// wrapYubiKeyProvider is set by the pkcs11 build tag to wrap a PKCS#11
-// KeyProvider with YubiKey-specific behavior (SO login for key generation).
-// Returns nil if the provider cannot be wrapped.
-var wrapYubiKeyProvider func(inner xkmssdk.KeyProvider) xkmssdk.KeyProvider
 
 // isYubiKeyLibrary returns true if the library path points to a YubiKey
 // PKCS#11 module (libykcs11).

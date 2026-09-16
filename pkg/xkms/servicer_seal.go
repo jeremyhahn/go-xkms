@@ -173,7 +173,11 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 
 	// Map password for TPM sealed object authentication.
 	if req.Password != "" {
-		opts.Password = types.NewPasswordFromString(req.Password)
+		pw, pwErr := types.NewPasswordFromString(req.Password)
+		if pwErr != nil {
+			return nil, pwErr
+		}
+		opts.Password = pw
 	}
 
 	sealed, err := b.Seal(ctx, req.Data, opts)
@@ -261,7 +265,11 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 
 	// Map password for TPM sealed object authentication.
 	if req.Password != "" {
-		opts.Password = types.NewPasswordFromString(req.Password)
+		pw, pwErr := types.NewPasswordFromString(req.Password)
+		if pwErr != nil {
+			return nil, pwErr
+		}
+		opts.Password = pw
 	}
 
 	plaintext, err := b.Unseal(ctx, sealed, opts)

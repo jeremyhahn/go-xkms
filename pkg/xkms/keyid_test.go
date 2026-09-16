@@ -151,15 +151,6 @@ func TestParseKeyID_Valid(t *testing.T) {
 			expectedKeyname: "pq-key",
 		},
 		{
-			name:              "threshold backend",
-			keyID:             "threshold:signing:frost-ed25519:threshold-key",
-			expectedBackend:   "threshold",
-			expectedKeyType:   "signing",
-			expectedAlgo:      "frost-ed25519",
-			expectedKeyname:   "threshold-key",
-			nonApprovedInFIPS: true,
-		},
-		{
 			name:              "frost backend",
 			keyID:             "frost:signing:frost-ristretto255:frost-key",
 			expectedBackend:   "frost",
@@ -337,7 +328,6 @@ func TestKeyIDToBackendType(t *testing.T) {
 		{"azurekv", "azurekv", types.BackendTypeAzureKV},
 		{"vault", "vault", types.BackendTypeVault},
 		{"quantum", "quantum", types.BackendTypeQuantum},
-		{"threshold", "threshold", types.BackendTypeThreshold},
 		{"frost", "frost", types.BackendTypeFrost},
 	}
 
@@ -544,7 +534,6 @@ func TestBackendTypeToStoreType(t *testing.T) {
 		{"AzureKV", types.BackendTypeAzureKV, types.StoreAzureKV},
 		{"Vault", types.BackendTypeVault, types.StoreVault},
 		{"Quantum", types.BackendTypeQuantum, types.StoreQuantum},
-		{"Threshold", types.BackendTypeThreshold, types.StoreThreshold},
 		{"Frost", types.BackendTypeFrost, types.StoreFrost},
 	}
 

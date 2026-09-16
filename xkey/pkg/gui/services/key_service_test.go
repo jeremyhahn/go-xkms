@@ -380,6 +380,18 @@ func (m *mockClient) SealStoreReseal(context.Context, *transport.SealStoreReseal
 func (m *mockClient) SealStoreStatus(context.Context) (*transport.SealStoreStatusResponse, error) {
 	panic("not implemented")
 }
+func (m *mockClient) EscrowKey(context.Context, *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	panic("not implemented")
+}
+func (m *mockClient) RecoverKey(context.Context, *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	panic("not implemented")
+}
+func (m *mockClient) ListEscrowed(context.Context) ([]transport.EscrowRecord, error) {
+	panic("not implemented")
+}
+func (m *mockClient) RevokeEscrow(context.Context, string) error {
+	panic("not implemented")
+}
 func (m *mockClient) PolicyCreate(context.Context, *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	panic("not implemented")
 }

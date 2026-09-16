@@ -722,7 +722,8 @@ func TestParseHashFromSignatureAlgorithm_UnknownAlgo(t *testing.T) {
 func TestClearPassword_Clear(t *testing.T) {
 	// Create a password with some data
 	password := []byte("secret-password")
-	clearPwd := NewPassword(password)
+	clearPwd, err := NewPassword(password)
+	require.NoError(t, err)
 
 	// Verify the password was stored
 	bytes := clearPwd.Bytes()
@@ -740,7 +741,8 @@ func TestClearPassword_Clear(t *testing.T) {
 
 func TestClearPassword_ClearEmpty(t *testing.T) {
 	// Test clearing an empty password
-	clearPwd := NewPassword([]byte{})
+	clearPwd, err := NewPassword([]byte{})
+	require.NoError(t, err)
 	clearPwd.Clear() // Should not panic
 	bytes := clearPwd.Bytes()
 	assert.Empty(t, bytes)

@@ -68,7 +68,12 @@ func TestKDFBridges_EveryAdvertisedHashDerives(t *testing.T) {
 					if HashUsable(want) {
 						t.Fatalf("bridge refuses %v, but this process can compute it", want)
 					}
-					t.Skipf("%v is not computable in this process; the bridge correctly refuses it", want)
+					// The bridge and HashUsable agree this hash cannot run in
+					// this process (e.g. GODEBUG=fips140=only disabling
+					// SHA-1). That agreement is the property under test, so
+					// the subtest is done: there is no key to derive with a
+					// hash the process cannot compute.
+					return
 				}
 
 				params := paramsForBridge(algorithm, name, 48)

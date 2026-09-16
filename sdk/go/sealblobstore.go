@@ -19,7 +19,8 @@ import "github.com/jeremyhahn/go-xkms/pkg/sealblobstore"
 // blobs without importing go-xkms/pkg/sealblobstore directly. The Store type
 // is aliased as SealedBlobStore, the Entity as SealedBlobEntity, and the
 // constructor as NewSealedBlobStore. Backing storage is supplied as a
-// QRDBKVStore (see NewKVStoreAdapter / NewStorageMemory).
+// github.com/jeremyhahn/go-qrdb/sdk/go KVStore (see NewKVStoreAdapter);
+// go-xkms does not re-export the qrdb database surface.
 
 // SealedBlobStore persists sealed data blobs through a go-qrdb GenericDAO
 // keyed by a deterministic ID derived from each blob label.

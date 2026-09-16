@@ -5260,7 +5260,8 @@ func TestTPMService_DeleteNVIndex_Error(t *testing.T) {
 
 func TestTPMService_BuildNVKeyAttributes_WithAuth(t *testing.T) {
 	svc := NewTPMService()
-	attrs := svc.buildNVKeyAttributes(0x01800001, "ownerpass", tpm2.TPMAlgSHA256)
+	attrs, err := svc.buildNVKeyAttributes(0x01800001, "ownerpass", tpm2.TPMAlgSHA256)
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	require.NotNil(t, attrs.TPMAttributes)
 	assert.Equal(t, tpm2.TPMHandle(0x01800001), attrs.TPMAttributes.Handle)
@@ -5271,7 +5272,8 @@ func TestTPMService_BuildNVKeyAttributes_WithAuth(t *testing.T) {
 
 func TestTPMService_BuildNVKeyAttributes_NoAuth(t *testing.T) {
 	svc := NewTPMService()
-	attrs := svc.buildNVKeyAttributes(0x01800001, "", tpm2.TPMAlgSHA256)
+	attrs, err := svc.buildNVKeyAttributes(0x01800001, "", tpm2.TPMAlgSHA256)
+	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Nil(t, attrs.Parent.TPMAttributes.HierarchyAuth)
 }

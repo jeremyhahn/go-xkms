@@ -18,9 +18,10 @@
 //
 // Every alias is prefixed with QRDB to avoid name collisions with go-xkms's
 // own types. Note these are the RUNTIME discovery primitives (interfaces,
-// constructors, manager) — distinct from the YAML/config-layer aliases in
-// types_qrdb.go (QRDBDiscoveryMethod, QRDBStaticDiscoveryConfig, ...), which
-// describe how discovery is requested rather than how it runs.
+// constructors, manager) that xkms's own node-embedding and trust-bootstrap
+// paths consume; the YAML/config-layer discovery aliases formerly re-exported
+// from types_qrdb.go were removed as a database/cluster-plane surface that
+// belongs to github.com/jeremyhahn/go-qrdb/sdk/go, not to go-xkms's SDK.
 
 package xkms
 

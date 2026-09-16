@@ -78,16 +78,15 @@ const (
 
 // validBackends contains all supported backend types for Key IDs.
 var validBackends = map[string]bool{
-	"software":  true, // Unified software backend (asymmetric + symmetric)
-	"pkcs11":    true, // PKCS#11 Hardware Security Module
-	"tpm2":      true, // Trusted Platform Module 2.0
-	"awskms":    true, // AWS Key Management Service
-	"gcpkms":    true, // Google Cloud KMS
-	"azurekv":   true, // Azure Key Vault
-	"vault":     true, // HashiCorp Vault
-	"quantum":   true, // Post-quantum cryptography (ML-DSA, ML-KEM)
-	"threshold": true, // Threshold cryptography (Shamir secret sharing)
-	"frost":     true, // FROST threshold signatures (RFC 9591)
+	"software": true, // Unified software backend (asymmetric + symmetric)
+	"pkcs11":   true, // PKCS#11 Hardware Security Module
+	"tpm2":     true, // Trusted Platform Module 2.0
+	"awskms":   true, // AWS Key Management Service
+	"gcpkms":   true, // Google Cloud KMS
+	"azurekv":  true, // Azure Key Vault
+	"vault":    true, // HashiCorp Vault
+	"quantum":  true, // Post-quantum cryptography (ML-DSA, ML-KEM)
+	"frost":    true, // FROST threshold signatures (RFC 9591)
 }
 
 // keynameRegex validates keyname characters (alphanumeric, hyphens, underscores, dots).
@@ -401,8 +400,6 @@ func keyIDToBackendType(backendStr string) (types.BackendType, error) {
 		return types.BackendTypeVault, nil
 	case "quantum":
 		return types.BackendTypeQuantum, nil
-	case "threshold":
-		return types.BackendTypeThreshold, nil
 	case "frost":
 		return types.BackendTypeFrost, nil
 	default:
@@ -514,8 +511,6 @@ func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 		return types.StoreVault
 	case types.BackendTypeQuantum:
 		return types.StoreQuantum
-	case types.BackendTypeThreshold:
-		return types.StoreThreshold
 	case types.BackendTypeFrost:
 		return types.StoreFrost
 	default:

@@ -20,7 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/secret"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -55,10 +55,14 @@ func TestHashUsable_IsStable(t *testing.T) {
 	}
 }
 
-// An unlinked digest is not usable, and asking must not panic.
+// An unlinked digest is not usable, and asking must not panic. No file in
+// this package (or its test files) imports crypto/md4, so crypto.MD4 is
+// never registered in this test binary; the assertion pins that fact rather
+// than skipping around it, so a future import that links MD4 fails this test
+// instead of silently going untested.
 func TestHashUsable_UnlinkedDigest(t *testing.T) {
 	if HashUsable(crypto.MD4) {
-		t.Skip("MD4 is linked in this binary; nothing to assert")
+		t.Fatal("crypto.MD4 is unexpectedly linked in this test binary; update this test for the newly available digest")
 	}
 }
 

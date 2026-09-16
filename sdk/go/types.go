@@ -68,12 +68,6 @@ type (
 	// QuantumAttributes contains post-quantum key parameters.
 	QuantumAttributes = types.QuantumAttributes
 
-	// ThresholdAlgorithm identifies a threshold signing algorithm.
-	ThresholdAlgorithm = types.ThresholdAlgorithm
-
-	// ThresholdAttributes contains threshold key parameters.
-	ThresholdAttributes = types.ThresholdAttributes
-
 	// FrostAlgorithm identifies a FROST threshold signing algorithm.
 	FrostAlgorithm = types.FrostAlgorithm
 
@@ -278,7 +272,6 @@ const (
 	BackendTypeAzureKV   = types.BackendTypeAzureKV
 	BackendTypeVault     = types.BackendTypeVault
 	BackendTypeQuantum   = types.BackendTypeQuantum
-	BackendTypeThreshold = types.BackendTypeThreshold
 	BackendTypeSymmetric = types.BackendTypeSymmetric
 	BackendTypePhone     = types.BackendTypePhone
 )
@@ -327,18 +320,17 @@ const (
 
 // Store type constants.
 const (
-	StoreUnknown   = types.StoreUnknown
-	StoreSoftware  = types.StoreSoftware
-	StorePKCS11    = types.StorePKCS11
-	StoreTPM2      = types.StoreTPM2
-	StoreAWSKMS    = types.StoreAWSKMS
-	StoreGCPKMS    = types.StoreGCPKMS
-	StoreAzureKV   = types.StoreAzureKV
-	StoreVault     = types.StoreVault
-	StoreQuantum   = types.StoreQuantum
-	StoreThreshold = types.StoreThreshold
-	StoreFrost     = types.StoreFrost
-	StorePhone     = types.StorePhone
+	StoreUnknown  = types.StoreUnknown
+	StoreSoftware = types.StoreSoftware
+	StorePKCS11   = types.StorePKCS11
+	StoreTPM2     = types.StoreTPM2
+	StoreAWSKMS   = types.StoreAWSKMS
+	StoreGCPKMS   = types.StoreGCPKMS
+	StoreAzureKV  = types.StoreAzureKV
+	StoreVault    = types.StoreVault
+	StoreQuantum  = types.StoreQuantum
+	StoreFrost    = types.StoreFrost
+	StorePhone    = types.StorePhone
 )
 
 // File system extension constants (FSExtension values used by the

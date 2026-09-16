@@ -1672,16 +1672,34 @@ func TestSealData_LargeData(t *testing.T) {
 func TestClearPassword_BackwardCompatibility(t *testing.T) {
 	// Test NewPassword backward compatibility
 	data := []byte("backward-compat-password")
-	password := NewPassword(data)
+	password, err := NewPassword(data)
+	require.NoError(t, err)
 	require.NotNil(t, password)
 	assert.Equal(t, data, password.Bytes())
 
 	// Test NewClearPasswordFromString
-	password2 := NewPasswordFromString("test-string")
+	password2, err := NewPasswordFromString("test-string")
+	require.NoError(t, err)
 	require.NotNil(t, password2)
 	str, err := password2.String()
 	assert.NoError(t, err)
 	assert.Equal(t, "test-string", str)
+}
+
+// TestNewPassword_EmptyIsIntentionalNotError verifies that an empty or nil
+// input to NewPassword returns a usable, nil-error Password representing
+// "no authentication" — this must never be conflated with the
+// ErrEnclaveUnavailable failure path.
+func TestNewPassword_EmptyIsIntentionalNotError(t *testing.T) {
+	pw, err := NewPassword(nil)
+	require.NoError(t, err)
+	require.NotNil(t, pw)
+	assert.Empty(t, pw.Bytes())
+
+	pw2, err := NewPasswordFromString("")
+	require.NoError(t, err)
+	require.NotNil(t, pw2)
+	assert.Empty(t, pw2.Bytes())
 }
 
 // =============================================================================

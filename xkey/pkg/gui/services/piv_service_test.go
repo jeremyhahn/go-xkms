@@ -1449,6 +1449,22 @@ func (m *mockPIVClient) SealStoreStatus(_ context.Context) (*transport.SealStore
 	return nil, errMockNotImplemented
 }
 
+func (m *mockPIVClient) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) RevokeEscrow(_ context.Context, _ string) error {
+	return errMockNotImplemented
+}
+
 // Policy operations stub implementations for mockPIVClient
 
 func (m *mockPIVClient) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
