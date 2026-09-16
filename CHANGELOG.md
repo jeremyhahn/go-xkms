@@ -7,6 +7,1294 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0-alpha] - 2026-09-16
+
+### Security
+
+- **ACME finalize enforces complete CSR identity matching with order authorization.** Per RFC 8555 Section 7.4, the finalize handler now requires the CSR's complete identity set — its CommonName plus all DNS and IP Subject Alternative Names — to correspond exactly to the order's authorized identifiers in both directions: a name the CSR carries that the order did not authorize is rejected, and an authorized identifier the CSR omits is also rejected. Email and URI SANs are rejected wholesale; only DNS and IP identifiers are permitted. This closes the gap that previously allowed issuance of SANs authorized in the order but omitted from the CSR (which the RFC forbids). The authorization check now runs before any certificate work begins, so a CSR that fails matching fails fast. The stored certificate's identity set, never the submitted CSR's, feeds all subsequent authorization decisions.
+- **ACME revocation requires byte-exact DER match and invokes canonical CA revocation.** The revoke-cert handler now mandates that the submitted certificate's DER encoding byte-equals the stored certificate before any authorization is checked, closing a gap where a self-signed certificate forged with a victim's serial number would sail through authorization using names the attacker chose. Authorization decisions use the stored certificate's identities exclusively, never the submitted one's. After authorization succeeds, revocation is invoked through the canonical CA revocation entry point (mirroring admin revocation) before the ACME certificate record is touched, so the CA's revocation list and CRL actually reflect the revocation instead of only the ACME bookkeeping. An already-revoked certificate is treated as success; the desired end state — revoked — already holds.
+- **google.golang.org/grpc v1.83.2 in every module.** Trivy began failing the
+  `Docker Build & Scan` job on every push to `main` from 2026-09-09 05:12Z
+  with one HIGH finding in the CLI image's Go binary, CVE-2026-84445 (gRPC-Go
+  xDS servers: denial of service via crash) against the pinned v1.83.1. No
+  repository change caused it: the advisory landed in the scanner database
+  between two identical builds. The pin moves to the fixed v1.83.2 in the
+  root, `sdk/go`, `xkey` and `web/desktop` modules, which is the whole diff.
+- **gRPC peer-credential authentication is now functional; Unix admin socket denials now work correctly.** The pkg/acme/api/server peer-credential interceptor now extracts real SO_PEERCRED/LOCAL_PEERCRED from Unix domain socket connections via PeerCredentialsAuthInfo on the peer.Peer.AuthInfo. Previously the interceptor was present but credentials were never populated, so the UID-to-role mapper always saw nil and the admin socket denied every request. The interceptor continues to pass through TCP connections without credentials (no SO_PEERCRED equivalent), so remote gRPC clients connect as before. Authorization against UID roles now works as intended for Unix-local admin access.
+- **Pairing a phone from the xkey desktop GUI now attests the device, and
+  refuses an unattestable one by default (#115, #131).** `PhoneService.Pair`
+  ran the Noise handshake, sent the pairing confirmation and wrote the record
+  without ever requesting an attestation, so a device that could never
+  produce a valid one paired from the GUI while `xkey device pair` refused it
+  — and the resulting record carried no device fingerprint, which left the
+  reconnect fingerprint check inert for every GUI-paired device. The GUI now
+  runs the same decision the CLI runs (`attestation.AttestOverSession`, chain
+  verified to a trusted Android hardware root plus a live signature over this
+  pairing's challenge) before anything is written, persists the same
+  `device_fingerprint`, `attestation_protocol_version`, security level, boot
+  state and boot hash the CLI would, and resolves the unattestable-device
+  policy through the one shared function, `attestation.AllowUnattestablePairing`,
+  over the same two planes: `devices.yaml`'s
+  `attestation_policy.allow_unattestable_devices` and the sealed
+  `policy:` section's `pairing_allow_unattestable_devices` gated by
+  `lock_pairing_attestation_policy`. A refusal returns
+  `ErrPhonePairAttestationRefused` and writes nothing; a policy-allowed
+  unattestable pairing writes the pairing half of the record and no
+  attestation claim, exactly as the CLI does. A missing trust store, or an
+  `xkey.yaml` that exists but cannot be read, refuses rather than admits.
+
+  Two mirror defects surfaced with it: the GUI's `devices.yaml` mirror had no
+  `attestation_policy` field, so every GUI save erased the user's
+  `xkey device pair` settings, and no `device_boot_hash_hex`, so a GUI save
+  dropped the boot hash a CLI attestation wrote. Both now round-trip.
+
+  **Upgrade note:** a phone that fails attestation can no longer be paired
+  from the GUI unless policy opts in. The in-memory phone responder the
+  CLI's interop test used moved to `xkey/pkg/attestation/attesttest` so both
+  pairing surfaces are tested against the same reading of the wire contract.
+- **`KeyWrapper.Wrap(plaintext []byte)` is replaced by
+  `WrapFrom(src *secure.Buffer)`, so the interface can no longer express a
+  wrap of key material staged on the ordinary Go heap** (#387). This is the
+  mirror of the unwrap transit #291 closed: the plaintext is read through a
+  borrow on a protected buffer the caller owns and streamed straight into the
+  ciphertext, never copied. `InitializeSOPIN` now generates the Admin Key and
+  Credential Master Key directly into mlocked memory and adopts them as they
+  are, where previously both spent their first moments on the heap; the
+  PKCS#8 attestation encoding, which `x509` can only marshal onto the heap, is
+  moved into protected memory by `secure.NewBufferFromBytes`, which wipes the
+  heap copy as it does so. `KeyManager.WrapCredentialKey` and
+  `KeyManager.WrapAttestationKey` take a `*secure.Buffer` the caller destroys
+  afterwards; `WrapFrom` refuses a nil or destroyed source with
+  `ErrInvalidWrapSource`. Because protected-buffer borrows must not nest, every
+  wrap of one protected key under another goes through `wrapFromProtected`,
+  which releases the wrapping-key borrow before the plaintext borrow is taken;
+  a regression test drives every wrap path under purge-class contention so a
+  re-nested borrow hangs into the test timeout instead of passing by luck.
+- **A partial config section keeps the defaults it omits (#114).** The
+  loader seeded each section of `xkey.yaml` as one opaque viper default and
+  decoded onto a zero `Config`, so the moment a file named a section, every
+  key the file did not set in that section landed on its Go zero value
+  instead of its `DefaultConfig()` value. A file containing only
+  `policy: {min_pin_length: 8}` therefore loaded with `require_user_pin`,
+  `require_so_pin` and `require_encrypted_storage` all `false`,
+  `pin_max_attempts` 0 and `storage_type` empty: an administrator tightening
+  one policy value silently switched off every other gate in the section,
+  and a policy sealed after that point sealed the weakened one. The same
+  shape affected all thirteen defaulted sections. The loader now decodes
+  onto `DefaultConfig()`, so a section merges key by key: an omitted key
+  keeps its default, an explicit value — an explicit `false` or `0`
+  included — still wins, and a list the file sets replaces the default list
+  outright. A deployment whose file names a section and, knowingly or not,
+  relied on the omitted keys being zero gains the defaults on upgrade; for
+  the `Require*` gates that is a tightening. Pinned by a per-section table
+  test that compares the whole loaded `Config` against `DefaultConfig()`
+  with the one set key applied.
+- **SECURITY: the module's PIV login proves the key is on a smartcard (#200).**
+  `POST /api/v1/auth/login/piv` authenticated on a TLS client-certificate
+  binding plus an optional issuer-DN string match, and a DN is not evidence:
+  a self-signed software key could assert any issuer. The exchange now accepts
+  a certificate as hardware-backed only when some certificate the client
+  presents chains to the operator-configured PIV attestation anchor
+  (`auth.piv_login.attestation_roots`, with optional
+  `attestation_intermediates`; `AttestationRoots` / `AttestationIntermediates`
+  on `PIVLoginOptions` and the SDK's `ServiceModulePIVLoginOptions`) AND
+  carries the login certificate's SubjectPublicKeyInfo, so a genuine
+  attestation borrowed from another card launders nothing; presented
+  certificates are chain material, never anchors. **BREAKING for
+  configuration**: with no anchor the exchange refuses every login, and a
+  config with `piv_login.enabled` and neither `attestation_roots` nor
+  `allow_unattested: true` no longer validates. The minted token records
+  `attest_level` (`hardware` or `unattested`, carried through refresh) and the
+  audit event for `auth.login.piv` carries the operator-facing reason for a
+  refusal. A bundle that does not load fails the daemon at composition.
+- **BREAKING (Go SDK): Refresh-token rotation is now an atomic compare-and-swap with family revocation tombstones; session claiming is atomic.** The pkg/auth/token package implements token rotation through compare-and-swap (CompareAndSwap on the underlying KV store), so a stolen-then-replayed refresh token that races the legitimate refresh request cannot succeed: the race is arbitrated by the store, and the loser reads the marked-rotated state that revokes the entire family lineage. Family revocation is written with PutIfAbsent so the first revoker's tombstone stands and two concurrent revokes cannot write divergent expiries. The WebAuthn session-claiming interface changes (pkg/webauthn) to claim the session before validation. SessionStore.Take is now an atomic get-and-delete operation: two concurrent finish requests for one ceremony cannot both proceed — the loser has nothing to validate against. This surfaces through the web transport and REST/gRPC API; the SDK's token types (Token, TokenPair) and refresh interfaces remain stable. Downstream integrations that work at the SessionStore layer must implement atomic Take.
+- **A TCG-CSR-IDEVID whose keys are not TCG Template H-0 keys under the
+  §7.3.6.6 IDevID/IAK Key Policy is refused.** The stateless verifier checked
+  Restricted, fixedTPM, fixedParent and Sign. It now applies the whole rule the
+  provisioning path applies before `TPM2_CreatePrimary`: decrypt CLEAR (§4.1,
+  §4.2 "Not-decrypting"), `adminWithPolicy` SET (§7.2.4), and `authPolicy`
+  equal to `DevIDKeyPolicyDigest(kind, nameAlg)`. §4 obliges the CA to verify
+  "key Attributes and Policies"; a key administered by a policy the
+  specification did not write is refused with
+  `ErrDevIDTemplateNonConformant`.
+
+  **Upgrade note:** this is the CA half of the re-key the IDevID/IAK key policy
+  change already requires. A device provisioned before that change presents a
+  public area with no `authPolicy` and is refused at enrollment; it must be
+  re-provisioned. There is no separate migration.
+
+
+  The CA checks the object attributes and the policy, and deliberately not the
+  creation-only rules the provisioning path also applies — the §7.3.1 unique
+  string and the H-1 through H-4 scheme, symmetric, exponent and kdf. §7.3.1
+  fixes the unique field "at the time of key creation"; `TPM2_CreatePrimary`
+  consumes it as derivation input and returns an `outPublic` whose unique field
+  holds the generated public key, and `outPublic` is what a TCG-CSR-IDEVID
+  carries. Demanding the string of a received public area would refuse every
+  genuine device. `assertDevIDAttributesConformant` is the shared half, so the
+  attribute and policy rules still have one definition.
+- **IDevID and IAK certificates now carry the subjectAltName TCG "TPM 2.0 Keys
+  for Device Identity and Attestation" v1.00 r12 §8.1 makes a SHALL.** The
+  extension holds two otherNames: an RFC 4108 `hardwareModuleName` with the TPM
+  2.0 hwType 2.23.133.1.2 and an hwSerialNum of `<TCG TPM manufacturer
+  code>:<EK authority key identifier>:<EK certificate serial number>`, and an
+  RFC 4043 `permanentIdentifier` whose assigner is `tcg-on-ekPermIdSha256`
+  (2.23.133.12.1) and whose identifierValue is `hex(SHA-256(EK certificate
+  DER))`. Neither reached a certificate before: the hardware module name
+  builder was never called and emitted a standalone extension under the
+  otherName's own OID rather than inside subjectAltName, and the permanent
+  identifier carried the product model and serial with no assigner. Both are
+  now derived from the endorsement key certificate the TCG-CSR-IDEVID carries;
+  a request without one, or whose TPM manufacturer code cannot be determined
+  from that certificate or from the new `CertificateRequest.TPMManufacturer`,
+  is refused rather than certified with a name that identifies the wrong TPM.
+
+- **The §8.2 TCG assertions are issued as certificate policies only, and the
+  fixed and restricted assertions are no longer combined.** §8.2 defines
+  `tcg-cap-verifiedTPMResidency`, `-Fixed` and `-Restricted` as policy
+  identifiers carrying "No data"; the boolean-valued standalone extensions that
+  also claimed them are removed. §8.2 further makes each of the fixed and
+  restricted assertions a MUST NOT beside the other: an IAK certificate now
+  carries residency and restricted, an IDevID residency and fixed. The extended
+  key usage gains "the one TCG OID most appropriate for the type of key used"
+  per §8.1 — the restricted OID on an attestation key, the fixed OID on an
+  identity key — beside the TLS usages.
+
+- **`ErrTCGMandatoryExtension` refuses issuance when an extension TCG DevID
+  §8.1 requires cannot be built.** Extension construction discarded its errors
+  (`if ext, err := ...; err == nil`), so a certificate could be issued
+  asserting less than the CA had verified with nothing reporting why.
+
+- **An IDevID's key usage is `digitalSignature` alone.** §8.1 Table 22 reserves
+  the encryption usages for a Combined key, which the TCG-CSR verifier refuses
+  to accept. The device model
+  moves from `tcg-at-tpmModel` to `tcg-at-platformModel` and the device serial
+  number out of `tcg-at-tpmVersion` into the subject's `serialNumber`
+  attribute, where §8.1 asks for it; the two TPM OIDs name the TPM's own model
+  and firmware version, not the platform's.
+- **IDevID and IAK delegation through the TCG Policy NV Index, and
+  `platform-policy` on an identity key now means what the specification says
+  it means.** TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12
+  §7.3 delegates use of a recoverable IDevID/IAK through a reserved NV index
+  (§7.3.2: `0x01C90010`/`0x01C90018` for SHA256) whose Name is the fourth
+  branch of the key policy. `DefineDevIDPolicyNV` defines that index to NV
+  Policy Template I-0/I-1..I-3 under Owner authorization (§7.3.5),
+  idempotently, and refuses with `ErrDevIDPolicyNVIndex` any index whose Name
+  is not the specification's Table 18 — one attribute bit off can never
+  delegate the key. `WriteDevIDDelegationPolicy` writes a Delegation Policy as
+  a `TPMT_HA` (hash ID, then digest; §7.3.5 NOTE) under a
+  `PolicySecret(TPM_RH_ENDORSEMENT)` session, so only the Privacy
+  Administrator chooses it (§7.2.4). `DevIDDelegatedSession` satisfies a
+  `DevIDDelegation`, executes `TPM2_PolicyAuthorizeNV` and completes the key
+  policy's `PolicyOR`; the TPM refuses it whenever the index holds a different
+  policy, and the TPM's response code stays in the error chain. The
+  specification's example Delegation Policies (`DevIDSigningDelegation`,
+  `DevIDAttestationDelegation`) are pinned to Table 20 in
+  `devid_policy_test.go`; the simulator suite defines, writes, signs through
+  the delegation, and proves a foreign index, a wrong authorization, a replaced
+  policy and a moved platform are each refused.
+
+  Previously `platform-policy: true` on an IDevID or IAK was ignored for the
+  key's USER role (the key's policy is fixed by Template H-0, so a
+  platform-policy session could never satisfy it). Now `CreateIDevID` and
+  `CreateIAK` provision the key's Policy NV Index with
+  `DevIDPlatformDelegation` — `TPM2_PolicyPCR` over the platform PCR in the
+  key's nameAlg — and, for a key with no authValue, `CreateKeySession` hands
+  out the delegated session, so signing stops when the platform state moves and
+  resumes once the Privacy Administrator rewrites the delegation for the new
+  state. The key and its certificates never change. A configured authValue is
+  still used in preference (§7.2.4 keeps it as a USER path on Template H-0):
+  making platform state the only path means an authValue nobody knows, which
+  is the Owner's decision, not this library's. The IDevID signing path in
+  `Sign` now takes its authorization from `CreateKeySession` like every other
+  key instead of presenting the password directly.
+
+  **Upgrade note:** no re-key. The default configuration sets
+  `idevid.platform-policy`, so a device provisioned with it now defines and
+  writes NV index `0x01C90010` (34 bytes) during provisioning; provisioning
+  fails closed if the Owner or Endorsement authorization is refused. A device
+  provisioned before this change is not touched: its IDevID keeps signing with
+  its (empty) authValue exactly as before, and the index is defined and
+  written only by re-provisioning or by the Owner calling
+  `DefineDevIDPolicyNV` / `WriteDevIDDelegationPolicy` through the SDK.
+- **IDevID and IAK keys are created to TCG "TPM 2.0 Keys for Device Identity
+  and Attestation" v1.00 r12, Template H-0, with the specification's
+  IDevID/IAK Key Policy as their `authPolicy`.** Previously `adminWithPolicy`
+  was CLEAR and no policy was attached, so the key's authValue — empty on the
+  default configuration — authorized *administration* of the device identity
+  as well as use of it. Now `userWithAuth` and `adminWithPolicy` are both SET
+  (§7.2.4): the authValue can sign, and only the Privacy Administrator, holding
+  `endorsementAuth`, can certify the key or release a credential against it,
+  through the §7.3.6.6 `PolicyOR` of PolicyUser, PolicyCertify,
+  PolicyActivateCredential and PolicyDelegationNV. `TPM2_Certify` and
+  `TPM2_ActivateCredential` on these keys now run under `DevIDAdminSession`,
+  which authorizes exactly one command; the authValue is refused for them
+  with `TPM_RC_AUTH_TYPE`. Every policy digest is computed through go-tpm's
+  trial-policy calculator and pinned to the digests TCG publishes in
+  Tables 14–19 (`devid_policy_test.go`). The specification is checked in
+  under `docs/references/`.
+
+  **This re-keys every IDevID and IAK.** `adminWithPolicy` and `authPolicy`
+  are inputs to a primary key's derivation, so a device provisioned before
+  this change holds identity keys that `CreateIDevID`/`CreateIAK` can no
+  longer derive. The key-template change in this same release moves further
+  derivation inputs, so the two share **one** upgrade note: see *Upgrade
+  note* under "IDevID and IAK key creation templates now match TCG …" in
+  `changed-tcg-devid-key-templates-1.md`. Re-provision once, for both.
+  `ErrDevIDTemplateNonConformant` refuses, before `TPM2_CreatePrimary`, any
+  template whose attributes or policy depart from Template H-0.
+
+- **One naming rule for both device identity keys.** `DevIDCommonName`
+  resolves an IDevID or IAK Common Name as: explicit `cn`, else the device's
+  configured model and serial number as `model-serial` (the Platform Identity
+  Information the TCG-CSR-IDEVID carries, §7.2.3 step 4a), else
+  `ErrDevIDCNUnresolved`. The IAK previously took `iak.cn` verbatim and was
+  left empty when unset, while the IDevID already derived `model-serial`;
+  the two keys of one device could therefore be named by different logic.
+  **Upgrade note:** an IAK provisioned with no `iak.cn` was stored under an
+  empty name and is now named `<model>-<serial>`; artifacts written under the
+  empty name are not found by the new name and must be re-imported or the
+  device re-provisioned. A configured `iak.cn` is unaffected.
+
+- **`store.FileBackend` refuses an empty Common Name (`ErrEmptyKeyCN`).**
+  The storage key is the CN plus an extension, so an empty CN degenerated to
+  the bare extension — `.key`, `.crt` — one slot shared by every nameless key
+  in the backend, last writer wins. `Get`, `Save` and `Delete` now refuse
+  rather than compose that key (#440).
+- **BREAKING: Tenant-bound certificate issuance fails closed; no fallback to global CA.** When an ACME order is bound to a tenant, the finalize handler must resolve that tenant's signing CA. Previously, resolution failures silently fell back to the global CA, which is a safety violation: a tenant whose CA is misconfigured should not issue certificates using the system CA. Tenant-bound orders now fail outright with a typed error (one of ErrTenantStorageUnsupported, ErrTenantDAOUnavailable, ErrTenantSignerUnavailable, ErrTenantCATypeUnsupported, ErrTenantIssuerCertUnavailable, or ErrTenantSignerIssuerMismatch) rather than falling back. The only legitimate way to sign a tenant-bound order with the global CA is explicit SigningCAInfo.UseGlobalDefault from GetSigningCA, which reflects the tenant's own configuration rather than a resolution failure. ErrTenantSignerIssuerMismatch is new: it is returned when the CA signer's public key does not match the issuer certificate it would be paired with, which would produce a certificate chain that never verifies.
+- **Vault Transit symmetric keys are no longer created exportable by default.** When GenerateSymmetricKey or ImportKey creates a key in Vault Transit, the backend now respects attrs.Exportable instead of hardcoding exportable=true for every symmetric key. The default stays secure: an attrs.Exportable left unset creates a non-exportable key. Only keys explicitly marked Exportable=true can expose their raw material through ExportKeyMaterial; all other operations (SymmetricEncrypter, etc.) work with non-exportable keys exactly as before. This brings Vault in line with the convention every other backend observes (CKA_EXTRACTABLE-equivalent).
+- **Enterprise policy is consumed only once it verifies (#118).** `config`
+  had the integrity machinery — `VerifyPolicyHMAC` over
+  `PolicyCanonicalJSON`, keyed from the SO PIN — but no CLI path called it,
+  so every policy field the CLI read was, in security terms, a value from a
+  file any local user could edit. `xkey device pair` had been mitigated in
+  #110 by consuming the section monotonically (it could refuse, never
+  permit), which closed the fail-open Codex found but could not honour a
+  deployment that legitimately locks pairing of unattestable devices open.
+  New: `config.LoadVerifiedPolicy(cfg, configDir, soPIN)` returns the policy
+  with its state — `PolicyUnsealed` (no HMAC file, the section is the user's
+  own) or `PolicySealedVerified` — and fails closed with the typed
+  `ErrPolicyUnverifiable`, joined with the cause, whenever the directory is
+  sealed and the section cannot be authenticated: no SO PIN, an unreadable
+  HMAC file, or a mismatch. No policy is returned with the error, so an
+  unverified sealed section cannot be consumed by accident. `xkey device
+  pair` now takes the SO PIN through the same three sources as the user PIN
+  (`--so-pin-stdin`, `XKEY_SO_PIN`, `--so-pin`) and honours a verified
+  policy in both directions; without an SO PIN a sealed policy is not
+  consulted and an unattestable device is refused whatever `devices.yaml`
+  says; a sealed policy that does not verify refuses the pairing outright
+  (`ErrPairingPolicyRefused`). `xkey extension serve` accepts the same
+  sources: verified, the policy is honoured; unverifiable with an SO PIN
+  supplied, the server does not start (`ErrServePolicyRefused`); with no SO
+  PIN it applies `DefaultPolicy()` for the extension gates instead of the
+  file, and says so. A log-only read of the unverified section at PIN
+  service start-up is gone. The shared pairing decision,
+  `attestation.AllowUnattestablePairing`, now takes the `VerifiedPolicy`
+  rather than a raw section, so the desktop GUI's `PhoneService.Pair`
+  resolves the enterprise plane exactly as the CLI does: honoured in both
+  directions in personal mode, and not consulted -- refuse -- in a sealed
+  deployment, since a GUI pairing has no SO PIN to verify it with. The GUI's start-up readers of the FIDO2 and
+  extension fields are not yet converted and remain tracked under #118.
+
+### Added
+
+- **CTAP 2.1 authenticatorLargeBlobs in the xkey authenticator.** The xkey (pkg/xkey) CTAP2 authenticator now supports the authenticatorLargeBlobs extension (RFC 8959, Section 2.2.3 / CTAP 2.1 Section 11.4.8.2) for storing and retrieving opaque large objects (up to 2^32 - 1 bytes) on the authenticator. The extension is integrated into registration and assertion ceremonies; clients can write and read credentials' associated blobs atomically as part of the ceremony.
+- **Key import can now say whether the key may leave again (#160).**
+  Every import path hardcoded `Exportable=true` for symmetric material, so
+  no transport could import a non-extractable secret key, and the plaintext
+  stayed recoverable through `export-material`; REST set nothing at all, so
+  a symmetric key imported over REST was stored non-exportable while the
+  same import over gRPC or MCP was exportable. `ImportKeyRequest` gains
+  `exportable` (optional; absent keeps the write-once default, symmetric
+  exportable and asymmetric not) and `sensitive`, on the transport type,
+  the gRPC proto (new fields 12 and 13), the MCP params, the REST body and
+  `xkmsctl key import --exportable/--sensitive`. The three attribute
+  builders apply the choice through one helper, `xkms.ApplyImportExportability`.
+- **Key escrow: a complete KMIP agent plus factory, daemon configuration, service layer and embedded transport wiring.** The pkg/escrow/kmip package now exports a production KMIP 2.0 client agent (kmip.NewAgent), coupled with factory and configuration (pkg/escrow with Config, Factory, Registry), service-layer plumbing (pkg/xkms servicer_escrow.go), and transport integration (pkg/api/transport types_escrow.go and each transport's escrow endpoints). Daemon configuration accepts escrow backends (e.g., KMIP=true in the config or DaemonEscrowConfig). Network transports (TCP, TLS, client authentication certificates) are not yet exposed to callers — KMIP agent operations run embedded-only or over internal channels for now.
+- **PKCS#11 gained CBC, CBC-pad and ECB symmetric modes, matching the software backend.** The pkg/backend/pkcs11 symmetric provider now supports CBC, CBC-PKCS7-pad and ECB mode envelopes in addition to the GCM and KWP modes it already offered. All three modes are available on all PKCS#11 tokens that expose the corresponding mechanisms (CKM_AES_CBC, CKM_AES_CBC_PAD, CKM_AES_ECB).
+- **The PKCS#11 remote state plane gains a guarded delete (#142).**
+  `PKCS11StateCAD` removes a token-state record only if it still holds the
+  value the caller observed, with the guard evaluated by xkmsd on its own
+  store, where the writes of every host sharing one server-side token
+  serialise. It is the release half of `PKCS11StatePutIfAbsent`'s guarded
+  create. Wired end to end: transport DTOs `PKCS11StateCADRequest` /
+  `PKCS11StateCADResponse`, the gRPC RPC (`keys:write`), the REST and QUIC
+  route `POST /api/v1/pkcs11state/compare-and-delete` (keys resource,
+  `delete` action), the gRPC, Unix, REST and QUIC client transports,
+  `XKMSService.PKCS11StateCAD`, and `pkcs11state.Store.CompareAndDelete`,
+  which refuses with `ErrCompareAndDeleteUnsupported` rather than emulating
+  the guard on a backend that lacks it. The module's remote storage backend
+  now implements `storage.CompareAndDeleter` over the RPC and is held to the
+  shared conformance suite; its `PKCS11StateClient` contract gains the method,
+  so a transport that does not carry it fails the build. An absent key or a
+  different value answers `deleted=false` without an error; a nil `expected`
+  is never a wildcard, matching a stored empty value only.
+- **`tofu` verifies an endpoint on the TLS path (#139).** The strategy was
+  implemented purely as a CA-bundle fetch, so it could not verify the one
+  thing it is most natural for: first contact with a device that presents a
+  self-signed certificate and serves no bundle, such as a BMC.
+  `bootstrap.NewTOFUTLSConfig(ctx, pinStore, "host:port", confirm)` is the
+  endpoint verifier, mirroring `NewSPKIPinTLSConfig` and `NewDANETLSConfig`:
+  the first connection captures the leaf's SPKI pin, offers it to the
+  confirm hook, and persists it; every later connection must present it,
+  session tickets are disabled so resumption cannot bypass the check, and a
+  pin store that fails for any reason other than "no pin" is an error, never
+  a fresh capture. The pin record is the one truststrap's bundle-fetching
+  TOFU bootstrapper writes, so both paths share a store. The resolver's TLS
+  dispatch for `tofu` now uses it, with the endpoint (or the scope's
+  server-url) as the key, while the PEM path keeps fetching a bundle: the
+  same split `dane` and `spki` already have. Re-exported through
+  `sdk/go/bootstrap` with typed errors `TOFUEndpointError`,
+  `TOFUPinStoreError`, `TOFUPinMismatchError` and `ErrTOFUPinStoreRequired`.
+
+### Changed
+
+- **transport: `BeginAuthenticationRequest.Username` and `FinishAuthenticationRequest.Username` are now `Email` (#518).**
+  Both carried the canonical email login key under a name that said
+  otherwise, the same defect the registration request had. The Go fields,
+  the gRPC/Unix proto fields (numbers unchanged, binary-compatible) and the
+  REST/QUIC JSON keys are now `email`. For one release the JSON decoders
+  still accept the legacy `username` key and the Go client sends both keys
+  with the same value; a body carrying both keys with different values is
+  refused with `transport.ErrAuthenticationLoginKeyConflict`. The three
+  ceremony requests resolve their login key through one shared decoder
+  path. The legacy key is removed in the following release.
+- **No host literal in the build system.** The in-house Gitea server was
+  written into the Makefile, the devcontainer and every integration compose
+  file, so a server move broke all of them at once. `scripts/gitea-host.sh`
+  now derives `GITEA_HOST` from the environment, from `.devcontainer/.env`,
+  or from the checkout's own origin remote (an SSH origin maps its port to
+  the HTTP port), the Makefile exports it so every compose file interpolates
+  `${GITEA_HOST}` (failing with the variable's name when it is unset), and a
+  GitHub origin with no override takes the public resolution path with no
+  `insteadOf` rewrite at all. `make gitea-host` prints the resolved value.
+  The review workflow's model endpoint is likewise a knob (the `OLLAMA_URL`
+  Actions variable or a runner-injected value) that fails naming itself
+  when neither is configured.
+- **CI: gosec findings are printed to the job log.** The Security Scan wrote
+  its findings only to a SARIF file that is uploaded on GitHub and skipped
+  on Gitea, so a failing scan ended with exit code 1 and nothing in the log
+  naming the finding (#334). gosec now also writes the
+  findings to standard output.
+- **CI runs the whole `sdk/go` test suite (#333).** The nested-module job
+  ran three package trees of the public SDK module, 130 of its ~1,000 test
+  functions, leaving 23 test directories, including the whole
+  `acme/client` family, the module root and `errors`, outside the gate. It
+  now runs `go test -race -v ./...` from `sdk/go`. Measured before widening:
+  26 packages, all green with no build tags, about one minute of wall time
+  under the race detector on a development host, so the addition is
+  cheaper than the xkey steps in the same job. A deliberately failing test
+  in a formerly dark package turns the step red.
+- **CI runs `cmd/xkey/cmd` and `pkg/gui/services` whole.** The two packages
+  held 8,282 test functions, and the named-selector steps ran 27 of them: a
+  renamed test was a red job, but a test added to either package arrived
+  dark and stayed dark. Both now run as whole packages in the unprivileged
+  xkey unit step, under `-tags ble` so the CLI's fail-closed fingerprint
+  tests and the logins harness guard are included. The "pre-existing
+  failures" that justified naming were CI running as root; as an
+  unprivileged user both packages are green (1,761 and 6,521 tests). The
+  one stale test found on the way, which pinned the pre-xhome behaviour of
+  refusing a missing `~/.xkey`, now asserts the current contract: the home
+  is created 0700 on first use, and an unwritable one fails with
+  `ErrSharePolicySetFailed` carrying the permission error. `require-tests.sh`
+  has no remaining caller and is removed (#332, #111).
+- **CI runs every xkey unit package.** The Nested Module Tests job ran 6 of
+  the xkey module's package trees and compiled the rest, so 2,987 test
+  functions in 41 packages -- truststore, tokenstore, luks, ca,
+  secretservice, nssdb, pivcert, pkcs11mgr, sshstore, sshlocal, config,
+  audit among them -- could not fail. The job's stated reason, that ten
+  packages failed identically on main, was a missing `codec_json` build tag:
+  with it, all 41 pass under `-race`. Forty of them now run on every PR in
+  one step that also records each deliberate exclusion with its reason;
+  `xkey/pkg/pkcs11`, 37% of the set's cost for 34 tests, runs nightly
+  instead. Whole-package runs for `cmd/xkey/cmd` and `pkg/gui/services` are
+  #332 and `sdk/go` is #333 (#147).
+- **The desktop apps serve their REST API in-process and open no listener.**
+  Both Wails applications bound a TCP listener on `127.0.0.1:0` and served
+  their API from it: the ACME client's 18 routes and — with no guard at all —
+  the admin app's 37, including tenant, user, role and CA creation. A loopback
+  port is reachable by every local process and, through the user's browser, by
+  every page the user visits, so the only consumer of that port was the app's
+  own webview while the audience was the whole machine. Wails' `AssetServer`
+  takes an `http.Handler` alongside `Assets`, so the existing router is now
+  mounted there: a GET is served from the frontend bundle first and falls back
+  to the router, every non-GET goes straight to it, and the webview reaches
+  `/api/v1/...` same-origin. The listener, the per-launch bearer token minted
+  for it, the `Host` allow list that defended it against DNS rebinding and the
+  token plumbing through `GetApiBaseUrl` and the frontend transport are all
+  gone; `GetApiBaseUrl` now returns an empty, same-origin base. The router
+  stays transport-agnostic and `trusted-acme-client serve` keeps serving it
+  over TCP, where the same-origin check still applies.
+- **`xkey device pair` is testable end to end without a phone (#120).**
+  `runDevicePair` opens its transport, reads and writes the devices file and
+  loads its attestation trust through `pairingSeams`, wired to the BLE
+  transport, `devices.yaml` and the trust store in production and replaced
+  in tests. Three command-flow tests drive the whole command against a
+  simulated phone: a failed attestation under the default policy returns
+  before anything is saved, an opted-in policy saves a record with no
+  attestation claim, and a verified attestation is recorded. No pairing
+  behaviour changes.
+- **DNS-01 challenges now drive the configured provider (Route53, Cloudflare, Azure, Cloud DNS) instead of logging manual setup required.** The pkg/acme/server challenge solver for dns-01 now dispatches to the configured DNS provider backend instead of logging that manual setup is required and returning a no-op response. Route53, Cloudflare, Azure DNS, and Cloud DNS backends now all drive DNS record creation and cleanup atomically as the certification flow runs. For ACME clients where dns-01 is the only feasible authorization method, this eliminates the separate manual publishing step.
+- **BREAKING (implementors): Import/export capabilities are now separate interfaces.** The pkg/backend package splits the key ceremony into ImportBackend (GetImportParameters, WrapKey, ImportKey) and ExportBackend (ExportKey, ExportKeyMaterial), replacing the monolithic ImportExportBackend interface. ImportExportBackend now embeds both halves and is stable for callers, but a backend missing one half (AWS KMS, which does not support export) can now implement only ImportBackend without stubbing or sentinel errors. A backend that is import-only or export-only for hardware reasons does not block the half it does support. Callers that only need one half should assert ImportBackend or ExportBackend instead, so a backend missing the other half does not break the half it provides.
+- **BREAKING (Go SDK): types.NewPassword and TPM2 store equivalent now return an error instead of silent fallback.** NewPassword and NewPasswordFromString now return ErrEnclaveUnavailable if enclave allocation fails (previously they would silently substitute an empty password), because silently downgrading a caller-supplied non-empty UserAuth into passwordless TPM authentication is a security violation. A non-empty input that fails to allocate returns an error, making the failure explicit rather than latent. Empty or nil input still returns a ClearPassword with no enclave backing and nil error (intentional "no authentication" case). The TPM2 GeneratePassword store equivalent now returns the same error instead of falling back.
+- **PKCS#11 sessions whose authentication state cannot be restored are discarded rather than returned to the pool.** The pkg/backend/pkcs11 session manager no longer caches sessions that lose their login state when a concurrent thread logs out from the same token. A session returned to the pool must have the same authentication state as when it was checked out; if restoration fails, the session is closed and a fresh one is checked out on the next use. This prevents subtle bugs where later callers inherit unexpected authentication context from a borrowed session.
+- **transport: `BeginRegistrationRequest.Username` is now `Email` (#192).**
+  The field carried the canonical email login key under a name that said
+  otherwise, and a caller that read the name literally enrolled a credential
+  against the wrong account. The Go field, the gRPC/Unix proto field
+  (field 1, binary-compatible) and the REST/QUIC JSON key are now `email`.
+  For one release the JSON decoder still accepts the legacy `username` key
+  and the Go client sends both keys with the same value, so old clients
+  and old servers both keep working across a rolling upgrade; a body
+  carrying both keys with different values is refused with
+  `transport.ErrRegistrationLoginKeyConflict` instead of a silently chosen
+  value. The Go SDK re-export follows the rename; the TypeScript SDK never
+  exposed this request. The legacy key is removed in the following release.
+- **The Shamir ceremony test fixture keeps shares in protected memory.** The
+  four copies of `testCaptureDistributor` in the xkms service, MCP, gRPC and
+  REST barrier tests split the barrier secret with quicraft's deprecated
+  string-share `Split` and retained every share as a Go string, which cannot
+  be wiped, until the test process exited. They are replaced by the one
+  `internal/shamirtest.CaptureDistributor`, built on `SplitProtected`: shares
+  live as `ProtectedShare` in mlock'd guard-paged memory, a rekey destroys the
+  previous round instead of dropping it, and the test's cleanup destroys the
+  last one. The base64 text a request carries is materialised only where the
+  request is built and is not retained. The eight `//nolint:staticcheck`
+  directives that #45 added against the deprecated API are gone (#46).
+- **IDevID and IAK key creation templates now match TCG "TPM 2.0 Keys for
+  Device Identity and Attestation" v1.00 r12 field for field**, §7.3.4
+  Templates H-0 through H-4, built in one place (`DevIDTemplateSpec`,
+  `pkg/tpm2/devid_template.go`) that both `CreateIDevID` and `CreateIAK`
+  derive from. `CreateIAK` previously built its own inline copies of the
+  templates the package exports, so the two could — and did — disagree.
+
+  - **`unique` carries the required string of §7.3.1 Table 2** — `'IDEVID'`
+    (49 44 45 56 49 44) or `'IAK'` (49 41 4B), unpadded and not NUL
+    terminated — where both keys previously zero-filled it. The MUST exists
+    so that a device's identity keys are reproducible by anyone following the
+    specification; a zero-filled `unique` produced keys nothing else could
+    recreate. The optional per-device string is the new `tpm.device-string`
+    configuration key: printable ASCII, appended to the required string, the
+    same value for both keys because §7.3.1 describes a property of the
+    device. Where it is stored is the OEM's choice (§7.3.3 reserves NV Index
+    0x01C90020 for it); this library reads it from configuration.
+  - **An RSA IDevID names no signature scheme** (`TPM_ALG_NULL`), as H-1
+    requires of a signing DevID, instead of pinning RSASSA or RSAPSS with
+    SHA-256. The padding and digest are chosen per `TPM2_Sign` command, so one
+    device identity key can now produce both the PKCS#1 v1.5 signature a
+    certificate is signed with and the RSA-PSS a TLS 1.3 handshake requires.
+    An IAK keeps RSASSA or RSAPSS with a hash: a Restricted signing key may
+    not name `TPM_ALG_NULL` (TPM 2.0 Library Part 1, §25.2.3).
+  - **`symmetric->algorithm`, `exponent` and `kdf->scheme` are stated
+    explicitly** on every DevID template rather than left to Go's zero value.
+  - **P-384 and P-521 suites** (Templates H-3 and H-4, with nameAlg SHA-384
+    and SHA-512) are added and reachable from an `idevid.ecc.curve` /
+    `iak.ecc.curve` configuration: `ECCIDevIDP384Template`,
+    `ECCIDevIDP521Template`, `ECCAKP384Template`, `ECCAKP521Template`,
+    re-exported through `sdk/go`. Template H-5 (SM2 P-256) is **not**
+    implemented: it requires nameAlg `TPM_ALG_SM3_256`, which the TPMs this
+    library is tested against do not implement (the reference simulator
+    refuses such a template with `TPM_RC_HASH`), and `crypto/elliptic` has no
+    SM2 curve. A configuration naming it is refused rather than substituted —
+    `types.ErrUnknownCurve` from `types.ParseCurve`, and
+    `ErrDevIDTemplateSuiteUnsupported` for any curve that reaches the template
+    builder without one.
+  - **`assertDevIDTemplateConformant` now covers `unique`, scheme, symmetric,
+    exponent, KDF and curve** in addition to the H-0 attributes and the key
+    policy, so any departure is refused with
+    `ErrDevIDTemplateNonConformant` before `TPM2_CreatePrimary` rather than
+    baked into a key that cannot be repaired. New errors:
+    `ErrDevIDUniqueString`, `ErrDevIDUniqueStringTooLong`,
+    `ErrDevIDTemplateSuiteUnsupported`.
+
+  **Known departure from Table 5, deliberate, and the specification's own
+  resolution.** Templates H-2, H-3 and H-4 state both `scheme->scheme =
+  TPM_ALG_ECDSA` and `scheme->details = NULL`. No TPM can carry that pair: the
+  details of an ECDSA `TPMT_ECC_SCHEME` are a `TPMS_SIG_SCHEME_ECDSA`, whose
+  `hashAlg` is a `TPMI_ALG_HASH` with no `+` decoration, so `TPM_ALG_NULL` is
+  not admissible there, and `TPM2_CreatePrimary` answers `TPM_RC_HASH` for
+  P-256, P-384 and P-521 alike (measured; `devid_template_simulator_test.go`
+  pins the refusal). The scheme stays `TPM_ALG_ECDSA` — the constraint Table 5
+  actually states — and the details name the template's own nameAlg, which is
+  the pairing §14 (Annex B, Table 24) uses when it names the conformance
+  suites: "the ECDSA P-256/SHA-256 signature suite" and "the ECDSA
+  P-384/SHA-384 signature suite". Dropping to a `TPM_ALG_NULL` scheme would
+  create, but would discard the stated constraint and widen the key's grant.
+
+- **`SignValidate` resolves an RSA signature scheme instead of copying the
+  key's.** It sent the key's own scheme field as `inScheme`, which is a
+  `TPM_ALG_NULL` for a Template H-1 IDevID, and `TPM2_Sign` refuses a
+  `TPM_ALG_NULL` `inScheme` on a key that names no scheme with
+  `TPM_RC_SCHEME` — for a key that constrains nothing, the command must say
+  what to sign with. It now uses the same `rsaSignScheme` resolution the
+  `crypto.Signer` path uses, and unpacks the response as the shape it asked
+  for rather than deciding that separately.
+
+- **Upgrade note — this re-keys every IDevID and IAK, and supersedes the
+  upgrade note of the Template H-0 / key policy change in this same
+  release.** Both changes move inputs to a primary key's derivation:
+  `adminWithPolicy` and `authPolicy` from that change, and `unique` and the
+  RSA scheme from this one. A device provisioned before this release holds
+  identity keys that `CreateIDevID` / `CreateIAK` can no longer derive.
+  There is no in-place migration — that is what a primary key is. Those
+  devices must be re-provisioned and their IDevID/IAK certificates re-issued;
+  the existing certificates remain valid for the old keys, which the new code
+  cannot reproduce. Setting `tpm.device-string` later re-keys again, for the
+  same reason, so choose it before provisioning a fleet. Do this once, for
+  both changes, rather than twice.
+- **BREAKING (Go SDK): `IAKAttributesFromConfig`, `IDevIDAttributesFromConfig` and `LDevIDAttributesFromConfig` no longer take a policy digest (#398).**
+  The `*tpm2.TPM2BDigest` parameter only ever fed an EK template nothing
+  read, and since the dead assignment went it was blank-named and documented
+  as retained for signature stability. It is gone from the three builders in
+  `pkg/tpm2` and therefore from their `sdk/go` re-exports; platform policy
+  is still conveyed by the `PlatformPolicy` field and applied by
+  `CreateIAK`/`CreateIDevID`, which compute the digest themselves. The two
+  in-repo callers no longer compute a digest they did not use. Consumers
+  that pass a digest (go-trusted-platform) drop the argument when they adopt
+  the release that carries this.
+- **BREAKING: Vault ciphertext now preserves the full versioned envelope; key names use injective escape.** The Vault backend's import/export cycle now preserves Vault Transit's internal versioned envelope in the ciphertext format instead of only the raw ciphertext blob, so the wrapped material returned by ExportKey can be passed back to ImportKey against any backend in the usual cross-system format. Key names are escaped using an injective scheme (e.g., slashes → hyphens, colons → underscores) so illegal characters in a key's CN do not corrupt the Vault Transit key name nor collide with other keys. Any existing Vault-stored ciphertext from an earlier release will not decrypt with this release: the format changed at the wire level. Any imported Vault KMS keys whose CNs contained special characters will need renaming to use the new escape scheme.
+- **xkey: go-luks2 v0.1.10 with a kernel-keyring preflight before any LUKS2 volume is created or unlocked (#188).**
+  A container that blocks the `add_key`, `keyctl` and `request_key`
+  syscalls used to fail
+  only when dm-crypt refused the volume key, after the image file or the
+  device had already been partitioned and formatted. `luks.EnsureKeyringAvailable`
+  now probes the keyring before each of them and refuses with the typed
+  `luks.KeyringError` (`errors.Is(err, luks.ErrKeyringUnavailable)`, the
+  go-luks2 cause reachable) before `luks2 seal`, `luks2 unseal`, `luks2 migrate` and `usb
+  create` touch anything, so a refusal leaves no file, no partition table,
+  no half-provisioned device and no renamed source container. The probe runs before every
+  operation and is never cached, so a key quota exhausted between two
+  operations of a long-lived process is caught before anything is touched,
+  and fixing the profile and retrying works.
+
+### Removed
+
+- **An unused persistent ACME nonce store is gone.** The pkg/acme/common nonce_store.go held an in-memory nonce store that was never wired into production and carried a check-then-delete race where a validly-used nonce could be double-spent in certain race windows. The ACME server's actual nonce management is in pkg/acme/server and uses the configured KV store; nonce_store.go had no callers. The dead code and its tests are removed.
+### Removed
+
+- The `pkg/acme/server/ratelimit` package. It was a second `TenantRateLimiter` beside the one in `pkg/acme/server` that the ACME server actually wires, and nothing in the tree imported it. (#538)
+- **The uncalled backend factory is gone (#173).**
+  `pkg/server/backend_factory.go`'s `Initialize`, its `BackendConfig` /
+  `BackendFactoryConfig` types, `createBackend` and the seven
+  `backend_factory_<backend>.go` constructors (with their `_stub.go`
+  siblings) had no production caller: the live path is `server.go`'s
+  `initializeBackends` calling `initXBackend` in `backend_<backend>.go`.
+  The dead factory modelled backends with operator-supplied names and a
+  randomized default that the live server never had, and three readers
+  reasoned from it to wrong conclusions in one review. Its tests go with
+  it; the two live storage helpers it housed, `createStorage` and
+  `createStorageAt`, move to `storage_factory.go`, and the docs now point
+  at the real construction path.
+### Removed
+
+- **The in-repo PR review automation is gone; review orchestration lives in
+  go-quicbaas.** `.github/workflows/opencode-review.yml`,
+  `claude-review.yml` and `automerge.yml` are deleted — the label-driven
+  reviewer routing (`agent:*` / `model:*` / `effort:*`), the verdict parsing
+  and the Gitea auto-merge arming all went with them. Two implementations of
+  the same control were conflicting; this repository now hosts none of it.
+
+  `ci.yml`, `coverage.yml`, `docker-tests.yml`, `nightly.yml` and
+  `release.yml` are unaffected — none referenced the review workflows except
+  one comment, which is updated. `.github/scripts/apt-deps.sh` and
+  `require-tool.sh` are CI dependency helpers, not review automation, and stay.
+
+  The `agent:*`, `model:*`, `effort:*`, `code-review` and `review:*` labels are
+  left in place: they are Gitea data rather than automation, and whatever
+  drives reviews next may want the same vocabulary.
+- **BREAKING: The SDK's qrdb database-plane re-exports are gone (about 253 identifiers).** The go-xkms SDK (sdk/go) formerly re-exported low-level qrdb storage internals from pkg/config, pkg/kv, pkg/dao, pkg/state, pkg/storage, pkg/watch, pkg/lease, pkg/index, pkg/timeseries, and pkg/mvcc. Downstream consumers that relied on these re-exports now import them directly from go-qrdb/sdk/go instead, which is the canonical source and the boundary xkms is converging toward. Callers using only the high-level xkms API surface (services, transports, authenticators) are unaffected.
+- **The threshold key provider is gone.** The pkg/backend/threshold backend advertised non-exportable threshold keys but generated and reconstructed a whole private key in one process, which is a threat model violation. The layer that threshold issuance belongs to (if needed at all) is quicbaas, not xkms; xkms owns split-key mechanisms only when hardware enforces the split (TPM, HSM). The threshold backend, its tests, and its KMS service integration are removed.
+- **The xkey YubiKey PKCS#11 provider is gone, superseded by the canonical backend.** The pkg/xkey/cli/pkcs11 directory contained a specialized YubiKey provider that was never wired into the xkey CLI or GUI. The canonical PKCS#11 backend (pkg/backend/pkcs11) already supports YubiKeys via the standard YKCS11 libary; this shadow implementation is removed to prevent divergence and confusion.
+
+### Fixed
+
+### Fixed
+
+- `TestFileAuditLogger_ProcessEvents` waited a fixed fifty milliseconds for the background writer and failed on a loaded CI runner; it now synchronises on `Flush`, which returns only after the buffer is drained and the writer synced.
+- **The ACME challenge listeners bind a configured host (#140, cluster 2).**
+  The client's http-01 challenge server and the three enrollment listeners
+  (enroll-01, endorse-01, device-attest-01) built their address as `":"+port`,
+  so every one bound every interface whatever the operator configured.
+  `acmeclient.EnrollmentConfig` gains `ListenHost`, and xkmsd passes its
+  `server.host` through `clusterca.ACMEOptions.ChallengeHost`, so a joining
+  node serves the enroll-01 exchange on the interface every other daemon
+  listener binds. The standalone client gains `challenge.http01.host`
+  (`ACME_CLIENT_CHALLENGE_HTTP01_HOST`; `challengeHost` on the GUI config
+  API), joined with the port through `net.JoinHostPort`. `enroll01.Setup`
+  takes a listen address (a bare port still means every interface). Empty
+  remains the defaults-layer value everywhere: every interface.
+- **`pkg/acme/client`'s tests no longer carry a path to Let's Encrypt
+  production (#152).** `golang.org/x/crypto/acme` substitutes the Let's
+  Encrypt directory for an empty `DirectoryURL`, so every test literal that
+  omitted it was an outbound HTTPS call waiting for the validation ahead of
+  it to regress; the ones that did reach the network failed on a ten-second
+  TLS timeout instead of on the defect (CI run 7429), and one sibling test
+  passed on that same timeout because its assertion could not tell the two
+  apart. The remaining eleven literals point at a loopback port that refuses
+  immediately, and a grep gate (`TestACMEClientLiteralsAreHermetic`) fails
+  the suite on any `acme.Client` literal in the package's tests that omits
+  `DirectoryURL`.
+- **ACME orders are no longer stranded in processing when a CSR fails to parse or validate.** The finalize handler now validates the CSR (parsing and checking identity matching) before updating the order to processing status; a CSR parse error or identity mismatch returns a 400 error and leaves the order in ready state, where the client can resubmit with a corrected CSR. Previously a malformed CSR would place the order in processing state with no way to recover except manual intervention.
+- **Advertised URLs are configuration, never a host glued to a bind address (#140, cluster 4).**
+  `trusted-acme-client serve` built the API base URL it hands the browser as
+  `scheme + "://localhost" + addr`, so the command's own `--addr 0.0.0.0:9443`
+  example advertised `https://localhost0.0.0.0:9443/api/v1`; the standalone
+  `TrustedCA` did the same for the ACME directory's external URL, served to
+  every ACME client. The client gains `serve.api_base_url` (`--api-base-url`,
+  `ACME_CLIENT_SERVE_API_BASE_URL`), advertised verbatim once it parses as an
+  absolute http(s) URL not ending in `/api/v1`, which the UI appends itself;
+  the Wails `GetApiBaseUrl` bindings return the origin for the same reason,
+  and `pkg/webui` renders the value into the page as an escaped JavaScript
+  string literal. With nothing configured both derive the URL through the new
+  `acmeclient.AdvertisedURL`, which splits host and port: a wildcard bind
+  advertises `localhost`, a named or literal bind advertises itself, and an
+  address with no port is an `AdvertisedURLError`. `DefaultExternalURLPrefix`
+  is gone with the gluing it existed for.
+- **The ACME audit end-to-end tests no longer fail on a contended runner.**
+  `awaitEvents` polled the audit trail under a five-second wall-clock
+  budget; the trail's `Flush` is synchronous (it hands the drain to the
+  writer goroutine, waits, and syncs the file) and every handler records its
+  event before answering, so the loop could never turn a wrong answer into a
+  right one — it only measured how long an fsync and a file scan take on a
+  saturated host, and failed reporting a page it never read when the first
+  evaluation outlived the budget. The helper is now one flush and one query
+  with no budget to expire, proven green under a full-core load generator.
+- **AWS KMS signers honour the hash and padding requested per call instead of a fixed algorithm chosen at construction.** The signer was storing only the hash algorithm chosen when the signer was created, then ignoring the hash and padding parameters passed to each Sign call. Now the signer respects the caller's choice on every invocation, so TLS and other protocols that expect PSS or PKCS#1v15 padding or a specific hash get the algorithm they requested rather than whatever was selected at startup.
+- **`make build` no longer needs a Gitea token on a host with a warm module
+  cache.** The builder container mounted the host module cache at
+  `/root/go/pkg/mod`, but the golang base image keeps its cache at
+  `/go/pkg/mod`, so the mount sat unused and every `xkmsd` and `xkey` build
+  refetched the whole module graph from Gitea. A checkout without
+  `.devcontainer/.env` then failed on the first private module (`go-codec
+  v1.4.0: Failed to authenticate user`) even though the host had every module
+  cached. The container's `GOMODCACHE` is now pinned to the mount path for the root
+  builder containers (`build-server`, `build-xkey`, `lib`, `docker-ci`), so a
+  host cache that already holds the graph serves the build with no fetch and
+  no token; `docker-run` and `docker-test`, which run as `testuser`, keep
+  resolving modules inside the image.
+### Fixed
+
+- CI's nine per-job `apt-get install` steps now go through one script that skips packages the runner image already carries, fetches only what is missing over IPv4 with a bounded retry, and fails naming any package dpkg still lacks. An archive outage no longer reddens a pull request that had no defect, and baking a package into the runner image makes its step a no-op without a workflow edit.
+### Fixed
+
+- The nightly xkey race suite installed its cgo packages with a raw `apt-get install` after the pull-request workflow had moved to the idempotent, retrying dependency script; it now uses the same script, so an archive outage no longer reddens the nightly run either.
+- **The authoritative DNS pre-check queries a configurable port (#140, item 14).**
+  `CheckDNSFromAuthoritative` appended a literal `:53` to every nameserver the
+  zone's NS records named, with no way to query a zone served elsewhere. The
+  pre-check gains `WithNameserverPort`; `DefaultDNSPort` (`"53"`) is the
+  defaults-layer value, an empty port keeps it, and a caller-supplied
+  `WithNameserverLookup` still returns complete addresses untouched.
+- **The authenticated wrap verbs reported the `GODEBUG=fips140=only` GCM
+  restriction as an internal fault (`CKR_FUNCTION_FAILED`) instead of an
+  unavailable mechanism** (#292, FIPS conformance).
+  `pkg/pkcs11/module/module_authwrap.go`, `pkg/crypto/aead/gcm_usable.go`.
+
+  Under `fips140=only` Go's `crypto/cipher` refuses arbitrary-IV GCM — the
+  construction every parameter form of `C_WrapKeyAuthenticated` /
+  `C_UnwrapKeyAuthenticated` depends on, including the token-generated-IV
+  form, which still hands `cipher.NewGCM` an IV from the module's own RNG.
+  The refusal surfaced from inside the wrap as `CKR_FUNCTION_FAILED: failed
+  to create GCM`, telling the application the token malfunctioned rather
+  than that the regime withholds the operation. The verbs (wrap, size query
+  and unwrap) now refuse at the mechanism check with
+  `CKR_MECHANISM_INVALID`, before any handle is resolved, and the size query
+  answers with the same code the wrap itself would.
+
+  The gate is a runtime probe, `aead.ArbitraryIVGCMUsable` — a throwaway
+  arbitrary-IV seal, performed once and cached — not a FIPS predicate,
+  because no exported predicate separates `fips140=only` from `fips140=on`,
+  where the identical construction works; gating on `fips140.Enabled()`
+  (true under both) would have withdrawn a working mechanism. Same
+  disposition as #303's `HashUsable`. The `CKM_AES_GCM` descriptor is
+  deliberately still advertised: its `C_Encrypt`/`C_Decrypt`/`C_WrapKey`
+  surface performs GCM in the service process, whose own FIPS posture
+  governs it, so only the verbs that build GCM locally refuse. No ciphertext
+  framing changed — `NewGCMWithRandomNonce` was ruled out in the issue
+  because it cannot honour a caller-supplied IV and cannot open existing
+  wrapped blobs. This closes the last of #292's three instances (the jwk
+  thumbprint and the KDF hash set were fixed by #300 and #303).
+
+  The one genuine panic the sweep recorded for this package was not in
+  production but in a test oracle (`crypto_wrapnonce_test.go`), which
+  panicked on the GCM construction error and aborted the test binary
+  before every test after it ran; it now returns the error through the
+  mock transport, so the suite under `fips140=only` reports the remaining
+  non-approved-mechanism expectations as ordinary failures instead of
+  hiding them.
+
+  Verified by re-exec'd subprocess tests in both activated modes:
+  `fips140=only` gets `CKR_MECHANISM_INVALID` from all three verbs with zero
+  panics, and `fips140=on` completes the full wrap/size/unwrap round trip;
+  the only-mode test fails against the unfixed code with
+  `CKR_FUNCTION_FAILED`.
+- **A raw PKCS#1 v1.5 RSA signature (hash `NONE`) under `GODEBUG=fips140=only`
+  now returns a typed error instead of panicking** (#486, fourth instance of
+  the #292 class). `pkg/types/rawpkcs1v15.go`, `pkg/xkms/servicer_crypto.go`,
+  `pkg/testing/pkcs11test/crypto_mock_client.go`.
+
+  `Sign` and `Verify` accept the hash name `NONE` to sign or check caller-built
+  bytes verbatim — what PKCS#11's `CKM_RSA_PKCS` sends for `C_Sign` and
+  `C_SignRecover`. In the only mode `crypto/rsa` admits a PKCS#1 v1.5
+  signature solely under a digest it can classify as approved, and at that
+  site it calls `crypto.Hash(0).New()`, which *panics* ("requested hash
+  function #0 is unavailable") rather than returning an error. The sweep found
+  it in the `pkcs11test` mock backend, where it aborted the module conformance
+  binary; the production service reaches the identical call for an in-process
+  RSA key, on both the signing and the verifying side (verification is always
+  in-process). The PKCS#11 backend is not affected: it builds its own
+  `DigestInfo` and never enters `crypto/rsa`.
+
+  `types.CheckRawPKCS1v15(key, hash)` refuses first with
+  `types.ErrRawPKCS1v15Enforced` when the digest is `crypto.Hash(0)`, the key
+  is an in-process `*rsa.PrivateKey` / `*rsa.PublicKey`, and
+  `crypto/fips140.Enforced()` is set. That predicate — new in Go 1.26 — is the
+  very variable `crypto/rsa` reads at the panicking site, so it cannot
+  disagree with the runtime; it is not `fips140.Enabled()`, which is also true
+  under `fips140=on`, where the raw form works and is left alone. The service
+  wraps the refusal in `ErrSigningFailed` / `ErrVerificationFailed`; the mock
+  returns it directly, and the module surfaces it as `CKR_FUNCTION_FAILED`.
+
+  Verified by re-exec'd subprocess tests in `pkg/types`, `pkg/xkms` and
+  `pkg/testing/pkcs11test`: under `fips140=only` all three get the typed error
+  with zero panics and the SHA-256 form still round-trips; under `fips140=on`
+  the raw form signs and verifies. Each package's in-process test asserts the
+  check against the operation itself, so it holds in whichever mode the suite
+  is run. Removing the guard in either the mock or the service brings the
+  panic back in the corresponding test.
+- **GCP KMS operations resolve the current primary key version instead of always version 1.** The GCP KMS backend's Encrypter and Decrypter operations were hardcoded to use version 1 of the key, so key rotations (which create new versions and promote them to primary) took effect only after a process restart. Key resolution now queries the key's metadata and uses the current primary version for all operations, so rotation takes immediate effect. Azure and Vault signers similarly pin the version resolved at signer construction so Public() matches the signing key, ensuring consistency across the key's lifecycle.
+- **`make test` no longer dirties the working tree, and the web dependency
+  trees install from the lockfiles (#454).** The vitest coverage reports of
+  `sdk/ts`, `sdk/ts/svelte-auth` and `web/app` (132 files, HTML and
+  `lcov.info`) were tracked and rewritten by every `npm run test:coverage`;
+  they are untracked and ignored, along with `node_modules/`. Every
+  `npm install` in the build and test paths is now `npm ci`, which installs
+  exactly the lockfile and refuses to rewrite it, so the tested dependency
+  set is the pinned one; all seven lockfiles were verified in sync. The
+  embedded `xkey/frontend/dist` stays tracked: `//go:embed all:dist` reads
+  it at compile time, so untracking it would break every plain `go build`
+  of xkey; with `npm ci` the Vite build is reproducible, which is what
+  removes that churn.
+- **In-house Go module resolution follows the Gitea move.** The `insteadOf`
+  rewrite that resolves `github.com/jeremyhahn/*` against the internal Gitea
+  instance was pinned to the old host in eleven places — the root `Makefile`
+  (both the container env block and the generated runner export), the
+  devcontainer compose file, and eight `test/integration/*/docker-compose.yml`
+  files. Every devcontainer build and integration-test target that fetches an
+  in-house module failed to reach the server. The review workflow's
+  `OLLAMA_URL` is deliberately unchanged: that service did not move.
+### Fixed
+
+- The xkey GUI no longer applies a sealed enterprise policy it has not verified. Before SO login the FIDO2 authenticator and the browser-extension gates run on `DefaultPolicy()`; the file's values, including any relaxation of a secure default, apply only after the SO PIN authenticates the section. (#495)
+- **Hardware certificate storage can release one record of a cert/chain pair (#143).**
+  `HardwareCertStorage` gains `DeleteCertChain`; `DeleteCert` on PKCS#11
+  now releases only the certificate object and leaves the `id-chain-<n>`
+  objects, which `DeleteCertChain` releases on their own; on TPM2 the one
+  NV index per id records its kind (`SaveCertChain` stamps a `Record: chain`
+  PEM header), so every method addresses the record only when it is of
+  its kind — a certificate read or delete of a chain record, and a chain
+  read or delete of a certificate record, is `ErrNotFound`, as is an absent
+  record. The storage adapter routes
+  `certs/{id}-chain.pem` and `certs/{id}.pem` to their own releases; it
+  still does not claim `storage.CompareAndDeleter`, now because a token or
+  NV index has writers its lock cannot serialise, and the absence is
+  pinned. The hybrid store and the external adapter follow.
+  The hybrid store's deletes report a real failure on either side as an
+  error instead of masking it behind the other side's absence. PKCS#11 object searches now page through `C_FindObjects`
+  until the token returns an empty page, so a chain member past the first
+  page is neither invisible to the delete nor to its verification.
+  With the kind in the TPM2 record, a chain that overflowed to the external
+  side is released there while the hardware certificate stays, and a stale
+  one-member hardware chain behind a newer external chain goes with the
+  chain instead of reappearing on the next read. A PKCS#11 object whose id
+  cannot be read fails the search as an unknown outcome instead of being
+  skipped.
+  A PKCS#11 listing classifies chain members by the exact `<id>-chain-<n>`
+  shape rather than any `-chain-` infix, so a certificate whose id merely
+  contains the infix no longer disappears from `ListCerts`. Ids of the
+  shapes the chain encoding reserves, `<id>-chain` and `<id>-chain-<n>`, are
+  refused on every path that accepts a certificate id, on every store
+  (`ErrIDReservedForChain`), so `certs/<id>-chain.pem` can only ever name
+  `<id>`'s chain.
+- **`xkey backup` and `xkey device` address the xKey home through `xhome`
+  (#442).** Two home-root literals survived #381's data-dir adoption because
+  they are of a different shape: the default backup directory was
+  `$HOME/.xkey/backups` and the shared devices file `$HOME/.xkey/devices.yaml`
+  whatever `XKEY_HOME` or portable mode said, so a backup written under a
+  configured home was not where the operator would look for it. Both now
+  resolve through the same four-strategy chain as every other command, and a
+  home that cannot be resolved is an error rather than a path under `$HOME`.
+  `xhome.ResolveForUser(homeDir)` is new: the per-user strategy evaluated
+  against a given home, which is how `sudo xkey device pair` keeps sharing
+  the invoking user's devices file with their GUI session while `XKEY_HOME`
+  and portable mode still take precedence. The `cmd` package's grep gate
+  gains a home-root pattern (`TestNoAdHocHomeRootLiterals`) so the shape
+  cannot regrow.
+### Fixed
+
+- The go-qrdb KVStore adapter and the ACME tenant-scoped store no longer drop the guarded operations. Both forward `PutIfAbsent`, `CompareAndDelete` and `CompareAndSwap` when the store they wrap can perform them, and neither claims the capability when it cannot, so a DAO built over them no longer loses atomic conditional writes at run time while still compiling. A backend now reports whether its guarded writes can execute (`storage.GuardedWriteReporter`), because declaring the methods is not the same as performing them: the QRDB backends from the embedded constructors declare all three and fail every one for want of a transaction service. (#89)
+- **`make build` works on a host whose Go is older than the module declares.**
+  The module has required Go 1.26.7 since 2026-08-27 and the fleet pins
+  `GOTOOLCHAIN=local` on hosts, so a host on 1.26.4 refused every Make target
+  (`go: go.mod requires go >= 1.26.7`) while the Docker builder, running
+  under `GOTOOLCHAIN=auto`, downloaded the right one. The Makefile now
+  selects the toolchain go.mod declares for every recipe, so the host go only
+  bootstraps that exact version and the build is the same on every host and
+  in CI. `make GOTOOLCHAIN=local ...` restores the host's own go.
+- **The MCP `copy_key` tool no longer refuses every key at the export step
+  (#155).** `handleCopyKey` built the source key's attributes by hand with
+  the common name and store type only, so `Exportable` was always false and
+  the backend refused every copy with "key is not exportable", whatever the
+  key's real exportability; the error read as the caller's fault and the
+  test that covered it passed for non-exportable and exportable keys alike.
+  The handler now delegates to `XKMSService.CopyKey`, which resolves the
+  source key's stored attributes from the backend's own listing, so what the
+  key is decides whether it may leave, and a request cannot assert
+  exportability of a key that has none (`CopyKeyParams` deliberately has no
+  such field). A copy still does not complete: the software backend's
+  `ExportKey` wraps under a wrapping key it mints itself while the service
+  replaces the import token with the destination's (#154); that is now
+  pinned by type as the only step allowed to fail for an exportable key.
+- **MCP `getImportParameters` can name the algorithm, so `key_spec` is no longer always `UNKNOWN` (#164).**
+  The params gain `key_type`, `key_size` and `curve`, the vocabulary the
+  import already takes, and the handler resolves the request through the
+  service like the import does, so the backend names the spec the import
+  will check the material against. The MCP client transport builds the
+  params by name and decodes the PEM wrapping key in the result back to the
+  DER the contract carries; it used to marshal the contract request and
+  decode the contract response, so the caller's key type went nowhere and
+  the wrapping key came back empty.
+- **MCP "invalid backend" refusals carry a sentinel and accept configured names (#176).**
+  Five handlers refused a backend name with a bare message, so a caller could
+  only tell that refusal apart from any other failure by matching its text;
+  and they judged the name with `types.ParseStoreType`, which refused every
+  configured backend name that is not a store-type keyword. The five sites now
+  resolve the name through the service's `LookupBackend` and refuse with
+  `mcp.InvalidBackendError`: `errors.Is` finds `mcp.ErrInvalidBackend`, the
+  service's reason (`xkms.ErrBackendNotFound`, `xkms.ErrBackendNameValidation`)
+  is the cause, the message is `invalid backend: <name>: <reason>`, and the
+  JSON-RPC code is invalid-params. A registered name such as `token-a` is
+  accepted; an upper-case or padded spelling, which the old gate normalised
+  away, is refused like everywhere else.
+- **Test: `TestHandler_Decrypt_OAEPHashArrives` no longer fails one run in
+  ~700.** Its last assertion required PKCS#1 v1.5 decryption of an OAEP
+  ciphertext to error, but v1.5 unpadding accepts the uniform bytes such a
+  decrypt produces whenever they happen to carry its `00 02 … 00` frame
+  (measured 432 of 300,000 attempts). The assertion now states the property
+  that matters, that the paddings are not interchangeable: a v1.5 decrypt
+  either fails or does not return the plaintext.
+- **`DeriveNoiseAddr` no longer mangles IPv6 literals (#140).** The Noise
+  bootstrap address derived from a server URL was cut at the last colon, so
+  `https://[fd00::1]` became `[fd00::8445` and a userinfo prefix survived
+  into the dial. The host is now taken from a parsed URL and joined with
+  `DefaultNoisePort`; a bare IP literal, bracketed or not, is joined whole; a
+  URL with no host derives nothing and surfaces as `ErrServerURLRequired`.
+- **A Noise bootstrap server that finished draining as the shutdown deadline
+  expired is no longer reported as an incomplete shutdown, and its static keys
+  are destroyed rather than retained** (#83). `pkg/server/server.go`.
+
+  `noiseStopDrained`, the one decision that licenses freeing the bootstrap
+  static keys' protected pages, required both a nil from
+  `noiseboot.Server.Stop` and an unexpired caller context. The second conjunct
+  was the only signal under go-truststrap v0.2.0-alpha, whose `Stop` returned
+  nil on its own timeout path too. The pin is now v0.4.0-alpha
+  (go-truststrap#13): nil is returned only after the run's WaitGroup has
+  emptied, the caller's deadline expiring first is `ErrShutdownIncomplete`,
+  and upstream re-checks its drained channel before ever saying so, precisely
+  so that a server that finished is not reported as incomplete. Reading the
+  expired context over that nil undid the re-check: a drain that completed as
+  the deadline expired retained a key that was safe to wipe and put
+  "noise bootstrap handshake workers" into xkmsd's `ErrShutdownIncomplete`
+  when nothing was still running. The decision now reads the error alone;
+  concurrent `Stop` callers may still see different outcomes, each under its
+  own deadline, and nothing here assumes otherwise — the two call sites
+  already derive their own contexts.
+
+  Held against the pinned server, not its description:
+  `TestNoiseStop_NilIsAuthoritative` completes a handshake and leaves the
+  worker blocked, then shows eight concurrent `Stop` callers (short and
+  already-expired deadlines) all get `ErrShutdownIncomplete` and never nil,
+  and that once the worker exits `Stop` returns nil under an already-expired
+  context too. Passes 200 of 200 under `-race`. The decision table now names
+  upstream's sentinels, so a future pin that changes them turns it red.
+- **Password store moves and renames write the destination before deleting the source; migration no longer deletes legacy records it has not confirmed migrated.** The password store's Move operation was deleting the source before confirming the destination write succeeded, so a crash between delete and write would lose the record. The operation now writes the destination first and verifies the read succeeds before deleting the source. Password migration (from plaintext to hashed) now deletes a legacy record only after confirming the migration wrote a new hashed record and the read-back verified it.
+### Fixed
+
+- **PKCS#11: `C_UnwrapKey` and `C_GenerateKeyPair` now agree about which EC
+  curves the module accepts.** The module recognises the Edwards and Montgomery
+  OIDs so `CKA_EC_PARAMS` can identify their own key types, but an ECDSA key
+  cannot live on them. An unwrap naming one — the X25519 OID is the shape older
+  implementations such as NSS emit for Curve25519 — used to resolve as
+  recognised, reach the backend, and come back as a generic `invalid curve`
+  several layers down, while an OID the module does not carry at all was
+  refused at the module with `CKR_CURVE_NOT_SUPPORTED`. One condition, two
+  answers, and only the second is one a PKCS#11 caller can act on. Both verbs
+  now resolve the curve through one predicate and return
+  `CKR_CURVE_NOT_SUPPORTED`.
+
+  `templateCurveName` no longer reports "attribute absent" and "attribute names
+  something unusable" with the same value: it returns the name, a presence
+  flag, and the `CK_RV` separately. An omitted `CKA_EC_PARAMS` still reaches the
+  backend and takes the service default, which PKCS#11 v3.2 Table 13 footnote 6
+  requires for an unwrapped EC private key.
+- **Test: `TestCryptoManager_Sign_ECDSA_ProducesVerifiableRawSignature` no longer
+  fails one run in 256.** It rejected any raw `r || s` signature whose first
+  byte was `0x30`, the DER SEQUENCE tag, but `r` is uniform so that byte is
+  `0x30` in one signature of every 256 (measured 82 of 20,000; the test failed
+  4 of 600 runs on an unchanged tree). The 64-byte length already rules DER
+  out, and the verification that follows proves the halves are the signature.
+- **`PKCS8Backend.ListKeys` reports an X25519 key as X25519 and an
+  unrecognised algorithm as unknown (#154).** The listing had no `x25519`
+  case, and its defaults block rewrote every algorithm it did not recognise
+  to RSA-2048, so an X25519 agreement key was described as an RSA key and a
+  re-import driven off that listing failed for the wrong reason. An X25519
+  key is now listed with `X25519Attributes` set and `KeyAlgorithm` unset,
+  the shape `GenerateKey` accepts and the software backend's key-type
+  validation requires; an algorithm the backend does not produce is listed
+  with `KeyAlgorithm` unset and logged, never renamed. The `CopyKey` token
+  mismatch the same issue records is separate and is not in this change.
+- **`PlatformKeyStore.IsProvisioned()` reports what the SRK handle actually
+  holds after a failed PIN change (#448).** A PIN change evicts the persistent
+  SRK before recreating it; when the recreate or re-persist failed, the
+  store kept reporting provisioned over an empty handle, so the retry through
+  `Initialize` took the verify-existing-SRK branch and failed at `ReadHandle`
+  instead of recreating the key. The failure path now re-probes the handle,
+  the same probe the constructor runs, and sets the provisioned state from
+  what is there: gone means unprovisioned and the next `Initialize`
+  recreates; present means provisioned but, as before, not auth-ready.
+  Recovery stays with the retry; the failure path reports, it does not
+  re-provision.
+- **`make test` no longer fails on a loaded runner because the release-assets
+  stub server was slow to start.** `test/scripts/release-assets.test.sh` gave
+  its stub Gitea API 5 s to publish a port; past that, an empty `PORT` silently
+  became port 80 and every assertion failed with `Failed to connect to
+  127.0.0.1 port 80`. The wait is now 60 s, and a server that never binds
+  fails the suite by name with its own stderr instead of by side effect.
+- **`release.yml` survives a flaked matrix leg (#447).** The asset upload
+  deleted an existing asset and re-uploaded it, which Gitea answers with
+  404, so re-running a release after one leg flaked failed every leg that
+  had already succeeded; `Create Master Checksums` then never ran and the
+  tag, which cannot be re-cut, lost its checksums file for good. Uploads
+  now go through `scripts/release-assets.sh`, which leaves an asset that is
+  present with the same SHA-256 alone, replaces one whose digest differs
+  and adds one that is absent. The checksums job runs whenever the release
+  exists, verifies the release carries every asset the build matrix
+  produces (failing on what is genuinely missing, not on how many runs it
+  took), assembles `checksums.txt` from the per-asset `.sha256` files it
+  downloads through the Gitea API, and uploads it the same idempotent way;
+  the `gh` CLI it used before does not speak to Gitea, so that download had
+  been silently empty on every release cut here. The announcement is gated
+  on the verified release rather than on this run's matrix.
+- **The release workflow always reaches a terminal state.** A build leg
+  that hung ran into the runner's three-hour default and left the run
+  `in_progress` while the release page showed only the legs that had
+  finished, with no master checksums. Every job now carries a
+  `timeout-minutes` sized from the healthy runs (75 minutes for a binary
+  leg, which builds arm64 under QEMU in 20–33), the matrix no longer
+  cancels its other legs when one fails, and the checksums job is a bare
+  `always()` gate that fails the run naming every expected asset the
+  release lacks, so a partial release is a red run rather than a
+  green-looking page.
+- **Import, wrap, unwrap and import-parameters work over the REST and QUIC transports (#522).**
+  The two client transports marshalled `transport.ImportKeyRequest`,
+  `WrapKeyRequest`, `UnwrapKeyRequest` and `GetImportParametersRequest`
+  straight onto routes whose handlers decode the REST body, which spells
+  the material `wrapped_key` and carries the wrapping key as PEM: the
+  material arrived under a name the handler never read, the wrapping key
+  arrived as base64, the import-parameters response came back with no
+  wrapping key, and `partition`, `metadata` and `key_spec` were dropped,
+  so no step of the ceremony over REST or QUIC could succeed. The REST
+  bodies now live in the leaf package `pkg/api/rest/wire`, aliased by the
+  handlers and built by name by both transports, which translate the
+  wrapping key between DER and PEM and refuse a key that is not DER with
+  the typed `wire.ErrWrappingPublicKeyNotDER`. The REST bodies gain
+  `partition`, `metadata` and `key_spec`, `GenerateKeyRequest` gains
+  `partition`, and a contract test pins every field against the transport
+  contract.
+- **The Noise server's lifecycle sentinels reach the SDK (#498).**
+  `NoiseServer.Stop` returns `ErrShutdownIncomplete` when the caller's
+  deadline expires before the handshake workers drain, and `Start`/`Stop`
+  return `ErrServerAlreadyStarted`/`ErrServerNotStarted`, but neither
+  `pkg/trust/bootstrap` nor `sdk/go/bootstrap` re-exported them, so an SDK
+  consumer orchestrating the server had to import go-truststrap to dispatch
+  on them, which the layer ownership forbids. Both layers now carry
+  `ErrNoiseShutdownIncomplete`, `ErrNoiseServerNotStarted` and
+  `ErrNoiseServerAlreadyStarted` as the upstream values.
+- **The Go SDK aliases the failure-class parse error (#391).**
+  `sdk/go` gains `PeerFailureClassError = peer.FailureClassError`, the typed
+  error `PeerFailureClass.UnmarshalText` returns for a name that is not
+  `none`, `absence` or `cryptographic`. A consumer that persists a verdict's
+  class as text can now parse it back through the alias type's own method and
+  `errors.As` the rejection, instead of reimplementing the mapping or
+  importing `pkg/attestation/peer` across the layer boundary.
+- **The server certificate's SANs are configuration, not literals (#140,
+  cluster 3).** Every auto-issued server certificate carried `localhost`,
+  `127.0.0.1` and `::1` unconditionally, and the CA-issued one an
+  unconditional `0.0.0.0` IP SAN as well; no configuration could remove them.
+  `tls.include_localhost_sans` (`XKMS_TLS_INCLUDE_LOCALHOST_SANS`,
+  defaults-layer `true`) now governs the loopback names for both the
+  bootstrap and the CA-issued certificate through one shared builder, and
+  the wildcard address is gone: no client dials it, and a wildcard is not a
+  name a certificate should present. A certificate issued under an earlier
+  configuration is reissued at the next start rather than served stale. The
+  CA-issued certificate, shared by every node, no longer carries the issuing
+  node's hostname; list a name clients dial in `tls.extra_sans`.
+- **`server.host` binds the listeners it names, through one configuration
+  chain (#140, cluster 1).** The REST listener configuration was built
+  without a host, so `server.host` validated and was then discarded on the
+  listen path, and the library gRPC server had no host field at all and bound
+  the wildcard from a literal. `pkg/config.Load` now resolves defaults → file
+  → environment through viper (`XKMS_<SECTION>_<KEY>` works for every key,
+  the optional `acme`, `trust`, `webauthn` and `backends.*` sections
+  included, whether or not the file declares them; `XKMS_HOST` stays as an
+  alias below the canonical `XKMS_SERVER_HOST`), a
+  `Defaults()` layer holds the one allowed literal, `xkmsd --host` sits on top
+  with `Changed()` semantics, and both `rest.Config.Host` and the new
+  `grpc.ServerConfig.Host` consume the resolved value. A value that cannot
+  decode into its field now fails `Load` rather than being dropped. The
+  legacy environment ladder cedes to the canonical names: where both
+  `XKMS_SERVER_REST_PORT` and `XKMS_REST_PORT` are set the canonical form
+  wins, as documented, for every name the ladder still owns. A SIGHUP
+  re-applies the command-line flags over the reloaded file, so
+  `xkmsd --host` is not silently dropped on reload. New feature folder
+  `docs/xkmsd-configuration/`.
+- **Removed a stray xkey SSH store from the repository root (#453).** A manual
+  `xkey ssh` run with the data directory set to `ssh` had written its profile
+  and key-record store to `ssh/ssh/` inside the checkout, and the directory was
+  committed. The two records were a host profile carrying a LAN address and an
+  account name, and a key record holding only a public key and a backend
+  reference — no private material. Nothing in the build or the tests referenced
+  the directory. `/ssh/` at the repository root is now ignored so a local run
+  cannot recommit it.
+- **Device identity provisioning fails closed.** `Install` used to discard
+  the EK certificate lookup error (`ekCert, _ :=`), log a failed
+  `CreateIDevID` as "continuing without it", ignore every IDevID lookup
+  answer other than TPM_RC_HANDLE, and return success — a device with no
+  IDevID reported itself provisioned. Under TCG "TPM 2.0 Keys for Device
+  Identity and Attestation" v1.00 r12 the ceremony either completes or the
+  device has no identity: the TCG-CSR-IDEVID carries the EK certificate
+  (§6.2.2 step 4b) and the CA verifies it before issuing (step 6b). Each site
+  now refuses with a typed error — `ErrDevIDProvisionEKCert`,
+  `ErrDevIDProvisionIDevID`, `ErrDevIDProvisionIAK`,
+  `ErrDevIDProvisionLookup` — with the cause reachable through `errors.Is`.
+  A platform whose EK certificate is not in NV RAM or the certificate store
+  must provision it (`ProvisionEKCert`) before asking for an IDevID, or
+  install without the `IDevID` option. A quote the TPM refuses while building
+  the CSR's `prodCaData` is likewise refused (`ErrTCGCSRAttestation`) instead
+  of being dropped from the CSR; absence of a transport to quote over is
+  still reported as an absent field, as §13.1 allows.
+
+- **TCG-CSR-IDEVID emitted to §13.1.** Three departures fixed in the
+  structure the device sends to the CA: `TCG_CSR_IDEVID.structVer` is now
+  `0x01000100` ("Version 1.0 = 0x01000100"; the leading `0x01` identifies an
+  IDevID CSR) where the content structure's `0x00000100` was written before;
+  the pad is `padSz` bytes of random data from the TPM's RNG, not a `=`
+  filler; and `hashAlgoId`/`hashSz` both describe the signer's hash — the
+  IAK's under the IAK strategy, the IDevID's under single-pass — where they
+  were taken from two different keys and agreed only while both used SHA-256.
+  Exported as `TCGCSRIDevIDStructVer`, `TCGIDevIDContentStructVer` and
+  `TCGCSRAlignment`. The parser (`UnmarshalIDevIDCSR`) is unchanged and
+  accepts both structure versions, so a CA on this release still enrolls
+  devices on the previous one. Pinned by a reader written from the
+  specification's field list (`tcg_csr_structure_simulator_test.go`) that
+  never consults the packer under test.
+
+- **`pkg/tpm2` runs in CI.** `make test` greps `pkg/tpm2` out of its package
+  list, so no simulator suite — the TCG policy vectors, the CSR structure
+  test, the provisioning tests — had ever run in CI. New targets
+  `test-tpm2-simulator`, `coverage-tpm2-simulator` and
+  `bench-tpm2-simulator` run the package under the
+  `codec_cbor codec_json codec_msgpack tpm_simulator` tags, and the CI job
+  `tpm2-simulator` invokes the first. The job is not yet in the `ci-gate`
+  needs list.
+- **A device identity key's configured authValue survives a restart, and an
+  IAK with one can be provisioned at all.** The cold-cache rebuilds
+  `IDevIDAttributes()` and `IAKAttributes()` reconstructed the key from the
+  TPM and configuration but never restored `idevid.password` /
+  `iak.password`, so a key provisioned with an authValue signed in the
+  process that provisioned it and answered `TPM_RC_BAD_AUTH` to every
+  USER-role command from the next boot on. Separately, `CreateIAK`
+  authorized the IAK's self-certification (`TPM2_CertifyCreation`) with the
+  EK's password instead of the IAK's, invisible while both were empty and a
+  provisioning failure the moment `iak.password` was set. The
+  configuration-derived fields of both keys -- CN, key type, platform
+  binding, signature algorithm and authValue -- are now assigned by one
+  function on the provisioning and restart paths, so a fourth field cannot
+  drift the way the CN (#337), PlatformPolicy and KeyType (#466) and the
+  password did. The simulator harness also registers the simulator's close
+  before provisioning can fail, so a failed harness reports its failure
+  instead of hanging every later test on the simulator lock (#467).
+- **A FIPS-built client can bootstrap over the Noise transport (#269, #436).**
+  `ModeNoise` reached the wire through go-truststrap's `NewNoiseBootstrapper`
+  facade, which carries one Curve25519 key and no suite selector, so a FIPS
+  client could only ever offer Noise_NK and failed at the handshake under
+  both mechanisms (`-tags fips` and `GOFIPS140` + `GODEBUG=fips140=only`),
+  even against a server that #435 had already taught to serve the approved
+  P-256 suite. `pkg/trust/bootstrap` now composes go-truststrap's
+  suite-negotiating `noiseboot.Client` directly. `NoiseConfig` gains
+  `ServerP256StaticKey` (the server's uncompressed P-256 point, as printed by
+  `xkmsctl bootstrap noise show-p256-key`) and `Suite`; the suites offered
+  are resolved by the same probe the listener uses, `EnsureSuiteAvailable`,
+  never by a build tag. Resolution fails closed: an unavailable suite is
+  skipped, a configured key that will not decode is a `SuiteError`, a pinned
+  suite this build cannot run is a `SuiteError` rather than a fallback, a
+  pinned suite reads only its own key (the other suite's key is never
+  consulted), and
+  nothing left to offer is a `NoSuiteError` naming the build as the
+  constraint. The Curve25519 path is unchanged for every existing
+  configuration. `xkmsctl bootstrap auto` takes `--p256-key`, the resolver's
+  `noise:` scope takes `server-p256-static-key`, and the new errors are
+  re-exported through `sdk/go/bootstrap`. `ModeAuto` now walks
+  go-truststrap's method order over this package's own single-mode
+  fetchers, so its Noise arm is the same suite-negotiating client and
+  `xkmsctl bootstrap auto --p256-key` alone completes the approved
+  handshake; go-truststrap's dispatcher built that arm from its facade and
+  a P-256-only client failed under it with a misleading "mode not
+  configured". The order, per-method timeout and aggregate error shape are
+  unchanged.
+- **The WebAuthn user store no longer decides "no such user" by substring
+  (#183).** `isUserNotFound` matched any error whose text contained
+  "not found", "ErrCodeNotFound" or "no rows", so a transport failure such
+  as "connection not found" or "tenant not found" was reported as
+  `ErrUserNotFound`: the registration ceremony then created a duplicate
+  account, and a consumer's rollback guard could delete a credential it did
+  not create. Classification is now typed, per go-qrdb#286's measured
+  contract: `*transport.UserNotFoundError` (REST),
+  `*transport.KeyNotFoundError` (gRPC, MCP, embedded) and the embedded DAO
+  not-found are absences; QUIC's opaque `*transport.RequestError` is
+  recognised only when its message is, by exact prefix, one of the user
+  service's own canonical forms. Everything else is an error. The credential
+  store was already typed; the two classifiers now agree.
+- **`SSHProxy.Stop` waits for the accept loop.** It closed the listener and
+  waited for the connection handlers, but never for the accept goroutine
+  itself, and the `done` channel it closed was read by nobody, so `Stop`
+  could return while that goroutine was still winding down. The race
+  detector reported the caller's next write against the goroutine's last
+  read, and once #481 began running `xkey/pkg/agent` under `-race` on every
+  PR that became a gate flake (`TestSSHProxy_StartStop`, reproducible within
+  300 runs on `main`). The accept loop now owns its listener, closes `done`
+  when it returns, and `Stop` waits on it before removing the socket:
+  0 races in 300 runs and in the full package.
+### Fixed
+
+- **xkey GUI: an unlock that fails because the barrier seal strategy is
+  unavailable no longer reports "invalid PIN".** On a TPM host configured with
+  `barrier_strategy: tpm2`, unlocking after the idle auto-lock failed with
+  `qrdb/seal: requested strategy not registered` and the CLI printed
+  `app_lock: invalid PIN`. The PIN retry counter never moved, which is the
+  proof that no PIN check ran — the unseal never reached the credential. An
+  operator told a correct PIN is wrong will retry it, and on a backend that
+  does count attempts that is a path into a lockout over a fault no PIN could
+  fix.
+
+  `AppLockService.Unlock` now classifies `ErrStrategyNotFound` and
+  `ErrStrategyMismatch` (including wrapped) as the new
+  `ErrAppLockUnsealUnavailable`, whose message states that the PIN was not
+  checked. The GUI's own `*ErrBarrierStrategyUnavailable` — what
+  `BarrierService.Unseal` returns on a host with no usable TPM sealer, and the
+  shape that actually produces the reported failure — is classified with it;
+  that type wraps no cause, so it needs `errors.As` and one shared predicate
+  covers both. A corrupt barrier root key is now `ErrAppLockStorageCorrupt`
+  rather than an invalid PIN, matching the data-loss classification gRPC and
+  REST already give `ErrCorruptRootKey`. An unseal that genuinely failed on the
+  credential still reports `ErrAppLockPINInvalid`.
+
+- **xkey setup wizard: the hardware→passphrase barrier fallback no longer fires
+  over a barrier that already exists.** The fallback is for a hardware strategy
+  that cannot *initialize* a barrier, where nothing is stored yet and a retry
+  costs nothing. It was also firing when a barrier already existed and would
+  not unseal — where the retry reaches a different strategy than the one the
+  data was sealed with, discards the real error on its way past, and reports
+  either a bogus credential failure or a silent downgrade to a software
+  barrier. On the reported host that ended the run with `setup_complete: false`,
+  and the next launch re-ran the wizard and minted a **new User PIN**, pushing a
+  new hash to the authenticator. `initBarrier` now reports the two failures
+  distinctly and the fallback is gated on "nothing is stored yet".
+- **xkey: `XKEY_*` environment variables reach every leaf key (#140, xkey mechanism gap).**
+  The loader registered each config section as one opaque struct default, so
+  viper knew `xkmsd` but not `xkmsd.address`, and `AutomaticEnv`, which only
+  consults the environment for keys viper knows, never looked `XKEY_XKMSD_ADDRESS`
+  up; no `XKEY_` variable took effect, while the configuration reference said
+  all of them did, and the one test hedged between the two outcomes. The loader
+  now walks the config struct and registers every leaf with its default and its
+  `XKEY_<KEY>` binding, so environment wins over file wins over default at leaf
+  granularity, lists of scalars split on commas, and an environment value is
+  validated like a file value. `backends.local`, `backends.remote`,
+  `backends.defaults` and `fido2.extensions` cannot be expressed by one
+  variable; a variable set for one of them fails the load instead of being
+  ignored.
+- **xkey GUI: the OIDC login callback listener binds the configured host (#140, item 8).**
+  The desktop GUI's OIDC login listened on `":"+port` with `SO_REUSEADDR`,
+  every interface, for a browser redirect that only arrives on loopback, and
+  defaulted the redirect URL from a literal `8085`. The callback listener
+  logic now lives once in `xkey/pkg/oidc` (`Callback`, `ListenAddrs`,
+  `BindCallback`, `ServeCallback`), shared by the CLI and the GUI; the GUI
+  service takes `oidc.callback_host` / `oidc.callback_port` from the unified
+  config through `SetCallback`, binds the loopback pair for `localhost` (with
+  `SO_REUSEADDR` kept), refuses a callback host that cannot serve the
+  provider's redirect host before opening the browser, and, as the CLI now
+  does too, answers on exactly the redirect URL's path (a literal
+  comparison, never a ServeMux pattern) rather than a fixed one. A unified
+  config that fails to load disables the GUI login with the cause instead of
+  binding the built-in callback in place of the operator's.
+- **xkey: the agent server and the pairing relay bind configured addresses (#140, xkey mechanism gaps).**
+  `xkey agent start` bound `:9443` with `--listen` as its only path, and
+  `xkey device relay` bound `:8444` from a flag default no config file or
+  variable could reach. The xkey config gains `agent.listen_address` and
+  `phone.relay_listen_address` (each validated as host:port;
+  `XKEY_AGENT_LISTEN_ADDRESS`, `XKEY_PHONE_RELAY_LISTEN_ADDRESS`), and each
+  command resolves flag over configuration over the built-in default, which
+  is unchanged. The audit's third xkey gap, the agent client's
+  `LocalAddress`, is a declared field nothing reads; it gets no
+  configuration path until the client binds it.
+- **xkey: the OIDC and AWS login callback listeners bind a configured host and port (#140, items 7 and 13).**
+  `xkey oidc login` listened on `":"+port`, every interface, for a browser
+  redirect that only ever arrives on loopback, and `xkey oidc aws` hard-coded
+  port 8085 with no flag, variable or config path. The xkey config gains an
+  `oidc` section (`callback_host`, default `localhost`, which binds both
+  loopback families since the browser may resolve the redirect host to either;
+  `callback_port`, default 8085; `XKEY_OIDC_CALLBACK_HOST` /
+  `XKEY_OIDC_CALLBACK_PORT`), and both commands gain `--callback-host` and
+  `--callback-port` (held to 1-65535). The default redirect URL follows the
+  callback host, so the browser is always sent where the listener is. The
+  listener binds the callback host on the redirect
+  URL's port, so an explicit `--redirect-url` or a saved provider's keeps the
+  port registered with the provider; the default redirect URLs and the AWS
+  refresh worker take the port from configuration. AWS's redirect host is
+  fixed at `127.0.0.1`, so its listener serves `127.0.0.1`. The OIDC listener
+  binds addresses that serve the redirect URL's host (the loopback pair for
+  `localhost`, an IP literal itself, the configured address for another
+  name, every interface for the empty host); a callback host that cannot
+  serve the redirect host is a typed `OIDCCallbackHostError` before any
+  browser opens rather than a five-minute timeout, and a redirect URL the
+  listener cannot serve, an https one included (the listener is plain http),
+  is a typed `OIDCRedirectURLError`.
+### Fixed
+
+- **xkey GUI: a failed PIV certificate delete is no longer read as "no
+  certificate" on any error whose text happens to contain "not found".**
+  `PIVService.DeleteCertificate` removes both the certificate and the key, and
+  decided whether a failed certificate delete should block the key delete with
+  `strings.Contains(err.Error(), "not found")`. A permission error naming a
+  path, a missing *backend*, a missing key and an unknown slot all satisfy
+  that, so any of them read as "carry on" — and the slot was reported empty
+  while it still held a certificate, which is the opposite of the method's
+  contract.
+
+  The in-process path now classifies on the sentinel alone
+  (`errors.Is(err, xkms.ErrPIVCertificateNotFound)`), which every local backend
+  produces: the file backend wraps it in a `PIVStorageError` and the tpm2
+  backend maps `storage.ErrNotFound` onto it. The remote path matches the
+  sentinel, or the sentinel's own rendered text — which is what the server
+  actually sends, since the error message goes into the response body — and
+  nothing looser. Anything else now fails closed.
+
+- **xkey GUI: deleting a PIV slot no longer reports success when the key was
+  never inspected.** `DeleteCertificate` removes both the certificate and the
+  key. When the certificate delete succeeded and the subsequent key listing
+  failed, it logged the failure and returned `nil`, so the GUI reported the
+  slot cleared while the backing key may still exist. Both paths now return the
+  listing error, wrapped, naming that the key may remain.
+
 ## [0.11.0-alpha] - 2026-09-06
 
 ### Security

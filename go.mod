@@ -228,8 +228,8 @@ require (
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.11.0-alpha
-	github.com/jeremyhahn/go-xkms/xkey v0.11.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.13.0-alpha
+	github.com/jeremyhahn/go-xkms/xkey v0.13.0-alpha
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect
