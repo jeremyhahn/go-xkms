@@ -29,8 +29,6 @@ var (
 	ErrNotSupported = pkgunix.ErrNotSupported
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = pkgunix.ErrConnectionFailed
-	// ErrNotImplemented is returned when a method is not yet implemented.
-	ErrNotImplemented = pkgunix.ErrNotImplemented
 	// ErrSocketPathRequired is returned when no socket path is provided.
 	ErrSocketPathRequired = pkgunix.ErrSocketPathRequired
 )

@@ -335,7 +335,7 @@ func TestWrapUnwrapKeyHandler_BackendResolutionErrors(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, unwrapW.Code)
 	})
 
-	t.Run("backend without import/export support is rejected with 400", func(t *testing.T) {
+	t.Run("backend without import support is rejected with 501", func(t *testing.T) {
 		capable := newMockKeyStoreWithImportExport()
 
 		xkms.Reset()
@@ -355,13 +355,19 @@ func TestWrapUnwrapKeyHandler_BackendResolutionErrors(t *testing.T) {
 		var capableCalls atomic.Int64
 		countingWrap(capable, "wrapped-by-capable", &capableCalls)
 
+		// WrapKey and UnwrapKey are both half of the import ceremony, so the
+		// resolver asserts backend.ImportBackend and reports the precise,
+		// typed backend.ErrImportNotSupported as 501 Not Implemented -- a
+		// capability boundary, not a malformed request -- rather than the
+		// old undifferentiated "does not support import/export" 400. See
+		// resolveImportBackend.
 		wrapW := doWrap(ctx, wrapRequestBody(t, "plain", pem))
-		assert.Equal(t, http.StatusBadRequest, wrapW.Code)
-		assert.Contains(t, wrapW.Body.String(), "import/export")
+		assert.Equal(t, http.StatusNotImplemented, wrapW.Code)
+		assert.Contains(t, wrapW.Body.String(), backend.ErrImportNotSupported.Error())
 		assert.Equal(t, int64(0), capableCalls.Load(), "an incapable named backend must not fall back to a capable one")
 
 		unwrapW := doUnwrap(ctx, unwrapRequestBody(t, "plain", pem, base64.StdEncoding.EncodeToString([]byte("ct"))))
-		assert.Equal(t, http.StatusBadRequest, unwrapW.Code)
-		assert.Contains(t, unwrapW.Body.String(), "import/export")
+		assert.Equal(t, http.StatusNotImplemented, unwrapW.Code)
+		assert.Contains(t, unwrapW.Body.String(), backend.ErrImportNotSupported.Error())
 	})
 }

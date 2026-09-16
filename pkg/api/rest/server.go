@@ -501,16 +501,30 @@ func NewServer(cfg *Config) (*Server, error) {
 		log.Info("Tenant handlers enabled")
 	}
 
-	// Set up password handlers if password store is configured
+	// Set up password handlers if password store is configured. pwManager
+	// here is used only to resolve the correctly-scoped store for the CRUD
+	// handlers (add/list/get/update/delete/generate), which need no session
+	// state. Session-affecting operations (unlock, lock, status) are handled
+	// entirely through the servicer set below via SetServicer: XKMSService
+	// owns the TenantPasswordStoreManager instance session state is tracked
+	// against (wired by the process composition root), so routing those three
+	// through a second, independently constructed manager here would risk
+	// reporting state that has drifted from what the servicer actually did.
+	//
+	// staticpw.NewTenantPasswordStoreManager can only fail on a nil registry
+	// or nil store, both already excluded by the surrounding conditions, so
+	// managerErr is unreachable today; it stays a checked error rather than a
+	// silent construction because that invariant belongs to staticpw, not to
+	// this wiring.
 	if cfg.PasswordStore != nil {
 		var pwManager *staticpw.TenantPasswordStoreManager
 		if cfg.BarrierRegistry != nil {
 			var managerErr error
 			pwManager, managerErr = staticpw.NewTenantPasswordStoreManager(cfg.BarrierRegistry, cfg.PasswordStore)
 			if managerErr != nil {
-				log.Warn("Failed to create tenant password store manager", "error", managerErr)
+				log.Warn("Failed to create tenant password store manager; per-tenant password CRUD routing unavailable", "error", managerErr)
 			} else {
-				log.Info("Tenant password store manager enabled")
+				log.Info("Tenant password store manager enabled for per-tenant CRUD routing")
 			}
 		}
 		server.passwordHandlers = NewPasswordHandlers(cfg.PasswordStore, pwManager)

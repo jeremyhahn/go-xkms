@@ -280,14 +280,17 @@ func Routes() []RouteSpec {
 	permIf("POST", "/pkcs11state/list", auth.ResourceKeys, auth.ActionList, hasP11, func(s *Server) http.HandlerFunc { return s.pkcs11StateHandlers.ListHandler })
 
 	// --- Platform store (sealed secrets). Placeholder must be {name}: the
-	// handlers read chi.URLParam(r, "name"). ---
+	// handlers read chi.URLParam(r, "name"). Secrets sealed here are
+	// key-protection material (the same trust class as pkcs11state above),
+	// so the routes carry the identical keys:* permission pairs rather than
+	// a bare authenticated-session gate. ---
 	hasPlatform := func(s *Server) bool { return s.platformHandlers != nil }
-	session("PUT", "/platform/secrets/{name}", hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.PutSecretHandler })
-	session("GET", "/platform/secrets/{name}", hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.GetSecretHandler })
-	session("DELETE", "/platform/secrets/{name}", hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.DeleteSecretHandler })
-	session("GET", "/platform/secrets", hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ListSecretsHandler })
-	session("POST", "/platform/secrets/{name}/reseal", hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ResealSecretHandler })
-	session("GET", "/platform/status", hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.StatusHandler })
+	permIf("PUT", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionWrite, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.PutSecretHandler })
+	permIf("GET", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionRead, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.GetSecretHandler })
+	permIf("DELETE", "/platform/secrets/{name}", auth.ResourceKeys, auth.ActionDelete, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.DeleteSecretHandler })
+	permIf("GET", "/platform/secrets", auth.ResourceKeys, auth.ActionList, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ListSecretsHandler })
+	permIf("POST", "/platform/secrets/{name}/reseal", auth.ResourceKeys, auth.ActionWrite, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.ResealSecretHandler })
+	permIf("GET", "/platform/status", auth.ResourceKeys, auth.ActionRead, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.StatusHandler })
 
 	// --- Policies ---
 	hasPolicies := func(s *Server) bool { return s.policyHandlers != nil }

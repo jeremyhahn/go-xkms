@@ -52,8 +52,6 @@ var (
 	ErrNotSupported = errors.New("unix transport: operation not supported")
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = errors.New("unix transport: connection failed")
-	// ErrNotImplemented is returned when a method is not yet implemented.
-	ErrNotImplemented = errors.New("unix transport: not implemented")
 	// ErrSocketPathRequired is returned when no socket path is provided.
 	ErrSocketPathRequired = errors.New("unix transport: socket path is required")
 )
@@ -2269,34 +2267,94 @@ func pbPasswordEntryToTransport(entry *pb.PasswordEntry) *transport.PasswordGetR
 
 // Platform Store Operations
 
-// SealStorePut stores a secret in the platform store.
-func (t *Transport) SealStorePut(_ context.Context, _ *transport.SealStorePutRequest) error {
-	return ErrNotSupported
+// SealStorePut stores a secret in the platform-sealed store.
+func (t *Transport) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	_, err := t.client.SealStorePut(ctx, &pb.SealStorePutRequest{Name: req.Name, Secret: req.Secret})
+	return err
 }
 
-// SealStoreGet retrieves a secret from the platform store.
-func (t *Transport) SealStoreGet(_ context.Context, _ *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
+// SealStoreGet retrieves a secret from the platform-sealed store.
+func (t *Transport) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.SealStoreGet(ctx, &pb.SealStoreGetRequest{Name: req.Name})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.SealStoreGetResponse{Name: resp.Name, Secret: resp.Secret}, nil
+}
+
+// SealStoreDelete deletes a secret from the platform-sealed store.
+func (t *Transport) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	_, err := t.client.SealStoreDelete(ctx, &pb.SealStoreDeleteRequest{Name: req.Name})
+	return err
+}
+
+// SealStoreList lists all stored secret names in the platform-sealed store.
+func (t *Transport) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.SealStoreList(ctx, &pb.SealStoreListRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.SealStoreListResponse{Names: resp.Names}, nil
+}
+
+// SealStoreReseal reseals a secret with the current platform sealing key.
+func (t *Transport) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	_, err := t.client.SealStoreReseal(ctx, &pb.SealStoreResealRequest{Name: req.Name})
+	return err
+}
+
+// SealStoreStatus returns the platform-sealed store status.
+func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.SealStoreStatus(ctx, &pb.SealStoreStatusRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.SealStoreStatusResponse{
+		Available:   resp.Available,
+		SealerID:    resp.SealerId,
+		SecretCount: int(resp.SecretCount),
+		SecretNames: resp.SecretNames,
+	}, nil
+}
+
+// Escrow Operations
+//
+// No unix-socket route exists yet for external key escrow (pkg/escrow); see
+// docs/escrow/architecture.md. These stubs keep Transport satisfying
+// transport.XKMSServicer.
+
+func (t *Transport) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
 	return nil, ErrNotSupported
 }
 
-// SealStoreDelete deletes a secret from the platform store.
-func (t *Transport) SealStoreDelete(_ context.Context, _ *transport.SealStoreDeleteRequest) error {
-	return ErrNotSupported
-}
-
-// SealStoreList lists all stored secret names.
-func (t *Transport) SealStoreList(_ context.Context) (*transport.SealStoreListResponse, error) {
+func (t *Transport) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
 	return nil, ErrNotSupported
 }
 
-// SealStoreReseal reseals a secret with the current sealing key.
-func (t *Transport) SealStoreReseal(_ context.Context, _ *transport.SealStoreResealRequest) error {
-	return ErrNotSupported
+func (t *Transport) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, ErrNotSupported
 }
 
-// SealStoreStatus returns the platform store status.
-func (t *Transport) SealStoreStatus(_ context.Context) (*transport.SealStoreStatusResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) RevokeEscrow(_ context.Context, _ string) error {
+	return ErrNotSupported
 }
 
 // Policy Operations

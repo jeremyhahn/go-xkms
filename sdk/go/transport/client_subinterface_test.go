@@ -313,6 +313,19 @@ func (s *stubClient) SealStoreStatus(context.Context) (*SealStoreStatusResponse,
 	panic("stub")
 }
 
+func (s *stubClient) EscrowKey(context.Context, *EscrowRequest) ([]*EscrowReceipt, error) {
+	panic("stub")
+}
+func (s *stubClient) RecoverKey(context.Context, *RecoverRequest) (*RecoverResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) ListEscrowed(context.Context) ([]EscrowRecord, error) {
+	panic("stub")
+}
+func (s *stubClient) RevokeEscrow(context.Context, string) error {
+	panic("stub")
+}
+
 func (s *stubClient) PolicyCreate(context.Context, *PolicyCreateRequest) (*PolicyCreateResponse, error) {
 	panic("stub")
 }

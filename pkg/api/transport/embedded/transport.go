@@ -934,6 +934,38 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 	return t.service.SealStoreStatus(ctx)
 }
 
+// EscrowKey sends wrapped key material to every configured escrow agent.
+func (t *Transport) EscrowKey(ctx context.Context, req *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.EscrowKey(ctx, req)
+}
+
+// RecoverKey retrieves wrapped key material from the first escrow agent that has it.
+func (t *Transport) RecoverKey(ctx context.Context, req *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.RecoverKey(ctx, req)
+}
+
+// ListEscrowed returns the aggregated escrow records across every configured escrow agent.
+func (t *Transport) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ListEscrowed(ctx)
+}
+
+// RevokeEscrow removes an escrowed key from every configured escrow agent.
+func (t *Transport) RevokeEscrow(ctx context.Context, escrowID string) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.RevokeEscrow(ctx, escrowID)
+}
+
 // PolicyCreate creates a new PCR policy.
 func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	if !t.connected {

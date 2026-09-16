@@ -81,6 +81,42 @@ func (s *unlockServicerStub) PasswordStoreUnlock(ctx context.Context, req *trans
 	return s.manager.UnlockTenant(identity.TenantID)
 }
 
+// PasswordStoreLock mirrors XKMSService.PasswordStoreLock: locking needs no
+// credential, so it delegates to the manager directly once a tenant identity
+// is established.
+func (s *unlockServicerStub) PasswordStoreLock(ctx context.Context) error {
+	identity := auth.GetIdentity(ctx)
+	if identity == nil || identity.TenantID == "" {
+		return staticpw.ErrInvalidTenantID
+	}
+	return s.manager.LockTenant(identity.TenantID)
+}
+
+// PasswordStoreStatus mirrors XKMSService.PasswordStoreStatus: a tenant
+// identity gets that tenant's status through the manager, and its absence
+// gets the system-level fallback.
+func (s *unlockServicerStub) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
+	identity := auth.GetIdentity(ctx)
+	if identity != nil && identity.TenantID != "" {
+		status, err := s.manager.TenantStoreStatus(identity.TenantID)
+		if err != nil {
+			return nil, err
+		}
+		return &transport.PasswordStoreStatusResponse{
+			AccessMode:    "tenant",
+			IsLocked:      status.IsLocked,
+			BarrierSealed: status.BarrierSealed,
+			PasswordCount: status.PasswordCount,
+		}, nil
+	}
+
+	return &transport.PasswordStoreStatusResponse{
+		AccessMode:   "direct",
+		IsLocked:     false,
+		AutoUnsealed: true,
+	}, nil
+}
+
 // newUnlockHandlers builds password handlers wired to a stub servicer holding
 // a provisioned PIN, which is the configuration a real deployment has.
 func newUnlockHandlers(store staticpw.Store, manager *staticpw.TenantPasswordStoreManager) (*PasswordHandlers, *unlockServicerStub) {
@@ -416,7 +452,7 @@ func TestUnlockHandler_SystemTenantIDRejected(t *testing.T) {
 
 func TestLockHandler_Success(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// Unlock first (precondition; the unlock credential flow itself is covered
 	// by UnlockHandler's own tests).
@@ -437,7 +473,10 @@ func TestLockHandler_Success(t *testing.T) {
 	assert.Equal(t, "Store locked successfully", resp.Message)
 }
 
-func TestLockHandler_NoManager(t *testing.T) {
+// TestLockHandler_NoServicer proves the handler reports the precise
+// capability error rather than a generic failure when the composition root
+// did not wire the service layer at all.
+func TestLockHandler_NoServicer(t *testing.T) {
 	systemBackend := storage.NewMemory()
 	systemStore := staticpw.NewStore(systemBackend)
 	handlers := NewPasswordHandlers(systemStore, nil)
@@ -455,9 +494,25 @@ func TestLockHandler_NoManager(t *testing.T) {
 	assert.Contains(t, resp["error"], "server integration")
 }
 
+// TestLockHandler_ManagerWithoutServicer proves that a locally-held
+// TenantPasswordStoreManager with no servicer wired does not, on its own,
+// make lock available: the handler must go through the servicer, which is
+// the single source of truth for session state (see UnlockHandler).
+func TestLockHandler_ManagerWithoutServicer(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers := NewPasswordHandlers(systemStore, manager) // servicer deliberately unset
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/lock", "", "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.LockHandler(w, req)
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+}
+
 func TestLockHandler_AlreadyLocked(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// Tenant starts locked. Locking again should return conflict.
 	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/lock", "", "tenant-1")
@@ -477,7 +532,7 @@ func TestLockHandler_AlreadyLocked(t *testing.T) {
 // TestUnlockHandler_SystemTenantIDRejected for the lock path.
 func TestLockHandler_SystemTenantIDRejected(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/lock", "", "system")
 	w := httptest.NewRecorder()
@@ -489,7 +544,7 @@ func TestLockHandler_SystemTenantIDRejected(t *testing.T) {
 
 func TestLockHandler_NoIdentity(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/lock", nil)
 	w := httptest.NewRecorder()
@@ -501,7 +556,7 @@ func TestLockHandler_NoIdentity(t *testing.T) {
 
 func TestLockHandler_TenantNotFound(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/lock", "", "nonexistent-tenant")
 	w := httptest.NewRecorder()
@@ -515,7 +570,7 @@ func TestLockHandler_TenantNotFound(t *testing.T) {
 
 func TestStatusHandler_WithTenant(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	req := requestWithTenantIdentity(http.MethodGet, "/api/v1/passwords/status", "", "tenant-1")
 	w := httptest.NewRecorder()
@@ -533,11 +588,14 @@ func TestStatusHandler_WithTenant(t *testing.T) {
 	assert.Equal(t, "Password store status retrieved", resp.Message)
 }
 
-func TestStatusHandler_NoTenant(t *testing.T) {
-	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+// TestStatusHandler_NoServicer proves the handler falls back to a generic
+// "available" answer, rather than erroring, when the composition root did
+// not wire the service layer at all.
+func TestStatusHandler_NoServicer(t *testing.T) {
+	systemBackend := storage.NewMemory()
+	systemStore := staticpw.NewStore(systemBackend)
+	handlers := NewPasswordHandlers(systemStore, nil)
 
-	// No identity in context triggers system fallback.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/passwords/status", nil)
 	w := httptest.NewRecorder()
 
@@ -552,9 +610,32 @@ func TestStatusHandler_NoTenant(t *testing.T) {
 	assert.Equal(t, "Password store is available", resp.Message)
 }
 
+// TestStatusHandler_NoTenant proves that, with a servicer wired, a caller
+// with no tenant identity gets the servicer's system-level status rather
+// than the generic no-servicer fallback message.
+func TestStatusHandler_NoTenant(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
+
+	// No identity in context triggers system fallback.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/passwords/status", nil)
+	w := httptest.NewRecorder()
+
+	handlers.StatusHandler(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp PasswordStoreStatusResponse
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Available)
+	assert.False(t, resp.IsLocked)
+	assert.Equal(t, "Password store status retrieved", resp.Message)
+}
+
 func TestStatusHandler_SystemFallbackEmptyTenantID(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// Identity with empty TenantID uses system fallback.
 	req := requestWithTenantIdentity(http.MethodGet, "/api/v1/passwords/status", "", "")
@@ -568,12 +649,13 @@ func TestStatusHandler_SystemFallbackEmptyTenantID(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.True(t, resp.Available)
-	assert.Equal(t, "Password store is available", resp.Message)
+	assert.False(t, resp.IsLocked)
+	assert.Equal(t, "Password store status retrieved", resp.Message)
 }
 
 func TestStatusHandler_TenantNotFound(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	req := requestWithTenantIdentity(http.MethodGet, "/api/v1/passwords/status", "", "nonexistent")
 	w := httptest.NewRecorder()

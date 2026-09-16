@@ -668,6 +668,16 @@ var goldenMethodPermissions = map[string]string{
 	"password.unlock":   "passwords:unlock",
 	"password.update":   "passwords:write",
 
+	// Platform-sealed store — pkg/api/mcp/handlers_seal_store.go. Same
+	// keys:* pairs as the PKCS#11 remote-state RPCs on every other
+	// transport, since both persist key-protection material.
+	"sealStore.put":    "keys:write",
+	"sealStore.get":    "keys:read",
+	"sealStore.delete": "keys:delete",
+	"sealStore.list":   "keys:list",
+	"sealStore.reseal": "keys:write",
+	"sealStore.status": "keys:read",
+
 	// SSH key, known-host, and authorized-key stores —
 	// pkg/api/quic/handlers_ssh.go.
 	"ssh.authorizedKeys.add":    "ssh:write",

@@ -29,8 +29,6 @@ var (
 	ErrNotSupported = pkgquic.ErrNotSupported
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = pkgquic.ErrConnectionFailed
-	// ErrNotImplemented is returned when a method is not yet implemented.
-	ErrNotImplemented = pkgquic.ErrNotImplemented
 )
 
 // Transport is an alias for the canonical QUIC transport implementation.

@@ -26,7 +26,6 @@ var (
 	ErrNotConnected     = pkgmcp.ErrNotConnected
 	ErrNotSupported     = pkgmcp.ErrNotSupported
 	ErrConnectionFailed = pkgmcp.ErrConnectionFailed
-	ErrNotImplemented   = pkgmcp.ErrNotImplemented
 )
 
 // Typed error re-exports.

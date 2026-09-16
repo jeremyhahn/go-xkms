@@ -1190,6 +1190,10 @@ func (m *mockNonMemorySessionStore) Get(ctx context.Context, sessionID string) (
 	return nil, &errs.Message{Msg: "session not found"}
 }
 
+func (m *mockNonMemorySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
+	return nil, &errs.Message{Msg: "session not found"}
+}
+
 func (m *mockNonMemorySessionStore) Delete(ctx context.Context, sessionID string) error {
 	return nil
 }

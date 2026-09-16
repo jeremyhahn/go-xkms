@@ -218,6 +218,16 @@ var methodPermissions = map[string]permission{
 	"password.status":   {auth.ResourcePasswords, auth.ActionRead},
 	"password.generate": {auth.ResourcePasswords, auth.ActionGenerate},
 
+	// Platform-sealed store. Secrets sealed here are key-protection
+	// material, so the actions mirror the keys:* pairs used by every other
+	// transport's SealStore* handlers.
+	"sealStore.put":    {auth.ResourceKeys, auth.ActionWrite},
+	"sealStore.get":    {auth.ResourceKeys, auth.ActionRead},
+	"sealStore.delete": {auth.ResourceKeys, auth.ActionDelete},
+	"sealStore.list":   {auth.ResourceKeys, auth.ActionList},
+	"sealStore.reseal": {auth.ResourceKeys, auth.ActionWrite},
+	"sealStore.status": {auth.ResourceKeys, auth.ActionRead},
+
 	// SSH keys.
 	"ssh.keys.generate": {auth.ResourceSSH, auth.ActionWrite},
 	"ssh.keys.import":   {auth.ResourceSSH, auth.ActionWrite},

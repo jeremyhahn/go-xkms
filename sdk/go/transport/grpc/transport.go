@@ -29,8 +29,6 @@ var (
 	ErrNotSupported = pkggrpc.ErrNotSupported
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = pkggrpc.ErrConnectionFailed
-	// ErrNotImplemented is returned when a method is not yet implemented.
-	ErrNotImplemented = pkggrpc.ErrNotImplemented
 )
 
 // Transport is an alias for the canonical gRPC transport implementation.

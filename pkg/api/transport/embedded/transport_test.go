@@ -705,6 +705,34 @@ func (m *mockService) SealStoreStatus(_ context.Context) (*transport.SealStoreSt
 	return &transport.SealStoreStatusResponse{}, nil
 }
 
+func (m *mockService) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return []*transport.EscrowReceipt{{}}, nil
+}
+
+func (m *mockService) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.RecoverResponse{}, nil
+}
+
+func (m *mockService) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return nil, nil
+}
+
+func (m *mockService) RevokeEscrow(_ context.Context, _ string) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
 func (m *mockService) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

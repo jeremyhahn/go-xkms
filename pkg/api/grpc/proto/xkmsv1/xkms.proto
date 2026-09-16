@@ -713,6 +713,31 @@ service KeystoreService {
     option (qrdb.v1.permission) = "keys:read";
   }
 
+  // ==================== Platform Sealed Store Operations ====================
+  // The machine-local sealed credential store: secrets sealed to the host's
+  // hardware sealer (TPM 2.0 when available). Gated by the same keys:*
+  // permissions as the PKCS#11 state above, since both persist
+  // key-protection material.
+
+  rpc SealStorePut(SealStorePutRequest) returns (SealStorePutResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
+  rpc SealStoreGet(SealStoreGetRequest) returns (SealStoreGetResponse) {
+    option (qrdb.v1.permission) = "keys:read";
+  }
+  rpc SealStoreDelete(SealStoreDeleteRequest) returns (SealStoreDeleteResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
+  rpc SealStoreList(SealStoreListRequest) returns (SealStoreListResponse) {
+    option (qrdb.v1.permission) = "keys:list";
+  }
+  rpc SealStoreReseal(SealStoreResealRequest) returns (SealStoreResealResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
+  rpc SealStoreStatus(SealStoreStatusRequest) returns (SealStoreStatusResponse) {
+    option (qrdb.v1.permission) = "keys:read";
+  }
+
   // User management. xkms presents its own user model; the backing store is
   // the embedded qrdb node.
   rpc CreateUser(CreateUserRequest) returns (UserResponse) {
@@ -3170,6 +3195,66 @@ message PKCS11StateListRequest {
 }
 message PKCS11StateListResponse {
   repeated string keys = 1;
+}
+
+// SealStorePutRequest requests storing a secret in the platform-sealed store.
+message SealStorePutRequest {
+  string name = 1;
+  bytes secret = 2;
+}
+
+// SealStorePutResponse confirms a secret was stored.
+message SealStorePutResponse {
+  string name = 1;
+}
+
+// SealStoreGetRequest requests a secret from the platform-sealed store.
+message SealStoreGetRequest {
+  string name = 1;
+}
+
+// SealStoreGetResponse contains a retrieved, unsealed secret.
+message SealStoreGetResponse {
+  string name = 1;
+  bytes secret = 2;
+}
+
+// SealStoreDeleteRequest requests deleting a secret from the platform-sealed store.
+message SealStoreDeleteRequest {
+  string name = 1;
+}
+
+// SealStoreDeleteResponse confirms a secret was deleted.
+message SealStoreDeleteResponse {}
+
+// SealStoreListRequest requests the names of all stored secrets.
+message SealStoreListRequest {}
+
+// SealStoreListResponse contains the names of all stored secrets.
+message SealStoreListResponse {
+  repeated string names = 1;
+}
+
+// SealStoreResealRequest requests resealing a secret with the current
+// platform sealing key.
+message SealStoreResealRequest {
+  string name = 1;
+}
+
+// SealStoreResealResponse confirms a secret was resealed.
+message SealStoreResealResponse {
+  string name = 1;
+}
+
+// SealStoreStatusRequest requests the platform-sealed store status.
+message SealStoreStatusRequest {}
+
+// SealStoreStatusResponse contains the platform-sealed store status.
+message SealStoreStatusResponse {
+  bool available = 1;
+  string sealer_id = 2;
+  int32 secret_count = 3;
+  repeated string secret_names = 4;
 }
 
 // PasswordStoreUnlockRequest requests unlocking the password store.

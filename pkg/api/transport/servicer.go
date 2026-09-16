@@ -47,6 +47,7 @@ type XKMSServicer interface {
 	InitCeremonyServicer
 	CredentialManagementServicer
 	AuditServicer
+	EscrowServicer
 }
 
 // HealthServicer handles health checks.
@@ -236,6 +237,16 @@ type PolicyServicer interface {
 	PolicyRefresh(ctx context.Context, req *PolicyRefreshRequest) (*PolicyGetResponse, error)
 	PolicyVerify(ctx context.Context, req *PolicyVerifyRequest) (*PolicyVerifyResponse, error)
 	PolicyExport(ctx context.Context, req *PolicyExportRequest) (*PolicyExportResponse, error)
+}
+
+// EscrowServicer provides external key-escrow operations (pkg/escrow):
+// replicating already-wrapped key material to configured escrow agents,
+// recovering it, listing what is escrowed, and revoking an escrowed key.
+type EscrowServicer interface {
+	EscrowKey(ctx context.Context, req *EscrowRequest) ([]*EscrowReceipt, error)
+	RecoverKey(ctx context.Context, req *RecoverRequest) (*RecoverResponse, error)
+	ListEscrowed(ctx context.Context) ([]EscrowRecord, error)
+	RevokeEscrow(ctx context.Context, escrowID string) error
 }
 
 // CustodianGroupServicer provides custodian group management operations.

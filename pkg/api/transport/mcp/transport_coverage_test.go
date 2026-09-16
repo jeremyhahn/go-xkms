@@ -7,6 +7,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -74,6 +75,24 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 			d, _ := json.Marshal(map[string]interface{}{
 				"username": "admin", "display_name": "Admin", "role": "admin", "enabled": true,
 			})
+			return jsonrpcResponse{Result: d}
+		case "sealStore.put":
+			d, _ := json.Marshal(map[string]string{"name": "db-password"})
+			return jsonrpcResponse{Result: d}
+		case "sealStore.get":
+			d, _ := json.Marshal(map[string]string{"name": "db-password", "secret": base64.StdEncoding.EncodeToString([]byte("s3cret"))})
+			return jsonrpcResponse{Result: d}
+		case "sealStore.delete":
+			d, _ := json.Marshal(map[string]string{"name": "db-password"})
+			return jsonrpcResponse{Result: d}
+		case "sealStore.list":
+			d, _ := json.Marshal(map[string]interface{}{"names": []string{"db-password"}})
+			return jsonrpcResponse{Result: d}
+		case "sealStore.reseal":
+			d, _ := json.Marshal(map[string]string{"name": "db-password"})
+			return jsonrpcResponse{Result: d}
+		case "sealStore.status":
+			d, _ := json.Marshal(map[string]interface{}{"available": true, "sealer_id": "tpm2", "secret_count": 1, "secret_names": []string{"db-password"}})
 			return jsonrpcResponse{Result: d}
 		default:
 			// Return empty valid result for all other methods
@@ -1080,36 +1099,64 @@ func TestPasswordGenerate_Connected(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-// --- SealStore (not supported) ---
+// --- SealStore ---
 
-func TestSealStorePut_NotSupported(t *testing.T) {
+func TestSealStore_RoundTrip(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	ctx := context.Background()
+
+	require.NoError(t, tr.SealStorePut(ctx, &transport.SealStorePutRequest{Name: "db-password", Secret: []byte("s3cret")}))
+
+	getResp, err := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "db-password"})
+	require.NoError(t, err)
+	assert.Equal(t, "db-password", getResp.Name)
+	assert.Equal(t, []byte("s3cret"), getResp.Secret)
+
+	listResp, err := tr.SealStoreList(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, listResp.Names, "db-password")
+
+	require.NoError(t, tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{Name: "db-password"}))
+
+	statusResp, err := tr.SealStoreStatus(ctx)
+	require.NoError(t, err)
+	assert.True(t, statusResp.Available)
+
+	require.NoError(t, tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: "db-password"}))
+}
+
+func TestSealStorePut_NotConnected(t *testing.T) {
 	err := (&Transport{}).SealStorePut(context.Background(), &transport.SealStorePutRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreGet_NotSupported(t *testing.T) {
+func TestSealStoreGet_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreDelete_NotSupported(t *testing.T) {
+func TestSealStoreDelete_NotConnected(t *testing.T) {
 	err := (&Transport{}).SealStoreDelete(context.Background(), &transport.SealStoreDeleteRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreList_NotSupported(t *testing.T) {
+func TestSealStoreList_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).SealStoreList(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreReseal_NotSupported(t *testing.T) {
+func TestSealStoreReseal_NotConnected(t *testing.T) {
 	err := (&Transport{}).SealStoreReseal(context.Background(), &transport.SealStoreResealRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreStatus_NotSupported(t *testing.T) {
+func TestSealStoreStatus_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).SealStoreStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 // --- Policy (not supported) ---

@@ -56,8 +56,6 @@ var (
 	ErrNotSupported = errors.New("operation not supported by this protocol")
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = errors.New("connection failed")
-	// ErrNotImplemented is returned when an operation has not been implemented yet.
-	ErrNotImplemented = errors.New("not implemented")
 )
 
 // RPCError is a typed error for a failed MCP tool call: either a tool-level
@@ -1823,34 +1821,86 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 
 // Platform Store Operations
 
-// SealStorePut stores a secret in the platform store.
-func (t *Transport) SealStorePut(ctx context.Context, _ *transport.SealStorePutRequest) error {
-	return ErrNotSupported
+// SealStorePut stores a secret in the platform-sealed store.
+func (t *Transport) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "sealStore.put", req, nil)
 }
 
-// SealStoreGet retrieves a secret from the platform store.
-func (t *Transport) SealStoreGet(ctx context.Context, _ *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
-	return nil, ErrNotSupported
+// SealStoreGet retrieves a secret from the platform-sealed store.
+func (t *Transport) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.SealStoreGetResponse
+	if err := t.rpcCall(ctx, "sealStore.get", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// SealStoreDelete deletes a secret from the platform store.
-func (t *Transport) SealStoreDelete(ctx context.Context, _ *transport.SealStoreDeleteRequest) error {
-	return ErrNotSupported
+// SealStoreDelete deletes a secret from the platform-sealed store.
+func (t *Transport) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "sealStore.delete", req, nil)
 }
 
-// SealStoreList lists all stored secret names.
+// SealStoreList lists all stored secret names in the platform-sealed store.
 func (t *Transport) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
-	return nil, ErrNotSupported
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.SealStoreListResponse
+	if err := t.rpcCall(ctx, "sealStore.list", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// SealStoreReseal reseals a secret with the current sealing key.
-func (t *Transport) SealStoreReseal(ctx context.Context, _ *transport.SealStoreResealRequest) error {
-	return ErrNotSupported
+// SealStoreReseal reseals a secret with the current platform sealing key.
+func (t *Transport) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "sealStore.reseal", req, nil)
 }
 
-// SealStoreStatus returns the platform store status.
+// SealStoreStatus returns the platform-sealed store status.
 func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.SealStoreStatusResponse
+	if err := t.rpcCall(ctx, "sealStore.status", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Escrow Operations
+//
+// No MCP tool exists yet for external key escrow (pkg/escrow); see
+// docs/escrow/architecture.md. These stubs keep Transport satisfying
+// transport.XKMSServicer.
+
+func (t *Transport) EscrowKey(ctx context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
 	return nil, ErrNotSupported
+}
+
+func (t *Transport) RecoverKey(ctx context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, ErrNotSupported
+}
+
+func (t *Transport) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
+	return nil, ErrNotSupported
+}
+
+func (t *Transport) RevokeEscrow(ctx context.Context, _ string) error {
+	return ErrNotSupported
 }
 
 // Policy Operations

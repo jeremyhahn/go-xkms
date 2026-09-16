@@ -571,6 +571,30 @@ func (s *mockKeystoreServer) PasswordGenerate(_ context.Context, _ *pb.PasswordG
 	return &pb.PasswordGenerateResponse{Password: "Rand0m!P@ssw0rd"}, nil
 }
 
+func (s *mockKeystoreServer) SealStorePut(_ context.Context, req *pb.SealStorePutRequest) (*pb.SealStorePutResponse, error) {
+	return &pb.SealStorePutResponse{Name: req.Name}, nil
+}
+
+func (s *mockKeystoreServer) SealStoreGet(_ context.Context, req *pb.SealStoreGetRequest) (*pb.SealStoreGetResponse, error) {
+	return &pb.SealStoreGetResponse{Name: req.Name, Secret: []byte("s3cret")}, nil
+}
+
+func (s *mockKeystoreServer) SealStoreDelete(_ context.Context, _ *pb.SealStoreDeleteRequest) (*pb.SealStoreDeleteResponse, error) {
+	return &pb.SealStoreDeleteResponse{}, nil
+}
+
+func (s *mockKeystoreServer) SealStoreList(_ context.Context, _ *pb.SealStoreListRequest) (*pb.SealStoreListResponse, error) {
+	return &pb.SealStoreListResponse{Names: []string{"db-password"}}, nil
+}
+
+func (s *mockKeystoreServer) SealStoreReseal(_ context.Context, req *pb.SealStoreResealRequest) (*pb.SealStoreResealResponse, error) {
+	return &pb.SealStoreResealResponse{Name: req.Name}, nil
+}
+
+func (s *mockKeystoreServer) SealStoreStatus(_ context.Context, _ *pb.SealStoreStatusRequest) (*pb.SealStoreStatusResponse, error) {
+	return &pb.SealStoreStatusResponse{Available: true, SealerId: "tpm2", SecretCount: 1, SecretNames: []string{"db-password"}}, nil
+}
+
 // newBufconnTransport creates an in-memory gRPC server + connected Unix Transport for testing.
 func newBufconnTransport(t *testing.T) (*Transport, func()) {
 	t.Helper()
@@ -1460,6 +1484,32 @@ func TestPasswordGenerate_Connected(t *testing.T) {
 	assert.NotEmpty(t, resp.Password)
 }
 
+func TestSealStore_RoundTrip(t *testing.T) {
+	tr, cleanup := newBufconnTransport(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	require.NoError(t, tr.SealStorePut(ctx, &transport.SealStorePutRequest{Name: "db-password", Secret: []byte("s3cret")}))
+
+	getResp, err := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "db-password"})
+	require.NoError(t, err)
+	assert.Equal(t, "db-password", getResp.Name)
+	assert.Equal(t, []byte("s3cret"), getResp.Secret)
+
+	listResp, err := tr.SealStoreList(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, listResp.Names, "db-password")
+
+	require.NoError(t, tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{Name: "db-password"}))
+
+	statusResp, err := tr.SealStoreStatus(ctx)
+	require.NoError(t, err)
+	assert.True(t, statusResp.Available)
+
+	require.NoError(t, tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: "db-password"}))
+}
+
 // --- ErrNotSupported methods ---
 
 func TestErrNotSupported_Methods(t *testing.T) {
@@ -1473,15 +1523,6 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		{"PasswordStoreSetAccessMode", func() error {
 			return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{})
 		}},
-		{"SealStorePut", func() error { return tr.SealStorePut(context.Background(), &transport.SealStorePutRequest{}) }},
-		{"SealStoreGet", func() error {
-			_, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})
-			return err
-		}},
-		{"SealStoreDelete", func() error { return tr.SealStoreDelete(context.Background(), &transport.SealStoreDeleteRequest{}) }},
-		{"SealStoreList", func() error { _, err := tr.SealStoreList(context.Background()); return err }},
-		{"SealStoreReseal", func() error { return tr.SealStoreReseal(context.Background(), &transport.SealStoreResealRequest{}) }},
-		{"SealStoreStatus", func() error { _, err := tr.SealStoreStatus(context.Background()); return err }},
 		{"PolicyCreate", func() error {
 			_, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
 			return err

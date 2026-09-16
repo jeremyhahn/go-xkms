@@ -40,3 +40,4 @@ type ShareServicer = pkgtransport.ShareServicer
 type TenantServicer = pkgtransport.TenantServicer
 type InitCeremonyServicer = pkgtransport.InitCeremonyServicer
 type CredentialManagementServicer = pkgtransport.CredentialManagementServicer
+type EscrowServicer = pkgtransport.EscrowServicer

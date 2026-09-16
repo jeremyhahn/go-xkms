@@ -223,7 +223,6 @@ func TestErrorSentinelsAreDistinctAndNonNil(t *testing.T) {
 		"ErrNotConnected":     sdkrest.ErrNotConnected,
 		"ErrNotSupported":     sdkrest.ErrNotSupported,
 		"ErrConnectionFailed": sdkrest.ErrConnectionFailed,
-		"ErrNotImplemented":   sdkrest.ErrNotImplemented,
 	}
 	seen := map[string]string{}
 	for name, err := range sentinels {

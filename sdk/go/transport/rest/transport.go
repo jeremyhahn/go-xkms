@@ -29,8 +29,6 @@ var (
 	ErrNotSupported = pkgrest.ErrNotSupported
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = pkgrest.ErrConnectionFailed
-	// ErrNotImplemented is returned when an operation has not been implemented yet.
-	ErrNotImplemented = pkgrest.ErrNotImplemented
 )
 
 // Transport is an alias for the canonical REST transport implementation.

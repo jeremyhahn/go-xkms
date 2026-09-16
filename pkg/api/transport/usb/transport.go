@@ -664,6 +664,28 @@ func (t *Transport) SealStoreStatus(_ context.Context) (*transport.SealStoreStat
 	return nil, ErrNotSupported
 }
 
+// Escrow Operations
+//
+// No USB route exists yet for external key escrow (pkg/escrow); see
+// docs/escrow/architecture.md. These stubs keep Transport satisfying
+// transport.XKMSServicer.
+
+func (t *Transport) EscrowKey(_ context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
+	return nil, ErrNotSupported
+}
+
+func (t *Transport) RecoverKey(_ context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
+	return nil, ErrNotSupported
+}
+
+func (t *Transport) ListEscrowed(_ context.Context) ([]transport.EscrowRecord, error) {
+	return nil, ErrNotSupported
+}
+
+func (t *Transport) RevokeEscrow(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
 // Policy Operations
 
 // PolicyCreate creates a new PCR policy.

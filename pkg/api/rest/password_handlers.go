@@ -50,6 +50,19 @@ type PasswordServicer interface {
 	// must never call TenantPasswordStoreManager.UnlockTenant directly or the
 	// credential check is bypassed entirely.
 	PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error
+
+	// PasswordStoreLock closes the session on the tenant password store.
+	// Locking needs no credential, so the handler may call it unconditionally
+	// once a tenant identity is established.
+	PasswordStoreLock(ctx context.Context) error
+
+	// PasswordStoreStatus reports the current lock and seal state of the
+	// password store addressed by the request context. The handler must read
+	// status through the servicer rather than a locally-held
+	// TenantPasswordStoreManager: the servicer's manager is the single
+	// instance session state is tracked against, so a second, independently
+	// constructed manager would report stale or divergent state.
+	PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error)
 }
 
 // Compile-time check that the canonical servicer satisfies the seam.
@@ -499,20 +512,22 @@ func (h *PasswordHandlers) DeletePasswordHandler(w http.ResponseWriter, r *http.
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// UnlockHandler handles POST /api/v1/passwords/unlock requests.
-// When a TenantPasswordStoreManager is configured, it unlocks the
-// tenant's session allowing password store access.
+// UnlockHandler handles POST /api/v1/passwords/unlock requests. It unlocks
+// the caller's tenant session, allowing password store access.
 //
 // The unlock itself is performed by the service layer, which verifies the
 // caller's user PIN first. The handler must not call
 // TenantPasswordStoreManager.UnlockTenant directly: that path carries no
 // credential check, so any authenticated tenant user could open the store.
+//
+// Both the unlock and the status read below go through h.servicer rather
+// than a locally-held TenantPasswordStoreManager. The servicer owns the one
+// manager instance session state is tracked against; a second, independently
+// constructed manager here would drift out of sync with it and could report
+// a store as locked when the servicer had already unlocked it (or the
+// reverse), which is a worse failure mode than a capability that is honestly
+// unavailable.
 func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request) {
-	if h.manager == nil {
-		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
-		return
-	}
-
 	if h.servicer == nil {
 		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
 		return
@@ -541,7 +556,7 @@ func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	status, err := h.manager.TenantStoreStatus(identity.TenantID)
+	status, err := h.servicer.PasswordStoreStatus(r.Context())
 	if err != nil {
 		passwordWriteJSONError(w, "Store unlocked but failed to get status", http.StatusInternalServerError)
 		return
@@ -558,11 +573,12 @@ func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// LockHandler handles POST /api/v1/passwords/lock requests.
-// When a TenantPasswordStoreManager is configured, it locks the
-// tenant's session preventing password store access.
+// LockHandler handles POST /api/v1/passwords/lock requests. It locks the
+// caller's tenant session, preventing password store access. See
+// UnlockHandler for why this goes through h.servicer rather than a
+// locally-held TenantPasswordStoreManager.
 func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
-	if h.manager == nil {
+	if h.servicer == nil {
 		passwordWriteJSONError(w, "Password store lock requires server integration", http.StatusNotImplemented)
 		return
 	}
@@ -573,19 +589,12 @@ func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.manager.LockTenant(identity.TenantID); err != nil {
-		switch {
-		case errors.Is(err, staticpw.ErrStoreAlreadyLocked):
-			passwordWriteJSONError(w, "Store is already locked", http.StatusConflict)
-		case errors.Is(err, seal.ErrTenantNotFound):
-			passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-		default:
-			passwordWriteJSONError(w, "Failed to lock store", http.StatusInternalServerError)
-		}
+	if err := h.servicer.PasswordStoreLock(r.Context()); err != nil {
+		passwordWriteLockError(w, err)
 		return
 	}
 
-	status, err := h.manager.TenantStoreStatus(identity.TenantID)
+	status, err := h.servicer.PasswordStoreStatus(r.Context())
 	if err != nil {
 		passwordWriteJSONError(w, "Store locked but failed to get status", http.StatusInternalServerError)
 		return
@@ -604,39 +613,40 @@ func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 
 // StatusHandler handles GET /api/v1/passwords/status requests.
 // It returns the availability and lock status of the password store.
+//
+// Status is read through h.servicer, the same source of truth UnlockHandler
+// and LockHandler use, rather than a locally-held TenantPasswordStoreManager;
+// see UnlockHandler for why a second manager instance would risk reporting
+// state that has drifted from what was actually unlocked or locked.
+// PasswordStoreStatus itself distinguishes tenant-scoped status from
+// system-level status, so no separate branch is needed here for either case.
 func (h *PasswordHandlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.manager != nil {
-		identity := auth.GetIdentity(r.Context())
-		if identity != nil && identity.TenantID != "" {
-			status, err := h.manager.TenantStoreStatus(identity.TenantID)
-			if err != nil {
-				if errors.Is(err, seal.ErrTenantNotFound) {
-					passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-					return
-				}
-				passwordWriteJSONError(w, "Failed to get store status", http.StatusInternalServerError)
-				return
-			}
+	if h.servicer == nil {
+		// No service layer wired: report only that the store exists.
+		writeJSON(w, PasswordStoreStatusResponse{
+			Available: true,
+			Message:   "Password store is available",
+		}, http.StatusOK)
+		return
+	}
 
-			resp := PasswordStoreStatusResponse{
-				Available:     true,
-				IsLocked:      status.IsLocked,
-				BarrierSealed: status.BarrierSealed,
-				PasswordCount: status.PasswordCount,
-				Message:       "Password store status retrieved",
-			}
-			writeJSON(w, resp, http.StatusOK)
+	status, err := h.servicer.PasswordStoreStatus(r.Context())
+	if err != nil {
+		if errors.Is(err, seal.ErrTenantNotFound) {
+			passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
 			return
 		}
+		passwordWriteJSONError(w, "Failed to get store status", http.StatusInternalServerError)
+		return
 	}
 
-	// System-level fallback.
-	resp := PasswordStoreStatusResponse{
-		Available: true,
-		Message:   "Password store is available",
-	}
-
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, PasswordStoreStatusResponse{
+		Available:     true,
+		IsLocked:      status.IsLocked,
+		BarrierSealed: status.BarrierSealed,
+		PasswordCount: status.PasswordCount,
+		Message:       "Password store status retrieved",
+	}, http.StatusOK)
 }
 
 // SetAccessModeHandler handles POST /api/v1/passwords/access-mode requests.
@@ -774,6 +784,21 @@ func passwordWriteUnlockError(w http.ResponseWriter, err error) {
 		// backend. Report it as an authentication failure without echoing the
 		// backend's message, which can carry retry counters and lockout state.
 		passwordWriteJSONError(w, "User PIN verification failed", http.StatusUnauthorized)
+	}
+}
+
+// passwordWriteLockError maps the errors returned by
+// XKMSService.PasswordStoreLock onto HTTP statuses.
+func passwordWriteLockError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, staticpw.ErrStoreAlreadyLocked):
+		passwordWriteJSONError(w, "Store is already locked", http.StatusConflict)
+	case errors.Is(err, seal.ErrTenantNotFound):
+		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
+	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
+		passwordWriteJSONError(w, "Password store lock requires server integration", http.StatusNotImplemented)
+	default:
+		passwordWriteJSONError(w, "Failed to lock store", http.StatusInternalServerError)
 	}
 }
 

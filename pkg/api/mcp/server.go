@@ -388,6 +388,14 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"password.status":   (*Server).handlePasswordStatus,
 	"password.generate": (*Server).handlePasswordGenerate,
 
+	// Platform-sealed store (machine-local sealed credential store)
+	"sealStore.put":    (*Server).handleSealStorePut,
+	"sealStore.get":    (*Server).handleSealStoreGet,
+	"sealStore.delete": (*Server).handleSealStoreDelete,
+	"sealStore.list":   (*Server).handleSealStoreList,
+	"sealStore.reseal": (*Server).handleSealStoreReseal,
+	"sealStore.status": (*Server).handleSealStoreStatus,
+
 	// SSH key operations
 	"ssh.keys.generate": (*Server).handleSSHKeysGenerate,
 	"ssh.keys.import":   (*Server).handleSSHKeysImport,

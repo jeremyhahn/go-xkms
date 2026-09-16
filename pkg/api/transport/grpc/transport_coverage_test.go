@@ -287,36 +287,36 @@ func TestFinishAuthentication_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-// --- SealStore (not supported) ---
+// --- SealStore ---
 
-func TestSealStorePut_NotSupported(t *testing.T) {
+func TestSealStorePut_NotConnected(t *testing.T) {
 	err := newDisconnected(t).SealStorePut(context.Background(), &transport.SealStorePutRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreGet_NotSupported(t *testing.T) {
+func TestSealStoreGet_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreDelete_NotSupported(t *testing.T) {
+func TestSealStoreDelete_NotConnected(t *testing.T) {
 	err := newDisconnected(t).SealStoreDelete(context.Background(), &transport.SealStoreDeleteRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreList_NotSupported(t *testing.T) {
+func TestSealStoreList_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).SealStoreList(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreReseal_NotSupported(t *testing.T) {
+func TestSealStoreReseal_NotConnected(t *testing.T) {
 	err := newDisconnected(t).SealStoreReseal(context.Background(), &transport.SealStoreResealRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestSealStoreStatus_NotSupported(t *testing.T) {
+func TestSealStoreStatus_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).SealStoreStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 // --- Policy (not supported) ---

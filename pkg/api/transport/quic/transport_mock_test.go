@@ -150,6 +150,16 @@ func mockHandler() http.Handler {
 			respond(transport.PasswordAddResponse{ID: "pw-1", Name: "test"})
 		case strings.HasPrefix(path, "/api/v1/passwords"):
 			respond(transport.PasswordGetResponse{ID: "pw-1", Name: "test"})
+		case strings.Contains(path, "/platform/status"):
+			respond(transport.SealStoreStatusResponse{Available: true, SealerID: "tpm2", SecretCount: 1, SecretNames: []string{"db-password"}})
+		case path == "/api/v1/platform/secrets":
+			respond(transport.SealStoreListResponse{Names: []string{"db-password"}})
+		case strings.Contains(path, "/reseal"):
+			respond(transport.SealStoreResealRequest{Name: "db-password"})
+		case strings.HasPrefix(path, "/api/v1/platform/secrets/") && r.Method == http.MethodGet:
+			respond(transport.SealStoreGetResponse{Name: "db-password", Secret: []byte("s3cret")})
+		case strings.HasPrefix(path, "/api/v1/platform/secrets/"):
+			respond(map[string]string{"name": "db-password"})
 		default:
 			respond(map[string]bool{"success": true})
 		}
@@ -173,6 +183,32 @@ func newMockTransport(t *testing.T) (*Transport, func()) {
 }
 
 // --- Connected tests ---
+
+func TestSealStore_MockRoundTrip(t *testing.T) {
+	tr, cleanup := newMockTransport(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	require.NoError(t, tr.SealStorePut(ctx, &transport.SealStorePutRequest{Name: "db-password", Secret: []byte("s3cret")}))
+
+	getResp, err := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "db-password"})
+	require.NoError(t, err)
+	assert.Equal(t, "db-password", getResp.Name)
+	assert.Equal(t, []byte("s3cret"), getResp.Secret)
+
+	listResp, err := tr.SealStoreList(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, listResp.Names, "db-password")
+
+	require.NoError(t, tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{Name: "db-password"}))
+
+	statusResp, err := tr.SealStoreStatus(ctx)
+	require.NoError(t, err)
+	assert.True(t, statusResp.Available)
+
+	require.NoError(t, tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: "db-password"}))
+}
 
 func TestHealth_MockConnected(t *testing.T) {
 	tr, cleanup := newMockTransport(t)
@@ -501,15 +537,6 @@ func TestErrNotSupported_StubMethods(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"SealStorePut", func() error { return tr.SealStorePut(context.Background(), &transport.SealStorePutRequest{}) }},
-		{"SealStoreGet", func() error {
-			_, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})
-			return err
-		}},
-		{"SealStoreDelete", func() error { return tr.SealStoreDelete(context.Background(), &transport.SealStoreDeleteRequest{}) }},
-		{"SealStoreList", func() error { _, err := tr.SealStoreList(context.Background()); return err }},
-		{"SealStoreReseal", func() error { return tr.SealStoreReseal(context.Background(), &transport.SealStoreResealRequest{}) }},
-		{"SealStoreStatus", func() error { _, err := tr.SealStoreStatus(context.Background()); return err }},
 		{"PolicyCreate", func() error {
 			_, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
 			return err

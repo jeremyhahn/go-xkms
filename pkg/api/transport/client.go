@@ -548,6 +548,29 @@ type TenantService interface {
 	UpdateTenantQuotas(ctx context.Context, req *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
 }
 
+// EscrowService provides external key-escrow operations (pkg/escrow):
+// replicating already-wrapped key material to configured escrow agents,
+// recovering it, listing what is escrowed, and revoking an escrowed key.
+// The key material carried in every request and response here is always
+// already wrapped (AES-KW or RSA-OAEP) by the caller — no escrow agent, and
+// no transport carrying these calls, ever sees plaintext key material.
+type EscrowService interface {
+	// EscrowKey sends wrapped key material to every configured escrow agent.
+	EscrowKey(ctx context.Context, req *EscrowRequest) ([]*EscrowReceipt, error)
+
+	// RecoverKey retrieves wrapped key material from the first configured
+	// escrow agent that has it.
+	RecoverKey(ctx context.Context, req *RecoverRequest) (*RecoverResponse, error)
+
+	// ListEscrowed returns the aggregated escrow records across every
+	// configured escrow agent.
+	ListEscrowed(ctx context.Context) ([]EscrowRecord, error)
+
+	// RevokeEscrow removes an escrowed key, identified by its escrow-assigned
+	// ID, from every configured escrow agent.
+	RevokeEscrow(ctx context.Context, escrowID string) error
+}
+
 // Client composes all service sub-interfaces into a unified client.
 // All transport implementations (gRPC, REST, QUIC, MCP, Unix, Embedded)
 // must implement this interface.
@@ -578,4 +601,5 @@ type Client interface {
 	InitCeremonyService
 	CredentialManagementService
 	AuditService
+	EscrowService
 }
