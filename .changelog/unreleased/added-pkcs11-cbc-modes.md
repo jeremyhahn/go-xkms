@@ -1,0 +1,1 @@
+- **PKCS#11 gained CBC, CBC-pad and ECB symmetric modes, matching the software backend.** The pkg/backend/pkcs11 symmetric provider now supports CBC, CBC-PKCS7-pad and ECB mode envelopes in addition to the GCM and KWP modes it already offered. All three modes are available on all PKCS#11 tokens that expose the corresponding mechanisms (CKM_AES_CBC, CKM_AES_CBC_PAD, CKM_AES_ECB).
