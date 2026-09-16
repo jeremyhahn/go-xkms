@@ -635,13 +635,10 @@ func (s *MultiProtocolServer) buildRouter() {
 		tenantHandlers.RegisterRoutes(s.router, s.authMiddleware, s.gate)
 	}
 
-	// Register barrier and setup handlers if the admin service supports them
+	// Register barrier handlers if the admin service supports them
 	if taSvc, ok := s.adminService.(admin.TenantAwareService); ok {
 		if barrierSvc := taSvc.BarrierSvc(); barrierSvc != nil {
 			admin.NewBarrierHandlers(barrierSvc, s.logger).RegisterRoutes(s.router, s.authMiddleware, s.gate)
-		}
-		if setupSvc := taSvc.SetupSvc(); setupSvc != nil {
-			admin.NewSetupHandlers(setupSvc, s.logger).RegisterRoutes(s.router)
 		}
 	}
 
@@ -832,8 +829,16 @@ func (s *MultiProtocolServer) startGRPC(_ context.Context) error {
 
 	// Start Unix socket listener WITHOUT TLS (uses SO_PEERCRED for authentication)
 	if s.config.GRPCUnixPath != "" {
-		// Unix socket server uses insecure credentials - authentication is via SO_PEERCRED
-		var unixOpts []grpc.ServerOption
+		// The Unix socket server carries no TLS; the kernel-verified SO_PEERCRED
+		// identity extracted during the transport handshake is the only
+		// authentication for this listener, so it must fail closed at
+		// construction on a platform this package cannot verify credentials on.
+		peerCreds, err := NewUnixPeerCredentials()
+		if err != nil {
+			return err
+		}
+
+		unixOpts := []grpc.ServerOption{grpc.Creds(peerCreds)}
 
 		// Add interceptors for Unix socket authentication
 		unixOpts = append(unixOpts, grpc.ChainUnaryInterceptor(

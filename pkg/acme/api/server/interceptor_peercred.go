@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build linux || darwin || freebsd || openbsd || netbsd
-
 package server
 
 import (

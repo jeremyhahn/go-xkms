@@ -41,6 +41,30 @@ func (e ErrPeerCredentialsFailed) Error() string {
 	return fmt.Sprintf("failed to get peer credentials: %s", e.Reason)
 }
 
+// ErrPeerCredentialsUnsupported is returned when the running platform has no
+// kernel peer-credential mechanism this package implements. It is returned
+// at transport-credential construction time, before any socket is opened, so
+// a deployment on an unsupported platform never starts an Admin API Unix
+// listener it cannot authenticate.
+type ErrPeerCredentialsUnsupported struct {
+	// GOOS is the runtime.GOOS value construction was attempted on.
+	GOOS string
+}
+
+func (e ErrPeerCredentialsUnsupported) Error() string {
+	return fmt.Sprintf("peer credential extraction is not implemented for GOOS=%s", e.GOOS)
+}
+
+// ErrClientHandshakeUnsupported is returned by unixPeerCredentials'
+// ClientHandshake, which exists only to satisfy credentials.TransportCredentials.
+// xkmsd never dials a Unix Admin API socket as a gRPC client, so this
+// transport credential is server-only.
+type ErrClientHandshakeUnsupported struct{}
+
+func (e ErrClientHandshakeUnsupported) Error() string {
+	return "peer credential transport does not support client-side handshakes"
+}
+
 // ErrPermissionDenied is returned when an authorization check fails. It names
 // the canonical go-qrdb resource:action grant the caller lacked, not a local
 // role tier, so the message matches what an operator must grant to fix it.
