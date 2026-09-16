@@ -144,3 +144,29 @@ func TestDeviceWithNilStore(t *testing.T) {
 	assert.Equal(t, "/dev/tpmrm0", device,
 		"Device must return the configured path even with nil stores")
 }
+
+// TestFixedProperties_ManufacturerCodeIsTheCertificateForm pins the format a
+// certificate carries, not merely that the field is populated.
+//
+// TCG DevID v1 r12 §8.1 makes the manufacturer code the first component of
+// the hardwareModuleName identifying the TPM. A CA issuing an IDevID for a
+// TPM whose EK certificate records no tcg-at-tpmManufacturer of its own takes
+// the code from here, so the wrong shape would not fail — it would produce a
+// certificate naming a TPM that no verifier resolves back to this vendor.
+func TestFixedProperties_ManufacturerCodeIsTheCertificateForm(t *testing.T) {
+	tpm := createSimNoStore(t)
+	defer func() { _ = tpm.Close() }()
+
+	props, err := tpm.FixedProperties()
+	require.NoError(t, err)
+
+	require.NotEmpty(t, props.ManufacturerCode, "ManufacturerCode must be populated")
+	assert.Regexp(t, `^id:[0-9A-F]{8}$`, props.ManufacturerCode,
+		"the code must be \"id:\" plus the 32-bit TPM_PT_MANUFACTURER value in uppercase hex, "+
+			"which is how tcg-at-tpmManufacturer carries it")
+
+	// It must be the CODE, never the friendly name: the name is a lookup
+	// result and cannot be resolved back to a vendor by a verifier.
+	assert.NotEqual(t, props.Manufacturer, props.ManufacturerCode,
+		"the code and the display name are different values for different jobs")
+}

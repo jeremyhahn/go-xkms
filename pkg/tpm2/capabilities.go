@@ -45,59 +45,73 @@ type PropertiesFixed struct {
 	LockoutCounter          uint32
 	LockoutInterval         uint32
 	LockoutRecovery         uint32
-	Manufacturer            string
-	MaxECCKeyBits           uint32
-	MaxRSAKeyBits           uint32
-	Model                   string
-	MaxAuthFail             uint32
-	Memory                  uint32
-	NVBufferMax             uint32
-	NVIndexesDefined        uint32
-	NVIndexesMax            uint32
-	NVWriteRecovery         uint32
-	PersistentAvail         uint32
-	PersistentLoaded        uint32
-	PersistentMin           uint32
-	Revision                string
-	SupportedAlgorithms     []string
-	TransientAvail          uint32
-	TransientMin            uint32
-	VendorID                string
-	InputBufferMax          uint32
-	MaxDigestSize           uint32
-	MaxObjectContext        uint32
-	DayOfYear               uint32
-	Year                    uint32
-	PCRCount                uint32
-	PCRSelectMin            uint32
-	ContextGapMax           uint32
-	NVCountersMax           uint32
-	ClockUpdate             uint32
-	ContextHash             uint32
-	ContextSym              uint32
-	ContextSymSize          uint32
-	OrderlyCount            uint32
-	MaxCommandSize          uint32
-	MaxResponseSize         uint32
-	MaxSessionContext       uint32
-	PSFamilyIndicator       uint32
-	PSLevel                 uint32
-	PSRevision              uint32
-	PSDayOfYear             uint32
-	PSYear                  uint32
-	SplitMax                uint32
-	TotalCommands           uint32
-	LibraryCommands         uint32
-	VendorCommands          uint32
-	MaxCapBuffer            uint32
-	HRLoadedMin             uint32
-	Permanent               uint32
-	StartupClear            uint32
-	NVCounters              uint32
-	NVCountersAvail         uint32
-	AlgorithmSet            uint32
-	AuditCounter0           uint32
-	AuditCounter1           uint32
+	// Manufacturer is the TPM vendor's human-readable name, e.g. "Infineon".
+	// It is for display; it is NOT the identifier a certificate carries.
+	Manufacturer string
+	// ManufacturerCode is the TCG TPM manufacturer code in the form the
+	// tcg-at-tpmManufacturer attribute carries it, e.g. "id:49465800".
+	//
+	// TCG DevID v1 r12 §8.1 makes this code the first component of the
+	// hardwareModuleName that identifies the TPM, so a CA issuing an
+	// IDevID for a TPM whose EK certificate records no code of its own
+	// needs it from the device. The friendly name cannot substitute: it is
+	// a lookup result, and writing it into a certificate would name a TPM
+	// that no verifier resolves back to this vendor.
+	//
+	// Empty only when TPM2_GetCapability(TPM_PT_MANUFACTURER) itself fails.
+	ManufacturerCode    string
+	MaxECCKeyBits       uint32
+	MaxRSAKeyBits       uint32
+	Model               string
+	MaxAuthFail         uint32
+	Memory              uint32
+	NVBufferMax         uint32
+	NVIndexesDefined    uint32
+	NVIndexesMax        uint32
+	NVWriteRecovery     uint32
+	PersistentAvail     uint32
+	PersistentLoaded    uint32
+	PersistentMin       uint32
+	Revision            string
+	SupportedAlgorithms []string
+	TransientAvail      uint32
+	TransientMin        uint32
+	VendorID            string
+	InputBufferMax      uint32
+	MaxDigestSize       uint32
+	MaxObjectContext    uint32
+	DayOfYear           uint32
+	Year                uint32
+	PCRCount            uint32
+	PCRSelectMin        uint32
+	ContextGapMax       uint32
+	NVCountersMax       uint32
+	ClockUpdate         uint32
+	ContextHash         uint32
+	ContextSym          uint32
+	ContextSymSize      uint32
+	OrderlyCount        uint32
+	MaxCommandSize      uint32
+	MaxResponseSize     uint32
+	MaxSessionContext   uint32
+	PSFamilyIndicator   uint32
+	PSLevel             uint32
+	PSRevision          uint32
+	PSDayOfYear         uint32
+	PSYear              uint32
+	SplitMax            uint32
+	TotalCommands       uint32
+	LibraryCommands     uint32
+	VendorCommands      uint32
+	MaxCapBuffer        uint32
+	HRLoadedMin         uint32
+	Permanent           uint32
+	StartupClear        uint32
+	NVCounters          uint32
+	NVCountersAvail     uint32
+	AlgorithmSet        uint32
+	AuditCounter0       uint32
+	AuditCounter1       uint32
 
 	// Handle enumeration results
 	PersistentHandles []tpm2.TPMHandle
@@ -402,6 +416,12 @@ func (tpm *TPM2) FixedProperties() (*PropertiesFixed, error) {
 		props.Manufacturer = v
 	} else {
 		tpm.logger.Debug("failed to query manufacturer", slog.String("error", err.Error()))
+	}
+
+	if v, err := manufacturerCode(tpm.transport); err == nil {
+		props.ManufacturerCode = v
+	} else {
+		tpm.logger.Debug("failed to query manufacturerCode", slog.String("error", err.Error()))
 	}
 
 	if v, err := maxAuthFail(tpm.transport); err == nil {
@@ -1590,6 +1610,29 @@ func manufacturer(transport transport.TPM) (string, error) {
 	// manufacturer code produces short codes like "IFX" that look like
 	// garbage for unknown vendors, so skip it entirely.
 	return fmt.Sprintf("0x%08X", val), nil
+}
+
+// manufacturerCode returns TPM_PT_MANUFACTURER in the textual form the
+// tcg-at-tpmManufacturer attribute uses, "id:" followed by the 32-bit value
+// in uppercase hexadecimal — "id:49465800" for Infineon.
+//
+// manufacturer() above resolves the same value to a friendly name and
+// discards the number. Both are wanted for different jobs: the name is for
+// an operator, the code is what goes in a certificate.
+func manufacturerCode(transport transport.TPM) (string, error) {
+	response, err := tpm2.GetCapability{
+		Capability:    tpm2.TPMCapTPMProperties,
+		Property:      tpmPtManufacturer,
+		PropertyCount: 1,
+	}.Execute(transport)
+	if err != nil {
+		return "", err
+	}
+	mfgProps, err := response.CapabilityData.Data.TPMProperties()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("id:%08X", mfgProps.TPMProperty[0].Value), nil
 }
 
 func model(transport transport.TPM) (string, error) {
