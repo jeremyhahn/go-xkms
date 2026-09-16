@@ -409,9 +409,10 @@ func TestCoverageBoost_GetTenantSigningCA_NoAvailableSigners(t *testing.T) {
 // ==========================================================================
 
 func TestCoverageBoost_GetTenant_DeletedTenant(t *testing.T) {
-	logger := slog.Default()
-	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	// Requires a real tenantDAO (storageFactory): the soft-delete status this
+	// test exercises lives on the local CA/EAB/status linkage row, which a
+	// nil storageFactory has no backing store for.
+	service := newTenantAwareTestService(t)
 
 	// Create and then soft-delete the tenant
 	_, err := service.CreateTenant(context.Background(), CreateTenantRequest{
@@ -429,14 +430,15 @@ func TestCoverageBoost_GetTenant_DeletedTenant(t *testing.T) {
 	assert.Equal(t, ErrTenantNotFound, err)
 }
 
-func TestCoverageBoost_GetTenant_FallbackNoPolicies(t *testing.T) {
-	// Service with no tenantDAO and no policies for this tenant
+func TestCoverageBoost_GetTenant_NoTenantService(t *testing.T) {
+	// Service with no qrdb TenantServicer wired: GetTenant must fail closed
+	// with ErrTenantServiceUnavailable rather than fall back to a local model.
 	logger := slog.Default()
 	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.GetTenant(context.Background(), "nonexistent")
 	require.Error(t, err)
-	assert.Equal(t, ErrTenantNotFound, err)
+	assert.Equal(t, ErrTenantServiceUnavailable, err)
 }
 
 // ==========================================================================
@@ -531,6 +533,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Suspend(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	// Create tenant first so tenantDAO can find it
 	_, err := service.CreateTenant(context.Background(), CreateTenantRequest{

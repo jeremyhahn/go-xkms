@@ -101,6 +101,7 @@ func TestTenantAwareAdminService_CreateTenant_Success(t *testing.T) {
 	qrdbSvc := newTestQRDB()
 
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	req := CreateTenantRequest{
 		ID:   "tenant-success",
@@ -139,6 +140,7 @@ func TestTenantAwareAdminService_GetTenant_NotFound(t *testing.T) {
 	qrdbSvc := newTestQRDB()
 
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	_, err := service.GetTenant(context.Background(), "nonexistent-tenant")
 	require.Error(t, err)
@@ -164,11 +166,14 @@ func TestTenantAwareAdminService_GetTenant_Success(t *testing.T) {
 }
 
 func TestTenantAwareAdminService_GetTenant_FallbackNotFound(t *testing.T) {
-	// This test verifies that ErrTenantNotFound is returned for nonexistent tenants
+	// This test verifies that ErrTenantNotFound is returned for nonexistent
+	// tenants once a qrdb TenantServicer is wired (qrdb is the single tenant
+	// authority; there is no local-only fallback to test here anymore).
 	logger := slog.Default()
 	qrdbSvc := newTestQRDB()
 
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	_, err := service.GetTenant(context.Background(), "tenant-123")
 	require.Error(t, err)
@@ -265,6 +270,7 @@ func TestTenantAwareAdminService_DeleteTenant_Success(t *testing.T) {
 	qrdbSvc := newTestQRDB()
 
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	// Create tenant first
 	_, err := service.CreateTenant(context.Background(), CreateTenantRequest{
@@ -371,6 +377,7 @@ func TestTenantAwareAdminService_ListTenants_Defaults(t *testing.T) {
 	qrdbSvc := newTestQRDB()
 
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	// Test with defaults (page 0, perPage 0)
 	tenants, pagination, err := service.ListTenants(context.Background(), ListTenantsRequest{})
@@ -387,6 +394,7 @@ func TestTenantAwareAdminService_ListTenants_MaxPerPage(t *testing.T) {
 	qrdbSvc := newTestQRDB()
 
 	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service.SetTenantService(newFakeTenantServicer())
 
 	// Test with too high perPage
 	_, pagination, err := service.ListTenants(context.Background(), ListTenantsRequest{

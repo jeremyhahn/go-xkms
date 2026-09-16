@@ -518,19 +518,26 @@ type ListEABRequest struct {
 
 // Tenant error types
 var (
-	ErrTenantNotFound        = errors.New("admin: tenant not found")
-	ErrTenantAlreadyExists   = errors.New("admin: tenant already exists")
-	ErrTenantSuspended       = errors.New("admin: tenant is suspended")
-	ErrTenantDeleted         = errors.New("admin: tenant is deleted")
-	ErrInvalidTenantID       = errors.New("admin: invalid tenant ID")
-	ErrTenantCANotConfigured = errors.New("admin: tenant CA not configured")
-	ErrTenantRootCAExists    = errors.New("admin: tenant root CA already exists")
-	ErrTenantRootCANotFound  = errors.New("admin: tenant root CA not found")
-	ErrTenantIntCANotFound   = errors.New("admin: tenant intermediate CA not found")
-	ErrTenantIntCAExists     = errors.New("admin: tenant intermediate CA already exists")
-	ErrEABNotFound           = errors.New("admin: external account binding not found")
-	ErrInvalidEABPurpose     = errors.New("admin: invalid EAB purpose")
-	ErrInvalidKeyAlgorithm   = errors.New("admin: invalid key algorithm")
-	ErrNoSigningCAAvailable  = errors.New("admin: no signing CA available for tenant")
-	ErrRBACNotAvailable      = errors.New("admin: RBAC service not available")
+	// ErrTenantServiceUnavailable is returned by CreateTenant, GetTenant,
+	// UpdateTenant, DeleteTenant, and ListTenants when no qrdb
+	// ServiceTenantServicer has been wired via SetTenantService. qrdb is the
+	// single authority for tenant identity; these methods never fall back to
+	// a local-only tenant model, so a caller that has not wired a tenant
+	// service gets this typed error instead of a silently divergent result.
+	ErrTenantServiceUnavailable = errors.New("admin: tenant service not configured")
+	ErrTenantNotFound           = errors.New("admin: tenant not found")
+	ErrTenantAlreadyExists      = errors.New("admin: tenant already exists")
+	ErrTenantSuspended          = errors.New("admin: tenant is suspended")
+	ErrTenantDeleted            = errors.New("admin: tenant is deleted")
+	ErrInvalidTenantID          = errors.New("admin: invalid tenant ID")
+	ErrTenantCANotConfigured    = errors.New("admin: tenant CA not configured")
+	ErrTenantRootCAExists       = errors.New("admin: tenant root CA already exists")
+	ErrTenantRootCANotFound     = errors.New("admin: tenant root CA not found")
+	ErrTenantIntCANotFound      = errors.New("admin: tenant intermediate CA not found")
+	ErrTenantIntCAExists        = errors.New("admin: tenant intermediate CA already exists")
+	ErrEABNotFound              = errors.New("admin: external account binding not found")
+	ErrInvalidEABPurpose        = errors.New("admin: invalid EAB purpose")
+	ErrInvalidKeyAlgorithm      = errors.New("admin: invalid key algorithm")
+	ErrNoSigningCAAvailable     = errors.New("admin: no signing CA available for tenant")
+	ErrRBACNotAvailable         = errors.New("admin: RBAC service not available")
 )

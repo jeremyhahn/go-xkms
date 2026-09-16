@@ -283,14 +283,28 @@ func TestTenantAwareAdminService_ListTenants_DelegatesToQRDB(t *testing.T) {
 	assert.Len(t, list, 2)
 }
 
-// TestTenantAwareAdminService_CreateTenant_NoQRDBFallsBackLocal proves that
-// without SetTenantService, CreateTenant still works against the local
-// entities.Tenant path — callers that never wire a qrdb node (most existing
-// unit tests in this package) are unaffected by the delegation change.
-func TestTenantAwareAdminService_CreateTenant_NoQRDBFallsBackLocal(t *testing.T) {
+// TestTenantAwareAdminService_TenantLifecycle_NoQRDBFailsClosed proves that
+// without SetTenantService, every tenant identity lifecycle method fails
+// with ErrTenantServiceUnavailable rather than silently falling back to a
+// local-only entities.Tenant model — qrdb is the single tenant authority,
+// per the owner decision this change implements.
+func TestTenantAwareAdminService_TenantLifecycle_NoQRDBFailsClosed(t *testing.T) {
 	svc := NewTenantAwareAdminService(nil, nil, nil, slog.Default(), "1.0.0")
 	// No SetTenantService call.
-	info, err := svc.CreateTenant(context.Background(), CreateTenantRequest{ID: "local-only", Name: "Local Only"})
-	require.NoError(t, err)
-	assert.Equal(t, "local-only", info.ID)
+	ctx := context.Background()
+
+	_, err := svc.CreateTenant(ctx, CreateTenantRequest{ID: "local-only", Name: "Local Only"})
+	assert.ErrorIs(t, err, ErrTenantServiceUnavailable)
+
+	_, err = svc.GetTenant(ctx, "local-only")
+	assert.ErrorIs(t, err, ErrTenantServiceUnavailable)
+
+	_, err = svc.UpdateTenant(ctx, "local-only", UpdateTenantRequest{Name: "New Name"})
+	assert.ErrorIs(t, err, ErrTenantServiceUnavailable)
+
+	err = svc.DeleteTenant(ctx, "local-only")
+	assert.ErrorIs(t, err, ErrTenantServiceUnavailable)
+
+	_, _, err = svc.ListTenants(ctx, ListTenantsRequest{})
+	assert.ErrorIs(t, err, ErrTenantServiceUnavailable)
 }

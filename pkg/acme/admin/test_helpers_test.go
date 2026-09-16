@@ -227,8 +227,11 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 }
 
 // newTenantAwareTestService creates a TenantAwareAdminService backed by an
-// in-memory TenantAwareFactory over the kvadapter datastore path. This provides
-// a real tenantDAO for tests that need to create, get, update, or delete tenants.
+// in-memory TenantAwareFactory over the kvadapter datastore path, with an
+// in-memory fake qrdb TenantServicer wired via SetTenantService. qrdb is the
+// single tenant identity authority, so every test that exercises
+// CreateTenant/GetTenant/UpdateTenant/DeleteTenant/ListTenants needs one
+// wired; the tenantDAO remains available for the CA/EAB/status linkage row.
 func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	t.Helper()
 
@@ -241,5 +244,7 @@ func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
 
-	return NewTenantAwareAdminService(nil, factory, qrdbSvc, logger, "1.0.0")
+	svc := NewTenantAwareAdminService(nil, factory, qrdbSvc, logger, "1.0.0")
+	svc.SetTenantService(newFakeTenantServicer())
+	return svc
 }
