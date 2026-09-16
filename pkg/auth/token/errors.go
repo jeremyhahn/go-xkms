@@ -13,6 +13,8 @@
 
 package token
 
+import "time"
+
 // NilInputError is returned when a required constructor argument is nil or
 // empty.
 type NilInputError struct {
@@ -61,6 +63,67 @@ type RefreshRevokedError struct{}
 // Error implements the error interface.
 func (e *RefreshRevokedError) Error() string {
 	return "auth/token: refresh token revoked or unknown"
+}
+
+// RefreshRaceLostError is returned when an atomic rotation lost its race: a
+// concurrent exchange of the same refresh token rotated the record first, so
+// this caller must not receive a successor.
+//
+// It is deliberately distinct from RefreshReuseError. A lost race is two
+// requests arriving inside one round trip, which is the shape of a
+// double-submitted client, and it revokes nothing; a rotated token presented
+// after the rotation completed is the signature of theft and still revokes the
+// whole family. Either way only one successor exists.
+type RefreshRaceLostError struct {
+	Family string
+	JTI    string
+}
+
+// Error implements the error interface.
+func (e *RefreshRaceLostError) Error() string {
+	return "auth/token: refresh token was already rotated by a concurrent request"
+}
+
+// FamilyRevokedError is returned when a record cannot be committed because its
+// family carries a revocation tombstone. It is how a refresh that raced a
+// logout is prevented from leaving a usable successor behind.
+type FamilyRevokedError struct {
+	Family string
+}
+
+// Error implements the error interface.
+func (e *FamilyRevokedError) Error() string {
+	return "auth/token: refresh token family is revoked; no successor may be issued"
+}
+
+// GuardedKVUnsupportedError is returned by NewQRDBRefreshStore when the KV
+// client does not carry the atomic conditional-write verbs
+// (transport.GuardedKVClient). Refresh-token rotation is decided by a
+// compare-and-swap, so a transport without them cannot host the store; the
+// store fails to build rather than run a read-then-write two refreshes can
+// interleave inside.
+type GuardedKVUnsupportedError struct {
+	ClientType string
+}
+
+// Error implements the error interface.
+func (e *GuardedKVUnsupportedError) Error() string {
+	return "auth/token: kv client " + e.ClientType +
+		" does not implement transport.GuardedKVClient; atomic refresh-token rotation is unavailable on this transport"
+}
+
+// RefreshTTLTooLongError is returned when a configured refresh lifetime
+// outlives the family revocation tombstone that has to guard it. Allowing it
+// would let a token outlive the record of its own family's revocation.
+type RefreshTTLTooLongError struct {
+	TTL time.Duration
+	Max time.Duration
+}
+
+// Error implements the error interface.
+func (e *RefreshTTLTooLongError) Error() string {
+	return "auth/token: refresh TTL " + e.TTL.String() +
+		" exceeds the revocation tombstone window " + e.Max.String()
 }
 
 // StoreError wraps a refresh-store failure.

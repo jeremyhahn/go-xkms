@@ -133,6 +133,12 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 	if refreshTTL <= 0 {
 		refreshTTL = DefaultRefreshTTL
 	}
+	// A refresh token that outlives its family's revocation tombstone could be
+	// exchanged after the record of the revocation has been swept, which is the
+	// one way a revoked lineage could come back to life.
+	if refreshTTL > RevocationTombstoneTTL {
+		return nil, &RefreshTTLTooLongError{TTL: refreshTTL, Max: RevocationTombstoneTTL}
+	}
 
 	return &Issuer{
 		signer:     cfg.Signer,
@@ -207,10 +213,17 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 		return nil, &RefreshReuseError{Family: family}
 	}
 
+	// MarkRotated is the arbitration point. The Rotated check above is an early
+	// out for the replay that arrives after a rotation completed; it cannot
+	// decide a race, because two refreshes can both read Rotated=false. Only
+	// this atomic compare-and-swap can, and exactly one caller wins it. The
+	// loser gets *RefreshRaceLostError and mints nothing.
 	if err := i.store.MarkRotated(ctx, family, jti); err != nil {
 		return nil, err
 	}
 
+	// The successor is committed by mintPair's Save, which refuses a family
+	// that was revoked while this refresh was in flight.
 	return i.mintPair(ctx, identityFromClaims(claims), family)
 }
 

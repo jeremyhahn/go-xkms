@@ -147,6 +147,16 @@ func (s *faultySessionStore) Get(ctx context.Context, sessionID string) (*webaut
 	return s.inner.Get(ctx, sessionID)
 }
 
+// Take honours getErr: it is the fault injection point for "the ceremony
+// session could not be fetched", which the service now reaches through the
+// atomic claim rather than a plain Get.
+func (s *faultySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.inner.Take(ctx, sessionID)
+}
+
 func (s *faultySessionStore) Delete(ctx context.Context, sessionID string) error {
 	return s.inner.Delete(ctx, sessionID)
 }

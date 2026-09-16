@@ -352,8 +352,12 @@ func TestMemoryRefreshStore_ErrorPaths(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got)
 
-	// Rotating or revoking the non-existent is a no-op.
-	assert.NoError(t, store.MarkRotated(ctx, "no-such-family", "no-such-jti"))
+	// Rotating what is not there must fail closed. Reporting success would let
+	// a refresh mint a successor against a record the store never had.
+	var revoked *RefreshRevokedError
+	assert.ErrorAs(t, store.MarkRotated(ctx, "no-such-family", "no-such-jti"), &revoked)
+
+	// Revoking the non-existent stays a no-op: logout is idempotent.
 	assert.NoError(t, store.RevokeFamily(ctx, "no-such-family"))
 }
 

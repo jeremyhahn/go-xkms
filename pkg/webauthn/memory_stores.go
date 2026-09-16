@@ -246,6 +246,30 @@ func (s *MemorySessionStore) Get(ctx context.Context, sessionID string) (*webaut
 	return entry.data, nil
 }
 
+// Take atomically claims a session, returning its data and removing it in one
+// step. The whole operation runs under the write lock, so of two concurrent
+// finish requests for one ceremony exactly one can claim the session and the
+// other finds nothing.
+//
+// An expired session is consumed as well: leaving it behind would let a
+// caller retry it, and it is worthless either way.
+func (s *MemorySessionStore) Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.sessions[sessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	delete(s.sessions, sessionID)
+
+	if s.clock().Sub(entry.createdAt) > s.ttl {
+		return nil, ErrSessionExpired
+	}
+
+	return entry.data, nil
+}
+
 // Delete removes session data by its ID.
 func (s *MemorySessionStore) Delete(ctx context.Context, sessionID string) error {
 	s.mu.Lock()

@@ -39,6 +39,16 @@ func verificationError(op string, err error) error {
 	return WrapError(op, err)
 }
 
+// sessionClaimError classifies a failed single-use session claim. A session
+// that cannot be claimed — missing, expired, or already consumed by a
+// concurrent finish — is an authentication failure, never a partial success:
+// there is no ceremony state left to validate the response against, so the
+// request must not authenticate. Classifying it as a verification failure also
+// keeps transports returning 401 rather than leaking store state.
+func sessionClaimError(op string, err error) error {
+	return NewVerificationError(op, err)
+}
+
 // Service provides WebAuthn registration and authentication operations.
 type Service struct {
 	webauthn   *webauthn.WebAuthn
@@ -223,10 +233,12 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 		return nil, ErrNotConfigured
 	}
 
-	// Get session
-	session, err := s.sessions.Get(ctx, sessionID)
+	// Claim the session BEFORE anything is validated. Take is get-and-delete in
+	// one atomic step, so two concurrent finish requests for one ceremony
+	// cannot both proceed: the loser has nothing to validate against.
+	session, err := s.sessions.Take(ctx, sessionID)
 	if err != nil {
-		return nil, WrapError("get session", err)
+		return nil, sessionClaimError("take registration session", err)
 	}
 
 	// Get user
@@ -251,13 +263,6 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 	user.AddCredential(cred)
 	if err := s.users.Save(ctx, user); err != nil {
 		return nil, WrapError("save user", err)
-	}
-
-	// Delete session - best-effort cleanup, don't fail the operation
-	if err := s.sessions.Delete(ctx, sessionID); err != nil {
-		s.logger.Warn("failed to delete registration session after completion",
-			"session_id", sessionID,
-			"error", err)
 	}
 
 	return user, nil
@@ -355,10 +360,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, userID 
 		return nil, ErrNotConfigured
 	}
 
-	// Get session
-	session, err := s.sessions.Get(ctx, sessionID)
+	// Claim the session BEFORE validating the assertion. Take is get-and-delete
+	// in one atomic step, so a replayed assertion racing the genuine one finds
+	// no session to authenticate against. Reading the session first and
+	// deleting it after validation let both requests succeed, and the
+	// authenticator sign counter does not catch it: go-webauthn only sets
+	// CloneWarning, and passkeys frequently report a counter of 0.
+	session, err := s.sessions.Take(ctx, sessionID)
 	if err != nil {
-		return nil, WrapError("get session", err)
+		return nil, sessionClaimError("take login session", err)
 	}
 
 	var user User
@@ -424,13 +434,6 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, userID 
 	user.UpdateCredential(cred)
 	if err := s.users.Save(ctx, user); err != nil {
 		return nil, WrapError("save user", err)
-	}
-
-	// Delete session - best-effort cleanup, don't fail the operation
-	if err := s.sessions.Delete(ctx, sessionID); err != nil {
-		s.logger.Warn("failed to delete login session after completion",
-			"session_id", sessionID,
-			"error", err)
 	}
 
 	return user, nil

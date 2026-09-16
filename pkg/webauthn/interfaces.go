@@ -53,8 +53,30 @@ type SessionStore interface {
 	// Returns ErrSessionNotFound if the session does not exist or has expired.
 	Get(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
 
+	// Take atomically claims a session: it returns the session data AND
+	// removes it in one indivisible operation, so exactly one caller can ever
+	// observe a given session.
+	//
+	// A WebAuthn ceremony session is single-use. Finishing a ceremony must
+	// claim it with Take BEFORE validating the authenticator response;
+	// validating first and deleting afterwards leaves a window in which two
+	// concurrent finish requests both validate against the same challenge and
+	// both succeed. Authenticator sign counters do not close that window —
+	// go-webauthn only raises CloneWarning, and passkeys commonly report a
+	// counter of 0.
+	//
+	// Returns ErrSessionNotFound when no session was claimed (missing, or
+	// already taken by a concurrent caller) and ErrSessionExpired when the
+	// claimed session had aged out. An expired session is consumed all the
+	// same, so it cannot be retried.
+	//
+	// Implementations that cannot make this atomic must not be used: a
+	// non-atomic take is the defect this method exists to remove.
+	Take(ctx context.Context, sessionID string) (*webauthn.SessionData, error)
+
 	// Delete removes session data by its ID.
-	// This should be called after a ceremony completes (success or failure).
+	// Use it to discard a session that was never claimed; a completed ceremony
+	// consumes its session through Take instead.
 	Delete(ctx context.Context, sessionID string) error
 }
 
