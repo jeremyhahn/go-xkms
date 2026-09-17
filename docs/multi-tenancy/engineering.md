@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-17
 
 ## Exported surface — `sdk/go/transport`
 
@@ -77,6 +77,20 @@ a code change.
   service layer's `importExportFor` instead. The tenant survives the read
   path because both key providers persist it in the key metadata record
   (PKCS#8 since its schema v1, symmetric since its schema v3).
+- **A transport must not withhold the tenant from an import.** MCP did, on the
+  reasoning that an imported key persisted no record to read it back from
+  (#162). That reason lapsed with #163 and the withholding then only sent a
+  tenant's import to the untenanted namespace, where the importing tenant's own
+  reads could not find it (#222). Every transport now passes the authenticated
+  caller's tenant to `XKMSService.ImportKey`.
+- **A copy carries the export's own import token.** `ExportKey` wraps under a
+  wrapping key the exporting backend mints for that export and names it by the
+  token it returns, so the token identifies the material, not the destination.
+  `CopyKey` must pass it through untouched; asking the destination for fresh
+  parameters and overwriting it points `ImportKey` at the wrong wrapping key
+  and the unwrap fails (#222). The destination attributes take the destination
+  backend's store type and the source's digest and partition, and the tenant is
+  stamped by the scoped backend's `ImportKey`, never assembled by the caller.
 
 ## Error semantics
 
@@ -124,7 +138,12 @@ resolution is `pkg/xkms/backend_tenant.go`.
 - **Backend scoping** — `pkg/xkms/backend_tenant_test.go`;
   tenant-scoped import/export —
   `pkg/xkms/servicer_key_tenant_import_test.go`,
+  `pkg/xkms/servicer_key_tenant_copy_test.go`,
   `pkg/keyprovider/symmetric/metadata_test.go`.
+- **Tenant-scoped BYOK over MCP** —
+  `pkg/api/mcp/handlers_keyops_tenant_import_test.go` runs the real ceremony
+  against the software backend and asserts which namespace the key lands in,
+  which a fake that ignores the import token could not show.
 
 The stream interceptor test matters: tenant scoping on a streaming RPC is easy
 to get right for the first message and wrong for the rest.

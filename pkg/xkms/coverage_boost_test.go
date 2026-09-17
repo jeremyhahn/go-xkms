@@ -694,23 +694,6 @@ func TestBoostCopyKey_IEBackend_SourceNotIE(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrOperationNotSupported))
 }
 
-func TestBoostCopyKey_IEBackend_GetImportParamsError(t *testing.T) {
-	ieStore, ieKP := setupBoostIEService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	boostGenIEKey(t, ieStore, ieKP, &types.KeyAttributes{CN: "src-key"})
-	ieKP.getParamsErr = errors.New("params error")
-
-	_, err = svc.CopyKey(context.Background(), &transport.CopyKeyRequest{
-		SourceKeyID:   "src-key",
-		SourceBackend: "ie-backend",
-		DestKeyID:     "dst-key",
-		DestBackend:   "ie-backend",
-	})
-	require.Error(t, err)
-}
-
 func TestBoostCopyKey_IEBackend_ExportError(t *testing.T) {
 	ieStore, ieKP := setupBoostIEService(t)
 	svc, err := Get()

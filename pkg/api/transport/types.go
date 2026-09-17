@@ -556,6 +556,14 @@ type ExportKeyResponse struct {
 	KeyID              string `json:"key_id"`
 	WrappedKeyMaterial []byte `json:"wrapped_key_material"`
 	Algorithm          string `json:"algorithm"`
+	// ImportToken names the wrapping key the material was wrapped under, as
+	// the exporting backend minted it. The backend selects the unwrapping
+	// private key by this token, so a response that drops it hands the caller
+	// material no ImportKey can open.
+	ImportToken []byte `json:"import_token,omitempty"`
+	// Metadata is the exporting backend's own description of the wrapped
+	// material. It travels with the blob to ImportKey.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // RotateKeyRequest contains parameters for key rotation.
@@ -621,6 +629,10 @@ type WrapKeyRequest struct {
 type WrapKeyResponse struct {
 	WrappedKeyMaterial []byte `json:"wrapped_key_material"`
 	Algorithm          string `json:"algorithm"`
+	// ImportToken is the token the material was wrapped for, echoed by
+	// backends that bind the wrap to a ceremony. ImportKey selects the
+	// unwrapping key by it, so it travels with the blob.
+	ImportToken []byte `json:"import_token,omitempty"`
 	// Metadata is the backend's own description of the wrapped material. It
 	// travels with the blob to ImportKey, so dropping it here loses whatever
 	// the wrapping backend recorded about the key.

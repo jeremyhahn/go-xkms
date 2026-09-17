@@ -410,6 +410,11 @@ type GetImportParametersParams struct {
 	KeySize int `json:"key_size,omitempty"`
 	// Curve names the EC curve for an "ecdsa" key, as on ImportKeyParams.
 	Curve string `json:"curve,omitempty"`
+	// TenantID is refused when set. The tenant an operation runs under is the
+	// authenticated caller's own, never one the request names; see
+	// ErrTenantIDNotAccepted. The field exists so a caller that sends one is
+	// told so rather than having it silently discarded by the decoder.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // GetImportParametersResult represents the import parameters response
@@ -526,6 +531,11 @@ type ImportKeyParams struct {
 	Exportable *bool `json:"exportable,omitempty"`
 	// Sensitive carries PKCS#11 CKA_SENSITIVE, as GenerateKeyParams does.
 	Sensitive bool `json:"sensitive,omitempty"`
+	// TenantID is refused when set. The tenant an import runs under is the
+	// authenticated caller's own, never one the request names; see
+	// ErrTenantIDNotAccepted. The field exists so a caller that sends one is
+	// told so rather than having it silently discarded by the decoder.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // ExportKeyParams represents parameters for exporting a key
@@ -595,6 +605,11 @@ type CopyKeyParams struct {
 	Curve         string `json:"curve,omitempty"`
 	Hash          string `json:"hash,omitempty"`
 	AESKeySize    int    `json:"aes_key_size,omitempty"`
+	// TenantID is refused when set. Both ends of a copy are the authenticated
+	// caller's own tenant; there are no cross-tenant copies on this transport.
+	// See ErrTenantIDNotAccepted. The field exists so a caller that names a
+	// tenant is told so rather than having it silently discarded.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // CopyKeyResult represents the result of copying a key

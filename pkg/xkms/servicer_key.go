@@ -318,10 +318,15 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
 
+	// The import token names the wrapping key the backend wrapped under, and
+	// the metadata describes the blob; both travel with it to ImportKey. A
+	// response that dropped them returned material nothing could import.
 	return &transport.ExportKeyResponse{
 		KeyID:              req.KeyID,
 		WrappedKeyMaterial: wrapped.WrappedKey,
 		Algorithm:          string(wrapped.Algorithm),
+		ImportToken:        wrapped.ImportToken,
+		Metadata:           wrapped.Metadata,
 	}, nil
 }
 
@@ -478,10 +483,19 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		return nil, &ErrCopyKeyBackend{Role: "source key", Err: err}
 	}
 
+	// The destination describes the same key under a new name: the store type
+	// is the destination backend's, exactly as an import into it would derive
+	// it, and the digest and partition travel with the material so the copy is
+	// addressed the way the source was. The tenant is deliberately not set
+	// here -- dstB is the caller's tenant-scoped view and its ImportKey stamps
+	// it, which is the one place the stamping belongs (go-xkms#222).
 	dstAttrs := &types.KeyAttributes{
 		CN:                 req.DestKeyID,
 		KeyAlgorithm:       srcAttrs.KeyAlgorithm,
 		KeyType:            srcAttrs.KeyType,
+		StoreType:          types.ParseStoreType(destBackend),
+		Hash:               srcAttrs.Hash,
+		Partition:          srcAttrs.Partition,
 		RSAAttributes:      srcAttrs.RSAAttributes,
 		ECCAttributes:      srcAttrs.ECCAttributes,
 		SymmetricAlgorithm: srcAttrs.SymmetricAlgorithm,
@@ -492,16 +506,19 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		algorithm = backend.WrappingAlgorithm(req.Algorithm)
 	}
 
-	importParams, err := dstImportExport.GetImportParameters(ctx, dstAttrs, algorithm)
-	if err != nil {
-		return nil, &ErrKeyOperation{Operation: "get import parameters", Err: err}
-	}
-
+	// The exported material is handed to the destination exactly as the source
+	// produced it. ExportKey wraps under the exporting backend's own freshly
+	// minted wrapping key and names that key by the import token it returns,
+	// so the token is part of the material, not a parameter of the
+	// destination. This used to ask the destination for fresh import
+	// parameters and overwrite the token with theirs, which pointed the import
+	// at a wrapping key the material was never wrapped under: every copy
+	// through a backend that honours its tokens -- the software backend
+	// included -- failed to unwrap (go-xkms#222).
 	wrappedKey, err := srcImportExport.ExportKey(ctx, srcAttrs, algorithm)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "export key", Err: err}
 	}
-	wrappedKey.ImportToken = importParams.ImportToken
 
 	if err := dstImportExport.ImportKey(ctx, dstAttrs, wrappedKey); err != nil {
 		return nil, &ErrKeyOperation{Operation: "import key", Err: err}
@@ -632,11 +649,12 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
 
-	// The backend's metadata travels with the blob to ImportKey, so it is
-	// returned rather than discarded.
+	// The backend's import token and metadata travel with the blob to
+	// ImportKey, so they are returned rather than discarded.
 	return &transport.WrapKeyResponse{
 		WrappedKeyMaterial: wrapped.WrappedKey,
 		Algorithm:          string(wrapped.Algorithm),
+		ImportToken:        wrapped.ImportToken,
 		Metadata:           wrapped.Metadata,
 	}, nil
 }

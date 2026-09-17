@@ -1,6 +1,6 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-17
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -62,6 +62,16 @@ unique only within a tenant**. Resolved against an unscoped backend it matches
 whichever tenant's key is listed first. MCP's `export_key` did exactly that and
 handed one tenant another tenant's wrapped key material (#166); the same
 first-match-on-CN scan was also duplicated inline in `seal` and `unseal`.
+
+The mirror-image defect is a **write** that carries no tenant. MCP's
+`import_key` passed none to the service, so a tenant's imported key landed in
+the untenanted namespace and that tenant's own reads could not find it — not a
+disclosure, but a key the owner cannot reach (#222, the #162/#163 family).
+`import_key`, `get_import_parameters` and `copy_key` now take the tenant from
+`tenantForRequest`, which supplies the authenticated caller's and **refuses a
+request that names one of its own** with `ErrTenantIDNotAccepted`. Their params
+structs carry a `tenant_id` field solely so that refusal is reachable: without
+the field the decoder discarded a caller-supplied tenant silently.
 
 The same scan existed on **gRPC and REST** and was fixed in #221. All three
 transports now reach the shared lookup through a per-transport

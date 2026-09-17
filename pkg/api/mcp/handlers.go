@@ -993,6 +993,11 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 		return nil, err
 	}
 
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
 	// The service resolves the backend through the caller's tenant and
 	// builds the attributes the backend mints its parameters for, from the
 	// same key-type vocabulary the import takes, so the spec the backend
@@ -1006,7 +1011,7 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 		KeyType:   params.KeyType,
 		KeySize:   params.KeySize,
 		Curve:     params.Curve,
-		TenantID:  callerTenantID(ctx),
+		TenantID:  tenantID,
 	})
 	if err != nil {
 		return nil, mapKeyOpError(err)
@@ -1145,10 +1150,14 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 // The algorithm now arrives in ImportKeyParams.KeyType and the service resolves
 // it, exactly as it does for the gRPC and REST imports.
 //
-// Tenant scoping is deliberately NOT passed through here: an imported
-// asymmetric key persists no metadata record, so a tenant-scoped import writes
-// a key its own tenant cannot then read back (go-xkms#162). This transport has
-// never scoped an import and does not start doing so while that holds.
+// The import runs under the caller's own tenant: the service writes it through
+// the tenant-scoped backend, so a tenant's key lands in the tenant's own
+// namespace and an untenanted caller's in the untenanted one, with no fallback
+// between them. This transport withheld the tenant while an imported key
+// persisted no metadata record it could be read back from (go-xkms#162); both
+// key providers have persisted the tenant since go-xkms#163, so withholding it
+// only sent a tenant's import where that tenant's own reads could not find it
+// (go-xkms#222).
 func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ImportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -1162,6 +1171,11 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	// The backend name is refused here, through the service's own lookup,
 	// so the refusal is classifiable before the import is attempted.
 	if err := s.refuseUnknownBackend(params.Backend); err != nil {
+		return nil, err
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1183,6 +1197,7 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 		Partition:  params.Partition,
 		Exportable: params.Exportable,
 		Sensitive:  params.Sensitive,
+		TenantID:   tenantID,
 	}); err != nil {
 		return nil, mapKeyOpError(err)
 	}
@@ -1597,7 +1612,15 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	// Tenant scoping rides on the request like every other delegating
 	// handler here: the service resolves both backends through
 	// resolveTenantBackend with this value, so a caller in one tenant cannot
-	// name a key ID that resolves in another tenant's store.
+	// name a key ID that resolves in another tenant's store. Both ends are the
+	// caller's own tenant -- there are no cross-tenant copies on this
+	// transport, so a request naming a tenant of its own is refused rather
+	// than acted on (go-xkms#222).
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := s.xkmsService.CopyKey(ctx, &transport.CopyKeyRequest{
 		SourceBackend: params.SourceBackend,
 		SourceKeyID:   params.SourceKeyID,
@@ -1607,7 +1630,7 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 		KeyType:       params.KeyType,
 		KeySize:       params.KeySize,
 		Curve:         params.Curve,
-		TenantID:      callerTenantID(ctx),
+		TenantID:      tenantID,
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to copy key", Err: err}
