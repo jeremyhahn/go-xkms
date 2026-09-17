@@ -69,6 +69,12 @@ var noiseAvailability struct {
 // most cares about -- and a guard that cannot fire in its advertised case is
 // itself the defect, because the next reader takes it for working.
 //
+// fips.Built(), added for #219, does answer "was this artifact compiled with
+// GOFIPS140" -- but that is not this question either. What decides availability
+// here is whether go-truststrap's Noise DH was built out, a `fips` BUILD TAG
+// that no GOFIPS140 value implies, so a predicate on either one would still be
+// restating a property of a dependency this package does not control.
+//
 // Availability here is instead DERIVED from go-truststrap, which is the only
 // component entitled to answer it. Its Noise DH lives in a file built
 // `//go:build fips`, whose entry points return ErrFIPSUnsupported, so the

@@ -770,11 +770,15 @@ func ToString(certificate *x509.Certificate) string {
 	// certificate for display died here (#197).
 	//
 	// It is REMOVED rather than conditioned on a FIPS predicate. A guard would
-	// have to ask "is this a FIPS artifact", and fips.Compiled() cannot answer
-	// that -- GODEBUG=fips140=off turns it false on a GOFIPS140-built binary
-	// (measured; #219). Any such guard therefore fails OPEN for exactly the
-	// artifacts the policy most cares about, and a guard that cannot fire in its
-	// advertised case is itself the defect: the next engineer reads it as working.
+	// have to ask "is SHA-1 fatal in this process", which is the fips140=only
+	// ACTIVATION state, and no predicate here answers it. fips.Compiled() is
+	// module state -- GODEBUG=fips140=off turns it false on a GOFIPS140-built
+	// binary (measured; #219) -- and fips.Built(), added for #219, is build
+	// PROVENANCE: it says the artifact was compiled FIPS, never how this process
+	// was started, so it is not the missing predicate either. Any such guard
+	// therefore fails OPEN for exactly the artifacts the policy most cares about,
+	// and a guard that cannot fire in its advertised case is itself the defect:
+	// the next engineer reads it as working.
 	//
 	// Deleting the line means there is no predicate to get wrong. This thumbprint
 	// is human-readable output -- nothing on the wire depends on it and no caller

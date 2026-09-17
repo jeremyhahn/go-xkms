@@ -10,42 +10,127 @@
 package module
 
 import (
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// F4/F5: the module labels itself so a user can tell a FIPS build from a
-// non-FIPS one. The label is the build-time truth (fipsBuild → crypto/fips140),
-// not the runtime GOFIPS140 environment, so a non-FIPS test binary — which is
-// what runs here — must report the non-FIPS labels and must not be swayed by an
-// environment variable a caller sets. The FIPS-labelled branch is asserted by
-// the FIPS enforcement suite, which runs under a FIPS-compiled binary.
-func TestModuleLabels_NonFIPSBuild(t *testing.T) {
-	require.False(t, fipsBuild(),
-		"the unit test binary is not FIPS-compiled; if this fails the label helpers cannot be trusted here")
+const (
+	fipsLibraryDescription  = "go-xkms PKCS#11 FIPS 140-3"
+	plainLibraryDescription = "go-xkms PKCS#11"
+	fipsTokenModel          = "FIPS 140-3 Token"
+	plainTokenModel         = "Virtual Token"
 
-	assert.Equal(t, "go-xkms PKCS#11", moduleLibraryDescription(),
-		"a non-FIPS build must not claim to be a FIPS module in CK_INFO")
-	assert.Equal(t, "Virtual Token", tokenModel(),
-		"a non-FIPS build must not claim to be a FIPS token in CK_TOKEN_INFO")
+	// fipsLabelSubprocessEnv marks the re-executed child of
+	// TestModuleLabels_IgnoreRuntimeModuleState.
+	fipsLabelSubprocessEnv = "XKMS_FIPS_LABEL_SUBPROCESS"
+	// fipsLabelParentBuiltEnv carries the parent's fips.Built() verdict to
+	// the child, so the child can assert provenance is unchanged by GODEBUG.
+	fipsLabelParentBuiltEnv = "XKMS_FIPS_LABEL_PARENT_BUILT"
+)
+
+// wantLabels returns the labels the artifact this test binary belongs to must
+// carry. The verdict is the build metadata's, not the environment's, which is
+// what lets the same assertions hold in a non-FIPS unit-test binary and in a
+// GOFIPS140-built one.
+func wantLabels(t *testing.T) (description, model string) {
+	t.Helper()
+	if fips.Built() {
+		return fipsLibraryDescription, fipsTokenModel
+	}
+	return plainLibraryDescription, plainTokenModel
+}
+
+// F4/F5: the module labels itself so a user can tell a FIPS build from a
+// non-FIPS one. The label is the build-time truth — the GOFIPS140 setting the
+// toolchain recorded in this binary (fips.Built) — not the runtime GOFIPS140
+// environment, so the labels must not be swayed by an environment variable a
+// caller sets.
+func TestModuleLabels_FollowTheBuildNotTheEnvironment(t *testing.T) {
+	t.Setenv(fipsEnvForTest, "off")
+	require.Equal(t, fips.Built(), fipsBuild(),
+		"fipsBuild must report exactly the recorded build setting")
+
+	description, model := wantLabels(t)
+	assert.Equal(t, description, moduleLibraryDescription(),
+		"CK_INFO.libraryDescription must describe the artifact that was built")
+	assert.Equal(t, model, tokenModel(),
+		"CK_TOKEN_INFO.model must describe the artifact that was built")
 
 	// The build-time truth ignores the runtime GOFIPS140 signal: a non-FIPS
 	// binary a test runs under GOFIPS140 filters like FIPS (fipsModeEnabled)
-	// but must not mislabel itself as a FIPS artifact.
+	// but must not relabel itself.
 	t.Setenv(fipsEnvForTest, "latest")
-	assert.False(t, fipsBuild(),
+	require.True(t, fipsModeEnabled(), "the env must still drive the filter")
+	assert.Equal(t, fips.Built(), fipsBuild(),
 		"fipsBuild is the compiled state; the runtime GOFIPS140 env must not flip it")
-	assert.Equal(t, "Virtual Token", tokenModel(),
-		"the label must stay non-FIPS even when the env forces FIPS filtering")
+	assert.Equal(t, description, moduleLibraryDescription(),
+		"the library description must not move with the env")
+	assert.Equal(t, model, tokenModel(),
+		"the token model must not move with the env")
+}
+
+// The labels must also ignore the MODULE state, which is the signal they used
+// to rest on. GODEBUG=fips140 selects crypto/fips140.Enabled() either way and
+// is fixed at process start, so each posture is asserted in a re-executed
+// child: under fips140=on a non-FIPS build must still not claim to be a FIPS
+// module, and under fips140=off a FIPS build must still claim to be one. Both
+// children assert the label against the parent's build verdict, which GODEBUG
+// cannot change — the defect this pins is a label that moved with the module
+// state instead (#219).
+func TestModuleLabels_IgnoreRuntimeModuleState(t *testing.T) {
+	if os.Getenv(fipsLabelSubprocessEnv) == "1" {
+		parentBuilt := os.Getenv(fipsLabelParentBuiltEnv) == "true"
+		require.Equal(t, parentBuilt, fips.Built(),
+			"build provenance changed between parent and child; GODEBUG must not touch it")
+		require.Equal(t, parentBuilt, fipsBuild(),
+			"fipsBuild must follow the build metadata, not the module state")
+
+		description, model := wantLabels(t)
+		assert.Equal(t, description, moduleLibraryDescription())
+		assert.Equal(t, model, tokenModel())
+		// fipsModeEnabled does follow the module state, so in the child it
+		// must agree with crypto/fips140.Enabled() as GODEBUG selected it.
+		assert.Equal(t, fips.Compiled() || fips.Enabled(), fipsModeEnabled(),
+			"the filter, unlike the label, follows the module state")
+		return
+	}
+
+	for _, state := range []string{"on", "off"} {
+		t.Run("fips140="+state, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0],
+				"-test.run=^TestModuleLabels_IgnoreRuntimeModuleState$", "-test.v")
+			cmd.Env = append(os.Environ(),
+				fipsLabelSubprocessEnv+"=1",
+				fipsLabelParentBuiltEnv+"="+boolString(fips.Built()),
+				"GODEBUG=fips140="+state,
+				fipsEnvForTest+"=off")
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, "child under GODEBUG=fips140=%s failed:\n%s", state, out)
+			require.True(t, strings.Contains(string(out), "PASS"),
+				"child under GODEBUG=fips140=%s did not pass:\n%s", state, out)
+		})
+	}
+}
+
+func boolString(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // The FIPS-mode filter, unlike the label, does honour the runtime env so a
 // non-FIPS binary can still exercise the approved-mechanism filter in tests.
 func TestFIPSModeEnabled_HonoursRuntimeEnv(t *testing.T) {
 	t.Setenv(fipsEnvForTest, "off")
-	require.False(t, fipsModeEnabled())
+	require.Equal(t, fips.Compiled(), fipsModeEnabled(),
+		"with the env off the filter is the module state alone")
 
 	t.Setenv(fipsEnvForTest, "latest")
 	assert.True(t, fipsModeEnabled(),
@@ -56,8 +141,8 @@ func TestFIPSModeEnabled_HonoursRuntimeEnv(t *testing.T) {
 // model tag fits CK_TOKEN_INFO.model (16 bytes), so neither is silently
 // truncated when the FIPS build sets it.
 func TestFIPSLabels_FitTheirFixedFields(t *testing.T) {
-	assert.LessOrEqual(t, len("go-xkms PKCS#11 FIPS 140-3"), 32,
+	assert.LessOrEqual(t, len(fipsLibraryDescription), 32,
 		"CK_INFO.libraryDescription is a 32-byte field")
-	assert.LessOrEqual(t, len("FIPS 140-3 Token"), 16,
+	assert.LessOrEqual(t, len(fipsTokenModel), 16,
 		"CK_TOKEN_INFO.model is a 16-byte field")
 }

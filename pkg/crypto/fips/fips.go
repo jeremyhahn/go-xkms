@@ -22,11 +22,19 @@ package fips
 import (
 	"crypto/fips140"
 	"os"
+	"runtime/debug"
 )
 
 const (
 	// EnvGOFIPS140 is the environment variable that controls FIPS 140 mode.
 	EnvGOFIPS140 = "GOFIPS140"
+
+	// buildSettingKey is the key under which cmd/go records the GOFIPS140
+	// value in a binary's build metadata (the "build GOFIPS140=<value>" line
+	// of `go version -m`). It is recorded only when the value enables the
+	// module, so a binary built without GOFIPS140, or with GOFIPS140=off,
+	// carries no such setting.
+	buildSettingKey = "GOFIPS140"
 
 	// KDFArgon2id is the Argon2id key derivation function identifier.
 	KDFArgon2id = "argon2id"
@@ -42,16 +50,87 @@ const (
 // no GOFIPS140 environment variable — the case Enabled cannot see.
 //
 // It is NOT build provenance, despite the name. crypto/fips140.Enabled reports
-// module state, and GODEBUG=fips140 can select that state in a binary built
-// without GOFIPS140. So a true result means "the module is in force here", not
-// "this artifact is a FIPS build". Nothing that labels an artifact — a token
-// model string, a library banner, a compliance manifest — may rest on it;
-// those need real build metadata, which the toolchain does not expose here.
+// module state, and GODEBUG=fips140 selects that state in either direction:
+// "on" activates the module in a binary built without GOFIPS140, and "off"
+// deactivates it in a binary built with it. So a true result means "the module
+// is in force here", not "this artifact is a FIPS build", and a false result
+// does not mean the artifact is not one. Nothing that labels an artifact — a
+// token model string, a library banner, a compliance manifest — may rest on
+// it; those rest on Built and BuildSetting, which read the GOFIPS140 value the
+// toolchain records in the binary's build metadata (#219).
 //
 // Pair it with Enabled (see FIPSMode in sdk/go) for a policy decision: either
 // signal alone is reason enough to refuse a non-approved algorithm.
 func Compiled() bool {
 	return fips140.Enabled()
+}
+
+// BuildSetting returns the GOFIPS140 value the Go toolchain recorded in this
+// binary's build metadata, or "" when the binary was built without one.
+//
+// This is build provenance in the strict sense. cmd/go stamps the setting into
+// the binary at link time — `go version -m` shows it as "build
+// GOFIPS140=<value>" — it survives into a c-shared library that a foreign
+// process dlopen()s, and no environment variable alters it afterwards:
+// GODEBUG=fips140=off turns the module off in a FIPS build and leaves this
+// value intact, which is exactly the case where Compiled goes false. The
+// toolchain records the setting only when it enables the module, so an
+// explicit GOFIPS140=off at build time reads back as "" like an unset one.
+//
+// The value is the selector the build ran with — "latest", "inprocess",
+// "certified" or "v1.Y.Z" — so a compliance manifest can name the module
+// version rather than just the fact of a FIPS build.
+func BuildSetting() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	return buildSettingFrom(info)
+}
+
+// buildSettingFrom extracts the recorded GOFIPS140 value from info, or ""
+// when info is nil or carries no such setting. It is the pure half of
+// BuildSetting so the lookup can be tested against synthetic build metadata.
+func buildSettingFrom(info *debug.BuildInfo) string {
+	if info == nil {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == buildSettingKey {
+			return setting.Value
+		}
+	}
+	return ""
+}
+
+// Built reports whether this binary was compiled with GOFIPS140 set to an
+// enabling value — whether the artifact IS a FIPS build, as opposed to
+// Compiled, which reports whether the module is in force in this process.
+//
+// This is the predicate an artifact label uses: the PKCS#11 module's
+// CK_INFO.libraryDescription and CK_TOKEN_INFO.model derive from it, so a
+// FIPS-built .so identifies itself as FIPS even when the loading process sets
+// GODEBUG=fips140=off, and a normally built binary never claims to be one even
+// under GODEBUG=fips140=on.
+//
+// It is deliberately NOT part of any algorithm-policy decision. Whether an
+// approved-only surface is enforced follows the module state (Compiled) and the
+// operator's environment (Enabled), because that is what the crypto actually
+// running in the process honours; see AlgorithmPermitted.
+func Built() bool {
+	return builtFrom(BuildSetting())
+}
+
+// builtFrom reports whether a recorded GOFIPS140 value enables the module. The
+// toolchain never records "off", but the spelling is refused here too so the
+// answer cannot flip if a future toolchain starts recording it.
+func builtFrom(setting string) bool {
+	switch setting {
+	case "", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 // Enabled reports whether FIPS 140 mode is active.

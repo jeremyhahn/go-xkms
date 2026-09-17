@@ -2394,25 +2394,33 @@ func effectiveMechanismFlags(desc *MechanismDescriptor) MechanismFlag {
 	return desc.Flags
 }
 
-// fipsModeEnabled reports whether the module is running in FIPS mode.
+// fipsModeEnabled reports whether the module is running in FIPS mode: the
+// approved surface is advertised and enforced when the Go Cryptographic Module
+// is in force in this process (fips.Compiled) or the environment selects FIPS
+// (fips.Enabled).
 //
-// A module compiled as a FIPS build (fips.Compiled) is always in FIPS mode: the
-// crypto it links is the FIPS module, so it must advertise and enforce the
-// approved surface no matter what the loading process's environment says. A
-// non-FIPS build still honours the runtime GOFIPS140 signal (fips.Enabled) so a
-// test can exercise the filter without a separate FIPS-compiled binary. The two
-// together mean the shipped FIPS .so enforces FIPS even though the process that
-// dlopen()s it sets no GOFIPS140 variable.
+// The module signal is what a FIPS build turns on by default, and it is the one
+// that survives into a process that dlopen()s the shipped FIPS .so without
+// setting GOFIPS140. The environment signal lets a non-FIPS test binary drive
+// the filter without a separate FIPS-compiled build. Neither is build
+// provenance — GODEBUG=fips140 can select the module state either way — and
+// the filter follows the crypto actually in force rather than the artifact's
+// pedigree, which is fipsBuild's concern, not this one's.
 func fipsModeEnabled() bool {
 	return fips.Compiled() || fips.Enabled()
 }
 
 // fipsBuild reports whether this is the FIPS-compiled artifact, for labelling
 // the token and library so a user can tell a FIPS module from a non-FIPS one.
-// It is the build-time truth only — a non-FIPS build a test runs under
-// GOFIPS140 filters like FIPS but must not claim to BE a FIPS module.
+//
+// It is the build-time truth and nothing else: the GOFIPS140 setting the
+// toolchain recorded in this binary's build metadata (fips.Built). It used to
+// read fips.Compiled, which is module state: a non-FIPS build a test ran under
+// GODEBUG=fips140=on claimed to BE a FIPS module, and the shipped FIPS .so
+// loaded under GODEBUG=fips140=off denied being one (#219). A label is a
+// statement about the artifact, so it must not move with the environment.
 func fipsBuild() bool {
-	return fips.Compiled()
+	return fips.Built()
 }
 
 // moduleLibraryDescription is the CK_INFO.libraryDescription (max 32 bytes). The

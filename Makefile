@@ -377,7 +377,10 @@ XKMS_GRPC_TLS_INSECURE ?= true
 #
 # The FIPS artifact is emitted alongside the non-FIPS one as
 # libxkms_pkcs11_fips.so and self-identifies as FIPS in its CK_INFO /
-# CK_TOKEN_INFO labels (via crypto/fips140.Enabled(), the build-time truth).
+# CK_TOKEN_INFO labels via fips.Built() — the GOFIPS140 value recorded here in
+# the binary's build metadata, which no environment variable alters. It is NOT
+# crypto/fips140.Enabled(), which is module state: GODEBUG=fips140=off turns
+# that false on this very artifact, and the labels used to move with it (#219).
 GOFIPS140 ?= off
 GOFIPS140_FIPS ?= latest
 

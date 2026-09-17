@@ -29,11 +29,53 @@ export GOFIPS140=latest
 unset GOFIPS140
 ```
 
-`fips.Enabled()` is the *runtime* signal. `fips.Compiled()` is the build-time one
-— `crypto/fips140.Enabled()`, true for a binary built with `GOFIPS140` — and it is
-the only signal available inside a FIPS-compiled shared library, whose loading
-process carries no `GOFIPS140`. Controls that must hold for the artifact itself
-test `Compiled() || Enabled()`.
+`fips.Enabled()` is the *runtime* signal: the `GOFIPS140` environment variable of
+this process. `fips.Compiled()` is the *module-state* signal —
+`crypto/fips140.Enabled()`, true when the Go Cryptographic Module is in force
+here. A FIPS build turns it on by default, and it is the signal that survives
+into a FIPS-compiled shared library whose loading process carries no
+`GOFIPS140`. Controls that must hold wherever the FIPS crypto is actually
+running test `Compiled() || Enabled()`.
+
+Neither one is build provenance. `GODEBUG=fips140` selects the module state in
+**either** direction, so `Compiled()` goes false on a `GOFIPS140`-built binary
+run under `GODEBUG=fips140=off`, and true on a stock binary run under
+`GODEBUG=fips140=on` (#219).
+
+## Build provenance
+
+`fips.BuildSetting()` returns the `GOFIPS140` value the toolchain stamped into
+the binary at link time — the `build GOFIPS140=<value>` line of
+`go version -m` — and `fips.Built()` reports whether that value enables the
+module. The stamp is fixed at link time, no environment variable alters it, and
+it survives into a c-shared library a foreign process `dlopen()`s.
+
+| Predicate | Answers | Moves with `GODEBUG=fips140` |
+|-----------|---------|------------------------------|
+| `Enabled()` | is `GOFIPS140` set in this process's environment | no |
+| `Compiled()` | is the FIPS module in force in this process | **yes** |
+| `Built()` | was this artifact compiled with `GOFIPS140` | no |
+
+The toolchain records the setting only when it enables the module, so a build
+with no `GOFIPS140` and one with an explicit `GOFIPS140=off` both read back as
+`""`. `BuildSetting()` reports the selector the build ran with (`latest`,
+`inprocess`, `certified`, `v1.Y.Z`), so a compliance manifest can name the
+module version rather than only the fact of a FIPS build.
+
+Anything that **labels an artifact** — a token model string, a library banner, a
+compliance manifest — uses `Built()`. The PKCS#11 module's
+`CK_INFO.libraryDescription` and `CK_TOKEN_INFO.model` derive from it, so the
+shipped `libxkms_pkcs11_fips.so` identifies itself as FIPS even when the loading
+process sets `GODEBUG=fips140=off`, and a stock build never claims to be one
+under `GODEBUG=fips140=on`.
+
+**Algorithm policy deliberately does not use `Built()`.** `AlgorithmPermitted`
+follows `Compiled() || Enabled()` — the crypto actually in force — so an
+operator who sets `GODEBUG=fips140=off` has turned the module off and the
+approved-only allowlist stops applying, exactly as in a non-FIPS build. Whether
+a validated artifact may be talked out of its own posture that way is an owner
+policy decision recorded on #219; changing it means adding `Built()` to that OR,
+and nothing else.
 
 ## Approved algorithm set
 
@@ -198,10 +240,13 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   the SDK as `CertToString`) prints a **SHA-256** fingerprint and no SHA-1 one.
   `crypto/sha1.Sum` *panics* under `GODEBUG=fips140=only` rather than returning
   an error, so any FIPS-activated process that formatted a certificate for
-  display used to die there. The line is removed rather than guarded: no
-  predicate here can answer "is this a FIPS artifact" (`GODEBUG=fips140=off`
-  turns `Compiled()` false on a `GOFIPS140`-built binary -- #219), so a guard
-  would fail open precisely for FIPS artifacts. `crypto/sha1` is no longer
+  display used to die there. The line is removed rather than guarded: the
+  question a guard must ask is "is SHA-1 fatal in this process", the
+  `fips140=only` *activation* state, and no predicate answers it. `Compiled()`
+  is module state, which `GODEBUG=fips140=off` turns false on a
+  `GOFIPS140`-built binary, and `Built()` is provenance, which says nothing
+  about how the process was started (#219). A guard would therefore fail open
+  precisely for FIPS artifacts. `crypto/sha1` is no longer
   imported by the package. Consumers comparing against
   `openssl x509 -fingerprint` must pass `-sha256`.
 - **Raw PKCS#1 v1.5 signatures (hash `NONE`)** -- `Sign` and `Verify` accept

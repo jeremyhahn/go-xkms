@@ -92,9 +92,18 @@ func ApprovedAlgorithm(algo string) bool {
 // Outside FIPS mode every algorithm the caller already accepts is permitted;
 // in FIPS mode only the approved set is.
 //
-// The predicate ORs the build-time and runtime signals for the reason given on
-// Compiled: a FIPS-compiled shared library carries no GOFIPS140 in the process
-// that loads it, so Enabled alone would let it accept non-approved algorithms.
+// The predicate ORs the module-state signal (Compiled) with the environment
+// signal (Enabled) for the reason given on Compiled: a FIPS-compiled shared
+// library carries no GOFIPS140 in the process that loads it, so Enabled alone
+// would let it accept non-approved algorithms.
+//
+// Neither signal is build provenance, and Built is deliberately not consulted.
+// The allowlist follows the crypto that is actually in force: a FIPS build
+// whose operator sets GODEBUG=fips140=off has turned the module off, and this
+// predicate then permits everything, exactly as in a non-FIPS build. Whether a
+// validated artifact should refuse to be talked out of its posture that way is
+// the owner's policy call recorded on #219; changing it means adding Built to
+// this OR, and nothing else.
 func AlgorithmPermitted(algo string) bool {
 	if !Compiled() && !Enabled() {
 		return true

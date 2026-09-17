@@ -245,7 +245,7 @@ Encrypted-at-rest storage and credential management:
 
 ### [FIPS 140](fips/)
 FIPS compliance and algorithm selection:
-- [FIPS Strategy](fips/README.md) - GOFIPS140 detection, KDF selection, and PasswordHasher
+- [FIPS Strategy](fips/README.md) - GOFIPS140 detection, build provenance, KDF selection, and PasswordHasher
 
 ### [Development](development/)
 Development and contributor documentation:
