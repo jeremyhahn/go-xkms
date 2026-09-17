@@ -65,9 +65,10 @@ func (unixPeerCredentials) ServerHandshake(conn net.Conn) (net.Conn, credentials
 
 // Info describes the security properties of this transport credential.
 func (unixPeerCredentials) Info() credentials.ProtocolInfo {
+	// SecurityVersion is omitted: gRPC deprecated it in favour of
+	// Peer.AuthInfo, and nothing in this tree read it.
 	return credentials.ProtocolInfo{
 		SecurityProtocol: "so_peercred",
-		SecurityVersion:  "1.0",
 	}
 }
 

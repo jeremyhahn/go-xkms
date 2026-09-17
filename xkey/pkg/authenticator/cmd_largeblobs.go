@@ -398,6 +398,20 @@ func (a *Authenticator) validateLargeBlobsSetLocked(req *largeBlobsRequest) erro
 // authenticate the caller against, so the spec permits the write
 // unauthenticated in that case.
 func (a *Authenticator) verifyLargeBlobsWriteAuth(req *largeBlobsRequest) error {
+	// The negated-conjunction form is deliberate and stays. The doc above
+	// states CTAP 2.1 §6.10.2 as "whenever the authenticator has a PIN
+	// configured, or whenever alwaysUv is enabled ... an authenticator with
+	// NEITHER has nothing to authenticate the caller against", and this line
+	// is that sentence: !(PIN configured) && !(alwaysUv). De Morgan would
+	// distribute "has a PIN configured" into a disjunction and break the
+	// one-to-one reading against the spec — in the predicate that decides
+	// whether a large-blob write proceeds UNAUTHENTICATED.
+	//
+	// QF1001 is staticcheck's quickfix family: a rewrite, not a defect. This
+	// repo already draws that line, restricting gocritic to diagnostic tags
+	// because "the style and opinionated tags flag rewrites rather than
+	// defects" (.golangci.yml).
+	//nolint:staticcheck // QF1001: see above.
 	if !(a.config.EnablePIN && a.IsPINSet()) && !a.config.AlwaysUV {
 		return nil
 	}
