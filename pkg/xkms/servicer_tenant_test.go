@@ -52,7 +52,9 @@ func setupServiceWithRegistry(t *testing.T) *XKMSService {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: []byte("test-password")}
+	creds, err := seal.CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err)
 
@@ -320,7 +322,7 @@ func TestTenantBarrierInit_Success(t *testing.T) {
 	// Phase 2: the tenant admin supplies their OWN passphrase.
 	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "init-tenant",
-		Passphrase: "tenant-admin-secret",
+		Passphrase: []byte("tenant-admin-secret"),
 	})
 	require.NoError(t, err)
 }
@@ -362,7 +364,7 @@ func TestTenantBarrierInit_EmptyPassphraseRejected(t *testing.T) {
 
 	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "no-pw-tenant",
-		Passphrase: "",
+		Passphrase: []byte(""),
 	})
 	assert.ErrorIs(t, err, ErrTenantPassphraseRequired)
 
@@ -387,7 +389,7 @@ func TestTenantBarrierInit_SamePassphraseUnseals(t *testing.T) {
 
 	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "roundtrip-tenant",
-		Passphrase: "shared-secret-123",
+		Passphrase: []byte("shared-secret-123"),
 	})
 	require.NoError(t, err)
 
@@ -420,7 +422,7 @@ func TestTenantBarrierInit_Idempotent(t *testing.T) {
 
 	req := &transport.TenantBarrierInitRequest{
 		TenantID:   "idem-tenant",
-		Passphrase: "idem-pw",
+		Passphrase: []byte("idem-pw"),
 	}
 	require.NoError(t, svc.TenantBarrierInit(ctx, req))
 	require.NoError(t, svc.TenantBarrierInit(ctx, req), "init must be idempotent")
@@ -483,7 +485,7 @@ func TestTenantBarrierUnseal_Success(t *testing.T) {
 	// already-unsealed barrier is a no-op that returns nil.
 	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "unseal-tenant",
-		Passphrase: "unseal-pw",
+		Passphrase: []byte("unseal-pw"),
 	})
 	require.NoError(t, err)
 
@@ -506,7 +508,7 @@ func TestTenantBarrierUnseal_WrongPassphraseFails(t *testing.T) {
 	// Phase 2: initialize with the tenant admin's passphrase.
 	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "wrong-pw-tenant",
-		Passphrase: "correct-horse",
+		Passphrase: []byte("correct-horse"),
 	})
 	require.NoError(t, err)
 

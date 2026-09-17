@@ -75,6 +75,10 @@ func (m *mockUserClient) AddCertBinding(ctx context.Context, userID uint64, thum
 	return m.addCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }
 
+func (m *mockUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
+	return nil, errors.New("not used")
+}
+
 func (m *mockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
 	return nil, errors.New("not used")
 }

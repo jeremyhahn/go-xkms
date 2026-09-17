@@ -2324,6 +2324,10 @@ func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
 	}
 
 	// Split the secret using Shamir's Secret Sharing
+	//nolint:staticcheck // SA1019: the replacement (shamir.SplitProtected) is
+	// not re-exported through go-qrdb/sdk/go, and reaching go-quicraft directly
+	// would breach the SDK boundary this project locks. Filed upstream for a
+	// re-export; the shares this produces are unchanged in the meantime.
 	shareObjs, err := qrdbsdk.ShamirSplit(secret, threshold, shares)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to split secret", Err: err}
@@ -2360,6 +2364,8 @@ func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	}
 
 	// Combine the shares to reconstruct the secret
+	//nolint:staticcheck // SA1019: see ShamirSplit above -- the protected
+	// replacement is not re-exported through the SDK yet.
 	secret, err := qrdbsdk.ShamirCombine(shareObjs)
 	if err != nil {
 		return "", &errs.Wrapped{Msg: "failed to combine shares", Err: err}

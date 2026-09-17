@@ -35,7 +35,9 @@ func newTestRegistry(t *testing.T) *BarrierRegistry {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds := Credentials{Secret: []byte("test-pass")}
+	creds, err := CredentialsFor([]byte("test-pass"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
 
 	registry, err := NewBarrierRegistry(barrier)
@@ -53,7 +55,9 @@ func newTestRegistryWithTenant(t *testing.T, tenantID string) *BarrierRegistry {
 	require.NoError(t, err, "RegisterTenant(%q)", tenantID)
 
 	ctx := context.Background()
-	creds := Credentials{Secret: []byte("tenant-pass")}
+	creds, err := CredentialsFor([]byte("tenant-pass"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	err = registry.InitializeTenant(ctx, tenantID, creds)
 	require.NoError(t, err)
 

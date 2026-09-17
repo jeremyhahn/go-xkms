@@ -103,7 +103,18 @@ func runBarrierInit(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	creds := xkms.SealCredentials{Secret: []byte(password)}
+	// The CLI has already rejected an empty password above, and this []byte
+	// conversion is a fresh copy this function owns and never reads again, so
+	// NewCredentials (move + wipe) is used rather than CredentialsFor (copy).
+	creds, credErr := xkms.NewCredentials([]byte(password))
+	if credErr != nil {
+		return &BarrierError{
+			Operation: "build_credentials",
+			Err:       credErr,
+		}
+	}
+	defer creds.Secret.Destroy()
+
 	if err := barrier.Initialize(context.Background(), creds); err != nil {
 		return &BarrierError{
 			Operation: "initialize",

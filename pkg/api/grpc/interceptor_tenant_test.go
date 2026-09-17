@@ -44,7 +44,8 @@ func testTenantRegistry(t *testing.T) *seal.BarrierRegistry {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: []byte("test-password")}
+	creds := seal.MustCredentials([]byte("test-password"))
+	defer creds.Secret.Destroy()
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err)
 
@@ -63,7 +64,8 @@ func testTenantRegisteredTenant(t *testing.T, registry *seal.BarrierRegistry, te
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: []byte("tenant-password")}
+	creds := seal.MustCredentials([]byte("tenant-password"))
+	defer creds.Secret.Destroy()
 	err = registry.InitializeTenant(ctx, tenantID, creds)
 	require.NoError(t, err)
 	require.False(t, tb.IsSealed(), "tenant barrier should be unsealed after initialization")

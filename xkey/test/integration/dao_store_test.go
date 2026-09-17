@@ -65,7 +65,11 @@ func setupBarrier(t *testing.T) (*xkms.Barrier, string) {
 	t.Cleanup(func() { barrier.Close() })
 
 	ctx := context.Background()
-	creds := xkms.SealCredentials{Secret: []byte(barrierPassword)}
+	// barrierPassword is borrowed test literal material; CredentialsFor
+	// copies it into protected memory and leaves the package constant intact.
+	creds, credErr := xkms.CredentialsFor([]byte(barrierPassword))
+	require.NoError(t, credErr, "failed to build barrier credentials")
+	t.Cleanup(func() { creds.Secret.Destroy() })
 
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err, "failed to initialize barrier")
@@ -419,7 +423,11 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	t.Cleanup(func() { strategy.Close() })
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	creds := xkms.SealCredentials{Secret: []byte(barrierPassword)}
+	// barrierPassword is borrowed test literal material; CredentialsFor
+	// copies it into protected memory and leaves the package constant intact.
+	creds, credErr := xkms.CredentialsFor([]byte(barrierPassword))
+	require.NoError(t, credErr, "failed to build barrier credentials")
+	t.Cleanup(func() { creds.Secret.Destroy() })
 
 	barrier, err := xkms.NewBarrier(
 		logger,

@@ -91,7 +91,8 @@ func TestBarrierInitializeHandler_PasswordBase64_Success(t *testing.T) {
 func TestBarrierUnsealHandler_PasswordBase64_RoundTrip(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: []byte("roundtrip-secret")}
+	creds := seal.MustCredentials([]byte("roundtrip-secret"))
+	defer creds.Secret.Destroy()
 	if err := barrier.Initialize(context.Background(), creds); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
@@ -117,7 +118,8 @@ func TestBarrierUnsealHandler_PasswordBase64_RoundTrip(t *testing.T) {
 func TestBarrierUnsealHandler_BothFieldsPresent_PrefersEnclaved(t *testing.T) {
 	h, barrier := newTestBarrierHandler(t)
 
-	creds := seal.Credentials{Secret: []byte("the-enclaved-secret")}
+	creds := seal.MustCredentials([]byte("the-enclaved-secret"))
+	defer creds.Secret.Destroy()
 	if err := barrier.Initialize(context.Background(), creds); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}

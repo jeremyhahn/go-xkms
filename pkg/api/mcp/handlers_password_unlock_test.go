@@ -93,14 +93,18 @@ func unlockTestManager(t *testing.T) *staticpw.TenantPasswordStoreManager {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	require.NoError(t, sysBarrier.Initialize(ctx, seal.Credentials{Secret: []byte("test-pw")}))
+	sysCreds := seal.MustCredentials([]byte("test-pw"))
+	defer sysCreds.Secret.Destroy()
+	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
 
 	registry, err := seal.NewBarrierRegistry(sysBarrier)
 	require.NoError(t, err)
 
 	_, err = registry.RegisterTenant("tenant-1")
 	require.NoError(t, err)
-	require.NoError(t, registry.InitializeTenant(ctx, "tenant-1", seal.Credentials{Secret: []byte("tenant-pw")}))
+	tenantCreds := seal.MustCredentials([]byte("tenant-pw"))
+	defer tenantCreds.Secret.Destroy()
+	require.NoError(t, registry.InitializeTenant(ctx, "tenant-1", tenantCreds))
 
 	manager, err := staticpw.NewTenantPasswordStoreManager(registry, staticpw.NewStore(storage.New()))
 	require.NoError(t, err)

@@ -49,7 +49,9 @@ func tenantGRPCTestRegistry(t *testing.T) *seal.BarrierRegistry {
 	)
 	require.NoError(t, err)
 
-	require.NoError(t, barrier.Initialize(context.Background(), seal.Credentials{Secret: []byte("test-password")}))
+	creds := seal.MustCredentials([]byte("test-password"))
+	defer creds.Secret.Destroy()
+	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
 	registry, err := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, err)

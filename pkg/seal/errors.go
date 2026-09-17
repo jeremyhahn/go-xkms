@@ -54,8 +54,19 @@ var (
 	ErrNotInitialized = qrdbsdk.ErrNotInitialized
 
 	// ErrInvalidCredentials is returned when the provided credentials fail to
-	// unseal the root key (wrong password, wrong token, etc).
+	// unseal the root key. Raised by the HARDWARE strategies (TPM2, PKCS#11,
+	// cloud KMS) via hardware_encryptor.go; a software passphrase strategy
+	// reports ErrDecryptionFailed instead.
 	ErrInvalidCredentials = qrdbsdk.ErrInvalidCredentials
+
+	// ErrDecryptionFailed is returned when a wrong passphrase fails to unseal
+	// the root key under the software strategy. It arrives wrapped in
+	// go-quicraft's *UnsealError, so test it with errors.Is, never ==.
+	//
+	// Callers mapping "wrong credential" to a status code must handle BOTH
+	// this and ErrInvalidCredentials: which one surfaces depends on whether
+	// the barrier is software- or hardware-backed, not on what went wrong.
+	ErrDecryptionFailed = qrdbsdk.ErrDecryptionFailed
 
 	// ErrNoAvailableStrategy is returned when no registered sealing strategy
 	// reports itself as available.

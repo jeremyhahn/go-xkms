@@ -141,7 +141,7 @@ func TestTenantBarrierInit_ForwardsPassphraseAndStrategy(t *testing.T) {
 	if mock.gotBarrierInitReq == nil {
 		t.Fatal("TenantBarrierInit was not called")
 	}
-	if mock.gotBarrierInitReq.Passphrase != "s3cret" {
+	if string(mock.gotBarrierInitReq.Passphrase) != "s3cret" {
 		t.Errorf("Passphrase = %q, want %q", mock.gotBarrierInitReq.Passphrase, "s3cret")
 	}
 	if mock.gotBarrierInitReq.Strategy != "tpm2" {

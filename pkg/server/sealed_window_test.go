@@ -138,7 +138,7 @@ func TestServeSealedWindow_SealedNodeProceedsAfterUnseal(t *testing.T) {
 	svcNode := node.Services()
 	require.NotNil(t, svcNode, "a sealed node must still expose the seal-layer services")
 	require.NotNil(t, svcNode.Barrier)
-	require.NoError(t, svcNode.Barrier.BarrierUnseal(context.Background(), "correct-horse-battery-staple"))
+	require.NoError(t, svcNode.Barrier.BarrierUnseal(context.Background(), []byte("correct-horse-battery-staple")))
 
 	select {
 	case err := <-done:

@@ -63,7 +63,14 @@ func (s *XKMSService) BarrierInitialize(ctx context.Context, req *transport.Barr
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.barrier.Initialize(ctx, seal.Credentials{Secret: []byte(req.Secret)})
+	// req.Secret is borrowed request material; CredentialsFor copies it into
+	// protected memory and leaves the request field intact.
+	creds, err := seal.CredentialsFor([]byte(req.Secret))
+	if err != nil {
+		return err
+	}
+	defer creds.Secret.Destroy()
+	return s.barrier.Initialize(ctx, creds)
 }
 
 // BarrierUnseal unseals the encryption barrier using a secret.
@@ -74,7 +81,14 @@ func (s *XKMSService) BarrierUnseal(ctx context.Context, req *transport.BarrierU
 	if req == nil {
 		return ErrNilRequest
 	}
-	return s.barrier.Unseal(ctx, seal.Credentials{Secret: []byte(req.Secret)})
+	// req.Secret is borrowed request material; CredentialsFor copies it into
+	// protected memory and leaves the request field intact.
+	creds, err := seal.CredentialsFor([]byte(req.Secret))
+	if err != nil {
+		return err
+	}
+	defer creds.Secret.Destroy()
+	return s.barrier.Unseal(ctx, creds)
 }
 
 // BarrierSeal seals the encryption barrier, re-encrypting all data at rest.
@@ -118,7 +132,14 @@ func (s *XKMSService) BarrierInitializeShamir(ctx context.Context, req *transpor
 		Threshold:   req.Threshold,
 		TotalShares: req.TotalShares,
 	})
-	result, err := s.barrier.InitializeShamir(ctx, seal.Credentials{Secret: []byte(req.Secret)})
+	// req.Secret is borrowed request material; CredentialsFor copies it into
+	// protected memory and leaves the request field intact.
+	creds, err := seal.CredentialsFor([]byte(req.Secret))
+	if err != nil {
+		return nil, err
+	}
+	defer creds.Secret.Destroy()
+	result, err := s.barrier.InitializeShamir(ctx, creds)
 	if err != nil {
 		return nil, err
 	}
@@ -287,17 +308,24 @@ func (s *XKMSService) BarrierEnableEncryption(ctx context.Context, req *transpor
 		scope = qrdbsdk.BarrierScope{Kind: qrdbsdk.ScopeTenant, TenantID: req.TenantID}
 	}
 
+	// req.Passphrase is borrowed request material; CredentialsFor copies it
+	// into protected memory and leaves the request field intact.
+	creds, err := seal.CredentialsFor([]byte(req.Passphrase))
+	if err != nil {
+		return nil, err
+	}
 	opts := qrdbsdk.MigrationOptions{
 		TargetStrategy:  seal.StrategyID(req.Strategy),
 		Mechanism:       migrationMechanism(req.Mechanism),
 		Availability:    migrationAvailability(req.Availability),
-		Credentials:     seal.Credentials{Secret: []byte(req.Passphrase)},
+		Credentials:     creds,
 		ShamirThreshold: req.ShamirThreshold,
 		ShamirTotal:     req.ShamirTotal,
 	}
 	// Validate synchronously so the caller gets immediate feedback on bad input;
 	// the async path can no longer surface a structured error to this client.
 	if err := opts.Validate(); err != nil {
+		creds.Secret.Destroy()
 		return nil, err
 	}
 
@@ -305,6 +333,7 @@ func (s *XKMSService) BarrierEnableEncryption(ctx context.Context, req *transpor
 	// is already running would race on the swap/in-place rewrite and corrupt it.
 	scopeKey := string(scope.Kind) + "\x00" + scope.TenantID
 	if _, inFlight := s.migrationsInFlight.LoadOrStore(scopeKey, struct{}{}); inFlight {
+		creds.Secret.Destroy()
 		return nil, ErrMigrationInProgress
 	}
 
@@ -313,6 +342,11 @@ func (s *XKMSService) BarrierEnableEncryption(ctx context.Context, req *transpor
 	// long-running background re-encryption tracked via migrationsInFlight,
 	// and cancelling it on request completion would abort the rewrite midway.
 	go func() {
+		// The migration OWNS the credential from here: it outlives this
+		// request, so destroying it earlier would pull the passphrase out
+		// from under a running migration. The destroy belongs to the last
+		// reader, which is this goroutine.
+		defer creds.Secret.Destroy()
 		defer s.migrationsInFlight.Delete(scopeKey)
 		time.Sleep(migrationStartGrace)
 		if err := migrator.EnableEncryption(context.Background(), scope, opts); err != nil {

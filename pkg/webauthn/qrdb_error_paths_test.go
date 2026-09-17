@@ -135,6 +135,10 @@ func (f *faultyUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return f.inner.DisableUser(ctx, id)
 }
 
+func (f *faultyUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
+	return nil, errors.New("not implemented in fake")
+}
+
 func (f *faultyUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
 	return f.inner.AddCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }

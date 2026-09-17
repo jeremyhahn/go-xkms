@@ -132,7 +132,7 @@ endif
 #
 # The module declares the Go it needs in go.mod's `go` directive, and the
 # fleet pins GOTOOLCHAIN=local on hosts, under which a host go older than that
-# directive refuses every target ("go: go.mod requires go >= 1.26.7 (running
+# directive refuses every target ("go: go.mod requires go >= 1.27.0 (running
 # go 1.26.4; GOTOOLCHAIN=local)") while the Docker builder, which runs with
 # GOTOOLCHAIN=auto, quietly downloads the right one. Select the declared
 # toolchain explicitly for every recipe: the host go then acts only as the

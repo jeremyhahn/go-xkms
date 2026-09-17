@@ -31,19 +31,32 @@ import (
 // once invoked, letting tests synchronize with the servicer's async migration
 // goroutine.
 type fakeEncryptionMigrator struct {
-	mu     sync.Mutex
-	called bool
-	scope  qrdbsdk.BarrierScope
-	opts   qrdbsdk.MigrationOptions
-	err    error
-	done   chan struct{}
+	mu               sync.Mutex
+	called           bool
+	scope            qrdbsdk.BarrierScope
+	opts             qrdbsdk.MigrationOptions
+	credentialSecret []byte
+	err              error
+	done             chan struct{}
 }
 
+// EnableEncryption records the call and, while the credential is still valid
+// (the caller destroys it via a deferred call once this method returns),
+// copies out the plaintext secret so tests can assert on it without racing
+// the caller's post-return destroy.
 func (f *fakeEncryptionMigrator) EnableEncryption(_ context.Context, scope qrdbsdk.BarrierScope, opts qrdbsdk.MigrationOptions) error {
 	f.mu.Lock()
 	f.called = true
 	f.scope = scope
 	f.opts = opts
+	if opts.Credentials.Secret != nil {
+		if view, openErr := opts.Credentials.Secret.Open(); openErr == nil {
+			if plaintext, readErr := view.Open(); readErr == nil {
+				f.credentialSecret = append([]byte(nil), plaintext...)
+			}
+			view.Destroy()
+		}
+	}
 	f.mu.Unlock()
 	if f.done != nil {
 		close(f.done)
@@ -142,7 +155,7 @@ func TestBarrierEnableEncryption_SystemScopeSuccess(t *testing.T) {
 	// Mechanism and availability default when unset in the request.
 	assert.Equal(t, qrdbsdk.MechanismSwap, migrator.opts.Mechanism)
 	assert.Equal(t, qrdbsdk.AvailabilityQuiesced, migrator.opts.Availability)
-	assert.Equal(t, []byte("hunter2"), migrator.opts.Credentials.Secret)
+	assert.Equal(t, []byte("hunter2"), migrator.credentialSecret)
 }
 
 // TestBarrierEnableEncryption_SingleFlightPerScope verifies that a second

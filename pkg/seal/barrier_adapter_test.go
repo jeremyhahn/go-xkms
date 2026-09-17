@@ -109,7 +109,9 @@ func TestBarrierRegistry_TenantLifecycle(t *testing.T) {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds := Credentials{Secret: []byte("test-password")}
+	creds, err := CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
 
 	registry, err := NewBarrierRegistry(barrier)
@@ -172,7 +174,9 @@ func TestBarrierRegistry_RegisterTenantWithConfig(t *testing.T) {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds := Credentials{Secret: []byte("test-password")}
+	creds, err := CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
 
 	registry, err := NewBarrierRegistry(barrier)
@@ -195,7 +199,9 @@ func TestBarrierRegistry_UnregisterTenant(t *testing.T) {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds := Credentials{Secret: []byte("test-password")}
+	creds, err := CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
 
 	registry, err := NewBarrierRegistry(barrier)
@@ -220,7 +226,9 @@ func TestBarrierRegistry_SealAll(t *testing.T) {
 	}, strategy)
 	require.NoError(t, err)
 
-	creds := Credentials{Secret: []byte("test-password")}
+	creds, err := CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 	initAndUnsealBarrier(t, barrier, creds)
 
 	registry, err := NewBarrierRegistry(barrier)

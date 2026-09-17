@@ -619,6 +619,25 @@ func TestBarrierService_ChangePassword_Success(t *testing.T) {
 	require.NoError(t, svc.ChangePassword("newpass"))
 }
 
+func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing.T) {
+	// Documents the empty-password semantics across the CredentialsFor
+	// migration (go-qrdb #41): an empty password against a real, passphrase-
+	// sealed barrier must still fail to unseal — it must never be silently
+	// treated as "no credentials requested" and succeed, and it must never
+	// unseal the barrier. go-quicraft's SoftwareStrategy already rejected a
+	// zero-length secret before this migration (len(creds.Secret) == 0) and
+	// continues to reject the zero Credentials value the same way, so this
+	// pins the observable behavior rather than the underlying sentinel.
+	svc := newTestBarrierService(t)
+	require.NoError(t, svc.Initialize("realpassword", "passphrase"))
+	require.NoError(t, svc.Seal())
+
+	svc2 := NewBarrierService(svc.configDir, slog.Default())
+	err := svc2.Unseal("", "passphrase")
+	require.Error(t, err, "empty password must not unseal a passphrase-protected barrier")
+	assert.False(t, svc2.IsUnsealed())
+}
+
 func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 	svc := newTestBarrierService(t)
 	err := svc.ChangePassword("newpass")

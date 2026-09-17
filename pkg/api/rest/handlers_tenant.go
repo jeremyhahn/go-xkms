@@ -519,7 +519,7 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 	}
 	if err := h.xkmsService.TenantBarrierInit(r.Context(), &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
-		Passphrase: req.Passphrase,
+		Passphrase: []byte(req.Passphrase),
 		Strategy:   req.Strategy,
 		Threshold:  req.Threshold,
 		Shares:     req.Shares,
@@ -631,6 +631,10 @@ func handleTenantError(w http.ResponseWriter, err error) {
 	case errors.Is(err, seal.ErrTenantAlreadyUnsealed):
 		writeError(w, err, http.StatusConflict)
 	case errors.Is(err, seal.ErrInvalidCredentials):
+		writeError(w, err, http.StatusUnauthorized)
+	// Software strategies report a wrong passphrase as ErrDecryptionFailed;
+	// hardware ones raise ErrInvalidCredentials. Both are 401.
+	case errors.Is(err, seal.ErrDecryptionFailed):
 		writeError(w, err, http.StatusUnauthorized)
 	case errors.Is(err, seal.ErrNilSystemBarrier):
 		writeError(w, err, http.StatusServiceUnavailable)

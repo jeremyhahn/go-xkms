@@ -96,6 +96,23 @@ type BarrierStatus = seal.BarrierStatus
 // SealCredentials are the credentials used to unseal a barrier.
 type SealCredentials = seal.Credentials
 
+// NewCredentials moves a secret into protected memory, WIPING the source slice
+// on return. Use it only where the caller owns the buffer and will not read it
+// again; an empty secret is refused. A caller that reads its buffer after the
+// call — to set a token PIN, to hash a verifier, to retry — must use
+// CredentialsFor instead, or it will read the zeroed slice.
+var NewCredentials = seal.NewCredentials
+
+// CredentialsFor copies a borrowed secret into protected memory and leaves the
+// caller's slice untouched. Use it for material the caller still owns: request
+// fields, config values, a password typed into a UI. An empty secret yields the
+// zero SealCredentials ("no credentials supplied") rather than an error.
+var CredentialsFor = seal.CredentialsFor
+
+// MustCredentials is NewCredentials for fixtures; it panics where
+// NewCredentials would return an error.
+var MustCredentials = seal.MustCredentials
+
 // SealedRootKey is a root key sealed by a strategy.
 type SealedRootKey = seal.SealedRootKey
 

@@ -37,8 +37,26 @@ type SealingStrategy = qrdbsdk.SealingStrategy
 // SymmetricEncrypter provides symmetric encryption/decryption operations.
 type SymmetricEncrypter = qrdbsdk.SymmetricEncrypter
 
-// Credentials holds authentication material for seal/unseal operations.
+// Credentials holds authentication material for seal/unseal operations. The
+// secret lives in protected memory (*enclave.SealedEnclave), not a []byte.
+// Build one with CredentialsFor (borrowed material: request fields, config
+// values) or NewCredentials (owned material: consumes and wipes the source
+// slice). The zero value means "no credentials supplied".
 type Credentials = qrdbsdk.Credentials
+
+// NewCredentials moves a secret into protected memory, WIPING the source
+// slice on return. Use only where the caller owns the buffer and will not
+// read it again. An empty secret is refused.
+var NewCredentials = qrdbsdk.NewCredentials
+
+// CredentialsFor copies a borrowed secret into protected memory, leaving the
+// caller's slice intact. An empty secret yields the zero Credentials ("no
+// credentials supplied") rather than an error.
+var CredentialsFor = qrdbsdk.CredentialsFor
+
+// MustCredentials is NewCredentials for fixtures; it panics where
+// NewCredentials would return an error.
+var MustCredentials = qrdbsdk.MustCredentials
 
 // SealedRootKey is the persisted form of an encrypted root key.
 type SealedRootKey = qrdbsdk.SealedRootKey

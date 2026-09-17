@@ -52,7 +52,8 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	}
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: []byte("test-password")}
+	creds := seal.MustCredentials([]byte("test-password"))
+	defer creds.Secret.Destroy()
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +313,7 @@ func TestTransport_TenantBarrierInit_Success(t *testing.T) {
 	// generates a secret. Empty/"passphrase" strategy requires it.
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "init-tenant",
-		Passphrase: "tenant-admin-secret",
+		Passphrase: []byte("tenant-admin-secret"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -349,7 +350,7 @@ func TestTransport_TenantBarrierUnseal_AlreadyUnsealed(t *testing.T) {
 	// the barrier unsealed.
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   "unseal-tenant",
-		Passphrase: "tenant-admin-secret",
+		Passphrase: []byte("tenant-admin-secret"),
 	})
 	if err != nil {
 		t.Fatalf("barrier init failed: %v", err)

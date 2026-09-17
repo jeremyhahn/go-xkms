@@ -42,11 +42,14 @@ var (
 // barrierErrorToGRPC maps barrier domain errors to gRPC status codes.
 var barrierErrorToGRPC = map[error]codes.Code{
 	// Core barrier errors.
-	seal.ErrSealed:                codes.FailedPrecondition,
-	seal.ErrAlreadyUnsealed:       codes.AlreadyExists,
-	seal.ErrAlreadyInitialized:    codes.AlreadyExists,
-	seal.ErrNotInitialized:        codes.FailedPrecondition,
-	seal.ErrInvalidCredentials:    codes.Unauthenticated,
+	seal.ErrSealed:             codes.FailedPrecondition,
+	seal.ErrAlreadyUnsealed:    codes.AlreadyExists,
+	seal.ErrAlreadyInitialized: codes.AlreadyExists,
+	seal.ErrNotInitialized:     codes.FailedPrecondition,
+	seal.ErrInvalidCredentials: codes.Unauthenticated,
+	// Software strategies report a wrong passphrase as ErrDecryptionFailed;
+	// hardware ones raise ErrInvalidCredentials. Both are Unauthenticated.
+	seal.ErrDecryptionFailed:      codes.Unauthenticated,
 	seal.ErrNoAvailableStrategy:   codes.Unavailable,
 	seal.ErrStrategyNotFound:      codes.NotFound,
 	seal.ErrStrategyMismatch:      codes.FailedPrecondition,
@@ -155,7 +158,11 @@ func (s *Service) BarrierInitialize(ctx context.Context, req *pb.BarrierInitiali
 		return nil, err
 	}
 
-	creds := seal.Credentials{Secret: []byte(req.GetSecret())}
+	creds, err := seal.CredentialsFor([]byte(req.GetSecret()))
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier initialize")
+	}
+	defer creds.Secret.Destroy()
 	if err := barrier.Initialize(ctx, creds); err != nil {
 		return nil, mapBarrierError(err, "barrier initialize")
 	}
@@ -174,7 +181,11 @@ func (s *Service) BarrierUnseal(ctx context.Context, req *pb.BarrierUnsealReques
 		return nil, err
 	}
 
-	creds := seal.Credentials{Secret: []byte(req.GetSecret())}
+	creds, err := seal.CredentialsFor([]byte(req.GetSecret()))
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier unseal")
+	}
+	defer creds.Secret.Destroy()
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		return nil, mapBarrierError(err, "barrier unseal")
 	}

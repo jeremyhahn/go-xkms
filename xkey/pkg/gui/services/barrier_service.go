@@ -289,7 +289,21 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	}
 
 	ctx := s.context()
-	if initErr := barrier.Initialize(ctx, xkms.SealCredentials{Secret: []byte(password)}); initErr != nil {
+	// CredentialsFor, not NewCredentials: strategyID may be hardware-backed
+	// (TPM2), in which case password is legitimately empty and must reach the
+	// strategy as the zero Credentials rather than tripping NewCredentials'
+	// "refuses empty input" guard. The password string itself is a Go string
+	// and cannot be wiped either way, so CredentialsFor's simplicity costs no
+	// additional exposure here.
+	creds, credErr := xkms.CredentialsFor([]byte(password))
+	if credErr != nil {
+		_ = base.Close()
+		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
+		return credErr
+	}
+	defer creds.Secret.Destroy()
+
+	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		_ = base.Close()
 		s.log.Error("barrier: barrier.Initialize failed",
 			"strategy", strategyID, "error", initErr)
@@ -347,7 +361,17 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	// the barrier was sealed with and fall through to the rebuild below,
 	// stranding every store for the sake of an argument that is not used.
 	if s.barrier != nil && s.barrier.IsSealed() {
-		if err := s.barrier.Unseal(s.context(), xkms.SealCredentials{Secret: []byte(password)}); err != nil {
+		// CredentialsFor: see the Initialize comment above — the active
+		// strategy may be hardware-backed and password may be empty.
+		creds, credErr := xkms.CredentialsFor([]byte(password))
+		if credErr != nil {
+			s.mu.Unlock()
+			s.logBarrierEvent(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
+			return credErr
+		}
+		defer creds.Secret.Destroy()
+
+		if err := s.barrier.Unseal(s.context(), creds); err != nil {
 			s.mu.Unlock()
 			s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
 			return err
@@ -408,7 +432,18 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	}
 
 	ctx := s.context()
-	if err := barrier.Unseal(ctx, xkms.SealCredentials{Secret: []byte(password)}); err != nil {
+	// CredentialsFor: see the Initialize comment above — the active strategy
+	// may be hardware-backed and password may be empty.
+	creds, credErr := xkms.CredentialsFor([]byte(password))
+	if credErr != nil {
+		_ = base.Close()
+		s.mu.Unlock()
+		s.logBarrierEvent(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID})
+		return credErr
+	}
+	defer creds.Secret.Destroy()
+
+	if err := barrier.Unseal(ctx, creds); err != nil {
 		_ = base.Close()
 		s.mu.Unlock()
 		s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
@@ -465,7 +500,17 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	}
 
 	ctx := s.context()
-	if err := s.barrier.ChangePassword(ctx, xkms.SealCredentials{Secret: []byte(newPassword)}); err != nil {
+	// CredentialsFor: ChangePassword is a no-op for hardware-backed
+	// strategies, which are called with an empty newPassword by design (see
+	// the doc comment above); NewCredentials would reject that empty input.
+	creds, credErr := xkms.CredentialsFor([]byte(newPassword))
+	if credErr != nil {
+		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, credErr, nil)
+		return credErr
+	}
+	defer creds.Secret.Destroy()
+
+	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
 		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, err, nil)
 		return err
 	}

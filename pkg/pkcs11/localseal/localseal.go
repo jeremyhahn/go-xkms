@@ -73,7 +73,11 @@ func New(base storage.Backend, rootKeyPath string, logger *slog.Logger) (*Contro
 // initialized" and "already unsealed" are benign and tolerated.
 func (c *Controller) Unseal(passphrase []byte) error {
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: passphrase}
+	creds, credErr := seal.CredentialsFor(passphrase)
+	if credErr != nil {
+		return credErr
+	}
+	defer creds.Secret.Destroy()
 
 	if err := c.barrier.Initialize(ctx, creds); err != nil && !isAlreadyInitialized(err) {
 		return err
@@ -99,12 +103,24 @@ func (c *Controller) Seal() error {
 // the change does not leave key material exposed. If the barrier was never
 // initialized — the user changed the PIN before ever logging in and creating a
 // key — there is nothing to rekey and the next login keys it to the new PIN.
+// CredentialsFor, never NewCredentials, at both sites: NewCredentials wipes
+// the caller's slice, and Module.SetPIN reads newPin AFTER this returns —
+// it sets the token PIN and hashes its verifier (pkg/pkcs11/module:1580,
+// :1584). Wiping here would key the token to NUL bytes while the barrier
+// held the real PIN. The cgo boundary already copies these out of the
+// application's memory, so nothing is aliased; if PIN wiping is wanted it
+// belongs in Module.SetPIN after its last read, not in a constructor here.
 func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 	ctx := context.Background()
 
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
-		err := c.barrier.Unseal(ctx, seal.Credentials{Secret: oldPassphrase})
+		oldCreds, credErr := seal.CredentialsFor(oldPassphrase)
+		if credErr != nil {
+			return credErr
+		}
+		defer oldCreds.Secret.Destroy()
+		err := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(err) {
 			return nil // no barrier yet; first login will key it to the new PIN
 		}
@@ -113,7 +129,15 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) error {
 		}
 	}
 
-	if err := c.barrier.ChangePassword(ctx, seal.Credentials{Secret: newPassphrase}); err != nil {
+	newCreds, credErr := seal.CredentialsFor(newPassphrase)
+	if credErr != nil {
+		if wasSealed {
+			_ = c.barrier.Seal()
+		}
+		return credErr
+	}
+	defer newCreds.Secret.Destroy()
+	if err := c.barrier.ChangePassword(ctx, newCreds); err != nil {
 		if wasSealed {
 			_ = c.barrier.Seal()
 		}

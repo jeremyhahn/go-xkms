@@ -285,3 +285,17 @@ func (c *memoryUserClient) AddCertBinding(_ context.Context, userID uint64, _ st
 	}
 	return user, nil
 }
+
+// RemoveCertBinding satisfies the transport.UserClient contract. Like
+// AddCertBinding above, this client tracks no cert bindings, so there is
+// nothing to withdraw: it resolves the user and returns it. The ACME tests
+// authenticate by username, never by cert thumbprint.
+func (c *memoryUserClient) RemoveCertBinding(_ context.Context, userID uint64, _ string) (*db.User, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	user, ok := c.users[userID]
+	if !ok {
+		return nil, errUserNotFound
+	}
+	return user, nil
+}
