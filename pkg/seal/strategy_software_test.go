@@ -32,7 +32,9 @@ func TestSoftwareStrategy_SealUnsealRoundTrip(t *testing.T) {
 	s := NewSoftwareStrategy()
 	ctx := context.Background()
 	rootKey := []byte("this-is-a-32-byte-root-key-test!")
-	creds := Credentials{Secret: []byte("my-passphrase")}
+	creds, err := CredentialsFor([]byte("my-passphrase"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 
 	sealed, err := s.SealRootKey(ctx, rootKey, creds)
 	require.NoError(t, err)
@@ -47,14 +49,21 @@ func TestSoftwareStrategy_UnsealWrongPassphrase(t *testing.T) {
 	s := NewSoftwareStrategy()
 	ctx := context.Background()
 	rootKey := []byte("this-is-a-32-byte-root-key-test!")
-	creds := Credentials{Secret: []byte("correct-passphrase")}
+	creds, err := CredentialsFor([]byte("correct-passphrase"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
 
 	sealed, err := s.SealRootKey(ctx, rootKey, creds)
 	require.NoError(t, err)
 
-	wrongCreds := Credentials{Secret: []byte("wrong-passphrase")}
+	wrongCreds, err := CredentialsFor([]byte("wrong-passphrase"))
+	require.NoError(t, err)
+	defer wrongCreds.Secret.Destroy()
 	_, err = s.UnsealRootKey(ctx, sealed, wrongCreds)
-	assert.ErrorIs(t, err, ErrInvalidCredentials)
+	// The software strategy reports a wrong passphrase as ErrDecryptionFailed,
+	// wrapped in go-quicraft's *UnsealError. ErrInvalidCredentials belongs to
+	// the hardware path (hardware_encryptor.go).
+	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
 
 func TestSoftwareStrategy_BarrierEncryptor(t *testing.T) {

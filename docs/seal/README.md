@@ -301,15 +301,23 @@ Argon2id for password-based key derivation:
 
 | Parameter | Value |
 |-----------|-------|
-| Time cost | 3 iterations |
-| Memory cost | 64 MiB |
+| Time cost | 4 iterations |
+| Memory cost | 128 MiB |
 | Parallelism | 4 threads |
 | Key length | 32 bytes |
-| Salt length | 16 bytes (random) |
+| Salt length | 32 bytes (random) |
+
+These are go-quicraft's `DefaultKDFParams()`, which is the authority — a
+deployment may seal at a higher factor, and that tuned factor is carried
+forward across a password change rather than reset to these defaults.
+
+Under FIPS (a `fips` build or `GODEBUG=fips140=only`) the strategy derives with
+PBKDF2-SHA256 at 600,000 iterations instead; a blob stays on the leg it was
+sealed with.
 
 Process:
-1. Generate 16-byte random salt
-2. Derive 32-byte key: `Argon2id(password, salt, t=3, m=64K, p=4)`
+1. Generate 32-byte random salt
+2. Derive 32-byte key: `Argon2id(password, salt, t=4, m=128 MiB, p=4)`
 3. Generate 12-byte random nonce
 4. Encrypt root key: `AES-256-GCM(derivedKey, nonce, rootKey)`
 5. Persist `SealedRootKey{salt, nonce, ciphertext}`
@@ -392,7 +400,8 @@ Audit failures are silently ignored to avoid blocking barrier operations.
 | `ErrAlreadyUnsealed` | `Unseal` called on an already-unsealed barrier |
 | `ErrAlreadyInitialized` | `Initialize` called when root key already exists |
 | `ErrNotInitialized` | `Unseal` called before `Initialize` |
-| `ErrInvalidCredentials` | Wrong password, token, or auth value |
+| `ErrDecryptionFailed` | Wrong passphrase under the software strategy |
+| `ErrInvalidCredentials` | Wrong token or auth value under a hardware strategy |
 | `ErrNoAvailableStrategy` | No registered strategy reports as available |
 | `ErrStrategyNotFound` | Sealed blob references an unregistered strategy |
 | `ErrStrategyMismatch` | PlatformSealer metadata missing strategy tag |

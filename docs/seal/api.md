@@ -36,7 +36,9 @@ Unseal the barrier with a password credential.
 { "success": true, "message": "barrier unsealed" }
 ```
 
-**Errors:** `ErrNotInitialized` (400), `ErrAlreadyUnsealed` (409), `ErrInvalidCredentials` (401)
+**Errors:** `ErrNotInitialized` (400), `ErrAlreadyUnsealed` (409),
+`ErrDecryptionFailed` (401 — wrong passphrase, software strategy),
+`ErrInvalidCredentials` (401 — hardware strategies)
 
 ---
 

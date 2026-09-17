@@ -141,11 +141,16 @@ func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	creds, ok := barrierCredentialsFromRequest(req.Password, req.Secret)
+	creds, ok, err := barrierCredentialsFromRequest(req.Password, req.Secret)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		writeError(w, ErrMissingSecret, http.StatusBadRequest)
 		return
 	}
+	defer creds.Secret.Destroy()
 	if err := h.Barrier.Initialize(r.Context(), creds); err != nil {
 		handleBarrierError(w, err)
 		return
@@ -180,11 +185,16 @@ func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	creds, ok := barrierCredentialsFromRequest(req.Password, req.Secret)
+	creds, ok, err := barrierCredentialsFromRequest(req.Password, req.Secret)
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
 	if !ok {
 		writeError(w, ErrMissingSecret, http.StatusBadRequest)
 		return
 	}
+	defer creds.Secret.Destroy()
 	if err := h.Barrier.Unseal(r.Context(), creds); err != nil {
 		handleBarrierError(w, err)
 		return
@@ -490,6 +500,14 @@ func handleBarrierError(w http.ResponseWriter, err error) {
 		writeError(w, err, http.StatusBadRequest)
 	case errors.Is(err, seal.ErrInvalidCredentials):
 		writeError(w, err, http.StatusUnauthorized)
+	// A software passphrase strategy reports a wrong secret as
+	// ErrDecryptionFailed; only the hardware strategies raise
+	// ErrInvalidCredentials. Both mean "wrong credential" and both are 401.
+	// Without this arm a wrong password reaches the default branch, which
+	// answers 500 AND writes the raw error — disclosing the crypto library
+	// and strategy name to an unauthenticated caller.
+	case errors.Is(err, seal.ErrDecryptionFailed):
+		writeError(w, err, http.StatusUnauthorized)
 	case errors.Is(err, seal.ErrSealed):
 		writeError(w, err, http.StatusConflict)
 	case errors.Is(err, seal.ErrNoAvailableStrategy):
@@ -563,16 +581,26 @@ func handlePINError(w http.ResponseWriter, err error) {
 // plaintext Secret string. Returns ok=false only when both sources
 // are empty — callers respond with ErrMissingSecret in that case.
 //
-// The resulting seal.Credentials carries a Go string because the
-// upstream quicraft seal API defines Secret as a string; the final
-// string conversion happens exactly once, at this boundary, and is
-// bounded by the handler's lifetime.
-func barrierCredentialsFromRequest(pw secureio.PasswordField, fallback string) (seal.Credentials, bool) {
+// The secret is copied into protected memory with seal.CredentialsFor:
+// both pw.Buffer().Bytes() and fallback are borrowed from the decoded
+// request, which the caller (req.Password.Destroy(), the JSON decoder's
+// string) remains responsible for. The returned Credentials is owned by
+// the caller of this function, which must destroy it once the barrier
+// call it was built for returns.
+func barrierCredentialsFromRequest(pw secureio.PasswordField, fallback string) (seal.Credentials, bool, error) {
 	if buf := pw.Buffer(); buf != nil && buf.Size() > 0 {
-		return seal.Credentials{Secret: buf.Bytes()}, true
+		creds, err := seal.CredentialsFor(buf.Bytes())
+		if err != nil {
+			return seal.Credentials{}, false, err
+		}
+		return creds, true, nil
 	}
 	if fallback == "" {
-		return seal.Credentials{}, false
+		return seal.Credentials{}, false, nil
 	}
-	return seal.Credentials{Secret: []byte(fallback)}, true
+	creds, err := seal.CredentialsFor([]byte(fallback))
+	if err != nil {
+		return seal.Credentials{}, false, err
+	}
+	return creds, true, nil
 }

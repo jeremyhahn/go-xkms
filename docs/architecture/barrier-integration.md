@@ -134,8 +134,10 @@ No adapter layer is needed because `storage.Backend` and
   `Shamir` fields.
 - `NewBarrier()` and `NewTenantBarrier()` constructors that translate config
   and delegate to go-qrdb.
-- `SoftwareStrategy` that defers passphrase binding to Seal/Unseal time
-  (unlike go-quicraft's version which binds at construction).
+- `SoftwareStrategy`, a re-export of go-quicraft's DEFERRED strategy, which
+  binds its passphrase at each Seal/Unseal from `Credentials.Secret`. xkms adds
+  no implementation of its own; go-quicraft's other constructor binds at
+  construction and is deliberately not the one re-exported.
 - `NewShamirStrategy()` for Shamir m-of-n with storage-backed shares.
 
 **What lives in go-xkms:**
