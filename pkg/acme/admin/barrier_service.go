@@ -260,7 +260,7 @@ func (s *barrierService) Initialize(ctx context.Context, req *BarrierInitializeR
 		return err
 	}
 	if err := s.barrier.BarrierInitialize(ctx, &db.BarrierInitializeRequest{
-		Secret: req.Secret,
+		Secret: []byte(req.Secret),
 	}); err != nil {
 		return &BarrierError{Operation: "initialize", Err: err}
 	}
@@ -286,7 +286,7 @@ func (s *barrierService) Unseal(ctx context.Context, req *BarrierUnsealRequest) 
 		return err
 	}
 	if err := s.barrier.BarrierUnseal(ctx, &db.BarrierUnsealRequest{
-		Secret: req.Secret,
+		Secret: []byte(req.Secret),
 	}); err != nil {
 		return &BarrierError{Operation: "unseal", Err: err}
 	}
@@ -300,7 +300,7 @@ func (s *barrierService) InitializeShamir(ctx context.Context, req *BarrierIniti
 		return nil, err
 	}
 	resp, err := s.barrier.BarrierInitializeShamir(ctx, &db.BarrierInitializeShamirRequest{
-		Secret:      req.Secret,
+		Secret:      []byte(req.Secret),
 		Threshold:   req.Threshold,
 		TotalShares: req.TotalShares,
 	})

@@ -121,11 +121,11 @@ func (f *fakeTenantServicer) GetQuotaUsage(context.Context, string, quota.Resour
 	f.notImplemented()
 	return 0, nil
 }
-func (f *fakeTenantServicer) TenantBarrierInit(context.Context, string, string, int, int) (*tenantpkg.TenantBarrierInitResult, error) {
+func (f *fakeTenantServicer) TenantBarrierInit(context.Context, string, []byte, int, int) (*tenantpkg.TenantBarrierInitResult, error) {
 	f.notImplemented()
 	return nil, nil
 }
-func (f *fakeTenantServicer) TenantBarrierInitWithStrategy(context.Context, string, string, int, int, seal.StrategyID) (*tenantpkg.TenantBarrierInitResult, error) {
+func (f *fakeTenantServicer) TenantBarrierInitWithStrategy(context.Context, string, []byte, int, int, seal.StrategyID) (*tenantpkg.TenantBarrierInitResult, error) {
 	f.notImplemented()
 	return nil, nil
 }

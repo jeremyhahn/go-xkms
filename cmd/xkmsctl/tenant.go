@@ -344,7 +344,7 @@ func tenantBarrierInit(cfg *Config, printer *Printer, tenantID, passphrase, stra
 
 	req := &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
-		Passphrase: passphrase,
+		Passphrase: []byte(passphrase),
 		Strategy:   strategy,
 		Threshold:  threshold,
 		Shares:     shares,
