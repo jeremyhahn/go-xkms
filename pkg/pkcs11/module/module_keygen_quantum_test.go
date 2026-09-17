@@ -602,19 +602,19 @@ func TestTokenPQCKeyPairSurvivesFinalizeAndStaysUsable(t *testing.T) {
 	// extractable, so nothing SaveObject withholds is load-bearing.
 	storableTemplates := func(label string) ([]Attribute, []Attribute) {
 		return []Attribute{
-				NewStringAttribute(CKA_LABEL, label+"-pub"),
-				NewBoolAttribute(CKA_TOKEN, true),
-				NewBoolAttribute(CKA_PRIVATE, false),
-				NewBoolAttribute(CKA_VERIFY, true),
-				NewBoolAttribute(CKA_ENCAPSULATE, true),
-			}, []Attribute{
-				NewStringAttribute(CKA_LABEL, label+"-priv"),
-				NewBoolAttribute(CKA_TOKEN, true),
-				NewBoolAttribute(CKA_SENSITIVE, false),
-				NewBoolAttribute(CKA_EXTRACTABLE, true),
-				NewBoolAttribute(CKA_SIGN, true),
-				NewBoolAttribute(CKA_DECAPSULATE, true),
-			}
+			NewStringAttribute(CKA_LABEL, label+"-pub"),
+			NewBoolAttribute(CKA_TOKEN, true),
+			NewBoolAttribute(CKA_PRIVATE, false),
+			NewBoolAttribute(CKA_VERIFY, true),
+			NewBoolAttribute(CKA_ENCAPSULATE, true),
+		}, []Attribute{
+			NewStringAttribute(CKA_LABEL, label+"-priv"),
+			NewBoolAttribute(CKA_TOKEN, true),
+			NewBoolAttribute(CKA_SENSITIVE, false),
+			NewBoolAttribute(CKA_EXTRACTABLE, true),
+			NewBoolAttribute(CKA_SIGN, true),
+			NewBoolAttribute(CKA_DECAPSULATE, true),
+		}
 	}
 
 	// findOne resolves a restored object by the label it was created with.
