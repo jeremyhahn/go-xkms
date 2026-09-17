@@ -1494,34 +1494,6 @@ func (h *HandlerContext) resolveImportBackend(w http.ResponseWriter, name string
 	return importBackend, true
 }
 
-// resolveExportBackend resolves the named backend and asserts that it
-// implements backend.ExportBackend. It writes the mapped error response and
-// reports false when resolution fails, so callers only need to return.
-//
-// This asserts backend.ExportBackend, not the full ImportExportBackend union,
-// for the same reason resolveImportBackend asserts ImportBackend: export is a
-// genuinely independent capability from import, and a backend missing the
-// other half must not block this one.
-func (h *HandlerContext) resolveExportBackend(w http.ResponseWriter, name string) (backend.ExportBackend, bool) {
-	if err := ValidateBackendName(name); err != nil {
-		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
-		return nil, false
-	}
-
-	ks, err := h.lookupBackend(name)
-	if err != nil {
-		writeError(w, ErrBackendNotFound, http.StatusNotFound)
-		return nil, false
-	}
-
-	exportBackend, ok := ks.KeyProvider().(backend.ExportBackend)
-	if !ok {
-		writeError(w, backend.ErrExportNotSupported, http.StatusNotImplemented)
-		return nil, false
-	}
-	return exportBackend, true
-}
-
 // WrapKeyHandler handles POST /api/v1/keys/wrap requests. The request must
 // name the backend whose wrapping semantics are used; an empty backend is
 // rejected with 400 rather than silently resolved, matching ImportKeyHandler.

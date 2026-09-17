@@ -14,6 +14,7 @@
 package escrow
 
 import (
+	"errors"
 	"sync"
 
 	xerrs "github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -86,8 +87,10 @@ func NewRegistryFromConfig(cfg *Config) (*Registry, error) {
 		agentCfg := &cfg.Agents[i]
 		agent, err := NewAgent(agentCfg)
 		if err != nil {
-			registry.Close()
-			return nil, err
+			// Join rather than discard: Registry.Close aggregates per-agent
+			// close failures, so a half-built registry that could not release
+			// an agent handle would otherwise say nothing.
+			return nil, errors.Join(err, registry.Close())
 		}
 
 		name := agentCfg.Name
@@ -95,8 +98,7 @@ func NewRegistryFromConfig(cfg *Config) (*Registry, error) {
 			name = agentCfg.Type
 		}
 		if err := registry.Register(name, agent); err != nil {
-			registry.Close()
-			return nil, err
+			return nil, errors.Join(err, registry.Close())
 		}
 	}
 
