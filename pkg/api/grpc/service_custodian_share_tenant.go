@@ -847,7 +847,7 @@ func (s *Service) TenantBarrierInit(ctx context.Context, req *pb.TenantBarrierIn
 	}
 	if err := svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
-		Passphrase: req.GetSecret(),
+		Passphrase: []byte(req.GetSecret()),
 		Strategy:   req.GetStrategy(),
 		Threshold:  int(req.GetThreshold()),
 		Shares:     int(req.GetShares()),

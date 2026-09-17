@@ -95,7 +95,12 @@ func (h *HandlerContext) BarrierInitializeShamirHandler(w http.ResponseWriter, r
 		return
 	}
 
-	creds := seal.Credentials{Secret: []byte(req.Secret)}
+	creds, err := seal.CredentialsFor([]byte(req.Secret))
+	if err != nil {
+		writeError(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer creds.Secret.Destroy()
 	result, err := h.Barrier.InitializeShamir(r.Context(), creds)
 	if err != nil {
 		handleBarrierError(w, err)

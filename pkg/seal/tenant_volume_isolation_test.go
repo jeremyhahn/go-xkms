@@ -48,7 +48,9 @@ func newVolumeTestStack(t *testing.T, ents *qrdbsdk.Entitlements) (*BarrierRegis
 		RootKeyPath: "core/seal",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
-	creds := Credentials{Secret: []byte("system-pass")}
+	creds, err := CredentialsFor([]byte("system-pass"))
+	require.NoError(t, err)
+	t.Cleanup(func() { creds.Secret.Destroy() })
 	require.NoError(t, barrier.Initialize(ctx, creds))
 	if barrier.IsSealed() {
 		require.NoError(t, barrier.Unseal(ctx, creds))
@@ -111,7 +113,9 @@ func TestVolumeTenant_RestoreAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	base := newMemoryBackend() // persists across the simulated restart
-	creds := Credentials{Secret: []byte("system-pass")}
+	creds, err := CredentialsFor([]byte("system-pass"))
+	require.NoError(t, err)
+	t.Cleanup(func() { creds.Secret.Destroy() })
 	pools := []qrdbsdk.DaemonVolumePoolConfig{{
 		Name:  "default",
 		Paths: []string{filepath.Join(dataDir, "tenant-volumes")},

@@ -40,7 +40,11 @@ func (s *Service) BarrierInitializeShamir(ctx context.Context, req *pb.BarrierIn
 		return nil, err
 	}
 
-	creds := seal.Credentials{Secret: []byte(req.GetSecret())}
+	creds, err := seal.CredentialsFor([]byte(req.GetSecret()))
+	if err != nil {
+		return nil, mapBarrierError(err, "barrier initialize shamir")
+	}
+	defer creds.Secret.Destroy()
 	result, err := barrier.InitializeShamir(ctx, creds)
 	if err != nil {
 		return nil, mapBarrierError(err, "barrier initialize shamir")

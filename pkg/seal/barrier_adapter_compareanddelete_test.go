@@ -198,7 +198,10 @@ func TestBarrierBackend_CompareAndDeleteContract(t *testing.T) {
 				RootKeyPath: "test/root-key",
 			}, NewSoftwareStrategy())
 			require.NoError(t, err)
-			initAndUnsealBarrier(t, barrier, Credentials{Secret: []byte("test-password")})
+			creds, err := CredentialsFor([]byte("test-password"))
+			require.NoError(t, err)
+			defer creds.Secret.Destroy()
+			initAndUnsealBarrier(t, barrier, creds)
 
 			return NewBarrierBackend(barrier)
 		},
@@ -216,7 +219,10 @@ func TestBarrierBackend_CompareAndDeleteTranslatesOnlyTheAbsentSentinel(t *testi
 		RootKeyPath: "test/root-key",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
-	initAndUnsealBarrier(t, barrier, Credentials{Secret: []byte("test-password")})
+	creds, err := CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
+	initAndUnsealBarrier(t, barrier, creds)
 	bb := NewBarrierBackend(barrier)
 
 	// A closed base fails for a reason that is NOT "absent", so it must remain

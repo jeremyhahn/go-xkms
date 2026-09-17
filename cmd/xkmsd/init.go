@@ -119,6 +119,10 @@ var (
 	// ErrPasskeyPINReadFailed is returned when --passkey-pin-stdin is set but
 	// standard input cannot be read.
 	ErrPasskeyPINReadFailed = errors.New("init: failed to read the passkey PIN from standard input")
+
+	// ErrBarrierCredentialsFailed is returned when the SO PIN cannot be
+	// moved into protected memory for the init-time barrier.
+	ErrBarrierCredentialsFailed = errors.New("init: failed to build barrier credentials")
 )
 
 // validBarrierStrategies is the set of canonical --barrier-strategy
@@ -328,7 +332,12 @@ func runInit(args []string) {
 	// introduces no new secret to manage. This barrier is backed by in-memory
 	// storage and lives only for the duration of the command — the durable
 	// artifacts are the CA bundle, SPKI pin, and admin bundle written to disk.
-	barrierCreds := seal.Credentials{Secret: []byte(flags.soPin)}
+	barrierCreds, cerr := seal.CredentialsFor([]byte(flags.soPin))
+	if cerr != nil {
+		logger.Error("barrier credentials failed", slog.Any("error", &WrappedError{Sentinel: ErrBarrierCredentialsFailed, Err: cerr}))
+		os.Exit(1)
+	}
+	defer barrierCreds.Secret.Destroy()
 	if berr := barrier.Initialize(context.Background(), barrierCreds); berr != nil {
 		logger.Error("barrier initialization failed", slog.Any("error", berr))
 		os.Exit(1)

@@ -41,7 +41,8 @@ func newTenantServiceWiredXKMS(t *testing.T) *xkms.XKMSService {
 	}, seal.NewSoftwareStrategy())
 	require.NoError(t, err)
 
-	creds := seal.Credentials{Secret: []byte("test-password")}
+	creds := seal.MustCredentials([]byte("test-password"))
+	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds))
 	if barrier.IsSealed() {
 		require.NoError(t, barrier.Unseal(ctx, creds))

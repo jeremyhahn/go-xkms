@@ -96,7 +96,10 @@ func TestRegisterTenantWithConfig_NilBaseReachesThePooledPath(t *testing.T) {
 		RootKeyPath: "test/root-key",
 	}, NewSoftwareStrategy())
 	require.NoError(t, err)
-	initAndUnsealBarrier(t, system, Credentials{Secret: []byte("test-password")})
+	creds, err := CredentialsFor([]byte("test-password"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
+	initAndUnsealBarrier(t, system, creds)
 
 	registry, err := NewBarrierRegistry(system)
 	require.NoError(t, err)

@@ -66,9 +66,9 @@ func (t *TPM2Strategy) HardwareBacked() bool {
 // SealRootKey delegates to the underlying types.Sealer and stores the
 // sealed payload as JSON in SealedRootKey.HardwarePayload.
 //
-// When creds.Secret is non-empty it is applied as the sealed object's TPM
+// When creds.Secret is supplied it is applied as the sealed object's TPM
 // UserAuth authorization value, so unsealing requires presenting the same
-// secret. An empty secret seals with no authorization value (legacy
+// secret. Absent credentials seal with no authorization value (legacy
 // behavior), keeping existing blobs and callers compatible.
 func (t *TPM2Strategy) SealRootKey(
 	ctx context.Context,
@@ -79,8 +79,21 @@ func (t *TPM2Strategy) SealRootKey(
 		return nil, ErrNoAvailableStrategy
 	}
 	var opts *types.SealOptions
-	if len(creds.Secret) != 0 {
-		pw, pwErr := types.NewPasswordFromString(string(creds.Secret))
+	if creds.Secret != nil {
+		// The credential secret lives in protected memory. Open it into a
+		// locked view, copy the plaintext out for the password, and destroy
+		// the view on return; the caller still owns and destroys the
+		// credential itself.
+		opened, openErr := creds.Secret.Open()
+		if openErr != nil {
+			return nil, openErr
+		}
+		secret, strErr := opened.OpenString()
+		opened.Destroy()
+		if strErr != nil {
+			return nil, strErr
+		}
+		pw, pwErr := types.NewPasswordFromString(secret)
 		if pwErr != nil {
 			return nil, pwErr
 		}
@@ -109,7 +122,7 @@ func (t *TPM2Strategy) SealRootKey(
 // UnsealRootKey deserializes the HardwarePayload into a types.SealedData
 // and delegates to the underlying types.Sealer.
 //
-// When creds.Secret is non-empty it is presented as the sealed object's TPM
+// When creds.Secret is supplied it is presented as the sealed object's TPM
 // UserAuth authorization value. A wrong secret fails TPM session
 // authorization and the unseal is rejected by the hardware.
 func (t *TPM2Strategy) UnsealRootKey(
@@ -133,8 +146,19 @@ func (t *TPM2Strategy) UnsealRootKey(
 	}
 
 	var opts *types.UnsealOptions
-	if len(creds.Secret) != 0 {
-		pw, pwErr := types.NewPasswordFromString(string(creds.Secret))
+	if creds.Secret != nil {
+		// Same borrow as SealRootKey: open the protected secret, copy the
+		// plaintext for the password, destroy the view immediately.
+		opened, openErr := creds.Secret.Open()
+		if openErr != nil {
+			return nil, openErr
+		}
+		secret, strErr := opened.OpenString()
+		opened.Destroy()
+		if strErr != nil {
+			return nil, strErr
+		}
+		pw, pwErr := types.NewPasswordFromString(secret)
 		if pwErr != nil {
 			return nil, pwErr
 		}

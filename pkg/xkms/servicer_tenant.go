@@ -244,6 +244,7 @@ func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.Tena
 	if err != nil {
 		return err
 	}
+	defer creds.Secret.Destroy()
 
 	// Initialize with the caller-supplied credentials. A concurrent init may
 	// have won the race; treat ErrAlreadyInitialized as success.
@@ -318,7 +319,11 @@ func (s *XKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.Te
 		return nil
 	}
 
-	creds := tenantUnsealCredentials(req)
+	creds, err := tenantUnsealCredentials(req)
+	if err != nil {
+		return err
+	}
+	defer creds.Secret.Destroy()
 	return s.barrierRegistry.UnsealTenant(ctx, req.TenantID, creds)
 }
 
@@ -432,20 +437,25 @@ func tenantInitCredentials(req *transport.TenantBarrierInitRequest) (seal.Creden
 	default:
 		// Empty, "passphrase"/"software", and "shamir" all require the tenant
 		// admin's passphrase. There is NO server-generated fallback.
-		if req.Passphrase == "" {
+		if len(req.Passphrase) == 0 {
 			return seal.Credentials{}, ErrTenantPassphraseRequired
 		}
-		return seal.Credentials{Secret: []byte(req.Passphrase)}, nil
+		// req.Passphrase is borrowed request material; CredentialsFor copies it
+		// into protected memory and leaves the request field intact.
+		return seal.CredentialsFor(req.Passphrase)
 	}
 }
 
 // tenantUnsealCredentials builds the seal.Credentials for a
 // TenantBarrierUnseal request from the caller-supplied recovery material. A
 // Shamir share takes precedence over a passphrase-derived key when both are
-// present.
-func tenantUnsealCredentials(req *transport.TenantBarrierUnsealRequest) seal.Credentials {
+// present. Both fields are borrowed request material, so CredentialsFor
+// copies into protected memory and leaves the request untouched; an absent
+// share and key together yield the zero Credentials ("no credentials
+// supplied"), matching the "none" strategy's prior nil-secret behavior.
+func tenantUnsealCredentials(req *transport.TenantBarrierUnsealRequest) (seal.Credentials, error) {
 	if len(req.Share) > 0 {
-		return seal.Credentials{Secret: req.Share}
+		return seal.CredentialsFor(req.Share)
 	}
-	return seal.Credentials{Secret: req.Key}
+	return seal.CredentialsFor(req.Key)
 }

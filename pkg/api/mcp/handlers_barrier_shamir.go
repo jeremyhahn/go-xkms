@@ -88,7 +88,11 @@ func (s *Server) handleBarrierInitialize(ctx context.Context, req *JSONRPCReques
 		return nil, ErrBarrierSecretRequired
 	}
 
-	creds := seal.Credentials{Secret: []byte(params.Secret)}
+	creds, err := seal.CredentialsFor([]byte(params.Secret))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "barrier credentials", Err: err}
+	}
+	defer creds.Secret.Destroy()
 	if err := s.barrier.Initialize(ctx, creds); err != nil {
 		return nil, err
 	}
@@ -114,7 +118,11 @@ func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPC
 		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
 	}
 
-	creds := seal.Credentials{Secret: []byte(params.Secret)}
+	creds, err := seal.CredentialsFor([]byte(params.Secret))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "barrier credentials", Err: err}
+	}
+	defer creds.Secret.Destroy()
 	result, err := s.barrier.InitializeShamir(ctx, creds)
 	if err != nil {
 		return nil, err
@@ -144,7 +152,11 @@ func (s *Server) handleBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (
 		return nil, ErrBarrierSecretRequired
 	}
 
-	creds := seal.Credentials{Secret: []byte(params.Secret)}
+	creds, err := seal.CredentialsFor([]byte(params.Secret))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "barrier credentials", Err: err}
+	}
+	defer creds.Secret.Destroy()
 	if err := s.barrier.Unseal(ctx, creds); err != nil {
 		return nil, err
 	}

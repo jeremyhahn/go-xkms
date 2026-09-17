@@ -41,7 +41,8 @@ type fakeTenantServicer struct {
 
 	deletedID string
 
-	initID, initPassphrase    string
+	initID                    string
+	initPassphrase            []byte
 	initThreshold, initShares int
 	initStrategy              qrdbsdk.StrategyID
 	initErr                   error
@@ -84,7 +85,7 @@ func (f *fakeTenantServicer) DeleteTenant(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeTenantServicer) TenantBarrierInitWithStrategy(_ context.Context, id, passphrase string, threshold, shares int, strategy qrdbsdk.StrategyID) (*qrdbsdk.ServiceTenantBarrierInitResult, error) {
+func (f *fakeTenantServicer) TenantBarrierInitWithStrategy(_ context.Context, id string, passphrase []byte, threshold, shares int, strategy qrdbsdk.StrategyID) (*qrdbsdk.ServiceTenantBarrierInitResult, error) {
 	f.initID, f.initPassphrase, f.initThreshold, f.initShares, f.initStrategy = id, passphrase, threshold, shares, strategy
 	if f.initErr != nil {
 		return nil, f.initErr
@@ -197,14 +198,14 @@ func TestTenantBarrierInit_DelegatesWithStrategy(t *testing.T) {
 
 	err := svc.TenantBarrierInit(context.Background(), &transport.TenantBarrierInitRequest{
 		TenantID:   "acme",
-		Passphrase: "s3cret",
+		Passphrase: []byte("s3cret"),
 		Threshold:  2,
 		Shares:     3,
 		Strategy:   "tpm2",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "acme", fake.initID)
-	assert.Equal(t, "s3cret", fake.initPassphrase)
+	assert.Equal(t, []byte("s3cret"), fake.initPassphrase)
 	assert.Equal(t, 2, fake.initThreshold)
 	assert.Equal(t, 3, fake.initShares)
 	assert.Equal(t, qrdbsdk.StrategyID("tpm2"), fake.initStrategy)
