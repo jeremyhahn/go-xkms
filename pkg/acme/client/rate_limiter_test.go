@@ -277,37 +277,77 @@ func TestDefaultRateLimiterConfig(t *testing.T) {
 }
 
 func TestParseRetryAfter(t *testing.T) {
+	// A fixed "now" with a sub-second component: the parsed deadline must
+	// carry it through, not round it away.
+	now := time.Date(2026, time.September, 6, 12, 30, 45, 678_901_234, time.UTC)
+
 	tests := []struct {
 		name  string
 		value string
-		want  time.Duration
+		want  time.Time
+		ok    bool
 	}{
 		{
-			name:  "integer seconds",
+			name:  "delta-seconds keeps now's sub-second offset",
 			value: "120",
-			want:  120 * time.Second,
+			want:  now.Add(120 * time.Second),
+			ok:    true,
 		},
 		{
-			name:  "zero",
+			name:  "single second",
+			value: "1",
+			want:  now.Add(time.Second),
+			ok:    true,
+		},
+		{
+			name:  "delta-seconds beyond time.Duration clamps instead of overflowing",
+			value: "99999999999",
+			want:  now.Add(time.Duration(maxRetryAfterSeconds) * time.Second),
+			ok:    true,
+		},
+		{
+			name:  "delta-seconds beyond uint64 clamps instead of failing",
+			value: "99999999999999999999999",
+			want:  now.Add(time.Duration(maxRetryAfterSeconds) * time.Second),
+			ok:    true,
+		},
+		{
+			name:  "zero means no hold-off",
 			value: "0",
-			want:  0,
+		},
+		{
+			name:  "signed value is not delta-seconds",
+			value: "+5",
+		},
+		{
+			name:  "negative value is not delta-seconds",
+			value: "-1",
+		},
+		{
+			name:  "fractional seconds are not delta-seconds",
+			value: "1.5",
+		},
+		{
+			name:  "surrounding whitespace is rejected",
+			value: " 5",
 		},
 		{
 			name:  "invalid string",
 			value: "invalid",
-			want:  0,
 		},
 		{
 			name:  "empty string",
 			value: "",
-			want:  0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseRetryAfter(tt.value)
-			if got != tt.want {
+			got, ok := parseRetryAfter(tt.value, now)
+			if ok != tt.ok {
+				t.Fatalf("parseRetryAfter(%q) ok = %v, want %v", tt.value, ok, tt.ok)
+			}
+			if !got.Equal(tt.want) {
 				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.value, got, tt.want)
 			}
 		})
@@ -347,30 +387,6 @@ func TestRateLimitedTransport(t *testing.T) {
 			t.Error("expected http.DefaultTransport to be used")
 		}
 	})
-}
-
-func TestParseInt(t *testing.T) {
-	tests := []struct {
-		input string
-		want  int
-	}{
-		{"123", 123},
-		{"0", 0},
-		{"999", 999},
-		{"abc", 0},
-		{"12a3", 0},
-		{"", 0},
-		{"-1", 0}, // negative numbers not supported
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := parseInt(tt.input)
-			if got != tt.want {
-				t.Errorf("parseInt(%q) = %d, want %d", tt.input, got, tt.want)
-			}
-		})
-	}
 }
 
 func TestRateLimiter_SetRetryAfterTime(t *testing.T) {
@@ -454,23 +470,47 @@ func TestRateLimiter_StatsIsBlocked(t *testing.T) {
 }
 
 func TestParseRetryAfter_HTTPDate(t *testing.T) {
-	t.Run("valid HTTP date format", func(t *testing.T) {
-		// Use a date in the future
-		futureTime := time.Now().Add(1 * time.Hour).UTC()
-		dateStr := futureTime.Format(time.RFC1123)
+	now := time.Date(2026, time.September, 6, 12, 30, 45, 678_901_234, time.UTC)
+	future := time.Date(2026, time.September, 6, 13, 30, 45, 0, time.UTC)
 
-		duration := parseRetryAfter(dateStr)
+	// RFC 9110 §5.6.7: a recipient must accept all three HTTP-date forms.
+	dates := []struct {
+		name  string
+		value string
+	}{
+		{name: "IMF-fixdate", value: future.Format(http.TimeFormat)},
+		{name: "RFC 850", value: future.Format("Monday, 02-Jan-06 15:04:05 GMT")},
+		{name: "asctime", value: future.Format(time.ANSIC)},
+	}
 
-		// Should be approximately 1 hour (allow some variance)
-		if duration < 50*time.Minute || duration > 70*time.Minute {
-			t.Errorf("expected duration around 1 hour, got %v", duration)
+	for _, tt := range dates {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRetryAfter(tt.value, now)
+			if !ok {
+				t.Fatalf("parseRetryAfter(%q) rejected a valid HTTP-date", tt.value)
+			}
+			if !got.Equal(future) {
+				t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.value, got, future)
+			}
+		})
+	}
+
+	t.Run("date already elapsed means no hold-off", func(t *testing.T) {
+		past := now.Add(-time.Minute).Format(http.TimeFormat)
+		if got, ok := parseRetryAfter(past, now); ok {
+			t.Errorf("expected an elapsed HTTP-date to be ignored, got %v", got)
+		}
+	})
+
+	t.Run("date equal to now means no hold-off", func(t *testing.T) {
+		if got, ok := parseRetryAfter(now.Format(http.TimeFormat), now.Truncate(time.Second)); ok {
+			t.Errorf("expected an HTTP-date equal to now to be ignored, got %v", got)
 		}
 	})
 
 	t.Run("invalid date format", func(t *testing.T) {
-		duration := parseRetryAfter("not-a-date")
-		if duration != 0 {
-			t.Errorf("expected 0 for invalid date, got %v", duration)
+		if got, ok := parseRetryAfter("not-a-date", now); ok {
+			t.Errorf("expected an invalid date to be ignored, got %v", got)
 		}
 	})
 }
@@ -566,6 +606,68 @@ func TestRateLimitedTransport_RoundTrip(t *testing.T) {
 		retryUntil := limiter.retryUntil.Load()
 		if retryUntil == 0 {
 			t.Error("expected retryUntil to be set after 429 response")
+		}
+	})
+
+	t.Run("handles 429 with an HTTP-date Retry-After", func(t *testing.T) {
+		until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+		header := make(http.Header)
+		header.Set("Retry-After", until.Format(http.TimeFormat))
+
+		mockTransport := &mockRoundTripper{
+			response: &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     header,
+			},
+		}
+
+		limiter := NewRateLimiter(&RateLimiterConfig{
+			Enabled:          true,
+			BurstSize:        10,
+			RetryAfterHeader: true,
+		})
+
+		transport := NewRateLimitedTransport(mockTransport, limiter)
+
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		if _, err := transport.RoundTrip(req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// The instant the server named is stored as-is, not re-derived from a
+		// duration measured against a second time.Now().
+		if got := limiter.retryUntil.Load(); got != until.UnixNano() {
+			t.Errorf("expected retryUntil = %d (%v), got %d (%v)",
+				until.UnixNano(), until, got, time.Unix(0, got))
+		}
+	})
+
+	t.Run("ignores an unparseable Retry-After", func(t *testing.T) {
+		header := make(http.Header)
+		header.Set("Retry-After", "soon")
+
+		mockTransport := &mockRoundTripper{
+			response: &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     header,
+			},
+		}
+
+		limiter := NewRateLimiter(&RateLimiterConfig{
+			Enabled:          true,
+			BurstSize:        10,
+			RetryAfterHeader: true,
+		})
+
+		transport := NewRateLimitedTransport(mockTransport, limiter)
+
+		req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+		if _, err := transport.RoundTrip(req); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := limiter.retryUntil.Load(); got != 0 {
+			t.Errorf("expected no hold-off from an unparseable Retry-After, got %d", got)
 		}
 	})
 

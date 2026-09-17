@@ -18,6 +18,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -351,8 +352,8 @@ func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 	// Handle Retry-After header
 	if t.rateLimiter != nil && resp.StatusCode == http.StatusTooManyRequests {
 		if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-			if duration := parseRetryAfter(retryAfter); duration > 0 {
-				t.rateLimiter.SetRetryAfter(duration)
+			if until, ok := parseRetryAfter(retryAfter, time.Now()); ok {
+				t.rateLimiter.SetRetryAfterTime(until)
 			}
 		}
 	}
@@ -360,29 +361,35 @@ func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 	return resp, nil
 }
 
-// parseRetryAfter parses a Retry-After header value
-func parseRetryAfter(value string) time.Duration {
-	// Try to parse as seconds
-	if seconds := parseInt(value); seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
+// maxRetryAfterSeconds is the largest delta-seconds value that still fits in a
+// time.Duration; larger Retry-After values are clamped to it rather than
+// overflowing into a negative (and therefore ignored) hold-off.
+const maxRetryAfterSeconds = uint64(math.MaxInt64 / int64(time.Second))
 
-	// Try to parse as HTTP-date
-	if t, err := time.Parse(time.RFC1123, value); err == nil {
-		return time.Until(t)
-	}
-
-	return 0
-}
-
-// parseInt parses an integer from a string, returning 0 on error
-func parseInt(s string) int {
-	var n int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0
+// parseRetryAfter parses a Retry-After header value as defined by RFC 9110
+// §10.2.3: either delta-seconds (1*DIGIT, relative to now) or an HTTP-date in
+// any of the three forms a recipient must accept (IMF-fixdate, RFC 850,
+// asctime). It returns the absolute instant until which the client must hold
+// off and true, or false when the value is malformed, zero, or has already
+// elapsed. The instant is never rounded.
+func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
+	seconds, err := strconv.ParseUint(value, 10, 64)
+	if err == nil || errors.Is(err, strconv.ErrRange) {
+		// Digits only. ErrRange means the value exceeded uint64 and ParseUint
+		// returned its maximum; both cases clamp to the longest representable
+		// hold-off, which MaxWaitTime then refuses.
+		if seconds > maxRetryAfterSeconds {
+			seconds = maxRetryAfterSeconds
 		}
-		n = n*10 + int(c-'0')
+		if seconds == 0 {
+			return time.Time{}, false
+		}
+		return now.Add(time.Duration(seconds) * time.Second), true
 	}
-	return n
+
+	if until, err := http.ParseTime(value); err == nil && until.After(now) {
+		return until, true
+	}
+
+	return time.Time{}, false
 }

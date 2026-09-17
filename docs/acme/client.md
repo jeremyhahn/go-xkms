@@ -517,6 +517,12 @@ sub-second `Retry-After` is honoured exactly and `Wait` never resumes early. A
 later `Retry-After` arriving while a request is already parked extends the wait
 rather than replacing it with the earlier deadline.
 
+The header itself is read per RFC 9110 §10.2.3, in either form: delta-seconds
+(digits only — a value too large to represent is clamped to the longest
+hold-off the limiter can express, never dropped), or an HTTP-date in any of the
+three forms a recipient must accept (IMF-fixdate, RFC 850, asctime). A date that
+has already elapsed, and a value that is neither form, install no hold-off.
+
 ### Use with HTTP Transport
 
 ```go
