@@ -14,7 +14,7 @@ on:
 # ci.yml records -- `GOSUMDB: off` disabled checksum verification for every
 # third-party dependency.
 env:
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.0'
 
 jobs:
   lint:

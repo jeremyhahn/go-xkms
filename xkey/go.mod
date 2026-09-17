@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms/xkey
 
-go 1.26.7
+go 1.27.0
 
 // Intra-repo submodule resolution (valid in-workspace and standalone on GitHub).
 // Cross-repo deps resolve via the parent go.work `use` directives; no cross-repo
@@ -29,7 +29,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-luks2 v0.1.10-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.3-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.18.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
 	github.com/jeremyhahn/go-xkms v0.13.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.13.0-alpha
@@ -41,7 +41,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/tobischo/gokeepasslib/v3 v3.6.2
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/crypto v0.56.0
@@ -118,7 +118,6 @@ require (
 	github.com/cockroachdb/redact v1.1.8 // indirect
 	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20260610153742-72563bc7ca83 // indirect
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260812191550-bda99d66b4bf // indirect
@@ -171,17 +170,17 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-enclave v0.4.0-alpha // indirect
+	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.16.3-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.18.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
-	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -213,12 +212,12 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20250313105119-ba97887b0a25 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.68.0 // indirect
-	github.com/prometheus/procfs v0.20.1 // indirect
+	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_model v0.6.3 // indirect
+	github.com/prometheus/common v0.70.1 // indirect
+	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.61.0 // indirect
+	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -290,5 +289,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
-	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )

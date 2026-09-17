@@ -122,7 +122,7 @@ env:
   # Bump within 1.26 as patches ship; move to 1.27 only in the Go 1.27.0 wave
   # (company task #121), which has to bump the swiss/pebble chain first. This
   # is the emergency valve, not the adoption decision.
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.0'
   # ANALYSIS TOOL PINS (#189). These are the versions BAKED INTO the
   # self-hosted runner image; .github/scripts/require-tool.sh asserts the
   # binary on PATH self-reports exactly this and fails the job otherwise.
@@ -138,7 +138,7 @@ env:
   # version number. The old pin exists because @latest had moved to v2.13.0,
   # which panics under Go 1.26 ("nilness: internal error: unhandled builtin
   # recover" in honnef.co/go/tools v0.8.0-rc.1). v2.13.2 was installed and run
-  # against this tree under Go 1.26.7: it does not panic, and it reports the
+  # against this tree under Go 1.27.0: it does not panic, and it reports the
   # SAME seven enabled linters as v2.12.2 (errcheck, gocritic, govet,
   # ineffassign, misspell, staticcheck, unused) -- the check that matters most,
   # because the quiet way a linter bump goes wrong is dropping a linter while

@@ -49,7 +49,7 @@ env:
   # generated Dockerfile does not fetch anything -- the pin holds.
   #
   # Unpin with ci.yml in the Go 1.27.0 wave (company task #121).
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.0'
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli

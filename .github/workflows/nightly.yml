@@ -44,7 +44,7 @@ permissions:
 # `stable`: an unpinned toolchain is what moved a green head to red once
 # already, which is why ci.yml carries that pin and this comment.
 env:
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.0'
 
 jobs:
   trivy:

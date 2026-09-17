@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms/web/desktop
 
-go 1.26.7
+go 1.27.0
 
 // Intra-repo submodule resolution (valid in-workspace and standalone on GitHub).
 // Cross-repo deps resolve via the parent go.work `use` directives; no cross-repo
@@ -146,11 +146,12 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
+	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.16.3-alpha // indirect
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.3-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.18.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.18.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/sdk/go v0.13.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.13.0-alpha // indirect
@@ -158,7 +159,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
-	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -191,12 +192,12 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20250313105119-ba97887b0a25 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.68.0 // indirect
-	github.com/prometheus/procfs v0.20.1 // indirect
+	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_model v0.6.3 // indirect
+	github.com/prometheus/common v0.70.1 // indirect
+	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.61.0 // indirect
+	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
@@ -268,6 +269,6 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 	tinygo.org/x/bluetooth v0.15.0 // indirect
 )
