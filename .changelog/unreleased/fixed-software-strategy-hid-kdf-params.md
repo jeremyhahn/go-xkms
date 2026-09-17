@@ -1,8 +1,8 @@
-- **Password and PIN changes work again under go-qrdb v0.18.0-alpha.** Every
+- **Password and PIN changes work again under go-qrdb v0.19.0-alpha.** Every
   password-change path was failing with `passphrase strategy is not a software
   strategy`: PKCS#11 token PIN changes (`pkg/pkcs11/localseal`), the xkey GUI
   password change, and barrier `ChangePassword` on every transport. go-qrdb
-  v0.18.0-alpha's `ChangePassword` reads the registered strategy's KDF version
+  v0.19.0-alpha's `ChangePassword` reads the registered strategy's KDF version
   and work factor so a password change preserves a deployment's tuned factor
   rather than silently resetting it to library defaults; xkms registered a
   95-line wrapper struct around go-quicraft's strategy that forwarded every

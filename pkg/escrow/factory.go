@@ -88,8 +88,8 @@ func NewRegistryFromConfig(cfg *Config) (*Registry, error) {
 		agent, err := NewAgent(agentCfg)
 		if err != nil {
 			// Join rather than discard: Registry.Close aggregates per-agent
-			// close failures, and a half-built registry that failed to release
-			// an agent's handle is worth reporting alongside the cause.
+			// close failures, so a half-built registry that could not release
+			// an agent handle would otherwise say nothing.
 			return nil, errors.Join(err, registry.Close())
 		}
 
