@@ -181,6 +181,16 @@ func (f *fakeUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return nil
 }
 
+func (f *fakeUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[userID]
+	if !ok {
+		return nil, errFakeUserNotFound
+	}
+	return u, nil
+}
+
 func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

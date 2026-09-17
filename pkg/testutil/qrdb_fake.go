@@ -55,6 +55,11 @@ type QRDBFakeTransport struct {
 	nextRoleID  int
 }
 
+// Conformance is asserted at compile time: without this, a method added to
+// an upstream qrdb interface surfaces as a panic inside a test binary that
+// type-asserts this fake, not as a build failure. It did exactly that once.
+var _ qrdbtransport.UserClient = (*QRDBFakeTransport)(nil)
+
 // NewQRDBFakeTransport constructs an empty in-memory fake transport.
 func NewQRDBFakeTransport() *QRDBFakeTransport {
 	return &QRDBFakeTransport{
@@ -268,6 +273,31 @@ func (f *QRDBFakeTransport) AddCertBinding(ctx context.Context, userID uint64, t
 		return nil, &qrdbtransport.UserNotFoundError{ID: userID}
 	}
 	f.usersByCert[thumbprint] = userID
+	return u, nil
+}
+
+// RemoveCertBinding implements transport.UserClient. It withdraws the
+// thumbprint so GetUserByCertThumbprint stops resolving it.
+//
+// A withdrawal that matched nothing is REPORTED, never succeeded vacuously:
+// the real store refuses it so an operator who mistypes a thumbprint is not
+// told the key is withdrawn while the real binding stays live. The store's
+// typed *user.CertBindingNotFoundError is not reachable from the SDK surface,
+// and the REST transport deliberately collapses "no such user" and "no such
+// binding" onto UserNotFoundError because they differ only in the server's
+// message. This fake implements the transport, so it returns what the
+// transport returns.
+func (f *QRDBFakeTransport) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[userID]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: userID}
+	}
+	if bound, ok := f.usersByCert[thumbprint]; !ok || bound != userID {
+		return nil, &qrdbtransport.UserNotFoundError{ID: userID}
+	}
+	delete(f.usersByCert, thumbprint)
 	return u, nil
 }
 

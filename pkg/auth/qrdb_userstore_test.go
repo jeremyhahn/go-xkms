@@ -70,6 +70,10 @@ func (f *fakeQRDBUserClient) GetUserByCertThumbprint(ctx context.Context, thumbp
 	return u, nil
 }
 
+func (f *fakeQRDBUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
+	return nil, errors.New("not implemented in fake")
+}
+
 func (f *fakeQRDBUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
 	return nil, errors.New("not implemented in fake")
 }
