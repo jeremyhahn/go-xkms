@@ -323,4 +323,14 @@ var (
 	// ErrFIDO2AttestationAAGUIDInvalid indicates the id-fido-gen-ce-aaguid
 	// extension is not a non-critical DER octet string of exactly 16 bytes.
 	ErrFIDO2AttestationAAGUIDInvalid = errors.New("ca: id-fido-gen-ce-aaguid extension is not a 16-byte octet string")
+
+	// ErrFIDO2AttestationAAGUIDNotPermitted indicates the request names an
+	// authenticator model the profile does not certify, so nothing was issued.
+	//
+	// The AAGUID is the certificate's claim about the authenticator's model,
+	// and a relying party reads it as the CA's word. The CA can give its word
+	// only for the models the operator listed when the profile was built;
+	// certifying any other would put a claim in the certificate that nobody
+	// vouched for. The accompanying detail names the refused AAGUID.
+	ErrFIDO2AttestationAAGUIDNotPermitted = errors.New("ca: id-fido-gen-ce-aaguid extension names an authenticator model this profile does not certify")
 )

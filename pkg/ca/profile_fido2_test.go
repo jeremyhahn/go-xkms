@@ -51,9 +51,16 @@ const (
 	attestationVendorOrganization = "Acme Authenticators AB"
 )
 
-// testAAGUID is the authenticator model identifier a device reports. The
-// distinctive byte pattern makes a mis-copied value obvious in a failure.
-var testAAGUID = []byte{
+// testAAGUID is the authenticator model identifier a device reports. It is
+// xkey's own AAGUID because that is the one model the default profile
+// certifies: a request naming any other is refused before it reaches the
+// section 8.2.1 conformance assertions these fixtures exist to make.
+var testAAGUID = ca.XKeyAAGUID[:]
+
+// foreignAAGUID is an authenticator model the default profile does not
+// certify, used by the allowlist tests. The distinctive byte pattern makes a
+// mis-copied value obvious in a failure.
+var foreignAAGUID = []byte{
 	0xcd, 0x8c, 0x39, 0x5c, 0x26, 0xed, 0xee, 0xde,
 	0x65, 0x3b, 0x00, 0x79, 0x7d, 0x03, 0xca, 0x3c,
 }
@@ -222,11 +229,19 @@ func attestationTemplate() *x509.Certificate {
 // carrying the AAGUID extension.
 func attestationRequest(t *testing.T) *ca.CertificateRequest {
 	t.Helper()
+	return requestWithAAGUID(t, testAAGUID)
+}
+
+// requestWithAAGUID returns the issuance context for a device request naming
+// the given AAGUID, so a test can vary the model without restating the
+// surrounding request.
+func requestWithAAGUID(t *testing.T, aaguid []byte) *ca.CertificateRequest {
+	t.Helper()
 	return &ca.CertificateRequest{
 		Subject: ca.Subject{CommonName: "xkey Attestation"},
 		CSRExtensions: []pkix.Extension{{
 			Id:    oidFIDOGenCEAAGUID,
-			Value: marshalAAGUIDExtensionValue(t, testAAGUID),
+			Value: marshalAAGUIDExtensionValue(t, aaguid),
 		}},
 	}
 }
@@ -485,6 +500,94 @@ func TestFIDO2AttestationProfile_RefusesMalformedCallerExtension(t *testing.T) {
 	}, ca.ProfileNameFIDO2Attestation)
 
 	require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDInvalid)
+	assert.Nil(t, issued)
+}
+
+// =============================================================================
+// Authenticator Model Allowlist
+// =============================================================================
+
+// TestFIDO2AttestationProfile_DefaultPermitsOnlyTheShippedModel proves the
+// no-argument constructor is fail-closed. An operator who never configures the
+// profile still gets a model binding: xkey's AAGUID certifies, and a device
+// naming any other model is refused rather than certified on its own say-so.
+func TestFIDO2AttestationProfile_DefaultPermitsOnlyTheShippedModel(t *testing.T) {
+	require.NoError(t, applyFIDO2Profile(attestationTemplate(), attestationRequest(t)),
+		"the shipped model's AAGUID must certify under the default profile")
+
+	template := attestationTemplate()
+	err := applyFIDO2Profile(template, requestWithAAGUID(t, foreignAAGUID))
+
+	require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDNotPermitted)
+	assert.Empty(t, template.ExtraExtensions,
+		"a refused request must leave no AAGUID on the template")
+}
+
+// TestFIDO2AttestationProfile_ExplicitAllowlistReplacesTheDefault proves the
+// AAGUIDs the operator lists are the whole policy: a listed model certifies,
+// and the shipped model does not unless they listed it too. A default quietly
+// unioned into every operator's list would be a model the CA vouches for that
+// nobody asked it to.
+func TestFIDO2AttestationProfile_ExplicitAllowlistReplacesTheDefault(t *testing.T) {
+	var listed [16]byte
+	copy(listed[:], foreignAAGUID)
+	profile := ca.NewFIDO2AttestationProfile(listed)
+
+	require.NoError(t, profile.Apply(attestationTemplate(), requestWithAAGUID(t, foreignAAGUID)),
+		"an AAGUID the operator listed must certify")
+
+	err := profile.Apply(attestationTemplate(), requestWithAAGUID(t, ca.XKeyAAGUID[:]))
+	require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDNotPermitted,
+		"the shipped model must not be permitted implicitly")
+}
+
+// TestFIDO2AttestationProfile_ExplicitAllowlistPermitsEveryListedModel covers
+// the multi-model deployment: an operator running more than one authenticator
+// lists them all, and every one of them issues while an unlisted one does not.
+func TestFIDO2AttestationProfile_ExplicitAllowlistPermitsEveryListedModel(t *testing.T) {
+	var listed [16]byte
+	copy(listed[:], foreignAAGUID)
+	profile := ca.NewFIDO2AttestationProfile(ca.XKeyAAGUID, listed)
+
+	require.NoError(t, profile.Apply(attestationTemplate(), requestWithAAGUID(t, ca.XKeyAAGUID[:])))
+	require.NoError(t, profile.Apply(attestationTemplate(), requestWithAAGUID(t, foreignAAGUID)))
+
+	unlisted := bytes.Repeat([]byte{0x11}, 16)
+	require.ErrorIs(t, profile.Apply(attestationTemplate(), requestWithAAGUID(t, unlisted)),
+		ca.ErrFIDO2AttestationAAGUIDNotPermitted)
+}
+
+// TestFIDO2AttestationProfile_RefusalNamesTheAAGUID proves the refusal carries
+// what an operator needs to act on it: the AAGUID in the RFC 4122 form device
+// documentation and FIDO metadata publish, and the profile to register to
+// admit it. A bare "not permitted" would leave them decoding hex to work out
+// which device was turned away.
+func TestFIDO2AttestationProfile_RefusalNamesTheAAGUID(t *testing.T) {
+	err := applyFIDO2Profile(attestationTemplate(), requestWithAAGUID(t, foreignAAGUID))
+
+	require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDNotPermitted)
+	assert.Contains(t, err.Error(), "cd8c395c-26ed-eede-653b-00797d03ca3c",
+		"the refusal must name the AAGUID it refused")
+	assert.Contains(t, err.Error(), ca.ProfileNameFIDO2Attestation,
+		"the refusal must point at how to permit the model")
+}
+
+// TestFIDO2AttestationProfile_RefusesUnpermittedCallerExtension closes the
+// direct-issuance route through the CA the default registry builds: a caller
+// supplying the extension among its own extra extensions, which the issuer
+// would append verbatim, is held to the same allowlist as a device request.
+// Enforcing only the CSR path would leave the binding bypassable by the caller
+// that does not go through a device.
+func TestFIDO2AttestationProfile_RefusesUnpermittedCallerExtension(t *testing.T) {
+	issued, err := attestationVendorCA(t).IssueCertificateWithProfile(context.Background(), &ca.CertificateRequest{
+		Subject: ca.Subject{CommonName: "xkey Attestation Direct"},
+		ExtraExtensions: []pkix.Extension{{
+			Id:    oidFIDOGenCEAAGUID,
+			Value: marshalAAGUIDExtensionValue(t, foreignAAGUID),
+		}},
+	}, ca.ProfileNameFIDO2Attestation)
+
+	require.ErrorIs(t, err, ca.ErrFIDO2AttestationAAGUIDNotPermitted)
 	assert.Nil(t, issued)
 }
 

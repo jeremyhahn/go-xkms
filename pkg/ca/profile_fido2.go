@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -56,6 +57,22 @@ var OIDFIDOGenCEAAGUID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 45724, 1, 1, 4}
 // fido2AAGUIDSize is the length of an AAGUID in bytes.
 const fido2AAGUIDSize = 16
 
+// XKeyAAGUID is the Authenticator Attestation GUID of the xkey authenticator,
+// the FIDO2 device this project ships: UUIDv5(DNS, "xkey.automatethethings.com")
+// = 5150e208-1ab8-5162-bc67-f5e4f24adefa.
+//
+// One product reports one AAGUID. This is the single value the CA can vouch
+// for on its own authority, so it is the only AAGUID the built-in
+// fido2-attestation profile certifies unless an operator registers a profile
+// that permits others. It is defined here, in the module both the CA and the
+// authenticator can reach, so that the device reporting the value and the CA
+// certifying it can never disagree; xkey's authenticator.DefaultAAGUID is this
+// value.
+var XKeyAAGUID = [16]byte{
+	0x51, 0x50, 0xE2, 0x08, 0x1A, 0xB8, 0x51, 0x62,
+	0xBC, 0x67, 0xF5, 0xE4, 0xF2, 0x4A, 0xDE, 0xFA,
+}
+
 // fido2AttestationValidityDays is the default validity of an attestation
 // certificate: ten years. A device's attestation identity is provisioned once
 // by a Security Officer and is expected to outlive every credential the device
@@ -76,13 +93,29 @@ var (
 )
 
 // fido2AttestationProfile issues FIDO2 attestation certificates conforming to
-// WebAuthn Level 2 section 8.2.1.
+// WebAuthn Level 2 section 8.2.1 for the authenticator models it permits.
 type fido2AttestationProfile struct {
 	baseProfile
+
+	// permitted is the set of AAGUIDs this profile will certify. It is fixed
+	// at construction: the profile is registered against a CA, and changing
+	// the set means registering a new profile, which is the deliberate
+	// administrative act the binding depends on.
+	permitted map[[16]byte]struct{}
 }
 
 // NewFIDO2AttestationProfile creates the profile for FIDO2 authenticator
 // attestation certificates.
+//
+// The permitted AAGUIDs are the whole of the profile's model policy: a
+// request naming any other AAGUID is refused with
+// ErrFIDO2AttestationAAGUIDNotPermitted, because the CA has no basis to
+// certify a model the operator has not vouched for. Called with no arguments
+// the profile permits exactly XKeyAAGUID, the one authenticator this project
+// ships, and that is what the default registry installs. An operator who
+// provisions other models lists every AAGUID the CA may certify, XKeyAAGUID
+// included if xkey devices are among them, and registers the result under
+// ProfileNameFIDO2Attestation; there is no way to permit every AAGUID.
 //
 // Key usage is DigitalSignature: an attestation key does nothing but sign
 // attestation statements. No extended key usage is set, because an attestation
@@ -100,7 +133,16 @@ type fido2AttestationProfile struct {
 //   - The id-fido-gen-ce-aaguid extension carrying the AAGUID the request asked
 //     for, non-critical.
 //   - Basic constraints asserting CA:false.
-func NewFIDO2AttestationProfile() ProfileProvider {
+func NewFIDO2AttestationProfile(permitted ...[16]byte) ProfileProvider {
+	if len(permitted) == 0 {
+		permitted = []([16]byte){XKeyAAGUID}
+	}
+
+	set := make(map[[16]byte]struct{}, len(permitted))
+	for _, aaguid := range permitted {
+		set[aaguid] = struct{}{}
+	}
+
 	return &fido2AttestationProfile{
 		baseProfile: baseProfile{
 			name:                  ProfileNameFIDO2Attestation,
@@ -109,6 +151,7 @@ func NewFIDO2AttestationProfile() ProfileProvider {
 			defaultValidity:       fido2AttestationValidityDays,
 			basicConstraintsValid: true,
 		},
+		permitted: set,
 	}
 }
 
@@ -138,7 +181,7 @@ func (p *fido2AttestationProfile) Apply(template *x509.Certificate, request *Cer
 		return err
 	}
 
-	return applyFIDO2AAGUIDExtension(template, request)
+	return p.applyAAGUIDExtension(template, request)
 }
 
 // applyFIDO2AttestationSubject rewrites the template's subject into the exact
@@ -207,21 +250,18 @@ func utf8NameAttribute(oid asn1.ObjectIdentifier, value string) pkix.AttributeTy
 	}
 }
 
-// applyFIDO2AAGUIDExtension copies the AAGUID the request asked for onto the
-// certificate.
+// applyAAGUIDExtension puts the AAGUID the request asked for onto the
+// certificate, provided the profile permits that AAGUID.
 //
-// Trust assumption, and its limit: the AAGUID is copied verbatim from the
-// request. The CA does not check it against a set of authenticator models the
-// operator has vouched for, because no such registry exists in this project.
-// What stands behind the value is therefore the provisioning ceremony alone —
-// the requester had to hold the device and its Security Officer PIN to produce
-// the request, and the CA certifying it is the operator's own. A device that
-// clears both bars can name any AAGUID it likes and this CA will certify it,
-// which is a weaker binding than the extension implies. Closing that gap needs
-// an operator-curated model registry consulted here; until one exists, do not
-// read a certificate issued by this profile as evidence of the authenticator's
-// model beyond what the ceremony already established.
-func applyFIDO2AAGUIDExtension(template *x509.Certificate, request *CertificateRequest) error {
+// The AAGUID is the certificate's claim about the authenticator's model, and a
+// relying party reads it as the CA's word. The CA can only give its word for
+// models the operator has vouched for, so a request naming any other AAGUID is
+// refused rather than certified: the provisioning ceremony proves the requester
+// holds the device and its Security Officer PIN, which says nothing about what
+// the device is. The remaining assumption is stated plainly: a permitted AAGUID
+// is certified on the operator's say-so, and the CA does not otherwise verify
+// that the device before it is the model the AAGUID names.
+func (p *fido2AttestationProfile) applyAAGUIDExtension(template *x509.Certificate, request *CertificateRequest) error {
 	if request == nil {
 		return ErrFIDO2AttestationAAGUIDMissing
 	}
@@ -230,7 +270,7 @@ func applyFIDO2AAGUIDExtension(template *x509.Certificate, request *CertificateR
 	// produced on the device carries the AAGUID the device reports.
 	extension, found := findExtension(request.CSRExtensions, OIDFIDOGenCEAAGUID)
 	if found {
-		aaguid, err := parseFIDO2AAGUIDExtension(extension)
+		aaguid, err := p.permittedAAGUID(extension)
 		if err != nil {
 			return err
 		}
@@ -243,11 +283,41 @@ func applyFIDO2AAGUIDExtension(template *x509.Certificate, request *CertificateR
 	// left where it is; adding a second copy would encode the same extension
 	// twice, which is malformed.
 	if extension, found = findExtension(request.ExtraExtensions, OIDFIDOGenCEAAGUID); found {
-		_, err := parseFIDO2AAGUIDExtension(extension)
+		_, err := p.permittedAAGUID(extension)
 		return err
 	}
 
 	return ErrFIDO2AttestationAAGUIDMissing
+}
+
+// permittedAAGUID parses an id-fido-gen-ce-aaguid extension and returns the
+// AAGUID it carries if the profile permits it, or
+// ErrFIDO2AttestationAAGUIDNotPermitted naming the AAGUID if it does not.
+func (p *fido2AttestationProfile) permittedAAGUID(extension pkix.Extension) ([]byte, error) {
+	aaguid, err := parseFIDO2AAGUIDExtension(extension)
+	if err != nil {
+		return nil, err
+	}
+
+	var key [16]byte
+	copy(key[:], aaguid)
+	if _, ok := p.permitted[key]; !ok {
+		return nil, &errs.Detail{
+			Err: ErrFIDO2AttestationAAGUIDNotPermitted,
+			Detail: "aaguid " + formatAAGUID(aaguid) + " is not an authenticator model this profile certifies; " +
+				"register a " + ProfileNameFIDO2Attestation + " profile built with NewFIDO2AttestationProfile that permits it",
+		}
+	}
+
+	return aaguid, nil
+}
+
+// formatAAGUID renders an AAGUID in the RFC 4122 form relying parties and
+// metadata publish, so an operator can match a refusal against a device's
+// documentation without decoding hex.
+func formatAAGUID(aaguid []byte) string {
+	encoded := hex.EncodeToString(aaguid)
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
 }
 
 // parseFIDO2AAGUIDExtension validates an id-fido-gen-ce-aaguid extension and

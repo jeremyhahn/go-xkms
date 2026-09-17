@@ -249,7 +249,7 @@ registration, so the profile enforces the same requirements at issuance:
 | Subject-O (UTF8String) | the issuing CA's own subject |
 | Subject-OU == `Authenticator Attestation` | the profile, literally |
 | Subject-CN (UTF8String) | the request |
-| `id-fido-gen-ce-aaguid`, non-critical, 16-byte OCTET STRING | copied from the request |
+| `id-fido-gen-ce-aaguid`, non-critical, 16-byte OCTET STRING | the request, if the profile permits that AAGUID |
 | Basic Constraints CA:false | the profile |
 
 The country and organisation are the CA's because §8.2.1 wants the attestation
@@ -257,11 +257,11 @@ The country and organisation are the CA's because §8.2.1 wants the attestation
 CA is the vendor of record for the authenticators it provisions.
 
 The profile refuses rather than issues something short. A request with no
-AAGUID extension, a malformed one, or an issuing CA whose subject has no country
-or organisation is rejected — an attestation certificate missing any §8.2.1
-field is rejected by the relying party that receives it, so issuing one would
-only move the failure to first registration, where nothing reports why
-attestation stopped working.
+AAGUID extension, a malformed one, an AAGUID the profile does not certify, or an
+issuing CA whose subject has no country or organisation is rejected — an
+attestation certificate missing any §8.2.1 field is rejected by the relying
+party that receives it, so issuing one would only move the failure to first
+registration, where nothing reports why attestation stopped working.
 
 Extensions are otherwise **not** copied from a certificate signing request. The
 request's extensions reach a profile through `CertificateRequest.CSRExtensions`
@@ -270,12 +270,34 @@ the only profile that does, and only for `id-fido-gen-ce-aaguid`. A requester
 that could name its own basic constraints or key usage would be issuing to
 itself.
 
-**Trust assumption.** The AAGUID is copied verbatim: the CA does not check it
-against a registry of authenticator models the operator has vouched for,
-because no such registry exists. What stands behind the value is the
-provisioning ceremony — the requester had to hold the device and its Security
-Officer PIN — and the fact that the CA is the operator's own. A device that
-clears both bars can name any AAGUID and this CA will certify it.
+**Authenticator model allowlist.** The AAGUID is not copied verbatim. The
+profile carries the set of AAGUIDs it may certify, and a request naming any
+other is refused with `ErrFIDO2AttestationAAGUIDNotPermitted`, which names the
+refused AAGUID in RFC 4122 form. The provisioning ceremony — the requester held
+the device and its Security Officer PIN — proves possession, and possession says
+nothing about what the device is, so it is not a basis for the CA to vouch for a
+model.
+
+`NewFIDO2AttestationProfile()` called with no arguments permits exactly
+`ca.XKeyAAGUID`, the one authenticator this project ships, and that is what
+`NewDefaultProfileRegistry` installs. No argument permits every AAGUID: a
+control that switched itself off when left unconfigured would read as
+enforcement while providing none. An operator provisioning other models lists
+every AAGUID the CA may certify and registers the result:
+
+```go
+myCA.Profiles().Register(ca.ProfileNameFIDO2Attestation,
+    ca.NewFIDO2AttestationProfile(ca.XKeyAAGUID, vendorAAGUID))
+```
+
+The listed AAGUIDs are the whole policy — `ca.XKeyAAGUID` is not unioned in, so
+list it too if xkey devices are among the models. Registering is a deliberate
+administrative act, distinct from provisioning, and it is how the first device
+of a newly approved model is admitted.
+
+The remaining assumption is stated plainly: a permitted AAGUID is certified on
+the operator's say-so, and the CA does not otherwise verify that the device
+before it is the model the AAGUID names.
 
 Registering a profile against a CA replaces it everywhere:
 
