@@ -7,6 +7,203 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0-alpha] - 2026-09-20
+
+### Security
+
+- **The `fido2-attestation` profile certifies only authenticator models the
+  operator has vouched for (#242).** The profile copied `id-fido-gen-ce-aaguid`
+  out of the request verbatim, so any device that cleared the provisioning
+  ceremony — physical possession plus the Security Officer PIN — could name any
+  AAGUID it liked and the CA would certify it. That made an xkms-issued
+  attestation certificate useless as evidence of *model*: a policy such as
+  "only this authenticator may register as an administrator" was unenforceable,
+  because an insider holding an SO PIN could provision a software device
+  claiming a hardware AAGUID and receive a certificate saying so.
+  `NewFIDO2AttestationProfile` now takes the AAGUIDs it may certify and refuses
+  every other one with `ErrFIDO2AttestationAAGUIDNotPermitted`, naming the
+  refused AAGUID in RFC 4122 form and pointing at the profile to register to
+  admit it. Both routes into the extension are covered: the device's
+  `CSRExtensions` and a direct caller's `ExtraExtensions`, which the issuer
+  would otherwise append unchecked.
+
+  Called with no arguments the profile permits exactly `ca.XKeyAAGUID`, the one
+  authenticator this project ships, which is what `NewDefaultProfileRegistry`
+  installs; there is no argument that permits every AAGUID, so the control
+  cannot be switched off by leaving it unconfigured. The listed AAGUIDs are the
+  whole policy and `ca.XKeyAAGUID` is not unioned into an operator's list. An
+  operator running other models registers a profile built with the full set
+  under `ProfileNameFIDO2Attestation` — a deliberate administrative act,
+  distinct from provisioning, which is how the first device of a newly approved
+  model is admitted. Files: `pkg/ca/profile_fido2.go`, `pkg/ca/errors.go`,
+  `pkg/ca/profile_fido2_test.go`, `docs/ca/architecture.md`. Verified by
+  `go test ./pkg/ca/...`: the shipped model issues, an unlisted model is
+  refused by both routes, an explicit list admits exactly what it names, and
+  the refusal text carries the AAGUID.
+- **A tenant's MCP key import landed in the untenanted namespace, where the
+  importing tenant's own reads could not find it, and every `copy_key` through
+  a token-honouring backend produced a key that could not be unwrapped**
+  (#222). `handleImportKeyMaterial` passed no `TenantID` to the service at all,
+  so the import resolved the unscoped backend and wrote under an identifier
+  carrying no tenant prefix — the #162/#163 family, a tenant's write going
+  somewhere that tenant cannot read, not a cross-tenant disclosure. The
+  withholding was deliberate while an imported key persisted no metadata record
+  to be read back from; both key providers have persisted the tenant since
+  #163, so the reason had lapsed and only the symptom remained. The import now
+  runs under the caller's tenant through `tenantForRequest`, and
+  `get_import_parameters` and `copy_key` take their tenant from the same helper
+  rather than from `callerTenantID` directly, so a request that names a tenant
+  of its own is refused with `ErrTenantIDNotAccepted` instead of having the
+  field silently dropped by the decoder. Separately, `XKMSService.CopyKey`
+  asked the destination backend for fresh import parameters and overwrote the
+  exported material's import token with theirs: `ExportKey` wraps under a
+  wrapping key the exporting backend mints for that export and names it by the
+  token it returns, so the override pointed `ImportKey` at a different key than
+  the material was wrapped under and the unwrap failed. The export's own token
+  is now passed through untouched, the destination attributes carry the
+  destination store type plus the source's digest and partition, and
+  `ExportKeyResponse`/`WrapKeyResponse` no longer drop the import token and
+  metadata that must travel with the blob. `pkg/api/mcp/handlers.go`,
+  `pkg/api/mcp/types.go`, `pkg/api/transport/types.go`,
+  `pkg/xkms/servicer_key.go`, `docs/multi-tenancy/`. Verified by
+  `pkg/xkms/servicer_key_tenant_copy_test.go`, which asserts the copy holds the
+  source's key material — provable only if the unwrap succeeded — and that it
+  is visible to the copying tenant and to no other, and by
+  `pkg/api/mcp/handlers_keyops_tenant_test.go`, which pins the import to the
+  authenticated tenant and the refusal of a caller-supplied one.
+- **A system-tenant identity can no longer reach another tenant's escrow
+  records.** The qrdb permission vocabulary xkms consumes gained a fourth
+  scope, `ScopeSelfStrict`, which admits a request only when the caller's
+  own tenant is the target tenant — for *every* identity, the system tenant
+  included. The three existing scopes could not express that: `ScopeSelf`
+  admits the caller's own tenant **or** a system-lifted identity acting
+  across tenants, `ScopeCross` is system-only by design, and
+  `ScopeTenantOnly` excludes the system tenant altogether, so the system
+  tenant could not use it for its *own* data. Escrow therefore sat on
+  `ScopeSelf` and inherited the system lift, which made a system
+  administrator able to read any tenant's escrowed key material. Each
+  tenant, including the system tenant, is its own boundary; a system
+  administrator administers the system tenant, it does not impersonate the
+  others. Taking go-qrdb v0.19.0-alpha activates the new scope — enforcement
+  lives entirely in qrdb's permission layer, so no xkms call site changes.
+  The bump is purely additive: the qrdb `sdk/go` exported surface went from
+  2730 to 2731 declarations with zero removals.
+
+### Fixed
+
+- **`CI / Lint` is green again, which unblocks every other job in the pipeline.**
+  The gate was failing on `main` itself, and because `test`,
+  `nested-module-test`, `security`, `build-raft` and `race` all declare
+  `needs: [lint, ...]`, a red Lint SKIPPED them — and a skipped job is not a
+  passing one, so `CI Gate` failed and every open pull request was refused at
+  merge with "not all required status checks successful". Two independent
+  causes, both fixed here. Thirteen test files had no trailing newline (#561,
+  #562); twelve are the ones `gofmt` has always flagged, and
+  `pkg/pkcs11/module/module_keygen_quantum_test.go` is flagged only by Go
+  1.27's `gofmt`, which indents a multi-value return of composite literals
+  differently — so it appears the moment CI moves to 1.27. And four
+  golangci-lint findings (#563) sat behind the formatting failure, invisible
+  until it was fixed: `registry.Close()` discarded on two error paths in
+  `pkg/escrow/factory.go` (its aggregated per-agent close failures are now
+  joined into the returned error), gRPC's deprecated `SecurityVersion` in
+  `peercred_transport.go` (removed; nothing read it), and the uncalled
+  `resolveExportBackend` in `pkg/api/rest/handlers.go` (deleted — the export
+  path asserts `backend.ExportBackend` inline, exactly as the dead helper did).
+- **The PKCS#11 module's FIPS labels now rest on the artifact's build
+  provenance instead of the module state of the process that loaded it**
+  (#219). `pkg/crypto/fips/fips.go`, `pkg/pkcs11/module/mechanism.go`.
+  `fipsBuild` read `fips.Compiled` — `crypto/fips140.Enabled()` — which is
+  runtime module state, not build provenance: `GODEBUG=fips140=off` turns it
+  false on a binary genuinely built with `GOFIPS140`, and `GODEBUG=fips140=on`
+  turns it true on one that was not. A user reading `CK_INFO.libraryDescription`
+  or `CK_TOKEN_INFO.model` to confirm they hold a FIPS module could therefore be
+  told the wrong thing in both directions: the shipped `libxkms_pkcs11_fips.so`
+  denied being a FIPS build under `fips140=off`, and a stock build claimed to be
+  one under `fips140=on`. New `fips.BuildSetting` and `fips.Built` read the
+  `GOFIPS140` value the toolchain stamps into the binary at link time (the
+  `build GOFIPS140=<value>` line of `go version -m`), which no environment
+  variable alters and which survives into a c-shared library a foreign process
+  `dlopen()`s; `fipsBuild` now reads `fips.Built`, so the label describes the
+  artifact and nothing else. `BuildSetting` returns the selector the build ran
+  with — `latest`, `inprocess`, `certified` or `v1.Y.Z` — so a compliance
+  manifest can name the module version rather than only the fact of a FIPS
+  build. **`AlgorithmPermitted` is deliberately unchanged**: the approved-only
+  allowlist still follows `Compiled() || Enabled()`, the crypto actually in
+  force, so an operator who sets `GODEBUG=fips140=off` has turned the module
+  off and the predicate permits everything, exactly as in a non-FIPS build —
+  whether a validated artifact may be talked out of its posture that way is the
+  owner's policy call recorded on #219, and changing it means adding `Built` to
+  that OR and nothing else. Verified by measuring a probe built both ways
+  (`GOFIPS140=latest` records the setting and it persists under
+  `GODEBUG=fips140=off`; an unset build and an explicit `GOFIPS140=off` build
+  both record nothing, so absent and off read back alike through `Built` while
+  `BuildSetting` still distinguishes them), by unit tests driving
+  `buildSettingFrom`/`builtFrom` with synthetic build metadata including the nil
+  and setting-absent cases, by tests pinning `BuildSetting` and `Built` against
+  the `GOFIPS140` environment variable that must not move them, and by the
+  PKCS#11 label suite, which re-execs itself under `GODEBUG=fips140=on` and
+  `=off` and asserts the labels hold still in both.
+- **The ACME client silently ignored a server's `Retry-After` backoff whenever
+  the value overflowed a `time.Duration` or used either of the two HTTP-date
+  forms besides IMF-fixdate** (#564). `parseRetryAfter` returned a
+  `time.Duration` and `RateLimitedTransport.RoundTrip` gated on `duration > 0`,
+  so three separate inputs collapsed to "no hold-off" and the client kept
+  hammering a server that had just answered `429`: a digits-only value above
+  `math.MaxInt64 / int64(time.Second)` (~9.22e9) wrapped negative in
+  `time.Duration(seconds) * time.Second` — measured, `"10000000000"` yielded
+  `-2346317h47m53s`; the hand-rolled `parseInt` had no overflow check, so
+  `"99999999999999999999999"` wrapped to `200376420520689663` rather than being
+  detected as out of range; and `time.Parse(time.RFC1123, ...)` rejected the
+  RFC 850 and asctime dates that RFC 9110 §5.6.7 requires a recipient to
+  accept, returning `0`.
+
+  The parser now follows RFC 9110 §10.2.3: delta-seconds via
+  `strconv.ParseUint` (digits only, clamping both the `ErrRange` case and any
+  value beyond the representable duration), HTTP-date in all three forms via
+  `http.ParseTime`, and an already-elapsed date rejected in the parser instead
+  of incidentally by the caller. It returns the absolute instant rather than a
+  duration, so the transport hands it to the existing `SetRetryAfterTime`
+  unrounded — no round trip through `time.Until` and a second `time.Now()`. The
+  parser's clamp composes with `storeRetryDeadline`'s year-2262 clamp, so a
+  far-future deadline stays representable and reads back as blocked. The
+  now-unused `parseInt` and its test are removed; the deadline storage, the
+  overflow clamp and the compare-and-swap clearing in `waitRetryAfter` / `Allow`
+  are unchanged and still covered by `rate_limiter_deadline_test.go`.
+  `pkg/acme/client/rate_limiter.go`, `rate_limiter_test.go`,
+  `docs/acme/client.md`. Verified by table-driven parser tests over
+  delta-seconds, each of the three date forms, an elapsed date, an equal-to-now
+  date, both overflow paths and malformed input, plus transport tests that an
+  HTTP-date header stores the named instant exactly and an unparseable one
+  installs no hold-off.
+- **Password and PIN changes work again under go-qrdb v0.19.0-alpha.** Every
+  password-change path was failing with `passphrase strategy is not a software
+  strategy`: PKCS#11 token PIN changes (`pkg/pkcs11/localseal`), the xkey GUI
+  password change, and barrier `ChangePassword` on every transport. go-qrdb
+  v0.19.0-alpha's `ChangePassword` reads the registered strategy's KDF version
+  and work factor so a password change preserves a deployment's tuned factor
+  rather than silently resetting it to library defaults; xkms registered a
+  95-line wrapper struct around go-quicraft's strategy that forwarded every
+  method verbatim but **not** `KDFVersion()`/`KDFParams()`, so the parameters
+  the re-seal needs were structurally hidden. `pkg/seal.SoftwareStrategy` is now
+  a type alias for the canonical go-quicraft strategy re-exported through the
+  qrdb SDK, and `NewSoftwareStrategy` re-exports the **deferred** constructor,
+  which binds its passphrase at each Seal/Unseal — never the bound one, which
+  ignores the credentials handed to unseal and would make wrong-secret unseals
+  succeed for the life of the process (go-qrdb#157). xkms contributes only
+  hardware seal strategies (TPM2, PKCS#11, cloud KMS); the barrier and seal
+  layer belongs to go-qrdb, and a forwarding-only wrapper was just a place for
+  the two sides to drift. A wrong passphrase now surfaces as
+  `seal.ErrDecryptionFailed` instead of `seal.ErrInvalidCredentials`, which
+  remains the sentinel for the hardware path, so the REST barrier/PIN, REST
+  tenant and gRPC error mappers gained matching arms: without them a wrong
+  password would have degraded from 401 to 500, and that default branch writes
+  the raw error, disclosing the crypto library and strategy name to an
+  unauthenticated caller. `TestBarrierUnsealHandler_InvalidCredentials` asserted
+  only `NotEqual(200)`, which a 500 satisfies, and is tightened to `Equal(401)`
+  so the regression cannot recur unseen. Verified: the five previously failing
+  tests pass, `pkg/seal` 90.8%, `pkg/api/rest` and `pkg/api/grpc` suites green,
+  build and vet clean across all four modules.
+
 ## [0.13.0-alpha] - 2026-09-16
 
 ### Security
