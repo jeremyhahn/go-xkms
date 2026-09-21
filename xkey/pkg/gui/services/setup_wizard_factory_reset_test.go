@@ -37,7 +37,7 @@ import (
 func newFactoryResetFixture(t *testing.T) (svc *SetupWizardService, hmacFile string, configSaved *bool) {
 	t.Helper()
 
-	svc = NewSetupWizardService()
+	svc = &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	configDir := t.TempDir()
@@ -70,10 +70,15 @@ func wireSOPIN(svc *SetupWizardService, soPIN string) *wizardMockPINBackend {
 }
 
 func TestFactoryReset_RefusesWhenPINServiceUnwired(t *testing.T) {
-	// The regression guard for #313 site 4. SetPINService is a setter, so
-	// FactoryReset can be reached with s.pinSvc still nil. The verification
-	// used to sit inside "if s.pinSvc != nil", which turned an authorization
-	// check that could not run into one that passed.
+	// The regression guard for #313 site 4. NewSetupWizardService now takes
+	// pinSvc as a required constructor argument specifically so production
+	// callers cannot build a wizard with it unwired -- but FactoryReset's own
+	// guard is what actually enforces the refusal, and this test constructs
+	// the struct directly (bypassing the constructor, as only same-package
+	// test code can) to prove that guard still fails closed on its own,
+	// rather than trusting the constructor as the only layer. The
+	// verification used to sit inside "if s.pinSvc != nil", which turned an
+	// authorization check that could not run into one that passed.
 	svc, hmacFile, configSaved := newFactoryResetFixture(t)
 
 	err := svc.FactoryReset("any-string-at-all")

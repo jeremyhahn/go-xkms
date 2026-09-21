@@ -336,7 +336,7 @@ func TestFM_SetupWizard_ApplySetup_BarrierInitFails(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &GUIConfigData{}
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return cfg })
 	svc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
@@ -373,7 +373,7 @@ func TestFM_SetupWizard_ApplySetup_NilBarrierSvc(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &GUIConfigData{}
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return cfg })
 	svc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
@@ -398,7 +398,7 @@ func TestFM_SetupWizard_ApplySetup_InitDataDirFails(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &GUIConfigData{}
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return cfg })
 	svc.SetConfigSaveFunc(func(c *GUIConfigData) error { return nil })
@@ -422,7 +422,7 @@ func TestFM_SetupWizard_ApplySetup_InitDataDirFails(t *testing.T) {
 // TestFM_SetupWizard_ApplySOProvisioning_InvalidMode covers the invalid
 // deployment mode path in ApplySOProvisioning (line 694-696).
 func TestFM_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	choices := &SetupChoices{
@@ -437,7 +437,7 @@ func TestFM_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
 // TestFM_SetupWizard_ApplySOProvisioning_NoSOPin covers the empty SO PIN
 // path in ApplySOProvisioning (line 691-692).
 func TestFM_SetupWizard_ApplySOProvisioning_NoSOPin(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	choices := &SetupChoices{SOPin: "", Mode: "local"}
 	_, err := svc.ApplySOProvisioning(choices)
 	assert.ErrorIs(t, err, ErrSetupSOPINRequired)

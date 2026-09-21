@@ -9,7 +9,7 @@ Package: `xkey/pkg/gui/services`, file `setup_wizard_service.go`. Errors in
 
 | Method | Purpose |
 |---|---|
-| `NewSetupWizardService()` | Constructor; dependencies arrive through `Set*` setters |
+| `NewSetupWizardService(pinSvc *PINService) (*SetupWizardService, error)` | Constructor; `pinSvc` is required, everything else arrives through `Set*` setters |
 | `ProbeEnvironment()` | `EnvironmentProbe`: TPM, LUKS, platform, existing storage, barrier strategies, sealers, backends |
 | `GenerateSetupPINs()` | Random SO PIN (16 chars) and User PIN (12 chars), full character-class complexity |
 | `ApplySetup(*SetupChoices)` | Personal setup, ten steps; returns `*SetupResult` |
@@ -21,12 +21,35 @@ Package: `xkey/pkg/gui/services`, file `setup_wizard_service.go`. Errors in
 | `GetPolicy()` | The written enterprise policy as a map |
 | `FactoryReset(soPin)` | Full wipe, SO-PIN-authorized |
 
-Setters: `SetContext`, `SetStorageService`, `SetPasswordProtectionService`,
-`SetTPMService`, `SetPINService`, `SetSealService`,
-`SetPlatformPolicyService`, `SetAutoUnsealService`, `SetBarrierService`,
-`SetStaticPasswordService`, `SetAdminService`, `SetTPMStatusFunc`,
-`SetConfigFunc`, `SetConfigSaveFunc`, `SetEventEmitter`,
-`SetInitDataDirFunc`, `SetPostApplyFunc`, `SetConfigDir`.
+Setters: `SetContext`, `SetStorageService`, `SetTPMService`, `SetPINService`
+(re-wires the collaborator the constructor already required, e.g. to swap in
+a test double), `SetSealService`, `SetPlatformPolicyService`,
+`SetAutoUnsealService`, `SetBarrierService`, `SetStaticPasswordService`,
+`SetAdminService`, `SetTPMStatusFunc`, `SetConfigFunc`, `SetConfigSaveFunc`,
+`SetEventEmitter`, `SetInitDataDirFunc`, `SetConfigDir`.
+
+### Required vs. optional collaborators (#313)
+
+`pinSvc` is the only constructor argument. It is the SO/User PIN credential
+gate that every wizard phase authorizes against: `ApplySetup` and
+`ApplySOProvisioning` configure the SO and User PINs, `ApplyUserOnboarding`
+and `FactoryReset` verify the SO PIN before a destructive operation proceeds.
+Earlier revisions accepted it through `SetPINService` and guarded each use
+with `if s.pinSvc != nil`, so a caller that forgot the setter got a wizard
+whose credential checks silently passed instead of refusing to run —
+observed for `FactoryReset`, a full device wipe. `NewSetupWizardService`
+refuses a nil `pinSvc` with `ErrSetupWizardPINServiceRequired`, so that
+construction is no longer possible through the public constructor.
+
+Every other collaborator stays a setter because each may legitimately be
+absent on a given build or host — e.g. a device with no TPM (#510) — and the
+step that needs it already degrades to a warning (`platform policy service
+unavailable`, `barrier service unavailable`, ...) or a soft `SetupResult`
+failure rather than fabricating success. `SetPasswordProtectionService` and
+`SetPostApplyFunc` were removed as part of this audit: the former set a
+field (`ppSvc`) no code in the package ever read, and the latter wired a
+callback `app.go` never called; both were exercised only by coverage-only
+tests, not by anything reachable from the GUI.
 
 ## Types that carry the credential contract
 
@@ -91,6 +114,7 @@ All declared in `errors.go`, all typed values, all prefixed `setup_wizard:`.
 
 | Error | When |
 |---|---|
+| `ErrSetupWizardPINServiceRequired` | `NewSetupWizardService` called with a nil `pinSvc` |
 | `ErrSetupAlreadyComplete` | `setup_complete` already true |
 | `ErrSetupInvalidMode` | mode not `standalone`, `server`, `both` |
 | `ErrSetupStorageFailed` | config functions missing, or config nil |
@@ -113,6 +137,21 @@ return an error.
 
 `setup_complete` in the GUI config file (`~/.xkey/gui.json`). `false` shows
 the wizard; `true` bypasses it. Nothing about PINs is written there.
+
+### `require_platform_policy` is reserved, not wired (#313)
+
+The enterprise wizard no longer offers a "Require platform policy" choice,
+and `ApplySOProvisioning` no longer writes `PolicySection.RequirePlatformPolicy`.
+The field previously had two write paths and no reader: `SetupChoices`
+carried a `require_platform_policy` value the frontend checkbox set, which
+nothing ever consulted, while `ApplySOProvisioning` separately wrote
+`policy.RequirePlatformPolicy = true` into the persisted config
+unconditionally — regardless of what the checkbox held. Both writes are
+removed. `PolicySection.RequirePlatformPolicy`
+(`xkey/pkg/config/policy.go`) stays, at its zero value (`false`), so configs
+written before this change keep parsing; giving it an enforcement path is
+tracked as #313 (A)/(B), along with the other 20 inert `PolicySection`
+fields the same audit found.
 
 ## Events
 
@@ -143,6 +182,10 @@ allow several minutes). The #290 contract lives in
 | `TestApplySetup_TPM2Available_PersistsStrategyOnSealedShutFailure` | a hardware failure against an *available* `tpm2` strategy still persists it for retry |
 | `TestApplySetup_PassphraseStrategy_UnaffectedByTPM2Guard` | the guard is scoped to `tpm2`; passphrase failures persist as before |
 | `TestRefuseUnavailableStrategyPersist_*` (`setup_wizard_tpm2_guard_test.go`) | the guard function in isolation: no sealer, `CanSeal()` false, a working sealer, passphrase never blocked, no barrier service wired |
+| `TestNewSetupWizardService_NilPINService_ReturnsError` | the constructor refuses a nil `pinSvc` with `ErrSetupWizardPINServiceRequired` |
+| `TestNewSetupWizardService_WithPINService_Succeeds` | the constructor wires a non-nil `pinSvc` through |
+| `TestFactoryReset_RefusesWhenPINServiceUnwired` (`setup_wizard_factory_reset_test.go`) | `FactoryReset`'s own guard still fails closed on a struct-literal-constructed service (the only way to reach a nil `pinSvc` now), independent of the constructor check |
+| `TestApplySOProvisioning_DoesNotWriteRequirePlatformPolicy` | `ApplySOProvisioning` no longer writes `require_platform_policy`, enterprise org or not |
 
 Mutation checks recorded on go-xkms#290: reinstating the `SO PIN` store
 write fails the first two tests at the name, value and lookup assertions;

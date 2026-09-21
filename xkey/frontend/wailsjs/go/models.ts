@@ -4557,7 +4557,6 @@ export namespace services {
 	    pin_max_attempts: number;
 	    require_encrypted_storage: boolean;
 	    require_tpm: boolean;
-	    require_platform_policy: boolean;
 	    allow_auto_unseal: boolean;
 	    allow_theme: boolean;
 	    allow_trust_store: boolean;
@@ -4607,7 +4606,6 @@ export namespace services {
 	        this.pin_max_attempts = source["pin_max_attempts"];
 	        this.require_encrypted_storage = source["require_encrypted_storage"];
 	        this.require_tpm = source["require_tpm"];
-	        this.require_platform_policy = source["require_platform_policy"];
 	        this.allow_auto_unseal = source["allow_auto_unseal"];
 	        this.allow_theme = source["allow_theme"];
 	        this.allow_trust_store = source["allow_trust_store"];

@@ -72,7 +72,6 @@ export interface SetupChoices {
   min_pin_length?: number;
   require_encrypted_storage?: boolean;
   require_tpm?: boolean;
-  require_platform_policy?: boolean;
   allow_auto_unseal?: boolean;
   allow_theme?: boolean;
   allow_trust_store?: boolean;

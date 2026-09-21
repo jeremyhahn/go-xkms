@@ -314,6 +314,15 @@ var (
 
 // SetupWizardService errors.
 var (
+	// ErrSetupWizardPINServiceRequired indicates NewSetupWizardService was
+	// called without a PIN service. The PIN service authorizes every
+	// destructive or credential-gated wizard operation (FactoryReset,
+	// ApplyUserOnboarding's SO PIN verification, ApplySOProvisioning's SO
+	// PIN setup); it is a required constructor argument, not a setter,
+	// specifically so a caller cannot construct a wizard whose credential
+	// checks are unreachable (#313).
+	ErrSetupWizardPINServiceRequired = errors.New("setup_wizard: PIN service is required")
+
 	// ErrSetupAlreadyComplete indicates setup has already been completed.
 	ErrSetupAlreadyComplete = errors.New("setup_wizard: setup already complete")
 

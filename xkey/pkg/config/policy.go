@@ -21,13 +21,19 @@ import "encoding/json"
 // so that json.Marshal produces a canonical byte representation suitable
 // for HMAC integrity verification.
 type PolicySection struct {
-	MinPINLength               int      `yaml:"min_pin_length" json:"min_pin_length" mapstructure:"min_pin_length"`
-	PINMaxAttempts             int      `yaml:"pin_max_attempts" json:"pin_max_attempts" mapstructure:"pin_max_attempts"`
-	RequireSOPIN               bool     `yaml:"require_so_pin" json:"require_so_pin" mapstructure:"require_so_pin"`
-	RequireUserPIN             bool     `yaml:"require_user_pin" json:"require_user_pin" mapstructure:"require_user_pin"`
-	RequireEncryptedStorage    bool     `yaml:"require_encrypted_storage" json:"require_encrypted_storage" mapstructure:"require_encrypted_storage"`
-	StorageType                string   `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
-	RequireTPM                 bool     `yaml:"require_tpm" json:"require_tpm" mapstructure:"require_tpm"`
+	MinPINLength            int    `yaml:"min_pin_length" json:"min_pin_length" mapstructure:"min_pin_length"`
+	PINMaxAttempts          int    `yaml:"pin_max_attempts" json:"pin_max_attempts" mapstructure:"pin_max_attempts"`
+	RequireSOPIN            bool   `yaml:"require_so_pin" json:"require_so_pin" mapstructure:"require_so_pin"`
+	RequireUserPIN          bool   `yaml:"require_user_pin" json:"require_user_pin" mapstructure:"require_user_pin"`
+	RequireEncryptedStorage bool   `yaml:"require_encrypted_storage" json:"require_encrypted_storage" mapstructure:"require_encrypted_storage"`
+	StorageType             string `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
+	RequireTPM              bool   `yaml:"require_tpm" json:"require_tpm" mapstructure:"require_tpm"`
+	// RequirePlatformPolicy is reserved: no code path enforces it. The setup
+	// wizard offered a checkbox for it and wrote it unconditionally to true
+	// regardless of what the operator chose, and nothing ever read it back
+	// (#313). The checkbox and the write were removed; the field stays so
+	// configs written before that change keep parsing. Wiring it to an
+	// actual PCR-policy precondition is tracked as #313 (A)/(B).
 	RequirePlatformPolicy      bool     `yaml:"require_platform_policy" json:"require_platform_policy" mapstructure:"require_platform_policy"`
 	PlatformPCRs               []int    `yaml:"platform_pcrs" json:"platform_pcrs" mapstructure:"platform_pcrs"`
 	PlatformPCRBank            string   `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`

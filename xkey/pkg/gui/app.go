@@ -1825,9 +1825,6 @@ func NewApp(cfg *GUIConfig) *App {
 	// Create certificate service. Client is set after ConnectionService connects.
 	certSvc := services.NewCertificateService()
 
-	// Create setup wizard service.
-	setupWizardSvc := services.NewSetupWizardService()
-
 	// Create barrier service for cross-platform encrypted storage.
 	barrierSvc := services.NewBarrierService(cfgDir, log)
 	if cfg.BarrierStrategy != "" {
@@ -1853,6 +1850,18 @@ func NewApp(cfg *GUIConfig) *App {
 
 	pinSvc := services.NewPINService()
 	pinSvc.SetBarrierService(barrierSvc)
+
+	// Create setup wizard service. The PIN service is a required constructor
+	// argument, not a setter: it authorizes every destructive or
+	// credential-gated wizard operation (FactoryReset, user onboarding's SO
+	// PIN verification), and a setter could be forgotten by some future
+	// construction path, leaving those checks unreachable (#313). pinSvc is
+	// always non-nil here, so this can only fail if that invariant breaks.
+	setupWizardSvc, err := services.NewSetupWizardService(pinSvc)
+	if err != nil {
+		log.Error("failed to create setup wizard service", "error", err)
+		panic("setup wizard service initialization failed: " + err.Error())
+	}
 
 	// App lock service: global lock that gates the entire app UI.
 	appLockSvc := services.NewAppLockService(pinSvc, barrierSvc)
@@ -2029,9 +2038,10 @@ func NewApp(cfg *GUIConfig) *App {
 		return appSvc.UpdateConfig(data)
 	})
 
-	// Wire setup wizard service dependencies.
+	// Wire setup wizard service dependencies. PINService is already wired
+	// through the constructor above; every other collaborator here is
+	// optional and wired through its own setter.
 	setupWizardSvc.SetStorageService(storageSvc)
-	setupWizardSvc.SetPasswordProtectionService(ppSvc)
 	setupWizardSvc.SetTPMStatusFunc(func() (bool, bool, bool) {
 		status, err := tpmSvc.GetStatus()
 		if err != nil || status == nil {
@@ -2049,7 +2059,6 @@ func NewApp(cfg *GUIConfig) *App {
 		a.EmitEvent(evt)
 	})
 	setupWizardSvc.SetTPMService(tpmSvc)
-	setupWizardSvc.SetPINService(pinSvc)
 	setupWizardSvc.SetSealService(sealSvc)
 	setupWizardSvc.SetPlatformPolicyService(platformPolicySvc)
 	setupWizardSvc.SetAutoUnsealService(autoUnsealSvc)

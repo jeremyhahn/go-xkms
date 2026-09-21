@@ -648,7 +648,7 @@ func TestOATHService_ScanQR_NoDisplay(t *testing.T) {
 // ===========================================================================
 
 func TestSetupWizardService_GetStartupState_SetupComplete(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
 	})
@@ -660,7 +660,7 @@ func TestSetupWizardService_GetStartupState_SetupComplete(t *testing.T) {
 }
 
 func TestSetupWizardService_GetStartupState_NilConfig(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 
 	state, err := svc.GetStartupState()
@@ -669,7 +669,7 @@ func TestSetupWizardService_GetStartupState_NilConfig(t *testing.T) {
 }
 
 func TestSetupWizardService_GetStartupState_NoConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// configFunc is nil.
 
 	state, err := svc.GetStartupState()
@@ -678,7 +678,7 @@ func TestSetupWizardService_GetStartupState_NoConfigFunc(t *testing.T) {
 }
 
 func TestSetupWizardService_GetStartupState_WithPINService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
 	})
@@ -700,7 +700,7 @@ func TestSetupWizardService_GetStartupState_WithPINService(t *testing.T) {
 func TestSetupWizardService_GetStartupState_EnterpriseSOProvisioning(t *testing.T) {
 	// configDir is set but no HMAC file exists, and setup is not complete.
 	tmpDir := t.TempDir()
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(tmpDir)
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
@@ -720,7 +720,7 @@ func TestSetupWizardService_GetStartupState_EnterpriseUserOnboarding(t *testing.
 	require.NoError(t, os.MkdirAll(filepath.Dir(hmacPath), 0700))
 	require.NoError(t, os.WriteFile(hmacPath, []byte("fake-hmac"), 0600))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(tmpDir)
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
@@ -733,7 +733,7 @@ func TestSetupWizardService_GetStartupState_EnterpriseUserOnboarding(t *testing.
 }
 
 func TestSetupWizardService_ApplySOProvisioning_MissingSOPIN(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	_, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "standalone",
 		SOPin: "",
@@ -742,7 +742,7 @@ func TestSetupWizardService_ApplySOProvisioning_MissingSOPIN(t *testing.T) {
 }
 
 func TestSetupWizardService_ApplySOProvisioning_InvalidMode(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	_, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "invalid_mode",
 		SOPin: "123456",
@@ -752,7 +752,7 @@ func TestSetupWizardService_ApplySOProvisioning_InvalidMode(t *testing.T) {
 
 func TestSetupWizardService_ApplySOProvisioning_NilBarrierService(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(tmpDir)
 
@@ -776,7 +776,7 @@ func TestSetupWizardService_ApplySOProvisioning_NilBarrierService(t *testing.T) 
 }
 
 func TestSetupWizardService_ApplySOProvisioning_NilPINService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(t.TempDir())
 
@@ -791,7 +791,7 @@ func TestSetupWizardService_ApplySOProvisioning_NilPINService(t *testing.T) {
 }
 
 func TestSetupWizardService_ApplyUserOnboarding_NotSOProvisioned(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(t.TempDir()) // No HMAC file.
 
 	_, err := svc.ApplyUserOnboarding(&UserOnboardingChoices{
@@ -807,7 +807,7 @@ func TestSetupWizardService_ApplyUserOnboarding_NilPINService(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(hmacPath), 0700))
 	require.NoError(t, os.WriteFile(hmacPath, []byte("fake-hmac"), 0600))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(tmpDir)
 	// pinSvc is nil.
 
@@ -824,7 +824,7 @@ func TestSetupWizardService_ApplyUserOnboarding_SOPINVerifyFailed(t *testing.T) 
 	require.NoError(t, os.MkdirAll(filepath.Dir(hmacPath), 0700))
 	require.NoError(t, os.WriteFile(hmacPath, []byte("fake-hmac"), 0600))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(tmpDir)
 
 	// PIN manager with a known SO PIN.
@@ -849,7 +849,7 @@ func TestSetupWizardService_ApplyUserOnboarding_Success(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(hmacPath), 0700))
 	require.NoError(t, os.WriteFile(hmacPath, []byte("fake-hmac"), 0600))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(tmpDir)
 	svc.SetContext(context.Background())
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
@@ -913,7 +913,7 @@ func TestSetupWizardService_GetPolicy_LoadsFromConfig(t *testing.T) {
 	cfg.Policy.OrganizationName = "Test Org"
 	require.NoError(t, config.Save(cfg))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(config.ConfigDir())
 
 	policyMap, err := svc.GetPolicy()
@@ -959,7 +959,7 @@ func TestSetupWizardService_ApplySetup_WithPINService_SOAndUser(t *testing.T) {
 }
 
 func TestSetupWizardService_ProbeEnvironment_StorageServiceAvailable(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetStorageService(NewStorageService())
 
 	probe, err := svc.ProbeEnvironment()
@@ -968,7 +968,7 @@ func TestSetupWizardService_ProbeEnvironment_StorageServiceAvailable(t *testing.
 }
 
 func TestSetupWizardService_ProbeEnvironment_LUKSCheck(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// LUKS availability depends on the system; just verify no panic.
 	probe, err := svc.ProbeEnvironment()
 	require.NoError(t, err)
@@ -992,7 +992,7 @@ func TestSetupWizardService_ApplySetup_AutoUnseal(t *testing.T) {
 }
 
 func TestSetupWizardService_SetConfigDir(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir("/tmp/test-config")
 	assert.Equal(t, "/tmp/test-config", svc.configDir)
 }

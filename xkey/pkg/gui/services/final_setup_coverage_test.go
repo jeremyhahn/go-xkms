@@ -26,7 +26,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +35,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestFSC_SetTPMStatusFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	assert.Nil(t, svc.tpmStatusFn)
 
 	called := false
@@ -58,20 +57,20 @@ func TestFSC_SetTPMStatusFunc(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFSC_IsSetupComplete_NilConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// configFunc is nil => assume complete
 	assert.True(t, svc.IsSetupComplete())
 }
 
 func TestFSC_IsSetupComplete_NilConfig(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 	// configFunc returns nil => assume complete
 	assert.True(t, svc.IsSetupComplete())
 }
 
 func TestFSC_IsSetupComplete_NotComplete(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
 	})
@@ -79,7 +78,7 @@ func TestFSC_IsSetupComplete_NotComplete(t *testing.T) {
 }
 
 func TestFSC_IsSetupComplete_Complete(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
 	})
@@ -91,7 +90,7 @@ func TestFSC_IsSetupComplete_Complete(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFSC_ProbeEnvironment_TPMStatusFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetTPMStatusFunc(func() (bool, bool, bool) {
 		return true, true, false
@@ -104,7 +103,7 @@ func TestFSC_ProbeEnvironment_TPMStatusFunc(t *testing.T) {
 
 func TestFSC_ProbeEnvironment_BarrierStrategies(t *testing.T) {
 	tmpDir := t.TempDir()
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	barrierSvc := NewBarrierService(tmpDir, slog.Default())
@@ -118,7 +117,7 @@ func TestFSC_ProbeEnvironment_BarrierStrategies(t *testing.T) {
 }
 
 func TestFSC_ProbeEnvironment_ConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{
@@ -134,7 +133,7 @@ func TestFSC_ProbeEnvironment_ConfigFunc(t *testing.T) {
 }
 
 func TestFSC_ProbeEnvironment_ConfigFuncNilResult(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 
@@ -149,7 +148,7 @@ func TestFSC_ProbeEnvironment_ConfigFuncNilResult(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFSC_ApplySetup_NilConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	// configFunc and configSave are nil
 	result, err := svc.ApplySetup(&SetupChoices{Mode: "standalone", SOPin: "123456", UserPin: "654321"})
@@ -158,7 +157,7 @@ func TestFSC_ApplySetup_NilConfigFunc(t *testing.T) {
 }
 
 func TestFSC_ApplySetup_NilConfigSave(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return &GUIConfigData{} })
 	// configSave is nil
@@ -168,7 +167,7 @@ func TestFSC_ApplySetup_NilConfigSave(t *testing.T) {
 }
 
 func TestFSC_ApplySetup_NilConfig(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 	svc.SetConfigSaveFunc(func(_ *GUIConfigData) error { return nil })
@@ -455,7 +454,7 @@ func TestFSC_ApplySetup_BothMode(t *testing.T) {
 }
 
 func TestFSC_ApplySetup_ConfigSaveError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	cfg := &GUIConfigData{}
@@ -487,14 +486,14 @@ func TestFSC_ApplySetup_ConfigSaveError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFSC_SkipSetup_NilConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	err := svc.SkipSetup()
 	assert.ErrorIs(t, err, ErrSetupStorageFailed)
 }
 
 func TestFSC_SkipSetup_NilConfigSave(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return &GUIConfigData{} })
 	err := svc.SkipSetup()
@@ -502,7 +501,7 @@ func TestFSC_SkipSetup_NilConfigSave(t *testing.T) {
 }
 
 func TestFSC_SkipSetup_NilConfigResult(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 	svc.SetConfigSaveFunc(func(_ *GUIConfigData) error { return nil })
@@ -537,7 +536,7 @@ func TestFSC_FactoryReset_EmitsEvent(t *testing.T) {
 }
 
 func TestFSC_FactoryReset_NoEventEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	pinMgr := &wizardMockPINBackend{
@@ -982,7 +981,7 @@ func TestFSC_ApplyUserOnboarding_GUIConfigSaveError(t *testing.T) {
 	policy := config.DefaultPolicy()
 	require.NoError(t, config.WritePolicyHMAC(policy, testSOPin, hmacPath))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(tmpDir)
 
@@ -1042,7 +1041,7 @@ func TestFSC_GetPolicy_Success(t *testing.T) {
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	policyMap, err := svc.GetPolicy()
@@ -1069,7 +1068,7 @@ func TestFSC_GetPolicy_ConfigLoadError(t *testing.T) {
 	cfgPath := filepath.Join(tmpDir, "xkey.yaml")
 	require.NoError(t, os.WriteFile(cfgPath, corruptYAML, 0600))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	_, err := svc.GetPolicy()
@@ -1218,39 +1217,12 @@ func TestFSC_ApplySetup_SetupCompletedEventPayload(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestSetupCov_TPMSealedPasswordProtection covers the tpm_sealed path in
-// ApplySetup step 8. When barrier is unavailable and PasswordStoreMode is
-// "tpm_sealed", ppSvc.SetModeTPMSealed() is invoked.
+// ApplySetup step 8 when neither a barrier nor a platform policy service is
+// wired.
 func TestSetupCov_TPMSealedPasswordProtection(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a mock TPM that supports sealing for the PasswordProtectionService.
-	ppMockTPM := &sealMockTPM{
-		mockTPM: *defaultMockTPM(),
-		canSeal: true,
-	}
-
-	// Create a SealService for the PasswordProtectionService.
-	ppSealSvc := NewSealService(filepath.Join(tmpDir, "pp-seals"))
-	wireSealMockClient(ppSealSvc, ppMockTPM)
-	ppSealSvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
-		return ppMockTPM
-	}))
-	ppSealSvc.SetContext(context.Background())
-
-	// Create the PasswordProtectionService backed by the working SealService.
-	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
-	staticPWSvc := NewStaticPasswordService(store)
-	staticPWSvc.SetContext(context.Background())
-
-	configPath := filepath.Join(tmpDir, "encryption.json")
-	ppSvc := NewPasswordProtectionService(configPath, staticPWSvc, ppSealSvc)
-	ppSvc.SetContext(context.Background())
-
 	// Wire up the setup wizard WITHOUT barrier service — this forces the
 	// tpm_sealed code path in step 8 (barrier takes precedence when available).
 	tw := newTestSetupWizard(&GUIConfigData{})
-	tw.svc.SetPasswordProtectionService(ppSvc)
 
 	result, err := tw.svc.ApplySetup(&SetupChoices{
 		Mode:              "standalone",
@@ -1311,19 +1283,8 @@ func TestSetupCov_TPMSealedUserPinSealSuccess(t *testing.T) {
 	require.NoError(t, err)
 	sealSvc.SetPlatformPolicyService(ppPolicySvc)
 
-	// PasswordProtectionService.
-	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
-	staticPWSvc := NewStaticPasswordService(store)
-	staticPWSvc.SetContext(context.Background())
-
-	configPath := filepath.Join(tmpDir, "encryption.json")
-	ppSvc := NewPasswordProtectionService(configPath, staticPWSvc, sealSvc)
-	ppSvc.SetContext(context.Background())
-
 	// Wire up the setup wizard with the SAME working SealService.
 	tw := newTestSetupWizard(&GUIConfigData{})
-	tw.svc.SetPasswordProtectionService(ppSvc)
 	tw.svc.SetSealService(sealSvc)
 
 	result, err := tw.svc.ApplySetup(&SetupChoices{
@@ -1359,7 +1320,7 @@ func TestSetupCov_SkipSetup_InitDataDirFails(t *testing.T) {
 // TestSetupCov_SkipSetup_ConfigSaveFails covers the SkipSetup path where
 // configSave returns an error (L596-598).
 func TestSetupCov_SkipSetup_ConfigSaveFails(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData { return &GUIConfigData{} })
 	svc.SetConfigSaveFunc(func(_ *GUIConfigData) error {
@@ -1398,7 +1359,7 @@ func TestSetupCov_GetStartupState_EnterpriseUserOnboarding(t *testing.T) {
 	hmacPath := config.PolicyHMACPath(tmpDir)
 	require.NoError(t, os.WriteFile(hmacPath, []byte("hmac-data"), 0600))
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(tmpDir)
 	svc.SetConfigFunc(func() *GUIConfigData {
@@ -1423,7 +1384,7 @@ func TestSetupCov_GetStartupState_EnterpriseUserOnboarding(t *testing.T) {
 func TestSetupCov_GetStartupState_SOProvisioning(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(tmpDir) // No HMAC file -> not enterprise mode.
 	svc.SetConfigFunc(func() *GUIConfigData {
@@ -1441,7 +1402,7 @@ func TestSetupCov_GetStartupState_SOProvisioning(t *testing.T) {
 // TestSetupCov_GetStartupState_Complete covers GetStartupState when
 // setup is already complete.
 func TestSetupCov_GetStartupState_Complete(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
@@ -1457,7 +1418,7 @@ func TestSetupCov_GetStartupState_Complete(t *testing.T) {
 // TestSetupCov_GetStartupState_WithPINStatus covers GetStartupState with
 // a working PINService that returns PIN status.
 func TestSetupCov_GetStartupState_WithPINStatus(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
@@ -1481,7 +1442,7 @@ func TestSetupCov_GetStartupState_WithPINStatus(t *testing.T) {
 // TestSetupCov_GetStartupState_NilConfigFunc covers GetStartupState when
 // configFunc is nil (L658 branch not taken).
 func TestSetupCov_GetStartupState_NilConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	state, err := svc.GetStartupState()
@@ -1516,7 +1477,7 @@ func TestSetupCov_ApplySetup_InitDataDirFails(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestProbeEnvironment_TPMDeviceExists_Available(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetTPMStatusFunc(func() (bool, bool, bool) {
 		return true, true, false // deviceExists=true, available=true
 	})
@@ -1528,7 +1489,7 @@ func TestProbeEnvironment_TPMDeviceExists_Available(t *testing.T) {
 }
 
 func TestProbeEnvironment_TPMDeviceExists_NotAvailable(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetTPMStatusFunc(func() (bool, bool, bool) {
 		return true, false, false // deviceExists=true, available=false
 	})
@@ -1540,7 +1501,7 @@ func TestProbeEnvironment_TPMDeviceExists_NotAvailable(t *testing.T) {
 }
 
 func TestProbeEnvironment_NoTPMDevice(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetTPMStatusFunc(func() (bool, bool, bool) {
 		return false, false, false
 	})
@@ -1552,7 +1513,7 @@ func TestProbeEnvironment_NoTPMDevice(t *testing.T) {
 }
 
 func TestProbeEnvironment_NilTPMStatusFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// No tpmStatusFn set.
 	probe, err := svc.ProbeEnvironment()
 	require.NoError(t, err)
@@ -1561,7 +1522,7 @@ func TestProbeEnvironment_NilTPMStatusFunc(t *testing.T) {
 }
 
 func TestProbeEnvironment_TPMDevicePath_FromTPMService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	tpmSvc := NewTPMService()
 	tpmSvc.SetDevicePath("/dev/tpm0")
 	svc.SetTPMService(tpmSvc)
@@ -1572,7 +1533,7 @@ func TestProbeEnvironment_TPMDevicePath_FromTPMService(t *testing.T) {
 }
 
 func TestProbeEnvironment_AvailableBackends_WithAdminService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	// Create an admin service that returns a static backend list.
 	adminSvc := NewAdminService()
@@ -1592,7 +1553,7 @@ func TestProbeEnvironment_AvailableBackends_WithAdminService(t *testing.T) {
 }
 
 func TestProbeEnvironment_AvailableBackends_NilAdminService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// No admin service set.
 	probe, err := svc.ProbeEnvironment()
 	require.NoError(t, err)
@@ -1600,7 +1561,7 @@ func TestProbeEnvironment_AvailableBackends_NilAdminService(t *testing.T) {
 }
 
 func TestSetupWizardService_SetAdminService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	assert.Nil(t, svc.adminSvc)
 
 	adminSvc := NewAdminService()

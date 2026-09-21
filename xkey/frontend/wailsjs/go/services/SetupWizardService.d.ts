@@ -41,11 +41,7 @@ export function SetInitDataDirFunc(arg1:any):Promise<void>;
 
 export function SetPINService(arg1:services.PINService):Promise<void>;
 
-export function SetPasswordProtectionService(arg1:services.PasswordProtectionService):Promise<void>;
-
 export function SetPlatformPolicyService(arg1:services.PlatformPolicyService):Promise<void>;
-
-export function SetPostApplyFunc(arg1:any):Promise<void>;
 
 export function SetSealService(arg1:services.SealService):Promise<void>;
 

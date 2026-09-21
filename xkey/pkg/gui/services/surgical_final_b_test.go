@@ -402,7 +402,6 @@ func TestSurgB_SetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcNil(t *testing.
 	// Password protection is now handled transparently by the barrier.
 	// Without barrier/policy services, setup succeeds with relevant warnings.
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
-	tw.svc.ppSvc = nil
 
 	result, err := tw.svc.ApplySetup(&SetupChoices{
 		Mode:              "standalone",
@@ -418,7 +417,7 @@ func TestSurgB_SetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcNil(t *testing.
 
 func TestSurgB_SetupWizard_GetPolicy_Execution(t *testing.T) {
 	// Targets L946-968: GetPolicy calls config.Load, marshals, unmarshals.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(t.TempDir())
 	result, err := svc.GetPolicy()
 	// config.Load may return defaults; just ensure no panic.
@@ -428,7 +427,7 @@ func TestSurgB_SetupWizard_GetPolicy_Execution(t *testing.T) {
 
 func TestSurgB_SetupWizard_ApplySOProvisioning_Minimal(t *testing.T) {
 	// Targets L779-799: config.Load/Save/WritePolicyHMAC path.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(t.TempDir())
 
@@ -450,7 +449,7 @@ func TestSurgB_SetupWizard_ApplySOProvisioning_Minimal(t *testing.T) {
 
 func TestSurgB_SetupWizard_ApplySOProvisioning_WithBarrierFail(t *testing.T) {
 	// Targets L708-712: barrier initialization failure.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(t.TempDir())
 	svc.SetEventEmitter(func(e events.Event) {})
@@ -469,7 +468,7 @@ func TestSurgB_SetupWizard_ApplySOProvisioning_WithBarrierFail(t *testing.T) {
 }
 
 func TestSurgB_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	_, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "invalid",
 		SOPin: testSOPin,
@@ -478,7 +477,7 @@ func TestSurgB_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
 }
 
 func TestSurgB_SetupWizard_ApplySOProvisioning_EmptySOPin(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	_, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode: "standalone",
 	})
@@ -487,7 +486,7 @@ func TestSurgB_SetupWizard_ApplySOProvisioning_EmptySOPin(t *testing.T) {
 
 func TestSurgB_SetupWizard_ApplySOProvisioning_DataDirInitFail(t *testing.T) {
 	// Targets L720-724: initDataDirFunc error.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigDir(t.TempDir())
 	svc.SetEventEmitter(func(e events.Event) {})

@@ -907,12 +907,6 @@
                 <span class="text-body-large">Require TPM</span>
               </label>
               <span class="field-help text-body-small">Device must have a TPM 2.0 module for hardware-backed security.</span>
-
-              <label class="toggle-row">
-                <input type="checkbox" checked={choices.require_platform_policy ?? false} on:change={(e) => setChoice('require_platform_policy', e.currentTarget.checked)} />
-                <span class="text-body-large">Require platform policy</span>
-              </label>
-              <span class="field-help text-body-small">Enforce platform integrity measurement via PCR policy.</span>
             </div>
           </div>
 

@@ -164,7 +164,7 @@ func TestFP_SetupWizardService_FactoryReset_PanicRecovery(t *testing.T) {
 	config.SetConfigDir(tmpDir)
 	defer config.ResetConfigDir()
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configDir = tmpDir
 
 	// Set configFunc to a function that panics. configSave must also be
@@ -245,7 +245,7 @@ func TestFP_SetupWizard_ApplySetup_BarrierAutoUnseal(t *testing.T) {
 	sealSvc.SetDefaultBackend("software")
 
 	// Create the wizard with the required dependencies.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configDir = tmpDir
 	svc.barrierSvc = barrierSvc
 	svc.sealSvc = sealSvc
@@ -304,7 +304,7 @@ func TestFP_SetupWizard_ApplySetup_BarrierAutoUnsealSealFail(t *testing.T) {
 	sealSvc.SetContext(context.Background())
 	sealSvc.SetDefaultBackend("software")
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configDir = tmpDir
 	svc.barrierSvc = barrierSvc
 	svc.sealSvc = sealSvc

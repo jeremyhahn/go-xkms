@@ -30,6 +30,39 @@ import (
 // defaultPINs provides standard PIN values for tests that need to pass
 // the mandatory SO PIN and User PIN validation.
 // ---------------------------------------------------------------------------
+// Constructor tests (#313)
+// ---------------------------------------------------------------------------
+
+// TestNewSetupWizardService_NilPINService_ReturnsError verifies that the
+// constructor refuses to build a SetupWizardService without a PIN service.
+// The PIN service is the credential gate for every destructive or
+// credential-gated wizard operation; earlier revisions accepted it through
+// a setter, so a caller that forgot to call it got a wizard whose
+// credential checks silently passed instead of refusing to run (#313).
+// Requiring it here makes that construction impossible through the public
+// constructor.
+func TestNewSetupWizardService_NilPINService_ReturnsError(t *testing.T) {
+	svc, err := NewSetupWizardService(nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSetupWizardPINServiceRequired)
+	assert.Nil(t, svc)
+}
+
+// TestNewSetupWizardService_WithPINService_Succeeds verifies that the
+// constructor succeeds and wires the PIN service when a non-nil one is
+// supplied.
+func TestNewSetupWizardService_WithPINService_Succeeds(t *testing.T) {
+	pinSvc := NewPINService()
+
+	svc, err := NewSetupWizardService(pinSvc)
+
+	require.NoError(t, err)
+	require.NotNil(t, svc)
+	assert.Same(t, pinSvc, svc.pinSvc)
+}
+
+// ---------------------------------------------------------------------------
 // Password protection default mode tests
 // ---------------------------------------------------------------------------
 
@@ -91,7 +124,7 @@ func TestApplySetup_ExplicitNone_StoresWithoutEncryption(t *testing.T) {
 // TestGenerateSetupPINs_Success verifies that GenerateSetupPINs returns PINs
 // with the correct lengths and complexity requirements (all character classes).
 func TestGenerateSetupPINs_Success(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	pins, err := svc.GenerateSetupPINs()
 	require.NoError(t, err)
@@ -121,7 +154,7 @@ func TestGenerateSetupPINs_Success(t *testing.T) {
 // TestGenerateSetupPINs_NonDeterministic verifies that consecutive calls to
 // GenerateSetupPINs produce different PINs (cryptographic randomness check).
 func TestGenerateSetupPINs_NonDeterministic(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	pins1, err := svc.GenerateSetupPINs()
 	require.NoError(t, err)
@@ -306,6 +339,44 @@ func TestApplySOProvisioning_ExtensionFieldsDefaults(t *testing.T) {
 	assert.False(t, saved.Policy.UserCanConfigureExtension,
 		"UserCanConfigureExtension should be false when SO chose false")
 	assert.Equal(t, "ZeroFieldsOrg", saved.Policy.OrganizationName)
+}
+
+// TestApplySOProvisioning_DoesNotWriteRequirePlatformPolicy is the
+// regression guard for #313 ruling #19. ApplySOProvisioning used to write
+// policy.RequirePlatformPolicy = true unconditionally, regardless of the
+// (now-withdrawn) wizard checkbox for it, into a field nothing read back.
+// The field stays in PolicySection for config-parse compatibility, but the
+// wizard must no longer write it, enterprise org or not.
+func TestApplySOProvisioning_DoesNotWriteRequirePlatformPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	config.SetConfigDir(tmpDir)
+	t.Cleanup(config.ResetConfigDir)
+
+	defaultCfg := config.DefaultConfig()
+	require.NoError(t, config.Save(defaultCfg))
+
+	tw := newTestSetupWizard(&GUIConfigData{})
+	tw.svc.SetConfigDir(tmpDir)
+
+	pinSvc := NewPINService()
+	tw.svc.SetPINService(pinSvc)
+	tw.svc.SetInitDataDirFunc(func() error { return nil })
+
+	choices := &SetupChoices{
+		Mode:             "standalone",
+		SOPin:            testSOPin,
+		OrganizationName: "PlatformPolicyOrg",
+	}
+
+	result, err := tw.svc.ApplySOProvisioning(choices)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	saved, loadErr := config.Load()
+	require.NoError(t, loadErr)
+
+	assert.False(t, saved.Policy.RequirePlatformPolicy,
+		"ApplySOProvisioning must not write require_platform_policy; the field is reserved pending #313 (A)/(B)")
 }
 
 // ---------------------------------------------------------------------------
@@ -685,7 +756,7 @@ func TestSetupWizard_ApplySetup_PersistsBarrierFields(t *testing.T) {
 func TestSetupWizard_ConfigSaveError_ReportsFailure(t *testing.T) {
 	saveErr := errors.New("disk full: unable to write config")
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	// Wire configFunc to return a valid config.
@@ -732,7 +803,7 @@ func TestSetupWizard_ConfigSaveError_ReportsFailure(t *testing.T) {
 // without setting configSave returns ErrSetupStorageFailed instead of panicking
 // with a nil pointer dereference.
 func TestSetupWizard_NilConfigSave_DoesNotPanic(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	// Set configFunc but leave configSave nil.
@@ -756,7 +827,7 @@ func TestSetupWizard_NilConfigSave_DoesNotPanic(t *testing.T) {
 // TestSetupWizard_NilConfigFunc_DoesNotPanic verifies that calling ApplySetup
 // without setting configFunc returns ErrSetupStorageFailed instead of panicking.
 func TestSetupWizard_NilConfigFunc_DoesNotPanic(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	// Set configSave but leave configFunc nil.
@@ -781,7 +852,7 @@ func TestSetupWizard_NilConfigFunc_DoesNotPanic(t *testing.T) {
 // ApplySetup with neither configFunc nor configSave set returns an error
 // instead of panicking.
 func TestSetupWizard_BothConfigCallbacksNil_DoesNotPanic(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	// Deliberately do NOT set configFunc or configSave.

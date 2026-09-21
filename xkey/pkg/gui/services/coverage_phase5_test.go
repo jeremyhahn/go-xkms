@@ -897,7 +897,7 @@ func TestP5B_SetupWizard_ApplySOProvisioning_EmitProgressEvents(t *testing.T) {
 	config.SetConfigDir(configDir)
 	t.Cleanup(config.ResetConfigDir)
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(configDir)
 
 	var eventLog []int
@@ -930,7 +930,7 @@ func TestP5B_SetupWizard_ApplySOProvisioning_EmitProgressEvents(t *testing.T) {
 // TestP5B_SetupWizard_ApplySOProvisioning_PanicRecovery verifies panic
 // recovery in ApplySOProvisioning.
 func TestP5B_SetupWizard_ApplySOProvisioning_PanicRecovery(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetPINService(&PINService{})
 
 	// Set an event emitter that panics.
@@ -953,7 +953,7 @@ func TestP5B_SetupWizard_ApplySOProvisioning_PanicRecovery(t *testing.T) {
 // TestP5B_SetupWizard_ApplyUserOnboarding_PanicRecovery verifies panic
 // recovery in ApplyUserOnboarding.
 func TestP5B_SetupWizard_ApplyUserOnboarding_PanicRecovery(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetPINService(&PINService{})
 
 	// Use a config dir that triggers enterprise mode.
@@ -985,7 +985,7 @@ func TestP5B_SetupWizard_ApplyUserOnboarding_PanicRecovery(t *testing.T) {
 // TestP5B_SetupWizard_GetStartupState_PanicRecovery verifies panic
 // recovery in GetStartupState.
 func TestP5B_SetupWizard_GetStartupState_PanicRecovery(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	// Set a config func that panics.
 	svc.SetConfigFunc(func() *GUIConfigData {
@@ -1001,7 +1001,7 @@ func TestP5B_SetupWizard_GetStartupState_PanicRecovery(t *testing.T) {
 // TestP5B_SetupWizard_GetPolicy_PanicRecovery verifies panic
 // recovery in GetPolicy.
 func TestP5B_SetupWizard_GetPolicy_PanicRecovery(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// GetPolicy calls config.Load() which may fail. We cannot inject a panic
 	// easily, but we can verify it returns an error for normal failure.
 	result, err := svc.GetPolicy()
@@ -1015,7 +1015,7 @@ func TestP5B_SetupWizard_GetPolicy_PanicRecovery(t *testing.T) {
 // TestP5B_SetupWizard_SkipSetup_InitDataDirError verifies that SkipSetup
 // returns an error when initDataDirFunc fails.
 func TestP5B_SetupWizard_SkipSetup_InitDataDirError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{}
 	})
@@ -1034,7 +1034,7 @@ func TestP5B_SetupWizard_SkipSetup_InitDataDirError(t *testing.T) {
 // TestP5B_SetupWizard_SkipSetup_ConfigSaveError verifies that SkipSetup
 // returns an error when configSave fails.
 func TestP5B_SetupWizard_SkipSetup_ConfigSaveError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{}
 	})
@@ -1050,7 +1050,7 @@ func TestP5B_SetupWizard_SkipSetup_ConfigSaveError(t *testing.T) {
 // TestP5B_SetupWizard_SkipSetup_EmitsSkipEvent verifies that SkipSetup
 // emits the setup skipped event.
 func TestP5B_SetupWizard_SkipSetup_EmitsSkipEvent(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{}
 	})
@@ -1071,7 +1071,7 @@ func TestP5B_SetupWizard_SkipSetup_EmitsSkipEvent(t *testing.T) {
 // TestP5B_SetupWizard_EmitProgress_NilEmitter verifies emitProgress
 // does not panic when emitter is nil.
 func TestP5B_SetupWizard_EmitProgress_NilEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.eventEmitter = nil
 	// Should not panic.
 	svc.emitProgress(1, "test")

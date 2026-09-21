@@ -175,8 +175,15 @@ type testSetupWizard struct {
 
 // newTestSetupWizard creates a SetupWizardService wired with in-memory config
 // helpers. Use tw.configFunc() to read persisted config state.
+//
+// The underlying SetupWizardService is built via struct literal rather than
+// NewSetupWizardService: most callers of this helper do not exercise
+// PIN-specific behavior and wire their own PINService with SetPINService
+// when they do (see wireSOPIN in setup_wizard_factory_reset_test.go), so
+// this stays a same-package, white-box construction rather than forcing
+// every caller to supply one.
 func newTestSetupWizard(cfg *GUIConfigData) *testSetupWizard {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	configFunc, configSave := newTestConfigPair(cfg)

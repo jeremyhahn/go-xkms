@@ -266,7 +266,7 @@ func TestP9_FIDO2_StoredToFIDO2Credential_UnknownCredProtect(t *testing.T) {
 // ===========================================================================
 
 func TestP9_SetupWizard_ProbeEnvironment_WithSealService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	sealSvc := NewSealService(t.TempDir())
 	svc.SetSealService(sealSvc)
 

@@ -28,7 +28,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,7 +57,7 @@ func newSealServiceWithPlatformPolicy(t *testing.T, mock *sealMockTPM) *SealServ
 // ==========================================================================
 
 func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcFailsSetMode(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	cfg := &GUIConfigData{}
 	var savedCfg *GUIConfigData
@@ -68,12 +67,6 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcFailsSetMode(t *testi
 		return nil
 	})
 	svc.SetInitDataDirFunc(func() error { return nil })
-
-	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
-	staticPWSvc := NewStaticPasswordService(store)
-	ppSvc := NewPasswordProtectionService(filepath.Join(t.TempDir(), "enc.json"), staticPWSvc, nil)
-	svc.SetPasswordProtectionService(ppSvc)
 
 	pinSvc := NewPINService()
 	svc.SetPINService(pinSvc)
@@ -96,7 +89,7 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcFailsSetMode(t *testi
 }
 
 func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_SealUserPIN(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	cfg := &GUIConfigData{}
 	svc.SetConfigFunc(func() *GUIConfigData { return cfg })
@@ -106,13 +99,6 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_SealUserPIN(t *testing.T) 
 	mock := defaultSealMock()
 	sealSvc := newSealServiceWithPlatformPolicy(t, mock)
 	svc.SetSealService(sealSvc)
-
-	backend := xkms.NewStorageMemory()
-	store := staticpw.NewStore(backend)
-	staticPWSvc := NewStaticPasswordService(store)
-	ppSvc := NewPasswordProtectionService(
-		filepath.Join(t.TempDir(), "enc.json"), staticPWSvc, sealSvc)
-	svc.SetPasswordProtectionService(ppSvc)
 
 	pinSvc := NewPINService()
 	svc.SetPINService(pinSvc)
@@ -131,7 +117,7 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_SealUserPIN(t *testing.T) 
 
 // TestSetupWizard_ApplySOProvisioning_ConfigLoadSavePaths covers L812-832.
 func TestSetupWizard_ApplySOProvisioning_ConfigLoadSavePaths(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(t.TempDir())
 
 	cfg := &GUIConfigData{}
@@ -155,7 +141,7 @@ func TestSetupWizard_ApplySOProvisioning_ConfigLoadSavePaths(t *testing.T) {
 }
 
 func TestSetupWizard_GetPolicy_ConfigLoadFails(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	result, err := svc.GetPolicy()
 	if err != nil {
 		assert.Nil(t, result)
@@ -164,7 +150,7 @@ func TestSetupWizard_GetPolicy_ConfigLoadFails(t *testing.T) {
 }
 
 func TestSetupWizard_GetPolicy_MarshalUnmarshalPaths(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	result, err := svc.GetPolicy()
 	if err != nil {
@@ -175,13 +161,13 @@ func TestSetupWizard_GetPolicy_MarshalUnmarshalPaths(t *testing.T) {
 }
 
 func TestSetupWizard_FactoryReset_SOPINEmpty(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	err := svc.FactoryReset("")
 	assert.ErrorIs(t, err, ErrSetupSOPINRequired)
 }
 
 func TestSetupWizard_FactoryReset_WithConfigFuncs(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(t.TempDir())
 
 	cfg := &GUIConfigData{SetupComplete: true}
@@ -208,7 +194,7 @@ func TestSetupWizard_FactoryReset_WithConfigFuncs(t *testing.T) {
 }
 
 func TestSetupWizard_FactoryReset_TPMResetError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir(t.TempDir())
 
 	cfg := &GUIConfigData{}
@@ -232,7 +218,7 @@ func TestSetupWizard_FactoryReset_TPMResetError(t *testing.T) {
 
 // TestSetupWizard_FactoryReset_HMACRemoval covers L1042-1046.
 func TestSetupWizard_FactoryReset_HMACRemoval(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	dir := t.TempDir()
 	svc.SetConfigDir(dir)
 

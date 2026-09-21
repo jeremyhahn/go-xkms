@@ -104,7 +104,6 @@ type SetupChoices struct {
 	PINMaxAttempts           int    `json:"pin_max_attempts"`
 	RequireEncryptedStorage  bool   `json:"require_encrypted_storage"`
 	RequireTPM               bool   `json:"require_tpm"`
-	RequirePlatformPolicy    bool   `json:"require_platform_policy"`
 	AllowAutoUnseal          bool   `json:"allow_auto_unseal"`
 	AllowTheme               bool   `json:"allow_theme"`
 	AllowTrustStore          bool   `json:"allow_trust_store"`
@@ -154,11 +153,10 @@ type UserOnboardingChoices struct {
 }
 
 // SetupWizardService orchestrates the first-run setup wizard by delegating
-// to existing services (StorageService, PasswordProtectionService, TPMService, etc.).
+// to existing services (StorageService, TPMService, PINService, etc.).
 type SetupWizardService struct {
 	ctx               context.Context
 	storageSvc        *StorageService
-	ppSvc             *PasswordProtectionService
 	tpmSvc            *TPMService
 	pinSvc            *PINService
 	sealSvc           *SealService
@@ -172,13 +170,34 @@ type SetupWizardService struct {
 	configSave        func(*GUIConfigData) error
 	eventEmitter      func(events.Event)
 	initDataDirFunc   func() error
-	postApplyFunc     func()
 	configDir         string
 }
 
-// NewSetupWizardService creates a new SetupWizardService.
-func NewSetupWizardService() *SetupWizardService {
-	return &SetupWizardService{}
+// NewSetupWizardService creates a new SetupWizardService with its required
+// collaborators.
+//
+// pinSvc is the SO/User PIN credential gate. Every wizard phase authorizes
+// against it: ApplySetup and ApplySOProvisioning configure the SO and User
+// PINs, ApplyUserOnboarding and FactoryReset verify the SO PIN before a
+// destructive operation proceeds. Earlier revisions accepted pinSvc through
+// a setter (SetPINService) and guarded each use with "if s.pinSvc != nil",
+// so a caller that forgot the setter got a wizard whose credential checks
+// silently passed instead of refusing to run -- observed for FactoryReset,
+// a full device wipe, in #313. Taking pinSvc here instead makes that class
+// of bug impossible to construct: there is no zero-argument constructor to
+// forget a setter after.
+//
+// Every other collaborator (TPM, seal, barrier, platform policy, ...) is
+// optional and wired through its own Set*/With* method, because each one
+// may legitimately be absent on a given build or host -- e.g. a device with
+// no TPM (#510) -- and the corresponding wizard step already degrades to a
+// warning or a typed refusal rather than fabricating success when it is
+// missing.
+func NewSetupWizardService(pinSvc *PINService) (*SetupWizardService, error) {
+	if pinSvc == nil {
+		return nil, ErrSetupWizardPINServiceRequired
+	}
+	return &SetupWizardService{pinSvc: pinSvc}, nil
 }
 
 // generateRandomPIN generates a cryptographically random string of the
@@ -273,11 +292,6 @@ func (s *SetupWizardService) SetStorageService(svc *StorageService) {
 	s.storageSvc = svc
 }
 
-// SetPasswordProtectionService sets the password protection service dependency.
-func (s *SetupWizardService) SetPasswordProtectionService(svc *PasswordProtectionService) {
-	s.ppSvc = svc
-}
-
 // SetTPMService sets the TPM service dependency.
 func (s *SetupWizardService) SetTPMService(svc *TPMService) {
 	s.tpmSvc = svc
@@ -344,13 +358,6 @@ func (s *SetupWizardService) SetEventEmitter(fn func(events.Event)) {
 // ApplySetup or SkipSetup to ensure the data directory is created.
 func (s *SetupWizardService) SetInitDataDirFunc(fn func() error) {
 	s.initDataDirFunc = fn
-}
-
-// SetPostApplyFunc sets a callback that runs at the end of ApplySetup,
-// after all steps including config save have completed. This allows the
-// caller to perform post-setup tasks (e.g. barrier unseal, config reload).
-func (s *SetupWizardService) SetPostApplyFunc(fn func()) {
-	s.postApplyFunc = fn
 }
 
 // SetConfigDir sets the configuration directory path used for enterprise
@@ -925,7 +932,14 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			if choices.UseUserPinAsMaster && choices.UserPin != "" {
 				barrierPW = choices.UserPin
 			}
-			canSeal, _ := s.sealSvc.CanSeal()
+			// s.sealSvc must be checked before CanSeal is called, not just
+			// before the result is used: CanSeal has a pointer receiver, and
+			// calling it through a nil *SealService dereferences the receiver
+			// inside the method before any nil check of ours runs.
+			canSeal := false
+			if s.sealSvc != nil {
+				canSeal, _ = s.sealSvc.CanSeal()
+			}
 			if barrierPW != "" && s.sealSvc != nil && canSeal {
 				policyType := string(PolicyTypeNone)
 				if platformPolicyCreated {
@@ -1033,12 +1047,6 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			BarrierInitialized:    barrierInitialized,
 			BarrierStrategy:       barrierStrategy,
 		}))
-	}
-
-	// Post-apply hook: runs after all steps so that the caller can
-	// perform post-setup tasks (e.g. barrier unseal, config reload).
-	if s.postApplyFunc != nil {
-		s.postApplyFunc()
 	}
 
 	return result, nil
@@ -1334,7 +1342,12 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 	policy := config.DefaultPolicy()
 
 	// Core security requirements — PlatformSRK is always created.
-	policy.RequirePlatformPolicy = true
+	//
+	// RequirePlatformPolicy is deliberately not set here. It used to be
+	// hardcoded true regardless of anything the operator chose, and nothing
+	// ever read it back (#313 ruling #19) -- the wizard's own checkbox for
+	// it had no effect either way. Leave it at DefaultPolicy()'s zero value
+	// until #313 (A)/(B) gives it an enforcement path to write for.
 	policy.PlatformPCRs = []int{0, 7, 9}
 	policy.PlatformPCRBank = "sha256"
 	if choices.StorageType != "" {

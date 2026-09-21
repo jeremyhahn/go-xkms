@@ -227,7 +227,7 @@ func TestSetupWizard_SkipSetup_EmitsSkippedEvent(t *testing.T) {
 }
 
 func TestSetupWizard_SkipSetup_ConfigSaveErrorWrapped(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	saveErr := errors.New("permission denied")
@@ -324,7 +324,7 @@ func TestSetupWizard_ApplySetup_AutoUnsealLUKS_NoService(t *testing.T) {
 }
 
 func TestSetupWizard_EmitProgress_NoEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	// Should not panic when eventEmitter is nil.
 	svc.emitProgress(1, "test")
@@ -333,7 +333,7 @@ func TestSetupWizard_EmitProgress_NoEmitter(t *testing.T) {
 }
 
 func TestSetupWizard_GetStartupState_SetupCompleteNoEnterprise(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
@@ -354,7 +354,7 @@ func TestSetupWizard_GetStartupState_NoConfigDir_NoSOProvisioning(t *testing.T) 
 	// find a stale xkey_policy.hmac in the package directory.
 	t.Chdir(t.TempDir())
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
@@ -369,7 +369,7 @@ func TestSetupWizard_GetStartupState_NoConfigDir_NoSOProvisioning(t *testing.T) 
 }
 
 func TestSetupWizard_GetPolicy_ConfigLoadError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	// config.Load() will attempt to load from the default path which

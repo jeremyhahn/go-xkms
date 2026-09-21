@@ -836,7 +836,7 @@ func TestFCP5_APIExplorer_DeleteHistoryEntry_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFCP5_SetupWizardService_GenerateSetupPINs_Success(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	pins, err := svc.GenerateSetupPINs()
 	require.NoError(t, err)
 	require.NotNil(t, pins)
@@ -846,18 +846,18 @@ func TestFCP5_SetupWizardService_GenerateSetupPINs_Success(t *testing.T) {
 }
 
 func TestFCP5_SetupWizardService_IsSetupComplete_NoConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	assert.True(t, svc.IsSetupComplete())
 }
 
 func TestFCP5_SetupWizardService_IsSetupComplete_NilConfig(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 	assert.True(t, svc.IsSetupComplete())
 }
 
 func TestFCP5_SetupWizardService_IsSetupComplete_NotComplete(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
 	})
@@ -865,7 +865,7 @@ func TestFCP5_SetupWizardService_IsSetupComplete_NotComplete(t *testing.T) {
 }
 
 func TestFCP5_SetupWizardService_IsSetupComplete_Complete(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
 	})

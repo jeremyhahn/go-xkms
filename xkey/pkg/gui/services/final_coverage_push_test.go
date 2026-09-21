@@ -399,31 +399,6 @@ func TestFinalCoveragePush_SealProtectionService_SetAuditLogger_Replace(t *testi
 	assert.Equal(t, logger2, *ptr)
 }
 
-// ---------------------------------------------------------------------------
-// SetupWizardService.SetPostApplyFunc
-// ---------------------------------------------------------------------------
-
-func TestFinalCoveragePush_SetupWizardService_SetPostApplyFunc(t *testing.T) {
-	svc := NewSetupWizardService()
-	assert.Nil(t, svc.postApplyFunc)
-
-	called := false
-	svc.SetPostApplyFunc(func() { called = true })
-	assert.NotNil(t, svc.postApplyFunc)
-
-	svc.postApplyFunc()
-	assert.True(t, called)
-}
-
-func TestFinalCoveragePush_SetupWizardService_SetPostApplyFunc_Nil(t *testing.T) {
-	svc := NewSetupWizardService()
-	svc.SetPostApplyFunc(func() {})
-	assert.NotNil(t, svc.postApplyFunc)
-
-	svc.SetPostApplyFunc(nil)
-	assert.Nil(t, svc.postApplyFunc)
-}
-
 // ===========================================================================
 // Part 2: Cover partially-covered functions with the most impact
 // ===========================================================================
@@ -1609,7 +1584,7 @@ func TestFinalCoveragePush_PasswordProtectionService_ExportPasswordsDecrypted_Su
 }
 
 func TestFinalCoveragePush_SetupWizardService_GenerateSetupPINs(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	pins, err := svc.GenerateSetupPINs()
 	require.NoError(t, err)
 	assert.Len(t, pins.SOPin, 16)
@@ -1620,20 +1595,20 @@ func TestFinalCoveragePush_SetupWizardService_GenerateSetupPINs(t *testing.T) {
 }
 
 func TestFinalCoveragePush_SetupWizardService_SetContext(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	ctx := context.Background()
 	svc.SetContext(ctx)
 	assert.Equal(t, ctx, svc.ctx)
 }
 
 func TestFinalCoveragePush_SetupWizardService_SetConfigDir(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir("/tmp/test-config")
 	assert.Equal(t, "/tmp/test-config", svc.configDir)
 }
 
 func TestFinalCoveragePush_SetupWizardService_SetInitDataDirFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	called := false
 	svc.SetInitDataDirFunc(func() error {
 		called = true

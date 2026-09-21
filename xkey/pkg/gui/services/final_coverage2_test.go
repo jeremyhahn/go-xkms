@@ -39,13 +39,6 @@ func TestFinal2_ApplySetup_TPMSealedMode_SealUserPinWarning(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
 	svc := tw.svc
 
-	// Wire a PasswordProtectionService with a real config path so SetModeTPMSealed
-	// can attempt to work. It will fail because there's no seal service with a real
-	// TPM, but the code path is exercised.
-	ppConfigPath := filepath.Join(t.TempDir(), "pp.json")
-	ppSvc := NewPasswordProtectionService(ppConfigPath, nil, nil)
-	svc.SetPasswordProtectionService(ppSvc)
-
 	// Wire a SealService whose SealData will error (no TPM accessor).
 	sealSvc := NewSealService(t.TempDir())
 	svc.SetSealService(sealSvc)
@@ -129,7 +122,7 @@ func TestFinal2_ApplySOProvisioning_LUKSMode(t *testing.T) {
 // =========================================================================
 
 func TestFinal2_FactoryReset_HMACRemoval(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	configDir := t.TempDir()
@@ -165,7 +158,7 @@ func TestFinal2_FactoryReset_HMACRemoval(t *testing.T) {
 }
 
 func TestFinal2_FactoryReset_TPMResetError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	tpmSvc := NewTPMService()
@@ -193,7 +186,7 @@ func TestFinal2_FactoryReset_TPMResetError(t *testing.T) {
 }
 
 func TestFinal2_FactoryReset_ConfigSaveError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	svc.SetConfigFunc(func() *GUIConfigData {

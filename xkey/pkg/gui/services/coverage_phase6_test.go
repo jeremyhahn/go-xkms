@@ -1528,7 +1528,7 @@ func TestP6B_PhoneService_SecurityLevelRank(t *testing.T) {
 // ===========================================================================
 
 func TestP6B_SetupWizard_ApplySOProvisioning_EmptySOPIN(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	result, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "standalone",
@@ -1539,7 +1539,7 @@ func TestP6B_SetupWizard_ApplySOProvisioning_EmptySOPIN(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	result, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "invalid_mode",
@@ -1550,7 +1550,7 @@ func TestP6B_SetupWizard_ApplySOProvisioning_InvalidMode(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_ApplySOProvisioning_NilPINService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 
 	result, err := svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "standalone",
@@ -1570,7 +1570,7 @@ func TestP6B_SetupWizard_ApplySOProvisioning_PINSetupError(t *testing.T) {
 	backendSvc := qrdbsdk.NewPINService(mgr, slog.Default())
 	pinSvc.SetPINService(backendSvc)
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetPINService(pinSvc)
 
 	result, err := svc.ApplySOProvisioning(&SetupChoices{
@@ -1584,7 +1584,7 @@ func TestP6B_SetupWizard_ApplySOProvisioning_PINSetupError(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_GetPolicy_ConfigLoadError(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// GetPolicy tries to load unified config which may not exist in test.
 	result, err := svc.GetPolicy()
 	// Expected: either works or returns error depending on config existence.
@@ -1598,7 +1598,7 @@ func TestP6B_SetupWizard_GetPolicy_ConfigLoadError(t *testing.T) {
 // ===========================================================================
 
 func TestP6B_SetupWizard_Apply_PlatformPolicyCreateFailed(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
 	svc.configSave = func(_ *GUIConfigData) error { return nil }
 	svc.initDataDirFunc = func() error { return nil }
@@ -1626,17 +1626,10 @@ func TestP6B_SetupWizard_Apply_PlatformPolicyCreateFailed(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_Apply_TPMSealedPasswordMode(t *testing.T) {
-	dir := t.TempDir()
-
-	store := &p6bMockStaticPWStore{passwords: []*staticpw.StaticPassword{}}
-	spSvc := &StaticPasswordService{store: store}
-	ppSvc := NewPasswordProtectionService(filepath.Join(dir, "enc.json"), spSvc, nil)
-
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
 	svc.configSave = func(_ *GUIConfigData) error { return nil }
 	svc.initDataDirFunc = func() error { return nil }
-	svc.SetPasswordProtectionService(ppSvc)
 
 	result, err := svc.ApplySetup(&SetupChoices{
 		Mode:              "standalone",
@@ -1651,17 +1644,10 @@ func TestP6B_SetupWizard_Apply_TPMSealedPasswordMode(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_Apply_AESSoftwareMode_MasterPassword(t *testing.T) {
-	dir := t.TempDir()
-
-	store := &p6bMockStaticPWStore{passwords: []*staticpw.StaticPassword{}}
-	spSvc := &StaticPasswordService{store: store}
-	ppSvc := NewPasswordProtectionService(filepath.Join(dir, "enc.json"), spSvc, nil)
-
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
 	svc.configSave = func(_ *GUIConfigData) error { return nil }
 	svc.initDataDirFunc = func() error { return nil }
-	svc.SetPasswordProtectionService(ppSvc)
 
 	result, err := svc.ApplySetup(&SetupChoices{
 		Mode:              "standalone",
@@ -1676,17 +1662,10 @@ func TestP6B_SetupWizard_Apply_AESSoftwareMode_MasterPassword(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_Apply_AESSoftwareMode_UserPinAsMaster(t *testing.T) {
-	dir := t.TempDir()
-
-	store := &p6bMockStaticPWStore{passwords: []*staticpw.StaticPassword{}}
-	spSvc := &StaticPasswordService{store: store}
-	ppSvc := NewPasswordProtectionService(filepath.Join(dir, "enc.json"), spSvc, nil)
-
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
 	svc.configSave = func(_ *GUIConfigData) error { return nil }
 	svc.initDataDirFunc = func() error { return nil }
-	svc.SetPasswordProtectionService(ppSvc)
 
 	result, err := svc.ApplySetup(&SetupChoices{
 		Mode:               "standalone",
@@ -1700,7 +1679,7 @@ func TestP6B_SetupWizard_Apply_AESSoftwareMode_UserPinAsMaster(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_Apply_AESSoftwareMode_NoPPSvc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
 	svc.configSave = func(_ *GUIConfigData) error { return nil }
 	svc.initDataDirFunc = func() error { return nil }
@@ -1726,7 +1705,7 @@ func TestP6B_SetupWizard_Apply_AESSoftwareMode_NoPPSvc(t *testing.T) {
 }
 
 func TestP6B_SetupWizard_Apply_AutoUnsealNilService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.configFunc = func() *GUIConfigData { return &GUIConfigData{} }
 	svc.configSave = func(_ *GUIConfigData) error { return nil }
 	svc.initDataDirFunc = func() error { return nil }

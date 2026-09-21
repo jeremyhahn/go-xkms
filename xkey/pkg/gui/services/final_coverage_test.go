@@ -41,14 +41,6 @@ func TestFinal_ApplySetup_TPMSealedPasswordMode_SealUserPinWarning(t *testing.T)
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
 	svc := tw.svc
 
-	// Wire a PasswordProtectionService.
-	ppSvc := NewPasswordProtectionService(
-		filepath.Join(t.TempDir(), "pp.json"),
-		nil, // no StaticPasswordService
-		nil, // no SealService
-	)
-	svc.SetPasswordProtectionService(ppSvc)
-
 	// Wire a SealService whose SealData will error (no TPM accessor).
 	sealSvc := NewSealService(t.TempDir())
 	svc.SetSealService(sealSvc)
@@ -143,7 +135,7 @@ func TestFinal_ApplySOProvisioning_StorageTypeAndPasswordMode(t *testing.T) {
 
 func TestFinal_GetPolicy_NoConfigFile(t *testing.T) {
 	// Covers L979-1004: GetPolicy with default config (no file on disk).
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	result, err := svc.GetPolicy()
@@ -154,7 +146,7 @@ func TestFinal_GetPolicy_NoConfigFile(t *testing.T) {
 
 func TestFinal_FactoryReset_EmptySOPin(t *testing.T) {
 	// Covers L1017-1018: empty SO PIN returns ErrSetupSOPINRequired.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	err := svc.FactoryReset("")
@@ -163,7 +155,7 @@ func TestFinal_FactoryReset_EmptySOPin(t *testing.T) {
 
 func TestFinal_FactoryReset_SOPINVerifyFails(t *testing.T) {
 	// Covers L1022-1025: pinSvc.VerifySOPIN fails -> ErrSetupSOPINVerifyFailed.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	pinSvc := NewPINService()
@@ -177,7 +169,7 @@ func TestFinal_FactoryReset_SOPINVerifyFails(t *testing.T) {
 func TestFinal_FactoryReset_WithConfigReset(t *testing.T) {
 	// Covers L1028-1075: The full FactoryReset path including TPM reset,
 	// HMAC removal, config removal, GUI config reset, and event emission.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	configDir := t.TempDir()
@@ -223,7 +215,7 @@ func TestFinal_FactoryReset_WithConfigReset(t *testing.T) {
 
 func TestFinal_FactoryReset_TPMResetError(t *testing.T) {
 	// Covers L1031-1034: tpmSvc.FactoryReset fails -> error appended.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	// Wire a TPMService with no TPM accessor -> FactoryReset will error.
@@ -254,7 +246,7 @@ func TestFinal_FactoryReset_TPMResetError(t *testing.T) {
 
 func TestFinal_FactoryReset_ConfigSaveError(t *testing.T) {
 	// Covers L1057-1058: configSave returns error -> appended to errs.
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetContext(context.Background())
 
 	svc.SetConfigFunc(func() *GUIConfigData {

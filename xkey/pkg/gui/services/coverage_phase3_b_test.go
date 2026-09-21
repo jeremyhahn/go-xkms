@@ -227,14 +227,14 @@ func TestP3B_SkipSetup_InitDataDirFuncSuccess(t *testing.T) {
 
 // TestP3B_SetupWizard_SetConfigDir tests the SetConfigDir setter.
 func TestP3B_SetupWizard_SetConfigDir(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigDir("/tmp/test-config")
 	assert.Equal(t, "/tmp/test-config", svc.configDir)
 }
 
 // TestP3B_SetupWizard_SetInitDataDirFunc tests the SetInitDataDirFunc setter.
 func TestP3B_SetupWizard_SetInitDataDirFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	called := false
 	svc.SetInitDataDirFunc(func() error {
 		called = true
@@ -280,7 +280,7 @@ func TestP3B_ApplySetup_BarrierAlreadyInit_WrongPassword(t *testing.T) {
 // TestP3B_EmitProgress_NilEmitter tests that emitProgress does not
 // panic when eventEmitter is nil.
 func TestP3B_EmitProgress_NilEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// eventEmitter is nil, should not panic.
 	svc.emitProgress(1, "test step")
 	svc.emitSOProvisioningProgress(1, "test SO step")
@@ -290,7 +290,7 @@ func TestP3B_EmitProgress_NilEmitter(t *testing.T) {
 // TestP3B_EmitProgress_WithEmitter tests that emitProgress sends
 // the correct progress event.
 func TestP3B_EmitProgress_WithEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	var received []events.Event
 	svc.SetEventEmitter(func(e events.Event) {
 		received = append(received, e)
@@ -309,7 +309,7 @@ func TestP3B_EmitProgress_WithEmitter(t *testing.T) {
 // TestP3B_EmitSOProvisioningProgress_WithEmitter tests SO provisioning
 // progress events.
 func TestP3B_EmitSOProvisioningProgress_WithEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	var received []events.Event
 	svc.SetEventEmitter(func(e events.Event) {
 		received = append(received, e)
@@ -326,7 +326,7 @@ func TestP3B_EmitSOProvisioningProgress_WithEmitter(t *testing.T) {
 // TestP3B_EmitUserOnboardingProgress_WithEmitter tests user onboarding
 // progress events.
 func TestP3B_EmitUserOnboardingProgress_WithEmitter(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	var received []events.Event
 	svc.SetEventEmitter(func(e events.Event) {
 		received = append(received, e)
@@ -343,7 +343,7 @@ func TestP3B_EmitUserOnboardingProgress_WithEmitter(t *testing.T) {
 // TestP3B_GetStartupState_SetupCompleteStandalone tests the startup state
 // when setup is complete in standalone mode.
 func TestP3B_GetStartupState_SetupCompleteStandalone(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
 	})
@@ -365,7 +365,7 @@ func TestP3B_GetStartupState_NotComplete_NoEnterprise(t *testing.T) {
 	// find a stale xkey_policy.hmac in the package directory.
 	t.Chdir(t.TempDir())
 
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
 	})
@@ -383,7 +383,7 @@ func TestP3B_GetStartupState_NotComplete_NoEnterprise(t *testing.T) {
 // TestP3B_GetStartupState_NotComplete_WithConfigDir tests the startup state
 // when setup is not complete and configDir is set (SO provisioning mode).
 func TestP3B_GetStartupState_NotComplete_WithConfigDir(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: false}
 	})
@@ -401,7 +401,7 @@ func TestP3B_GetStartupState_NotComplete_WithConfigDir(t *testing.T) {
 // TestP3B_GetStartupState_WithPINService tests the startup state when a
 // PIN service is available.
 func TestP3B_GetStartupState_WithPINService(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData {
 		return &GUIConfigData{SetupComplete: true}
 	})
@@ -424,7 +424,7 @@ func TestP3B_GetStartupState_WithPINService(t *testing.T) {
 // TestP3B_GetStartupState_NilConfigFunc tests GetStartupState when
 // configFunc is nil.
 func TestP3B_GetStartupState_NilConfigFunc(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	// configFunc is nil.
 
 	state, err := svc.GetStartupState()
@@ -436,7 +436,7 @@ func TestP3B_GetStartupState_NilConfigFunc(t *testing.T) {
 // TestP3B_GetStartupState_NilConfigResult tests GetStartupState when
 // configFunc returns nil.
 func TestP3B_GetStartupState_NilConfigResult(t *testing.T) {
-	svc := NewSetupWizardService()
+	svc := &SetupWizardService{}
 	svc.SetConfigFunc(func() *GUIConfigData { return nil })
 
 	state, err := svc.GetStartupState()

@@ -209,27 +209,15 @@ const scPolicyHMACFile = "xkey_policy.hmac"
 // TestSC_SetupWizard_TPMSealedPW_SealFails covers L443-455: tpm_sealed mode
 // where SetModeTPMSealed succeeds but SealData for user_pin fails.
 func TestSC_SetupWizard_TPMSealedPW_SealFails(t *testing.T) {
-	// ppSvc uses its own working sealSvc so SetModeTPMSealed succeeds.
-	ppMock := defaultSealMock()
-	ppSealSvc := newSealServiceWithMock(t, ppMock)
-	ppStore := &scMockStaticPWStore{}
-	ppStaticSvc := NewStaticPasswordService(ppStore)
-	ppSvc := NewPasswordProtectionService(
-		filepath.Join(t.TempDir(), "enc.json"),
-		ppStaticSvc,
-		ppSealSvc,
-	)
-
-	// wizard uses a separate sealSvc that always fails (for user_pin seal).
+	// wizard uses a sealSvc that always fails (for user_pin seal).
 	wizMock := defaultSealMock()
 	wizMock.sealErr = errors.New("seal error")
 	wizSealSvc := newSealServiceWithMock(t, wizMock)
 
 	pinSvc := scNewPINServiceWithManager(t)
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
-	wiz.SetPasswordProtectionService(ppSvc)
 	wiz.SetSealService(wizSealSvc)
 	wiz.SetPINService(pinSvc)
 	wiz.SetInitDataDirFunc(func() error { return nil })
@@ -256,19 +244,10 @@ func TestSC_SetupWizard_TPMSealedPW_SealFails(t *testing.T) {
 // store mode path. Password protection is now handled transparently by the
 // barrier, so the wizard succeeds with warnings rather than errors.
 func TestSC_SetupWizard_AESSoftwarePW_Fails(t *testing.T) {
-	ppStore := &scMockStaticPWStore{}
-	ppStaticSvc := NewStaticPasswordService(ppStore)
-	ppSvc := NewPasswordProtectionService(
-		"/dev/null/impossible/enc.json", // unwritable path
-		ppStaticSvc,
-		nil,
-	)
-
 	pinSvc := scNewPINServiceWithManager(t)
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
-	wiz.SetPasswordProtectionService(ppSvc)
 	wiz.SetPINService(pinSvc)
 	wiz.SetInitDataDirFunc(func() error { return nil })
 	wiz.SetEventEmitter(func(_ events.Event) {})
@@ -308,7 +287,7 @@ func TestSC_SetupWizard_AutoUnseal_EnableFails(t *testing.T) {
 
 	pinSvc := scNewPINServiceWithManager(t)
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetAutoUnsealService(autoSvc)
 	wiz.SetPINService(pinSvc)
@@ -340,7 +319,7 @@ func TestSC_SOProvisioning_TPMInstallAndPlatformKeyStore(t *testing.T) {
 
 	tpmSvc := &TPMService{log: slog.Default().With("component", "tpm_service")}
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetPINService(pinSvc)
 	wiz.SetTPMService(tpmSvc)
@@ -359,7 +338,7 @@ func TestSC_SOProvisioning_ConfigLoadFails(t *testing.T) {
 	pinSvc := scNewPINServiceWithManager(t)
 	require.NoError(t, pinSvc.SetSOPIN("", "so-pin"))
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetPINService(pinSvc)
 	wiz.SetEventEmitter(func(_ events.Event) {})
@@ -377,7 +356,7 @@ func TestSC_SOProvisioning_PolicyHMACFails(t *testing.T) {
 	pinSvc := scNewPINServiceWithManager(t)
 	require.NoError(t, pinSvc.SetSOPIN("", "so-pin"))
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetPINService(pinSvc)
 	wiz.SetEventEmitter(func(_ events.Event) {})
@@ -401,7 +380,7 @@ func TestSC_UserOnboarding_SetUserPINFails(t *testing.T) {
 	pinSvc := scNewPINServiceWithManager(t)
 	require.NoError(t, pinSvc.SetSOPIN("", "so-pin"))
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetPINService(pinSvc)
 	wiz.SetEventEmitter(func(_ events.Event) {})
@@ -436,7 +415,7 @@ func TestSC_UserOnboarding_ConfigLoadFails(t *testing.T) {
 		0600,
 	))
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetPINService(pinSvc)
 	wiz.SetEventEmitter(func(_ events.Event) {})
@@ -475,7 +454,7 @@ func TestSC_UserOnboarding_ConfigSaveFails(t *testing.T) {
 	require.NoError(t, os.Chmod(configDir, 0500))
 	defer os.Chmod(configDir, 0700) //nolint:errcheck
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 	wiz.SetPINService(pinSvc)
 	wiz.SetEventEmitter(func(_ events.Event) {})
@@ -504,7 +483,7 @@ func TestSC_GetPolicy_ConfigLoadError(t *testing.T) {
 	config.SetConfigDir(badDir)
 	defer config.ResetConfigDir()
 
-	wiz := NewSetupWizardService()
+	wiz := &SetupWizardService{}
 	wiz.SetContext(context.Background())
 
 	result, err := wiz.GetPolicy()

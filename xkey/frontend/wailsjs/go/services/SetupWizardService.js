@@ -78,16 +78,8 @@ export function SetPINService(arg1) {
   return window['go']['services']['SetupWizardService']['SetPINService'](arg1);
 }
 
-export function SetPasswordProtectionService(arg1) {
-  return window['go']['services']['SetupWizardService']['SetPasswordProtectionService'](arg1);
-}
-
 export function SetPlatformPolicyService(arg1) {
   return window['go']['services']['SetupWizardService']['SetPlatformPolicyService'](arg1);
-}
-
-export function SetPostApplyFunc(arg1) {
-  return window['go']['services']['SetupWizardService']['SetPostApplyFunc'](arg1);
 }
 
 export function SetSealService(arg1) {
