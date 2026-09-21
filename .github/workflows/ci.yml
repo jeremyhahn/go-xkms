@@ -119,9 +119,10 @@ env:
   # same graph. Nothing in the tree changed; the environment moved underneath
   # the head, which is exactly what an unpinned toolchain lets happen.
   #
-  # Bump within 1.26 as patches ship; move to 1.27 only in the Go 1.27.0 wave
-  # (company task #121), which has to bump the swiss/pebble chain first. This
-  # is the emergency valve, not the adoption decision.
+  # Go 1.27.0 was adopted repo-wide in #560 (module toolchains, CI, and this
+  # pin all moved together; the Dockerfiles followed to close out #36). Bump
+  # the patch version here as 1.27.x releases ship; re-run the swiss/pebble
+  # compatibility check above before ever bumping the minor version again.
   GO_VERSION: '1.27.0'
   # ANALYSIS TOOL PINS (#189). These are the versions BAKED INTO the
   # self-hosted runner image; .github/scripts/require-tool.sh asserts the

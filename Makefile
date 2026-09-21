@@ -3313,7 +3313,7 @@ docker-clean: docker-stop
 # Create default Dockerfile if it doesn't exist
 create-dockerfile:
 	@echo "# Dockerfile for go-xkms integration testing" > Dockerfile
-	@echo "FROM golang:1.26.1-alpine" >> Dockerfile
+	@echo "FROM golang:1.27.0-alpine" >> Dockerfile
 	@echo "" >> Dockerfile
 	@echo "# Install dependencies" >> Dockerfile
 	@echo "RUN apk add --no-cache \\" >> Dockerfile

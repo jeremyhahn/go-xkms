@@ -1,6 +1,6 @@
 # go-xkms Development Container
 # This container provides ALL dependencies needed for development and testing
-# Go Version: Latest stable via golang:1.26.1-bookworm (GOTOOLCHAIN=auto)
+# Go Version: Latest stable via golang:1.27.0-bookworm (GOTOOLCHAIN=auto)
 #
 # Includes:
 # - PKCS#11: SoftHSM2, OpenSC, pkcs11-provider (for both OpenSSLs)
@@ -11,7 +11,7 @@
 # - Docker: docker-in-docker support for integration tests
 
 # Stage 1: Builder stage - compile dependencies from source
-FROM golang:1.26.6-bookworm AS builder
+FROM golang:1.27.0-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -257,7 +257,7 @@ RUN OPENSSH_VERSION=10.4p1 && \
     make install-nosysconf
 
 # Stage 2: Development runtime environment
-FROM golang:1.26.6-bookworm
+FROM golang:1.27.0-bookworm
 
 LABEL maintainer="go-xkms"
 LABEL description="Development environment for go-xkms with ALL build and test dependencies"
