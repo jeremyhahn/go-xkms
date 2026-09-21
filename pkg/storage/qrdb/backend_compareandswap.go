@@ -15,6 +15,7 @@ package qrdb
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
@@ -30,9 +31,16 @@ import (
 // node: at most one of N concurrent CompareAndSwap calls against the same
 // current value succeeds.
 //
-// On a failed swap the transaction's failure branch reads the key, so current
-// carries the value actually present (nil when the key is absent), letting a
-// read-modify-write caller recompute and retry.
+// The transaction carries NO failure branch. A transaction's success/failure
+// branches are executed atomically as a single Raft write with no per-op
+// read-result channel, so branch operations are write-only by design; go-qrdb's
+// service layer rejects a Get in either branch with "transaction branches
+// support only Put and Delete" (#125 — this package's compare-and-delete and
+// put-if-absent transactions never had a read branch; this one, uniquely,
+// used to). So on a failed swap, current is fetched with a follow-up Get
+// instead of inside the transaction — current is advisory for a retry, and any
+// value can change between the attempt and the retry regardless of how it was
+// read.
 func (b *Backend) CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
 	txClient, ok := b.client.(transport.TransactionClient)
 	if !ok {
@@ -60,9 +68,6 @@ func (b *Backend) CompareAndSwap(ctx context.Context, key string, expected, newV
 	req := &transport.TransactionRequest{
 		Compares:   []transport.Compare{compare},
 		SuccessOps: []transport.Op{{Type: transport.OpPut, Key: []byte(key), Value: newValue}},
-		// On failure, read the key back so the caller learns the current value
-		// it must recompute against.
-		FailureOps: []transport.Op{{Type: transport.OpGet, Key: []byte(key)}},
 	}
 
 	resp, err := txClient.ExecuteTransaction(ctx, req)
@@ -73,9 +78,16 @@ func (b *Backend) CompareAndSwap(ctx context.Context, key string, expected, newV
 		return true, nil, nil
 	}
 
-	var current []byte
-	if len(resp.Responses) > 0 && len(resp.Responses[0].Kvs) > 0 {
-		current = resp.Responses[0].Kvs[0].Value
+	// The swap did not happen; fetch the value actually present so a
+	// read-modify-write caller can recompute and retry. A key that is still
+	// absent is not an error here — it is the current value, nil.
+	current, err := b.client.Get(ctx, key, followerRead)
+	if err != nil {
+		var knf *transport.KeyNotFoundError
+		if errors.As(err, &knf) {
+			return false, nil, nil
+		}
+		return false, nil, &BackendError{Op: "compare-and-swap", Key: key, Err: err}
 	}
 	return false, current, nil
 }
