@@ -1,6 +1,6 @@
 # Setup Wizard — Engineering
 
-> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 Package: `xkey/pkg/gui/services`, file `setup_wizard_service.go`. Errors in
 `errors.go`. Frontend contract in `xkey/frontend/src/lib/types/setup.ts`.
@@ -69,6 +69,21 @@ SOPINRecorded   bool   `json:"so_pin_recorded"`    // quick setup: operator reco
 6. Steps 6 → 7 → 8 are ordered: barrier, then data directory, then password
    store. PIN calls that fail at step 2 because the PIN manager does not
    exist yet are retried at step 7.
+7. **A failed barrier attempt never persists `barrier_strategy: tpm2` on a
+   build/host with no usable TPM sealer.** When `ApplySetup`'s barrier step
+   fails, the config-commit switch persists `choices.SealerBackend` so the
+   operator can retry -- except that `refuseUnavailableStrategyPersist`
+   refuses the write specifically for `tpm2` when
+   `BarrierService.ProbeStrategies` reports it unavailable
+   (`tpmSealerFn == nil`, or the sealer's `CanSeal()` is false). The prior
+   config value, if any, is left untouched; `ErrSetupSealStrategyUnavailable`
+   is reported instead. Every other strategy, a barrier service that is not
+   wired at all (test-only path), and a hardware/credential failure against
+   an *available* tpm2 strategy (`CanSeal()` true but `Unseal` still fails)
+   are unaffected and still persist the requested strategy for retry
+   (go-xkms#510 item 1). This closes the setup-time half of #510; the
+   runtime re-unseal-in-place path is `BarrierService.Unseal`'s own guard via
+   `assembleStrategy`, already in place.
 
 ## Errors
 
@@ -87,6 +102,7 @@ All declared in `errors.go`, all typed values, all prefixed `setup_wizard:`.
 | `ErrSetupSOPINVerifyFailed` | user onboarding presented the wrong SO PIN |
 | `ErrSetupPINServiceUnavailable` | an SO-PIN-authorized operation reached without a PIN service; refused, never assumed |
 | `ErrSetupNotSOProvisioned` | user onboarding before SO provisioning |
+| `ErrSetupSealStrategyUnavailable` | a failed barrier attempt requested `tpm2` and no usable TPM sealer is wired in on this build/host; the config write for `barrier_strategy` is skipped |
 
 Step failures inside `ApplySetup` are soft: they land in
 `SetupResult.Warnings` or `SetupResult.Errors` with `Success` false, and
@@ -122,6 +138,11 @@ allow several minutes). The #290 contract lives in
 | `TestApplySetup_QuickSetup_AcknowledgedSOPINApplies` | the same choices with the flag set run the flow |
 | `TestApplySetup_ManualSetup_NeedsNoSOPINAcknowledgement` | manual setup is not gated |
 | `TestApplySetup_SOPINRequiredBeforeAcknowledgementGate` | validation order |
+| `TestApplySetup_TPM2Unavailable_RefusesToPersistStrategy` | a failed `tpm2` attempt with no TPM sealer wired writes no `barrier_strategy` and reports `ErrSetupSealStrategyUnavailable` |
+| `TestApplySetup_TPM2Unavailable_PreservesPriorBarrierStrategy` | the refused write leaves a pre-existing config value untouched |
+| `TestApplySetup_TPM2Available_PersistsStrategyOnSealedShutFailure` | a hardware failure against an *available* `tpm2` strategy still persists it for retry |
+| `TestApplySetup_PassphraseStrategy_UnaffectedByTPM2Guard` | the guard is scoped to `tpm2`; passphrase failures persist as before |
+| `TestRefuseUnavailableStrategyPersist_*` (`setup_wizard_tpm2_guard_test.go`) | the guard function in isolation: no sealer, `CanSeal()` false, a working sealer, passphrase never blocked, no barrier service wired |
 
 Mutation checks recorded on go-xkms#290: reinstating the `SO PIN` store
 write fails the first two tests at the name, value and lookup assertions;

@@ -992,7 +992,18 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		// NOT mark setup complete.
 		updated.SetupComplete = false
 		updated.BarrierInitialized = false
-		updated.BarrierStrategy = choices.SealerBackend
+		if guardErr := s.refuseUnavailableStrategyPersist(choices.SealerBackend); guardErr != nil {
+			// tpm2 was requested but this build/host has no usable TPM
+			// sealer wired into the barrier. Leave updated.BarrierStrategy
+			// untouched (whatever cfg already had, including "") rather
+			// than committing a strategy this build can never unseal
+			// again (#510 item 1).
+			slog.Error("wizard: refusing to persist unavailable barrier strategy",
+				"strategy", choices.SealerBackend, "error", guardErr)
+			result.Errors = append(result.Errors, guardErr.Error())
+		} else {
+			updated.BarrierStrategy = choices.SealerBackend
+		}
 		result.SetupComplete = false
 		result.Success = false
 		result.Errors = append(result.Errors,
@@ -1031,6 +1042,38 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	}
 
 	return result, nil
+}
+
+// refuseUnavailableStrategyPersist returns ErrSetupSealStrategyUnavailable
+// when strategyID is "tpm2" and the barrier service has no usable TPM
+// sealer wired in on this build/host, per the barrier service's own
+// availability probe (the same check assembleStrategy uses to decide
+// whether Initialize/Unseal can even attempt tpm2). It returns nil for
+// every other strategy and whenever no barrier service is wired at all --
+// callers that reach it only after a failed attempt already know
+// s.barrierSvc is non-nil, but the nil check keeps this safe to call from
+// anywhere.
+//
+// This is the single point that decides whether a failed barrier attempt's
+// strategy may still be committed to config for retry. Persisting
+// barrier_strategy: tpm2 after a failed attempt on a host with no TPM
+// sealer would write a config this build's GUI can never unseal again
+// (#510 item 1); every other failure reason (e.g. a wrong password against
+// an existing tpm2 barrier) still persists the strategy, since a working
+// sealer is wired and the barrier itself is what would not open.
+func (s *SetupWizardService) refuseUnavailableStrategyPersist(strategyID string) error {
+	if strategyID != string(xkms.StrategyTPM2) || s.barrierSvc == nil {
+		return nil
+	}
+	for _, info := range s.barrierSvc.ProbeStrategies() {
+		if info.ID == strategyID {
+			if info.Available {
+				return nil
+			}
+			break
+		}
+	}
+	return ErrSetupSealStrategyUnavailable
 }
 
 // initBarrier attempts to initialize the barrier with the given strategy,

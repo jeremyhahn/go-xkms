@@ -342,6 +342,22 @@ var (
 	// so applying without the acknowledgement would initialize a device whose
 	// recovery credential nobody holds.
 	ErrSetupSOPINNotRecorded = errors.New("setup_wizard: generated SO PIN must be acknowledged as recorded out of band before setup can apply")
+
+	// ErrSetupSealStrategyUnavailable indicates the wizard was asked to seal
+	// the barrier with a strategy (currently only tpm2) that this build/host
+	// has no usable sealer for. It is the sibling of AppLockService's
+	// ErrAppLockUnsealUnavailable, one step earlier: that one classifies an
+	// unseal that already failed against an unavailable strategy; this one
+	// stops the strategy from ever being written to config in the first
+	// place. A barrier that already exists and fails to unseal for this
+	// reason (barrierSealedShut) still has a real, working strategy on disk
+	// -- retrying it under a different one would only strand it further, so
+	// this error blocks nothing there but the fresh persistence of "tpm2"
+	// into config; it is reported and the previous config value, if any, is
+	// left untouched. Without it, a failed attempt could still commit
+	// barrier_strategy: tpm2, leaving a config this build's GUI can never
+	// unseal on its own (#510 item 1).
+	ErrSetupSealStrategyUnavailable = errors.New("setup_wizard: requested barrier strategy is unavailable on this build/host - refusing to persist it")
 )
 
 // BarrierService errors.
