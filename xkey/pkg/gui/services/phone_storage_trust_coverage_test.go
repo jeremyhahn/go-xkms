@@ -34,6 +34,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -76,7 +77,7 @@ func TestPhoneService_EnforceAttestationPolicy_PolicyMismatchFields(t *testing.T
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:02",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled:       true,
 			BootHash:      "expected_boot_hash_value",
 			BootKeyHash:   "expected_boot_key_hash_value",
@@ -399,11 +400,11 @@ func TestPhoneService_AutoAttest_PolicyDisabledButPresent(t *testing.T) {
 			{
 				Name:    "Pixel 9",
 				Address: "AA:BB:CC:DD:EE:04",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:  false, // Not enabled.
 					BootHash: "abc123",
 				},
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified: true,
 					BootHash: "abc123",
 				},

@@ -13,118 +13,143 @@
 
 package pairing
 
-import "time"
+import (
+	"time"
 
-// DeviceType identifies the kind of paired device.
-type DeviceType string
-
-const (
-	// DeviceTypePhone represents an Android/iOS phone paired via BLE or USB.
-	DeviceTypePhone DeviceType = "phone"
-
-	// DeviceTypeAgent represents a remote agent paired via TCP/network.
-	DeviceTypeAgent DeviceType = "agent"
-
-	// DeviceTypeUSB represents a USB-connected hardware device.
-	DeviceTypeUSB DeviceType = "usb"
-
-	// DeviceTypeDesktop represents a desktop machine paired via TCP.
-	DeviceTypeDesktop DeviceType = "desktop"
+	"gopkg.in/yaml.v3"
 )
 
-// EnrollmentMethod identifies how the device was paired.
-type EnrollmentMethod string
-
-const (
-	// EnrollmentMethodBLE indicates pairing via Bluetooth Low Energy.
-	EnrollmentMethodBLE EnrollmentMethod = "ble"
-
-	// EnrollmentMethodUSB indicates pairing via USB connection.
-	EnrollmentMethodUSB EnrollmentMethod = "usb"
-
-	// EnrollmentMethodTCP indicates pairing via TCP network connection.
-	EnrollmentMethodTCP EnrollmentMethod = "tcp"
-
-	// EnrollmentMethodOneTimeCode indicates enrollment via a one-time code.
-	EnrollmentMethodOneTimeCode EnrollmentMethod = "one-time-code"
-
-	// EnrollmentMethodAdminApproval indicates enrollment via admin approval.
-	EnrollmentMethodAdminApproval EnrollmentMethod = "admin-approval"
-
-	// EnrollmentMethodEnterpriseCA indicates enrollment via enterprise CA certificate.
-	EnrollmentMethodEnterpriseCA EnrollmentMethod = "enterprise-ca"
-
-	// EnrollmentMethodNoiseDirect indicates enrollment via direct Noise handshake.
-	EnrollmentMethodNoiseDirect EnrollmentMethod = "noise-direct"
-
-	// EnrollmentMethodQR indicates pairing via QR code scan.
-	EnrollmentMethodQR EnrollmentMethod = "qr"
-)
-
-// TransportType identifies the communication transport used for the device.
-type TransportType string
-
-const (
-	// TransportTypeBLE indicates BLE GATT transport.
-	TransportTypeBLE TransportType = "ble"
-
-	// TransportTypeUSB indicates USB/AOA transport.
-	TransportTypeUSB TransportType = "usb"
-
-	// TransportTypeTCP indicates TCP network transport.
-	TransportTypeTCP TransportType = "tcp"
-)
-
-// PairedDevice represents a device that has been paired with this xKey instance.
+// PairedDevice is the persisted record of a device paired with this xKey
+// instance.
+//
+// It is the ONE owned shape for the pairing file: the CLI's devices.yaml and
+// the GUI's mirror of the same file both read and write this exact type
+// (#130). Before this, the CLI and the GUI each hand-maintained their own
+// struct for the same file, and the drift between them silently dropped a
+// security field three times — `attestation_protocol_version` missing from
+// the GUI's mirror (#95, #124 round 1) being the recurring instance. The
+// fix is structural: there is nothing left to drift, because there is only
+// one definition of what a paired device record contains.
+//
+// The GUI's Wails-facing view model is a projection of this type (see
+// pkg/gui/services' deviceView), never a parallel definition; the fields
+// below are the complete union of what either surface persists, so a value
+// read by one and re-saved by the other round-trips every field the other
+// wrote.
 type PairedDevice struct {
 	// Name is the human-readable device name.
-	Name string `json:"name"`
+	Name string `yaml:"name" json:"name"`
 
-	// DeviceType identifies the kind of device.
-	DeviceType DeviceType `json:"device_type"`
+	// Address is the BLE MAC address.
+	Address string `yaml:"address" json:"address"`
 
-	// PublicKey is the device's Noise static public key.
-	PublicKey []byte `json:"public_key"`
+	// NoisePublicKey is the phone's Noise static public key (base64 encoded).
+	NoisePublicKey string `yaml:"noise_public_key" json:"noise_public_key"`
 
-	// AttestationData contains device attestation evidence (format depends on DeviceType).
-	AttestationData []byte `json:"attestation_data,omitempty"`
+	// LocalNoisePrivateKey is our local Noise static private key (base64
+	// encoded). #42 tracks the custody of this key material; this
+	// unification carries the field forward exactly as it persists today.
+	LocalNoisePrivateKey string `yaml:"local_noise_private_key" json:"local_noise_private_key"`
 
-	// PairedAt is the timestamp when the device was first paired.
-	PairedAt time.Time `json:"paired_at"`
+	// PairedAt is the timestamp when the device was paired.
+	PairedAt time.Time `yaml:"paired_at" json:"paired_at"`
 
-	// LastSeen is the timestamp of the last successful connection.
-	LastSeen time.Time `json:"last_seen,omitempty"`
+	// LastDeviceAttestationTime is the timestamp of the last successful device attestation.
+	LastDeviceAttestationTime time.Time `yaml:"last_device_attestation_time,omitempty" json:"last_device_attestation_time,omitempty"`
 
-	// SecurityLevel describes the security posture (e.g., "tee", "strongbox", "software").
-	SecurityLevel string `json:"security_level,omitempty"`
+	// DeviceBootHashHex is the hex-encoded hash of the device boot state.
+	DeviceBootHashHex string `yaml:"device_boot_hash_hex,omitempty" json:"device_boot_hash_hex,omitempty"`
 
-	// AgentAddress is the network address for agent-type devices.
-	AgentAddress string `json:"agent_address,omitempty"`
+	// AttestationGracePeriod is the per-device attestation validity window.
+	AttestationGracePeriod Duration `yaml:"attestation_grace_period,omitempty" json:"attestation_grace_period,omitempty"`
 
-	// CertificateFingerprint is the SHA-256 fingerprint of the device's identity certificate.
-	CertificateFingerprint string `json:"certificate_fingerprint,omitempty"`
+	// SecurityLevel indicates the device's hardware security level (e.g., "tee", "strongbox").
+	SecurityLevel string `yaml:"security_level,omitempty" json:"security_level,omitempty"`
 
-	// EnrollmentMethod records how the device was paired.
-	EnrollmentMethod EnrollmentMethod `json:"enrollment_method,omitempty"`
+	// BootStateVerified indicates whether the device boot state has been verified.
+	BootStateVerified bool `yaml:"boot_state_verified,omitempty" json:"boot_state_verified,omitempty"`
 
-	// TransportType records the communication transport for this device.
-	TransportType TransportType `json:"transport_type,omitempty"`
+	// DeviceFingerprint is a unique identifier derived from device attestation:
+	// the SHA-256 of the device's persistent attested key's
+	// SubjectPublicKeyInfo (#93/#129), hex encoded.
+	DeviceFingerprint string `yaml:"device_fingerprint,omitempty" json:"device_fingerprint,omitempty"`
+
+	// AttestationProtocolVersion records which attestation model bound this
+	// device: 2 for challenge-response (#129), absent or 1 for a record
+	// established before it.
+	//
+	// It is the anti-downgrade term. A device bound under version 2 must prove
+	// liveness on every reconnect, and a peer that answers a version 2 record
+	// with a version 1 attestation is refused rather than accommodated —
+	// otherwise the protocol version would be chosen at connect time by the
+	// party being checked, which is the one party that must not choose it.
+	// Records that predate the change keep working in the weaker mode until
+	// the device is re-paired; they are not silently reported as if they had
+	// the stronger binding.
+	AttestationProtocolVersion int `yaml:"attestation_protocol_version,omitempty" json:"attestation_protocol_version,omitempty"`
+
+	// LastAttestation records the outcome of the last successful attestation,
+	// so a surface can auto-refresh or offer to pin it as a policy baseline
+	// without a fresh BLE round trip. Only the GUI populates it today; the
+	// CLI round-trips it unchanged rather than dropping it on save.
+	LastAttestation *PairedDeviceAttestationSnapshot `yaml:"last_attestation,omitempty" json:"last_attestation,omitempty"`
+
+	// AttestationPolicy pins this device's later attestations to a
+	// previously observed baseline, so a drift from it is flagged instead of
+	// silently accepted. Only the GUI populates it today; the CLI
+	// round-trips it unchanged.
+	AttestationPolicy *PairedDeviceAttestationPolicy `yaml:"attestation_policy,omitempty" json:"attestation_policy,omitempty"`
+
+	// IsBackend marks the device as usable as a key backend, so it appears
+	// in backend-selection lists. Only the GUI sets it today; the CLI
+	// round-trips it unchanged.
+	IsBackend bool `yaml:"is_backend,omitempty" json:"is_backend,omitempty"`
 }
 
-// AttestationPolicy defines requirements for device attestation.
-type AttestationPolicy struct {
-	// RequireTPM requires the device to have a TPM for hardware-backed attestation.
-	RequireTPM bool `json:"require_tpm" yaml:"require_tpm"`
+// PairedDeviceAttestationSnapshot records the outcome of a device
+// attestation for persistence, so it can be redisplayed or compared against
+// a future attestation without a fresh BLE round trip.
+type PairedDeviceAttestationSnapshot struct {
+	Verified      bool      `yaml:"verified" json:"verified"`
+	SecurityLevel string    `yaml:"security_level" json:"security_level"`
+	BootHash      string    `yaml:"boot_hash" json:"boot_hash"`
+	BootKeyHash   string    `yaml:"boot_key_hash" json:"boot_key_hash"`
+	BootState     string    `yaml:"boot_state" json:"boot_state"`
+	DeviceLocked  bool      `yaml:"device_locked" json:"device_locked"`
+	Timestamp     time.Time `yaml:"timestamp" json:"timestamp"`
+}
 
-	// RequireSecureBoot requires the device to have verified/secure boot enabled.
-	RequireSecureBoot bool `json:"require_secure_boot" yaml:"require_secure_boot"`
+// PairedDeviceAttestationPolicy defines the expected attestation properties
+// for a device. When enabled, later attestations are compared against it and
+// a mismatch is reported rather than silently accepted.
+type PairedDeviceAttestationPolicy struct {
+	Enabled       bool      `yaml:"enabled" json:"enabled"`
+	BootHash      string    `yaml:"boot_hash" json:"boot_hash"`
+	BootKeyHash   string    `yaml:"boot_key_hash" json:"boot_key_hash"`
+	BootState     string    `yaml:"boot_state" json:"boot_state"`
+	DeviceLocked  bool      `yaml:"device_locked" json:"device_locked"`
+	SecurityLevel string    `yaml:"min_security_level" json:"min_security_level"`
+	SetAt         time.Time `yaml:"set_at" json:"set_at"`
+}
 
-	// AllowedPCRBanks restricts which PCR hash algorithms are accepted.
-	AllowedPCRBanks []string `json:"allowed_pcr_banks,omitempty" yaml:"allowed_pcr_banks"`
+// Duration wraps time.Duration for YAML marshaling.
+type Duration time.Duration
 
-	// MinSecurityLevel specifies the minimum acceptable security level.
-	MinSecurityLevel string `json:"min_security_level,omitempty" yaml:"min_security_level"`
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	dur, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*d = Duration(dur)
+	return nil
+}
 
-	// RequireBiometric requires the device to support biometric authentication.
-	RequireBiometric bool `json:"require_biometric" yaml:"require_biometric"`
+// MarshalYAML implements yaml.Marshaler.
+func (d Duration) MarshalYAML() (interface{}, error) {
+	return time.Duration(d).String(), nil
 }

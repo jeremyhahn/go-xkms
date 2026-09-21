@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -299,10 +299,11 @@ defect and the shape of the fix is what the current design is for.
    the BLE half and `pairOverTransport`, and the latter runs, in order:
    handshake, `pairing.confirm`, `attestation.AttestOverSession` with purpose
    `pair` against the GUI's trust store, the policy, and only then the record.
-   The decision, the record projection (`recordVerifiedAttestation`, field for
-   field the CLI's `recordDeviceAttestation`) and the policy resolution are
-   the CLI's; what is the GUI's is which trust store to open and what the
-   frontend is told (an `EventAttestationResult`). A GUI pairing supplies no
+   The decision, the record projection (`attestation.ApplyVerifiedAttestation`,
+   shared with the CLI's `recordDeviceAttestation` rather than duplicated
+   field for field — see *The paired-device record* below) and the policy
+   resolution are the CLI's; what is the GUI's is which trust store to open
+   and what the frontend is told (an `EventAttestationResult`). A GUI pairing supplies no
    SO PIN, so in a sealed deployment the enterprise plane is not consulted and
    the shared decision refuses; locking the setting open is proved through
    `xkey device pair` with the SO PIN (#118). A refusal is
@@ -473,6 +474,60 @@ Device-side policy: `device_enrollment_policy.go`, `sharing_policy.go`.
 The pairing — both static public keys and the device fingerprint — is persisted
 on both sides. Everything else is session state and does not survive a
 disconnect.
+
+### The paired-device record — one owned type (#130)
+
+`pairing.PairedDevice` (`xkey/pkg/pairing/device.go`) is the **one** record
+type for a paired device, and it is what the CLI's `devices.yaml` and the
+GUI's mirror of that same file both read and write. Before #130 the CLI
+(`cmd/xkey/cmd/device.go`), the GUI's file mirror
+(`pkg/gui/services/phone_service.go`) and this package each hand-maintained
+their own struct for the same record, and the drift between the first two
+silently dropped `attestation_protocol_version` from the GUI's copy — three
+separate times (#95, #124 round 1, and the GUI mirror's own omission before
+this unification) — so a CLI-paired challenge-response device reconnected
+through the GUI as if it had never been attested.
+
+`cmd.PairedDevice` and `services.phoneConfigDevice` are now type aliases to
+`pairing.PairedDevice`, not separate definitions, so there is nothing left to
+drift. Every persisted field carries both a `yaml` and a `json` tag; the
+`yaml` tags are byte-compatible with the pre-unification CLI record (see the
+round-trip test in `cmd/xkey/cmd/device_record_roundtrip_test.go`), because
+`PairedDevice`'s field order was carried forward from the CLI's struct. The
+GUI's writer used a different field order for the same conceptual record —
+compare `device_record_roundtrip_test.go` (byte-identical) against
+`pkg/gui/services/phone_record_roundtrip_test.go` (content-identical; see
+that file's comment for why byte order cannot match both historical writers
+at once).
+
+Two fields exist only because the GUI populates them —
+`PairedDeviceAttestationSnapshot` (`LastAttestation`, the last successful
+attestation result, kept for auto-refresh and "pin as policy" without a fresh
+BLE round trip) and `PairedDeviceAttestationPolicy` (`AttestationPolicy`, a
+per-device baseline the GUI pins later attestations against) — and `IsBackend`
+marks a device usable as a key backend. The CLI does not set any of the
+three; it round-trips them unchanged, which is the point: before the
+unification these three fields existed on the GUI's mirror alone, and a
+CLI-driven save (pairing, re-attestation) had no way to preserve them because
+it did not know they existed.
+
+The GUI's Wails-facing view model (`services.PairedDevice`, JSON only — never
+the persisted YAML shape) is a pure projection, `services.deviceView(d
+pairing.PairedDevice, connected bool) PairedDevice`, never a parallel
+definition. `pkg/gui/services/device_view_fieldset_test.go` reflects both
+types' field sets and fails if a field is added to either one without an
+explicit decision recorded for it — either a projection into the view or an
+entry on the reviewed persisted-only allowlist — which is the general
+mechanism #130 asked for, not a pin on today's field list.
+
+`attestation.DeviceBindingFor(d pairing.PairedDevice) DeviceBinding` and
+`attestation.ApplyVerifiedAttestation(d *pairing.PairedDevice, result
+*Result)` (`xkey/pkg/attestation/device.go`) are the two functions that used
+to be duplicated per surface as `attestationBinding()` and
+`recordVerifiedAttestation`/`recordDeviceAttestation`. They live in
+`pkg/attestation` rather than as methods on `pairing.PairedDevice` because
+`pkg/attestation` already imports `pkg/pairing` to build `DeviceBinding`'s
+contents (#95, #129); the reverse import would cycle.
 
 ## Test strategy
 

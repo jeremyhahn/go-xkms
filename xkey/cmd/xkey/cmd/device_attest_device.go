@@ -316,7 +316,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	// attestation of its own device could turn the operator's revalidation
 	// into a rebind onto that device. Legitimate rotation is an explicit
 	// re-pair, which establishes a fresh binding on purpose.
-	if err := device.attestationBinding().ValidateAttestedKeyMatch(deviceFingerprint); err != nil {
+	if err := attestation.DeviceBindingFor(*device).ValidateAttestedKeyMatch(deviceFingerprint); err != nil {
 		fmt.Println()
 		fmt.Println("WARNING: the device's attested key has changed since pairing!")
 		fmt.Printf("  Previous: %s\n", truncateDeviceInfoHash(device.DeviceFingerprint))

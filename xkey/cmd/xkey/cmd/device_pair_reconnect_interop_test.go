@@ -242,7 +242,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	assert.Equal(t, storedFingerprint, record.DeviceFingerprint)
 	assert.Equal(t, phone.AttestProtocolV2, record.AttestationProtocolVersion,
 		"the record must remember it was bound under challenge-response")
-	assert.NoError(t, record.attestationBinding().ValidateAttestedKeyMatch(reattested.Result.DeviceFingerprint),
+	assert.NoError(t, attestation.DeviceBindingFor(*record).ValidateAttestedKeyMatch(reattested.Result.DeviceFingerprint),
 		"an honest re-attestation must not read as a changed device")
 }
 
@@ -448,7 +448,7 @@ func runReattestAgainst(
 		ExpectedDeviceFingerprint: expected,
 	}), "every check that existed before #129 must still pass; that is the point")
 
-	reattestErr := attestation.VerifyReattestation(ctx, init, session, record.attestationBinding(), &attestation.Trust{Pool: ca.Pool()}, logger)
+	reattestErr := attestation.VerifyReattestation(ctx, init, session, attestation.DeviceBindingFor(*record), &attestation.Trust{Pool: ca.Pool()}, logger)
 
 	return reattestErr
 }

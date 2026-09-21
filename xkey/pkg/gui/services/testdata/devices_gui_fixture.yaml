@@ -1,0 +1,42 @@
+devices:
+    - name: Pixel 9 Pro Fold
+      address: AA:BB:CC:DD:EE:01
+      noise_public_key: cGhvbmUtcHVibGljLWtleS1iYXNlNjQ=
+      local_noise_private_key: bG9jYWwtcHJpdmF0ZS1rZXktYmFzZTY0
+      paired_at: 2026-03-15T10:30:00Z
+      last_device_attestation_time: 2026-03-15T10:31:05Z
+      security_level: strongbox
+      boot_state_verified: true
+      device_fingerprint: aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899
+      device_boot_hash_hex: deadbeefcafef00d
+      attestation_protocol_version: 2
+      last_attestation:
+        verified: true
+        security_level: strongbox
+        boot_hash: deadbeefcafef00d
+        boot_key_hash: "0011223344556677"
+        boot_state: verified
+        device_locked: true
+        timestamp: 2026-04-01T09:00:00Z
+      attestation_policy:
+        enabled: true
+        boot_hash: deadbeefcafef00d
+        boot_key_hash: "0011223344556677"
+        boot_state: verified
+        device_locked: true
+        min_security_level: strongbox
+        set_at: 2026-04-01T09:00:00Z
+      is_backend: true
+    - name: Legacy Phone
+      address: 11:22:33:44:55:66
+      noise_public_key: bGVnYWN5LXB1YmxpYy1rZXk=
+      local_noise_private_key: bGVnYWN5LXByaXZhdGUta2V5
+      paired_at: 2026-03-15T10:30:00Z
+default_device: Pixel 9 Pro Fold
+attestation_policy:
+    allow_unattestable_devices: false
+    auto_attest_on_connect: true
+    default_grace_period: 5m0s
+    min_security_level: tee
+    require_device_attestation: true
+    verify_boot_state: true

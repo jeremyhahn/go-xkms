@@ -198,17 +198,22 @@ type SharingPolicy struct {
 
 `FileSharingPolicyStore` provides JSON file persistence. When `AllowedDevices` is set, the requesting device fingerprint must match.
 
-## Device Types
+## Paired device record
 
-```go
-const (
-    DeviceTypePhone DeviceType = "phone"  // Android/iOS via BLE or USB
-    DeviceTypeAgent DeviceType = "agent"  // Remote agent via TCP/network
-    DeviceTypeUSB   DeviceType = "usb"    // USB-connected hardware
-)
-```
+`pairing.PairedDevice` (`xkey/pkg/pairing/device.go`) is the one persisted
+record for a paired device: the CLI's `devices.yaml` and the GUI's mirror of
+the same file both read and write it directly (#130). It records the device
+name, address, Noise static keys, attestation fields (security level, boot
+state, device fingerprint, protocol version) and timestamps — see
+[Unified Device Pairing](README.md#configuration) for the on-disk shape.
 
-`PairedDevice` records the device name, Noise static public key, attestation data, security level, and timestamps. `AttestationPolicy` defines requirements such as `RequireTPM`, `RequireSecureBoot`, and `MinSecurityLevel`.
+An earlier, unimplemented design sketch had `pairing.DeviceType`,
+`pairing.EnrollmentMethod`, `pairing.TransportType` and a separate
+`pairing.AttestationPolicy` (`RequireTPM`/`RequireSecureBoot`/…) alongside it;
+none were ever constructed or enforced anywhere in the codebase, and they were
+removed rather than left as dead exports. Device-type discrimination in
+practice is per-package: `xkey/pkg/agent` owns agent enrollment (with its own
+real `EnrollmentMethod`), and the pairing record above is phone-only.
 
 ## Usage Example
 

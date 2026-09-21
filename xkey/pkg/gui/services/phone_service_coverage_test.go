@@ -32,6 +32,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -374,7 +375,7 @@ func TestPhoneService_Coverage_EnforcePolicy_VerificationFailed(t *testing.T) {
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:01",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled:       true,
 			BootHash:      "somehash",
 			SecurityLevel: "tee",
@@ -398,7 +399,7 @@ func TestPhoneService_Coverage_EnforcePolicy_NilEmitterStillReturnsError(t *test
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:01",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled:       true,
 			BootHash:      "expected",
 			SecurityLevel: "strongbox",
@@ -534,7 +535,7 @@ func TestPhoneService_Coverage_AutoAttest_PolicyDisabled(t *testing.T) {
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:01",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled: false, // disabled
 		},
 	}
@@ -568,7 +569,7 @@ func TestPhoneService_Coverage_AutoAttest_PolicyEnabled_NoTransport_EmitsDisconn
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:01",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled:  true,
 			BootHash: "expected_hash",
 		},
@@ -606,7 +607,7 @@ func TestPhoneService_Coverage_AutoAttest_LastAttestation_NoTransport_EmitsFailu
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:01",
-		LastAttestation: &savedAttestationData{
+		LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 			Verified:      true,
 			SecurityLevel: "tee",
 			Timestamp:     time.Now().Add(-1 * time.Hour),

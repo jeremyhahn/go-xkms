@@ -77,12 +77,12 @@ var (
 // DeviceBinding is everything the verifier needs to know about a pairing
 // record: which device identity was bound, and under which attestation model.
 //
-// It is a small value rather than the record itself on purpose. The persisted
-// record differs per surface — the CLI's YAML struct, the GUI's mirror of the
-// same file — and unifying those is a separate, open decision (#130). Taking
-// only the two fields the decision actually reads means this package does not
-// have to wait on that, and means neither surface can pass a record whose
-// other fields the verifier might quietly start depending on.
+// It is a small value rather than the record itself on purpose. #130 unified
+// the CLI's and the GUI's persisted record into one owned type,
+// pairing.PairedDevice, but the verifier still takes only the two fields it
+// actually reads rather than the whole record — see DeviceBindingFor — so
+// this package's contract stays narrow and neither surface can pass a record
+// whose other fields the verifier might quietly start depending on.
 type DeviceBinding struct {
 	// Fingerprint is the hex-encoded SHA-256 of the attested key's
 	// SubjectPublicKeyInfo bound at pairing. Empty means never attested.
@@ -91,6 +91,48 @@ type DeviceBinding struct {
 	// ProtocolVersion is the attestation model that established the binding:
 	// 2 for challenge-response (#129), absent or 1 for older records.
 	ProtocolVersion int
+}
+
+// DeviceBindingFor projects the persisted pairing record onto what the
+// verifier needs: which device identity was bound, and under which
+// attestation model (#130).
+//
+// It lives here rather than as a method on pairing.PairedDevice because
+// pkg/attestation already imports pkg/pairing to build the binding's
+// contents, and the reverse import would cycle: pkg/pairing owns the record,
+// this package owns the decision the record is judged by.
+func DeviceBindingFor(d pairing.PairedDevice) DeviceBinding {
+	return DeviceBinding{
+		Fingerprint:     d.DeviceFingerprint,
+		ProtocolVersion: d.AttestationProtocolVersion,
+	}
+}
+
+// ApplyVerifiedAttestation applies a VERIFIED attestation result to a paired
+// device record — the one place every surface writes an attestation claim,
+// so a claim applied on the CLI and a claim applied by the GUI cannot drift
+// (#130). It mirrors what pairing (device_pair.go), re-attestation
+// (device_attest_device.go) and the GUI's connect-time proof all used to
+// implement separately field for field.
+//
+// It is never called with an unverified result. Whether an unattestable
+// device may still be paired is policy; that no unverified claim is ever
+// written down is not, and the caller enforces it by not calling this
+// function at all when attestation failed.
+func ApplyVerifiedAttestation(d *pairing.PairedDevice, result *Result) {
+	d.LastDeviceAttestationTime = result.AttestationTime
+	d.SecurityLevel = result.SecurityLevel
+	d.BootStateVerified = result.BootStateVerified
+	d.DeviceBootHashHex = result.BootHashHex
+	d.DeviceFingerprint = result.DeviceFingerprint
+
+	// The recorded protocol version only ever moves UP. A successful version 2
+	// attestation upgrades a legacy record; nothing here can walk a record
+	// back to the weaker model, because the version is the anti-downgrade
+	// term and a term an attacker could lower is not one (#129).
+	if result.ProtocolVersion > d.AttestationProtocolVersion {
+		d.AttestationProtocolVersion = result.ProtocolVersion
+	}
 }
 
 // RequiresLiveAttestation reports whether this binding was established under

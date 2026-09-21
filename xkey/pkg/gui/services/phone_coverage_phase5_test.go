@@ -33,6 +33,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -694,7 +695,7 @@ func TestP5C_EnforceAttestationPolicy_AttestationFailed(t *testing.T) {
 	device := &phoneConfigDevice{
 		Name:    "Pixel 9",
 		Address: "AA:BB:CC:DD:EE:FF",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled:       true,
 			BootHash:      "abc123",
 			BootState:     "verified",
@@ -722,7 +723,7 @@ func TestP5C_EnforceAttestationPolicy_NilEmitter(t *testing.T) {
 	device := &phoneConfigDevice{
 		Name:    "Test Phone",
 		Address: "AA:BB:CC:DD:EE:FF",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled: true,
 		},
 	}
@@ -765,7 +766,7 @@ func TestP5C_AutoAttest_PolicyEnabled_EmitsDisconnect(t *testing.T) {
 			{
 				Name:    "Test Phone",
 				Address: "AA:BB:CC:DD:EE:FF",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:  true,
 					BootHash: "expected-hash",
 				},
@@ -837,7 +838,7 @@ func TestP5C_AutoAttest_LastAttestationRefresh(t *testing.T) {
 			{
 				Name:    "Refresh Phone",
 				Address: "AA:BB:CC:DD:EE:FF",
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified:      true,
 					SecurityLevel: "tee",
 					Timestamp:     time.Now().UTC(),
@@ -879,11 +880,11 @@ func TestP5C_AutoAttest_PolicyDisabled_WithLastAttestation(t *testing.T) {
 			{
 				Name:    "Half-Policy Phone",
 				Address: "AA:BB:CC:DD:EE:FF",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:  false,
 					BootHash: "should-be-ignored",
 				},
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified: true,
 					BootHash: "previous",
 				},
@@ -971,7 +972,7 @@ func TestP5C_SaveConfig_Success(t *testing.T) {
 				Name:     "SavedPhone",
 				Address:  "AA:BB:CC:DD:EE:FF",
 				PairedAt: now,
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified: true,
 					BootHash: "aabb",
 				},
@@ -1034,7 +1035,7 @@ func TestP5C_SetAttestationPolicy_SuccessfulSet(t *testing.T) {
 			{
 				Name:    "Policy Phone",
 				Address: "AA:BB:CC:DD:EE:FF",
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified:      true,
 					SecurityLevel: "strongbox",
 					BootHash:      "deadbeef",
@@ -1093,7 +1094,7 @@ func TestP5C_ClearAttestationPolicy_Success(t *testing.T) {
 			{
 				Name:    "Clear Phone",
 				Address: "AA:BB:CC:DD:EE:FF",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:  true,
 					BootHash: "deadbeef",
 				},
@@ -1156,7 +1157,7 @@ func TestP5C_GetAttestationPolicy_WithPolicy(t *testing.T) {
 			{
 				Name:    "Policed Phone",
 				Address: "AA:BB:CC:DD:EE:FF",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:       true,
 					BootHash:      "abc",
 					SecurityLevel: "tee",

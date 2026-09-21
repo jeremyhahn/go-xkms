@@ -414,8 +414,56 @@ export namespace oidc {
 
 }
 
+export namespace pairing {
+
+	export class PairedDeviceAttestationPolicy {
+	    enabled: boolean;
+	    boot_hash: string;
+	    boot_key_hash: string;
+	    boot_state: string;
+	    device_locked: boolean;
+	    min_security_level: string;
+	    // Go type: time
+	    set_at: any;
+
+	    static createFrom(source: any = {}) {
+	        return new PairedDeviceAttestationPolicy(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.boot_hash = source["boot_hash"];
+	        this.boot_key_hash = source["boot_key_hash"];
+	        this.boot_state = source["boot_state"];
+	        this.device_locked = source["device_locked"];
+	        this.min_security_level = source["min_security_level"];
+	        this.set_at = this.convertValues(source["set_at"], null);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace pin {
-	
+
 	export class LockoutStatus {
 	    failed_attempts: number;
 	    max_attempts: number;
@@ -5182,49 +5230,6 @@ export namespace services {
 	        this.library_path = source["library_path"];
 	        this.error = source["error"];
 	    }
-	}
-	export class attestationPolicy {
-	    Enabled: boolean;
-	    BootHash: string;
-	    BootKeyHash: string;
-	    BootState: string;
-	    DeviceLocked: boolean;
-	    SecurityLevel: string;
-	    // Go type: time
-	    SetAt: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new attestationPolicy(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Enabled = source["Enabled"];
-	        this.BootHash = source["BootHash"];
-	        this.BootKeyHash = source["BootKeyHash"];
-	        this.BootState = source["BootState"];
-	        this.DeviceLocked = source["DeviceLocked"];
-	        this.SecurityLevel = source["SecurityLevel"];
-	        this.SetAt = this.convertValues(source["SetAt"], null);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }

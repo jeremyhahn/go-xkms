@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -78,27 +78,10 @@ const (
 	legacyPhoneConfigFileName = "phone.yaml"
 )
 
-// Duration wraps time.Duration for YAML marshaling.
-type Duration time.Duration
-
-// UnmarshalYAML implements yaml.Unmarshaler.
-func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
-	var s string
-	if err := value.Decode(&s); err != nil {
-		return err
-	}
-	dur, err := time.ParseDuration(s)
-	if err != nil {
-		return err
-	}
-	*d = Duration(dur)
-	return nil
-}
-
-// MarshalYAML implements yaml.Marshaler.
-func (d Duration) MarshalYAML() (interface{}, error) {
-	return time.Duration(d).String(), nil
-}
+// Duration wraps time.Duration for YAML marshaling. The type itself is owned
+// by pkg/pairing, which owns the persisted device record that uses it
+// (#130); this alias keeps the CLI's call sites reading as they did.
+type Duration = pairing.Duration
 
 // AttestationPolicy configures device attestation requirements.
 type AttestationPolicy struct {
@@ -140,71 +123,13 @@ type AttestationPolicy struct {
 }
 
 // PairedDevice represents a paired device.
-type PairedDevice struct {
-	// Name is the human-readable device name.
-	Name string `yaml:"name"`
-
-	// Address is the BLE MAC address.
-	Address string `yaml:"address"`
-
-	// NoisePublicKey is the phone's Noise static public key (base64 encoded).
-	NoisePublicKey string `yaml:"noise_public_key"`
-
-	// LocalNoisePrivateKey is our local Noise static private key (base64 encoded).
-	LocalNoisePrivateKey string `yaml:"local_noise_private_key"`
-
-	// PairedAt is the timestamp when the device was paired.
-	PairedAt time.Time `yaml:"paired_at"`
-
-	// LastDeviceAttestationTime is the timestamp of the last successful device attestation.
-	LastDeviceAttestationTime time.Time `yaml:"last_device_attestation_time,omitempty"`
-
-	// DeviceBootHashHex is the hex-encoded hash of the device boot state.
-	DeviceBootHashHex string `yaml:"device_boot_hash_hex,omitempty"`
-
-	// AttestationGracePeriod is the per-device attestation validity window.
-	AttestationGracePeriod Duration `yaml:"attestation_grace_period,omitempty"`
-
-	// SecurityLevel indicates the device's hardware security level (e.g., "tee", "strongbox").
-	SecurityLevel string `yaml:"security_level,omitempty"`
-
-	// BootStateVerified indicates whether the device boot state has been verified.
-	BootStateVerified bool `yaml:"boot_state_verified,omitempty"`
-
-	// DeviceFingerprint is a unique identifier derived from device attestation:
-	// the SHA-256 of the device's persistent attested key's
-	// SubjectPublicKeyInfo (#93/#129), hex encoded.
-	DeviceFingerprint string `yaml:"device_fingerprint,omitempty"`
-
-	// AttestationProtocolVersion records which attestation model bound this
-	// device: 2 for challenge-response (#129), absent or 1 for a record
-	// established before it.
-	//
-	// It is the anti-downgrade term. A device bound under version 2 must prove
-	// liveness on every reconnect, and a peer that answers a version 2 record
-	// with a version 1 attestation is refused rather than accommodated —
-	// otherwise the protocol version would be chosen at connect time by the
-	// party being checked, which is the one party that must not choose it.
-	// Records that predate the change keep working in the weaker mode until
-	// the device is re-paired; they are not silently reported as if they had
-	// the stronger binding.
-	AttestationProtocolVersion int `yaml:"attestation_protocol_version,omitempty"`
-}
-
-// attestationBinding is what the shared verifier needs from this record: which
-// device identity was bound, and under which attestation model.
 //
-// It is a projection rather than the record itself so that pkg/attestation
-// depends on two fields instead of on this struct — which matters because
-// whether the CLI, the GUI and the GUI's view model should collapse into one
-// owned record type is an open decision (#130), and the verifier must not
-// prejudge it.
-func (d *PairedDevice) attestationBinding() attestation.DeviceBinding {
-	return attestation.DeviceBinding{
-		Fingerprint:     d.DeviceFingerprint,
-		ProtocolVersion: d.AttestationProtocolVersion,
-	}
-}
+// The type itself is owned by pkg/pairing, which owns pairing records; this
+// alias keeps the CLI's call sites — findDeviceByName, newPairedDeviceRecord,
+// every command under cmd/xkey/cmd/device_*.go — reading exactly as they did
+// before the CLI's and the GUI's struct definitions were unified into one
+// (#130).
+type PairedDevice = pairing.PairedDevice
 
 // DevicesConfig holds the paired devices configuration.
 type DevicesConfig struct {

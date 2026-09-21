@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -852,7 +853,7 @@ func TestAutoAttestPropagatesTheTeardownItForces(t *testing.T) {
 	device := &phoneConfigDevice{
 		Name:              "Pixel 9",
 		Address:           "AA:BB:CC:DD:EE:01",
-		AttestationPolicy: &attestationPolicy{Enabled: true, DeviceLocked: true},
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{Enabled: true, DeviceLocked: true},
 	}
 
 	err := svc.autoAttest(&phoneConfig{Devices: []phoneConfigDevice{*device}}, device, "Pixel 9")

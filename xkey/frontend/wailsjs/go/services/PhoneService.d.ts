@@ -3,6 +3,7 @@
 import {services} from '../models';
 import {context} from '../models';
 import {truststore} from '../models';
+import {pairing} from '../models';
 
 export function AttestDevice(arg1:string):Promise<services.AttestationResult>;
 
@@ -14,7 +15,7 @@ export function ConnectedDeviceName():Promise<string>;
 
 export function Disconnect(arg1:string):Promise<void>;
 
-export function GetAttestationPolicy(arg1:string):Promise<services.attestationPolicy>;
+export function GetAttestationPolicy(arg1:string):Promise<pairing.PairedDeviceAttestationPolicy>;
 
 export function GetBackendDevices():Promise<Array<services.PairedDevice>>;
 

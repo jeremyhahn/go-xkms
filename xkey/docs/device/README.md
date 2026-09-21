@@ -189,34 +189,22 @@ The scanning device decodes the URI, extracts the Noise public key and address, 
 - Configuration file (`devices.yaml`) is written with 0600 permissions (contains private keys)
 - Android BLE address rotation (RPA) is handled by `--force` re-pairing
 
-### Enrollment Methods
+### Agent enrollment methods
 
-| Method | Value | Description |
-|--------|-------|-------------|
-| BLE | `ble` | Bluetooth Low Energy proximity pairing |
-| USB | `usb` | USB wired connection |
-| TCP | `tcp` | TCP network connection |
-| One-Time Code | `one-time-code` | Pre-shared enrollment code |
-| Admin Approval | `admin-approval` | Manual approval on master |
-| Enterprise CA | `enterprise-ca` | CA-issued certificate |
-| Noise Direct | `noise-direct` | Direct Noise handshake |
-| QR | `qr` | QR code scan |
-
-### Attestation Policy
-
-The `AttestationPolicy` can enforce requirements on paired devices:
-
-- `RequireTPM` -- hardware TPM attestation required
-- `RequireSecureBoot` -- verified/secure boot must be enabled
-- `RequireBiometric` -- biometric authentication support required
-- `MinSecurityLevel` -- minimum acceptable level (`tee`, `strongbox`)
-- `AllowedPCRBanks` -- restrict accepted PCR hash algorithms
+Agent enrollment (`xkey agent`, `xkey/pkg/agent`) supports one-time codes,
+admin approval, enterprise CA certificates and direct Noise handshakes; see
+`agent.EnrollmentMethod` in `xkey/pkg/agent/config.go` for the authoritative
+list and values. An earlier, unimplemented `pairing.EnrollmentMethod` and a
+separate `pairing.AttestationPolicy` (`RequireTPM`/`RequireSecureBoot`/…)
+existed alongside `pairing.PairedDevice` but were never constructed or
+enforced anywhere; both were removed as dead exports (#130) rather than left
+undocumented and unused. See [pairing.md](pairing.md#paired-device-record).
 
 ## Architecture
 
 ```
 xkey/pkg/pairing/       Protocol layer (transport-agnostic)
-  device.go               PairedDevice, DeviceType, EnrollmentMethod, TransportType
+  device.go               PairedDevice, PairedDeviceAttestationSnapshot, PairedDeviceAttestationPolicy
   transport.go            Transport interface (Send, Receive, SendAndReceive)
   noise.go                Noise XX session management
   tcp_transport.go        TCP transport with length-prefixed framing

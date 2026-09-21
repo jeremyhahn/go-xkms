@@ -232,7 +232,7 @@ func enforceReattestation(
 	device *PairedDevice,
 	logger *slog.Logger,
 ) error {
-	binding := device.attestationBinding()
+	binding := attestation.DeviceBindingFor(*device)
 	if !binding.RequiresLiveAttestation() {
 		return nil
 	}
@@ -255,7 +255,7 @@ func enforceReattestation(
 // machine now trusts.
 func newLiveAttestor(device *PairedDevice, logger *slog.Logger) phone.LiveAttestFunc {
 	return attestation.NewLiveAttestor(
-		device.attestationBinding(), loadPairingAttestationTrust, logger)
+		attestation.DeviceBindingFor(*device), loadPairingAttestationTrust, logger)
 }
 
 // newPairedDeviceBackendConfig builds the phone-backend configuration for a
@@ -320,7 +320,7 @@ func newPairedDeviceBackendConfig(
 		// Set together: RequireLiveAttestation without LiveAttest is a
 		// refusal, so an edit that drops the verifier fails closed rather than
 		// silently skipping the proof.
-		RequireLiveAttestation: device.attestationBinding().RequiresLiveAttestation(),
+		RequireLiveAttestation: attestation.DeviceBindingFor(*device).RequiresLiveAttestation(),
 		LiveAttest:             newLiveAttestor(device, logger),
 
 		ScanTimeout:      30 * time.Second,

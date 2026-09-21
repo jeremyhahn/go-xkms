@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -90,9 +91,9 @@ func TestAttestationBindingReadsTheRecordNotThePeer(t *testing.T) {
 	}
 	legacy := &phoneConfigDevice{DeviceFingerprint: "cc"}
 
-	assert.True(t, bound.attestationBinding().RequiresLiveAttestation(),
+	assert.True(t, xkeyAttestation.DeviceBindingFor(*bound).RequiresLiveAttestation(),
 		"a v2 record must demand the proof in the GUI exactly as it does in the CLI")
-	assert.Equal(t, "cc", bound.attestationBinding().Fingerprint)
+	assert.Equal(t, "cc", xkeyAttestation.DeviceBindingFor(*bound).Fingerprint)
 
-	assert.False(t, legacy.attestationBinding().RequiresLiveAttestation())
+	assert.False(t, xkeyAttestation.DeviceBindingFor(*legacy).RequiresLiveAttestation())
 }

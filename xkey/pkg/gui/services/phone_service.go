@@ -40,6 +40,7 @@ import (
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -100,6 +101,13 @@ type PhoneEventEmitter func(evt events.Event)
 type PhoneStatusChangeFunc func(connected bool, deviceName string)
 
 // PairedDevice describes a phone that has been previously paired.
+//
+// It is the Wails/TS-facing view model, and it is deliberately NOT the
+// persisted record: pairing.PairedDevice is the one owned type for
+// devices.yaml (#130), and this type carries only what the frontend needs to
+// display plus fields computed at call time (Connected). deviceView is the
+// projection from one to the other; there is no field here that also lives
+// in pairing.PairedDevice under a different name.
 type PairedDevice struct {
 	Name      string    `json:"name"`
 	Address   string    `json:"address"`
@@ -107,6 +115,24 @@ type PairedDevice struct {
 	LastSeen  time.Time `json:"last_seen"`
 	Connected bool      `json:"connected"`
 	IsBackend bool      `json:"is_backend"`
+}
+
+// deviceView projects the persisted pairing record onto the view model the
+// frontend receives. It is the only place that translates one to the other,
+// so a field the persisted record gains is either surfaced here on purpose
+// or is deliberately left out — never silently missing (#130).
+//
+// connected is supplied by the caller rather than read from the record: it
+// is live connection state, not something devices.yaml ever stores.
+func deviceView(d pairing.PairedDevice, connected bool) PairedDevice {
+	return PairedDevice{
+		Name:      d.Name,
+		Address:   d.Address,
+		PairedAt:  d.PairedAt,
+		LastSeen:  d.LastDeviceAttestationTime,
+		Connected: connected,
+		IsBackend: d.IsBackend,
+	}
 }
 
 // DeviceStatus describes the live status of a paired device.
@@ -170,99 +196,12 @@ type AttestCertInfo struct {
 	IsTrustAnchor bool   `json:"is_trust_anchor"`
 }
 
-// savedAttestationData records the last successful attestation result for persistence.
-type savedAttestationData struct {
-	Verified      bool      `yaml:"verified"`
-	SecurityLevel string    `yaml:"security_level"`
-	BootHash      string    `yaml:"boot_hash"`
-	BootKeyHash   string    `yaml:"boot_key_hash"`
-	BootState     string    `yaml:"boot_state"`
-	DeviceLocked  bool      `yaml:"device_locked"`
-	Timestamp     time.Time `yaml:"timestamp"`
-}
-
-// attestationPolicy defines the expected attestation properties for a device.
-// When enabled, subsequent attestations are compared against the policy.
-type attestationPolicy struct {
-	Enabled       bool      `yaml:"enabled"`
-	BootHash      string    `yaml:"boot_hash"`
-	BootKeyHash   string    `yaml:"boot_key_hash"`
-	BootState     string    `yaml:"boot_state"`
-	DeviceLocked  bool      `yaml:"device_locked"`
-	SecurityLevel string    `yaml:"min_security_level"`
-	SetAt         time.Time `yaml:"set_at"`
-}
-
-// phoneConfigDevice mirrors the CLI PairedDevice YAML structure.
-type phoneConfigDevice struct {
-	Name                      string    `yaml:"name"`
-	Address                   string    `yaml:"address"`
-	NoisePublicKey            string    `yaml:"noise_public_key"`
-	LocalNoisePrivateKey      string    `yaml:"local_noise_private_key"`
-	PairedAt                  time.Time `yaml:"paired_at"`
-	LastDeviceAttestationTime time.Time `yaml:"last_device_attestation_time,omitempty"`
-	SecurityLevel             string    `yaml:"security_level,omitempty"`
-	BootStateVerified         bool      `yaml:"boot_state_verified,omitempty"`
-	DeviceFingerprint         string    `yaml:"device_fingerprint,omitempty"`
-
-	// DeviceBootHashHex mirrors the CLI record's field. A verified pairing
-	// attestation records it (#115), and carrying it in the mirror means a
-	// GUI save no longer drops the value a CLI attestation wrote.
-	DeviceBootHashHex string `yaml:"device_boot_hash_hex,omitempty"`
-
-	// AttestationProtocolVersion mirrors the CLI record's field (#129). It is
-	// carried here because this struct is a hand-maintained mirror of the same
-	// devices.yaml the CLI writes: a field missing from the mirror is read as
-	// absent, and for this field absent means "not bound under
-	// challenge-response", which would silently drop the liveness requirement
-	// for a device the CLI paired under it.
-	//
-	// The GUI enforces it on reconnect (proveDeviceLiveness) and establishes it
-	// at pairing (recordVerifiedAttestation), both through the shared decision
-	// in pkg/attestation. #130 (b) is the open question of whether this mirror
-	// and the CLI record should be one type.
-	AttestationProtocolVersion int                   `yaml:"attestation_protocol_version,omitempty"`
-	LastAttestation            *savedAttestationData `yaml:"last_attestation,omitempty"`
-	AttestationPolicy          *attestationPolicy    `yaml:"attestation_policy,omitempty"`
-	IsBackend                  bool                  `yaml:"is_backend,omitempty"`
-}
-
-// attestationBinding is what the shared verifier needs from this record.
-//
-// The GUI mirrors devices.yaml in its own struct, so this projection is what
-// keeps the two surfaces judging the SAME two fields even while the mirrors
-// themselves remain separate (#130 (b) is the open question of whether they
-// should be one type at all).
-func (d *phoneConfigDevice) attestationBinding() xkeyAttestation.DeviceBinding {
-	return xkeyAttestation.DeviceBinding{
-		Fingerprint:     d.DeviceFingerprint,
-		ProtocolVersion: d.AttestationProtocolVersion,
-	}
-}
-
-// recordVerifiedAttestation applies a VERIFIED pairing attestation to the
-// record. It mirrors the CLI's recordDeviceAttestation field for field, so a
-// GUI pairing persists exactly what a CLI pairing would (#131); the two
-// projections exist only because the two mirrors do (#130 (b)).
-//
-// It is never called with an unverified result. Whether an unattestable device
-// may pair at all is policy; that no unverified claim is ever written down is
-// not, and the caller enforces it by passing nothing here.
-func (d *phoneConfigDevice) recordVerifiedAttestation(result *xkeyAttestation.Result) {
-	d.LastDeviceAttestationTime = result.AttestationTime
-	d.SecurityLevel = result.SecurityLevel
-	d.BootStateVerified = result.BootStateVerified
-	d.DeviceBootHashHex = result.BootHashHex
-	d.DeviceFingerprint = result.DeviceFingerprint
-
-	// The recorded protocol version only ever moves UP. A successful version 2
-	// attestation upgrades a legacy record; nothing here can walk a record
-	// back to the weaker model, because the version is the anti-downgrade
-	// term and a term an attacker could lower is not one (#129).
-	if result.ProtocolVersion > d.AttestationProtocolVersion {
-		d.AttestationProtocolVersion = result.ProtocolVersion
-	}
-}
+// phoneConfigDevice is the persisted pairing record this service reads and
+// writes. The type itself is owned by pkg/pairing, which also owns the CLI's
+// devices.yaml record — this alias keeps the GUI's call sites unchanged now
+// that the two surfaces share one definition instead of hand-mirroring it
+// field for field (#130).
+type phoneConfigDevice = pairing.PairedDevice
 
 // devicesAttestationPolicy mirrors the top-level `attestation_policy` block of
 // devices.yaml, the CLI's AttestationPolicy.
@@ -437,14 +376,7 @@ func (s *PhoneService) ListDevices() ([]PairedDevice, error) {
 	devices := make([]PairedDevice, 0, len(cfg.Devices))
 	for _, d := range cfg.Devices {
 		connected := isConnected && d.Name == connName
-		devices = append(devices, PairedDevice{
-			Name:      d.Name,
-			Address:   d.Address,
-			PairedAt:  d.PairedAt,
-			LastSeen:  d.LastDeviceAttestationTime,
-			Connected: connected,
-			IsBackend: d.IsBackend,
-		})
+		devices = append(devices, deviceView(d, connected))
 	}
 	return devices, nil
 }
@@ -696,7 +628,7 @@ func (s *PhoneService) pairOverTransport(
 		PairedAt:             now,
 	}
 	if attestResult != nil {
-		cfgDevice.recordVerifiedAttestation(attestResult)
+		xkeyAttestation.ApplyVerifiedAttestation(&cfgDevice, attestResult)
 		s.emitAttestationEvent(phoneName, true, "pairing attestation verified: "+attestResult.SecurityLevel)
 	}
 
@@ -724,12 +656,8 @@ func (s *PhoneService) pairOverTransport(
 	s.log.Info("pairing complete", "device", phoneName, "address", address,
 		"attested", attestResult != nil)
 
-	return &PairedDevice{
-		Name:     phoneName,
-		Address:  address,
-		PairedAt: now,
-		LastSeen: cfgDevice.LastDeviceAttestationTime,
-	}, nil
+	view := deviceView(cfgDevice, false)
+	return &view, nil
 }
 
 // attestForPairing attests the device during pairing and returns what was
@@ -950,14 +878,7 @@ func (s *PhoneService) GetBackendDevices() ([]PairedDevice, error) {
 			continue
 		}
 		connected := isConnected && d.Name == connName
-		devices = append(devices, PairedDevice{
-			Name:      d.Name,
-			Address:   d.Address,
-			PairedAt:  d.PairedAt,
-			LastSeen:  d.LastDeviceAttestationTime,
-			Connected: connected,
-			IsBackend: true,
-		})
+		devices = append(devices, deviceView(d, connected))
 	}
 	return devices, nil
 }
@@ -1141,7 +1062,7 @@ func (s *PhoneService) proveDeviceLiveness(
 	session *phone.NoiseSession,
 	device *phoneConfigDevice,
 ) error {
-	binding := device.attestationBinding()
+	binding := xkeyAttestation.DeviceBindingFor(*device)
 	if !binding.RequiresLiveAttestation() {
 		return nil
 	}
@@ -1528,7 +1449,7 @@ func (s *PhoneService) saveAttestationResult(cfg *phoneConfig, device *phoneConf
 	device.LastDeviceAttestationTime = result.AttestTime
 	device.SecurityLevel = result.SecurityLevel
 	device.BootStateVerified = result.BootState == "verified"
-	device.LastAttestation = &savedAttestationData{
+	device.LastAttestation = &pairing.PairedDeviceAttestationSnapshot{
 		Verified:      result.Verified,
 		SecurityLevel: result.SecurityLevel,
 		BootHash:      result.BootHash,
@@ -1568,7 +1489,7 @@ func (s *PhoneService) SetAttestationPolicy(deviceName string) error {
 				return ErrPhonePolicyNotSet
 			}
 			last := cfg.Devices[i].LastAttestation
-			cfg.Devices[i].AttestationPolicy = &attestationPolicy{
+			cfg.Devices[i].AttestationPolicy = &pairing.PairedDeviceAttestationPolicy{
 				Enabled:       true,
 				BootHash:      last.BootHash,
 				BootKeyHash:   last.BootKeyHash,
@@ -1604,7 +1525,7 @@ func (s *PhoneService) ClearAttestationPolicy(deviceName string) error {
 }
 
 // GetAttestationPolicy returns the current attestation policy for a device.
-func (s *PhoneService) GetAttestationPolicy(deviceName string) (*attestationPolicy, error) {
+func (s *PhoneService) GetAttestationPolicy(deviceName string) (*pairing.PairedDeviceAttestationPolicy, error) {
 	if deviceName == "" {
 		return nil, ErrPhoneDeviceNotFound
 	}

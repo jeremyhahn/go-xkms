@@ -265,10 +265,8 @@ type SharingPolicy = pairing.SharingPolicy
 type SharingPolicyStore = pairing.SharingPolicyStore
 type FileSharingPolicyStore = pairing.FileSharingPolicyStore
 
-// PairedDevice types from pairing package.
+// PairedDevice type from pairing package.
 type PairedDevice = pairing.PairedDevice
-type DeviceType = pairing.DeviceType
-type AttestationPolicy = pairing.AttestationPolicy
 
 // TCP pairing server types from the pairing package are NOT re-exported here.
 // The phone package defines its own TCPPairingServer and TCPPairingConfig in

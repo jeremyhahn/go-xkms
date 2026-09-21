@@ -1,6 +1,6 @@
 # Phone as HSM — Architecture
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## The problem
 
@@ -68,6 +68,17 @@ Rejected alternatives:
 
 Capability rows: **"Phone-as-HSM pairing (wire contract)"** in the ownership
 register, and **"Phone pairing (xkey-android)"** under the xkey product surface.
+
+**The persisted pairing record also has one owner.** `pairing.PairedDevice`
+(`xkey/pkg/pairing/device.go`) is the single type for the record `devices.yaml`
+holds; the CLI (`cmd/xkey/cmd`) and the GUI (`pkg/gui/services`) both read and
+write it directly rather than each keeping their own mirror of the file, and
+the GUI's Wails-facing view model is a projection of it, never a second
+definition. This closed a repeated defect: with two independent mirrors, a
+field one surface added and the other did not — `attestation_protocol_version`
+— silently reset a device's challenge-response binding on the surface that
+lacked it (#95, #124 round 1, #130). See *The paired-device record — one owned
+type (#130)* in `engineering.md` for the field-level detail.
 
 **Coupling is by wire compatibility, not by import.** xkey-android is a Kotlin
 application; there is no Go dependency in either direction. The consequence is a

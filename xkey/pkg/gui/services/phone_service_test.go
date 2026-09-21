@@ -37,6 +37,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 func TestNewPhoneService(t *testing.T) {
@@ -306,7 +307,7 @@ func TestPhoneService_Connect_PolicyNotEnabled_MissingKeys(t *testing.T) {
 				Name:     "Pixel 8",
 				Address:  "AA:BB:CC:DD:EE:FF",
 				PairedAt: time.Now().UTC(),
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:  false,
 					BootHash: "abc123",
 				},
@@ -890,7 +891,7 @@ func TestPhoneService_SetAttestationPolicy_Success(t *testing.T) {
 			{
 				Name:    "Pixel 8",
 				Address: "AA:BB:CC:DD:EE:FF",
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified:      true,
 					SecurityLevel: "tee",
 					BootHash:      "abc123",
@@ -978,7 +979,7 @@ func TestPhoneService_ClearAttestationPolicy_Success(t *testing.T) {
 			{
 				Name:    "Pixel 8",
 				Address: "AA:BB:CC:DD:EE:FF",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:  true,
 					BootHash: "abc123",
 				},
@@ -1091,7 +1092,7 @@ func TestPhoneService_SaveAndLoadConfig_WithAttestationData(t *testing.T) {
 				Name:     "Test",
 				Address:  "11:22:33:44:55:66",
 				PairedAt: now,
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified:      true,
 					SecurityLevel: "tee",
 					BootHash:      "deadbeef",
@@ -1100,7 +1101,7 @@ func TestPhoneService_SaveAndLoadConfig_WithAttestationData(t *testing.T) {
 					DeviceLocked:  true,
 					Timestamp:     now,
 				},
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:       true,
 					BootHash:      "deadbeef",
 					BootKeyHash:   "cafebabe",
@@ -1675,7 +1676,7 @@ func TestPhoneService_EnforceAttestationPolicy_NoActiveTransport(t *testing.T) {
 	device := &phoneConfigDevice{
 		Name:    "Pixel 8",
 		Address: "AA:BB:CC:DD:EE:FF",
-		AttestationPolicy: &attestationPolicy{
+		AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 			Enabled:       true,
 			BootHash:      "abc123",
 			BootKeyHash:   "def456",
@@ -1755,7 +1756,7 @@ func TestPhoneService_AutoAttest_PolicyEnabled_NoTransport(t *testing.T) {
 			{
 				Name:    "Pixel 8",
 				Address: "AA:BB:CC:DD:EE:FF",
-				AttestationPolicy: &attestationPolicy{
+				AttestationPolicy: &pairing.PairedDeviceAttestationPolicy{
 					Enabled:       true,
 					BootHash:      "abc123",
 					BootKeyHash:   "def456",
@@ -1808,7 +1809,7 @@ func TestPhoneService_AutoAttest_LastAttestation_NoPolicy_NoTransport(t *testing
 			{
 				Name:    "Pixel 8",
 				Address: "AA:BB:CC:DD:EE:FF",
-				LastAttestation: &savedAttestationData{
+				LastAttestation: &pairing.PairedDeviceAttestationSnapshot{
 					Verified:      true,
 					SecurityLevel: "tee",
 					BootHash:      "aabb",

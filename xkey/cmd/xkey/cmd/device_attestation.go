@@ -47,21 +47,12 @@ func isDeviceAttestationRequired(device *PairedDevice, policy *AttestationPolicy
 	return time.Since(device.LastDeviceAttestationTime) > gracePeriod
 }
 
-// recordDeviceAttestation updates device after successful attestation.
+// recordDeviceAttestation updates device after successful attestation. The
+// CLI's call sites keep this name; the field-for-field update itself is
+// pkg/attestation.ApplyVerifiedAttestation, shared with the GUI so the two
+// surfaces cannot again drift on what a verified attestation writes (#130).
 func recordDeviceAttestation(device *PairedDevice, result *DeviceAttestationResult) {
-	device.LastDeviceAttestationTime = result.AttestationTime
-	device.SecurityLevel = result.SecurityLevel
-	device.BootStateVerified = result.BootStateVerified
-	device.DeviceBootHashHex = result.BootHashHex
-	device.DeviceFingerprint = result.DeviceFingerprint
-
-	// The recorded protocol version only ever moves UP. A successful version 2
-	// attestation upgrades a legacy record; nothing here can walk a record
-	// back to the weaker model, because the version is the anti-downgrade
-	// term and a term an attacker could lower is not one (#129).
-	if result.ProtocolVersion > device.AttestationProtocolVersion {
-		device.AttestationProtocolVersion = result.ProtocolVersion
-	}
+	attestation.ApplyVerifiedAttestation(device, result)
 }
 
 // validateBootHashMatch checks if boot hash changed (detects tampering).

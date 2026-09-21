@@ -289,7 +289,7 @@ func TestPairRecordsAVerifiedAttestation(t *testing.T) {
 	require.False(t, rec.PairedAt.IsZero())
 
 	// And the record is one the reconnect path will DEMAND a proof for.
-	require.True(t, rec.attestationBinding().RequiresLiveAttestation())
+	require.True(t, xkeyAttestation.DeviceBindingFor(*rec).RequiresLiveAttestation())
 
 	evts := h.attestationEvents()
 	require.Len(t, evts, 1)
@@ -446,7 +446,7 @@ func TestPairPreservesTheUsersAttestationPolicyBlock(t *testing.T) {
 func TestRecordVerifiedAttestationNeverLowersTheProtocolVersion(t *testing.T) {
 	rec := &phoneConfigDevice{AttestationProtocolVersion: phone.AttestProtocolV2, DeviceFingerprint: "old"}
 
-	rec.recordVerifiedAttestation(&xkeyAttestation.Result{
+	xkeyAttestation.ApplyVerifiedAttestation(rec, &xkeyAttestation.Result{
 		ProtocolVersion:   phone.AttestProtocolV1,
 		DeviceFingerprint: "new",
 		SecurityLevel:     "tee",
@@ -464,7 +464,7 @@ func TestRecordVerifiedAttestationRaisesALegacyRecord(t *testing.T) {
 	when := time.Now().UTC().Truncate(time.Second)
 	rec := &phoneConfigDevice{}
 
-	rec.recordVerifiedAttestation(&xkeyAttestation.Result{
+	xkeyAttestation.ApplyVerifiedAttestation(rec, &xkeyAttestation.Result{
 		AttestationTime:   when,
 		ProtocolVersion:   phone.AttestProtocolV2,
 		DeviceFingerprint: "fp",
