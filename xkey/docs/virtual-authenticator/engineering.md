@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## Exported surface
 
@@ -106,7 +106,28 @@ first run and the wrong one for daily use.
   [`fido2/authenticator-security.md`](../fido2/authenticator-security.md).
 - **`--storage memory` loses credentials on exit.** No warning is emitted; it is
   the documented default.
-- **CTAP2 is one command at a time per channel.** The HID adapter serialises.
+- **CTAP2 is one command at a time per channel, and the authenticator itself
+  now enforces it, not just the transport.** `Authenticator.cmdMu`
+  (`authenticator.go`) is held for the whole of `ProcessCBORWithContext` —
+  including any user-presence wait the command performs — so a second command
+  cannot begin until the first has fully returned. This closes a TOCTOU gap
+  (#323): `AuthorizePinUvAuthToken`'s check (`checkPinUvAuthTokenLocked`) and
+  its spend (`consumePinUvAuthToken`, `cmd_clientpin.go`) are two separate
+  acquisitions of `mu` with a possible user-presence prompt in between, so two
+  concurrent commands presenting the same `pinUvAuthToken` could previously
+  both pass authorization before either consumed it — a race the detector
+  cannot see, because every individual access to the token state is correctly
+  synchronized under `mu`; the flaw was that the check and the use were two
+  critical sections instead of one. `cmdMu` closes the window by construction
+  instead of narrowing it, which also makes the `cmdCtx.Store`/`defer
+  Store(nil)` single-command assumption true. The accepted trade: a command
+  blocked on user presence blocks every other queued command for the whole
+  wait, not just its own critical section — matching how a real CTAP
+  authenticator behaves, since it never processes a second command while
+  waiting on the first's touch. Every `requestUserPresence` call site releases
+  `mu` before it blocks, so `cmdMu` is the only lock held across the wait — see
+  `ProcessCBORWithContext`'s doc comment. The HID adapter's own per-channel
+  serialization above `cmdMu` is unaffected and still applies.
 - **PIN state is `state.PINHash` with a fixed size** — treat it as the
   authenticator's own credential, distinct from the barrier or the OS.
 - **A first PIN has one establishment path.** The CTAP `setPIN` subcommand

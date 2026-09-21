@@ -211,6 +211,13 @@ type Authenticator struct {
 	// (e.g., requestUserPresence) use commandContext() to obtain it.
 	cmdCtx atomic.Pointer[cmdCtxHolder]
 
+	// cmdMu serializes ProcessCBORWithContext end to end; see the doc comment
+	// there for why. It is a dedicated field rather than mu: mu is taken and
+	// released repeatedly inside a single command (e.g. AuthorizePinUvAuthToken,
+	// consumePinUvAuthToken), and cmdMu must stay held across all of those
+	// acquisitions for the whole command, including any user-presence wait.
+	cmdMu sync.Mutex
+
 	// poweredUpAt is when this authenticator instance came up. It bounds the
 	// trust-on-first-use window for token initialization (CTAP 2.1 §6.9); for a
 	// software authenticator a power cycle is a process restart.
@@ -488,7 +495,30 @@ func (a *Authenticator) ProcessCBOR(cmd byte, data []byte) ([]byte, error) {
 // ProcessCBORWithContext handles a CTAP2 command with a cancellable context.
 // The context is propagated to user presence requests, allowing external
 // cancellation (e.g., via CTAPHID_CANCEL) to abort blocking operations.
+//
+// Commands are serialized end to end by cmdMu, including any user-presence
+// wait a command performs: CTAP authenticators are single-command devices
+// (the spec's transport model has one outstanding command at a time), so
+// this matches the wire protocol rather than fighting it. Without it, two
+// concurrent commands presenting the same pinUvAuthToken could both pass
+// checkPinUvAuthTokenLocked (cmd_clientpin.go) before either reached
+// consumePinUvAuthToken — authorization and consumption are separate
+// critical sections under mu, so the gap between them was a TOCTOU window,
+// not a data race the race detector could see (#323). Serializing every
+// command closes that window by construction and also makes the
+// cmdCtx.Store/defer Store(nil) single-command assumption true.
+//
+// The accepted trade: a command blocked on user presence (a human touching
+// the key) blocks every other queued command for the whole wait, not just
+// its own critical section. That is deliberate under option 1 — every
+// requestUserPresence call site already releases mu before it blocks, so
+// cmdMu is the only lock held across the wait, and a real CTAP authenticator
+// would not be processing a second command while waiting on the first's
+// touch either.
 func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, data []byte) ([]byte, error) {
+	a.cmdMu.Lock()
+	defer a.cmdMu.Unlock()
+
 	if a.closed.Load() {
 		return a.errorResponse(StatusOtherError), ErrAuthenticatorClosed
 	}
