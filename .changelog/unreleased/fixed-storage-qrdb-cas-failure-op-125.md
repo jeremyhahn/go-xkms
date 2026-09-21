@@ -17,11 +17,11 @@
   value refuses the swap, `current` reports the value actually present via the
   follow-up `Get`, and the stored value is left unchanged).
 
-  This is independent of the rest of #125: the embedded constructors in
-  `pkg/storage/qrdb/factory.go` (`NewMemory`, `NewFile`, `NewPebble`) still
-  wire no transaction service at all, so `CompareAndSwap` and `PutIfAbsent`
-  remain unavailable through them regardless of this fix —
-  `factory_cas_characterization_test.go` continues to pin that. Routing those
-  constructors onto a working transaction path (`storage.OpenEngine`, per the
-  option the issue recommends) is a separate, owner-decided change and is not
-  part of this entry.
+  This was independent of the rest of #125 at the time it was written: the
+  embedded constructors in `pkg/storage/qrdb/factory.go` (`NewMemory`,
+  `NewFile`, `NewPebble`) still wired no transaction service at all, so this
+  fix alone did not make `CompareAndSwap` or `PutIfAbsent` reachable through
+  them. The remainder — preferring `transport.GuardedKVClient` over the
+  transaction, which needs no transaction service — is the companion
+  "guarded-writes-125" entry in this same unreleased set; together the two
+  entries close #125.

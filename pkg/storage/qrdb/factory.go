@@ -18,69 +18,75 @@ import (
 	"io"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// COMPARE-AND-SWAP IS NOT AVAILABLE FROM ANY CONSTRUCTOR BELOW.
+// GUARDED WRITES (PutIfAbsent, CompareAndSwap, CompareAndDelete) ARE
+// AVAILABLE FROM EVERY CONSTRUCTOR BELOW.
 //
-// Backend advertises PutIfAbsent and CompareAndSwap, but no embedded
-// constructor here supports them. Measured 2026-08-21 against go-qrdb
-// v0.9.0-alpha, through these exact constructors
-// (factory_cas_characterization_test.go):
+// They were not, uniformly, and the fix -- landed for issue #125 -- did not
+// need a transaction service, a different storage layout, or a different
+// package boundary. It needed this package's own guarded methods
+// (backend_putifabsent.go, backend_compareandswap.go) to try
+// transport.GuardedKVClient before transport.TransactionClient, which is the
+// dispatch order backend_compareanddelete.go already used. newEmbedded's
+// transport, built by embedded.New(kvSvc, adminSvc) below, implements
+// GuardedKVClient by delegating straight to the KV service -- no transaction
+// service required -- and always has; the SDK carried PutIfAbsent and
+// CompareAndDelete on that interface since go-qrdb#119 and CompareAndSwap
+// since go-qrdb#121 (v0.12.0-alpha). PutIfAbsent and CompareAndSwap in this
+// package simply never asked for it, so they took the transaction path alone,
+// which newEmbedded genuinely does not wire, and failed identically to the
+// "embedded: TransactionServicer must not be nil" this note used to
+// characterize. CompareAndDelete had already been fixed the same way once its
+// own blocker (a missing FastStateMachine opcode handler, go-qrdb#175) was
+// cleared in go-qrdb v0.16.3-alpha; see backend_compareanddelete.go's history
+// and factory_cas_characterization_test.go's current assertions for both
+// verbs.
 //
-//	memory  ->  embedded: TransactionServicer must not be nil
-//	file    ->  embedded: TransactionServicer must not be nil
-//	pebble  ->  embedded: TransactionServicer must not be nil
-//
-// The behaviour is UNIFORM, and that uniformity is the point: the request
-// never reaches a storage engine, so there is no per-backend capability
-// difference to route around. Plain Put/Get is unaffected on all three, which
-// is what makes this a trap -- a caller sees a working store and only
-// discovers the gap on the path that needs the operation.
-//
-// The cause is in newEmbedded below: it builds its transport with
-// embedded.New(kvSvc, adminSvc) and no transaction service. This is tracked as
-// issue #125 — distinct from #61, which was the pkg/server `storage.backend:
-// qrdb` path and is fixed in go-qrdb v0.11.0-alpha (the sdk/go/node daemon node
-// now serves standalone CAS). These low-level constructors are a separate path;
-// the sanctioned fix is embedded.NewServer (memory/pebble gain CAS; the file KV
-// engine cannot — measured). See #125.
-//
-// What this note deliberately does NOT say is what happens after #61 is fixed.
-// An earlier revision published a file-vs-memory capability matrix derived
-// from qrdb's pkg/server/lifecycle.NewLocalEngine, which selects a KVEngine or
-// an MVCCEngine from the backend type. These constructors do not use that path
-// -- newEmbedded passes the storage straight to NewFastStateMachine -- so the
-// matrix described something else and would have had callers avoiding NewFile
-// for a reason that does not apply to it. Reading the current source, qrdb's
-// FastStateMachine.handleTransaction also requires an MVCC store supplied via
-// WithMVCCStore, and newEmbedded passes no options, so a transaction service
-// alone may not be sufficient either. Whatever the answer turns out to be, it
-// gets measured through these constructors before it is written down here.
+// The issue's discussion considered rebasing these constructors on
+// storage.OpenEngine (pkg/storage/engine.go), which already produces a
+// guarded-write-capable Backend for file/pebble/memory. That path was not
+// taken: pkg/storage already imports pkg/storage/qrdb (constructors.go
+// delegates NewFile/NewPebble here), so this package importing pkg/storage
+// back would be a compile-time cycle -- the same constraint
+// backend_compareanddelete_test.go documents for why it cannot import
+// pkg/storage/storagetest directly. OpenEngine's mechanism is also a
+// different one: engineBackend wraps go-qrdb's raw Storage engine and
+// arbitrates guarded writes with a process-local mutex, never touching a
+// transaction service or the embedded transport at all. Reaching the SAME
+// outcome (guarded writes, on the SAME on-disk layout, with no data move) by
+// fixing the dispatch order here is smaller, avoids the cycle, and leaves
+// newEmbedded's storage engines -- and therefore the on-disk format every
+// existing NewFile/NewPebble directory was written in -- untouched.
 //
 // A caller cannot currently ask a Backend which operations it supports; that
-// needs a capability on the interface and is an owner decision (#29).
+// needs a capability on the interface and is an owner decision (#29). Backend
+// implements GuardedWriteReporter (backend.go's GuardedWritesAvailable) for
+// exactly this, and now answers true for everything built below.
 
 // NewMemory creates an embedded in-memory backend. The entire QRDB stack
 // (storage, state machine, services, transport, and SDK client) is
 // initialized in-process. Close() tears down all resources.
 //
-// Does not support compare-and-swap; see the note above these constructors.
+// Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
+// above these constructors.
 func NewMemory() (*Backend, error) {
 	store := qrdbsdk.NewMemoryStorage()
 	return newEmbedded(store, "memory")
 }
 
 // NewFile creates an embedded file-based backend at the given path. Each
-// key-value pair is stored as a separate file under the directory. The
+// key-value pair is stored as a separate file under the directory -- the
+// same on-disk layout NewFile has always written, unchanged by #125. The
 // entire QRDB stack is initialized in-process. Close() tears down all
 // resources.
 //
-// Does not support compare-and-swap; see the note above these constructors.
-// It is no worse off than NewMemory or NewPebble in this respect -- all three
-// fail identically.
+// Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
+// above these constructors.
 func NewFile(path string) (*Backend, error) {
 	store, err := qrdbsdk.NewFileStorage(path)
 	if err != nil {
@@ -94,7 +100,8 @@ func NewFile(path string) (*Backend, error) {
 // usage. The entire QRDB stack is initialized in-process. Close() tears
 // down all resources.
 //
-// Does not support compare-and-swap; see the note above these constructors.
+// Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
+// above these constructors.
 func NewPebble(path string) (*Backend, error) {
 	cfg := qrdbsdk.TestPebbleConfig(path)
 	store, err := qrdbsdk.NewPebbleStorage(cfg)
@@ -143,10 +150,15 @@ func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
 		return nil, &FactoryError{Engine: engine, Err: err}
 	}
 
-	// guardedWrites is false: this transport carries no transaction service
-	// (see the file comment and #125), so PutIfAbsent, CompareAndSwap and
-	// CompareAndDelete are declared by Backend and cannot execute here.
-	return newOwnedBackend(client.KV(), &embeddedCloser{client: client, fsm: fsm, store: store}, false), nil
+	// guardedWrites is computed the same way NewBackend computes it for a
+	// caller-supplied client, rather than hardcoded, so this stays correct if
+	// the embedded transport's capabilities ever change without another edit
+	// here. It is true today: kv implements transport.GuardedKVClient (see the
+	// file comment and #125), so PutIfAbsent, CompareAndSwap and
+	// CompareAndDelete all execute through it.
+	kv := client.KV()
+	_, guardedWrites := kv.(transport.GuardedKVClient)
+	return newOwnedBackend(kv, &embeddedCloser{client: client, fsm: fsm, store: store}, guardedWrites), nil
 }
 
 // embeddedCloser tears down the embedded stack in dependency order: the client

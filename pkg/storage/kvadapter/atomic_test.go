@@ -238,12 +238,13 @@ func TestNew_BackendThatReportsGuardedWritesUnavailableIsNotClaimedAtomic(t *tes
 			"unavailable must fail the assertion rather than fail the first guarded write")
 }
 
-// TestNew_EmbeddedQRDBBackendsAreNotClaimedAtomic is the regression the
+// TestNew_EmbeddedQRDBBackendsAreClaimedAtomic is the regression the
 // capability report exists for, against the real constructors rather than a
-// fake: pkg/storage/qrdb's embedded memory, file and pebble backends implement
-// CompareAndSwapper and CompareAndDeleter and cannot execute either, because
-// newEmbedded wires no transaction service (#125).
-func TestNew_EmbeddedQRDBBackendsAreNotClaimedAtomic(t *testing.T) {
+// fake: pkg/storage/qrdb's embedded memory, file and pebble backends declare
+// CompareAndSwapper and CompareAndDeleter and, since #125, can execute all
+// three guarded verbs through the transport's own guarded-write capability, so
+// New must claim them as an AtomicKVStore.
+func TestNew_EmbeddedQRDBBackendsAreClaimedAtomic(t *testing.T) {
 	dir := t.TempDir()
 
 	memory, err := qrdbstorage.NewMemory()
@@ -274,7 +275,7 @@ func TestNew_EmbeddedQRDBBackendsAreNotClaimedAtomic(t *testing.T) {
 			require.NoError(t, err)
 
 			_, ok := store.(qrdbsdk.AtomicKVStore)
-			assert.False(t, ok, "the embedded transport carries no transaction service, so the guarded writes fail")
+			assert.True(t, ok, "the embedded transport's GuardedKVClient capability serves all three guarded writes (#125)")
 		})
 	}
 }

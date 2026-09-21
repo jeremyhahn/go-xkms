@@ -84,11 +84,14 @@ type Backend interface {
 	// compare-and-swap); single-process implementations satisfy it via internal
 	// synchronization.
 	//
-	// AN IMPLEMENTATION MAY REPORT THIS OPERATION AS UNAVAILABLE. The embedded
-	// QRDB backends returned by NewFile, NewPebble and qrdb.NewMemory do so
-	// today, uniformly, because their transport carries no transaction service
-	// (#61). A caller that needs cross-node uniqueness must therefore handle
-	// the error rather than assume the operation exists -- and must not read a
+	// AN IMPLEMENTATION MAY REPORT THIS OPERATION AS UNAVAILABLE, via
+	// GuardedWriteReporter (guardedwrites.go). The embedded QRDB backends
+	// returned by NewFile, NewPebble and qrdb.NewMemory used to do so
+	// uniformly (#125): the two guarded methods that needed it dispatched to a
+	// transaction their transport wires no service for, instead of the
+	// transport's own guarded-write capability. All three now report it
+	// available. A caller that needs cross-node uniqueness must still handle
+	// an error rather than assume the operation exists -- and must not read a
 	// failure here as "the key was present", which is what stored=false means
 	// and an error does not.
 	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)

@@ -34,6 +34,12 @@ import (
 // verbs are now held to the correct answer on every backend here; only Delete
 // still reports success for a key that was never written, which is what
 // AbsentDeleteDivergence declares (go-xkms#252, narrowed in #406).
+//
+// PutIfAbsent's separate divergence (go-xkms#61/#125, Config.PutIfAbsentUnavailable)
+// is gone from these two fixtures entirely: NewFile and NewPebble now dispatch
+// PutIfAbsent through the embedded transport's transport.GuardedKVClient
+// capability, which needs no transaction service, so the suite holds them to
+// the same "stores and reports true" answer as every conforming backend.
 
 func TestEngineBackend_AbsentKeyContract(t *testing.T) {
 	storagetest.RunAbsentKeyContract(t, storagetest.Config{
@@ -73,7 +79,6 @@ func TestNewFile_AbsentKeyContract(t *testing.T) {
 			return b
 		},
 		AbsentDeleteDivergence: true,
-		PutIfAbsentUnavailable: true,
 	})
 }
 
@@ -88,6 +93,5 @@ func TestNewPebble_AbsentKeyContract(t *testing.T) {
 			return b
 		},
 		AbsentDeleteDivergence: true,
-		PutIfAbsentUnavailable: true,
 	})
 }

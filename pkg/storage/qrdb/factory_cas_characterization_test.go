@@ -15,23 +15,18 @@ package qrdb
 
 import (
 	"context"
-	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// The compare-and-swap notes on the constructors are a claim about behaviour,
-// so they are pinned by exercising THE CONSTRUCTORS -- not by reasoning about
-// which engine qrdb would select on some other path. An earlier version of
-// that documentation described the KVEngine/MVCCEngine split from
-// pkg/server/lifecycle.NewLocalEngine, which newEmbedded does not use; these
-// tests exist so the next such claim has to survive contact with the code.
-//
-// They are characterization tests: they record what happens TODAY, including
-// the parts that are defects. When #61 lands they are expected to fail, and
-// the failure is the point -- it forces the documentation to be re-derived
-// from measurement rather than left to drift.
+// eachEmbeddedConstructor runs fn against a fresh Backend from each embedded
+// constructor (memory, file, pebble), closing it on cleanup. Shared by every
+// characterization test in this package, including
+// backend_compareanddelete_test.go's, so all three verbs are measured through
+// the same construction path.
 func eachEmbeddedConstructor(t *testing.T, fn func(t *testing.T, name string, b *Backend)) {
 	t.Helper()
 
@@ -60,36 +55,94 @@ func eachEmbeddedConstructor(t *testing.T, fn func(t *testing.T, name string, b 
 	}
 }
 
-// Every embedded constructor refuses PutIfAbsent and CompareAndSwap the same
-// way, and the reason is the same for all three: newEmbedded builds its
-// transport with embedded.New(kvSvc, adminSvc) and no transaction service.
+// The compare-and-swap notes on the constructors are a claim about behaviour,
+// so they are pinned by exercising THE CONSTRUCTORS -- not by reasoning about
+// which engine qrdb would select on some other path. An earlier version of
+// that documentation described the KVEngine/MVCCEngine split from
+// pkg/server/lifecycle.NewLocalEngine, which newEmbedded does not use; these
+// tests exist so the next such claim has to survive contact with the code.
 //
-// The uniformity is the finding. There is no memory-vs-file asymmetry to
-// document here, because the request never reaches an engine.
-func TestEmbeddedConstructors_CASUnavailableWithoutTransactionService(t *testing.T) {
+// They are characterization tests: they record what happens TODAY. This file
+// used to pin PutIfAbsent and CompareAndSwap as UNAVAILABLE on every embedded
+// constructor (#125): newEmbedded wires no transaction service, and both
+// methods dispatched to transport.TransactionClient alone. The fix was not a
+// transaction service -- it was dispatching to transport.GuardedKVClient
+// first, the same preference backend_compareanddelete.go already used, since
+// newEmbedded's transport implements that capability by delegating straight
+// to the KV service. These tests were written to FAIL the day that dispatch
+// changed, which is exactly what happened; what follows is the re-derivation
+// that failure asked for.
+func TestEmbeddedConstructors_PutIfAbsentAndCompareAndSwap(t *testing.T) {
 	eachEmbeddedConstructor(t, func(t *testing.T, name string, b *Backend) {
 		ctx := context.Background()
-		key := "cas-characterization"
 
-		if _, err := b.PutIfAbsent(ctx, key, []byte("v1")); err == nil {
-			t.Fatal("PutIfAbsent succeeded: the transaction service is now wired, " +
-				"so the CAS notes on these constructors must be re-derived by " +
-				"measurement (see #61)")
-		} else {
-			requireMissingTransactionService(t, "PutIfAbsent", err)
-		}
+		// PutIfAbsent: the first writer wins, and a second call is a clean
+		// refusal that leaves the stored value untouched.
+		key := "cas-characterization/put-if-absent"
+		stored, err := b.PutIfAbsent(ctx, key, []byte("v1"))
+		require.NoError(t, err, "%s: PutIfAbsent", name)
+		assert.True(t, stored, "%s: the first PutIfAbsent must succeed", name)
 
-		if _, _, err := b.CompareAndSwap(ctx, key, []byte("v1"), []byte("v2")); err == nil {
-			t.Fatal("CompareAndSwap succeeded: see #61, the notes need re-deriving")
-		} else {
-			requireMissingTransactionService(t, "CompareAndSwap", err)
-		}
+		stored, err = b.PutIfAbsent(ctx, key, []byte("v2"))
+		require.NoError(t, err, "%s: PutIfAbsent", name)
+		assert.False(t, stored, "%s: a present key must refuse PutIfAbsent", name)
+		got, err := b.Get(ctx, key)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v1"), got, "%s: a refused PutIfAbsent must not overwrite", name)
+
+		// CompareAndSwap: a stale guard refuses and reports the value actually
+		// present without mutating it; a matching guard swaps.
+		swapKey := "cas-characterization/compare-and-swap"
+		require.NoError(t, b.Put(ctx, swapKey, []byte("v1")))
+
+		swapped, current, err := b.CompareAndSwap(ctx, swapKey, []byte("stale"), []byte("v2"))
+		require.NoError(t, err, "%s: CompareAndSwap", name)
+		assert.False(t, swapped, "%s: a stale guard must refuse", name)
+		assert.Equal(t, []byte("v1"), current, "%s: a refusal must report the current value", name)
+		got, err = b.Get(ctx, swapKey)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v1"), got, "%s: a refused swap must not mutate the stored value", name)
+
+		swapped, _, err = b.CompareAndSwap(ctx, swapKey, []byte("v1"), []byte("v2"))
+		require.NoError(t, err, "%s: CompareAndSwap", name)
+		assert.True(t, swapped, "%s: a matching guard must swap", name)
+		got, err = b.Get(ctx, swapKey)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v2"), got, "%s: a successful swap must store the new value", name)
 	})
 }
 
-// Plain Put/Get must be unaffected, which is what makes the CAS gap a trap
-// rather than an obvious outage: a caller sees a working store and only
-// discovers the missing operations on the path that needs them.
+// TestEmbeddedConstructors_PutIfAbsentAndCompareAndSwapTakeTheGuardedPath pins
+// WHICH route serves the verbs, which the conformance test above cannot see: a
+// transaction fallback that happened to produce the same answers would satisfy
+// it too. newEmbedded wires no transaction service, so if the guarded path
+// were not answering, every case above would be an error rather than a
+// refusal or a success -- calling straight through the capability, bypassing
+// Backend's dispatch, is the in-package evidence that the guarded path, not a
+// fallback, is what runs. Mirrors
+// TestEmbeddedConstructors_CompareAndDeleteTakesTheGuardedPath in
+// backend_compareanddelete_test.go.
+func TestEmbeddedConstructors_PutIfAbsentAndCompareAndSwapTakeTheGuardedPath(t *testing.T) {
+	eachEmbeddedConstructor(t, func(t *testing.T, name string, b *Backend) {
+		ctx := context.Background()
+
+		guarded, ok := b.client.(transport.GuardedKVClient)
+		require.True(t, ok, "%s: the embedded transport must implement GuardedKVClient", name)
+
+		key := "cas-characterization/guarded-path"
+		stored, err := guarded.PutIfAbsent(ctx, key, []byte("v1"))
+		require.NoError(t, err, "%s: the guarded capability must serve PutIfAbsent", name)
+		assert.True(t, stored)
+
+		swapped, err := guarded.CompareAndSwap(ctx, key, []byte("v1"), []byte("v2"))
+		require.NoError(t, err, "%s: the guarded capability must serve CompareAndSwap", name)
+		assert.True(t, swapped)
+	})
+}
+
+// Plain Put/Get must be unaffected, which is what made the CAS gap a trap
+// while it existed: a caller saw a working store and only discovered the
+// missing operations on the path that needed them.
 func TestEmbeddedConstructors_PlainPutGetUnaffected(t *testing.T) {
 	eachEmbeddedConstructor(t, func(t *testing.T, name string, b *Backend) {
 		ctx := context.Background()
@@ -106,32 +159,4 @@ func TestEmbeddedConstructors_PlainPutGetUnaffected(t *testing.T) {
 			t.Fatalf("Get = %q, want %q", got, want)
 		}
 	})
-}
-
-// requireMissingTransactionService identifies the cause structurally rather
-// than by matching the rendered message.
-//
-// These assertions read go-qrdb's typed error and its Service FIELD, not
-// strings.Contains on the text. A reworded diagnostic upstream would otherwise
-// fail these tests while the behaviour they characterize was unchanged, which
-// turns a dependency bump into a false alarm -- and, worse, would be "fixed"
-// by loosening the assertion.
-func requireMissingTransactionService(t *testing.T, op string, err error) {
-	t.Helper()
-
-	// The local wrapper first: crossing this package's boundary must produce a
-	// *BackendError naming the operation, whatever the cause underneath.
-	var backendErr *BackendError
-	if !errors.As(err, &backendErr) {
-		t.Fatalf("%s error type = %T, want *BackendError: %v", op, err, err)
-	}
-
-	var nilSvc *embedded.NilServiceError
-	if !errors.As(err, &nilSvc) {
-		t.Fatalf("%s failed for an unexpected reason: %v", op, err)
-	}
-	if nilSvc.Service != "TransactionServicer" {
-		t.Fatalf("%s reports a missing %q; the CAS gap is the transaction service",
-			op, nilSvc.Service)
-	}
 }

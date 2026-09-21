@@ -26,11 +26,15 @@ package storage
 //
 // It is not the whole story for a backend whose writes travel to a server. The
 // qrdb backend implements all three and, built through the embedded
-// constructors, fails every one of them at run time because the transport
-// carries no transaction service (#125, measured through the constructors
-// themselves). The methods are present, the operation is unavailable, and a
-// caller reading the method set alone cannot tell — which turns a guarded
-// write into a run-time failure on the path that needed the guard most.
+// constructors, USED TO fail every one of them at run time, because the two
+// guarded methods that needed it dispatched to a transaction the transport
+// carries no service for, instead of the transport's own
+// transport.GuardedKVClient capability CompareAndDelete already preferred
+// (#125, fixed by matching that dispatch order in the other two methods). The
+// methods were present, the operation was unavailable, and a caller reading
+// the method set alone could not tell — which is exactly the failure mode this
+// interface exists to make reportable instead of silent, for whatever backend
+// hits it next.
 //
 // A capability that cannot be probed without writing has to be declared. This
 // interface is that declaration, and it is deliberately OPTIONAL: a backend

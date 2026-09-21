@@ -22,15 +22,15 @@ func init() {
 }
 
 // The QRDB backend reports whether its guarded writes can execute, and the
-// embedded constructors below build backends that answer false. The assertion
-// lives here rather than in that package because the dependency runs one way:
-// this package imports qrdb, never the reverse.
+// embedded constructors below build backends that answer true (#125). The
+// assertion lives here rather than in that package because the dependency
+// runs one way: this package imports qrdb, never the reverse.
 var _ GuardedWriteReporter = (*qrdb.Backend)(nil)
 
-// THE EMBEDDED CONSTRUCTORS BELOW DIVERGE FROM THE Backend CONTRACT IN TWO
-// WAYS. One fails loudly; the other is silent and is the dangerous one.
+// THE EMBEDDED CONSTRUCTORS BELOW DIVERGE FROM THE Backend CONTRACT IN ONE
+// WAY, and it is silent, which is what makes it the dangerous one.
 //
-// Both divergences travel with the embedded QRDB client, NOT with the storage
+// This divergence travels with the embedded QRDB client, NOT with the storage
 // medium, and that is the distinction to hold on to. "Memory versus disk" is
 // the obvious reading and the wrong one:
 //
@@ -39,24 +39,26 @@ var _ GuardedWriteReporter = (*qrdb.Backend)(nil)
 //	Exists, absent key      false OK    true      true        true
 //	Get, absent key         NotFound    nil,nil   nil,nil     nil,nil
 //	Delete, absent key      NotFound    nil       nil         nil
-//	PutIfAbsent             works       error     error       error
+//	PutIfAbsent             works       works     works       works
 //
-// So NewMemory -- this package's engineBackend -- conforms, while an
-// in-memory QRDB backend diverges exactly like the two on disk.
-//
-// 1. COMPARE-AND-SWAP IS NOT AVAILABLE. The Backend contract says PutIfAbsent
-// atomically stores the value. NewFile and NewPebble do not satisfy that: the
-// embedded QRDB transport is built without a transaction service, so
-// PutIfAbsent and CompareAndSwap fail with "embedded: TransactionServicer must
-// not be nil". A caller must handle that error and must not read it as "the
-// key was present". Tracked as #61, blocked on go-qrdb#62, and pinned by
+// So NewMemory -- this package's engineBackend -- conforms on every row, while
+// all three QRDB-backed constructors still diverge on absent-key semantics
+// (row 2 below). PutIfAbsent used to be a fourth divergent row (#125): the
+// embedded QRDB transport is built without a transaction service, and
+// PutIfAbsent and CompareAndSwap dispatched to one exclusively, so both failed
+// with "embedded: TransactionServicer must not be nil" on NewFile, NewPebble
+// and qrdb.NewMemory alike. They now prefer the transport's own
+// transport.GuardedKVClient capability first -- the same dispatch
+// CompareAndDelete already used -- which needs no transaction service, so all
+// four constructors in the table serve PutIfAbsent identically. Pinned by
 // pkg/storage/qrdb/factory_cas_characterization_test.go.
 //
-// 2. ABSENT KEYS ANSWER WRONGLY, WITHOUT ERRORING. Exists reports true for a
-// key that was never written, and Get and Delete report success where the
-// interface documents ErrNotFound. Plain Put and a Get of a key that IS
-// present are unaffected, which is what makes this a trap rather than an
-// outage: the store looks healthy and the wrong answers propagate.
+// ABSENT KEYS STILL ANSWER WRONGLY, WITHOUT ERRORING, on every QRDB-backed
+// constructor. Exists reports true for a key that was never written, and Get
+// and Delete report success where the interface documents ErrNotFound. Plain
+// Put and a Get of a key that IS present are unaffected, which is what makes
+// this a trap rather than an outage: the store looks healthy and the wrong
+// answers propagate.
 //
 // The practical consequences, because they are not symmetric: a "refuse if
 // already present" guard built on Exists is INVERTED here -- it refuses every
@@ -78,7 +80,8 @@ var _ GuardedWriteReporter = (*qrdb.Backend)(nil)
 // stored as a separate file under the directory. The entire QRDB stack
 // is initialized in-process. Close() tears down all resources.
 //
-// Does not support compare-and-swap; see the note above.
+// Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the absent-key
+// note above for the divergence that remains.
 func NewFile(path string) (Backend, error) {
 	backend, err := qrdb.NewFile(path)
 	if err != nil {
@@ -91,6 +94,9 @@ func NewFile(path string) (Backend, error) {
 // Delegates to the go-qrdb embedded PebbleDB engine. Uses a test-optimized
 // PebbleDB configuration suitable for lightweight embedded usage. The entire
 // QRDB stack is initialized in-process. Close() tears down all resources.
+//
+// Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the
+// package-level note above NewFile for the absent-key divergence that remains.
 func NewPebble(path string) (Backend, error) {
 	backend, err := qrdb.NewPebble(path)
 	if err != nil {

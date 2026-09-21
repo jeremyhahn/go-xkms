@@ -56,11 +56,15 @@ var _ qrdbsdk.KVStore = (*KVStoreAdapter)(nil)
 //
 // Declaring the methods is not sufficient, and asking for them is not either:
 // the QRDB backend implements all three and, built through the embedded
-// constructors, fails every one at run time for want of a transaction service
-// (#125). So the capability is taken from the backend's own report
-// (storage.GuardedWritesAvailable), not from its method set — otherwise this
-// adapter would hand the DAO layer a store that passes the assertion and then
-// fails on the first guarded write, which is the defect it exists to remove.
+// constructors, USED TO fail every one at run time, because two of the three
+// dispatched exclusively to a transaction their transport wires no service for
+// (#125, fixed by preferring the transport's own guarded-write capability
+// instead). So the capability is taken from the backend's own report
+// (storage.GuardedWritesAvailable), not from its method set — a rule that
+// still matters even now that the embedded constructors answer true, because
+// a hand-rolled or future backend can still declare the methods and be unable
+// to run them, and this adapter must not hand the DAO layer a store that
+// passes the assertion and then fails on the first guarded write.
 //
 // The return type is the interface rather than *KVStoreAdapter for that
 // reason: the concrete type varies with the backend's capability.

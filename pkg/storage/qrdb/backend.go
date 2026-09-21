@@ -55,11 +55,16 @@ type Backend struct {
 // callers are responsible for managing the client lifecycle.
 func NewBackend(client transport.KVClient) *Backend {
 	// A caller-supplied client is taken at the only signal that exists before
-	// a write: whether it can carry a transaction at all. That is the same
-	// assertion the guarded methods make, hoisted to construction so a caller
-	// can ask instead of discovering.
+	// a write: whether it can carry a guarded write at all, either through the
+	// SDK's native guarded-write capability or through a transaction. That is
+	// the same pair of assertions PutIfAbsent, CompareAndSwap and
+	// CompareAndDelete make, hoisted to construction so a caller can ask
+	// instead of discovering. Either capability alone is sufficient — the
+	// guarded methods themselves prefer GuardedKVClient and fall back to
+	// TransactionClient (#125) — so this is an OR, not an AND.
+	_, guarded := client.(transport.GuardedKVClient)
 	_, transactional := client.(transport.TransactionClient)
-	return &Backend{client: client, guardedWrites: transactional}
+	return &Backend{client: client, guardedWrites: guarded || transactional}
 }
 
 // newOwnedBackend creates a backend that owns the client lifecycle.
@@ -72,17 +77,19 @@ func newOwnedBackend(client transport.KVClient, closer io.Closer, guardedWrites 
 // GuardedWritesAvailable reports whether this backend's PutIfAbsent,
 // CompareAndSwap and CompareAndDelete can execute.
 //
-// It is false for every backend the embedded constructors in factory.go build:
-// newEmbedded wires its transport with embedded.New(kvSvc, adminSvc) and no
-// transaction service, so all three fail identically with "embedded:
-// TransactionServicer must not be nil" — measured through the constructors for
-// memory, file and pebble alike (#125). The methods are declared and the
-// operations are unavailable, and without this a caller reading the method set
-// would take the guarded path and fail on the first write.
+// It is true for every backend the embedded constructors in factory.go build:
+// newEmbedded's transport (embedded.New(kvSvc, adminSvc)) implements
+// transport.GuardedKVClient by delegating straight to the KV service, so all
+// three guarded verbs execute without a transaction service — measured through
+// the constructors for memory, file and pebble alike (#125, fixed by
+// preferring GuardedKVClient in the guarded methods over the transaction
+// fallback). It is also true for a caller-supplied client that can only carry
+// a transaction, since the guarded methods fall back to that when
+// GuardedKVClient is absent or refuses on capability.
 //
-// It is true for a caller-supplied client that can carry a transaction. Flip
-// the embedded answer when #125 lands, in the same change that wires the
-// service — not before, and the characterization test will say when.
+// It is false only for a client offering neither capability — a hand-rolled
+// KVClient a caller injects, since every concrete QRDB transport implements at
+// least one.
 func (b *Backend) GuardedWritesAvailable() bool {
 	return b.guardedWrites
 }

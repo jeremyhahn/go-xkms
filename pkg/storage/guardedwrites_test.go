@@ -74,12 +74,16 @@ func TestGuardedWritesUsable_NeedsBothHalves(t *testing.T) {
 		"declared methods that cannot execute are not a usable capability")
 }
 
-// TestGuardedWritesAvailable_EmbeddedQRDBBackendsReportUnavailable pins the
-// measurement the report is derived from: these constructors build a transport
-// with no transaction service, so all three guarded writes fail at run time
-// (#125). They declare the methods, which is why the method set cannot be the
-// capability test.
-func TestGuardedWritesAvailable_EmbeddedQRDBBackendsReportUnavailable(t *testing.T) {
+// TestGuardedWritesAvailable_EmbeddedQRDBBackendsReportAvailable pins the
+// measurement the report is derived from: these constructors' transport
+// implements transport.GuardedKVClient, delegating straight to the KV
+// service, so all three guarded writes execute without a transaction service
+// (#125, fixed by pkg/storage/qrdb preferring that capability over the
+// transaction it wires none of). They declare the methods AND can run them,
+// which is why the method set alone was never sufficient as the capability
+// test -- it could not have told this backend, before the fix, from the one
+// this test constructs today.
+func TestGuardedWritesAvailable_EmbeddedQRDBBackendsReportAvailable(t *testing.T) {
 	dir := t.TempDir()
 
 	memory, err := qrdb.NewMemory()
@@ -99,7 +103,7 @@ func TestGuardedWritesAvailable_EmbeddedQRDBBackendsReportUnavailable(t *testing
 			_, canSwap := backend.(CompareAndSwapper)
 			require.True(t, canSwap, "the premise: the method is declared")
 
-			assert.False(t, GuardedWritesAvailable(backend))
+			assert.True(t, GuardedWritesAvailable(backend))
 		})
 	}
 }

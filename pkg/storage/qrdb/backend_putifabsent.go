@@ -27,30 +27,66 @@ import (
 // caller injects a hand-rolled KVClient lacking that capability.
 var ErrTransactionsUnsupported = errors.New("qrdb: client does not support compare-and-swap transactions")
 
-// NOT AVAILABLE FROM THE EMBEDDED CONSTRUCTORS in factory.go. This is a
-// transaction, and the embedded transport built by newEmbedded wires no
-// transaction service, so it fails for memory, file and pebble alike with
-// "embedded: TransactionServicer must not be nil" (#125). Measured 2026-08-21
-// against go-qrdb v0.9.0-alpha through the constructors themselves; see
-// factory_cas_characterization_test.go. This is distinct from #61 (the
-// pkg/server `storage.backend: qrdb` node path), which is fixed in go-qrdb
-// v0.11.0-alpha.
+// AVAILABLE FROM EVERY EMBEDDED CONSTRUCTOR in factory.go, on the guarded
+// path, since go-qrdb's transport.GuardedKVClient carried PutIfAbsent (#119,
+// well before the transaction fallback below was ever reachable through
+// newEmbedded). This package simply never dispatched to it: PutIfAbsent went
+// straight to transport.TransactionClient, and newEmbedded's
+// embedded.New(kvSvc, adminSvc) wires no transaction service, so every
+// embedded constructor failed with "embedded: TransactionServicer must not be
+// nil" despite the client sitting right there implementing the capability
+// that would have served the call directly (#125). Fixed by preferring
+// GuardedKVClient here, the same dispatch order CompareAndDelete already
+// used. See factory_cas_characterization_test.go.
+//
+// It prefers transport.GuardedKVClient — the SDK's native guarded-write
+// capability — over a compare-and-swap TRANSACTION for the same reason
+// CompareAndDelete does: the embedded transport wires no transaction service
+// but does implement the guarded capability, delegating straight to the KV
+// service. The transaction fallback covers a remote transport whose protocol
+// carries transactions but not yet the guarded verbs.
 //
 // A caller cannot ask a Backend whether the operation is available; that needs
 // a capability on the interface and is an owner decision (#29). Until then the
 // constructor doc in factory.go is the reference.
 //
-// PutIfAbsent atomically stores value at key only if key is absent, using a
-// QRDB compare-and-swap transaction applied through Raft consensus. The
-// precondition "key version == 0" holds exactly when the key has never been
-// written, so the success op (Put) executes only on the first writer; every
-// concurrent writer on any node observes Succeeded=false. This gives
-// linearizable cross-node key-ID uniqueness — the guarantee an in-process lock
-// cannot provide.
+// PutIfAbsent atomically stores value at key only if key is absent. On the
+// guarded path this is the KV service's native PutIfAbsent opcode; on the
+// transaction fallback it is a QRDB compare-and-swap transaction applied
+// through Raft consensus, whose precondition "key version == 0" holds exactly
+// when the key has never been written, so the success op (Put) executes only
+// on the first writer. Either way every concurrent writer on any node observes
+// stored=false. This gives linearizable cross-node key-ID uniqueness — the
+// guarantee an in-process lock cannot provide.
 func (b *Backend) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	// A client can implement GuardedKVClient and still be unable to perform
+	// the operation: the capability is a property of the TRANSPORT, while
+	// executing it is a property of the server's state machine. So a
+	// capability refusal here falls through to the transaction, which may
+	// well be able to do it. ONLY a capability refusal falls through; any
+	// other failure may already have reached the state machine, and retrying
+	// via another route risks a double-apply. See CompareAndDelete for the
+	// same reasoning stated at length.
+	var guardedErr error
+	if guarded, ok := b.client.(transport.GuardedKVClient); ok {
+		stored, err := guarded.PutIfAbsent(ctx, key, value)
+		if err == nil {
+			return stored, nil
+		}
+		var unsupported *transport.CapabilityUnsupportedError
+		if !errors.As(err, &unsupported) {
+			return false, &BackendError{Op: "put-if-absent", Key: key, Err: err}
+		}
+		guardedErr = err
+	}
+
 	txClient, ok := b.client.(transport.TransactionClient)
 	if !ok {
-		return false, &BackendError{Op: "put-if-absent", Key: key, Err: ErrTransactionsUnsupported}
+		cause := error(ErrTransactionsUnsupported)
+		if guardedErr != nil {
+			cause = guardedErr
+		}
+		return false, &BackendError{Op: "put-if-absent", Key: key, Err: cause}
 	}
 
 	req := &transport.TransactionRequest{
