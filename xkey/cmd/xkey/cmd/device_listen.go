@@ -29,6 +29,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -123,6 +124,7 @@ func init() {
 	deviceListenCmd.Flags().String("tpm-device", "", "TPM2 device path (default: /dev/tpmrm0)")
 	deviceListenCmd.Flags().Bool("tpm-enrollment", false, "Serve TCG-CSR-IDEVID device enrollment from this host's TPM")
 	deviceListenCmd.Flags().String("tpm-pcr-bank", "", "PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated")
+	addDeviceBarrierFlags(deviceListenCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("device.listen.device", deviceListenCmd.Flags().Lookup("device"))
@@ -148,6 +150,16 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 
 	// Parse attestation mode
 	attestMode := phone.ParseAttestationMode(attestModeStr)
+
+	// The barrier is opened, if one is initialized, before the devices file:
+	// this command reads the local Noise static private key to advertise as
+	// this host's identity. A host with no barrier initialized at all is not
+	// refused here (#42 owner ruling) -- see openDeviceBarrier.
+	barrier, closeBarrier, err := openDeviceBarrier(cmd)
+	if err != nil {
+		return err
+	}
+	defer closeBarrier()
 
 	// Load phone configuration
 	cfg, err := loadDevicesConfig()
@@ -190,18 +202,37 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		return &WrappedError{Msg: "failed to decode phone public key", Err: err}
 	}
 
-	// Decode our local static key
-	localPrivateKey, err := base64.StdEncoding.DecodeString(targetDevice.LocalNoisePrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "failed to decode local private key", Err: err}
+	// Unseal our local static key (#42). This accepts both the current
+	// barrier-sealed form and a legacy plaintext-base64 record left over
+	// from before #42, so an existing pairing keeps listening. barrier is
+	// nil here only because openDeviceBarrier found none initialized (any
+	// other resolution failure already returned above), so a legacy record
+	// read with it is exactly the unencrypted case the owner ruling on #42
+	// wants logged, once, per operation.
+	wasLegacyKey := !pairing.IsSealedNoiseKey(targetDevice.LocalNoisePrivateKey)
+	if barrier == nil && wasLegacyKey {
+		logger.Warn(noBarrierConfiguredWarning, "device", targetDevice.Name)
 	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
+	localPrivateKey, err := pairing.UnsealLocalNoiseKey(barrier, targetDevice.LocalNoisePrivateKey)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrDeviceListenFailed, Cause: err}
+	}
+	// Destroyed here, at the unseal, not at the LoadStaticKey below: a
+	// decode failure on any other field returns in between, and the raw
+	// scalar would be left sitting in protected memory nothing releases.
+	defer localPrivateKey.Destroy()
+
+	// A legacy plaintext record that unsealed successfully is migrated now,
+	// while the key is already in hand, re-sealed under the barrier this
+	// command already opened (#42). barrier == nil is skipped rather than
+	// attempted: it means no barrier is initialized on this host at all,
+	// already warned about once above, and there is nowhere to seal into yet.
+	if wasLegacyKey && barrier != nil {
+		migrateLegacyNoiseKeyAndSave(cfg, targetDevice, barrier, localPrivateKey.Bytes(), logger)
+	}
 
 	// Reconstruct the Noise static key from stored private key
-	localStaticKey, err := phone.LoadStaticKey(localPrivateKey)
+	localStaticKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}

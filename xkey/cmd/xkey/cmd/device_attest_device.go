@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -87,6 +88,7 @@ func init() {
 	deviceAttestDeviceCmd.Flags().String("device", "", "Device name to attest (uses default if not specified)")
 	deviceAttestDeviceCmd.Flags().Bool("force", false, "Ignore grace period and re-attest anyway")
 	deviceAttestDeviceCmd.Flags().Duration("set-grace-period", 0, "Set the attestation grace period for this device (e.g., 5m, 30m)")
+	addDeviceBarrierFlags(deviceAttestDeviceCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("device.attest.device", deviceAttestDeviceCmd.Flags().Lookup("device"))
@@ -101,6 +103,18 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	deviceFilter, _ := cmd.Flags().GetString("device")
 	force, _ := cmd.Flags().GetBool("force")
 	setGracePeriod, _ := cmd.Flags().GetDuration("set-grace-period")
+
+	// The barrier is opened, if one is initialized, before the devices file:
+	// this command reads the local Noise static private key to reconnect
+	// and, on success, rewrites the record with a fresh attestation
+	// timestamp, migrating a legacy plaintext record to the sealed form when
+	// it can. A host with no barrier initialized at all is not refused here
+	// (#42 owner ruling) -- see openDeviceBarrier.
+	barrier, closeBarrier, err := openDeviceBarrier(cmd)
+	if err != nil {
+		return err
+	}
+	defer closeBarrier()
 
 	// Load phone configuration
 	cfg, err := loadDevicesConfig()
@@ -158,17 +172,27 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Attesting device \"%s\"...\n", device.Name)
 
-	// Load session keys from pairing
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "failed to decode local noise key", Err: err}
+	// Unseal the local Noise private key (#42). This accepts both the
+	// current barrier-sealed form and a legacy plaintext-base64 record left
+	// over from before #42, so an existing pairing keeps re-attesting. barrier
+	// is nil here only because openDeviceBarrier found none initialized
+	// (any other resolution failure already returned above), so a legacy
+	// record read with it is exactly the unencrypted case the owner ruling
+	// on #42 wants logged, once, per operation.
+	wasLegacyKey := !pairing.IsSealedNoiseKey(device.LocalNoisePrivateKey)
+	if barrier == nil && wasLegacyKey {
+		logger.Warn(noBarrierConfiguredWarning, "device", device.Name)
 	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
+	localPrivateKey, err := pairing.UnsealLocalNoiseKey(barrier, device.LocalNoisePrivateKey)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAttestDeviceVerifyFailed, Cause: err}
+	}
+	// Destroyed here, at the unseal, not at the LoadStaticKey below: a
+	// decode failure on any other field returns in between, and the raw
+	// scalar would be left sitting in protected memory nothing releases.
+	defer localPrivateKey.Destroy()
 
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
+	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return &WrappedError{Msg: "failed to load local noise key", Err: err}
 	}
@@ -331,6 +355,24 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	}
 
 	recordDeviceAttestation(device, verified.Result)
+
+	// A legacy plaintext record that unsealed successfully is migrated now,
+	// while the key is already in hand: re-sealed under the barrier this
+	// command already opened, so this device's row holds only the sealed
+	// form from here on (#42). The save below persists it along with the
+	// fresh attestation data. Best effort: a sealing failure here leaves the
+	// legacy value in place rather than overwriting it with an empty string.
+	// barrier == nil is skipped rather than attempted: it means no barrier is
+	// initialized on this host at all, already warned about once above, and
+	// there is nowhere to seal into yet.
+	if wasLegacyKey && barrier != nil {
+		if sealedKey, sealErr := pairing.SealLocalNoiseKey(barrier, localKey.Private); sealErr != nil {
+			logger.Warn("failed to seal legacy local Noise private key during migration; keeping the legacy form for now",
+				"device", device.Name, "error", sealErr)
+		} else {
+			device.LocalNoisePrivateKey = sealedKey
+		}
+	}
 
 	// Update grace period if specified
 	if setGracePeriod > 0 {

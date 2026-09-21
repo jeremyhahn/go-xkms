@@ -1,6 +1,6 @@
 # Phone as HSM — API
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 Transport shapes:
 [`../../../docs/key-management/api.md`](../../../docs/key-management/api.md).
@@ -66,6 +66,18 @@ an explicit error rather than a missing method.
 
 Failure at any step closes the transport. There is no partially established
 session.
+
+**Where the local static key comes from is invisible on the wire, and that is
+deliberate.** This host's Noise static private key is sealed at rest under
+the barrier when one exists, or kept in the legacy plaintext form with a
+warning logged when it does not (#42, see `engineering.md`'s
+*`LocalNoisePrivateKey` custody* section); by the time `Connect` runs, the
+caller has already resolved it into protected memory either way, and the
+protocol above never carries or references which. `ErrNoiseNotConfigured`
+above still means exactly "no pairing keys are set" — a caller that could not
+unseal a genuinely sealed record (a barrier exists but could not be opened)
+reports that failure before ever calling `Connect`, through its own error,
+not this transport's.
 
 ## Requests are serialised, by necessity
 

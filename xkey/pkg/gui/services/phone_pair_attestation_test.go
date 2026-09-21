@@ -10,7 +10,9 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -28,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -55,6 +58,12 @@ type pairingHarness struct {
 	svc    *PhoneService
 	store  truststore.TrustStore
 	events []events.Event
+
+	// lastLocalPrivate is a copy of the raw Noise private scalar the most
+	// recent pair() call generated, captured before pairOverTransport seals
+	// and persists it. A #42 test uses it to assert that value never appears
+	// verbatim in what actually gets written to disk.
+	lastLocalPrivate []byte
 }
 
 func newPairingHarness(t *testing.T) *pairingHarness {
@@ -70,6 +79,7 @@ func newPairingHarness(t *testing.T) *pairingHarness {
 	h.svc = &PhoneService{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	h.svc.connState.deviceName.Store("")
 	h.svc.SetTrustStore(store)
+	h.svc.SetBarrierService(newUnsealedTestBarrierService(t))
 	h.svc.SetEventEmitter(func(evt events.Event) { h.events = append(h.events, evt) })
 	return h
 }
@@ -145,6 +155,7 @@ func (h *pairingHarness) pair(device *attesttest.Phone, exchanges int, address s
 	localKey, err := phone.GenerateStaticKey()
 	require.NoError(h.t, err)
 	defer localKey.Destroy()
+	h.lastLocalPrivate = append([]byte(nil), localKey.Private...)
 
 	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
 		LocalStaticKey: localKey,
@@ -294,6 +305,85 @@ func TestPairRecordsAVerifiedAttestation(t *testing.T) {
 	evts := h.attestationEvents()
 	require.Len(t, evts, 1)
 	require.True(t, evts[0].Success)
+}
+
+// TestPairSealsTheLocalNoisePrivateKeyAndNeverWritesItAsPlaintext is the #42
+// gate on the GUI pairing path. It asserts two distinct things: the persisted
+// field carries the sealed marker, and -- because a bug could seal one copy
+// while some other code path still wrote the raw value -- the actual bytes
+// devices.yaml was written with never contain the plaintext base64 of the
+// private scalar this pairing generated.
+func TestPairSealsTheLocalNoisePrivateKeyAndNeverWritesItAsPlaintext(t *testing.T) {
+	h := newPairingHarness(t)
+	ca := attesttest.NewCA(t, "Trusted Attestation Root")
+	h.trust(ca)
+	device := attesttest.NewPhone(t, healthyDAK(t, ca))
+	device.Name = "Pixel 9"
+
+	_, err := h.pair(device, 2, testPairAddress)
+	require.NoError(t, err)
+	require.NotEmpty(t, h.lastLocalPrivate)
+	plaintextBase64 := base64.StdEncoding.EncodeToString(h.lastLocalPrivate)
+
+	rec := h.savedDevice(testPairAddress)
+	require.True(t, pairing.IsSealedNoiseKey(rec.LocalNoisePrivateKey),
+		"the persisted field must carry the #42 sealed marker, not legacy plaintext base64")
+	require.NotEqual(t, plaintextBase64, rec.LocalNoisePrivateKey)
+
+	raw, err := os.ReadFile(filepath.Join(h.home, ".xkey", devicesConfigFileName))
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), plaintextBase64,
+		"the raw private scalar's base64 must never appear anywhere in devices.yaml")
+}
+
+// TestPairProceedsWithoutABarrierConfigured is the #42 owner ruling: a host
+// with no barrier wired at all -- one was never initialized -- is not
+// refused. Pairing completes exactly as xkey always did before #42: the key
+// lands in the legacy plaintext base64 form, and the only difference is one
+// warning logged, pointing at `xkey barrier init`.
+func TestPairProceedsWithoutABarrierConfigured(t *testing.T) {
+	h := newPairingHarness(t)
+	h.svc.SetBarrierService(nil)
+	var logBuf bytes.Buffer
+	h.svc.log = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	ca := attesttest.NewCA(t, "Trusted Attestation Root")
+	h.trust(ca)
+	device := attesttest.NewPhone(t, healthyDAK(t, ca))
+
+	paired, err := h.pair(device, 2, testPairAddress)
+	require.NoError(t, err, "no barrier configured must never refuse a pairing")
+	require.NotNil(t, paired)
+
+	rec := h.savedDevice(testPairAddress)
+	require.False(t, pairing.IsSealedNoiseKey(rec.LocalNoisePrivateKey),
+		"with no barrier configured the key must be written in the legacy plaintext form")
+	require.NotEmpty(t, rec.LocalNoisePrivateKey)
+	_, decodeErr := base64.StdEncoding.DecodeString(rec.LocalNoisePrivateKey)
+	require.NoError(t, decodeErr, "the legacy form is plain base64 of the raw private scalar")
+
+	require.Contains(t, logBuf.String(), "pairing key stored unencrypted",
+		"exactly one warning must be logged for the operation")
+	require.Contains(t, logBuf.String(), "xkey barrier init",
+		"the warning must point the operator at the fix")
+}
+
+// TestPairRefusesWhenBarrierExistsButIsSealed is the other half of the #42
+// owner ruling: once a barrier HAS been initialized on this host, it staying
+// sealed (locked, or the app not yet unlocked) is not consent to fall back
+// to plaintext -- pairing refuses.
+func TestPairRefusesWhenBarrierExistsButIsSealed(t *testing.T) {
+	h := newPairingHarness(t)
+	barrierSvc := newUnsealedTestBarrierService(t)
+	require.NoError(t, barrierSvc.Seal())
+	h.svc.SetBarrierService(barrierSvc)
+
+	_, err := h.svc.Pair(testPairAddress)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrPhoneBarrierRequired)
+	_, ok := h.savedConfig()
+	require.False(t, ok, "a pairing refused because the barrier is sealed must write nothing")
 }
 
 // TestPairAllowsAnUnattestableDeviceWhenPolicySaysSoAndRecordsNoClaim is the

@@ -544,6 +544,20 @@ func (s *BarrierService) IsUnsealed() bool {
 	return !s.barrier.IsSealed()
 }
 
+// GetBarrier returns the underlying barrier for callers that need its direct
+// Encrypt/Decrypt rather than the KV-store view GetBackend provides -- sealing
+// a value that must stay embedded in another record instead of becoming its
+// own storage entry, e.g. the phone pairing file's Noise static private key
+// (#42). Returns nil if the barrier has not been initialized; callers must
+// check for a nil *xkms.Barrier before handing it to an interface parameter,
+// or the typed nil will not compare equal to a nil interface.
+func (s *BarrierService) GetBarrier() *xkms.Barrier {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.barrier
+}
+
 // GetBackend returns the barrier as a storage.Backend for use by other
 // services that need encrypted storage. Returns nil if the barrier has
 // not been initialized or unsealed.

@@ -142,6 +142,7 @@ func TestPhoneService_Pair_EmptyAddress(t *testing.T) {
 func TestPhoneService_Pair_BLEUnavailable(t *testing.T) {
 	// On machines without BLE, Pair returns a BLE-related error.
 	svc := NewPhoneService()
+	svc.SetBarrierService(newUnsealedTestBarrierService(t))
 	_, err := svc.Pair("AA:BB:CC:DD:EE:FF")
 	assert.Error(t, err)
 	assert.True(t,

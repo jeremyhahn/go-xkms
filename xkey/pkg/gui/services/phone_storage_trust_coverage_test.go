@@ -250,6 +250,7 @@ func TestPhoneService_Pair_EmptyAddressReturnsError(t *testing.T) {
 // local key generation and BLE transport creation paths).
 func TestPhoneService_Pair_NonEmptyAddress_NoHardware(t *testing.T) {
 	svc := NewPhoneService()
+	svc.SetBarrierService(newUnsealedTestBarrierService(t))
 	result, err := svc.Pair("11:22:33:44:55:66")
 	// Should fail either because BLE unavailable or pairing failed (key gen succeeded).
 	assert.Nil(t, result)

@@ -1,6 +1,6 @@
 # Phone as HSM — CLI
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 
@@ -9,7 +9,7 @@ Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 | Verb | Flags |
 |---|---|
 | `device scan` | — |
-| `device pair` | `--device` (name or address), `--timeout` (scan timeout), `--force` (re-pair even if already paired), `--so-pin-stdin` / `--so-pin` / `XKEY_SO_PIN` (verify a sealed enterprise policy so it is honoured in both directions; see below) |
+| `device pair` | `--device` (name or address), `--timeout` (scan timeout), `--force` (re-pair even if already paired), `--so-pin-stdin` / `--so-pin` / `XKEY_SO_PIN` (verify a sealed enterprise policy so it is honoured in both directions; see below), `--barrier-password` / `--barrier-password-file` / `XKEY_BARRIER_PASSWORD` (seal the new pairing's key, if a barrier exists; see *The barrier, when one exists* below) |
 | `device list` | — |
 | `device status` | `--device` (check a specific device) |
 | `device unpair <device-name>` | `--force` (skip confirmation) |
@@ -36,6 +36,49 @@ policy is not consulted and an unattestable device is refused whatever
 `--force` only when you mean to replace an existing pairing — it discards the
 old binding.
 
+## The barrier, when one exists (#42)
+
+`device pair`, `device listen` and `device attest-device` open this host's
+barrier, if one has been initialized, **before** doing anything else with a
+paired device's Noise static private key — pairing to seal the new key into
+it, the other two to unseal an existing one.
+
+**A host that has never run `xkey barrier init` is not refused.** Pairing
+writes the key in the same legacy plaintext form xkey has always used, and
+logs one warning naming the fix:
+
+```
+$ xkey device pair --device "Pixel-8"
+...
+level=WARN msg="pairing key stored unencrypted: no barrier is initialized on this host; run \`xkey barrier init\` to protect it" device=Pixel-8
+```
+
+`device listen` and `device attest-device` warn the same way when reading
+such a record, and none of the three prompt for a barrier password in this
+case — there is nothing to unseal.
+
+**A barrier that exists but cannot currently be opened is always a
+refusal.** A wrong or missing password against an initialized barrier
+refuses the command; there is no fallback to plaintext once you have opted
+into protecting this key. Supply the password with `--barrier-password`, a
+file via `--barrier-password-file`, or `XKEY_BARRIER_PASSWORD` for unattended
+use (e.g. `device listen` run from a service unit):
+
+```
+xkey barrier init                                          # once, to start protecting this key
+xkey device pair --barrier-password-file /run/secrets/xkey-barrier
+XKEY_BARRIER_PASSWORD="$(cat /run/secrets/xkey-barrier)" xkey device listen
+```
+
+A device paired before a barrier existed, or paired on a host that still has
+none, keeps connecting: its key is read as legacy plaintext and re-sealed the
+next time `device attest-device` or `device listen` succeeds against it
+**after** `xkey barrier init` has been run, after which only the sealed form
+is on disk for that device. Every other device-backed verb below
+(`oath-sync`, `share`, `import`, `sync-*`, `enroll-phone`, `fido2 --backend
+phone`) reads a legacy record the same way with no barrier needed, and reads a
+sealed one from `XKEY_BARRIER_PASSWORD` alone if it is set.
+
 ## Using the phone as the key backend
 
 ```
@@ -50,7 +93,7 @@ cross the channel; only operations and results do.
 | Verb | Purpose |
 |---|---|
 | `device attest <key-id>` | Prove a key was generated in the phone's hardware |
-| `device attest-device` | Device-level attestation |
+| `device attest-device` | Device-level attestation (opens a barrier if one exists — #42, see above) |
 | `device device-info [device-name]` | Report device details |
 | `device enroll` | Enrol the device |
 | `device enroll-phone` | Enrol the phone specifically |
@@ -86,7 +129,7 @@ xkey device device-info "Pixel-8"
 | Verb | Purpose |
 |---|---|
 | `device connect <address>` | Connect to a specific address |
-| `device listen` | Wait for an inbound connection |
+| `device listen` | Wait for an inbound connection (opens a barrier if one exists — #42, see above) |
 | `device relay` | Run the TCP relay path |
 
 ```

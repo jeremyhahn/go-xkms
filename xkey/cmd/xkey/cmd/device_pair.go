@@ -80,6 +80,7 @@ func init() {
 	devicePairCmd.Flags().Duration("timeout", defaultDeviceScanTimeout, "Scan timeout duration")
 	devicePairCmd.Flags().Bool("force", false, "Force re-pairing even if already paired")
 	addSOPINFlags(devicePairCmd)
+	addDeviceBarrierFlags(devicePairCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("device.pair.device", devicePairCmd.Flags().Lookup("device"))
@@ -101,7 +102,8 @@ type pairingTransport interface {
 }
 
 // pairingSeams are runDevicePair's injection points: how it opens its
-// transport, reads and writes the devices file, and loads this machine's
+// transport, reads and writes the devices file, opens the barrier the new
+// Noise private key is sealed under (#42), and loads this machine's
 // attestation trust. Production wires the real implementations; a test
 // replaces them so the abort/allow/save wiring itself can be exercised, not
 // only the helpers it calls.
@@ -110,6 +112,7 @@ type pairingSeams struct {
 	loadDevices  func() (*DevicesConfig, error)
 	saveDevices  func(cfg *DevicesConfig) error
 	loadTrust    func() (*attestation.Trust, error)
+	openBarrier  func(cmd *cobra.Command) (pairing.NoiseKeyBarrier, func(), error)
 }
 
 // newBLEPairingTransport opens the real BLE transport. It returns an
@@ -129,6 +132,7 @@ var pairSeams = pairingSeams{
 	loadDevices:  loadDevicesConfig,
 	saveDevices:  saveDevicesConfig,
 	loadTrust:    loadPairingAttestationTrust,
+	openBarrier:  openDeviceBarrier,
 }
 
 // runDevicePair executes the phone pairing command.
@@ -138,6 +142,21 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	deviceFilter, _ := cmd.Flags().GetString("device")
 	scanTimeout, _ := cmd.Flags().GetDuration("timeout")
 	force, _ := cmd.Flags().GetBool("force")
+
+	// The barrier is opened, if one is initialized, before anything else
+	// including the scan: pairing generates a new Noise static private key
+	// that gets sealed under it when there is one (#42). A host with no
+	// barrier initialized at all is not refused here -- barrier comes back
+	// nil with a nil error, and sealOrWarnLocalNoiseKey below falls back to
+	// the legacy plaintext form with a warning, same as xkey always did
+	// before #42. A barrier that exists but could not be opened IS refused,
+	// and there is nothing to gain from running a full BLE handshake and
+	// attestation exchange only to hit that refusal at the very end.
+	barrier, closeBarrier, err := pairSeams.openBarrier(cmd)
+	if err != nil {
+		return err
+	}
+	defer closeBarrier()
 
 	// Load existing configuration
 	cfg, err := pairSeams.loadDevices()
@@ -391,9 +410,19 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	// Disconnect after pairing (will reconnect when needed)
 	_ = transport.Disconnect()
 
+	// Seal the local Noise static private key before it is written anywhere,
+	// or fall back to the legacy plaintext form with a warning if no barrier
+	// is initialized on this host at all (#42). localKey.Private is still
+	// valid here: it is destroyed by the deferred localKey.Destroy() above,
+	// which has not run yet.
+	noiseKeyField, err := sealOrWarnLocalNoiseKey(logger, deviceName, barrier, localKey.Private)
+	if err != nil {
+		return err
+	}
+
 	// Create or update device record
 	pairedDevice := newPairedDeviceRecord(
-		deviceName, selectedDevice.Address, remotePublicKey, localKey.Private, attestResult)
+		deviceName, selectedDevice.Address, remotePublicKey, noiseKeyField, attestResult)
 
 	// Update or add to configuration.
 	// When force re-pairing, remove all old entries for the same device name
@@ -508,16 +537,23 @@ func loadPairingAttestationTrust() (*attestation.Trust, error) {
 
 	return attestation.LoadTrust(store)
 }
+
+// newPairedDeviceRecord builds the persisted record for a freshly paired
+// device. localNoisePrivateKey is the value to store verbatim in
+// LocalNoisePrivateKey -- the caller seals it (pairing.SealLocalNoiseKey)
+// before calling this, so this function never sees the raw private scalar
+// and cannot accidentally persist it unsealed (#42).
 func newPairedDeviceRecord(
 	name, address string,
-	remotePublicKey, localPrivateKey []byte,
+	remotePublicKey []byte,
+	localNoisePrivateKey string,
 	attest *DeviceAttestationResult,
 ) PairedDevice {
 	device := PairedDevice{
 		Name:                 name,
 		Address:              address,
 		NoisePublicKey:       base64.StdEncoding.EncodeToString(remotePublicKey),
-		LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(localPrivateKey),
+		LocalNoisePrivateKey: localNoisePrivateKey,
 		PairedAt:             time.Now().UTC(),
 	}
 	if attest != nil {

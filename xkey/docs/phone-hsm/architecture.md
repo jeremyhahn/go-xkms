@@ -131,6 +131,19 @@ phone's attestation fingerprint into the Noise prologue.
   is unsealed or the section verifies under the SO PIN, and fails closed
   otherwise. An unverified sealed policy is a value any local user could have
   written, and it grants nothing (#118).
+- **This host's own Noise static private key is sealed in the barrier when
+  this host has one** (#42). It is the credential that authenticates this
+  host to the paired phone, so its exposure is symmetric with "keys never
+  leave the phone" above: a copy of it lets a peer impersonate the host, the
+  same way a copy of the phone's key would let a peer impersonate the phone.
+  A host with **no barrier initialized at all** is not refused for that
+  reason — it pairs and connects exactly as xkey always did, with the key in
+  the legacy plaintext form and one warning logged per operation. A barrier
+  that **exists** but cannot currently be opened (sealed, or an unattended
+  command given no password) is a different case and does refuse: choosing to
+  protect this key is not undone by a locked barrier. See
+  *`LocalNoisePrivateKey` custody* in `engineering.md` for the sealed format
+  and the per-surface decision, and `user.md` for what an operator sees.
 
 ## Known constraint: the cipher suite is fixed and not FIPS-approved
 

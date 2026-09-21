@@ -729,6 +729,13 @@ func (a *App) initializeDataDir() error {
 	// Get barrier backend (nil if barrier not active).
 	barrierBackend := a.barrierService.GetBackend()
 
+	// The phone service seals the Noise static private key on Pair and
+	// unseals it on Connect (#42); it re-fetches the barrier on every use
+	// rather than being handed a snapshot, so wiring the service, not a
+	// value, is enough even though the barrier is not active here on every
+	// call to initializeDataDir (e.g. before the very first unseal).
+	a.phoneService.SetBarrierService(a.barrierService)
+
 	// OATH store — encrypted via barrier or plain file fallback.
 	if barrierBackend != nil {
 		oathStore, oathErr := oath.NewBackendStore(barrierBackend, "oath/")

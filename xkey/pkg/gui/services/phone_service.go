@@ -85,6 +85,13 @@ var (
 	// is what every later connection is judged against, and a record whose
 	// attestation half was never checked is worse than no record at all.
 	ErrPhonePairAttestationRefused = errors.New("phone_service: device attestation could not be verified - pairing refused")
+
+	// ErrPhoneBarrierRequired indicates the local Noise static private key
+	// could not be sealed (Pair) or unsealed (Connect) because no unsealed
+	// barrier is available (#42). The ruling is that this key never touches
+	// disk as plaintext, so there is no fallback: pairing and connecting both
+	// refuse rather than writing or reading it unsealed.
+	ErrPhoneBarrierRequired = errors.New("phone_service: sealing/unsealing the local Noise private key requires an unsealed barrier")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -250,6 +257,13 @@ type PhoneService struct {
 	statusChangeFn PhoneStatusChangeFunc
 	trustStore     truststore.TrustStore
 
+	// barrierSvc seals the local Noise static private key on Pair and
+	// unseals it on Connect (#42). Read fresh on every use via
+	// noiseKeyBarrier rather than captured once: BarrierService replaces its
+	// underlying barrier on every Unseal, so a value captured at wiring time
+	// would go stale across an app lock/unlock cycle.
+	barrierSvc atomic.Pointer[BarrierService]
+
 	// Active BLE connection state (protected by connMu).
 	// A mutex is appropriate here because Connect and Disconnect are slow
 	// I/O operations that happen infrequently (user-initiated).
@@ -345,6 +359,108 @@ func (s *PhoneService) SetStatusChangeFunc(fn PhoneStatusChangeFunc) {
 // SetTrustStore sets the trust store used for attestation verification.
 func (s *PhoneService) SetTrustStore(ts truststore.TrustStore) {
 	s.trustStore = ts
+}
+
+// SetBarrierService wires the barrier service used to seal the local Noise
+// static private key on Pair and unseal it on Connect (#42). See
+// resolveNoiseKeyBarrier for what happens at each of the barrier's states
+// when no BarrierService is wired at all, or one is wired but reports
+// differently.
+func (s *PhoneService) SetBarrierService(svc *BarrierService) {
+	s.barrierSvc.Store(svc)
+}
+
+// noiseKeyBarrier returns the current barrier for sealing/unsealing the local
+// Noise static private key, or an untyped nil pairing.NoiseKeyBarrier when no
+// BarrierService is wired or it is not currently open. IsUnsealed, not a nil
+// check on GetBarrier, is what decides "open": BarrierService keeps its
+// underlying *xkms.Barrier object across a Seal() call (so a later Unseal
+// can reuse it), so GetBarrier() stays non-nil for a sealed barrier too --
+// only the object's own IsSealed() state, which IsUnsealed reads, tells the
+// two apart. Returning bare nil on the not-open paths (rather than a
+// *xkms.Barrier(nil) boxed into the interface) matters: a typed nil inside
+// an interface value is not itself nil, and
+// pairing.SealLocalNoiseKey/UnsealLocalNoiseKey compare their barrier
+// parameter against nil to decide whether one was supplied at all.
+//
+// This does not distinguish "no barrier was ever initialized on this host"
+// from "one exists but is sealed" -- Connect's unseal path does not need to:
+// a legacy plaintext record reads with a nil barrier regardless of why, and
+// a sealed record refuses with a nil barrier regardless of why. Pair, which
+// chooses the record's FORMAT rather than just reading it, needs the
+// distinction and uses resolveNoiseKeyBarrier instead.
+func (s *PhoneService) noiseKeyBarrier() pairing.NoiseKeyBarrier {
+	svc := s.barrierSvc.Load()
+	if svc == nil || !svc.IsUnsealed() {
+		return nil
+	}
+	barrier := svc.GetBarrier()
+	if barrier == nil {
+		return nil
+	}
+	return barrier
+}
+
+// resolveNoiseKeyBarrier is Pair's version of noiseKeyBarrier: it also
+// reports whether an absent barrier is because none was ever initialized on
+// this host, which Pair treats differently from one that exists but is
+// currently sealed (owner ruling on #42, recorded on the issue).
+//
+// Three outcomes:
+//   - No BarrierService is wired, or one is wired but IsInitialized() is
+//     false: (nil, true). There is nothing to seal the new key into, and
+//     that is not a refusal -- Pair logs a warning and writes the legacy
+//     plaintext form, same as it always could before #42.
+//   - A BarrierService is wired and initialized, but not currently open
+//     (sealed, e.g. the app is locked, or the CLI was not given a
+//     password): (nil, false). The operator chose to protect this host's
+//     pairing key by initializing a barrier; a locked one is not consent
+//     to fall back to plaintext, so Pair refuses. IsUnsealed(), not a nil
+//     check on GetBarrier, is what detects this -- see noiseKeyBarrier's
+//     comment for why GetBarrier alone cannot.
+//   - Open: (barrier, false).
+func (s *PhoneService) resolveNoiseKeyBarrier() (barrier pairing.NoiseKeyBarrier, noBarrierConfigured bool) {
+	svc := s.barrierSvc.Load()
+	if svc == nil || !svc.IsInitialized() {
+		return nil, true
+	}
+	if !svc.IsUnsealed() {
+		return nil, false
+	}
+	b := svc.GetBarrier()
+	if b == nil {
+		return nil, false
+	}
+	return b, false
+}
+
+// sealOrWarnLocalNoiseKey resolves the value to store in a fresh
+// PairedDevice's LocalNoisePrivateKey field for priv, the raw private
+// scalar. It seals priv when a barrier is open, warns and returns the
+// legacy plaintext form when no barrier is initialized on this host at all,
+// and refuses when a barrier is initialized but not currently open (#42
+// owner ruling, recorded on the issue).
+//
+// The warning is logged exactly once per call, here, so every caller that
+// persists a newly generated key gets it without repeating the log line
+// itself.
+func (s *PhoneService) sealOrWarnLocalNoiseKey(deviceName string, priv []byte) (string, error) {
+	barrier, noBarrierConfigured := s.resolveNoiseKeyBarrier()
+	switch {
+	case barrier != nil:
+		sealed, err := pairing.SealLocalNoiseKey(barrier, priv)
+		if err != nil {
+			return "", errors.Join(ErrPhoneBarrierRequired, err)
+		}
+		return sealed, nil
+	case noBarrierConfigured:
+		s.log.Warn("pairing key stored unencrypted: no barrier is initialized on this host; "+
+			"run `xkey barrier init` to protect it",
+			"device", deviceName)
+		return base64.StdEncoding.EncodeToString(priv), nil
+	default:
+		return "", ErrPhoneBarrierRequired
+	}
 }
 
 // IsConnected returns true if a phone device is currently connected.
@@ -462,11 +578,23 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		return nil, ErrPhonePairFailed
 	}
 
+	// The barrier is checked before anything touches the radio: pairing
+	// generates a new Noise static private key, and there is nothing to gain
+	// by running the whole handshake and attestation exchange only to refuse
+	// at the last step. A host with no barrier initialized at all is not
+	// refused here -- see resolveNoiseKeyBarrier and sealOrWarnLocalNoiseKey
+	// -- only one whose barrier exists but is not currently open (#42 owner
+	// ruling).
+	if barrier, noBarrierConfigured := s.resolveNoiseKeyBarrier(); barrier == nil && !noBarrierConfigured {
+		s.log.Error("pairing refused: a barrier is initialized on this host but is not open; cannot seal the local Noise private key")
+		return nil, ErrPhoneBarrierRequired
+	}
+
 	s.log.Info("starting pairing", "address", address)
 
 	// Generate a local Noise static key for this pairing. It does not outlive
-	// this call: the session is built here, and the private half is base64ed
-	// into the stored device record before we return.
+	// this call: the session is built here, and the private half is sealed
+	// into the stored device record before we return (#42).
 	localKey, err := phone.GenerateStaticKey()
 	if err != nil {
 		s.log.Error("failed to generate local key", "error", err)
@@ -618,13 +746,27 @@ func (s *PhoneService) pairOverTransport(
 				"so the record carries no security level, boot state or device fingerprint")
 	}
 
+	// Seal the local Noise static private key before it is written anywhere,
+	// or fall back to the legacy plaintext form with a warning if no barrier
+	// is initialized on this host at all (#42). The barrier's state was
+	// confirmed at the top of Pair, but is re-checked here rather than
+	// trusted from that earlier check: nothing in this package should assume
+	// the barrier's state is unchanged across a long-running BLE exchange
+	// and attestation round trip.
+	noiseKeyField, err := s.sealOrWarnLocalNoiseKey(phoneName, localKey.Private)
+	if err != nil {
+		s.log.Error("pairing refused: failed to seal the local Noise private key",
+			"device", phoneName, "error", err)
+		return nil, err
+	}
+
 	// Save to shared config file.
 	now := time.Now().UTC()
 	cfgDevice := phoneConfigDevice{
 		Name:                 phoneName,
 		Address:              address,
 		NoisePublicKey:       base64.StdEncoding.EncodeToString(remotePublicKey),
-		LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(localKey.Private),
+		LocalNoisePrivateKey: noiseKeyField,
 		PairedAt:             now,
 	}
 	if attestResult != nil {
@@ -883,6 +1025,46 @@ func (s *PhoneService) GetBackendDevices() ([]PairedDevice, error) {
 	return devices, nil
 }
 
+// migrateLocalNoiseKey re-seals device's Noise private key under the barrier
+// and persists it, completing the migration of a legacy plaintext record to
+// the sealed form (#42). priv is the already-unsealed raw private scalar;
+// device aliases the entry inside cfg.Devices, so mutating it in place is
+// enough for saveConfig to write the update.
+//
+// It is best-effort and never returns an error to its caller: a connect that
+// otherwise succeeded must not fail because migration could not run, and a
+// migration that could not run leaves the record exactly as it was for the
+// next call that has a barrier open.
+func (s *PhoneService) migrateLocalNoiseKey(cfg *phoneConfig, device *phoneConfigDevice, priv []byte) {
+	barrier, noBarrierConfigured := s.resolveNoiseKeyBarrier()
+	if barrier == nil {
+		if noBarrierConfigured {
+			s.log.Warn("pairing key stored unencrypted: no barrier is initialized on this host; "+
+				"run `xkey barrier init` to protect it",
+				"device", device.Name)
+		} else {
+			s.log.Warn("local Noise private key is still stored as legacy plaintext; a barrier is initialized but not open, so it cannot be migrated right now",
+				"device", device.Name)
+		}
+		return
+	}
+
+	sealed, err := pairing.SealLocalNoiseKey(barrier, priv)
+	if err != nil {
+		s.log.Warn("failed to seal legacy local Noise private key during migration",
+			"device", device.Name, "error", err)
+		return
+	}
+
+	device.LocalNoisePrivateKey = sealed
+	if err := s.saveConfig(cfg); err != nil {
+		s.log.Warn("failed to persist the sealed local Noise private key",
+			"device", device.Name, "error", err)
+		return
+	}
+	s.log.Info("migrated local Noise private key from legacy plaintext to sealed storage", "device", device.Name)
+}
+
 // Connect establishes a real BLE connection and Noise handshake to the named paired device.
 func (s *PhoneService) Connect(name string) error {
 	if name == "" {
@@ -912,16 +1094,23 @@ func (s *PhoneService) Connect(name string) error {
 		return ErrPhoneMissingKeys
 	}
 
-	// Decode saved Noise keys.
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
+	// Unseal the saved local Noise private key (#42). This accepts both the
+	// current barrier-sealed form and a legacy plaintext-base64 record left
+	// over from before #42, so an existing pairing keeps connecting; a sealed
+	// record with no barrier open is refused rather than left unreadable.
+	wasLegacy := !pairing.IsSealedNoiseKey(device.LocalNoisePrivateKey)
+	localPrivateKey, err := pairing.UnsealLocalNoiseKey(s.noiseKeyBarrier(), device.LocalNoisePrivateKey)
 	if err != nil {
-		s.log.Error("invalid local noise key", "device", name, "error", err)
+		s.log.Error("failed to unseal local noise key", "device", name, "error", err)
+		if errors.Is(err, pairing.ErrNoiseKeyUnsealBarrierRequired) {
+			return errors.Join(ErrPhoneBarrierRequired, err)
+		}
 		return ErrPhoneMissingKeys
 	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
+	// Destroyed here, at the unseal, not at the LoadStaticKey below: a
+	// decode failure on any other field returns in between, and the raw
+	// scalar would be left sitting in protected memory nothing releases.
+	defer localPrivateKey.Destroy()
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
 		s.log.Error("invalid phone noise key", "device", name, "error", err)
@@ -931,7 +1120,7 @@ func (s *PhoneService) Connect(name string) error {
 	// Reconstruct the local Noise DH key pair. Ownership stays local until it
 	// is published onto the service below; every failure path in between has
 	// to release the protected pages.
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
+	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		s.log.Error("failed to load local static key", "device", name, "error", err)
 		return ErrPhoneMissingKeys
@@ -942,6 +1131,16 @@ func (s *PhoneService) Connect(name string) error {
 			localKey.Destroy()
 		}
 	}()
+
+	// A legacy plaintext record that unsealed successfully is migrated now,
+	// while the key is already in hand: re-sealed under the barrier and
+	// rewritten, so this device's row holds only the sealed form from here
+	// on (#42). Best effort -- with no barrier open there is nothing to seal
+	// into yet, and the record is left as it was for the next call that has
+	// one.
+	if wasLegacy {
+		s.migrateLocalNoiseKey(cfg, device, localKey.Private)
+	}
 
 	// Decode the expected device fingerprint. A stored-but-malformed value is
 	// refused rather than treated as "no fingerprint configured" — see

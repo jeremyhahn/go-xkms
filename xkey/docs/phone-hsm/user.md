@@ -1,6 +1,6 @@
 # Phone as HSM — User Guide
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## What this does
 
@@ -39,6 +39,45 @@ record, and the GUI says so. An enterprise policy can lock that choice closed.
 
 `--force` re-pairs over an existing pairing. It throws the old binding away —
 use it when you mean to, not to make an error go away.
+
+**Your desktop's own pairing key can be protected too, if you set up a
+barrier.** Pairing generates a private key for *this* machine — the
+credential that lets the phone trust your desktop back. If you have set up a
+barrier (`xkey barrier init`, or the desktop GUI's setup wizard), xkey seals
+this key under it the same way it protects everything else under `xkey
+barrier`, and never writes it to disk in the clear. If you have **not** set
+one up, xkey pairs anyway, exactly as it always has, and tells you about it:
+
+```
+xkey barrier init                                            # optional, protects this key
+xkey device pair --barrier-password-file /run/secrets/xkey-barrier
+```
+
+or, with no barrier at all:
+
+```
+$ xkey device pair --device "Pixel-8"
+...
+pairing key stored unencrypted: no barrier is initialized on this host; run `xkey barrier init` to protect it
+```
+
+`device listen` and `device attest-device` behave the same way on read: if a
+barrier exists they open it, and if not they warn and continue. The desktop
+GUI mirrors this too — **Pair** and **Connect** use the barrier when the app
+has one set up (which in the ordinary case just means the app itself is
+unlocked) and fall back to the same warning when it does not.
+
+The one case that **does** refuse: a barrier that exists but is currently
+locked (the app is locked, or the CLI wasn't given a working password). Once
+you have chosen to protect this key, a locked barrier is not treated as
+permission to fall back to writing it unencrypted — see the troubleshooting
+table below.
+
+A device you paired before setting up a barrier, or on a host that still has
+none, keeps working: the first successful `device attest-device` or `device
+listen` against it **after** a barrier exists quietly upgrades its stored
+key to the protected form, after which the file never holds it in the clear
+again.
 
 **Under a sealed enterprise policy.** If your Security Officer sealed the
 device's policy, `xkey device pair` refuses a phone whose attestation cannot be
@@ -161,6 +200,8 @@ to change in the same release, so it is coordinated work rather than a setting.
 | `password` commands fail over the phone | the channel does not carry the vault | expected — use the desktop store |
 | the phone app disconnects when it sleeps | power management | keep it awake for long operations |
 | **stored device fingerprint is not valid hex** | the saved pairing record is corrupt or truncated | re-pair the device; the connection is refused until you do |
+| **pairing key stored unencrypted: no barrier is initialized...** (a warning, not an error) | no barrier exists on this host, so this desktop's own pairing key was written/read in the legacy plaintext form | informational; run `xkey barrier init` if you want it protected |
+| **barrier password required** / **failed to unseal barrier** | a barrier exists but no password (or the wrong one) was supplied; the operation is refused, since a barrier you set up does not fall back to plaintext | `--barrier-password`, `--barrier-password-file`, or `XKEY_BARRIER_PASSWORD` |
 
 Those two rows are security events rather than nuisances, and the key mismatch
 is the more serious of the two: it means the other end could not prove it holds

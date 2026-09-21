@@ -206,7 +206,7 @@ func TestResolvePairingPolicy_EmptyStdinIsReported(t *testing.T) {
 // carry NOTHING about the device's hardware, not a zeroed version of it.
 func TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone(t *testing.T) {
 	device := newPairedDeviceRecord("pixel", "AA:BB:CC:DD:EE:FF",
-		[]byte("remote-public"), []byte("local-private"), nil)
+		[]byte("remote-public"), "sealed-local-private", nil)
 
 	require.Equal(t, "pixel", device.Name)
 	require.Equal(t, "AA:BB:CC:DD:EE:FF", device.Address)
@@ -232,7 +232,7 @@ func TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone(t *testin
 func TestNewPairedDeviceRecord_RecordsAVerifiedAttestation(t *testing.T) {
 	when := time.Now().UTC().Truncate(time.Second)
 	device := newPairedDeviceRecord("pixel", "AA:BB:CC:DD:EE:FF",
-		[]byte("remote-public"), []byte("local-private"),
+		[]byte("remote-public"), "sealed-local-private",
 		&DeviceAttestationResult{
 			AttestationTime:   when,
 			SecurityLevel:     "strongbox",

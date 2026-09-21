@@ -527,7 +527,110 @@ to be duplicated per surface as `attestationBinding()` and
 `recordVerifiedAttestation`/`recordDeviceAttestation`. They live in
 `pkg/attestation` rather than as methods on `pairing.PairedDevice` because
 `pkg/attestation` already imports `pkg/pairing` to build `DeviceBinding`'s
-contents (#95, #129); the reverse import would cycle.
+contents (#95, #129); the reverse import would cycle. Neither function reads
+or writes `LocalNoisePrivateKey`, sealed or not (#42) — the binding is built
+from the public identity fields only.
+
+### `LocalNoisePrivateKey` custody — sealed, never plaintext (#42)
+
+The field holds one of two forms, told apart by a prefix and nothing else:
+
+```go
+const NoiseKeySealedPrefix = "xkey-noise-sealed-v1:"  // xkey/pkg/pairing/noise_key_seal.go
+
+func IsSealedNoiseKey(stored string) bool
+func SealLocalNoiseKey(barrier NoiseKeyBarrier, priv []byte) (string, error)
+func UnsealLocalNoiseKey(barrier NoiseKeyBarrier, stored string) (*secure.Buffer, error)
+
+type NoiseKeyBarrier interface {
+	Encrypt(plaintext []byte) ([]byte, error)
+	Decrypt(ciphertext []byte) ([]byte, error)
+}
+```
+
+- **Sealed** (current): `NoiseKeySealedPrefix` + base64 of the private scalar
+  encrypted under the barrier's master key. `*sdk/go.Barrier` (go-qrdb's
+  `StorageBarrier`) satisfies `NoiseKeyBarrier` directly — the same two
+  methods its own `Put`/`Get` call to encrypt a KV entry at rest, so a key
+  sealed this way is protected exactly like every other secret this stack
+  keeps under the barrier, without going through the KV-store surface (the
+  private scalar stays embedded in the `devices.yaml` record rather than
+  becoming its own storage entry).
+- **Legacy** (pre-#42): raw base64 of the private scalar, no prefix.
+  `UnsealLocalNoiseKey` still reads this form, with `barrier == nil`
+  accepted, so an existing pairing is not broken by the fix that stops
+  writing it.
+
+`UnsealLocalNoiseKey` refuses (`ErrNoiseKeyUnsealBarrierRequired`) a sealed
+value handed a nil barrier — there is no fallback to reading it as plaintext.
+The unsealed material never exists as a Go string: `SealLocalNoiseKey` takes
+the raw scalar as `[]byte` (typically `phone.StaticKey.Private`, itself
+memguard-backed) and `UnsealLocalNoiseKey` returns an `sdk/go/secure.Buffer`,
+mlocked and wiped on `Destroy`.
+
+#### The barrier-absent case degrades, it does not refuse (owner ruling, recorded on #42)
+
+`SealLocalNoiseKey`/`UnsealLocalNoiseKey` above are about one *value*: given a
+barrier or not, seal or read accordingly, refuse a sealed value with no
+barrier. What a **whole host** does when it has never run `xkey barrier init`
+is a policy question one level up, decided per surface:
+
+- **No barrier initialized on this host at all**: never refused. `Pair`
+  writes the legacy plaintext form and logs `slog.Warn` once, pointing at
+  `xkey barrier init`; `Connect`/`device listen`/`device attest-device` read
+  a (necessarily legacy) record the same way, with the same warning, and
+  skip migration since there is nowhere yet to seal into.
+- **A barrier exists but cannot currently be opened** (sealed — an app lock
+  — or the CLI wasn't given a working password): still refused
+  (`ErrPhoneBarrierRequired` / `ErrDeviceBarrierUnsealFailed`). The operator
+  chose to protect this key by initializing a barrier; a locked one is not
+  consent to fall back to plaintext.
+
+The GUI's `PhoneService.resolveNoiseKeyBarrier()` and the CLI's
+`openDeviceBarrier` are what draw this line, each returning a three-way
+result — open, none-configured, or exists-but-unavailable — rather than the
+two-way "have a barrier or don't" that `SealLocalNoiseKey` itself sees:
+
+```go
+// pkg/gui/services/phone_service.go
+func (s *PhoneService) resolveNoiseKeyBarrier() (barrier pairing.NoiseKeyBarrier, noBarrierConfigured bool)
+func (s *PhoneService) sealOrWarnLocalNoiseKey(deviceName string, priv []byte) (string, error)
+
+// cmd/xkey/cmd/device_barrier.go
+func openDeviceBarrier(cmd *cobra.Command) (pairing.NoiseKeyBarrier, func(), error)
+func sealOrWarnLocalNoiseKey(logger *slog.Logger, deviceName string, barrier pairing.NoiseKeyBarrier, priv []byte) (string, error)
+```
+
+`resolveNoiseKeyBarrier`/`openDeviceBarrier` tell "none configured" apart from
+"exists but sealed" using `BarrierService.IsInitialized()` (root key present
+on disk, regardless of seal state) and `IsUnsealed()` (root key present *and*
+currently open) together — `GetBarrier()` alone cannot: `BarrierService`
+keeps its underlying `*xkms.Barrier` object across a `Seal()` call so a later
+`Unseal()` can reuse it, so `GetBarrier()` stays non-nil for a sealed barrier
+too. `noiseKeyBarrier()` (the read-only accessor `Connect` uses) checks
+`IsUnsealed()` for the same reason, even though it does not need to
+distinguish *why* a barrier is unavailable the way `resolveNoiseKeyBarrier`
+does.
+
+**Custody per surface:**
+
+| Surface | Where | Barrier source | No barrier configured | Exists but sealed |
+|---|---|---|---|---|
+| GUI `Pair`/`Connect` | `pkg/gui/services/phone_service.go` | `PhoneService.SetBarrierService`, re-resolved on every use so an app lock/unlock is honoured | legacy plaintext + one `slog.Warn` | refuses (`ErrPhoneBarrierRequired`) |
+| CLI `device pair`, `device listen`, `device attest-device` | `cmd/xkey/cmd/device_barrier.go` (`openDeviceBarrier`) | `--barrier-password`/`--barrier-password-file` flags, then `XKEY_BARRIER_PASSWORD`; resolved before the devices file is even read | legacy plaintext + one `slog.Warn` | refuses (`ErrDeviceBarrierUnsealFailed`) |
+| Every other device-backed command (OATH sync, backup, sharing, re-attest, phone enrollment, FIDO2 phone backend) | `cmd/xkey/cmd/device_session.go` (`unsealDeviceLocalKey`, behind `openDeviceSession`/`newPairedDeviceBackendConfig`) | `XKEY_BARRIER_PASSWORD` only, opened and closed around the one unseal | unaffected — a legacy record already needed no barrier | refuses (only reached for an already-sealed record, which always needs a barrier) |
+
+**Migration** happens the first time a legacy record is successfully used
+*and* a barrier is actually open: the caller re-seals the key with whatever
+barrier it has and rewrites `devices.yaml` (`PhoneService.migrateLocalNoiseKey`,
+`migrateLegacyNoiseKeyAndSave` in `device_barrier.go`, and the inline reseal
+in `device attest-device`), so a device's record holds the sealed form from
+its next successful connect or re-attestation *after a barrier exists*.
+`device listen` migrates but never otherwise saves; the
+OATH/backup/sharing/enrollment/FIDO2 paths read through `unsealDeviceLocalKey`
+without migrating, on the reasoning that GUI `Connect` or the two CLI verbs
+above will do it the first time any of them runs against a host that now has
+a barrier.
 
 ## Test strategy
 

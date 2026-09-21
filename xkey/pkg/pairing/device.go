@@ -46,9 +46,21 @@ type PairedDevice struct {
 	// NoisePublicKey is the phone's Noise static public key (base64 encoded).
 	NoisePublicKey string `yaml:"noise_public_key" json:"noise_public_key"`
 
-	// LocalNoisePrivateKey is our local Noise static private key (base64
-	// encoded). #42 tracks the custody of this key material; this
-	// unification carries the field forward exactly as it persists today.
+	// LocalNoisePrivateKey is our local Noise static private key, at rest
+	// under one of two forms distinguished by NoiseKeySealedPrefix (#42):
+	//
+	//   - Sealed (current): NoiseKeySealedPrefix + base64(barrier
+	//     ciphertext). Written by SealLocalNoiseKey; the private scalar
+	//     never touches disk unencrypted. Reading it back
+	//     (UnsealLocalNoiseKey) requires an unsealed barrier.
+	//   - Legacy plaintext (pre-#42): raw base64 of the private scalar, no
+	//     prefix. UnsealLocalNoiseKey still reads this form -- with no
+	//     barrier needed -- so an existing pairing keeps working; the
+	//     caller reseals and rewrites the record the next time it
+	//     successfully uses the key, and from then on this device's row
+	//     only ever holds the sealed form.
+	//
+	// IsSealedNoiseKey reports which form a stored value is.
 	LocalNoisePrivateKey string `yaml:"local_noise_private_key" json:"local_noise_private_key"`
 
 	// PairedAt is the timestamp when the device was paired.

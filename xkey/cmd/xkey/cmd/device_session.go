@@ -21,9 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -37,6 +40,39 @@ var (
 	// phone's own code and message travel with it.
 	ErrSessionRPC = errors.New("device: the phone refused the request")
 )
+
+// unsealDeviceLocalKey resolves device's local Noise static private key for
+// the surfaces that reach the phone through openDeviceSession or
+// newPairedDeviceBackendConfig rather than through a device command with its
+// own --barrier-password flags (#42): OATH sync, backup, sharing, attest,
+// phone enrollment, and the FIDO2 phone backend.
+//
+// A legacy plaintext record (IsSealedNoiseKey false) is read with no barrier
+// at all -- these surfaces predate #42 and must keep working unattended for
+// an existing pairing with no barrier configured. A sealed record needs the
+// barrier open, so this opens one from XKEY_BARRIER_PASSWORD -- the one
+// source that does not need a *cobra.Command threaded through this whole call
+// graph -- and closes it again immediately: nothing else in these flows needs
+// it once the key is in hand. There is no fallback to reading a sealed record
+// as plaintext: with no password available, UnsealLocalNoiseKey itself
+// refuses via ErrNoiseKeyUnsealBarrierRequired.
+func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Buffer, error) {
+	if !pairing.IsSealedNoiseKey(device.LocalNoisePrivateKey) {
+		return pairing.UnsealLocalNoiseKey(nil, device.LocalNoisePrivateKey)
+	}
+
+	password := os.Getenv("XKEY_BARRIER_PASSWORD")
+	if password == "" {
+		return nil, &SentinelCauseError{Sentinel: ErrSessionKeyDecode, Cause: pairing.ErrNoiseKeyUnsealBarrierRequired}
+	}
+	barrier, closeBarrier, err := openDeviceBarrierWithPassword(password)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrSessionKeyDecode, Cause: err}
+	}
+	defer closeBarrier()
+
+	return pairing.UnsealLocalNoiseKey(barrier, device.LocalNoisePrivateKey)
+}
 
 // deviceSession is a connected, handshaken channel to a paired phone.
 //
@@ -62,15 +98,15 @@ func openDeviceSession(
 	device *PairedDevice,
 	logger *slog.Logger,
 ) (*deviceSession, func(), error) {
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
+	localPrivateKey, err := unsealDeviceLocalKey(device, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: local key: %v", ErrSessionKeyDecode, err)
 	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
+	// Destroyed here, at the unseal, not at the LoadStaticKey below: a
+	// decode failure on any other field returns in between, and the raw
+	// scalar would be left sitting in protected memory nothing releases.
+	defer localPrivateKey.Destroy()
+	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: local key: %v", ErrSessionKeyDecode, err)
 	}
@@ -279,14 +315,14 @@ func newPairedDeviceBackendConfig(
 	timeout time.Duration,
 	logger *slog.Logger,
 ) (*phone.PhoneKeyBackendConfig, error) {
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
+	localPrivateKey, err := unsealDeviceLocalKey(device, logger)
 	if err != nil {
 		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
-	// Wiped at the decode, not at the LoadStaticKey below: a decode failure on
-	// any other field returns in between, and the raw scalar would be left
-	// sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
+	// Destroyed at the unseal, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in protected memory nothing releases.
+	defer localPrivateKey.Destroy()
 
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
@@ -303,7 +339,7 @@ func newPairedDeviceBackendConfig(
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
 	}
 
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
+	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
 	}

@@ -16,9 +16,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -31,8 +34,44 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
+
+// captureDefaultLog temporarily replaces slog's default logger -- what
+// runDevicePair itself logs through -- with one that writes to the returned
+// buffer, and restores the previous default when the test ends.
+func captureDefaultLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &buf
+}
+
+// xorTestBarrier is a minimal in-memory pairing.NoiseKeyBarrier for tests
+// that need to drive the pairing flow's sealing without a real barrier's
+// password and strategy plumbing. It XORs with a fixed key -- reversible,
+// deterministic, and enough to prove the seal wiring without dragging a real
+// qrdb barrier into every pairing test.
+type xorTestBarrier struct{ key byte }
+
+func (b xorTestBarrier) Encrypt(plaintext []byte) ([]byte, error) {
+	return b.xor(plaintext), nil
+}
+
+func (b xorTestBarrier) Decrypt(ciphertext []byte) ([]byte, error) {
+	return b.xor(ciphertext), nil
+}
+
+func (b xorTestBarrier) xor(in []byte) []byte {
+	out := make([]byte, len(in))
+	for i, c := range in {
+		out[i] = c ^ b.key
+	}
+	return out
+}
 
 // fakePairingTransport is the in-memory pairing transport: discovery returns
 // one canned device, connecting is a no-op, and the encrypted channel is the
@@ -119,6 +158,9 @@ func newPairFlow(t *testing.T, phoneCA, trustCA *attesttest.CA, existing *Device
 		loadTrust: func() (*attestation.Trust, error) {
 			return &attestation.Trust{Pool: trustCA.Pool()}, nil
 		},
+		openBarrier: func(*cobra.Command) (pairing.NoiseKeyBarrier, func(), error) {
+			return xorTestBarrier{key: 0x5A}, func() {}, nil
+		},
 	}
 	return flow
 }
@@ -202,5 +244,38 @@ func TestRunDevicePair_SavesAVerifiedAttestationUnderDefaultPolicy(t *testing.T)
 	assert.Equal(t, phone.AttestProtocolV2, record.AttestationProtocolVersion)
 	assert.NotEmpty(t, record.SecurityLevel)
 	assert.False(t, record.LastDeviceAttestationTime.IsZero())
+	require.NoError(t, <-flow.done)
+}
+
+// TestRunDevicePair_NoBarrierConfiguredWritesLegacyFormWithWarning is the
+// #42 owner ruling: a host with no barrier initialized at all pairs exactly
+// as xkey always did before #42 -- the key lands as legacy plaintext base64
+// -- and the only difference is one warning logged, pointing at `xkey
+// barrier init`. This must never be a refusal.
+func TestRunDevicePair_NoBarrierConfiguredWritesLegacyFormWithWarning(t *testing.T) {
+	ca := attesttest.NewCA(t, "Trusted Attestation Root")
+	flow := newPairFlow(t, ca, ca, nil)
+	pairSeams.openBarrier = func(*cobra.Command) (pairing.NoiseKeyBarrier, func(), error) {
+		return nil, func() {}, nil
+	}
+
+	logs := captureDefaultLog(t)
+
+	require.NoError(t, runDevicePair(pairCommand(t), nil))
+
+	require.NotNil(t, flow.saved)
+	require.Len(t, flow.saved.Devices, 1)
+	record := flow.saved.Devices[0]
+
+	assert.False(t, pairing.IsSealedNoiseKey(record.LocalNoisePrivateKey),
+		"with no barrier configured the key must be written in the legacy plaintext form, not refused")
+	require.NotEmpty(t, record.LocalNoisePrivateKey)
+	_, decodeErr := base64.StdEncoding.DecodeString(record.LocalNoisePrivateKey)
+	assert.NoError(t, decodeErr, "the legacy form is plain base64 of the raw private scalar")
+
+	assert.Contains(t, logs.String(), "pairing key stored unencrypted",
+		"exactly one warning must be logged for the operation")
+	assert.Contains(t, logs.String(), "xkey barrier init",
+		"the warning must point the operator at the fix")
 	require.NoError(t, <-flow.done)
 }
