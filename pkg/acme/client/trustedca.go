@@ -248,7 +248,16 @@ func (tca *TrustedCA) KMSService() kms.KMSService {
 
 // RestService returns the ACME REST service.
 // Returns nil if Serve() has not been called.
+//
+// Guarded by tca.mu: Serve constructs and publishes it from its own
+// goroutine, so an unsynchronized read here raced with that write (and,
+// transitively, with every field NewRestService initializes, since nothing
+// established happens-before between the two goroutines) whenever a caller —
+// health checks, admin tooling, or a test driving the service directly —
+// read RestService() while Serve was still starting (#140).
 func (tca *TrustedCA) RestService() handlers.RestServicer {
+	tca.mu.RLock()
+	defer tca.mu.RUnlock()
 	return tca.restService
 }
 
@@ -325,20 +334,23 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
-		AuditLogger:    auditLog,
-		BaseRESTURI:    externalURL,
-		CA:             tca.ca,
-		CAAIdentities:  tca.config.ACME.CAIdentifiers,
-		ChallengeMap:   tca.challengeMap,
-		KMSService:     tca.kmsService,
-		Logger:         tca.logger,
-		StorageFactory: tca.storageFactory,
-		TermsOfService: tca.config.ACME.TermsOfService,
+		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
+		AuditLogger:             auditLog,
+		BaseRESTURI:             externalURL,
+		CA:                      tca.ca,
+		CAAIdentities:           tca.config.ACME.CAIdentifiers,
+		ChallengeMap:            tca.challengeMap,
+		KMSService:              tca.kmsService,
+		Logger:                  tca.logger,
+		StorageFactory:          tca.storageFactory,
+		TermsOfService:          tca.config.ACME.TermsOfService,
 	})
 	if err != nil {
 		return caerrors.InternalServerError("failed to initialize ACME service: %v", err)
 	}
+	tca.mu.Lock()
 	tca.restService = restService
+	tca.mu.Unlock()
 
 	// Initialize Prometheus metrics
 	metrics.Init()

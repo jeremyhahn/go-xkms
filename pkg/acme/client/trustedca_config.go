@@ -89,6 +89,14 @@ type TCAACMEConfig struct {
 
 	// TLS holds TLS configuration (TLS 1.3 enforced by default).
 	TLS TCATLSConfig `yaml:"tls" json:"tls"`
+
+	// AllowLoopbackIdentifier permits an authorization's permanent-identifier
+	// to be the loopback address 127.0.0.1 for enrollment challenges
+	// (enroll-01/endorse-01/device-attest-01), substituting the request's
+	// client IP as the validation target. This supports local development
+	// and testing; it is a development switch and is off by default. See
+	// handlers.Params.AllowLoopbackIdentifier (#140).
+	AllowLoopbackIdentifier bool `yaml:"allow_loopback_identifier" json:"allow_loopback_identifier"`
 }
 
 // TLSConfig holds TLS configuration for HTTPS.

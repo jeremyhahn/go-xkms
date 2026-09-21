@@ -80,6 +80,12 @@ var (
 	// the request URL per RFC 8555 Section 6.3
 	ErrJWSURLMismatch = errors.New("handlers: JWS url header does not match request URL")
 
+	// ErrLoopbackIdentifierNotAllowed is returned when an enrollment
+	// challenge's permanent-identifier is the loopback address 127.0.0.1 but
+	// the server is not configured to allow it
+	// (acme.enrollment.allow_loopback_identifier).
+	ErrLoopbackIdentifierNotAllowed = errors.New("handlers: loopback identifier not allowed for enrollment challenge")
+
 	// randReader is the random reader used for ID and token generation.
 	// This is a package-level variable to allow testing with mock readers.
 	randReader io.Reader = rand.Reader
@@ -226,6 +232,14 @@ type Params struct {
 	// recommended FedRAMP/PCI posture. Empty preserves default issuance. The CA
 	// must implement ca.IdentityIssuer for this to take effect.
 	ClusterCACN string
+
+	// AllowLoopbackIdentifier permits an authorization's permanent-identifier
+	// to be the loopback address 127.0.0.1 for enrollment challenges
+	// (enroll-01/endorse-01/device-attest-01), substituting the request's
+	// client IP as the validation target. This supports local development
+	// and testing; it is a development switch and is off by default
+	// (acme.enrollment.allow_loopback_identifier).
+	AllowLoopbackIdentifier bool
 }
 
 // CAAValidatorInterface defines the interface for CAA validation.
@@ -236,6 +250,7 @@ type CAAValidatorInterface interface {
 
 // RestService implements the ACME REST service handlers.
 type RestService struct {
+	allowLoopbackIdentifier bool
 	auditLog                audit.AuditLogger
 	baseRESTURI             string
 	ca                      ca.TCGCA
@@ -301,6 +316,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 	}
 
 	return &RestService{
+		allowLoopbackIdentifier: params.AllowLoopbackIdentifier,
 		auditLog:                auditLog,
 		baseRESTURI:             params.BaseRESTURI,
 		ca:                      params.CA,

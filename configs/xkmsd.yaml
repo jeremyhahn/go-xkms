@@ -109,6 +109,7 @@ backends:
   #   enabled: true
   #   vault_url: ""
   #   # Remaining credentials come from the standard Azure environment variables.
+  #   # allow_local_vault_url: false  # dev-only: permits a localhost/127.0.0.1 vault_url
 
   # vault:
   #   enabled: true

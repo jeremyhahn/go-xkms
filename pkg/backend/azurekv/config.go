@@ -48,6 +48,13 @@ type Config struct {
 	// Debug enables debug logging for Azure SDK operations.
 	Debug bool `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
 
+	// AllowLocalVaultURL permits VaultURL to name localhost or 127.0.0.1
+	// instead of an Azure vault domain (*.vault.azure.net and the sovereign
+	// cloud equivalents). This is a development switch for testing against a
+	// local Azure Key Vault emulator or mock and must never be enabled in
+	// production. Off by default: a local vault URL fails Validate.
+	AllowLocalVaultURL bool `yaml:"allow_local_vault_url,omitempty" json:"allow_local_vault_url,omitempty" mapstructure:"allow_local_vault_url"`
+
 	// KeyStorage is the underlying storage for key metadata.
 	// This can be file-based, memory-based, or any implementation
 	// of the storage.Backend interface.
@@ -80,6 +87,13 @@ func (c *Config) Validate() error {
 	// Validate vault URL format
 	if !isValidVaultURL(c.VaultURL) {
 		return &errs.Detail{Err: ErrInvalidVaultURL, Detail: fmt.Sprintf("%s", c.VaultURL)}
+	}
+
+	// A localhost/127.0.0.1 vault URL is only well-formed for local
+	// development against an emulator or mock; it requires an explicit
+	// opt-in so a production configuration can never reach it silently.
+	if isLocalVaultURL(c.VaultURL) && !c.AllowLocalVaultURL {
+		return &errs.Detail{Err: ErrLocalVaultURLNotAllowed, Detail: fmt.Sprintf("%s", c.VaultURL)}
 	}
 
 	// If service principal credentials are provided, all three must be present
@@ -149,8 +163,9 @@ func isValidVaultURL(url string) bool {
 	// Remove protocol
 	url = strings.TrimPrefix(url, "https://")
 
-	// Should contain vault.azure.net or similar Azure domain
-	// Allow localhost for testing
+	// A localhost/127.0.0.1 URL is well-formed; whether it is *permitted*
+	// is a separate policy decision gated by Config.AllowLocalVaultURL in
+	// Validate.
 	if strings.HasPrefix(url, "localhost") || strings.HasPrefix(url, "127.0.0.1") {
 		return true
 	}
@@ -164,4 +179,13 @@ func isValidVaultURL(url string) bool {
 	}
 
 	return true
+}
+
+// isLocalVaultURL reports whether url names the local development endpoint
+// (localhost or 127.0.0.1) rather than an Azure-hosted vault domain. Callers
+// use this to gate the endpoint behind Config.AllowLocalVaultURL; it does
+// not itself judge whether the URL is well-formed (see isValidVaultURL).
+func isLocalVaultURL(url string) bool {
+	url = strings.TrimPrefix(url, "https://")
+	return strings.HasPrefix(url, "localhost") || strings.HasPrefix(url, "127.0.0.1")
 }

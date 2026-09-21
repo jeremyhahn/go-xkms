@@ -230,6 +230,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// ACME handlers rely on the TCG extensions (IssueEKCertificate,
 	// SignTCGCSRIDevID, ...) exposed by *pkg/ca.CA.
 	service, err := handlers.NewRestService(&handlers.Params{
+		AllowLoopbackIdentifier: acmeCfg.Enrollment.AllowLoopbackIdentifier,
 		AuditLogger:             auditLogger,
 		BaseRESTURI:             acmeCfg.ExternalURL,
 		CA:                      tcgCA,

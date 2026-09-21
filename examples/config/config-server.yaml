@@ -107,6 +107,7 @@ backends:
   #   tenant_id: ${AZURE_TENANT_ID}
   #   client_id: ${AZURE_CLIENT_ID}
   #   client_secret: ${AZURE_CLIENT_SECRET}
+  #   allow_local_vault_url: false  # dev-only: permits a localhost/127.0.0.1 vault_url
 
   # vault:
   #   enabled: true

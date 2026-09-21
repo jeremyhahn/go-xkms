@@ -57,4 +57,10 @@ var (
 	// ErrInvalidKeyID is returned when a key identifier returned by Azure Key
 	// Vault cannot be parsed to extract its version.
 	ErrInvalidKeyID = errors.New("azurekv: invalid key identifier")
+
+	// ErrLocalVaultURLNotAllowed is returned when the vault URL names
+	// localhost or 127.0.0.1 but the configuration does not opt into
+	// AllowLocalVaultURL. Off by default: a production build must not
+	// silently accept a fake vault endpoint.
+	ErrLocalVaultURLNotAllowed = errors.New("azurekv: local vault URL not allowed")
 )

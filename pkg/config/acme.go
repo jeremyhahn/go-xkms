@@ -121,6 +121,24 @@ type ACMEConfig struct {
 	// ACME CA makes. It is on unless the operator turns it off; see
 	// ACMEAuditConfig.
 	Audit ACMEAuditConfig `yaml:"audit"`
+
+	// Enrollment configures behavior specific to TPM-attestation enrollment
+	// challenges (enroll-01/endorse-01/device-attest-01). See
+	// ACMEEnrollmentConfig.
+	Enrollment ACMEEnrollmentConfig `yaml:"enrollment"`
+}
+
+// ACMEEnrollmentConfig configures behavior specific to TPM-attestation
+// enrollment challenges (enroll-01/endorse-01/device-attest-01).
+type ACMEEnrollmentConfig struct {
+	// AllowLoopbackIdentifier permits an authorization's permanent-identifier
+	// to be the loopback address 127.0.0.1, in which case the challenge
+	// handler substitutes the request's client IP (or X-Forwarded-For) as
+	// the validation target instead. This supports local development and
+	// testing, where a device registers with a loopback identifier but the
+	// actual challenge validation must reach the device at its real IP.
+	// Off by default: a loopback identifier is otherwise refused.
+	AllowLoopbackIdentifier bool `yaml:"allow_loopback_identifier"`
 }
 
 // Audit trail defaults. Zero-valued rotation knobs in the configuration select

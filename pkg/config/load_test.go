@@ -447,3 +447,69 @@ func TestLoad_IncludeLocalhostSANs(t *testing.T) {
 		}
 	})
 }
+
+// TestLoad_AzureKVAllowLocalVaultURL pins the defaults-layer value of
+// backends.azurekv.allow_local_vault_url: a file that never mentions the key
+// resolves to false (refusing a local vault URL), a file that sets it true
+// resolves to true, and XKMS_BACKENDS_AZUREKV_ALLOW_LOCAL_VAULT_URL=true
+// wins over a file that says nothing (#140).
+func TestLoad_AzureKVAllowLocalVaultURL(t *testing.T) {
+	t.Run("defaults layer is false", func(t *testing.T) {
+		cfg, err := Load(writeConfigBody(t, "", "  azurekv:\n    enabled: true\n    vault_url: \"https://myvault.vault.azure.net/\"\n"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Backends.AzureKV == nil || cfg.Backends.AzureKV.AllowLocalVaultURL {
+			t.Fatalf("Backends.AzureKV = %+v, want AllowLocalVaultURL false with no file key", cfg.Backends.AzureKV)
+		}
+	})
+
+	t.Run("file enables it", func(t *testing.T) {
+		cfg, err := Load(writeConfigBody(t, "", "  azurekv:\n    enabled: true\n    vault_url: \"https://myvault.vault.azure.net/\"\n    allow_local_vault_url: true\n"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Backends.AzureKV == nil || !cfg.Backends.AzureKV.AllowLocalVaultURL {
+			t.Fatalf("Backends.AzureKV = %+v, want AllowLocalVaultURL true from the file", cfg.Backends.AzureKV)
+		}
+	})
+
+	t.Run("environment enables it over a file that says nothing", func(t *testing.T) {
+		t.Setenv("XKMS_BACKENDS_AZUREKV_ALLOW_LOCAL_VAULT_URL", "true")
+		cfg, err := Load(writeConfigBody(t, "", "  azurekv:\n    enabled: true\n    vault_url: \"https://myvault.vault.azure.net/\"\n"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Backends.AzureKV == nil || !cfg.Backends.AzureKV.AllowLocalVaultURL {
+			t.Fatalf("Backends.AzureKV = %+v, want AllowLocalVaultURL true from the environment", cfg.Backends.AzureKV)
+		}
+	})
+}
+
+// TestLoad_ACMEEnrollmentAllowLoopbackIdentifier pins the defaults-layer
+// value of acme.enrollment.allow_loopback_identifier: a file that never
+// mentions the key resolves to false, one that sets it true resolves to
+// true, and XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER=true wins over a
+// file that says nothing (#140).
+func TestLoad_ACMEEnrollmentAllowLoopbackIdentifier(t *testing.T) {
+	t.Run("defaults layer is false", func(t *testing.T) {
+		cfg, err := Load(writeConfigBody(t, "", ""))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ACME != nil && cfg.ACME.Enrollment.AllowLoopbackIdentifier {
+			t.Fatalf("ACME.Enrollment.AllowLoopbackIdentifier = true, want false with no file key")
+		}
+	})
+
+	t.Run("environment enables it with no acme section in the file", func(t *testing.T) {
+		t.Setenv("XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER", "true")
+		cfg, err := Load(writeConfigBody(t, "", ""))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ACME == nil || !cfg.ACME.Enrollment.AllowLoopbackIdentifier {
+			t.Fatalf("ACME = %+v, want Enrollment.AllowLoopbackIdentifier true from the environment", cfg.ACME)
+		}
+	})
+}

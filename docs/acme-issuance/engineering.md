@@ -172,9 +172,30 @@ cluster:
 `RaftACMEConfigError` (`Field`, `Reason`) renders as
 `cluster: raft_enrollment.acme.<field>: <reason>`.
 
-The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`) carries its
-own advertised URL, `acme.external_url`; `Validate` requires it, and a caller
-that skips validation gets the derived default described under Invariants.
+`acme.enrollment.allow_loopback_identifier` (`ACMEEnrollmentConfig`,
+`pkg/config/acme.go`) gates a development-only substitution in
+`ChallengeHandler` (`pkg/acme/server/handlers/challenge.go`): when an
+enrollment challenge's (`enroll-01`/`endorse-01`/`device-attest-01`)
+permanent-identifier is the literal `127.0.0.1`, the handler can validate
+against the request's client IP (or the first `X-Forwarded-For` entry)
+instead of the identifier, so a device that registered with a loopback
+identifier is still reachable at its real address. Off by default
+(`XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER`): with the key false, a
+loopback identifier is refused with `ErrLoopbackIdentifierNotAllowed` before
+the challenge verifier runs, rather than being silently substituted (#140).
+
+The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`) is a
+separate configuration surface — not built from `pkg/config` and not read
+through viper — so it carries its own copy of the same switch:
+`TCAACMEConfig.AllowLoopbackIdentifier` (`allow_loopback_identifier`), also
+off by default, threaded into `handlers.Params.AllowLoopbackIdentifier` in
+`TrustedCA.Serve`. An embedder configuring `TrustedCAConfig` directly (rather
+than through xkmsd) sets this field itself; there is no `XKMS_`-prefixed
+environment name for it (#140).
+
+The standalone `TrustedCA` also carries its own advertised URL,
+`acme.external_url`; `Validate` requires it, and a caller that skips
+validation gets the derived default described under Invariants.
 The standalone client's browser UI is told the origin the API is reachable at
 by `serve.api_base_url` (`--api-base-url`, `ACME_CLIENT_SERVE_API_BASE_URL`),
 derived from `serve.addr` when empty. The UI appends `/api/v1` and the

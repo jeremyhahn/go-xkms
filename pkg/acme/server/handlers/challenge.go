@@ -30,6 +30,11 @@ import (
 
 const challengeNonceSize = 16
 
+// loopbackIdentifier is the permanent-identifier value that, for enrollment
+// challenges, is eligible for substitution with the request's client IP when
+// acme.enrollment.allow_loopback_identifier is enabled.
+const loopbackIdentifier = "127.0.0.1"
+
 func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Debug("ChallengeHandler", "method", r.Method, "url", r.URL)
@@ -212,35 +217,46 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// For enrollment challenges with permanent-identifier, we need the client's IP or hostname
 		challengeDomain := authz.Identifier.Value
+		loopbackRefused := false
 
 		if authz.Identifier.Type == common.AuthzTypePermanentIdentifier &&
 			isEnrollXChallenge(challenge.Type) {
-			// Only use client IP when identifier is localhost (127.0.0.1)
-			// This supports local development/testing where the device registers with localhost
-			// but the actual challenge validation needs to reach the device at its real IP
-			if authz.Identifier.Value == "127.0.0.1" {
-				// Extract the client IP from the request
-				clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
-				if err != nil {
-					// If SplitHostPort fails, RemoteAddr might just be the IP
-					clientIP = r.RemoteAddr
-				}
-				// Check for X-Forwarded-For header if behind a proxy
-				if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-					// Use the first IP in the chain
-					ips := strings.Split(xff, ",")
-					if len(ips) > 0 {
-						clientIP = strings.TrimSpace(ips[0])
+			// Only use client IP when identifier is loopback (127.0.0.1)
+			// This supports local development/testing where the device registers with the
+			// loopback address but the actual challenge validation needs to reach the
+			// device at its real IP. Gated by acme.enrollment.allow_loopback_identifier
+			// (default false): a production deployment must refuse the substitution.
+			if authz.Identifier.Value == loopbackIdentifier {
+				if !s.allowLoopbackIdentifier {
+					loopbackRefused = true
+					s.logger.Warn("enrollment challenge refused: loopback identifier requires acme.enrollment.allow_loopback_identifier",
+						"identifierValue", authz.Identifier.Value,
+						"remoteAddr", r.RemoteAddr,
+						"challengeType", challenge.Type)
+				} else {
+					// Extract the client IP from the request
+					clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+					if err != nil {
+						// If SplitHostPort fails, RemoteAddr might just be the IP
+						clientIP = r.RemoteAddr
 					}
-				}
-				challengeDomain = clientIP
+					// Check for X-Forwarded-For header if behind a proxy
+					if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+						// Use the first IP in the chain
+						ips := strings.Split(xff, ",")
+						if len(ips) > 0 {
+							clientIP = strings.TrimSpace(ips[0])
+						}
+					}
+					challengeDomain = clientIP
 
-				s.logger.Info("Processing enrollment challenge with localhost override",
-					"clientIP", clientIP,
-					"remoteAddr", r.RemoteAddr,
-					"identifierValue", authz.Identifier.Value,
-					"challengeDomain", challengeDomain,
-					"challengeType", challenge.Type)
+					s.logger.Info("Processing enrollment challenge with loopback override",
+						"clientIP", clientIP,
+						"remoteAddr", r.RemoteAddr,
+						"identifierValue", authz.Identifier.Value,
+						"challengeDomain", challengeDomain,
+						"challengeType", challenge.Type)
+				}
 			} else {
 				s.logger.Info("Processing enrollment challenge",
 					"identifierValue", authz.Identifier.Value,
@@ -249,28 +265,33 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Get DNS resolver - use default if not configured
-		var resolver *net.Resolver
-		if resolver == nil {
-			resolver = net.DefaultResolver
-		}
-
-		if err := challengeVerifierFunc(
-			resolver,
-			s.ca,
-			challengeDomain,
-			fmt.Sprintf("%d", challengePort),
-			challenge.Token,
-			keyAuth); err != nil {
-
-			s.logger.Warn(
-				"challenge verification failed",
-				slog.String("error", err.Error()),
-				slog.String("challenge", challenge.Type))
+		if loopbackRefused {
 			challenge.Status = common.StatusInvalid
-			challenge.Error = common.IncorrectResponse(err.Error())
+			challenge.Error = common.Unauthorized(ErrLoopbackIdentifierNotAllowed.Error())
 		} else {
-			validationSuccessful = true
+			// Get DNS resolver - use default if not configured
+			var resolver *net.Resolver
+			if resolver == nil {
+				resolver = net.DefaultResolver
+			}
+
+			if err := challengeVerifierFunc(
+				resolver,
+				s.ca,
+				challengeDomain,
+				fmt.Sprintf("%d", challengePort),
+				challenge.Token,
+				keyAuth); err != nil {
+
+				s.logger.Warn(
+					"challenge verification failed",
+					slog.String("error", err.Error()),
+					slog.String("challenge", challenge.Type))
+				challenge.Status = common.StatusInvalid
+				challenge.Error = common.IncorrectResponse(err.Error())
+			} else {
+				validationSuccessful = true
+			}
 		}
 	}
 

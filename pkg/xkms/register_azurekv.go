@@ -22,7 +22,10 @@
 package xkms
 
 import (
+	"fmt"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -39,6 +42,11 @@ func init() {
 //   - "tenant_id" (string): Azure AD tenant ID (optional)
 //   - "client_id" (string): Azure service principal client ID (optional)
 //   - "client_secret" (string): Azure service principal secret (optional)
+//   - "allow_local_vault_url" (bool): permit "vault_url" to name localhost
+//     or 127.0.0.1, for local development against an emulator or mock.
+//     Off by default; a value present under this key that is not a bool
+//     fails with ErrInvalidBackendConfigValue rather than being ignored
+//     (#140).
 func newAzureKVKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
 	azConfig := &azurekv.Config{
 		KeyStorage: storage.New(),
@@ -55,6 +63,16 @@ func newAzureKVKeyProvider(config map[string]interface{}) (types.KeyProvider, er
 	}
 	if clientSecret, ok := config["client_secret"].(string); ok {
 		azConfig.ClientSecret = clientSecret
+	}
+	if v, present := config["allow_local_vault_url"]; present {
+		allowLocal, ok := v.(bool)
+		if !ok {
+			return nil, &errs.Detail{
+				Err:    ErrInvalidBackendConfigValue,
+				Detail: fmt.Sprintf("azurekv: allow_local_vault_url must be a bool, got %T", v),
+			}
+		}
+		azConfig.AllowLocalVaultURL = allowLocal
 	}
 
 	return azurekv.NewBackend(azConfig)

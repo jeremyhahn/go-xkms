@@ -32,11 +32,12 @@ func (s *Server) initAzureKVBackend() error {
 	}
 
 	azureBackend, err := azurekv.NewBackend(&azurekv.Config{
-		VaultURL:     s.config.Backends.AzureKV.VaultURL,
-		TenantID:     s.config.Backends.AzureKV.TenantID,
-		ClientID:     s.config.Backends.AzureKV.ClientID,
-		ClientSecret: s.config.Backends.AzureKV.ClientSecret,
-		KeyStorage:   storage,
+		VaultURL:           s.config.Backends.AzureKV.VaultURL,
+		TenantID:           s.config.Backends.AzureKV.TenantID,
+		ClientID:           s.config.Backends.AzureKV.ClientID,
+		ClientSecret:       s.config.Backends.AzureKV.ClientSecret,
+		AllowLocalVaultURL: s.config.Backends.AzureKV.AllowLocalVaultURL,
+		KeyStorage:         storage,
 	})
 	if err != nil {
 		return &ErrBackendCreate{Backend: "Azure Key Vault", Err: err}

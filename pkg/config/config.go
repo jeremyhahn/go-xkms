@@ -1051,6 +1051,12 @@ type AzureKVConfig struct {
 	TenantID     string `yaml:"tenant_id"`
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"`
+
+	// AllowLocalVaultURL permits VaultURL to name localhost or 127.0.0.1
+	// instead of an Azure vault domain, for local development against an
+	// emulator or mock. Off by default; a local vault URL otherwise fails
+	// validation (#140).
+	AllowLocalVaultURL bool `yaml:"allow_local_vault_url"`
 }
 
 // VaultConfig contains HashiCorp Vault backend settings

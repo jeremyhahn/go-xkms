@@ -507,6 +507,7 @@ func TestChallengeHandler_MultipleAuthorizationsOneInvalid(t *testing.T) {
 func TestChallengeHandler_EnrollmentChallengeWithPermanentIdentifier(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
+	service.allowLoopbackIdentifier = true
 
 	// Add mock enrollment challenge verifier
 	// Use "enroll-01-9000" which will be parsed as base="enroll-01", port=9000
@@ -550,6 +551,55 @@ func TestChallengeHandler_EnrollmentChallengeWithPermanentIdentifier(t *testing.
 	require.NoError(t, err)
 
 	assert.Equal(t, common.StatusValid, challengeResp.Status)
+}
+
+// TestChallengeHandler_LoopbackIdentifierRefusedByDefault proves that
+// acme.enrollment.allow_loopback_identifier defaults to false: an enrollment
+// challenge whose permanent-identifier is the loopback address 127.0.0.1 is
+// refused, and the challenge verifier (which would receive the substituted
+// client IP) is never invoked (#140).
+func TestChallengeHandler_LoopbackIdentifierRefusedByDefault(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	verifierCalled := false
+	service.challengeMap["enroll-01-9000"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
+		verifierCalled = true
+		return nil
+	}
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	identifier := entities.ACMEIdentifier{
+		Type:  common.AuthzTypePermanentIdentifier,
+		Value: "127.0.0.1",
+	}
+
+	order := createTestOrderWithIdentifiers(t, service, account, []entities.ACMEIdentifier{identifier})
+	authz := createTestAuthorizationWithChallenges(t, service, account, order, identifier, []string{"enroll-01-9000"})
+
+	url := fmt.Sprintf("%s/acme/challenge/%d", service.baseRESTURI, authz.Challenges[0].ID)
+	req := createJWSRequest(t, service, key, url, map[string]interface{}{}, true, account.ID)
+	req.Header.Set("X-Forwarded-For", "192.168.1.100")
+	req.RemoteAddr = "10.0.0.1:12345"
+
+	resp := httptest.NewRecorder()
+	service.ChallengeHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var challengeResp struct {
+		Status string          `json:"status"`
+		Error  *entities.Error `json:"error"`
+	}
+	err := json.NewDecoder(resp.Body).Decode(&challengeResp)
+	require.NoError(t, err)
+
+	assert.Equal(t, common.StatusInvalid, challengeResp.Status)
+	require.NotNil(t, challengeResp.Error)
+	assert.Contains(t, challengeResp.Error.Detail, ErrLoopbackIdentifierNotAllowed.Error())
+	assert.False(t, verifierCalled, "challenge verifier must not run when the loopback identifier is refused")
 }
 
 func TestParseChallengeAsDynamicPortAssignment_NoPort(t *testing.T) {
@@ -663,6 +713,7 @@ func TestChallengeHandler_DynamicPortAssignment(t *testing.T) {
 func TestChallengeHandler_RemoteAddrWithoutPort(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
+	service.allowLoopbackIdentifier = true
 
 	// Add mock enrollment challenge verifier
 	service.challengeMap["enroll-01-7777"] = func(resolver *net.Resolver, ca common.CertificateAuthority, domain, port, token, keyAuth string) error {
@@ -702,6 +753,7 @@ func TestChallengeHandler_RemoteAddrWithoutPort(t *testing.T) {
 func TestChallengeHandler_XForwardedForMultipleIPs(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
+	service.allowLoopbackIdentifier = true
 
 	// Track which domain was used in validation
 	var capturedDomain string
@@ -738,6 +790,7 @@ func TestChallengeHandler_XForwardedForMultipleIPs(t *testing.T) {
 func TestChallengeHandler_XForwardedForWithLocalhost(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
+	service.allowLoopbackIdentifier = true
 
 	// Track which domain was used in validation
 	var capturedDomain string

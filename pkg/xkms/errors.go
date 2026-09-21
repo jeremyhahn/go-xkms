@@ -36,6 +36,13 @@ var (
 	// ErrNoBackendsConfigured indicates no backends were provided in the configuration.
 	ErrNoBackendsConfigured = errors.New("keystore: at least one backend must be configured")
 
+	// ErrInvalidBackendConfigValue is returned when a per-backend
+	// configuration map (BackendConfigs / AutoConfig) carries a key whose
+	// value cannot be parsed as the type that key requires, e.g. a
+	// non-boolean value for a boolean switch such as
+	// "allow_local_vault_url".
+	ErrInvalidBackendConfigValue = errors.New("keystore: invalid backend configuration value")
+
 	// ErrInvalidBackendName is returned when a configured backend or key
 	// provider is registered under a name the canonical validator refuses.
 	//

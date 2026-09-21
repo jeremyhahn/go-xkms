@@ -143,6 +143,10 @@ type Config struct {
     // Azure AD Client Secret (service principal)
     ClientSecret string
 
+    // Permit a localhost/127.0.0.1 VaultURL for local development
+    // (default: false)
+    AllowLocalVaultURL bool
+
     // Use Managed Identity instead of service principal
     UseManagedIdentity bool
 
@@ -177,6 +181,15 @@ type Config struct {
 - Should be stored in environment variables or Azure Key Vault
 - Never hardcode in source code
 - Not required when using managed identity
+
+**AllowLocalVaultURL** (optional, default: false)
+- Permits `VaultURL` to name `localhost` or `127.0.0.1` instead of an Azure
+  vault domain, for testing against a local Azure Key Vault emulator or mock
+- Off by default: `Validate` refuses a `localhost`/`127.0.0.1` `VaultURL`
+  with `ErrLocalVaultURLNotAllowed` unless this is set
+- Config key: `backends.azurekv.allow_local_vault_url`; environment:
+  `XKMS_BACKENDS_AZUREKV_ALLOW_LOCAL_VAULT_URL`
+- Never enable in a production configuration
 
 **UseManagedIdentity** (optional, default: false)
 - Enable managed identity authentication

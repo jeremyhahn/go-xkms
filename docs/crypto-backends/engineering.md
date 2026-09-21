@@ -98,6 +98,17 @@ can be stricter than the backend's ceiling.
   `_stub.go` reports unavailable at construction; it never degrades to software.
 - **`Close()` releases device state.** PKCS#11 sessions and TPM contexts are
   finite; leaking them exhausts the device, not memory.
+- **A local Azure Key Vault URL requires an explicit opt-in.** `azurekv.Config.VaultURL`
+  naming `localhost`/`127.0.0.1` fails `Validate` with `ErrLocalVaultURLNotAllowed`
+  unless `backends.azurekv.allow_local_vault_url`
+  (`XKMS_BACKENDS_AZUREKV_ALLOW_LOCAL_VAULT_URL`, `azurekv.AllowLocalVaultURL`) is
+  `true`. Off by default: a production configuration cannot reach a fake vault
+  endpoint by accident (#140). The `xkms.AutoInitialize` map-based path
+  (`pkg/xkms/register_azurekv.go`) reads the same switch from its
+  `BackendConfigs[xkms.BackendAzureKV]` map under the key
+  `"allow_local_vault_url"`, parsed as a `bool`; a value present under that
+  key that is not a `bool` fails construction with
+  `xkms.ErrInvalidBackendConfigValue` rather than being silently ignored.
 - **Concurrency.** The composite is concurrency-safe. Individual backends
   serialise where the device requires it; do not assume parallel throughput from
   a single token.
