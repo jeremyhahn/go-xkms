@@ -123,9 +123,6 @@ func TestIsValidEnrollmentMethod(t *testing.T) {
 func TestDefaultClientConfig(t *testing.T) {
 	cfg := DefaultClientConfig()
 
-	if cfg.LocalAddress != "localhost:19443" {
-		t.Errorf("expected local address localhost:19443, got %q", cfg.LocalAddress)
-	}
 	if cfg.ReconnectBackoffMax != 2*time.Minute {
 		t.Errorf("expected reconnect backoff max 2m, got %v", cfg.ReconnectBackoffMax)
 	}

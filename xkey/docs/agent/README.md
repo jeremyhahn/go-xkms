@@ -109,7 +109,6 @@ defer proxy.Stop()
 | `tls_cert_file` | string | | Client certificate path (from enrollment) |
 | `tls_key_file` | string | | Client private key path |
 | `tls_ca_file` | string | | CA certificate for server verification |
-| `local_address` | string | `localhost:19443` | Declared as the local reverse-proxy bind address; the client does not yet read it, so it has no config-file, environment or flag path |
 | `reconnect_backoff_max` | duration | `2m` | Maximum reconnection backoff (0 = no reconnect) |
 
 ## GUI Service Integration

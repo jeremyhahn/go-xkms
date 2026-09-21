@@ -145,10 +145,6 @@ type ClientConfig struct {
 	// TLSCAFile is the path to the CA certificate for server verification.
 	TLSCAFile string `yaml:"tls_ca_file" json:"tls_ca_file" mapstructure:"tls_ca_file"`
 
-	// LocalAddress is the local address for reverse-proxy services
-	// (e.g., "localhost:19443").
-	LocalAddress string `yaml:"local_address" json:"local_address" mapstructure:"local_address"`
-
 	// ReconnectBackoffMax is the maximum backoff duration between reconnect
 	// attempts. Zero means no reconnection.
 	ReconnectBackoffMax time.Duration `yaml:"reconnect_backoff_max" json:"reconnect_backoff_max" mapstructure:"reconnect_backoff_max"`
@@ -157,7 +153,6 @@ type ClientConfig struct {
 // DefaultClientConfig returns a ClientConfig with sensible defaults.
 func DefaultClientConfig() *ClientConfig {
 	return &ClientConfig{
-		LocalAddress:        "localhost:19443",
 		ReconnectBackoffMax: 2 * time.Minute,
 	}
 }

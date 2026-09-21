@@ -30,9 +30,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Client connects to a master xKey instance and exposes its services
-// locally via gRPC reverse proxy. The client uses mTLS with the
-// certificate issued during enrollment. Thread-safe.
+// Client connects to a master xKey instance over mTLS, using the
+// certificate issued during enrollment, and maintains that connection
+// with automatic reconnect. Thread-safe.
 type Client struct {
 	config      *ClientConfig
 	conn        *grpc.ClientConn
