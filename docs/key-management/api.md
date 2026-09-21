@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## How the six transports are shaped
 
@@ -23,7 +23,15 @@ service method on it returns `ErrNotSupported` and `RequestStream` returns
 apply to it.
 
 gRPC, QUIC, Unix and MCP each assert conformance to the full client contract at
-compile time (`var _ transport.Client = (*Transport)(nil)`).
+compile time (`var _ transport.Client = (*Transport)(nil)`). MCP's `FIDO2Service`
+methods (`BeginRegistration`, `FinishRegistration`, `BeginAuthentication`,
+`FinishAuthentication`) satisfy that contract but are a deliberate, permanent
+exclusion rather than a real implementation: an MCP tool-call surface is
+agent-facing and must not mint sessions or enrol credentials, so those four
+methods always return the typed `pkg/api/transport/mcp.ErrIdentityCeremonyExcluded`
+(issue #193). See [`../webauthn/api.md`](../webauthn/api.md) §Capability matrix
+for the full rationale and the capability-discovery mechanism
+(`pkg/api/mcp.ModuleMethods` never lists a tool for these methods).
 
 REST authorization is data: every route carries a `RouteSpec` with a
 `RouteAuth` classification (`RouteAuthPublic`, `RouteAuthSession`,

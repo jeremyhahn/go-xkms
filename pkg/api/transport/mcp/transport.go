@@ -22,6 +22,13 @@
 // them. The tool's result is a single JSON text content item; tool-level
 // failures come back as an MCP tool error (IsError=true with a text
 // message).
+//
+// WebAuthn registration and authentication are a named exclusion from this
+// transport, not a gap awaiting an MCP tool: an agent tool-call surface must
+// not mint sessions or enrol credentials, since MCP holds no
+// identity-ceremony state of its own. Session minting and credential
+// enrolment stay on operator-facing transports (REST, gRPC). See
+// ErrIdentityCeremonyExcluded.
 package mcp
 
 import (
@@ -56,6 +63,14 @@ var (
 	ErrNotSupported = errors.New("operation not supported by this protocol")
 	// ErrConnectionFailed is returned when a connection fails.
 	ErrConnectionFailed = errors.New("connection failed")
+	// ErrIdentityCeremonyExcluded is returned by BeginRegistration,
+	// FinishRegistration, BeginAuthentication, and FinishAuthentication.
+	// It is a deliberate, permanent exclusion (issue #193), not a
+	// transitional stub: an agent tool-call surface must not mint sessions
+	// or enrol credentials, and MCP holds no identity-ceremony state to
+	// correlate a Begin call with its matching Finish call. Session minting
+	// and credential enrolment stay on operator-facing transports.
+	ErrIdentityCeremonyExcluded = errors.New("mcp: WebAuthn registration and authentication are excluded from the MCP transport by design; use the REST or gRPC transport")
 )
 
 // RPCError is a typed error for a failed MCP tool call: either a tool-level
@@ -1290,25 +1305,36 @@ func (t *Transport) CanSeal(ctx context.Context, backend string) (*transport.Can
 }
 
 // WebAuthn/FIDO2 Operations
+//
+// These four methods are a named exclusion, not an unimplemented tool: the
+// MCP transport is an agent-facing tool-call surface, and WebAuthn
+// registration and authentication mint sessions and enrol credentials — an
+// identity ceremony that must stay on operator-facing transports (REST,
+// gRPC). They always fail with ErrIdentityCeremonyExcluded; see that error
+// and the package comment for the rationale.
 
-// BeginRegistration begins a WebAuthn registration flow.
+// BeginRegistration is excluded from the MCP transport by design; see
+// ErrIdentityCeremonyExcluded. It always returns ErrIdentityCeremonyExcluded.
 func (t *Transport) BeginRegistration(ctx context.Context, _ *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
-	return nil, ErrNotSupported
+	return nil, ErrIdentityCeremonyExcluded
 }
 
-// FinishRegistration completes a WebAuthn registration flow.
+// FinishRegistration is excluded from the MCP transport by design; see
+// ErrIdentityCeremonyExcluded. It always returns ErrIdentityCeremonyExcluded.
 func (t *Transport) FinishRegistration(ctx context.Context, _ *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
-	return nil, ErrNotSupported
+	return nil, ErrIdentityCeremonyExcluded
 }
 
-// BeginAuthentication begins a WebAuthn authentication flow.
+// BeginAuthentication is excluded from the MCP transport by design; see
+// ErrIdentityCeremonyExcluded. It always returns ErrIdentityCeremonyExcluded.
 func (t *Transport) BeginAuthentication(ctx context.Context, _ *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
-	return nil, ErrNotSupported
+	return nil, ErrIdentityCeremonyExcluded
 }
 
-// FinishAuthentication completes a WebAuthn authentication flow.
+// FinishAuthentication is excluded from the MCP transport by design; see
+// ErrIdentityCeremonyExcluded. It always returns ErrIdentityCeremonyExcluded.
 func (t *Transport) FinishAuthentication(ctx context.Context, _ *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
-	return nil, ErrNotSupported
+	return nil, ErrIdentityCeremonyExcluded
 }
 
 // CA Operations

@@ -157,6 +157,17 @@ failure.
 uniform 401 so a caller cannot distinguish "no such user" from "wrong
 authenticator". The distinction stays in the logs.
 
+**MCP transport exclusion (#193).** `pkg/api/transport/mcp.Transport`'s
+`BeginRegistration`, `FinishRegistration`, `BeginAuthentication`, and
+`FinishAuthentication` always return the typed
+`pkg/api/transport/mcp.ErrIdentityCeremonyExcluded`, re-exported unchanged as
+`sdk/go/transport/mcp.ErrIdentityCeremonyExcluded`. This is a named,
+permanent exclusion rather than an unimplemented tool: an MCP tool-call
+surface is agent-facing and must not mint sessions or enrol credentials.
+`pkg/api/mcp.ModuleMethods`, the capability surface a client can query
+without calling and failing, never lists a tool for these four methods
+either — see [api.md](api.md) §Capability matrix.
+
 **Not-found is decided by type, never by text (#183).** The qrdb-backed
 stores map a missing record to `ErrUserNotFound` / `ErrCredentialNotFound`
 only when the SDK returns its typed not-found: `*transport.UserNotFoundError`

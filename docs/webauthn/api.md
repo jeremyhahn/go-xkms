@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — API
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -16,21 +16,31 @@ unauthenticated — WebAuthn is the auth mechanism.**
 
 | Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded (`FIDO2Service.`) | Auth |
 |---|---|---|---|---|---|---|
-| Begin registration | `POST /api/v1/webauthn/registration/begin` | `BeginRegistration` | same as REST | **MISSING — docs/13** | `BeginRegistration` | public |
-| Finish registration | `POST /api/v1/webauthn/registration/finish` | `FinishRegistration` | same as REST | **MISSING — docs/13** | `FinishRegistration` | public |
+| Begin registration | `POST /api/v1/webauthn/registration/begin` | `BeginRegistration` | same as REST | **Excluded (#193)** | `BeginRegistration` | public |
+| Finish registration | `POST /api/v1/webauthn/registration/finish` | `FinishRegistration` | same as REST | **Excluded (#193)** | `FinishRegistration` | public |
 | Registration status | `GET /api/v1/webauthn/registration/status` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | `Service.IsRegistered` (in-process) | public |
-| Begin login | `POST /api/v1/webauthn/login/begin` | `BeginAuthentication` | same as REST | **MISSING — docs/13** | `BeginAuthentication` | public |
-| Finish login | `POST /api/v1/webauthn/login/finish` | `FinishAuthentication` | same as REST | **MISSING — docs/13** | `FinishAuthentication` | public |
+| Begin login | `POST /api/v1/webauthn/login/begin` | `BeginAuthentication` | same as REST | **Excluded (#193)** | `BeginAuthentication` | public |
+| Finish login | `POST /api/v1/webauthn/login/finish` | `FinishAuthentication` | same as REST | **Excluded (#193)** | `FinishAuthentication` | public |
 | SDK begin registration | `POST /api/v1/webauthn/sdk/registration/begin` | — | same as REST | — | — | public |
 | SDK finish registration | `POST /api/v1/webauthn/sdk/registration/finish` | — | same as REST | — | — | public |
 | SDK begin authentication | `POST /api/v1/webauthn/sdk/authentication/begin` | — | same as REST | — | — | public |
 | SDK finish authentication | `POST /api/v1/webauthn/sdk/authentication/finish` | — | same as REST | — | — | public |
 
-**MCP carries none of the WebAuthn ceremony.** That is the largest single
-transport gap in this feature and it is recorded rather than omitted. It is
-arguably defensible — an MCP tool server is not a user-facing login surface —
-but it is a tier-1 capability, so the absence is debt with an owner, not a
-design statement.
+**MCP carries none of the WebAuthn ceremony, and it never will.** Owner
+ruling 2026-09-21 (issue #193, option C) settled this as a named exclusion,
+not the transport gap this table used to record it as: an MCP tool-call
+surface is agent-facing, and it must not mint sessions or enrol credentials
+— WebAuthn registration and authentication do both, and MCP holds no
+identity-ceremony state to correlate a Begin call with its matching Finish
+call. Session minting and credential enrolment stay on operator-facing
+transports (REST, gRPC).
+`pkg/api/transport/mcp.Transport.BeginRegistration` / `FinishRegistration` /
+`BeginAuthentication` / `FinishAuthentication` always fail with the typed
+`pkg/api/transport/mcp.ErrIdentityCeremonyExcluded`, and the MCP server's
+capability surface (`pkg/api/mcp.ModuleMethods`) never lists a tool for
+them, so a client can discover the exclusion without calling and failing.
+Registration status remains real, unconverted debt (docs/13) — it is not
+part of this exclusion.
 
 The `/sdk/...` variants are the programmatic ceremony for non-browser clients
 (`pkg/webauthn/client`, the xkey virtual authenticator). They exist only on the

@@ -522,26 +522,26 @@ func TestCanSeal_Connected(t *testing.T) {
 	assert.True(t, resp.CanSeal)
 }
 
-// --- WebAuthn (not supported) ---
+// --- WebAuthn (excluded by design, issue #193) ---
 
-func TestBeginRegistration_NotSupported(t *testing.T) {
+func TestBeginRegistration_ExcludedByDesign(t *testing.T) {
 	_, err := (&Transport{}).BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrIdentityCeremonyExcluded)
 }
 
-func TestFinishRegistration_NotSupported(t *testing.T) {
+func TestFinishRegistration_ExcludedByDesign(t *testing.T) {
 	_, err := (&Transport{}).FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrIdentityCeremonyExcluded)
 }
 
-func TestBeginAuthentication_NotSupported(t *testing.T) {
+func TestBeginAuthentication_ExcludedByDesign(t *testing.T) {
 	_, err := (&Transport{}).BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrIdentityCeremonyExcluded)
 }
 
-func TestFinishAuthentication_NotSupported(t *testing.T) {
+func TestFinishAuthentication_ExcludedByDesign(t *testing.T) {
 	_, err := (&Transport{}).FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrIdentityCeremonyExcluded)
 }
 
 // --- CA Service ---

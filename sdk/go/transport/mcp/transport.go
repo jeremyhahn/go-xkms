@@ -26,6 +26,12 @@ var (
 	ErrNotConnected     = pkgmcp.ErrNotConnected
 	ErrNotSupported     = pkgmcp.ErrNotSupported
 	ErrConnectionFailed = pkgmcp.ErrConnectionFailed
+
+	// ErrIdentityCeremonyExcluded is returned by BeginRegistration,
+	// FinishRegistration, BeginAuthentication, and FinishAuthentication:
+	// WebAuthn registration and authentication are a named exclusion from
+	// the MCP transport by design (issue #193), not an unimplemented tool.
+	ErrIdentityCeremonyExcluded = pkgmcp.ErrIdentityCeremonyExcluded
 )
 
 // Typed error re-exports.

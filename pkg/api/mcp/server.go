@@ -259,6 +259,16 @@ type rpcHandler func(s *Server, ctx context.Context, req *JSONRPCRequest) (inter
 
 // rpcMethodHandlers maps every supported JSON-RPC method to its handler for
 // O(1) dispatch. It is built once at package initialization.
+//
+// WebAuthn/FIDO2 registration and authentication (transport.FIDO2Servicer:
+// BeginRegistration, FinishRegistration, BeginAuthentication,
+// FinishAuthentication) have no entry here and never will: they are a named
+// exclusion from the MCP surface (issue #193), not a gap. An agent tool-call
+// surface must not mint sessions or enrol credentials, and this table is
+// also ModuleMethods' source of tool names for capability discovery, so the
+// absence here is what keeps those ceremonies off the advertised tool list
+// as well as off the dispatcher. See
+// pkg/api/transport/mcp.ErrIdentityCeremonyExcluded and docs/webauthn/api.md.
 var rpcMethodHandlers = map[string]rpcHandler{
 	// Health
 	"health": (*Server).handleHealth,

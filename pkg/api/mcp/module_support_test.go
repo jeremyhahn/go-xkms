@@ -73,6 +73,44 @@ func TestModuleMethods_Surface(t *testing.T) {
 	assert.Equal(t, "xkms_frost_signRound", frost.Tool)
 }
 
+// TestModuleMethods_ExcludesWebAuthn proves the capability surface a client
+// can discover without calling and failing (ModuleMethods) carries no
+// WebAuthn/FIDO2 registration or authentication tool: that ceremony is a
+// named exclusion from the MCP transport (issue #193), not an unlisted
+// method a client could stumble onto and get ErrIdentityCeremonyExcluded
+// from. See pkg/api/transport/mcp.ErrIdentityCeremonyExcluded.
+func TestModuleMethods_ExcludesWebAuthn(t *testing.T) {
+	specs := ModuleMethods()
+	require.NotEmpty(t, specs)
+
+	excludedTools := []string{
+		"xkms_beginRegistration",
+		"xkms_finishRegistration",
+		"xkms_beginAuthentication",
+		"xkms_finishAuthentication",
+	}
+	webauthnPattern := regexp.MustCompile(`(?i)webauthn|registration|authentication`)
+	for _, spec := range specs {
+		for _, excluded := range excludedTools {
+			assert.NotEqual(t, excluded, spec.Tool)
+		}
+		assert.NotRegexp(t, webauthnPattern, spec.Method,
+			"method %s (tool %s) looks like a WebAuthn ceremony method; "+
+				"WebAuthn is a named exclusion from the MCP transport, not a tool",
+			spec.Method, spec.Tool)
+	}
+
+	for _, method := range []string{
+		"webauthn.beginRegistration",
+		"webauthn.finishRegistration",
+		"webauthn.beginAuthentication",
+		"webauthn.finishAuthentication",
+	} {
+		_, dispatchable := rpcMethodHandlers[method]
+		assert.False(t, dispatchable, "WebAuthn method %s must not be dispatchable over MCP", method)
+	}
+}
+
 // TestInvokeMethod_HealthAndUnknown proves the connectionless dispatch path
 // serves a real method and answers a typed method-not-found error.
 func TestInvokeMethod_HealthAndUnknown(t *testing.T) {
