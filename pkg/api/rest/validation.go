@@ -15,7 +15,6 @@ package rest
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -37,25 +36,6 @@ import (
 // here.
 func ValidateKeyID(keyID string) error {
 	return validation.ValidateKeyID(keyID)
-}
-
-// ValidateBackendName checks if a backend name is valid.
-// Backend names should be simple identifiers without special characters.
-func ValidateBackendName(backend string) error {
-	if backend == "" {
-		return &errs.Message{Msg: "backend name cannot be empty"}
-	}
-
-	// Backend names should only contain alphanumeric and hyphens
-	if !regexp.MustCompile(`^[a-z0-9\-]+$`).MatchString(backend) {
-		return &errs.Message{Msg: "backend name contains invalid characters (allowed: a-z, 0-9, -)"}
-	}
-
-	if len(backend) > 64 {
-		return &errs.Message{Msg: "backend name too long (max 64 characters)"}
-	}
-
-	return nil
 }
 
 // SanitizeString removes potentially dangerous characters from a string.
@@ -84,7 +64,7 @@ func ValidateAndGetBackend(backendName string) (interface{}, error) {
 		return nil, &errs.Message{Msg: "backend name cannot be empty"}
 	}
 
-	if err := ValidateBackendName(backendName); err != nil {
+	if err := validation.ValidateBackendName(backendName); err != nil {
 		return nil, &errs.Wrapped{Msg: "invalid backend", Err: err}
 	}
 
@@ -117,7 +97,7 @@ func ValidateURLParam(param string, paramName string) error {
 	case "id", "keyID":
 		return ValidateKeyID(param)
 	case "backend", "backendID":
-		return ValidateBackendName(param)
+		return validation.ValidateBackendName(param)
 	}
 
 	// Generic validation for other params

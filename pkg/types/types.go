@@ -956,9 +956,44 @@ type KeyAttributes struct {
 	// SignatureAlgorithm specifies the signature algorithm to use
 	SignatureAlgorithm x509.SignatureAlgorithm
 
-	// StoreType specifies the backend storage type (e.g., "software", "tpm2", "pkcs11").
-	// This is both the storage type and the backend name used for registry lookup.
+	// StoreType labels the kind of backend that holds this key (e.g.,
+	// "software", "tpm2", "pkcs11"), reported by the resolved backend's own
+	// Type(). It is derived, not addressable: two backends of the same kind
+	// (two PKCS#11 tokens, "token-a" and "token-b") report the same
+	// StoreType and are told apart only by Backend.
+	//
+	// StoreType is a segment of KeyAttributes.ID(), so changing how it is
+	// populated must not change ID() for any key that already exists: every
+	// backend registered under a name that is also a store-type keyword
+	// (the only shape that existed before the Backend field did) reports
+	// that same keyword as its Type(), so ID() is unaffected for those. A
+	// backend registered under a non-keyword name reports its real kind
+	// here instead of the "unknown" a name-keyed lookup used to leave
+	// behind (go-xkms#312) -- that is a new-key improvement, not a
+	// migration, and does not reach any key that predates it.
 	StoreType StoreType
+
+	// Backend is the registry name the owning backend was registered
+	// under -- the exact string passed to RegisterServiceBackend or a
+	// config's `name:`, e.g. "token-a" for a second PKCS#11 token. It is
+	// what BackendFor and getBackendForKID key their lookup on
+	// (go-xkms#312): the registry has always been keyed by name
+	// (service.backends[name]), but before this field existed the only
+	// value carried on attributes for that purpose was StoreType, which
+	// only ever matched the registered name by coincidence, for backends
+	// registered under a store-type keyword.
+	//
+	// Empty on attributes read back from a key persisted before this field
+	// existed, and on attributes ListKeys reconstructs from backend-local
+	// storage, which has no way to learn its own registered name. Both are
+	// permanent, not a migration step to be completed later: no backend's
+	// storage format is rewritten by this field's addition, and a caller
+	// that already has the name (everything that addresses a backend by
+	// name in the first place) can still supply it directly. BackendFor and
+	// getBackendForKID fall back to treating StoreType as the name in
+	// exactly that terminal case, which reproduces the behaviour every
+	// caller depended on before Backend existed.
+	Backend string `json:"backend,omitempty" yaml:"backend,omitempty" mapstructure:"backend" cbor:"backend,omitempty"`
 
 	// ECCAttributes contains ECC-specific configuration
 	ECCAttributes *ECCAttributes

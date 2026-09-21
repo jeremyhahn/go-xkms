@@ -113,6 +113,13 @@ func (m *importOnlyKeyStore) KeyProvider() types.KeyProvider { return m.provider
 func (m *importOnlyKeyStore) CertStorage() certstore.CertificateStorageAdapter {
 	return nil
 }
+
+// Type derives the store type from the wrapped provider's own BackendType,
+// exactly as a real compositeBackend does, rather than hard-coding a value
+// this fake would drift from.
+func (m *importOnlyKeyStore) Type() types.StoreType {
+	return types.ParseStoreType(string(m.provider.Type()))
+}
 func (m *importOnlyKeyStore) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	attrs.KeyAlgorithm = x509.RSA
 	return m.provider.GenerateKey(ctx, attrs)

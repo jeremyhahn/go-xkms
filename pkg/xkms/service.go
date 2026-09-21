@@ -663,8 +663,8 @@ func DefaultBackend() (Backend, error) {
 }
 
 // BackendFor returns the appropriate backend for the given key attributes.
-// If StoreType is specified in attrs, returns that backend.
-// Otherwise returns the default backend.
+// If Backend is specified in attrs, returns that backend by its registry
+// name. Otherwise returns the default backend.
 // This centralizes backend resolution logic to avoid scattered conditionals.
 func BackendFor(attrs *types.KeyAttributes) (Backend, error) {
 	if attrs == nil {
@@ -676,12 +676,37 @@ func BackendFor(attrs *types.KeyAttributes) (Backend, error) {
 		return nil, err
 	}
 
-	// If StoreType is specified, use that backend
+	return resolveBackendFromAttrs(attrs)
+}
+
+// resolveBackendFromAttrs resolves the registered Backend that owns attrs,
+// keyed by name -- the model go-xkms#312 settled on: the registry has
+// always been service.backends[name], and StoreType is a label the resolved
+// backend reports, not a second name for the same map.
+//
+// attrs.Backend, when set, names the registered backend directly. Keys
+// persisted, listed, or parsed before that field existed carry no Backend
+// value, and for those StoreType is the only surviving pointer to one -- it
+// happens to equal the registered name for every backend registered under a
+// store-type keyword, which was the only shape that existed before this
+// field did. That fallback is permanent, not a migration step: no backend's
+// storage format is rewritten by Backend's addition, so a key with no
+// Backend on read stays that way for as long as it is not rewritten by its
+// own backend, and BackendFor must keep resolving it the way every caller
+// already depended on.
+func resolveBackendFromAttrs(attrs *types.KeyAttributes) (Backend, error) {
+	if attrs == nil {
+		return DefaultBackend()
+	}
+
+	if attrs.Backend != "" {
+		return GetBackend(attrs.Backend)
+	}
+
 	if attrs.StoreType != "" {
 		return GetBackend(string(attrs.StoreType))
 	}
 
-	// Fall back to default backend
 	return DefaultBackend()
 }
 
@@ -795,16 +820,7 @@ func getBackendForKID(kid string) (Backend, *types.KeyAttributes, error) {
 		return nil, nil, err
 	}
 
-	var b Backend
-
-	if attrs.StoreType != "" {
-		// Use StoreType as the backend name
-		b, err = GetBackend(string(attrs.StoreType))
-	} else {
-		// Use default backend
-		b, err = DefaultBackend()
-	}
-
+	b, err := resolveBackendFromAttrs(attrs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1121,20 +1137,44 @@ func ListKeys(ctx context.Context, backendName ...string) ([]*types.KeyAttribute
 			}
 		}
 
-		return b.ListKeys(ctx)
+		keys, err := b.ListKeys(ctx)
+		if err != nil {
+			return nil, err
+		}
+		stampBackendName(keys, backendName[0])
+		return keys, nil
 	}
 
 	// List from all backends
-	for _, b := range service.backends {
+	for name, b := range service.backends {
 		keys, err := b.ListKeys(ctx)
 		if err != nil {
 			// Log error but continue with other backends
 			continue
 		}
+		stampBackendName(keys, name)
 		allKeys = append(allKeys, keys...)
 	}
 
 	return allKeys, nil
+}
+
+// stampBackendName sets attrs.Backend to name on every listed key.
+//
+// A backend's own ListKeys cannot know its registered name -- that mapping
+// lives only in service.backends, one layer up -- so a key read back via
+// ListKeys otherwise carries no Backend at all (go-xkms#312). This is the
+// one place in the Simplified API that knows both the keys and the name
+// they were listed under, and every caller that lists keys and then passes
+// one to Key/Signer/Decrypter/DeleteKey (as the PIV slot lookups do) depends
+// on the attributes it hands back resolving to the same backend the listing
+// came from.
+func stampBackendName(keys []*types.KeyAttributes, name string) {
+	for _, k := range keys {
+		if k != nil {
+			k.Backend = name
+		}
+	}
 }
 
 // SaveCertificateByID saves a certificate by key ID.

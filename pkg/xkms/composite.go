@@ -20,6 +20,14 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
+// Type returns the store type of the composed key provider, mapped through
+// backendTypeToStoreType so it names the same keyword ID() and the Key ID
+// parser expect regardless of what this backend was registered as
+// (go-xkms#312).
+func (c *compositeBackend) Type() types.StoreType {
+	return backendTypeToStoreType(c.backend.Type())
+}
+
 // KeyProvider returns the underlying key provider for direct access if needed.
 // This allows users to access key-provider-specific features not exposed
 // through the Backend interface.

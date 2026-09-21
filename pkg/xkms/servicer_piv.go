@@ -18,7 +18,6 @@ import (
 	"encoding/pem"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // ListPIVSlots returns the status of all PIV slots for the specified backend.
@@ -78,8 +77,11 @@ func (s *XKMSService) InitPIVBackendResolver() error {
 		if err != nil {
 			return nil, err
 		}
-		storeType := types.ParseStoreType(backendName)
-		return newBackendPIVKeyGenerator(b, storeType), nil
+		// b.Type(), not ParseStoreType(backendName): a backend registered
+		// under a name that is not a store-type keyword (e.g. "token-a")
+		// must still report its real kind, not the "unknown"
+		// ParseStoreType(backendName) would give it (go-xkms#312).
+		return newBackendPIVKeyGenerator(b, b.Type()), nil
 	}
 	return SetPIVBackendResolver(resolver)
 }

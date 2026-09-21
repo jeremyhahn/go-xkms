@@ -526,6 +526,12 @@ func (m *mockKeyStoreWithImportExport) CertStorage() certstore.CertificateStorag
 	return nil
 }
 
+// Type derives the store type from the wrapped mock backend's own
+// BackendType, exactly as a real compositeBackend does.
+func (m *mockKeyStoreWithImportExport) Type() types.StoreType {
+	return types.ParseStoreType(string(m.backend.Type()))
+}
+
 func (m *mockKeyStoreWithImportExport) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	attrs.KeyAlgorithm = x509.RSA
 	return m.backend.GenerateKey(ctx, attrs)

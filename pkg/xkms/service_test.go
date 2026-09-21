@@ -46,6 +46,8 @@ type mockKeyStore struct {
 	backend     types.KeyProvider
 	closeError  error
 	listKeysErr error
+	// storeType overrides Type()'s default of StoreSoftware when set.
+	storeType types.StoreType
 }
 
 func newMockKeyStore(name string) *mockKeyStore {
@@ -225,6 +227,16 @@ func (m *mockKeyStore) CertStorage() certstore.CertificateStorageAdapter {
 
 func (m *mockKeyStore) Close() error {
 	return m.closeError
+}
+
+// Type reports StoreSoftware unless storeType is set, so BackendFor
+// resolution tests can register a mockKeyStore under a non-keyword name and
+// still pin what kind of backend it claims to be.
+func (m *mockKeyStore) Type() types.StoreType {
+	if m.storeType != "" {
+		return m.storeType
+	}
+	return types.StoreSoftware
 }
 
 func (m *mockKeyStore) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
@@ -1704,6 +1716,14 @@ func (m *mockExtendedKeyStore) GetDecrypterByID(_ context.Context, keyID string)
 
 func (m *mockExtendedKeyStore) KeyProvider() types.KeyProvider {
 	return m.backendImpl
+}
+
+// Type maps the wrapped mockExtendedBackend's BackendType through the
+// package's canonical mapping, so a store built with
+// newMockExtendedKeyStore(name, types.BackendTypePKCS11) reports StorePKCS11
+// here exactly as a real compositeBackend would.
+func (m *mockExtendedKeyStore) Type() types.StoreType {
+	return backendTypeToStoreType(m.backendImpl.Type())
 }
 
 func (m *mockExtendedKeyStore) CertStorage() certstore.CertificateStorageAdapter {

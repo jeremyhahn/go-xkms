@@ -30,6 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // importRoundTripCase is one algorithm's worth of the import ceremony: a key
@@ -475,14 +476,14 @@ func TestKeyTemplateRefusalNamesTheCallersField(t *testing.T) {
 		TargetKeyID:      "k",
 		TargetKeyBackend: "software",
 		TargetKeyType:    "kyber",
-	}, 32)
+	}, 32, types.StoreSoftware)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported target key type: kyber")
 
 	_, err = buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "k",
 		KeyType: "kyber",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported key type: kyber")
 }

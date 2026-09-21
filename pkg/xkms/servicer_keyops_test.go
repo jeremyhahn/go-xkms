@@ -554,6 +554,40 @@ func TestUnwrapKeyByID_Success(t *testing.T) {
 		"the re-wrapped material must decrypt back to the originally wrapped key")
 }
 
+// TestUnwrapKeyByID_TargetAttributesUseResolvedBackendType pins go-xkms#312
+// for the unwrap path specifically: unwrapTargetAttributes used to write
+// types.StoreType(req.TargetKeyBackend) -- a raw cast of the registry name,
+// not even routed through ParseStoreType -- so a target backend named
+// "target-be" (a legal, registrable name, and none of #312's defined
+// keywords) stamped every unwrapped key with the nonsense StoreType
+// "target-be" rather than a real store type. The resolved backend's Type()
+// is the source of truth now, and Backend carries the name separately.
+func TestUnwrapKeyByID_TargetAttributesUseResolvedBackendType(t *testing.T) {
+	targetProvider := newMaterialProvider([]byte("target-material"))
+	stores := setupKeyOpsService(t, map[string]types.KeyProvider{"kek-be": nil, "target-be": targetProvider})
+	// The mock reports StorePKCS11 regardless of what it is registered as,
+	// exactly as a real PKCS#11 token named "target-be" would.
+	stores["target-be"].storeType = types.StorePKCS11
+	kekKey := addKeyOpsRSAKey(t, stores["kek-be"], &types.KeyAttributes{CN: "kek"})
+
+	plaintext := []byte("unwrapped-key-material-32-bytes")
+	wrapped, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &kekKey.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	req := newUnwrapRequest()
+	req.WrappedKey = wrapped
+	resp, err := keyOpsService(t).UnwrapKeyByID(context.Background(), &req)
+	require.NoError(t, err)
+	require.True(t, resp.Success)
+
+	importedAttrs, ok := targetProvider.keyAttrs["imported-key"]
+	require.True(t, ok, "ImportKey must have received attributes for the unwrapped key")
+	assert.Equal(t, "target-be", importedAttrs.Backend,
+		"Backend must carry the registry name the request addressed")
+	assert.Equal(t, types.StorePKCS11, importedAttrs.StoreType,
+		"StoreType must come from the resolved backend's Type(), not a cast of its name")
+}
+
 func TestUnwrapKeyByID_ValidationFailures(t *testing.T) {
 	setupKeyOpsService(t, nil)
 	svc := keyOpsService(t)
@@ -756,7 +790,7 @@ func TestUnwrapTargetAttributes(t *testing.T) {
 			// 32 bytes stands in for the recovered material: the length only
 			// matters when the request omits a key size, which the size-derivation
 			// case below exercises explicitly.
-			attrs, err := unwrapTargetAttributes(&req, 32)
+			attrs, err := unwrapTargetAttributes(&req, 32, types.StoreSoftware)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				return
@@ -1207,7 +1241,7 @@ func TestUnwrapTargetAttributes_DerivesSymmetricSizeFromMaterial(t *testing.T) {
 			req.TargetKeyType = string(types.AlgorithmAES)
 			req.TargetKeySize = 0
 
-			attrs, err := unwrapTargetAttributes(&req, tt.materialLen)
+			attrs, err := unwrapTargetAttributes(&req, tt.materialLen, types.StoreSoftware)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, attrs.SymmetricAlgorithm)
 		})
@@ -1218,7 +1252,7 @@ func TestUnwrapTargetAttributes_DerivesSymmetricSizeFromMaterial(t *testing.T) {
 		req.TargetKeyType = string(types.AlgorithmAES)
 		req.TargetKeySize = 0
 
-		_, err := unwrapTargetAttributes(&req, 7)
+		_, err := unwrapTargetAttributes(&req, 7, types.StoreSoftware)
 		assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
 	})
 
@@ -1227,7 +1261,7 @@ func TestUnwrapTargetAttributes_DerivesSymmetricSizeFromMaterial(t *testing.T) {
 		req.TargetKeyType = string(types.AlgorithmAES)
 		req.TargetKeySize = 256
 
-		attrs, err := unwrapTargetAttributes(&req, 16)
+		attrs, err := unwrapTargetAttributes(&req, 16, types.StoreSoftware)
 		require.NoError(t, err)
 		assert.Equal(t, types.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
 	})

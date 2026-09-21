@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -263,7 +264,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Validate backend name
-	if err := ValidateBackendName(req.Backend); err != nil {
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
@@ -1371,7 +1372,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Validate backend name
-	if err := ValidateBackendName(req.Backend); err != nil {
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
@@ -1475,7 +1476,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 // by WrapKey -- so a backend that cannot export (AWS KMS, by hardware design)
 // must still be reachable through this resolver.
 func (h *HandlerContext) resolveImportBackend(w http.ResponseWriter, name string) (backend.ImportBackend, bool) {
-	if err := ValidateBackendName(name); err != nil {
+	if err := validation.ValidateBackendName(name); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return nil, false
 	}
@@ -1651,7 +1652,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Validate backend name
-	if err := ValidateBackendName(req.Backend); err != nil {
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
@@ -1988,7 +1989,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate backend name
-	if err := ValidateBackendName(req.Backend); err != nil {
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
@@ -2081,7 +2082,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate backend name
-	if err := ValidateBackendName(req.Backend); err != nil {
+	if err := validation.ValidateBackendName(req.Backend); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}
@@ -2179,7 +2180,7 @@ func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Validate backend name
-	if err := ValidateBackendName(backendName); err != nil {
+	if err := validation.ValidateBackendName(backendName); err != nil {
 		writeError(w, &errs.Wrapped{Msg: "invalid backend", Err: err}, http.StatusBadRequest)
 		return
 	}

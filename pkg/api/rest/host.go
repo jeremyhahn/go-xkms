@@ -159,7 +159,8 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 
 	attrs := &types.KeyAttributes{
 		CN:                 cn,
-		StoreType:          types.ParseStoreType(p.BackendName),
+		Backend:            p.BackendName,
+		StoreType:          p.Backend.Type(),
 		KeyType:            types.KeyTypeSigning,
 		KeyAlgorithm:       x509.ECDSA,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,

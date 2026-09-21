@@ -172,6 +172,17 @@ type Backend interface {
 	// Lifecycle
 	// ========================================================================
 
+	// Type returns the store type this backend reports for the keys it
+	// holds -- e.g. StoreSoftware, StorePKCS11, StoreTPM2. It answers "what
+	// kind of backend is this", independent of the registry name the
+	// backend was registered under (go-xkms#312): two PKCS#11 tokens
+	// registered as "token-a" and "token-b" both report StorePKCS11 here.
+	//
+	// This is reachable without unwrapping to KeyProvider(), so a
+	// TenantScopedBackend can answer it without discarding its tenant scope
+	// (go-xkms#163).
+	Type() types.StoreType
+
 	// KeyProvider returns the underlying key provider for direct access if needed.
 	KeyProvider() types.KeyProvider
 

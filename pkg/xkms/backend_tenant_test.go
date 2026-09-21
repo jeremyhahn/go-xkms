@@ -102,6 +102,12 @@ func (r *recordingBackend) getLastKeyID() string {
 	return r.lastKeyID
 }
 
+// Type reports StoreSoftware unconditionally: none of the tenant-scoping
+// tests this fake serves distinguish backends by kind.
+func (r *recordingBackend) Type() types.StoreType {
+	return types.StoreSoftware
+}
+
 func (r *recordingBackend) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	r.setAttrs(attrs)
 	return nil, r.generateRSAErr

@@ -462,6 +462,68 @@ func TestKeyAttributes_ID(t *testing.T) {
 	})
 }
 
+// TestKeyAttributes_ID_RegressionFixture pins ID() output for every backend
+// keyword that existed before go-xkms#312 added the Backend field, so a
+// change to how producers populate StoreType cannot silently reshape the
+// storage identifier of a key that already exists. Every case here uses only
+// fields that existed before #312 -- CN, StoreType, KeyType, KeyAlgorithm --
+// deliberately excluding Backend, since a key persisted before #312 has no
+// Backend value and its ID must not depend on one.
+func TestKeyAttributes_ID_RegressionFixture(t *testing.T) {
+	cases := []struct {
+		name      string
+		storeType StoreType
+		wantID    string
+	}{
+		{"software", StoreSoftware, "software:signing:fixture-key:rsa"},
+		{"pkcs11", StorePKCS11, "pkcs11:signing:fixture-key:rsa"},
+		{"tpm2", StoreTPM2, "tpm2:signing:fixture-key:rsa"},
+		{"awskms", StoreAWSKMS, "awskms:signing:fixture-key:rsa"},
+		{"gcpkms", StoreGCPKMS, "gcpkms:signing:fixture-key:rsa"},
+		{"azurekv", StoreAzureKV, "azurekv:signing:fixture-key:rsa"},
+		{"vault", StoreVault, "vault:signing:fixture-key:rsa"},
+		{"quantum", StoreQuantum, "quantum:signing:fixture-key:rsa"},
+		{"frost", StoreFrost, "frost:signing:fixture-key:rsa"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := &KeyAttributes{
+				CN:           "fixture-key",
+				StoreType:    tc.storeType,
+				KeyType:      KeyTypeSigning,
+				KeyAlgorithm: x509.RSA,
+			}
+			assert.Equal(t, tc.wantID, attrs.ID(),
+				"ID() must stay byte-identical for a key predating the Backend field")
+		})
+	}
+}
+
+// TestKeyAttributes_ID_UnaffectedByBackendField pins that Backend, added by
+// go-xkms#312, is not a segment of ID(): two attrs differing only in Backend
+// must address the same stored key, and a key generated before Backend
+// existed (Backend == "") must remain reachable under the identifier it was
+// always given.
+func TestKeyAttributes_ID_UnaffectedByBackendField(t *testing.T) {
+	withoutBackend := &KeyAttributes{
+		CN:           "fixture-key",
+		StoreType:    StorePKCS11,
+		KeyType:      KeyTypeSigning,
+		KeyAlgorithm: x509.RSA,
+	}
+	withBackend := &KeyAttributes{
+		CN:           "fixture-key",
+		Backend:      "token-a",
+		StoreType:    StorePKCS11,
+		KeyType:      KeyTypeSigning,
+		KeyAlgorithm: x509.RSA,
+	}
+
+	assert.Equal(t, withoutBackend.ID(), withBackend.ID(),
+		"Backend must not change the storage identifier a key is addressed under")
+}
+
 func TestKeyAttributes_AlgorithmString(t *testing.T) {
 	t.Run("X25519", func(t *testing.T) {
 		attrs := &KeyAttributes{X25519Attributes: &X25519Attributes{}}

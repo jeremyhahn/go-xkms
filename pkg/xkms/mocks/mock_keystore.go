@@ -71,6 +71,7 @@ type MockKeyStore struct {
 	UnsealFunc            func(context.Context, *types.SealedData, *types.UnsealOptions) ([]byte, error)
 	CanSealFunc           func() bool
 	CloseFunc             func() error
+	TypeFunc              func() types.StoreType
 
 	// Call tracking
 	GenerateRSACalls      []string
@@ -97,6 +98,7 @@ type MockKeyStore struct {
 	UnsealCalls           int
 	CanSealCalls          int
 	CloseCalls            int
+	TypeCalls             int
 
 	// State
 	closed bool
@@ -650,6 +652,22 @@ func (m *MockKeyStore) CanSeal() bool {
 	return false
 }
 
+// Type returns the store type this mock reports. Defaults to StoreSoftware
+// when TypeFunc is unset, so existing tests that never set it keep the
+// software-backend behaviour they had before Type() existed.
+func (m *MockKeyStore) Type() types.StoreType {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	m.TypeCalls++
+
+	if m.TypeFunc != nil {
+		return m.TypeFunc()
+	}
+
+	return types.StoreSoftware
+}
+
 // KeyProvider returns the underlying key provider for direct access if needed.
 func (m *MockKeyStore) KeyProvider() types.KeyProvider {
 	return m.BackendMock
@@ -707,6 +725,7 @@ func (m *MockKeyStore) Reset() {
 	m.UnsealCalls = 0
 	m.CanSealCalls = 0
 	m.CloseCalls = 0
+	m.TypeCalls = 0
 	m.closed = false
 
 	if m.BackendMock != nil {

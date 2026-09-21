@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Exported surface
 
@@ -10,11 +10,33 @@ The full method set is listed in [`architecture.md`](architecture.md). Implement
 all of it; a store that cannot do something reports so through its
 `Capabilities` and returns a typed error when asked anyway. `CanSeal() bool`
 is the one capability that is also a method, because sealing is checked on
-every seal call.
+every seal call. `Type() types.StoreType` is likewise a method rather than a
+derived value: it answers "what kind of backend is this" without unwrapping
+to `KeyProvider()`, so a `TenantScopedBackend` can answer it without
+discarding its tenant scope (#163). Every implementation in the tree —
+`compositeBackend`, `TenantScopedBackend`, and every test fake — has one; a
+new `Backend` implementation must too, with a compile-time
+`var _ xkms.Backend = (*T)(nil)` check.
 
 `BackendConfig` (`pkg/xkms/keystore.go:187`) is the construction input.
 `compositeBackend` (`:238`) is the internal fan-out used by the composite
-keystore.
+keystore; its `Type()` maps its composed key provider's `types.BackendType`
+through `backendTypeToStoreType` (`pkg/xkms/keyid.go`), so it reports the
+same keyword `ID()` and the Key ID parser expect regardless of the name it
+was registered under.
+
+### `types.KeyAttributes.Backend` and `.StoreType` — `pkg/types/types.go`
+
+`Backend` is the exact registry name a key's operation ran against —
+`service.backends[name]`'s key. `StoreType` is the kind of backend that is,
+reported by the resolved backend's `Type()`. See
+[`architecture.md`](architecture.md#model-backend-name-vs-store-type) for the
+full model and the fallback that resolves attributes with no `Backend` set
+(#312).
+
+`BackendFor` and `getBackendForKID` (`pkg/xkms/service.go`) both resolve
+through the unexported `resolveBackendFromAttrs`, so the two entry points —
+attribute-based and Key-ID-string-based — cannot drift on which field wins.
 
 ### `types.Capabilities` — `pkg/types/types.go:1366`
 
@@ -118,6 +140,15 @@ can be stricter than the backend's ceiling.
 - **Import and export capabilities are split.** A backend can implement `Import`
   independently from `Export`. Vault gained a real BYOK (Bring Your Own Key)
   import ceremony in place of simpler paste operations.
+- **A backend's registry name is never derived from its `StoreType`, or the
+  reverse.** `StoreType` is what `Type()` reports about the backend's kind;
+  the registry name is whatever string it was registered under and may be
+  anything `validation.ValidateBackendName` accepts, including a name that is
+  not a store-type keyword (`token-a` beside `token-b`, two PKCS#11 tokens).
+  A producer that builds `types.KeyAttributes` sets `StoreType` from the
+  resolved backend's `Type()`, never from `types.ParseStoreType(backendName)`
+  — the latter is only correct when the two happen to coincide, and coincided
+  for every backend that existed before #312 was fixed (#312, #297, #172).
 
 ## Error semantics
 

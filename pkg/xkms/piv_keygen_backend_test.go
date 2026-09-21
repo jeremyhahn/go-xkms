@@ -41,6 +41,9 @@ type mockXKMSBackend struct {
 
 	generateCalls []types.KeyAttributes
 	signerCalls   []string
+
+	// storeType overrides Type()'s default of StoreSoftware when set.
+	storeType types.StoreType
 }
 
 func (m *mockXKMSBackend) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -149,6 +152,16 @@ func (m *mockXKMSBackend) Unseal(_ context.Context, _ *types.SealedData, _ *type
 
 func (m *mockXKMSBackend) CanSeal() bool {
 	return false
+}
+
+// Type reports StoreSoftware unless storeType is set, so tests that resolve
+// a backend by name-then-kind (e.g. through InitPIVBackendResolver) can pin
+// a specific kind while every other test keeps the default.
+func (m *mockXKMSBackend) Type() types.StoreType {
+	if m.storeType != "" {
+		return m.storeType
+	}
+	return types.StoreSoftware
 }
 
 func (m *mockXKMSBackend) KeyProvider() types.KeyProvider {

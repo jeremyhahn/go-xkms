@@ -321,6 +321,14 @@ func (t *TenantScopedBackend) ExportKeyMaterial(ctx context.Context, attrs *type
 // Lifecycle
 // ========================================================================
 
+// Type returns the base backend's store type. It reaches Type() without
+// unwrapping to KeyProvider(), so asking a tenant-scoped view what kind of
+// backend it is does not require discarding the tenant scope to get the
+// answer (go-xkms#163, go-xkms#312).
+func (t *TenantScopedBackend) Type() types.StoreType {
+	return t.base.Type()
+}
+
 // KeyProvider returns the underlying key provider.
 func (t *TenantScopedBackend) KeyProvider() types.KeyProvider {
 	return t.base.KeyProvider()

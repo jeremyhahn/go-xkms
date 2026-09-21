@@ -1,6 +1,6 @@
 # Crypto Backends — Architecture
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## The problem
 
@@ -30,6 +30,7 @@ type Backend interface {
 	Seal(ctx, data, opts) (*types.SealedData, error)
 	Unseal(ctx, sealed, opts) ([]byte, error)
 	CanSeal() bool
+	Type() types.StoreType
 	KeyProvider() types.KeyProvider
 	CertStorage() certstore.CertificateStorageAdapter
 	Close() error
@@ -92,6 +93,45 @@ KMS" (tier 1)**; the operation surface over it is
 tier-2 rows documented in
 [`../sealing-and-barrier/`](../sealing-and-barrier/architecture.md) and
 [`../pin-management/`](../pin-management/architecture.md).
+
+## Model: backend name vs. store type
+
+A key's attributes (`types.KeyAttributes`) carry two separate facts about
+where it lives, and the two used to be conflated into one field
+(go-xkms#312):
+
+- **`Backend`** is the exact string a backend was registered under —
+  `service.backends[name]`'s key — e.g. `token-a` for a second PKCS#11 token
+  beside one named `token-b`. It is an operator-chosen identifier with no
+  required relationship to what the backend *is*.
+- **`StoreType`** is what KIND of backend that is — `StoreSoftware`,
+  `StorePKCS11`, `StoreTPM2`, … — reported by the resolved backend's own
+  `Type()` method, never guessed from its name. Two PKCS#11 tokens registered
+  as `token-a` and `token-b` both report `StorePKCS11` here and are told
+  apart only by `Backend`.
+
+Before `Backend` existed, `BackendFor` and `getBackendForKID` resolved
+`GetBackend(string(attrs.StoreType))` — using the store type AS the registry
+key. That happened to work because every backend that existed had been
+registered under a name that was also a store-type keyword; a backend
+registered under any other name resolved to `backend not found: unknown`
+everywhere its attributes were read back rather than passed by name
+directly. `StoreType` is also a segment of `types.KeyAttributes.ID()`
+(`storetype:keytype:cn:algorithm`), so the same conflation put the wrong
+word in the storage identifier for such a backend's keys.
+
+`BackendFor` and `getBackendForKID` now resolve `attrs.Backend` first. A key
+whose attributes carry no `Backend` — every key persisted, listed, or parsed
+before this field existed, since a backend's own `ListKeys` has no way to
+learn the registry name it was registered under — falls back to treating
+`StoreType` as the name, exactly as every caller depended on before. That
+fallback is permanent, not a migration step to complete later: no backend's
+storage format is rewritten by `Backend`'s addition. `ID()` is unaffected for
+every key that already exists, because a backend registered under a
+store-type keyword reports that same keyword from `Type()`; a backend
+registered under a non-keyword name now stores *new* keys under its real
+kind instead of the `unknown` segment `ParseStoreType(backendName)` used to
+produce.
 
 ## Data flow
 

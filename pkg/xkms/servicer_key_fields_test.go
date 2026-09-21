@@ -100,7 +100,7 @@ func TestBuildKeyAttributesRecordsTheRequestedHash(t *testing.T) {
 			KeyID:     "hashed",
 			Algorithm: "ecdsa",
 			Hash:      "SHA-384",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.NoError(t, err)
 		assert.Equal(t, crypto.SHA384, attrs.Hash)
 	})
@@ -109,7 +109,7 @@ func TestBuildKeyAttributesRecordsTheRequestedHash(t *testing.T) {
 		attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 			KeyID:     "unhashed",
 			Algorithm: "ecdsa",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.NoError(t, err)
 		assert.Equal(t, crypto.SHA256, attrs.Hash)
 	})
@@ -119,7 +119,7 @@ func TestBuildKeyAttributesRecordsTheRequestedHash(t *testing.T) {
 			KeyID:     "bad-hash",
 			Algorithm: "ecdsa",
 			Hash:      "SHA-3000",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidHashFunction)
 	})
@@ -132,7 +132,7 @@ func TestBuildKeyAttributesRecordsTheRequestedHash(t *testing.T) {
 			KeyID:     "none-hash",
 			Algorithm: "ecdsa",
 			Hash:      "NONE",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidHashFunction)
 	})
@@ -214,7 +214,7 @@ func TestGenerateKeyHonoursPartition(t *testing.T) {
 		KeyID:     "partitioned",
 		Algorithm: "ecdsa",
 		Partition: "tenant-a",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.Partition("tenant-a"), attrs.Partition)
 	assert.Contains(t, attrs.ID(), "tenant-a",
@@ -227,7 +227,7 @@ func TestImportKeyHonoursPartition(t *testing.T) {
 		KeyID:     "partitioned",
 		KeyType:   "ecdsa",
 		Partition: "tenant-a",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.Partition("tenant-a"), attrs.Partition)
 	assert.Contains(t, attrs.ID(), "tenant-a")

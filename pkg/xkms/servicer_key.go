@@ -65,7 +65,7 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 		return nil, err
 	}
 
-	attrs, err := buildKeyAttributes(req, backendName)
+	attrs, err := buildKeyAttributes(req, backendName, b.Type())
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		}
 	}
 
-	attrs, err := buildImportKeyAttributes(req, backendName)
+	attrs, err := buildImportKeyAttributes(req, backendName, b.Type())
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,8 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 	// not chosen a key kind yet can still ask for a wrapping key.
 	attrs := &types.KeyAttributes{
 		CN:        req.KeyID,
-		StoreType: types.ParseStoreType(backendName),
+		Backend:   backendName,
+		StoreType: b.Type(),
 	}
 	if req.KeyType != "" {
 		if err := applyKeyTemplate(attrs, "key type", req.KeyType, req.KeySize, req.Curve); err != nil {
@@ -493,7 +494,8 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		CN:                 req.DestKeyID,
 		KeyAlgorithm:       srcAttrs.KeyAlgorithm,
 		KeyType:            srcAttrs.KeyType,
-		StoreType:          types.ParseStoreType(destBackend),
+		Backend:            destBackend,
+		StoreType:          dstB.Type(),
 		Hash:               srcAttrs.Hash,
 		Partition:          srcAttrs.Partition,
 		RSAAttributes:      srcAttrs.RSAAttributes,
@@ -935,7 +937,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 	// is wiped on the way out rather than left for the garbage collector.
 	defer secure.Wipe(keyMaterial)
 
-	targetAttrs, err := unwrapTargetAttributes(req, len(keyMaterial))
+	targetAttrs, err := unwrapTargetAttributes(req, len(keyMaterial), targetBackend.Type())
 	if err != nil {
 		return nil, err
 	}
@@ -987,10 +989,19 @@ func importKeyMaterial(ctx context.Context, target ImportExporter, attrs *types.
 
 // unwrapTargetAttributes builds the key attributes for the key an
 // UnwrapKeyByID request creates, from the request's key template.
-func unwrapTargetAttributes(req *transport.UnwrapKeyByIDRequest, materialLen int) (*types.KeyAttributes, error) {
+//
+// storeType is the resolved target backend's own Type(), not
+// types.StoreType(req.TargetKeyBackend): the target key backend is a
+// registry name, and casting it straight to StoreType named the wrong thing
+// for any backend registered under a name that is not itself a store-type
+// keyword (go-xkms#312) -- unlike the ParseStoreType(name) sites elsewhere in
+// this file, this one did not even normalise case or reject an unknown
+// keyword first.
+func unwrapTargetAttributes(req *transport.UnwrapKeyByIDRequest, materialLen int, storeType types.StoreType) (*types.KeyAttributes, error) {
 	attrs := &types.KeyAttributes{
 		CN:         req.TargetKeyID,
-		StoreType:  types.StoreType(req.TargetKeyBackend),
+		Backend:    req.TargetKeyBackend,
+		StoreType:  storeType,
 		Partition:  types.Partition(req.TargetPartition),
 		Exportable: req.TargetExportable,
 	}
@@ -1187,14 +1198,21 @@ func guardKeyID(keyID string) error {
 // here while the same string became the named purpose in every transport that
 // built its own attributes. The purpose is part of types.KeyAttributes.ID(), so
 // the two paths stored the same request's key in two different places.
-func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string) (*types.KeyAttributes, error) {
+//
+// storeType is the resolved backend's own Type(), not derived from
+// backendName here: a backend registered under a non-keyword name (e.g.
+// "token-a") is a legal registration, and StoreType must still name its real
+// kind rather than the ParseStoreType(backendName) "unknown" that used to
+// reach ID() for one (go-xkms#312).
+func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, storeType types.StoreType) (*types.KeyAttributes, error) {
 	if err := guardKeyID(req.KeyID); err != nil {
 		return nil, err
 	}
 
 	attrs := &types.KeyAttributes{
 		CN:        req.KeyID,
-		StoreType: types.ParseStoreType(backendName),
+		Backend:   backendName,
+		StoreType: storeType,
 		Partition: types.Partition(req.Partition),
 	}
 
@@ -1298,7 +1316,11 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string) (
 // an application actually asked for. Asymmetric private keys stay
 // non-exportable, which is what every backend's ExportKeyMaterial requires of
 // them anyway.
-func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName string) (*types.KeyAttributes, error) {
+//
+// storeType is the resolved backend's own Type(), for the same reason
+// buildKeyAttributes takes it rather than deriving it from backendName
+// (go-xkms#312).
+func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName string, storeType types.StoreType) (*types.KeyAttributes, error) {
 	if req.KeyType == "" {
 		// There is no honest default. The algorithm cannot be recovered from
 		// the wrapped material at this layer, and guessing one stores the key
@@ -1312,7 +1334,8 @@ func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName strin
 
 	attrs := &types.KeyAttributes{
 		CN:        req.KeyID,
-		StoreType: types.ParseStoreType(backendName),
+		Backend:   backendName,
+		StoreType: storeType,
 		Partition: types.Partition(req.Partition),
 	}
 

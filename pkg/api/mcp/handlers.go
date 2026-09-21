@@ -1230,16 +1230,21 @@ func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (inte
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
-	storeType := types.ParseStoreType(backendName)
-	if storeType != types.StoreUnknown {
-		attrs.StoreType = storeType
-	}
-
 	// Get the correct keystore
 	ks, err := s.tenantBackend(ctx, backendName)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
+
+	// The resolved backend is authoritative for both fields: Backend is the
+	// name the caller addressed it by, and StoreType is what that backend
+	// reports itself to be via Type(), not a guess parsed from the name
+	// (go-xkms#312). This replaces the old ParseStoreType(backendName) gate,
+	// which silently left StoreType unchanged for any backend named
+	// something other than a store-type keyword -- exactly the "token-a"
+	// shape this transport must support.
+	attrs.Backend = backendName
+	attrs.StoreType = ks.Type()
 
 	// Check if the backend supports the export half of the ceremony. Asserts
 	// backend.ExportBackend, not the full ImportExportBackend union, so a

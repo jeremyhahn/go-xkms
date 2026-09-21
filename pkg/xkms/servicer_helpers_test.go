@@ -306,7 +306,7 @@ func TestBuildKeyAttributes_RSA(t *testing.T) {
 		KeyID:     "rsa-key",
 		Algorithm: "rsa",
 		KeySize:   4096,
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, "rsa-key", attrs.CN)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -314,11 +314,27 @@ func TestBuildKeyAttributes_RSA(t *testing.T) {
 	assert.Equal(t, 4096, attrs.RSAAttributes.KeySize)
 }
 
+// TestBuildKeyAttributes_BackendAndStoreType pins go-xkms#312's producer
+// contract: Backend carries the registry name verbatim, and StoreType is
+// whatever the caller passes in as the resolved backend's Type() -- never
+// derived from backendName here. A backend registered under a name that is
+// not a store-type keyword (e.g. "token-a", a second PKCS#11 token) is the
+// case that a name-derived StoreType got wrong before this field existed.
+func TestBuildKeyAttributes_BackendAndStoreType(t *testing.T) {
+	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
+		KeyID:     "rsa-key",
+		Algorithm: "rsa",
+	}, "token-a", types.StorePKCS11)
+	require.NoError(t, err)
+	assert.Equal(t, "token-a", attrs.Backend)
+	assert.Equal(t, types.StorePKCS11, attrs.StoreType)
+}
+
 func TestBuildKeyAttributes_RSA_DefaultSize(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "rsa-default",
 		Algorithm: "rsa",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, 2048, attrs.RSAAttributes.KeySize)
 }
@@ -328,7 +344,7 @@ func TestBuildKeyAttributes_ECDSA_P384(t *testing.T) {
 		KeyID:     "ec-key",
 		Algorithm: "ecdsa",
 		Curve:     "P-384",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	assert.Equal(t, elliptic.P384(), attrs.ECCAttributes.Curve)
@@ -338,7 +354,7 @@ func TestBuildKeyAttributes_Ed25519(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "ed-key",
 		Algorithm: "ed25519",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, x509.Ed25519, attrs.KeyAlgorithm)
 }
@@ -347,7 +363,7 @@ func TestBuildKeyAttributes_Symmetric(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "sym-key",
 		Algorithm: "AES-256-GCM",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.NotEmpty(t, attrs.SymmetricAlgorithm)
 }
@@ -357,7 +373,7 @@ func TestBuildKeyAttributes_Exportable(t *testing.T) {
 		KeyID:      "export-key",
 		Algorithm:  "ecdsa",
 		Exportable: true,
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.True(t, attrs.Exportable)
 }
@@ -366,7 +382,7 @@ func TestBuildKeyAttributes_ECAlias(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "ec-key",
 		Algorithm: "ec",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 }
@@ -375,7 +391,7 @@ func TestBuildKeyAttributes_ECCAlias(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "ecc-key",
 		Algorithm: "ecc",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 }
@@ -384,7 +400,7 @@ func TestBuildKeyAttributes_UnsupportedAlgorithm(t *testing.T) {
 	_, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "bad-key",
 		Algorithm: "quantum-lattice",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnsupportedKeyAlgorithm)
 }
@@ -393,7 +409,7 @@ func TestBuildKeyAttributes_DefaultECDSAP256(t *testing.T) {
 	// No algorithm specified, should default to ECDSA P-256
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID: "default-key",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 	assert.Equal(t, elliptic.P256(), attrs.ECCAttributes.Curve)
@@ -404,7 +420,7 @@ func TestBuildKeyAttributes_WithKeyType(t *testing.T) {
 		KeyID:     "typed-key",
 		Algorithm: "ecdsa",
 		KeyType:   "signing",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
 }
@@ -414,7 +430,7 @@ func TestBuildKeyAttributes_DefaultKeyType(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "no-type-key",
 		Algorithm: "ecdsa",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
 }
@@ -432,7 +448,7 @@ func TestBuildImportKeyAttributes_Basic(t *testing.T) {
 	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "import-key",
 		KeyType: "ecdsa",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, "import-key", attrs.CN)
 	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
@@ -441,8 +457,8 @@ func TestBuildImportKeyAttributes_Basic(t *testing.T) {
 }
 
 // TestBuildImportKeyAttributes_WithKeyType covers every asymmetric algorithm
-// name the field accepts, in the backend-name form the store type is derived
-// from.
+// name the field accepts, passing the backend name and its resolved
+// StoreType (go-xkms#312: the latter is no longer derived from the former).
 func TestBuildImportKeyAttributes_WithKeyType(t *testing.T) {
 	algorithms := map[string]x509.PublicKeyAlgorithm{
 		"rsa":     x509.RSA,
@@ -457,13 +473,28 @@ func TestBuildImportKeyAttributes_WithKeyType(t *testing.T) {
 			attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 				KeyID:   "import-key",
 				KeyType: name,
-			}, "pkcs11")
+			}, "pkcs11", types.StorePKCS11)
 			require.NoError(t, err)
 			assert.Equal(t, "import-key", attrs.CN)
 			assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
 			assert.Equal(t, want, attrs.KeyAlgorithm)
 		})
 	}
+}
+
+// TestBuildImportKeyAttributes_BackendAndStoreType is the import-ceremony
+// counterpart of TestBuildKeyAttributes_BackendAndStoreType: a backend
+// registered under a non-keyword name must still stamp its real StoreType
+// on the key it imports, not the "unknown" ParseStoreType(backendName) used
+// to leave in its place (go-xkms#312).
+func TestBuildImportKeyAttributes_BackendAndStoreType(t *testing.T) {
+	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+		KeyID:   "import-key",
+		KeyType: "rsa",
+	}, "token-a", types.StorePKCS11)
+	require.NoError(t, err)
+	assert.Equal(t, "token-a", attrs.Backend)
+	assert.Equal(t, types.StorePKCS11, attrs.StoreType)
 }
 
 // TestBuildImportKeyAttributes_PurposeNameIsNotAnAlgorithm pins that a purpose
@@ -479,7 +510,7 @@ func TestBuildImportKeyAttributes_PurposeNameIsNotAnAlgorithm(t *testing.T) {
 			_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 				KeyID:   "import-key",
 				KeyType: purpose,
-			}, "software")
+			}, "software", types.StoreSoftware)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrInvalidKeyType)
 		})
@@ -493,7 +524,7 @@ func TestBuildImportKeyAttributes_PurposeNameIsNotAnAlgorithm(t *testing.T) {
 func TestBuildImportKeyAttributes_KeyTypeRequired(t *testing.T) {
 	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID: "no-type-key",
-	}, "pkcs11")
+	}, "pkcs11", types.StorePKCS11)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingRequiredField)
 }
@@ -502,7 +533,7 @@ func TestBuildImportKeyAttributes_UnknownKeyType(t *testing.T) {
 	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "unknown-type",
 		KeyType: "unknown-type-xyz",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidKeyType)
 }
@@ -529,7 +560,7 @@ func TestBuildImportKeyAttributes_Symmetric(t *testing.T) {
 					KeyID:   "sym-import",
 					KeyType: keyType,
 					KeySize: size,
-				}, "software")
+				}, "software", types.StoreSoftware)
 				require.NoError(t, err)
 				assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)
 				assert.Equal(t, want, attrs.SymmetricAlgorithm,
@@ -554,7 +585,7 @@ func TestBuildImportKeyAttributes_SymmetricSizeFromKeySizeNotAESKeySize(t *testi
 		KeyType:    "symmetric",
 		KeySize:    128,
 		AESKeySize: 256,
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.SymmetricAES128GCM, attrs.SymmetricAlgorithm,
 		"KeySize wins over AESKeySize, because only KeySize survives every transport")
@@ -565,7 +596,7 @@ func TestBuildImportKeyAttributes_SymmetricSizeFromKeySizeNotAESKeySize(t *testi
 		KeyID:      "sym-import",
 		KeyType:    "symmetric",
 		AESKeySize: 192,
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.SymmetricAES192GCM, fallback.SymmetricAlgorithm)
 }
@@ -584,7 +615,7 @@ func TestBuildImportKeyAttributes_SymmetricInvalidSize(t *testing.T) {
 				KeyID:   "sym-import",
 				KeyType: "symmetric",
 				KeySize: size,
-			}, "software")
+			}, "software", types.StoreSoftware)
 			require.Error(t, err)
 			assert.Nil(t, attrs, "a refused request must yield no attributes to act on")
 			assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
@@ -600,7 +631,7 @@ func TestBuildImportKeyAttributes_SymmetricZeroSizeDefaults(t *testing.T) {
 	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "sym-import",
 		KeyType: "symmetric",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
 	assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)

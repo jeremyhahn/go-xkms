@@ -289,10 +289,19 @@ func TestHandler_GenerateKey_SymmetricUsesNamedBackend(t *testing.T) {
 		"the default backend must not hold it")
 }
 
-// TestHandler_GenerateKey_StoreTypeMatchesBackend pins the attribute the key
-// is stored under. types.KeyAttributes.ID() encodes StoreType, so a key whose
-// attributes name one store while living in another is addressed by an
-// identifier no other path constructs.
+// TestHandler_GenerateKey_StoreTypeMatchesBackend pins the two attributes
+// that identify where a generated key lives (go-xkms#312): Backend names the
+// registry entry the caller addressed, and StoreType reports what KIND of
+// backend that is via its own Type() -- not a parse of the name.
+//
+// twoEmptyBackendServer registers a real software-implemented backend under
+// the name "tpm2" specifically so this is observable: the fixture's own doc
+// comment says "what is under test is the routing, not the hardware", so a
+// key generated through it must carry Backend "tpm2" (the name that routed
+// it there) and StoreType StoreSoftware (what the backend actually is), not
+// StoreTPM2 -- which is what ParseStoreType("tpm2") would have produced
+// before Backend existed, and is exactly the name/type conflation #312
+// tracks.
 func TestHandler_GenerateKey_StoreTypeMatchesBackend(t *testing.T) {
 	server := twoEmptyBackendServer(t)
 	const keyID = "store-type-follows-backend"
@@ -317,8 +326,8 @@ func TestHandler_GenerateKey_StoreTypeMatchesBackend(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "the named backend must hold the key")
-	assert.Equal(t, types.StoreTPM2, found.StoreType,
-		"the stored attributes must name the backend the key lives in")
+	assert.Equal(t, types.StoreSoftware, found.StoreType,
+		"StoreType must report the backend's real kind, not a parse of its registry name")
 }
 
 // sha256Digest is a small helper keeping the signing assertions readable.

@@ -146,6 +146,11 @@ func (m *boostIEKeyProvider) ImportKey(_ context.Context, attrs *types.KeyAttrib
 		return m.importErr
 	}
 	m.importedKeys[attrs.CN] = wrapped
+	// Recorded alongside the wrapped material, not into m.keys, so a test can
+	// inspect exactly what attributes ImportKey received (go-xkms#312: Backend
+	// and StoreType among them) without changing what ListKeys reports -- that
+	// iterates m.keys, which ImportKey has never populated.
+	m.keyAttrs[attrs.CN] = attrs
 	return nil
 }
 
@@ -1299,7 +1304,7 @@ func TestBoostBuildKeyAttributes_ECCAlias(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "key",
 		Algorithm: "ecc",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 }
@@ -1308,7 +1313,7 @@ func TestBoostBuildKeyAttributes_SymmetricSecret(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "key",
 		Algorithm: "symmetric",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.NotEmpty(t, attrs.SymmetricAlgorithm)
 	assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)
@@ -1318,7 +1323,7 @@ func TestBoostBuildKeyAttributes_SecretAlias(t *testing.T) {
 	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID:     "key",
 		Algorithm: "secret",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.NotEmpty(t, attrs.SymmetricAlgorithm)
 }
@@ -1330,7 +1335,7 @@ func TestBoostBuildImportKeyAttributes_WithKeyType(t *testing.T) {
 	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "key",
 		KeyType: "rsa",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
 	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -1346,7 +1351,7 @@ func TestBoostBuildImportKeyAttributes_PurposeNameRejected(t *testing.T) {
 	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "key",
 		KeyType: "signing",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidKeyType)
 }
@@ -1358,7 +1363,7 @@ func TestBoostBuildImportKeyAttributes_PurposeNameRejected(t *testing.T) {
 func TestBoostBuildImportKeyAttributes_KeyTypeRequired(t *testing.T) {
 	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID: "key",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingRequiredField)
 }

@@ -43,7 +43,7 @@ func TestBuildKeyAttributes_RefusesSeparatorInKeyID(t *testing.T) {
 			KeyID:     keyID,
 			KeyType:   "tls",
 			Algorithm: "rsa",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.Error(t, err, "a key ID containing the separator must be refused: %q", keyID)
 		assert.ErrorIs(t, err, ErrInvalidKeyID)
 	}
@@ -64,7 +64,7 @@ func TestBuildKeyAttributes_RefusesOtherUnsafeKeyIDs(t *testing.T) {
 				KeyID:     keyID,
 				KeyType:   "tls",
 				Algorithm: "rsa",
-			}, "software")
+			}, "software", types.StoreSoftware)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrInvalidKeyID)
 		})
@@ -79,7 +79,7 @@ func TestBuildKeyAttributes_AcceptsLegalKeyIDs(t *testing.T) {
 			KeyID:     keyID,
 			KeyType:   "tls",
 			Algorithm: "rsa",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.NoError(t, err, "%q is a legal key ID", keyID)
 		assert.Equal(t, keyID, attrs.CN)
 	}
@@ -106,7 +106,7 @@ func TestBuildKeyAttributes_KeyIDCannotShiftTheStorageIdentifier(t *testing.T) {
 			KeyID:     keyID,
 			KeyType:   "tls",
 			Algorithm: "rsa",
-		}, "software")
+		}, "software", types.StoreSoftware)
 		require.NoError(t, err)
 
 		segments := strings.Split(attrs.ID(), ":")
@@ -123,7 +123,7 @@ func TestBuildKeyAttributes_KeyIDCannotShiftTheStorageIdentifier(t *testing.T) {
 		KeyID:     "a:b",
 		KeyType:   "tls",
 		Algorithm: "rsa",
-	}, "software")
+	}, "software", types.StoreSoftware)
 	require.Error(t, err)
 }
 

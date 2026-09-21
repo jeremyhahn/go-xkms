@@ -77,36 +77,11 @@ func TestValidateKeyID(t *testing.T) {
 	}
 }
 
-func TestValidateBackendName(t *testing.T) {
-	tests := []struct {
-		name    string
-		backend string
-		wantErr bool
-	}{
-		{"valid simple", "memory", false},
-		{"valid with hyphen", "aws-kms", false},
-		{"valid with numbers", "backend123", false},
-		{"empty", "", true},
-		{"uppercase", "Memory", true},
-		{"underscore", "my_backend", true},
-		{"dot", "my.backend", true},
-		{"space", "my backend", true},
-		{"special chars", "backend<>", true},
-		{"path traversal", "../backend", true},
-		{"absolute path", "/etc/backend", true},
-		{"too long", strings.Repeat("a", 65), true},
-		{"max length", strings.Repeat("a", 64), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateBackendName(tt.backend)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateBackendName(%q) error = %v, wantErr %v", tt.backend, err, tt.wantErr)
-			}
-		})
-	}
-}
+// ValidateBackendName has no copy in this package to test: it was removed in
+// favor of pkg/validation.ValidateBackendName, the canonical implementation,
+// which pkg/api/rest now calls directly (go-xkms#312, go-xkms#297). See
+// pkg/validation's own TestValidateBackendName and
+// TestValidateBackendNameTypedErrors for its coverage.
 
 func TestSanitizeString(t *testing.T) {
 	tests := []struct {

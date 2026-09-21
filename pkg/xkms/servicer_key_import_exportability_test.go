@@ -51,16 +51,16 @@ func TestApplyImportExportability(t *testing.T) {
 // reaches the attributes the backend stores, through the same builder every
 // import over the service takes.
 func TestBuildImportKeyAttributes_Exportability(t *testing.T) {
-	unset, err := buildImportKeyAttributes(&transport.ImportKeyRequest{KeyID: "k", KeyType: "symmetric", KeySize: 256}, "software")
+	unset, err := buildImportKeyAttributes(&transport.ImportKeyRequest{KeyID: "k", KeyType: "symmetric", KeySize: 256}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.True(t, unset.Exportable, "a symmetric import that says nothing keeps the exportable default")
 
-	refused, err := buildImportKeyAttributes(&transport.ImportKeyRequest{KeyID: "k", KeyType: "symmetric", KeySize: 256, Exportable: boolPtr(false), Sensitive: true}, "software")
+	refused, err := buildImportKeyAttributes(&transport.ImportKeyRequest{KeyID: "k", KeyType: "symmetric", KeySize: 256, Exportable: boolPtr(false), Sensitive: true}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.False(t, refused.Exportable)
 	assert.True(t, refused.Sensitive)
 
-	rsa, err := buildImportKeyAttributes(&transport.ImportKeyRequest{KeyID: "k", KeyType: "rsa", KeySize: 2048, Exportable: boolPtr(true)}, "software")
+	rsa, err := buildImportKeyAttributes(&transport.ImportKeyRequest{KeyID: "k", KeyType: "rsa", KeySize: 2048, Exportable: boolPtr(true)}, "software", types.StoreSoftware)
 	require.NoError(t, err)
 	assert.True(t, rsa.Exportable, "an explicit true is honoured for asymmetric material too")
 }
