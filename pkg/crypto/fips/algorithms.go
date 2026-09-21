@@ -88,24 +88,31 @@ func ApprovedAlgorithm(algo string) bool {
 	return ok
 }
 
+// builtFunc is Built, indirected so algorithms_test can drive the Built()
+// signal independently of how this test binary was itself built (#219).
+var builtFunc = Built
+
 // AlgorithmPermitted reports whether algo may be used in the current process.
 // Outside FIPS mode every algorithm the caller already accepts is permitted;
 // in FIPS mode only the approved set is.
 //
-// The predicate ORs the module-state signal (Compiled) with the environment
-// signal (Enabled) for the reason given on Compiled: a FIPS-compiled shared
+// The predicate ORs three signals: build provenance (Built), module state
+// (Compiled), and the operator's environment (Enabled). Compiled is paired
+// with Enabled for the reason given on Compiled: a FIPS-compiled shared
 // library carries no GOFIPS140 in the process that loads it, so Enabled alone
 // would let it accept non-approved algorithms.
 //
-// Neither signal is build provenance, and Built is deliberately not consulted.
-// The allowlist follows the crypto that is actually in force: a FIPS build
-// whose operator sets GODEBUG=fips140=off has turned the module off, and this
-// predicate then permits everything, exactly as in a non-FIPS build. Whether a
-// validated artifact should refuse to be talked out of its posture that way is
-// the owner's policy call recorded on #219; changing it means adding Built to
-// this OR, and nothing else.
+// Built is included by owner ruling on #219: a FIPS-built artifact keeps its
+// allowlist even when the operator sets GODEBUG=fips140=off. Provenance is
+// fixed at link time (see Built) and cannot be revoked by the environment, so
+// an operator who turns the module off at runtime stops the FIPS-validated
+// crypto from running but does not talk the artifact out of enforcing the
+// approved algorithm set it was built to enforce. A binary that was never
+// built with GOFIPS140 is unaffected by this change: it still permits every
+// algorithm the caller accepts whenever neither Compiled nor Enabled is
+// active.
 func AlgorithmPermitted(algo string) bool {
-	if !Compiled() && !Enabled() {
+	if !builtFunc() && !Compiled() && !Enabled() {
 		return true
 	}
 	return ApprovedAlgorithm(algo)

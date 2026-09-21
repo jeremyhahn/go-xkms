@@ -92,16 +92,68 @@ func TestAlgorithmPermitted_NonFIPSMode(t *testing.T) {
 
 	// A FIPS-compiled binary enforces the approved set regardless of the
 	// environment, so the expectation depends on how this binary was built.
-	want := !Compiled()
+	want := !Compiled() && !builtFunc()
 
 	for _, algo := range nonApproved {
 		if got := AlgorithmPermitted(algo); got != want {
-			t.Errorf("AlgorithmPermitted(%q) = %v with GOFIPS140=off, want %v (fips.Compiled()=%v)",
-				algo, got, want, Compiled())
+			t.Errorf("AlgorithmPermitted(%q) = %v with GOFIPS140=off, want %v (fips.Compiled()=%v, fips.Built()=%v)",
+				algo, got, want, Compiled(), builtFunc())
 		}
 	}
 	// Approved algorithms are permitted in either build.
 	if !AlgorithmPermitted("aes256-gcm") {
 		t.Error(`AlgorithmPermitted("aes256-gcm") = false, want true`)
+	}
+}
+
+// TestAlgorithmPermitted_BuiltKeepsAllowlist is the owner ruling on #219: a
+// FIPS-built artifact keeps enforcing the approved set even when neither the
+// module (Compiled) nor the environment (Enabled) is active — the case of an
+// operator setting GODEBUG=fips140=off against a FIPS-built binary.
+func TestAlgorithmPermitted_BuiltKeepsAllowlist(t *testing.T) {
+	t.Setenv(EnvGOFIPS140, "off")
+
+	original := builtFunc
+	builtFunc = func() bool { return true }
+	t.Cleanup(func() { builtFunc = original })
+
+	for _, algo := range nonApproved {
+		if AlgorithmPermitted(algo) {
+			t.Errorf("AlgorithmPermitted(%q) = true with Built()=true, want false (allowlist must hold)", algo)
+		}
+	}
+	if !AlgorithmPermitted("aes256-gcm") {
+		t.Error(`AlgorithmPermitted("aes256-gcm") = false with Built()=true, want true (approved algorithm)`)
+	}
+}
+
+// TestAlgorithmPermitted_NotBuiltDisablesAllowlist is the complementary case:
+// with Built forced false, the allowlist follows Compiled and Enabled exactly
+// as it did before this change. The expectation is computed per algorithm
+// from the real Compiled()/Enabled() state rather than assumed, so the test
+// holds under any GODEBUG=fips140 setting — including "on", which activates
+// Compiled() even in a binary never built with GOFIPS140.
+func TestAlgorithmPermitted_NotBuiltDisablesAllowlist(t *testing.T) {
+	t.Setenv(EnvGOFIPS140, "off")
+
+	original := builtFunc
+	builtFunc = func() bool { return false }
+	t.Cleanup(func() { builtFunc = original })
+
+	// With Built forced false, AlgorithmPermitted falls back to the
+	// pre-existing Compiled() || Enabled() policy: the allowlist applies
+	// whenever either is active, and is off entirely otherwise.
+	allowlistActive := Compiled() || Enabled()
+
+	for _, algo := range nonApproved {
+		want := !allowlistActive
+		if got := AlgorithmPermitted(algo); got != want {
+			t.Errorf("AlgorithmPermitted(%q) = %v with Built()=false, want %v (Compiled()=%v, Enabled()=%v)",
+				algo, got, want, Compiled(), Enabled())
+		}
+	}
+	// Approved algorithms are permitted regardless of the allowlist state.
+	if !AlgorithmPermitted("aes256-gcm") {
+		t.Error(`AlgorithmPermitted("aes256-gcm") = false with Built()=false, want true (approved algorithm)`)
 	}
 }

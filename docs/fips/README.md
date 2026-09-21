@@ -69,13 +69,15 @@ shipped `libxkms_pkcs11_fips.so` identifies itself as FIPS even when the loading
 process sets `GODEBUG=fips140=off`, and a stock build never claims to be one
 under `GODEBUG=fips140=on`.
 
-**Algorithm policy deliberately does not use `Built()`.** `AlgorithmPermitted`
-follows `Compiled() || Enabled()` — the crypto actually in force — so an
-operator who sets `GODEBUG=fips140=off` has turned the module off and the
-approved-only allowlist stops applying, exactly as in a non-FIPS build. Whether
-a validated artifact may be talked out of its own posture that way is an owner
-policy decision recorded on #219; changing it means adding `Built()` to that OR,
-and nothing else.
+**Algorithm policy uses all three signals.** `AlgorithmPermitted` follows
+`Built() || Compiled() || Enabled()`. A binary built with an enabling
+`GOFIPS140` keeps enforcing the approved-only allowlist even when an operator
+sets `GODEBUG=fips140=off` at runtime — provenance is fixed at link time and
+the environment cannot revoke it — so a validated artifact cannot be talked
+out of its own posture that way (owner ruling on #219). A binary never built
+with `GOFIPS140` is unaffected: the allowlist still stops applying, exactly
+as in a non-FIPS build, whenever neither `Compiled()` nor `Enabled()` is
+active either.
 
 ## Approved algorithm set
 
