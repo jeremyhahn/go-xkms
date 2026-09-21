@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## The problem
 
@@ -63,7 +63,7 @@ Rejected alternatives:
 | Challenge implementations | `pkg/acme/challenges/{http-01,dns-01,device-attest-01,enroll-01,endorse-01}` |
 | Issuance | `pkg/acme/issuance` → `pkg/ca` |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
-| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/ratelimits`, `pkg/acme/server/{circuitbreaker,degradation}` |
+| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/server/rate_limiter.go`, `pkg/acme/server/{circuitbreaker,degradation}` |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
@@ -117,8 +117,8 @@ through ACME against an existing node's directory.
   EK certificate does not chain to a trusted manufacturer root, activation
   cannot succeed.
 - **Rate limits and CAA are enforcement, not advice.** `pkg/acme/server/caa.go`
-  checks CAA before issuing; `ratelimits` and the tenant rate limiter bound
-  per-account and per-tenant issuance.
+  checks CAA before issuing; `pkg/acme/server/rate_limiter.go` and the tenant
+  rate limiter bound per-account and per-tenant issuance.
 - **The circuit breaker and degradation paths fail closed** — under pressure the
   server refuses new orders rather than issuing unvalidated ones.
 

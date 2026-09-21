@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Exported surface
 
@@ -17,9 +17,8 @@
 - `pkg/acme/issuance` — the bridge to `pkg/ca`.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy and CAA.
-- `pkg/acme/ratelimits`, `pkg/acme/server/rate_limiter.go`,
-  `tenant_rate_limiter.go`, `circuit_breaker.go`, `server/degradation` — the
-  protective layer.
+- `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go`,
+  `circuit_breaker.go`, `server/degradation` — the protective layer.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport

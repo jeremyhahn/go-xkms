@@ -20,7 +20,6 @@ The ACME client package provides a complete implementation for interacting with 
 | **Retry Logic** | Configurable retries with exponential backoff |
 | **OCSP Stapling** | Fetch and validate OCSP responses for stapling |
 | **Chain Selection** | Select preferred certificate chains |
-| **Rate Limiting** | Client-side rate limiting with Retry-After support |
 | **Renewal Helpers** | Compute optimal renewal times |
 
 ## Quick Start
@@ -490,66 +489,6 @@ chain := client.SelectShortestChain(chains)
 
 // Select longest chain (maximum compatibility)
 chain := client.SelectLongestChain(chains)
-```
-
-## Client-Side Rate Limiting
-
-Prevent hitting server-side rate limits with built-in rate limiting.
-
-### Configure Rate Limiting
-
-```go
-// Create rate limiter
-limiter := client.NewRateLimiter(&client.RateLimiterConfig{
-    Enabled:           true,
-    RequestsPerSecond: 10,    // Max 10 requests/second
-    BurstSize:         20,    // Allow bursts up to 20
-    MaxWaitTime:       30 * time.Second,
-    RetryAfterHeader:  true,  // Respect Retry-After headers
-})
-```
-
-### Retry-After Precision
-
-When `RetryAfterHeader` is enabled, a `429` response parks the limiter until the
-instant the server named. That deadline is held with nanosecond precision, so a
-sub-second `Retry-After` is honoured exactly and `Wait` never resumes early. A
-later `Retry-After` arriving while a request is already parked extends the wait
-rather than replacing it with the earlier deadline.
-
-The header itself is read per RFC 9110 §10.2.3, in either form: delta-seconds
-(digits only — a value too large to represent is clamped to the longest
-hold-off the limiter can express, never dropped), or an HTTP-date in any of the
-three forms a recipient must accept (IMF-fixdate, RFC 850, asctime). A date that
-has already elapsed, and a value that is neither form, install no hold-off.
-
-### Use with HTTP Transport
-
-```go
-// Wrap HTTP transport with rate limiting
-transport := client.NewRateLimitedTransport(http.DefaultTransport, limiter)
-httpClient := &http.Client{Transport: transport}
-```
-
-### Manual Rate Limiting
-
-```go
-// Wait for rate limit token
-err := limiter.Wait(ctx)
-if err != nil {
-    if errors.Is(err, client.ErrRateLimitExceeded) {
-        log.Println("Rate limit exceeded, try again later")
-    }
-}
-
-// Check without waiting
-if limiter.Allow() {
-    // Make request
-}
-
-// Get rate limiter stats
-stats := limiter.Stats()
-fmt.Printf("Available tokens: %.1f\n", stats.AvailableTokens)
 ```
 
 ## Renewal Timing Helpers
