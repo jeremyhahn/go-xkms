@@ -220,6 +220,34 @@ jobs:
         env:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
+      # #454: a clean checkout must come out of `make test` (this job's
+      # `make coverage`, which is `coverage: test` in the Makefile) exactly as
+      # it went in. Before #469, test-web's `npm install` rewrote every
+      # package-lock.json and vitest wrote its lcov-report trees into paths
+      # git still tracked, so a green gate still left the working tree dirty
+      # -- a PR that ran the gates had to be hand-restored before it could be
+      # committed, and the noise was large enough to hide a real change in
+      # review. #469 fixed the known offenders (`npm ci` everywhere, the
+      # coverage trees gitignored and untracked); this step is the regression
+      # guard, because a regenerated tracked artifact means the committed
+      # artifact is stale -- a PR that trips it would otherwise ship a build
+      # that differs from what's in source control. `git diff` catches a
+      # tracked file being rewritten; `git status --porcelain` also catches a
+      # new untracked file being left behind, which `git diff` alone would
+      # miss.
+      - name: Fail if make test dirtied the tree (#454)
+        run: |
+          if ! git diff --exit-code --stat; then
+            echo "::error::make coverage (make test) modified tracked files -- see #454"
+            exit 1
+          fi
+          DIRTY=$(git status --porcelain)
+          if [ -n "$DIRTY" ]; then
+            echo "::error::make coverage (make test) left the tree dirty -- see #454"
+            echo "$DIRTY"
+            exit 1
+          fi
+
       - name: Calculate coverage
         id: coverage
         run: |
