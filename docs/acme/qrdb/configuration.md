@@ -15,6 +15,7 @@
 | `ClientTLS` | `*TLSClientConfig` | `client_tls` | Client TLS settings (optional) |
 | `Timeout` | `time.Duration` | `timeout` | Default request timeout |
 | `Shutdown` | `*ShutdownConfig` | `shutdown` | Graceful shutdown settings (optional) |
+| `Barrier` | `*BarrierConfig` | `barrier` | Barrier/seal settings for `embedded` mode (optional, see [BarrierConfig](#barrierconfig)) |
 
 ## Protocol Values
 
@@ -56,6 +57,23 @@
 | `DrainTimeout` | `time.Duration` | `drain_timeout` | `10s` | Max wait for drain completion |
 | `TransferLeader` | `bool` | `transfer_leader` | `true` | Transfer Raft leadership on shutdown |
 
+## BarrierConfig
+
+| Field | Type | YAML Key | Description |
+|-------|------|----------|-------------|
+| `Enabled` | `bool` | `enabled` | Must be `false`. See constraint below. |
+| `Strategy` | `xkmssdk.QRDBStrategyID` | `strategy` | Sealing strategy identifier |
+| `Shamir` | `*ShamirConfig` | `shamir` | M-of-N secret sharing settings (required when `Strategy` is `StrategyShamir`) |
+
+**Constraint: `Enabled` must be `false`.** This struct carries no credential
+or auto-unseal source, so an embedded ACME barrier built from it can never
+leave the sealed state — it would only fail later, on the first data-plane
+call, instead of failing fast at startup. `Config.Validate` rejects
+`Enabled: true` with `ErrBarrierCredentialUnsupported`. Configure encryption
+at rest for the ACME data plane through the parent xkmsd barrier instead;
+this field exists only so that existing configuration files continue to
+parse.
+
 ## Defaults
 
 `DefaultConfig()` returns:
@@ -79,3 +97,4 @@ shutdown:
 - `embedded` protocol requires `DataDir`.
 - `raft` mode requires both `NodeID` and `ClusterID`.
 - TLS cert/key must be specified as a pair.
+- `Barrier.Enabled` must be `false` (see [BarrierConfig](#barrierconfig)).

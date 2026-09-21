@@ -156,7 +156,14 @@ type ShutdownConfig struct {
 
 // BarrierConfig controls the encryption barrier for embedded QRDB mode.
 type BarrierConfig struct {
-	// Enabled controls whether the barrier is active.
+	// Enabled must be false. This struct carries no credential or
+	// auto-unseal source, so an embedded ACME barrier built from it can
+	// never leave the sealed state; enabling it here only defers the
+	// failure from Validate to the first data-plane call. Encryption at
+	// rest for the ACME data plane is configured through the parent
+	// xkmsd barrier instead. Validate rejects Enabled: true with
+	// ErrBarrierCredentialUnsupported. The field is kept, rather than
+	// removed, so existing configuration files continue to parse.
 	Enabled bool `json:"enabled" yaml:"enabled"`
 
 	// Strategy identifies the sealing strategy.
@@ -166,6 +173,16 @@ type BarrierConfig struct {
 	// Required when Strategy is seal.StrategyShamir.
 	Shamir *ShamirConfig `json:"shamir,omitempty" yaml:"shamir,omitempty"`
 }
+
+// ErrBarrierCredentialUnsupported is returned by Config.Validate when
+// Barrier.Enabled is true. The embedded ACME barrier configured by this
+// package has no credential or auto-unseal source, so a server built from
+// it can never leave the sealed state (it fails on the first data-plane
+// call with "data-plane barrier is sealed" instead of failing fast here).
+// Leave Barrier.Enabled false and configure encryption at rest through the
+// parent xkmsd barrier instead.
+var ErrBarrierCredentialUnsupported = NewError(ErrorCodeInvalidConfig,
+	"barrier: embedded ACME barrier has no credential or auto-unseal source; leave barrier.enabled false and configure encryption at rest through the parent xkmsd barrier")
 
 // ShamirConfig controls M-of-N secret sharing parameters.
 type ShamirConfig struct {
@@ -229,6 +246,12 @@ func (c *Config) Validate() error {
 		if c.ClientTLS.KeyFile != "" && c.ClientTLS.CertFile == "" {
 			return NewError(ErrorCodeInvalidConfig, "cert_file is required when key_file is specified")
 		}
+	}
+
+	// The embedded ACME barrier has no credential or auto-unseal source,
+	// so it must stay disabled. See ErrBarrierCredentialUnsupported.
+	if c.Barrier != nil && c.Barrier.Enabled {
+		return ErrBarrierCredentialUnsupported
 	}
 
 	// Raft mode requires node and cluster IDs.
