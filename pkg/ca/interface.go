@@ -338,7 +338,10 @@ type CARevoker interface {
 	// RevokeCert revokes a certificate and optionally deletes its signing key.
 	RevokeCert(ctx context.Context, cert *x509.Certificate, opts RevokeOptions) error
 
-	// GenerateCRL generates a Certificate Revocation List.
+	// GenerateCRL forces regeneration of the Certificate Revocation List and
+	// persists the result, even when a still-valid CRL is already
+	// published. This is the explicit force-refresh verb; see CRL for a
+	// cheap read that only regenerates when necessary.
 	//
 	// The CRL contains all certificates that have been revoked by this CA.
 	// The CRL is signed by the CA's private key and includes the next update
@@ -351,6 +354,20 @@ type CARevoker interface {
 	//
 	// Thread-safe: Yes
 	GenerateCRL(ctx context.Context) ([]byte, error)
+
+	// CRL returns the current CRL DER for the CA's issuing certificate,
+	// persisted as a replicated artifact so any instance can serve it. It
+	// regenerates and persists a new CRL first when none has been
+	// published yet or the published artifact's NextUpdate has passed;
+	// otherwise it returns the persisted DER without signing. There is no
+	// leader election and no background scheduler: refresh happens after a
+	// successful revocation (best-effort) and lazily on read.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrCRLGenerationFailed if regeneration is required and fails.
+	//
+	// Thread-safe: Yes
+	CRL(ctx context.Context) ([]byte, error)
 
 	// IsRevoked checks if a certificate serial number is revoked.
 	//

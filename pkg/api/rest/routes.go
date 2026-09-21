@@ -217,6 +217,7 @@ func Routes() []RouteSpec {
 	session("POST", "/ca/issue", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueCertificate })
 	session("POST", "/ca/revoke", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleRevokeCertificate })
 	session("POST", "/ca/crl", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGenerateCRL })
+	session("GET", "/ca/crl", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCRL })
 	session("GET", "/ca/revoked/{serial}", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIsRevoked })
 	session("POST", "/ca/tcg/ek", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueEKCertificate })
 	session("POST", "/ca/tcg/ak", hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleIssueAKCertificate })

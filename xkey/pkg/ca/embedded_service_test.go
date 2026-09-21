@@ -156,6 +156,13 @@ func (m *mockTrustedCA) GenerateCRL(_ context.Context) ([]byte, error) {
 	return m.crlDER, nil
 }
 
+func (m *mockTrustedCA) CRL(_ context.Context) ([]byte, error) {
+	if m.generateCRLErr != nil {
+		return nil, m.generateCRLErr
+	}
+	return m.crlDER, nil
+}
+
 func (m *mockTrustedCA) IsRevoked(serial *big.Int) (bool, error) {
 	if m.isRevokedErr != nil {
 		return false, m.isRevokedErr

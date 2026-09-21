@@ -122,6 +122,7 @@ func (m *initTestMockCA) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x
 }
 func (m *initTestMockCA) Revoke(_ context.Context, _ *big.Int, _ int) error { return nil }
 func (m *initTestMockCA) GenerateCRL(_ context.Context) ([]byte, error)     { return nil, nil }
+func (m *initTestMockCA) CRL(_ context.Context) ([]byte, error)             { return nil, nil }
 func (m *initTestMockCA) IsRevoked(_ *big.Int) (bool, error)                { return false, nil }
 func (m *initTestMockCA) TLSCertificate(_ context.Context, _ *types.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil

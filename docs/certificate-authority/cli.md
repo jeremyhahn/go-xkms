@@ -1,6 +1,6 @@
 # Certificate Authority — CLI
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 Binary: `xkmsctl`. Groups: `ca` (the authority), `cert` (certificate storage
 against a key), `tls` (TLS material). Sources: `cmd/xkmsctl/ca.go`,
@@ -78,6 +78,11 @@ xkmsctl ca revoke --serial 0a1b2c3d4e5f --reason 1
 ```
 
 ### `ca crl`
+
+Forces regeneration of the CRL (`POST /ca/crl`) and writes the result, even
+when a still-valid CRL is already published. There is no CLI verb for the
+cheap read (`GET /ca/crl`, which only regenerates when necessary) yet; fetch
+it directly — see [api.md](api.md).
 
 | Flag | Type | Default |
 |---|---|---|

@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Exported surface — `pkg/ca`
 
@@ -25,7 +25,11 @@ startup.
 
 **`CARevoker`** — `Revoke(ctx, serial *big.Int, reason int) error`,
 `RevokeCert(ctx, cert, opts RevokeOptions) error`, `GenerateCRL(ctx) ([]byte, error)`,
-`IsRevoked(serial *big.Int) (bool, error)`.
+`CRL(ctx) ([]byte, error)`, `IsRevoked(serial *big.Int) (bool, error)`.
+`GenerateCRL` always signs a new CRL (the explicit force-refresh verb,
+`POST /ca/crl`); `CRL` returns the persisted DER, regenerating first only
+when none exists or the published `NextUpdate` has passed (`GET /ca/crl`).
+See "CRL persistence" under Persistence.
 
 **`CATLSConfig`** — `TLSCertificate(ctx, attrs)`, `TLSConfig(ctx, attrs)`,
 `ServerTLSConfig(ctx, attrs, requireClientCert bool)`,
@@ -115,6 +119,20 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   fails at the far end.
 - **Concurrency.** Issuance is safe for concurrent use; `Init` is not, and is
   documented as a startup-only call.
+- **The persisted CRL artifact is the source of truth; `certStore`'s
+  `StoreCRL`/`GetCRL` is a cache, never authoritative.** `CA.CRL` checks the
+  cache first, but a miss or a stale cached entry always falls through to
+  `ca.revocationStore` (or `ca.objectStore`) — never to signing without first
+  checking there.
+- **CRL `Number` is monotonic per issuer, derived from the previously
+  persisted artifact, not from wall-clock time.** Two regenerations inside
+  the same clock tick — refresh-on-revoke firing twice in quick succession,
+  or a test with a fixed injected clock — still produce strictly increasing
+  numbers.
+- **Staleness is a read-time decision, not a write-time one.** There is no
+  leader election and no background CRL scheduler; any instance may sign a
+  refresh. A read past the persisted `NextUpdate` regenerates before
+  answering; a read before it never signs.
 - **A TCG DevID certificate carries its §8.1 subjectAltName or it is not
   issued.** The hardwareModuleName and permanentIdentifier are a SHALL and are
   derived from the endorsement key certificate the CSR carries, so a request
@@ -156,7 +174,10 @@ the keystore errors from `pkg/xkms/errors.go`
 
 Transport mapping is in `pkg/api/rest/handlers_ca.go` /
 `handlers_ca_bundle.go` / `handlers_ca_tcg.go`, `pkg/api/grpc/service_ca_bundle.go`,
-and `pkg/api/mcp/handlers_ca.go` / `handlers_ca_tcg.go`.
+and `pkg/api/mcp/handlers_ca.go` / `handlers_ca_tcg.go`. `ErrCRLNotFound` maps
+to `404`; `ErrNotInitialized` maps to `503`; both are declared in
+`pkg/ca/errors.go` and joined into REST's `caErrorStatusMap` by
+`errors.Is`, so they map correctly even wrapped in `xkms.ErrCAOperation`.
 
 **Fail-closed paths:** uninitialized CA; a CSR that fails policy; a revoked or
 expired issuer; an attestation quote that does not verify; a TCG CSR whose
@@ -195,6 +216,33 @@ Compatibility: certificate encodings are standards-defined and stable. The
 store layout is internal, and a change to it needs a migration
 (`pkg/migration`).
 
+### CRL persistence (#275)
+
+`pkg/ca/crl_persistence.go`. `ca.revocationStore` (preferred) or
+`ca.objectStore` (legacy fallback) — the same `storage.Backend` revocation
+records use, so a CRL artifact replicates under Raft exactly the way the
+revocation state that produced it does. No separate storage wiring or server
+config exists for it.
+
+| key | value | written by |
+|---|---|---|
+| `revocations/<serial-decimal>.json` | `persistedRevocation{Serial, Reason, RevokedAt, DeletedKeys}` | `recordRevocation` (`Revoke`, `RevokeCert`) |
+| `crl/<issuer-ski-hex>` | `persistedCRL{DER, Number, ThisUpdate, NextUpdate}` | `generateAndPersistCRL` (`GenerateCRL`, `CRL`, and the refresh-on-revoke hook in `recordRevocation`) |
+
+The CRL key is the issuing certificate's Subject Key Identifier, hex-encoded
+— not its CN — because `crypto/x509.CreateRevocationList` requires the
+issuer to have one, `x509.CreateCertificate` always populates it for a CA
+template, and keying by SKI survives a CA renaming its subject and
+disambiguates a root's CRL from an intermediate's when a `CA` instance holds
+both.
+
+Read path (`CA.CRL`): `certstore.compositeCertStore`'s `GetCRL` in-memory
+cache first (a per-process hot path, keyed by issuer CN, warmed by
+`StoreCRL` after every regeneration on that instance) → the persisted `crl/`
+row → regenerate via `generateAndPersistCRL` when neither has a
+not-yet-stale entry. `GenerateCRL` always calls `generateAndPersistCRL`
+directly, skipping both freshness checks.
+
 ## Test strategy
 
 - **Unit** — `pkg/ca` carries the repo's densest suite: `ca_core_test.go`,
@@ -202,7 +250,11 @@ store layout is internal, and a change to it needs a migration
   `certpolicy_test.go`, `bundle_test.go`, `attestation_test.go`,
   `interface_contract_test.go` (the conformance test for `TrustedCA`), plus
   `multi_keystore_test.go`, `multi_keystore_pkcs11_test.go`,
-  `multi_keystore_tpm2_sim_test.go`.
+  `multi_keystore_tpm2_sim_test.go`. CRL persistence:
+  `crl_persistence_test.go` (round trip across independent `*CA` instances
+  sharing a backend, refresh-on-revoke, regenerate-on-read past/before
+  `NextUpdate` via an injected `Clock`, force-regenerate) and
+  `ocsp_revocationstore_test.go` (the OCSP cold-path fix).
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,

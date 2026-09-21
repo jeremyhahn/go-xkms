@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -25,7 +25,8 @@ unauthenticated by design.
 | Sign CSR | `POST /api/v1/ca/sign-csr` | `SignCSR` | same as REST | **MISSING — docs/13** | `SignCSR` | session |
 | Issue certificate | `POST /api/v1/ca/issue` | `IssueCertificate` | same as REST | `xkms.ca.issue` | `IssueCertificate` | session |
 | Revoke | `POST /api/v1/ca/revoke` | `RevokeCertificate` | same as REST | `xkms.ca.revoke` | `RevokeCertificate` | session |
-| Generate CRL | `POST /api/v1/ca/crl` | `GenerateCRL` | same as REST | `xkms.ca.crl` | `GenerateCRL` | session |
+| Generate CRL (force-regenerate) | `POST /api/v1/ca/crl` | `GenerateCRL` | same as REST | `xkms.ca.crl` | `GenerateCRL` | session |
+| Get CRL (read, regenerates only if stale/missing) | `GET /api/v1/ca/crl` | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | session |
 | Revocation status | `GET /api/v1/ca/revoked/{serial}` | `IsRevoked` | same as REST | **MISSING — docs/13** | `IsRevoked` | session |
 
 ### TCG enrollment (`TCGCAService`)
@@ -60,6 +61,16 @@ three of the four TCG methods. Every gap above is written as a row rather than
 omitted, per the convention, so it is tracked debt with an owner rather than an
 invisible hole.
 
+**Get CRL is REST-only (#275).** `CA.CRL(ctx)` — the read that only
+regenerates when the persisted artifact is missing or stale — is reachable
+today solely through `GET /api/v1/ca/crl`. gRPC, the Unix socket transport,
+QUIC, MCP, and the embedded transport carry only the force-regenerate verb
+(`GenerateCRL`); none of them gained a new verb for the replicated read.
+Since `CA.CRL` and `CA.GenerateCRL` differ only in *when* they sign — never
+in the shape of what they return — a client on any of those transports gets
+an equivalent artifact by calling the existing generate verb; it simply pays
+for a signing operation on every call instead of only when necessary.
+
 The public bootstrap route has no non-HTTP equivalent, which is defensible —
 its whole purpose is to be reachable by a client that has nothing yet, and HTTP
 is what such a client has. Recorded as a gap so the decision is visible rather
@@ -69,7 +80,10 @@ than assumed.
 
 Go types in `pkg/api/transport/types.go` (re-exported by `sdk/go/transport`),
 protobuf in `pkg/api/grpc/proto/xkmsv1/xkms.proto`. Certificates are carried as
-PEM; CRLs as PEM; serials as hex strings on the wire and `*big.Int` in Go.
+PEM; CRLs as PEM (`POST /api/v1/ca/crl`'s JSON response) or raw DER with
+`Content-Type: application/pkix-crl` (`GET /api/v1/ca/crl`'s body — no JSON
+envelope, since the payload *is* the CRL); serials as hex strings on the wire
+and `*big.Int` in Go.
 
 `SignOptions` and `CertificateRequest` (`pkg/ca`) carry profile, validity, SANs
 and algorithm. A request that omits validity gets `DefaultValidityPeriod()`;
@@ -87,6 +101,8 @@ CA-specific cases:
 | CSR fails policy | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | serial not found | 404 | `NotFound` | error object |
 | already revoked | 409 | `AlreadyExists` | error object |
+| `GET /api/v1/ca/crl`, no CA configured | 404 (route not registered — the `hasCA` predicate) | n/a — not exposed on this transport | n/a — not exposed on this transport |
+| `GET /api/v1/ca/crl`, `ca.ErrCRLNotFound` mapped | 404 | n/a — not exposed on this transport | n/a — not exposed on this transport |
 | TCG CSR signature invalid | 400 | `InvalidArgument` | error object |
 | attestation quote fails verification | 400 | `InvalidArgument` | error object |
 
@@ -94,11 +110,20 @@ Handlers: `pkg/api/rest/handlers_ca.go`, `handlers_ca_bundle.go`,
 `handlers_ca_tcg.go`; `pkg/api/grpc/service_ca_bundle.go`;
 `pkg/api/mcp/handlers_ca.go`, `handlers_ca_tcg.go`.
 
+`GET /api/v1/ca/crl` self-heals a missing artifact rather than reporting it
+missing: `CA.CRL` regenerates and persists a CRL the first time it is called
+for an issuer that has never published one, so `ca.ErrCRLNotFound` reaching
+the transport layer (and the 404 mapping above) requires a CA configured
+with no issuing certificate at all — a misconfiguration the not-initialized
+and not-configured cases above already cover in practice. The mapping exists
+for completeness and for any future caller that reads the persisted artifact
+directly rather than through `CA.CRL`.
+
 ## Pagination
 
-`ListCertificates` takes `ListOption` values and pages. `GenerateCRL` returns
-the whole current CRL and is deliberately not paged — a partial CRL is a
-security defect, not a convenience.
+`ListCertificates` takes `ListOption` values and pages. `GenerateCRL` and
+`CA.CRL` both return the whole current CRL and are deliberately not paged —
+a partial CRL is a security defect, not a convenience.
 
 ## Versioning and deprecation
 

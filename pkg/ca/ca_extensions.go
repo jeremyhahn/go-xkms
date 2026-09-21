@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,6 +33,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -689,6 +691,17 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 		slog.Warn("ca: revocation recorded without persistence (no revocation store configured)",
 			"serial", key, "reason", reason)
 	}
+
+	// Refresh the published CRL so it reflects this revocation without
+	// waiting for its NextUpdate to lapse. Best-effort: the revocation
+	// state above (what enforcement/IsRevoked/OCSP read) is already
+	// durable, and a CRL refresh failure here self-heals on the next read
+	// past NextUpdate (see CRL in crl_persistence.go) or the next
+	// successful revocation.
+	if _, err := ca.generateAndPersistCRL(ctx); err != nil {
+		slog.Warn("ca: failed to refresh crl after revocation", "serial", key, "err", err)
+	}
+
 	return nil
 }
 
@@ -710,6 +723,57 @@ func (ca *CA) putRevocationBlob(ctx context.Context, serial *big.Int, buf []byte
 		return true, nil
 	}
 	return false, nil
+}
+
+// getRevocationBlob reads a single persisted revocation record, preferring
+// the datastore-backed revocation store and falling back to the legacy
+// object store -- the same preference order putRevocationBlob writes with.
+// Returns ErrCRLNotFound when no record exists for serial or neither store
+// is configured; the OCSP responder's cold path relies on that distinction
+// to answer ocsp.Good rather than ocsp.Unknown for a never-revoked serial.
+func (ca *CA) getRevocationBlob(ctx context.Context, serial *big.Int) ([]byte, error) {
+	key := revocationKey(serial) + ".json"
+
+	if ca.revocationStore != nil {
+		data, err := ca.revocationStore.Get(ctx, key)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return nil, ErrCRLNotFound
+			}
+			return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get revocation: %v", err)}
+		}
+		return data, nil
+	}
+
+	if ca.objectStore != nil {
+		reader, err := ca.objectStore.Get(key)
+		if err != nil {
+			// List-and-scan fallback for backends that return opaque errors
+			// on missing keys. Keeps callers robust against divergent store
+			// implementations.
+			keys, listErr := ca.objectStore.List(revocationKeyPrefix)
+			if listErr != nil {
+				return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("list revocations: %v", listErr)}
+			}
+			for _, k := range keys {
+				if k == key {
+					// Key exists in listing but Get failed — surface the
+					// original Get error rather than pretending it's absent.
+					return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get revocation: %v", err)}
+				}
+			}
+			return nil, ErrCRLNotFound
+		}
+		defer func() { _ = reader.Close() }()
+
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("read revocation: %v", err)}
+		}
+		return data, nil
+	}
+
+	return nil, ErrCRLNotFound
 }
 
 // listRevocationBlobs reads all persisted revocation records (key -> JSON

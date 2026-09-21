@@ -64,8 +64,14 @@ type CA interface {
 	// Revoke marks a certificate as revoked by serial number and reason code.
 	Revoke(ctx context.Context, serial *big.Int, reason int) error
 
-	// GenerateCRL generates a Certificate Revocation List in DER format.
+	// GenerateCRL forces regeneration of a Certificate Revocation List in
+	// DER format, even when a still-valid one is already published.
 	GenerateCRL(ctx context.Context) ([]byte, error)
+
+	// CRL returns the current CRL DER, regenerating and persisting it first
+	// only when none has been published yet or the published artifact's
+	// NextUpdate has passed.
+	CRL(ctx context.Context) ([]byte, error)
 
 	// IsRevoked checks whether a certificate serial number is revoked.
 	IsRevoked(serial *big.Int) (bool, error)

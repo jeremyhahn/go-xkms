@@ -272,11 +272,14 @@ func (cs *compositeCertStore) StoreCRL(crl *x509.RevocationList) error {
 		return ErrCRLExpired
 	}
 
-	// Store in cache
+	// Store in cache. This is intentionally an in-process, non-durable
+	// cache only: pkg/ca persists the signed CRL DER as a replicated
+	// artifact (see crl_persistence.go, go-xkms#275) and calls StoreCRL to
+	// warm this cache after every (re)generation. GetCRL is the fast path
+	// CA.CRL consults before falling through to the persisted artifact;
+	// callers that need durability or cross-instance visibility must go
+	// through CA.CRL, not this cache directly.
 	cs.crlCache[issuer] = crl
-
-	// Note: CRLs are kept in memory cache only for now.
-	// For production use, you may want to persist them using a separate storage mechanism.
 
 	return nil
 }

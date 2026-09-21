@@ -1,6 +1,6 @@
 # Certificate Authority — User Guide
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Prerequisites
 
@@ -67,6 +67,24 @@ Revocation is not retroactive to anything already trusting the certificate —
 publish the fresh CRL where relying parties actually read it, or revocation has
 no effect in practice.
 
+`ca revoke` already refreshes the published CRL for you as part of the
+revocation, so a fresh CRL is normally available immediately — you do not
+need to also run `ca crl` afterward. `xkmsctl ca crl` forces a new CRL to be
+signed even when the published one is still valid; a relying party that only
+needs to *fetch* the current CRL, without forcing a new signature, can do so
+directly:
+
+```
+curl -s -H "Authorization: Bearer $XKMS_TOKEN" \
+    https://kms.example.com:8443/api/v1/ca/crl -o current.crl
+```
+
+Like every other `ca` verb, this needs the same authenticated session as
+`xkmsctl` — there is no public route for it, unlike the bootstrap bundle.
+`GET /api/v1/ca/crl` works from any `xkmsd` instance in a cluster — the
+signed CRL replicates the same way the revocation itself does, so you do not
+need to find the specific instance that processed the revocation.
+
 ## Store a certificate against a key
 
 Issuance and storage are separate. If you issued elsewhere and want the
@@ -100,6 +118,7 @@ and the attestation semantics are in
 | chain building fails on the far end | the peer does not have the intermediate | ship the chain, not just the leaf |
 | revocation "worked" but clients still accept the certificate | the CRL you generated is not where clients look | publish the new CRL |
 | serial not found | wrong serial format | hex, no `0x`, no colons |
+| `GET /api/v1/ca/crl` is missing a very recent revocation from another cluster node | the refresh-on-revoke CRL update is best-effort; it can lag replication under load | wait for `NextUpdate` to pass (the next read self-heals), or force it with `xkmsctl ca crl` / `POST /api/v1/ca/crl` |
 
 ## Where to go next
 

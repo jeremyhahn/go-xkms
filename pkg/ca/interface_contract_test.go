@@ -40,6 +40,7 @@ var trustedCAMethods = map[string]struct{}{
 	"CACertificate":                          {},
 	"CAKeyAttributes":                        {},
 	"CASigner":                               {},
+	"CRL":                                    {},
 	"Certificate":                            {},
 	"CertificatePEM":                         {},
 	"CertStore":                              {},

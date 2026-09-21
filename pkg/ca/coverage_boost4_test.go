@@ -460,7 +460,7 @@ func TestCheckCertificateStatus_ObjectStore_NotFound(t *testing.T) {
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
 	// Serial not revoked in memory, object store has no record → Good.
-	status, _, _, err := resp.checkCertificateStatus(big.NewInt(333333))
+	status, _, _, err := resp.checkCertificateStatus(context.Background(), big.NewInt(333333))
 	require.NoError(t, err)
 	assert.Equal(t, 0 /*ocsp.Good*/, status)
 }

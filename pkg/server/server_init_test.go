@@ -95,6 +95,7 @@ func (m *mockTrustedCA) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x5
 }
 func (m *mockTrustedCA) Revoke(_ context.Context, _ *big.Int, _ int) error { return nil }
 func (m *mockTrustedCA) GenerateCRL(_ context.Context) ([]byte, error)     { return nil, nil }
+func (m *mockTrustedCA) CRL(_ context.Context) ([]byte, error)             { return nil, nil }
 func (m *mockTrustedCA) IsRevoked(_ *big.Int) (bool, error)                { return false, nil }
 func (m *mockTrustedCA) TLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil

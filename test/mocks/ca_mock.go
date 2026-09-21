@@ -207,6 +207,15 @@ func (m *MockCertificateAuthority) GenerateCRL(ctx context.Context) ([]byte, err
 	return args.Get(0).([]byte), args.Error(1)
 }
 
+// CRL returns the current CRL DER, regenerating it first when necessary.
+func (m *MockCertificateAuthority) CRL(ctx context.Context) ([]byte, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
 // ========================================================================
 // TLS Helpers
 // ========================================================================

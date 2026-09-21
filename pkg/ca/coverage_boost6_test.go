@@ -394,6 +394,6 @@ func TestLoadRevocationFromStore_ListScan_NotFound(t *testing.T) {
 	))
 
 	// A serial that doesn't match the stored key → should return ErrCRLNotFound.
-	_, err := resp.loadRevocationFromStore(big.NewInt(999888777))
+	_, err := resp.loadRevocationFromStore(context.Background(), big.NewInt(999888777))
 	assert.ErrorIs(t, err, ErrCRLNotFound)
 }

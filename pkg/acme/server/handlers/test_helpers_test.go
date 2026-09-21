@@ -128,6 +128,7 @@ func (m *MockCA) RevokeCert(_ context.Context, _ *x509.Certificate, _ ca.RevokeO
 }
 func (m *MockCA) IsRevoked(_ *big.Int) (bool, error)            { return false, nil }
 func (m *MockCA) GenerateCRL(_ context.Context) ([]byte, error) { return []byte("mock-crl-data"), nil }
+func (m *MockCA) CRL(_ context.Context) ([]byte, error)         { return []byte("mock-crl-data"), nil }
 
 // TLS
 

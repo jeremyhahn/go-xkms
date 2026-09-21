@@ -95,7 +95,7 @@ func TestCheckCertificateStatus_Good_NoObjectStore(t *testing.T) {
 	ca := setupTestCA(t)
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
-	status, _, _, err := resp.checkCertificateStatus(big.NewInt(999999))
+	status, _, _, err := resp.checkCertificateStatus(context.Background(), big.NewInt(999999))
 	require.NoError(t, err)
 	assert.Equal(t, 0 /*ocsp.Good*/, status)
 }
@@ -110,7 +110,7 @@ func TestCheckCertificateStatus_Revoked_InMemory(t *testing.T) {
 		Reason:         1,
 	}
 
-	status, _, reason, err := resp.checkCertificateStatus(serial)
+	status, _, reason, err := resp.checkCertificateStatus(context.Background(), serial)
 	require.NoError(t, err)
 	assert.Equal(t, 1 /*ocsp.Revoked*/, status)
 	assert.Equal(t, 1, reason)
@@ -124,7 +124,7 @@ func TestLoadRevocationFromStore_NotFound(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
 
-	_, err := resp.loadRevocationFromStore(big.NewInt(404))
+	_, err := resp.loadRevocationFromStore(context.Background(), big.NewInt(404))
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCRLNotFound), "got: %v", err)
 }
@@ -145,7 +145,7 @@ func TestLoadRevocationFromStore_ValidRecord(t *testing.T) {
 	key := revocationKey(serial) + ".json"
 	require.NoError(t, ca.objectStore.Put(key, bytes.NewReader(data)))
 
-	loaded, err := resp.loadRevocationFromStore(serial)
+	loaded, err := resp.loadRevocationFromStore(context.Background(), serial)
 	require.NoError(t, err)
 	assert.Equal(t, rec.Serial, loaded.Serial)
 	assert.Equal(t, rec.Reason, loaded.Reason)

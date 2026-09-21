@@ -52,6 +52,8 @@ type mockCA struct {
 	revokeErr     error
 	crlDER        []byte
 	crlErr        error
+	crlReadDER    []byte
+	crlReadErr    error
 	isRevoked     bool
 	isRevokedErr  error
 	identity      string
@@ -71,6 +73,7 @@ func (m *mockCA) IssueCertificateRaw(_ context.Context, commonName, organization
 }
 func (m *mockCA) Revoke(_ context.Context, serial *big.Int, reason int) error { return m.revokeErr }
 func (m *mockCA) GenerateCRL(_ context.Context) ([]byte, error)               { return m.crlDER, m.crlErr }
+func (m *mockCA) CRL(_ context.Context) ([]byte, error)                       { return m.crlReadDER, m.crlReadErr }
 func (m *mockCA) IsRevoked(serial *big.Int) (bool, error)                     { return m.isRevoked, m.isRevokedErr }
 func (m *mockCA) Identity() string                                            { return m.identity }
 func (m *mockCA) IsInitialized() bool                                         { return m.initialized }

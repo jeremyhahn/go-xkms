@@ -449,6 +449,24 @@ func (s *XKMSService) GenerateCRL(ctx context.Context, req *transport.GenerateCR
 	}, nil
 }
 
+// CRL returns the current CRL DER for the configured CA, regenerating and
+// persisting it first only when none has been published yet or the
+// published artifact's NextUpdate has passed. Unlike GenerateCRL, this does
+// not force a new signing operation when a valid CRL is already published.
+func (s *XKMSService) CRL(ctx context.Context) ([]byte, error) {
+	ca, err := s.getCA()
+	if err != nil {
+		return nil, err
+	}
+
+	crlDER, err := ca.CRL(ctx)
+	if err != nil {
+		return nil, &ErrCAOperation{Operation: "get crl", Err: err}
+	}
+
+	return crlDER, nil
+}
+
 // IsRevoked checks whether a certificate has been revoked.
 func (s *XKMSService) IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
 	if req == nil {

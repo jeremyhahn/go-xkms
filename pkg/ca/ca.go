@@ -268,6 +268,13 @@ type CA struct {
 	revocations      map[string]*RevocationInfo
 	revocationsMutex sync.RWMutex
 
+	// clock is the time source CRL generation and staleness detection use
+	// (see now() in crl_persistence.go). nil in production, which falls
+	// back to time.Now(); tests inject a fixed/advancing clock to make
+	// regenerate-on-read behavior deterministic instead of sleeping out a
+	// real validity window.
+	clock Clock
+
 	// State management
 	// Using atomic for lock-free read of initialized state
 	initialized atomic.Bool
@@ -1937,7 +1944,10 @@ func (ca *CA) Revoke(ctx context.Context, serial *big.Int, reason int) error {
 	return ca.recordRevocation(ctx, serial, reason, false)
 }
 
-// GenerateCRL generates a Certificate Revocation List.
+// GenerateCRL forces regeneration of the Certificate Revocation List and
+// persists the result, even when a still-valid CRL is already published.
+// This is the explicit force-refresh verb; use CRL to read the current
+// artifact without paying for a signing operation on every call.
 //
 // The CRL contains all certificates that have been revoked by this CA.
 // The CRL is signed by the CA's private key and includes the next update
@@ -1954,63 +1964,7 @@ func (ca *CA) GenerateCRL(ctx context.Context) ([]byte, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
-
-	ca.mu.RLock()
-	issuingCert := ca.getIssuingCertificate()
-	ca.mu.RUnlock()
-
-	if issuingCert == nil {
-		return nil, ErrCRLGenerationFailed
-	}
-
-	signer, err := ca.getSigner(ctx)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	// Build revoked certificates list
-	ca.revocationsMutex.RLock()
-	revokedEntries := make([]x509.RevocationListEntry, 0, len(ca.revocations))
-	for _, info := range ca.revocations {
-		revokedEntries = append(revokedEntries, x509.RevocationListEntry{
-			SerialNumber:   info.SerialNumber,
-			RevocationTime: info.RevocationTime,
-			ReasonCode:     info.Reason,
-		})
-	}
-	ca.revocationsMutex.RUnlock()
-
-	// Determine CRL validity from issuing identity
-	crlValidityDays := DefaultCRLValidityDays
-	if issuingIdentity := ca.config.IssuingIdentity(); issuingIdentity != nil {
-		crlValidityDays = issuingIdentity.GetCRLValidityDays()
-	}
-
-	now := time.Now()
-	template := &x509.RevocationList{
-		Number:                    big.NewInt(now.Unix()),
-		ThisUpdate:                now,
-		NextUpdate:                now.AddDate(0, 0, crlValidityDays),
-		RevokedCertificateEntries: revokedEntries,
-		SignatureAlgorithm:        determineSignatureAlgorithm(signer.Public()),
-	}
-
-	crlDER, err := x509.CreateRevocationList(rand.Reader, template, issuingCert, signer)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	// Store the CRL
-	crl, err := x509.ParseRevocationList(crlDER)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("failed to parse generated CRL: %v", err)}
-	}
-
-	if err := ca.certStore.StoreCRL(crl); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to store CRL", Err: err}
-	}
-
-	return crlDER, nil
+	return ca.generateAndPersistCRL(ctx)
 }
 
 // IsRevoked checks if a certificate serial number is revoked.

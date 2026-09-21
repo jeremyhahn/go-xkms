@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	transport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,8 @@ type mockCAServicer struct {
 	revokeCertErr   error
 	generateCRLResp *transport.GenerateCRLResponse
 	generateCRLErr  error
+	crlDER          []byte
+	crlErr          error
 	isRevokedResp   *transport.IsRevokedResponse
 	isRevokedErr    error
 }
@@ -65,6 +68,9 @@ func (m *mockCAServicer) RevokeCertificate(_ context.Context, _ *transport.Revok
 }
 func (m *mockCAServicer) GenerateCRL(_ context.Context, _ *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
 	return m.generateCRLResp, m.generateCRLErr
+}
+func (m *mockCAServicer) CRL(_ context.Context) ([]byte, error) {
+	return m.crlDER, m.crlErr
 }
 func (m *mockCAServicer) IsRevoked(_ context.Context, _ *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
 	return m.isRevokedResp, m.isRevokedErr
@@ -260,6 +266,32 @@ func TestHandleGenerateCRL_Error(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/ca/crl", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.HandleGenerateCRL(w, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestHandleGetCRL_Success(t *testing.T) {
+	h := newTestCAHandlers(&mockCAServicer{crlDER: []byte("der-bytes")})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ca/crl", nil)
+	w := httptest.NewRecorder()
+	h.HandleGetCRL(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/pkix-crl", w.Header().Get("Content-Type"))
+	assert.Equal(t, []byte("der-bytes"), w.Body.Bytes())
+}
+
+func TestHandleGetCRL_NotFound(t *testing.T) {
+	h := newTestCAHandlers(&mockCAServicer{crlErr: ca.ErrCRLNotFound})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ca/crl", nil)
+	w := httptest.NewRecorder()
+	h.HandleGetCRL(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestHandleGetCRL_Error(t *testing.T) {
+	h := newTestCAHandlers(&mockCAServicer{crlErr: errors.New("crl read failed")})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ca/crl", nil)
+	w := httptest.NewRecorder()
+	h.HandleGetCRL(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

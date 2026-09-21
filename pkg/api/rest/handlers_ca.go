@@ -23,6 +23,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	transport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -46,8 +47,14 @@ type caServicer interface {
 	// RevokeCertificate revokes a certificate by serial number.
 	RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error)
 
-	// GenerateCRL generates a certificate revocation list.
+	// GenerateCRL forces regeneration of the certificate revocation list,
+	// even when a still-valid one is already published.
 	GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error)
+
+	// CRL returns the current CRL DER, regenerating and persisting it first
+	// only when none has been published yet or the published artifact's
+	// NextUpdate has passed.
+	CRL(ctx context.Context) ([]byte, error)
 
 	// IsRevoked checks whether a certificate is revoked.
 	IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error)
@@ -69,6 +76,8 @@ var caErrorStatusMap = map[error]int{
 	xkms.ErrInvalidKeyAttributes: http.StatusBadRequest,
 	xkms.ErrCertNotFound:         http.StatusNotFound,
 	xkms.ErrInvalidEncodingPEM:   http.StatusBadRequest,
+	ca.ErrCRLNotFound:            http.StatusNotFound,
+	ca.ErrNotInitialized:         http.StatusServiceUnavailable,
 }
 
 // CAHandlers provides HTTP handlers for the CA operations API.
@@ -218,7 +227,11 @@ func (h *CAHandlers) HandleRevokeCertificate(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// HandleGenerateCRL generates a certificate revocation list.
+// HandleGenerateCRL forces regeneration of the certificate revocation list
+// and persists it, even when a still-valid CRL is already published, and
+// returns it PEM-encoded. This is the explicit force-refresh verb; use
+// HandleGetCRL to read the current artifact without forcing a signing
+// operation.
 // POST /api/v1/ca/crl
 func (h *CAHandlers) HandleGenerateCRL(w http.ResponseWriter, r *http.Request) {
 	var req transport.GenerateCRLRequest
@@ -238,6 +251,28 @@ func (h *CAHandlers) HandleGenerateCRL(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("ca: CRL generated")
 
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// HandleGetCRL returns the current Certificate Revocation List DER,
+// regenerating and persisting one first only when none has been published
+// yet or the published artifact's NextUpdate has passed. Any instance can
+// serve this call: the CRL is a replicated artifact, not a live query.
+// GET /api/v1/ca/crl
+func (h *CAHandlers) HandleGetCRL(w http.ResponseWriter, r *http.Request) {
+	der, err := h.ca.CRL(r.Context())
+	if err != nil {
+		h.logger.Warn("ca: get CRL failed",
+			slog.String("error", err.Error()))
+		writeError(w, err, mapCAError(err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pkix-crl")
+	w.WriteHeader(http.StatusOK)
+	if _, writeErr := w.Write(der); writeErr != nil {
+		h.logger.Warn("ca: failed to write CRL response",
+			slog.String("error", writeErr.Error()))
+	}
 }
 
 // HandleIsRevoked checks whether a certificate is revoked by serial number.

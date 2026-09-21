@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"sync"
 	"time"
@@ -182,7 +181,7 @@ func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) (
 		return nil, &errs.Detail{Err: ErrOCSPSigningFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	status, revocationTime, revocationReason, err := o.checkCertificateStatus(req.SerialNumber)
+	status, revocationTime, revocationReason, err := o.checkCertificateStatus(ctx, req.SerialNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -211,9 +210,10 @@ func (o *OCSPResponder) createResponse(ctx context.Context, req *ocsp.Request) (
 
 // checkCertificateStatus reports whether the given serial number is revoked.
 // Storage lookups first consult the in-memory revocation map (always
-// populated for recent revocations) and fall back to the object store so
-// revocations persisted before the current process started are visible.
-func (o *OCSPResponder) checkCertificateStatus(serial *big.Int) (int, time.Time, int, error) {
+// populated for recent revocations) and fall back to the durable revocation
+// store so revocations persisted before the current process started, or
+// written by another instance in the cluster, are visible.
+func (o *OCSPResponder) checkCertificateStatus(ctx context.Context, serial *big.Int) (int, time.Time, int, error) {
 	// Hot path: in-memory check — RevokeCert and Revoke both update this map.
 	o.ca.revocationsMutex.RLock()
 	info, revoked := o.ca.revocations[serial.Text(10)]
@@ -222,14 +222,13 @@ func (o *OCSPResponder) checkCertificateStatus(serial *big.Int) (int, time.Time,
 		return ocsp.Revoked, info.RevocationTime, info.Reason, nil
 	}
 
-	// Cold path: consult the object store (when configured). Load() normally
-	// populates the in-memory map, but a fresh CA that hasn't been reloaded
-	// since another instance wrote a revocation still needs to read through.
-	if o.ca.objectStore == nil {
-		return ocsp.Good, time.Time{}, 0, nil
-	}
-
-	rec, err := o.loadRevocationFromStore(serial)
+	// Cold path: consult the durable revocation store, preferring the
+	// datastore-backed revocationStore (replicated under Raft) and falling
+	// back to the legacy object store -- the same preference order
+	// putRevocationBlob/listRevocationBlobs use. Load() normally populates
+	// the in-memory map, but a fresh CA that hasn't been reloaded since
+	// another instance wrote a revocation still needs to read through.
+	rec, err := o.loadRevocationFromStore(ctx, serial)
 	if err != nil {
 		if errors.Is(err, ErrCRLNotFound) {
 			return ocsp.Good, time.Time{}, 0, nil
@@ -239,33 +238,14 @@ func (o *OCSPResponder) checkCertificateStatus(serial *big.Int) (int, time.Time,
 	return ocsp.Revoked, rec.RevokedAt, rec.Reason, nil
 }
 
-// loadRevocationFromStore reads a single persistedRevocation from the
-// object store. Returns ErrCRLNotFound when no record exists for serial.
-func (o *OCSPResponder) loadRevocationFromStore(serial *big.Int) (*persistedRevocation, error) {
-	key := revocationKey(serial) + ".json"
-	reader, err := o.ca.objectStore.Get(key)
+// loadRevocationFromStore reads a single persistedRevocation, preferring the
+// datastore-backed revocation store and falling back to the legacy object
+// store. Returns ErrCRLNotFound when no record exists for serial or neither
+// store is configured.
+func (o *OCSPResponder) loadRevocationFromStore(ctx context.Context, serial *big.Int) (*persistedRevocation, error) {
+	data, err := o.ca.getRevocationBlob(ctx, serial)
 	if err != nil {
-		// List-and-scan fallback for backends that return opaque errors
-		// on missing keys. Keeps the responder robust against divergent
-		// store implementations.
-		keys, listErr := o.ca.objectStore.List(revocationKeyPrefix)
-		if listErr != nil {
-			return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", listErr)}
-		}
-		for _, k := range keys {
-			if k == key {
-				// Key exists in listing but Get failed — surface the
-				// original Get error rather than pretending it's absent.
-				return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
-			}
-		}
-		return nil, ErrCRLNotFound
-	}
-	defer func() { _ = reader.Close() }()
-
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrOCSPStorageError, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
 	var rec persistedRevocation
 	if err := json.Unmarshal(data, &rec); err != nil {
