@@ -120,17 +120,6 @@ type TLSConfigOptions struct {
 	// If nil, the CA's own certificate pool is used.
 	ClientCAs *x509.CertPool
 
-	// PreferServerCipherSuites specifies that the server's cipher suite
-	// preferences should be used instead of the client's.
-	//
-	// Deprecated: this knob has no effect. Go has ignored
-	// tls.Config.PreferServerCipherSuites since Go 1.18 — the server always
-	// chooses from its own preference order, informed by the client's — and
-	// in TLS 1.3 cipher suite order is not configurable at all. Setting this
-	// field changes nothing. It is retained only so that existing callers
-	// continue to compile; TLSConfig no longer reads it.
-	PreferServerCipherSuites bool
-
 	// CipherSuites specifies the cipher suites to use.
 	// If empty, SecureCipherSuites() is used to provide secure defaults.
 	// Only applies to TLS 1.2 and earlier; TLS 1.3 cipher suites are not configurable.
@@ -330,9 +319,6 @@ func (ca *CA) TLSConfigWithOptions(ctx context.Context, attrs *types.KeyAttribut
 	}
 
 	// Build the TLS config
-	// opts.PreferServerCipherSuites is deliberately not propagated: Go has
-	// ignored tls.Config.PreferServerCipherSuites since 1.18, so assigning it
-	// only claimed an effect it never had. See the field's doc comment.
 	config := &tls.Config{
 		Certificates:           []tls.Certificate{tlsCert},
 		MinVersion:             opts.MinVersion,
@@ -383,9 +369,8 @@ func (ca *CA) TLSConfigWithOptions(ctx context.Context, attrs *types.KeyAttribut
 //	tlsConfig, err := ca.ServerTLSConfig(ctx, serverKeyAttrs, true)
 func (ca *CA) ServerTLSConfig(ctx context.Context, attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error) {
 	opts := &TLSConfigOptions{
-		IsServer:                 true,
-		RequireClientCert:        requireClientCert,
-		PreferServerCipherSuites: true,
+		IsServer:          true,
+		RequireClientCert: requireClientCert,
 	}
 	return ca.TLSConfigWithOptions(ctx, attrs, opts)
 }
@@ -484,9 +469,8 @@ func (ca *CA) QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttribut
 //	tlsConfig.ServerName = "server.example.com"
 func (ca *CA) MutualTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error) {
 	opts := &TLSConfigOptions{
-		IsServer:                 true,
-		RequireClientCert:        true,
-		PreferServerCipherSuites: true,
+		IsServer:          true,
+		RequireClientCert: true,
 	}
 	return ca.TLSConfigWithOptions(ctx, attrs, opts)
 }
