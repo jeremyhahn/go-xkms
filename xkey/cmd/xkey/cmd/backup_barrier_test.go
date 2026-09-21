@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package cmd
+
+// Tests for "xkey backup create/restore" against a barrier-backed OATH store
+// (go-xkms#134, go-xkms#148): the backup reads the same ciphertext the CLI
+// and the GUI wrote, the sealed backup file never carries the plaintext
+// secret, and the restored credential is readable again through a plain
+// file store on the other side.
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+)
+
+func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+	const barrierPassword = "backup-barrier-pw"
+	initTestOATHBarrier(t, home, barrierPassword)
+
+	// Add the OATH credential the same way an operator would: through the
+	// barrier-backed CLI store, not by writing the fixture file directly.
+	addCmd, _ := newDetachedOATHCmd(t, oathAddCmd)
+	require.NoError(t, addCmd.Flags().Set("name", "BarrierOATH"))
+	require.NoError(t, addCmd.Flags().Set("secret", "JBSWY3DPEHPK3PXP"))
+	require.NoError(t, addCmd.Flags().Set("issuer", "Example"))
+	require.NoError(t, addCmd.Flags().Set("barrier-password", barrierPassword))
+	require.NoError(t, runOATHAdd(addCmd, nil))
+
+	// Trust store and password store are not barrier-aware yet (only OATH
+	// is, go-xkms#134/#148), so point them at explicit plain-file locations
+	// to opt out of the barrier-encrypted refusal for those two stores.
+	output := filepath.Join(home, "barrier-backup.xkb")
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":           output,
+		"password":         "correct-horse-battery-staple",
+		"trust-store":      filepath.Join(dataDir, backupTrustStoreDir),
+		"password-store":   filepath.Join(dataDir, backupPasswordStoreDir),
+		"barrier-password": barrierPassword,
+	})
+	var createOut bytes.Buffer
+	backupCreateCmd.SetOut(&createOut)
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+	assert.Contains(t, createOut.String(), "OATH:         1")
+
+	// The sealed backup file must never carry the plaintext secret.
+	raw, err := os.ReadFile(output)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP")
+	assert.NotContains(t, string(raw), "BarrierOATH")
+
+	// Restore into a second, barrier-free home.
+	restoreHome := isolatedBackupHome(t)
+	setBackupFlags(t, backupRestoreCmd, map[string]string{
+		"password": "correct-horse-battery-staple",
+		"key":      "",
+	})
+	var restoreOut bytes.Buffer
+	backupRestoreCmd.SetOut(&restoreOut)
+	require.NoError(t, runBackupRestore(backupRestoreCmd, []string{output}))
+	assert.Contains(t, restoreOut.String(), "Restore completed successfully.")
+
+	restoredOATH, err := oath.NewFileStore(filepath.Join(backupTestDataDir(restoreHome), backupOATHStoreFile))
+	require.NoError(t, err)
+	defer func() { _ = restoredOATH.Close() }()
+	creds, err := restoredOATH.List()
+	require.NoError(t, err)
+	require.Len(t, creds, 1)
+	assert.Equal(t, "BarrierOATH", creds[0].Name)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", creds[0].SecretString())
+}
+
+func TestResolveOATHBackupStore_BarrierInitialized_UsesBackendStore(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+	const password = "resolve-oath-backup-pw"
+	initTestOATHBarrier(t, home, password)
+
+	setBackupFlags(t, backupCreateCmd, map[string]string{"barrier-password": password})
+
+	store, displayPath, err := resolveOATHBackupStore(backupCreateCmd, dataDir, "")
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	assert.Equal(t, "barrier:oath/", displayPath)
+	require.NoError(t, store.Add(withOATHSecret(&oath.Credential{
+		ID:        "resolve-test",
+		Name:      "ResolveTest",
+		Type:      oath.TypeTOTP,
+		Algorithm: oath.AlgorithmSHA1,
+		Digits:    6,
+		Period:    30,
+	}, "JBSWY3DPEHPK3PXP")))
+
+	credFile := filepath.Join(dataDir, "oath", "resolve-test.json")
+	raw, err := os.ReadFile(credFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "JBSWY3DPEHPK3PXP")
+}
+
+func TestResolveOATHBackupStore_ExplicitPathBypassesBarrier(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+	initTestOATHBarrier(t, home, "irrelevant-password")
+
+	explicitPath := filepath.Join(t.TempDir(), "explicit-oath.json")
+	store, displayPath, err := resolveOATHBackupStore(backupCreateCmd, dataDir, explicitPath)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	assert.Equal(t, explicitPath, displayPath)
+
+	// Writing through the returned store must land in the explicit plain
+	// file, proving the barrier (initialized above) was never consulted.
+	require.NoError(t, store.Add(withOATHSecret(&oath.Credential{
+		ID:        "explicit-test",
+		Name:      "ExplicitTest",
+		Type:      oath.TypeTOTP,
+		Algorithm: oath.AlgorithmSHA1,
+		Digits:    6,
+		Period:    30,
+	}, "JBSWY3DPEHPK3PXP")))
+
+	raw, err := os.ReadFile(explicitPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "JBSWY3DPEHPK3PXP",
+		"the plain file store must hold the secret in the historical format")
+}

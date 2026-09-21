@@ -36,7 +36,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/keyboard"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -1402,8 +1401,10 @@ func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.St
 }
 
 // createBarrierStorage creates barrier-encrypted storage that reads the same
-// FIDO2 credentials as the GUI. It resolves the xkey home directory, creates
-// a file backend, and unseals the barrier with the provided password.
+// FIDO2 credentials as the GUI. It resolves the xkey home directory and
+// unseals the barrier with the provided password through openBarrierBackend
+// (barrier_store.go), the same low-level unseal the oath/backup/device-sync
+// commands use.
 func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialStorage, error) {
 	// Resolve xkey home and data directory.
 	home, err := xhome.Resolve()
@@ -1425,40 +1426,15 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 		password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
 	}
 
-	// Create file backend over the data directory.
-	fileBackend, err := xkms.NewFileStorageBackend(dataDir)
+	barrierBackend, err := openBarrierBackend(password, dataDir)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
-	}
-
-	// Read barrier strategy from root key to determine unseal method.
-	strategy, err := readBarrierStrategy(dataDir)
-	if err != nil {
-		_ = fileBackend.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
-	}
-
-	// Create barrier service and unseal.
-	logger := slog.Default()
-	barrierSvc := services.NewBarrierService(home.Root, logger)
-	barrierSvc.SetDataDir(dataDir)
-
-	if err := barrierSvc.Unseal(password, string(strategy)); err != nil {
-		_ = fileBackend.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
-	}
-
-	barrierBackend := barrierSvc.GetBackend()
-	if barrierBackend == nil {
-		_ = fileBackend.Close()
-		return nil, &DetailError{Err: ErrFIDO2BarrierUnsealFailed, Detail: ": barrier backend unavailable after unseal"}
 	}
 
 	// Create FIDO2 credential storage using the barrier backend.
 	// Prefix "fido2/xkey/" matches the GUI's storage namespace.
 	storage, err := authenticator.NewBackendStorage(barrierBackend, fido2BarrierKeyPrefix)
 	if err != nil {
-		_ = fileBackend.Close()
 		return nil, err
 	}
 

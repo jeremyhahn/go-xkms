@@ -102,16 +102,19 @@ func init() {
 	oathSyncPhoneCmd.Flags().String("device", "", "Paired device name")
 	oathSyncPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
 	oathSyncPhoneCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	addBarrierPasswordFlags(oathSyncPhoneCmd)
 
 	// Push flags
 	oathPushPhoneCmd.Flags().String("device", "", "Paired device name")
 	oathPushPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
 	oathPushPhoneCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	addBarrierPasswordFlags(oathPushPhoneCmd)
 
 	// Pull flags
 	oathPullPhoneCmd.Flags().String("device", "", "Paired device name")
 	oathPullPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
 	oathPullPhoneCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	addBarrierPasswordFlags(oathPullPhoneCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("oath.sync.device", oathSyncPhoneCmd.Flags().Lookup("device"))
@@ -152,9 +155,9 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open local OATH store
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -284,9 +287,9 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open local OATH store and find credential
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -371,9 +374,9 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open local OATH store
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 

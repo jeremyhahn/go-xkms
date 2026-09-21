@@ -336,7 +336,7 @@ func TestBackupToDevice_ConnectFailure(t *testing.T) {
 func sealedDevicePayload(t *testing.T, password string) []byte {
 	t.Helper()
 
-	sources, err := resolveBackupSources(backupStorePaths{})
+	sources, err := resolveBackupSources(backupToDeviceCmd, backupStorePaths{})
 	require.NoError(t, err)
 	defer sources.Close()
 

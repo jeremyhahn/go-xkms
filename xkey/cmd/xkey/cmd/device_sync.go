@@ -125,10 +125,12 @@ func init() {
 	deviceSyncCmd.Flags().String("device", "", "Paired device name")
 	deviceSyncCmd.Flags().Bool("dry-run", false, "Show what would be synced without applying")
 	deviceSyncCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
+	addBarrierPasswordFlags(deviceSyncCmd)
 
 	// Sync-status flags
 	deviceSyncStatusCmd.Flags().String("device", "", "Paired device name")
 	deviceSyncStatusCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
+	addBarrierPasswordFlags(deviceSyncStatusCmd)
 
 	// Sync-push flags
 	deviceSyncPushCmd.Flags().Bool("trust-store", false, "Push trust store certificates")
@@ -138,6 +140,7 @@ func init() {
 	deviceSyncPushCmd.Flags().String("device", "", "Paired device name")
 	deviceSyncPushCmd.Flags().Bool("dry-run", false, "Show what would be pushed without applying")
 	deviceSyncPushCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
+	addBarrierPasswordFlags(deviceSyncPushCmd)
 
 	// Sync-pull flags
 	deviceSyncPullCmd.Flags().Bool("trust-store", false, "Pull trust store certificates")
@@ -147,6 +150,7 @@ func init() {
 	deviceSyncPullCmd.Flags().String("device", "", "Paired device name")
 	deviceSyncPullCmd.Flags().Bool("dry-run", false, "Show what would be pulled without applying")
 	deviceSyncPullCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
+	addBarrierPasswordFlags(deviceSyncPullCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("device.sync.trust_store", deviceSyncCmd.Flags().Lookup("trust-store"))
@@ -297,7 +301,7 @@ func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
 
 	// Open the local stores before any radio work so an unreachable store
 	// fails here rather than after the phone has already been handed data.
-	svc, sources, err := openSyncService()
+	svc, sources, err := openSyncService(cmd)
 	if err != nil {
 		return err
 	}
@@ -403,7 +407,7 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// The local half comes from the sync state file this machine maintains.
-	svc, sources, err := openSyncService()
+	svc, sources, err := openSyncService(cmd)
 	if err != nil {
 		return err
 	}
@@ -766,13 +770,13 @@ const syncStateFile = "sync-state.json"
 
 // openSyncService opens every local store and wires it into a sync service.
 // The caller owns the returned sources and must close them.
-func openSyncService() (*xkeysync.Service, *backupSources, error) {
+func openSyncService(cmd *cobra.Command) (*xkeysync.Service, *backupSources, error) {
 	dataDir, err := backupDataDir()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	sources, err := resolveBackupSources(backupStorePaths{})
+	sources, err := resolveBackupSources(cmd, backupStorePaths{})
 	if err != nil {
 		return nil, nil, err
 	}

@@ -117,6 +117,7 @@ func init() {
 	backupToDeviceCmd.Flags().String("password", "",
 		"Encryption password (if not set, a random key is generated)")
 	addBackupStoreFlags(backupToDeviceCmd)
+	addBarrierPasswordFlags(backupToDeviceCmd)
 
 	// From-device flags
 	backupFromDeviceCmd.Flags().String("device", "", "Paired device name to restore from")
@@ -124,6 +125,7 @@ func init() {
 	backupFromDeviceCmd.Flags().String("password", "", "Decryption password")
 	backupFromDeviceCmd.Flags().String("key", "", "Hex-encoded decryption key")
 	addBackupStoreFlags(backupFromDeviceCmd)
+	addBarrierPasswordFlags(backupFromDeviceCmd)
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("backup.to_device.device", backupToDeviceCmd.Flags().Lookup("device"))
@@ -153,7 +155,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	sources, err := resolveBackupSources(backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
 	if err != nil {
 		return err
 	}
@@ -314,7 +316,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 		return classifyBackupDecryptError(err)
 	}
 
-	sources, err := resolveBackupSources(backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
 	if err != nil {
 		return err
 	}

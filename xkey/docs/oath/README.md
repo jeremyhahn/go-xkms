@@ -38,7 +38,9 @@ xkey oath add [flags]
 | `--algorithm` | `SHA1` | Hash algorithm: `SHA1`, `SHA256`, `SHA512` |
 | `--digits` | `6` | Number of digits: 6, 7, or 8 |
 | `--period` | `30` | Time period in seconds (TOTP only) |
-| `--store` | `/var/lib/xkey/oath.json` | Path to credential store |
+| `--store` | `/var/lib/xkey/oath.json` | Path to credential store. An explicit value always selects a plain file, bypassing the barrier (see [At-Rest Encryption](#at-rest-encryption)) |
+| `--barrier-password` | | Barrier password, when the default store location is barrier-encrypted |
+| `--barrier-password-file` | | Read the barrier password from a file (first line) |
 
 **Examples:**
 
@@ -72,6 +74,8 @@ Aliases: `ls`
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store` | `/var/lib/xkey/oath.json` | Path to credential store |
+| `--barrier-password` | | Barrier password, when the default store location is barrier-encrypted |
+| `--barrier-password-file` | | Read the barrier password from a file (first line) |
 | `--secrets` | `false` | Show secret keys |
 | `--uri` | `false` | Show otpauth:// URIs |
 
@@ -123,6 +127,8 @@ Aliases: `gen`, `code`
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store` | `/var/lib/xkey/oath.json` | Path to credential store |
+| `--barrier-password` | | Barrier password, when the default store location is barrier-encrypted |
+| `--barrier-password-file` | | Read the barrier password from a file (first line) |
 | `--all` | `false` | Generate codes for all credentials |
 
 **Examples:**
@@ -153,6 +159,8 @@ xkey oath scan [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store` | `/var/lib/xkey/oath.json` | Path to credential store |
+| `--barrier-password` | | Barrier password, when the default store location is barrier-encrypted |
+| `--barrier-password-file` | | Read the barrier password from a file (first line) |
 | `--name` | (from QR) | Override the credential name |
 | `--display` | `-1` | Display index to scan (-1 for all) |
 | `--list-displays` | `false` | List available displays and exit |
@@ -210,6 +218,8 @@ Aliases: `rm`, `delete`
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store` | `/var/lib/xkey/oath.json` | Path to credential store |
+| `--barrier-password` | | Barrier password, when the default store location is barrier-encrypted |
+| `--barrier-password-file` | | Read the barrier password from a file (first line) |
 | `--force` | `false` | Don't prompt for confirmation |
 
 **Examples:**
@@ -256,7 +266,9 @@ otpauth://totp/GitHub:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&al
 
 ### Default Location
 
-OATH credentials are stored in `/var/lib/xkey/oath.json` by default.
+By default, credentials go through the barrier-encrypted store when a
+barrier is initialized, or the plain file (`/var/lib/xkey/oath.json`) when
+one is not -- see [At-Rest Encryption](#at-rest-encryption) below.
 
 ### Custom Location
 
@@ -267,9 +279,43 @@ xkey oath add --name "Test" --secret ABC123 --store ~/.xkey/oath.json
 xkey oath generate --all --store ~/.xkey/oath.json
 ```
 
-### Storage Format
+### At-Rest Encryption
 
-Credentials are stored as JSON:
+(go-xkms#134, go-xkms#148)
+
+`xkey oath`, `xkey backup`, and `xkey device oath-sync` all resolve the OATH
+store the same way, at the default `--store`/`--oath-store` location only:
+
+- **A barrier is initialized** (`xkey barrier init`, or the GUI's barrier
+  setup): every read and write goes through the barrier-encrypted store
+  (`oath.NewBackendStore` over the unsealed barrier backend), the exact
+  mechanism the GUI and `xkey extension serve` already use. Nothing here is a
+  second encryption scheme layered on top of the JSON shown below -- the
+  barrier encrypts the whole entry opaquely before it ever reaches disk, so
+  the plaintext JSON form never exists there. Supply the password with
+  `--barrier-password`, `--barrier-password-file`, or the
+  `XKEY_BARRIER_PASSWORD` environment variable; without one of those, an
+  interactive terminal is prompted.
+- **No barrier is initialized:** the command falls back to the historical
+  plain `oath.json` file below, and logs one warning naming the store and
+  pointing at `xkey barrier init` -- never a silent, unannounced plaintext
+  write.
+- **A barrier is initialized but cannot be opened** (missing or wrong
+  password, unsupported strategy, corrupt root key): the command refuses
+  with a typed error. It never falls back to writing plaintext.
+- **An explicit `--store` (or `--oath-store`) path** always selects the
+  plain file at that path, bypassing the barrier decision entirely -- the
+  operator asked for a specific file.
+
+Once a barrier protects the store, its on-disk shape is opaque
+ciphertext, not the JSON form documented below -- there is nothing for an
+operator to inspect directly on disk; use `xkey oath list` (optionally
+`--secrets`) to read the credentials back.
+
+### Storage Format (no barrier)
+
+Without a barrier, credentials are stored as JSON, unencrypted at rest
+(protect the file with filesystem permissions, or initialize a barrier):
 
 ```json
 {
@@ -319,9 +365,22 @@ RFC 4226 compliant implementation:
 
 ### Secret Storage
 
-- Secrets are stored in plaintext in the JSON file
-- Protect the store file with appropriate permissions
-- Consider storing in an encrypted filesystem for production
+- The shared secret is protected at rest by the xkey barrier whenever one is
+  initialized -- run `xkey barrier init` to turn this on. See
+  [At-Rest Encryption](#at-rest-encryption) for exactly which commands and
+  flags this applies to.
+- Without a barrier, the secret is plaintext in the JSON store file (the CLI
+  logs a warning naming the store every time it opens one this way); protect
+  the file with filesystem permissions in that case.
+- In memory, the secret lives in mlocked, guard-paged protected memory for
+  its whole lifetime as a `Credential`, never as a plain Go string
+  (go-xkms#210) -- see `xkey/pkg/oath/credential.go`. The one accepted
+  residue is `crypto/hmac`'s internal ipad/opad copy of the key during TOTP
+  and HOTP computation: `crypto/hmac` exposes no way to wipe it, and hand
+  rolling HMAC to keep it wipeable would forfeit FIPS validation on the exact
+  path this code makes FIPS-safe. That trade-off, and why it is the right
+  one, is documented at the call site in `GenerateCounter`
+  (`xkey/pkg/oath/generator.go`).
 
 ### Backup
 

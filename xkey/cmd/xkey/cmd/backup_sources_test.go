@@ -321,13 +321,6 @@ func TestRequireBackupFile(t *testing.T) {
 
 // --- Store resolution ---
 
-func TestBackupStorePaths_UsesDefaults(t *testing.T) {
-	assert.True(t, backupStorePaths{}.usesDefaults())
-	assert.False(t, backupStorePaths{trust: "/tmp/trust"}.usesDefaults())
-	assert.False(t, backupStorePaths{oath: "/tmp/oath.json"}.usesDefaults())
-	assert.False(t, backupStorePaths{passwords: "/tmp/passwords"}.usesDefaults())
-}
-
 func TestBackupStorePathsFromFlags(t *testing.T) {
 	setBackupFlags(t, backupCreateCmd, map[string]string{
 		"trust-store":    "/tmp/t",
@@ -345,7 +338,7 @@ func TestResolveBackupSources_Defaults(t *testing.T) {
 	home := isolatedBackupHome(t)
 	dataDir := backupTestDataDir(home)
 
-	sources, err := resolveBackupSources(backupStorePaths{})
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
 	require.NoError(t, err)
 	defer sources.Close()
 
@@ -369,7 +362,7 @@ func TestResolveBackupSources_ExplicitPaths(t *testing.T) {
 		passwords: filepath.Join(dir, "custom-passwords"),
 	}
 
-	sources, err := resolveBackupSources(paths)
+	sources, err := resolveBackupSources(backupCreateCmd, paths)
 	require.NoError(t, err)
 	defer sources.Close()
 
@@ -386,7 +379,7 @@ func TestResolveBackupSources_BarrierEncryptedRefused(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(rootKey), 0700))
 	require.NoError(t, os.WriteFile(rootKey, []byte("sealed"), 0600))
 
-	_, err := resolveBackupSources(backupStorePaths{})
+	_, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackupBarrierEncrypted)
 }
@@ -400,7 +393,7 @@ func TestResolveBackupSources_ExplicitPathsBypassBarrierCheck(t *testing.T) {
 	require.NoError(t, os.WriteFile(rootKey, []byte("sealed"), 0600))
 
 	dir := t.TempDir()
-	sources, err := resolveBackupSources(backupStorePaths{
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{
 		trust:     filepath.Join(dir, "trust"),
 		oath:      filepath.Join(dir, "oath.json"),
 		passwords: filepath.Join(dir, "passwords"),
@@ -418,7 +411,7 @@ func TestResolveBackupSources_UnopenableStore(t *testing.T) {
 	blocker := filepath.Join(dir, "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 
-	_, err := resolveBackupSources(backupStorePaths{
+	_, err := resolveBackupSources(backupCreateCmd, backupStorePaths{
 		trust:     filepath.Join(blocker, "trust"),
 		oath:      filepath.Join(dir, "oath.json"),
 		passwords: filepath.Join(dir, "passwords"),

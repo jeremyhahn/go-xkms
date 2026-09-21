@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -209,6 +210,50 @@ Examples:
 	RunE: runOATHScan,
 }
 
+// openOATHStore opens the OATH credential store an "xkey oath" verb should
+// use: barrier-backed (oath.NewBackendStore) when --store is left at its
+// default and a barrier is initialized, the historical 0600 JSON file
+// (oath.NewFileStore) otherwise. resolveSecretStoreBackend (barrier_store.go)
+// makes the barrier decision and logs the one unencrypted-storage warning
+// when no barrier exists; a barrier that exists but cannot be opened is a
+// typed refusal here, never a silent write of plaintext.
+//
+// An explicit --store value always selects the plain file at that path: the
+// operator asked for a specific file, so the barrier auto-detection does not
+// apply, matching how `xkey backup`'s --oath-store override behaves.
+func openOATHStore(cmd *cobra.Command, storePath string) (oath.Store, error) {
+	if cmd.Flags().Changed("store") {
+		store, err := oath.NewFileStore(storePath)
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		}
+		return store, nil
+	}
+
+	dataDir, err := resolveDataDir("")
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+	}
+
+	backend, opened, err := resolveSecretStoreBackend(cmd, dataDir, "OATH", slog.Default())
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+	}
+	if opened {
+		store, err := oath.NewBackendStore(backend, "oath/")
+		if err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		}
+		return store, nil
+	}
+
+	store, err := oath.NewFileStore(storePath)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+	}
+	return store, nil
+}
+
 // runOATHAdd executes the oath add command.
 func runOATHAdd(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
@@ -222,9 +267,9 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 	period, _ := cmd.Flags().GetInt("period")
 	storePath, _ := cmd.Flags().GetString("store")
 
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -283,14 +328,14 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 	showSecrets, _ := cmd.Flags().GetBool("secrets")
 	showURI, _ := cmd.Flags().GetBool("uri")
 
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
 		// If file doesn't exist, just show empty list
 		if os.IsNotExist(err) {
 			_, _ = fmt.Fprintln(out, "No OATH credentials found.")
 			return nil
 		}
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -337,9 +382,9 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 	storePath, _ := cmd.Flags().GetString("store")
 	all, _ := cmd.Flags().GetBool("all")
 
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -438,9 +483,9 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 		return ErrOATHMissingRemoveArg
 	}
 
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -595,9 +640,9 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Open store and add credential
-	store, err := oath.NewFileStore(storePath)
+	store, err := openOATHStore(cmd, storePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
+		return err
 	}
 	defer func() { _ = store.Close() }()
 
@@ -630,19 +675,23 @@ func init() {
 	oathAddCmd.Flags().Int("digits", 6, "Number of digits (6, 7, or 8)")
 	oathAddCmd.Flags().Int("period", 30, "Time period in seconds (TOTP only)")
 	oathAddCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	addBarrierPasswordFlags(oathAddCmd)
 
 	// oath list flags
 	oathListCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
 	oathListCmd.Flags().Bool("secrets", false, "Show secret keys")
 	oathListCmd.Flags().Bool("uri", false, "Show otpauth:// URIs")
+	addBarrierPasswordFlags(oathListCmd)
 
 	// oath generate flags
 	oathGenerateCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
 	oathGenerateCmd.Flags().Bool("all", false, "Generate codes for all credentials")
+	addBarrierPasswordFlags(oathGenerateCmd)
 
 	// oath remove flags
 	oathRemoveCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
 	oathRemoveCmd.Flags().Bool("force", false, "Don't prompt for confirmation")
+	addBarrierPasswordFlags(oathRemoveCmd)
 
 	// oath scan flags
 	oathScanCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
@@ -651,4 +700,5 @@ func init() {
 	oathScanCmd.Flags().Bool("list-displays", false, "List available displays and exit")
 	oathScanCmd.Flags().BoolP("yes", "y", false, "Don't prompt for confirmation")
 	oathScanCmd.Flags().Int("index", -1, "Select QR code by index when multiple are found")
+	addBarrierPasswordFlags(oathScanCmd)
 }

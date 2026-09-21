@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -69,11 +70,13 @@ var (
 	// category the CLI cannot write back, so the restore was partial.
 	ErrBackupRestoreIncomplete = errors.New("backup: restore incomplete")
 
-	// ErrBackupBarrierEncrypted indicates the xkey data directory is sealed
-	// by the barrier, which the CLI cannot unlock on its own.
+	// ErrBackupBarrierEncrypted indicates the trust store or password store
+	// is barrier-encrypted at its default location. Unlike the OATH store
+	// (resolveOATHBackupStore, barrier-aware since go-xkms#134/#148), these
+	// two do not yet have a barrier-backed CLI path.
 	ErrBackupBarrierEncrypted = errors.New(
 		"backup: xkey data directory is barrier-encrypted; unseal it in the xkey GUI, " +
-			"or pass explicit --trust-store/--oath-store/--password-store paths")
+			"or pass explicit --trust-store/--password-store paths")
 )
 
 // Default store locations beneath the xkey data directory ($XKEY_HOME/data,
@@ -186,11 +189,13 @@ func init() {
 	backupCreateCmd.Flags().String("password", "",
 		"Encryption password (if not set, a random key is generated)")
 	addBackupStoreFlags(backupCreateCmd)
+	addBarrierPasswordFlags(backupCreateCmd)
 
 	// Restore flags
 	backupRestoreCmd.Flags().String("password", "", "Decryption password")
 	backupRestoreCmd.Flags().String("key", "", "Hex-encoded decryption key")
 	addBackupStoreFlags(backupRestoreCmd)
+	addBarrierPasswordFlags(backupRestoreCmd)
 
 	// Contents flags
 	backupContentsCmd.Flags().String("password", "", "Decryption password")
@@ -203,7 +208,9 @@ func addBackupStoreFlags(cmd *cobra.Command) {
 	cmd.Flags().String("trust-store", "",
 		"Trust store directory (default: {xkey-home}/data/trust)")
 	cmd.Flags().String("oath-store", "",
-		"OATH credential store file (default: {xkey-home}/data/oath.json)")
+		"OATH credential store file, bypassing the barrier "+
+			"(default: the barrier-encrypted store when a barrier is initialized, "+
+			"otherwise {xkey-home}/data/oath.json)")
 	cmd.Flags().String("password-store", "",
 		"Static password store directory (default: {xkey-home}/data/passwords)")
 }
@@ -305,7 +312,7 @@ func runBackupCreate(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generated encryption key (save this):\n  %s\n\n", hex.EncodeToString(key))
 	}
 
-	sources, err := resolveBackupSources(backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
 	if err != nil {
 		return err
 	}
@@ -381,7 +388,7 @@ func runBackupRestore(cmd *cobra.Command, args []string) error {
 		return classifyBackupDecryptError(err)
 	}
 
-	sources, err := resolveBackupSources(backupStorePathsFromFlags(cmd))
+	sources, err := resolveBackupSources(cmd, backupStorePathsFromFlags(cmd))
 	if err != nil {
 		return err
 	}
@@ -535,11 +542,6 @@ func backupStorePathsFromFlags(cmd *cobra.Command) backupStorePaths {
 	return backupStorePaths{trust: trust, oath: oathPath, passwords: passwords}
 }
 
-// usesDefaults reports whether every store location is left at its default.
-func (p backupStorePaths) usesDefaults() bool {
-	return p.trust == "" && p.oath == "" && p.passwords == ""
-}
-
 // backupSkippedSource records a data category the CLI could not read or
 // write, together with the operator-facing reason.
 type backupSkippedSource struct {
@@ -559,16 +561,26 @@ type backupSources struct {
 // resolveBackupSources opens every data store reachable from the CLI. A store
 // that cannot be opened is a hard failure: omitting it would produce a backup
 // that silently misses data, or a restore that silently drops it.
-func resolveBackupSources(paths backupStorePaths) (*backupSources, error) {
+//
+// The OATH store is barrier-aware (go-xkms#134/#148): resolveOATHBackupStore
+// opens it through the same --barrier-password / --barrier-password-file /
+// XKEY_BARRIER_PASSWORD reach as `xkey oath` and `xkey device oath-sync`
+// (resolveSecretStoreBackend, barrier_store.go), so a backup taken while the
+// barrier is active reads the same ciphertext the GUI wrote instead of a
+// stale or absent plaintext file. The trust store and password store do not
+// have a barrier-backed CLI path yet, so they keep the original refusal:
+// back up stale plaintext copies of those two, never.
+func resolveBackupSources(cmd *cobra.Command, paths backupStorePaths) (*backupSources, error) {
 	dataDir, err := backupDataDir()
 	if err != nil {
 		return nil, err
 	}
 
-	// The GUI keeps these stores inside the barrier once it is initialized,
-	// so any plaintext copy left on disk is stale. The CLI has no unseal
-	// flow of its own, so refuse rather than back up stale data.
-	if paths.usesDefaults() && barrierRootKeyExists(dataDir) {
+	// Trust store and password store: unchanged refusal. Back up a stale
+	// plaintext copy of neither when their default location is
+	// barrier-encrypted; an explicit override opts out of the barrier
+	// entirely for that one store.
+	if (paths.trust == "" || paths.passwords == "") && barrierRootKeyExists(dataDir) {
 		return nil, ErrBackupBarrierEncrypted
 	}
 
@@ -587,16 +599,12 @@ func resolveBackupSources(paths backupStorePaths) (*backupSources, error) {
 	}
 	sources.trust = &trustStoreAdapter{store: trustStore, path: trustPath}
 
-	oathPath := paths.oath
-	if oathPath == "" {
-		oathPath = filepath.Join(dataDir, backupOATHStoreFile)
-	}
-	oathStore, err := oath.NewFileStore(oathPath)
+	oathStore, oathDisplayPath, err := resolveOATHBackupStore(cmd, dataDir, paths.oath)
 	if err != nil {
 		sources.Close()
-		return nil, backupStoreError(backup.ItemOATH, oathPath, err)
+		return nil, backupStoreError(backup.ItemOATH, oathDisplayPath, err)
 	}
-	sources.oath = &oathStoreAdapter{store: oathStore, path: oathPath}
+	sources.oath = &oathStoreAdapter{store: oathStore, path: oathDisplayPath}
 
 	passwordPath := paths.passwords
 	if passwordPath == "" {
@@ -713,6 +721,47 @@ func backupDataDir() (string, error) {
 	return dataDir, nil
 }
 
+// resolveOATHBackupStore opens the OATH store a backup create/restore run
+// reads or writes. An explicit --oath-store path always selects the plain
+// file at that path: the operator asked for a specific file, so the barrier
+// decision does not apply, matching how xkey oath's --store override
+// behaves. The default location goes through resolveSecretStoreBackend
+// (barrier_store.go), the same "is the barrier initialised? open it, or
+// warn" decision xkey oath and xkey device oath-sync use, so a backup taken
+// with a barrier active reads the same ciphertext the GUI wrote instead of a
+// stale or absent plaintext file.
+//
+// Returns the opened store and the path or barrier location to use in error
+// and summary messages.
+func resolveOATHBackupStore(cmd *cobra.Command, dataDir, oathPath string) (oath.Store, string, error) {
+	if oathPath != "" {
+		store, err := oath.NewFileStore(oathPath)
+		if err != nil {
+			return nil, oathPath, err
+		}
+		return store, oathPath, nil
+	}
+
+	backend, opened, err := resolveSecretStoreBackend(cmd, dataDir, "OATH", slog.Default())
+	if err != nil {
+		return nil, filepath.Join(dataDir, backupOATHStoreFile), err
+	}
+	if opened {
+		store, err := oath.NewBackendStore(backend, "oath/")
+		if err != nil {
+			return nil, "barrier:oath/", err
+		}
+		return store, "barrier:oath/", nil
+	}
+
+	oathPath = filepath.Join(dataDir, backupOATHStoreFile)
+	store, err := oath.NewFileStore(oathPath)
+	if err != nil {
+		return nil, oathPath, err
+	}
+	return store, oathPath, nil
+}
+
 // ---------------------------------------------------------------------------
 // Store adapters
 // ---------------------------------------------------------------------------
@@ -774,9 +823,12 @@ func (a *trustStoreAdapter) Contains(fingerprint string) (bool, error) {
 func (a *trustStoreAdapter) Close() error { return a.store.Close() }
 
 // oathStoreAdapter bridges the xkey OATH credential store to the backup
-// service's reader and writer contracts.
+// service's reader and writer contracts. store is the oath.Store interface
+// rather than a concrete type because it may be barrier-backed
+// (oath.BackendStore) or a plain file (oath.FileStore) depending on how
+// resolveOATHBackupStore opened it.
 type oathStoreAdapter struct {
-	store *oath.FileStore
+	store oath.Store
 	path  string
 }
 
