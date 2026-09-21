@@ -765,7 +765,8 @@ func (a *App) initializeDataDir() error {
 			a.fido2Service.SetStorage(fido2Storage)
 		}
 	} else {
-		fido2Backend, fErr := a.openStore(filepath.Join(dir, "fido2"))
+		fido2Dir := filepath.Join(dir, "fido2")
+		fido2Backend, fErr := a.openStore(fido2Dir)
 		if fErr != nil {
 			a.log.Warn("failed to create FIDO2 storage backend", "error", fErr)
 		} else {
@@ -775,6 +776,13 @@ func (a *App) initializeDataDir() error {
 			} else {
 				a.fido2Storage = fido2Storage
 				a.fido2Service.SetStorage(fido2Storage)
+
+				// go-qrdb's barrier is the only at-rest encryption in this
+				// stack; without one this store has none. Warn once per
+				// store open rather than refusing or silently falling back.
+				a.log.Warn("passkey store is unencrypted at rest: private keys are stored in plaintext",
+					"path", fido2Dir,
+					"remedy", "run 'xkey barrier init' to encrypt the passkey store")
 			}
 		}
 	}

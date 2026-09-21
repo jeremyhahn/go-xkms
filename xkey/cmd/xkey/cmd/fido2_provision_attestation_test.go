@@ -301,7 +301,7 @@ func newProvisioningDevice(t *testing.T) string {
 func openTestDevice(t *testing.T) (*authenticator.Authenticator, authenticator.StatefulCredentialStorage) {
 	t.Helper()
 
-	storage, err := createFIDO2Storage(buildFIDO2Config())
+	storage, err := createFIDO2Storage(buildFIDO2Config(), discardLogger())
 	if err != nil {
 		t.Fatalf("open device storage: %v", err)
 	}
@@ -343,7 +343,7 @@ func setDeviceSOPIN(t *testing.T) {
 func deviceState(t *testing.T) *authenticator.AuthenticatorState {
 	t.Helper()
 
-	storage, err := createFIDO2Storage(buildFIDO2Config())
+	storage, err := createFIDO2Storage(buildFIDO2Config(), discardLogger())
 	if err != nil {
 		t.Fatalf("open device storage: %v", err)
 	}
@@ -1430,7 +1430,7 @@ func newTestAttestationCSR(t *testing.T, key *ecdsa.PrivateKey, aaguid []byte) [
 func saveTestDeviceState(t *testing.T, certDER []byte) authenticator.StatefulCredentialStorage {
 	t.Helper()
 
-	storage, err := createFIDO2Storage(buildFIDO2Config())
+	storage, err := createFIDO2Storage(buildFIDO2Config(), discardLogger())
 	if err != nil {
 		t.Fatalf("open device storage: %v", err)
 	}
@@ -1689,7 +1689,7 @@ func makeCredentialAttestation(t *testing.T) (string, [][]byte) {
 	t.Helper()
 
 	cfg := buildFIDO2Config()
-	storage, err := createFIDO2Storage(cfg)
+	storage, err := createFIDO2Storage(cfg, discardLogger())
 	if err != nil {
 		t.Fatalf("open device storage: %v", err)
 	}

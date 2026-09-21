@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — User Guide
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## What this does
 
@@ -66,6 +66,26 @@ ceremony that carries no PIN still waits for a touch, which a script can supply
 with `xkey touch`.
 
 Same for `--require-touch=false`, more narrowly.
+
+## At-rest encryption of the passkey store
+
+`--storage barrier` and the GUI (once you run `xkey barrier init`) encrypt
+the credential store with go-qrdb's seal barrier — the only at-rest
+encryption xkey has. `--storage file` (and the GUI before the barrier is
+initialized) is a plain file at `0600`: readable by anything running as you,
+same as any other config file with no encryption of its own. That is a valid
+choice — not everyone wants a barrier password in their startup — but you
+should choose it knowingly. Every time the daemon or the GUI opens an
+unencrypted store it logs one warning naming the exposure and the fix:
+
+```
+passkey store is unencrypted at rest: private keys are stored in plaintext
+path=... remedy="run 'xkey barrier init' to encrypt the passkey store"
+```
+
+`--storage memory` never touches disk, so it never carries this warning.
+`xkey fido2 status` also reports which store is live and whether it is
+encrypted — see [`cli.md`](cli.md#xkey-fido2-start--status).
 
 ## Choosing where the keys live
 

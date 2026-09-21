@@ -25,12 +25,22 @@ The CTAP2 implementation. One file per command:
 | `authenticatorReset` | `cmd_reset.go` |
 
 Supporting: `authenticator.go`, `authdata.go`, `crypto.go`, `config.go`,
-`entity.go`, `errors.go`, `hid_adapter.go`, `pin_protocol.go`,
+`errors.go`, `hid_adapter.go`, `pin_protocol.go`,
 `pin_protocol_v1.go`, `migration.go`.
 
 Extensions: `ext_hmac_secret.go`, `ext_deviceconfig.go`.
 
-Storage seams: `dao_credential_store.go`, `dao_rp_policy_store.go`.
+Storage seams: `storage.go` (the `StatefulCredentialStorage` /
+`ListableStorage` / `ClearableStorage` interfaces), `storage_memory.go`
+(`NewMemoryStorage`, the `--storage memory` default), `storage_backend.go`
+(`BackendStorage`, adapting any `xkms.StorageBackend` — file or
+barrier — to credential storage; this is the one type both the GUI and the
+standalone daemon construct, so there is no separate DAO-backed store to
+diverge from it), and `dao_rp_policy_store.go` (RP policy storage; unrelated
+to credentials). `entity.go` and `dao_credential_store.go` — an unused
+`GenericDAO`-backed credential store with zero non-test callers — were
+deleted (#181); `BackendStorage` was always the production seam for both the
+GUI and the daemon.
 
 Key material: `key_manager.go`, `key_wrapper.go`, `keybackend/`.
 
@@ -93,8 +103,8 @@ first run and the wrong one for daily use.
 - **The relying party cannot distinguish backends.** `software`, `tpm2` and
   `phone` present identically over CTAP2, so the strength claim is the
   operator's to make honestly.
-- **Credential storage and key material are separate seams.** The DAO stores
-  hold credential records; `keybackend` holds key material. Do not merge them.
+- **Credential storage and key material are separate seams.** `BackendStorage`
+  holds credential records; `keybackend` holds key material. Do not merge them.
 - **Key material never transits the ordinary Go heap through the wrapper.**
   `KeyWrapper` has no method that takes or returns a plaintext slice:
   `WrapFrom(src *secure.Buffer)` reads from protected memory the caller owns
@@ -106,6 +116,25 @@ first run and the wrong one for daily use.
   [`fido2/authenticator-security.md`](../fido2/authenticator-security.md).
 - **`--storage memory` loses credentials on exit.** No warning is emitted; it is
   the documented default.
+- **go-qrdb's seal barrier is the only at-rest encryption in this stack; xkey
+  adds no per-credential wrap of its own on top of it (#181).** `--storage
+  barrier` and the GUI's barrier-backed branch construct `BackendStorage`
+  over the barrier's `xkms.StorageBackend`, so credential JSON is encrypted
+  by the barrier exactly like every other barrier-routed store. `--storage
+  file` and the GUI's pre-`barrier init` fallback construct the same
+  `BackendStorage` over a plain file backend instead — a `0600` file with no
+  encryption of its own, which is a legitimate configuration, not a bug.
+  Both plain-file construction sites (`createFIDO2Storage`'s
+  `FIDO2StorageTypeFile` case in `xkey/cmd/xkey/cmd/fido2.go`, and the
+  no-barrier branch of `initializeDataDir` in `xkey/pkg/gui/app.go`) log one
+  `slog.Warn` naming the exposure and pointing at `xkey barrier init` every
+  time the store is opened — never a refusal, never a silent fallback.
+  `--storage memory` never touches disk and is exempt. `BackendStorage`
+  itself (`storage_backend.go`) carries no logger and emits no warning of its
+  own; the warning is deliberately at the two call sites that know whether a
+  barrier is present, not inside the shared storage type. `xkey fido2
+  status`'s `EncryptedAtRest` field (`fido2_status.go`) reports this
+  per-store: `true` for `barrier`, `false` for `file` and `memory`.
 - **CTAP2 is one command at a time per channel, and the authenticator itself
   now enforces it, not just the transport.** `Authenticator.cmdMu`
   (`authenticator.go`) is held for the whole of `ProcessCBORWithContext` —
@@ -182,12 +211,15 @@ backend that cannot reach its TPM does not silently become `software`.
 
 ## Persistence
 
-- **`memory`** — nothing survives the process.
-- **`file`** — under `--storage-path` (default `./data`).
-- **`barrier`** — encrypted, keyed by the barrier password.
+- **`memory`** — nothing survives the process. `storage_memory.go`.
+- **`file`** — under `--storage-path` (default `./data`). `BackendStorage`
+  over a plain `xkms.StorageBackend`; plaintext at rest (see the at-rest
+  invariant above).
+- **`barrier`** — the same `BackendStorage` over the barrier's
+  `xkms.StorageBackend` instead; encrypted, keyed by the barrier password.
 
-Credential records go through the DAO stores; key material through
-`keybackend` to software, TPM or phone. RP policies are
+Credential records go through `storage_backend.go`'s `BackendStorage`; key
+material through `keybackend` to software, TPM or phone. RP policies are
 `dao_rp_policy_store.go`.
 
 `migration.go` handles moving between earlier PIN-state layouts —
@@ -198,7 +230,7 @@ for the GUI/TPM path) and the deprecated `FilePINManager` they came from.
 ## Test strategy
 
 - **Unit** — per-command suites in `xkey/pkg/authenticator`, plus PIN protocol,
-  extensions, key wrapping and the DAO stores.
+  extensions, key wrapping, `BackendStorage`, and the RP policy DAO store.
 - **UHID** — `xkey/pkg/uhid` serialization and device tests; the stub build is
   compiled on non-Linux.
 - **Browser end to end** — Playwright specs against the CDP bridge, and

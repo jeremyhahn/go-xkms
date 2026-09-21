@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
@@ -276,7 +277,7 @@ func openTokenDevice(cmd *cobra.Command) (authenticator.StatefulCredentialStorag
 		return nil, ErrFIDO2DaemonRunning
 	}
 
-	storage, err := createFIDO2Storage(cfg)
+	storage, err := createFIDO2Storage(cfg, slog.Default())
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrTokenDeviceOpenFailed, Cause: err}
 	}

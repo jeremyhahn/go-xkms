@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/fxamacker/cbor/v2"
@@ -236,7 +237,7 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
 		return ErrFIDO2DaemonRunning
 	}
 
-	storage, err := createFIDO2Storage(cfg)
+	storage, err := createFIDO2Storage(cfg, slog.Default())
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAttestProvisionDeviceOpenFailed, Cause: err}
 	}

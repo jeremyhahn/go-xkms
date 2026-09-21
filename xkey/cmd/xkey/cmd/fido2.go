@@ -653,7 +653,7 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	}
 
 	// Create the appropriate storage backend
-	storage, err := createFIDO2Storage(cfg)
+	storage, err := createFIDO2Storage(cfg, logger)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2StorageCreationFailed, err)
 	}
@@ -1367,7 +1367,7 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 }
 
 // createFIDO2Storage creates the appropriate storage backend based on configuration.
-func createFIDO2Storage(cfg *FIDO2Config) (authenticator.StatefulCredentialStorage, error) {
+func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.StatefulCredentialStorage, error) {
 	switch cfg.StorageType {
 	case FIDO2StorageTypeMemory:
 		return authenticator.NewMemoryStorage(), nil
@@ -1383,6 +1383,13 @@ func createFIDO2Storage(cfg *FIDO2Config) (authenticator.StatefulCredentialStora
 			_ = backend.Close()
 			return nil, err
 		}
+
+		// go-qrdb's barrier is the only at-rest encryption in this stack;
+		// this file store has none. Warn once per store open rather than
+		// refusing or silently falling back.
+		logger.Warn("passkey store is unencrypted at rest: private keys are stored in plaintext",
+			slog.String("path", cfg.StoragePath),
+			slog.String("remedy", "run 'xkey barrier init' to encrypt the passkey store"))
 
 		return storage, nil
 

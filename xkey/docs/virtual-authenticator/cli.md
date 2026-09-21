@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 Binary: `xkey`. Groups: `fido2` (the daemon) and `uhid` (device setup and
 policy). Sources: `xkey/cmd/xkey/cmd/fido2.go`, `uhid.go`.
@@ -26,6 +26,14 @@ xkey fido2 --storage file --storage-path ~/.local/share/xkey --pin --require-tou
 **The default is `memory`, and credentials do not survive a restart.** That is
 fine for a first look and wrong for daily use — pick `file` or `barrier` before
 you register anything you care about.
+
+**`file` is plaintext at rest; `barrier` is the only encrypted option.**
+go-qrdb's seal barrier is the one at-rest encryption xkey has — there is no
+separate per-credential wrap. Every time `--storage file` opens its store the
+daemon logs one warning naming the exposure and pointing at `xkey barrier
+init`; this is a disclosure, not a refusal, since a plaintext store is a
+legitimate choice for a host that has no barrier password to manage.
+`--storage memory` never writes to disk and never carries the warning.
 
 ### Where the keys live
 
