@@ -85,24 +85,55 @@ make compose-down
 
 ### Production Environment
 
-The `docker-compose.production.yml` provides production services:
+`docker-compose.production.yml` runs the images built above; it does not
+build them itself (see "Building Images" below for why):
 
 ```bash
-# Build production images
-make compose-prod-build
+# Build the images the compose file references
+make docker-build-all
 
 # Start production services
-make compose-prod-up
+docker compose -f docker-compose.production.yml up -d
 
 # View logs
-make compose-prod-logs
+docker compose -f docker-compose.production.yml logs -f
 
 # Show service status
-make compose-prod-ps
+docker compose -f docker-compose.production.yml ps
 
 # Stop services
-make compose-prod-down
+docker compose -f docker-compose.production.yml down
 ```
+
+### Building Images
+
+Production images embed private `github.com/jeremyhahn/*` Go modules, fetched
+during `go mod download` with the in-house module credential. Each
+`docker-build-*` Make target stages that credential to a gitignored file via
+`stage-gomodauth` and hands it to BuildKit as a build secret
+(`--secret id=gomodauth`); the Dockerfiles never see it any other way.
+
+Build the images with the Make targets, not `docker compose build`:
+
+```bash
+make docker-build-server   # unified server
+make docker-build-rest     # REST-only
+make docker-build-grpc     # gRPC-only
+make docker-build-quic     # QUIC-only
+make docker-build-mcp      # MCP-only
+make docker-build-all      # all of the above
+```
+
+`docker compose -f docker-compose.production.yml build` (and an accidental
+`docker compose up` before the images exist) is intentionally unsupported:
+compose has no equivalent secret-injection step, so building through it would
+fail on the first private module with an opaque authentication error instead
+of an actionable one. The `build:` block in `docker-compose.production.yml`
+instead points at `Dockerfile.compose-build-unsupported`, a stub that fails
+immediately with a message naming the correct `docker-build-*` target. The
+`image:` tags in that compose file match what the Make targets produce
+(`go-xkms-server:${VERSION:-latest}`, etc.), so `docker compose up` uses the
+Make-built image once it exists.
 
 ## Port Mappings
 
@@ -345,7 +376,7 @@ docker logs xkms-server
 docker logs -f xkms-server
 
 # Docker Compose logs
-make compose-prod-logs
+docker compose -f docker-compose.production.yml logs -f
 ```
 
 ### Container Shell
@@ -435,10 +466,11 @@ make docker-help
 | docker-run-grpc | Run gRPC server locally |
 | docker-stop-all | Stop all containers |
 | docker-clean-production | Remove all production images |
-| compose-prod-up | Start production services |
-| compose-prod-down | Stop production services |
-| compose-prod-build | Build production images |
-| compose-prod-logs | View service logs |
+
+`docker-compose.production.yml` has no corresponding `compose-*` Make
+targets; drive it directly with `docker compose -f
+docker-compose.production.yml <up|down|logs|ps>` after building images with
+the targets above (see "Building Images").
 
 ## Examples
 

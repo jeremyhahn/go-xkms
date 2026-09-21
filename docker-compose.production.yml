@@ -1,13 +1,16 @@
 services:
   # Unified server (all protocols)
   xkms-server:
+    # `docker compose build` is unsupported here — see
+    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
+    # ("Building Images"). Build with `make docker-build-server` (or
+    # `docker-build-all`); this image: tag is what that target produces.
     build:
       context: .
-      dockerfile: Dockerfile.server
+      dockerfile: Dockerfile.compose-build-unsupported
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: go-xkms/server:${VERSION:-latest}
+        MAKE_TARGET: docker-build-server
+    image: go-xkms-server:${VERSION:-latest}
     container_name: xkms-server
     ports:
       - "8443:8443"   # REST
@@ -34,13 +37,16 @@ services:
 
   # REST-only server
   xkms-rest:
+    # `docker compose build` is unsupported here — see
+    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
+    # ("Building Images"). Build with `make docker-build-rest` (or
+    # `docker-build-all`); this image: tag is what that target produces.
     build:
       context: .
-      dockerfile: Dockerfile.rest
+      dockerfile: Dockerfile.compose-build-unsupported
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: go-xkms/rest:${VERSION:-latest}
+        MAKE_TARGET: docker-build-rest
+    image: go-xkms-rest:${VERSION:-latest}
     container_name: xkms-rest
     ports:
       - "8445:8443"
@@ -66,13 +72,16 @@ services:
 
   # gRPC-only server
   xkms-grpc:
+    # `docker compose build` is unsupported here — see
+    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
+    # ("Building Images"). Build with `make docker-build-grpc` (or
+    # `docker-build-all`); this image: tag is what that target produces.
     build:
       context: .
-      dockerfile: Dockerfile.grpc
+      dockerfile: Dockerfile.compose-build-unsupported
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: go-xkms/grpc:${VERSION:-latest}
+        MAKE_TARGET: docker-build-grpc
+    image: go-xkms-grpc:${VERSION:-latest}
     container_name: xkms-grpc
     ports:
       - "9445:9443"
@@ -95,13 +104,16 @@ services:
 
   # QUIC-only server
   xkms-quic:
+    # `docker compose build` is unsupported here — see
+    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
+    # ("Building Images"). Build with `make docker-build-quic` (or
+    # `docker-build-all`); this image: tag is what that target produces.
     build:
       context: .
-      dockerfile: Dockerfile.quic
+      dockerfile: Dockerfile.compose-build-unsupported
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: go-xkms/quic:${VERSION:-latest}
+        MAKE_TARGET: docker-build-quic
+    image: go-xkms-quic:${VERSION:-latest}
     container_name: xkms-quic
     ports:
       - "8446:8444/udp"
@@ -124,13 +136,16 @@ services:
 
   # MCP-only server
   xkms-mcp:
+    # `docker compose build` is unsupported here — see
+    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
+    # ("Building Images"). Build with `make docker-build-mcp` (or
+    # `docker-build-all`); this image: tag is what that target produces.
     build:
       context: .
-      dockerfile: Dockerfile.mcp
+      dockerfile: Dockerfile.compose-build-unsupported
       args:
-        VERSION: ${VERSION:-dev}
-        COMMIT: ${COMMIT:-unknown}
-    image: go-xkms/mcp:${VERSION:-latest}
+        MAKE_TARGET: docker-build-mcp
+    image: go-xkms-mcp:${VERSION:-latest}
     container_name: xkms-mcp
     ports:
       - "9446:9444"

@@ -1,0 +1,22 @@
+# docker-compose.production.yml intentionally does not carry a working
+# `build:` section for its services (issue #228).
+#
+# Every production image (Dockerfile.server, Dockerfile.rest, Dockerfile.grpc,
+# Dockerfile.quic, Dockerfile.mcp) fetches private github.com/jeremyhahn/*
+# modules during `go mod download`. That fetch authenticates with the
+# in-house Go module credential, which is staged to a gitignored file by
+# `make stage-gomodauth` and handed to BuildKit as a build secret
+# (`--secret id=gomodauth`) by each `docker-build-*` Make target. `docker
+# compose build` has no equivalent secret-staging step, so pointing compose
+# at the real Dockerfiles would fail on the first private module with an
+# opaque authentication error instead of an actionable one.
+#
+# This Dockerfile stands in for the real one so that failure is explicit:
+# build the images with the Make targets instead.
+#   make docker-build-server   make docker-build-rest
+#   make docker-build-grpc     make docker-build-quic
+#   make docker-build-mcp      make docker-build-all
+# See docs/deployment/docker.md ("Building Images") for details.
+FROM alpine:3
+ARG MAKE_TARGET=docker-build-all
+RUN echo "error: 'docker compose build' is not supported for docker-compose.production.yml; run 'make ${MAKE_TARGET}' instead (see docs/deployment/docker.md)" >&2 && exit 1
