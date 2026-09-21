@@ -115,6 +115,11 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 	// Provenance is a consequence of this code path, not an input: this is the
 	// generate path, so the key is generated. See types.KeyOrigin.
 	attrs.KeyOrigin = types.KeyOriginGenerated
+	// AttestLevel is KeyOrigin's sibling: it records where the key lives
+	// (hardware or software) rather than how it arrived. g implements
+	// PIVAttestLevelReporter itself, so this always resolves to the backend's
+	// own classification.
+	attrs.AttestLevel = pivAttestLevel(g, slot, cn)
 
 	// If the backend implements PIVParentProvider, set the parent key attributes.
 	// This is used by TPM2 to set PlatformSRK as the parent for PIV keys.
@@ -225,6 +230,11 @@ func (g *backendPIVKeyGenerator) ImportPIVKey(ctx context.Context, slot pivcert.
 	// built here from the algorithm and the slot rather than taken from a
 	// caller, which is what makes the value unforgeable at this seam.
 	attrs.KeyOrigin = types.KeyOriginImported
+	// An imported key is not exempt from carrying an attestation level: it
+	// answers a different question than KeyOrigin (where the key lives, not
+	// how it arrived), and hardware + imported is the combination #207
+	// singled out as the one that must stay distinguishable.
+	attrs.AttestLevel = pivAttestLevel(g, slot, cn)
 
 	if provider, ok := g.backend.(PIVParentProvider); ok {
 		parentAttrs, err := provider.PIVParentAttributes()
@@ -322,3 +332,20 @@ func (g *backendPIVKeyGenerator) PIVKeyOrigin(_ pivcert.PIVSlot, cn string) (typ
 
 // Verify origin-reporting compliance at compile time.
 var _ PIVKeyOriginReporter = (*backendPIVKeyGenerator)(nil)
+
+// AttestLevel classifies the key this generator backs, from the underlying
+// backend's own hardware-backed capability flag — the same signal the
+// backend catalog and UI backend sorting already use to describe a
+// backend's trust class (types.Capabilities.HardwareBacked), so PIV does
+// not invent a second one. The answer does not vary by slot or CN: a
+// backend's hardware backing is a property of the backend, not of any one
+// key it holds.
+func (g *backendPIVKeyGenerator) AttestLevel(_ pivcert.PIVSlot, _ string) (types.AttestLevel, error) {
+	if g.backend.KeyProvider().Capabilities().IsHardwareBacked() {
+		return types.AttestLevelHardware, nil
+	}
+	return types.AttestLevelSoftware, nil
+}
+
+// Verify attest-level-reporting compliance at compile time.
+var _ PIVAttestLevelReporter = (*backendPIVKeyGenerator)(nil)

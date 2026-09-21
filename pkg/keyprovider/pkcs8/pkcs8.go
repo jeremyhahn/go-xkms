@@ -554,6 +554,18 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 		}
 		attr.KeyOrigin = resolveKeyOrigin(metadata)
 
+		// AttestLevel needs no metadata round trip, unlike KeyOrigin: this
+		// backend encodes every key as PKCS#8, which is software cryptography
+		// by construction — there is no PKCS#8 record that could describe a
+		// hardware-resident key, so the answer is the same for a key written
+		// before this field existed as for one written after. A caller that
+		// stamped a different value in memory before GenerateKey/ImportKey
+		// wrote it (there should be none — see PIVKeyGenerator.AttestLevel,
+		// which classifies this backend as software for exactly this reason)
+		// is corrected here rather than trusted, the same way GenerateKey does
+		// not accept a caller-supplied KeyOrigin.
+		attr.AttestLevel = types.AttestLevelSoftware
+
 		attrs = append(attrs, attr)
 	}
 

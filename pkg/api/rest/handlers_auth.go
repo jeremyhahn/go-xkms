@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // PIVLoginOptions configures the TLS-client-certificate login exchange.
@@ -61,28 +62,90 @@ type PIVLoginOptions struct {
 	// is strict; set it only for deployments that knowingly accept software
 	// keys on this route.
 	AllowUnattested bool
+
+	// RecordedLevel optionally looks up the attestation level xkms itself
+	// recorded when the login key was enrolled — e.g. from a PIV slot's
+	// KeyAttributes.AttestLevel (pkg/xkms's PIVKeyGenerator implementations)
+	// or an admin PIV factor's enrollment metadata — keyed by the login
+	// certificate. found is false when no such record exists for this
+	// certificate, which is not a claim about the key; it means this
+	// exchange has nothing to prefer and falls back to the certificate
+	// chain alone.
+	//
+	// Nil means no enrollment lookup is wired, and every login is decided
+	// from the certificate chain exactly as before RecordedLevel existed.
+	RecordedLevel func(cert *x509.Certificate) (level types.AttestLevel, found bool)
 }
 
 // Attestation levels recorded on the token minted by the PIV login exchange,
 // in the attest_level claim, so an unattested login is representable rather
 // than indistinguishable from a proven one.
+//
+// These are the REST-local names for the one shared attestation-level
+// vocabulary, types.AttestLevel (types.AttestLevelHardware /
+// types.AttestLevelUnattested): the wire value is pinned to the shared
+// constant's spelling rather than re-declared, so a claim minted here and a
+// level recorded by pkg/xkms's PIVKeyGenerator implementations always agree.
+// A third value, "software" (types.AttestLevelSoftware), can also reach the
+// claim — see attestationLevel — when RecordedLevel reports it; it has no
+// package constant here because the certificate-chain path, the only path
+// that predates RecordedLevel, can never produce it: a chain proves hardware
+// or proves nothing, never that a key is definitely software.
 const (
-	// PIVAttestLevelHardware means a presented certificate chained to a
-	// configured attestation anchor and attests the login key.
-	PIVAttestLevelHardware = "hardware"
+	// PIVAttestLevelHardware means either a presented certificate chained to
+	// a configured attestation anchor and attests the login key, or a
+	// recorded enrollment level of types.AttestLevelHardware took precedence.
+	PIVAttestLevelHardware = string(types.AttestLevelHardware)
 	// PIVAttestLevelUnattested means nothing proved the key is on a
 	// smartcard and the deployment accepted the login anyway.
-	PIVAttestLevelUnattested = "unattested"
+	PIVAttestLevelUnattested = string(types.AttestLevelUnattested)
 )
 
 // attestLevelMetadataKey is the identity metadata key the token issuer maps
 // to the attest_level claim.
 const attestLevelMetadataKey = "attest_level"
 
-// attestationLevel decides what the presented certificates prove about the
-// login key, peers[0]. It returns the level to record, or an empty level
-// with the operator-facing reason the login is refused.
+// attestationLevel decides what is known about the login key, peers[0], and
+// returns the level to record, or an empty level with the operator-facing
+// reason the login is refused.
+//
+// Precedence: when RecordedLevel is set and reports a level for the login
+// certificate, that level is used as-is and the certificate chain below is
+// not consulted at all for this decision — chainAttestationLevel only runs
+// when RecordedLevel is nil, or reports not-found for this certificate. This
+// is a strict either/or, not a merge of the two signals: a recorded
+// types.AttestLevelHardware is never downgraded by a chain that fails to
+// prove it, because the chain is never examined once a recorded level is
+// found; a recorded types.AttestLevelUnattested or types.AttestLevelSoftware
+// is never upgraded by a chain that happens to prove residency, for the same
+// reason — the chain-derived path is the fallback for a key with no recorded
+// enrollment, not a second opinion on one that has one.
+//
+// A recorded level still passes through the same admission policy the
+// chain-derived path applies: types.AttestLevelHardware is always accepted,
+// but anything weaker is accepted only when AllowUnattested is set, exactly
+// as an unattested chain-derived login is today. RecordedLevel decides WHAT
+// the key is, not whether a non-hardware key may log in — that remains
+// AllowUnattested's job.
 func (o *PIVLoginOptions) attestationLevel(peers []*x509.Certificate) (level, reason string) {
+	if o.RecordedLevel != nil {
+		if recorded, found := o.RecordedLevel(peers[0]); found {
+			if recorded == types.AttestLevelHardware {
+				return PIVAttestLevelHardware, ""
+			}
+			if o.AllowUnattested {
+				return recorded.String(), ""
+			}
+			return "", "the recorded enrollment level is not hardware-backed and unattested logins are not allowed"
+		}
+	}
+	return o.chainAttestationLevel(peers)
+}
+
+// chainAttestationLevel decides what the presented certificate chain alone
+// proves about the login key, peers[0]. It is attestationLevel's fallback
+// for a key with no recorded enrollment level.
+func (o *PIVLoginOptions) chainAttestationLevel(peers []*x509.Certificate) (level, reason string) {
 	if o.AttestationRoots == nil {
 		if o.AllowUnattested {
 			return PIVAttestLevelUnattested, ""

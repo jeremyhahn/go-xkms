@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -33,8 +33,30 @@ which is an authentication route rather than a slot operation.
 rate limiter. It accepts a certificate as smartcard-backed only when a presented
 certificate chains to the configured PIV attestation anchor and carries the
 login key's SubjectPublicKeyInfo; the token it mints records `attest_level`
-(`hardware` or `unattested`). The contract is in
+(`hardware`, `software`, or `unattested` — `types.AttestLevel`, `pkg/types`,
+the one vocabulary shared with go-quicbaas#379). The contract is in
 [`../auth-factors/api.md`](../auth-factors/api.md).
+
+**Precedence: a recorded enrollment level, when one exists, decides the
+claim outright — the certificate chain is not consulted at all in that case.**
+`PIVLoginOptions.RecordedLevel`
+(`func(cert *x509.Certificate) (types.AttestLevel, bool)`) looks up the level
+`pkg/xkms`'s `PIVKeyGenerator` implementations recorded on
+`types.KeyAttributes.AttestLevel` when the login key was enrolled. `pkg/server`
+wires it to `PIVManager.AttestLevelForCertificate`, which matches the login
+certificate against every enrolled PIV slot on every registered backend by
+SubjectPublicKeyInfo — the canonical qrdb SPKI SHA-256 thumbprint
+(`qrdbsdk.ComputeSPKIThumbprint`, the one cert-binding algorithm already used
+for admin cert binding), not a second algorithm invented for this lookup.
+When `RecordedLevel` is nil (no PIV manager was initialized at server
+composition) or reports not-found for the presented certificate, the
+exchange falls back to the pre-existing chain-derived decision (an anchored
+attestation chain proves `hardware`; `AllowUnattested` opts into minting
+`unattested` otherwise). A recorded `hardware` is never downgraded by a
+missing or invalid chain, and a recorded `software` or `unattested` is never
+upgraded by a chain that happens to verify — RecordedLevel decides *what*
+the key is; `AllowUnattested` still decides whether a non-hardware login may
+proceed at all.
 
 ## `{slot}` is a closed set
 

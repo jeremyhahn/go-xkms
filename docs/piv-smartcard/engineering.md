@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Exported surface — `pkg/pivcert`
 
@@ -78,6 +78,64 @@ storage failure diagnosable — "put failed" without the slot is useless.
 `piv_keygen_software.go` (software fallback). The generator seam is
 `xkms.PIVKeyGenerator`, which is also what
 [`../auth-factors/`](../auth-factors/engineering.md) injects.
+
+Two optional capabilities a `PIVKeyGenerator` may additionally implement,
+both satisfied by `backendPIVKeyGenerator` and `softwarePIVKeyGenerator`
+(`pkg/xkms`):
+
+```go
+type PIVKeyOriginReporter interface {
+	PIVKeyOrigin(slot pivcert.PIVSlot, cn string) (origin types.KeyOrigin, found bool, err error)
+}
+
+type PIVAttestLevelReporter interface {
+	AttestLevel(slot pivcert.PIVSlot, cn string) (types.AttestLevel, error)
+}
+```
+
+`types.AttestLevel` (`pkg/types`, alongside `types.KeyOrigin`):
+`AttestLevelHardware`, `AttestLevelSoftware`, `AttestLevelUnattested`
+(`String()`, `ParseAttestLevel(s string) (AttestLevel, error)` returning
+`types.ErrUnknownAttestLevel` on an unrecognized value, JSON/YAML tags
+`attest_level`). `types.KeyAttributes.AttestLevel` sits next to `KeyOrigin`
+on the same struct — see [`architecture.md`](architecture.md) for why they
+are siblings, not one field, and #220 for the ownership ruling that put xkms
+in charge of this vocabulary for go-quicbaas#379 as well.
+
+`rest.PIVLoginOptions.RecordedLevel` (`pkg/api/rest`) is the resolver the PIV
+login exchange consults before falling back to the certificate-chain
+decision:
+
+```go
+RecordedLevel func(cert *x509.Certificate) (level types.AttestLevel, found bool)
+```
+
+`pkg/server` wires it, at REST composition, to
+`PIVManager.AttestLevelForCertificate`:
+
+```go
+func GetPIVManager() (*PIVManager, error)
+
+func (m *PIVManager) AttestLevelForCertificate(ctx context.Context, cert *x509.Certificate) (types.AttestLevel, bool, error)
+```
+
+`AttestLevelForCertificate` computes `cert`'s SPKI SHA-256 thumbprint with
+`qrdbsdk.ComputeSPKIThumbprint` (`go-qrdb/sdk/go`) — the one cert-binding
+algorithm the stack uses everywhere an mTLS identity is resolved, never a
+second one invented for this lookup — and scans the enrolled slots of every
+backend with a registered PIV store (`RegisterPIVStore`, or one resolved
+once through the configured backend resolver; a name this manager has never
+seen is not probed) for a certificate sharing that thumbprint. A match
+resolves the level through that backend's `PIVAttestLevelReporter` via
+`pivAttestLevel`. `found=false` with a nil error means no enrolled slot's
+key matches — the ordinary case for a certificate unrelated to any PIV
+enrollment, not a failure. `ErrPIVAttestLevelLookupFailed` is returned only
+when a registered backend's store cannot be listed or its generator cannot
+be resolved — a system failure the login path needs to know about rather
+than silently reading as no match. `GetPIVManager` returns
+`ErrPIVNotInitialized` when no manager exists yet; `pkg/server` treats that
+as "RecordedLevel stays nil," not a composition failure, since a build with
+no PIV backends configured has no PIV manager to wire.
 
 ## Slot attestation: reading the evidence back
 
@@ -251,6 +309,56 @@ whether there is any evidence to check.
   whether the bytes land in a file, NV, or a token.
 - **Concurrency.** Storage implementations serialise device access; the slot
   model itself is stateless.
+- **`AttestLevel` is a property of the generator, not of any one key —
+  unlike `KeyOrigin`, it needs no "found" return.** `PIVKeyOriginReporter`
+  answers a fact that can only be known by consulting the specific key's own
+  record (generated or imported), so it may find no record at all.
+  `PIVAttestLevelReporter.AttestLevel` answers whether the *generator* is
+  hardware-backed, which does not vary key to key, so it is always
+  answerable by a generator that implements the interface. A generator that
+  cannot back any hardware-backing claim simply does not implement
+  `PIVAttestLevelReporter` — see `pivAttestLevel` (`pkg/xkms/piv_manager.go`)
+  for the fallback that follows from its absence.
+- **An absent `PIVAttestLevelReporter`, or one that errors, resolves to
+  `AttestLevelUnattested` — never guessed at.** `pivAttestLevel` is the one
+  place this fallback is applied, mirroring the fail-closed rule
+  `refuseUnattestableKey` applies to an unrecognised `KeyOrigin`: a claim
+  this build cannot back is recorded as no claim, not as the caller's
+  preferred value.
+- **`AttestLevel` and `KeyOrigin` are recorded together, at the same
+  enrollment-time write, but answer independent questions.** Both
+  `GeneratePIVKey` and `ImportPIVKey` stamp `attrs.AttestLevel` immediately
+  after `attrs.KeyOrigin` in `backendPIVKeyGenerator`. An imported key on a
+  hardware backend still records `AttestLevelHardware` — `AttestLevel` is not
+  exempted from being set on the import path, because it answers *where the
+  key lives*, which import does not change, not *whether the key is
+  exclusive*, which `KeyOrigin` already covers and which is why `AttestPIVSlot`
+  separately refuses an imported key regardless of its `AttestLevel`.
+- **`pkg/keyprovider/pkcs8` never round-trips `AttestLevel` through its
+  metadata record, by design — see [`architecture.md`](architecture.md).**
+  Do not add an `AttestLevel` field to `keyMetadata` mirroring `KeyOrigin`'s:
+  the structural invariant ("PKCS#8 storage is always software") makes a
+  persisted, possibly-stale value strictly worse than the live, unconditional
+  answer `ListKeys` already gives.
+- **A recorded PIV login level takes precedence over the certificate chain,
+  never a blend of the two.** `PIVLoginOptions.attestationLevel`
+  (`pkg/api/rest`) consults `RecordedLevel` first; when it reports found, the
+  chain is not examined at all for that decision. `AllowUnattested` still
+  gates whether a non-hardware level — recorded or chain-derived — may log
+  in; `RecordedLevel` only decides which level that is.
+- **`AttestLevelForCertificate` matches on SPKI, not on certificate
+  identity.** Two certificates issued for the same key — a renewal, or a
+  distinct self-signed leaf minted over the same key at enrollment versus
+  login time — produce the same `qrdbsdk.ComputeSPKIThumbprint` and
+  therefore the same match. Comparing whole certificates (or the PKIX
+  `Fingerprint` `PIVSlotInfo.List` reports, which hashes the DER, not the
+  SPKI) would silently stop matching the day a slot's certificate is
+  reissued for the same key.
+- **`AttestLevelForCertificate` only scans backends this manager already
+  knows about.** It iterates `PIVManager.stores`'s current keys, never a
+  backend name it has not seen — invoking the lazy `StoreFactory` path
+  `pivStore` uses for on-demand backends would create stores for names this
+  lookup has no reason to touch, for every login.
 
 ## Error semantics
 
@@ -291,9 +399,25 @@ orphan every existing NV-stored certificate and is a migration, not a change.
 - **Unit** — `pkg/pivcert/pivcert_test.go`, `slotinfo_test.go`,
   `verify_test.go`; per-storage suites under `pkg/pivcert/{file,tpm2,pkcs11}`.
 - **Keystore side** — `pkg/xkms/piv_manager_test.go`, `piv_ops_test.go`,
-  `piv_keygen_backend_test.go`, `piv_keygen_software_test.go`.
+  `piv_keygen_backend_test.go`, `piv_keygen_software_test.go`,
+  `piv_attest_level_test.go` (`PIVAttestLevelReporter` on both generators,
+  `pivAttestLevel`'s capability/error fallback, enrollment-time stamping on
+  both `GeneratePIVKey` and `ImportPIVKey`),
+  `piv_attest_level_for_certificate_test.go`
+  (`PIVManager.AttestLevelForCertificate`: a match on a hardware-enrolled
+  key, a match on a software-enrolled key, no match, a nil certificate, and
+  a backend listing failure surfacing `ErrPIVAttestLevelLookupFailed`).
+- **`types.AttestLevel`** — `pkg/types/attest_level_test.go` (round trip,
+  `ParseAttestLevel` error case, JSON/YAML); `pkg/keyprovider/pkcs8/attest_level_test.go`
+  (`ListKeys` always resolves to software regardless of what was claimed).
 - **Transport** — `pkg/api/rest/handlers_piv_test.go`,
-  `pkg/api/mcp/handlers_piv_test.go`.
+  `pkg/api/mcp/handlers_piv_test.go`,
+  `pkg/api/rest/handlers_auth_recorded_level_test.go` (`attestationLevel`'s
+  precedence table, and the REST constants pinned to `types.AttestLevel`'s
+  spelling).
+- **Composition** — `pkg/server` (existing suite; exercises
+  `restConfig.PIVLogin` construction, including the `RecordedLevel` wiring
+  guarded on `xkms.GetPIVManager`).
 - **SDK** — `sdk/go/piv_test.go`, `piv_signer_test.go`,
   `pivcert_backends*.go`.
 - **Integration** — `test/integration/pkcs11`, `test/integration/tpm2`.

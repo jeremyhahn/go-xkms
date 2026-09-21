@@ -1,6 +1,6 @@
 # PIV Smartcard — Architecture
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## The problem
 
@@ -227,6 +227,53 @@ verifier would read it as authoritative when it is merely asserted.
 hardware-resident key may still have been imported, and that combination is
 the dangerous one: trusted-looking on every other axis, lacking exactly the
 property attestation is taken to prove.
+
+### AttestLevel: KeyOrigin's sibling, not its replacement (#220)
+
+`KeyOrigin` answers *how* a key arrived. It does not answer *where it lives*
+— and #207's own design note is explicit that the two must stay separate
+fields: folding "hardware" into the origin vocabulary would make an imported
+hardware key carry the vocabulary's most trusted value while lacking
+exclusivity entirely, exactly the case a verifier most needs to tell apart.
+
+`types.AttestLevel` (`pkg/types`, alongside `KeyOrigin`) is that second axis:
+`AttestLevelHardware`, `AttestLevelSoftware`, or `AttestLevelUnattested`. It
+is the one vocabulary shared with go-quicbaas's `AttestLevel`
+(go-quicbaas#379) — the ownership ruling on #220 put xkms in charge of the
+spelling, so a composed node never translates between two enumerations that
+mean the same fact.
+
+`types.KeyAttributes.AttestLevel` is recorded next to `KeyOrigin`, at the
+same enrollment-time write: both `backendPIVKeyGenerator.GeneratePIVKey` and
+`.ImportPIVKey` stamp it before the key reaches the backend. The value comes
+from `PIVAttestLevelReporter`, an optional `PIVKeyGenerator` capability
+mirroring `PIVKeyOriginReporter`'s shape:
+
+```go
+type PIVAttestLevelReporter interface {
+    AttestLevel(slot pivcert.PIVSlot, cn string) (types.AttestLevel, error)
+}
+```
+
+Unlike `PIVKeyOrigin`, this is not a per-key persisted-record lookup — a
+backend's hardware backing does not vary key to key, so the answer is a
+property of the *generator*, read live from
+`types.Capabilities.HardwareBacked` (`backend.KeyProvider().Capabilities()`),
+the same signal the backend catalog already uses to describe a backend's
+trust class. `backendPIVKeyGenerator` reports `Hardware` when the underlying
+backend is hardware-backed and `Software` otherwise; the fallback
+`softwarePIVKeyGenerator` always reports `Software`. A `PIVKeyGenerator` with
+no `PIVAttestLevelReporter` at all — the shape of a caller-supplied generator
+that cannot back any claim about its hardware backing — resolves to
+`AttestLevelUnattested` through `pivAttestLevel`, the same "absent capability
+fails to the weakest claim" rule `PIVKeyOriginReporter`'s absence follows.
+
+`pkg/keyprovider/pkcs8` needs no metadata round trip for this field, unlike
+`KeyOrigin`: PKCS#8 storage is software cryptography by construction, so
+`ListKeys` always reports `AttestLevelSoftware` for a key it holds, overriding
+whatever was stamped in memory — the same "computed by the system, never
+trusted from a caller" rule `KeyOrigin` follows, applied even more strongly
+because there is no legitimate case where this backend answers `Hardware`.
 
 ### The legacy rule, and where it lives
 

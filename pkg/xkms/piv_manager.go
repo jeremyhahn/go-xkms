@@ -26,7 +26,10 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -61,6 +64,13 @@ var (
 
 	// ErrPIVCASignFuncNotSet is returned when ca-signed output is requested but no CA signing function is configured.
 	ErrPIVCASignFuncNotSet = errors.New("piv: CA signing not available (no CA configured)")
+
+	// ErrPIVAttestLevelLookupFailed is returned by
+	// PIVManager.AttestLevelForCertificate when a registered backend's PIV
+	// store cannot be listed, or its generator cannot be resolved. It is
+	// never returned for "no enrolled slot matches this certificate" — that
+	// is a false found value, not an error.
+	ErrPIVAttestLevelLookupFailed = errors.New("piv: attest level lookup failed")
 )
 
 // PIV output format constants.
@@ -119,6 +129,53 @@ type PIVKeyOriginReporter interface {
 	// unrecognised origin without also refusing every slot whose key simply
 	// is not held here.
 	PIVKeyOrigin(slot pivcert.PIVSlot, cn string) (origin types.KeyOrigin, found bool, err error)
+}
+
+// PIVAttestLevelReporter is an optional capability a PIVKeyGenerator may
+// implement to classify the key it backs a slot with: hardware-resident,
+// software, or unattested.
+//
+// It differs from PIVKeyOriginReporter in what question it answers and how.
+// Origin is a fact about one specific key — generated here or imported —
+// that can only be known by consulting the record that key was written
+// with, so PIVKeyOrigin has a "found" return: the record may not exist.
+// Attestation level is a fact about the GENERATOR — whether the backend it
+// talks to is hardware or software — which does not vary from key to key,
+// so AttestLevel needs no persisted per-key record and is always answerable
+// by a generator that implements this interface at all. A generator that
+// cannot back any claim about its hardware backing simply does not
+// implement PIVAttestLevelReporter; see pivAttestLevel for how a caller
+// holding only a plain PIVKeyGenerator falls back when the capability is
+// absent.
+type PIVAttestLevelReporter interface {
+	// AttestLevel classifies the key the generator backs for the given
+	// slot: types.AttestLevelHardware for a hardware-backed generator,
+	// types.AttestLevelSoftware for a software one. Returning
+	// types.AttestLevelUnattested is valid too, for a generator that holds
+	// a key but cannot itself back a stronger claim about it.
+	AttestLevel(slot pivcert.PIVSlot, cn string) (types.AttestLevel, error)
+}
+
+// pivAttestLevel derives the attestation level to record for a key a
+// generator just produced or accepted, at enrollment time: the reporter's
+// own answer when the generator implements PIVAttestLevelReporter, and
+// types.AttestLevelUnattested otherwise.
+//
+// A generator with no reporter is exactly the "cannot attest" case, and it
+// fails closed to the weakest claim rather than to one this call has no
+// basis for. An error from the reporter is treated the same way: a
+// generator that tried to answer and could not still leaves the key
+// unattested rather than enrolled with a guess.
+func pivAttestLevel(generator PIVKeyGenerator, slot pivcert.PIVSlot, cn string) types.AttestLevel {
+	reporter, ok := generator.(PIVAttestLevelReporter)
+	if !ok {
+		return types.AttestLevelUnattested
+	}
+	level, err := reporter.AttestLevel(slot, cn)
+	if err != nil {
+		return types.AttestLevelUnattested
+	}
+	return level
 }
 
 // PIVKeyImporter is an optional capability a PIVKeyGenerator may implement to
@@ -285,23 +342,146 @@ func pivBackend(backendName string) (PIVKeyGenerator, error) {
 	if pivManager == nil {
 		return nil, ErrPIVNotInitialized
 	}
+	return pivManager.resolveGenerator(backendName)
+}
 
-	pivManager.mu.RLock()
-	resolver := pivManager.backendResolver
-	pivManager.mu.RUnlock()
+// resolveGenerator is pivBackend's logic as a method on m itself, so a
+// caller holding a *PIVManager directly (AttestLevelForCertificate, tests)
+// can resolve a generator without going through the package-level
+// singleton. Falls back to cached software key generation when no resolver
+// is configured, exactly as pivBackend always has.
+func (m *PIVManager) resolveGenerator(backendName string) (PIVKeyGenerator, error) {
+	m.mu.RLock()
+	resolver := m.backendResolver
+	m.mu.RUnlock()
 
 	if resolver != nil {
 		return resolver(backendName)
 	}
 
-	// No resolver set: fall back to cached software key generation
-	pivManager.mu.Lock()
-	if pivManager.softwareGenerator == nil {
-		pivManager.softwareGenerator = NewSoftwarePIVKeyGenerator()
+	m.mu.Lock()
+	if m.softwareGenerator == nil {
+		m.softwareGenerator = NewSoftwarePIVKeyGenerator()
 	}
-	gen := pivManager.softwareGenerator
-	pivManager.mu.Unlock()
+	gen := m.softwareGenerator
+	m.mu.Unlock()
 	return gen, nil
+}
+
+// GetPIVManager returns the package-level PIV manager singleton.
+//
+// It exists for callers that need the *PIVManager itself rather than one of
+// the package-level convenience functions above — chiefly, wiring
+// PIVManager.AttestLevelForCertificate as rest.PIVLoginOptions.RecordedLevel
+// at server composition, which needs a method value bound to a live manager
+// instance rather than a function that reaches for the singleton on every
+// call. Returns ErrPIVNotInitialized when no manager has been created; a
+// caller wiring an optional capability should treat that as "unavailable",
+// not fail composition over it.
+func GetPIVManager() (*PIVManager, error) {
+	pivInitMu.RLock()
+	defer pivInitMu.RUnlock()
+	if pivManager == nil {
+		return nil, ErrPIVNotInitialized
+	}
+	return pivManager, nil
+}
+
+// AttestLevelForCertificate reports the attestation level xkms itself
+// recorded for cert's public key, by scanning the enrolled PIV slots of
+// every backend with a registered PIV store for one whose stored
+// certificate carries the same SubjectPublicKeyInfo as cert.
+//
+// The match is computed with qrdbsdk.ComputeSPKIThumbprint — the one
+// cert-binding algorithm this stack uses everywhere an mTLS identity is
+// resolved (admin cert binding, the PIV login user lookup itself), never a
+// second thumbprint invented for this lookup. It is computed over the
+// public key rather than the whole certificate, so a renewed login
+// certificate for the same enrolled key still matches.
+//
+// found is false when no enrolled slot's key matches cert. That is the
+// ordinary case for most callers — the certificate may not correspond to
+// any PIV enrollment at all — and it is deliberately not an error:
+// rest.PIVLoginOptions.attestationLevel reads a false found as "no recorded
+// level, fall back to the certificate chain," which is the correct answer
+// for an unrelated certificate. A backend whose PIV store cannot be listed,
+// or whose generator cannot be resolved, IS an error
+// (ErrPIVAttestLevelLookupFailed): a caller deciding a login's trust level
+// needs to know the lookup itself failed rather than silently reading a
+// partial scan as "no match".
+//
+// Only backends already registered with this manager (RegisterPIVStore, or
+// resolved once through the configured backend resolver) are scanned. A
+// backend name this manager has never seen is not probed — there is no
+// enumerable universe of "every possible backend name" to try, and doing so
+// would trigger lazy store creation (see pivStore's StoreFactory) for
+// backends this lookup has no reason to touch.
+func (m *PIVManager) AttestLevelForCertificate(ctx context.Context, cert *x509.Certificate) (types.AttestLevel, bool, error) {
+	if m == nil || cert == nil {
+		return types.AttestLevelUnattested, false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return types.AttestLevelUnattested, false, err
+	}
+
+	target := qrdbsdk.ComputeSPKIThumbprint(cert)
+	if target == "" {
+		return types.AttestLevelUnattested, false, nil
+	}
+
+	m.mu.RLock()
+	names := make([]string, 0, len(m.stores))
+	for name := range m.stores {
+		names = append(names, name)
+	}
+	m.mu.RUnlock()
+
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return types.AttestLevelUnattested, false, err
+		}
+
+		m.mu.RLock()
+		store, ok := m.stores[name]
+		m.mu.RUnlock()
+		if !ok {
+			// Deleted between the snapshot above and here; nothing to scan.
+			continue
+		}
+
+		slots, err := store.List()
+		if err != nil {
+			return types.AttestLevelUnattested, false, &errs.Detail{
+				Err:    ErrPIVAttestLevelLookupFailed,
+				Detail: "list slots for backend " + name + ": " + err.Error(),
+			}
+		}
+
+		for _, info := range slots {
+			slotCert, retrieveErr := store.Retrieve(info.Slot)
+			if retrieveErr != nil {
+				// A slot the List above reported occupied but that is no
+				// longer retrievable is a benign race with a concurrent
+				// delete, not a lookup failure — skip it rather than fail
+				// the whole scan over one slot.
+				continue
+			}
+			if qrdbsdk.ComputeSPKIThumbprint(slotCert) != target {
+				continue
+			}
+
+			generator, genErr := m.resolveGenerator(name)
+			if genErr != nil {
+				return types.AttestLevelUnattested, false, &errs.Detail{
+					Err:    ErrPIVAttestLevelLookupFailed,
+					Detail: "resolve generator for backend " + name + ": " + genErr.Error(),
+				}
+			}
+			return pivAttestLevel(generator, info.Slot, PivSlotCN(info.Slot)), true, nil
+		}
+	}
+
+	return types.AttestLevelUnattested, false, nil
 }
 
 // RegisterPIVStore registers a PIV certificate store for a backend.

@@ -60,6 +60,9 @@ var (
 	// ErrUnknownSignatureAlgorithm is returned when a signature algorithm string is not recognized.
 	ErrUnknownSignatureAlgorithm = errors.New("unknown signature algorithm")
 
+	// ErrUnknownAttestLevel is returned when an attestation-level string is not recognized.
+	ErrUnknownAttestLevel = errors.New("unknown attestation level")
+
 	// ErrAlreadyInitialized is returned when the system is already initialized.
 	ErrAlreadyInitialized = errors.New("already initialized")
 
@@ -185,6 +188,66 @@ func (o KeyOrigin) String() string { return string(o) }
 // IsImported reports whether the key is known to have arrived by import.
 // Unknown is not imported: a record with no origin predates the import path.
 func (o KeyOrigin) IsImported() bool { return o == KeyOriginImported }
+
+// AttestLevel records what is known about a key's backing at the moment it
+// was enrolled: hardware-resident, software, or unproven. It is a sibling
+// axis to KeyOrigin, not a replacement for it — KeyOrigin answers how a key
+// arrived (generated in place or imported), AttestLevel answers where it
+// lives, and the two are independent. A hardware-resident key can still have
+// been imported, which is the combination that matters most: it looks
+// trusted on this axis while lacking exclusivity entirely, and losing either
+// fact by merging the two fields would hide exactly that case.
+//
+// This is the one shared vocabulary for attestation level across go-xkms and
+// its consumers (go-quicbaas#379): nothing downstream defines a parallel
+// enumeration for the same fact.
+type AttestLevel string
+
+const (
+	// AttestLevelUnattested is the zero value. It means nothing established
+	// that the key is hardware-backed: no reporter was available to answer,
+	// the reporter could not back the claim, or a login had no recorded
+	// enrollment level and no certificate chain proved residency either.
+	// Unattested is the absence of a claim, not a claim that the key is
+	// software — see AttestLevelSoftware for that positive claim.
+	AttestLevelUnattested AttestLevel = "unattested"
+
+	// AttestLevelSoftware marks a key a software generator produced or
+	// backs. It is a stronger, positive claim than AttestLevelUnattested —
+	// the generator affirmatively knows the key is not hardware-resident —
+	// even though the two are typically treated the same way by an access
+	// policy that only trusts hardware.
+	AttestLevelSoftware AttestLevel = "software"
+
+	// AttestLevelHardware marks a key a hardware-backed generator reports
+	// producing, or a login whose presented certificate chain proved
+	// residency on a smartcard via a configured attestation anchor.
+	AttestLevelHardware AttestLevel = "hardware"
+)
+
+// String returns the attestation level as a string.
+func (l AttestLevel) String() string { return string(l) }
+
+// IsHardware reports whether the level asserts hardware backing.
+func (l AttestLevel) IsHardware() bool { return l == AttestLevelHardware }
+
+// ParseAttestLevel converts a string to an AttestLevel. It returns
+// ErrUnknownAttestLevel, wrapped with the offending value, for a string
+// that is not one of the recognized levels — including "", which callers
+// that want the zero value should use AttestLevelUnattested for directly
+// rather than parsing.
+func ParseAttestLevel(s string) (AttestLevel, error) {
+	switch AttestLevel(s) {
+	case AttestLevelUnattested:
+		return AttestLevelUnattested, nil
+	case AttestLevelSoftware:
+		return AttestLevelSoftware, nil
+	case AttestLevelHardware:
+		return AttestLevelHardware, nil
+	default:
+		return "", &errs.Detail{Err: ErrUnknownAttestLevel, Detail: s}
+	}
+}
 
 // StoreType identifies the backend storage mechanism for cryptographic keys.
 type StoreType string
@@ -1066,6 +1129,17 @@ type KeyAttributes struct {
 	// not-imported, but must not treat it as a positive assertion of
 	// generation.
 	KeyOrigin KeyOrigin `json:"key_origin,omitempty" yaml:"key_origin,omitempty"`
+
+	// AttestLevel records what is known about the key's backing at the
+	// moment it was enrolled: hardware-resident, software, or unproven. It
+	// is KeyOrigin's sibling, not its replacement — KeyOrigin says how the
+	// key arrived, AttestLevel says where it lives, and a caller that needs
+	// exclusivity as well as residency must read both. Currently populated
+	// for PIV slot keys (pkg/xkms's PIVKeyGenerator implementations); a key
+	// record written before this field existed, or by a path that does not
+	// yet set it, reads back the zero value, AttestLevelUnattested — the
+	// absence of a claim, not a claim that the key is software-backed.
+	AttestLevel AttestLevel `json:"attest_level,omitempty" yaml:"attest_level,omitempty"`
 
 	// WrapAttributes specifies key wrapping configuration
 	WrapAttributes *KeyAttributes

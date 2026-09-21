@@ -1,6 +1,6 @@
 # PIV Smartcard — User Guide
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## What PIV gives you
 
@@ -74,6 +74,27 @@ tell from the client:
 
 If a deployment claims hardware-backed PIV, confirm which one — the commands
 look identical and the guarantee does not.
+
+## What `attest_level` means when you log in with a card
+
+Logging in with `POST /api/v1/auth/login/piv` (see
+[`../auth-factors/user.md`](../auth-factors/user.md)) mints a token carrying
+an `attest_level` claim, so anything that reads the token can tell how much
+the login actually proved:
+
+| `attest_level` | What it means |
+|---|---|
+| `hardware` | Either the server itself recorded this key as hardware-backed when it was enrolled (a PIV slot generated on a TPM or a PKCS#11 token), or the certificate you presented chained to the server's configured attestation anchor and proved it for this login. |
+| `software` | The server recorded this key as software-backed when it was enrolled. Not a failure — some deployments knowingly issue software PIV credentials — but it is not a hardware guarantee, and a consumer that refuses non-hardware logins refuses this one too. |
+| `unattested` | Nothing proved either way. No enrollment record was found for this key, and the certificate chain proved nothing about hardware backing either. The server had to be configured to accept this (`allow_unattested`), or the login would have been refused outright. |
+
+You cannot upgrade a login's `attest_level` by presenting a better attestation
+chain than the one your key was actually enrolled with: if the server
+recorded your key's level when you enrolled it, that recorded level is what
+the token gets, regardless of what the certificate chain in front of it can
+or cannot prove on any given login. A recorded `hardware` is never downgraded
+by a missing chain either — you do not need to keep re-presenting attestation
+material on every login once the level is on record.
 
 ## Troubleshooting
 

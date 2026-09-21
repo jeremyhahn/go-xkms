@@ -164,3 +164,17 @@ var _ PIVKeyImporter = (*softwarePIVKeyGenerator)(nil)
 
 // Verify origin-reporting compliance at compile time.
 var _ PIVKeyOriginReporter = (*softwarePIVKeyGenerator)(nil)
+
+// AttestLevel classifies the key this generator backs. It is always
+// types.AttestLevelSoftware for a CN this generator holds: every key it
+// produces is generated or imported into an in-process Go crypto.Signer,
+// never hardware. A CN it has never seen is reported the same way — the
+// generator itself is software regardless of whether it happens to hold a
+// key for this particular slot yet — so, unlike PIVKeyOrigin, there is no
+// not-found case here.
+func (g *softwarePIVKeyGenerator) AttestLevel(_ pivcert.PIVSlot, _ string) (types.AttestLevel, error) {
+	return types.AttestLevelSoftware, nil
+}
+
+// Verify attest-level-reporting compliance at compile time.
+var _ PIVAttestLevelReporter = (*softwarePIVKeyGenerator)(nil)

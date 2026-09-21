@@ -2784,6 +2784,25 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 				}
 				restConfig.PIVLogin.AttestationRoots = roots
 				restConfig.PIVLogin.AttestationIntermediates = intermediates
+
+				// Prefer a recorded enrollment level over the certificate
+				// chain when xkms itself enrolled the login key. The PIV
+				// manager is optional at composition time — a build with no
+				// PIV backends configured has none — so its absence here
+				// only means RecordedLevel is never wired, not a composition
+				// failure: the exchange falls back to the chain-derived
+				// decision exactly as it did before this existed.
+				if pivManager, pivErr := xkms.GetPIVManager(); pivErr == nil {
+					restConfig.PIVLogin.RecordedLevel = func(cert *x509.Certificate) (types.AttestLevel, bool) {
+						level, found, lookupErr := pivManager.AttestLevelForCertificate(context.Background(), cert)
+						if lookupErr != nil {
+							slog.Warn("piv: recorded attest-level lookup failed, falling back to certificate chain",
+								"error", lookupErr)
+							return types.AttestLevelUnattested, false
+						}
+						return level, found
+					}
+				}
 			}
 		}
 	}

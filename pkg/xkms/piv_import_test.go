@@ -637,10 +637,20 @@ func TestPIVAlgorithmForKey(t *testing.T) {
 // failingImportProvider implements the import ceremony and fails at a chosen
 // step, standing in for an applet that accepts the interface but refuses the
 // operation. The embedded interface supplies the rest of types.KeyProvider;
-// nothing calls it.
+// nothing calls it, except Capabilities — ImportPIVKey's AttestLevel
+// classification reads it on every call, success or failure, so it is
+// overridden explicitly rather than left to the embedded nil interface.
 type failingImportProvider struct {
 	types.KeyProvider
 	failAt string
+}
+
+// Capabilities reports a software (non-hardware) provider. The value is not
+// exercised by these tests, which assert on the ceremony error rather than
+// the recorded attestation level; it exists so AttestLevel has a real
+// answer instead of a nil-interface panic.
+func (f *failingImportProvider) Capabilities() types.Capabilities {
+	return types.Capabilities{}
 }
 
 func (f *failingImportProvider) GetImportParameters(_ context.Context, _ *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
@@ -1092,6 +1102,15 @@ func (r *recordingLessBackend) KeyProvider() types.KeyProvider {
 
 // acceptingImportProvider satisfies the import ceremony and succeeds at it.
 type acceptingImportProvider struct{ types.KeyProvider }
+
+// Capabilities reports a hardware-backed provider, matching the
+// types.StorePKCS11 storeType TestImportPIVKey_RefusesBackendThatDoesNotRecordProvenance
+// constructs this generator with. ImportPIVKey's AttestLevel classification
+// reads it before the provenance rollback runs, so it needs a real answer
+// rather than the embedded nil interface.
+func (a *acceptingImportProvider) Capabilities() types.Capabilities {
+	return types.Capabilities{HardwareBacked: true}
+}
 
 func (a *acceptingImportProvider) GetImportParameters(_ context.Context, _ *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	return &backend.ImportParameters{Algorithm: algorithm, ImportToken: []byte("t")}, nil

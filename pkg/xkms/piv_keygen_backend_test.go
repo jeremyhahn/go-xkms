@@ -24,6 +24,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -39,11 +40,29 @@ type mockXKMSBackend struct {
 	generateEd25519Func func(*types.KeyAttributes) (crypto.PrivateKey, error)
 	signerFunc          func(*types.KeyAttributes) (crypto.Signer, error)
 
+	// hardwareBacked configures the Capabilities the KeyProvider() stub
+	// reports, which is what backendPIVKeyGenerator.AttestLevel classifies a
+	// generated key from. Defaults to false (software), matching the
+	// types.StoreSoftware storeType every existing test in this file uses.
+	hardwareBacked bool
+
 	generateCalls []types.KeyAttributes
 	signerCalls   []string
 
 	// storeType overrides Type()'s default of StoreSoftware when set.
 	storeType types.StoreType
+}
+
+// KeyProvider returns a types.KeyProvider stub whose Capabilities().HardwareBacked
+// reflects m.hardwareBacked, so backendPIVKeyGenerator.AttestLevel has a real
+// (non-nil) provider to classify against.
+func (m *mockXKMSBackend) KeyProvider() types.KeyProvider {
+	hardwareBacked := m.hardwareBacked
+	provider := mocks.NewMockBackend()
+	provider.CapabilitiesFunc = func() types.Capabilities {
+		return types.Capabilities{HardwareBacked: hardwareBacked}
+	}
+	return provider
 }
 
 func (m *mockXKMSBackend) GenerateRSA(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -162,10 +181,6 @@ func (m *mockXKMSBackend) Type() types.StoreType {
 		return m.storeType
 	}
 	return types.StoreSoftware
-}
-
-func (m *mockXKMSBackend) KeyProvider() types.KeyProvider {
-	return nil
 }
 
 func (m *mockXKMSBackend) CertStorage() certstore.CertificateStorageAdapter {
