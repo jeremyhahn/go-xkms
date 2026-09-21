@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Exported surface — `pkg/webauthn`
 
@@ -105,6 +105,14 @@ invalidates every existing credential.
 
 - **A session is single-use.** `BeginRegistration`/`BeginLogin` create it,
   `Finish…` consumes and deletes it. Replaying a finish fails.
+- **`FinishLogin`/`FinishLoginPair`'s `userID` is advisory, not authoritative.**
+  The session created by `BeginLogin` already records whether the ceremony is
+  discoverable (empty `SessionData.UserID`) or user-identified (the resolved
+  handle); that record always decides which validation path runs, so `userID`
+  may be nil for either flow and a caller that supplies one — as
+  `pkg/auth_factors`'s `WebAuthnFactorVerifier.Verify` does once it has
+  resolved a qrdb factor to a user — cannot flip a discoverable session into
+  the identified path or vice versa (go-xkms#558).
 - **Challenges are server-generated and stored in the session**, never taken
   from the request.
 - **Origin and RP id are verified on every finish.** A response from an

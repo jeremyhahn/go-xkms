@@ -315,14 +315,16 @@ func (s *Service) BeginLogin(ctx context.Context, userID []byte) (*protocol.Cred
 }
 
 // FinishLogin completes the WebAuthn authentication ceremony.
-// For discoverable credentials, userID can be nil.
+// userID is advisory only: the session created by BeginLogin already
+// records whether the ceremony is discoverable or user-identified, and that
+// record always takes precedence, so userID may be nil for either flow.
 // Returns a token (JWT if configured, otherwise base64 user ID) and the user.
 func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (string, User, error) {
 	if !s.configured {
 		return "", nil, ErrNotConfigured
 	}
 
-	user, err := s.finishLoginUser(ctx, sessionID, userID, response)
+	user, err := s.finishLoginUser(ctx, sessionID, response)
 	if err != nil {
 		return "", nil, err
 	}
@@ -338,9 +340,9 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []by
 
 // FinishLoginPair completes the login ceremony and returns an access/refresh
 // token pair. The refresh token is empty when the configured generator does
-// not implement TokenPairGenerator.
+// not implement TokenPairGenerator. userID is advisory only; see FinishLogin.
 func (s *Service) FinishLoginPair(ctx context.Context, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (*TokenPair, User, error) {
-	user, err := s.finishLoginUser(ctx, sessionID, userID, response)
+	user, err := s.finishLoginUser(ctx, sessionID, response)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -355,7 +357,7 @@ func (s *Service) FinishLoginPair(ctx context.Context, sessionID string, userID 
 
 // finishLoginUser runs the login ceremony through credential-counter update,
 // returning the authenticated user. Token minting is the caller's choice.
-func (s *Service) finishLoginUser(ctx context.Context, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (User, error) {
+func (s *Service) finishLoginUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialAssertionData) (User, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
@@ -375,14 +377,18 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, userID 
 	var credential *webauthn.Credential
 
 	// The session records which ceremony was started: BeginLogin stores the
-	// user handle, BeginDiscoverableLogin leaves it empty. Prefer it over the
-	// caller-supplied userID, which transports derive from a client-controlled
-	// header — a client that omits the header would otherwise be routed into
-	// discoverable validation and rejected with "session was not initiated as
-	// a client-side discoverable login".
-	if len(userID) == 0 {
-		userID = session.UserID
-	}
+	// user handle, BeginDiscoverableLogin leaves it empty. Always defer to
+	// the session rather than the caller-supplied userID, which transports
+	// derive from a client-controlled header. A discoverable session must
+	// stay discoverable even when the caller re-derives a handle from an
+	// already-resolved factor — go-webauthn's ValidateLogin rejects any
+	// non-empty handle against an empty session.UserID with "ID mismatch for
+	// User and Session", so honoring the caller's handle here would make
+	// every discoverable login unreachable. Conversely, a session begun
+	// identified must stay identified: ValidatePasskeyLogin rejects a
+	// non-empty session.UserID with "session was not initiated as a
+	// client-side discoverable login".
+	userID := session.UserID
 
 	if len(userID) == 0 {
 		// Discoverable credentials flow - find user by credential
