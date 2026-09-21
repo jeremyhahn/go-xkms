@@ -695,6 +695,22 @@ jobs:
       - name: Run golangci-lint
         run: make lint
 
+      # go-qrdb's pkg/secure/analyzer enforces the raw-memguard-import,
+      # ssh.ParsePrivateKey and sensitive-field rules, but only where its own
+      # make target runs -- and nothing in go-qrdb reaches into this
+      # repository. Before this it ran nowhere here, so compliance with the
+      # three rules was unmeasured (go-xkms#549). The selftest runs first: a
+      # sweep whose analyzer failed to build, whose -vettool never started, or
+      # whose allowlist swallowed a real finding prints approximately the same
+      # "clean" result as a genuinely clean tree, so the gate has to prove it
+      # can still find a known violation before its own result is evidence of
+      # anything.
+      - name: Prove the secure-analyzer gate goes red on a known violation
+        run: make secure-analyzer-selftest
+
+      - name: Run the secure-analyzer sweep (go-xkms#549)
+        run: make secure-analyzer
+
   # Job 4: Security Scanning
   security:
     name: Security Scan

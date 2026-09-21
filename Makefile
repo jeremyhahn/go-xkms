@@ -3535,6 +3535,56 @@ lint:
 	done; \
 	echo "$(GREEN)✓ Linting complete ($(LINT_MODULES))$(RESET)"
 
+# --------------------------------------------------------------------------
+# pkg/secure/analyzer sweep (go-xkms#549)
+# --------------------------------------------------------------------------
+#
+# go-qrdb's pkg/secure/analyzer enforces three rules on sensitive-material
+# handling (raw memguard imports outside pkg/secure, ssh.ParsePrivateKey, and
+# sensitive-named struct fields typed string/[]byte) but enforces them only
+# where its OWN make target runs -- nothing in go-qrdb reaches into this
+# repository. `make secure-analyzer` builds the analyzer from the pinned
+# go-qrdb dependency and sweeps it, as `go vet -vettool=...`, over every
+# module in LINT_MODULES under every tag combination that module's own
+# vet/lint/test targets already declare, so compliance is measured here
+# rather than assumed. See pkg/secure/doc.go (go-qrdb) and go-xkms#549.
+#
+# The Makefile owns the module/tags declaration -- SECURE_ANALYZER_RUNGS is a
+# flat "module tags module tags ..." list ("-" for no -tags flag), passed to
+# scripts/secure-analyzer.sh as data rather than repeated there as a second
+# copy that can drift from what `make vet`, `make lint` and `make test`
+# already use. The root module gets TWO rungs, untagged (matching `make
+# vet`) and under TEST_TAGS (matching what `make test` actually compiles):
+# a single tag combination only answers for the files it compiles, and
+# go-qrdb#429 measured a finding visible under the full tag set and invisible
+# under the narrower one. sdk/go and web/desktop build untagged, matching
+# `make vet`/`make lint`; xkey gets LINT_TAGS_xkey, the widest combination
+# already declared for ITS vet/lint (see that variable's comment for why
+# `desktop` is deliberately not a third web/desktop rung here either: it
+# needs cgo + WebKit headers `make vet`/`make lint` do not carry).
+#
+# scripts/secure-analyzer-allowlist.txt is the exemption list -- not a
+# baseline. Its own header documents the two named, reasoned exemption
+# classes (a go-truststrap-forced signature; an upstream rule-2 narrowing)
+# and the pre-existing rule-3 residue reported for triage rather than
+# guessed at in the change that only wires the gate. An entry that stops
+# matching anything fails the sweep as stale rather than aging out silently.
+empty :=
+space := $(empty) $(empty)
+SECURE_ANALYZER_ROOT_TAGS := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
+export SECURE_ANALYZER_RUNGS := . - . $(SECURE_ANALYZER_ROOT_TAGS) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
+export SECURE_ANALYZER_ALLOWLIST := $(CURDIR)/scripts/secure-analyzer-allowlist.txt
+
+.PHONY: secure-analyzer
+## secure-analyzer: Run go-qrdb's pkg/secure analyzer over every module/tag combination (go-xkms#549)
+secure-analyzer:
+	@./scripts/secure-analyzer.sh --sweep
+
+.PHONY: secure-analyzer-selftest
+## secure-analyzer-selftest: Prove the secure-analyzer gate goes red on a planted violation and green on its clean counterpart
+secure-analyzer-selftest:
+	@./scripts/secure-analyzer-selftest.sh
+
 # gosec exclusions (documented):
 #   G103: unsafe calls - required for HID ioctls and protobuf generated code
 #   G104: unhandled errors - false positive for hash.Write (never returns error)

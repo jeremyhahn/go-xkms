@@ -23,7 +23,15 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// The raw memguard import above is forced, not a convenience: go-truststrap
+// v0.4.0-alpha's p256proto.{NewStaticKey,EncodeStaticKey,DecodeStaticKey} take
+// a *memguard.LockedBuffer directly, and secure.Buffer wraps its LockedBuffer
+// in an unexported field with no accessor -- correctly, since exposing it
+// would hand back the handle the boundary exists to withhold. Filed as
+// jeremyhahn/go-truststrap#60; secure-analyzer exemption until it lands.
 
 // Operator-side key management for the FIPS-approved bootstrap suite,
 // TSBOOT1_P256_AESGCM_SHA256, alongside the Noise_NK verbs in
@@ -131,7 +139,7 @@ func showP256Key(keyFile, keyHex string) {
 		}
 		// The file bytes are ours to wipe once decoded; TrimSpace returns a
 		// subslice of the same backing array, so wiping data covers both.
-		defer memguard.WipeBytes(data)
+		defer secure.Wipe(data)
 		hexKey = bytes.TrimSpace(data)
 	case keyHex != "":
 		// --key-hex came in on the command line and is already visible in the

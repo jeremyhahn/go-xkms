@@ -6,6 +6,7 @@ This directory contains development-focused documentation for contributors and m
 
 - [encoding-interop-status.md](encoding-interop-status.md) - Status of JWK/JWT/JWE integration test implementation
 - [errors.md](errors.md) - Typed-error conventions (`pkg/errs` types, sentinels, sentinel-preservation rule)
+- [lint-gates.md](lint-gates.md) - What CI's Lint job enforces (gofmt, go vet, golangci-lint, secure-analyzer) and the local Make target for each
 
 ## For Other Documentation
 

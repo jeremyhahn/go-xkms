@@ -23,10 +23,10 @@ import (
 	"io"
 	"os"
 
-	"github.com/awnumar/memguard"
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // noiseCmd represents the noise command group
@@ -102,8 +102,14 @@ func generateNoiseKey(outputFile string) {
 	// heap, destroyed on the way out. EncodeStaticKey's contract asks for a
 	// protected destination, and an ordinary make([]byte) cannot honour it —
 	// wiping afterwards does nothing about the copies the GC may already have
-	// made, or about the page reaching swap in between.
-	buf := memguard.NewBuffer(bootstrap.NoiseHexKeySize + 1)
+	// made, or about the page reaching swap in between. Unlike the P-256 path,
+	// EncodeNoiseStaticKey takes a plain []byte destination, so the SDK's
+	// secure.Buffer (never a raw memguard.LockedBuffer) is sufficient here.
+	buf, err := secure.NewBuffer(bootstrap.NoiseHexKeySize + 1)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})
+		return
+	}
 	defer buf.Destroy()
 	encoded := buf.Bytes()
 

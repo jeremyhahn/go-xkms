@@ -20,7 +20,16 @@ import (
 	"github.com/awnumar/memguard"
 
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// The raw memguard import above is forced, not a convenience:
+// bootstrap.DecodeP256StaticKey (go-truststrap v0.4.0-alpha's
+// p256proto.DecodeStaticKey) takes a *memguard.LockedBuffer directly, and
+// secure.Buffer wraps its LockedBuffer in an unexported field with no
+// accessor -- correctly, since exposing it would hand back the handle the
+// boundary exists to withhold. Filed as jeremyhahn/go-truststrap#60;
+// secure-analyzer exemption until it lands.
 
 // Suite resolution for the bootstrap listener.
 //
@@ -133,7 +142,7 @@ func (s *Server) loadP256StaticKey() (*bootstrap.P256StaticKey, error) {
 		// The configured string is immutable and cannot be wiped; the copy we
 		// make for decoding can be, and does not outlive this call.
 		hexKey := []byte(noiseCfg.P256StaticKeyHex)
-		defer memguard.WipeBytes(hexKey)
+		defer secure.Wipe(hexKey)
 		return decodeP256StaticKey(hexKey)
 	}
 
@@ -144,7 +153,7 @@ func (s *Server) loadP256StaticKey() (*bootstrap.P256StaticKey, error) {
 			return nil, &ErrFileRead{Path: "p256 key file", Err: err}
 		}
 		// TrimSpace returns a subslice of data, so wiping data covers both.
-		defer memguard.WipeBytes(data)
+		defer secure.Wipe(data)
 		return decodeP256StaticKey(bytes.TrimSpace(data))
 	}
 
