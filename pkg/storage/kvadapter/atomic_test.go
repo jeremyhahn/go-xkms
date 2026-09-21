@@ -145,11 +145,12 @@ func TestAtomicAdapter_CompareAndSwapReplacesOnlyTheExpectedValue(t *testing.T) 
 	assert.Equal(t, []byte("2"), value)
 }
 
-// TestAtomicAdapter_CompareAndSwapWithNilExpectedNeverCreates is the reason
-// CompareAndSwap is not a straight delegation. go-xkms's CompareAndSwapper
-// reads a nil expected as "require the key to be absent" and WRITES; go-qrdb's
-// CompareAndSwap must never create a key. Forwarding the nil would create one
-// the caller was told could not be created.
+// TestAtomicAdapter_CompareAndSwapWithNilExpectedNeverCreates pins the
+// property that makes CompareAndSwap a safe straight delegation (#186):
+// go-xkms's CompareAndSwapper and go-qrdb's CompareAndSwap now agree that a
+// nil expected is never "require the key to be absent" -- an absent key
+// refuses on both sides, so forwarding the nil cannot create a key the
+// qrdb-side caller was told could not be created.
 func TestAtomicAdapter_CompareAndSwapWithNilExpectedNeverCreates(t *testing.T) {
 	ctx := context.Background()
 	backend := storage.NewMemory()

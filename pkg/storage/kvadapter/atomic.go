@@ -76,26 +76,15 @@ func (a *atomicKVStoreAdapter) CompareAndDelete(ctx context.Context, key string,
 // CompareAndSwap atomically replaces key's value with next only when its
 // stored value still equals expected.
 //
-// THE TWO CONTRACTS DIVERGE ON A NIL expected, AND THE DIFFERENCE IS A WRITE.
-// go-qrdb's CompareAndSwap never creates a key: "an absent key is NOT created
-// — a swap is not a create", so an unmatched precondition is swapped=false
-// with the store unchanged. go-xkms's storage.CompareAndSwapper gives nil
-// expected the opposite meaning: it REQUIRES the key to be absent and writes
-// it, which is PutIfAbsent. Forwarding a nil through would silently create a
-// key the qrdb-side caller was told could not be created.
-//
-// So nil expected is refused here rather than translated: it reports
-// swapped=false with a nil error, which is what qrdb's own contract yields in
-// both of the states the key can be in (absent, so not created; present, so
-// not equal to absent). A caller that wants a guarded create has PutIfAbsent
-// on this same interface.
-//
-// An expected that is non-nil but EMPTY is a real value, not a nil, and is
-// forwarded normally: a store may legitimately hold an empty byte slice.
+// THE TWO CONTRACTS NOW AGREE EXACTLY (#186), so this is a straight
+// delegation, the same shape as CompareAndDelete below. go-qrdb's
+// CompareAndSwap never creates a key: "an absent key is NOT created — a swap
+// is not a create". go-xkms's storage.CompareAndSwapper gives a nil expected
+// the identical meaning: it is compared like any other value (matching only a
+// stored empty one), never as "require absent", so an absent key refuses on
+// both sides of this adapter regardless of what expected was. A caller that
+// wants a guarded create uses PutIfAbsent on this same interface.
 func (a *atomicKVStoreAdapter) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
-	if expected == nil {
-		return false, nil
-	}
 	swapped, _, err := a.swapper.CompareAndSwap(ctx, key, expected, next)
 	if err != nil {
 		return false, &PutError{Key: key, Err: err}

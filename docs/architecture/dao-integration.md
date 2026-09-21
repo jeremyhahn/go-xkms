@@ -52,14 +52,21 @@ Declaring the methods is not the same as being able to perform them, which is wh
 
 `PrefixBackend` is the case that needs both halves. It declares `CompareAndSwap` and `CompareAndDelete` unconditionally — a decorator cannot add a method depending on what it wraps — and answers `ErrCompareAndSwapUnsupported` when the inner backend has neither, so its own method set says nothing about whether a guarded write will work. Its report is therefore the inner backend's usability, not merely the inner backend's availability.
 
-Two contract differences are handled rather than forwarded:
+The two contracts agree on the guard: `storage.CompareAndSwapper.CompareAndSwap`
+and `kvstore.AtomicKVStore.CompareAndSwap` both refuse on an absent key
+regardless of `expected` — a swap edits, it does not create, and a nil
+`expected` is compared like any other value rather than read as "require
+absent" (#186). A guarded create is `PutIfAbsent`, on the same interface, on
+both sides.
+
+One difference remains, in the return shape rather than the guard:
 
 | Operation | `storage.Backend` | `kvstore.AtomicKVStore` | Adapter behaviour |
 |---|---|---|---|
-| `CompareAndSwap` with a nil `expected` | requires the key to be **absent** and writes it (a guarded create) | never creates: an absent key reports `swapped=false` | Reports `swapped=false` and writes nothing. A guarded create is `PutIfAbsent`, on the same interface. |
 | `CompareAndSwap` return | `(swapped, current, error)` | `(swapped, error)` | The observed `current` value is dropped; a caller that needs it reads the store. |
 
-An `expected` that is non-nil but empty is a real stored value and is forwarded normally.
+So the adapter's `CompareAndSwap` is a straight delegation, the same shape
+`CompareAndDelete` already had.
 
 A decorator over a `KVStore` inherits this rule. `pkg/acme/storage/objstore`'s tenant-scoped wrapper namespaces keys and adds no writer of its own, so it forwards the three guarded operations under the prefixed key when the inner store offers them, and does not claim `AtomicKVStore` when the inner store does not.
 

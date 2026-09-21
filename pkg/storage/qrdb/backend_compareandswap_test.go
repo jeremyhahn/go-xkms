@@ -95,18 +95,28 @@ func TestBackend_CompareAndSwap_ValueMatches_Succeeds(t *testing.T) {
 	require.NoError(t, getErr)
 	assert.Equal(t, []byte("new"), stored)
 
-	// Precondition: a value compare, not PutIfAbsent's version compare.
-	require.Len(t, client.lastReq.Compares, 1)
-	cmp := client.lastReq.Compares[0]
-	assert.Equal(t, "key", string(cmp.Key))
-	assert.Equal(t, transport.CompareValue, cmp.Target)
-	assert.Equal(t, transport.CompareEqual, cmp.Result)
-	assert.Equal(t, []byte("old"), cmp.Value)
+	// TWO preconditions: the key must exist AND its value must equal expected
+	// -- the same shape CompareAndDelete uses, and for the same reason (#186).
+	require.Len(t, client.lastReq.Compares, 2)
+	existence := client.lastReq.Compares[0]
+	assert.Equal(t, "key", string(existence.Key))
+	assert.Equal(t, transport.CompareVersion, existence.Target)
+	assert.Equal(t, transport.CompareGreater, existence.Result)
+	assert.Equal(t, int64(0), existence.Version)
+
+	value := client.lastReq.Compares[1]
+	assert.Equal(t, "key", string(value.Key))
+	assert.Equal(t, transport.CompareValue, value.Target)
+	assert.Equal(t, transport.CompareEqual, value.Result)
+	assert.Equal(t, []byte("old"), value.Value)
 }
 
-// expected == nil requires the key to be absent (version 0), the same
-// precondition PutIfAbsent uses -- CompareAndSwap can also create.
-func TestBackend_CompareAndSwap_ExpectedNil_UsesVersionPrecondition(t *testing.T) {
+// expected == nil is no longer a "require absent" wildcard (#186): a swap does
+// not create. The transaction still carries the existence precondition -- now
+// paired with a value compare against nil/empty rather than a version==0
+// compare -- so the request can only succeed against a key that both exists
+// and holds an empty value.
+func TestBackend_CompareAndSwap_ExpectedNil_RequiresExistenceAndEmptyValue(t *testing.T) {
 	ctx := context.Background()
 	client := newTxClient()
 	client.succeeded = true
@@ -116,13 +126,18 @@ func TestBackend_CompareAndSwap_ExpectedNil_UsesVersionPrecondition(t *testing.T
 	swapped, _, err := backend.CompareAndSwap(ctx, "key", nil, []byte("new"))
 
 	require.NoError(t, err)
-	assert.True(t, swapped)
+	assert.True(t, swapped, "the mock client answers whatever client.succeeded says; this test pins the REQUEST SHAPE, not the mock's evaluation")
 
-	require.Len(t, client.lastReq.Compares, 1)
-	cmp := client.lastReq.Compares[0]
-	assert.Equal(t, transport.CompareVersion, cmp.Target)
-	assert.Equal(t, transport.CompareEqual, cmp.Result)
-	assert.Equal(t, int64(0), cmp.Version)
+	require.Len(t, client.lastReq.Compares, 2)
+	existence := client.lastReq.Compares[0]
+	assert.Equal(t, transport.CompareVersion, existence.Target)
+	assert.Equal(t, transport.CompareGreater, existence.Result)
+	assert.Equal(t, int64(0), existence.Version)
+
+	value := client.lastReq.Compares[1]
+	assert.Equal(t, transport.CompareValue, value.Target)
+	assert.Equal(t, transport.CompareEqual, value.Result)
+	assert.Nil(t, value.Value)
 }
 
 // ---------------------------------------------------------------------------

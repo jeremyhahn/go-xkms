@@ -94,9 +94,11 @@ type CompareAndDeleter interface {
 	//
 	// expected is compared as raw bytes and nil is NOT a wildcard: it is
 	// equivalent to an empty slice, so it matches a stored empty value and
-	// nothing else. (This differs from CompareAndSwapper.CompareAndSwap, where a
-	// nil expected means "require the key to be ABSENT". The verbs differ
-	// because a swap can meaningfully create, and a delete cannot.)
+	// nothing else. CompareAndSwapper.CompareAndSwap uses the identical
+	// convention (#186): neither verb treats a nil expected as "require the key
+	// to be absent". A swap cannot meaningfully create any more than a delete
+	// can meaningfully remove what was never there — PutIfAbsent is the one verb
+	// with a create precondition.
 	//
 	// expected IS AN ORDINARY HEAP SLICE and carries no memory-protection
 	// guarantee, including from sealed.Backend, which protects the value it

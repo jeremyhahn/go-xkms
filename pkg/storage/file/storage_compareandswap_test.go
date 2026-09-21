@@ -22,8 +22,9 @@ import (
 )
 
 // TestFileStorage_CompareAndSwap verifies the file backend's atomic
-// compare-and-swap: create-if-absent, a matching-value swap, and a stale-value
-// rejection that returns the current value and leaves the stored value intact.
+// compare-and-swap (#186): an absent key refuses regardless of expected (a
+// swap does not create), a matching-value swap succeeds, and a stale-value
+// rejection returns the current value and leaves the stored value intact.
 func TestFileStorage_CompareAndSwap(t *testing.T) {
 	ctx := context.Background()
 	fs, err := New(t.TempDir())
@@ -34,14 +35,21 @@ func TestFileStorage_CompareAndSwap(t *testing.T) {
 	cas := fs.(storage.CompareAndSwapper)
 
 	const key = "counters/lockout"
-	v0 := []byte("0")
 
-	swapped, _, err := cas.CompareAndSwap(ctx, key, nil, v0)
-	if err != nil || !swapped {
-		t.Fatalf("CompareAndSwap (create) = (%v, %v), want (true, nil)", swapped, err)
+	swapped, current, err := cas.CompareAndSwap(ctx, key, nil, []byte("0"))
+	if err != nil {
+		t.Fatalf("CompareAndSwap (absent, nil expected) error: %v", err)
 	}
-	if got, err := fs.Get(ctx, key); err != nil || !bytes.Equal(got, v0) {
-		t.Fatalf("Get after create = (%q, %v), want (%q, nil)", got, err, v0)
+	if swapped {
+		t.Fatalf("CompareAndSwap (absent, nil expected) = swapped true, want false -- a swap must not create")
+	}
+	if current != nil {
+		t.Fatalf("CompareAndSwap (absent) current = %q, want nil", current)
+	}
+
+	v0 := []byte("0")
+	if stored, err := fs.PutIfAbsent(ctx, key, v0); err != nil || !stored {
+		t.Fatalf("PutIfAbsent(seed) = (%v, %v), want (true, nil)", stored, err)
 	}
 
 	v1 := []byte("1")
@@ -50,7 +58,7 @@ func TestFileStorage_CompareAndSwap(t *testing.T) {
 		t.Fatalf("CompareAndSwap (match) = (%v, %v), want (true, nil)", swapped, err)
 	}
 
-	swapped, current, err := cas.CompareAndSwap(ctx, key, v0, []byte("2"))
+	swapped, current, err = cas.CompareAndSwap(ctx, key, v0, []byte("2"))
 	if err != nil {
 		t.Fatalf("CompareAndSwap (stale) error: %v", err)
 	}

@@ -42,8 +42,9 @@ import (
 // the empty tenant is the system scope. The values are opaque bytes, so the test
 // stores a decimal counter and reads it back.
 const (
-	pkcs11StateGetPath = "/api/v1/pkcs11state/get"
-	pkcs11StateCASPath = "/api/v1/pkcs11state/compare-and-swap"
+	pkcs11StateGetPath         = "/api/v1/pkcs11state/get"
+	pkcs11StateCASPath         = "/api/v1/pkcs11state/compare-and-swap"
+	pkcs11StatePutIfAbsentPath = "/api/v1/pkcs11state/put-if-absent"
 
 	// casToken labels the token the counter is filed under; casKey is the
 	// counter record. Any label works — the server stores opaque bytes.
@@ -64,21 +65,38 @@ type casGetResponse struct {
 	Found bool   `json:"found"`
 }
 
-// casRequest / casResponse mirror the PKCS11StateCAS DTOs. A nil Expected with
-// ExpectAbsent=true means create-if-absent; otherwise the swap requires the
-// stored value to equal Expected exactly.
+// casRequest / casResponse mirror the PKCS11StateCAS DTOs. A swap never
+// creates (#186): Expected is compared as an ordinary value, nil included, and
+// an absent key always refuses. ExpectAbsent remains on the wire for
+// compatibility but is REDEFINED server-side as "PutIfAbsent(New)" rather than
+// "require absent" -- this test does not set it, using the dedicated
+// put-if-absent endpoint instead (putIfAbsentRequest/Response below), the same
+// split ModuleStorage.incrementViaCAS and remoteBackend use in-process.
 type casRequest struct {
-	TenantID     string `json:"tenant_id,omitempty"`
-	Token        string `json:"token"`
-	Key          string `json:"key"`
-	Expected     []byte `json:"expected,omitempty"`
-	New          []byte `json:"new"`
-	ExpectAbsent bool   `json:"expect_absent,omitempty"`
+	TenantID string `json:"tenant_id,omitempty"`
+	Token    string `json:"token"`
+	Key      string `json:"key"`
+	Expected []byte `json:"expected,omitempty"`
+	New      []byte `json:"new"`
 }
 
 type casResponse struct {
 	Swapped bool   `json:"swapped"`
 	Current []byte `json:"current,omitempty"`
+}
+
+// putIfAbsentRequest / putIfAbsentResponse mirror the PKCS11StatePutIfAbsent
+// DTOs: the explicit create-if-absent verb, used to seed the counter's first
+// value instead of asking the CAS endpoint to double as a create.
+type putIfAbsentRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Token    string `json:"token"`
+	Key      string `json:"key"`
+	Value    []byte `json:"value"`
+}
+
+type putIfAbsentResponse struct {
+	Stored bool `json:"stored"`
 }
 
 // readCounter reads the shared counter through baseURL, returning its current
@@ -110,15 +128,17 @@ func readCounter(ctx context.Context, baseURL string) (value uint64, raw []byte,
 	return v, resp.Value, true, nil
 }
 
-// swapCounter attempts one compare-and-swap through baseURL and reports whether
-// it committed. expectAbsent selects create-if-absent (expected must be nil).
-func swapCounter(ctx context.Context, baseURL string, expected, next []byte, expectAbsent bool) (bool, error) {
+// swapCounter attempts one compare-and-swap through baseURL and reports
+// whether it committed. expected is always the real bytes last observed for
+// the key -- never nil (#186: a swap does not create, so a nil expected
+// against an absent key would only ever refuse). Creating the counter's first
+// value is putIfAbsentCounter's job, below.
+func swapCounter(ctx context.Context, baseURL string, expected, next []byte) (bool, error) {
 	body, err := json.Marshal(casRequest{
-		Token:        casToken,
-		Key:          casKey,
-		Expected:     expected,
-		New:          next,
-		ExpectAbsent: expectAbsent,
+		Token:    casToken,
+		Key:      casKey,
+		Expected: expected,
+		New:      next,
 	})
 	if err != nil {
 		return false, err
@@ -135,6 +155,33 @@ func swapCounter(ctx context.Context, baseURL string, expected, next []byte, exp
 		return false, err
 	}
 	return resp.Swapped, nil
+}
+
+// putIfAbsentCounter attempts to create the counter through baseURL, atomically
+// and only if it does not already exist, reporting whether this call created
+// it. It is the explicit create-if-absent verb (#186) that used to be
+// approximated by a nil-expected compare-and-swap.
+func putIfAbsentCounter(ctx context.Context, baseURL string, value []byte) (bool, error) {
+	body, err := json.Marshal(putIfAbsentRequest{
+		Token: casToken,
+		Key:   casKey,
+		Value: value,
+	})
+	if err != nil {
+		return false, err
+	}
+	code, respBody, err := post(ctx, baseURL+pkcs11StatePutIfAbsentPath, string(body))
+	if err != nil {
+		return false, err
+	}
+	if code != http.StatusOK {
+		return false, &errs.Detail{Err: errClusterCAS, Detail: fmt.Sprintf("put-if-absent status %d: %s", code, respBody)}
+	}
+	var resp putIfAbsentResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return false, err
+	}
+	return resp.Stored, nil
 }
 
 // errClusterCAS tags a non-2xx from a pkcs11state endpoint so the failure names
@@ -162,6 +209,12 @@ func formatDecimal(v uint64) []byte {
 // returns an error only for a transport/status failure, not for a lost race
 // (which is retried). committed counts a genuine commit so the caller can assert
 // the total.
+//
+// A swap does not create (#186), so an absent counter is created explicitly
+// with putIfAbsentCounter -- the same PutIfAbsent-then-CompareAndSwap split
+// ModuleStorage.incrementViaCAS uses in-process. Losing the create race is not
+// an error: it means a concurrent writer created the counter first, so the
+// loop re-reads its real bytes and falls into the ordinary CAS retry.
 func incrementOnce(ctx context.Context, baseURL string) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -171,16 +224,19 @@ func incrementOnce(ctx context.Context, baseURL string) error {
 		if err != nil {
 			return err
 		}
-		var (
-			expected     []byte
-			expectAbsent bool
-		)
-		if found {
-			expected = raw
-		} else {
-			expectAbsent = true
+		if !found {
+			created, err := putIfAbsentCounter(ctx, baseURL, formatDecimal(1))
+			if err != nil {
+				return err
+			}
+			if created {
+				return nil
+			}
+			// Lost the create race; re-read and fall into the CAS retry below.
+			continue
 		}
-		swapped, err := swapCounter(ctx, baseURL, expected, formatDecimal(value+1), expectAbsent)
+
+		swapped, err := swapCounter(ctx, baseURL, raw, formatDecimal(value+1))
 		if err != nil {
 			return err
 		}
@@ -205,12 +261,13 @@ func TestCluster_CompareAndSwap_ConcurrentAccumulates(t *testing.T) {
 	waitAllReady(t, ctx, nodes)
 	leader := waitLeader(t, ctx, nodes)
 
-	// A first create-if-absent probes the write path. When it commits we run the
-	// full concurrency assertion; when it hits the known go-quicraft
+	// A first create-if-absent probes the write path, through the explicit
+	// PutIfAbsent verb (#186: a swap does not create). When it commits we run
+	// the full concurrency assertion; when it hits the known go-quicraft
 	// Raft-over-QUIC idle-stall we assert graceful degradation, matching
 	// TestCluster_WriteReplication — a stalled proposal must not hang or crash.
 	probeCtx, probeCancel := context.WithTimeout(ctx, requestTimeout)
-	swapped, err := swapCounter(probeCtx, leader, nil, formatDecimal(0), true)
+	swapped, err := putIfAbsentCounter(probeCtx, leader, formatDecimal(0))
 	probeCancel()
 	if err != nil {
 		t.Logf("initial CAS to leader %s did not commit within %s (known idle-stall): %v; "+

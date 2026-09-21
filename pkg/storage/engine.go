@@ -147,9 +147,14 @@ func (b *engineBackend) PutIfAbsent(_ context.Context, key string, value []byte)
 	return true, nil
 }
 
-// CompareAndSwap atomically stores newValue at key only if the current value
-// equals expected (or, when expected is nil, only if the key is absent),
-// returning the current value when it does not swap.
+// CompareAndSwap atomically stores newValue at key only if the key exists and
+// its current value equals expected exactly, returning the current value when
+// it does not swap.
+//
+// An absent key REFUSES regardless of expected (#186): a swap edits, it does
+// not create, so expected == nil is compared like any other value (matching
+// only a stored empty value) rather than being read as "require absent". A
+// caller that wants to create only when the key is absent calls PutIfAbsent.
 //
 // It shares writeMu with PutIfAbsent so the get-compare-set is
 // linearizable for this single-writer, process-local engine — the same genuine
@@ -173,16 +178,12 @@ func (b *engineBackend) CompareAndSwap(_ context.Context, key string, expected, 
 		}
 	}
 
-	if expected == nil {
-		// Require the key to be absent.
-		if exists {
-			return false, current, nil
-		}
-	} else {
-		// Require the current value to equal expected exactly.
-		if !exists || !bytes.Equal(current, expected) {
-			return false, current, nil
-		}
+	// Require the key to exist AND its value to equal expected exactly. Absence
+	// is checked unconditionally, before the byte comparison, so a nil expected
+	// can never match an absent key even though bytes.Equal(nil, nil) would
+	// otherwise say it does.
+	if !exists || !bytes.Equal(current, expected) {
+		return false, current, nil
 	}
 
 	if err := b.eng.Set([]byte(key), newValue); err != nil {

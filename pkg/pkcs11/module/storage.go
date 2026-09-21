@@ -271,27 +271,59 @@ func (s *ModuleStorage) IncrementFailedAttempt(slotID SlotID, userType UserType)
 
 // incrementViaCAS performs the compare-and-swap retry loop for a counter key.
 //
-// Only the FIRST attempt reads the counter with a separate Get. Every retry
-// recomputes against the value the failed CompareAndSwap itself observed, which
-// the CompareAndSwapper contract returns for exactly this purpose ("when swapped
+// storage.CompareAndSwapper.CompareAndSwap no longer creates: a nil expected
+// is compared like any other value and an absent key always refuses (#186),
+// so this loop never passes one. Whenever the counter is (or becomes) absent
+// -- the first attempt found no key, or a concurrent writer's refusal reports
+// current=nil, which happens if a reset raced this call -- it is created with
+// PutIfAbsent, the explicit verb for "create only if absent," instead of
+// asking CompareAndSwap to do double duty. PutIfAbsent losing its race is not
+// an error: it means a concurrent creator won, so the real bytes are re-read
+// and the loop falls through to the ordinary compare-and-swap retry below.
+//
+// Once a real value is in hand, every retry after the first recomputes
+// against the value the failed CompareAndSwap itself observed, which the
+// CompareAndSwapper contract returns for exactly this purpose ("when swapped
 // is false, current holds the value that was actually present ... so a caller
-// doing a read-modify-write can recompute against it and retry"). Re-reading out
-// of band instead, as this loop used to, put an unsynchronized Get between the
-// observation and the swap and so lost far more races than the CAS alone does.
+// doing a read-modify-write can recompute against it and retry"). Re-reading
+// out of band instead, as this loop used to for every retry, put an
+// unsynchronized Get between the observation and the swap and so lost far
+// more races than the CAS alone does.
 func (s *ModuleStorage) incrementViaCAS(cas storage.CompareAndSwapper, key string) (uint32, error) {
 	ctx, cancel := s.opContext()
 	defer cancel()
 
 	expected, getErr := s.backend.Get(ctx, key)
-	switch {
-	case getErr == nil:
-	case errors.Is(getErr, storage.ErrNotFound):
-		expected = nil // require-absent
-	default:
+	if getErr != nil && !errors.Is(getErr, storage.ErrNotFound) {
 		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: getErr}
 	}
+	// getErr == nil leaves expected as the bytes Get returned; ErrNotFound
+	// leaves it nil, handled by the create branch below.
 
 	for attempt := 0; attempt < attemptCASRetryBudget; attempt++ {
+		if expected == nil {
+			stored, piaErr := s.backend.PutIfAbsent(ctx, key, []byte("1"))
+			if piaErr != nil {
+				return 0, &errs.Wrapped{Msg: "failed to create lockout counter", Err: piaErr}
+			}
+			if stored {
+				return 1, nil
+			}
+			// Lost the create race. Re-read the real bytes a concurrent writer
+			// left and fall through to the compare-and-swap branch below on
+			// this same iteration.
+			var reGetErr error
+			expected, reGetErr = s.backend.Get(ctx, key)
+			if reGetErr != nil {
+				if errors.Is(reGetErr, storage.ErrNotFound) {
+					// Raced a concurrent delete/reset too: try creating again.
+					runtime.Gosched()
+					continue
+				}
+				return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: reGetErr}
+			}
+		}
+
 		curVal, parseErr := parseAttemptCounter(expected)
 		if parseErr != nil {
 			return 0, parseErr
@@ -306,9 +338,10 @@ func (s *ModuleStorage) incrementViaCAS(cas storage.CompareAndSwapper, key strin
 		if swapped {
 			return next, nil
 		}
-		// A concurrent writer moved the counter. Recompute against what that
-		// writer left behind (nil means the key is absent again, i.e. reset) and
-		// yield so the winner is not simply re-elected by the runtime.
+		// A concurrent writer moved the counter, or removed it entirely (nil):
+		// the next iteration's create branch handles that case rather than
+		// this loop ever calling CompareAndSwap with a nil expected. Yield so
+		// the winner is not simply re-elected by the runtime.
 		expected = current
 		runtime.Gosched()
 	}

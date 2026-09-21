@@ -68,9 +68,18 @@ func (s *XKMSService) PKCS11StatePutIfAbsent(ctx context.Context, req *transport
 	return &transport.PKCS11StatePutIfAbsentResponse{Stored: stored}, nil
 }
 
-// PKCS11StateCAS atomically stores New only if the current value equals Expected
-// (or, when ExpectAbsent is set, only if the key is absent). It backs the
-// multi-client lockout-counter value-CAS.
+// PKCS11StateCAS atomically stores New only if the key exists and its current
+// value equals Expected exactly. It backs the multi-client lockout-counter
+// value-CAS.
+//
+// ExpectAbsent is REDEFINED, not honoured as "require absent" (#186): a swap
+// cannot create, so the field's old meaning is gone from this handler. Kept on
+// the wire for compatibility (no proto regeneration), it now means "perform
+// PutIfAbsent with New as the value" instead of a compare-and-swap — the
+// explicit create-if-absent verb, routed through this RPC for a peer that
+// still sets the flag rather than calling PKCS11StatePutIfAbsent directly.
+// This server's own client (pkg/pkcs11/module's remoteBackend) no longer sets
+// it; ModuleStorage.incrementViaCAS calls PutIfAbsent directly instead.
 func (s *XKMSService) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -81,14 +90,24 @@ func (s *XKMSService) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11S
 	if s.pkcs11StateStore == nil {
 		return nil, ErrPKCS11StateStoreUnavailable
 	}
-	// A nil expected value tells the store "require absent"; ExpectAbsent makes
-	// that intent explicit on the wire (JSON cannot distinguish an omitted byte
-	// slice from an empty one otherwise).
-	var expected []byte
-	if !req.ExpectAbsent {
-		expected = req.Expected
+	if req.ExpectAbsent {
+		stored, err := s.pkcs11StateStore.PutIfAbsent(ctx, req.TenantID, req.Token, req.Key, req.New)
+		if err != nil {
+			return nil, err
+		}
+		if stored {
+			return &transport.PKCS11StateCASResponse{Swapped: true}, nil
+		}
+		// Lost the create race: report the value actually present, the same
+		// advisory-current convention CompareAndSwap uses on a refusal, so a
+		// caller can recompute and retry.
+		current, _, err := s.pkcs11StateStore.Get(ctx, req.TenantID, req.Token, req.Key)
+		if err != nil {
+			return nil, err
+		}
+		return &transport.PKCS11StateCASResponse{Swapped: false, Current: current}, nil
 	}
-	swapped, current, err := s.pkcs11StateStore.CompareAndSwap(ctx, req.TenantID, req.Token, req.Key, expected, req.New)
+	swapped, current, err := s.pkcs11StateStore.CompareAndSwap(ctx, req.TenantID, req.Token, req.Key, req.Expected, req.New)
 	if err != nil {
 		return nil, err
 	}

@@ -28,11 +28,17 @@ import "context"
 // each increment from the same base and lose a failed-attempt.
 type CompareAndSwapper interface {
 	// CompareAndSwap atomically stores new at key only if the key's current
-	// value equals expected, and reports the outcome:
+	// value equals expected, and reports the outcome.
 	//
-	//   - expected == nil requires the key to be ABSENT (never written). This is
-	//     the same precondition PutIfAbsent uses.
-	//   - expected != nil requires the current value to equal expected exactly.
+	// A swap can meaningfully edit; it cannot meaningfully create. So an absent
+	// key REFUSES regardless of expected: expected is compared as raw bytes and
+	// nil is NOT a wildcard for "require absent" — it is equivalent to an empty
+	// slice, so it matches only a stored empty value, exactly the convention
+	// CompareAndDeleter.CompareAndDelete already uses. A caller that wants to
+	// create a key only when it is absent calls PutIfAbsent, the verb that
+	// exists for exactly that precondition; a caller that needs "absent OR
+	// equals X" in one guarded write has no primitive for that today and must
+	// not approximate it here (#186).
 	//
 	// swapped is true when new was written. When swapped is false, current holds
 	// the value that was actually present (nil when the key was absent), so a

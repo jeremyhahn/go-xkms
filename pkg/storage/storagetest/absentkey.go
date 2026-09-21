@@ -163,4 +163,48 @@ func RunAbsentKeyContract(t *testing.T, cfg Config) {
 			t.Fatalf("PutIfAbsent stored %q, want %q", got, cfg.valueA())
 		}
 	})
+
+	// CompareAndSwapper is optional, so a backend that does not claim it is
+	// skipped rather than failed -- this suite runs against every fixture wired
+	// to RunAbsentKeyContract regardless of which optional capabilities it has.
+	t.Run("CompareAndSwap refuses regardless of expected", func(t *testing.T) {
+		ctx := context.Background()
+		b := cfg.NewBackend(t)
+
+		cas, ok := b.(storage.CompareAndSwapper)
+		if !ok {
+			t.Skip("backend does not implement storage.CompareAndSwapper")
+		}
+
+		// A swap edits, it does not create (#186): an absent key refuses no
+		// matter what expected is, including nil -- which used to be read as
+		// "require absent" and swap. nil is now compared like any other value
+		// (matching only a stored empty one), so it refuses here exactly like a
+		// non-nil guess does.
+		for _, tc := range []struct {
+			name     string
+			expected []byte
+		}{
+			{"nil expected", nil},
+			{"empty expected", []byte{}},
+			{"non-empty expected", []byte("guess")},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				swapped, current, err := cas.CompareAndSwap(ctx, key, tc.expected, cfg.valueA())
+				if err != nil {
+					t.Fatalf("CompareAndSwap(%q, expected=%q) on an absent key must not error, got %v", key, tc.expected, err)
+				}
+				if swapped {
+					t.Fatalf("CompareAndSwap(%q, expected=%q) swapped=true on an absent key -- a swap must not "+
+						"create (#186); use PutIfAbsent to create", key, tc.expected)
+				}
+				if current != nil {
+					t.Fatalf("CompareAndSwap(%q, expected=%q) current=%q, want nil for an absent key", key, tc.expected, current)
+				}
+				if exists, err := b.Exists(ctx, key); err != nil || exists {
+					t.Fatalf("CompareAndSwap(%q, expected=%q) must not create the key, Exists=(%v,%v)", key, tc.expected, exists, err)
+				}
+			})
+		}
+	})
 }

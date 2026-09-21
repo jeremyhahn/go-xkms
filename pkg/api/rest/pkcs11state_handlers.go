@@ -105,8 +105,10 @@ func (h *PKCS11StateHandlers) PutIfAbsentHandler(w http.ResponseWriter, r *http.
 	h.respond(w, resp, err)
 }
 
-// CASHandler atomically stores New only if the current value equals Expected
-// (or, when ExpectAbsent is set, only if the key is absent).
+// CASHandler atomically stores New only if the current value equals Expected.
+// ExpectAbsent is a legacy field now redefined as "PutIfAbsent with New as the
+// value" rather than "require absent" (#186); see
+// transport.PKCS11StateCASRequest's doc comment for the full contract.
 func (h *PKCS11StateHandlers) CASHandler(w http.ResponseWriter, r *http.Request) {
 	if !h.ready(w) {
 		return

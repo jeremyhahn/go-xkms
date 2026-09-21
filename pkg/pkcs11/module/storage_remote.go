@@ -122,24 +122,26 @@ func (b *remoteBackend) PutIfAbsent(ctx context.Context, key string, value []byt
 	return resp.Stored, nil
 }
 
-// CompareAndSwap atomically stores newValue only if the current value equals
-// expected (or, when expected is nil, only if the key is absent), returning the
-// current value on a failed swap. It backs the multi-client lockout-counter
-// update: several remote-mode modules sharing one server-side token increment the
-// same failed-attempt counter, and only a value-CAS keeps those concurrent
+// CompareAndSwap atomically stores newValue only if the key exists and its
+// current value equals expected exactly, returning the current value on a
+// failed swap. It backs the multi-client lockout-counter update: several
+// remote-mode modules sharing one server-side token increment the same
+// failed-attempt counter, and only a value-CAS keeps those concurrent
 // read-modify-write updates from clobbering each other.
 //
-// A nil expected is sent as ExpectAbsent so the server can tell "require absent"
-// apart from "require the empty value" — JSON cannot distinguish an omitted byte
-// slice from an empty one.
+// A swap cannot create (#186): expected — nil included — is forwarded as an
+// ordinary value compare, never as ExpectAbsent. ExpectAbsent still exists on
+// the wire (PKCS11StateCASRequest, kept for compatibility), but this client no
+// longer sets it; the create-if-absent precondition is PutIfAbsent, above,
+// which the caller (ModuleStorage.incrementViaCAS) uses directly instead of
+// asking this RPC to do double duty.
 func (b *remoteBackend) CompareAndSwap(ctx context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
 	resp, err := b.client.PKCS11StateCAS(ctx, &transport.PKCS11StateCASRequest{
-		TenantID:     b.tenantID,
-		Token:        b.token,
-		Key:          key,
-		Expected:     expected,
-		New:          newValue,
-		ExpectAbsent: expected == nil,
+		TenantID: b.tenantID,
+		Token:    b.token,
+		Key:      key,
+		Expected: expected,
+		New:      newValue,
 	})
 	if err != nil {
 		return false, nil, &errs.Wrapped{Msg: "remote state compare-and-swap", Err: err}
