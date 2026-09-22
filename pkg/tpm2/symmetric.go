@@ -332,39 +332,65 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 	// 5.2.1.2 defines a t-bit tag as the leading t bits of the full tag; a
 	// caller that asked for one and got 128 bits back has a ciphertext its
 	// peer cannot authenticate.
-	gcm, err := aead.NewGCM(block, opts.TagSize)
+	//
+	// Under GODEBUG=fips140=only, Go refuses every AES-GCM construction that
+	// accepts a caller- or process-supplied IV, so when opts.Nonce is unset
+	// this substitutes cipher.NewGCMWithRandomNonce (randomNonce true) and
+	// reports it via GCMNonceMode so Decrypt reconstructs the same
+	// construction later. See pkg/crypto/aead.NewGCMForFreshEncrypt.
+	gcm, randomNonce, err := aead.NewGCMForFreshEncrypt(block, opts.TagSize, opts.Nonce != nil)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create GCM", Err: err}
 	}
 
-	// STEP 2: Generate or use provided nonce
-	var nonce []byte
-	if opts.Nonce != nil {
-		nonce = opts.Nonce
-		if len(nonce) != gcm.NonceSize() {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
+	var nonce, ciphertext, tag []byte
+
+	if randomNonce {
+		// gcm's NonceSize is 0: it generates the nonce itself and prepends
+		// it to Seal's output, so Seal is called with a nil nonce argument
+		// and the nonce is not known until this returns.
+		sealed := gcm.Seal(nil, nil, plaintext, opts.AdditionalData)
+		nonce, ciphertext, tag, err = aead.SplitGCMWithRandomNonce(sealed)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "tpm2: failed to split random-nonce GCM output", Err: err}
+		}
+
+		// STEP 3: Check nonce uniqueness. Unlike the explicit-nonce path,
+		// the nonce cannot be checked before Seal produces it.
+		if e.tpm.tracker != nil {
+			if err := e.tpm.tracker.CheckNonce(keyID, nonce); err != nil {
+				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+			}
 		}
 	} else {
-		nonce = make([]byte, gcm.NonceSize())
-		if _, err := e.tpm.random.Read(nonce); err != nil {
-			return nil, &errs.Wrapped{Msg: "tpm2: failed to generate nonce", Err: err}
+		// STEP 2: Generate or use provided nonce
+		if opts.Nonce != nil {
+			nonce = opts.Nonce
+			if len(nonce) != gcm.NonceSize() {
+				return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
+			}
+		} else {
+			nonce = make([]byte, gcm.NonceSize())
+			if _, err := e.tpm.random.Read(nonce); err != nil {
+				return nil, &errs.Wrapped{Msg: "tpm2: failed to generate nonce", Err: err}
+			}
 		}
-	}
 
-	// STEP 3: Check nonce uniqueness before encryption
-	if e.tpm.tracker != nil {
-		if err := e.tpm.tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+		// STEP 3: Check nonce uniqueness before encryption
+		if e.tpm.tracker != nil {
+			if err := e.tpm.tracker.CheckNonce(keyID, nonce); err != nil {
+				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+			}
 		}
+
+		// STEP 4: Encrypt with authentication
+		sealedWithTag := gcm.Seal(nil, nonce, plaintext, opts.AdditionalData)
+
+		// GCM appends the tag to ciphertext, extract it
+		tagSize := gcm.Overhead()
+		tag = sealedWithTag[len(sealedWithTag)-tagSize:]
+		ciphertext = sealedWithTag[:len(sealedWithTag)-tagSize]
 	}
-
-	// STEP 4: Encrypt with authentication
-	ciphertext := gcm.Seal(nil, nonce, plaintext, opts.AdditionalData)
-
-	// GCM appends the tag to ciphertext, extract it
-	tagSize := gcm.Overhead()
-	tag := ciphertext[len(ciphertext)-tagSize:]
-	ciphertext = ciphertext[:len(ciphertext)-tagSize]
 
 	// STEP 5: Record nonce after successful encryption
 	if e.tpm.tracker != nil {
@@ -374,11 +400,17 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 		}
 	}
 
+	nonceMode := types.GCMNonceModeExplicit
+	if randomNonce {
+		nonceMode = types.GCMNonceModeRandom
+	}
+
 	return &types.EncryptedData{
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
-		Tag:        tag,
-		Algorithm:  e.attrs.KeyAlgorithm.String(),
+		Ciphertext:   ciphertext,
+		Nonce:        nonce,
+		Tag:          tag,
+		Algorithm:    e.attrs.KeyAlgorithm.String(),
+		GCMNonceMode: nonceMode,
 	}, nil
 }
 
@@ -428,9 +460,40 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	// SP 800-38D section 5.2.2 verifies a t-bit tag by recomputing it at t
 	// bits, and inferring t from the bundle would let an attacker choose how
 	// many bits get checked.
-	gcm, err := aead.NewGCM(block, opts.TagSize)
+	//
+	// The construction is selected by data.GCMNonceMode, not by the current
+	// process's FIPS posture, so a random-nonce ciphertext a fips140=only
+	// process wrote still opens under fips140=on (and a classic
+	// explicit-nonce ciphertext still opens on any process that can
+	// construct arbitrary-IV GCM). See pkg/crypto/aead.NewGCMForDecrypt.
+	randomNonce := data.GCMNonceMode == types.GCMNonceModeRandom
+	gcm, err := aead.NewGCMForDecrypt(block, opts.TagSize, randomNonce)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create GCM", Err: err}
+	}
+
+	if randomNonce {
+		// gcm is cipher.NewGCMWithRandomNonce: NonceSize is 0 and Overhead
+		// is nonce+tag combined, so the wire-carried fields are checked
+		// against the fixed random-nonce framing rather than against gcm's
+		// own (zero) NonceSize.
+		if len(data.Tag) != aead.GCMFullTagSize {
+			return nil, &errs.Message{Msg: fmt.Sprintf(
+				"tpm2: authentication tag is %d bytes, want %d", len(data.Tag), aead.GCMFullTagSize)}
+		}
+		if len(data.Nonce) != aead.GCMRandomNonceSize {
+			return nil, &errs.Message{Msg: fmt.Sprintf(
+				"tpm2: nonce is %d bytes, want %d", len(data.Nonce), aead.GCMRandomNonceSize)}
+		}
+
+		// Decrypt and verify: Open reads its nonce from the front of the
+		// input rather than accepting one as a parameter.
+		joined := aead.JoinGCMWithRandomNonce(data.Nonce, data.Ciphertext, data.Tag)
+		plaintext, err := gcm.Open(nil, nil, joined, opts.AdditionalData)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "tpm2: decryption failed (authentication error)", Err: err}
+		}
+		return plaintext, nil
 	}
 
 	if len(data.Tag) != gcm.Overhead() {

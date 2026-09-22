@@ -61,6 +61,17 @@ var (
 	// truncation request had been honoured when it had not.
 	ErrTagSizeNotSupported = errors.New("symmetric: this cipher supports only its full-length authentication tag")
 
+	// ErrArbitraryIVGCMUnavailable is returned when an AES-GCM operation
+	// requires a caller-supplied nonce -- opts.Nonce was set on Encrypt, or
+	// the ciphertext's GCMNonceMode is the explicit legacy framing on
+	// Decrypt -- and this process is GODEBUG=fips140=only, which refuses
+	// every AES-GCM construction that accepts an externally supplied IV.
+	// There is no substitute construction that honours a caller-supplied
+	// nonce, so the operation fails closed rather than silently switching to
+	// a framing the caller did not ask for. See pkg/crypto/aead's identical
+	// sentinel, ArbitraryIVGCMUsable and NewGCMForFreshEncrypt.
+	ErrArbitraryIVGCMUnavailable = errors.New("symmetric: this FIPS 140-only process cannot construct an AES-GCM AEAD over a caller-supplied nonce")
+
 	// ErrAdditionalDataNotSupported is returned when AdditionalData is
 	// supplied for a non-AEAD cipher mode. AES-CBC has no authenticated-data
 	// input, so silently accepting and ignoring it would misrepresent the

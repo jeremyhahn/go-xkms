@@ -277,10 +277,7 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
 outright -- "use of GCM with arbitrary IVs is not allowed in FIPS 140-only
 mode" -- while `fips140=on` permits the identical construction. AES-GCM itself
 is approved (SP 800-38D); what the only mode forbids is an IV that arrives
-from outside the FIPS module boundary. `cipher.NewGCMWithRandomNonce` is not a
-substitute: it cannot honour a caller-chosen IV and produces a different
-ciphertext framing, so adopting it would leave every existing wrapped blob
-unreadable.
+from outside the FIPS module boundary.
 
 `aead.ArbitraryIVGCMUsable` reports whether *this process* can perform
 arbitrary-IV GCM. It is a runtime probe -- one throwaway seal, cached for the
@@ -290,6 +287,50 @@ the standard library exports no predicate for the only mode. The PKCS#11
 authenticated wrap verbs gate on it and answer `CKR_MECHANISM_INVALID`, the
 code for a mechanism the token does not offer, rather than reporting the
 regime restriction as an internal fault (#292).
+
+### Random-nonce GCM for the default Encrypt path (#23)
+
+`cipher.NewGCMWithRandomNonce` cannot honour a caller-chosen IV -- its
+`NonceSize` is zero, and it generates the nonce internally -- so it is not a
+substitute for `cipher.NewGCM` wherever a caller supplies its own nonce
+(an interop wire format, or a nonce derived through a KDF) or asks for a
+truncated tag, which `NewGCMWithRandomNonce` cannot produce. Those calls
+still fail closed under `fips140=only` with
+`aead.ErrArbitraryIVGCMUnavailable`: Vault Transit's BYOK wrap
+(`pkg/backend/vault/vault_importexport.go`), whose wire format mandates a
+fixed all-zero nonce, is one such caller.
+
+It *is* the substitute for the one combination every symmetric backend's
+default `Encrypt` call uses when neither of those applies: no caller-supplied
+nonce, and the default full 128-bit tag. `pkg/crypto/aead.NewGCMForFreshEncrypt`
+makes that substitution under `fips140=only` and reports it back as
+`randomNonce`; `pkg/crypto/aead.NewGCMForDecrypt` takes the same boolean (read
+off the ciphertext's own recorded `types.GCMNonceMode`, never off the
+decrypting process's FIPS posture) and rebuilds the matching construction. The
+symmetric (`pkg/keyprovider/symmetric`), Azure Key Vault
+(`pkg/backend/azurekv`) and TPM2 (`pkg/tpm2`) AES-GCM implementations all
+route through this pair rather than calling `NewGCM` directly.
+
+This changes the ciphertext framing -- `NewGCMWithRandomNonce`'s `Seal`
+generates a 96-bit nonce, prepends it to its output, and reports `Overhead()`
+as nonce+tag combined -- so nothing about an *existing* wrapped blob is
+disturbed: `GCMNonceMode` is `GCMNonceModeExplicit`, the zero value, unless a
+`fips140=only` process actually produced the ciphertext with the
+random-nonce construction, which means every blob written before this
+capability existed keeps decoding exactly as it always did, on any process
+that can still construct arbitrary-IV GCM. The on-disk TLV envelope
+(`pkg/keyprovider/symmetric.Marshal`/`Unmarshal`) only spends a wire-format
+version bump (and one marker byte) recording the mode when it is not the
+zero value, for the same reason: a version-1 blob and a version-1 write are
+byte-identical whether or not this capability exists in the binary that
+wrote them.
+
+A `fips140=only` process cannot open a `GCMNonceModeExplicit` (legacy,
+caller-nonce) ciphertext either, for the identical reason `NewGCM` itself is
+refused: arbitrary-IV GCM is what the mode forbids, on `Open` exactly as on
+`Seal`. That is expected, not a regression introduced by this capability --
+the ciphertext was never rewritten, and a process that can construct
+arbitrary-IV GCM (the default, and `fips140=on`) still opens it.
 
 ## See Also
 

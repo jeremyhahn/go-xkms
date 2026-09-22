@@ -95,6 +95,15 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 	// Store algorithm in metadata
 	sealed.Metadata["azurekv:algorithm"] = []byte(encrypted.Algorithm)
 
+	// Store the GCM nonce mode in metadata whenever it is not the zero
+	// value: under GODEBUG=fips140=only, Encrypt may have substituted
+	// cipher.NewGCMWithRandomNonce (see azureSymmetricKey.Encrypt), and
+	// Unseal must reconstruct the identical AEAD construction regardless of
+	// the FIPS posture of the process that later unseals this data.
+	if encrypted.GCMNonceMode != types.GCMNonceModeExplicit {
+		sealed.Metadata["azurekv:gcm_nonce_mode"] = []byte(encrypted.GCMNonceMode)
+	}
+
 	// Store AAD indicator in metadata if provided
 	if opts.AAD != nil {
 		sealed.Metadata["azurekv:has_aad"] = []byte("true")
@@ -156,6 +165,12 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	// Get algorithm from metadata if available
 	if alg, ok := sealed.Metadata["azurekv:algorithm"]; ok {
 		encrypted.Algorithm = string(alg)
+	}
+
+	// Get the GCM nonce mode from metadata if available; its absence means
+	// GCMNonceModeExplicit, the zero value, exactly as Seal left it unset.
+	if mode, ok := sealed.Metadata["azurekv:gcm_nonce_mode"]; ok {
+		encrypted.GCMNonceMode = types.GCMNonceMode(mode)
 	}
 
 	// Set up decryption options

@@ -1323,3 +1323,102 @@ func TestMarshalUnmarshalRoundTrip_UnicodeAlgorithm(t *testing.T) {
 
 	assert.Equal(t, data.Algorithm, unmarshaled.Algorithm)
 }
+
+// TestMarshal_ExplicitNonceModeWritesVersion1 pins that the zero-value
+// GCMNonceMode (the mode every ciphertext had before FIPS 140-only support)
+// produces byte-identical version-1 output, so this feature changes nothing
+// about a ciphertext that never uses the random-nonce construction.
+func TestMarshal_ExplicitNonceModeWritesVersion1(t *testing.T) {
+	data := &types.EncryptedData{
+		Algorithm:    string(types.SymmetricAES256GCM),
+		Nonce:        []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+		Tag:          []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Ciphertext:   []byte("explicit nonce ciphertext"),
+		GCMNonceMode: types.GCMNonceModeExplicit,
+	}
+
+	marshaled, err := Marshal(data)
+	require.NoError(t, err)
+	assert.Equal(t, byte(0x01), marshaled[0], "explicit nonce mode must write the legacy version-1 layout")
+}
+
+// TestMarshalUnmarshal_RandomNonceModeRoundTrips verifies GCMNonceModeRandom
+// survives Marshal/Unmarshal, upgrading the wire version so a reader can
+// recover which AEAD construction produced the ciphertext.
+func TestMarshalUnmarshal_RandomNonceModeRoundTrips(t *testing.T) {
+	data := &types.EncryptedData{
+		Algorithm:    string(types.SymmetricAES256GCM),
+		Nonce:        []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+		Tag:          []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Ciphertext:   []byte("random nonce ciphertext"),
+		GCMNonceMode: types.GCMNonceModeRandom,
+	}
+
+	marshaled, err := Marshal(data)
+	require.NoError(t, err)
+	require.Equal(t, byte(0x02), marshaled[0], "a non-explicit nonce mode must upgrade to version 2")
+	require.Equal(t, byte(0x01), marshaled[1], "the marker byte must name the random-nonce mode")
+
+	unmarshaled, err := Unmarshal(marshaled)
+	require.NoError(t, err)
+	assert.Equal(t, types.GCMNonceModeRandom, unmarshaled.GCMNonceMode)
+	assert.Equal(t, data.Algorithm, unmarshaled.Algorithm)
+	assert.Equal(t, data.Nonce, unmarshaled.Nonce)
+	assert.Equal(t, data.Tag, unmarshaled.Tag)
+	assert.Equal(t, data.Ciphertext, unmarshaled.Ciphertext)
+}
+
+// TestUnmarshal_LegacyVersion1GoldenFixture is a golden fixture pinned to
+// the exact version-1 wire bytes this package has always produced. It must
+// keep decoding, byte for byte, forever: every ciphertext ever written by a
+// version of this package before types.GCMNonceMode existed is a version-1
+// blob on disk today, and this is the only guarantee that it keeps opening.
+func TestUnmarshal_LegacyVersion1GoldenFixture(t *testing.T) {
+	// Captured from TestMarshalWireFormatStructure's expected output: the
+	// version-1 layout this package produced before this change, for
+	// Algorithm="AES", Nonce=[0xAA,0xBB], Tag=[0xCC], Ciphertext=[0xDD,0xEE,0xFF].
+	golden := []byte{
+		0x01,       // version
+		0x00, 0x03, // algorithm length
+		0x41, 0x45, 0x53, // "AES"
+		0x00, 0x02, // nonce length
+		0xAA, 0xBB, // nonce
+		0x00, 0x01, // tag length
+		0xCC,                   // tag
+		0x00, 0x00, 0x00, 0x03, // ciphertext length
+		0xDD, 0xEE, 0xFF, // ciphertext
+	}
+
+	unmarshaled, err := Unmarshal(golden)
+	require.NoError(t, err, "a version-1 golden fixture must always decode")
+
+	assert.Equal(t, types.GCMNonceModeExplicit, unmarshaled.GCMNonceMode,
+		"a version-1 blob predates GCMNonceMode and must decode as explicit")
+	assert.Equal(t, "AES", unmarshaled.Algorithm)
+	assert.Equal(t, []byte{0xAA, 0xBB}, unmarshaled.Nonce)
+	assert.Equal(t, []byte{0xCC}, unmarshaled.Tag)
+	assert.Equal(t, []byte{0xDD, 0xEE, 0xFF}, unmarshaled.Ciphertext)
+
+	// Re-marshaling an explicit-mode struct must reproduce the identical
+	// version-1 bytes: round-tripping a legacy blob must not upgrade it.
+	remarshaled, err := Marshal(unmarshaled)
+	require.NoError(t, err)
+	assert.Equal(t, golden, remarshaled, "re-marshaling a version-1 blob must reproduce it exactly")
+}
+
+// TestUnmarshal_UnknownNonceModeMarkerIsRejected is the bad-input case for
+// version 2: a marker byte outside the two defined values cannot have been
+// produced by this package's own Marshal.
+func TestUnmarshal_UnknownNonceModeMarkerIsRejected(t *testing.T) {
+	data := []byte{
+		0x02,       // version 2
+		0xFF,       // unknown nonce mode marker
+		0x00, 0x00, // algorithm length = 0
+		0x00, 0x00, // nonce length = 0
+		0x00, 0x00, // tag length = 0
+		0x00, 0x00, 0x00, 0x00, // ciphertext length = 0
+	}
+	_, err := Unmarshal(data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nonce mode marker")
+}

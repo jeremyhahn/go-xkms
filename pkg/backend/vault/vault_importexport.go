@@ -45,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -157,6 +158,24 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create ephemeral cipher", Err: err}
 	}
+
+	// Vault's BYOK ceremony is an interop format: it mandates the all-zero
+	// nonce sealed under below, so there is no substitute AEAD construction
+	// this process could switch to the way the default (no caller nonce)
+	// Encrypt path elsewhere in this stack does. Under
+	// GODEBUG=fips140=only, Go's crypto/cipher refuses every AES-GCM
+	// construction that accepts a caller- or process-supplied IV --
+	// cipher.NewGCM below included -- so this fails closed at the gate
+	// with the same sentinel pkg/pkcs11/module's authenticated-wrap verbs
+	// use for the identical restriction (#292), rather than relaying the
+	// runtime's own refusal from inside Seal.
+	if !aead.ArbitraryIVGCMUsable() {
+		return nil, &errs.Detail{
+			Err:    aead.ErrArbitraryIVGCMUnavailable,
+			Detail: "Vault Transit BYOK wrapping requires the all-zero nonce this FIPS 140-only process cannot seal under",
+		}
+	}
+
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create ephemeral GCM", Err: err}

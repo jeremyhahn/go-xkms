@@ -347,43 +347,69 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 	// fixed constant: NIST SP 800-38D section 5.2.1.2 defines a t-bit tag as
 	// the leading t bits of the full tag, and a caller that asked for one and
 	// got 128 bits back has a ciphertext its peer cannot authenticate.
-	gcm, err := aead.NewGCM(block, opts.TagSize)
+	//
+	// Under GODEBUG=fips140=only, Go refuses every AES-GCM construction that
+	// accepts a caller- or process-supplied IV, so when opts.Nonce is unset
+	// this substitutes cipher.NewGCMWithRandomNonce (randomNonce true) and
+	// reports it via GCMNonceMode so Decrypt reconstructs the same
+	// construction later. See pkg/crypto/aead.NewGCMForFreshEncrypt.
+	gcm, randomNonce, err := aead.NewGCMForFreshEncrypt(block, opts.TagSize, opts.Nonce != nil)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
-	}
-
-	// STEP 2: Generate or use provided nonce
-	var nonce []byte
-	if opts.Nonce != nil {
-		nonce = opts.Nonce
-		if len(nonce) != gcm.NonceSize() {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
-		}
-	} else {
-		nonce = make([]byte, gcm.NonceSize())
-		if _, err := rand.Read(nonce); err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
-		}
-	}
-
-	// STEP 3: Check nonce uniqueness before encryption
-	if k.backend.tracker != nil {
-		if err := k.backend.tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
-		}
 	}
 
 	// Get additional data if provided
 	aad := opts.AdditionalData
 
-	// STEP 4: Encrypt (GCM appends the tag to the ciphertext)
-	ciphertextWithTag := gcm.Seal(nil, nonce, plaintext, aad)
+	var nonce, ciphertext, tag []byte
 
-	// The tag is the trailing gcm.Overhead() bytes, which is the requested
-	// length rather than a fixed 16.
-	tagSize := gcm.Overhead()
-	ciphertext := ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
-	tag := ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
+	if randomNonce {
+		// gcm's NonceSize is 0: it generates the nonce itself and prepends
+		// it to Seal's output, so Seal is called with a nil nonce argument
+		// and the nonce is not known until this returns.
+		sealed := gcm.Seal(nil, nil, plaintext, aad)
+		nonce, ciphertext, tag, err = aead.SplitGCMWithRandomNonce(sealed)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to split random-nonce GCM output", Err: err}
+		}
+
+		// STEP 3: Check nonce uniqueness. Unlike the explicit-nonce path,
+		// the nonce cannot be checked before Seal produces it.
+		if k.backend.tracker != nil {
+			if err := k.backend.tracker.CheckNonce(keyID, nonce); err != nil {
+				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+			}
+		}
+	} else {
+		// STEP 2: Generate or use provided nonce
+		if opts.Nonce != nil {
+			nonce = opts.Nonce
+			if len(nonce) != gcm.NonceSize() {
+				return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
+			}
+		} else {
+			nonce = make([]byte, gcm.NonceSize())
+			if _, err := rand.Read(nonce); err != nil {
+				return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
+			}
+		}
+
+		// STEP 3: Check nonce uniqueness before encryption
+		if k.backend.tracker != nil {
+			if err := k.backend.tracker.CheckNonce(keyID, nonce); err != nil {
+				return nil, &errs.Affix{Prefix: "AEAD safety check failed: ", Err: err, Suffix: " (CRITICAL: rotate this key immediately)"}
+			}
+		}
+
+		// STEP 4: Encrypt (GCM appends the tag to the ciphertext)
+		ciphertextWithTag := gcm.Seal(nil, nonce, plaintext, aad)
+
+		// The tag is the trailing gcm.Overhead() bytes, which is the
+		// requested length rather than a fixed 16.
+		tagSize := gcm.Overhead()
+		ciphertext = ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
+		tag = ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
+	}
 
 	// STEP 5: Record nonce after successful encryption
 	if k.backend.tracker != nil {
@@ -393,11 +419,17 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 		}
 	}
 
+	nonceMode := types.GCMNonceModeExplicit
+	if randomNonce {
+		nonceMode = types.GCMNonceModeRandom
+	}
+
 	return &types.EncryptedData{
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
-		Tag:        tag,
-		Algorithm:  k.algorithm,
+		Ciphertext:   ciphertext,
+		Nonce:        nonce,
+		Tag:          tag,
+		Algorithm:    k.algorithm,
+		GCMNonceMode: nonceMode,
 	}, nil
 }
 
@@ -420,9 +452,41 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 	// that arrived: SP 800-38D section 5.2.2 verifies a t-bit tag by
 	// recomputing it at t bits, and letting the ciphertext bundle choose t
 	// would let an attacker pick how many bits get checked.
-	gcm, err := aead.NewGCM(block, opts.TagSize)
+	//
+	// The construction is selected by encrypted.GCMNonceMode, not by the
+	// current process's FIPS posture, so a random-nonce ciphertext a
+	// fips140=only process wrote still opens under fips140=on (and a
+	// classic explicit-nonce ciphertext still opens on any process that can
+	// construct arbitrary-IV GCM). See pkg/crypto/aead.NewGCMForDecrypt.
+	randomNonce := encrypted.GCMNonceMode == types.GCMNonceModeRandom
+	gcm, err := aead.NewGCMForDecrypt(block, opts.TagSize, randomNonce)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
+	}
+
+	// Get additional data if provided
+	aad := opts.AdditionalData
+
+	if randomNonce {
+		// gcm is cipher.NewGCMWithRandomNonce: NonceSize is 0 and Overhead
+		// is nonce+tag combined, so the wire-carried fields are checked
+		// against the fixed random-nonce framing rather than against gcm's
+		// own (zero) NonceSize.
+		if len(encrypted.Tag) != aead.GCMFullTagSize {
+			return nil, &errs.Message{Msg: fmt.Sprintf(
+				"azurekv: authentication tag is %d bytes, want %d", len(encrypted.Tag), aead.GCMFullTagSize)}
+		}
+		if len(encrypted.Nonce) != aead.GCMRandomNonceSize {
+			return nil, &errs.Message{Msg: fmt.Sprintf(
+				"azurekv: nonce is %d bytes, want %d", len(encrypted.Nonce), aead.GCMRandomNonceSize)}
+		}
+
+		joined := aead.JoinGCMWithRandomNonce(encrypted.Nonce, encrypted.Ciphertext, encrypted.Tag)
+		plaintext, err := gcm.Open(nil, nil, joined, aad)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
+		}
+		return plaintext, nil
 	}
 
 	if len(encrypted.Tag) != gcm.Overhead() {
@@ -438,9 +502,6 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 		return nil, &errs.Message{Msg: fmt.Sprintf(
 			"azurekv: nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
 	}
-
-	// Get additional data if provided
-	aad := opts.AdditionalData
 
 	// Reconstruct ciphertext with tag
 	ciphertextWithTag := append(encrypted.Ciphertext, encrypted.Tag...)

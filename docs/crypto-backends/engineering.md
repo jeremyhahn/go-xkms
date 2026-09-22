@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## Exported surface
 
@@ -186,6 +186,29 @@ can be stricter than the backend's ceiling.
   resolved backend's `Type()`, never from `types.ParseStoreType(backendName)`
   — the latter is only correct when the two happen to coincide, and coincided
   for every backend that existed before #312 was fixed (#312, #297, #172).
+- **`types.EncryptedData.GCMNonceMode` is self-describing, not
+  environment-derived.** The symmetric (`pkg/keyprovider/symmetric`), Azure
+  Key Vault and TPM2 (`pkg/tpm2`) AES-GCM `Encrypt` implementations select
+  their AEAD construction through `pkg/crypto/aead.NewGCMForFreshEncrypt`:
+  outside `GODEBUG=fips140=only` this is the pre-existing caller-nonce
+  `cipher.NewGCM` and `GCMNonceMode` stays its zero value
+  (`GCMNonceModeExplicit`); under `fips140=only`, when the caller left the
+  nonce to be generated at the default full tag, it substitutes
+  `cipher.NewGCMWithRandomNonce` and marks the result
+  `GCMNonceModeRandom`. `Decrypt` reads the mode back off the ciphertext
+  (`aead.NewGCMForDecrypt`) rather than off the current process's FIPS
+  posture, so a ciphertext's own recorded framing — not the environment it
+  is opened in — decides how `Nonce`, `Ciphertext` and `Tag` recombine; see
+  [`docs/fips/README.md`](../fips/README.md#aead-construction). A caller
+  that supplies its own nonce, or asks for a truncated tag, has no
+  substitute construction under `fips140=only` and fails closed with
+  `aead.ErrArbitraryIVGCMUnavailable` — this applies equally to Vault
+  Transit's BYOK wrap (`pkg/backend/vault/vault_importexport.go`), whose
+  wire format mandates a fixed all-zero nonce. The on-disk TLV envelope
+  (`pkg/keyprovider/symmetric.Marshal`/`Unmarshal`) carries the mode as an
+  extra marker byte only when it is not the zero value, so every ciphertext
+  written before this mode existed remains byte-identical version-1 output
+  and keeps decoding unchanged.
 
 ## Error semantics
 
