@@ -70,6 +70,12 @@ Still owed a folder: `agent/`, `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`,
 | [autofill/](autofill/) | AutoFill browser extension architecture and policy |
 | [xkeysigner/](xkeysigner/) | crypto.Signer via IPC (daemon integration) |
 
+## Skills and Tools
+
+| Tool | Purpose |
+|------|---------|
+| [xkey-agent skill](../skills/xkey-agent/SKILL.md) | AI agent skill for CLI automation of status queries, key operations, certificate management, and agent services |
+
 ## Architecture
 
 xKey operates in two modes:
