@@ -97,9 +97,9 @@ Go-xkms implements ML-DSA at levels 2, 3, and 5, and ML-KEM at levels 3 and 5 (M
       └────────────────┘          └───────────────────┘
               │                            │
       ┌───────▼────────┐          ┌────────▼──────────┐
-      │  circl/sign/   │          │  crypto/mlkem     │
-      │  mldsa         │          │  (Go stdlib)      │
-      │  (Cloudflare)  │          │                   │
+      │  crypto/mldsa  │          │  crypto/mlkem     │
+      │  (Go stdlib)   │          │  (Go stdlib)      │
+      │                │          │  512: circl        │
       └────────────────┘          └───────────────────┘
 ```
 
@@ -326,16 +326,16 @@ Typical performance on Intel x86_64 (3.0 GHz):
 
 The implementation uses pure Go libraries with no CGO or external C dependencies:
 
-- **ML-DSA (FIPS 204)**: Cloudflare's `circl` library (`github.com/cloudflare/circl/sign/mldsa/{mldsa44,mldsa65,mldsa87}`)
-- **ML-KEM (FIPS 203)**: Go standard library `crypto/mlkem` (ML-KEM-768, ML-KEM-1024)
+- **ML-DSA (FIPS 204)**: Go standard library `crypto/mldsa` (ML-DSA-44, ML-DSA-65, ML-DSA-87), available since Go 1.26
+- **ML-KEM (FIPS 203)**: Go standard library `crypto/mlkem` (ML-KEM-768, ML-KEM-1024); Cloudflare's `circl` library (`github.com/cloudflare/circl/kem/mlkem/mlkem512`) for ML-KEM-512, which `crypto/mlkem` does not implement
 
 **Advantages:**
 - No CGO required -- pure Go compilation
 - Cross-platform support (all Go-supported platforms)
 - No external C library installation needed
 - Simplified build process with no special build tags
-- Go standard library ML-KEM benefits from Go team maintenance and security updates
-- Cloudflare circl is well-tested and widely deployed
+- Go standard library ML-DSA and ML-KEM benefit from Go team maintenance and security updates, and from the Go Cryptographic Module's own FIPS enforcement (go-xkms #21)
+- Cloudflare circl, used only where the standard library has no equivalent (ML-KEM-512), is well-tested and widely deployed
 
 ### Always-On Compilation
 
@@ -522,8 +522,9 @@ This provides:
 - SP 800-38D: Recommendation for Block Cipher Modes of Operation: Galois/Counter Mode (GCM) and GMAC
 
 **Implementation:**
-- Cloudflare circl (ML-DSA): https://github.com/cloudflare/circl
-- Go crypto/mlkem (ML-KEM): https://pkg.go.dev/crypto/mlkem
+- Go crypto/mldsa (ML-DSA): https://pkg.go.dev/crypto/mldsa
+- Go crypto/mlkem (ML-KEM-768/1024): https://pkg.go.dev/crypto/mlkem
+- Cloudflare circl (ML-KEM-512 only): https://github.com/cloudflare/circl
 
 **Research:**
 - CRYSTALS-Dilithium (ML-DSA): https://pq-crystals.org/dilithium/

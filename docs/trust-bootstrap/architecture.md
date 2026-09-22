@@ -146,10 +146,11 @@ operator whose build can serve nothing learns it once, at startup, with a typed
 error naming both suites — not from every client that later fails to connect.
 
 **Availability is asked of the library, not of a FIPS predicate.** The obvious
-`if fips.Compiled()` is wrong for the reason already recorded on the certstore
+`if fips140.Enabled()` is wrong for the reason already recorded on the certstore
 thumbprint: `GODEBUG=fips140=off` turns that predicate false on a
 GOFIPS140-built binary, so the guard fails *open* for exactly the artifacts the
-policy most cares about. `EnsureSuiteAvailable` instead attempts the key
+policy most cares about — `crypto/fips140.Enabled` reports module state, not
+build provenance. `EnsureSuiteAvailable` instead attempts the key
 generation and classifies the result, caching it per process. That reads the
 build's real behaviour, cannot disagree with the code that will run the
 handshake, and tracks upstream if go-truststrap's FIPS support later changes.

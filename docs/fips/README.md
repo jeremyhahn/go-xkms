@@ -2,45 +2,57 @@
 
 ## Overview
 
-go-xkms provides transparent FIPS 140 mode detection and algorithm selection. When the `GOFIPS140` environment variable is set, cryptographic algorithm defaults automatically switch to FIPS-approved alternatives. No code changes are required.
+go-xkms provides FIPS 140 default-algorithm selection for the choices this
+repository owns (the KDF selectors below), and reports FIPS build provenance
+for artifact labels. Whether FIPS 140 mode is *active* in a process is
+answered by the Go standard library alone (go-xkms #21) — this repository
+keeps no copy of that signal.
 
 **Packages**:
-- `github.com/jeremyhahn/go-xkms/pkg/crypto/fips` -- mode detection and KDF selection
+- `github.com/jeremyhahn/go-xkms/pkg/crypto/fips` -- build-provenance reporting (`Built`, `BuildSetting`) and KDF selection
 - `github.com/jeremyhahn/go-xkms/pkg/crypto/kdf` -- `PasswordHasher` with versioned algorithms
 
-## FIPS Mode Detection
+## FIPS Mode Detection (owner ruling on #21, 2026-09-22)
 
 ```go
-import "github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
+import "crypto/fips140"
 
-if fips.Enabled() {
-    // GOFIPS140 is set to a non-empty value
+if fips140.Enabled() {
+    // the Go Cryptographic Module is active in this process
 }
 ```
 
-Detection checks `os.Getenv("GOFIPS140")`. The toolchain accepts `off`, `latest`,
-`inprocess`, `certified` and `v1.Y.Z`; only `off` (and unset) means disabled.
+`crypto/fips140.Enabled()` is true under two conditions, and only these two:
+
+- **Runtime**: `GODEBUG=fips140=on` or `GODEBUG=fips140=only` is set when the
+  process starts. `=only` additionally refuses non-approved algorithms inside
+  the stdlib crypto packages themselves; `=on` activates the module without
+  that refusal.
+- **Build time**: the binary was built with `GOFIPS140` set to an enabling
+  value (`latest`, `inprocess`, `certified`, or `vX.Y.Z`), which activates the
+  module by default without requiring `GODEBUG` at runtime.
+
+**`GOFIPS140` set as a plain runtime environment variable does nothing.** It
+is exclusively a `go build` / `go test -c` selector recorded into the binary
+at link time; the Go runtime never reads it as a process environment variable
+the way it reads `GODEBUG`. Earlier revisions of this package (`fips.Enabled`)
+read `os.Getenv("GOFIPS140")` as if it were a runtime policy switch, and
+`fips.Compiled` was `crypto/fips140.Enabled()` under another name; callers
+combined them with `fips.Compiled() || fips.Enabled()`. Both functions are
+deleted: `fips.Compiled()` was a redundant alias, and `fips.Enabled()` was a
+runtime signal this repository invented that the toolchain does not honour.
+Every caller now calls `crypto/fips140.Enabled()` directly.
 
 ```bash
-# Enable FIPS mode
-export GOFIPS140=latest
+# Enable FIPS mode at runtime (module active, non-approved algorithms still permitted)
+GODEBUG=fips140=on ./xkmsd
 
-# Disable (default)
-unset GOFIPS140
+# Enable FIPS mode at runtime with strict enforcement (non-approved algorithms refused)
+GODEBUG=fips140=only ./xkmsd
+
+# Enable FIPS mode at build time (module active by default, no GODEBUG needed)
+GOFIPS140=latest go build ./cmd/xkmsd
 ```
-
-`fips.Enabled()` is the *runtime* signal: the `GOFIPS140` environment variable of
-this process. `fips.Compiled()` is the *module-state* signal —
-`crypto/fips140.Enabled()`, true when the Go Cryptographic Module is in force
-here. A FIPS build turns it on by default, and it is the signal that survives
-into a FIPS-compiled shared library whose loading process carries no
-`GOFIPS140`. Controls that must hold wherever the FIPS crypto is actually
-running test `Compiled() || Enabled()`.
-
-Neither one is build provenance. `GODEBUG=fips140` selects the module state in
-**either** direction, so `Compiled()` goes false on a `GOFIPS140`-built binary
-run under `GODEBUG=fips140=off`, and true on a stock binary run under
-`GODEBUG=fips140=on` (#219).
 
 ## Build provenance
 
@@ -52,9 +64,8 @@ it survives into a c-shared library a foreign process `dlopen()`s.
 
 | Predicate | Answers | Moves with `GODEBUG=fips140` |
 |-----------|---------|------------------------------|
-| `Enabled()` | is `GOFIPS140` set in this process's environment | no |
-| `Compiled()` | is the FIPS module in force in this process | **yes** |
-| `Built()` | was this artifact compiled with `GOFIPS140` | no |
+| `crypto/fips140.Enabled()` | is the Go Cryptographic Module active in this process | **yes** |
+| `fips.Built()` | was this artifact compiled with an enabling `GOFIPS140` | no |
 
 The toolchain records the setting only when it enables the module, so a build
 with no `GOFIPS140` and one with an explicit `GOFIPS140=off` both read back as
@@ -69,52 +80,72 @@ shipped `libxkms_pkcs11_fips.so` identifies itself as FIPS even when the loading
 process sets `GODEBUG=fips140=off`, and a stock build never claims to be one
 under `GODEBUG=fips140=on`.
 
-**Algorithm policy uses all three signals.** `AlgorithmPermitted` follows
-`Built() || Compiled() || Enabled()`. A binary built with an enabling
-`GOFIPS140` keeps enforcing the approved-only allowlist even when an operator
-sets `GODEBUG=fips140=off` at runtime — provenance is fixed at link time and
-the environment cannot revoke it — so a validated artifact cannot be talked
-out of its own posture that way (owner ruling on #219). A binary never built
-with `GOFIPS140` is unaffected: the allowlist still stops applying, exactly
-as in a non-FIPS build, whenever neither `Compiled()` nor `Enabled()` is
-active either.
+`crypto/fips140.Enabled()` remains the one signal other packages in this
+repository call directly to decide whether FIPS mode is active for their own
+purposes (KDF selection below, the AEAD selector, PKCS#11 mechanism
+advertisement — see [FIPS Mode Detection](#fips-mode-detection-owner-ruling-on-21-2026-09-22)
+above). It does not decide whether a given *algorithm* may run. That decision
+belongs to the Go standard library — see "Algorithm enforcement" below.
 
-## Approved algorithm set
+## Algorithm enforcement (owner ruling on #21, 2026-09-22)
 
-`fips.ApprovedAlgorithm` is the repository's answer to "may a FIPS deployment use
-this key algorithm", and `fips.AlgorithmPermitted` pairs it with mode detection.
-The key-ID allowlists in `pkg/validation` and `pkg/xkms` filter through it, so in
-FIPS mode a key ID naming a non-approved algorithm is rejected rather than
-accepted and later failing somewhere less obvious.
+go-xkms keeps no approved-algorithm allowlist of its own. Earlier revisions
+of this package held one (`approvedAlgorithms`, `fips.ApprovedAlgorithm`,
+`fips.AlgorithmPermitted`) that `pkg/validation` and `pkg/xkms/keyid`
+consulted to reject a key ID naming a non-approved algorithm. It was deleted:
+a hand-maintained list that has to be kept in sync with what the Go toolchain
+actually enforces is a list that drifts, and the toolchain already enforces
+its own answer correctly.
 
-| Approved | Basis |
-|----------|-------|
-| RSA, ECDSA P-256/384/521 | FIPS 186-5 |
-| Ed25519, Ed448 | FIPS 186-5 |
-| AES-128/192/256-GCM | FIPS 197 + SP 800-38D |
-| ML-DSA-44/65/87 | FIPS 204 |
-| ML-KEM-512/768/1024 | FIPS 203 |
-| HMAC-SHA-256/384/512 | FIPS 198-1 |
+Under `GODEBUG=fips140=only`, or a binary built with an enabling `GOFIPS140`,
+the standard library crypto package that implements an algorithm refuses it
+on its own:
 
-### Absent from FIPS mode
+| Algorithm | Enforced by | Behavior under `fips140=only` |
+|-----------|-------------|--------------------------------|
+| RSA, ECDSA P-256/384/521, Ed25519 | `crypto/rsa`, `crypto/ecdsa`, `crypto/ed25519` | Approved; unaffected |
+| AES-128/192/256-GCM | `crypto/aes`, `crypto/cipher` | Approved; unaffected (arbitrary-IV GCM has its own restriction — see [AEAD construction](#aead-construction)) |
+| HMAC-SHA-256/384/512 | `crypto/hmac` | Approved; unaffected |
+| ML-DSA-44/65/87 | `crypto/mldsa` (Go 1.26+) | Approved; refuses only under a build selecting the FIPS 140-3 Go Cryptographic Module v1.0.0, which predates ML-DSA support (`mldsa: unavailable in FIPS 140-3 Go Cryptographic Module v1.0.0`) |
+| ML-KEM-768/1024 | `crypto/mlkem` | Approved; unaffected |
+| X25519 | `crypto/ecdh` | Refused: `"use of X25519 is not allowed in FIPS 140-only mode"` |
 
-These stay fully present and fully tested in a normal build. Only a FIPS-mode run
-refuses them:
+`pkg/validation.isValidAlgorithm` and `pkg/xkms/keyid.validateAlgorithm` are
+now grammar checks only — is `algo` a spelling either package recognizes —
+never a FIPS policy decision. An algorithm this repository's grammar accepts
+but the stdlib does not implement (`chacha20-poly1305`, `xchacha20-poly1305`,
+`x448`, the `frost-*` ciphersuites) is unaffected by that grammar check
+either way; nothing in this repository currently wires x448 or FROST to a key
+generation backend, and ChaCha20-Poly1305's own FIPS posture is handled where
+it is actually selected — see `pkg/crypto/aead.SelectOptimal`, which always
+returns AES-256-GCM under `crypto/fips140.Enabled()` because
+`golang.org/x/crypto/chacha20poly1305` is not part of the Go Cryptographic
+Module and the toolchain cannot refuse it for us.
 
-| Withheld | Why | Approved substitute |
-|----------|-----|---------------------|
-| `chacha20-poly1305`, `xchacha20-poly1305` | Not an approved AEAD | AES-256-GCM |
-| `x25519`, `x448` | SP 800-56A Rev. 3 approves only the NIST curves and finite field groups for key agreement. `crypto/ecdh` under `GODEBUG=fips140=only` refuses X25519 outright. | ECDH P-256/384/521 |
-| `frost-*` (all RFC 9591 ciphersuites, including `frost-p256`) | Threshold Schnorr is not an approved signature scheme; the approval is of the scheme, not the curve underneath it. | None — no approved threshold signature scheme exists |
+### Crypto the standard library cannot see
 
-The allowlist in `pkg/crypto/fips` is an allowlist rather than a denylist so the
-control fails closed: an algorithm added to a caller's own list is refused in FIPS
-mode until it is added to the approved set deliberately.
+Two post-quantum parameter sets have no Go Cryptographic Module
+implementation and stay on `github.com/cloudflare/circl`, a library outside
+the module boundary that `crypto/fips140.Enabled()` cannot see and therefore
+cannot refuse on its own:
 
-**Algorithm approval is not implementation validation.** ML-DSA and Ed448 are
-reached through `github.com/cloudflare/circl`, so admitting them asserts an
-approved *algorithm*, not a validated *module*. A deployment that must claim a
-validated implementation has a narrower list than this one.
+| Algorithm | Package | Why CIRCL |
+|-----------|---------|-----------|
+| ML-KEM-512 | `pkg/quantum/mlkem512` | `crypto/mlkem` implements only the 768 and 1024 parameter sets |
+
+`pkg/quantum/mlkem512.New` and `.Create` are this algorithm's one shared
+seam: both refuse with `ErrFIPSMode` when `crypto/fips140.Enabled()` is true,
+before any CIRCL call runs. Every other exported method operates on an
+already-constructed `*MLKEM512`, so gating construction is sufficient.
+
+Ed448, ML-DSA-44/65/87, and ML-KEM-768/1024 previously listed here as
+CIRCL-backed now use `crypto/mldsa` and `crypto/mlkem` respectively (see the
+table above); `pkg/quantum/dilithium2`, `pkg/quantum/mldsa65`,
+`pkg/quantum/mldsa87`, `pkg/quantum/kyber768` and `pkg/quantum/mlkem1024`
+wrap the standard library, not CIRCL. No production code path in this
+repository currently implements Ed448 as a standalone signature algorithm
+(it appears only as a FROST ciphersuite curve, gated as described above, and
+as PKCS#11 curve/OID metadata).
 
 ## KDF Selection
 
@@ -138,8 +169,8 @@ Argon2id is the default because it provides superior resistance to GPU/ASIC atta
 
 ```mermaid
 graph TD
-    A[NewFIPSAwareHasher] -->|GOFIPS140 unset| B[HashV1: Argon2id]
-    A -->|GOFIPS140 set| C[HashV2: PBKDF2-SHA256]
+    A[NewFIPSAwareHasher] -->|fips140.Enabled false| B[HashV1: Argon2id]
+    A -->|fips140.Enabled true| C[HashV2: PBKDF2-SHA256]
     B --> D[PasswordHasher]
     C --> D
     D -->|Hash| E[key + salt + version]
@@ -215,7 +246,8 @@ The FIPS strategy is consumed by several subsystems:
 | LUKS passphrase derivation | KDF for disk encryption keys |
 | Raw PKCS#1 v1.5 signatures | `Sign` / `Verify` with hash `NONE` on an in-process RSA key refuse with `types.ErrRawPKCS1v15Enforced` under `GODEBUG=fips140=only` (see [Hash selection](#hash-selection)) |
 | AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../configuration/aead-auto-selection.md)) |
-| Key-ID validation | Filters `pkg/validation` and `pkg/xkms` algorithm allowlists to the approved set |
+| Key-ID grammar | `pkg/validation` and `pkg/xkms/keyid` validate spelling only; algorithm approval is enforced by the stdlib crypto package a caller reaches for, not here (go-xkms #21) |
+| ML-KEM-512 | `pkg/quantum/mlkem512.New`/`.Create` refuse with `ErrFIPSMode` under `crypto/fips140.Enabled()`, since CIRCL is outside the module boundary the stdlib polices (see [Crypto the standard library cannot see](#crypto-the-standard-library-cannot-see)) |
 | PKCS#11 authenticated wrapping | Refuses `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` with `CKR_MECHANISM_INVALID` when the runtime withholds arbitrary-IV GCM (see [AEAD construction](#aead-construction)) |
 
 ## Error Handling
@@ -244,12 +276,12 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   an error, so any FIPS-activated process that formatted a certificate for
   display used to die there. The line is removed rather than guarded: the
   question a guard must ask is "is SHA-1 fatal in this process", the
-  `fips140=only` *activation* state, and no predicate answers it. `Compiled()`
-  is module state, which `GODEBUG=fips140=off` turns false on a
-  `GOFIPS140`-built binary, and `Built()` is provenance, which says nothing
-  about how the process was started (#219). A guard would therefore fail open
-  precisely for FIPS artifacts. `crypto/sha1` is no longer
-  imported by the package. Consumers comparing against
+  `fips140=only` *activation* state specifically, and no predicate answers it:
+  `crypto/fips140.Enabled()` is true under both `fips140=on` and
+  `fips140=only` and cannot distinguish them, and `fips.Built()` is
+  provenance, which says nothing about how the process was started (#219). A
+  guard would therefore fail open precisely for FIPS artifacts. `crypto/sha1`
+  is no longer imported by the package. Consumers comparing against
   `openssl x509 -fingerprint` must pass `-sha256`.
 - **Raw PKCS#1 v1.5 signatures (hash `NONE`)** -- `Sign` and `Verify` accept
   the hash name `NONE` to sign or check caller-built bytes verbatim, which is

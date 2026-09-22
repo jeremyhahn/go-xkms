@@ -15,6 +15,9 @@ package kdf
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,19 +60,42 @@ func TestNewPasswordHasher_InvalidVersion(t *testing.T) {
 }
 
 func TestNewFIPSAwareHasher_Standard(t *testing.T) {
-	t.Setenv("GOFIPS140", "")
 	h := NewFIPSAwareHasher()
 	require.NotNil(t, h)
 	assert.Equal(t, HashV1, h.Version())
 	assert.False(t, h.IsFIPS())
 }
 
+// TestNewFIPSAwareHasher_FIPS is the compliance assertion for go-xkms #21:
+// NewFIPSAwareHasher selects PBKDF2 because crypto/fips140.Enabled is true,
+// not because of a GOFIPS140 environment variable this package used to read
+// itself. crypto/fips140.Enabled is fixed when the process starts, so this
+// re-execs under GODEBUG=fips140=on, mirroring
+// pkg/quantum/mlkem512.TestNewAndCreate_RefuseUnderFIPS.
 func TestNewFIPSAwareHasher_FIPS(t *testing.T) {
-	t.Setenv("GOFIPS140", "v1.0.0")
-	h := NewFIPSAwareHasher()
-	require.NotNil(t, h)
-	assert.Equal(t, HashV2, h.Version())
-	assert.True(t, h.IsFIPS())
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+		h := NewFIPSAwareHasher()
+		if h == nil {
+			t.Fatal("NewFIPSAwareHasher() = nil")
+		}
+		if h.Version() != HashV2 {
+			t.Fatalf("Version() = %v, want HashV2", h.Version())
+		}
+		if !h.IsFIPS() {
+			t.Fatal("IsFIPS() = false, want true under GODEBUG=fips140=on")
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestNewFIPSAwareHasher_FIPS", "-test.v")
+	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
+	}
 }
 
 func TestHash_V1(t *testing.T) {

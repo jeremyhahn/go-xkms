@@ -38,10 +38,11 @@ return **AES-256-GCM** regardless of CPU capability. Nothing is withdrawn: AES-G
 is the approved primitive with the same security property, so the capability
 exists in both builds and only the choice between them changes.
 
-FIPS mode here means `fips.Compiled() || fips.Enabled()` — a binary compiled with
-`GOFIPS140`, *or* a process running under it. Both are needed: a FIPS-compiled
-shared library carries no `GOFIPS140` in the process that `dlopen()`s it, so the
-environment alone would not see it.
+FIPS mode here means `crypto/fips140.Enabled()` (go-xkms #21): true under
+`GODEBUG=fips140=on|only` at runtime, or in a binary built with an enabling
+`GOFIPS140` (which activates the module by default, so a FIPS-compiled shared
+library reports the module active even in a process whose own environment sets
+nothing).
 
 This is a runtime check rather than a `//go:build` exclusion because `pkg/crypto/aead`
 selects an algorithm *name* and imports no cipher implementation — there is no

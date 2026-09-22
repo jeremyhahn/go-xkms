@@ -40,8 +40,9 @@ application reading `ulMinKeySize=1, ulMaxKeySize=0` would see an empty range.
 ## Advertised mechanisms
 
 FIPS column: **yes** = `FIPSApproved`, offered in FIPS mode; **no** = withheld
-entirely when `GOFIPS140` selects FIPS mode (`C_GetMechanismInfo` answers
-`CKR_MECHANISM_INVALID`, not merely "unlisted").
+entirely when `crypto/fips140.Enabled()` selects FIPS mode (go-xkms #21:
+`GODEBUG=fips140=on|only` at runtime, or a `GOFIPS140` build) —
+`C_GetMechanismInfo` answers `CKR_MECHANISM_INVALID`, not merely "unlisted".
 
 ### RSA
 
@@ -243,11 +244,13 @@ refusal than `CKM_UNKNOWN(0x00004038): CKR_MECHANISM_INVALID`.
 
 ## FIPS mode
 
-FIPS mode is selected process-wide by `GOFIPS140`, the same signal the rest of the
-stack uses, so the module and its backends cannot end up in different modes.
+FIPS mode is selected process-wide by `crypto/fips140.Enabled()`, the same
+signal the rest of the stack uses (go-xkms #21), so the module and its
+backends cannot end up in different modes. `GOFIPS140` set as a plain runtime
+environment variable has no effect — it is a `go build` selector only.
 
 ```bash
-GOFIPS140=on xkmsd --config /etc/xkms/xkmsd.yaml
+GODEBUG=fips140=on xkmsd --config /etc/xkms/xkmsd.yaml
 ```
 
 A non-approved mechanism is then hidden entirely: absent from

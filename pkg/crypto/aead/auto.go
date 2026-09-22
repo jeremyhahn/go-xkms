@@ -50,11 +50,10 @@
 package aead
 
 import (
+	"crypto/fips140"
 	"runtime"
 
 	"golang.org/x/sys/cpu"
-
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 )
 
 // Algorithm names for AEAD ciphers
@@ -122,11 +121,11 @@ func selectAESGCM(isHardwareBacked, aesni, fipsMode bool) bool {
 // fipsRequiresAES reports whether FIPS 140-3 policy forbids selecting a
 // non-approved AEAD, in which case the selectors must return AES-256-GCM.
 //
-// It ORs the build-time and runtime predicates for the same reason
-// pkg/pkcs11/module/mechanism.go does: a FIPS-compiled shared library carries
-// no GOFIPS140 in the process that dlopen()s it, so Compiled is the only signal
-// there, while a normally-built binary run under GOFIPS140 only sets Enabled.
-// Either alone leaves a FIPS deployment able to select ChaCha20-Poly1305.
+// The Go standard library alone answers "is FIPS mode active" (go-xkms #21):
+// crypto/fips140.Enabled is true whenever GODEBUG=fips140=on|only selects the
+// module at runtime, or the binary was built with an enabling GOFIPS140 (a
+// FIPS build turns the module on by default). There is no separate build-time
+// signal to OR in beside it.
 //
 // Why this is a runtime predicate and not a //go:build exclusion: this package
 // selects an algorithm *name*. It imports no cipher implementation, so there is
@@ -137,7 +136,7 @@ func selectAESGCM(isHardwareBacked, aesni, fipsMode bool) bool {
 // what this function returns. Splitting auto.go across two build tags would
 // only duplicate the same branch while making one copy untestable per build.
 func fipsRequiresAES() bool {
-	return fips.Compiled() || fips.Enabled()
+	return fips140.Enabled()
 }
 
 // HasAESNI returns true if the CPU has AES-NI (AES New Instructions) support.

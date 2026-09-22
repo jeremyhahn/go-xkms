@@ -87,12 +87,17 @@ devcontainer run to confirm — not runnable in the review environment.
 
 ## Phase 2 — FIPS + non-FIPS builds (P2)
 
-Current state: **no FIPS `.so` build exists.** `GOFIPS140` is not a Makefile
-variable; only `integration-test-pkcs11-fips`'s Go test binary ever sees it.
-Runtime detection (`pkg/crypto/fips/fips.go:47-59`) reads the **env var**, not the
-compiled-in `crypto/fips140.Enabled()` state — so a non-FIPS `.so` with
-`GOFIPS140=latest` in the environment *claims* FIPS filtering without FIPS crypto,
-and vice versa. No CK_INFO/CK_TOKEN_INFO string identifies a FIPS build.
+Starting state (before F1-F6, below): **no FIPS `.so` build exists.**
+`GOFIPS140` is not a Makefile variable; only `integration-test-pkcs11-fips`'s
+Go test binary ever sees it. Runtime detection (`pkg/crypto/fips/fips.go`, as
+it existed then) read the **env var** via its own now-deleted `Enabled()`,
+not the compiled-in `crypto/fips140.Enabled()` state — so a non-FIPS `.so`
+with `GOFIPS140=latest` in the environment *claimed* FIPS filtering without
+FIPS crypto, and vice versa. No CK_INFO/CK_TOKEN_INFO string identified a
+FIPS build. F5 (below) and go-xkms #21 close this gap: `GOFIPS140` set as a
+runtime environment variable has no effect on anything in this repository
+today, labeling reads build provenance only, and mechanism filtering reads
+`crypto/fips140.Enabled()` directly.
 
 | ID | Task | Status |
 |----|------|--------|
@@ -100,7 +105,7 @@ and vice versa. No CK_INFO/CK_TOKEN_INFO string identifies a FIPS build.
 | F2 | Thread `GOFIPS140=$(GOFIPS140)` into `build-pkcs11-module` and both `run_with_server` .so rebuild sites (Makefile:1927, 1935) | **DONE** — build target + both `run_with_server` macro build sites thread `GOFIPS140` |
 | F3 | New `build-pkcs11-module-fips` target → separate artifact `libxkms_pkcs11_fips.so` built with `GOFIPS140=$(GOFIPS140_FIPS)`; both .so ship side by side | **DONE** — target added; both `.so` builds verified (GOFIPS140=off / latest) |
 | F4 | FIPS self-identification: CK_INFO `LibraryDescription` (module.go:297/324) and CK_TOKEN_INFO model (token.go:444) branch on FIPS — e.g. "go-xkms PKCS#11 (FIPS 140-3)" / "Virtual Token FIPS" | **DONE** — `moduleLibraryDescription()`="go-xkms PKCS#11 FIPS 140-3", `tokenModel()`="FIPS 140-3 Token" (fit 32/16-byte fields); `fips_label_test.go` |
-| F5 | Base self-ID + mechanism filtering on **compiled** state: `crypto/fips140.Enabled()` authoritative; decide relationship with env-var runtime toggle (compiled state must win for labeling; document the policy in `pkg/crypto/fips`) | **DONE** — `fips.Compiled()`(=`crypto/fips140.Enabled()`) drives LABELING (build-time truth); `fipsModeEnabled()`=`Compiled() OR Enabled()` so the FIPS `.so` ENFORCES from compiled state while tests simulate via env; `fips140.Enabled()` verified to flip off/latest |
+| F5 | Base self-ID + mechanism filtering on **compiled** state: `crypto/fips140.Enabled()` authoritative; decide relationship with env-var runtime toggle (compiled state must win for labeling; document the policy in `pkg/crypto/fips`) | **DONE, revised for #21** — labeling uses `fips.Built()` (build provenance: was this binary compiled with an enabling `GOFIPS140`), never module state, so it cannot be swayed by `GODEBUG=fips140`; mechanism filtering uses `fipsModeEnabled` (`pkg/pkcs11/module/mechanism.go`), a var defaulting to `crypto/fips140.Enabled` directly — the package's own `Compiled`/`Enabled` functions and the runtime `GOFIPS140` env-var toggle are deleted (go-xkms #21: `GOFIPS140` was never a real runtime signal). Tests override the `fipsModeEnabled` var instead of setting an environment variable; see `docs/fips/README.md` |
 | F6 | FIPS integration lanes (`-fips`, `-fips-enforcement`, cabi/tool/OpenSSL/SSH FIPS variants) must dlopen the FIPS-built `.so`, not the default one | **DONE (core), devcontainer-verify** — `-fips-enforcement` compiles its `.so` FIPS (target-specific `GOFIPS140`), dlopens the real FIPS artifact; `label_test.go` asserts CK_INFO/CK_TOKEN_INFO say FIPS. `-fips` (conformance) is Go-linked, already FIPS via `GOFIPS140=latest`. cabi/tool/OpenSSL/SSH FIPS variants = follow-up (needs devcontainer) |
 
 Phase 2 exit criteria: `make build-pkcs11-module` (non-FIPS) and

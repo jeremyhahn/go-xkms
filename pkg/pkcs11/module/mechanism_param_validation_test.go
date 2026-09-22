@@ -236,7 +236,7 @@ func TestQuantumRegistry_AllMechanismsAreFIPSApproved(t *testing.T) {
 }
 
 func TestGetQuantumMechanismDescriptor_HonoursFIPSChokePoint(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "latest")
+	withFIPSMode(t, true)
 	require.True(t, fipsModeEnabled(), "the test must run with FIPS mode on")
 
 	// Every advertised vendor PQC mechanism stays reachable under FIPS mode.

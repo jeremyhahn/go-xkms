@@ -61,13 +61,15 @@ var noiseAvailability struct {
 //
 // # It asks the library, it does not consult a FIPS predicate
 //
-// The obvious implementation is `if fips.Compiled() { ... }`, and it is wrong
-// for the reason recorded on the certstore thumbprint (go-xkms#212/#219): a
-// FIPS predicate cannot answer "is this artifact FIPS-constrained".
-// GODEBUG=fips140=off turns fips.Compiled() false on a GOFIPS140-built binary,
-// so a guard written that way fails OPEN for exactly the artifacts the policy
-// most cares about -- and a guard that cannot fire in its advertised case is
-// itself the defect, because the next reader takes it for working.
+// The obvious implementation is `if fips140.Enabled() { ... }`, and it is
+// wrong for the reason recorded on the certstore thumbprint (go-xkms#212/
+// #219, and reaffirmed by #21): a FIPS predicate cannot answer "is this
+// artifact FIPS-constrained". crypto/fips140.Enabled reports module STATE,
+// not build provenance -- GODEBUG=fips140=off turns it false on a
+// GOFIPS140-built binary just as readily as on a normal one -- so a guard
+// written that way fails OPEN for exactly the artifacts the policy most
+// cares about, and a guard that cannot fire in its advertised case is itself
+// the defect, because the next reader takes it for working.
 //
 // fips.Built(), added for #219, does answer "was this artifact compiled with
 // GOFIPS140" -- but that is not this question either. What decides availability

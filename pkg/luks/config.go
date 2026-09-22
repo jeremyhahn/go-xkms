@@ -13,7 +13,7 @@
 
 package luks
 
-import "github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
+import "crypto/fips140"
 
 // KDFType identifies a key derivation function used by LUKS.
 type KDFType string
@@ -62,9 +62,10 @@ type VolumeConfig struct {
 }
 
 // DefaultKDF returns the FIPS-appropriate default KDF type. In FIPS 140 mode
-// it returns KDFPBKDF2; otherwise it returns KDFArgon2id.
+// (crypto/fips140.Enabled -- GODEBUG=fips140=on|only, or a GOFIPS140 build;
+// go-xkms #21) it returns KDFPBKDF2; otherwise it returns KDFArgon2id.
 func DefaultKDF() KDFType {
-	if fips.Enabled() {
+	if fips140.Enabled() {
 		return KDFPBKDF2
 	}
 	return KDFArgon2id

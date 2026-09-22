@@ -29,6 +29,7 @@ package module
 
 import (
 	"crypto/ecdh"
+	"crypto/fips140"
 	"fmt"
 	"os"
 	"sort"
@@ -2344,11 +2345,6 @@ func GetMechanismDescriptor(mechType MechanismType) *MechanismDescriptor {
 	return desc
 }
 
-// fipsEnvForTest names the environment variable that selects FIPS mode, so a
-// test can toggle the policy through the same signal a deployment uses rather
-// than reaching past it.
-const fipsEnvForTest = fips.EnvGOFIPS140
-
 // weakHashSigningEnvVar names the module's weak-hash signing policy. It mirrors
 // the daemon's crypto.allow_weak_hashes, but is a separate signal because the
 // shared library runs in its own process and cannot read the daemon's config:
@@ -2395,20 +2391,22 @@ func effectiveMechanismFlags(desc *MechanismDescriptor) MechanismFlag {
 }
 
 // fipsModeEnabled reports whether the module is running in FIPS mode: the
-// approved surface is advertised and enforced when the Go Cryptographic Module
-// is in force in this process (fips.Compiled) or the environment selects FIPS
-// (fips.Enabled).
+// approved surface is advertised and enforced whenever the Go Cryptographic
+// Module is active in this process (go-xkms #21) — crypto/fips140.Enabled,
+// true under GODEBUG=fips140=on|only at runtime or a GOFIPS140 build, which
+// activates the module by default. There is no separate signal to OR in
+// beside it: GOFIPS140 read from the process environment was this package's
+// own re-derivation of build-time provenance as if it were a runtime switch,
+// which it never was.
 //
-// The module signal is what a FIPS build turns on by default, and it is the one
-// that survives into a process that dlopen()s the shipped FIPS .so without
-// setting GOFIPS140. The environment signal lets a non-FIPS test binary drive
-// the filter without a separate FIPS-compiled build. Neither is build
-// provenance — GODEBUG=fips140 can select the module state either way — and
-// the filter follows the crypto actually in force rather than the artifact's
-// pedigree, which is fipsBuild's concern, not this one's.
-func fipsModeEnabled() bool {
-	return fips.Compiled() || fips.Enabled()
-}
+// It is a variable, not a plain call, so a test can drive both sides of the
+// gate: GODEBUG=fips140 can only be set before the process starts, so the
+// alternative is re-execing a subprocess for every one of this package's
+// FIPS-mode behaviour tests, which is exactly the heavyweight, host-touching
+// repetition unit tests here must not do. Production code never assigns to
+// it; only tests do, always restoring it via t.Cleanup. This mirrors
+// pkg/crypto/aead's hasAESNI and xkey/pkg/oath's fipsMode.
+var fipsModeEnabled = fips140.Enabled
 
 // fipsBuild reports whether this is the FIPS-compiled artifact, for labelling
 // the token and library so a user can tell a FIPS module from a non-FIPS one.

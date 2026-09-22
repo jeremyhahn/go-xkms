@@ -31,17 +31,20 @@
 //
 // # FIPS regime
 //
-// The module's policy switch is the GOFIPS140 environment variable, read
-// through pkg/crypto/fips.Enabled, which treats any non-empty value as "FIPS
-// on". That variable is also a Go toolchain build variable, and the toolchain
-// rejects values outside {off, latest, inprocess, certified, v1.Y.Z} -- so a
-// recipe that says "GOFIPS140=on go test" never builds anything at all. Use
-// GOFIPS140=latest to build against the Go Cryptographic Module and turn the
-// module's policy on at the same time.
+// The module's policy switch is crypto/fips140.Enabled (go-xkms #21): true
+// under GODEBUG=fips140=on|only at runtime, or in a binary built with an
+// enabling GOFIPS140 build variable (which the toolchain restricts to
+// {off, latest, inprocess, certified, v1.Y.Z}, and which has no effect set as
+// a plain runtime environment variable -- only GODEBUG selects module state
+// at runtime). This harness therefore drives the module through
+// GODEBUG=fips140=on rather than GOFIPS140, which is the same signal every
+// GODEBUG=fips140=on subprocess test elsewhere in this repository uses
+// (pkg/crypto/aead, pkg/crypto/kdf, pkg/quantum/mlkem512, ...).
 //
-// TestMain re-executes the suite under GOFIPS140 rather than trusting the
-// caller, so the suite cannot silently assert FIPS behaviour of a non-FIPS
-// process. It never skips: a misinvocation is corrected, not excused.
+// TestMain re-executes the suite under GODEBUG=fips140=on rather than
+// trusting the caller, so the suite cannot silently assert FIPS behaviour of
+// a non-FIPS process. It never skips: a misinvocation is corrected, not
+// excused.
 package fips
 
 import (
@@ -56,16 +59,18 @@ import (
 	"github.com/miekg/pkcs11"
 )
 
-// envFIPS is the environment variable that selects FIPS mode, mirroring
-// pkg/crypto/fips.EnvGOFIPS140. It is spelled out here rather than imported so
-// that the test observes the module through the same signal a deployment uses.
-const envFIPS = "GOFIPS140"
+// envFIPS is the environment variable that selects FIPS mode: GODEBUG, read
+// by crypto/fips140.Enabled. It is spelled out here rather than imported so
+// that the test observes the module through the same signal a deployment
+// uses.
+const envFIPS = "GODEBUG"
 
 // fipsRuntimeValue is the value TestMain sets when the caller did not select a
-// regime. It is a runtime-only policy switch: the module treats any non-empty
-// value as FIPS on, while the Go toolchain would have rejected this spelling at
-// build time, which is exactly why it is applied after the binary exists.
-const fipsRuntimeValue = "on"
+// regime: GODEBUG=fips140=on activates the Go Cryptographic Module for this
+// process (and for the c-shared library it dlopen()s, whose own Go runtime
+// reads the same environment at its own initialization) without requiring a
+// GOFIPS140 build.
+const fipsRuntimeValue = "fips140=on"
 
 // envHelper marks a re-executed child process and names the job it should do.
 // Its presence also suppresses the TestMain re-execution, so a child can never
@@ -151,12 +156,17 @@ func (d *mechanismDump) set() map[uint]mechanismRecord {
 // TestMain guarantees the suite's own process is in FIPS mode before any test
 // runs.
 //
-// Without this, running the suite without GOFIPS140 set would exercise the
-// non-FIPS module while every assertion claimed to be about FIPS, and the whole
-// suite would pass green while proving nothing. Re-executing is not a skip: the
-// tests still run, in the regime they describe.
+// Without this, running the suite without GODEBUG=fips140 set would exercise
+// the non-FIPS module while every assertion claimed to be about FIPS, and the
+// whole suite would pass green while proving nothing. Re-executing is not a
+// skip: the tests still run, in the regime they describe.
+//
+// The check is for "fips140" specifically, not merely a non-empty GODEBUG:
+// GODEBUG carries unrelated debug settings too (comma-separated), and a
+// caller's GODEBUG set for some other reason must not be read as "a FIPS
+// regime was explicitly selected".
 func TestMain(m *testing.M) {
-	if os.Getenv(envHelper) != "" || os.Getenv(envFIPS) != "" {
+	if os.Getenv(envHelper) != "" || strings.Contains(os.Getenv(envFIPS), "fips140") {
 		os.Exit(m.Run())
 	}
 
@@ -337,17 +347,18 @@ func TestFIPSHelper_DumpMechanisms(t *testing.T) {
 	fmt.Println(dumpMarker + string(encoded))
 }
 
-// mechanismsInRegime re-executes this binary with the given GOFIPS140 value and
+// mechanismsInRegime re-executes this binary with the given GODEBUG value and
 // returns the mechanism list that child observed.
 //
 // A child process is the only honest way to observe the other regime. The
-// module reads GOFIPS140 through the Go runtime's copy of the environment,
-// which a c-shared library snapshots when the dynamic loader initialises it, so
-// setting the variable in this process and re-opening the library does not
-// change what the library sees -- and a second dlopen of the same path returns
-// the library that is already loaded in whatever mode it started in. A test
-// that toggled the variable in-process would therefore report the current
-// regime twice and call the filter proven.
+// module reads crypto/fips140.Enabled, whose module state a c-shared library's
+// own Go runtime resolves once, at the moment the dynamic loader initialises
+// it, from the process environment at that instant -- so setting the variable
+// in this process and re-opening the library does not change what the library
+// sees, and a second dlopen of the same path returns the library that is
+// already loaded in whatever mode it started in. A test that toggled the
+// variable in-process would therefore report the current regime twice and
+// call the filter proven.
 func mechanismsInRegime(t *testing.T, fipsValue string) *mechanismDump {
 	t.Helper()
 

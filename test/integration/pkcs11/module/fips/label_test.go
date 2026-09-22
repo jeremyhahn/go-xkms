@@ -24,12 +24,14 @@ import (
 // library tells a user, through CK_INFO and CK_TOKEN_INFO, that it is a FIPS
 // module.
 //
-// This lane dlopens the artifact the FIPS Makefile target builds with GOFIPS140,
-// so the label comes from the compiled state (crypto/fips140), not the runtime
-// GOFIPS140 environment — the only signal that survives into the process that
-// loads a shared library. A non-FIPS build run under the environment filters
-// like FIPS but must NOT carry these labels, which is exactly why the label is
-// worth asserting separately from the mechanism filter.
+// This lane dlopens the artifact the FIPS Makefile target builds with
+// GOFIPS140, so the label comes from that build-time provenance
+// (pkg/crypto/fips.Built, which reads the toolchain's own build metadata),
+// not from crypto/fips140.Enabled's module state, which a GODEBUG=fips140=on
+// process that loads a non-FIPS build shares. A non-FIPS build run under
+// GODEBUG=fips140=on filters mechanisms like FIPS but must NOT carry these
+// labels, which is exactly why the label is worth asserting separately from
+// the mechanism filter.
 func TestFIPSLabel_ModuleSelfIdentifiesAsFIPS(t *testing.T) {
 	tok := openToken(t)
 

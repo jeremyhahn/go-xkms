@@ -88,7 +88,7 @@ type PINBackend interface {
 |-------------|-----------|------------|
 | `DefaultHashConfig()` | Argon2id | time=3, memory=64 MiB, threads=4, keyLen=32, saltLen=16 |
 | `FIPSHashConfig()` | PBKDF2-SHA256 | iterations=600000, keyLen=32, saltLen=16 |
-| `AutoDetectHashConfig()` | Auto | Calls `fips.Enabled()` -- PBKDF2 when true, Argon2id otherwise |
+| `AutoDetectHashConfig()` | Auto | Calls `crypto/fips140.Enabled()` -- PBKDF2 when true, Argon2id otherwise |
 
 ### PINRecord Format
 

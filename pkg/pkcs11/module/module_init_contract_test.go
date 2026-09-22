@@ -642,7 +642,7 @@ func withMechanismWithheldInFIPS(t *testing.T, mechType MechanismType) {
 	mechanismRegistry[mechType] = &withheld
 	t.Cleanup(func() { mechanismRegistry[mechType] = original })
 
-	t.Setenv(fipsEnvForTest, "1")
+	withFIPSMode(t, true)
 
 	require.Nil(t, GetMechanismDescriptor(mechType),
 		"the fixture must actually withhold the mechanism")
@@ -670,7 +670,7 @@ func TestFIPSFilterReachesDeriveAndWrap(t *testing.T) {
 	})
 
 	t.Run("C_DeriveKey accepts the same mechanism outside FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		m, sessionHandle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
@@ -704,7 +704,7 @@ func TestFIPSFilterReachesDeriveAndWrap(t *testing.T) {
 	})
 
 	t.Run("C_WrapKey accepts the same mechanism outside FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		m, sessionHandle, wrappingKey, targetKey := createWrapKeyFixture(t)
 		defer m.Finalize()
@@ -728,7 +728,7 @@ func TestFIPSFilterReachesDeriveAndWrap(t *testing.T) {
 	})
 
 	t.Run("C_UnwrapKey accepts the same mechanism outside FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		m, sessionHandle, unwrappingKey := createUnwrapKeyFixture(t)
 		defer m.Finalize()
@@ -1111,7 +1111,7 @@ func TestGenerateKeyPairEnforcesModulusCap(t *testing.T) {
 	const rsaKeyPairGen = CKM_RSA_PKCS_KEY_PAIR_GEN
 
 	t.Run("refuses a modulus above the advertised maximum", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		info, err := GetMechanismInfo(rsaKeyPairGen)
 		require.NoError(t, err)
@@ -1126,7 +1126,7 @@ func TestGenerateKeyPairEnforcesModulusCap(t *testing.T) {
 	})
 
 	t.Run("refuses a modulus below the advertised minimum", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		info, err := GetMechanismInfo(rsaKeyPairGen)
 		require.NoError(t, err)
@@ -1141,7 +1141,7 @@ func TestGenerateKeyPairEnforcesModulusCap(t *testing.T) {
 	})
 
 	t.Run("accepts the advertised maximum outside FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		info, err := GetMechanismInfo(rsaKeyPairGen)
 		require.NoError(t, err)
@@ -1159,7 +1159,7 @@ func TestGenerateKeyPairEnforcesModulusCap(t *testing.T) {
 	})
 
 	t.Run("FIPS mode lowers the ceiling", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "1")
+		withFIPSMode(t, true)
 
 		info, err := GetMechanismInfo(rsaKeyPairGen)
 		require.NoError(t, err)

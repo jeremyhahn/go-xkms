@@ -16,7 +16,6 @@ package dilithium2
 import (
 	"testing"
 
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,11 +38,11 @@ func TestGenerateKeyPair(t *testing.T) {
 	pubKey, err := d.GenerateKeyPair()
 	require.NoError(t, err)
 	assert.NotEmpty(t, pubKey)
-	assert.Equal(t, mldsa44.PublicKeySize, len(pubKey))
+	assert.Equal(t, PublicKeySize, len(pubKey))
 
 	secretKey := d.ExportSecretKey()
 	assert.NotEmpty(t, secretKey)
-	assert.Equal(t, mldsa44.SeedSize, len(secretKey))
+	assert.Equal(t, SeedSize, len(secretKey))
 	assert.True(t, d.hasSeed)
 	assert.NotNil(t, d.privateKey)
 	assert.NotNil(t, d.publicKey)
@@ -61,7 +60,7 @@ func TestSignAndVerify(t *testing.T) {
 	signature, err := d.Sign(message)
 	require.NoError(t, err)
 	assert.NotEmpty(t, signature)
-	assert.Equal(t, mldsa44.SignatureSize, len(signature))
+	assert.Equal(t, SignatureSize, len(signature))
 
 	valid, err := d.Verify(message, signature, pubKey)
 	require.NoError(t, err)
@@ -117,7 +116,7 @@ func TestCreateWithExistingKey(t *testing.T) {
 	// Export and copy the seed before cleaning
 	seed := d1.ExportSecretKey()
 	require.NotNil(t, seed)
-	require.Equal(t, mldsa44.SeedSize, len(seed))
+	require.Equal(t, SeedSize, len(seed))
 	d1.Clean()
 
 	// Create new instance from the exported seed
@@ -173,7 +172,7 @@ func TestVerifyNotInitialized(t *testing.T) {
 	require.NoError(t, err)
 
 	// Attempt to verify without any public key (no generation, no external key)
-	_, err = d.Verify([]byte("test"), make([]byte, mldsa44.SignatureSize), nil)
+	_, err = d.Verify([]byte("test"), make([]byte, SignatureSize), nil)
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
@@ -183,7 +182,7 @@ func TestVerifyWithInvalidPublicKey(t *testing.T) {
 	defer d.Clean()
 
 	// Provide garbage public key bytes
-	_, err = d.Verify([]byte("test"), make([]byte, mldsa44.SignatureSize), []byte{0x01, 0x02})
+	_, err = d.Verify([]byte("test"), make([]byte, SignatureSize), []byte{0x01, 0x02})
 	assert.ErrorIs(t, err, ErrVerificationFailed)
 }
 
@@ -238,27 +237,27 @@ func TestDetails(t *testing.T) {
 
 	details := d.Details()
 	assert.Equal(t, AlgorithmName, details.Name)
-	assert.Equal(t, mldsa44.PublicKeySize, details.LengthPublicKey)
-	assert.Equal(t, mldsa44.SeedSize, details.LengthSecretKey)
-	assert.Equal(t, mldsa44.SignatureSize, details.MaxLengthSignature)
+	assert.Equal(t, PublicKeySize, details.LengthPublicKey)
+	assert.Equal(t, SeedSize, details.LengthSecretKey)
+	assert.Equal(t, SignatureSize, details.MaxLengthSignature)
 }
 
 func TestPublicKeyLength(t *testing.T) {
 	d, err := New()
 	require.NoError(t, err)
-	assert.Equal(t, mldsa44.PublicKeySize, d.PublicKeyLength())
+	assert.Equal(t, PublicKeySize, d.PublicKeyLength())
 }
 
 func TestSecretKeyLength(t *testing.T) {
 	d, err := New()
 	require.NoError(t, err)
-	assert.Equal(t, mldsa44.SeedSize, d.SecretKeyLength())
+	assert.Equal(t, SeedSize, d.SecretKeyLength())
 }
 
 func TestSignatureLength(t *testing.T) {
 	d, err := New()
 	require.NoError(t, err)
-	assert.Equal(t, mldsa44.SignatureSize, d.SignatureLength())
+	assert.Equal(t, SignatureSize, d.SignatureLength())
 }
 
 func TestTypeStrings(t *testing.T) {

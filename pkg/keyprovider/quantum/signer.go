@@ -17,15 +17,12 @@ import (
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/mldsa"
 	"crypto/mlkem"
 	"fmt"
 	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
-	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
-	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -39,13 +36,13 @@ type MLDSAPublicKey struct {
 
 // MLDSAPrivateKey represents a post-quantum ML-DSA private key
 // that implements crypto.Signer for compatibility with Go's crypto interfaces.
-// The underlying key material is a circl ML-DSA private key reconstructed
+// The underlying key material is a crypto/mldsa private key reconstructed
 // from a 32-byte deterministic seed.
 type MLDSAPrivateKey struct {
 	Algorithm string
 	PublicKey *MLDSAPublicKey
-	sk        any // *mldsa44.PrivateKey, *mldsa65.PrivateKey, or *mldsa87.PrivateKey
-	pk        any // *mldsa44.PublicKey, *mldsa65.PublicKey, or *mldsa87.PublicKey
+	sk        any // *mldsa.PrivateKey
+	pk        any // *mldsa.PublicKey
 	// seed is the 32-byte deterministic seed, sealed in an enclave rather than
 	// held as a plaintext []byte on the Go heap: it reconstructs the whole
 	// private key. Open it only for the moment it is needed and destroy the
@@ -59,55 +56,37 @@ func (k *MLDSAPrivateKey) Public() crypto.PublicKey {
 }
 
 // Sign signs digest with the private key.
-// The signature algorithm is determined by the key type (ML-DSA-44, ML-DSA-65, ML-DSA-87).
-// ML-DSA signs the full message (not a pre-hash), so the digest parameter is treated
-// as the message. opts.HashFunc() must return 0; rand is ignored.
+// The signature algorithm is determined by the key's parameter set (ML-DSA-44,
+// ML-DSA-65, ML-DSA-87), carried inside the crypto/mldsa private key itself.
+// ML-DSA signs the full message (not a pre-hash), so the digest parameter is
+// treated as the message. opts and rand are ignored: crypto/mldsa.Sign signs
+// directly when opts is nil.
 func (k *MLDSAPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if k.sk == nil {
 		return nil, ErrNotInitialized
 	}
 
-	// Circl's PrivateKey.Sign requires opts.HashFunc() == 0
-	switch sk := k.sk.(type) {
-	case *mldsa44.PrivateKey:
-		return sk.Sign(nil, digest, crypto.Hash(0))
-	case *mldsa65.PrivateKey:
-		return sk.Sign(nil, digest, crypto.Hash(0))
-	case *mldsa87.PrivateKey:
-		return sk.Sign(nil, digest, crypto.Hash(0))
-	default:
+	sk, ok := k.sk.(*mldsa.PrivateKey)
+	if !ok {
 		return nil, ErrSigningFailed
 	}
-}
-
-// verifyDispatch maps algorithm names to their verification functions.
-// Each function captures the typed public key and calls the package-level Verify.
-type verifyFunc func(pk any, message, signature []byte) bool
-
-var verifyDispatch = map[string]verifyFunc{
-	"ML-DSA-44": func(pk any, msg, sig []byte) bool {
-		return mldsa44.Verify(pk.(*mldsa44.PublicKey), msg, nil, sig)
-	},
-	"ML-DSA-65": func(pk any, msg, sig []byte) bool {
-		return mldsa65.Verify(pk.(*mldsa65.PublicKey), msg, nil, sig)
-	},
-	"ML-DSA-87": func(pk any, msg, sig []byte) bool {
-		return mldsa87.Verify(pk.(*mldsa87.PublicKey), msg, nil, sig)
-	},
+	return sk.Sign(nil, digest, nil)
 }
 
 // Verify verifies a ML-DSA signature against the message using the public key.
+// The parameter set (ML-DSA-44, ML-DSA-65, ML-DSA-87) is carried inside the
+// crypto/mldsa public key itself, so one code path covers all three levels.
 func (k *MLDSAPrivateKey) Verify(message, signature []byte) (bool, error) {
 	if k.pk == nil {
 		return false, ErrNotInitialized
 	}
 
-	vf, ok := verifyDispatch[k.Algorithm]
+	pk, ok := k.pk.(*mldsa.PublicKey)
 	if !ok {
 		return false, &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: k.Algorithm}
 	}
 
-	return vf(k.pk, message, signature), nil
+	return mldsa.Verify(pk, message, signature, nil) == nil, nil
 }
 
 // Clean destroys the enclaved seed to remove key material from memory.

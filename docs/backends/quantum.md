@@ -2,7 +2,7 @@
 
 ## Overview
 
-The quantum backend provides post-quantum cryptographic operations using NIST-standardized algorithms. This implementation uses ML-DSA (Module-Lattice Digital Signature Algorithm, FIPS 204) for signing via Cloudflare's `circl` library and ML-KEM (Module-Lattice Key Encapsulation Mechanism, FIPS 203) for key establishment via Go's standard library `crypto/mlkem` package.
+The quantum backend provides post-quantum cryptographic operations using NIST-standardized algorithms. This implementation uses ML-DSA (Module-Lattice Digital Signature Algorithm, FIPS 204) for signing via Go's standard library `crypto/mldsa` package and ML-KEM (Module-Lattice Key Encapsulation Mechanism, FIPS 203) for key establishment via Go's standard library `crypto/mlkem` package for the 768 and 1024 parameter sets. ML-KEM-512, which `crypto/mlkem` does not implement, uses Cloudflare's `circl` library instead and refuses to construct a key under `crypto/fips140.Enabled()` (go-xkms #21), since CIRCL is outside the Go Cryptographic Module boundary the standard library polices.
 
 Both implementations are pure Go -- no CGO, no external C libraries, and no special build tags are required. Quantum support is always compiled in.
 
@@ -62,7 +62,7 @@ defer xkms.Close()
 
 ### ML-DSA (Digital Signatures)
 
-Module-Lattice Digital Signature Algorithm, standardized as NIST FIPS 204. Implemented via Cloudflare's `circl` library (`github.com/cloudflare/circl/sign/mldsa`).
+Module-Lattice Digital Signature Algorithm, standardized as NIST FIPS 204. Implemented via Go's standard library `crypto/mldsa` package.
 
 - ML-DSA-44: NIST Security Level 2 (equivalent to AES-128)
   - Public key: 1312 bytes
@@ -428,8 +428,8 @@ make integration-test-quantum
 
 All quantum cryptographic dependencies are pure Go:
 
-- **ML-DSA**: `github.com/cloudflare/circl/sign/mldsa/{mldsa44,mldsa65,mldsa87}`
-- **ML-KEM**: Go standard library `crypto/mlkem` (ML-KEM-768, ML-KEM-1024)
+- **ML-DSA**: Go standard library `crypto/mldsa` (ML-DSA-44, ML-DSA-65, ML-DSA-87)
+- **ML-KEM**: Go standard library `crypto/mlkem` (ML-KEM-768, ML-KEM-1024); `github.com/cloudflare/circl/kem/mlkem/mlkem512` for ML-KEM-512, which `crypto/mlkem` does not implement
 
 No CGO, cmake, ninja, pkg-config, or external C libraries are required.
 

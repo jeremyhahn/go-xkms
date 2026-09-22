@@ -24,7 +24,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/dilithium2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,12 +43,12 @@ func TestDilithium2Integration_KeyGeneration(t *testing.T) {
 
 	// ExportSecretKey returns the 32-byte seed, not the expanded private key
 	secretKey := d.ExportSecretKey()
-	assert.Equal(t, mldsa44.SeedSize, len(secretKey), "Exported secret key should be 32-byte seed")
-	assert.Equal(t, mldsa44.SeedSize, d.SecretKeyLength(), "SecretKeyLength should match seed size")
+	assert.Equal(t, dilithium2.SeedSize, len(secretKey), "Exported secret key should be 32-byte seed")
+	assert.Equal(t, dilithium2.SeedSize, d.SecretKeyLength(), "SecretKeyLength should match seed size")
 
 	// ML-DSA-44 specific sizes (from NIST FIPS 204 standard)
-	assert.Equal(t, mldsa44.PublicKeySize, len(pubKey), "ML-DSA-44 public key should be 1312 bytes")
-	assert.Equal(t, mldsa44.SeedSize, len(secretKey), "ML-DSA-44 exported seed should be 32 bytes")
+	assert.Equal(t, dilithium2.PublicKeySize, len(pubKey), "ML-DSA-44 public key should be 1312 bytes")
+	assert.Equal(t, dilithium2.SeedSize, len(secretKey), "ML-DSA-44 exported seed should be 32 bytes")
 }
 
 // TestDilithium2Integration_SignatureWorkflow tests complete sign/verify workflow
@@ -165,7 +164,7 @@ func TestDilithium2Integration_KeyPersistence(t *testing.T) {
 	assert.Equal(t, secretKey, exportedKey2, "Exported secret key should be consistent")
 
 	// Verify key sizes are correct
-	assert.Equal(t, mldsa44.SeedSize, len(secretKey), "Exported seed should be 32 bytes")
+	assert.Equal(t, dilithium2.SeedSize, len(secretKey), "Exported seed should be 32 bytes")
 	assert.Equal(t, d1.PublicKeyLength(), len(pubKey), "Public key size should match")
 }
 
@@ -330,9 +329,9 @@ func TestDilithium2Integration_Details(t *testing.T) {
 
 	// ML-DSA-44 is the NIST standard name for Dilithium2
 	assert.Equal(t, "ML-DSA-44", details.Name)
-	assert.Equal(t, mldsa44.PublicKeySize, details.LengthPublicKey)
-	assert.Equal(t, mldsa44.SeedSize, details.LengthSecretKey)
-	assert.Equal(t, mldsa44.SignatureSize, details.MaxLengthSignature)
+	assert.Equal(t, dilithium2.PublicKeySize, details.LengthPublicKey)
+	assert.Equal(t, dilithium2.SeedSize, details.LengthSecretKey)
+	assert.Equal(t, dilithium2.SignatureSize, details.MaxLengthSignature)
 
 	// Verify helper methods match details
 	assert.Equal(t, details.LengthPublicKey, d.PublicKeyLength())

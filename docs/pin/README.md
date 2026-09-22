@@ -194,7 +194,7 @@ The software backend uses Argon2id or PBKDF2 password hashing to protect PINs at
 
 - **Default**: Argon2id (`time=3, memory=64 MiB, threads=4, keyLen=32, saltLen=16`)
 - **FIPS 140 mode**: PBKDF2 with SHA-256 and 600,000 iterations (NIST SP 800-132)
-- **Auto-detection**: `AutoDetectHashConfig()` returns `FIPSHashConfig()` when `fips.Enabled()` is true, otherwise `DefaultHashConfig()`
+- **Auto-detection**: `AutoDetectHashConfig()` returns `FIPSHashConfig()` when `crypto/fips140.Enabled()` is true, otherwise `DefaultHashConfig()`
 
 ## HashConfig
 

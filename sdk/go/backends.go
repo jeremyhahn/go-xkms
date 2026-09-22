@@ -191,8 +191,8 @@ var ErrTPM2BackendNotInitialized = tpm2backend.ErrNotInitialized
 // ---------------------------------------------------------------------------
 // Quantum backend (from pkg/backend/quantum/)
 //
-// Post-quantum cryptographic backend using pure-Go implementations:
-// cloudflare/circl for ML-DSA (FIPS 204) and crypto/mlkem for ML-KEM (FIPS 203).
+// Post-quantum cryptographic backend using Go standard library implementations:
+// crypto/mldsa for ML-DSA (FIPS 204) and crypto/mlkem for ML-KEM (FIPS 203).
 // No CGO or external libraries required.
 //
 // Available types (re-exported in backends_quantum.go):

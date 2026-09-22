@@ -14,7 +14,11 @@
 package fips
 
 import (
+	"crypto/fips140"
+	"os"
+	"os/exec"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,39 +41,50 @@ func buildInfo(pairs ...string) *debug.BuildInfo {
 	return info
 }
 
-func TestEnabled_ReturnsFalseWhenUnset(t *testing.T) {
-	t.Setenv(EnvGOFIPS140, "")
-	assert.False(t, Enabled(), "Enabled must return false when GOFIPS140 is empty")
-}
-
-func TestEnabled_ReturnsTrueWhenSet(t *testing.T) {
-	values := []string{"v1.0.0", "1", "true", "on", "yes"}
-	for _, v := range values {
-		t.Run(v, func(t *testing.T) {
-			t.Setenv(EnvGOFIPS140, v)
-			require.True(t, Enabled(), "Enabled must return true when GOFIPS140=%q", v)
-		})
+func boolString(b bool) string {
+	if b {
+		return "true"
 	}
+	return "false"
 }
 
-func TestDefaultKDF_ReturnsArgon2idWhenFIPSDisabled(t *testing.T) {
-	t.Setenv(EnvGOFIPS140, "")
-	assert.Equal(t, KDFArgon2id, DefaultKDF(), "DefaultKDF must return argon2id in standard mode")
+func TestDefaultKDF_ReturnsArgon2idOutsideFIPS(t *testing.T) {
+	assert.Equal(t, KDFArgon2id, DefaultKDF(), "DefaultKDF must return argon2id outside FIPS mode")
 }
 
-func TestDefaultKDF_ReturnsPBKDF2WhenFIPSEnabled(t *testing.T) {
-	t.Setenv(EnvGOFIPS140, "v1.0.0")
-	assert.Equal(t, KDFPBKDF2, DefaultKDF(), "DefaultKDF must return pbkdf2 in FIPS mode")
+func TestDefaultLUKSKDF_ReturnsArgon2idOutsideFIPS(t *testing.T) {
+	assert.Equal(t, KDFArgon2id, DefaultLUKSKDF(), "DefaultLUKSKDF must return argon2id outside FIPS mode")
 }
 
-func TestDefaultLUKSKDF_ReturnsArgon2idWhenFIPSDisabled(t *testing.T) {
-	t.Setenv(EnvGOFIPS140, "")
-	assert.Equal(t, KDFArgon2id, DefaultLUKSKDF(), "DefaultLUKSKDF must return argon2id in standard mode")
-}
+// TestDefaultKDFs_ReturnPBKDF2UnderFIPS140On is the compliance assertion for
+// go-xkms #21: DefaultKDF/DefaultLUKSKDF select pbkdf2 because
+// crypto/fips140.Enabled is true, not because of a GOFIPS140 environment
+// variable this package used to read itself. crypto/fips140.Enabled is fixed
+// when the process starts, so this re-execs under GODEBUG=fips140=on,
+// mirroring pkg/quantum/mlkem512.TestNewAndCreate_RefuseUnderFIPS.
+func TestDefaultKDFs_ReturnPBKDF2UnderFIPS140On(t *testing.T) {
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+		if !fips140.Enabled() {
+			t.Fatal("child process is not FIPS-active; GODEBUG=fips140=on was not honored")
+		}
+		if got := DefaultKDF(); got != KDFPBKDF2 {
+			t.Fatalf("DefaultKDF() = %q, want %q under GODEBUG=fips140=on", got, KDFPBKDF2)
+		}
+		if got := DefaultLUKSKDF(); got != KDFPBKDF2 {
+			t.Fatalf("DefaultLUKSKDF() = %q, want %q under GODEBUG=fips140=on", got, KDFPBKDF2)
+		}
+		return
+	}
 
-func TestDefaultLUKSKDF_ReturnsPBKDF2WhenFIPSEnabled(t *testing.T) {
-	t.Setenv(EnvGOFIPS140, "1")
-	assert.Equal(t, KDFPBKDF2, DefaultLUKSKDF(), "DefaultLUKSKDF must return pbkdf2 in FIPS mode")
+	cmd := exec.Command(os.Args[0], "-test.run=TestDefaultKDFs_ReturnPBKDF2UnderFIPS140On", "-test.v")
+	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
+	}
 }
 
 // buildSettingFrom must find the recorded GOFIPS140 value among the other
@@ -157,36 +172,46 @@ func TestBuildSetting_ReadsThisBinarysMetadata(t *testing.T) {
 	}
 }
 
-// Provenance must not move with the environment. This is the entire distinction
-// from Enabled, and the direction of the #219 defect: GOFIPS140 in the
-// environment selects module state for the process, never what was compiled.
-func TestBuildSetting_IgnoresTheEnvironment(t *testing.T) {
-	recorded := BuildSetting()
+// TestBuildSettingAndBuilt_IgnoreGODEBUG is the direction #219 fixed:
+// GODEBUG=fips140 selects crypto/fips140.Enabled's module state for the
+// process, and must not move BuildSetting/Built, which read only this
+// binary's build metadata. crypto/fips140.Enabled is fixed when the process
+// starts, so this re-execs, comparing the child's BuildSetting()/Built()
+// against the parent's — the parent's own values, not a hard-coded
+// expectation, because whether this test binary itself is a FIPS build
+// depends on how `go test` was invoked.
+func TestBuildSettingAndBuilt_IgnoreGODEBUG(t *testing.T) {
+	recordedSetting := BuildSetting()
+	recordedBuilt := Built()
 
-	t.Setenv(EnvGOFIPS140, "latest")
-	require.True(t, Enabled(), "the environment signal must be live or this test asserts nothing")
-	assert.Equal(t, recorded, BuildSetting(),
-		"setting GOFIPS140 in the environment must not alter the recorded build setting")
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+		if !fips140.Enabled() {
+			t.Fatal("child process is not FIPS-active; GODEBUG=fips140=on was not honored")
+		}
+		wantSetting := os.Getenv("XKMS_FIPS_PARENT_SETTING")
+		wantBuilt := os.Getenv("XKMS_FIPS_PARENT_BUILT") == "true"
+		if got := BuildSetting(); got != wantSetting {
+			t.Fatalf("BuildSetting() = %q under GODEBUG=fips140=on, want %q (the parent's "+
+				"build setting, unmoved by GODEBUG)", got, wantSetting)
+		}
+		if got := Built(); got != wantBuilt {
+			t.Fatalf("Built() = %v under GODEBUG=fips140=on, want %v (the parent's build "+
+				"verdict, unmoved by GODEBUG)", got, wantBuilt)
+		}
+		return
+	}
 
-	t.Setenv(EnvGOFIPS140, "off")
-	assert.Equal(t, recorded, BuildSetting(),
-		"clearing GOFIPS140 in the environment must not alter the recorded build setting")
-}
-
-func TestBuilt_MatchesTheRecordedSetting(t *testing.T) {
-	assert.Equal(t, builtFrom(BuildSetting()), Built(),
-		"Built must be builtFrom applied to the recorded setting and nothing else")
-}
-
-func TestBuilt_IgnoresTheEnvironment(t *testing.T) {
-	built := Built()
-
-	t.Setenv(EnvGOFIPS140, "latest")
-	require.True(t, Enabled(), "the environment signal must be live or this test asserts nothing")
-	assert.Equal(t, built, Built(),
-		"a non-FIPS build run under GOFIPS140 filters like FIPS but is still not a FIPS build")
-
-	t.Setenv(EnvGOFIPS140, "off")
-	assert.Equal(t, built, Built(),
-		"build provenance is fixed at link time and the environment cannot revoke it")
+	cmd := exec.Command(os.Args[0], "-test.run=TestBuildSettingAndBuilt_IgnoreGODEBUG", "-test.v")
+	cmd.Env = append(os.Environ(),
+		"XKMS_FIPS_SUBPROCESS=1",
+		"GODEBUG=fips140=on",
+		"XKMS_FIPS_PARENT_SETTING="+recordedSetting,
+		"XKMS_FIPS_PARENT_BUILT="+boolString(recordedBuilt))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
+	}
 }

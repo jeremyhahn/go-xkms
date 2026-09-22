@@ -14,8 +14,9 @@
 // Package module provides quantum-safe cryptographic operations for PKCS#11.
 //
 // This file implements ML-DSA (signing) and ML-KEM (encapsulation) operations
-// using pure-Go implementations: cloudflare/circl for ML-DSA and crypto/mlkem
-// for ML-KEM.
+// using pure-Go implementations: crypto/mldsa for ML-DSA-44/65/87,
+// cloudflare/circl for ML-KEM-512 (crypto/mlkem has no 512 parameter set),
+// and crypto/mlkem for ML-KEM-768/1024.
 //
 // References:
 //   - NIST FIPS 203: Module-Lattice-Based Key-Encapsulation Mechanism Standard

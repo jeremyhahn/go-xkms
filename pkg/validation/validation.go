@@ -23,8 +23,6 @@ import (
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 )
 
 var (
@@ -68,8 +66,14 @@ var (
 	// This list must stay in sync with the authoritative algorithm list
 	// in pkg/xkms/keyid.go validateAlgorithm.
 	//
-	// It is the full, build-independent list. FIPS mode narrows it at the
-	// point of use — see isValidAlgorithm and fips.ApprovedAlgorithm.
+	// It is grammar validation only: whether algo is a spelling this package
+	// recognizes, not whether a FIPS-140 deployment may use it. That is the
+	// Go standard library's job (go-xkms #21): the crypto package a caller
+	// eventually reaches for the algorithm — crypto/ecdh for X25519,
+	// crypto/mldsa for ML-DSA, and so on — refuses on its own under
+	// GODEBUG=fips140=only or a FIPS-only build. Keeping a second,
+	// hand-maintained approved-algorithm list here would drift from that
+	// enforcement instead of matching it.
 	validAlgorithms = map[string]struct{}{
 		// Asymmetric algorithms
 		"rsa":        {},
@@ -244,15 +248,12 @@ func isValidKeyType(keyType string) bool {
 
 // isValidAlgorithm checks if the algorithm is valid using O(1) map lookup.
 //
-// In FIPS 140-3 mode the list is additionally filtered to the approved
-// algorithms: validAlgorithms admits ChaCha20, X25519/X448 and the FROST
-// ciphersuites, none of which a FIPS deployment may use. Outside FIPS mode the
-// list is unfiltered, so no capability is withdrawn from a normal build.
+// This is grammar validation only. Whether a FIPS-140 deployment may
+// actually use the algorithm is enforced downstream by the Go standard
+// library crypto package that handles it (go-xkms #21), not here.
 func isValidAlgorithm(algo string) bool {
-	if _, ok := validAlgorithms[strings.ToLower(algo)]; !ok {
-		return false
-	}
-	return fips.AlgorithmPermitted(algo)
+	_, ok := validAlgorithms[strings.ToLower(algo)]
+	return ok
 }
 
 // ValidateBackendName validates a backend name.

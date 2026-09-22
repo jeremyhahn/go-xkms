@@ -15,10 +15,10 @@ package kdf
 
 import (
 	"crypto"
+	"crypto/fips140"
 	cryptorand "crypto/rand"
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
 )
 
@@ -84,9 +84,11 @@ func NewPasswordHasher(version HashVersion) (*PasswordHasher, error) {
 
 // NewFIPSAwareHasher creates a PasswordHasher that auto-selects the version
 // based on FIPS mode: V2 (PBKDF2) if FIPS enabled, V1 (Argon2id) otherwise.
+// FIPS mode is crypto/fips140.Enabled directly (go-xkms #21): GODEBUG=fips140
+// =on|only at runtime, or a GOFIPS140 build.
 func NewFIPSAwareHasher() *PasswordHasher {
 	version := HashV1
-	if fips.Enabled() {
+	if fips140.Enabled() {
 		version = HashV2
 	}
 	// Version is always valid here, so the error can be safely ignored.

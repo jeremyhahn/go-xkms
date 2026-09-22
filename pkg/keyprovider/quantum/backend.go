@@ -13,12 +13,17 @@
 
 // Package quantum provides a quantum-safe cryptographic backend using
 // post-quantum algorithms (ML-DSA for signatures, ML-KEM for key encapsulation).
-// ML-DSA uses cloudflare/circl (FIPS 204) and ML-KEM uses Go stdlib crypto/mlkem (FIPS 203).
+// Both use the Go standard library: ML-DSA via crypto/mldsa (FIPS 204) and
+// ML-KEM via crypto/mlkem (FIPS 203). Neither keeps an approved-algorithm
+// allowlist of its own — under a FIPS-140 build whose selected module
+// version does not yet certify an algorithm, the stdlib functions this
+// package calls refuse on their own (go-xkms #21).
 package quantum
 
 import (
 	"context"
 	"crypto"
+	"crypto/mldsa"
 	"crypto/mlkem"
 	"crypto/rand"
 	"encoding/json"
@@ -29,10 +34,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
-	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
-	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
-
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -40,7 +41,7 @@ import (
 )
 
 // mldsaSeedSize is the seed size for all ML-DSA security levels (32 bytes).
-const mldsaSeedSize = mldsa44.SeedSize
+const mldsaSeedSize = mldsa.PrivateKeySize
 
 // keyMetadata stores information needed to reconstruct quantum keys from
 // deterministic seeds. For ML-DSA the Seed is 32 bytes; for ML-KEM it is 64 bytes.
@@ -58,22 +59,28 @@ type Config struct {
 }
 
 // mldsaKeyGenerator is the function signature for ML-DSA key generation from seed.
-type mldsaKeyGenerator func(seed *[mldsaSeedSize]byte) (pkBytes []byte, sk any, pk any)
+type mldsaKeyGenerator func(seed *[mldsaSeedSize]byte) (pkBytes []byte, sk any, pk any, err error)
+
+// mldsaGenerator returns a key-generation closure for the given ML-DSA
+// parameter set, sharing one seed-to-keypair path across all three security
+// levels rather than repeating it per algorithm.
+func mldsaGenerator(params mldsa.Parameters) mldsaKeyGenerator {
+	return func(seed *[mldsaSeedSize]byte) ([]byte, any, any, error) {
+		sk, err := mldsa.NewPrivateKey(params, seed[:])
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		pk := sk.PublicKey()
+		pkBytes := pk.Bytes()
+		return pkBytes, sk, pk, nil
+	}
+}
 
 // mldsaKeyGenerators maps algorithm names to their key generation functions.
 var mldsaKeyGenerators = map[string]mldsaKeyGenerator{
-	"ML-DSA-44": func(seed *[mldsaSeedSize]byte) ([]byte, any, any) {
-		pk, sk := mldsa44.NewKeyFromSeed(seed)
-		return pk.Bytes(), sk, pk
-	},
-	"ML-DSA-65": func(seed *[mldsaSeedSize]byte) ([]byte, any, any) {
-		pk, sk := mldsa65.NewKeyFromSeed(seed)
-		return pk.Bytes(), sk, pk
-	},
-	"ML-DSA-87": func(seed *[mldsaSeedSize]byte) ([]byte, any, any) {
-		pk, sk := mldsa87.NewKeyFromSeed(seed)
-		return pk.Bytes(), sk, pk
-	},
+	"ML-DSA-44": mldsaGenerator(mldsa.MLDSA44()),
+	"ML-DSA-65": mldsaGenerator(mldsa.MLDSA65()),
+	"ML-DSA-87": mldsaGenerator(mldsa.MLDSA87()),
 }
 
 // mlkemKeyGenerator generates an ML-KEM key pair, returning the seed bytes,
@@ -278,7 +285,7 @@ func sealSeed(src []byte) (*secure.Secret, error) {
 	return sealed, nil
 }
 
-// generateMLDSAKey generates a ML-DSA signing key using circl.
+// generateMLDSAKey generates a ML-DSA signing key using crypto/mldsa.
 // A random 32-byte seed is generated and used to deterministically derive
 // the key pair via NewKeyFromSeed, enabling seed-based reconstruction.
 func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *keyMetadata, error) {
@@ -297,7 +304,10 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 	// Both consumers below copy what they need before this runs.
 	defer secure.Wipe(seed[:])
 
-	pkBytes, sk, pk := gen(&seed)
+	pkBytes, sk, pk, err := gen(&seed)
+	if err != nil {
+		return nil, nil, &errs.Wrapped{Msg: "failed to derive key pair from seed", Err: err}
+	}
 
 	// The seed feeds two consumers with different lifetimes: the in-memory key,
 	// which holds it enclaved, and the metadata, which is serialized to
@@ -447,7 +457,8 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	}
 }
 
-// loadMLDSAKey recreates a ML-DSA key from stored seed using circl's NewKeyFromSeed.
+// loadMLDSAKey recreates a ML-DSA key from stored seed using crypto/mldsa's
+// NewPrivateKey.
 func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, error) {
 	gen, ok := mldsaKeyGenerators[metadata.Algorithm]
 	if !ok {
@@ -461,7 +472,10 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 	var seed [mldsaSeedSize]byte
 	copy(seed[:], metadata.Seed)
 
-	pkBytes, sk, pk := gen(&seed)
+	pkBytes, sk, pk, err := gen(&seed)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to derive key pair from seed", Err: err}
+	}
 
 	// seed is this function's own stack copy, so it is wiped once sealed;
 	// metadata.Seed belongs to the caller and is left intact.

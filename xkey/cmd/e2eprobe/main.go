@@ -19,6 +19,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
@@ -38,7 +39,6 @@ import (
 	"os"
 	"time"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -656,15 +656,18 @@ func selfSignedCert(cn string) ([]byte, error) {
 
 // totp computes an RFC 6238 TOTP (SHA1, 6 digits) for the given Base32 secret.
 //
-// CALLERS MUST CHECK xkms.FIPSMode() FIRST. crypto/hmac rejects SHA-1 under
+// CALLERS MUST CHECK fipsMode() FIRST. crypto/hmac rejects SHA-1 under
 // GODEBUG=fips140=only by panicking, so this cannot be made to return an error
 // from inside; the guard has to be at the call site. See the one caller.
 // and time counter.
-// fipsMode reports whether this process is under FIPS 140 rules. Indirected
-// through a variable so a test can drive both sides of the branch below: the
-// alternative is running the suite twice under different environments, which
-// no CI job here does, and an ungated branch is one nobody ever executes.
-var fipsMode = xkms.FIPSMode
+// fipsMode reports whether this process is under FIPS 140 rules, by asking
+// the Go standard library directly (go-xkms #21): GODEBUG=fips140=on|only at
+// runtime, or a GOFIPS140 build, both surface through crypto/fips140.Enabled.
+// Indirected through a variable so a test can drive both sides of the branch
+// below: the alternative is running the suite twice under different
+// environments, which no CI job here does, and an ungated branch is one
+// nobody ever executes.
+var fipsMode = fips140.Enabled
 
 // oathProbeAlgorithm picks the digest the probe enrolls and cross-computes.
 //

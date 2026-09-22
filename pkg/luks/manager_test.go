@@ -15,10 +15,13 @@ package luks
 
 import (
 	"context"
+	"crypto/fips140"
 	"errors"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +77,6 @@ func validConfig() *VolumeConfig {
 // --- NewManager ---
 
 func TestNewManager_Success(t *testing.T) {
-	t.Setenv(fips.EnvGOFIPS140, "")
 	mgr, err := NewManager(validConfig(), &mockExecutor{})
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
@@ -109,19 +111,39 @@ func TestNewManager_InvalidKDFInConfig(t *testing.T) {
 // --- NewFIPSAwareManager ---
 
 func TestNewFIPSAwareManager_Standard(t *testing.T) {
-	t.Setenv(fips.EnvGOFIPS140, "")
 	mgr, err := NewFIPSAwareManager("/tmp/vol.luks", "/mnt/vol", "xkms-vol", &mockExecutor{})
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
 	assert.Equal(t, KDFArgon2id, mgr.Config().KDF)
 }
 
+// TestNewFIPSAwareManager_FIPS re-execs under GODEBUG=fips140=on for the same
+// reason TestDefaultKDF_FIPS in config_test.go does (go-xkms #21):
+// crypto/fips140.Enabled is fixed when the process starts.
 func TestNewFIPSAwareManager_FIPS(t *testing.T) {
-	t.Setenv(fips.EnvGOFIPS140, "v1.0.0")
-	mgr, err := NewFIPSAwareManager("/tmp/vol.luks", "/mnt/vol", "xkms-vol", &mockExecutor{})
-	require.NoError(t, err)
-	require.NotNil(t, mgr)
-	assert.Equal(t, KDFPBKDF2, mgr.Config().KDF)
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+		if !fips140.Enabled() {
+			t.Fatal("child process is not FIPS-active; GODEBUG=fips140=on was not honored")
+		}
+		mgr, err := NewFIPSAwareManager("/tmp/vol.luks", "/mnt/vol", "xkms-vol", &mockExecutor{})
+		if err != nil {
+			t.Fatalf("NewFIPSAwareManager() error = %v, want nil", err)
+		}
+		if mgr.Config().KDF != KDFPBKDF2 {
+			t.Fatalf("Config().KDF = %q under GODEBUG=fips140=on, want %q", mgr.Config().KDF, KDFPBKDF2)
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestNewFIPSAwareManager_FIPS", "-test.v")
+	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
+	}
 }
 
 func TestNewFIPSAwareManager_NilExecutor(t *testing.T) {
@@ -301,7 +323,6 @@ func TestIsMounted_IsUnlocked_StateTracking(t *testing.T) {
 // --- Config ---
 
 func TestConfig_ReturnsCopy(t *testing.T) {
-	t.Setenv(fips.EnvGOFIPS140, "")
 	cfg := validConfig()
 	mgr, err := NewManager(cfg, &mockExecutor{})
 	require.NoError(t, err)

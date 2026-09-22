@@ -17,8 +17,9 @@
 //   - ML-DSA (formerly Dilithium) for digital signatures (FIPS 204)
 //   - ML-KEM (formerly Kyber) for key encapsulation (FIPS 203)
 //
-// This backend uses pure-Go implementations: cloudflare/circl for ML-DSA
-// and crypto/mlkem for ML-KEM. No CGO or external libraries required.
+// This backend uses pure-Go implementations: crypto/mldsa for ML-DSA-44/65/87,
+// cloudflare/circl for ML-KEM-512 (crypto/mlkem has no 512 parameter set), and
+// crypto/mlkem for ML-KEM-768/1024. No CGO or external libraries required.
 package module
 
 func init() {

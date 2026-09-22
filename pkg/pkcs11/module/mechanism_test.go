@@ -3172,7 +3172,7 @@ func TestFIPSMode(t *testing.T) {
 	const nonApproved = CKM_SHA1_RSA_PKCS
 
 	t.Run("the full OASIS surface is available by default", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		desc := GetMechanismDescriptor(nonApproved)
 		require.NotNil(t, desc, "a spec-defined mechanism must be available outside FIPS mode")
@@ -3183,7 +3183,7 @@ func TestFIPSMode(t *testing.T) {
 	})
 
 	t.Run("FIPS mode withholds a non-approved mechanism", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "1")
+		withFIPSMode(t, true)
 
 		assert.Nil(t, GetMechanismDescriptor(nonApproved),
 			"every *Init resolves through this lookup, so a nil descriptor is what "+
@@ -3195,7 +3195,7 @@ func TestFIPSMode(t *testing.T) {
 	})
 
 	t.Run("FIPS mode keeps the approved mechanisms", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "1")
+		withFIPSMode(t, true)
 
 		for _, mechType := range []MechanismType{
 			CKM_RSA_PKCS_KEY_PAIR_GEN, CKM_SHA256_RSA_PKCS, CKM_SHA256_RSA_PKCS_PSS,
@@ -3215,7 +3215,7 @@ func TestFIPSMode(t *testing.T) {
 		// The flag defaults to false, so a mechanism added without thinking
 		// about it silently disappears in FIPS mode. This pins the one
 		// mechanism that is meant to.
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 
 		var withheld []MechanismType
 		for mechType := range defaultMechanismInfo() {
@@ -3259,7 +3259,7 @@ func TestFIPSMode(t *testing.T) {
 // precisely the operation that caused the outage, and it would prove nothing
 // that the advertised number does not already state.
 func TestRSAModulusCeilingIsASizeTheModuleGenerates(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "")
+	withFIPSMode(t, false)
 
 	if rsaModulusBitsMax > 4096 {
 		t.Fatalf("the advertised RSA ceiling is %d bits; nothing in this stack generates a "+
@@ -3311,7 +3311,7 @@ func TestRSAModulusCeilingIsASizeTheModuleGenerates(t *testing.T) {
 // above it, so nothing in the module contradicted a caller who asked for a size
 // FIPS forbids.
 func TestRSAModulusCeilingNarrowsUnderFIPS(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "1")
+	withFIPSMode(t, true)
 
 	info, err := GetMechanismInfo(CKM_RSA_PKCS_KEY_PAIR_GEN)
 	if err != nil {
@@ -3359,14 +3359,14 @@ func TestRSAModulusFloorNeverInvertsBetweenRegimes(t *testing.T) {
 	const belowFloor = 1024
 
 	t.Run("refused outside FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 		if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, belowFloor) {
 			t.Errorf("a %d-bit modulus is accepted; the floor is %d bits", belowFloor, rsaModulusBitsMin)
 		}
 	})
 
 	t.Run("refused under FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "1")
+		withFIPSMode(t, true)
 		if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, belowFloor) {
 			t.Errorf("a %d-bit modulus is accepted under FIPS but refused outside it; FIPS "+
 				"mode must only ever narrow what the module accepts", belowFloor)
@@ -3401,7 +3401,7 @@ func TestRSAModulusFloorNeverInvertsBetweenRegimes(t *testing.T) {
 // path. The constant survives as a KDF PRF selector, which
 // mechanismToHashFromPRF resolves by switch rather than through this registry.
 func TestIsValidKeySizeHonoursTheNoMaximumSentinel(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "")
+	withFIPSMode(t, false)
 
 	for _, mechType := range []MechanismType{CKM_GENERIC_SECRET_KEY_GEN} {
 		desc := GetMechanismDescriptor(mechType)
@@ -3432,14 +3432,14 @@ func TestIsValidKeySizeHonoursTheNoMaximumSentinel(t *testing.T) {
 // caller uses this to decide whether to start an operation.
 func TestIsValidKeySizeRejectsBadInput(t *testing.T) {
 	t.Run("unknown mechanism", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "")
+		withFIPSMode(t, false)
 		if IsValidKeySize(MechanismType(0xFFFFFFFF), 2048) {
 			t.Error("an unregistered mechanism reported a valid key size")
 		}
 	})
 
 	t.Run("mechanism withheld by FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "1")
+		withFIPSMode(t, true)
 		if IsValidKeySize(CKM_SHA1_RSA_PKCS, 2048) {
 			t.Error("CKM_SHA1_RSA_PKCS reported a valid key size under FIPS although the " +
 				"mechanism itself is withheld; every size is invalid for a mechanism the " +
@@ -3461,7 +3461,7 @@ func TestIsValidKeySizeRejectsBadInput(t *testing.T) {
 // as §6.3.17, and an application reads CKF_DERIVE to decide it may be used for
 // derivation at all.
 func TestECDH1CofactorDeriveIsDiscoverable(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "")
+	withFIPSMode(t, false)
 
 	info, err := GetMechanismInfo(CKM_ECDH1_COFACTOR_DERIVE)
 	if err != nil {
@@ -3489,7 +3489,7 @@ func TestECDH1CofactorDeriveIsDiscoverable(t *testing.T) {
 	}
 
 	t.Run("stays available under FIPS", func(t *testing.T) {
-		t.Setenv(fipsEnvForTest, "1")
+		withFIPSMode(t, true)
 		if _, advertised := defaultMechanismInfo()[CKM_ECDH1_COFACTOR_DERIVE]; !advertised {
 			t.Error("cofactor ECDH is withheld under FIPS although NIST SP 800-56A approves " +
 				"it and the non-cofactor form remains advertised")
@@ -3513,7 +3513,7 @@ func TestECDH1CofactorDeriveIsDiscoverable(t *testing.T) {
 // derivation-capable, with no key-size bound, because neither RFC 5869 nor
 // SP 800-108r1 bounds the length of the key they derive from.
 func TestKDFsAreAdvertisedAndDescribedTruthfully(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "")
+	withFIPSMode(t, false)
 
 	advertised := defaultMechanismInfo()
 	for _, mechType := range []MechanismType{
@@ -3562,35 +3562,35 @@ func TestEffectiveKeySizeRange(t *testing.T) {
 	tests := []struct {
 		name    string
 		desc    MechanismDescriptor
-		fips    string
+		fips    bool
 		wantMin uint32
 		wantMax uint32
 	}{
 		{
 			name:    "FIPS ceiling applies in FIPS mode",
 			desc:    MechanismDescriptor{MinKeySize: 2048, MaxKeySize: 4096, FIPSMaxKeySize: 3072},
-			fips:    "1",
+			fips:    true,
 			wantMin: 2048,
 			wantMax: 3072,
 		},
 		{
 			name:    "FIPS ceiling is ignored outside FIPS mode",
 			desc:    MechanismDescriptor{MinKeySize: 2048, MaxKeySize: 4096, FIPSMaxKeySize: 3072},
-			fips:    "",
+			fips:    false,
 			wantMin: 2048,
 			wantMax: 4096,
 		},
 		{
 			name:    "no declared FIPS ceiling leaves the range alone",
 			desc:    MechanismDescriptor{MinKeySize: 16, MaxKeySize: 32},
-			fips:    "1",
+			fips:    true,
 			wantMin: 16,
 			wantMax: 32,
 		},
 		{
 			name: "a FIPS ceiling above the mechanism's own never widens it",
 			desc: MechanismDescriptor{MinKeySize: 16, MaxKeySize: 32, FIPSMaxKeySize: 64},
-			fips: "1",
+			fips: true,
 			// FIPS may only narrow what the module offers; a wider FIPS
 			// ceiling is a data error and must not take effect.
 			wantMin: 16,
@@ -3599,7 +3599,7 @@ func TestEffectiveKeySizeRange(t *testing.T) {
 		{
 			name:    "the no-maximum sentinel survives the clamp",
 			desc:    MechanismDescriptor{MinKeySize: 1, MaxKeySize: 0},
-			fips:    "1",
+			fips:    true,
 			wantMin: 1,
 			wantMax: 0,
 		},
@@ -3607,7 +3607,7 @@ func TestEffectiveKeySizeRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(fipsEnvForTest, tt.fips)
+			withFIPSMode(t, tt.fips)
 
 			gotMin, gotMax := effectiveKeySizeRange(&tt.desc)
 			if gotMin != tt.wantMin || gotMax != tt.wantMax {

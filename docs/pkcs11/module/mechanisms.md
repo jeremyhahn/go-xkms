@@ -1051,10 +1051,14 @@ different claims: the specification defines what a Cryptoki module must
 implement, and FIPS narrows which of it a validated deployment may use.
 
 FIPS mode is enabled through the same process-wide signal the rest of the stack
-uses:
+uses: `crypto/fips140.Enabled()` (go-xkms #21), true under `GODEBUG=fips140=on`
+or `=only` at runtime, or by default in a binary built with an enabling
+`GOFIPS140`. `GOFIPS140` set as a plain runtime environment variable has no
+effect — it is a `go build` selector only, not something the Go runtime reads
+as a process environment variable the way it reads `GODEBUG`.
 
 ```bash
-GOFIPS140=on xkmsd --config /etc/xkms/xkmsd.yaml
+GODEBUG=fips140=on xkmsd --config /etc/xkms/xkmsd.yaml
 ```
 
 When it is enabled, a non-approved mechanism is withheld from
@@ -1122,8 +1126,9 @@ crypto:
 
 This is an explicit opt-in, not a compliance gap: `Config.ComplianceGaps` does
 not report it, so `xkmsd` starts either way. Which algorithms are approved is a
-property of the binary's FIPS mode (`GOFIPS140` / `GODEBUG=fips140`), under
-which `types.SetAllowLegacyKeyWrap` ignores a request to re-admit them. While
+property of the binary's FIPS mode (`crypto/fips140.Enabled()` — a
+`GODEBUG=fips140=on|only` process, or a `GOFIPS140` build), under which
+`types.SetAllowLegacyKeyWrap` ignores a request to re-admit them. While
 the setting is off, a request naming one of the three is refused with a typed
 policy error that names the mechanism and the setting — not with "unsupported
 algorithm", which would send an operator looking for a missing feature.

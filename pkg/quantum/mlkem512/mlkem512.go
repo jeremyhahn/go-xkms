@@ -29,9 +29,18 @@
 // seed as the private-key representation, because the PKCS#11 module stores that
 // seed in a private key object's CKA_VALUE and reconstructs the key through
 // Create on every later use.
+//
+// CIRCL is not part of the Go Cryptographic Module, so crypto/fips140.Enabled
+// cannot see it and cannot refuse it on its own the way it refuses a
+// non-approved stdlib algorithm under GODEBUG=fips140=only (go-xkms #21).
+// New and Create are this package's one shared seam for that refusal: every
+// other exported method operates on an already-constructed *MLKEM512, so
+// gating construction is sufficient and avoids repeating the check per
+// operation.
 package mlkem512
 
 import (
+	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -80,6 +89,14 @@ var (
 	// ErrInvalidSecretKey is an alias for ErrInvalidSeed, matching the naming
 	// the sibling parameter-set packages expose.
 	ErrInvalidSecretKey = ErrInvalidSeed
+
+	// ErrFIPSMode indicates the process is running under FIPS 140 mode, in
+	// which this package refuses to construct a key. ML-KEM-512 has no Go
+	// Cryptographic Module implementation to defer to — crypto/mlkem covers
+	// only the 768 and 1024 parameter sets — so refusing here is this
+	// package's own responsibility rather than something the stdlib does for
+	// it once fips140.Enabled reports the module active.
+	ErrFIPSMode = errors.New("mlkem512: ML-KEM-512 uses cloudflare/circl, which is not part of the Go Cryptographic Module, and is refused under FIPS 140 mode")
 )
 
 // KEMDetails contains the algorithm parameters for the KEM.
@@ -110,6 +127,10 @@ type MLKEM512 struct {
 // what Create reconstructs from; generating the key by any route that does not
 // yield its seed would produce a key this package could not persist.
 func New() (*MLKEM512, error) {
+	if fips140.Enabled() {
+		return nil, ErrFIPSMode
+	}
+
 	seed := make([]byte, SeedSize)
 	if _, err := io.ReadFull(rand.Reader, seed); err != nil {
 		return nil, err
@@ -127,6 +148,9 @@ func New() (*MLKEM512, error) {
 
 // Create initializes MLKEM512 from an existing 64-byte seed.
 func Create(seed []byte) (*MLKEM512, error) {
+	if fips140.Enabled() {
+		return nil, ErrFIPSMode
+	}
 	if len(seed) != SeedSize {
 		return nil, ErrInvalidSeed
 	}

@@ -25,6 +25,7 @@ package ca
 
 import (
 	"crypto"
+	"crypto/mldsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -34,12 +35,17 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
-	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
-	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
-
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
 )
+
+// mldsaParameters maps ML-DSA algorithm strings to their FIPS 204 parameter
+// set, so verification shares one code path across all three security levels
+// instead of a type switch per level.
+var mldsaParameters = map[string]mldsa.Parameters{
+	"ML-DSA-44": mldsa.MLDSA44(),
+	"ML-DSA-65": mldsa.MLDSA65(),
+	"ML-DSA-87": mldsa.MLDSA87(),
+}
 
 // ML-DSA algorithm OIDs per NIST FIPS 204.
 var (
@@ -319,34 +325,21 @@ func oidToQuantumAlgorithm(oid asn1.ObjectIdentifier) (string, error) {
 	return "", &QuantumAlgorithmError{Algorithm: oid.String()}
 }
 
-// verifyMLDSASignature verifies an ML-DSA signature using the appropriate
-// algorithm-specific verification function.
+// verifyMLDSASignature verifies an ML-DSA signature using crypto/mldsa. The
+// parameter set is selected by algorithm; the verification call itself is
+// the same for all three security levels.
 func verifyMLDSASignature(algorithm string, pubKeyBytes, message, signature []byte) (bool, error) {
-	switch algorithm {
-	case "ML-DSA-44":
-		var pk mldsa44.PublicKey
-		if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
-			return false, &errs.Wrapped{Msg: "unmarshal ML-DSA-44 public key", Err: err}
-		}
-		return mldsa44.Verify(&pk, message, nil, signature), nil
-
-	case "ML-DSA-65":
-		var pk mldsa65.PublicKey
-		if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
-			return false, &errs.Wrapped{Msg: "unmarshal ML-DSA-65 public key", Err: err}
-		}
-		return mldsa65.Verify(&pk, message, nil, signature), nil
-
-	case "ML-DSA-87":
-		var pk mldsa87.PublicKey
-		if err := pk.UnmarshalBinary(pubKeyBytes); err != nil {
-			return false, &errs.Wrapped{Msg: "unmarshal ML-DSA-87 public key", Err: err}
-		}
-		return mldsa87.Verify(&pk, message, nil, signature), nil
-
-	default:
+	params, ok := mldsaParameters[algorithm]
+	if !ok {
 		return false, &QuantumAlgorithmError{Algorithm: algorithm}
 	}
+
+	pk, err := mldsa.NewPublicKey(params, pubKeyBytes)
+	if err != nil {
+		return false, &errs.Wrapped{Msg: "unmarshal " + algorithm + " public key", Err: err}
+	}
+
+	return mldsa.Verify(pk, message, signature, nil) == nil, nil
 }
 
 // encodeQuantumPublicKey creates a SubjectPublicKeyInfo structure for

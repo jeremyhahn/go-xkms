@@ -57,10 +57,11 @@ at startup; a SIGHUP reload does not change it.
 A library embedding xkms without a `Config` gets the refusing default;
 `types.SetAllowWeakHashes` is the programmatic equivalent.
 
-FIPS mode is the ceiling. Under `GOFIPS140` / `GODEBUG=fips140=on|only` the
-opt-in is ignored: `types.SetAllowWeakHashes` refuses to loosen the policy
-inside the validated module's boundary, so no configuration file can widen the
-approved-algorithm set.
+FIPS mode is the ceiling. Under `crypto/fips140.Enabled()` — true under
+`GODEBUG=fips140=on|only` at runtime, or by default in a `GOFIPS140` build
+(go-xkms #21) — the opt-in is ignored: `types.SetAllowWeakHashes` refuses to
+loosen the policy inside the validated module's boundary, so no configuration
+file can widen the approved-algorithm set.
 
 Refusing governs whether a weak digest is **performed**, never whether it is
 **advertised**. The PKCS#11 module still lists its SHA-1 and MD5 mechanisms in

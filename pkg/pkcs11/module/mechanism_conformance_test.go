@@ -453,7 +453,7 @@ func TestAdvertisedKeySizeRangesAreNonEmpty(t *testing.T) {
 // mechanisms that are not advertised, or IsValidKeySize would start refusing
 // every key size those mechanisms accept.
 func TestUnadvertisedSentinelIsStillTheRegistrysNoMaximum(t *testing.T) {
-	t.Setenv(fipsEnvForTest, "")
+	withFIPSMode(t, false)
 
 	desc := GetMechanismDescriptor(CKM_SHA256_HMAC)
 	if desc == nil {

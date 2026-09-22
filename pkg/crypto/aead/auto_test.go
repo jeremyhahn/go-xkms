@@ -14,12 +14,14 @@
 package aead
 
 import (
+	"crypto/fips140"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/cpu"
-
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 )
 
 func TestHasAESNI(t *testing.T) {
@@ -102,50 +104,82 @@ func TestSelectAESGCM_FIPSNeverSelectsChaCha(t *testing.T) {
 	}
 }
 
-// TestFIPSRequiresAES verifies the predicate honours the runtime GOFIPS140
-// setting, and that a FIPS-compiled binary reports true regardless of it.
+// TestFIPSRequiresAES is the compliance assertion for go-xkms #21:
+// fipsRequiresAES is exactly crypto/fips140.Enabled, so this asserts the real
+// stdlib outcome under GODEBUG=fips140=on and =only rather than a predicate
+// of this package's own. crypto/fips140.Enabled is fixed when the process
+// starts, so the on/only cases re-exec, mirroring
+// pkg/quantum/mlkem512.TestNewAndCreate_RefuseUnderFIPS.
 func TestFIPSRequiresAES(t *testing.T) {
-	t.Run("GOFIPS140 off", func(t *testing.T) {
-		t.Setenv(fips.EnvGOFIPS140, "off")
-		if got, want := fipsRequiresAES(), fips.Compiled(); got != want {
-			t.Errorf("fipsRequiresAES() = %v with GOFIPS140=off, want %v (fips.Compiled())", got, want)
+	t.Run("no GODEBUG", func(t *testing.T) {
+		if fipsRequiresAES() {
+			t.Error("fipsRequiresAES() = true with no GODEBUG set and a non-FIPS test build, want false")
 		}
 	})
 
-	t.Run("GOFIPS140 latest", func(t *testing.T) {
-		t.Setenv(fips.EnvGOFIPS140, "latest")
-		if !fipsRequiresAES() {
-			t.Error("fipsRequiresAES() = false with GOFIPS140=latest, want true")
-		}
-	})
+	for _, godebug := range []string{"fips140=on", "fips140=only"} {
+		t.Run(godebug, func(t *testing.T) {
+			if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+				if !fipsRequiresAES() {
+					t.Fatal("fipsRequiresAES() = false, want true")
+				}
+				return
+			}
+
+			cmd := exec.Command(os.Args[0], "-test.run=TestFIPSRequiresAES/"+godebug, "-test.v")
+			cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG="+godebug)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s subprocess failed: %v\n%s", godebug, err, out)
+			}
+			if !strings.Contains(string(out), "PASS") {
+				t.Errorf("%s subprocess did not pass:\n%s", godebug, out)
+			}
+		})
+	}
 }
 
 // TestSelectOptimal_FIPSModeNoAESNI is the verification the audit asked for:
 // on a CPU without AES-NI — the one path that used to return ChaCha20 — a
-// FIPS-mode run selects AES-256-GCM instead.
+// FIPS-mode run selects AES-256-GCM instead. crypto/fips140.Enabled is fixed
+// when the process starts, so this re-execs under GODEBUG=fips140=on to
+// assert the real stdlib-driven outcome rather than a predicate of this
+// package's own (go-xkms #21).
 func TestSelectOptimal_FIPSModeNoAESNI(t *testing.T) {
-	t.Setenv(fips.EnvGOFIPS140, "latest")
-	withAESNI(t, false)
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+		withAESNI(t, false)
 
-	if got := SelectOptimal(false); got != AES256GCM {
-		t.Errorf("SelectOptimal(false) = %s in FIPS mode without AES-NI, want %s", got, AES256GCM)
+		if got := SelectOptimal(false); got != AES256GCM {
+			t.Errorf("SelectOptimal(false) = %s in FIPS mode without AES-NI, want %s", got, AES256GCM)
+		}
+		if got := SelectOptimalBackend(false); got != BackendAES256GCM {
+			t.Errorf("SelectOptimalBackend(false) = %s in FIPS mode without AES-NI, want %s",
+				got, BackendAES256GCM)
+		}
+		if IsChaCha(SelectOptimal(false)) || IsChaCha(SelectOptimalBackend(false)) {
+			t.Error("FIPS-mode selection returned a ChaCha variant")
+		}
+		return
 	}
-	if got := SelectOptimalBackend(false); got != BackendAES256GCM {
-		t.Errorf("SelectOptimalBackend(false) = %s in FIPS mode without AES-NI, want %s",
-			got, BackendAES256GCM)
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestSelectOptimal_FIPSModeNoAESNI", "-test.v")
+	cmd.Env = append(os.Environ(), "XKMS_FIPS_SUBPROCESS=1", "GODEBUG=fips140=on")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fips140=on subprocess failed: %v\n%s", err, out)
 	}
-	if IsChaCha(SelectOptimal(false)) || IsChaCha(SelectOptimalBackend(false)) {
-		t.Error("FIPS-mode selection returned a ChaCha variant")
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("fips140=on subprocess did not pass:\n%s", out)
 	}
 }
 
 func TestSelectOptimal(t *testing.T) {
-	// A FIPS-compiled binary can never select ChaCha20, whatever GOFIPS140 says
-	// in the process, so the software/no-AES-NI expectation depends on how this
-	// test binary was built.
+	// A FIPS-active process can never select ChaCha20, whatever this test run
+	// inherited, so the software/no-AES-NI expectation depends on the real
+	// stdlib signal rather than being hard-coded to the non-FIPS case.
 	softwareNoAESNI := ChaCha20Poly1305
 	softwareNoAESNIBackend := BackendChaCha20Poly1305
-	if fips.Compiled() {
+	if fips140.Enabled() {
 		softwareNoAESNI = AES256GCM
 		softwareNoAESNIBackend = BackendAES256GCM
 	}
@@ -182,7 +216,6 @@ func TestSelectOptimal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(fips.EnvGOFIPS140, "off")
 			withAESNI(t, tt.aesni)
 
 			if got := SelectOptimal(tt.isHardwareBacked); got != tt.want {

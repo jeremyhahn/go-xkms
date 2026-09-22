@@ -12,23 +12,38 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package mldsa87 provides ML-DSA-87 quantum-safe digital signatures using
-// the cloudflare/circl library. ML-DSA-87 is the NIST FIPS 204 standard for
-// post-quantum digital signatures at security level 5.
+// the Go standard library's crypto/mldsa package. ML-DSA-87 is the NIST
+// FIPS 204 standard for post-quantum digital signatures at security level 5.
+//
+// crypto/mldsa is the Go Cryptographic Module's own implementation: under a
+// FIPS-140 build whose selected module version does not yet certify ML-DSA,
+// the stdlib functions this package calls refuse on their own, so no
+// allowlist of approved algorithms needs to be kept here (go-xkms #21).
 package mldsa87
 
 import (
-	"crypto"
+	"crypto/mldsa"
 	"crypto/rand"
 	"errors"
 	"io"
-
-	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
 )
 
 const (
 	// AlgorithmName is the NIST FIPS 204 standard algorithm identifier
 	AlgorithmName = "ML-DSA-87"
+
+	// SeedSize is the size of the deterministic key-derivation seed, in bytes.
+	SeedSize = mldsa.PrivateKeySize
+
+	// PublicKeySize is the size of a serialized ML-DSA-87 public key, in bytes.
+	PublicKeySize = mldsa.MLDSA87PublicKeySize
+
+	// SignatureSize is the size of an ML-DSA-87 signature, in bytes.
+	SignatureSize = mldsa.MLDSA87SignatureSize
 )
+
+// params is the FIPS 204 parameter set for ML-DSA-87.
+var params = mldsa.MLDSA87()
 
 var (
 	// ErrNotInitialized indicates the signer has not been initialized
@@ -49,14 +64,14 @@ type SignatureDetails struct {
 	MaxLengthSignature int
 }
 
-// MLDSA87 wraps the circl ML-DSA-87 signature scheme.
+// MLDSA87 wraps the stdlib ML-DSA-87 signature scheme.
 // The 32-byte seed is stored internally for deterministic key reconstruction
 // and export. The expanded private key and public key are derived from the
 // seed and held in memory for signing and verification operations.
 type MLDSA87 struct {
-	privateKey *mldsa87.PrivateKey
-	publicKey  *mldsa87.PublicKey
-	seed       [mldsa87.SeedSize]byte
+	privateKey *mldsa.PrivateKey
+	publicKey  *mldsa.PublicKey
+	seed       [SeedSize]byte
 	hasSeed    bool
 }
 
@@ -69,18 +84,21 @@ func New() (*MLDSA87, error) {
 // Create initializes MLDSA87 from an existing 32-byte seed.
 // The seed is used to deterministically reconstruct the key pair.
 func Create(seed []byte) (*MLDSA87, error) {
-	if len(seed) != mldsa87.SeedSize {
+	if len(seed) != SeedSize {
 		return nil, ErrInvalidSecretKey
 	}
 
-	var seedArr [mldsa87.SeedSize]byte
-	copy(seedArr[:], seed)
+	priv, err := mldsa.NewPrivateKey(params, seed)
+	if err != nil {
+		return nil, ErrInvalidSecretKey
+	}
 
-	pub, priv := mldsa87.NewKeyFromSeed(&seedArr)
+	var seedArr [SeedSize]byte
+	copy(seedArr[:], seed)
 
 	return &MLDSA87{
 		privateKey: priv,
-		publicKey:  pub,
+		publicKey:  priv.PublicKey(),
 		seed:       seedArr,
 		hasSeed:    true,
 	}, nil
@@ -105,19 +123,22 @@ func (m *MLDSA87) Clean() {
 func (m *MLDSA87) GenerateKeyPair() ([]byte, error) {
 	// Generate a random seed and derive the key pair from it so
 	// that we retain the seed for deterministic reconstruction.
-	var seed [mldsa87.SeedSize]byte
+	var seed [SeedSize]byte
 	if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
 		return nil, err
 	}
 
-	pub, priv := mldsa87.NewKeyFromSeed(&seed)
+	priv, err := mldsa.NewPrivateKey(params, seed[:])
+	if err != nil {
+		return nil, err
+	}
 
 	m.privateKey = priv
-	m.publicKey = pub
+	m.publicKey = priv.PublicKey()
 	m.seed = seed
 	m.hasSeed = true
 
-	return pub.Bytes(), nil
+	return m.publicKey.Bytes(), nil
 }
 
 // ExportSecretKey returns a copy of the 32-byte seed.
@@ -126,7 +147,7 @@ func (m *MLDSA87) ExportSecretKey() []byte {
 	if !m.hasSeed {
 		return nil
 	}
-	out := make([]byte, mldsa87.SeedSize)
+	out := make([]byte, SeedSize)
 	copy(out, m.seed[:])
 	return out
 }
@@ -137,7 +158,7 @@ func (m *MLDSA87) Sign(message []byte) ([]byte, error) {
 	if m.privateKey == nil {
 		return nil, ErrNotInitialized
 	}
-	sig, err := m.privateKey.Sign(nil, message, crypto.Hash(0))
+	sig, err := m.privateKey.Sign(nil, message, nil)
 	if err != nil {
 		return nil, ErrSignatureFailed
 	}
@@ -148,43 +169,45 @@ func (m *MLDSA87) Sign(message []byte) ([]byte, error) {
 // The publicKey parameter is the serialized public key (2592 bytes). If nil,
 // the internally stored public key is used.
 func (m *MLDSA87) Verify(message, signature, publicKey []byte) (bool, error) {
-	var pk mldsa87.PublicKey
+	var pk *mldsa.PublicKey
 
 	switch {
 	case publicKey != nil:
-		if err := pk.UnmarshalBinary(publicKey); err != nil {
+		decoded, err := mldsa.NewPublicKey(params, publicKey)
+		if err != nil {
 			return false, ErrVerificationFailed
 		}
+		pk = decoded
 	case m.publicKey != nil:
-		pk = *m.publicKey
+		pk = m.publicKey
 	default:
 		return false, ErrNotInitialized
 	}
 
-	return mldsa87.Verify(&pk, message, nil, signature), nil
+	return mldsa.Verify(pk, message, signature, nil) == nil, nil
 }
 
 // Details returns the algorithm parameters as constant values
 func (m *MLDSA87) Details() SignatureDetails {
 	return SignatureDetails{
 		Name:               AlgorithmName,
-		LengthPublicKey:    mldsa87.PublicKeySize,
-		LengthSecretKey:    mldsa87.SeedSize,
-		MaxLengthSignature: mldsa87.SignatureSize,
+		LengthPublicKey:    PublicKeySize,
+		LengthSecretKey:    SeedSize,
+		MaxLengthSignature: SignatureSize,
 	}
 }
 
 // PublicKeyLength returns the public key size in bytes (2592)
 func (m *MLDSA87) PublicKeyLength() int {
-	return mldsa87.PublicKeySize
+	return PublicKeySize
 }
 
 // SecretKeyLength returns the seed size in bytes (32)
 func (m *MLDSA87) SecretKeyLength() int {
-	return mldsa87.SeedSize
+	return SeedSize
 }
 
 // SignatureLength returns the signature size in bytes (4627)
 func (m *MLDSA87) SignatureLength() int {
-	return mldsa87.SignatureSize
+	return SignatureSize
 }

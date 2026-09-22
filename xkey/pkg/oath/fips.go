@@ -13,18 +13,14 @@
 
 package oath
 
-import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+import "crypto/fips140"
 
-// fipsMode reports whether this process is under FIPS 140 rules, by build or
-// by environment.
+// fipsMode reports whether this process is under FIPS 140 rules, by asking
+// the Go standard library directly (go-xkms #21): GODEBUG=fips140=on|only at
+// runtime, or a GOFIPS140 build, both surface through crypto/fips140.Enabled.
 //
 // It is a variable rather than a direct call so a test can drive both sides of
 // the gate: the alternative is running the suite twice under different
 // environments, which no CI job here does, and an ungated branch is one nobody
 // ever executes.
-//
-// The detection itself is deliberately NOT re-derived here. GOFIPS140 accepts
-// "off" among its spellings, so a local "is it set?" check reads the operator's
-// explicit opt-OUT as an opt-in. go-xkms already got that right; this consumes
-// it through sdk/go rather than keeping a second copy that can drift.
-var fipsMode = xkms.FIPSMode
+var fipsMode = fips140.Enabled

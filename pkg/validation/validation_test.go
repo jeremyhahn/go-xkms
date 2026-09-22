@@ -208,16 +208,19 @@ func TestValidateKeyReference(t *testing.T) {
 		{"type only", ":signing::my-key", false},
 		{"algo only", "::ecdsa-p256:my-key", false},
 
-		// Valid ChaCha20 and XChaCha20 algorithms
-		{"chacha20-poly1305", "software:encryption:chacha20-poly1305:stream-key", fipsFiltersNonApproved()},
-		{"xchacha20-poly1305", "software:encryption:xchacha20-poly1305:xstream-key", fipsFiltersNonApproved()},
-		{"chacha20 shorthand", "software:encryption:chacha20:stream-key", fipsFiltersNonApproved()},
-		{"xchacha20 shorthand", "software:encryption:xchacha20:stream-key", fipsFiltersNonApproved()},
+		// Valid ChaCha20 and XChaCha20 algorithms. The key-ID grammar admits
+		// these unconditionally: whether a FIPS-140 deployment may actually
+		// use one is enforced downstream by the crypto package that handles
+		// it (go-xkms #21), not by this grammar check.
+		{"chacha20-poly1305", "software:encryption:chacha20-poly1305:stream-key", false},
+		{"xchacha20-poly1305", "software:encryption:xchacha20-poly1305:xstream-key", false},
+		{"chacha20 shorthand", "software:encryption:chacha20:stream-key", false},
+		{"xchacha20 shorthand", "software:encryption:xchacha20:stream-key", false},
 
 		// Valid Ed448 and key exchange algorithms
 		{"ed448", "software:signing:ed448:my-ed448-key", false},
-		{"x25519", "software:encryption:x25519:my-kex-key", fipsFiltersNonApproved()},
-		{"x448", "software:encryption:x448:my-kex-key", fipsFiltersNonApproved()},
+		{"x25519", "software:encryption:x25519:my-kex-key", false},
+		{"x448", "software:encryption:x448:my-kex-key", false},
 
 		// Valid post-quantum algorithms
 		{"ml-dsa-44", "software:signing:ml-dsa-44:pq-sig-key", false},
@@ -233,8 +236,8 @@ func TestValidateKeyReference(t *testing.T) {
 		{"hmac-sha512", "software:hmac:hmac-sha512:hmac-key", false},
 
 		// Valid FROST algorithms
-		{"frost-ed25519", "software:signing:frost-ed25519:frost-key", fipsFiltersNonApproved()},
-		{"frost-p256-sha256", "software:signing:frost-p256-sha256:frost-key", fipsFiltersNonApproved()},
+		{"frost-ed25519", "software:signing:frost-ed25519:frost-key", false},
+		{"frost-p256-sha256", "software:signing:frost-p256-sha256:frost-key", false},
 
 		// Invalid key IDs
 		{"empty string", "", true},
@@ -418,19 +421,21 @@ func TestIsValidAlgorithm(t *testing.T) {
 		{"ecdsa-p256", "ecdsa-p256", true},
 		{"ed25519", "ed25519", true},
 		{"ed448", "ed448", true},
-		// Key exchange
-		{"x25519", "x25519", !fipsFiltersNonApproved()},
-		{"x448", "x448", !fipsFiltersNonApproved()},
+		// Key exchange. isValidAlgorithm is grammar validation only: whether a
+		// FIPS-140 deployment may actually use an algorithm is enforced
+		// downstream by the crypto package that handles it (go-xkms #21).
+		{"x25519", "x25519", true},
+		{"x448", "x448", true},
 		// Symmetric - AES
 		{"aes256-gcm", "aes256-gcm", true},
 		{"aes128", "aes128", true},
 		// Symmetric - ChaCha20
-		{"chacha20-poly1305", "chacha20-poly1305", !fipsFiltersNonApproved()},
-		{"chacha20", "chacha20", !fipsFiltersNonApproved()},
-		{"xchacha20-poly1305", "xchacha20-poly1305", !fipsFiltersNonApproved()},
-		{"xchacha20", "xchacha20", !fipsFiltersNonApproved()},
+		{"chacha20-poly1305", "chacha20-poly1305", true},
+		{"chacha20", "chacha20", true},
+		{"xchacha20-poly1305", "xchacha20-poly1305", true},
+		{"xchacha20", "xchacha20", true},
 		// Case insensitivity
-		{"uppercase chacha", "CHACHA20-POLY1305", !fipsFiltersNonApproved()},
+		{"uppercase chacha", "CHACHA20-POLY1305", true},
 		{"mixed case aes", "AES256-GCM", true},
 		// Post-quantum
 		{"ml-dsa-44", "ml-dsa-44", true},
@@ -441,8 +446,8 @@ func TestIsValidAlgorithm(t *testing.T) {
 		{"hmac-sha256", "hmac-sha256", true},
 		{"hmac-sha512", "hmac-sha512", true},
 		// FROST
-		{"frost-ed25519", "frost-ed25519", !fipsFiltersNonApproved()},
-		{"frost-p256-sha256", "frost-p256-sha256", !fipsFiltersNonApproved()},
+		{"frost-ed25519", "frost-ed25519", true},
+		{"frost-p256-sha256", "frost-p256-sha256", true},
 		// Invalid
 		{"empty string", "", false},
 		{"garbage", "not-an-algo", false},

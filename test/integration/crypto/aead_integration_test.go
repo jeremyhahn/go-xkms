@@ -16,23 +16,24 @@
 package crypto_test
 
 import (
+	"crypto/fips140"
 	"crypto/rand"
 	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // softwareSelectsChaCha reports whether a software key is expected to select
 // ChaCha20-Poly1305 on this host and in this build configuration. FIPS mode
-// forbids the non-approved AEAD regardless of CPU capability, so it is part of
-// the expectation and not just AES-NI.
+// forbids the non-approved AEAD regardless of CPU capability (go-xkms #21:
+// crypto/fips140.Enabled, the same signal aead.fipsRequiresAES uses), so it
+// is part of the expectation and not just AES-NI.
 func softwareSelectsChaCha() bool {
-	return !aead.HasAESNI() && !fips.Compiled() && !fips.Enabled()
+	return !aead.HasAESNI() && !fips140.Enabled()
 }
 
 func TestAEAD_AutoSelection(t *testing.T) {

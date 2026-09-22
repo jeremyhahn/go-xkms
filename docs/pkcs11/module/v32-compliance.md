@@ -10,7 +10,7 @@ The module implements 12 v3.2 function signatures with full input validation, se
 |----------|--------|-------|
 | `C_EncapsulateKey` | Supported | ML-KEM-768/1024 via crypto/mlkem; parameter set resolved from `CKA_PARAMETER_SET` |
 | `C_DecapsulateKey` | Supported | ML-KEM-768/1024 via crypto/mlkem |
-| `C_VerifySignatureInit` | Supported | ML-DSA via circl |
+| `C_VerifySignatureInit` | Supported | ML-DSA via crypto/mldsa |
 | `C_VerifySignature` | Supported | Single-part verification |
 | `C_VerifySignatureUpdate` | Supported | Multi-part streaming |
 | `C_VerifySignatureFinal` | Supported | Multi-part finalization |
@@ -100,9 +100,9 @@ Parameter set names can be resolved via the `parameterSetNameMap` lookup (e.g., 
 
 | Algorithm | NIST Standard | Key Gen | Sign | Verify | Encapsulate | Decapsulate | Implementation |
 |-----------|---------------|---------|------|--------|-------------|-------------|----------------|
-| ML-DSA-44 | FIPS 204 | Yes | Yes | Yes | -- | -- | circl `mldsa44` |
-| ML-DSA-65 | FIPS 204 | Yes | Yes | Yes | -- | -- | circl `mldsa65` |
-| ML-DSA-87 | FIPS 204 | Yes | Yes | Yes | -- | -- | circl `mldsa87` |
+| ML-DSA-44 | FIPS 204 | Yes | Yes | Yes | -- | -- | crypto/mldsa `MLDSA44` |
+| ML-DSA-65 | FIPS 204 | Yes | Yes | Yes | -- | -- | crypto/mldsa `MLDSA65` |
+| ML-DSA-87 | FIPS 204 | Yes | Yes | Yes | -- | -- | crypto/mldsa `MLDSA87` |
 | ML-KEM-768 | FIPS 203 | Yes | -- | -- | Yes | Yes | Go stdlib `crypto/mlkem` |
 | ML-KEM-1024 | FIPS 203 | Yes | -- | -- | Yes | Yes | Go stdlib `crypto/mlkem` |
 
@@ -339,7 +339,7 @@ go test ./pkg/pkcs11/module/...
 
 PQC operations use pure Go libraries with no CGO requirements:
 
-- **ML-DSA**: Cloudflare `circl` (`github.com/cloudflare/circl/sign/mldsa`)
+- **ML-DSA**: Go standard library `crypto/mldsa`
 - **ML-KEM**: Go standard library `crypto/mlkem`
 
 ## References
