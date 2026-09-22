@@ -166,6 +166,15 @@ var (
 
 	// ErrAWSCredentialsWriteFailed is returned when writing AWS credentials fails.
 	ErrAWSCredentialsWriteFailed = errors.New("oidc: failed to write AWS credentials")
+
+	// ErrIncompleteManualEndpoints is returned when SkipDiscovery is set (or
+	// implied by supplying any manual endpoint) but not every required
+	// manual endpoint is configured.
+	ErrIncompleteManualEndpoints = errors.New("oidc: incomplete manual endpoint configuration")
+
+	// ErrInvalidTokenEncoding is returned when a ProviderConfig's
+	// TokenEncoding is set to a value other than "form" or "json".
+	ErrInvalidTokenEncoding = errors.New("oidc: invalid token encoding")
 )
 
 // DetailError appends detail text directly after a wrapped error while

@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 )
 
 func TestOIDCCmd_Help(t *testing.T) {
@@ -721,7 +723,7 @@ func TestExchangeCodeForTokens_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tokens, err := exchangeCodeForTokens(server.URL, "test-client", "", "auth-code", "http://localhost:8085/callback", "code-verifier")
+	tokens, err := exchangeCodeForTokens(server.URL, "test-client", "", "auth-code", "http://localhost:8085/callback", "code-verifier", oidc.TokenEncodingForm)
 	if err != nil {
 		t.Fatalf("exchangeCodeForTokens failed: %v", err)
 	}
@@ -743,9 +745,58 @@ func TestExchangeCodeForTokens_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := exchangeCodeForTokens(server.URL, "test-client", "", "auth-code", "http://localhost:8085/callback", "code-verifier")
+	_, err := exchangeCodeForTokens(server.URL, "test-client", "", "auth-code", "http://localhost:8085/callback", "code-verifier", oidc.TokenEncodingForm)
 	if err == nil {
 		t.Error("exchangeCodeForTokens should fail with error response")
+	}
+}
+
+func TestExchangeCodeForTokens_JSONEncoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			http.Error(w, "want application/json content type, got "+got, http.StatusBadRequest)
+			return
+		}
+
+		var decoded map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&decoded); err != nil {
+			http.Error(w, "bad json body", http.StatusBadRequest)
+			return
+		}
+		if decoded["grant_type"] != "authorization_code" {
+			http.Error(w, "invalid grant_type", http.StatusBadRequest)
+			return
+		}
+		if decoded["code"] != "auth-code" {
+			http.Error(w, "invalid code", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
+			AccessToken: "access-token-123",
+			TokenType:   "Bearer",
+			ExpiresIn:   3600,
+		})
+	}))
+	defer server.Close()
+
+	tokens, err := exchangeCodeForTokens(server.URL, "test-client", "", "auth-code", "http://localhost:8085/callback", "code-verifier", oidc.TokenEncodingJSON)
+	if err != nil {
+		t.Fatalf("exchangeCodeForTokens with json encoding failed: %v", err)
+	}
+	if tokens.AccessToken != "access-token-123" {
+		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "access-token-123")
+	}
+}
+
+func TestExchangeCodeForTokens_UnknownEncodingRefused(t *testing.T) {
+	_, err := exchangeCodeForTokens("http://unused.invalid", "test-client", "", "auth-code", "http://localhost:8085/callback", "code-verifier", oidc.TokenEncoding("xml"))
+	if err == nil {
+		t.Fatal("exchangeCodeForTokens should refuse an unknown token encoding")
+	}
+	if !strings.Contains(err.Error(), "invalid token encoding") {
+		t.Errorf("error = %q, want it to mention the invalid encoding", err.Error())
 	}
 }
 
@@ -773,7 +824,7 @@ func TestExchangeCodeForTokens_WithClientSecret(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tokens, err := exchangeCodeForTokens(server.URL, "test-client", "test-secret", "auth-code", "http://localhost:8085/callback", "code-verifier")
+	tokens, err := exchangeCodeForTokens(server.URL, "test-client", "test-secret", "auth-code", "http://localhost:8085/callback", "code-verifier", oidc.TokenEncodingForm)
 	if err != nil {
 		t.Fatalf("exchangeCodeForTokens failed: %v", err)
 	}
@@ -812,7 +863,7 @@ func TestRefreshTokens_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tokens, err := refreshTokens(server.URL, "test-client", "old-refresh-token")
+	tokens, err := refreshTokens(server.URL, "test-client", "old-refresh-token", oidc.TokenEncodingForm)
 	if err != nil {
 		t.Fatalf("refreshTokens failed: %v", err)
 	}
@@ -831,9 +882,58 @@ func TestRefreshTokens_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := refreshTokens(server.URL, "test-client", "expired-refresh-token")
+	_, err := refreshTokens(server.URL, "test-client", "expired-refresh-token", oidc.TokenEncodingForm)
 	if err == nil {
 		t.Error("refreshTokens should fail with error response")
+	}
+}
+
+func TestRefreshTokens_JSONEncoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			http.Error(w, "want application/json content type, got "+got, http.StatusBadRequest)
+			return
+		}
+
+		var decoded map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&decoded); err != nil {
+			http.Error(w, "bad json body", http.StatusBadRequest)
+			return
+		}
+		if decoded["grant_type"] != "refresh_token" {
+			http.Error(w, "invalid grant_type", http.StatusBadRequest)
+			return
+		}
+		if decoded["refresh_token"] != "old-refresh-token" {
+			http.Error(w, "invalid refresh_token", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
+			AccessToken: "new-access-token",
+			TokenType:   "Bearer",
+			ExpiresIn:   3600,
+		})
+	}))
+	defer server.Close()
+
+	tokens, err := refreshTokens(server.URL, "test-client", "old-refresh-token", oidc.TokenEncodingJSON)
+	if err != nil {
+		t.Fatalf("refreshTokens with json encoding failed: %v", err)
+	}
+	if tokens.AccessToken != "new-access-token" {
+		t.Errorf("AccessToken = %q, want %q", tokens.AccessToken, "new-access-token")
+	}
+}
+
+func TestRefreshTokens_UnknownEncodingRefused(t *testing.T) {
+	_, err := refreshTokens("http://unused.invalid", "test-client", "old-refresh-token", oidc.TokenEncoding("xml"))
+	if err == nil {
+		t.Fatal("refreshTokens should refuse an unknown token encoding")
+	}
+	if !strings.Contains(err.Error(), "invalid token encoding") {
+		t.Errorf("error = %q, want it to mention the invalid encoding", err.Error())
 	}
 }
 

@@ -214,10 +214,14 @@ xkey supports two types of OIDC providers:
 
 ### Standard OIDC (`--type oidc`)
 
-Any OpenID Connect-compliant identity provider with discovery support.
+Any OpenID Connect-compliant identity provider, with or without a
+`.well-known/openid-configuration` discovery document (see
+[Manual Endpoints](#manual-endpoints-skipping-discovery)).
 
 **Required fields:**
-- `--issuer` - Provider issuer URL (must have `/.well-known/openid-configuration`)
+- `--issuer` - Provider issuer URL. Used for discovery unless manual
+  endpoints are supplied, and always checked against the ID token's `iss`
+  claim.
 - `--client-id` - OAuth2 client ID
 
 **Optional fields:**
@@ -226,6 +230,66 @@ Any OpenID Connect-compliant identity provider with discovery support.
 - `--callback-host` - Host the local callback listener binds (default: `oidc.callback_host`, `localhost`: both loopback families)
 - `--callback-port` - Port of the default redirect URL (default: `oidc.callback_port`, `8085`)
 - `--scopes` - Scopes to request (default: `openid,profile,email`)
+- `--authorization-endpoint`, `--token-endpoint`, `--jwks-uri`,
+  `--userinfo-endpoint` - Manual endpoints; see
+  [Manual Endpoints](#manual-endpoints-skipping-discovery)
+- `--token-encoding` - Token request body encoding, `form` (default) or
+  `json`; see [Token Encoding](#token-encoding)
+
+### Manual Endpoints (skipping discovery)
+
+Some providers publish no `.well-known/openid-configuration` document — for
+example a CLI-only OAuth2 client that only ever hands out an authorization
+and a token endpoint out of band. Supply `--authorization-endpoint`,
+`--token-endpoint`, and `--jwks-uri` together (`--userinfo-endpoint` too, if
+the provider has one) and `xkey oidc login` / `xkey oidc providers add`
+never dial `.well-known` at all — the supplied endpoints are used directly.
+This mirrors `pkg/oidc.ProviderConfig.SkipDiscovery` in the Go SDK, which the
+xkey GUI and CLI both build on.
+
+```bash
+xkey oidc providers add --name no-discovery \
+  --issuer https://auth.example.com \
+  --client-id YOUR_CLIENT_ID \
+  --authorization-endpoint https://auth.example.com/authorize \
+  --token-endpoint https://auth.example.com/token \
+  --jwks-uri https://auth.example.com/jwks
+
+xkey oidc login --provider no-discovery
+```
+
+Supplying only some of the three required endpoints is refused before any
+network request is made, naming exactly which flags are still missing:
+
+```
+$ xkey oidc providers add --name partial --issuer https://i --client-id c \
+    --authorization-endpoint https://i/authorize
+Error: oidc: incomplete manual endpoint configuration: --token-endpoint, --jwks-uri
+```
+
+A provider's manual endpoints are saved with it, so `xkey oidc refresh
+--provider no-discovery` also skips discovery; refreshing without
+`--provider` still falls back to the issuer's `.well-known` document.
+
+### Token Encoding
+
+Token requests (authorization-code exchange and refresh) are form-encoded
+(`application/x-www-form-urlencoded`, RFC 6749) by default. A provider whose
+token endpoint expects `application/json` instead sets
+`--token-encoding json` on `xkey oidc providers add` (or `xkey oidc login`
+for a one-off, unsaved provider):
+
+```bash
+xkey oidc providers add --name json-token-endpoint \
+  --issuer https://auth.example.com \
+  --client-id YOUR_CLIENT_ID \
+  --token-encoding json
+```
+
+An unrecognized value (anything other than `form` or `json`) is refused
+immediately. The encoding decision is made in one place,
+`pkg/oidc.EncodeTokenRequestBody`, used by both the CLI and the `pkg/oidc`
+library the GUI is built on, so the two never diverge.
 
 ### Callback listener
 
@@ -419,8 +483,21 @@ xkey oidc login [flags]
 | `--auto-refresh` | `0` | Auto-refresh interval in seconds |
 | `--background` | `false` | Run auto-refresh in background |
 | `--log-file` | (auto-generated) | Log file for background refresh |
+| `--authorization-endpoint` | | Manual authorization endpoint; skips discovery (requires `--token-endpoint` and `--jwks-uri`) |
+| `--token-endpoint` | | Manual token endpoint; skips discovery (requires `--authorization-endpoint` and `--jwks-uri`) |
+| `--jwks-uri` | | Manual JWKS URI; skips discovery (requires `--authorization-endpoint` and `--token-endpoint`) |
+| `--userinfo-endpoint` | | Manual userinfo endpoint (optional, used only with manual endpoints) |
+| `--token-encoding` | `form` | Token request body encoding: `form` or `json` |
 
 **When `--provider` specifies an AWS provider, all AWS-specific settings are loaded and the AWS login flow is used automatically.**
+
+**Providers with no `.well-known/openid-configuration` document:** supply
+`--authorization-endpoint`, `--token-endpoint`, and `--jwks-uri` together (add
+`--userinfo-endpoint` if the provider has one) and discovery is skipped
+entirely — no request to `.well-known` is made. Supplying only some of the
+three required endpoints is refused with an error naming exactly which flags
+are still missing. See [Manual Endpoints](#manual-endpoints-skipping-discovery)
+below.
 
 ### oidc aws
 
@@ -446,6 +523,17 @@ Refresh the access token using the stored refresh token.
 ```
 xkey oidc refresh [flags]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--token-store` | `~/.config/xkey/tokens.json` | Path to token store |
+| `--provider` | | Use a saved provider's manual endpoints and token encoding; required to refresh a provider added with manual endpoints |
+
+Without `--provider`, refresh re-discovers the issuer's endpoints from its
+`.well-known` document and posts a form-encoded request, exactly as before.
+With `--provider`, it uses that provider's saved manual endpoints (skipping
+discovery, same as login) and token encoding, so a provider configured
+without discovery keeps working after the initial login.
 
 ### oidc logout
 
@@ -535,6 +623,11 @@ xkey oidc providers add [flags]
 | `--callback-host` | `oidc.callback_host` (`localhost`) | Host the local callback listener binds; `localhost` is both loopback families |
 | `--callback-port` | `oidc.callback_port` (`8085`) | Port of the default redirect URL |
 | `--scopes` | | Scopes to request |
+| `--authorization-endpoint` | | Manual authorization endpoint; skips discovery (requires `--token-endpoint` and `--jwks-uri`) |
+| `--token-endpoint` | | Manual token endpoint; skips discovery (requires `--authorization-endpoint` and `--jwks-uri`) |
+| `--jwks-uri` | | Manual JWKS URI; skips discovery (requires `--authorization-endpoint` and `--token-endpoint`) |
+| `--userinfo-endpoint` | | Manual userinfo endpoint (optional, used only with manual endpoints) |
+| `--token-encoding` | `form` | Token request body encoding: `form` or `json` |
 
 **AWS flags (`--type aws`):**
 
@@ -730,6 +823,16 @@ Default: `~/.config/xkey/oidc-providers.json`
       "client_id": "YOUR_CLIENT_ID"
     },
     {
+      "name": "no-discovery",
+      "type": "oidc",
+      "issuer": "https://auth.example.com",
+      "client_id": "YOUR_CLIENT_ID",
+      "authorization_endpoint": "https://auth.example.com/authorize",
+      "token_endpoint": "https://auth.example.com/token",
+      "jwks_uri": "https://auth.example.com/jwks",
+      "token_encoding": "json"
+    },
+    {
       "name": "aws-prod",
       "type": "aws",
       "aws_region": "us-east-1",
@@ -741,6 +844,12 @@ Default: `~/.config/xkey/oidc-providers.json`
   ]
 }
 ```
+
+`authorization_endpoint`, `token_endpoint`, `jwks_uri`, and
+`userinfo_endpoint` are omitted (or empty) for a normal discovery-based
+provider; setting `authorization_endpoint`, `token_endpoint`, and `jwks_uri`
+together skips discovery for that provider from then on, on both `login` and
+`refresh --provider <name>`. `token_encoding` is `form` when omitted.
 
 ### AWS Session Store
 

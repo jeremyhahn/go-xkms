@@ -74,6 +74,7 @@ var (
 	ErrOIDCConfigSaveFailed      = errors.New("oidc: failed to save config")
 	ErrOIDCInvalidRefreshToken   = errors.New("oidc: invalid or missing refresh token")
 	ErrOIDCExecFailed            = errors.New("oidc: exec command failed")
+	ErrOIDCIncompleteEndpoints   = errors.New("oidc: incomplete manual endpoint configuration")
 )
 
 // OIDCExecPayload is the JSON structure passed to exec scripts.
@@ -157,6 +158,18 @@ type OIDCProvider struct {
 	AutoRefresh  int              `json:"auto_refresh,omitempty"`
 	Background   bool             `json:"background,omitempty"`
 	LogFile      string           `json:"log_file,omitempty"`
+
+	// Manual endpoints. Set together (authorization, token, and jwks are
+	// all required; userinfo is optional) to skip discovery entirely, for
+	// providers that publish no .well-known/openid-configuration document.
+	AuthorizationEndpoint string `json:"authorization_endpoint,omitempty"`
+	TokenEndpoint         string `json:"token_endpoint,omitempty"`
+	JwksURI               string `json:"jwks_uri,omitempty"`
+	UserinfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
+
+	// TokenEncoding selects how the token endpoint request body is
+	// encoded: "form" (default, RFC 6749) or "json". Empty means form.
+	TokenEncoding oidc.TokenEncoding `json:"token_encoding,omitempty"`
 
 	// AWS-specific fields
 	AWSRegion          string `json:"aws_region,omitempty"`
@@ -453,6 +466,9 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	autoRefresh, _ := cmd.Flags().GetInt("auto-refresh")
 	background, _ := cmd.Flags().GetBool("background")
 	logFile, _ := cmd.Flags().GetString("log-file")
+	manual, _ := getManualOIDCEndpointFlags(cmd)
+	tokenEncodingStr, _ := cmd.Flags().GetString("token-encoding")
+	tokenEncoding := oidc.TokenEncoding(tokenEncodingStr)
 
 	// If --provider is specified, load configuration from saved provider
 	if providerName != "" {
@@ -506,6 +522,21 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		if logFile == "" && provider.LogFile != "" {
 			logFile = provider.LogFile
 		}
+		if manual.empty() {
+			manual = manualOIDCEndpoints{
+				AuthorizationEndpoint: provider.AuthorizationEndpoint,
+				TokenEndpoint:         provider.TokenEndpoint,
+				JwksURI:               provider.JwksURI,
+				UserinfoEndpoint:      provider.UserinfoEndpoint,
+			}
+		}
+		if tokenEncoding == "" {
+			tokenEncoding = provider.TokenEncoding
+		}
+	}
+
+	if err := tokenEncoding.Validate(); err != nil {
+		return err
 	}
 
 	// The callback listener is configuration: oidc.callback_host and
@@ -530,9 +561,13 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		scopes[i] = strings.TrimSpace(scopes[i])
 	}
 
-	// Discover provider configuration
-	discovery, err := discoverOIDCProvider(issuer)
+	// Resolve provider endpoints: manual endpoints skip discovery entirely,
+	// otherwise fetch the issuer's .well-known discovery document.
+	discovery, err := resolveOIDCEndpoints(issuer, manual)
 	if err != nil {
+		if errors.Is(err, ErrOIDCIncompleteEndpoints) {
+			return err
+		}
 		return &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: err}
 	}
 
@@ -625,7 +660,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	// Exchange code for tokens
-	tokens, err := exchangeCodeForTokens(discovery.TokenEndpoint, clientID, clientSecret, code, redirectURL, codeVerifier)
+	tokens, err := exchangeCodeForTokens(discovery.TokenEndpoint, clientID, clientSecret, code, redirectURL, codeVerifier, tokenEncoding)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenExchangeFailed, Cause: err}
 	}
@@ -709,14 +744,14 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 			if providerName == "" {
 				providerName = "default"
 			}
-			return startBackgroundRefresh(out, providerName, discovery.TokenEndpoint, clientID, tokenStore, execCmd, logFile, autoRefresh)
+			return startBackgroundRefresh(out, providerName, discovery.TokenEndpoint, clientID, tokenStore, execCmd, logFile, autoRefresh, tokenEncoding)
 		}
 
 		_, _ = fmt.Fprintf(out, "\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
 		_, _ = fmt.Fprintln(out, "Press Ctrl+C to stop...")
 		_, _ = fmt.Fprintln(out)
 
-		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil)
+		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil, tokenEncoding)
 	}
 
 	return nil
@@ -794,6 +829,7 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	tokenStore, _ := cmd.Flags().GetString("token-store")
+	providerName, _ := cmd.Flags().GetString("provider")
 
 	token, err := loadToken(tokenStore)
 	if err != nil {
@@ -808,14 +844,41 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 		return ErrOIDCInvalidRefreshToken
 	}
 
-	// Discover provider configuration
-	discovery, err := discoverOIDCProvider(token.Issuer)
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: err}
+	// A named provider carries its manual endpoints (if any) and its token
+	// encoding; without one, refresh falls back to discovering the issuer's
+	// endpoints and posting the request as a form, exactly as before.
+	var tokenEndpoint string
+	tokenEncoding := oidc.TokenEncodingForm
+	if providerName != "" {
+		provider, loadErr := loadProvider(tokenStore, providerName)
+		if loadErr != nil {
+			return &DetailError{Err: ErrOIDCProviderNotFound, Detail: fmt.Sprintf(": %s", providerName)}
+		}
+		tokenEncoding = provider.TokenEncoding
+		manual := manualOIDCEndpoints{
+			AuthorizationEndpoint: provider.AuthorizationEndpoint,
+			TokenEndpoint:         provider.TokenEndpoint,
+			JwksURI:               provider.JwksURI,
+			UserinfoEndpoint:      provider.UserinfoEndpoint,
+		}
+		discovery, resolveErr := resolveOIDCEndpoints(token.Issuer, manual)
+		if resolveErr != nil {
+			if errors.Is(resolveErr, ErrOIDCIncompleteEndpoints) {
+				return resolveErr
+			}
+			return &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: resolveErr}
+		}
+		tokenEndpoint = discovery.TokenEndpoint
+	} else {
+		discovery, discoverErr := discoverOIDCProvider(token.Issuer)
+		if discoverErr != nil {
+			return &SentinelCauseError{Sentinel: ErrOIDCDiscoveryFailed, Cause: discoverErr}
+		}
+		tokenEndpoint = discovery.TokenEndpoint
 	}
 
 	// Refresh tokens
-	newTokens, err := refreshTokens(discovery.TokenEndpoint, token.ClientID, token.RefreshToken)
+	newTokens, err := refreshTokens(tokenEndpoint, token.ClientID, token.RefreshToken, tokenEncoding)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenRefreshFailed, Cause: err}
 	}
@@ -978,6 +1041,16 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 	awsCrossDevice, _ := cmd.Flags().GetBool("cross-device")
 	awsSessionStore, _ := cmd.Flags().GetString("session-store")
 
+	manual, err := getManualOIDCEndpointFlags(cmd)
+	if err != nil {
+		return err
+	}
+	tokenEncodingStr, _ := cmd.Flags().GetString("token-encoding")
+	tokenEncoding := oidc.TokenEncoding(tokenEncodingStr)
+	if err := tokenEncoding.Validate(); err != nil {
+		return err
+	}
+
 	if name == "" {
 		return ErrOIDCMissingProviderName
 	}
@@ -1004,6 +1077,23 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 		}
 		if clientID == "" {
 			return ErrOIDCMissingClientID
+		}
+		// A partial set of manual endpoints is refused up front so the
+		// mistake surfaces at `providers add` time, not at the next login.
+		if !manual.empty() {
+			var missing []string
+			if manual.AuthorizationEndpoint == "" {
+				missing = append(missing, "--authorization-endpoint")
+			}
+			if manual.TokenEndpoint == "" {
+				missing = append(missing, "--token-endpoint")
+			}
+			if manual.JwksURI == "" {
+				missing = append(missing, "--jwks-uri")
+			}
+			if len(missing) > 0 {
+				return &DetailError{Err: ErrOIDCIncompleteEndpoints, Detail: fmt.Sprintf(": %s", strings.Join(missing, ", "))}
+			}
 		}
 	}
 
@@ -1060,6 +1150,12 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 		AutoRefresh:  autoRefresh,
 		Background:   background,
 		LogFile:      logFile,
+		// Manual endpoints (standard OIDC only; empty unless supplied)
+		AuthorizationEndpoint: manual.AuthorizationEndpoint,
+		TokenEndpoint:         manual.TokenEndpoint,
+		JwksURI:               manual.JwksURI,
+		UserinfoEndpoint:      manual.UserinfoEndpoint,
+		TokenEncoding:         tokenEncoding,
 		// AWS fields
 		AWSRegion:          awsRegion,
 		AWSProfile:         awsProfile,
@@ -1164,6 +1260,82 @@ func discoverOIDCProvider(issuer string) (*OIDCDiscoveryDocument, error) {
 	return &doc, nil
 }
 
+// manualOIDCEndpoints is the manual-endpoint half of resolveOIDCEndpoints'
+// input: the four endpoint flags a caller may supply to bypass discovery.
+type manualOIDCEndpoints struct {
+	AuthorizationEndpoint string
+	TokenEndpoint         string
+	JwksURI               string
+	UserinfoEndpoint      string
+}
+
+// empty returns true if none of the manual endpoints are set.
+func (m manualOIDCEndpoints) empty() bool {
+	return m.AuthorizationEndpoint == "" && m.TokenEndpoint == "" &&
+		m.JwksURI == "" && m.UserinfoEndpoint == ""
+}
+
+// resolveOIDCEndpoints returns the provider's endpoints. When any manual
+// endpoint is supplied it skips discovery entirely and requires the
+// authorization, token, and jwks endpoints (mirroring pkg/oidc's
+// ProviderConfig.SkipDiscovery contract); a caller who supplies only some of
+// them is refused with a typed error naming what's missing. Otherwise it
+// falls back to fetching the issuer's .well-known discovery document.
+func resolveOIDCEndpoints(issuer string, manual manualOIDCEndpoints) (*OIDCDiscoveryDocument, error) {
+	if manual.empty() {
+		return discoverOIDCProvider(issuer)
+	}
+
+	var missing []string
+	if manual.AuthorizationEndpoint == "" {
+		missing = append(missing, "--authorization-endpoint")
+	}
+	if manual.TokenEndpoint == "" {
+		missing = append(missing, "--token-endpoint")
+	}
+	if manual.JwksURI == "" {
+		missing = append(missing, "--jwks-uri")
+	}
+	if len(missing) > 0 {
+		return nil, &DetailError{Err: ErrOIDCIncompleteEndpoints, Detail: fmt.Sprintf(": %s", strings.Join(missing, ", "))}
+	}
+
+	return &OIDCDiscoveryDocument{
+		Issuer:                issuer,
+		AuthorizationEndpoint: manual.AuthorizationEndpoint,
+		TokenEndpoint:         manual.TokenEndpoint,
+		JwksURI:               manual.JwksURI,
+		UserinfoEndpoint:      manual.UserinfoEndpoint,
+	}, nil
+}
+
+// getManualOIDCEndpointFlags reads the --authorization-endpoint,
+// --token-endpoint, --jwks-uri, and --userinfo-endpoint flags from cmd.
+func getManualOIDCEndpointFlags(cmd *cobra.Command) (manualOIDCEndpoints, error) {
+	authEndpoint, err := cmd.Flags().GetString("authorization-endpoint")
+	if err != nil {
+		return manualOIDCEndpoints{}, err
+	}
+	tokenEndpoint, err := cmd.Flags().GetString("token-endpoint")
+	if err != nil {
+		return manualOIDCEndpoints{}, err
+	}
+	jwksURI, err := cmd.Flags().GetString("jwks-uri")
+	if err != nil {
+		return manualOIDCEndpoints{}, err
+	}
+	userinfoEndpoint, err := cmd.Flags().GetString("userinfo-endpoint")
+	if err != nil {
+		return manualOIDCEndpoints{}, err
+	}
+	return manualOIDCEndpoints{
+		AuthorizationEndpoint: authEndpoint,
+		TokenEndpoint:         tokenEndpoint,
+		JwksURI:               jwksURI,
+		UserinfoEndpoint:      userinfoEndpoint,
+	}, nil
+}
+
 // generateCodeVerifier generates a PKCE code verifier.
 func generateCodeVerifier() (string, error) {
 	b := make([]byte, oidcCodeVerifierLength)
@@ -1232,7 +1404,11 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 }
 
 // exchangeCodeForTokens exchanges an authorization code for tokens.
-func exchangeCodeForTokens(endpoint, clientID, clientSecret, code, redirectURL, codeVerifier string) (*OIDCTokenResponse, error) {
+// encoding selects the token request body format ("form" or "json",
+// defaulting to form); the actual encoding decision is made by
+// pkg/oidc.EncodeTokenRequestBody so the CLI and the pkg/oidc.Client used by
+// the GUI never diverge on how a provider's token endpoint is addressed.
+func exchangeCodeForTokens(endpoint, clientID, clientSecret, code, redirectURL, codeVerifier string, encoding oidc.TokenEncoding) (*OIDCTokenResponse, error) {
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {clientID},
@@ -1245,49 +1421,37 @@ func exchangeCodeForTokens(endpoint, clientID, clientSecret, code, redirectURL, 
 		data.Set("client_secret", clientSecret)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultOIDCProviderTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &MessageError{Msg: fmt.Sprintf("token endpoint returned status %d", resp.StatusCode)}
-	}
-
-	var tokens OIDCTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
-		return nil, err
-	}
-
-	return &tokens, nil
+	return doOIDCTokenRequest(endpoint, data, encoding)
 }
 
 // refreshTokens refreshes tokens using a refresh token.
-func refreshTokens(endpoint, clientID, refreshToken string) (*OIDCTokenResponse, error) {
+// encoding selects the token request body format; see exchangeCodeForTokens.
+func refreshTokens(endpoint, clientID, refreshToken string, encoding oidc.TokenEncoding) (*OIDCTokenResponse, error) {
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {clientID},
 		"refresh_token": {refreshToken},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultOIDCProviderTimeout)
-	defer cancel()
+	return doOIDCTokenRequest(endpoint, data, encoding)
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(data.Encode()))
+// doOIDCTokenRequest POSTs a token request body to endpoint, encoded per
+// encoding via pkg/oidc.EncodeTokenRequestBody, and decodes the response.
+func doOIDCTokenRequest(endpoint string, data url.Values, encoding oidc.TokenEncoding) (*OIDCTokenResponse, error) {
+	body, contentType, err := oidc.EncodeTokenRequestBody(encoding, data)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultOIDCProviderTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -1476,8 +1640,9 @@ func formatDuration(d time.Duration) string {
 }
 
 // runAutoRefresh runs a loop that periodically refreshes the token.
-// If logWriter is nil, output goes to stdout.
-func runAutoRefresh(tokenEndpoint, clientID, tokenStorePath, execCmd, providerName string, interval time.Duration, logWriter io.Writer) error {
+// If logWriter is nil, output goes to stdout. encoding selects the token
+// request body format used for every refresh in the loop.
+func runAutoRefresh(tokenEndpoint, clientID, tokenStorePath, execCmd, providerName string, interval time.Duration, logWriter io.Writer, encoding oidc.TokenEncoding) error {
 	if logWriter == nil {
 		logWriter = os.Stdout
 	}
@@ -1535,7 +1700,7 @@ func runAutoRefresh(tokenEndpoint, clientID, tokenStorePath, execCmd, providerNa
 			}
 
 			// Refresh the token
-			newTokens, err := refreshTokens(tokenEndpoint, clientID, token.RefreshToken)
+			newTokens, err := refreshTokens(tokenEndpoint, clientID, token.RefreshToken, encoding)
 			if err != nil {
 				log("  Error refreshing: %v\n", err)
 				updateStatus("error", fmt.Sprintf("refresh failed: %v", err))
@@ -1695,7 +1860,7 @@ func loadRefreshStatus(tokenStore, providerName string) (*OIDCRefreshStatus, err
 }
 
 // startBackgroundRefresh starts a background refresh process.
-func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID, tokenStorePath, execCmd, logFile string, autoRefresh int) error {
+func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID, tokenStorePath, execCmd, logFile string, autoRefresh int, encoding oidc.TokenEncoding) error {
 	// Ensure log directory exists
 	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
@@ -1740,6 +1905,9 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 	if execCmd != "" {
 		args = append(args, "--exec", execCmd)
 	}
+	if encoding != "" {
+		args = append(args, "--token-encoding", string(encoding))
+	}
 
 	cmd := exec.Command(executable, args...)
 	cmd.Stdout = logFileHandle
@@ -1783,6 +1951,8 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) error {
 	autoRefresh, _ := cmd.Flags().GetInt("auto-refresh")
 	logFile, _ := cmd.Flags().GetString("log-file")
 	providerName, _ := cmd.Flags().GetString("provider-name")
+	tokenEncodingStr, _ := cmd.Flags().GetString("token-encoding")
+	tokenEncoding := oidc.TokenEncoding(tokenEncodingStr)
 
 	// Open log file for writing
 	var logWriter io.Writer = os.Stdout
@@ -1803,7 +1973,7 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintf(logWriter, "\n")
 
-	return runAutoRefresh(tokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter)
+	return runAutoRefresh(tokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter, tokenEncoding)
 }
 
 // isProcessRunning checks if a process with the given PID file is running.
@@ -2111,13 +2281,18 @@ func init() {
 	oidcLoginCmd.Flags().Int("auto-refresh", 0, "Auto-refresh interval in seconds (0 to disable)")
 	oidcLoginCmd.Flags().Bool("background", false, "Run auto-refresh in background (requires --auto-refresh)")
 	oidcLoginCmd.Flags().String("log-file", "", "Log file for background refresh (default: auto-generated)")
+	oidcLoginCmd.Flags().String("authorization-endpoint", "", "Manual authorization endpoint (skips discovery; requires --token-endpoint and --jwks-uri)")
+	oidcLoginCmd.Flags().String("token-endpoint", "", "Manual token endpoint (skips discovery; requires --authorization-endpoint and --jwks-uri)")
+	oidcLoginCmd.Flags().String("jwks-uri", "", "Manual JWKS URI (skips discovery; requires --authorization-endpoint and --token-endpoint)")
+	oidcLoginCmd.Flags().String("userinfo-endpoint", "", "Manual userinfo endpoint (optional; only used with manual endpoints)")
+	oidcLoginCmd.Flags().String("token-encoding", "", "Token request body encoding: form (default) or json")
 
-	// Hidden flags for background worker mode (used internally)
+	// Hidden flags for background worker mode (used internally). Note
+	// --token-endpoint above is dual-purpose: a user-supplied manual
+	// endpoint and the resolved endpoint carried across the re-exec.
 	oidcLoginCmd.Flags().Bool("background-worker", false, "Internal: run as background worker")
-	oidcLoginCmd.Flags().String("token-endpoint", "", "Internal: token endpoint URL")
 	oidcLoginCmd.Flags().String("provider-name", "", "Internal: provider name for PID file")
 	_ = oidcLoginCmd.Flags().MarkHidden("background-worker")
-	_ = oidcLoginCmd.Flags().MarkHidden("token-endpoint")
 	_ = oidcLoginCmd.Flags().MarkHidden("provider-name")
 
 	// oidc token flags
@@ -2126,6 +2301,7 @@ func init() {
 
 	// oidc refresh flags
 	oidcRefreshCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
+	oidcRefreshCmd.Flags().String("provider", "", "Use saved provider configuration by name (required for manual-endpoint providers)")
 
 	// oidc logout flags
 	oidcLogoutCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
@@ -2152,6 +2328,11 @@ func init() {
 	oidcProvidersAddCmd.Flags().String("redirect-url", "", "Callback URL (default: http://localhost:<oidc.callback_port>/callback)")
 	registerOIDCCallbackFlags(oidcProvidersAddCmd.Flags())
 	oidcProvidersAddCmd.Flags().String("scopes", "", "Scopes to request (comma-separated)")
+	oidcProvidersAddCmd.Flags().String("authorization-endpoint", "", "Manual authorization endpoint (skips discovery; requires --token-endpoint and --jwks-uri)")
+	oidcProvidersAddCmd.Flags().String("token-endpoint", "", "Manual token endpoint (skips discovery; requires --authorization-endpoint and --jwks-uri)")
+	oidcProvidersAddCmd.Flags().String("jwks-uri", "", "Manual JWKS URI (skips discovery; requires --authorization-endpoint and --token-endpoint)")
+	oidcProvidersAddCmd.Flags().String("userinfo-endpoint", "", "Manual userinfo endpoint (optional; only used with manual endpoints)")
+	oidcProvidersAddCmd.Flags().String("token-encoding", "", "Token request body encoding: form (default) or json")
 
 	// AWS-specific flags
 	oidcProvidersAddCmd.Flags().StringP("region", "r", "", "AWS region (required for type=aws)")

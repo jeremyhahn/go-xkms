@@ -303,6 +303,35 @@ func TestClient_DPoPRefresh(t *testing.T) {
 	assert.Equal(t, "refreshed-refresh-token", tokens.RefreshToken)
 }
 
+func TestClient_DPoPRefresh_JSONEncoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NotEmpty(t, r.Header.Get("DPoP"), "DPoP header must be present for refresh")
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		var decoded map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&decoded))
+		assert.Equal(t, "refresh_token", decoded["grant_type"])
+		assert.Equal(t, "original-refresh-token", decoded["refresh_token"])
+
+		writeTokenResponse(t, w, "refreshed-access-token", "DPoP", "refreshed-refresh-token")
+	}))
+	defer server.Close()
+
+	provider := newTestProvider(server.URL)
+	config := newTestConfig(server.URL)
+	config.TokenEncoding = TokenEncodingJSON
+	client := NewClient(provider, config)
+
+	dpopKey, err := GenerateDPoPKey()
+	require.NoError(t, err)
+	client.SetDPoPKey(dpopKey)
+
+	ctx := context.Background()
+	tokens, err := client.Refresh(ctx, "original-refresh-token")
+	require.NoError(t, err)
+	assert.Equal(t, "refreshed-access-token", tokens.AccessToken)
+}
+
 func TestClient_NoDPoPBackwardCompat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify that NO DPoP header is sent when the client has no DPoP key.

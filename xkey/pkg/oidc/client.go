@@ -14,6 +14,7 @@
 package oidc
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rsa"
@@ -197,13 +198,18 @@ func (c *Client) doPlainTokenRequest(ctx context.Context, data url.Values) (*Tok
 		httpClient = http.DefaultClient
 	}
 
+	reqBody, contentType, err := EncodeTokenRequestBody(c.config.TokenEncoding, data)
+	if err != nil {
+		return nil, err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.provider.TokenEndpoint,
-		strings.NewReader(data.Encode()))
+		bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, ErrTokenExchangeFailed
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req)
@@ -240,6 +246,11 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 	nonce := c.dpopNonce
 	c.dpopMu.Unlock()
 
+	reqBody, contentType, err := EncodeTokenRequestBody(c.config.TokenEncoding, data)
+	if err != nil {
+		return nil, err
+	}
+
 	for attempt := 0; attempt < MaxDPoPNonceRetries; attempt++ {
 		proof, err := dpopKey.GenerateProof(&DPoPProofOptions{
 			HTTPMethod: http.MethodPost,
@@ -251,12 +262,12 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint,
-			strings.NewReader(data.Encode()))
+			bytes.NewReader(reqBody))
 		if err != nil {
 			return nil, ErrTokenExchangeFailed
 		}
 
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("DPoP", proof)
 

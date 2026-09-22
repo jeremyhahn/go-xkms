@@ -738,3 +738,113 @@ func TestProvider_IsInitialized(t *testing.T) {
 		assert.False(t, provider.IsInitialized())
 	})
 }
+
+func TestNewProvider_ManualEndpoints(t *testing.T) {
+	t.Run("skips discovery entirely when all required endpoints are set", func(t *testing.T) {
+		// A discovery document is never served: any GET here fails the test,
+		// proving NewProvider never dials .well-known/openid-configuration.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("unexpected discovery request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		config := &ProviderConfig{
+			Issuer:                "https://manual.example.com",
+			ClientID:              "client-123",
+			RedirectURL:           "http://localhost:8080/callback",
+			AuthorizationEndpoint: server.URL + "/authorize",
+			TokenEndpoint:         server.URL + "/token",
+			JwksURI:               server.URL + "/jwks",
+			UserinfoEndpoint:      server.URL + "/userinfo",
+		}
+
+		provider, err := NewProvider(context.Background(), config)
+		require.NoError(t, err)
+		assert.True(t, provider.IsInitialized())
+		assert.Equal(t, server.URL+"/authorize", provider.AuthorizationEndpoint)
+		assert.Equal(t, server.URL+"/token", provider.TokenEndpoint)
+		assert.Equal(t, server.URL+"/jwks", provider.JwksURI)
+		assert.Equal(t, server.URL+"/userinfo", provider.UserinfoEndpoint)
+	})
+
+	t.Run("skips discovery without a userinfo endpoint", func(t *testing.T) {
+		config := &ProviderConfig{
+			Issuer:                "https://manual.example.com",
+			ClientID:              "client-123",
+			RedirectURL:           "http://localhost:8080/callback",
+			AuthorizationEndpoint: "https://manual.example.com/authorize",
+			TokenEndpoint:         "https://manual.example.com/token",
+			JwksURI:               "https://manual.example.com/jwks",
+		}
+
+		provider, err := NewProvider(context.Background(), config)
+		require.NoError(t, err)
+		assert.True(t, provider.IsInitialized())
+		assert.Empty(t, provider.UserinfoEndpoint)
+	})
+
+	t.Run("refuses partial manual endpoints naming what is missing", func(t *testing.T) {
+		config := &ProviderConfig{
+			Issuer:                "https://manual.example.com",
+			ClientID:              "client-123",
+			RedirectURL:           "http://localhost:8080/callback",
+			AuthorizationEndpoint: "https://manual.example.com/authorize",
+		}
+
+		_, err := NewProvider(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrIncompleteManualEndpoints)
+		assert.ErrorContains(t, err, "TokenEndpoint")
+		assert.ErrorContains(t, err, "JwksURI")
+		assert.NotContains(t, err.Error(), "AuthorizationEndpoint")
+	})
+
+	t.Run("bare SkipDiscovery with no manual endpoints still yields an uninitialized provider", func(t *testing.T) {
+		config := &ProviderConfig{
+			Issuer:        "https://manual.example.com",
+			ClientID:      "client-123",
+			RedirectURL:   "http://localhost:8080/callback",
+			SkipDiscovery: true,
+		}
+
+		provider, err := NewProvider(context.Background(), config)
+		require.NoError(t, err)
+		assert.False(t, provider.IsInitialized())
+	})
+}
+
+func TestProviderConfig_TokenEncoding(t *testing.T) {
+	t.Run("empty encoding validates and defaults to form", func(t *testing.T) {
+		config := &ProviderConfig{
+			Issuer:      "https://auth.example.com",
+			ClientID:    "client-123",
+			RedirectURL: "http://localhost:8080/callback",
+		}
+		assert.NoError(t, config.Validate())
+		assert.Equal(t, TokenEncodingForm, config.EffectiveTokenEncoding())
+	})
+
+	t.Run("json encoding is valid", func(t *testing.T) {
+		config := &ProviderConfig{
+			Issuer:        "https://auth.example.com",
+			ClientID:      "client-123",
+			RedirectURL:   "http://localhost:8080/callback",
+			TokenEncoding: TokenEncodingJSON,
+		}
+		assert.NoError(t, config.Validate())
+		assert.Equal(t, TokenEncodingJSON, config.EffectiveTokenEncoding())
+	})
+
+	t.Run("unknown encoding is refused", func(t *testing.T) {
+		config := &ProviderConfig{
+			Issuer:        "https://auth.example.com",
+			ClientID:      "client-123",
+			RedirectURL:   "http://localhost:8080/callback",
+			TokenEncoding: TokenEncoding("xml"),
+		}
+		err := config.Validate()
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidTokenEncoding)
+	})
+}

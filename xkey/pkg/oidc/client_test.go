@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -491,6 +492,120 @@ func TestClient_Refresh(t *testing.T) {
 		tokens, err := clientWithSecret.Refresh(ctx, "valid-refresh-token")
 		require.NoError(t, err)
 		assert.NotNil(t, tokens)
+	})
+}
+
+func TestClient_TokenEncoding(t *testing.T) {
+	var gotContentType string
+	var gotBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(TokenResponse{
+			AccessToken: "access-token-123",
+			TokenType:   "Bearer",
+			ExpiresIn:   3600,
+		})
+	}))
+	defer server.Close()
+
+	provider := &Provider{
+		Issuer:                server.URL,
+		AuthorizationEndpoint: server.URL + "/authorize",
+		TokenEndpoint:         server.URL,
+		JwksURI:               server.URL + "/jwks",
+		jwksCache:             &JWKSCache{},
+		httpClient:            &http.Client{Timeout: 5 * time.Second},
+	}
+
+	t.Run("Exchange defaults to form encoding", func(t *testing.T) {
+		client := NewClient(provider, &ProviderConfig{
+			Issuer:      server.URL,
+			ClientID:    "client-123",
+			RedirectURL: "http://localhost:8080/callback",
+		})
+
+		_, err := client.Exchange(context.Background(), "code", &AuthCodeOptions{
+			State:        "state",
+			CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "application/x-www-form-urlencoded", gotContentType)
+
+		values, err := url.ParseQuery(string(gotBody))
+		require.NoError(t, err)
+		assert.Equal(t, "code", values.Get("code"))
+		assert.Equal(t, "authorization_code", values.Get("grant_type"))
+	})
+
+	t.Run("Exchange honors json encoding", func(t *testing.T) {
+		client := NewClient(provider, &ProviderConfig{
+			Issuer:        server.URL,
+			ClientID:      "client-123",
+			RedirectURL:   "http://localhost:8080/callback",
+			TokenEncoding: TokenEncodingJSON,
+		})
+
+		_, err := client.Exchange(context.Background(), "code", &AuthCodeOptions{
+			State:        "state",
+			CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "application/json", gotContentType)
+
+		var decoded map[string]string
+		require.NoError(t, json.Unmarshal(gotBody, &decoded))
+		assert.Equal(t, "code", decoded["code"])
+		assert.Equal(t, "authorization_code", decoded["grant_type"])
+	})
+
+	t.Run("Refresh honors json encoding", func(t *testing.T) {
+		client := NewClient(provider, &ProviderConfig{
+			Issuer:        server.URL,
+			ClientID:      "client-123",
+			RedirectURL:   "http://localhost:8080/callback",
+			TokenEncoding: TokenEncodingJSON,
+		})
+
+		_, err := client.Refresh(context.Background(), "refresh-token")
+		require.NoError(t, err)
+		assert.Equal(t, "application/json", gotContentType)
+
+		var decoded map[string]string
+		require.NoError(t, json.Unmarshal(gotBody, &decoded))
+		assert.Equal(t, "refresh-token", decoded["refresh_token"])
+		assert.Equal(t, "refresh_token", decoded["grant_type"])
+	})
+
+	t.Run("Refresh defaults to form encoding", func(t *testing.T) {
+		client := NewClient(provider, &ProviderConfig{
+			Issuer:      server.URL,
+			ClientID:    "client-123",
+			RedirectURL: "http://localhost:8080/callback",
+		})
+
+		_, err := client.Refresh(context.Background(), "refresh-token")
+		require.NoError(t, err)
+		assert.Equal(t, "application/x-www-form-urlencoded", gotContentType)
+
+		values, err := url.ParseQuery(string(gotBody))
+		require.NoError(t, err)
+		assert.Equal(t, "refresh-token", values.Get("refresh_token"))
+	})
+
+	t.Run("unknown encoding is refused before any request is sent", func(t *testing.T) {
+		client := NewClient(provider, &ProviderConfig{
+			Issuer:        server.URL,
+			ClientID:      "client-123",
+			RedirectURL:   "http://localhost:8080/callback",
+			TokenEncoding: TokenEncoding("xml"),
+		})
+
+		_, err := client.Refresh(context.Background(), "refresh-token")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidTokenEncoding)
 	})
 }
 

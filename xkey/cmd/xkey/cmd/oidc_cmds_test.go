@@ -31,6 +31,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 )
 
 // oidcTestCmd builds a detached cobra command carrying every flag the OIDC
@@ -46,7 +48,9 @@ func oidcTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 	for _, name := range []string{
 		"name", "type", "issuer", "client-id", "client-secret", "redirect-url",
 		"scopes", "exec", "log-file", "region", "profile", "credentials-file",
-		"output", "session-store",
+		"output", "session-store", "provider",
+		"authorization-endpoint", "token-endpoint", "jwks-uri", "userinfo-endpoint",
+		"token-encoding",
 	} {
 		fs.String(name, "", "")
 	}
@@ -349,6 +353,80 @@ func TestRunOIDCProvidersAdd_Validation(t *testing.T) {
 			assert.ErrorIs(t, runOIDCProvidersAdd(cmd, nil), tt.want)
 		})
 	}
+}
+
+func TestRunOIDCProvidersAdd_ManualEndpointsSkipDiscovery(t *testing.T) {
+	cmd, buf, store := oidcTestCmd(t)
+	setOIDCFlags(t, cmd, map[string]string{
+		"name":                   "no-discovery",
+		"issuer":                 "https://auth.example.com",
+		"client-id":              "abc123",
+		"authorization-endpoint": "https://auth.example.com/authorize",
+		"token-endpoint":         "https://auth.example.com/token",
+		"jwks-uri":               "https://auth.example.com/jwks",
+		"userinfo-endpoint":      "https://auth.example.com/userinfo",
+	})
+
+	require.NoError(t, runOIDCProvidersAdd(cmd, nil))
+	assert.Contains(t, buf.String(), "Added OIDC provider: no-discovery")
+
+	config, err := loadOIDCConfig(getConfigPath(store))
+	require.NoError(t, err)
+	require.Len(t, config.Providers, 1)
+
+	p := config.Providers[0]
+	assert.Equal(t, "https://auth.example.com/authorize", p.AuthorizationEndpoint)
+	assert.Equal(t, "https://auth.example.com/token", p.TokenEndpoint)
+	assert.Equal(t, "https://auth.example.com/jwks", p.JwksURI)
+	assert.Equal(t, "https://auth.example.com/userinfo", p.UserinfoEndpoint)
+}
+
+func TestRunOIDCProvidersAdd_PartialManualEndpointsRefused(t *testing.T) {
+	cmd, _, _ := oidcTestCmd(t)
+	setOIDCFlags(t, cmd, map[string]string{
+		"name":                   "partial",
+		"issuer":                 "https://auth.example.com",
+		"client-id":              "abc123",
+		"authorization-endpoint": "https://auth.example.com/authorize",
+	})
+
+	err := runOIDCProvidersAdd(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOIDCIncompleteEndpoints)
+	assert.Contains(t, err.Error(), "--token-endpoint")
+	assert.Contains(t, err.Error(), "--jwks-uri")
+	assert.NotContains(t, err.Error(), "--authorization-endpoint")
+}
+
+func TestRunOIDCProvidersAdd_TokenEncoding(t *testing.T) {
+	cmd, _, store := oidcTestCmd(t)
+	setOIDCFlags(t, cmd, map[string]string{
+		"name":           "json-provider",
+		"issuer":         "https://auth.example.com",
+		"client-id":      "abc123",
+		"token-encoding": "json",
+	})
+
+	require.NoError(t, runOIDCProvidersAdd(cmd, nil))
+
+	config, err := loadOIDCConfig(getConfigPath(store))
+	require.NoError(t, err)
+	require.Len(t, config.Providers, 1)
+	assert.Equal(t, oidc.TokenEncodingJSON, config.Providers[0].TokenEncoding)
+}
+
+func TestRunOIDCProvidersAdd_UnknownTokenEncodingRefused(t *testing.T) {
+	cmd, _, _ := oidcTestCmd(t)
+	setOIDCFlags(t, cmd, map[string]string{
+		"name":           "bad-encoding",
+		"issuer":         "https://auth.example.com",
+		"client-id":      "abc123",
+		"token-encoding": "xml",
+	})
+
+	err := runOIDCProvidersAdd(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, oidc.ErrInvalidTokenEncoding)
 }
 
 func TestRunOIDCProvidersAdd_RegionWithoutAWSTypeHintsAtFix(t *testing.T) {
@@ -758,6 +836,72 @@ func TestRunOIDCRefresh_ReportsTokenEndpointFailure(t *testing.T) {
 	err := runOIDCRefresh(cmd, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrOIDCTokenRefreshFailed)
+}
+
+func TestRunOIDCRefresh_WithProviderSkipsDiscoveryAndHonoursEncoding(t *testing.T) {
+	// A discovery document is never served: any GET fails the test, proving
+	// the manual endpoints saved on the provider bypassed discovery.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected non-POST request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		var decoded map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&decoded))
+		assert.Equal(t, "refresh_token", decoded["grant_type"])
+		assert.Equal(t, "old-refresh", decoded["refresh_token"])
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(OIDCTokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+		})
+	}))
+	defer server.Close()
+
+	cmd, buf, store := oidcTestCmd(t)
+	addStandardProvider(t, store, map[string]string{
+		"name":                   "manual",
+		"issuer":                 "https://issuer.invalid",
+		"client-id":              "client",
+		"authorization-endpoint": "https://issuer.invalid/authorize",
+		"token-endpoint":         server.URL,
+		"jwks-uri":               "https://issuer.invalid/jwks",
+		"token-encoding":         "json",
+	})
+
+	require.NoError(t, storeToken(store, OIDCStoredToken{
+		Issuer:       "https://issuer.invalid",
+		ClientID:     "client",
+		AccessToken:  "old-access",
+		RefreshToken: "old-refresh",
+		ExpiresAt:    time.Now().Add(-time.Minute),
+	}))
+
+	require.NoError(t, cmd.Flags().Set("provider", "manual"))
+	require.NoError(t, runOIDCRefresh(cmd, nil))
+	assert.Contains(t, buf.String(), "Token refreshed successfully!")
+
+	token, err := loadToken(store)
+	require.NoError(t, err)
+	assert.Equal(t, "new-access", token.AccessToken)
+}
+
+func TestRunOIDCRefresh_UnknownProviderReturnsTypedError(t *testing.T) {
+	cmd, _, store := oidcTestCmd(t)
+	require.NoError(t, storeToken(store, OIDCStoredToken{
+		Issuer: "https://issuer.invalid", ClientID: "c", RefreshToken: "r",
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}))
+
+	require.NoError(t, cmd.Flags().Set("provider", "does-not-exist"))
+	err := runOIDCRefresh(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOIDCProviderNotFound)
 }
 
 // --- executeOIDCScript ---

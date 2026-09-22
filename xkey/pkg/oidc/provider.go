@@ -65,7 +65,44 @@ type ProviderConfig struct {
 	HTTPClient *http.Client
 
 	// SkipDiscovery skips automatic discovery (endpoints must be set manually).
+	// It is implied whenever any manual endpoint below is set, so callers
+	// need not set it explicitly once they supply endpoints.
 	SkipDiscovery bool
+
+	// AuthorizationEndpoint is the manual authorization endpoint, used
+	// instead of discovery when SkipDiscovery is in effect.
+	AuthorizationEndpoint string
+
+	// TokenEndpoint is the manual token endpoint, used instead of
+	// discovery when SkipDiscovery is in effect.
+	TokenEndpoint string
+
+	// JwksURI is the manual JWKS URI, used instead of discovery when
+	// SkipDiscovery is in effect.
+	JwksURI string
+
+	// UserinfoEndpoint is the manual userinfo endpoint, used instead of
+	// discovery when SkipDiscovery is in effect. Optional: some providers
+	// (e.g. CLI-only OAuth2 clients) have no userinfo endpoint.
+	UserinfoEndpoint string
+
+	// TokenEncoding selects how token requests (authorization code
+	// exchange and refresh) are encoded. Defaults to TokenEncodingForm.
+	TokenEncoding TokenEncoding
+}
+
+// hasManualEndpoint returns true if any manual endpoint field is set,
+// which implies SkipDiscovery regardless of that field's literal value.
+func (c *ProviderConfig) hasManualEndpoint() bool {
+	return c.AuthorizationEndpoint != "" || c.TokenEndpoint != "" ||
+		c.JwksURI != "" || c.UserinfoEndpoint != ""
+}
+
+// skipsDiscovery returns true if discovery should be skipped, either
+// because SkipDiscovery was set explicitly or because a manual endpoint
+// was supplied.
+func (c *ProviderConfig) skipsDiscovery() bool {
+	return c.SkipDiscovery || c.hasManualEndpoint()
 }
 
 // Validate validates the provider configuration.
@@ -92,6 +129,30 @@ func (c *ProviderConfig) Validate() error {
 		return ErrInvalidRedirectURL
 	}
 
+	if err := c.TokenEncoding.Validate(); err != nil {
+		return err
+	}
+
+	// Manual endpoints are only required once the caller has started
+	// supplying them; a bare SkipDiscovery: true with no endpoints at all
+	// is the pre-existing "I will populate the Provider myself" contract
+	// and is left alone.
+	if c.hasManualEndpoint() {
+		var missing []string
+		if c.AuthorizationEndpoint == "" {
+			missing = append(missing, "AuthorizationEndpoint")
+		}
+		if c.TokenEndpoint == "" {
+			missing = append(missing, "TokenEndpoint")
+		}
+		if c.JwksURI == "" {
+			missing = append(missing, "JwksURI")
+		}
+		if len(missing) > 0 {
+			return &DetailError{Err: ErrIncompleteManualEndpoints, Detail: fmt.Sprintf(": %s", strings.Join(missing, ", "))}
+		}
+	}
+
 	return nil
 }
 
@@ -101,6 +162,12 @@ func (c *ProviderConfig) EffectiveScopes() []string {
 		return DefaultScopes
 	}
 	return c.Scopes
+}
+
+// EffectiveTokenEncoding returns the token encoding to use, defaulting to
+// TokenEncodingForm if none is set.
+func (c *ProviderConfig) EffectiveTokenEncoding() TokenEncoding {
+	return c.TokenEncoding.orDefault()
 }
 
 // Provider represents an OIDC provider with discovered endpoints.
@@ -213,10 +280,13 @@ func NewProvider(ctx context.Context, config *ProviderConfig) (*Provider, error)
 		jwksCache:  &JWKSCache{},
 	}
 
-	if !config.SkipDiscovery {
-		if err := p.Discover(ctx); err != nil {
-			return nil, err
-		}
+	if config.skipsDiscovery() {
+		p.AuthorizationEndpoint = config.AuthorizationEndpoint
+		p.TokenEndpoint = config.TokenEndpoint
+		p.JwksURI = config.JwksURI
+		p.UserinfoEndpoint = config.UserinfoEndpoint
+	} else if err := p.Discover(ctx); err != nil {
+		return nil, err
 	}
 
 	return p, nil
