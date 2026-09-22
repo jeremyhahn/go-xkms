@@ -1377,7 +1377,7 @@ func TestLoadNoiseStaticKey_HexKey(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex: hexKey,
+				StaticKeyHex: hexKey, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	})
@@ -1399,7 +1399,7 @@ func TestLoadNoiseStaticKey_KeyFile(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: keyFile,
+				StaticKeyFile: keyFile, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	})
@@ -1413,7 +1413,7 @@ func TestLoadNoiseStaticKey_KeyFileMissing(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: "/nonexistent/noise.key",
+				StaticKeyFile: "/nonexistent/noise.key", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	})
@@ -1436,8 +1436,8 @@ func TestLoadNoiseStaticKey_Generate(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex:  "",
-				StaticKeyFile: "",
+				StaticKeyHex:  "", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
+				StaticKeyFile: "", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	})
@@ -3681,7 +3681,7 @@ func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 		Server: config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: "/nonexistent/path/to/key.hex",
+				StaticKeyFile: "/nonexistent/path/to/key.hex", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	})

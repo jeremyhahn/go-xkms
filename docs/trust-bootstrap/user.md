@@ -1,6 +1,6 @@
 # Trust Bootstrap — User Guide
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## What this is for
 
@@ -131,10 +131,24 @@ it offers whichever its build can run, so one configuration serves a mixed
 fleet. In the resolver's config file the same pair is `server-static-key` and
 `server-p256-static-key` under the scope's `noise:` block.
 
-If you configure **neither** key, the server generates an ephemeral one at
-startup and logs a warning. It works, but the key changes on every restart, so
-every client that pinned the previous one stops connecting. Configure the file
-in production.
+If you configure **neither** key, the server persists one for you (go-xkms#35)
+instead of generating a fresh one on every restart: sealed under the barrier
+when you have one configured (`barrier.enabled: true`), or as a plaintext hex
+file inside the server's data directory with a one-time warning if you don't.
+Either way, the key it serves on the next boot is the same one, so a public
+key you have already distributed to clients keeps working across restarts.
+Configure `barrier.enabled: true` in production so this key gets the same
+at-rest protection as everything else the barrier covers.
+
+**Upgrading from a server that used `static_key_file` / `static_key_hex` /
+`p256_static_key_file` / `p256_static_key_hex`:** leave the field in place for
+one more restart. The server reads it exactly once, seals the key it names
+into the barrier (or, with no barrier, into the persisted file above), and
+logs that the config field is now deprecated. After that restart, confirm the
+public key clients have did not change (`xkmsctl bootstrap noise show-key` /
+`show-p256-key` against the key file you originally generated, or simply that
+existing clients still connect), then delete the field from your
+configuration — it will not be read again.
 
 If the server can run **no** suite at all it refuses at startup with
 `bootstrap is enabled but this build can run no handshake suite`, naming why

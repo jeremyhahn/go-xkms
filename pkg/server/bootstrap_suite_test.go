@@ -263,7 +263,7 @@ func TestLoadBootstrapKeys_NoSuiteAvailable(t *testing.T) {
 // provisioned for the approved suite failed to connect.
 func TestLoadBootstrapKeys_BrokenConfiguredKeyIsHardFailure(t *testing.T) {
 	s := newSuiteTestServer(t, config.NoiseBootstrapConfig{
-		P256StaticKeyHex: "not-a-key",
+		P256StaticKeyHex: "not-a-key", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 	})
 
 	keys, err := s.loadBootstrapKeys()
@@ -296,7 +296,7 @@ func TestLoadP256StaticKey_UsesConfiguredKey(t *testing.T) {
 
 	t.Run("from hex", func(t *testing.T) {
 		s := newSuiteTestServer(t, config.NoiseBootstrapConfig{
-			P256StaticKeyHex: encodeP256Hex(t, original),
+			P256StaticKeyHex: encodeP256Hex(t, original), //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 		})
 
 		loaded, err := s.loadP256StaticKey()
@@ -318,7 +318,7 @@ func TestLoadP256StaticKey_UsesConfiguredKey(t *testing.T) {
 			t.Fatalf("WriteFile: %v", err)
 		}
 
-		s := newSuiteTestServer(t, config.NoiseBootstrapConfig{P256StaticKeyFile: path})
+		s := newSuiteTestServer(t, config.NoiseBootstrapConfig{P256StaticKeyFile: path}) //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 
 		loaded, err := s.loadP256StaticKey()
 		if err != nil {
@@ -337,7 +337,7 @@ func TestLoadP256StaticKey_UsesConfiguredKey(t *testing.T) {
 // P-256 key, not swallowed into an ephemeral key.
 func TestLoadP256StaticKey_MissingFile(t *testing.T) {
 	s := newSuiteTestServer(t, config.NoiseBootstrapConfig{
-		P256StaticKeyFile: filepath.Join(t.TempDir(), "absent.key"),
+		P256StaticKeyFile: filepath.Join(t.TempDir(), "absent.key"), //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 	})
 
 	key, err := s.loadP256StaticKey()

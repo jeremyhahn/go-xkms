@@ -14,9 +14,6 @@
 package server
 
 import (
-	"bytes"
-	"os"
-
 	"github.com/awnumar/memguard"
 
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
@@ -24,12 +21,19 @@ import (
 )
 
 // The raw memguard import above is forced, not a convenience:
-// bootstrap.DecodeP256StaticKey (go-truststrap v0.4.0-alpha's
-// p256proto.DecodeStaticKey) takes a *memguard.LockedBuffer directly, and
-// secure.Buffer wraps its LockedBuffer in an unexported field with no
-// accessor -- correctly, since exposing it would hand back the handle the
-// boundary exists to withhold. Filed as jeremyhahn/go-truststrap#60;
-// secure-analyzer exemption until it lands.
+// bootstrap.DecodeP256StaticKey and bootstrap.EncodeP256StaticKey
+// (go-truststrap v0.4.0-alpha's p256proto.{Decode,Encode}StaticKey) take a
+// *memguard.LockedBuffer directly, and secure.Buffer wraps its LockedBuffer
+// in an unexported field with no accessor -- correctly, since exposing it
+// would hand back the handle the boundary exists to withhold. Filed as
+// jeremyhahn/go-truststrap#60; secure-analyzer exemption until it lands.
+//
+// This is the ONLY file in the package that imports memguard, and
+// decodeP256StaticKey/encodeP256StaticKeyHex are the only two functions that
+// need to: every other P-256 (and all Noise) custody code in
+// bootstrap_key_custody.go works with sdk/go/secure buffers and plain []byte
+// it wipes with secure.Wipe, and calls into these two helpers for the one
+// step go-truststrap's API forces through raw memguard.
 
 // Suite resolution for the bootstrap listener.
 //
@@ -130,36 +134,9 @@ func (s *Server) loadBootstrapKeys() (*bootstrapKeys, error) {
 	return keys, nil
 }
 
-// loadP256StaticKey loads the P-256 static key for the approved suite from
-// config, mirroring loadNoiseStaticKey. The returned key holds its private
-// scalar in protected memory; the caller owns it and must Destroy it once the
-// bootstrap server that uses it has stopped.
-func (s *Server) loadP256StaticKey() (*bootstrap.P256StaticKey, error) {
-	noiseCfg := s.config.Bootstrap.Noise
-
-	// Inline hex first, matching the Noise key's precedence.
-	if noiseCfg.P256StaticKeyHex != "" {
-		// The configured string is immutable and cannot be wiped; the copy we
-		// make for decoding can be, and does not outlive this call.
-		hexKey := []byte(noiseCfg.P256StaticKeyHex)
-		defer secure.Wipe(hexKey)
-		return decodeP256StaticKey(hexKey)
-	}
-
-	if noiseCfg.P256StaticKeyFile != "" {
-		// #nosec G304 - Key file path from trusted config
-		data, err := os.ReadFile(noiseCfg.P256StaticKeyFile)
-		if err != nil {
-			return nil, &ErrFileRead{Path: "p256 key file", Err: err}
-		}
-		// TrimSpace returns a subslice of data, so wiping data covers both.
-		defer secure.Wipe(data)
-		return decodeP256StaticKey(bytes.TrimSpace(data))
-	}
-
-	s.logger.Warn("No P-256 bootstrap static key configured, generating ephemeral key. This is NOT recommended for production.")
-	return bootstrap.GenerateP256StaticKey()
-}
+// loadP256StaticKey (custody for the P-256 bootstrap static key,
+// go-xkms#35) lives in bootstrap_key_custody.go, alongside its Noise
+// counterpart.
 
 // decodeP256StaticKey moves a hex-encoded private scalar into protected memory
 // and decodes it there, so the sensitive hex form never sits in an ordinary
@@ -187,4 +164,31 @@ func decodeP256StaticKey(hexKey []byte) (*bootstrap.P256StaticKey, error) {
 	defer buf.Destroy()
 
 	return bootstrap.DecodeP256StaticKey(buf)
+}
+
+// encodeP256StaticKeyHex is decodeP256StaticKey's inverse: it hex-encodes
+// key's private scalar and hands the result back as a *secure.Buffer, so
+// bootstrap_key_custody.go's sealing/persisting paths (go-xkms#35) can reach
+// go-truststrap's P-256 encode step without importing memguard themselves.
+//
+// The memguard.LockedBuffer bootstrap.EncodeP256StaticKey writes into is
+// destroyed before this function returns; the hex bytes it produced are
+// copied into the returned secure.Buffer (which itself wipes and copies
+// under the hood) rather than handed back as that LockedBuffer, for the same
+// reason decodeP256StaticKey never hands one to its own caller -- the
+// LockedBuffer handle is exactly what the secure-analyzer exemption above
+// stays scoped to this file for. The caller owns the returned buffer and
+// must Destroy it.
+func encodeP256StaticKeyHex(key *bootstrap.P256StaticKey) (*secure.Buffer, error) {
+	memBuf := memguard.NewBuffer(bootstrap.P256HexKeySize)
+	defer memBuf.Destroy()
+
+	if err := bootstrap.EncodeP256StaticKey(memBuf, key); err != nil {
+		return nil, err
+	}
+
+	// NewBufferFromBytes copies memBuf.Bytes() into the new secure.Buffer and
+	// wipes the source in place; the deferred memBuf.Destroy() above then
+	// unmaps the (already wiped) protected pages.
+	return secure.NewBufferFromBytes(memBuf.Bytes())
 }

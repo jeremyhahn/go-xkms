@@ -84,7 +84,7 @@
 # --- go-truststrap#60: forced *memguard.LockedBuffer (rule 1) --------------
 cmd/xkmsctl/bootstrap_p256.go	1	github.com/awnumar/memguard	go-truststrap#60: p256proto.{NewStaticKey,EncodeStaticKey,DecodeStaticKey} take *memguard.LockedBuffer; secure.Buffer exposes no accessor to supply one
 cmd/xkmsctl/bootstrap_p256_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises the same forced p256proto signature directly
-pkg/server/bootstrap_suite.go	1	github.com/awnumar/memguard	go-truststrap#60: bootstrap.DecodeP256StaticKey (p256proto.DecodeStaticKey) forces a *memguard.LockedBuffer
+pkg/server/bootstrap_suite.go	1	github.com/awnumar/memguard	go-truststrap#60: bootstrap.{Decode,Encode}P256StaticKey (p256proto.{Decode,Encode}StaticKey) force a *memguard.LockedBuffer
 pkg/server/bootstrap_suite_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises bootstrap.EncodeP256StaticKey's forced *memguard.LockedBuffer signature directly
 pkg/trust/bootstrap/suite_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises p256proto.EncodeStaticKey/DecodeStaticKey's forced *memguard.LockedBuffer signature directly
 

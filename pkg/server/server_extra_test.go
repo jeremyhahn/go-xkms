@@ -233,7 +233,7 @@ func TestLoadNoiseStaticKey_FromHex(t *testing.T) {
 	cfg := &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex: hexKey,
+				StaticKeyHex: hexKey, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	}
@@ -271,7 +271,7 @@ func TestLoadNoiseStaticKey_FromFile(t *testing.T) {
 	cfg := &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: keyFile,
+				StaticKeyFile: keyFile, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	}
@@ -286,7 +286,7 @@ func TestLoadNoiseStaticKey_FromFile_NotFound(t *testing.T) {
 	cfg := &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: "/nonexistent/path/noise.key",
+				StaticKeyFile: "/nonexistent/path/noise.key", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
 			},
 		},
 	}

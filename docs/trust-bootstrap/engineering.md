@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -225,30 +225,70 @@ server:
   noise_port: 8447        # configs/xkmsd-local.yaml
 ```
 
-Server side — the static keys the listener serves each suite with
-(`config.NoiseBootstrapConfig`, YAML key `bootstrap.noise`):
+Server side — custody of the static keys the listener serves each suite with
+(`config.NoiseBootstrapConfig`, YAML key `bootstrap.noise`; go-xkms#35,
+go-xkms#436) is now the barrier, not config:
 
 ```yaml
 bootstrap:
   noise:
     enabled: true
-    # Noise_NK (0x01). Unavailable in a FIPS build; ignored there.
-    static_key_file: /var/lib/xkms/noise.key
-    static_key_hex: ""
-    # TSBOOT1_P256_AESGCM_SHA256 (0x02), the approved suite.
-    p256_static_key_file: /var/lib/xkms/p256.key
-    p256_static_key_hex: ""
 ```
 
-Each suite takes a file path or an inline hex scalar, hex first when both are
-set. A suite with neither gets an **ephemeral** key generated at startup, which
-is logged as a warning: an ephemeral responder key changes on every restart, so
-every client provisioned with the old public key fails to connect. Configure
-both explicitly in production.
+`pkg/server/bootstrap_key_custody.go` resolves each suite's key on every boot,
+in this order:
+
+1. **Barrier configured** (`s.barrier != nil`, adopted from the embedded qrdb
+   node or built by `initializeBarrier` — either way the same `*seal.Barrier`):
+   load the hex-encoded key already sealed under `bootstrap-noise/x25519-static-key`
+   / `bootstrap-noise/p256-static-key` in the barrier's own key-value store
+   (`seal.Barrier.Get`/`Put`, the same mechanism `pkg/server/credentials`
+   uses for operator-owned credentials). If nothing is sealed yet
+   (`isBarrierKeyNotFound`: `storage.ErrNotFound` from an xkms-backed barrier,
+   `seal.ErrSecretNotFound` from a node-adopted one — the same `*seal.Barrier`
+   type surfaces either sentinel depending on the storage backend underneath
+   it), fall back to the **deprecated** `static_key_hex` / `static_key_file` /
+   `p256_static_key_hex` / `p256_static_key_file` fields, read exactly once;
+   present, that key is sealed into the barrier and a `deprecated` warning is
+   logged. Present nowhere, a fresh key is generated and sealed. Every path
+   after the first leaves a sealed key in place, so the next boot always takes
+   the first branch — the config fields are read at most once per key, ever.
+2. **No barrier** (`barrier.enabled: false`): the deprecated config fields, if
+   set, are still honored exactly as before. Otherwise a key persisted in
+   plaintext hex at `<storage.path>/bootstrap-noise-x25519.key` (and
+   `bootstrap-noise-p256.key`) is loaded, or generated and written there
+   (0600, atomic temp-file-then-rename) with **one** warning that it is
+   unprotected without a barrier. A missing `storage.path` (no data directory
+   configured at all) has nowhere durable to persist to and falls back to the
+   pre-#35 ephemeral-with-warning behavior rather than writing to an
+   unpredictable location such as the process's working directory.
+
+Either way, a key is never silently regenerated once one exists: an ephemeral
+key that changes on every restart invalidates every client provisioned with
+the old public key, which was the defect #35 closes.
+
+The four `static_key_*` / `p256_static_key_*` fields are `Deprecated` in
+`config.NoiseBootstrapConfig`'s doc comments. They still parse — the one-time
+migration above depends on it — but nothing reads them again once the sealed
+(or, without a barrier, the persisted-file) form exists. Remove them from your
+configuration once you have confirmed the key survives a restart (`xkmsctl
+bootstrap noise show-p256-key`, or compare the Noise public key a client has
+pinned against what the listener now serves).
 
 The struct is still named `NoiseBootstrapConfig` and still lives under the
 `bootstrap.noise` YAML key. That is historical — it predates the second suite —
 and is kept so existing configs keep parsing.
+
+**Sequencing (Ruling 1, go-xkms#35):** the bootstrap listener is a network
+service and so must not bind before the barrier is unsealed. This already
+holds by construction and needs no extra gating here: `s.barrier` is set
+inside `initEmbeddedQRDBNode` (`pkg/server/qrdb_node.go`), which blocks on
+`serveSealedWindow` until the node reports unsealed before `New` can return
+(`TestServeSealedWindow_SealedNodeProceedsAfterUnseal`,
+`pkg/server/sealed_window_test.go`); `Start` — the only caller of
+`startNoiseBootstrap`, which is what calls `loadNoiseStaticKey` — is never
+reachable until `New` has returned. There is no path from a sealed barrier to
+a bound Noise listener.
 
 **Key-loading failures are not interchangeable.** A suite that is *unavailable
 in this build* is skipped, which is the normal state of Noise_NK under FIPS. A
@@ -292,12 +332,41 @@ it as equivalent to the ability to re-anchor trust.
 
 ## Persistence
 
-Only TOFU persists anything: the captured SPKI pin, through the qrdb pin store.
-Every other mode is stateless. There is no bundle cache and no pin cache for the
-non-TOFU modes.
+Client side, only TOFU persists anything: the captured SPKI pin, through the
+qrdb pin store. Every other mode is stateless. There is no bundle cache and no
+pin cache for the non-TOFU modes.
+
+Server side, the listener's own static keys persist (go-xkms#35): barrier-
+sealed key-value storage when a barrier is configured, a fixed plaintext hex
+file in the data directory otherwise. See Configuration above.
 
 ## Test strategy
 
+- **Listener key custody (go-xkms#35)** — `pkg/server/bootstrap_key_custody_test.go`:
+  sealed persist/load round trip across two `*Server`s sharing a barrier
+  (`TestNoiseKeyCustody_SealedRoundTrip`, `TestP256KeyCustody_SealedRoundTrip`);
+  legacy hex/file config migrates into the barrier with the deprecation
+  warning logged exactly once, and a later boot with no legacy config finds
+  the sealed key (`TestNoiseKeyCustody_MigratesLegacyHexAndDeprecates`,
+  `TestP256KeyCustody_MigratesLegacyFileAndDeprecates`); a barrier failure
+  that is not "nothing sealed yet" surfaces as `*server.ErrBarrierKeyLoad`
+  rather than silently falling through
+  (`TestNoiseKeyCustody_BarrierGetErrorWraps`,
+  `TestP256KeyCustody_BarrierGetErrorWraps`); the no-barrier floor persists to
+  a fixed 0600 file and does not re-warn on a later boot
+  (`TestNoiseKeyCustody_NoBarrierPersistsToFileAndReloads`,
+  `TestP256KeyCustody_NoBarrierPersistsToFileAndReloads`), and falls back to
+  the pre-#35 ephemeral behavior only when there is no data directory either
+  (`TestNoiseKeyCustody_NoBarrierNoDataDirStaysEphemeral`,
+  `TestP256KeyCustody_NoBarrierNoDataDirStaysEphemeral`);
+  `TestNoiseKeyCustody_ThroughNodeAdoptedBarrier` repeats the round trip
+  through the SAME `*seal.Barrier` the embedded qrdb node hands back
+  (`node.BarrierRegistry().SystemBarrier()`), which is where the two
+  "not found" sentinels (`storage.ErrNotFound` vs `seal.ErrSecretNotFound`)
+  this package's `isBarrierKeyNotFound` handles actually diverge. Sequencing
+  (no listener before unseal) is proved separately by
+  `TestServeSealedWindow_SealedNodeProceedsAfterUnseal` in
+  `pkg/server/sealed_window_test.go`, cited rather than re-proved here.
 - **Suite availability and the listener's keys** —
   `pkg/server/bootstrap_suite_test.go`, plus `pkg/trust/bootstrap/suite_test.go`
   and its `suite_fips_test.go` / `suite_nofips_test.go` pair. These run under

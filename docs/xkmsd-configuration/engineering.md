@@ -1,6 +1,6 @@
 # xkmsd Configuration — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## Exported surface — `pkg/config`
 
@@ -86,6 +86,17 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
    CA-issued certificate is shared by every node through replicated storage,
    so its SAN set is deterministic cluster-wide, and a certificate whose set
    no longer matches is retired and reissued rather than served stale.
+8. **A field marked `Deprecated` in a struct doc comment still resolves
+   through every layer above** (file, environment, flags where applicable) —
+   deprecating a field changes what the server DOES with the value once
+   loaded, never whether `Load` accepts it. `config.NoiseBootstrapConfig`'s
+   four `static_key_*` / `p256_static_key_*` fields are the current instance
+   (go-xkms#35): still walked by `registerEnvKeys`, still decoded by `Load`,
+   but read by `pkg/server` at most once, to migrate an existing key into
+   barrier-sealed storage. See
+   [`../trust-bootstrap/engineering.md`](../trust-bootstrap/engineering.md)
+   §Configuration for the migration order; this file owns layering and
+   resolution, not that custody decision.
 
 ## Decoding notes
 

@@ -1119,18 +1119,35 @@ type NoiseBootstrapConfig struct {
 	// Enabled controls whether Noise bootstrap is active
 	Enabled bool `yaml:"enabled"`
 
-	// StaticKeyFile is the path to the hex-encoded Noise static private key file
+	// StaticKeyFile is the path to the hex-encoded Noise static private key file.
+	//
+	// Deprecated: the bootstrap listener now persists its Noise static key
+	// barrier-sealed (go-xkms#35) and only reads this field once, to migrate
+	// an existing key into the barrier on the first boot after upgrade. It
+	// keeps parsing so that one-time migration works, but a key it names is
+	// never read again once the sealed form exists; remove it from your
+	// configuration after confirming the sealed key survives a restart.
 	StaticKeyFile string `yaml:"static_key_file"`
 
-	// StaticKeyHex is an inline hex-encoded Noise static private key
+	// StaticKeyHex is an inline hex-encoded Noise static private key.
+	//
+	// Deprecated: see StaticKeyFile -- same one-time migration, same removal
+	// guidance, inline instead of a file path.
 	StaticKeyHex string `yaml:"static_key_hex"`
 
 	// P256StaticKeyFile is the path to the hex-encoded P-256 static private
 	// key file for the FIPS-approved suite.
+	//
+	// Deprecated: see StaticKeyFile -- the P-256 bootstrap key is migrated
+	// into barrier-sealed storage the same way and on the same one-time
+	// schedule (go-xkms#35, go-xkms#436).
 	P256StaticKeyFile string `yaml:"p256_static_key_file"`
 
 	// P256StaticKeyHex is an inline hex-encoded P-256 static private key for
 	// the FIPS-approved suite.
+	//
+	// Deprecated: see P256StaticKeyFile -- same one-time migration, inline
+	// instead of a file path.
 	P256StaticKeyHex string `yaml:"p256_static_key_hex"`
 
 	// MaxConnections is the maximum concurrent bootstrap connections (default: 100)

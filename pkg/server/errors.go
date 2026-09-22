@@ -531,3 +531,58 @@ func (e *ErrP256KeyLength) Error() string {
 		"server: P-256 bootstrap static key is %d hex characters, want %d",
 		e.Got, e.Want)
 }
+
+// ErrFileWrite represents a failure to write a file.
+type ErrFileWrite struct {
+	Path string
+	Err  error
+}
+
+// Error returns the error message.
+func (e *ErrFileWrite) Error() string {
+	return fmt.Sprintf("failed to write %s: %s", e.Path, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrFileWrite) Unwrap() error {
+	return e.Err
+}
+
+// ErrBarrierKeyLoad represents a failure to read a bootstrap static key from
+// the barrier's sealed storage that is NOT "no key stored yet" (see
+// isBarrierKeyNotFound in bootstrap_key_custody.go, which callers treat as
+// "fall back to legacy config or generate", not as a failure). A sealed
+// barrier, a corrupt ciphertext, or an underlying storage error all surface
+// here.
+type ErrBarrierKeyLoad struct {
+	Key string
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrBarrierKeyLoad) Error() string {
+	return fmt.Sprintf("failed to load barrier-sealed key %q: %s", e.Key, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrBarrierKeyLoad) Unwrap() error {
+	return e.Err
+}
+
+// ErrBarrierKeySeal represents a failure to seal a bootstrap static key into
+// the barrier's storage, whether the failure is in hex-encoding the key or in
+// the barrier's own Put.
+type ErrBarrierKeySeal struct {
+	Key string
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrBarrierKeySeal) Error() string {
+	return fmt.Sprintf("failed to seal key %q into the barrier: %s", e.Key, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrBarrierKeySeal) Unwrap() error {
+	return e.Err
+}

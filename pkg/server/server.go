@@ -3229,37 +3229,8 @@ func (s *Server) retainBootstrapKeys(keys *bootstrapKeys) {
 	s.retainedP256Keys = append(s.retainedP256Keys, keys.p256)
 }
 
-// loadNoiseStaticKey loads the Noise static key from config. The returned key
-// holds its private scalar in protected memory; the caller owns it and must
-// Destroy it once the bootstrap server that uses it has stopped.
-func (s *Server) loadNoiseStaticKey() (*noiseproto.StaticKey, error) {
-	noiseCfg := s.config.Bootstrap.Noise
-
-	// Try hex key first (inline config)
-	if noiseCfg.StaticKeyHex != "" {
-		// The configured string is immutable and cannot be wiped; the copy we
-		// make for decoding can be, so it does not outlive this call.
-		hexKey := []byte(noiseCfg.StaticKeyHex)
-		defer noiseproto.WipeBytes(hexKey)
-		return noiseproto.DecodeStaticKey(hexKey)
-	}
-
-	// Try key file
-	if noiseCfg.StaticKeyFile != "" {
-		// #nosec G304 - Key file path from trusted config
-		data, err := os.ReadFile(noiseCfg.StaticKeyFile)
-		if err != nil {
-			return nil, &ErrFileRead{Path: "noise key file", Err: err}
-		}
-		// TrimSpace returns a subslice of data, so wiping data covers both.
-		defer noiseproto.WipeBytes(data)
-		return noiseproto.DecodeStaticKey(bytes.TrimSpace(data))
-	}
-
-	// Generate a new key (first-time setup)
-	s.logger.Warn("No Noise static key configured, generating ephemeral key. This is NOT recommended for production.")
-	return noiseproto.GenerateStaticKey()
-}
+// loadNoiseStaticKey and loadP256StaticKey (custody for the bootstrap
+// listener's static keys, go-xkms#35) live in bootstrap_key_custody.go.
 
 // buildTLSConfig builds a crypto/tls.Config from the server configuration
 func (s *Server) buildTLSConfig() (*tls.Config, error) {
