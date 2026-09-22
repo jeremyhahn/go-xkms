@@ -1,12 +1,13 @@
 # Release engineering — API
 
 **Status:** implemented.
-**Last verified:** 2026-09-06.
+**Last verified:** 2026-09-21.
 
 No programmatic API surface: releases are cut by an operator or a project agent
-through `make release-alpha`, and nothing in the library, the SDK or any
-transport exposes them. Publishing is deliberately not reachable from a running
-service.
+through `make release-alpha` (prepare) and `make release-tag` (publish, once
+that pull request has merged — go-xkms#419, go-xkms#211), and nothing in the
+library, the SDK or any transport exposes them. Publishing is deliberately not
+reachable from a running service.
 
 The one contract worth naming is what a release **produces**, which consumers do
 depend on:

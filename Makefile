@@ -942,6 +942,7 @@ test-scripts:
 	@echo "$(CYAN)$(BOLD)→ Running shell script tests...$(RESET)"
 	@bash test/scripts/clean-test-containers.test.sh
 	@bash test/scripts/release-alpha.test.sh
+	@bash test/scripts/release-tag.test.sh
 	@bash test/scripts/release-assets.test.sh
 	@bash test/scripts/changelog-assemble.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
@@ -4612,25 +4613,39 @@ coverage-%:
 export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# deps-latest runs before compiling in a consumer repo; release-alpha publishes
-# a stated -alpha version of this repo to dev. deps-latest picks the highest
-# tag INCLUDING -alpha prereleases — bare 'go get @latest' ignores prereleases
-# and would downgrade to legacy v0.0.0.
+# deps-latest runs before compiling in a consumer repo. release-alpha PREPARES
+# a stated -alpha version of this repo as a pull request and stops
+# (go-xkms#419); release-tag TAGS and publishes it once that pull request has
+# been reviewed and merged (go-xkms#211). deps-latest picks the highest tag
+# INCLUDING -alpha prereleases — bare 'go get @latest' ignores prereleases and
+# would downgrade to legacy v0.0.0.
 #
 # The lockstep tag namespaces and the reciprocal go.mod pin edges are declared
-# in scripts/release-alpha.sh, which owns them. There is no second copy here to
-# drift out of step with it.
+# in scripts/release-alpha.sh, which owns them and which release-tag.sh
+# sources rather than redeclaring. There is no second copy here to drift out
+# of step with either.
 
-.PHONY: release-alpha deps-latest
+.PHONY: release-alpha release-tag deps-latest
 
-## release-alpha: Cut and publish an -alpha release. VERSION is REQUIRED.
+## release-alpha: PREPARE an -alpha release as a pull request. VERSION is
+## REQUIRED. Publishes nothing -- it pushes only the release branch and
+## prints the pull request URL.
 ## Usage: make release-alpha VERSION=0.9.2-alpha [BUMP=minor] [DRY_RUN=1]
 ## The version is stated, never guessed; BUMP, when given, declares what kind
-## of release this is and is refused unless it agrees with VERSION.
+## of release this is and is refused unless it agrees with VERSION. Also
+## refuses an effective PATCH bump that grew the exported Go API.
 release-alpha:
 	@bash scripts/release-alpha.sh --version "$(VERSION)" \
 		$(if $(BUMP),--bump "$(BUMP)") \
 		$(if $(DRY_RUN),--dry-run) \
+		$(if $(RELEASE_REMOTE),--remote "$(RELEASE_REMOTE)")
+
+## release-tag: TAG and publish a release already merged to main. VERSION is
+## REQUIRED and must match the merged release commit's VERSION file exactly.
+## Run this only after `make release-alpha`'s pull request has merged.
+## Usage: make release-tag VERSION=0.9.2-alpha
+release-tag:
+	@bash scripts/release-tag.sh --version "$(VERSION)" \
 		$(if $(RELEASE_REMOTE),--remote "$(RELEASE_REMOTE)")
 
 deps-latest:

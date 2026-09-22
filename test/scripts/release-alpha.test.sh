@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# Unit tests for the pure functions in scripts/release-alpha.sh.
+# Unit tests for scripts/release-alpha.sh: the pure functions directly, and
+# the fetch/checkout/commit/push flow end to end against a throwaway fixture
+# repository with its own bare "dev" remote (go-xkms#419/#211 rewrote this
+# script to fetch and prepare a pull request rather than publish directly, so
+# a fixture with no remote at all can no longer exercise it).
 #
-# Scope is deliberate: only the functions that are a function of their
-# arguments are tested here, because only those can be tested without cutting a
-# release. The parts that touch git -- branch and clean-tree preconditions,
-# tagging, signature confirmation, the atomic push -- are exercised by
-# `--dry-run` and by cutting a real release, not simulated. A harness that
-# fakes those seams is go-xkms#211, not this file.
+# scripts/release-tag.sh -- the tagging, signature confirmation and atomic
+# push that used to live here -- has its own suite,
+# test/scripts/release-tag.test.sh, which sources this file's pure functions
+# the same way the script itself does.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -194,6 +196,38 @@ section "escape_dots"
 eq "dots are escaped for a BRE" 'v0\.9\.1-alpha' "$(escape_dots v0.9.1-alpha)"
 eq "a module path is escaped" 'github\.com/jeremyhahn/go-xkms' "$(escape_dots github.com/jeremyhahn/go-xkms)"
 
+# --- bump_level: the growth gate's trigger, derived rather than declared ----
+#
+# go-xkms#419's incident shipped nine new exported symbols with NO --bump flag
+# at all, so the growth gate cannot gate on the flag being present -- it has
+# to derive the same answer --bump would have declared, from the two versions
+# alone.
+
+section "bump_level"
+eq "a patch-only difference" "patch" "$(bump_level v0.9.1-alpha v0.9.2-alpha)"
+eq "a multi-patch jump is still patch" "patch" "$(bump_level v0.9.1-alpha v0.9.9-alpha)"
+eq "a minor difference" "minor" "$(bump_level v0.9.4-alpha v0.10.0-alpha)"
+eq "minor outranks a simultaneous patch difference" "minor" "$(bump_level v0.9.4-alpha v0.10.1-alpha)"
+eq "a major difference" "major" "$(bump_level v0.9.4-alpha v1.0.0-alpha)"
+eq "major outranks minor and patch together" "major" "$(bump_level v0.9.4-alpha v1.1.1-alpha)"
+
+# --- remote_repo_path: the PR URL's path half --------------------------------
+#
+# Mirrors scripts/gitea-host.sh's own case structure over the HOST half of the
+# same URL, deliberately: the two compose into one PR URL without either
+# script guessing at the shape the other already handles.
+
+section "remote_repo_path"
+eq "an ssh:// remote" "jeremyhahn/go-xkms" \
+	"$(remote_repo_path 'ssh://git@git.example.internal:2222/jeremyhahn/go-xkms.git')"
+eq "an http remote" "jeremyhahn/go-xkms" \
+	"$(remote_repo_path 'http://git.example.internal/jeremyhahn/go-xkms.git')"
+eq "an scp-like remote" "jeremyhahn/go-xkms" \
+	"$(remote_repo_path 'git@198.51.100.50:jeremyhahn/go-xkms.git')"
+eq "an unrecognized shape yields nothing, not a guess" "" \
+	"$(remote_repo_path '/media/local4tb/git/go-xkms.git')"
+eq "the empty string yields nothing" "" "$(remote_repo_path '')"
+
 # --- the declared edge set matches the repository ---------------------------
 #
 # The edge set is declared rather than discovered, which is what makes it
@@ -244,22 +278,20 @@ if changelog_entries_pending "$CEP/one";     then ok "one entry: pending";      
 if changelog_entries_pending "$CEP/many";    then ok "five entries under pipefail: pending"; else no "five entries: assembler would be SKIPPED (SIGPIPE 141)"; fi
 rm -rf "$CEP"
 
-# --- --dry-run leaves the working tree byte-identical (go-xkms#415, #416) ----
+
+# --- fetch/checkout/commit/push against a real tree (end to end) -----------
 #
-# The only end-to-end cases in this file, and they earn the exception: the
-# defect they cover is invisible to a unit test of the pure functions, because
-# it is entirely a question of WHICH TREE the impure steps write to. A dry run
-# used to assemble .changelog/unreleased into the real CHANGELOG.md and delete
-# the entry files -- while printing "nothing was changed" -- so the rehearsal
-# consumed the release notes it was only supposed to preview.
+# go-xkms#419/#211 rewrote release-alpha.sh to fetch --remote/--branch and
+# read VERSION, the pins and CHANGELOG.md from that fetched tip rather than
+# from whatever is checked out locally, and to stop at a pushed branch
+# instead of tagging and publishing. Every fixture below therefore carries
+# its own bare "dev" remote: a repository with none can no longer exercise
+# this script at all, which is itself part of what changed.
 #
-# The fixture is a throwaway git repository under mktemp -d carrying the shape
-# the script demands: a VERSION file, every declared pin edge, a CHANGELOG with
-# an Unreleased heading, pending entries, and copies of both scripts. Git runs
-# against it with the host's global and system config disabled, so the result
-# is a property of the script rather than of whoever's machine runs the suite.
-# Nothing here reaches the network: no remote is configured and no push is ever
-# attempted.
+# Git runs against every fixture with the host's global and system config
+# disabled, so the result is a property of the script rather than of
+# whoever's machine runs the suite. The only network these tests reach is a
+# bare repository under mktemp -d beside the fixture -- nothing external.
 
 section "--dry-run against a real tree (end to end)"
 
@@ -282,9 +314,23 @@ fxmod() { # fxmod <repo> <path> <module> <required...>
 	} >"$r/$path"
 }
 
-mkfixture() { # mkfixture <repo>
-	local r=$1 x=github.com/jeremyhahn/go-xkms
-	mkdir -p "$r/scripts" "$r/.changelog/unreleased"
+# mkbare creates a fresh bare repository under FXROOT and prints its path.
+mkbare() {
+	local b
+	b=$(mktemp -d -p "$FXROOT")/bare.git
+	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git init -q --bare -b main "$b" >/dev/null
+	printf '%s' "$b"
+}
+
+# mkfixture builds a throwaway repository at $1 carrying the shape the script
+# demands -- VERSION, every declared pin edge, a CHANGELOG with an Unreleased
+# heading, pending entries, copies of both scripts plus exportsurface (the
+# growth gate shells out to `go build` on it) -- commits it, tags the commit
+# v0.1.0-alpha (the baseline the growth gate's tests compare against), adds a
+# bare "dev" remote and pushes main to it. Prints the bare remote's path.
+mkfixture() {
+	local r=$1 x=github.com/jeremyhahn/go-xkms bare
+	mkdir -p "$r/scripts/exportsurface" "$r/.changelog/unreleased"
 	printf '0.1.0-alpha\n' >"$r/VERSION"
 	fxmod "$r" go.mod "$x" "$x/sdk/go" "$x/xkey"
 	fxmod "$r" sdk/go/go.mod "$x/sdk/go" "$x" "$x/xkey"
@@ -296,15 +342,23 @@ mkfixture() { # mkfixture <repo>
 	printf -- '- **thing** two ([#2](x))\n' >"$r/.changelog/unreleased/added-two-2.md"
 	printf 'contributor notes\n' >"$r/.changelog/unreleased/README.md"
 	cp "$ROOT/scripts/release-alpha.sh" "$ROOT/scripts/changelog-assemble.sh" "$r/scripts/"
+	cp "$ROOT/scripts/exportsurface/main.go" "$r/scripts/exportsurface/main.go"
 	fxgit "$r" init -q -b main
 	fxgit "$r" add -A
 	fxgit "$r" -c user.name=test -c user.email=test@example.invalid \
 		-c commit.gpgsign=false commit -q -m "fixture"
+	fxgit "$r" tag v0.1.0-alpha
+	bare=$(mkbare)
+	fxgit "$r" remote add dev "$bare"
+	fxgit "$r" push -q dev main
+	printf '%s' "$bare"
 }
 
 # fxmanifest is the tree-identity assertion: the index and worktree state git
 # reports, plus a content hash of every file the changelog steps can touch. A
-# deletion, a rewrite and a staging all change it.
+# deletion, a rewrite and a staging all change it. It deliberately does not
+# look at refs or branches -- a fetch updating remote-tracking refs is not a
+# working-tree mutation and must not fail this check.
 fxmanifest() { # fxmanifest <repo>
 	fxgit "$1" status --porcelain
 	(cd "$1" && find CHANGELOG.md .changelog -type f -exec sha256sum {} + 2>&1 | LC_ALL=C sort)
@@ -320,7 +374,9 @@ fxrelease() { # fxrelease <repo> <args...>
 # The script reaches git through $GIT, which makes "a dry run writes nothing"
 # answerable directly rather than only by its effects: every subcommand is
 # recorded and the write verbs must not appear. A tree-identity check alone
-# cannot see a write whose content happened to match.
+# cannot see a write whose content happened to match. A dry run DOES read the
+# network now (fetch, fetch --tags), which is the point of go-xkms#211 -- only
+# the write verbs are forbidden.
 cat >"$FXROOT/git-wrap" <<'WRAP'
 #!/usr/bin/env bash
 printf '%s\n' "${1:-}" >>"$GITLOG"
@@ -329,7 +385,7 @@ WRAP
 chmod +x "$FXROOT/git-wrap"
 
 FX="$FXROOT/dry"
-mkfixture "$FX"
+mkfixture "$FX" >/dev/null
 BEFORE=$(fxmanifest "$FX")
 GITLOG="$FXROOT/git-calls"
 : >"$GITLOG"
@@ -341,6 +397,8 @@ AFTER=$(fxmanifest "$FX")
 
 eq "the dry run succeeds" "0" "$RC"
 eq "the working tree is byte-identical after a dry run" "$BEFORE" "$AFTER"
+eq "the checked-out branch is unchanged after a dry run" "main" "$(fxgit "$FX" symbolic-ref --short HEAD)"
+eq "no local branch was created by a dry run" "" "$(fxgit "$FX" branch --list 'release/*')"
 eq "no changelog entry was consumed" "2" \
 	"$(find "$FX/.changelog/unreleased" -name '*.md' ! -name README.md | wc -l | tr -d ' ')"
 eq "the index is empty after a dry run" "" "$(fxgit "$FX" status --porcelain)"
@@ -358,16 +416,22 @@ true_ "the preview prints the assembled changelog section" grep -q '^+## \[0.2.0
 true_ "the preview prints the assembled entry text" grep -q '^+- \*\*thing\*\* one' <<<"$OUT"
 true_ "the preview names the entry files a real cut would consume" \
 	grep -q 'would remove .changelog/unreleased/fixed-one-1.md' <<<"$OUT"
-true_ "the preview still reports the tags" grep -q 'sdk/go/v0.2.0-alpha' <<<"$OUT"
+true_ "the preview names the release branch, not a tag" \
+	grep -q 'push release/v0.2.0-alpha to dev' <<<"$OUT"
+false_ "the preview never mentions tagging -- that is release-tag.sh's job now" \
+	grep -q 'sdk/go/v0.2.0-alpha' <<<"$OUT"
 
-# Error handling: a malformed entry name must fail the rehearsal, and must fail
-# it without having consumed anything either.
+# Error handling: a malformed entry name must fail the rehearsal, and must
+# fail it without having consumed anything either. The bad entry is pushed to
+# the fixture's own remote -- a fetch-based script cannot be tripped by an
+# unpushed local commit it will never read.
 FXBAD="$FXROOT/bad"
-mkfixture "$FXBAD"
+mkfixture "$FXBAD" >/dev/null
 printf -- '- oops\n' >"$FXBAD/.changelog/unreleased/typo-section-3.md"
 fxgit "$FXBAD" add -A
 fxgit "$FXBAD" -c user.name=test -c user.email=test@example.invalid \
 	-c commit.gpgsign=false commit -q -m "bad entry"
+fxgit "$FXBAD" push -q dev main
 BEFORE=$(fxmanifest "$FXBAD")
 OUT=$(fxrelease "$FXBAD" --version 0.2.0-alpha --bump minor --dry-run)
 RC=$?
@@ -375,33 +439,121 @@ eq "a malformed entry name fails the dry run" "1" "$RC"
 true_ "the failure names the assembler" grep -q 'changelog-assemble failed' <<<"$OUT"
 eq "a failed dry run is byte-identical too" "$BEFORE" "$(fxmanifest "$FXBAD")"
 
-# The real path must still assemble against the repository -- the fix moves the
-# dry run off the worktree, it does not stop a release from cutting one. The
-# run is stopped at the tag-signing check by pointing gpg.program at /bin/false,
-# which is as far as a test may go: everything after it publishes.
+# --- prepare reads the fetched remote tip, never the local checkout --------
+#
+# The whole point of go-xkms#211's "fetch-and-assert": a local checkout that
+# has never seen a version published upstream must still be unable to
+# republish it, because every read comes from what was JUST fetched.
+
+section "prepare reads the fetched remote tip, not a stale local checkout (go-xkms#211)"
+
+FXSTALE="$FXROOT/stale"
+mkfixture "$FXSTALE" >/dev/null
+BARE=$(fxgit "$FXSTALE" remote get-url dev)
+FXPUSHER="$FXROOT/pusher"
+GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git clone -q "$BARE" "$FXPUSHER"
+printf '0.1.5-alpha\n' >"$FXPUSHER/VERSION"
+fxgit "$FXPUSHER" add -A
+fxgit "$FXPUSHER" -c user.name=test -c user.email=test@example.invalid \
+	-c commit.gpgsign=false commit -q -m "someone else's release"
+fxgit "$FXPUSHER" push -q origin main
+
+# $FXSTALE has never fetched the commit FXPUSHER just made. If prepare
+# trusted the local checkout, it would validate 0.1.5-alpha against the STALE
+# 0.1.0-alpha still on disk here and accept a version already superseded.
+OUT=$(fxrelease "$FXSTALE" --version 0.1.5-alpha --dry-run)
+RC=$?
+eq "a version already published upstream is refused, though the local checkout has never seen it" \
+	"1" "$RC"
+true_ "the refusal compares against the just-fetched version, not the stale local one" \
+	grep -q 'is not greater than the current version v0.1.5-alpha' <<<"$OUT"
+
+# --- prepare refuses a release branch that already exists on the remote ----
+
+section "prepare refuses a duplicate release branch (go-xkms#419)"
+
+FXDUP="$FXROOT/dup"
+mkfixture "$FXDUP" >/dev/null
+fxgit "$FXDUP" push -q dev "HEAD:refs/heads/release/v0.1.1-alpha"
+OUT=$(fxrelease "$FXDUP" --version 0.1.1-alpha --dry-run)
+RC=$?
+eq "a release branch already on the remote is refused" "1" "$RC"
+true_ "the refusal names the branch" grep -q 'release/v0.1.1-alpha' <<<"$OUT"
+
+# --- the exported-API growth gate (go-xkms#419/#421) ------------------------
+
+section "the exported-API growth gate"
+
+FXGROW="$FXROOT/growth"
+mkfixture "$FXGROW" >/dev/null
+mkdir -p "$FXGROW/pkg/foo"
+printf 'package foo\n\nfunc Exported() string { return "x" }\n' >"$FXGROW/pkg/foo/foo.go"
+fxgit "$FXGROW" add -A
+fxgit "$FXGROW" -c user.name=test -c user.email=test@example.invalid \
+	-c commit.gpgsign=false commit -q -m "add pkg/foo, unreleased"
+fxgit "$FXGROW" push -q dev main
+
+OUT=$(fxrelease "$FXGROW" --version 0.1.1-alpha --dry-run)
+RC=$?
+eq "an implied PATCH bump that grew the API is refused" "1" "$RC"
+true_ "the refusal names the added symbol" grep -q '\.:pkg/foo\.Exported' <<<"$OUT"
+true_ "the refusal suggests the fix" grep -q -- '--bump minor' <<<"$OUT"
+
+OUT=$(fxrelease "$FXGROW" --version 0.2.0-alpha --bump minor --dry-run)
+RC=$?
+eq "the same growth is allowed under a MINOR bump" "0" "$RC"
+
+OUT=$(fxrelease "$FXGROW" --version 0.1.1-alpha --bump patch --dry-run)
+RC=$?
+eq "an explicit --bump patch is refused exactly like an implied one" "1" "$RC"
+
+# --- a real cut prepares a pull request branch, and stops (end to end) -----
+
+section "a real cut prepares a pull request branch, and stops"
+
 FXREAL="$FXROOT/real"
-mkfixture "$FXREAL"
-fxgit "$FXREAL" config gpg.program /bin/false
-fxgit "$FXREAL" config commit.gpgsign false
+BARE=$(mkfixture "$FXREAL")
 fxgit "$FXREAL" config user.name test
 fxgit "$FXREAL" config user.email test@example.invalid
-BASE=$(fxgit "$FXREAL" rev-parse HEAD)
+fxgit "$FXREAL" config commit.gpgsign false
+STARTHEAD=$(fxgit "$FXREAL" rev-parse HEAD)
+
 OUT=$(fxrelease "$FXREAL" --version 0.2.0-alpha --bump minor)
 RC=$?
-eq "a real cut stops at the signing check" "1" "$RC"
-true_ "a real cut assembles the changelog against the repository" \
-	grep -q '^## \[0.2.0-alpha\]' "$FXREAL/CHANGELOG.md"
-eq "a real cut consumes the entry files" "0" \
+
+eq "a real cut succeeds" "0" "$RC"
+eq "local main is unchanged -- the release commit lands on a new branch" \
+	"$STARTHEAD" "$(fxgit "$FXREAL" rev-parse main)"
+eq "the operator is left on the release branch" "release/v0.2.0-alpha" \
+	"$(fxgit "$FXREAL" symbolic-ref --short HEAD)"
+on_remote_branch() { fxgit "$FXREAL" ls-remote --exit-code --heads dev release/v0.2.0-alpha >/dev/null; }
+true_ "the release branch was pushed to the remote" on_remote_branch
+eq "remote main is unchanged -- nothing was published to it" "$STARTHEAD" \
+	"$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$BARE" rev-parse refs/heads/main)"
+# v0.1.0-alpha is mkfixture's baseline tag; v0.2.0-alpha and its lockstep
+# namespaces are the ones a real cut must NOT create -- that is
+# release-tag.sh's job, run only after this branch's pull request merges.
+eq "no new tag was created -- that is release-tag.sh's job" "v0.1.0-alpha" \
+	"$(fxgit "$FXREAL" tag --list 'v*' | tr '\n' ' ' | sed 's/ $//')"
+true_ "the changelog was assembled" grep -q '^## \[0.2.0-alpha\]' "$FXREAL/CHANGELOG.md"
+eq "the entry files were consumed" "0" \
 	"$(find "$FXREAL/.changelog/unreleased" -name '*.md' ! -name README.md | wc -l | tr -d ' ')"
-true_ "a real cut keeps the entries README" test -f "$FXREAL/.changelog/unreleased/README.md"
-true_ "a real cut moved the pins" \
-	grep -q 'go-xkms/sdk/go v0.2.0-alpha' "$FXREAL/go.mod"
-# go-xkms#416, second finding: the release commit is created BEFORE the tags,
-# so a run that dies at the signing check leaves an unsigned chore(release)
-# commit. A cleanup hint that names only the tags leaves the operator on it.
-true_ "the signing failure names the release commit to unwind" \
-	grep -q "git reset --hard $BASE" <<<"$OUT"
-eq "no tag survived the failed cut" "" "$(fxgit "$FXREAL" tag --list)"
+true_ "the entries README survived" test -f "$FXREAL/.changelog/unreleased/README.md"
+true_ "the pins moved" grep -q 'go-xkms/sdk/go v0.2.0-alpha' "$FXREAL/go.mod"
+eq "the commit message is the release commit" "chore(release): v0.2.0-alpha" \
+	"$(fxgit "$FXREAL" log -1 --format=%s)"
+true_ "the run names the pull request URL or says it could not" \
+	grep -qE 'open a pull request|could not determine the repository URL' <<<"$OUT"
+true_ "the run names release-tag as the next step" \
+	grep -q 'make release-tag VERSION=0.2.0-alpha' <<<"$OUT"
+
+# Preparing the same version again is refused: the branch now exists both
+# locally and on the remote.
+OUT2=$(fxrelease "$FXREAL" --version 0.2.0-alpha --bump minor)
+RC2=$?
+eq "preparing an already-prepared version is refused" "1" "$RC2"
+true_ "the refusal names the existing local branch" \
+	grep -q "local branch 'release/v0.2.0-alpha' already exists" <<<"$OUT2"
 
 rm -rf "$FXROOT"
 

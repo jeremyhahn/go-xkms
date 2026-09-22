@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+  # This still fires exactly as before go-xkms#419/#211 split release cutting
+  # into two steps: `scripts/release-alpha.sh` / `make release-alpha` now only
+  # prepares a pull request and pushes a `release/<version>` BRANCH (no `v*`
+  # tag, so this workflow does not see it), and `scripts/release-tag.sh` /
+  # `make release-tag` -- run only after that pull request has merged --
+  # creates and pushes the three lockstep tags this trigger matches. A direct
+  # push to `main` therefore can no longer produce a tag at all: nothing but
+  # release-tag.sh ever creates one, and it refuses to run against anything
+  # but a fetched, reviewed, merged main. See docs/release-engineering/.
+  #
   # RECOVERY PATH (go-xkms#44). A tag push is the normal trigger, but when the
   # pipeline itself is broken the tag is already published and CANNOT be moved
   # to re-fire it -- the module proxy caches a tag and deleting it does not

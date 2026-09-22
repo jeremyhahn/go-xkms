@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# release-alpha.sh — cut an -alpha release of go-xkms.
+# release-alpha.sh — PREPARE an -alpha release of go-xkms. It stops at a pull
+# request; it never publishes.
 #
 # Usage:
 #	scripts/release-alpha.sh --version X.Y.Z-alpha [--bump LEVEL] [--dry-run]
@@ -8,11 +9,40 @@
 #
 #	--version   REQUIRED. The exact version to publish, e.g. 0.9.2-alpha.
 #	--bump      Optional. patch|minor|major. Declares what KIND of release
-#	            this is; refused unless it agrees with --version.
+#	            this is; refused unless it agrees with --version. The
+#	            exported-API growth gate below does not depend on this flag
+#	            being given — see its comment.
 #	--dry-run   Rehearse every check, the pin rewrite AND the changelog
-#	            assembly against a scratch copy; print the diff, change nothing.
-#	--remote    Remote to publish to (default: dev).
-#	--branch    Branch releases are cut from (default: main).
+#	            assembly against a scratch copy of the fetched remote tip;
+#	            print the diff, change nothing, push nothing.
+#	--remote    Remote to fetch from and push the release branch to
+#	            (default: dev).
+#	--branch    The branch releases are cut from (default: main). Overriding
+#	            it is the only way to rehearse against a branch other than
+#	            main.
+#
+# WHAT THIS SCRIPT DOES, and where the rest of the release happens
+# (go-xkms#419, go-xkms#211 "option B"):
+#
+#	1. Fetches --branch from --remote and reads VERSION, the reciprocal
+#	   pins and CHANGELOG.md from THAT fetched tip, never from whatever
+#	   happens to be checked out locally — a stale local main cannot pass a
+#	   check it never reads.
+#	2. Validates the requested version, the pin set, the changelog heading,
+#	   and refuses a release that grows the exported Go API under an
+#	   effective PATCH bump.
+#	3. On a real (non-dry-run) cut: checks out a new branch
+#	   release/X.Y.Z-alpha from the fetched tip, assembles the changelog,
+#	   moves the pins, bumps VERSION, commits, and pushes THE BRANCH ONLY.
+#	   It prints the pull request URL and stops.
+#
+# It used to also create the three lockstep tags and push them, atomically,
+# to main — with no pull request anywhere in that path (go-xkms#419: two
+# releases raced for the same base because the tooling path had no review
+# gate the documented issue → branch → PR → review → merge flow provides).
+# That step is now `scripts/release-tag.sh` / `make release-tag`, run only
+# after this script's pull request has been reviewed and merged. See
+# docs/release-engineering/.
 #
 # The version is STATED, never derived. Deriving it asks an open question --
 # what is the greatest version anywhere? -- whose answer depends on local tags,
@@ -22,23 +52,35 @@
 # checklist: well-formed, strictly greater than the current in every lockstep
 # namespace, and not already taken in any of them.
 #
-# Scope note: this script deliberately does NOT defend the seams between its
-# first read and its final push against a concurrent writer. It refuses to run
-# on a dirty tree or a non-empty index instead, which removes that class rather
-# than guarding it. Making the remaining races unreachable means cutting from
-# an isolated checkout, which is go-xkms#211 and needs an owner ruling.
+# Scope note: fetching --branch and reading from that tip (rather than a fully
+# isolated, disposable checkout) is go-xkms#211's "fetch-and-assert" option,
+# not its "cut from a disposable checkout" option — the latter was considered
+# and declined. This script still writes into the operator's own working
+# tree/index for the real cut, and still refuses to run on a dirty tree or a
+# non-empty index rather than defending every seam between its first read and
+# its last push against a concurrent writer.
 set -euo pipefail
 
 REMOTE=${REMOTE:-dev}
 RELEASE_BRANCH=${RELEASE_BRANCH:-main}
 GIT=${GIT:-git}
+GO=${GO:-go}
 
 # The lockstep tag namespaces. Every release publishes exactly one tag in each,
 # all pointing at the same commit (release-versioning.md P2). web/desktop is a
 # module but not a published one -- it carries no tag namespace because it
 # replaces all three siblings with local paths and is never resolved by a
-# consumer.
+# consumer. Tags themselves are no longer created here — scripts/release-tag.sh
+# owns TAG_NAMESPACES too, kept in step with this list deliberately — but the
+# namespaces are still the closed set this script checks the requested version
+# against before it prepares anything.
 TAG_NAMESPACES=("" "sdk/go/" "xkey/")
+
+# The modules whose exported Go API the growth gate below compares. Same three
+# as TAG_NAMESPACES, named without the trailing slash a directory path does not
+# carry, and without web/desktop for the same reason it carries no tag
+# namespace: nothing ever resolves it as a versioned dependency.
+API_MODULES=("." "sdk/go" "xkey")
 
 # The DECLARED reciprocal pin edges: every "<file> requires <module> at the
 # release version" relationship in the repository, as "<file>:<module>".
@@ -146,6 +188,26 @@ max_version() {
 	printf '%s' "$best"
 }
 
+# bump_level derives patch|minor|major from two well-formed versions by
+# comparing MAJOR and MINOR alone -- it never reads --bump. --bump is a
+# DECLARED intent, cross-checked against --version earlier and only ever
+# equal to what this function would derive when it is given at all (see the
+# growth-gate comment below for why the derivation, not the flag, is what
+# gates it). $1 must be strictly less than $2; callers only ever pass
+# (CURRENT, NEXT) after version_gt has already confirmed that.
+bump_level() {
+	local cur=${1#v} nxt=${2#v} c1 c2 c3 n1 n2 n3
+	IFS='.' read -r c1 c2 c3 <<<"${cur%-alpha}"
+	IFS='.' read -r n1 n2 n3 <<<"${nxt%-alpha}"
+	if ((10#$n1 != 10#$c1)); then
+		printf 'major'
+	elif ((10#$n2 != 10#$c2)); then
+		printf 'minor'
+	else
+		printf 'patch'
+	fi
+}
+
 # pin_version prints the version a go.mod requires a module at, or nothing.
 #
 # A go.mod carries our module paths in two shapes and only one is a pin:
@@ -240,6 +302,36 @@ changelog_entries_pending() {
 	[ -n "$(find "$1" -maxdepth 1 -name '*.md' ! -name 'README.md' -print -quit 2>/dev/null)" ]
 }
 
+# remote_repo_path prints "<owner>/<repo>" (no trailing .git) from a git
+# remote URL in any of the three shapes this fabric's remotes use: ssh://,
+# http(s)://, or scp-like user@host:path. Mirrors the case structure of
+# scripts/gitea-host.sh, which resolves the HOST half of the same URL; this
+# resolves the PATH half, so the two compose into one PR URL without either
+# script guessing at the other's job. Prints nothing for a shape it does not
+# recognize -- the PR URL this feeds is a convenience, never worth failing a
+# prepared release over.
+remote_repo_path() {
+	local url=$1 rest path
+	case "$url" in
+	ssh://*)
+		rest=${url#ssh://}
+		rest=${rest#*@}
+		path=${rest#*/}
+		;;
+	http://* | https://*)
+		rest=${url#*://}
+		rest=${rest#*@}
+		path=${rest#*/}
+		;;
+	*@*:*)
+		rest=${url#*@}
+		path=${rest#*:}
+		;;
+	*) path="" ;;
+	esac
+	printf '%s' "${path%.git}"
+}
+
 # Sourced by the unit tests for the functions above; nothing below runs.
 if [ "${RELEASE_ALPHA_LIB:-0}" = 1 ]; then
 	return 0
@@ -264,7 +356,7 @@ while [ $# -gt 0 ]; do
 	--branch) [ $# -ge 2 ] || die "--branch needs a value"; RELEASE_BRANCH=$2; shift 2 ;;
 	--branch=*) RELEASE_BRANCH=${1#--branch=}; shift ;;
 	--dry-run) DRY_RUN=1; shift ;;
-	-h | --help) sed -n '3,16p' "$0"; exit 0 ;;
+	-h | --help) sed -n '3,22p' "$0"; exit 0 ;;
 	*) die "unknown argument '$1'" ;;
 	esac
 done
@@ -281,39 +373,90 @@ case $BUMP in
 esac
 
 # ---------------------------------------------------------------------------
-# Preconditions. Nothing is written until all of them pass.
+# Preconditions that need neither the network nor the fetched tip.
 # ---------------------------------------------------------------------------
 
 $GIT rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
 cd "$($GIT rev-parse --show-toplevel)" || die "could not reach the repository root"
 
-# PROVENANCE, before content. Module tags cannot be withdrawn once a consumer
-# has fetched them, so tagging from a feature branch or a detached HEAD is not
-# recoverable by reverting -- only by burning a version.
-BRANCH=$($GIT symbolic-ref -q --short HEAD 2>/dev/null) || BRANCH=""
-[ -n "$BRANCH" ] || die "HEAD is detached -- check out $RELEASE_BRANCH first"
-[ "$BRANCH" = "$RELEASE_BRANCH" ] ||
-	die "on branch '$BRANCH' -- releases are cut from '$RELEASE_BRANCH' only. Pass --branch to override deliberately"
-
 # A clean tree and an empty index are a PRECONDITION, not a race guard. The
-# release commit takes whatever is staged, so refusing to start on a dirty tree
-# deletes the "someone's unrelated edits were swept into the release" class
-# outright, and makes the later `git add` of RELEASE_FILES exact by
-# construction.
+# real cut below checks out a NEW branch from the fetched remote tip, which
+# git refuses to do over uncommitted changes it would have to discard or
+# carry; refusing here turns that into one plain message instead of a raw git
+# error, and deletes the "someone's unrelated edits were swept into the
+# release" class outright.
 [ -z "$($GIT status --porcelain)" ] ||
 	die "the working tree is not clean. A release commit must contain this release and nothing else; commit or stash your changes first"
+
+BRANCH_NAME="release/$NEXT"
+
+# Scratch directories this run creates, removed on every exit path. Declared
+# before the first mktemp call, not after: a die() between here and the first
+# `SCRATCH_DIRS+=(...)` still runs this trap, over an empty array, which is a
+# no-op rather than a missing variable.
+SCRATCH_DIRS=()
+trap 'rm -rf "${SCRATCH_DIRS[@]}"' EXIT
+
+# cleanup_hint names how to undo whatever this run left behind LOCALLY.
+# Before the checkout below it is "nothing" by construction: a dry run never
+# reaches a git write command, and a real cut has not made one yet either.
+# PREVIOUS_REF and RELEASE_COMMIT are filled in once they exist.
+PREVIOUS_REF=""
+RELEASE_COMMIT=""
+cleanup_hint() {
+	if [ -z "$RELEASE_COMMIT" ]; then
+		printf 'nothing was written; there is nothing to undo'
+	else
+		printf 'Nothing was pushed; undo the local state with: git checkout %s -q && git branch -D %s' \
+			"$PREVIOUS_REF" "$BRANCH_NAME"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Fetch the tip this release is cut from. Read from THIS, never from whatever
+# the operator happens to have checked out: a stale local main is exactly the
+# TOCTOU class go-xkms#211 asks to make unrepresentable, and reading through a
+# fetch answers "what is on the remote right now" instead of "what did I last
+# happen to pull".
+# ---------------------------------------------------------------------------
+
+printf 'release-alpha: fetching %s/%s...\n' "$REMOTE" "$RELEASE_BRANCH"
+$GIT fetch --quiet "$REMOTE" "$RELEASE_BRANCH" ||
+	die "could not fetch $RELEASE_BRANCH from $REMOTE"
+REMOTE_TIP=$($GIT rev-parse FETCH_HEAD) ||
+	die "could not resolve the fetched tip of $REMOTE/$RELEASE_BRANCH"
+# Tags too: the tag-namespace checks below and the exported-API growth gate
+# both need the CURRENT release's tag, and a local tag cache can be stale in
+# exactly the way the branch fetch above exists to avoid for the branch.
+$GIT fetch --quiet --tags "$REMOTE" ||
+	die "could not fetch tags from $REMOTE"
+
+if $GIT rev-parse -q --verify "refs/heads/$BRANCH_NAME" >/dev/null; then
+	die "local branch '$BRANCH_NAME' already exists -- delete it (git branch -D $BRANCH_NAME) if a previous prepare run did not finish, or pick the next version"
+fi
+if $GIT ls-remote --exit-code --heads "$REMOTE" "$BRANCH_NAME" >/dev/null 2>&1; then
+	die "'$BRANCH_NAME' already exists on $REMOTE -- a release is already prepared for $NEXT. Open its pull request instead of preparing a second one, or pick the next version"
+fi
+
+# READROOT is a read-only materialization of the fetched tip: every
+# precondition below reads from it, never from "." -- which, before the
+# checkout further down, is still whatever branch the operator started on.
+READROOT=$(mktemp -d) || die "could not create a scratch directory for the fetched tip"
+SCRATCH_DIRS+=("$READROOT")
+$GIT archive --format=tar "$REMOTE_TIP" | (cd "$READROOT" && tar -xf -) ||
+	die "could not materialize the fetched tip of $REMOTE/$RELEASE_BRANCH"
 
 # ---------------------------------------------------------------------------
 # Version validation: a closed checklist over a stated version.
 # ---------------------------------------------------------------------------
 
-[ -f VERSION ] || die "VERSION not found at the repository root"
-CURRENT=v$(tr -d ' \t\n' <VERSION)
+[ -f "$READROOT/VERSION" ] || die "VERSION not found at the root of $REMOTE/$RELEASE_BRANCH"
+CURRENT=v$(tr -d ' \t\n' <"$READROOT/VERSION")
 is_alpha_semver "$CURRENT" ||
-	die "the VERSION file holds '${CURRENT#v}', which is not a X.Y.Z-alpha version"
+	die "$REMOTE/$RELEASE_BRANCH's VERSION file holds '${CURRENT#v}', which is not a X.Y.Z-alpha version"
 
 version_gt "$NEXT" "$CURRENT" ||
-	die "$NEXT is not greater than the current version $CURRENT. Pass the version to publish: make release-alpha VERSION=<X.Y.Z-alpha>"
+	die "$NEXT is not greater than the current version $CURRENT on $REMOTE/$RELEASE_BRANCH. Pass the version to publish: make release-alpha VERSION=<X.Y.Z-alpha>"
 
 # --bump is a stated intent checked against the stated version, never a
 # derivation. It is what makes a breaking release expressible: the old target
@@ -326,10 +469,9 @@ if [ -n "$BUMP" ]; then
 fi
 
 # Strictly greater than the current tag in EVERY lockstep namespace, and taken
-# in none of them. Asked of the local tag store; the atomic push below is what
-# actually enforces it against the remote, since git refuses to move an
-# existing remote tag without --force and an atomic push publishes nothing when
-# any one ref is rejected.
+# in none of them. Asked of the LOCAL tag store, which the fetch above just
+# refreshed from the remote; scripts/release-tag.sh re-asserts this against
+# the remote again at tag time, since this script never publishes a tag.
 for ns in "${TAG_NAMESPACES[@]}"; do
 	label=${ns:-<root>}
 	if $GIT rev-parse -q --verify "refs/tags/${ns}${NEXT}" >/dev/null; then
@@ -345,42 +487,79 @@ done
 # to be checked after the changelog assembly, so a tree with an inconsistent
 # pin set was refused only once its .changelog entries had already been
 # consumed and staged -- a refusal that left work behind.
-require_pins_at . "$CURRENT" "before the rewrite" ||
-	die "refusing to start a release from an inconsistent pin set"
+require_pins_at "$READROOT" "$CURRENT" "before the rewrite" ||
+	die "refusing to prepare a release from an inconsistent pin set on $REMOTE/$RELEASE_BRANCH"
 
 printf 'release-alpha: %s -> %s (%d reciprocal pins, %d tags)\n' \
 	"$CURRENT" "$NEXT" "${#PIN_EDGES[@]}" "${#TAG_NAMESPACES[@]}"
 
 # ---------------------------------------------------------------------------
-# The tree the rest of this script writes to. A real cut writes to the
-# repository; a dry run writes to a scratch copy and nothing else, so it leaves
-# the working tree byte-identical however it exits -- which is why there is no
-# restore trap here to get wrong.
+# Exported-API growth gate (go-xkms#419/#421). Refuses an effective PATCH
+# bump that adds exported Go API in any published module since the CURRENT
+# tag -- the exact defect that shipped nine new exported symbols in a PATCH
+# release with no check to catch it.
 #
-# CHANGELOG.md and .changelog/unreleased are in the copy because the assembly
-# below is DESTRUCTIVE: it deletes the entry files it splices. Rehearsing it
-# against the repository consumed the release notes it was only supposed to
-# preview, then reported "nothing was changed" (#415, #416).
+# Gated on the DERIVED level (bump_level CURRENT NEXT), not on whether --bump
+# was passed: --bump is optional, and `--version 0.9.5-alpha` with no --bump
+# at all is just as much a patch as `--bump patch --version 0.9.5-alpha` is --
+# the incident this closes shipped with no --bump given at all. When --bump
+# IS given it has already been asserted to agree with --version above, so the
+# derived level and the stated one can never disagree by the time this runs.
+# ---------------------------------------------------------------------------
+
+LEVEL=$(bump_level "$CURRENT" "$NEXT")
+if [ "$LEVEL" = patch ] && $GIT rev-parse -q --verify "refs/tags/$CURRENT" >/dev/null; then
+	OLDROOT=$(mktemp -d) || die "could not create a scratch directory for $CURRENT"
+	SCRATCH_DIRS+=("$OLDROOT")
+	$GIT archive --format=tar "$CURRENT" | (cd "$OLDROOT" && tar -xf -) ||
+		die "could not materialize $CURRENT for the exported-API comparison"
+
+	TOOLDIR=$(mktemp -d) || die "could not create a scratch directory for the exported-API tool"
+	SCRATCH_DIRS+=("$TOOLDIR")
+	GOWORK=off "$GO" build -o "$TOOLDIR/exportsurface" ./scripts/exportsurface ||
+		die "could not build scripts/exportsurface -- the exported-API comparison cannot run"
+
+	MODULE_ARGS=()
+	for m in "${API_MODULES[@]}"; do MODULE_ARGS+=(--module "$m"); done
+	GROWTH=$("$TOOLDIR/exportsurface" --old "$OLDROOT" --new "$READROOT" "${MODULE_ARGS[@]}") ||
+		die "the exported-API comparison failed"
+	ADDED=$(printf '%s\n' "$GROWTH" | grep '^+ ' || true)
+	if [ -n "$ADDED" ]; then
+		die "$NEXT is a PATCH on $CURRENT but adds exported Go API:$(printf '\n  %s' "$ADDED")
+Pass --bump minor (and a minor --version) if this is meant to ship, or remove the additions"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# The tree the rest of this script writes to. A real cut checks out a new
+# branch from the fetched tip and writes to the working tree; a dry run writes
+# to a scratch copy of READROOT and nothing else, so it leaves the operator's
+# actual working tree and branch byte-identical however it exits -- which is
+# why there is no restore trap here to get wrong.
 # ---------------------------------------------------------------------------
 
 WORK=.
 if [ "$DRY_RUN" = 1 ]; then
 	SCRATCH=$(mktemp -d) || die "could not create a scratch directory"
-	trap 'rm -rf "$SCRATCH"' EXIT
+	SCRATCH_DIRS+=("$SCRATCH")
 	for f in "${RELEASE_FILES[@]}"; do
 		mkdir -p "$SCRATCH/$(dirname "$f")"
-		cp "$f" "$SCRATCH/$f"
+		cp "$READROOT/$f" "$SCRATCH/$f"
 	done
-	if [ -f CHANGELOG.md ]; then
-		cp CHANGELOG.md "$SCRATCH/CHANGELOG.md" ||
+	if [ -f "$READROOT/CHANGELOG.md" ]; then
+		cp "$READROOT/CHANGELOG.md" "$SCRATCH/CHANGELOG.md" ||
 			die "could not copy CHANGELOG.md into the scratch directory"
 	fi
-	if [ -d .changelog/unreleased ]; then
+	if [ -d "$READROOT/.changelog/unreleased" ]; then
 		mkdir -p "$SCRATCH/.changelog"
-		cp -R .changelog/unreleased "$SCRATCH/.changelog/unreleased" ||
+		cp -R "$READROOT/.changelog/unreleased" "$SCRATCH/.changelog/unreleased" ||
 			die "could not copy .changelog/unreleased into the scratch directory"
 	fi
 	WORK=$SCRATCH
+else
+	PREVIOUS_REF=$($GIT symbolic-ref -q --short HEAD 2>/dev/null) || PREVIOUS_REF=$($GIT rev-parse HEAD)
+	$GIT checkout -q -b "$BRANCH_NAME" "$REMOTE_TIP" ||
+		die "could not create and check out $BRANCH_NAME from the fetched tip of $REMOTE/$RELEASE_BRANCH"
 fi
 
 # Fold any pending .changelog/unreleased entries into CHANGELOG.md under the
@@ -390,124 +569,90 @@ fi
 # failure class). With no pending entries this is a no-op and the heading
 # check below remains the arbiter, exactly as before.
 if changelog_entries_pending "$WORK/.changelog/unreleased"; then
-	bash scripts/changelog-assemble.sh --root "$WORK" "${NEXT#v}" ||
-		die "changelog-assemble failed; fix the entry files before cutting"
+	bash scripts/changelog-assemble.sh --root "$WORK" "${NEXT#v}" || {
+		[ "$DRY_RUN" = 1 ] && die "changelog-assemble failed; fix the entry files before preparing the release"
+		die "changelog-assemble failed; fix the entry files before preparing the release. $(cleanup_hint)"
+	}
 	if [ "$DRY_RUN" = 0 ]; then
 		$GIT add CHANGELOG.md .changelog/unreleased ||
-			die "failed to stage the assembled changelog"
+			die "failed to stage the assembled changelog. $(cleanup_hint)"
 	fi
 fi
 
-changelog_has_heading "$WORK/CHANGELOG.md" "${NEXT#v}" ||
-	die "CHANGELOG.md has no '## [${NEXT#v}]' section beginning a line. Add it (or add .changelog/unreleased entries for the assembler) and commit -- the release workflow fails the tag without it, AFTER the module tags have been pushed and become permanent"
+changelog_has_heading "$WORK/CHANGELOG.md" "${NEXT#v}" || {
+	MSG="CHANGELOG.md has no '## [${NEXT#v}]' section beginning a line. Add it (or add .changelog/unreleased entries for the assembler) and commit -- the release workflow fails the tag without it, AFTER the module tags have been pushed and become permanent"
+	[ "$DRY_RUN" = 1 ] && die "$MSG"
+	die "$MSG. $(cleanup_hint)"
+}
+
+# ---------------------------------------------------------------------------
+# The pin rewrite, shared by both the rehearsal and the real cut: $WORK is
+# the scratch copy for a dry run and "." (now checked out at the fetched tip)
+# for a real one.
+# ---------------------------------------------------------------------------
+
+printf '%s\n' "${NEXT#v}" >"$WORK/VERSION"
+for edge in "${PIN_EDGES[@]}"; do
+	rewrite_pin "$WORK" "${edge%%:*}" "${edge#*:}" "$CURRENT" "$NEXT"
+done
+
+require_pins_at "$WORK" "$NEXT" "after the rewrite" || {
+	[ "$DRY_RUN" = 1 ] && die "the rehearsed rewrite did not move every pin -- a real release would have refused here too"
+	die "the rewrite did not move every pin. $(cleanup_hint)"
+}
 
 # ---------------------------------------------------------------------------
 # Rehearsal
 # ---------------------------------------------------------------------------
 
 if [ "$DRY_RUN" = 1 ]; then
-	printf '%s\n' "${NEXT#v}" >"$SCRATCH/VERSION"
-	for edge in "${PIN_EDGES[@]}"; do
-		rewrite_pin "$SCRATCH" "${edge%%:*}" "${edge#*:}" "$CURRENT" "$NEXT"
-	done
-	require_pins_at "$SCRATCH" "$NEXT" "after the rehearsed rewrite" ||
-		die "the rehearsed rewrite did not move every pin -- a real release would have refused here too"
 	for f in "${RELEASE_FILES[@]}" CHANGELOG.md; do
 		[ -f "$SCRATCH/$f" ] || continue
-		diff -u --label "a/$f" --label "b/$f" "$f" "$SCRATCH/$f" || true
+		diff -u --label "a/$f" --label "b/$f" "$READROOT/$f" "$SCRATCH/$f" || true
 	done
 	# The entry files a real cut would consume, named rather than diffed: they
-	# are still in the repository, so there is no deletion for `diff` to show.
-	if [ -d .changelog/unreleased ]; then
-		for f in .changelog/unreleased/*.md; do
+	# are still on the fetched tip, so there is no deletion for `diff` to show.
+	if [ -d "$READROOT/.changelog/unreleased" ]; then
+		for f in "$READROOT/.changelog/unreleased"/*.md; do
 			[ -f "$f" ] || continue
-			case ${f##*/} in README.md) continue ;; esac
-			[ -f "$SCRATCH/$f" ] ||
-				printf 'release-alpha: would remove %s\n' "$f"
+			base=${f##*/}
+			case "$base" in README.md) continue ;; esac
+			[ -f "$SCRATCH/.changelog/unreleased/$base" ] ||
+				printf 'release-alpha: would remove .changelog/unreleased/%s\n' "$base"
 		done
 	fi
-	printf 'release-alpha: DRY RUN -- would commit the diff above, then tag and atomically push:\n'
-	for ns in "${TAG_NAMESPACES[@]}"; do printf '  %s%s\n' "$ns" "$NEXT"; done
+	printf 'release-alpha: DRY RUN -- would push %s to %s and open a pull request into %s:\n' \
+		"$BRANCH_NAME" "$REMOTE" "$RELEASE_BRANCH"
+	REPO_PATH=$(remote_repo_path "$($GIT remote get-url "$REMOTE" 2>/dev/null || true)")
+	HOST=$(bash scripts/gitea-host.sh 2>/dev/null || true)
+	if [ -n "$HOST" ] && [ -n "$REPO_PATH" ]; then
+		printf '  http://%s/%s/compare/%s...%s\n' "$HOST" "$REPO_PATH" "$RELEASE_BRANCH" "$BRANCH_NAME"
+	fi
 	printf 'release-alpha: nothing was changed\n'
 	exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# The release
+# The release commit and the branch push. NOTHING beyond this point is
+# reachable from --dry-run.
 # ---------------------------------------------------------------------------
 
-printf '%s\n' "${NEXT#v}" >VERSION
-for edge in "${PIN_EDGES[@]}"; do
-	rewrite_pin . "${edge%%:*}" "${edge#*:}" "$CURRENT" "$NEXT"
-done
-
-require_pins_at . "$NEXT" "after the rewrite" ||
-	die "the rewrite did not move every pin. Nothing has been committed, tagged or pushed; 'git checkout --' the files above to undo it"
-
-# BASE_COMMIT is captured BEFORE the commit exists, because every refusal from
-# here on has a release commit to unwind as well as tags. The commit is created
-# first and the tags are signed second, so a run that dies at the signing check
-# leaves an UNSIGNED chore(release) commit on the branch; a cleanup hint naming
-# only the tags left the operator standing on it, to discover it at the push
-# where main enforces signed commits (#416).
-BASE_COMMIT=$($GIT rev-parse HEAD) || die "could not resolve the current commit"
-
-TAGS=()
-
-# cleanup_hint names everything this run created locally, in the order it must
-# be undone. Nothing has been published at any point it is reached.
-cleanup_hint() {
-	local tags=""
-	[ ${#TAGS[@]} -eq 0 ] || tags="git tag -d ${TAGS[*]} && "
-	printf 'Nothing was pushed; undo the local state with: %sgit reset --hard %s' \
-		"$tags" "$BASE_COMMIT"
-}
-
-$GIT add -- "${RELEASE_FILES[@]}" || die "could not stage the release files"
-$GIT commit -q -m "chore(release): $NEXT" || die "the release commit failed"
+$GIT add -- "${RELEASE_FILES[@]}" || die "could not stage the release files. $(cleanup_hint)"
+$GIT commit -q -m "chore(release): $NEXT" || die "the release commit failed. $(cleanup_hint)"
 RELEASE_COMMIT=$($GIT rev-parse HEAD) || die "could not resolve the release commit"
 
-# Annotated AND signed, both required. Every existing tag in this repo is an
-# annotated object, and agent-git.sh sets tag.gpgsign=true, under which a bare
-# `git tag <name>` with no -m aborts with "fatal: no tag message?" -- so the old
-# target was unusable by any project agent, which is the only thing that
-# releases these repos. `-s` rather than `-a` because `-a` signs only when
-# tag.gpgSign happens to be set, which silently gave agents signed tags and
-# humans unsigned ones.
-for ns in "${TAG_NAMESPACES[@]}"; do
-	t="${ns}${NEXT}"
-	$GIT tag -s -m "$t" "$t" "$RELEASE_COMMIT" ||
-		die "failed to create the signed tag $t. Configure a signing key (user.signingkey + gpg.format) or release through software/scripts/agent-git.sh. $(cleanup_hint)"
-	TAGS+=("$t")
-done
+$GIT push -u "$REMOTE" "$BRANCH_NAME" ||
+	die "the branch push was refused, so nothing was published. The commit is still local on $BRANCH_NAME. $(cleanup_hint)"
 
-# The signature is confirmed to be ON the object before anything is published.
-# `git tag -v` cannot answer this: SSH-signed tags need an allowedSignersFile
-# to verify, which is not configured here, so a correctly signed tag reports as
-# unverifiable. Reading the object answers the question this script owns --
-# did signing happen -- without needing a trust store.
-for t in "${TAGS[@]}"; do
-	# Captured, not piped into `grep -q`: grep exits on the first match, and
-	# under pipefail the resulting SIGPIPE on cat-file would read as a failed
-	# check on a tag that is correctly signed.
-	tag_object=$($GIT cat-file tag "$t") ||
-		die "created tag $t but could not read it back. $(cleanup_hint)"
-	grep -qE '^-----BEGIN (SSH|PGP) SIGNATURE-----' <<<"$tag_object" ||
-		die "tag $t carries no signature. $(cleanup_hint)"
-done
+REPO_PATH=$(remote_repo_path "$($GIT remote get-url "$REMOTE" 2>/dev/null || true)")
+HOST=$(bash scripts/gitea-host.sh 2>/dev/null || true)
 
-# Exactly the refs this run created, ALL OR NOTHING.
-#
-# `--tags` publishes every local tag, including leftovers from an abandoned
-# attempt. And without `--atomic` a push of four refs is not a transaction: one
-# rejected ref leaves the others published, which for a lockstep release is the
-# worst outcome available, since module tags are immutable once a consumer has
-# fetched them and a half-published release can only be followed by another
-# version.
-REFSPECS=("$RELEASE_COMMIT:refs/heads/$RELEASE_BRANCH")
-for t in "${TAGS[@]}"; do REFSPECS+=("refs/tags/$t:refs/tags/$t"); done
-
-$GIT push --atomic "$REMOTE" "${REFSPECS[@]}" ||
-	die "the atomic push was refused, so NOTHING was published. The release commit and tags are still local. $(cleanup_hint)"
-
-printf 'release-alpha: published %s to %s (%s)\n' "$NEXT" "$REMOTE" "${TAGS[*]}"
+printf 'release-alpha: pushed %s to %s at %s\n' "$BRANCH_NAME" "$REMOTE" "$RELEASE_COMMIT"
+if [ -n "$HOST" ] && [ -n "$REPO_PATH" ]; then
+	printf 'release-alpha: open a pull request: http://%s/%s/compare/%s...%s\n' \
+		"$HOST" "$REPO_PATH" "$RELEASE_BRANCH" "$BRANCH_NAME"
+else
+	printf 'release-alpha: could not determine the repository URL for %s -- open a pull request from %s into %s manually\n' \
+		"$REMOTE" "$BRANCH_NAME" "$RELEASE_BRANCH"
+fi
+printf 'release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=%s\n' "${NEXT#v}"

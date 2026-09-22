@@ -1,13 +1,20 @@
 # Release engineering — engineering
 
 **Status:** implemented.
-**Last verified:** 2026-09-08.
+**Last verified:** 2026-09-21.
 
 ## Surface
 
-`scripts/release-alpha.sh`, driven by `make release-alpha`. It is the only
-supported way to cut a release; nothing imports it as a library except its own
-test.
+`scripts/release-alpha.sh`, driven by `make release-alpha`, PREPARES a release
+as a pull request and stops. `scripts/release-tag.sh`, driven by `make
+release-tag`, TAGS and publishes a release already merged to `main`. Together
+they are the only supported way to cut a release (go-xkms#419, go-xkms#211);
+nothing imports either as a library except `release-tag.sh` itself, which
+sources `release-alpha.sh` for its shared declarations, and their own tests.
+
+`scripts/exportsurface` is a small standalone Go program (`package main`
+under `scripts/exportsurface/`) that `release-alpha.sh` builds and runs as
+part of its precondition checks; see below.
 
 `scripts/release-assets.sh`, driven by `.github/workflows/release.yml`, is the
 workflow's view of a Gitea release's assets: `list`, `expected VERSION` (the
@@ -21,13 +28,21 @@ digest is replaced, one that is absent is added. It reads `RELEASE_API`,
 
 ## Declared constants
 
-| Name | Contents |
-|---|---|
-| `TAG_NAMESPACES` | `""`, `sdk/go/`, `xkey/` |
-| `PIN_EDGES` | nine `<file>:<module>` pairs over `go.mod`, `sdk/go/go.mod`, `xkey/go.mod`, `web/desktop/go.mod` |
-| `RELEASE_FILES` | **derived** from `PIN_EDGES`: `VERSION` plus every file carrying an edge |
+| Name | Declared in | Contents |
+|---|---|---|
+| `TAG_NAMESPACES` | `release-alpha.sh` | `""`, `sdk/go/`, `xkey/` |
+| `API_MODULES` | `release-alpha.sh` | `.`, `sdk/go`, `xkey` — same three, without the trailing slash a directory path does not carry |
+| `PIN_EDGES` | `release-alpha.sh` | nine `<file>:<module>` pairs over `go.mod`, `sdk/go/go.mod`, `xkey/go.mod`, `web/desktop/go.mod` |
+| `RELEASE_FILES` | `release-alpha.sh` | **derived** from `PIN_EDGES`: `VERSION` plus every file carrying an edge |
 
-Re-derive after any module change:
+`release-tag.sh` declares none of these itself. It sources `release-alpha.sh`
+with `RELEASE_ALPHA_LIB=1` — which defines every constant and pure function
+above the argument-parsing guard and returns before touching the repository —
+so `TAG_NAMESPACES`, `PIN_EDGES` and the pure functions below are read from
+exactly one place. `API_MODULES` is unused by `release-tag.sh`, which does
+not run the growth gate; it is not redeclared there either.
+
+Re-derive `PIN_EDGES` after any module change:
 
 ```sh
 git ls-tree -r --name-only HEAD | grep 'go.mod$'
@@ -43,7 +58,8 @@ every check and ships a stale pin.
 
 ## Pure functions
 
-Tested in isolation; each is a function of its arguments alone.
+Tested in isolation in `test/scripts/release-alpha.test.sh`; each is a
+function of its arguments alone.
 
 | Function | Contract |
 |---|---|
@@ -51,19 +67,24 @@ Tested in isolation; each is a function of its arguments alone.
 | `next_version v level` | one field advanced, lower fields zeroed; returns 1 on an unknown level |
 | `version_gt a b` | field-by-field numeric comparison, not `sort -V` |
 | `max_version` | greatest well-formed version on stdin; malformed lines discarded, not coerced |
+| `bump_level current next` | `patch`\|`minor`\|`major`, derived from comparing MAJOR/MINOR alone — never reads `--bump` |
 | `pin_version file module` | the version of a **require** pin, ignoring `replace` entries |
 | `rewrite_pin root file module from to` | moves one edge, keeping `// indirect` |
 | `require_pins_at root want phase` | every declared edge present and at `want`; reports each offender |
 | `changelog_has_heading file version` | `## [version]` at the **start** of a line |
+| `changelog_entries_pending dir` | true when `dir` holds at least one non-`README.md` entry file |
 | `escape_dots s` | BRE-literal dots |
+| `remote_repo_path url` | `<owner>/<repo>` (no `.git`) from an `ssh://`, `http(s)://` or scp-like remote URL; empty for an unrecognized shape |
 
-Sourcing the script with `RELEASE_ALPHA_LIB=1` defines these and returns before
-anything touches the repository.
+Sourcing either script with `RELEASE_ALPHA_LIB=1` defines these and returns
+before anything touches the repository.
 
 `scripts/changelog-assemble.sh` folds `.changelog/unreleased/*.md` entry files
 into `CHANGELOG.md` under the version being cut; `release-alpha.sh` invokes it
 before the heading check whenever entries are pending, and stages the result on
-a real cut. Sourcing it with `CHANGELOG_ASSEMBLE_LIB=1` exposes
+a real cut. `release-tag.sh` never invokes it — by the time a release reaches
+`release-tag.sh`, the heading is re-checked, not assembled. Sourcing
+`changelog-assemble.sh` with `CHANGELOG_ASSEMBLE_LIB=1` exposes
 `assemble`/`entry_section` for `test/scripts/changelog-assemble.test.sh`. The
 contributor-facing convention lives in `.changelog/README.md`.
 
@@ -76,8 +97,8 @@ changelog-assemble.sh [--root DIR] <version-without-v> [<date>]
 It exists because assembly is **destructive**: the CLI deletes every entry file
 it splices, so a caller rehearsing a release must be able to point the whole
 operation at a scratch copy. `release-alpha.sh` passes the tree it is writing
-to, which is the repository on a real cut and the `mktemp -d` copy under
-`--dry-run`.
+to: the fetched tip's `mktemp -d` copy under `--dry-run`, the operator's own
+checkout (now on the new release branch) on a real cut.
 
 `assemble` refuses a `CHANGELOG.md` that does not carry **exactly one**
 `## [Unreleased]` heading. `make release` extracts a version's notes with
@@ -92,90 +113,170 @@ swallow a neighbouring document's entries depending on which occurrence the
 tool picks (go-xkms#356). A file that reached that state is refused rather
 than spliced into blindly.
 
-Two properties of `CHANGELOG.md` follow from that `sed`, and both are load
-bearing:
+## `scripts/exportsurface`: the exported-API diff
 
-- **A version heading must be unique.** The range restarts, so two `##
-  [0.1.0-alpha]` headings emit *both* sections as one release's notes.
-- **Nothing may trail the oldest release section except under a heading that
-  itself begins `## [`.** The last section has no terminator otherwise and
-  runs to end of file. This is why the absorbed go-trusted-ca history sits
-  under `## [go-trusted-ca] - merged 2026-04-16` rather than a prose heading,
-  and why its own version headings are demoted to `###`: the bracketed
-  heading bounds the oldest go-xkms release, and the demoted ones cannot be
-  mistaken for go-xkms releases.
+A standalone `package main`, built by `release-alpha.sh` with `GOWORK=off go
+build` into a scratch directory and invoked as a subprocess — not imported —
+so its own build failure is a plain, nameable precondition failure rather than
+a compile error in the release script's own package (it has none; it is a
+shell script).
+
+```
+exportsurface --old DIR --new DIR --module PATH [--module PATH ...]
+```
+
+`DIR` is a module's directory relative to both `--old` and `--new`; repeat
+`--module` once per published module (`release-alpha.sh` passes `.`, `sdk/go`
+and `xkey`). For each, `exportsurface` walks every package directory reachable
+under it — except one beginning another Go module (has its own `go.mod`),
+named or nested under `internal`, `testdata` or `vendor`, or whose package
+clause is `main` — and parses its non-test `.go` files with `go/parser`
+(`go/packages`/`go/doc` are deliberately not used: either needs a resolved
+module graph, which is neither fast nor offline-safe as a release
+precondition). It records every exported top-level function, type, const and
+var, plus — for a struct or interface — every exported field or method,
+labelled `<module>:<pkg-relative-dir>.<Name>` (a method labelled
+`<module>:<pkg>.<Type>.<Method>`). It prints one `+ <symbol>` line per symbol
+present only in `--new` and one `- <symbol>` line per symbol present only in
+`--old`, and exits non-zero only on a usage or parse error — growth is not a
+failure here; refusing a release over it is `release-alpha.sh`'s policy, read
+from the tool's stdout, not the tool's own exit code.
+
+**`--old`/`--new`/`--module` are validated against path traversal in two
+independent layers** (gosec G703, CWE-22). `resolveRoot` makes `--old`/`--new`
+absolute and clean once; `resolveModuleRoot` then refuses a `--module` value
+that is absolute, that contains a literal `".."` segment, or that — after
+joining and cleaning — `filepath.Rel` reports as outside `root` (a
+`*pathEscapeError`, checked directly by `escapesRoot`'s own tests rather than
+only through cases the segment scan happens to let reach it). That string-level
+check is not the containment guarantee, though: `filepath.Clean`/`Abs` LEXICALLY
+evaluate a `".."` instead of refusing it, and neither can see a symlink under
+`root` that itself points outside it. `collectModule` therefore also opens an
+`os.Root` at `root` (Go 1.24+) and reaches every file through it (`fs.Stat`,
+`fs.WalkDir`, `fs.ReadDir`, `fs.ReadFile` over `root.FS()`, never the raw
+`os`/`path/filepath` equivalents) — real containment enforced at the syscall
+level, which is what actually stops the symlink case
+(`TestCollectModule_RejectsSymlinkEscape`), and incidentally why gosec's own
+taint analyzer no longer has anything to flag: `os.Root`'s methods are not in
+its configured `os.Stat`/`filepath.WalkDir` sink list at all.
+
+`release-alpha.sh` runs it only when `bump_level CURRENT NEXT` is `patch`, and
+only when the previous release's root tag (`$CURRENT`) exists locally (it does
+not for a repository's first release, and the gate is a no-op then). `--old`
+is that tag materialized via `git archive`; `--new` is the fetched tip already
+materialized as `READROOT` for every other precondition. Any `+` line fails
+the run, naming every added symbol.
 
 ## Invariants
 
 - The version is an input. No step reads the tag namespace to decide *what* to
   publish, only to decide whether the stated version is acceptable.
-- Nothing is written until every precondition and version check has passed.
-- **`--dry-run` leaves the working tree byte-identical and the index empty.**
-  Every write it makes — the pin rewrite *and* the changelog assembly — lands
-  in a scratch copy under `mktemp -d`, so a rehearsal cannot leave a partially
-  rewritten pin set or a consumed set of changelog entries behind however it
-  exits; there is no restore trap to get wrong. A dry run runs no git write
-  subcommand at all, which is asserted directly in the test suite through the
-  `$GIT` seam rather than only inferred from the tree.
-- The pin set is validated **before** anything is written, so a tree that is
-  going to be refused is refused with its `.changelog` entries intact.
+- Nothing is written until every precondition and version check has passed —
+  including the exported-API growth gate, which therefore runs before the
+  branch is created or the pin rewrite starts.
+- `release-alpha.sh` reads `VERSION`, the pins, the changelog and the previous
+  release's tag from a **fetch of `--remote`/`--branch`**, never from the
+  operator's own checkout — a stale local `main` cannot pass a check it never
+  reads (go-xkms#211).
+- **`--dry-run` leaves the operator's working tree and checked-out branch
+  byte-identical.** Every write it makes — the pin rewrite *and* the changelog
+  assembly — lands in a scratch copy of the fetched tip under `mktemp -d`, so a
+  rehearsal cannot leave a partially rewritten pin set, a consumed set of
+  changelog entries, or a new local branch behind however it exits; there is
+  no restore trap to get wrong. A dry run runs no git write subcommand at all
+  (fetch and `git archive` are reads), which is asserted directly in the test
+  suite through the `$GIT` seam rather than only inferred from the tree.
+- A real cut checks out `release/<version>` FROM the fetched tip — never from
+  the operator's prior `HEAD` — commits the version bump, the pin rewrite and
+  the assembled changelog onto that one branch, and pushes **only that
+  branch**. `main` (local or remote) is never written.
+- `release-tag.sh` asserts, every time, fetched fresh: local `HEAD` is exactly
+  `--branch`, checked out and byte-identical to the just-fetched
+  `--remote`/`--branch`; `VERSION` at that commit (read from the object, not
+  the working tree) is exactly `--version`; a commit reachable from that tip
+  carries the message `release-alpha.sh` produces for `--version` (a squash
+  merge's `(#<pr>)` suffix is the one accepted variation); and the reciprocal
+  pins and the `CHANGELOG` heading are still correct at that exact commit —
+  re-checked against the object, not trusted from review.
 - Tags are created from the resolved release commit, are annotated and
   explicitly signed, and every one has its signature confirmed **on the object**
   before anything is pushed.
-- The push is `--atomic` over exactly the branch and the three tag refs this run
-  created.
+- The push is `--atomic` over exactly the refs the run created: the branch
+  ref alone for `release-alpha.sh`, the three tag refs alone for
+  `release-tag.sh`.
 
 ## Errors
 
-Every refusal exits non-zero through `die`, prefixed `release-alpha:`, and
-states what was and was not changed. Refusals before the commit have written
-nothing; a refused push says explicitly that nothing was published.
+Every refusal from either script exits non-zero through its own `die`
+(`release-alpha: ...` / `release-tag: ...`) and states what was and was not
+changed. Refusals before a write has happened have written nothing; a refused
+push says explicitly that nothing was published.
 
-Refusals *after* the release commit exists route their cleanup advice through
-`cleanup_hint`, which names the local tags **and** the commit:
+`release-alpha.sh` refusals *after* the release branch is checked out route
+their cleanup advice through `cleanup_hint`, which names the branch and the
+ref to return to:
 
 ```
-Nothing was pushed; undo the local state with: git tag -d <tags> && git reset --hard <base>
+Nothing was pushed; undo the local state with: git checkout <previous-ref> -q && git branch -D release/<version>
 ```
 
-The commit is created before the tags are signed, so a run that dies at the
-signing check leaves an unsigned `chore(release)` commit on the branch. A hint
-naming only the tags left the operator standing on it, to discover it at the
-push where `main` enforces signed commits.
+`release-tag.sh` refusals *after* a tag is created (but before the atomic
+push) route through its own `cleanup_hint`, which names only the local tags —
+there is no commit or branch for it to unwind, since it never writes to the
+working tree at all:
+
+```
+Nothing was pushed; undo the local state with: git tag -d <tags>
+```
 
 ## Deliberate non-goals
 
-Concurrency. A second release running against the same worktree at the same
-time is not defended against — see go-xkms#211. The clean-tree precondition
-makes the common single-operator mistake impossible instead.
+Concurrency, beyond what fetch-and-assert already closes. A second `prepare`
+running against the same worktree at the same time is not defended against;
+the clean-tree precondition makes the common single-operator mistake
+impossible instead. Cutting from a fully isolated, disposable checkout — which
+would make that concurrency class structurally unreachable rather than merely
+unlikely — was considered under go-xkms#211 and declined; see
+architecture.md.
 
 ## Tests
 
 `make test-scripts` (also reached by `make test`) runs
-`test/scripts/release-alpha.test.sh` and `test/scripts/release-assets.test.sh`.
-The latter stands up a local HTTP stub of the two Gitea endpoints the asset
+`test/scripts/release-alpha.test.sh`, `test/scripts/release-tag.test.sh`,
+`test/scripts/release-assets.test.sh` and `test/scripts/changelog-assemble.test.sh`.
+`release-assets.test.sh` stands up a local HTTP stub of the two Gitea endpoints the asset
 script uses and asserts the whole decision table: `expected` is the matrix,
 `verify` names exactly the missing assets, `download` honours the glob, and
 `upload` skips an identical asset, replaces a differing one (DELETE then POST)
 and adds an absent one, with the requests the stub recorded as the evidence.
 
-The rest of this section is about `release-alpha.test.sh`. Most of it covers the pure functions —
-the `v0.7.9 -> v0.7.10` carry, the `0.9.10 > 0.9.9` ordering that lexical
-comparison gets wrong, the `replace`-block-first shape of `xkey/go.mod`, and
-stale, deleted and missing-file edges.
+`release-alpha.test.sh` covers the pure functions directly — the `v0.7.9 ->
+v0.7.10` carry, the `0.9.10 > 0.9.9` ordering that lexical comparison gets
+wrong, the `replace`-block-first shape of `xkey/go.mod`, stale/deleted/missing
+edges, `bump_level`'s MAJOR-then-MINOR precedence, and `remote_repo_path`'s
+three URL shapes — and then, end to end, a throwaway fixture repository (under
+`mktemp -d`, host git config disabled) with its own **bare `dev` remote**: a
+fixture with no remote cannot exercise a script whose entire job is fetching
+one. The end-to-end cases assert: a dry run reads the network but writes
+nothing (asserted through the `$GIT` seam, not just tree identity); prepare
+validates against what was JUST FETCHED, not a stale local checkout, even when
+the local checkout has never seen the remote's real state; a duplicate release
+branch (local or remote) is refused; the exported-API growth gate refuses an
+implied or explicit PATCH that grew the API and allows the identical growth
+under MINOR; and a real cut lands the release commit on a new branch, leaves
+`main` (local and remote) untouched, pushes only the branch, and refuses to
+prepare the same version twice.
 
-The last section is end to end, and is the exception the tree-identity
-invariant earns: the defect it covers is entirely a question of *which tree*
-the impure steps write to, which no test of the pure functions can see. It
-builds a throwaway repository under `mktemp -d` carrying the shape the script
-demands — a `VERSION` file, every declared pin edge, a CHANGELOG with an
-`## [Unreleased]` heading, pending entries and copies of both scripts — runs
-`--dry-run` against it with the host's git config disabled, and asserts a
-before/after manifest (`git status --porcelain` plus a content hash of
-`CHANGELOG.md` and every `.changelog` file) is unchanged. A real cut is driven
-as far as the tag-signing check, with `gpg.program` pointed at `/bin/false`,
-which is as far as a test may go: everything after it publishes.
-
-The remaining git seams — the push, signature confirmation on a real key — are
-exercised by cutting a real release, not simulated. A harness that fakes them
-is the dependent artifact of go-xkms#211, not of this script.
+`release-tag.test.sh` covers the same shape of fixture, extended with a real
+`chore(release): <version>` commit (`mkrelease_commit`, reproducing exactly
+what a real `release-alpha.sh` cut leaves) and real SSH tag signing with this
+repository's own agent key
+(`~/.agent-identity/keys/agent-go-xkms.key` — never the
+owner's hardware key). It asserts each of the four preconditions refuses on
+its own: a local `HEAD` behind the fetched tip, a checkout on the wrong
+branch, a `VERSION` not matching `--version`, a `VERSION` match with no
+reachable release commit, an inconsistent pin set at the release commit, and a
+missing `CHANGELOG` heading at the release commit — and that a clean run
+creates and pushes all three tags atomically, each pointing at the release
+commit, each carrying a verified SSH signature, each present on the bare
+remote, and that tagging the same version twice is refused.

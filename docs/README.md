@@ -31,7 +31,7 @@ the folder in the same commit that changes the behavior.
 | [piv-smartcard](piv-smartcard/) | PIV slot operations as a factor and as a CLI/SDK verb |
 | [pkcs11-provider-module](pkcs11-provider-module/) | The `pkcs11-module` cgo provider and its slot/token lifecycle |
 | [platform-secrets](platform-secrets/) | Platform secret storage and resolution |
-| [release-engineering](release-engineering/) | Cutting an -alpha release — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, `make release-alpha` |
+| [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
