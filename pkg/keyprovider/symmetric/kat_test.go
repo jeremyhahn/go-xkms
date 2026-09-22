@@ -31,10 +31,11 @@ const (
 	legacyPwKeyData  = "legacy exported key material 32b"
 )
 
-// TestDecryptWithPassword_ReadsLegacyExport asserts a password-encrypted key
-// export written before AES-GCM nonce generation moved inside the module
-// boundary still imports.
-func TestDecryptWithPassword_ReadsLegacyExport(t *testing.T) {
+// TestDecryptWithPassword_ReadsKnownAnswerExport is a known-answer test: a
+// fixed password-encrypted key export captured from the format produced
+// before AES-GCM nonce generation moved inside the module boundary still
+// imports.
+func TestDecryptWithPassword_ReadsKnownAnswerExport(t *testing.T) {
 	blob, err := hex.DecodeString(legacyPwBlobHex)
 	require.NoError(t, err)
 

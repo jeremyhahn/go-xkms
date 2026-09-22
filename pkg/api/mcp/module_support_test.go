@@ -117,7 +117,6 @@ func TestInvokeMethod_HealthAndUnknown(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 	})

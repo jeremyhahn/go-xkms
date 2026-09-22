@@ -423,33 +423,6 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 	})
 }
 
-// TestGetHashForAlgorithm tests the hash function retrieval
-func TestGetHashForAlgorithm(t *testing.T) {
-	testCases := []struct {
-		algorithm    backend.WrappingAlgorithm
-		expectedHash string
-		expectError  bool
-	}{
-		{backend.WrappingAlgorithmRSAES_OAEP_SHA_1, "SHA-1", false},
-		{backend.WrappingAlgorithmRSAES_OAEP_SHA_256, "SHA-256", false},
-		{backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, "SHA-1", false},
-		{backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, "SHA-256", false},
-		{backend.WrappingAlgorithm("INVALID"), "", true},
-	}
-
-	for _, tc := range testCases {
-		t.Run(string(tc.algorithm), func(t *testing.T) {
-			hash, err := GetHashForAlgorithm(tc.algorithm)
-			if tc.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.expectedHash, hash.String())
-			}
-		})
-	}
-}
-
 // TestWrapUnwrapAlgorithmMismatch tests error handling when algorithms don't match
 func TestWrapUnwrapAlgorithmMismatch(t *testing.T) {
 	privateKey, err := generateTestKeyPair(2048)

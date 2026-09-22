@@ -85,9 +85,12 @@ func generateTestCertificateChain(count int) ([]*x509.Certificate, error) {
 // Test cases - Unit tests that don't require real PKCS#11 hardware
 
 func TestNewPKCS11CertStorage_NilPool(t *testing.T) {
-	storage, err := NewPKCS11CertStorage(
+	storage, err := NewPKCS11CertStorageWithSO(
 		nil,
 		"test-token",
+		"",
+		"",
+		false,
 	)
 
 	require.Error(t, err)

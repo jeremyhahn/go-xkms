@@ -57,18 +57,3 @@ func (e ErrDAOCreation) Error() string {
 func (e ErrDAOCreation) Unwrap() error {
 	return e.Cause
 }
-
-// ErrMigration is returned when migration from legacy storage fails.
-type ErrMigration struct {
-	Cause error
-}
-
-// Error returns the error message.
-func (e ErrMigration) Error() string {
-	return fmt.Sprintf("serverregistry: migration failed: %v", e.Cause)
-}
-
-// Unwrap returns the underlying cause.
-func (e ErrMigration) Unwrap() error {
-	return e.Cause
-}

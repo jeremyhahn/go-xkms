@@ -530,22 +530,6 @@ func TestGenerateDerivedKey_DifferentInputs(t *testing.T) {
 	assert.NotEqual(t, key1, key3)
 }
 
-func TestGenerateLUKSKey_BackwardsCompatibility(t *testing.T) {
-	secret := make([]byte, 32)
-	for i := range secret {
-		secret[i] = byte(i)
-	}
-
-	// GenerateLUKSKey should be an alias for GenerateDerivedKey
-	luksKey, err := GenerateLUKSKey(secret)
-	require.NoError(t, err)
-
-	derivedKey, err := GenerateDerivedKey(secret)
-	require.NoError(t, err)
-
-	assert.Equal(t, luksKey, derivedKey)
-}
-
 func TestVerifyHMACSecret_AllCases(t *testing.T) {
 	tests := []struct {
 		name        string

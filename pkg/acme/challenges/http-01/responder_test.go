@@ -584,59 +584,6 @@ func TestResponder_ConcurrentUseOfOneResponder(t *testing.T) {
 	}
 }
 
-// TestSetup_ReplacesPreviousResponder pins the behaviour of the deprecated
-// process-global path: a second Setup retires the first responder instead of
-// leaking its listener.
-func TestSetup_ReplacesPreviousResponder(t *testing.T) {
-	firstPort := freePort(t)
-	Setup(firstPort, "token-global-first.thumbprint")
-
-	serverMu.Lock()
-	firstResponder := activeResponder
-	serverMu.Unlock()
-	if firstResponder == nil {
-		t.Fatal("Setup did not install a responder")
-	}
-	firstAddr := firstResponder.Addr().String()
-
-	secondPort := freePort(t)
-	Setup(secondPort, "token-global-second.thumbprint")
-	defer Shutdown()
-
-	select {
-	case <-firstResponder.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("the replaced responder was left running")
-	}
-
-	conn, err := net.DialTimeout("tcp", firstAddr, 2*time.Second)
-	if err == nil {
-		_ = conn.Close()
-		t.Errorf("the replaced responder on %s is still accepting connections", firstAddr)
-	}
-
-	// The current responder is the second one and is serving.
-	if err := Verify(nil, "127.0.0.1", secondPort, "token-global-second", "token-global-second.thumbprint"); err != nil {
-		t.Errorf("the current global responder is not serving: %v", err)
-	}
-}
-
-func TestShutdown_WithNoActiveResponder(t *testing.T) {
-	serverMu.Lock()
-	previous := activeResponder
-	activeResponder = nil
-	serverMu.Unlock()
-
-	t.Cleanup(func() {
-		serverMu.Lock()
-		activeResponder = previous
-		serverMu.Unlock()
-	})
-
-	// Must not panic and must not reach the fatal handler.
-	Shutdown()
-}
-
 func TestResponderErrors_MessagesAndUnwrapping(t *testing.T) {
 	cause := errors.New("address already in use")
 

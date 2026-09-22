@@ -14,15 +14,12 @@
 package http01
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -66,34 +63,6 @@ type ErrKeyAuthorizationMismatch struct {
 
 func (e ErrKeyAuthorizationMismatch) Error() string {
 	return fmt.Sprintf("http-01: key authorization mismatch for domain %s", e.Domain)
-}
-
-var (
-	// serverMu guards activeResponder and fatalHandler.
-	serverMu sync.Mutex
-
-	// activeResponder is the single Responder owned by the deprecated
-	// process-global Setup/Shutdown pair. Callers that need more than one
-	// concurrent order use NewResponder directly and hold their own.
-	activeResponder *Responder
-
-	serverShutdownTimeout = DefaultShutdownTimeout
-
-	// fatalHandler reports an error the deprecated Setup/Shutdown signature
-	// cannot return. Uses log.Printf instead of log.Fatalf to avoid process
-	// termination; tests override it to observe the error.
-	fatalHandler = func(format string, v ...interface{}) {
-		log.Printf("ERROR: "+format, v...)
-	}
-)
-
-// fatalf reports through the current fatalHandler under serverMu, so a test
-// swapping the handler cannot race the call site.
-func fatalf(format string, v ...interface{}) {
-	serverMu.Lock()
-	handler := fatalHandler
-	serverMu.Unlock()
-	handler(format, v...)
 }
 
 // Verify performs http-01 challenge verification as defined in RFC 8555.
@@ -160,74 +129,6 @@ func Verify(
 	}
 
 	return nil
-}
-
-// Setup initializes an HTTP server to respond to http-01 challenges.
-//
-// Deprecated: Setup owns a single process-global responder and cannot report a
-// bind failure, because its signature has no error to return; the failure
-// reaches the caller only as a rejected authorization. Use NewResponder, which
-// binds eagerly, returns a typed error, exposes the bound address, and lets
-// concurrent orders each hold their own responder.
-//
-// Setup is retained for existing callers and delegates to NewResponder. A bind
-// failure is reported through the package fatal handler. Setting up a second
-// responder while one is active shuts the first one down rather than leaking
-// its listener.
-//
-// Parameters:
-//   - port: the address to listen on, as ResponderConfig.Addr takes it: a
-//     host:port ("127.0.0.1:80") binds that host, a bare port ("80") every
-//     interface. Which host to bind is the caller's configuration (go-xkms#140).
-//   - keyAuth: Key authorization to serve in response to challenge requests
-func Setup(port, keyAuth string) {
-
-	slog.Info("Setting up http-01 challenge", slog.String("port", port))
-
-	responder, err := NewResponder(ResponderConfig{Addr: port, KeyAuth: keyAuth})
-	if err != nil {
-		fatalf("Failed to listen on %s: %v", port, err)
-		return
-	}
-
-	serverMu.Lock()
-	previous := activeResponder
-	activeResponder = responder
-	serverMu.Unlock()
-
-	if previous != nil {
-		if err := previous.Close(); err != nil {
-			fatalf("Server shutdown failed: %v", err)
-		}
-	}
-}
-
-// Shutdown gracefully stops the HTTP challenge server started by Setup.
-//
-// Deprecated: use Responder.Shutdown, which takes a context and returns the
-// shutdown error instead of routing it to the package fatal handler.
-//
-// The function initiates a graceful shutdown with a timeout, allowing
-// in-flight requests to complete. This function is safe to call multiple
-// times; subsequent calls are no-ops.
-func Shutdown() {
-	slog.Info("Shutting down HTTP challenge server")
-
-	serverMu.Lock()
-	responder := activeResponder
-	activeResponder = nil
-	serverMu.Unlock()
-
-	if responder == nil {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-	defer cancel()
-
-	if err := responder.Shutdown(ctx); err != nil {
-		fatalf("Server shutdown failed: %v", err)
-	}
 }
 
 // challengeHandlerHTTPx returns an HTTP handler function that serves the key authorization

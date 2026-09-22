@@ -197,7 +197,7 @@ The bind is eager, so a nil error means the responder is already serving and
 the order may be accepted at once. Each responder owns its own listener, so
 concurrent orders are safe. See
 [`docs/acme/challenges.md`](../challenges.md#http-01-challenge) for the full
-contract and the deprecated process-global alternative.
+contract.
 
 ### Admin Services
 

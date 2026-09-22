@@ -44,22 +44,6 @@ func (e ErrDAOCreation) Unwrap() error {
 	return e.Cause
 }
 
-// ErrMigration is returned when migration from old storage format fails.
-type ErrMigration struct {
-	Key   string
-	Cause error
-}
-
-// Error implements the error interface.
-func (e ErrMigration) Error() string {
-	return fmt.Sprintf("audit: migration failed for key %q: %v", e.Key, e.Cause)
-}
-
-// Unwrap returns the underlying cause.
-func (e ErrMigration) Unwrap() error {
-	return e.Cause
-}
-
 // WrappedError wraps an underlying cause with a contextual message while
 // preserving errors.Is / errors.As matching through Unwrap. It replaces
 // inline formatted-error constructions that wrap another error.

@@ -749,22 +749,6 @@ func TestGenerateDerivedKey_InvalidLength(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid HMAC secret length")
 }
 
-// TestGenerateLUKSKey_Alias tests the LUKS key generation alias
-func TestGenerateLUKSKey_Alias(t *testing.T) {
-	secret := make([]byte, 32)
-	for i := range secret {
-		secret[i] = byte(i)
-	}
-
-	luksKey, err := GenerateLUKSKey(secret)
-	require.NoError(t, err)
-
-	derivedKey, err := GenerateDerivedKey(secret)
-	require.NoError(t, err)
-
-	assert.Equal(t, derivedKey, luksKey)
-}
-
 // TestParseAuthDataExtensions_WithAttestedCredData tests extension parsing with attested cred data
 func TestParseAuthDataExtensions_WithAttestedCredData(t *testing.T) {
 	// Create auth data with AT flag and ED flag

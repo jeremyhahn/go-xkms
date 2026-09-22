@@ -47,25 +47,6 @@ const (
 	MethodLocalBiometricPending = "local.biometricPending"
 )
 
-// Deprecated: These phone.* methods implemented the wrong attestation direction.
-// The correct flow is:
-//   - Phone connects to laptop
-//   - Phone sends remote.attestDevice with a nonce
-//   - Laptop generates its attestation and responds
-//   - Phone verifies the laptop's attestation
-//
-// These constants are kept for backward compatibility but should not be used.
-// Use remote.attestDevice (MethodRemoteAttestDevice) instead.
-const (
-	// Deprecated: MethodPhoneRequestChallenge is no longer used.
-	// The phone should generate its own nonce and send remote.attestDevice.
-	MethodPhoneRequestChallenge = "phone.requestChallenge"
-
-	// Deprecated: MethodPhoneSubmitAttestation is no longer used.
-	// The laptop responds to remote.attestDevice with its attestation directly.
-	MethodPhoneSubmitAttestation = "phone.submitAttestation"
-)
-
 // LocalGenerateKeyParams contains parameters for local.generateKey.
 // Algorithm accepts: "ES256", "ES384", "ES512", "RS256", "RS384",
 // "RS512", "AES128", "AES256", "HMAC-SHA256", "HMAC-SHA512".
@@ -407,38 +388,6 @@ type LocalBiometricPendingParams struct {
 	TimeoutSecs int    `json:"timeoutSecs"` // How long phone will wait
 }
 
-// Deprecated: PhoneRequestChallengeResult is no longer used.
-// The correct attestation flow uses remote.attestDevice where the phone
-// generates its own nonce and the laptop responds with its attestation.
-type PhoneRequestChallengeResult struct {
-	Nonce         []byte `json:"nonce"`         // 32-byte challenge nonce
-	ChallengeID   string `json:"challengeId"`   // Unique ID to correlate with submission
-	ExpiresInSecs int    `json:"expiresInSecs"` // Nonce validity period
-}
-
-// Deprecated: PhoneSubmitAttestationParams is no longer used.
-// The correct attestation flow uses remote.attestDevice.
-type PhoneSubmitAttestationParams struct {
-	ChallengeID      string   `json:"challengeId"`      // From requestChallenge response
-	Nonce            []byte   `json:"nonce"`            // Echoed nonce
-	Format           string   `json:"format"`           // "android-keystore"
-	CertificateChain [][]byte `json:"certificateChain"` // X.509 cert chain
-	SecurityLevel    string   `json:"securityLevel"`    // "tee" or "strongbox"
-	// RootOfTrust fields from Android attestation extension
-	BootState        int    `json:"bootState"` // 0=VERIFIED, 1=SELF_SIGNED, etc.
-	DeviceLocked     bool   `json:"deviceLocked"`
-	VerifiedBootKey  []byte `json:"verifiedBootKey"`
-	VerifiedBootHash []byte `json:"verifiedBootHash"`
-}
-
-// Deprecated: PhoneSubmitAttestationResult is no longer used.
-// The correct attestation flow uses remote.attestDevice.
-type PhoneSubmitAttestationResult struct {
-	Verified          bool   `json:"verified"`
-	Message           string `json:"message,omitempty"`
-	DeviceFingerprint string `json:"deviceFingerprint,omitempty"` // SHA256 of attestation root cert
-}
-
 // localMethodNames contains all valid local.* method names for validation.
 var localMethodNames = map[string]bool{
 	MethodLocalGenerateKey:          true,
@@ -465,23 +414,7 @@ var localMethodNames = map[string]bool{
 	MethodLocalStoreDeviceCredential:      true,
 }
 
-// phoneMethodNames contains all valid phone.* method names for validation.
-//
-// Deprecated: These methods implement the wrong attestation direction.
-// They are kept for backward compatibility only.
-var phoneMethodNames = map[string]bool{
-	MethodPhoneRequestChallenge:  true,
-	MethodPhoneSubmitAttestation: true,
-}
-
 // IsLocalMethod returns true if the method name is a valid local.* method.
 func IsLocalMethod(method string) bool {
 	return localMethodNames[method]
-}
-
-// IsPhoneMethod returns true if the method name is a valid phone.* method.
-//
-// Deprecated: Use remote.attestDevice instead.
-func IsPhoneMethod(method string) bool {
-	return phoneMethodNames[method]
 }

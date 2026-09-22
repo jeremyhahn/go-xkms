@@ -105,18 +105,6 @@ func (v *PairingVerifier) IsPairedForOrigin(origin string) bool {
 	return ok
 }
 
-// GetState returns the pairing state for a single paired extension, for
-// backwards compatibility. If multiple extensions are paired, it returns
-// one arbitrarily. Returns nil if no extensions are paired.
-func (v *PairingVerifier) GetState() *PairingState {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	for _, s := range v.states {
-		return s
-	}
-	return nil
-}
-
 // GetStateForOrigin returns the pairing state for a specific origin.
 func (v *PairingVerifier) GetStateForOrigin(origin string) *PairingState {
 	v.mu.RLock()
@@ -303,12 +291,6 @@ func (v *PairingVerifier) UnpairAll() error {
 	v.pending = nil
 	v.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"action": "unpair_all"})
 	return v.removeStateLocked()
-}
-
-// Unpair removes all paired extensions. Kept for backwards compatibility;
-// callers should prefer UnpairOrigin or UnpairAll for clarity.
-func (v *PairingVerifier) Unpair() error {
-	return v.UnpairAll()
 }
 
 // Reload re-reads the pairing state from disk. This allows a running native

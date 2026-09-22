@@ -770,7 +770,7 @@ func (ca *CA) VerifyQuote(attrs *types.KeyAttributes, quote *tpm2.Quote, nonce [
 // into the CA's certificate store.
 //
 // The certificate is validated for the presence of the TCG EK OID extension
-// (OIDTCGEKCertificate). An absent OID logs a warning but is not treated as
+// (OIDTCGKpEKCertificate). An absent OID logs a warning but is not treated as
 // an error, to accommodate non-standard manufacturer certificates.
 func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
 	if !ca.initialized.Load() {
@@ -783,7 +783,7 @@ func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
 	// Warn when the TCG EK OID is absent; some manufacturer certs omit it.
 	hasEKOID := false
 	for _, ext := range cert.Extensions {
-		if ext.Id.Equal(OIDTCGEKCertificate) {
+		if ext.Id.Equal(OIDTCGKpEKCertificate) {
 			hasEKOID = true
 			break
 		}
@@ -818,7 +818,7 @@ func (ca *CA) EndorsementKeyCertificate(cn string) (*x509.Certificate, error) {
 	// Warn when the TCG EK OID is absent.
 	hasEKOID := false
 	for _, ext := range cert.Extensions {
-		if ext.Id.Equal(OIDTCGEKCertificate) {
+		if ext.Id.Equal(OIDTCGKpEKCertificate) {
 			hasEKOID = true
 			break
 		}

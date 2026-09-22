@@ -331,11 +331,11 @@ func (b *Backend) CreateCertificateStorage(config *CertStorageConfig) (storage.C
         return config.ExternalStorage, nil
 
     case hardware.CertStorageModeHardware:
-        return hardware.NewPKCS11CertStorage(
+        return hardware.NewPKCS11CertStorageWithSO(
             b.p11ctx, b.session, b.config.TokenLabel, b.config.Slot)
 
     case hardware.CertStorageModeHybrid:
-        hwStorage, _ := hardware.NewPKCS11CertStorage(
+        hwStorage, _ := hardware.NewPKCS11CertStorageWithSO(
             b.p11ctx, b.session, b.config.TokenLabel, b.config.Slot)
         return hardware.NewHybridCertStorage(hwStorage, config.ExternalStorage)
     }

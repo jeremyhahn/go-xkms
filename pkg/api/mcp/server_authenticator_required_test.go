@@ -32,7 +32,6 @@ func TestNewServer_NilAuthenticatorRejected(t *testing.T) {
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{
-		Addr:        "localhost:0",
 		XKMSService: svc,
 	})
 
@@ -47,7 +46,6 @@ func TestNewServer_ExplicitNoOpAuthenticator(t *testing.T) {
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 	})

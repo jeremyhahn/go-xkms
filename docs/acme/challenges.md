@@ -152,11 +152,6 @@ Wiring the responder into an order goes through the `ChallengeSetup` and
 [`sdk/go/acme/http01_responder.go`](../../sdk/go/acme/http01_responder.go) for a
 complete example.
 
-The process-global `http01.Setup` / `http01.Shutdown` pair in
-`pkg/acme/challenges/http-01` is **deprecated**. It cannot report a bind
-failure, because its signature has no error to return, and it holds one
-responder for the whole process, so two concurrent orders clobber each other.
-
 ### Error Types
 
 | Error | Description |

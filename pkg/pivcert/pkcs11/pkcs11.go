@@ -241,7 +241,7 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 	if config.RequireSO {
 		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, config.SOPIN, config.PIN, true)
 	} else {
-		hw, err = hardware.NewPKCS11CertStorage(pool, config.TokenLabel)
+		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, "", "", false)
 	}
 	if err != nil {
 		pool.Close()
@@ -259,7 +259,7 @@ func NewFromPool(pool hardware.PKCS11SessionProvider, tokenLabel string) (*PKCS1
 	if pool == nil {
 		return nil, pivcert.NewStorageTypeError("NewFromPool", pivcert.StorageTypePKCS11, pivcert.ErrInvalidConfig)
 	}
-	hw, err := hardware.NewPKCS11CertStorage(pool, tokenLabel)
+	hw, err := hardware.NewPKCS11CertStorageWithSO(pool, tokenLabel, "", "", false)
 	if err != nil {
 		return nil, pivcert.NewStorageTypeError("NewFromPool", pivcert.StorageTypePKCS11, err)
 	}
@@ -274,7 +274,7 @@ func NewFromSession(ctx *p11.Ctx, session p11.SessionHandle, slotID uint) (*PKCS
 		return nil, pivcert.NewStorageTypeError("NewFromSession", pivcert.StorageTypePKCS11, pivcert.ErrInvalidConfig)
 	}
 	provider := &singleSessionProvider{ctx: ctx, session: session, slotID: slotID}
-	hw, err := hardware.NewPKCS11CertStorage(provider, "")
+	hw, err := hardware.NewPKCS11CertStorageWithSO(provider, "", "", "", false)
 	if err != nil {
 		return nil, pivcert.NewStorageTypeError("NewFromSession", pivcert.StorageTypePKCS11, err)
 	}

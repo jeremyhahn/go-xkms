@@ -1372,7 +1372,7 @@ func TestImportEndorsementKeyCertificate_WithEKOID(t *testing.T) {
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 		ExtraExtensions: []pkix.Extension{
-			{Id: OIDTCGEKCertificate, Value: ekExt},
+			{Id: OIDTCGKpEKCertificate, Value: ekExt},
 		},
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)

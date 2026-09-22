@@ -20,9 +20,7 @@
 //
 // Cross-signed certificates are stored in the object store under the
 // "cross-signed/{issuer_cn}/{subject_cn}.pem" key pattern, with PEM-encoded
-// CERTIFICATE bodies. Readers additionally surface legacy "xsigned/" keyed
-// entries so that an object store populated by earlier tooling remains
-// accessible.
+// CERTIFICATE bodies.
 package ca
 
 import (

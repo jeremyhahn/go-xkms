@@ -50,7 +50,6 @@ func newSSHServer(t *testing.T) *Server {
 	t.Cleanup(func() { _ = sshClient.Close() })
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 		SSHClient:     sshClient,

@@ -143,28 +143,6 @@ func (e *ReceiveError) Unwrap() error {
 	return e.Err
 }
 
-// SendError is a typed error retained for API compatibility with the
-// previous TCP transport, whose rpcCall could observe a request-write
-// failure distinct from a response-read failure. The Streamable HTTP
-// client library performs a tool call as one send-and-receive operation, so
-// rpcCall no longer has a distinct write-phase failure to report here; any
-// such failure now surfaces as ReceiveError. SendError is unused by rpcCall
-// but kept so callers that still type-assert against it (e.g. the sdk/go
-// re-export) continue to compile.
-type SendError struct {
-	Err error
-}
-
-// Error implements the error interface.
-func (e *SendError) Error() string {
-	return fmt.Sprintf("failed to send request: %v", e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *SendError) Unwrap() error {
-	return e.Err
-}
-
 // TLSSetupError is a typed error for TLS configuration failures.
 type TLSSetupError struct {
 	Detail string

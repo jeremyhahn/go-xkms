@@ -2968,10 +2968,7 @@ func (s *Server) buildMCPConfig() (*mcp.Config, error) {
 		return nil, &MCPConfigError{Reason: "no keystore available"}
 	}
 
-	addr := s.listenAddr(s.config.Server.MCPPort)
-
 	return &mcp.Config{
-		Addr:        addr,
 		Logger:      s.logger.With("component", "mcp"),
 		XKMSService: s.xkmsService,
 		SSHClient:   s.ensureSSHClient(),

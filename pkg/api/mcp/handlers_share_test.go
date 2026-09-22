@@ -43,7 +43,6 @@ func newShareServer(t *testing.T) *Server {
 	t.Cleanup(cleanupXKMS)
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 	})

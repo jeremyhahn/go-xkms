@@ -40,8 +40,6 @@ export function SetRequireUserPresence(arg1:boolean):Promise<void>;
 
 export function SetUserIntentCheck(arg1:boolean):Promise<void>;
 
-export function SetWindowHideFunc(arg1:any):Promise<void>;
-
 export function Start(arg1:authenticator.StatefulCredentialStorage,arg2:notify.Notifier):Promise<void>;
 
 export function Stop():Promise<void>;

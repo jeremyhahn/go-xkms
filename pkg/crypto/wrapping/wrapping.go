@@ -33,7 +33,6 @@
 package wrapping
 
 import (
-	"crypto"
 	"crypto/aes"
 	"crypto/rand"
 	"crypto/rsa"
@@ -488,22 +487,6 @@ func encloseAndCopy(src []byte) ([]byte, error) {
 	// Best-effort wipe of our caller-supplied source.
 	secure.Wipe(src)
 	return out, nil
-}
-
-// GetHashForAlgorithm returns the crypto.Hash ID for the given
-// wrapping algorithm. Kept for backward compatibility with callers
-// that need the hash identifier separately (e.g., PKCS#11 mechanisms).
-func GetHashForAlgorithm(algorithm backend.WrappingAlgorithm) (crypto.Hash, error) {
-	switch algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
-		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1:
-		return crypto.SHA1, nil
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		return crypto.SHA256, nil
-	default:
-		return 0, &UnsupportedAlgorithmError{Algorithm: string(algorithm)}
-	}
 }
 
 // aesKWDefaultIV is the RFC 3394 section 2.2.3.1 default initial value,

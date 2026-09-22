@@ -54,18 +54,6 @@ func TestUnmarshalError_Unwrap(t *testing.T) {
 	assert.Equal(t, cause, e.Unwrap())
 }
 
-func TestSendError_Error(t *testing.T) {
-	e := &SendError{Err: errors.New("broken pipe")}
-	assert.Contains(t, e.Error(), "send request")
-	assert.Contains(t, e.Error(), "broken pipe")
-}
-
-func TestSendError_Unwrap(t *testing.T) {
-	cause := errors.New("cause")
-	e := &SendError{Err: cause}
-	assert.Equal(t, cause, e.Unwrap())
-}
-
 func TestReceiveError_Error(t *testing.T) {
 	e := &ReceiveError{Err: errors.New("connection reset")}
 	assert.Contains(t, e.Error(), "receive response")

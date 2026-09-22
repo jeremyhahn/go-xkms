@@ -1615,15 +1615,6 @@ func (b *Backend) SetSessionPool(pool *SessionPool) {
 	b.probeQuantumMechanisms()
 }
 
-// SetP11Ctx allows an external manager to inject a raw PKCS#11 context.
-// Use SetSessionPool when possible; this is for backward compatibility.
-func (b *Backend) SetP11Ctx(ctx *pkcs11.Ctx) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.p11ctx = ctx
-	b.ownsP11ctx = false
-}
-
 // findKey finds a key object by its resolved CKA_ID.
 // Must be called with mutex held.
 //

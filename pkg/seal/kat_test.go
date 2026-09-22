@@ -27,9 +27,9 @@ import (
 // Golden SealedData produced by the PRE-CHANGE SecretSealer.Seal: a hand-rolled
 // 12-byte nonce passed to cipher.NewGCM's Seal, with the nonce kept in its own
 // field. Fixed bytes captured from that implementation, under the data key
-// HKDF-SHA256 derives from the secret below. The current code cannot regenerate
-// them, which is what makes this a real compatibility check rather than a round
-// trip that agrees with itself.
+// HKDF-SHA256 derives from the secret below. The current code cannot
+// regenerate them, which is what makes this a real known-answer test rather
+// than a round trip that agrees with itself.
 const (
 	legacySealSecret     = "a-strong-node-protection-secret"
 	legacySealNonceHex   = "a0a1a2a3a4a5a6a7a8a9aaab"
@@ -38,9 +38,10 @@ const (
 	legacySealBackendKey = types.BackendTypeSoftware
 )
 
-// TestSecretSealer_UnsealsLegacySealedData asserts a blob sealed before AES-GCM
-// nonce generation moved inside the module boundary still unseals.
-func TestSecretSealer_UnsealsLegacySealedData(t *testing.T) {
+// TestSecretSealer_UnsealsKnownAnswerSealedData is a known-answer test: a
+// fixed blob sealed before AES-GCM nonce generation moved inside the module
+// boundary still unseals.
+func TestSecretSealer_UnsealsKnownAnswerSealedData(t *testing.T) {
 	sealer, err := NewSecretSealer([]byte(legacySealSecret))
 	require.NoError(t, err)
 
@@ -59,8 +60,9 @@ func TestSecretSealer_UnsealsLegacySealedData(t *testing.T) {
 }
 
 // TestSecretSealer_SealStillSplitsTheNonceOut asserts the other direction: a
-// blob sealed now keeps the two separate fields an older build reads, with the
-// nonce at its documented length rather than folded into the ciphertext.
+// blob sealed now keeps the same two separate fields the known-answer
+// vectors assume, with the nonce at its documented length rather than
+// folded into the ciphertext.
 func TestSecretSealer_SealStillSplitsTheNonceOut(t *testing.T) {
 	sealer, err := NewSecretSealer([]byte(legacySealSecret))
 	require.NoError(t, err)

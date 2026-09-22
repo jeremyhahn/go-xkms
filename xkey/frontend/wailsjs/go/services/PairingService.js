@@ -10,10 +10,6 @@ export function GetPairedExtensions() {
   return window['go']['services']['PairingService']['GetPairedExtensions']();
 }
 
-export function GetPairingStatus() {
-  return window['go']['services']['PairingService']['GetPairingStatus']();
-}
-
 export function InstallManifest(arg1) {
   return window['go']['services']['PairingService']['InstallManifest'](arg1);
 }

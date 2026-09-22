@@ -103,7 +103,6 @@ func newRBACServer(t *testing.T, svc *xkms.XKMSService, rbac *fakeRBAC) *Server 
 	t.Helper()
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Authorizer:    auth.NewAuthorizer(rbac),
@@ -143,7 +142,6 @@ func TestNewServer_RBACEnabled_NilAuthorizerRejected(t *testing.T) {
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 		EnableRBAC:    true,
@@ -161,7 +159,6 @@ func TestNewServer_RBACEnabled_DisabledAuthorizerRejected(t *testing.T) {
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Authorizer:    auth.NewAuthorizer(nil),
@@ -193,7 +190,6 @@ func TestNewServer_RBACDisabled_DefaultsToDisabledAuthorizer(t *testing.T) {
 	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 	})
@@ -470,7 +466,6 @@ func TestRBACDisabled_AllowsEveryMethod(t *testing.T) {
 
 	rbac := newFakeRBAC() // denies everything
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Authorizer:    auth.NewAuthorizer(rbac),
@@ -536,7 +531,6 @@ func TestRBACDisabled_ParityWithRESTAndQUIC(t *testing.T) {
 
 	// MCP's disabled server: same Authorizer shape, same outcome.
 	server, err := NewServer(&Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 	})

@@ -435,12 +435,7 @@ func (pks *PlatformKeyStore) IsInitialized() bool {
 	return pks.initialized.Load()
 }
 
-// PINManager returns the integrated PIN manager for backward compatibility.
-// New code should use PINBackend() instead.
-//
-// Deprecated: Use PINBackend() instead.
-
-// PINBackend returns the modern PIN backend for this key store.
+// PINBackend returns the PIN backend for this key store.
 func (pks *PlatformKeyStore) PINBackend() qrdbsdk.PINBackend {
 	return pks.pinBackend
 }

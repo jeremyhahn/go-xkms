@@ -32,9 +32,10 @@ const (
 	legacyBackupPayload = "legacy backup payload"
 )
 
-// TestDecryptData_ReadsLegacyBackup asserts an encrypted backup written before
-// AES-GCM nonce generation moved inside the module boundary still restores.
-func TestDecryptData_ReadsLegacyBackup(t *testing.T) {
+// TestDecryptData_ReadsKnownAnswerBackup asserts an encrypted backup written
+// before AES-GCM nonce generation moved inside the module boundary still
+// restores.
+func TestDecryptData_ReadsKnownAnswerBackup(t *testing.T) {
 	adapter, err := NewFileBackupAdapter(t.TempDir())
 	require.NoError(t, err)
 

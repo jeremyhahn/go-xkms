@@ -1440,12 +1440,6 @@ func TestMiscServices_Coverage_FIDO2DeviceService_SetAuthenticator(t *testing.T)
 	assert.Nil(t, svc.externalAuth)
 }
 
-func TestMiscServices_Coverage_FIDO2DeviceService_SetWindowHideFunc(t *testing.T) {
-	svc := NewFIDO2DeviceService(slog.Default())
-	// SetWindowHideFunc is a no-op; just verify it doesn't panic.
-	svc.SetWindowHideFunc(func() {})
-}
-
 func TestMiscServices_Coverage_FIDO2DeviceService_GetRequireUserPresence_NilAuth(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
 	// No external auth -> returns true (safe default).

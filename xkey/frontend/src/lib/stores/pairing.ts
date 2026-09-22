@@ -86,9 +86,6 @@ const initialState: PairingState = {
 
 export const pairingState = writable<PairingState>(initialState);
 
-// Keep phoneState as alias for backward compatibility during transition.
-export const phoneState = pairingState;
-
 export const isPhoneConnected = derived(pairingState, ($s) => $s.connected);
 export const connectedDevice = derived(pairingState, ($s) =>
   $s.connected ? { name: $s.deviceName, address: $s.deviceAddress } : null

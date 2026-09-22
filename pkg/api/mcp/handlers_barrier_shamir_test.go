@@ -74,7 +74,6 @@ func createTestBarrierServer(t *testing.T) (*Server, *shamirtest.CaptureDistribu
 
 	server, err := NewServer(&Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
 		Barrier:       barrier,
 		XKMSService:   svc,
 	})
@@ -861,7 +860,7 @@ func TestBarrierSetBarrier(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
+	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Initially no barrier
@@ -889,7 +888,6 @@ func TestBarrierConfigPassthrough(t *testing.T) {
 	barrier, _, _ := createTestBarrier(t)
 	server, err := NewServer(&Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
 		Barrier:       barrier,
 		XKMSService:   svc,
 	})

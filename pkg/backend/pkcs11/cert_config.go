@@ -138,8 +138,11 @@ func (b *Backend) createHardwareStorage() (hardware.HardwareCertStorage, error) 
 		)
 	}
 
-	return hardware.NewPKCS11CertStorage(
+	return hardware.NewPKCS11CertStorageWithSO(
 		b.pool,
 		b.config.TokenLabel,
+		"",
+		"",
+		false,
 	)
 }

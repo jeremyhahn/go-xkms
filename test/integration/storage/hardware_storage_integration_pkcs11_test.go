@@ -78,7 +78,7 @@ func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
 	}
 
 	// Create hardware storage using the pool
-	hwStorage, err := hardware.NewPKCS11CertStorage(pool, "test-token")
+	hwStorage, err := hardware.NewPKCS11CertStorageWithSO(pool, "test-token", "", "", false)
 	if err != nil {
 		t.Logf("Failed to create PKCS#11 cert storage: %v", err)
 		pool.Close()

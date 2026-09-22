@@ -133,18 +133,6 @@ func TestCoverageBoostPhase2_FIDO2DeviceService_SetAuthenticator_Nil(t *testing.
 	assert.Nil(t, svc.externalAuth)
 }
 
-func TestCoverageBoostPhase2_FIDO2DeviceService_SetWindowHideFunc_Nil(t *testing.T) {
-	svc := NewFIDO2DeviceService(slog.Default())
-	// SetWindowHideFunc is a no-op; just verify it doesn't panic.
-	svc.SetWindowHideFunc(nil)
-}
-
-func TestCoverageBoostPhase2_FIDO2DeviceService_SetWindowHideFunc_Called(t *testing.T) {
-	svc := NewFIDO2DeviceService(slog.Default())
-	// SetWindowHideFunc is a no-op; just verify it doesn't panic.
-	svc.SetWindowHideFunc(func() {})
-}
-
 func TestCoverageBoostPhase2_FIDO2DeviceService_GetRequireUserPresence_WithAuth(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
 	auth := createPhase2Authenticator(t)

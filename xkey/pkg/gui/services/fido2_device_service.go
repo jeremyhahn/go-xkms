@@ -139,14 +139,6 @@ func (s *FIDO2DeviceService) SetElevator(e Elevator) {
 	s.elevator = e
 }
 
-// SetWindowHideFunc is a no-op preserved for API compatibility.
-// Touch approval no longer hides the window --- the user's xkey
-// stays visible and the browser regains focus naturally.
-//
-// Deprecated: This callback is unused. Will be removed in a future release.
-func (s *FIDO2DeviceService) SetWindowHideFunc(_ func()) {
-}
-
 // GetRequireUserPresence returns whether the authenticator requires physical
 // touch for user presence. Returns true if the authenticator is unavailable.
 func (s *FIDO2DeviceService) GetRequireUserPresence() bool {

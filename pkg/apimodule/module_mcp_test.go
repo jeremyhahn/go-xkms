@@ -48,7 +48,6 @@ func newMCPBackend(t *testing.T) *xkmsmcp.Server {
 	require.NoError(t, err)
 
 	srv, err := xkmsmcp.NewServer(&xkmsmcp.Config{
-		Addr:          "localhost:0",
 		XKMSService:   svc,
 		Authenticator: auth.NewNoOpAuthenticator(),
 	})

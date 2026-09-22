@@ -37,7 +37,7 @@ const (
 	legacyECIESAAD           = "ecies-aad"
 )
 
-// legacyECIESRecipientKey rebuilds the ECDSA private key the golden blob was
+// knownAnswerECIESRecipientKey rebuilds the ECDSA private key the golden blob was
 // encrypted to. A P-256 private key is the big-endian scalar, so the fixture
 // stores that and the public point is derived from it.
 //
@@ -46,7 +46,7 @@ const (
 // constructor derives the point itself and rejects a scalar outside [1, N-1],
 // so a corrupted fixture fails loudly here instead of producing a key that is
 // silently wrong.
-func legacyECIESRecipientKey(t *testing.T) *ecdsa.PrivateKey {
+func knownAnswerECIESRecipientKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
 	d, err := hex.DecodeString(legacyECIESRecipientDHex)
 	require.NoError(t, err)
@@ -57,21 +57,23 @@ func legacyECIESRecipientKey(t *testing.T) *ecdsa.PrivateKey {
 	return priv
 }
 
-// TestDecrypt_ReadsLegacyCiphertext asserts an ECIES blob written before
-// AES-GCM nonce generation moved inside the module boundary still decrypts.
-func TestDecrypt_ReadsLegacyCiphertext(t *testing.T) {
+// TestDecrypt_ReadsKnownAnswerCiphertext is a known-answer test: a fixed
+// ECIES blob captured from the format produced before AES-GCM nonce
+// generation moved inside the module boundary still decrypts.
+func TestDecrypt_ReadsKnownAnswerCiphertext(t *testing.T) {
 	blob, err := hex.DecodeString(legacyECIESBlobHex)
 	require.NoError(t, err)
 
-	got, err := Decrypt(legacyECIESRecipientKey(t), blob, []byte(legacyECIESAAD))
+	got, err := Decrypt(knownAnswerECIESRecipientKey(t), blob, []byte(legacyECIESAAD))
 	require.NoError(t, err)
 	assert.Equal(t, legacyECIESPlaintext, string(got))
 }
 
-// TestEncrypt_KeepsLegacyFieldPositions asserts the other direction: a blob
-// written now puts the nonce and tag where an older reader looks for them.
-func TestEncrypt_KeepsLegacyFieldPositions(t *testing.T) {
-	priv := legacyECIESRecipientKey(t)
+// TestEncrypt_KeepsKnownAnswerFieldPositions asserts the other direction: a
+// blob written now keeps the same fixed field layout the known-answer
+// vectors assume.
+func TestEncrypt_KeepsKnownAnswerFieldPositions(t *testing.T) {
+	priv := knownAnswerECIESRecipientKey(t)
 	plaintext := []byte(legacyECIESPlaintext)
 
 	out, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, []byte(legacyECIESAAD))

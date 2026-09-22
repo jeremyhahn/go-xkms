@@ -459,11 +459,6 @@ func GenerateDerivedKey(hmacSecret []byte) ([]byte, error) {
 	return derivedKey, nil
 }
 
-// GenerateLUKSKey generates a LUKS key from FIDO2 HMAC-secret (alias for backwards compatibility)
-func GenerateLUKSKey(hmacSecret []byte) ([]byte, error) {
-	return GenerateDerivedKey(hmacSecret)
-}
-
 // VerifyHMACSecret verifies that an HMAC secret is valid
 func VerifyHMACSecret(secret []byte) error {
 	if len(secret) == 0 {

@@ -235,7 +235,7 @@ func newKeyOpsServer(t *testing.T, extra map[string]types.KeyProvider) *Server {
 	svc, err := xkms.Get()
 	require.NoError(t, err)
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
+	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 	return server
 }

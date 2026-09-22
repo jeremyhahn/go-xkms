@@ -32,9 +32,10 @@ const (
 	legacyQuantumAAD     = "quantum-aad"
 )
 
-// TestDecryptWithAESGCM_ReadsLegacyCiphertext asserts ciphertext written before
-// AES-GCM nonce generation moved inside the module boundary still decrypts.
-func TestDecryptWithAESGCM_ReadsLegacyCiphertext(t *testing.T) {
+// TestDecryptWithAESGCM_ReadsKnownAnswerCiphertext is a known-answer test:
+// a fixed ciphertext captured from the format produced before AES-GCM nonce
+// generation moved inside the module boundary still decrypts.
+func TestDecryptWithAESGCM_ReadsKnownAnswerCiphertext(t *testing.T) {
 	key, err := hex.DecodeString(legacyQuantumKeyHex)
 	require.NoError(t, err)
 	blob, err := hex.DecodeString(legacyQuantumBlobHex)

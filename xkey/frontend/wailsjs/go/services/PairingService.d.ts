@@ -9,8 +9,6 @@ export function GetExtensionFullStatus():Promise<services.ExtensionFullStatus>;
 
 export function GetPairedExtensions():Promise<Array<services.PairingStatus>>;
 
-export function GetPairingStatus():Promise<services.PairingStatus>;
-
 export function InstallManifest(arg1:string):Promise<void>;
 
 export function IsPaired():Promise<boolean>;

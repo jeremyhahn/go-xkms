@@ -434,31 +434,6 @@ func TestBackend_SetSessionPool_BorrowsContext(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotInitialized, "the borrower's own pool must be gone after Close")
 }
 
-// TestBackend_SetP11Ctx_BorrowsContext proves the raw-context injection path
-// also marks the context borrowed, and that injecting nil is handled rather
-// than panicking on Close.
-func TestBackend_SetP11Ctx_BorrowsContext(t *testing.T) {
-	owner := newProvisionedBackend(t, "borrowed-ctx")
-
-	borrower := &Backend{config: owner.config}
-	borrower.SetP11Ctx(owner.p11ctx)
-
-	assert.Same(t, owner.p11ctx, borrower.p11ctx)
-	assert.False(t, borrower.ownsP11ctx)
-	require.NoError(t, borrower.Close())
-
-	random, err := owner.GenerateRandom(16)
-	require.NoError(t, err, "closing a context borrower must not finalize the owner's context")
-	require.Len(t, random, 16)
-
-	t.Run("nil-context", func(t *testing.T) {
-		empty := &Backend{config: owner.config}
-		empty.SetP11Ctx(nil)
-		assert.Nil(t, empty.p11ctx)
-		require.NoError(t, empty.Close(), "Close must tolerate a backend with no context")
-	})
-}
-
 // TestBackend_ProbeQuantumMechanisms_RealToken proves the probe reflects what
 // the token actually advertises. SoftHSM2 exposes no PKCS#11 v3.2 ML-DSA or
 // ML-KEM mechanism, so both quantum capabilities must stay false; claiming

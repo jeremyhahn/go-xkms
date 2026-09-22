@@ -28,9 +28,6 @@ var (
 	// ErrConfigLoadFailed is returned when the config file cannot be read from disk.
 	ErrConfigLoadFailed = errors.New("config: failed to load")
 
-	// ErrConfigMigrationFailed is returned when migration from an old config format fails.
-	ErrConfigMigrationFailed = errors.New("config: migration from old format failed")
-
 	// ErrConfigDirCreate is returned when the config directory cannot be created.
 	ErrConfigDirCreate = errors.New("config: failed to create directory")
 

@@ -174,15 +174,6 @@ func (s *PairingService) IsPaired() bool {
 	return s.verifier.IsPaired()
 }
 
-// GetPairingStatus returns the current pairing state for the frontend.
-// If no verifier is configured or no extension is paired, it returns
-// an unpaired status. For multi-browser support, use GetPairedExtensions.
-func (s *PairingService) GetPairingStatus() *PairingStatus {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.getPairingStatusLocked()
-}
-
 // GetPairedExtensions returns the pairing status for all paired extensions.
 // Returns an empty slice if no extensions are paired or verifier is not set.
 func (s *PairingService) GetPairedExtensions() []*PairingStatus {
@@ -459,27 +450,6 @@ func (s *PairingService) UninstallManifest(browser string) error {
 	s.log.Info("manifest uninstalled", "browser", b)
 	s.logPairingEvent(audit.OpPairingManifest, true, nil, map[string]any{"browser": browser, "action": "uninstall"})
 	return nil
-}
-
-// getPairingStatusLocked returns pairing status for a single extension,
-// for backwards compatibility (caller must hold mu).
-func (s *PairingService) getPairingStatusLocked() *PairingStatus {
-	if s.verifier == nil {
-		return &PairingStatus{Paired: false}
-	}
-	states := s.verifier.GetStates()
-	if len(states) == 0 {
-		return &PairingStatus{Paired: false}
-	}
-	// Return the first one for backwards compat.
-	for origin, state := range states {
-		return &PairingStatus{
-			Paired:   true,
-			Origin:   origin,
-			PairedAt: state.PairedAt.Format(time.RFC3339),
-		}
-	}
-	return &PairingStatus{Paired: false}
 }
 
 // getPairedExtensionsLocked returns pairing status for all paired extensions

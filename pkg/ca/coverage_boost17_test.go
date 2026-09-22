@@ -284,8 +284,8 @@ func TestVerifyQuote_CertStoreFallback_RSAPKCS1v15_B17(t *testing.T) {
 
 // TestEndorsementKeyCertificate_EKOIDFound_B17 covers tcg.go:709.40,711.9
 // (hasEKOID = true; break). IssueEKCertificate attaches OIDTCGKpEKCertificate
-// to the issued cert, which equals OIDTCGEKCertificate; the loop in
-// EndorsementKeyCertificate finds it and sets hasEKOID = true.
+// to the issued cert; the loop in EndorsementKeyCertificate finds it and
+// sets hasEKOID = true.
 func TestEndorsementKeyCertificate_EKOIDFound_B17(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)

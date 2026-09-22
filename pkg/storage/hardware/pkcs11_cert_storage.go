@@ -72,17 +72,6 @@ type PKCS11CertStorage struct {
 	closed     bool
 }
 
-// NewPKCS11CertStorage creates a new PKCS#11 certificate storage instance
-// backed by a session pool. The pool must be initialized and logged in.
-// This is the backward-compatible constructor that does not use CKU_SO
-// elevation for deletes.
-func NewPKCS11CertStorage(
-	pool PKCS11SessionProvider,
-	tokenLabel string,
-) (HardwareCertStorage, error) {
-	return NewPKCS11CertStorageWithSO(pool, tokenLabel, "", "", false)
-}
-
 // NewPKCS11CertStorageWithSO creates a PKCS#11 certificate storage instance
 // that can optionally elevate to CKU_SO (Security Officer) for delete
 // operations. Required for YubiKey PIV where C_DestroyObject is rejected

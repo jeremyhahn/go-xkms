@@ -391,7 +391,7 @@ func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := pairing.Unpair(); err != nil {
+	if err := pairing.UnpairAll(); err != nil {
 		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
 	}
 

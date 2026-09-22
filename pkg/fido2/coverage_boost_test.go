@@ -864,17 +864,6 @@ func TestGenerateDerivedKey_InvalidSecretLength(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid HMAC secret length")
 }
 
-// TestGenerateLUKSKey_Alias tests the GenerateLUKSKey alias.
-func TestGenerateLUKSKey_AliasFunction(t *testing.T) {
-	secret := make([]byte, 32)
-
-	key1, err1 := GenerateDerivedKey(secret)
-	key2, err2 := GenerateLUKSKey(secret)
-
-	assert.Equal(t, err1, err2)
-	assert.Equal(t, key1, key2)
-}
-
 // TestNewHMACSecretExtension_NoSupport tests creating extension on device without hmac-secret.
 func TestNewHMACSecretExtension_NoSupport(t *testing.T) {
 	config := DefaultConfig

@@ -116,8 +116,7 @@ var knownBrowsers = []knownBrowser{
 }
 
 // chromiumBrowsers is a filtered view of knownBrowsers containing only
-// Chromium-family entries. Retained for backward compatibility with existing
-// tests and callers.
+// Chromium-family entries.
 var chromiumBrowsers = filterByFamily(familyChromium)
 
 // firefoxBrowsers is a filtered view of knownBrowsers containing only

@@ -124,7 +124,8 @@ func (e *XKMSError) Is(target error) bool {
 		return e.Code == ke.Code
 	}
 
-	// Check against sentinel errors for backward compatibility
+	// Check against the sentinel errors so callers using errors.Is with
+	// either the sentinel value or the XKMSError code match consistently.
 	switch e.Code {
 	case ErrCodeProtocolUnsupported:
 		return target == ErrUnsupportedProtocol

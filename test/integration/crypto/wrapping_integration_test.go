@@ -17,7 +17,6 @@ package crypto_test
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -360,34 +359,6 @@ func TestWrapUnwrapConcurrentIntegration(t *testing.T) {
 	}
 
 	assert.Equal(t, numGoroutines, successCount, "All concurrent operations should succeed")
-}
-
-// TestGetHashForAlgorithmIntegration tests hash retrieval helper
-func TestGetHashForAlgorithmIntegration(t *testing.T) {
-	testCases := []struct {
-		algorithm    backend.WrappingAlgorithm
-		expectedHash crypto.Hash
-		shouldError  bool
-	}{
-		{backend.WrappingAlgorithmRSAES_OAEP_SHA_1, crypto.SHA1, false},
-		{backend.WrappingAlgorithmRSAES_OAEP_SHA_256, crypto.SHA256, false},
-		{backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, crypto.SHA1, false},
-		{backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, crypto.SHA256, false},
-		{backend.WrappingAlgorithm("unsupported"), crypto.Hash(0), true},
-	}
-
-	for _, tc := range testCases {
-		t.Run(string(tc.algorithm), func(t *testing.T) {
-			hash, err := wrapping.GetHashForAlgorithm(tc.algorithm)
-
-			if tc.shouldError {
-				assert.Error(t, err, "Should error for unsupported algorithm")
-			} else {
-				require.NoError(t, err, "Should not error for supported algorithm")
-				assert.Equal(t, tc.expectedHash, hash, "Hash should match expected")
-			}
-		})
-	}
 }
 
 // TestWrapUnwrapAlgorithmMismatchIntegration tests using different algorithms for wrap/unwrap

@@ -70,10 +70,6 @@ export function SetUserIntentCheck(arg1) {
   return window['go']['services']['FIDO2DeviceService']['SetUserIntentCheck'](arg1);
 }
 
-export function SetWindowHideFunc(arg1) {
-  return window['go']['services']['FIDO2DeviceService']['SetWindowHideFunc'](arg1);
-}
-
 export function Start(arg1, arg2) {
   return window['go']['services']['FIDO2DeviceService']['Start'](arg1, arg2);
 }

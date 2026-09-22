@@ -1364,9 +1364,6 @@ export function notifyBackendUnavailable(action: string): void {
   });
 }
 
-/** @deprecated use notifyBackendUnavailable */
-export const notifyWailsRequired = notifyBackendUnavailable;
-
 export async function callBackend<T>(
   service: string,
   method: string,

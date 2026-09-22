@@ -46,10 +46,10 @@ func mustHex(t *testing.T, s string) []byte {
 	return b
 }
 
-// TestDecrypt_ReadsLegacyCiphertext is the compatibility claim this migration
-// rests on: ciphertexts written before AES-GCM nonce generation moved inside
-// the module boundary must still decrypt.
-func TestDecrypt_ReadsLegacyCiphertext(t *testing.T) {
+// TestDecrypt_ReadsKnownAnswerCiphertext is a known-answer test: fixed
+// ciphertexts captured from the format produced before AES-GCM nonce
+// generation moved inside the module boundary must still decrypt.
+func TestDecrypt_ReadsKnownAnswerCiphertext(t *testing.T) {
 	key := mustHex(t, legacyKeyHex)
 
 	t.Run("without AAD", func(t *testing.T) {
@@ -65,11 +65,11 @@ func TestDecrypt_ReadsLegacyCiphertext(t *testing.T) {
 	})
 }
 
-// TestEncrypt_ProducesLegacyReadableLayout is the other direction: a blob
-// written now must be readable by a build that still splits the nonce off the
-// front by hand. Reproducing that split here, rather than calling Decrypt,
-// keeps the check independent of the new reader.
-func TestEncrypt_ProducesLegacyReadableLayout(t *testing.T) {
+// TestEncrypt_ProducesKnownAnswerLayout is the other direction: a blob
+// written now must keep the same on-disk layout the known-answer vectors
+// assume -- nonce split off the front by hand. Reproducing that split here,
+// rather than calling Decrypt, keeps the check independent of the reader.
+func TestEncrypt_ProducesKnownAnswerLayout(t *testing.T) {
 	key := mustHex(t, legacyKeyHex)
 	plaintext := []byte(legacyPlaintext)
 

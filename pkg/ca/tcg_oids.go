@@ -76,11 +76,6 @@ var (
 	// fields."
 	OIDTCGOnEKPermIdSha256 = asn1.ObjectIdentifier{2, 23, 133, 12, 1}
 
-	// Legacy aliases for backward compatibility
-	OIDTCGSpecification  = OIDTCGAttributeTPMSpecification
-	OIDTCGEKCertificate  = OIDTCGKpEKCertificate
-	OIDTCGAIKCertificate = OIDTCGKpAIKCertificate
-
 	// Trusted Platform OIDs (Private Enterprise Number: 29377)
 	OIDTPIssuerKeyStore = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 1}
 	OIDTPKeyStore       = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377, 101, 2}

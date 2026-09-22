@@ -344,7 +344,7 @@ func twoBackendServer(t *testing.T, keyID string) (*Server, *rsa.PublicKey, *rsa
 	require.NoError(t, err)
 
 	server, err := NewServer(&Config{
-		Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator(),
+		XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator(),
 	})
 	require.NoError(t, err)
 

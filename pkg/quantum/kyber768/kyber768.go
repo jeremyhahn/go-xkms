@@ -51,9 +51,6 @@ var (
 	ErrEncapsulationFailed = errors.New("kyber768: encapsulation failed")
 	// ErrDecapsulationFailed indicates decapsulation operation failed
 	ErrDecapsulationFailed = errors.New("kyber768: decapsulation failed")
-
-	// ErrInvalidSecretKey is an alias for ErrInvalidSeed for backward compatibility
-	ErrInvalidSecretKey = ErrInvalidSeed
 )
 
 // KEMDetails contains the algorithm parameters for the KEM

@@ -66,7 +66,6 @@ func TestPairingVerifier_FullCeremony(t *testing.T) {
 	v, err := NewPairingVerifier(statePath)
 	require.NoError(t, err)
 	assert.False(t, v.IsPaired())
-	assert.Nil(t, v.GetState())
 
 	pubKey, privKey := generateTestIdentity(t)
 
@@ -227,7 +226,7 @@ func TestPairingVerifier_ReplayProtection(t *testing.T) {
 	assert.ErrorIs(t, err, ErrIdentitySignature)
 }
 
-func TestPairingVerifier_Unpair(t *testing.T) {
+func TestPairingVerifier_UnpairAll(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "pairing.json")
 
@@ -238,11 +237,10 @@ func TestPairingVerifier_Unpair(t *testing.T) {
 	completePairingCeremony(t, v, pubKey, testOrigin)
 	assert.True(t, v.IsPaired())
 
-	// Unpair.
-	err = v.Unpair()
+	// Unpair all.
+	err = v.UnpairAll()
 	require.NoError(t, err)
 	assert.False(t, v.IsPaired())
-	assert.Nil(t, v.GetState())
 	assert.Empty(t, v.GetStates())
 
 	// Verify should now return pairing required.
@@ -254,7 +252,7 @@ func TestPairingVerifier_Unpair(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPairingRequired)
 }
 
-func TestPairingVerifier_Unpair_NoPairingState(t *testing.T) {
+func TestPairingVerifier_UnpairAll_NoPairingState(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "nonexistent-pairing.json")
 
@@ -262,7 +260,7 @@ func TestPairingVerifier_Unpair_NoPairingState(t *testing.T) {
 	require.NoError(t, err)
 
 	// Unpair when no state exists should succeed.
-	err = v.Unpair()
+	err = v.UnpairAll()
 	require.NoError(t, err)
 	assert.False(t, v.IsPaired())
 }
@@ -702,7 +700,7 @@ func TestReload(t *testing.T) {
 	assert.True(t, v2.IsPaired())
 
 	// Unpair via v2 — this writes to disk.
-	err = v2.Unpair()
+	err = v2.UnpairAll()
 	require.NoError(t, err)
 	assert.False(t, v2.IsPaired())
 

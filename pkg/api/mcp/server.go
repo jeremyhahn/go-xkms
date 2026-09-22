@@ -97,7 +97,6 @@ var (
 // barrier, password store, SSH) each handler needs. It carries no network
 // state; InvokeMethod is the only entry point.
 type Server struct {
-	addr            string
 	keystore        xkms.Backend // Default keystore for backward compatibility
 	xkmsService     *xkms.XKMSService
 	barrier         *seal.Barrier
@@ -123,11 +122,6 @@ type Server struct {
 
 // Config holds the MCP server configuration.
 type Config struct {
-	// Addr is retained for wiring compatibility with pkg/server's
-	// buildMCPConfig, which still assembles it from the daemon's configured
-	// host and MCP port. It is not read by this package: there is no
-	// listener left to bind it to.
-	Addr          string
 	Authenticator auth.Authenticator
 	Logger        *slog.Logger
 	Barrier       *seal.Barrier
@@ -171,10 +165,6 @@ func NewServer(config *Config) (*Server, error) {
 		return nil, ErrXKMSServiceRequired
 	}
 
-	if config.Addr == "" {
-		config.Addr = "localhost:9444"
-	}
-
 	// The authenticator is mandatory. Substituting a NoOp authenticator for a
 	// missing one would silently disable authentication for every JSON-RPC
 	// method, so an omitted authenticator is an error: selecting
@@ -205,7 +195,6 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	s := &Server{
-		addr:            config.Addr,
 		xkmsService:     svc,
 		barrier:         config.Barrier,
 		barrierRegistry: config.BarrierRegistry,

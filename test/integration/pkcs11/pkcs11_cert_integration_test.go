@@ -182,7 +182,7 @@ func TestPKCS11CertificateStorageIntegration(t *testing.T) {
 		defer pool.Close()
 
 		// Create hardware certificate storage using the pool
-		hwStorage, err := hardware.NewPKCS11CertStorage(pool, "test-token-certs")
+		hwStorage, err := hardware.NewPKCS11CertStorageWithSO(pool, "test-token-certs", "", "", false)
 		if err != nil {
 			t.Fatalf("Failed to create PKCS11CertStorage: %v", err)
 		}

@@ -125,45 +125,6 @@ func TestPairingService_SetVerifier(t *testing.T) {
 	assert.Equal(t, v, svc.verifier)
 }
 
-func TestPairingService_GetPairingStatus_NoVerifier(t *testing.T) {
-	svc := NewPairingService(slog.Default())
-	status := svc.GetPairingStatus()
-	require.NotNil(t, status)
-	assert.False(t, status.Paired)
-	assert.Empty(t, status.Origin)
-	assert.Empty(t, status.PairedAt)
-}
-
-func TestPairingService_GetPairingStatus_UnpairedVerifier(t *testing.T) {
-	svc := NewPairingService(slog.Default())
-	svc.SetVerifier(newTestVerifier(t))
-	status := svc.GetPairingStatus()
-	require.NotNil(t, status)
-	assert.False(t, status.Paired)
-}
-
-func TestPairingService_GetPairingStatus_Paired(t *testing.T) {
-	svc, _ := setupPairingService(t)
-	v := newTestVerifier(t)
-	svc.SetVerifier(v)
-
-	_, keyB64 := generateTestIdentityKey(t)
-	origin := "chrome-extension://test-extension-id"
-
-	code, err := svc.RequestPairing(keyB64, origin)
-	require.NoError(t, err)
-	require.NotEmpty(t, code)
-
-	err = svc.VerifyPairingCode(keyB64, origin, code)
-	require.NoError(t, err)
-
-	status := svc.GetPairingStatus()
-	require.NotNil(t, status)
-	assert.True(t, status.Paired)
-	assert.Equal(t, origin, status.Origin)
-	assert.NotEmpty(t, status.PairedAt)
-}
-
 func TestPairingService_IsPaired_NoVerifier(t *testing.T) {
 	svc := NewPairingService(slog.Default())
 	assert.False(t, svc.IsPaired())
@@ -380,8 +341,7 @@ func TestPairingService_FullLifecycle(t *testing.T) {
 
 	// Initially unpaired.
 	assert.False(t, svc.IsPaired())
-	status := svc.GetPairingStatus()
-	assert.False(t, status.Paired)
+	assert.Empty(t, svc.GetPairedExtensions())
 
 	// Start pairing.
 	_, keyB64 := generateTestIdentityKey(t)
@@ -396,18 +356,18 @@ func TestPairingService_FullLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, svc.IsPaired())
 
-	status = svc.GetPairingStatus()
-	assert.True(t, status.Paired)
-	assert.Equal(t, origin, status.Origin)
-	assert.NotEmpty(t, status.PairedAt)
+	extensions := svc.GetPairedExtensions()
+	require.Len(t, extensions, 1)
+	assert.True(t, extensions[0].Paired)
+	assert.Equal(t, origin, extensions[0].Origin)
+	assert.NotEmpty(t, extensions[0].PairedAt)
 
 	// Unpair.
 	err = svc.Unpair("")
 	require.NoError(t, err)
 	assert.False(t, svc.IsPaired())
 
-	status = svc.GetPairingStatus()
-	assert.False(t, status.Paired)
+	assert.Empty(t, svc.GetPairedExtensions())
 
 	// Verify all events were emitted in order.
 	assert.Equal(t, 3, collector.count())

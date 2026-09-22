@@ -303,24 +303,6 @@ top of whichever engine is selected.
 
 Validation runs automatically on both load and save.
 
-## Migration from Legacy Config
-
-On first load, xKey checks for legacy config files:
-
-| Legacy File | Format | Contents |
-|-------------|--------|----------|
-| `~/.xkey/config.yaml` | YAML | CLI settings (backend, FIDO2, TPM, etc.) |
-| `~/.config/xkey/gui.json` | JSON | GUI settings (theme, window, server, etc.) |
-
-If the unified config does not exist but legacy files are found, migration runs automatically:
-
-1. Start with `DefaultConfig()` defaults
-2. Overlay values from the old CLI YAML (only explicitly set keys)
-3. Overlay values from the old GUI JSON (flat fields mapped to nested structure)
-4. Save the merged result to `~/.config/xkey/xkey.yaml`
-
-Legacy files are preserved for rollback. Migration runs once and is skipped on subsequent loads.
-
 ## Atomic Writes
 
 Both `Save()` and `WritePolicyHMAC()` use atomic write patterns:
@@ -348,9 +330,6 @@ err := config.Save(cfg)
 
 // Save to a specific path
 err := config.SaveToPath(cfg, "/path/to/xkey.yaml")
-
-// Run migration (idempotent)
-cfg, migrated, err := config.Migrate()
 
 // Read the policy section with its verification state. Fails closed with
 // ErrPolicyUnverifiable when the directory is sealed and the section cannot

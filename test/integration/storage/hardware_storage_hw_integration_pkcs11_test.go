@@ -127,7 +127,7 @@ func initRealPKCS11Hardware(t *testing.T) hardware.HardwareCertStorage {
 	}
 
 	// Create hardware storage using the pool
-	hwStorage, err := hardware.NewPKCS11CertStorage(pool, "real-hw-token")
+	hwStorage, err := hardware.NewPKCS11CertStorageWithSO(pool, "real-hw-token", "", "", false)
 	if err != nil {
 		t.Logf("Failed to create PKCS#11 cert storage: %v", err)
 		pool.Close()

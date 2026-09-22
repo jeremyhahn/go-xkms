@@ -38,7 +38,6 @@ var (
 type RPCError = pkgmcp.RPCError
 type MarshalError = pkgmcp.MarshalError
 type UnmarshalError = pkgmcp.UnmarshalError
-type SendError = pkgmcp.SendError
 type ReceiveError = pkgmcp.ReceiveError
 type TLSSetupError = pkgmcp.TLSSetupError
 

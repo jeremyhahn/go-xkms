@@ -18,7 +18,6 @@ package audit
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -729,79 +728,4 @@ func TestDAOAuditStore_EntryEntityConversion(t *testing.T) {
 	assert.Equal(t, entry.Success, roundTripped.Success)
 	assert.Equal(t, entry.Error, roundTripped.Error)
 	assert.Equal(t, entry.DurationMs, roundTripped.DurationMs)
-}
-
-func TestDAOMigrateFromBackend(t *testing.T) {
-
-	t.Run("migrates entries from old backend to DAO store", func(t *testing.T) {
-		// Create old backend with entries in the old format.
-		oldBackend := xkms.NewStorageMemory()
-		t.Cleanup(func() { oldBackend.Close() })
-
-		ctx := context.Background()
-
-		entry1 := Entry{
-			Timestamp: time.Date(2025, 3, 8, 10, 0, 0, 0, time.UTC),
-			Operation: OpKeyCreated,
-			Backend:   "tpm2",
-			KeyID:     "migrate-key-1",
-			Success:   true,
-		}
-		entry2 := Entry{
-			Timestamp: time.Date(2025, 3, 8, 11, 0, 0, 0, time.UTC),
-			Operation: OpSignRequest,
-			Backend:   "software",
-			KeyID:     "migrate-key-2",
-			Success:   true,
-		}
-
-		data1, _ := json.Marshal(entry1)
-		data2, _ := json.Marshal(entry2)
-		require.NoError(t, oldBackend.Put(ctx, "audit/1000-000000000000.json", data1))
-		require.NoError(t, oldBackend.Put(ctx, "audit/2000-000000000001.json", data2))
-
-		store := newTestDAOStore(t)
-
-		errs := MigrateFromBackend(ctx, oldBackend, store)
-		assert.Empty(t, errs)
-
-		assert.Equal(t, 2, store.Count())
-		results := store.Query(QueryFilter{})
-		require.Len(t, results, 2)
-
-		// Old keys should be deleted.
-		keys, listErr := oldBackend.List(ctx, "audit/")
-		require.NoError(t, listErr)
-		assert.Empty(t, keys)
-	})
-
-	t.Run("nil backend returns nil errors", func(t *testing.T) {
-		store := newTestDAOStore(t)
-		errs := MigrateFromBackend(context.Background(), nil, store)
-		assert.Nil(t, errs)
-	})
-
-	t.Run("nil store returns nil errors", func(t *testing.T) {
-		backend := xkms.NewStorageMemory()
-		t.Cleanup(func() { backend.Close() })
-		errs := MigrateFromBackend(context.Background(), backend, nil)
-		assert.Nil(t, errs)
-	})
-
-	t.Run("invalid JSON entries are reported as errors", func(t *testing.T) {
-		oldBackend := xkms.NewStorageMemory()
-		t.Cleanup(func() { oldBackend.Close() })
-
-		ctx := context.Background()
-		require.NoError(t, oldBackend.Put(ctx, "audit/1000-000000000000.json", []byte("not-json")))
-
-		store := newTestDAOStore(t)
-
-		errs := MigrateFromBackend(ctx, oldBackend, store)
-		require.Len(t, errs, 1)
-
-		var migErr ErrMigration
-		require.True(t, errors.As(errs[0], &migErr))
-		assert.Contains(t, migErr.Key, "audit/")
-	})
 }

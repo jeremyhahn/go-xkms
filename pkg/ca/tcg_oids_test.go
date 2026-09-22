@@ -92,31 +92,6 @@ func TestOIDConstants_NonNil(t *testing.T) {
 	}
 }
 
-func TestOIDConstants_LegacyAliases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("OIDTCGSpecification_equals_OIDTCGAttributeTPMSpecification", func(t *testing.T) {
-		t.Parallel()
-		if !OIDTCGSpecification.Equal(OIDTCGAttributeTPMSpecification) {
-			t.Errorf("OIDTCGSpecification should equal OIDTCGAttributeTPMSpecification")
-		}
-	})
-
-	t.Run("OIDTCGEKCertificate_equals_OIDTCGKpEKCertificate", func(t *testing.T) {
-		t.Parallel()
-		if !OIDTCGEKCertificate.Equal(OIDTCGKpEKCertificate) {
-			t.Errorf("OIDTCGEKCertificate should equal OIDTCGKpEKCertificate")
-		}
-	})
-
-	t.Run("OIDTCGAIKCertificate_equals_OIDTCGKpAIKCertificate", func(t *testing.T) {
-		t.Parallel()
-		if !OIDTCGAIKCertificate.Equal(OIDTCGKpAIKCertificate) {
-			t.Errorf("OIDTCGAIKCertificate should equal OIDTCGKpAIKCertificate")
-		}
-	})
-}
-
 func TestOIDConstants_TCGBasePrefix(t *testing.T) {
 	t.Parallel()
 
