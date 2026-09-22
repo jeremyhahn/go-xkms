@@ -461,7 +461,43 @@ var (
 	// the interface is inaccessible, but the barrier's data encryption key
 	// is still resident, so the lock is weaker than it claims to be.
 	ErrAppLockBarrierSealFailed = errors.New("app_lock: barrier seal failed - app locked with encryption key still resident")
+
+	// ErrAppLockPINBlocked indicates the app lock's own unlock-attempt
+	// budget (AppLockPINMaxAttempts, independent of and in addition to
+	// whatever counter the PIN backend or hardware strategy keeps) is
+	// exhausted. The PIN was not evaluated for this attempt: only an
+	// SO-PIN-authorized reset (PINService.ResetLockout, PINService.SetUserPIN,
+	// or "xkey pin reset-lockout" / "xkey pin set-user" against an
+	// out-of-process daemon's data directory) restores it.
+	ErrAppLockPINBlocked = errors.New("app_lock: unlock attempts exhausted - blocked until SO-PIN reset")
+
+	// ErrAppLockAttemptsUnavailable indicates the persisted unlock-attempt
+	// counter could not be read or written. Unlock refuses in this state
+	// rather than falling back to an unlimited budget: a counter that
+	// cannot be consulted must never be treated as an open one.
+	ErrAppLockAttemptsUnavailable = errors.New("app_lock: unlock attempt counter unavailable - refusing until it can be read")
 )
+
+// AppLockAttemptsError decorates a credential rejection, or the refusal
+// once the app lock's own unlock-attempt budget is exhausted, with the
+// attempts remaining -- so a caller (the IPC unlock response, the CLI) can
+// report the count without losing errors.Is / errors.As on the underlying
+// cause (ErrAppLockPINInvalid, ErrAppLockPINBlocked, or a raw PIN-backend
+// error such as qrdbsdk.ErrPINInvalid).
+type AppLockAttemptsError struct {
+	Cause     error
+	Remaining int
+}
+
+// Error implements the error interface.
+func (e *AppLockAttemptsError) Error() string {
+	return fmt.Sprintf("%s (%d attempt(s) remaining)", e.Cause.Error(), e.Remaining)
+}
+
+// Unwrap returns the underlying cause for errors.Is / errors.As.
+func (e *AppLockAttemptsError) Unwrap() error {
+	return e.Cause
+}
 
 // CustodianService errors.
 var (

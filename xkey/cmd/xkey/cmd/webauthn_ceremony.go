@@ -76,7 +76,7 @@ var (
 	// declares, so a rename cannot leave this message naming a flag that no
 	// longer exists.
 	ErrWebAuthnPINRequired = errors.New("webauthn: this authenticator requires a PIN; supply it with --" +
-		pinFlagStdin + " (preferred), the " + pinEnvVar + " environment variable, or --" + pinFlagValue)
+		pinFlagStdin + " (preferred) or the " + pinEnvVar + " environment variable")
 )
 
 // CeremonyRequest carries one ceremony's inputs: the relying party's

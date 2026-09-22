@@ -70,6 +70,15 @@ func mapSOPINUnsupportedErr(err error, strategy qrdbsdk.PINStrategyID) error {
 	return err
 }
 
+// appLockAttemptsResetter is the subset of AppLockService PINService needs
+// to clear the app lock's own unlock-attempt budget (#272) whenever a
+// Security Officer successfully authorizes an operation that already
+// implies the equivalent of a lockout reset. Using an interface here avoids
+// a direct dependency from PINService onto AppLockService.
+type appLockAttemptsResetter interface {
+	ResetAttempts() error
+}
+
 // PINService exposes PIN management to the frontend. It is a thin wrapper
 // over the unified qrdbsdk.PINService that adds Wails context and audit logging.
 // It is bound to the Wails runtime so every exported method is callable
@@ -80,6 +89,7 @@ type PINService struct {
 	auditLog   atomic.Pointer[audit.Logger]
 	pinSvc     atomic.Pointer[qrdbsdk.PINService]
 	barrierSvc atomic.Pointer[BarrierService]
+	appLockSvc atomic.Pointer[appLockAttemptsResetter]
 }
 
 // NewPINService creates a new PINService. The underlying qrdbsdk.PINService must
@@ -113,6 +123,43 @@ func (s *PINService) SetBarrierService(svc *BarrierService) {
 		return
 	}
 	s.barrierSvc.Store(svc)
+}
+
+// SetAppLockService wires an AppLockService so a successful SO-PIN
+// verification here (SetUserPIN, ResetLockout) also clears the app lock's
+// own unlock-attempt budget: an operator who has just proven they hold the
+// SO PIN should not also be stuck behind a separate, unrelated counter.
+func (s *PINService) SetAppLockService(svc appLockAttemptsResetter) {
+	if svc == nil {
+		return
+	}
+	s.appLockSvc.Store(&svc)
+}
+
+// getAppLockService returns the wired AppLockService, or nil if none was
+// set (a headless CLI invocation, or a GUI/daemon composition that has not
+// wired one).
+func (s *PINService) getAppLockService() appLockAttemptsResetter {
+	ptr := s.appLockSvc.Load()
+	if ptr == nil {
+		return nil
+	}
+	return *ptr
+}
+
+// resetAppLockAttempts clears the wired AppLockService's own unlock-attempt
+// budget, when one is wired. A failure here is logged but never fails the
+// PIN operation that triggered it: the SO PIN was still verified, and the
+// operation it authorized still happened.
+func (s *PINService) resetAppLockAttempts(reason string) {
+	appLock := s.getAppLockService()
+	if appLock == nil {
+		return
+	}
+	if err := appLock.ResetAttempts(); err != nil {
+		s.log.Warn("failed to reset app lock unlock-attempt counter",
+			"reason", reason, "error", err)
+	}
 }
 
 // getPINService returns the underlying qrdbsdk.PINService or ErrPINServiceNotConfigured.
@@ -239,6 +286,12 @@ func (s *PINService) SetUserPIN(soPIN, newUserPIN string) (retErr error) {
 		"operation": "set",
 		"type":      "user_pin",
 	})
+
+	// Setting the user PIN requires and just verified the SO PIN, so this
+	// carries the same authority as an explicit lockout reset (#272): an
+	// operator who has proven they hold the SO PIN should not also be
+	// stuck behind the app lock's own unlock-attempt budget.
+	s.resetAppLockAttempts("set_user_pin")
 	return nil
 }
 
@@ -429,7 +482,16 @@ func (s *PINService) ResetLockout(soPIN string) (retErr error) {
 		return err
 	}
 
-	return svc.ResetLockout(soPIN)
+	if err := svc.ResetLockout(soPIN); err != nil {
+		return err
+	}
+
+	// The PIN backend's own lockout is reset; the app lock's independent
+	// unlock-attempt budget (#272) is reset alongside it, so an operator
+	// who has just proven they hold the SO PIN is not left blocked by a
+	// counter this call does not otherwise touch.
+	s.resetAppLockAttempts("reset_lockout")
+	return nil
 }
 
 // IsPINSet returns true if the user PIN has been configured. Implements

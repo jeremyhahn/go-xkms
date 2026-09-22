@@ -1,6 +1,6 @@
 # Agent Automation — Architecture
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## The problem
 
@@ -45,8 +45,12 @@ Plus PIN and presence supply without a terminal:
 |---|---|---|
 | `xkey auth register` / `login` | `--pin-stdin` | the authenticator PIN, read from stdin, sent with the ceremony |
 | `xkey unlock` | `--pin-stdin` | unlock an xkey instance that owns an app lock |
-| `xkey unlock` | `--pin` | **visible in the process list** — the help says so |
 | `xkey touch` | `--password` | approve a pending presence request; optionally type a named password |
+
+There is no `--pin` / `--so-pin` value flag on any of these — removed
+(go-xkms#272) because a value on the command line is visible to every other
+process on the host via `ps`. Only `--pin-stdin` / `--so-pin-stdin` and the
+`XKEY_PIN` / `XKEY_SO_PIN` environment variables remain.
 
 The relying party is unchanged and unaware. That is the design decision: there
 is no "agent mode" on the server, no weakened policy, and no second
@@ -82,7 +86,8 @@ Rejected alternatives:
 | UP/UV flag decisions | `xkey/pkg/authenticator` (`cmd_makecredential.go`, `cmd_getassertion.go`) |
 | Programmatic device (explicit auto-grant) | `xkey/pkg/virtualdevice` |
 | Notification routing | `xkey/pkg/notify` |
-| PIN input (`--pin-stdin`, `XKEY_PIN`, `--pin`) | `xkey/cmd/xkey/cmd/pin_input.go` |
+| PIN input (`--pin-stdin`, `XKEY_PIN`) | `xkey/cmd/xkey/cmd/pin_input.go` |
+| Unlock-attempt budget | `xkey/pkg/gui/services/app_lock_attempts.go` |
 | PIN/touch IPC | `xkey/pkg/ipc`, `xkey/cmd/xkey/cmd/{unlock,touch}.go` |
 | Chrome DevTools bridge | `xkey/pkg/cdp` |
 | Synthetic keyboard input | `xkey/pkg/keyboard` |
@@ -130,8 +135,16 @@ auto-grant at construction and drives ceremonies in-process.
 - **The blast radius is the machine.** Anything that can reach the IPC socket
   while the authenticator is unlocked can use the credential. Filesystem
   permissions on `$XDG_RUNTIME_DIR/xkey/xkey.sock` are the access control.
-- **`--pin` puts the PIN in the process list.** The flag's own help says so.
-  `--pin-stdin` is the form to use.
+- **There is no PIN value flag to put a PIN in the process list.** It existed
+  through v0.9.x and was removed (go-xkms#272): `--pin-stdin` is the only
+  form now, alongside `XKEY_PIN`.
+- **`xkey unlock` counts a wrong PIN against its own budget, independent of
+  the socket's access control.** Filesystem permissions decide who can call
+  `unlock` at all; the budget (`AppLockPINMaxAttempts`, 8) decides how many
+  wrong guesses whoever that is gets before the verb refuses outright and
+  needs a Security Officer to clear it. The socket being reachable was never
+  the same fact as the credential being guessable — this closes the second
+  one.
 - **`--cdp` opens a debugging port** (default `9222`). Anything that reaches it
   drives the authenticator. Loopback only. Chrome's virtual authenticator
   simulates presence and verification itself; it is a test device.

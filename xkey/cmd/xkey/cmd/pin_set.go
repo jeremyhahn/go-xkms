@@ -17,6 +17,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
 // pinSetSOCmd sets the host PIN service's Security Officer PIN.
@@ -161,6 +163,18 @@ func runPINSetUser(cmd *cobra.Command, args []string) error {
 	// Set the user PIN. The Service handles FIDO2 hash propagation
 	// internally via SetFIDO2HashSetter when configured.
 	if err := svc.SetUserPIN(soPIN, newUserPIN); err != nil {
+		return &PINCommandError{
+			Operation: "set_user",
+			Err:       err,
+		}
+	}
+
+	// Setting the user PIN requires and just verified the SO PIN, so this
+	// carries the same authority as an explicit lockout reset: it also
+	// clears the app lock's own unlock-attempt budget for the "unlock" IPC
+	// verb (#272), persisted at <dataDir>/pin/unlock_attempts outside this
+	// process.
+	if err := services.ResetAppLockAttempts(dataDir); err != nil {
 		return &PINCommandError{
 			Operation: "set_user",
 			Err:       err,

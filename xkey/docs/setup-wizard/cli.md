@@ -25,3 +25,9 @@ cannot reach.
 The SO PIN is never retrievable from the CLI: `xkey password list` and
 `xkey password get` read the password store, and the wizard does not put the
 SO PIN there.
+
+`xkey unlock` (a separate command, not under `xkey pin`) is what actually
+opens a wizard-configured device from a script; its own 8-attempt budget and
+the `xkey pin reset-lockout` / `xkey pin set-user` recovery path are
+documented in [`../agent-automation/cli.md`](../agent-automation/cli.md#the-unlock-attempt-budget)
+rather than duplicated here.

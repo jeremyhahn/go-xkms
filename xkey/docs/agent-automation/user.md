@@ -49,15 +49,36 @@ printf '%s' "$XKEY_PIN" | xkey auth login --pin-stdin \
 ```
 
 `auth register` and `auth login` take the authenticator's PIN from
-`--pin-stdin`, then `XKEY_PIN`, then `--pin`. There is a `--pin` flag; its own
-help text says the value is visible in the process list. Use `--pin-stdin`.
+`--pin-stdin`, then `XKEY_PIN`. There is no `--pin` value flag — it was
+removed, because a value on the command line is visible to every other
+process on the host via `ps`. Use `--pin-stdin`.
 
-The same three sources drive `xkey unlock`, for an xkey instance that owns an
+The same two sources drive `xkey unlock`, for an xkey instance that owns an
 app lock (the GUI or headless app):
 
 ```
 printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 ```
+
+### If `unlock` keeps refusing
+
+A wrong PIN over `unlock` is only allowed 8 times before it refuses outright,
+whatever PIN you send next — a budget kept separately from, and in addition
+to, the authenticator's own PIN retry counter. Each refusal tells you how many
+attempts are left:
+
+```
+Error: unlock: failed: app_lock: invalid PIN (2 attempt(s) remaining)
+```
+
+Once it reaches zero, only a Security Officer can clear it:
+
+```
+xkey pin reset-lockout
+```
+
+That runs against the same data directory the daemon uses, so it works even
+while the daemon is up and blocked — it does not go through the socket.
 
 ## Supplying a touch on demand
 
@@ -258,7 +279,8 @@ dialog that is not answerable over CDP.
 | "socket not found" | the daemon is not running, or `--socket` disagrees | start `xkey fido2`; check the path |
 | the SDK will not authenticate | `XKEY_IPC_SOCKET` unset or wrong | export it |
 | credentials gone after the job restarts | `--storage memory` | use `--storage file` |
-| the PIN turned up in a CI log | `--pin` on a command line | `--pin-stdin` |
+| the PIN turned up in a CI log | a leftover `--pin <value>` from before go-xkms#272 | switch to `--pin-stdin` — `--pin` no longer parses at all |
+| `unlock` refuses every PIN, even one you know is right | the unlock-attempt budget hit zero | `xkey pin reset-lockout` against the daemon's data directory |
 | it works locally, not in the container | `$XDG_RUNTIME_DIR` differs, or no TPM | set `--socket` explicitly; check the backend |
 
 ## Where to go next

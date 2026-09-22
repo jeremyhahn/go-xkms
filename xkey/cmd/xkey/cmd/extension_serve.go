@@ -162,6 +162,8 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	barrierSvc.SetDataDir(dataDir)
 
 	appLockSvc := services.NewAppLockService(pinSvc, barrierSvc)
+	appLockSvc.SetDataDir(dataDir)
+	pinSvc.SetAppLockService(appLockSvc)
 	passwordSvc := services.NewStaticPasswordService(nil)
 	oathSvc := services.NewOATHService(nil)
 
@@ -576,7 +578,7 @@ func serveEnterprisePolicy(cmd *cobra.Command, unified *config.Config, configDir
 	if soPIN == "" {
 		logger.Warn("sealed enterprise policy not consulted: no SO PIN supplied, applying the default policy",
 			"config_dir", configDir,
-			"hint", "supply the SO PIN (--so-pin-stdin, XKEY_SO_PIN or --so-pin) to honour the sealed policy")
+			"hint", "supply the SO PIN (--so-pin-stdin or XKEY_SO_PIN) to honour the sealed policy")
 		return config.DefaultPolicy(), nil
 	}
 

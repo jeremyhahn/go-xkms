@@ -110,7 +110,7 @@ func TestServeEnterprisePolicy_SealedWithWrongPINRefusesToStart(t *testing.T) {
 	cfg := relaxedExtensionConfig()
 	configDir := sealServePolicy(t, cfg, testSOPIN)
 	cmd := newTestServeCmd()
-	require.NoError(t, cmd.Flags().Set(soPINFlagValue, "not-the-so-pin"))
+	t.Setenv(soPINEnvVar, "not-the-so-pin")
 
 	pol, err := serveEnterprisePolicy(cmd, cfg, configDir, discardLogger())
 	require.Error(t, err)

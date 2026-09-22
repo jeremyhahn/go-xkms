@@ -1,6 +1,6 @@
 # Setup Wizard — User Guide
 
-> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `setup-wizard` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 The wizard runs the first time you open xKey. It sets up two PINs and the
 encrypted storage behind them.
@@ -48,6 +48,26 @@ The Security Officer runs **SO provisioning** and chooses the SO PIN
 themselves. Each user is later onboarded by entering the SO PIN the
 administrator gives them, then choosing their own User PIN. The SO PIN is
 not stored on the user's device at any point.
+
+## Too many wrong User PINs
+
+Unlocking xKey from the command line (`xkey unlock`) is limited to 8 wrong
+attempts before it refuses outright, whatever you type next. This is a
+separate budget from anything the authenticator itself enforces, kept
+specifically because a locked device's own credential store is sealed and
+cannot count attempts against itself while it is sealed — the very state a
+wrong PIN leaves it in.
+
+If you hit the limit, the SO PIN clears it:
+
+```
+xkey pin reset-lockout
+```
+
+Setting the User PIN again (`xkey pin set-user`) clears it too, since that
+already requires the SO PIN. Either way the count goes back to 8. There is
+no way to clear it without the SO PIN — which is the point: see "If you lose
+the SO PIN" below for what that means if you no longer have it.
 
 ## If you lose the SO PIN
 

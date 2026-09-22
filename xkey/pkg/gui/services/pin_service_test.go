@@ -95,6 +95,20 @@ func newTestPINService(backend qrdbsdk.PINBackend) *PINService {
 	return svc
 }
 
+// mockAppLockAttemptsResetter implements appLockAttemptsResetter, recording
+// whether ResetAttempts was called and optionally failing it, so a test can
+// assert PINService reaches (or does not reach) the app lock's own
+// unlock-attempt budget (go-xkms#272) on a given code path.
+type mockAppLockAttemptsResetter struct {
+	resetCalls atomic.Int32
+	resetErr   error
+}
+
+func (m *mockAppLockAttemptsResetter) ResetAttempts() error {
+	m.resetCalls.Add(1)
+	return m.resetErr
+}
+
 func TestPINService_GetPINStatus(t *testing.T) {
 	backend := &mockPINBackend{
 		strategy:    qrdbsdk.PINStrategySoftware,
@@ -173,6 +187,57 @@ func TestPINService_SetUserPIN_ManagerError(t *testing.T) {
 
 	err := svc.SetUserPIN("so-pin-123456", "user-pin-123456")
 	assert.Equal(t, errTest, err)
+}
+
+// TestPINService_SetUserPIN_ResetsAppLockAttempts proves setting the user
+// PIN -- which requires and just verified the SO PIN -- also clears a
+// wired AppLockService's own unlock-attempt budget (go-xkms#272): the same
+// authority as an explicit lockout reset.
+func TestPINService_SetUserPIN_ResetsAppLockAttempts(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+	appLock := &mockAppLockAttemptsResetter{}
+	svc.SetAppLockService(appLock)
+
+	require.NoError(t, svc.SetUserPIN("so-pin-123456", "user-pin-123456"))
+	assert.Equal(t, int32(1), appLock.resetCalls.Load())
+}
+
+// TestPINService_SetUserPIN_FailureDoesNotResetAppLockAttempts is the
+// control: an SO PIN that was never verified must not reset anything.
+func TestPINService_SetUserPIN_FailureDoesNotResetAppLockAttempts(t *testing.T) {
+	errTest := errors.New("test: user pin error")
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, setUserPINErr: errTest}
+	svc := newTestPINService(backend)
+	appLock := &mockAppLockAttemptsResetter{}
+	svc.SetAppLockService(appLock)
+
+	require.Error(t, svc.SetUserPIN("so-pin-123456", "user-pin-123456"))
+	assert.Equal(t, int32(0), appLock.resetCalls.Load())
+}
+
+// TestPINService_SetUserPIN_NoAppLockServiceWired proves the reset is
+// opt-in: a headless CLI invocation of PINService, with no AppLockService
+// ever wired, must not panic or fail the PIN operation.
+func TestPINService_SetUserPIN_NoAppLockServiceWired(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+
+	assert.NoError(t, svc.SetUserPIN("so-pin-123456", "user-pin-123456"))
+}
+
+// TestPINService_SetUserPIN_AppLockResetFailureDoesNotFailThePINChange
+// proves a failure resetting the app lock's budget is logged, not
+// propagated: the SO PIN was verified and the user PIN was set, so the
+// call already did what it promised.
+func TestPINService_SetUserPIN_AppLockResetFailureDoesNotFailThePINChange(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+	appLock := &mockAppLockAttemptsResetter{resetErr: errors.New("counter unavailable")}
+	svc.SetAppLockService(appLock)
+
+	assert.NoError(t, svc.SetUserPIN("so-pin-123456", "user-pin-123456"))
+	assert.Equal(t, int32(1), appLock.resetCalls.Load())
 }
 
 func TestPINService_ChangeSOPIN(t *testing.T) {
@@ -343,6 +408,46 @@ func TestPINService_ResetLockout_ManagerError(t *testing.T) {
 
 	err := svc.ResetLockout("so-pin-123456")
 	assert.Equal(t, errTest, err)
+}
+
+// TestPINService_ResetLockout_ResetsAppLockAttempts proves resetting the
+// PIN backend's own lockout also clears a wired AppLockService's
+// independent unlock-attempt budget (go-xkms#272): an operator who has
+// just proven they hold the SO PIN should not be left blocked by a
+// counter this call would otherwise not touch.
+func TestPINService_ResetLockout_ResetsAppLockAttempts(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+	appLock := &mockAppLockAttemptsResetter{}
+	svc.SetAppLockService(appLock)
+
+	require.NoError(t, svc.ResetLockout("so-pin-123456"))
+	assert.Equal(t, int32(1), appLock.resetCalls.Load())
+}
+
+// TestPINService_ResetLockout_FailureDoesNotResetAppLockAttempts is the
+// control: a rejected SO PIN must not reset anything.
+func TestPINService_ResetLockout_FailureDoesNotResetAppLockAttempts(t *testing.T) {
+	errTest := errors.New("test: reset lockout error")
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, resetLockoutErr: errTest}
+	svc := newTestPINService(backend)
+	appLock := &mockAppLockAttemptsResetter{}
+	svc.SetAppLockService(appLock)
+
+	require.Error(t, svc.ResetLockout("so-pin-123456"))
+	assert.Equal(t, int32(0), appLock.resetCalls.Load())
+}
+
+// TestPINService_SetAppLockService_NilIsIgnored proves SetAppLockService is
+// safe to call with a nil interface, leaving the field unset rather than
+// storing a pointer to a nil interface value that getAppLockService would
+// later dereference into a non-nil-looking, unusable resetter.
+func TestPINService_SetAppLockService_NilIsIgnored(t *testing.T) {
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	svc := newTestPINService(backend)
+
+	svc.SetAppLockService(nil)
+	assert.Nil(t, svc.getAppLockService())
 }
 
 func TestPINService_GetPINStatus_Uninitialized(t *testing.T) {

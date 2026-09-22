@@ -27,16 +27,22 @@ the presence handler an authenticator is constructed with.
 ### PIN input (`xkey/cmd/xkey/cmd/pin_input.go`)
 
 `xkey auth register`, `xkey auth login` and `xkey unlock` share one resolver,
-in precedence order: `--pin-stdin`, then `XKEY_PIN`, then `--pin`.
+in precedence order: `--pin-stdin`, then `XKEY_PIN`.
 
 | Flag | Default | Notes |
 |---|---|---|
 | `--pin-stdin` | `false` | read the PIN from standard input |
-| `--pin` | `""` | **"visible in the process list; prefer --pin-stdin"** — the help text says this |
+
+There is no `--pin` value flag (go-xkms#272 removed it, breaking any script
+that passed `--pin <value>`): a value on the command line is visible to every
+other process on the host via `ps`. `addPINFlags`/`addSOPINFlags` now declare
+only the `-stdin` bool flag; `resolve` falls through to `os.Getenv` when it is
+unset. `pinSource.valueFlag` no longer exists as a field.
 
 For `auth register` / `auth login` this is the authenticator's CTAP2 PIN, sent
 with the ceremony as a browser would send it. It is unrelated to `--spki-pin`,
-which is the server's public-key pin. An authenticator with no PIN configured
+which is the server's public-key pin and remains a value flag (it carries a
+fingerprint, never a credential). An authenticator with no PIN configured
 needs none.
 
 ### `xkey unlock` (`xkey/cmd/xkey/cmd/unlock.go`)
@@ -60,6 +66,45 @@ a host then fails closed as `ErrUnlockDaemonNotRunning`, not
 `ErrUnlockFailed`: there is no daemon to answer. An automation pipeline
 driving a device it did not provision itself should check `xkey pin
 status` for the governing strategy before relying on `unlock` there.
+
+#### The unlock-attempt budget (go-xkms#272)
+
+`AppLockService` (`xkey/pkg/gui/services/app_lock_service.go`) enforces its
+own budget of `AppLockPINMaxAttempts` (8) unlock attempts, independent of
+and in addition to whatever counter the PIN backend or hardware strategy
+keeps. It exists because that other counter is not reachable on every
+branch `Unlock` takes: the software PIN backend keeps none of its own, and
+a sealed barrier's counter lives behind the very barrier the PIN is trying
+to open. The budget is persisted at `<dataDir>/pin/unlock_attempts`
+(`xkey/pkg/gui/services/app_lock_attempts.go`; JSON, atomic
+temp-file-then-rename, `0600`), a sibling of the PIN state, NOT behind the
+barrier — deliberately, so it is readable and writable while the barrier
+stays sealed.
+
+Every credential check `Unlock` performs — `PINService.VerifyUserPIN` or
+`BarrierService.Unseal` — routes through `AppLockService.evaluateCredential`,
+which checks the budget before evaluating anything and classifies the
+result afterward: `ErrAppLockUnsealUnavailable`, `ErrAppLockStorageCorrupt`
+and `qrdbsdk.ErrPINNotSet` (the #510 fault classifications) never spend an
+attempt, because the credential itself was never evaluated; anything else
+does. Once the budget reaches zero, `Unlock` returns the typed
+`ErrAppLockPINBlocked` without calling either verifier again. Every
+rejection or refusal is wrapped in `*AppLockAttemptsError{Cause,
+Remaining}`, which implements `Unwrap` so `errors.Is` against the
+underlying cause (`ErrAppLockPINInvalid`, `ErrAppLockPINBlocked`, a raw
+`qrdbsdk` error) still matches. `ipc.UnlockResult` carries the same count in
+`RemainingAttempts *int`, so `unlock`'s IPC caller does not have to parse
+the error string to script on it.
+
+A successful Security Officer PIN verification resets the budget:
+`PINService.SetAppLockService` wires an `appLockAttemptsResetter`
+(`ResetAttempts() error`), and `PINService.ResetLockout` /
+`PINService.SetUserPIN` call it on success — both `App` (the GUI) and
+`runExtensionServe` (the headless daemon) wire their own `AppLockService`
+this way. `xkey pin reset-lockout` and `xkey pin set-user` run in a
+separate process from the daemon whose `AppLockService` holds the live
+counter, so they reach the same persisted file directly through
+`services.ResetAppLockAttempts(dataDir)` instead.
 
 ### `xkey touch` (`xkey/cmd/xkey/cmd/touch.go`)
 
@@ -125,8 +170,24 @@ xkey instead of a key file.
   handler, and with the socket handler that means `xkey touch` or a timeout.
 - **The relying party is not involved.** No server-side flag participates; the
   ceremony it sees is ordinary, and what it says about UP and UV is true.
-- **`--pin` is documented as unsafe in its own help text.** Keep it that way,
-  and keep `--pin-stdin` working.
+- **There is no `--pin` / `--so-pin` value flag anywhere in this feature.**
+  Only `--pin-stdin` / `--so-pin-stdin` and the `XKEY_PIN` / `XKEY_SO_PIN`
+  environment variables (go-xkms#272). Do not reintroduce a value flag to
+  "make scripting easier" — that is the exact capability that was removed,
+  and for the reason stated in its own former help text.
+- **The app lock's own unlock-attempt budget is independent of the PIN
+  backend's counter, and both apply.** A build against a backend that keeps
+  its own lockout (TPM2 DA, a future hardware strategy) still enforces
+  `AppLockPINMaxAttempts` on top of it; do not remove one on the assumption
+  the other covers it — the whole reason the budget exists is that the
+  backend counter is not reachable on every branch (see "The unlock-attempt
+  budget" above).
+- **A fault never spends a budget attempt; only an evaluated-and-rejected
+  credential does.** `evaluateCredential`'s `isFault` classifier is the one
+  place that decides which is which. Adding a new fault classification to
+  `unsealBarrier` or `verifyUserPIN` means adding it there too, or the fault
+  silently starts spending the budget it was carved out of (#510's own
+  lesson, reapplied).
 - **`unlock` reports only a state it has confirmed.** Success is taken from
   `ipc.UnlockResult.Success`, never from the transport status, and is then
   checked against the daemon's own `HandleStatus`. A daemon that reports
@@ -158,7 +219,8 @@ xkey instead of a key file.
 | ceremony with a wrong PIN | refused; retries counted like real hardware; `auth register` / `auth login` exit non-zero |
 | ceremony with no PIN, `--require-touch=false` | presence is still requested; `xkey touch` answers it or it times out |
 | ceremony with no PIN against a policy requiring UV | refused by the authenticator or the relying party; nothing fabricates UV |
-| unlock with a wrong PIN | refused; retries counted; `unlock` exits non-zero carrying the daemon's reason |
+| unlock with a wrong PIN | refused; the app lock's own budget decrements and the attempts left are reported; `unlock` exits non-zero carrying the daemon's reason |
+| unlock's attempt budget reaches zero | refused without evaluating the PIN; `ErrAppLockPINBlocked`; needs `xkey pin reset-lockout` / `xkey pin set-user` against the daemon's data directory |
 | unlock granted but the daemon is still locked | `ErrUnlockStillLocked`, non-zero; no success line is printed |
 | unlock released the app lock but not the barrier | `ErrUnlockIncomplete`, non-zero, naming what stayed locked |
 | unlock against a daemon with no app lock | success, plus an explicit note that the state could not be confirmed |
@@ -212,6 +274,17 @@ Nothing new. Credentials are the authenticator's; sessions are
 - **Browser automation** — Playwright specs through the CDP bridge.
 - **IPC** — `xkey/pkg/ipc` suites; `xkey/cmd/xkey/cmd/{unlock,touch}` paths.
 - **Agent lifecycle** — `xkey/cmd/xkey/cmd/agent_lifecycle_test.go`.
+- **Unlock-attempt budget** — `xkey/pkg/gui/services/app_lock_attempts_test.go`
+  (the persisted counter directly: restarts, corruption, concurrent
+  writers under `-race`) and `app_lock_service_test.go` /
+  `app_lock_attempts_test.go` (through `Unlock`: decrements only on a real
+  rejection, not on a fault; blocks at zero without evaluating the PIN;
+  resets on success and on `ResetAttempts`). `pin_service_test.go` proves
+  `ResetLockout` / `SetUserPIN` reach a wired `AppLockService`.
+  `xkey/cmd/xkey/cmd/pin_test.go` proves `reset-lockout` / `set-user` reach
+  the persisted file from a separate process; `unlock_test.go` proves the
+  CLI surfaces the remaining-attempts count and that `--pin` no longer
+  parses.
 
 ## Observability
 

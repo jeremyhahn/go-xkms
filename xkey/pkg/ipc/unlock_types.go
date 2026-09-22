@@ -44,6 +44,16 @@ type UnlockResult struct {
 	// StillLocked names the subsystems that remained locked afterwards.
 	// A non-empty value is a failure regardless of Success.
 	StillLocked []string `json:"still_locked,omitempty"`
+
+	// RemainingAttempts reports the app lock's own unlock-attempt budget
+	// left after this call, when the daemon's answer involved that budget:
+	// a credential rejection, or a refusal because the budget was already
+	// exhausted. It is a pointer (rather than an int with omitempty) so a
+	// present zero -- the budget is exhausted -- is distinguishable from
+	// absent -- this attempt was never evaluated against the budget at
+	// all, e.g. an empty PIN, or an unlock that had nothing left to
+	// converge.
+	RemainingAttempts *int `json:"remaining_attempts,omitempty"`
 }
 
 // Validate checks the UnlockPayload for correctness.

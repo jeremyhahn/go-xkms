@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -533,6 +534,45 @@ func TestRunPINSetUser_SetsUserPINWithSOAuthorization(t *testing.T) {
 	require.NoError(t, svc.VerifyUserPIN("user-pin-1"))
 }
 
+// TestRunPINSetUser_ResetsAppLockAttemptCounter proves set-user's SO-PIN
+// authorization also clears the app lock's own unlock-attempt budget
+// (go-xkms#272): setting the user PIN requires proving the SO PIN, which
+// carries the same authority as an explicit "reset-lockout".
+func TestRunPINSetUser_ResetsAppLockAttemptCounter(t *testing.T) {
+	dir := isolatePIN(t)
+
+	pipePIN(t, "so-pin-one", "so-pin-one")
+	_, err := runPINCmd(t, runPINSetSO)
+	require.NoError(t, err)
+
+	writeAppLockAttempts(t, dir, 1)
+
+	pipePIN(t, "so-pin-one", "user-pin-1", "user-pin-1")
+	_, err = runPINCmd(t, runPINSetUser)
+	require.NoError(t, err)
+
+	assert.Equal(t, services.AppLockPINMaxAttempts, readAppLockAttempts(t, dir))
+}
+
+// TestRunPINSetUser_WrongSOPINDoesNotResetAppLockAttemptCounter is the
+// control: a failed SO-PIN authorization must not touch the budget either,
+// or the counter would be resettable by guessing.
+func TestRunPINSetUser_WrongSOPINDoesNotResetAppLockAttemptCounter(t *testing.T) {
+	dir := isolatePIN(t)
+
+	pipePIN(t, "so-pin-one", "so-pin-one")
+	_, err := runPINCmd(t, runPINSetSO)
+	require.NoError(t, err)
+
+	writeAppLockAttempts(t, dir, 2)
+
+	pipePIN(t, "wrong-so-pin", "user-pin-1", "user-pin-1")
+	_, err = runPINCmd(t, runPINSetUser)
+	require.Error(t, err)
+
+	assert.Equal(t, 2, readAppLockAttempts(t, dir))
+}
+
 func TestRunPINSetUser_RejectsWrongSOPIN(t *testing.T) {
 	isolatePIN(t)
 
@@ -838,6 +878,61 @@ func TestRunPINResetLockout_FailsWhenDataDirUnusable(t *testing.T) {
 	var notFound *PINStoreNotFoundError
 	require.ErrorAs(t, err, &notFound,
 		"a data dir with no store must surface as store-not-found")
+}
+
+// readAppLockAttempts reads the app lock's own unlock-attempt budget
+// persisted at <dataDir>/pin/unlock_attempts, the file a running daemon's
+// AppLockService owns. Tests use it to prove a CLI command that authorizes
+// itself with the SO PIN reaches that same file (go-xkms#272), even though
+// no AppLockService instance is running in the test process.
+func readAppLockAttempts(t *testing.T, dataDir string) int {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(dataDir, "pin", "unlock_attempts"))
+	require.NoError(t, err)
+
+	var rec struct {
+		Remaining int `json:"remaining"`
+	}
+	require.NoError(t, json.Unmarshal(data, &rec))
+	return rec.Remaining
+}
+
+// writeAppLockAttempts seeds a depleted unlock-attempt budget directly, as
+// if a running daemon's AppLockService had already spent most of it.
+func writeAppLockAttempts(t *testing.T, dataDir string, remaining int) {
+	t.Helper()
+
+	path := filepath.Join(dataDir, "pin", "unlock_attempts")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	data, err := json.Marshal(struct {
+		Remaining int `json:"remaining"`
+	}{Remaining: remaining})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0600))
+}
+
+// TestRunPINResetLockout_ResetsAppLockAttemptCounter proves reset-lockout
+// reaches the app lock's own unlock-attempt budget (go-xkms#272), not only
+// the PIN backend's lockout: a daemon's AppLockService and this CLI
+// invocation are different processes, so the only way this command can
+// restore an operator's blocked "xkey unlock" is through the same
+// persisted file.
+func TestRunPINResetLockout_ResetsAppLockAttemptCounter(t *testing.T) {
+	dir := isolatePIN(t)
+
+	pipePIN(t, "so-pin-one", "so-pin-one")
+	_, err := runPINCmd(t, runPINSetSO)
+	require.NoError(t, err)
+
+	writeAppLockAttempts(t, dir, 0)
+	require.Equal(t, 0, readAppLockAttempts(t, dir))
+
+	pipePIN(t, "so-pin-one")
+	_, err = runPINCmd(t, runPINResetLockout)
+	require.NoError(t, err)
+
+	assert.Equal(t, services.AppLockPINMaxAttempts, readAppLockAttempts(t, dir))
 }
 
 // --- PINCommandError ---

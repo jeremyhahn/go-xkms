@@ -725,6 +725,9 @@ func (a *App) initializeDataDir() error {
 		}
 	}
 	a.dataDir = dir
+	if a.appLockService != nil {
+		a.appLockService.SetDataDir(dir)
+	}
 
 	// Get barrier backend (nil if barrier not active).
 	barrierBackend := a.barrierService.GetBackend()
@@ -1883,6 +1886,11 @@ func NewApp(cfg *GUIConfig) *App {
 	appLockSvc.SetBarrierStrategy(cfg.BarrierStrategy)
 	appLockSvc.SetAutoLockMinutes(cfg.AppAutoLockMinutes)
 	appLockSvc.SetLockOnScreenLock(cfg.AppLockOnScreenLock)
+	// The data directory is not resolved yet at this point in startup (see
+	// initializeDataDir / the pre-unseal PIN path below); wiring the
+	// unlock-attempt counter's persisted location happens there, once
+	// a.dataDir is known.
+	pinSvc.SetAppLockService(appLockSvc)
 
 	authSvc := services.NewAuthService(pinSvc, cfgDir)
 
@@ -3062,6 +3070,9 @@ func (a *App) startupReturningUser(ctx context.Context) {
 		if a.dataDir == "" {
 			if dir, err := dataDir(); err == nil {
 				a.dataDir = dir
+				if a.appLockService != nil {
+					a.appLockService.SetDataDir(dir)
+				}
 			} else {
 				a.log.Warn("failed to resolve data dir for pre-unseal PIN service", "error", err)
 			}

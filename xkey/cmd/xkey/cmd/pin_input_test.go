@@ -41,14 +41,15 @@ func stubStdin(t *testing.T, data []byte, err error) {
 	t.Cleanup(func() { stdinReader = original })
 }
 
-// TestAddPINFlagsDeclaresBothSources proves the helper declares exactly the
-// flags the resolver reads — the property that keeps a command from compiling
-// cleanly and then failing at run time on a flag it never declared.
-func TestAddPINFlagsDeclaresBothSources(t *testing.T) {
+// TestAddPINFlagsDeclaresStdinSource proves the helper declares exactly the
+// flag the resolver reads, and that it declares no value flag: a "--pin"
+// value on the command line was removed (go-xkms#272) because it is visible
+// to every other process on the host via 'ps'.
+func TestAddPINFlagsDeclaresStdinSource(t *testing.T) {
 	cmd := newPINCommand(t)
 
-	require.NotNil(t, cmd.Flags().Lookup(pinFlagValue), "--pin must be declared")
 	require.NotNil(t, cmd.Flags().Lookup(pinFlagStdin), "--pin-stdin must be declared")
+	require.Nil(t, cmd.Flags().Lookup("pin"), "a --pin value flag must not be declared")
 
 	pin, err := resolvePINInput(cmd)
 	require.NoError(t, err)
@@ -56,39 +57,24 @@ func TestAddPINFlagsDeclaresBothSources(t *testing.T) {
 }
 
 func TestResolvePINInputPrecedence(t *testing.T) {
-	t.Run("stdin outranks the environment and the flag", func(t *testing.T) {
+	t.Run("stdin outranks the environment", func(t *testing.T) {
 		t.Setenv(pinEnvVar, "from-env")
 		stubStdin(t, []byte("from-stdin\n"), nil)
 
 		cmd := newPINCommand(t)
 		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
-		require.NoError(t, cmd.Flags().Set(pinFlagValue, "from-flag"))
 
 		pin, err := resolvePINInput(cmd)
 		require.NoError(t, err)
 		assert.Equal(t, "from-stdin", pin, "the trailing newline must be trimmed")
 	})
 
-	t.Run("the environment outranks the flag", func(t *testing.T) {
+	t.Run("the environment is the last resort", func(t *testing.T) {
 		t.Setenv(pinEnvVar, "from-env")
 
-		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagValue, "from-flag"))
-
-		pin, err := resolvePINInput(cmd)
+		pin, err := resolvePINInput(newPINCommand(t))
 		require.NoError(t, err)
 		assert.Equal(t, "from-env", pin)
-	})
-
-	t.Run("the flag is the last resort", func(t *testing.T) {
-		t.Setenv(pinEnvVar, "")
-
-		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagValue, "from-flag"))
-
-		pin, err := resolvePINInput(cmd)
-		require.NoError(t, err)
-		assert.Equal(t, "from-flag", pin)
 	})
 
 	t.Run("a carriage return pair is trimmed too", func(t *testing.T) {
@@ -151,17 +137,6 @@ func TestResolvePINInputErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrPINInputFlagsMissing)
 	})
-
-	t.Run("a command declaring only --pin-stdin is still a wiring defect", func(t *testing.T) {
-		t.Setenv(pinEnvVar, "")
-
-		cmd := &cobra.Command{}
-		cmd.Flags().Bool(pinFlagStdin, false, "")
-
-		_, err := resolvePINInput(cmd)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrPINInputFlagsMissing)
-	})
 }
 
 // TestResolveUnlockPINAppliesItsOwnPolicy proves unlock keeps its stricter
@@ -170,12 +145,9 @@ func TestResolvePINInputErrors(t *testing.T) {
 // treats it as legitimate.
 func TestResolveUnlockPINAppliesItsOwnPolicy(t *testing.T) {
 	t.Run("a supplied PIN passes through", func(t *testing.T) {
-		t.Setenv(pinEnvVar, "")
+		t.Setenv(pinEnvVar, "123456")
 
-		cmd := newPINCommand(t)
-		require.NoError(t, cmd.Flags().Set(pinFlagValue, "123456"))
-
-		pin, err := resolveUnlockPIN(cmd)
+		pin, err := resolveUnlockPIN(newPINCommand(t))
 		require.NoError(t, err)
 		assert.Equal(t, "123456", pin)
 	})

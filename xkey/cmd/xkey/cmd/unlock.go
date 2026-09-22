@@ -78,6 +78,13 @@ subsystem it governs is still locked, or when the daemon still reports itself
 locked — an unlock that reported success while the barrier was still sealed
 would make every automated flow proceed on a false premise.
 
+A wrong PIN over this verb is counted against a budget of 8 attempts,
+independent of and in addition to any PIN-backend counter the daemon keeps.
+A rejection reports the attempts left; once the budget reaches zero the
+daemon refuses outright, without evaluating the PIN, until a Security
+Officer resets it ("xkey pin reset-lockout" or "xkey pin set-user" against
+the daemon's data directory).
+
 ` + pinUsage + `
 
 Examples:
@@ -85,10 +92,7 @@ Examples:
   printf '%s' "$PIN" | xkey unlock --pin-stdin
 
   # Environment
-  XKEY_PIN="$PIN" xkey unlock
-
-  # Explicit flag (development)
-  xkey unlock --pin 1234`,
+  XKEY_PIN="$PIN" xkey unlock`,
 	Args: cobra.NoArgs,
 	RunE: runUnlock,
 }

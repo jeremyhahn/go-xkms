@@ -23,9 +23,18 @@ import (
 )
 
 // This file holds the ONE way a PIN enters the xkey CLI. Every command that
-// needs one — "unlock", "auth register", "auth login" — declares the same three
-// flags and resolves them in the same precedence order, so an operator learns
-// the mechanism once and a second, divergent input path cannot appear.
+// needs one — "unlock", "auth register", "auth login" — declares the same two
+// sources and resolves them in the same precedence order, so an operator
+// learns the mechanism once and a second, divergent input path cannot
+// appear.
+//
+// A third source, a "--pin"/"--so-pin" VALUE flag, existed through
+// v0.9.x. It was removed (go-xkms#272): a value flag is visible to every
+// other process on the host via `ps`, which is a wider audience than the
+// IPC socket the PIN is often headed for, and its own help text said so.
+// stdin and the environment are the only two sources now; a command line
+// with "--pin" or "--so-pin" on it is a cobra parse error, not a quieter
+// way in.
 
 // PIN input errors.
 var (
@@ -48,22 +57,19 @@ var (
 	ErrPINInputFlagsMissing = errors.New("pin: the command does not declare the PIN input flags")
 )
 
-// pinFlagStdin, pinFlagValue and pinEnvVar name the three PIN sources. They are
-// constants so the flag declaration, the resolver, and the help text cannot
-// drift apart.
+// pinFlagStdin and pinEnvVar name the two PIN sources. They are constants so
+// the flag declaration, the resolver, and the help text cannot drift apart.
 const (
 	pinFlagStdin = "pin-stdin"
-	pinFlagValue = "pin"
 	pinEnvVar    = "XKEY_PIN"
 )
 
-// soPINFlagStdin, soPINFlagValue and soPINEnvVar name the three sources of
-// the Security Officer PIN, which a command needs only to verify a sealed
-// enterprise policy (config.LoadVerifiedPolicy, #118). They mirror the user
-// PIN sources exactly so an operator learns one convention.
+// soPINFlagStdin and soPINEnvVar name the two sources of the Security
+// Officer PIN, which a command needs only to verify a sealed enterprise
+// policy (config.LoadVerifiedPolicy, #118). They mirror the user PIN
+// sources exactly so an operator learns one convention.
 const (
 	soPINFlagStdin = "so-pin-stdin"
-	soPINFlagValue = "so-pin"
 	soPINEnvVar    = "XKEY_SO_PIN"
 )
 
@@ -72,17 +78,16 @@ const (
 // operator is told which of the two PINs was expected.
 var ErrSOPINInputStdinEmpty = errors.New("pin: --so-pin-stdin was given but standard input carried no SO PIN")
 
-// pinSource describes one kind of PIN and the three inputs it resolves from.
+// pinSource describes one kind of PIN and the two inputs it resolves from.
 // The user PIN and the SO PIN are the two kinds; each is declared once here
 // so their flag names, environment variables and resolution order cannot
 // diverge.
 type pinSource struct {
 	// label names the PIN in flag help ("PIN", "SO PIN").
 	label string
-	// stdinFlag, valueFlag and envVar are the three inputs, in precedence
-	// order: stdin, environment, flag value.
+	// stdinFlag and envVar are the two inputs, in precedence order: stdin,
+	// then environment.
 	stdinFlag string
-	valueFlag string
 	envVar    string
 	// stdinEmpty is returned when stdinFlag was given but stdin was empty.
 	stdinEmpty error
@@ -92,39 +97,42 @@ var (
 	userPINSource = pinSource{
 		label:      "PIN",
 		stdinFlag:  pinFlagStdin,
-		valueFlag:  pinFlagValue,
 		envVar:     pinEnvVar,
 		stdinEmpty: ErrPINInputStdinEmpty,
 	}
 	soPINSource = pinSource{
 		label:      "SO PIN",
 		stdinFlag:  soPINFlagStdin,
-		valueFlag:  soPINFlagValue,
 		envVar:     soPINEnvVar,
 		stdinEmpty: ErrSOPINInputStdinEmpty,
 	}
 )
 
-// pinUsage is the operator-facing description of the three PIN sources,
+// pinUsage is the operator-facing description of the two PIN sources,
 // embedded verbatim in the long help of every command that accepts one.
-const pinUsage = `The PIN may be supplied three ways, in precedence order:
+const pinUsage = `The PIN may be supplied two ways, in precedence order:
 
   --pin-stdin      read the PIN from standard input (preferred: it keeps the
                    PIN out of the process list and the shell history)
   XKEY_PIN         environment variable
-  --pin            flag value (visible in 'ps'; use for local development only)`
 
-// soPINUsage is the operator-facing description of the three SO PIN sources,
+There is no "--pin" value flag: a value on the command line is visible to
+every other process on the host via 'ps', which is a wider audience than
+the destination the PIN is usually headed for.`
+
+// soPINUsage is the operator-facing description of the two SO PIN sources,
 // embedded in the long help of every command that verifies a sealed policy.
 const soPINUsage = `In an enterprise deployment the config directory is sealed (xkey_policy.hmac
 is present) and the SO-controlled policy is honoured only once it has been
-verified with the Security Officer PIN. The SO PIN may be supplied three ways,
+verified with the Security Officer PIN. The SO PIN may be supplied two ways,
 in precedence order:
 
   --so-pin-stdin   read the SO PIN from standard input (preferred: it keeps
                    the PIN out of the process list and the shell history)
   XKEY_SO_PIN      environment variable
-  --so-pin         flag value (visible in 'ps'; use for local development only)
+
+There is no "--so-pin" value flag, for the same reason there is no "--pin"
+one: it would be visible to every other process on the host via 'ps'.
 
 Without it the sealed policy is not consulted and the command fails closed.
 A sealed policy that does not verify is refused, whatever it says.`
@@ -159,15 +167,17 @@ func resolveSOPINInput(cmd *cobra.Command) (string, error) {
 	return soPINSource.resolve(cmd)
 }
 
-// addFlags declares the source's two flags on cmd.
+// addFlags declares the source's one flag on cmd. XKEY_PIN / XKEY_SO_PIN
+// need no flag of their own: os.Getenv reads them directly.
 func (p pinSource) addFlags(cmd *cobra.Command) {
-	cmd.Flags().String(p.valueFlag, "", p.label+" (visible in the process list; prefer --"+p.stdinFlag+")")
 	cmd.Flags().Bool(p.stdinFlag, false, "Read the "+p.label+" from standard input")
 }
 
 // resolve returns the PIN from the highest-precedence source that carries
-// one: stdin when the stdin flag is set, then the environment variable, then
-// the flag value. It returns "" when no source carries a PIN.
+// one: stdin when the stdin flag is set, then the environment variable. It
+// returns "" when neither does -- there is no third, flag-value source
+// (go-xkms#272): a value on the command line is visible to every other
+// process on the host via 'ps'.
 func (p pinSource) resolve(cmd *cobra.Command) (string, error) {
 	fromStdin, err := cmd.Flags().GetBool(p.stdinFlag)
 	if err != nil {
@@ -185,13 +195,5 @@ func (p pinSource) resolve(cmd *cobra.Command) (string, error) {
 		return pin, nil
 	}
 
-	if pin := os.Getenv(p.envVar); pin != "" {
-		return pin, nil
-	}
-
-	pin, err := cmd.Flags().GetString(p.valueFlag)
-	if err != nil {
-		return "", &SentinelCauseError{Sentinel: ErrPINInputFlagsMissing, Cause: err}
-	}
-	return pin, nil
+	return os.Getenv(p.envVar), nil
 }

@@ -29,22 +29,24 @@ because it checked it.
 ## The PIN on the ceremony
 
 `xkey auth register` and `xkey auth login` take the authenticator's CTAP2 PIN
-three ways, in precedence order:
+two ways, in precedence order:
 
 | Source | Notes |
 |---|---|
 | `--pin-stdin` | read the PIN from standard input |
 | `XKEY_PIN` | environment variable |
-| `--pin` | **visible in the process list** |
 
 ```
 printf '%s' "$XKEY_PIN" | xkey auth login --pin-stdin \
     --server "$XKMS" --email agent-build@example.com
 ```
 
-Use `--pin-stdin`. The `--pin` flag exists and its own help text warns that the
-value shows up in `ps`. Note that `--pin` is the authenticator's PIN and
-`--spki-pin` is the server's public-key pin; they are unrelated.
+Use `--pin-stdin`. There is no `--pin` value flag (go-xkms#272 removed it): a
+value on the command line is visible to every other process on the host via
+`ps`, which is a wider audience than the IPC socket or the server connection
+the PIN is usually headed for. `--spki-pin` is the server's public-key pin, an
+unrelated, still-present value flag — it never carries a credential, only a
+fingerprint.
 
 ## `xkey unlock`
 
@@ -54,12 +56,44 @@ For an xkey instance that owns an app lock — the GUI or the headless app.
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--pin-stdin` | bool | `false` | read the PIN from standard input |
-| `--pin` | string | `""` | **visible in the process list** |
 | `--socket` | string | auto-detect | IPC socket path |
 
 ```
 printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 ```
+
+### The unlock-attempt budget
+
+A wrong PIN over `unlock` is counted against its own budget of 8 attempts
+(`AppLockPINMaxAttempts`), independent of and in addition to whatever counter
+the PIN backend or hardware strategy keeps (go-xkms#272). It exists because
+that other counter is not always reachable: the software PIN backend keeps
+none of its own, and a sealed barrier's counter lives behind the very barrier
+the PIN is trying to open. The budget is persisted outside the barrier, at
+`<dataDir>/pin/unlock_attempts`, so it survives a daemon restart and is
+enforced even while the barrier stays sealed.
+
+A rejection reports the attempts left, both in the printed error and in the
+IPC response's `remaining_attempts` field, for a script to act on without
+parsing prose:
+
+```
+$ printf '%s' "wrong" | xkey unlock --pin-stdin
+Error: unlock: failed: app_lock: invalid PIN (5 attempt(s) remaining)
+```
+
+Once the budget reaches zero, `unlock` refuses outright — the PIN is not
+evaluated at all — until a Security Officer resets it:
+
+```
+xkey pin reset-lockout          # or
+xkey pin set-user               # setting the user PIN also proves the SO PIN
+```
+
+Both run against the daemon's own data directory, not through the socket:
+the daemon and the CLI invocation are different processes, and the budget is
+a file both reach independently, not daemon state the CLI can only poke over
+IPC.
 
 ### `unlock` confirms the state it reports
 

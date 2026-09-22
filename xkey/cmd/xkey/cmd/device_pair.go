@@ -396,7 +396,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 			_ = transport.Disconnect()
 			if enterprisePolicy == nil {
 				logger.Warn("unattestable device refused: the config directory is sealed and the enterprise policy was not verified",
-					"hint", "supply the SO PIN (--so-pin-stdin, XKEY_SO_PIN or --so-pin) to honour a sealed policy that allows it")
+					"hint", "supply the SO PIN (--so-pin-stdin or XKEY_SO_PIN) to honour a sealed policy that allows it")
 			}
 			return attestErr
 		}

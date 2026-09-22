@@ -17,6 +17,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
 // pinResetLockoutCmd resets the PIN lockout counter.
@@ -64,6 +66,18 @@ func runPINResetLockout(cmd *cobra.Command, args []string) error {
 
 	// Reset lockout.
 	if err := svc.ResetLockout(soPIN); err != nil {
+		return &PINCommandError{
+			Operation: "reset_lockout",
+			Err:       err,
+		}
+	}
+
+	// The PIN backend's own lockout is reset; the app lock's own,
+	// independent unlock-attempt budget for the "unlock" IPC verb (#272)
+	// is reset alongside it. It is persisted outside this process (a
+	// running daemon's AppLockService owns the live copy), so this CLI
+	// command can only reach it through the same file.
+	if err := services.ResetAppLockAttempts(dataDir); err != nil {
 		return &PINCommandError{
 			Operation: "reset_lockout",
 			Err:       err,

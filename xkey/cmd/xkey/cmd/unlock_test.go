@@ -81,14 +81,19 @@ func serveUnlockDaemon(t *testing.T, handler ipc.Handler) string {
 	return sockPath
 }
 
-// newUnlockTestCmd builds an unlock command bound to the given socket and PIN,
-// with its output captured.
-func newUnlockTestCmd(socketPath, pin string) (*cobra.Command, *bytes.Buffer) {
+// newUnlockTestCmd builds an unlock command bound to the given socket and
+// PIN, with its output captured. The PIN travels through XKEY_PIN rather
+// than a flag: the "--pin" value flag was removed (go-xkms#272), so the
+// environment is the resolver's lowest-precedence source that still
+// carries a value in a test.
+func newUnlockTestCmd(t *testing.T, socketPath, pin string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+
+	t.Setenv(pinEnvVar, pin)
+
 	cmd := &cobra.Command{Use: "unlock", RunE: runUnlock}
-	cmd.Flags().String("pin", "", "")
 	cmd.Flags().Bool("pin-stdin", false, "")
 	cmd.Flags().String("socket", "", "")
-	_ = cmd.Flags().Set("pin", pin)
 	_ = cmd.Flags().Set("socket", socketPath)
 
 	out := &bytes.Buffer{}
@@ -105,7 +110,7 @@ func TestRunUnlock_RefusedUnlockIsNotReportedAsSuccess(t *testing.T) {
 		statusAction: ipc.ActionLocked,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "1234")
+	cmd, out := newUnlockTestCmd(t, sock, "1234")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err, "a refused unlock must exit non-zero")
@@ -128,7 +133,7 @@ func TestRunUnlock_SuccessWithLockedDaemonIsReportedAsFailure(t *testing.T) {
 		statusAction: ipc.ActionLocked,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "1234")
+	cmd, out := newUnlockTestCmd(t, sock, "1234")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err, "unlock must not report success while the daemon is still locked")
@@ -149,7 +154,7 @@ func TestRunUnlock_SuccessWithUnlockedDaemonReportsSuccess(t *testing.T) {
 		statusAction: ipc.ActionUnlocked,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "1234")
+	cmd, out := newUnlockTestCmd(t, sock, "1234")
 	err := runUnlock(cmd, nil)
 
 	require.NoError(t, err)
@@ -166,7 +171,7 @@ func TestRunUnlock_DaemonWithoutAppLockReportsWhatItDid(t *testing.T) {
 		statusAction: ipc.ActionDaemonReady,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "1234")
+	cmd, out := newUnlockTestCmd(t, sock, "1234")
 	err := runUnlock(cmd, nil)
 
 	require.NoError(t, err)
@@ -177,7 +182,7 @@ func TestRunUnlock_DaemonWithoutAppLockReportsWhatItDid(t *testing.T) {
 
 // TestRunUnlock_DaemonNotRunning covers the no-daemon case.
 func TestRunUnlock_DaemonNotRunning(t *testing.T) {
-	cmd, _ := newUnlockTestCmd(filepath.Join(t.TempDir(), "absent.sock"), "1234")
+	cmd, _ := newUnlockTestCmd(t, filepath.Join(t.TempDir(), "absent.sock"), "1234")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err)
@@ -188,7 +193,7 @@ func TestRunUnlock_DaemonNotRunning(t *testing.T) {
 func TestRunUnlock_MissingPIN(t *testing.T) {
 	t.Setenv("XKEY_PIN", "")
 
-	cmd, _ := newUnlockTestCmd(filepath.Join(t.TempDir(), "absent.sock"), "")
+	cmd, _ := newUnlockTestCmd(t, filepath.Join(t.TempDir(), "absent.sock"), "")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err)
@@ -215,7 +220,7 @@ func TestRunUnlock_PartialUnlockIsAFailure(t *testing.T) {
 		statusAction: ipc.ActionUnlocked,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "123456")
+	cmd, out := newUnlockTestCmd(t, sock, "123456")
 	err := runUnlock(cmd, nil)
 
 	require.Error(t, err, "a sealed barrier must fail the unlock even when the app lock opened")
@@ -236,7 +241,7 @@ func TestRunUnlock_NamesTheSubsystemsItReleased(t *testing.T) {
 		statusAction: ipc.ActionUnlocked,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "123456")
+	cmd, out := newUnlockTestCmd(t, sock, "123456")
 	require.NoError(t, runUnlock(cmd, nil))
 
 	// Rendered in a stable order so the line is diffable and scriptable.
@@ -251,7 +256,7 @@ func TestRunUnlock_UnnamedSubsystemsStillReportSuccess(t *testing.T) {
 		statusAction: ipc.ActionUnlocked,
 	})
 
-	cmd, out := newUnlockTestCmd(sock, "123456")
+	cmd, out := newUnlockTestCmd(t, sock, "123456")
 	require.NoError(t, runUnlock(cmd, nil))
 	assert.Contains(t, out.String(), "Unlocked")
 }
@@ -260,4 +265,74 @@ func TestRunUnlock_UnnamedSubsystemsStillReportSuccess(t *testing.T) {
 func TestJoinSubsystems(t *testing.T) {
 	assert.Equal(t, "app lock, barrier", joinSubsystems([]string{"barrier", "app lock"}))
 	assert.Equal(t, "", joinSubsystems(nil))
+}
+
+// TestRunUnlock_RejectionSurfacesRemainingAttempts proves a credential
+// rejection reaches the operator with the app lock's own unlock-attempt
+// budget (go-xkms#272) left on it, not just a bare failure: the daemon's
+// UnlockResult.Error already carries the count in its message, and unlock
+// relays it verbatim rather than replacing it with a generic failure.
+func TestRunUnlock_RejectionSurfacesRemainingAttempts(t *testing.T) {
+	remaining := 5
+	sock := serveUnlockDaemon(t, &unlockTestHandler{
+		unlockResult: &ipc.UnlockResult{
+			Success:           false,
+			Error:             "app_lock: invalid PIN (5 attempt(s) remaining)",
+			StillLocked:       []string{"app lock"},
+			RemainingAttempts: &remaining,
+		},
+		statusAction: ipc.ActionLocked,
+	})
+
+	cmd, _ := newUnlockTestCmd(t, sock, "wrong-pin")
+	err := runUnlock(cmd, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnlockFailed)
+	assert.Contains(t, err.Error(), "5 attempt(s) remaining",
+		"the operator must see how many attempts are left, not just that it failed")
+}
+
+// TestRunUnlock_BlockedReportsZeroAttemptsRemaining is the same path once
+// the budget is exhausted: the daemon refuses without evaluating the PIN,
+// and unlock must still report that plainly rather than as an ordinary
+// wrong-PIN failure.
+func TestRunUnlock_BlockedReportsZeroAttemptsRemaining(t *testing.T) {
+	zero := 0
+	sock := serveUnlockDaemon(t, &unlockTestHandler{
+		unlockResult: &ipc.UnlockResult{
+			Success: false,
+			Error: "app_lock: unlock attempts exhausted - blocked until SO-PIN reset " +
+				"(0 attempt(s) remaining)",
+			StillLocked:       []string{"app lock"},
+			RemainingAttempts: &zero,
+		},
+		statusAction: ipc.ActionLocked,
+	})
+
+	cmd, _ := newUnlockTestCmd(t, sock, "any-pin")
+	err := runUnlock(cmd, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnlockFailed)
+	assert.Contains(t, err.Error(), "blocked")
+	assert.Contains(t, err.Error(), "0 attempt(s) remaining")
+}
+
+// TestUnlockCmd_PINValueFlagRemoved proves "--pin" no longer parses: it was
+// a value flag visible to every other process on the host via 'ps'
+// (go-xkms#272). Only "--pin-stdin" and XKEY_PIN remain.
+func TestUnlockCmd_PINValueFlagRemoved(t *testing.T) {
+	buf := &bytes.Buffer{}
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	t.Cleanup(func() {
+		RootCmd.SetOut(nil)
+		RootCmd.SetErr(nil)
+	})
+	RootCmd.SetArgs([]string{"unlock", "--pin", "1234", "--socket", filepath.Join(t.TempDir(), "absent.sock")})
+
+	err := RootCmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown flag")
 }

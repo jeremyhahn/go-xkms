@@ -157,6 +157,16 @@ type AppLockService struct {
 	// because the timer arms from whichever goroutine last recorded
 	// activity. Zero means one minute.
 	autoLockUnit atomic.Int64
+
+	// attempts is the app lock's own unlock-attempt budget: up to
+	// AppLockPINMaxAttempts credential rejections before Unlock refuses
+	// outright, persisted outside the barrier (see app_lock_attempts.go) so
+	// it is enforced on every branch Unlock takes — including the one
+	// branch (a sealed barrier) whose own PIN-backend counter is
+	// unreadable until the very credential it protects succeeds. It
+	// defaults to an in-memory-only counter until SetDataDir wires a
+	// persisted one.
+	attempts atomic.Pointer[appLockAttemptCounter]
 }
 
 // NewAppLockService creates a new AppLockService that starts in the
@@ -174,6 +184,7 @@ func NewAppLockService(pinSvc *PINService, barrierSvc barrierUnsealer) *AppLockS
 	svc.autoLockMinutes.Store(15)
 	svc.lockOnScreenLock.Store(true)
 	svc.autoLockUnit.Store(int64(time.Minute))
+	svc.attempts.Store(newAppLockAttemptCounter(""))
 	return svc
 }
 
@@ -192,6 +203,101 @@ func (s *AppLockService) SetEmitFunc(fn func(string, any)) {
 // authentication is active.
 func (s *AppLockService) SetBarrierStrategy(strategyID string) {
 	s.barrierStrategy = strategyID
+}
+
+// SetDataDir configures the directory where the app lock's own
+// unlock-attempt budget persists (<dataDir>/pin/unlock_attempts), OUTSIDE
+// the barrier so a wrong PIN is still counted while the barrier is sealed.
+//
+// It should be called once, as soon as the data directory is resolved, from
+// the same startup path that wires PINService and BarrierService (App's
+// data-dir initialization; the headless daemon's runExtensionServe). An
+// AppLockService that never has this called keeps the budget in memory
+// only, for the life of the process — the state every test in this package
+// that does not call SetDataDir relies on.
+func (s *AppLockService) SetDataDir(dataDir string) {
+	s.attempts.Store(newAppLockAttemptCounter(dataDir))
+}
+
+// ResetAttempts clears the app lock's own unlock-attempt budget back to
+// AppLockPINMaxAttempts. Call it after a Security Officer authorizes a
+// reset (PINService.ResetLockout, PINService.SetUserPIN both call it
+// automatically when an AppLockService is wired), so an operator blocked by
+// the budget is not also stuck restarting the daemon.
+func (s *AppLockService) ResetAttempts() error {
+	if err := s.attemptCounter().recordSuccess(); err != nil {
+		s.log.Warn("app lock: failed to reset unlock attempt counter", "error", err)
+		return err
+	}
+	s.log.Info("app lock: unlock attempt counter reset")
+	return nil
+}
+
+// attemptCounter returns the current unlock-attempt counter. It never
+// returns nil: NewAppLockService always stores one, and this guards the
+// zero-value AppLockService{} a test might construct directly.
+func (s *AppLockService) attemptCounter() *appLockAttemptCounter {
+	if c := s.attempts.Load(); c != nil {
+		return c
+	}
+	return newAppLockAttemptCounter("")
+}
+
+// evaluateCredential runs verify — a barrier unseal or a PIN verification —
+// against the app lock's own unlock-attempt budget: a count kept outside
+// the barrier, in addition to whatever counter the PIN backend or hardware
+// strategy keeps. That other counter is not always reachable: the software
+// PIN backend keeps none of its own, and the branch that most needs a
+// budget — a sealed barrier — has its credential live behind the very
+// barrier the unlock is trying to open, so nothing behind it can be
+// consulted until the correct PIN has already been supplied (#272).
+//
+// verify performs the actual check: nil means the credential was correct,
+// any other error means it was rejected or never evaluated. isFault
+// classifies that error: true means the credential was never evaluated at
+// all (a strategy fault, corrupt storage, ErrPINNotSet) and must not spend
+// a budget attempt; false means it was evaluated and rejected, which does.
+func (s *AppLockService) evaluateCredential(verify func() error, isFault func(error) bool) error {
+	counter := s.attemptCounter()
+
+	blocked, remaining, err := counter.blocked()
+	if err != nil {
+		s.log.Error("app unlock: attempt counter unavailable - refusing", "error", err)
+		return &SentinelCauseError{Sentinel: ErrAppLockAttemptsUnavailable, Cause: err}
+	}
+	if blocked {
+		s.log.Warn("app unlock: refused - unlock attempt budget exhausted")
+		return &AppLockAttemptsError{Cause: ErrAppLockPINBlocked, Remaining: remaining}
+	}
+
+	verifyErr := verify()
+	if verifyErr == nil {
+		if resetErr := counter.recordSuccess(); resetErr != nil {
+			s.log.Warn("app unlock: failed to reset attempt counter after success", "error", resetErr)
+		}
+		return nil
+	}
+	if isFault(verifyErr) {
+		return verifyErr
+	}
+
+	remaining, recErr := counter.recordFailure()
+	if recErr != nil {
+		s.log.Error("app unlock: failed to persist attempt counter", "error", recErr)
+		return verifyErr
+	}
+	s.log.Warn("app unlock: credential rejected", "remaining_attempts", remaining)
+	return &AppLockAttemptsError{Cause: verifyErr, Remaining: remaining}
+}
+
+// verifyUserPIN evaluates pin through PINService, counted against the app
+// lock's own unlock-attempt budget. qrdbsdk.ErrPINNotSet is a fault — the
+// PIN store has nothing to check against — never a rejection.
+func (s *AppLockService) verifyUserPIN(pin string) error {
+	return s.evaluateCredential(
+		func() error { return s.pinSvc.VerifyUserPIN(pin) },
+		func(err error) bool { return errors.Is(err, qrdbsdk.ErrPINNotSet) },
+	)
 }
 
 // SetAutoLockMinutes configures the auto-lock inactivity timeout.
@@ -347,7 +453,7 @@ func (s *AppLockService) releaseAppLock(pin string) error {
 			s.log.Error("app unlock: PIN service not configured")
 			return ErrAppLockSetupIncomplete
 		}
-		if err := s.pinSvc.VerifyUserPIN(pin); err != nil {
+		if err := s.verifyUserPIN(pin); err != nil {
 			if errors.Is(err, qrdbsdk.ErrPINNotSet) {
 				s.log.Error("app unlock: user PIN not set - setup incomplete",
 					"barrier_configured", barrierConfigured,
@@ -388,7 +494,7 @@ func (s *AppLockService) releaseAppLock(pin string) error {
 		// setup-incomplete message. Pre-checking would instead refuse a
 		// TPM whose SRK is provisioned but whose auth this session has not
 		// yet confirmed — a credential the backend can in fact check.
-		if err := s.pinSvc.VerifyUserPIN(pin); err != nil {
+		if err := s.verifyUserPIN(pin); err != nil {
 			if errors.Is(err, qrdbsdk.ErrPINNotSet) {
 				s.log.Error("app unlock: user PIN not set - setup incomplete",
 					"barrier_configured", barrierConfigured,
@@ -425,24 +531,31 @@ func (s *AppLockService) barrierIsSealed() bool {
 // established — and invites the operator to retry a PIN that is correct
 // (#510).
 func (s *AppLockService) unsealBarrier(pin string) error {
-	err := s.barrierSvc.Unseal(pin, s.barrierStrategy)
-	if err == nil {
-		return nil
-	}
-	switch {
-	case errors.Is(err, qrdbsdk.ErrCorruptRootKey):
-		// The stored root key would not parse. No PIN repairs that, and the
-		// rest of the stack already calls it data loss.
-		s.log.Error("app unlock: barrier root key is corrupt - the PIN was not checked",
-			"strategy", s.barrierStrategy, "error", err)
-		return ErrAppLockStorageCorrupt
-	case unsealFailedBeforeTheCredential(err):
-		s.log.Error("app unlock: barrier seal strategy unavailable - the PIN was not checked",
-			"strategy", s.barrierStrategy, "error", err)
-		return ErrAppLockUnsealUnavailable
-	}
-	s.log.Warn("app unlock: barrier unseal failed", "error", err)
-	return ErrAppLockPINInvalid
+	return s.evaluateCredential(
+		func() error {
+			err := s.barrierSvc.Unseal(pin, s.barrierStrategy)
+			if err == nil {
+				return nil
+			}
+			switch {
+			case errors.Is(err, qrdbsdk.ErrCorruptRootKey):
+				// The stored root key would not parse. No PIN repairs that, and
+				// the rest of the stack already calls it data loss.
+				s.log.Error("app unlock: barrier root key is corrupt - the PIN was not checked",
+					"strategy", s.barrierStrategy, "error", err)
+				return ErrAppLockStorageCorrupt
+			case unsealFailedBeforeTheCredential(err):
+				s.log.Error("app unlock: barrier seal strategy unavailable - the PIN was not checked",
+					"strategy", s.barrierStrategy, "error", err)
+				return ErrAppLockUnsealUnavailable
+			}
+			s.log.Warn("app unlock: barrier unseal failed", "error", err)
+			return ErrAppLockPINInvalid
+		},
+		func(err error) bool {
+			return errors.Is(err, ErrAppLockStorageCorrupt) || errors.Is(err, ErrAppLockUnsealUnavailable)
+		},
+	)
 }
 
 // snapshot observes the current state of every subsystem the app lock
@@ -502,6 +615,16 @@ func (s *AppLockService) HandleUnlock(pin string) *ipc.UnlockResult {
 	result := &ipc.UnlockResult{
 		Unlocked:    outcome.Unlocked,
 		StillLocked: outcome.StillLocked,
+	}
+
+	// A credential rejection, or a refusal because the budget was already
+	// exhausted, carries the app lock's own attempts remaining. Reporting
+	// it in band — not only in the error string — lets a scripted caller
+	// act on the count without parsing prose.
+	var attemptsErr *AppLockAttemptsError
+	if errors.As(err, &attemptsErr) {
+		remaining := attemptsErr.Remaining
+		result.RemainingAttempts = &remaining
 	}
 
 	switch {

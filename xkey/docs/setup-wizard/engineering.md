@@ -107,6 +107,16 @@ SOPINRecorded   bool   `json:"so_pin_recorded"`    // quick setup: operator reco
    (go-xkms#510 item 1). This closes the setup-time half of #510; the
    runtime re-unseal-in-place path is `BarrierService.Unseal`'s own guard via
    `assembleStrategy`, already in place.
+8. **The wizard does not touch the app lock's unlock-attempt budget
+   (go-xkms#272).** That budget (`AppLockPINMaxAttempts`,
+   `xkey/pkg/gui/services/app_lock_attempts.go`) is a property of
+   `AppLockService`, not of the PIN the wizard establishes, and starts at
+   its full value for a fresh data directory with no wizard involvement
+   needed. `ApplySetup` neither reads nor resets it; only a Security
+   Officer, after setup, clears an exhausted one
+   (`PINService.ResetLockout` / `PINService.SetUserPIN`, both of which
+   reset it as a side effect when an `AppLockService` is wired — see
+   [`../agent-automation/engineering.md`](../agent-automation/engineering.md)).
 
 ## Errors
 
