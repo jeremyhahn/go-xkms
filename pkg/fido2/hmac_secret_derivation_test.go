@@ -20,8 +20,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"log/slog"
-	"reflect"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -360,56 +358,12 @@ func TestHMACSecretOutput_Accepted(t *testing.T) {
 	}
 }
 
-// TestDerivationModeLegacy_ReproducesGoldenValue proves the migration
-// escape hatch still unlocks a volume keyed with the broken derivation.
-func TestDerivationModeLegacy_ReproducesGoldenValue(t *testing.T) {
-	hmacExt, _ := newSimulatedExtension(t)
-
-	warnings := captureWarnings(t)
-
-	config := &AuthenticationConfig{
-		RelyingPartyID: "example.com",
-		CredentialID:   legacyGoldenCredentialID,
-		Salt:           legacyGoldenSalt,
-		DerivationMode: DerivationModeLegacyInsecure,
-	}
-
-	result, err := hmacExt.DeriveSecret(config)
-	require.NoError(t, err)
-
-	golden, err := hex.DecodeString(legacyGoldenSecret)
-	require.NoError(t, err)
-	assert.Equal(t, golden, result.HMACSecret,
-		"legacy mode must reproduce the pre-fix value byte for byte")
-
-	assert.Contains(t, warnings.String(), "NOT bound to the authenticator",
-		"legacy mode must warn that the key is not hardware-bound")
-	assert.Contains(t, warnings.String(), "re-enroll")
-}
-
-// TestDerivationModeLegacy_IsNotReachableByDefault proves the fabrication
-// cannot be reached without the explicit opt-in.
-func TestDerivationModeLegacy_IsNotReachableByDefault(t *testing.T) {
-	// The zero value of the mode is the CTAP2 derivation, so a caller that
-	// never mentions DerivationMode gets the secure path.
-	assert.Equal(t, DerivationModeCTAP2, DerivationMode(0))
-	assert.Equal(t, DerivationModeCTAP2, (&AuthenticationConfig{}).DerivationMode)
-	assert.Equal(t, DerivationModeCTAP2, DefaultAuthenticationConfig(nil, nil).DerivationMode)
-
-	// The field is excluded from every serialization format, so no
-	// configuration file can select the insecure mode.
-	field, ok := reflect.TypeOf(AuthenticationConfig{}).FieldByName("DerivationMode")
-	require.True(t, ok)
-	for _, tag := range []string{"yaml", "json", "mapstructure"} {
-		assert.Equal(t, "-", field.Tag.Get(tag), "DerivationMode must be excluded from %s", tag)
-	}
-
-	// And with the default mode, an authenticator that returns no output
-	// yields an error rather than the fabricated value.
+// TestDeriveSecret_MissingOutputIsAnError proves an authenticator that
+// returns no hmac-secret output yields a typed error rather than a
+// fabricated value derived from public material.
+func TestDeriveSecret_MissingOutputIsAnError(t *testing.T) {
 	hmacExt, mockDev := newSimulatedExtension(t)
 	mockDev.sim.suppressExtensionOutput = true
-
-	warnings := captureWarnings(t)
 
 	result, err := hmacExt.DeriveSecret(&AuthenticationConfig{
 		RelyingPartyID: "example.com",
@@ -418,43 +372,6 @@ func TestDerivationModeLegacy_IsNotReachableByDefault(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, ErrHMACSecretMissing)
 	assert.Nil(t, result)
-	assert.Empty(t, warnings.String(), "the default path must not emit the legacy warning")
-}
-
-// TestLegacyHMACSecret_FixedOffsetBranch covers the other half of the
-// pre-fix extraction: raw bytes read from offset 37 regardless of what the
-// AT flag says lives there.
-func TestLegacyHMACSecret_FixedOffsetBranch(t *testing.T) {
-	config := &AuthenticationConfig{
-		CredentialID: legacyGoldenCredentialID,
-		Salt:         legacyGoldenSalt,
-	}
-
-	raw := bytes.Repeat([]byte{0x77}, hmacSecretSaltLen)
-	authData := simAuthData(t, FlagUserPresent|FlagExtensionData, raw)
-	assert.Equal(t, raw, legacyHMACSecret(authData, config))
-
-	// Without the ED flag the extraction falls back to public material.
-	golden, err := hex.DecodeString(legacyGoldenSecret)
-	require.NoError(t, err)
-	assert.Equal(t, golden, legacyHMACSecret(simAuthData(t, FlagUserPresent, nil), config))
-
-	// So does an ED flag over fewer than 32 trailing bytes.
-	assert.Equal(t, golden, legacyHMACSecret(
-		simAuthData(t, FlagUserPresent|FlagExtensionData, make([]byte, 4)), config))
-}
-
-// captureWarnings redirects the default slog logger to a buffer for the
-// duration of the test.
-func captureWarnings(t *testing.T) *bytes.Buffer {
-	t.Helper()
-
-	buf := &bytes.Buffer{}
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	return buf
 }
 
 // simAuthData builds authenticator data with the given flags and trailing

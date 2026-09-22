@@ -1013,7 +1013,7 @@ func TestKeyServiceGenerateKeySuccess(t *testing.T) {
 	result, err := svc.GenerateKey("server", &GenerateKeyParams{
 		KeyID:   "test-key",
 		Backend: "software",
-		KeyType: "ECDSA",
+		Purpose: "ECDSA",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)

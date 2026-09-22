@@ -51,9 +51,8 @@ type RemoteKeyInfo struct {
 type GenerateKeyParams struct {
 	KeyID      string `json:"key_id"`
 	Backend    string `json:"backend"`
-	Purpose    string `json:"purpose"`   // KeyType: SIGNING, ENCRYPTION, CA, TLS, SECRET, HMAC, ATTESTATION
-	Algorithm  string `json:"algorithm"` // rsa, ecdsa, ed25519, aes256-gcm, etc.
-	KeyType    string `json:"key_type"`  // Deprecated: use Purpose instead
+	Purpose    string `json:"purpose,omitempty"` // SIGNING, ENCRYPTION, CA, TLS, SECRET, HMAC, ATTESTATION; the server defaults to SIGNING
+	Algorithm  string `json:"algorithm"`         // rsa, ecdsa, ed25519, aes256-gcm, etc.
 	KeySize    int    `json:"key_size,omitempty"`
 	Curve      string `json:"curve,omitempty"`
 	Exportable bool   `json:"exportable,omitempty"`
@@ -412,17 +411,10 @@ func (s *KeyService) GenerateKey(source string, req *GenerateKeyParams) (*Genera
 	if err != nil {
 		return nil, err
 	}
-	// Map frontend fields to transport request.
-	// Purpose is the semantic KeyType (SIGNING, CA, TLS, etc.).
-	// Algorithm is the crypto algorithm (rsa, ecdsa, ed25519, aes256-gcm, etc.).
-	keyType := req.Purpose
-	if keyType == "" {
-		keyType = req.KeyType // backwards compat
-	}
 	resp, err := client.GenerateKey(s.ctx, &transport.GenerateKeyRequest{
 		KeyID:      req.KeyID,
 		Backend:    req.Backend,
-		KeyType:    keyType,
+		KeyType:    req.Purpose,
 		Algorithm:  req.Algorithm,
 		KeySize:    req.KeySize,
 		Curve:      req.Curve,

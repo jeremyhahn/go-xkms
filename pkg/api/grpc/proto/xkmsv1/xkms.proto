@@ -3146,12 +3146,13 @@ message PKCS11StatePutIfAbsentResponse {
 }
 
 message PKCS11StateCASRequest {
+  reserved 6;
+  reserved "expect_absent";
   string tenant_id = 1;
   string token = 2;
   string key = 3;
   bytes expected = 4;
   bytes new = 5;
-  bool expect_absent = 6;
 }
 message PKCS11StateCASResponse {
   bool swapped = 1;
@@ -3298,8 +3299,7 @@ message PasswordGenerateResponse {
 // BeginRegistrationRequest begins a WebAuthn registration ceremony.
 message BeginRegistrationRequest {
   // email is the canonical tenant-unique login key of the account the
-  // credential is enrolled against. Field 1 used to be spelled "username";
-  // the number is unchanged, so the binary encoding is compatible.
+  // credential is enrolled against.
   string email = 1;
   string display_name = 2;
 }
@@ -3330,8 +3330,7 @@ message FinishRegistrationResponse {
 // BeginAuthenticationRequest begins a WebAuthn authentication (login) ceremony.
 message BeginAuthenticationRequest {
   // email is the canonical tenant-unique login key of the account whose
-  // credentials are challenged. Field 1 used to be spelled "username"; the
-  // number is unchanged, so the binary encoding is compatible.
+  // credentials are challenged.
   string email = 1;
 }
 
@@ -3346,7 +3345,6 @@ message BeginAuthenticationResponse {
 message FinishAuthenticationRequest {
   string session_id = 1;
   // email is the login key of the account whose credentials are asserted.
-  // Field 2 used to be spelled "username"; the number is unchanged.
   string email = 2;
   string assertion_json = 3;
 }

@@ -224,6 +224,9 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 	if params.KeyID == "" {
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
+	if params.Algorithm == "" {
+		return nil, &errs.Message{Msg: "algorithm is required"}
+	}
 
 	// A named curve is validated here rather than left to the service, which
 	// silently substitutes P-256 for anything it cannot parse

@@ -299,9 +299,9 @@ func TestExportKeyWithValidBackend(t *testing.T) {
 	t.Run("exports key from backend", func(t *testing.T) {
 		// Generate an exportable key
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-			KeyId:      "export-test-key",
-			Backend:    "software",
-			KeyType:    "ecdsa",
+			KeyId:   "export-test-key",
+			Backend: "software",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
 			Curve:      "P256",
 			Exportable: true,
 		})
@@ -352,9 +352,9 @@ func TestCopyKeyWithValidBackend(t *testing.T) {
 	t.Run("copies key within same backend", func(t *testing.T) {
 		// Generate an exportable source key
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-			KeyId:      "copy-source-key",
-			Backend:    "software",
-			KeyType:    "ecdsa",
+			KeyId:   "copy-source-key",
+			Backend: "software",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
 			Curve:      "P256",
 			Exportable: true,
 		})
@@ -422,7 +422,7 @@ func TestSignWithDifferentHashes(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "hash-test-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -510,7 +510,7 @@ func TestVerifyWithDifferentHashes(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "verify-hash-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -693,8 +693,8 @@ func TestGenerateKeyWithAlgorithmField(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "keytype-test-key",
 			Backend: "software",
-			KeyType: "ecdsa", // Used as algorithm
-			Curve:   "P256",
+			KeyType: "ecdsa", Algorithm: "ecdsa", // Used as algorithm
+			Curve: "P256",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)

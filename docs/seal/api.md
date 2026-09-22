@@ -8,9 +8,9 @@ All barrier endpoints are under `/api/v1/barrier`. Shamir operations are only av
 
 Initialize the barrier with a password-based credential. Generates a root key, seals it with the best available strategy, and transitions to unsealed.
 
-**Request:**
+**Request:** the passphrase is base64-encoded in `password_b64` — the plaintext `secret` field was removed (BREAKING, 2026-09-22).
 ```json
-{ "secret": "my-secure-passphrase" }
+{ "password_b64": "bXktc2VjdXJlLXBhc3NwaHJhc2U=" }
 ```
 
 **Response (200):**
@@ -26,9 +26,9 @@ Initialize the barrier with a password-based credential. Generates a root key, s
 
 Unseal the barrier with a password credential.
 
-**Request:**
+**Request:** same `password_b64` field as initialize.
 ```json
-{ "secret": "my-secure-passphrase" }
+{ "password_b64": "bXktc2VjdXJlLXBhc3NwaHJhc2U=" }
 ```
 
 **Response (200):**

@@ -706,7 +706,7 @@ func TestRemoveMemberHandler_CustodianMissingUserID(t *testing.T) {
 func TestGenerateKeyHandler_InvalidBackendName(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "key1", Backend: "../../evil", KeyType: "rsa"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "key1", Backend: "../../evil", KeyType: "rsa", Algorithm: "rsa"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -716,7 +716,7 @@ func TestGenerateKeyHandler_InvalidBackendName(t *testing.T) {
 func TestGenerateKeyHandler_InvalidKeyIDChars(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "../../evil", Backend: "test-backend", KeyType: "rsa"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "../../evil", Backend: "test-backend", KeyType: "rsa", Algorithm: "rsa"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -726,7 +726,7 @@ func TestGenerateKeyHandler_InvalidKeyIDChars(t *testing.T) {
 func TestGenerateKeyHandler_Ed25519(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "ed-gen", Backend: "test-backend", KeyType: "ed25519"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "ed-gen", Backend: "test-backend", KeyType: "ed25519", Algorithm: "ed25519"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -736,7 +736,7 @@ func TestGenerateKeyHandler_Ed25519(t *testing.T) {
 func TestGenerateKeyHandler_ECDSAWithCurve(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "ec-gen", Backend: "test-backend", KeyType: "ecdsa", Curve: "P384"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "ec-gen", Backend: "test-backend", KeyType: "ecdsa", Algorithm: "ecdsa", Curve: "P384"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -746,7 +746,7 @@ func TestGenerateKeyHandler_ECDSAWithCurve(t *testing.T) {
 func TestGenerateKeyHandler_RSAWithSize(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "rsa-gen", Backend: "test-backend", KeyType: "rsa", KeySize: 4096})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "rsa-gen", Backend: "test-backend", KeyType: "rsa", Algorithm: "rsa", KeySize: 4096})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -756,7 +756,7 @@ func TestGenerateKeyHandler_RSAWithSize(t *testing.T) {
 func TestGenerateKeyHandler_WithHash(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "hash-gen", Backend: "test-backend", KeyType: "rsa", Hash: "SHA-512"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "hash-gen", Backend: "test-backend", KeyType: "rsa", Algorithm: "rsa", Hash: "SHA-512"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -766,7 +766,7 @@ func TestGenerateKeyHandler_WithHash(t *testing.T) {
 func TestGenerateKeyHandler_UnknownKeyType(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "unknown-gen", Backend: "test-backend", KeyType: "dilithium"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "unknown-gen", Backend: "test-backend", KeyType: "dilithium", Algorithm: "dilithium"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -777,7 +777,7 @@ func TestGenerateKeyHandler_UnknownKeyType(t *testing.T) {
 func TestGenerateKeyHandler_BackendNotFound(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "gen-key", Backend: "nonexistent", KeyType: "rsa"})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "gen-key", Backend: "nonexistent", KeyType: "rsa", Algorithm: "rsa"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -787,7 +787,7 @@ func TestGenerateKeyHandler_BackendNotFound(t *testing.T) {
 func TestGenerateKeyHandler_Exportable(t *testing.T) {
 	setupTestService(t, "test-backend")
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "export-gen", Backend: "test-backend", KeyType: "rsa", Exportable: true})
+	body, _ := json.Marshal(GenerateKeyRequest{KeyID: "export-gen", Backend: "test-backend", KeyType: "rsa", Algorithm: "rsa", Exportable: true})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)
@@ -908,8 +908,8 @@ func TestGenerateKeyHandler_UnknownCurve(t *testing.T) {
 	body, _ := json.Marshal(GenerateKeyRequest{
 		KeyID:   "curve-key",
 		Backend: "test-backend",
-		KeyType: "ecdsa",
-		Curve:   "P-999",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-999",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()

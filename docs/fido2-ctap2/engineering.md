@@ -102,11 +102,10 @@ Injected as `*Config` at handler construction; the same fields appear in
 `xkmsctl fido2` flags (`--rp-id`, `--rp-name`, `--timeout`, `--device`,
 `--user-verification`). Precedence: flag → config file → struct default.
 
-**`--legacy-hmac-derivation`** on `xkmsctl fido2 authenticate` selects an older
-derivation of the `hmac-secret` output. It exists for credentials enrolled
-before the current derivation; a credential enrolled under one derivation
-produces a different key under the other, so the flag is not cosmetic — using
-the wrong one yields a wrong key with no error.
+**BREAKING (2026-09-22):** `--legacy-hmac-derivation` on
+`xkmsctl fido2 authenticate`, the `DerivationModeLegacyInsecure` mode it
+selected, and the pre-fix `hmac-secret` derivation itself have been deleted
+outright. `DerivationModeCTAP2` (CTAP 2.1 §12.5) is the only mode.
 
 ## Persistence
 
@@ -118,8 +117,8 @@ go-qrdb's user store, xkey stores them locally.
 
 - **Unit** — `fido2_test.go`, `ctap2_test.go`, `authdata_test.go`,
   `device_test.go`, `device_edge_cases_test.go`, `hmac_secret_test.go`,
-  `hmac_secret_derivation_test.go` (the derivation-compatibility suite — this is
-  what protects the legacy path), `hid_linux_test.go`, `coverage_test.go`,
+  `hmac_secret_derivation_test.go` (pins the CTAP2 derivation against the
+  authenticator simulator), `hid_linux_test.go`, `coverage_test.go`,
   `coverage_boost_test.go`.
 - **Mock device** — `mock_test.go` supplies a `HIDDeviceEnumerator`, so the
   whole ceremony path runs with no hardware.

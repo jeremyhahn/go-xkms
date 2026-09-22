@@ -89,7 +89,7 @@ func TestGenerateKeyHandler_PartitionReachesTheBackend(t *testing.T) {
 		partition = attrs.Partition
 		return rsa.GenerateKey(rand.Reader, 2048)
 	}
-	body := `{"backend":"test-backend","key_id":"k","key_type":"rsa","partition":"p1"}`
+	body := `{"backend":"test-backend","key_id":"k","key_type":"rsa","algorithm":"rsa","partition":"p1"}`
 	w := httptest.NewRecorder()
 	newTestHandlerContext().GenerateKeyHandler(w, httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(body)))
 	require.Less(t, w.Code, 300, w.Body.String())

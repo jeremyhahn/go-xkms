@@ -84,34 +84,21 @@ func setupFIDO2HandlerTest(t *testing.T, wa *pkgwebauthn.Service) *chi.Mux {
 // handleSDKBeginRegistration
 // ============================================================================
 
-// TestHandleSDKBeginRegistration_LegacyUsernameKey verifies the SDK route
-// still accepts the login key under the previous "username" spelling for the
-// compatibility release, so clients built against it keep registering.
-func TestHandleSDKBeginRegistration_LegacyUsernameKey(t *testing.T) {
+// TestHandleSDKBeginRegistration_UsernameKeyNotRecognized verifies the SDK
+// route reads the login key from "email" only: a body that carries the
+// address solely under the removed "username" wire key never resolves an
+// account by that address, proving the alias was deleted outright rather
+// than kept as a silent fallback (owner rule 2026-09-22, PR 2).
+func TestHandleSDKBeginRegistration_UsernameKeyNotRecognized(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin",
 		bytes.NewReader([]byte(`{"username":"alice@example.com","display_name":"Alice"}`))))
 
-	require.Equal(t, http.StatusOK, rr.Code)
-	var resp transport.BeginRegistrationResponse
-	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.NotEmpty(t, resp.SessionID)
-}
-
-// TestHandleSDKBeginRegistration_ConflictingKeysRejected verifies a body that
-// names different login keys under "email" and "username" is a bad request,
-// not a registration against whichever value the decoder happened to pick.
-func TestHandleSDKBeginRegistration_ConflictingKeysRejected(t *testing.T) {
-	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
-
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin",
-		bytes.NewReader([]byte(`{"email":"alice@example.com","username":"alice"}`))))
-
-	require.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Contains(t, rr.Body.String(), "legacy username key")
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+	assert.NotContains(t, rr.Body.String(), "alice@example.com",
+		"the removed \"username\" key must not be read as the login key")
 }
 
 func TestHandleSDKBeginRegistration_Success(t *testing.T) {
@@ -268,31 +255,19 @@ func TestHandleSDKBeginAuthentication_UnknownUser(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-// TestHandleSDKBeginAuthentication_LegacyUsernameKey verifies the SDK route
-// still reads the login key from the legacy "username" spelling for the
-// compatibility release: the body reaches the service, which reports the
-// unknown account (500) rather than the decoder refusing the body (400).
-func TestHandleSDKBeginAuthentication_LegacyUsernameKey(t *testing.T) {
+// TestHandleSDKBeginAuthentication_UsernameKeyNotRecognized verifies the SDK
+// route reads the login key from "email" only: a body that carries the
+// address solely under the removed "username" wire key resolves an empty
+// login key, not the address, and so is reported as the same unknown-account
+// error an empty Email always produces (owner rule 2026-09-22, PR 2).
+func TestHandleSDKBeginAuthentication_UsernameKeyNotRecognized(t *testing.T) {
 	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
 
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin",
-		bytes.NewReader([]byte(`{"username":"nobody@example.com"}`))))
+		bytes.NewReader([]byte(`{"username":"alice@example.com"}`))))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-}
-
-// TestHandleSDKBeginAuthentication_ConflictingKeysRejected verifies a body
-// naming different login keys under "email" and "username" is a bad request.
-func TestHandleSDKBeginAuthentication_ConflictingKeysRejected(t *testing.T) {
-	r := setupFIDO2HandlerTest(t, newTestWebAuthnService(t))
-
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/authentication/begin",
-		bytes.NewReader([]byte(`{"email":"alice@example.com","username":"alice"}`))))
-
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Contains(t, rr.Body.String(), "legacy username key")
 }
 
 func TestHandleSDKBeginAuthentication_NotConfigured(t *testing.T) {

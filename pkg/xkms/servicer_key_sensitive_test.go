@@ -48,9 +48,9 @@ func TestExportKeyMaterialRefusesSensitiveKeys(t *testing.T) {
 	t.Run("a sensitive key never yields its plaintext", func(t *testing.T) {
 		const keyID = "sensitive-secret"
 		_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID:      keyID,
-			Backend:    "software",
-			KeyType:    "Symmetric",
+			KeyID:   keyID,
+			Backend: "software",
+			KeyType: "Symmetric", Algorithm: "Symmetric",
 			KeySize:    256,
 			Exportable: true,
 			Sensitive:  true,
@@ -70,9 +70,9 @@ func TestExportKeyMaterialRefusesSensitiveKeys(t *testing.T) {
 	t.Run("a non-sensitive exportable key still exports", func(t *testing.T) {
 		const keyID = "plain-secret"
 		_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID:      keyID,
-			Backend:    "software",
-			KeyType:    "Symmetric",
+			KeyID:   keyID,
+			Backend: "software",
+			KeyType: "Symmetric", Algorithm: "Symmetric",
 			KeySize:    256,
 			Exportable: true,
 			Sensitive:  false,
@@ -105,9 +105,9 @@ func TestSensitiveSurvivesTheKeyRecord(t *testing.T) {
 
 	const keyID = "persisted-sensitive-secret"
 	_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID:      keyID,
-		Backend:    "software",
-		KeyType:    "Symmetric",
+		KeyID:   keyID,
+		Backend: "software",
+		KeyType: "Symmetric", Algorithm: "Symmetric",
 		KeySize:    256,
 		Exportable: true,
 		Sensitive:  true,

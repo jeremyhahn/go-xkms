@@ -310,7 +310,7 @@ func TestHandleUnseal_AdditionalPaths(t *testing.T) {
 		genParams := GenerateKeyParams{
 			KeyID:   "unseal-roundtrip-key",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
@@ -357,7 +357,7 @@ func TestHandleUnseal_AdditionalPaths(t *testing.T) {
 		genParams := GenerateKeyParams{
 			KeyID:   "unseal-nokey-test",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		genParamsJSON, _ := json.Marshal(genParams)

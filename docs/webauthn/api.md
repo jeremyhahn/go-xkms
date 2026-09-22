@@ -68,18 +68,13 @@ and `FinishAuthenticationRequest` carry the same field as `email` (the field
 numbers are unchanged, so the binary encoding is compatible with earlier
 clients).
 
-**Compatibility window.** The field was previously spelled `username` on the
-wire in all three requests while carrying the email, and a caller that read
-the name literally ran the ceremony against the wrong account. For one
-release the JSON decoders still accept the login key under the legacy
-`username` key, and the Go client encodes the login key under **both** keys
-with the same value, so a client on this release still registers and
-authenticates against a server that reads only the legacy key during a
-rolling upgrade. A body that carries both keys with different values is
-refused with `400` and `transport.ErrRegistrationLoginKeyConflict` or
-`transport.ErrAuthenticationLoginKeyConflict` rather than one value being
-chosen silently. The legacy key is removed from both the decoders and the
-encoders in the release after the rename.
+**BREAKING (2026-09-22).** The field was previously spelled `username` on the
+wire in all three requests while carrying the email, which invited a caller
+to read the name literally and run the ceremony against the wrong account.
+The `username` key, its parallel encoding, and the conflict-detection
+decoders have been removed outright: `email` is the only login key any
+decoder reads, and a body that still carries `username` has that key ignored
+rather than honoured.
 
 ## Related identity routes
 

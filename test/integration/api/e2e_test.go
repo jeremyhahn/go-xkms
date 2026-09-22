@@ -289,7 +289,7 @@ func TestE2EGRPCToREST(t *testing.T) {
 	_, err = grpcClient.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	assertNoError(t, err, "Failed to create key via gRPC")
@@ -455,11 +455,12 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 			defer cancel()
 
 			req := &pb.GenerateKeyRequest{
-				KeyId:   keyID,
-				Backend: "software",
-				KeyType: kt.keyType,
-				KeySize: kt.keySize,
-				Curve:   kt.curve,
+				KeyId:     keyID,
+				Backend:   "software",
+				KeyType:   kt.keyType,
+				Algorithm: kt.keyType,
+				KeySize:   kt.keySize,
+				Curve:     kt.curve,
 			}
 
 			_, err := grpcClient.client.GenerateKey(ctx, req)

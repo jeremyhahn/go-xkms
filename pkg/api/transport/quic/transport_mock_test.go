@@ -242,7 +242,7 @@ func TestGenerateKey_MockConnected(t *testing.T) {
 	defer cleanup()
 
 	resp, err := tr.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
-		KeyID: "key-1", Backend: "software", KeyType: "ECDSA",
+		KeyID: "key-1", Backend: "software", KeyType: "ECDSA", Algorithm: "ECDSA",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "key-1", resp.KeyID)

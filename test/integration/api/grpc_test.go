@@ -186,11 +186,12 @@ func TestGRPCGenerateKey(t *testing.T) {
 			defer cancel()
 
 			req := &pb.GenerateKeyRequest{
-				KeyId:   keyID,
-				Backend: "software",
-				KeyType: tt.keyType,
-				KeySize: tt.keySize,
-				Curve:   tt.curve,
+				KeyId:     keyID,
+				Backend:   "software",
+				KeyType:   tt.keyType,
+				Algorithm: tt.keyType,
+				KeySize:   tt.keySize,
+				Curve:     tt.curve,
 			}
 
 			resp, err := client.client.GenerateKey(ctx, req)
@@ -244,7 +245,7 @@ func TestGRPCListKeys(t *testing.T) {
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	assertNoError(t, err, "Failed to create test key")
@@ -308,7 +309,7 @@ func TestGRPCGetKey(t *testing.T) {
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	assertNoError(t, err, "Failed to create test key")
@@ -360,7 +361,7 @@ func TestGRPCSignVerify(t *testing.T) {
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	assertNoError(t, err, "Failed to create test key")
@@ -445,7 +446,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	assertNoError(t, err, "Failed to create test key")
@@ -509,7 +510,7 @@ func TestGRPCErrorHandling(t *testing.T) {
 			name: "Generate key without key_id",
 			operation: func() error {
 				_, err := client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
-					KeyType: "rsa",
+					KeyType: "rsa", Algorithm: "rsa",
 				})
 				return err
 			},

@@ -418,8 +418,8 @@ func TestWrapKeyByID_TargetBackendNoImportExport(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "wrap-target-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -465,7 +465,7 @@ func TestDeriveKeyECDH_KeyNotECDSA(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rsa-for-ecdh",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -504,8 +504,8 @@ func TestDeriveKeyECDH_BackendNoKeyAgreement(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-for-ecdh-unimpl",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -529,7 +529,7 @@ func TestDecrypt_AsymmetricRSA_ErrorPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rsa-decrypt-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -572,7 +572,7 @@ func TestVerify_Ed25519_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ed25519-verify-key",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	})
 	require.NoError(t, err)
 
@@ -602,7 +602,7 @@ func TestVerify_Ed25519_InvalidSignature(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ed25519-verify-inv",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	})
 	require.NoError(t, err)
 
@@ -624,8 +624,8 @@ func TestVerify_ECDSA_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-verify-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -654,8 +654,8 @@ func TestVerify_MissingData_NonEd25519Key(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-verify-nodata",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -697,8 +697,8 @@ func TestEncryptAsym_NonRSAKeyError(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-for-encrypt",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -741,8 +741,8 @@ func TestRotateKey_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rotate-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -909,7 +909,7 @@ func TestGenerateKey_Ed25519Type(t *testing.T) {
 	resp, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ed25519-gen-test",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.KeyId)
@@ -923,7 +923,7 @@ func TestGenerateKey_SymmetricAES256Type(t *testing.T) {
 	resp, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "aes256-gen-test",
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 256,
 	})
 	require.NoError(t, err)
@@ -937,7 +937,7 @@ func TestGenerateKey_SymmetricAES128Type(t *testing.T) {
 	resp, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "aes128-gen-test",
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 128,
 	})
 	require.NoError(t, err)
@@ -951,7 +951,7 @@ func TestGenerateKey_SymmetricAES192Type(t *testing.T) {
 	resp, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "aes192-gen-test",
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 192,
 	})
 	require.NoError(t, err)
@@ -984,8 +984,8 @@ func TestGetKey_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "get-key-test",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -1021,8 +1021,8 @@ func TestListKeys_WithGeneratedKeys(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "list-keys-test",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -1049,8 +1049,8 @@ func TestDeleteKey_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "delete-key-test",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -1107,7 +1107,7 @@ func TestSeal_WithRSAKey_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "seal-rsa-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -1130,7 +1130,7 @@ func TestUnseal_InvalidCiphertext(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "unseal-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -1155,7 +1155,7 @@ func TestSign_RSAKey(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rsa-sign-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -1232,7 +1232,7 @@ func TestVerify_RSA_InvalidSignature(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rsa-verify-invalid",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -1274,7 +1274,7 @@ func TestSign_Ed25519Key(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ed25519-sign-test",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	})
 	require.NoError(t, err)
 
@@ -1295,9 +1295,9 @@ func TestGetImportParameters_RSAKeySuccessPath(t *testing.T) {
 
 	// Generate an exportable RSA key for import parameters
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-rsa",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "import-params-rsa",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
@@ -1320,9 +1320,9 @@ func TestExportKey_SymmetricKeySuccessPath(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "export-sym-key-wrap",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "export-sym-key-wrap",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1343,9 +1343,9 @@ func TestExportKeyMaterial_SymmetricSuccessPath(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "export-sym-key",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "export-sym-key",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1366,9 +1366,9 @@ func TestWrapKeyByID_FullPath(t *testing.T) {
 
 	// Create a wrapping RSA key
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "wrapping-key-byid",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "wrapping-key-byid",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
@@ -1376,9 +1376,9 @@ func TestWrapKeyByID_FullPath(t *testing.T) {
 
 	// Create an exportable symmetric key to wrap
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "target-sym-key-byid",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "target-sym-key-byid",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1402,9 +1402,9 @@ func TestUnwrapKeyByID_FullPath(t *testing.T) {
 
 	// Create an RSA key for wrapping
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
@@ -1412,9 +1412,9 @@ func TestUnwrapKeyByID_FullPath(t *testing.T) {
 
 	// Create an exportable symmetric key
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym-key",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym-key",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1457,18 +1457,18 @@ func TestUnwrapKeyByID_RSATargetType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key2",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key2",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym2",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym2",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1504,18 +1504,18 @@ func TestUnwrapKeyByID_ECDSATargetType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key3",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key3",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym3",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym3",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1549,18 +1549,18 @@ func TestUnwrapKeyByID_Ed25519TargetType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key4",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key4",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym4",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym4",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1593,18 +1593,18 @@ func TestUnwrapKeyByID_AES128TargetType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key5",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key5",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym5",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym5",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    128,
 		Exportable: true,
 	})
@@ -1645,18 +1645,18 @@ func TestUnwrapKeyByID_AES192TargetType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key6",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key6",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym6",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym6",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    192,
 		Exportable: true,
 	})
@@ -1696,18 +1696,18 @@ func TestUnwrapKeyByID_InvalidTargetKeyType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key7",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key7",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym7",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym7",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1740,18 +1740,18 @@ func TestUnwrapKeyByID_InvalidSymmetricKeySize(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key8",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key8",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym8",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym8",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1785,18 +1785,18 @@ func TestUnwrapKeyByID_NoKeyTypeWithNoKeySize(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key9",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key9",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym9",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym9",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1828,18 +1828,18 @@ func TestUnwrapKeyByID_InvalidECDSACurve(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key10",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key10",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
 	require.NoError(t, err)
 
 	_, err = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "source-sym10",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "source-sym10",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1874,9 +1874,9 @@ func TestCopyKey_SuccessPath(t *testing.T) {
 
 	// Generate an exportable symmetric key (small enough for RSA wrapping)
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "copy-source-key",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "copy-source-key",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1900,9 +1900,9 @@ func TestImportKey_SymmetricWithSoftwareBackend(t *testing.T) {
 
 	// Generate an exportable symmetric key, export it, then import it back
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-sym-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-sym-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -1935,9 +1935,9 @@ func TestGetImportParameters_ECDSAKeyType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-ecdsa",
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyId:   "import-params-ecdsa",
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P256",
 		Exportable: true,
 	})
@@ -1959,9 +1959,9 @@ func TestGetImportParameters_Ed25519KeyType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-ed25519",
-		Backend:    "software",
-		KeyType:    "ed25519",
+		KeyId:   "import-params-ed25519",
+		Backend: "software",
+		KeyType: "ed25519", Algorithm: "ed25519",
 		Exportable: true,
 	})
 	require.NoError(t, err)
@@ -1981,9 +1981,9 @@ func TestGetImportParameters_SymmetricKeyType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-sym",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-params-sym",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2005,9 +2005,9 @@ func TestGetImportParameters_SymmetricAES128(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-sym128",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-params-sym128",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    128,
 		Exportable: true,
 	})
@@ -2029,9 +2029,9 @@ func TestGetImportParameters_SymmetricAES192(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-sym192",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-params-sym192",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    192,
 		Exportable: true,
 	})
@@ -2053,9 +2053,9 @@ func TestGetImportParameters_UnsupportedKeyType(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-dummy",
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyId:   "import-params-dummy",
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P256",
 		Exportable: true,
 	})
@@ -2078,9 +2078,9 @@ func TestGetImportParameters_InvalidSymmetricKeySize(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-sym-bad",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-params-sym-bad",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2104,9 +2104,9 @@ func TestGetImportParameters_ECDSAInvalidCurve(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-params-ecdsa-bad",
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyId:   "import-params-ecdsa-bad",
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P256",
 		Exportable: true,
 	})
@@ -2133,9 +2133,9 @@ func TestImportKey_ECDSATypeBranch(t *testing.T) {
 
 	// Generate exportable ECDSA, export, re-import
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-ecdsa-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-ecdsa-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2167,9 +2167,9 @@ func TestImportKey_Ed25519TypeBranch(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-ed-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-ed-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2198,9 +2198,9 @@ func TestImportKey_UnsupportedTypeBranch(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-unsup-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-unsup-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2232,9 +2232,9 @@ func TestImportKey_AESInvalidKeySizeWithBackend(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-aes-bad-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-aes-bad-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2267,9 +2267,9 @@ func TestImportKey_ECDSAInvalidCurveWithBackend(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-ecdsa-bad-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-ecdsa-bad-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -2307,7 +2307,7 @@ func TestGetTLSCertificate_SuccessPath(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "tls-cert-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -2342,8 +2342,8 @@ func TestDecrypt_ECDSAKey_NoDecrypter(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-decrypt-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -2367,8 +2367,8 @@ func TestCopyKey_NonExportableKey(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "copy-noexport",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -2391,8 +2391,8 @@ func TestGenerateKey_InvalidCurve(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "gen-bad-curve",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "INVALID_CURVE",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "INVALID_CURVE",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -2407,7 +2407,7 @@ func TestGenerateKey_UnsupportedKeyType(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "gen-unsupported",
 		Backend: "software",
-		KeyType: "chacha20",
+		KeyType: "chacha20", Algorithm: "chacha20",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -2422,7 +2422,7 @@ func TestGenerateKey_InvalidSymmetricSize(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "gen-bad-sym-size",
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 512,
 	})
 	require.Error(t, err)
@@ -2438,7 +2438,7 @@ func TestGenerateKey_BackendNotFound(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "gen-no-backend",
 		Backend: "nonexistent",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -2705,9 +2705,9 @@ func TestWrapKey_SuccessPath(t *testing.T) {
 
 	// Generate an RSA key for wrapping
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "wrap-rsa-key",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "wrap-rsa-key",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
@@ -2742,9 +2742,9 @@ func TestUnwrapKey_SuccessPath(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "unwrap-rsa-key-full",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyId:   "unwrap-rsa-key-full",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	})
@@ -3155,7 +3155,7 @@ func TestEncrypt_WithAsymmetricKey(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rsa-for-sym-encrypt",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)
@@ -3180,9 +3180,9 @@ func TestDecrypt_SymmetricKey(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "aes-for-decrypt",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "aes-for-decrypt",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -3217,7 +3217,7 @@ func TestDecrypt_SymmetricKeyInvalidCiphertext(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "aes-for-decrypt-bad",
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 256,
 	})
 	require.NoError(t, err)
@@ -3243,8 +3243,8 @@ func TestExportKey_NonExportableKey(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "non-export-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 
@@ -3263,9 +3263,9 @@ func TestExportKeyMaterial_NonSymmetricKey(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "ecdsa-export-mat",
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyId:   "ecdsa-export-mat",
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P256",
 		Exportable: true,
 	})
@@ -3344,9 +3344,9 @@ func TestImportKey_RSATypeBranch(t *testing.T) {
 
 	// Export a symmetric key, then try to import it as RSA
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-rsa-branch-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-rsa-branch-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})
@@ -3380,9 +3380,9 @@ func TestImportKey_AES128BranchWithExport(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-aes128-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-aes128-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    128,
 		Exportable: true,
 	})
@@ -3413,9 +3413,9 @@ func TestImportKey_AES192BranchWithExport(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
-		KeyId:      "import-aes192-src",
-		Backend:    "software",
-		KeyType:    "symmetric",
+		KeyId:   "import-aes192-src",
+		Backend: "software",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize:    192,
 		Exportable: true,
 	})
@@ -3450,7 +3450,7 @@ func TestImportKey_ECDSAInvalidCurveWithRealBackend(t *testing.T) {
 	// Export sym key
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId: "imp-ecdsa-curve-src", Backend: "software",
-		KeyType: "symmetric", KeySize: 256, Exportable: true,
+		KeyType: "symmetric", Algorithm: "symmetric", KeySize: 256, Exportable: true,
 	})
 	require.NoError(t, err)
 	exp, err := svc.ExportKey(context.Background(), &pb.ExportKeyRequest{
@@ -3477,7 +3477,7 @@ func TestImportKey_AESInvalidSizeWithRealBackend(t *testing.T) {
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId: "imp-aes-bad-src", Backend: "software",
-		KeyType: "symmetric", KeySize: 256, Exportable: true,
+		KeyType: "symmetric", Algorithm: "symmetric", KeySize: 256, Exportable: true,
 	})
 	require.NoError(t, err)
 	exp, err := svc.ExportKey(context.Background(), &pb.ExportKeyRequest{
@@ -3504,7 +3504,7 @@ func TestImportKey_UnsupportedTypeWithRealBackend(t *testing.T) {
 
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId: "imp-unsup-src", Backend: "software",
-		KeyType: "symmetric", KeySize: 256, Exportable: true,
+		KeyType: "symmetric", Algorithm: "symmetric", KeySize: 256, Exportable: true,
 	})
 	require.NoError(t, err)
 	exp, err := svc.ExportKey(context.Background(), &pb.ExportKeyRequest{
@@ -3553,8 +3553,8 @@ func TestDeriveKeyECDH_InvalidPeerKey(t *testing.T) {
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-ecdh-bad-peer",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	require.NoError(t, err)
 

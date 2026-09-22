@@ -273,6 +273,10 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		writeError(w, ErrInvalidKeyType, http.StatusBadRequest)
 		return
 	}
+	if req.Algorithm == "" {
+		writeError(w, ErrMissingAlgorithm, http.StatusBadRequest)
+		return
+	}
 
 	// Get the backend (this also validates it exists)
 	ks, err := h.lookupBackend(req.Backend)
@@ -281,25 +285,17 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Parse key algorithm
-	// Support both direct algorithm names (aes-256-gcm) and simple types (aes)
-	// Use Algorithm field if provided, otherwise fall back to KeyType for backward compatibility
+	// Parse key algorithm.
+	// Support both direct algorithm names (aes-256-gcm) and simple types (aes).
 	algorithmStr := req.Algorithm
-	if algorithmStr == "" {
-		algorithmStr = req.KeyType
-	}
 	keyType := strings.ToLower(algorithmStr)
 	var keyAlgorithm x509.PublicKeyAlgorithm
 	var symmetricAlgorithm types.SymmetricAlgorithm
 
-	// Check if it's a simple "symmetric" request and use algorithm if provided
+	// The literal "symmetric" algorithm names no specific cipher: default to
+	// AES-256-GCM.
 	if keyType == "symmetric" {
-		if req.Algorithm == "" {
-			// Default to AES-256-GCM if no algorithm specified
-			symmetricAlgorithm = types.SymmetricAES256GCM
-		} else {
-			symmetricAlgorithm = types.SymmetricAlgorithm(strings.ToLower(req.Algorithm))
-		}
+		symmetricAlgorithm = types.SymmetricAES256GCM
 	} else {
 		// Try parsing as asymmetric algorithm
 		keyAlgorithm, _ = types.ParseKeyAlgorithm(algorithmStr)

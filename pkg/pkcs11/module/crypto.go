@@ -2125,9 +2125,13 @@ func (cm *CryptoManager) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	keyType := mechanismToKeyType(req.Mechanism.Type)
 
 	sdkReq := &transport.GenerateKeyRequest{
-		KeyID:      req.KeyID,
-		Backend:    backend,
+		KeyID:   req.KeyID,
+		Backend: backend,
+		// KeyType and Algorithm both carry the mechanism's translated name:
+		// the server requires Algorithm on every request and no longer infers
+		// it from KeyType (owner rule 2026-09-22, PR 2).
 		KeyType:    keyType,
+		Algorithm:  keyType,
 		KeySize:    req.KeySize,
 		Exportable: req.Exportable,
 		Sensitive:  req.Sensitive,
@@ -2177,9 +2181,12 @@ func (cm *CryptoManager) GenerateKeyPair(ctx context.Context, req *GenerateKeyPa
 	sdkReq := &transport.GenerateKeyRequest{
 		KeyID:   req.KeyID,
 		Backend: backend,
-		KeyType: keyType,
-		KeySize: req.KeySize,
-		Curve:   req.Curve,
+		// KeyType and Algorithm both carry the mechanism's translated name;
+		// see GenerateKey above.
+		KeyType:   keyType,
+		Algorithm: keyType,
+		KeySize:   req.KeySize,
+		Curve:     req.Curve,
 	}
 
 	return cm.client.GenerateKey(ctx, sdkReq)

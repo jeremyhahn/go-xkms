@@ -18,7 +18,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -167,14 +166,6 @@ const (
 	hmacSecretInputPinUVAuthProtocol = 0x04
 )
 
-// legacyDerivationWarning is emitted whenever the deprecated derivation is
-// used. It is deliberately blunt: an operator who sees it is holding a key
-// that any holder of the credential ID and salt can recompute.
-const legacyDerivationWarning = "SECURITY: FIDO2 legacy hmac-secret derivation is in use. " +
-	"The resulting key is NOT bound to the authenticator and can be recomputed from the credential ID and salt alone, " +
-	"both of which are normally stored beside the encrypted volume. " +
-	"Use this mode only to unlock a volume enrolled before the derivation was fixed, and re-enroll that volume immediately."
-
 // DeriveSecret derives an HMAC secret from the credential.
 //
 // The secret is the authenticator's hmac-secret extension output: the
@@ -183,17 +174,11 @@ const legacyDerivationWarning = "SECURITY: FIDO2 legacy hmac-secret derivation i
 // HMAC-SHA-256(CredRandom, salt) encrypted under the same secret, and the
 // platform decrypts it. CredRandom never leaves the authenticator, so the
 // result is reproducible only in its presence.
-//
-// When config.DerivationMode is DerivationModeLegacyInsecure the deprecated
-// pre-fix derivation runs instead. See DerivationModeLegacyInsecure.
 func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*AuthenticationResult, error) {
 	if config == nil {
 		return nil, ErrAuthenticationConfigNil
 	}
 
-	if config.DerivationMode == DerivationModeLegacyInsecure {
-		return h.deriveSecretLegacy(config)
-	}
 	return h.deriveSecretCTAP2(config)
 }
 
@@ -372,65 +357,6 @@ func newAuthenticationResult(resp *GetAssertionResponse) (*AuthenticationResult,
 		Signature:      resp.Signature,
 		AuthData:       authData,
 	}, nil
-}
-
-// deriveSecretLegacy reproduces the derivation go-xkms performed before the
-// hmac-secret extension output was parsed correctly, so that a volume
-// enrolled against it can be unlocked once and re-enrolled.
-//
-// Deprecated: migration only. The value it returns is not hardware-bound.
-func (h *HMACSecretExtension) deriveSecretLegacy(config *AuthenticationConfig) (*AuthenticationResult, error) {
-	slog.Warn(legacyDerivationWarning,
-		"relying_party_id", config.RelyingPartyID,
-		"derivation_mode", "legacy-insecure",
-	)
-
-	// The legacy request sent the raw salt under a "salt1" key, which no
-	// conforming authenticator interprets as an hmac-secret input. It is
-	// reproduced verbatim so the legacy result is reproduced verbatim.
-	extensions := map[string]interface{}{
-		ExtensionHMACSecret: map[string]interface{}{
-			"salt1": config.Salt,
-		},
-	}
-
-	resp, err := h.getAssertion(config, extensions)
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := newAuthenticationResult(resp)
-	if err != nil {
-		return nil, err
-	}
-
-	result.HMACSecret = legacyHMACSecret(resp.AuthData, config)
-	return result, nil
-}
-
-// legacyHMACSecret reproduces the pre-fix extraction byte for byte: raw
-// bytes from a fixed offset that ignores the AT flag and is never
-// CBOR-decoded, falling back to SHA-256(credentialID || salt), which is
-// computable from public data alone.
-//
-// Deprecated: migration only.
-func legacyHMACSecret(authData []byte, config *AuthenticationConfig) []byte {
-	var secret []byte
-
-	if authData[authDataRPIDHashLen]&FlagExtensionData != 0 && len(authData) > authDataHeaderLen {
-		if extensionData := authData[authDataHeaderLen:]; len(extensionData) >= hmacSecretSaltLen {
-			secret = extensionData[:hmacSecretSaltLen]
-		}
-	}
-
-	if len(secret) == 0 {
-		hash := sha256.New()
-		hash.Write(config.CredentialID)
-		hash.Write(config.Salt)
-		secret = hash.Sum(nil)
-	}
-
-	return secret
 }
 
 // GenerateDerivedKey generates a derived key from FIDO2 HMAC-secret

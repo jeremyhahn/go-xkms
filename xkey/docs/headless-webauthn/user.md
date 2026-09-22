@@ -121,7 +121,7 @@ copied off the machine.
 |---|---|---|
 | SPKI pin mismatch | the server did not verify | **stop.** Confirm the pin out of band |
 | "authenticator not found" | no `xkey fido2` daemon running | start it first |
-| enrolment created an account nobody asked for | `--username` defaulted to the OS user, which the server looked up as an email and missed | pass `--email`; the OS-user default is gone |
+| enrolment created an account nobody asked for | the login key defaulted to the OS user, which the server looked up as an email and missed | pass `--email`; there is no default and no `--username` flag |
 | a bare 401 with no detail | intentional — the server does not say why | read the client's error, then the server log |
 | routes return 404 | the server has no token issuer configured | server-side |
 | it hangs at login | the authenticator is waiting for a touch: no PIN was sent, or `--require-touch` is still on | send the PIN with `--pin-stdin` and run the daemon with `--require-touch=false`; or answer with `xkey touch` |

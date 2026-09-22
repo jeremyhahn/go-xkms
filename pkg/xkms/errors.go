@@ -141,6 +141,11 @@ var (
 	// ErrInvalidKeyID indicates the key identifier is invalid.
 	ErrInvalidKeyID = errors.New("keystore: invalid key ID")
 
+	// ErrMissingAlgorithm indicates a GenerateKeyRequest carries no Algorithm.
+	// KeyType is a purpose (SIGNING, TLS, ...), not an algorithm name, and no
+	// longer doubles as one when Algorithm is empty.
+	ErrMissingAlgorithm = errors.New("keystore: algorithm is required")
+
 	// ErrKeyAlreadyExists indicates a key with the same identifier already exists.
 	ErrKeyAlreadyExists = errors.New("keystore: key already exists")
 

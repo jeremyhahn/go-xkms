@@ -416,7 +416,7 @@ func TestAuthz_GenerateKeyMapping(t *testing.T) {
 	_, _ = svc.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   "gen-key-1",
 		Backend: "software",
-		KeyType: "ecdsa",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 	})
 
 	assertMapping(t, rbac, authzMapping{resource: "keys", action: "create"})
@@ -546,7 +546,7 @@ func TestAuthz_GenerateKeyDenied(t *testing.T) {
 	_, err := svc.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   "denied-key",
 		Backend: "software",
-		KeyType: "ecdsa",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 	})
 	if err == nil {
 		t.Fatal("Expected error on denied authorization")
@@ -680,7 +680,7 @@ func TestAuthz_AuditLogOnDeny(t *testing.T) {
 	_, _ = svc.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   "denied-key",
 		Backend: "software",
-		KeyType: "ecdsa",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 	})
 
 	events := auditLog.Events()

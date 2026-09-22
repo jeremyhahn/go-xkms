@@ -14,7 +14,6 @@
 package transport
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -864,64 +863,6 @@ type BeginRegistrationRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
-// beginRegistrationWire is the JSON shape BeginRegistrationRequest encodes
-// to and decodes from. It carries the legacy "username" key, the field's
-// spelling from when a user had one identifier, so for one release clients
-// built against that spelling keep working against this server and this
-// client keeps working against a server that still reads that spelling.
-type beginRegistrationWire struct {
-	Email       string `json:"email"`
-	Username    string `json:"username,omitempty"`
-	DisplayName string `json:"display_name"`
-}
-
-// MarshalJSON emits the login key under "email" and, for one release, under
-// the legacy "username" key with the same value, so a client on this
-// release registering against a server that still reads the legacy key does
-// not send it an empty login key during a rolling upgrade.
-func (r BeginRegistrationRequest) MarshalJSON() ([]byte, error) {
-	return json.Marshal(beginRegistrationWire{
-		Email:       r.Email,
-		Username:    r.Email,
-		DisplayName: r.DisplayName,
-	})
-}
-
-// UnmarshalJSON accepts the login key under "email" or, for one release,
-// under the legacy "username" key. A body that carries both with different
-// values is refused with ErrRegistrationLoginKeyConflict: the field is a
-// string either way, so a silently chosen value would surface later as
-// "account not found" or as a credential enrolled against the wrong account.
-func (r *BeginRegistrationRequest) UnmarshalJSON(data []byte) error {
-	var wire beginRegistrationWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	email, err := loginKeyFromWire(wire.Email, wire.Username, ErrRegistrationLoginKeyConflict)
-	if err != nil {
-		return err
-	}
-	r.Email = email
-	r.DisplayName = wire.DisplayName
-	return nil
-}
-
-// loginKeyFromWire resolves one login key out of the "email" key and the
-// legacy "username" key of a decoded ceremony request. Either key alone is
-// the login key; both with one value are that value; both with different
-// values are refused with conflict, since a silently chosen value would
-// surface later as "account not found" or as a ceremony run against the
-// wrong account.
-func loginKeyFromWire(email, username string, conflict error) (string, error) {
-	if email != "" && username != "" && email != username {
-		return "", conflict
-	}
-	if email != "" {
-		return email, nil
-	}
-	return username, nil
-}
-
 // BeginRegistrationResponse carries the session ID and the JSON-marshaled
 // WebAuthn registration options produced by the relying party.
 type BeginRegistrationResponse struct {
@@ -971,38 +912,6 @@ type BeginAuthenticationRequest struct {
 	Email string `json:"email"`
 }
 
-// beginAuthenticationWire is the JSON shape BeginAuthenticationRequest
-// encodes to and decodes from; the legacy "username" key is carried for one
-// release, as beginRegistrationWire carries it.
-type beginAuthenticationWire struct {
-	Email    string `json:"email"`
-	Username string `json:"username,omitempty"`
-}
-
-// MarshalJSON emits the login key under "email" and, for one release, under
-// the legacy "username" key with the same value, so a client on this
-// release still authenticates against a server that reads only the legacy
-// key during a rolling upgrade.
-func (r BeginAuthenticationRequest) MarshalJSON() ([]byte, error) {
-	return json.Marshal(beginAuthenticationWire{Email: r.Email, Username: r.Email})
-}
-
-// UnmarshalJSON accepts the login key under "email" or, for one release,
-// under the legacy "username" key, refusing a body that carries both with
-// different values with ErrAuthenticationLoginKeyConflict.
-func (r *BeginAuthenticationRequest) UnmarshalJSON(data []byte) error {
-	var wire beginAuthenticationWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	email, err := loginKeyFromWire(wire.Email, wire.Username, ErrAuthenticationLoginKeyConflict)
-	if err != nil {
-		return err
-	}
-	r.Email = email
-	return nil
-}
-
 // BeginAuthenticationResponse carries the session ID and the JSON-marshaled
 // WebAuthn authentication options produced by the relying party.
 type BeginAuthenticationResponse struct {
@@ -1031,46 +940,6 @@ type FinishAuthenticationRequest struct {
 	// authenticator (the response from navigator.credentials.get()). It is the
 	// exact body that protocol.ParseCredentialRequestResponseBody expects.
 	AssertionJSON string `json:"assertion_json"`
-}
-
-// finishAuthenticationWire is the JSON shape FinishAuthenticationRequest
-// encodes to and decodes from; the legacy "username" key is carried for one
-// release, as beginRegistrationWire carries it.
-type finishAuthenticationWire struct {
-	SessionID     string `json:"session_id"`
-	Email         string `json:"email"`
-	Username      string `json:"username,omitempty"`
-	AssertionJSON string `json:"assertion_json"`
-}
-
-// MarshalJSON emits the login key under "email" and, for one release, under
-// the legacy "username" key with the same value; see
-// BeginAuthenticationRequest.MarshalJSON.
-func (r FinishAuthenticationRequest) MarshalJSON() ([]byte, error) {
-	return json.Marshal(finishAuthenticationWire{
-		SessionID:     r.SessionID,
-		Email:         r.Email,
-		Username:      r.Email,
-		AssertionJSON: r.AssertionJSON,
-	})
-}
-
-// UnmarshalJSON accepts the login key under "email" or, for one release,
-// under the legacy "username" key, refusing a body that carries both with
-// different values with ErrAuthenticationLoginKeyConflict.
-func (r *FinishAuthenticationRequest) UnmarshalJSON(data []byte) error {
-	var wire finishAuthenticationWire
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	email, err := loginKeyFromWire(wire.Email, wire.Username, ErrAuthenticationLoginKeyConflict)
-	if err != nil {
-		return err
-	}
-	r.SessionID = wire.SessionID
-	r.Email = email
-	r.AssertionJSON = wire.AssertionJSON
-	return nil
 }
 
 // FinishAuthenticationResponse contains the result of WebAuthn authentication.

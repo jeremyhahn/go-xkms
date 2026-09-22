@@ -67,11 +67,10 @@ type casGetResponse struct {
 
 // casRequest / casResponse mirror the PKCS11StateCAS DTOs. A swap never
 // creates (#186): Expected is compared as an ordinary value, nil included, and
-// an absent key always refuses. ExpectAbsent remains on the wire for
-// compatibility but is REDEFINED server-side as "PutIfAbsent(New)" rather than
-// "require absent" -- this test does not set it, using the dedicated
-// put-if-absent endpoint instead (putIfAbsentRequest/Response below), the same
-// split ModuleStorage.incrementViaCAS and remoteBackend use in-process.
+// an absent key always refuses. Seeding the counter's first value uses the
+// dedicated put-if-absent endpoint instead (putIfAbsentRequest/Response
+// below), the same split ModuleStorage.incrementViaCAS and remoteBackend use
+// in-process.
 type casRequest struct {
 	TenantID string `json:"tenant_id,omitempty"`
 	Token    string `json:"token"`

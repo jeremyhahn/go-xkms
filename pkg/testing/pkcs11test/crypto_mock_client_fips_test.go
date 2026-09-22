@@ -140,7 +140,7 @@ func TestCryptoMockClient_RawPKCS1v15_FIPS140Only(t *testing.T) {
 func generateRawSignKey(t *testing.T, c *CryptoMockClient) {
 	t.Helper()
 	_, err := c.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
-		KeyID: rawSignKeyID, KeyType: "rsa", KeySize: 2048,
+		KeyID: rawSignKeyID, KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey(rsa-2048): %v", err)

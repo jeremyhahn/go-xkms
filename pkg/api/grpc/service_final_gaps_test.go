@@ -128,7 +128,7 @@ func TestVerifyErrorPaths(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-rsa-for-verify-empty-data",
 			Backend: "software",
-			KeyType: "RSA",
+			KeyType: "RSA", Algorithm: "RSA",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -235,7 +235,7 @@ func TestSignErrorPaths(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-rsa-for-empty-data",
 			Backend: "software",
-			KeyType: "RSA",
+			KeyType: "RSA", Algorithm: "RSA",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -861,7 +861,7 @@ func TestGenerateKeyErrorPaths(t *testing.T) {
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		})
 		if err == nil {
 			t.Fatal("Expected error for missing key_id")
@@ -878,7 +878,7 @@ func TestGenerateKeyErrorPaths(t *testing.T) {
 	t.Run("returns error for missing backend", func(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-key",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		})
 		if err == nil {
 			t.Fatal("Expected error for missing backend")
@@ -913,7 +913,7 @@ func TestGenerateKeyErrorPaths(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-key",
 			Backend: "software",
-			KeyType: "unsupported-algo",
+			KeyType: "unsupported-algo", Algorithm: "unsupported-algo",
 		})
 		if err == nil {
 			t.Fatal("Expected error for unsupported algorithm")
@@ -931,8 +931,8 @@ func TestGenerateKeyErrorPaths(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "invalid-curve-key",
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "invalid-curve",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "invalid-curve",
 		})
 		if err == nil {
 			t.Fatal("Expected error for invalid curve")
@@ -1177,7 +1177,7 @@ func TestVerifyWithEd25519Key(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ed25519-verify-test",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -1221,8 +1221,8 @@ func TestListKeysPagination(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "pagination-key-" + string(rune('a'+i)),
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "P256",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "P256",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
@@ -1499,7 +1499,7 @@ func TestSignWithSHA512Hash(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "sha512-sign-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1531,7 +1531,7 @@ func TestVerifyWithSHA512Hash(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "sha512-verify-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1577,7 +1577,7 @@ func TestGenerateKeyWithDefaultKeySize(t *testing.T) {
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "default-keysize-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		// KeySize not specified - should default
 	})
 	if err != nil {
@@ -1598,7 +1598,7 @@ func TestGenerateKeyECDSAWithDefaultCurve(t *testing.T) {
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "default-curve-test",
 		Backend: "software",
-		KeyType: "ecdsa",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		// Curve not specified - should default to P256
 	})
 	if err != nil {
@@ -1682,7 +1682,7 @@ func TestRotateKeyWithRSA(t *testing.T) {
 	genResp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rsa-rotate-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1714,7 +1714,7 @@ func TestGetKeyWithRSA(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "get-rsa-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1747,8 +1747,8 @@ func TestSignVerifyWithECDSAP384(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "ecdsa-p384-test",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P384",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P384",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -1833,8 +1833,8 @@ func TestVerifyWithInvalidSignatureECDSA(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "verify-invalid-ecdsa-test",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -1879,7 +1879,7 @@ func TestEncryptWithAsymmetricKey(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "encrypt-asym-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1912,7 +1912,7 @@ func TestDecryptWithAsymmetricKey(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "decrypt-asym-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1945,7 +1945,7 @@ func TestSignWithDefaultHash(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "sign-default-hash-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -1977,7 +1977,7 @@ func TestVerifyWithDefaultHash(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "verify-default-hash-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -2024,7 +2024,7 @@ func TestSignWithInvalidHash(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "sign-invalid-hash-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -2061,7 +2061,7 @@ func TestVerifyWithWrongHash(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "verify-wrong-hash-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -2169,7 +2169,7 @@ func TestListKeyFilteredByType(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "filter-rsa-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	if err != nil {
@@ -2179,8 +2179,8 @@ func TestListKeyFilteredByType(t *testing.T) {
 	_, err = service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "filter-ecdsa-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)

@@ -135,7 +135,7 @@ func TestHandler_Seal(t *testing.T) {
 		genParams := GenerateKeyParams{
 			KeyID:   "seal-key-1",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		genParamsJSON, err := json.Marshal(genParams)

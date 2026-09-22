@@ -116,27 +116,20 @@ error (`ErrHMACSecretMissing`, `ErrHMACSecretOutputInvalid`,
 `ErrInvalidExtensions`, ...). No key is returned. A value that is not the
 authenticator's secret is not a key.
 
-### Legacy derivation (deprecated, migration only)
+### BREAKING (2026-09-22): legacy derivation removed
 
 Releases before this derivation was corrected read 32 raw bytes from a fixed
 offset in the authenticator data and, failing that, used
 `SHA-256(credentialID || salt)`. Both credential ID and salt are public and
-are normally stored beside the encrypted volume, so a key derived that way is
-**not hardware-bound** and can be recomputed without the token.
+are normally stored beside the encrypted volume, so a key derived that way was
+**not hardware-bound** and could be recomputed without the token.
 
-`DerivationModeLegacyInsecure` reproduces that behavior byte for byte so an
-affected volume can be unlocked once and re-enrolled. It is never selected by
-default and cannot be enabled from a configuration file — the
-`AuthenticationConfig.DerivationMode` field is excluded from every
-serialization format. Selecting it logs a prominent warning.
-
-```
-xkmsctl fido2 authenticate \
-  --credential-id <id> --salt <salt> --legacy-hmac-derivation
-```
-
-Volumes unlocked this way must be re-enrolled immediately. The mode is
-deprecated and will be removed.
+That derivation, its `DerivationModeLegacyInsecure` mode, and the
+`xkmsctl fido2 authenticate --legacy-hmac-derivation` flag that selected it
+have been deleted outright — `DerivationModeCTAP2` is the only mode. A volume
+still keyed with the legacy derivation cannot be unlocked through this SDK;
+re-enroll it against a release that still carries the removed mode, then
+re-enroll again on the current release.
 
 ## Virtual Authenticator
 

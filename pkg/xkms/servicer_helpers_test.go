@@ -405,14 +405,17 @@ func TestBuildKeyAttributes_UnsupportedAlgorithm(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnsupportedKeyAlgorithm)
 }
 
-func TestBuildKeyAttributes_DefaultECDSAP256(t *testing.T) {
-	// No algorithm specified, should default to ECDSA P-256
-	attrs, err := buildKeyAttributes(&transport.GenerateKeyRequest{
+// TestBuildKeyAttributes_NoAlgorithmIsUnsupported verifies buildKeyAttributes
+// no longer defaults an empty Algorithm to ECDSA P-256: GenerateKey now
+// enforces Algorithm is non-empty before calling here (owner rule
+// 2026-09-22, PR 2), so an empty value reaching this function is treated the
+// same as any other unrecognized algorithm name.
+func TestBuildKeyAttributes_NoAlgorithmIsUnsupported(t *testing.T) {
+	_, err := buildKeyAttributes(&transport.GenerateKeyRequest{
 		KeyID: "default-key",
 	}, "software", types.StoreSoftware)
-	require.NoError(t, err)
-	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
-	assert.Equal(t, elliptic.P256(), attrs.ECCAttributes.Curve)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnsupportedKeyAlgorithm)
 }
 
 func TestBuildKeyAttributes_WithKeyType(t *testing.T) {

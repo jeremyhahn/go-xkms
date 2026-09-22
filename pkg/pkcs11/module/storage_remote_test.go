@@ -63,21 +63,12 @@ func (f *fakePKCS11StateClient) PKCS11StatePutIfAbsent(_ context.Context, req *t
 
 // PKCS11StateCAS evaluates the guard the way the server's servicer does
 // (#186): a swap never creates, so an absent key refuses regardless of
-// Expected. ExpectAbsent is REDEFINED rather than honoured as "require
-// absent" -- it selects PutIfAbsent(New) instead of a compare-and-swap,
-// mirroring pkg/xkms/servicer_pkcs11state.go's PKCS11StateCAS.
+// Expected.
 func (f *fakePKCS11StateClient) PKCS11StateCAS(_ context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := f.k(req.TenantID, req.Token, req.Key)
 	current, present := f.data[key]
-	if req.ExpectAbsent {
-		if present {
-			return &transport.PKCS11StateCASResponse{Swapped: false, Current: current}, nil
-		}
-		f.data[key] = append([]byte(nil), req.New...)
-		return &transport.PKCS11StateCASResponse{Swapped: true}, nil
-	}
 	if !present || !bytes.Equal(current, req.Expected) {
 		return &transport.PKCS11StateCASResponse{Swapped: false, Current: current}, nil
 	}
@@ -223,9 +214,9 @@ func TestRemoteBackend_NamespaceIsForwarded(t *testing.T) {
 
 // TestRemoteBackend_CompareAndSwap verifies the remote backend translates the
 // storage.CompareAndSwapper contract onto the CAS RPC (#186): an absent key
-// refuses regardless of expected -- a swap does not create, and this client
-// never sends ExpectAbsent -- a matching expected swaps, and a stale expected
-// is rejected with the current value returned so the caller can retry.
+// refuses regardless of expected -- a swap does not create -- a matching
+// expected swaps, and a stale expected is rejected with the current value
+// returned so the caller can retry.
 func TestRemoteBackend_CompareAndSwap(t *testing.T) {
 	b, _ := newRemoteBackendForTest(t)
 	ctx := context.Background()
@@ -264,41 +255,4 @@ func TestRemoteBackend_CompareAndSwap(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, swapped)
 	assert.Equal(t, v1, current)
-}
-
-// TestRemoteBackend_CompareAndSwap_NeverSendsExpectAbsent pins the client-side
-// half of #186: the CAS path no longer derives ExpectAbsent from a nil
-// expected, because ExpectAbsent no longer means "require absent" on the
-// server (it now means "PutIfAbsent(New)", a different operation this client
-// reaches directly via PutIfAbsent instead).
-func TestRemoteBackend_CompareAndSwap_NeverSendsExpectAbsent(t *testing.T) {
-	ctx := context.Background()
-	spy := &expectAbsentSpyClient{fakePKCS11StateClient: newFakePKCS11StateClient()}
-	b, err := newRemoteBackend(spy, "tenant-x", "tok0")
-	require.NoError(t, err)
-	cas := b.(storage.CompareAndSwapper)
-
-	require.NoError(t, b.Put(ctx, "k", []byte("v")))
-
-	_, _, err = cas.CompareAndSwap(ctx, "k", nil, []byte("v2"))
-	require.NoError(t, err)
-	assert.False(t, spy.gotExpectAbsent, "CompareAndSwap must never set ExpectAbsent (#186)")
-
-	// A non-nil expected must not set it either.
-	_, _, err = cas.CompareAndSwap(ctx, "k", []byte("v"), []byte("v2"))
-	require.NoError(t, err)
-	assert.False(t, spy.gotExpectAbsent)
-}
-
-// expectAbsentSpyClient wraps fakePKCS11StateClient to record whether a
-// PKCS11StateCAS call set ExpectAbsent, without changing the fake's storage
-// semantics.
-type expectAbsentSpyClient struct {
-	*fakePKCS11StateClient
-	gotExpectAbsent bool
-}
-
-func (s *expectAbsentSpyClient) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error) {
-	s.gotExpectAbsent = req.ExpectAbsent
-	return s.fakePKCS11StateClient.PKCS11StateCAS(ctx, req)
 }

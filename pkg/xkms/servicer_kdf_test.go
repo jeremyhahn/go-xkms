@@ -311,9 +311,9 @@ func TestDeriveKeyAfterGenerateKeyIsTheModulesOwnPath(t *testing.T) {
 	// CKM_DES3_KEY_GEN and CKM_GENERIC_SECRET_KEY_GEN alike.
 	const keyID = "module-generated-base"
 	_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
-		KeyID:      keyID,
-		Backend:    "software",
-		KeyType:    "Symmetric",
+		KeyID:   keyID,
+		Backend: "software",
+		KeyType: "Symmetric", Algorithm: "Symmetric",
 		KeySize:    256,
 		Exportable: true,
 	})

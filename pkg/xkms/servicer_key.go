@@ -54,6 +54,9 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 	if req.KeyID == "" {
 		return nil, ErrInvalidKeyID
 	}
+	if req.Algorithm == "" {
+		return nil, ErrMissingAlgorithm
+	}
 
 	backendName := req.Backend
 	if backendName == "" {
@@ -1242,17 +1245,14 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, s
 	attrs.Hash = hash
 
 	attrs.KeyType = types.ParseKeyType(req.KeyType)
-	// Default to signing key type if not specified or not a purpose name (the
-	// field doubles as the algorithm for callers that send only a key type).
+	// Default to signing key type if not specified or not a purpose name.
 	if attrs.KeyType == 0 {
 		attrs.KeyType = types.KeyTypeSigning
 	}
 
-	// Determine algorithm
+	// Algorithm is required (enforced by GenerateKey before this is called);
+	// KeyType is a purpose, never a fallback algorithm name.
 	algorithm := req.Algorithm
-	if algorithm == "" {
-		algorithm = req.KeyType
-	}
 
 	// Exportability is set before the symmetric branch returns, not after the
 	// asymmetric parsing. It used to be assigned only at the end of this
@@ -1277,13 +1277,6 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string, s
 	if symAlgo := ParseSymmetricAlgorithm(algorithm); symAlgo != "" {
 		attrs.SymmetricAlgorithm = symAlgo
 		attrs.KeyType = types.KeyTypeSecret
-		return attrs, nil
-	}
-
-	if algorithm == "" {
-		// No algorithm specified, default to ECDSA P-256
-		attrs.KeyAlgorithm = x509.ECDSA
-		attrs.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P256()}
 		return attrs, nil
 	}
 

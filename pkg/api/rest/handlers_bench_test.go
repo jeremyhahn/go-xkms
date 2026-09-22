@@ -140,7 +140,7 @@ func BenchmarkREST_GenerateKeyRSA(b *testing.B) {
 				reqBody := GenerateKeyRequest{
 					KeyID:   fmt.Sprintf("bench-rsa-%d", i),
 					Backend: "software",
-					KeyType: "rsa",
+					KeyType: "rsa", Algorithm: "rsa",
 					KeySize: keySize,
 				}
 
@@ -178,8 +178,8 @@ func BenchmarkREST_GenerateKeyECDSA(b *testing.B) {
 				reqBody := GenerateKeyRequest{
 					KeyID:   fmt.Sprintf("bench-ecdsa-%d", i),
 					Backend: "software",
-					KeyType: "ecdsa",
-					Curve:   curve,
+					KeyType: "ecdsa", Algorithm: "ecdsa",
+					Curve: curve,
 				}
 
 				body, err := json.Marshal(reqBody)
@@ -209,8 +209,8 @@ func BenchmarkREST_SignData(b *testing.B) {
 	genReq := GenerateKeyRequest{
 		KeyID:   "bench-sign-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	}
 
 	body, _ := json.Marshal(genReq)
@@ -262,8 +262,8 @@ func BenchmarkREST_GetPublicKey(b *testing.B) {
 	genReq := GenerateKeyRequest{
 		KeyID:   "bench-pubkey",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	}
 
 	body, _ := json.Marshal(genReq)
@@ -308,8 +308,8 @@ func BenchmarkREST_ListKeys(b *testing.B) {
 				reqBody := GenerateKeyRequest{
 					KeyID:   fmt.Sprintf("bench-list-%d", i),
 					Backend: "software",
-					KeyType: "ecdsa",
-					Curve:   "P256",
+					KeyType: "ecdsa", Algorithm: "ecdsa",
+					Curve: "P256",
 				}
 
 				body, _ := json.Marshal(reqBody)
@@ -343,8 +343,8 @@ func BenchmarkREST_ConcurrentRequests(b *testing.B) {
 	genReq := GenerateKeyRequest{
 		KeyID:   "bench-concurrent",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	}
 
 	body, _ := json.Marshal(genReq)

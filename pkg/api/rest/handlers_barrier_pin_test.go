@@ -85,7 +85,7 @@ func TestBarrierInitializeHandler_Success(t *testing.T) {
 	h, _ := newTestBarrierHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize",
-		strings.NewReader(`{"secret":"test-secret-123"}`))
+		strings.NewReader(`{"password_b64":"dGVzdC1zZWNyZXQtMTIz"}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierInitializeHandler(w, req)
@@ -101,7 +101,7 @@ func TestBarrierInitializeHandler_NilBarrier(t *testing.T) {
 	h := NewHandlerContext("test")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize",
-		strings.NewReader(`{"secret":"test"}`))
+		strings.NewReader(`{"password_b64":"dGVzdA=="}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierInitializeHandler(w, req)
@@ -125,7 +125,7 @@ func TestBarrierInitializeHandler_MissingSecret(t *testing.T) {
 	h, _ := newTestBarrierHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize",
-		strings.NewReader(`{"secret":""}`))
+		strings.NewReader(`{"password_b64":""}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierInitializeHandler(w, req)
@@ -141,7 +141,7 @@ func TestBarrierInitializeHandler_AlreadyInitialized(t *testing.T) {
 	require.NoError(t, barrier.Initialize(context.Background(), creds))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize",
-		strings.NewReader(`{"secret":"second"}`))
+		strings.NewReader(`{"password_b64":"c2Vjb25k"}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierInitializeHandler(w, req)
@@ -160,7 +160,7 @@ func TestBarrierUnsealHandler_Success(t *testing.T) {
 	require.NoError(t, barrier.Seal())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal",
-		strings.NewReader(`{"secret":"my-secret"}`))
+		strings.NewReader(`{"password_b64":"bXktc2VjcmV0"}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierUnsealHandler(w, req)
@@ -175,7 +175,7 @@ func TestBarrierUnsealHandler_NilBarrier(t *testing.T) {
 	h := NewHandlerContext("test")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal",
-		strings.NewReader(`{"secret":"test"}`))
+		strings.NewReader(`{"password_b64":"dGVzdA=="}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierUnsealHandler(w, req)
@@ -199,7 +199,7 @@ func TestBarrierUnsealHandler_MissingSecret(t *testing.T) {
 	h, _ := newTestBarrierHandler(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal",
-		strings.NewReader(`{"secret":""}`))
+		strings.NewReader(`{"password_b64":""}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierUnsealHandler(w, req)
@@ -216,7 +216,7 @@ func TestBarrierUnsealHandler_InvalidCredentials(t *testing.T) {
 	require.NoError(t, barrier.Seal())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal",
-		strings.NewReader(`{"secret":"wrong"}`))
+		strings.NewReader(`{"password_b64":"d3Jvbmc="}`))
 	w := httptest.NewRecorder()
 
 	h.BarrierUnsealHandler(w, req)
@@ -922,4 +922,39 @@ func TestBarrierUnsealHandler_PasswordTooLarge(t *testing.T) {
 	h.BarrierUnsealHandler(w, req)
 
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+// TestBarrierInitializeHandler_PlaintextSecretKeyIgnored verifies the removed
+// plaintext "secret" JSON key carries no credential: a body that sends it
+// alone, with no password_b64, is refused as ErrMissingSecret rather than
+// silently accepted (owner rule 2026-09-22, PR 2 — no aliases for old names).
+func TestBarrierInitializeHandler_PlaintextSecretKeyIgnored(t *testing.T) {
+	h, _ := newTestBarrierHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize",
+		strings.NewReader(`{"secret":"test-secret-123"}`))
+	w := httptest.NewRecorder()
+
+	h.BarrierInitializeHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestBarrierUnsealHandler_PlaintextSecretKeyIgnored is the unseal-side twin
+// of TestBarrierInitializeHandler_PlaintextSecretKeyIgnored.
+func TestBarrierUnsealHandler_PlaintextSecretKeyIgnored(t *testing.T) {
+	h, barrier := newTestBarrierHandler(t)
+
+	creds := seal.MustCredentials([]byte("my-secret"))
+	defer creds.Secret.Destroy()
+	require.NoError(t, barrier.Initialize(context.Background(), creds))
+	require.NoError(t, barrier.Seal())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal",
+		strings.NewReader(`{"secret":"my-secret"}`))
+	w := httptest.NewRecorder()
+
+	h.BarrierUnsealHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

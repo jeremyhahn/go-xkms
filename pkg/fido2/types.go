@@ -367,21 +367,6 @@ const (
 	// specified by CTAP 2.1 12.5. It is the only mode that yields a
 	// hardware-bound key.
 	DerivationModeCTAP2 DerivationMode = iota
-
-	// DerivationModeLegacyInsecure reproduces the derivation go-xkms used
-	// before the hmac-secret extension was parsed correctly. It reads raw
-	// bytes from a fixed offset in the authenticator data and, when that
-	// yields nothing, computes SHA-256(credentialID || salt) — a value
-	// derived entirely from non-secret material that is normally stored
-	// beside the encrypted volume. A key produced in this mode is NOT
-	// hardware-bound and can be recomputed without the authenticator.
-	//
-	// It exists for one purpose: unlocking a volume that was enrolled with
-	// the broken derivation, once, so it can be re-enrolled with
-	// DerivationModeCTAP2. It is deprecated and will be removed.
-	//
-	// Deprecated: migration only. Re-enroll the volume immediately.
-	DerivationModeLegacyInsecure
 )
 
 // AuthenticationConfig for FIDO2 authentication

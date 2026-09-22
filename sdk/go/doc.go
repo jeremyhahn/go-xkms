@@ -42,10 +42,11 @@
 //
 //	// Generate a key
 //	resp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
-//	    KeyID:   "my-key",
-//	    Backend: "software",
-//	    KeyType: "EC",
-//	    Curve:   "P-256",
+//	    KeyID:     "my-key",
+//	    Backend:   "software",
+//	    KeyType:   "signing",
+//	    Algorithm: "EC",
+//	    Curve:     "P-256",
 //	})
 //
 // # Protocol Selection

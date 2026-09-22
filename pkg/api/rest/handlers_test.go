@@ -376,7 +376,7 @@ func TestGenerateKeyHandler(t *testing.T) {
 	t.Run("returns error for non-existent backend", func(t *testing.T) {
 		setupTestService(t, "test-backend")
 		ctx := newTestHandlerContext()
-		body := `{"key_id": "test-key", "backend": "nonexistent", "key_type": "rsa"}`
+		body := `{"key_id": "test-key", "backend": "nonexistent", "key_type": "rsa", "algorithm": "rsa"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -389,7 +389,7 @@ func TestGenerateKeyHandler(t *testing.T) {
 		setupTestService(t, "test-backend")
 		ctx := newTestHandlerContext()
 
-		body := `{"key_id": "rsa-key", "backend": "test-backend", "key_type": "rsa", "key_size": 2048}`
+		body := `{"key_id": "rsa-key", "backend": "test-backend", "key_type": "rsa", "algorithm": "rsa", "key_size": 2048}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -409,7 +409,7 @@ func TestGenerateKeyHandler(t *testing.T) {
 		setupTestService(t, "test-backend")
 		ctx := newTestHandlerContext()
 
-		body := `{"key_id": "ecdsa-key", "backend": "test-backend", "key_type": "ecdsa", "curve": "P256"}`
+		body := `{"key_id": "ecdsa-key", "backend": "test-backend", "key_type": "ecdsa", "algorithm": "ecdsa", "curve": "P256"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -428,7 +428,7 @@ func TestGenerateKeyHandler(t *testing.T) {
 		setupTestService(t, "test-backend")
 		ctx := newTestHandlerContext()
 
-		body := `{"key_id": "ed25519-key", "backend": "test-backend", "key_type": "ed25519"}`
+		body := `{"key_id": "ed25519-key", "backend": "test-backend", "key_type": "ed25519", "algorithm": "ed25519"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -447,7 +447,7 @@ func TestGenerateKeyHandler(t *testing.T) {
 		setupTestService(t, "test-backend")
 		ctx := newTestHandlerContext()
 
-		body := `{"key_id": "unknown-key", "backend": "test-backend", "key_type": "unknown"}`
+		body := `{"key_id": "unknown-key", "backend": "test-backend", "key_type": "unknown", "algorithm": "unknown"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(body))
 		w := httptest.NewRecorder()
 

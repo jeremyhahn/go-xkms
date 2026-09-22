@@ -513,16 +513,12 @@ func init() {
 	authRegisterCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authRegisterCmd.Flags().String("setup-token", "", "Pre-authorized enrollment token")
 	authRegisterCmd.Flags().String("email", "", "Canonical email login key to enroll (required)")
-	authRegisterCmd.Flags().String("username", "", "Deprecated spelling of --email")
 	authRegisterCmd.Flags().String("display-name", "", "Human-readable account name (default: the login key)")
 	addPINFlags(authRegisterCmd)
-	markLoginKeyFlagDeprecated(authRegisterCmd)
 
 	// Login command flags
 	authLoginCmd.Flags().String("server", "", "Server URL (required)")
 	authLoginCmd.Flags().String("email", "", "Canonical email login key to authenticate (required)")
-	authLoginCmd.Flags().String("username", "", "Deprecated spelling of --email")
-	markLoginKeyFlagDeprecated(authLoginCmd)
 	authLoginCmd.Flags().Bool("piv", false, "Authenticate with a PIV slot certificate over mTLS instead of WebAuthn")
 	authLoginCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
@@ -829,47 +825,31 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 }
 
 // resolveAuthLoginKey returns the canonical login key the server resolves a
-// WebAuthn ceremony by: the --email flag, or the deprecated --username flag
-// still carrying that value.
+// WebAuthn ceremony by: the --email flag.
 //
 // The server's ceremony takes an email — XKMSService.BeginRegistration and
 // BeginAuthentication forward this value to GetUserByEmail — so this is the
-// only identifier that can address a principal. The previous fallback to the
-// current operating system user is gone rather than deprecated: an OS account
-// name is never an email, so defaulting to it can only produce a lookup that
-// misses. On a relying party with public registration enabled that miss is not
-// even an error, it is a sign-up, and the credential is enrolled onto a second
+// only identifier that can address a principal. There is no fallback to the
+// current operating system user or to any other flag: an OS account name is
+// never an email, so defaulting to it can only produce a lookup that misses.
+// On a relying party with public registration enabled that miss is not even
+// an error, it is a sign-up, and the credential is enrolled onto a second
 // principal nobody created.
 func resolveAuthLoginKey(cmd *cobra.Command) (string, error) {
 	email := strings.TrimSpace(cmdFlagString(cmd, "email"))
 	if email != "" {
 		return validateLoginKey(email)
 	}
-
-	// The deprecated spelling of the same flag. An operator already passing an
-	// email under it keeps working; cobra prints the deprecation notice.
-	if username := strings.TrimSpace(cmdFlagString(cmd, "username")); username != "" {
-		return validateLoginKey(username)
-	}
-
 	return "", ErrAuthEmailRequired
 }
 
 // validateLoginKey refuses a login key that is not an email address.
 //
-// The comment on resolveAuthLoginKey claimed the deprecated --username path was
-// safe because "an operator already passing an email keeps working" — but the
-// code accepted ANY non-empty string and forwarded it as an email login key. So
-// `--username alice` reproduced exactly the misrouting this change exists to
-// eliminate: a closed relying party fails to find the principal, and an open one
-// enrols the credential onto a second one keyed by "alice" (Codex, go-xkms #190).
-//
 // The check is deliberately minimal — an address must PARSE and must be the bare
 // address, not a display-name form, because the server stores this value
 // verbatim as an index key and "Alice <a@b.com>" would become the key. Full
 // RFC 5322 conformance is not the goal; distinguishing an email from an OS
-// account name is. Applied to --email as well, since a bad value is exactly as
-// dangerous whichever flag carries it.
+// account name is.
 func validateLoginKey(value string) (string, error) {
 	addr, err := mail.ParseAddress(value)
 	if err != nil || addr.Address != value {
@@ -883,21 +863,6 @@ func validateLoginKey(value string) (string, error) {
 func cmdFlagString(cmd *cobra.Command, name string) string {
 	value, _ := cmd.Flags().GetString(name)
 	return value
-}
-
-// markLoginKeyFlagDeprecated hides --username from help and makes cobra warn
-// when it is used. The flag is still honored: an operator already passing the
-// email under the old spelling keeps working.
-func markLoginKeyFlagDeprecated(cmd *cobra.Command) {
-	if err := cmd.Flags().MarkDeprecated(
-		"username",
-		"use --email: the WebAuthn ceremony resolves the account by its canonical email login key",
-	); err != nil {
-		// The flag is declared immediately above; a failure here means the
-		// declaration was removed and the deprecation notice would silently
-		// stop being shown.
-		panic(err)
-	}
 }
 
 // authServerDetail formats a server-supplied failure message as error detail.

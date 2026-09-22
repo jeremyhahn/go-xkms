@@ -116,11 +116,10 @@ says so. `errors.Is(err, fido2.ErrInvalidPIN)` still matches.
   with a slot certificate; WebAuthn is not attempted.
 - **The login key is an email, and it has no default.** The server resolves
   both ceremonies with `GetUserByEmail`, so `--email` is the only identifier
-  that reaches a principal. The old `--username` default — the current OS user,
-  in a CI container `root` or a random UID — could only miss that lookup, and
-  on a relying party with public registration enabled a miss is a sign-up that
-  enrols the credential onto an account nobody created. `--username` remains as
-  a deprecated spelling of `--email`.
+  that reaches a principal; there is no `--username` flag. The old default —
+  the current OS user, in a CI container `root` or a random UID — could only
+  miss that lookup, and on a relying party with public registration enabled a
+  miss is a sign-up that enrols the credential onto an account nobody created.
 - **Tokens are session credentials.** `xkey/pkg/tokenstore` holds them; treat
   the store's protection as the credential's protection.
 - **Concurrency.** One ceremony at a time per authenticator; the CTAP2 channel
@@ -129,9 +128,10 @@ says so. `errors.Is(err, fido2.ErrInvalidPIN)` still matches.
 ## Error semantics
 
 Failures surface as the CLI's typed errors over the client's:
-`ErrServerURLRequired`, `ErrUsernameRequired`, `ErrRegistrationFailed`,
-`ErrAuthenticationFailed`, `ErrServerUnavailable`, `ErrAuthenticatorNotFound`,
-`ErrCTAPOperationFailed`, `ErrInvalidServerResponse`, `ErrInvalidChallenge`.
+`ErrServerURLRequired`, `ErrAuthEmailRequired`, `ErrAuthLoginKeyNotEmail`,
+`ErrRegistrationFailed`, `ErrAuthenticationFailed`, `ErrServerUnavailable`,
+`ErrAuthenticatorNotFound`, `ErrCTAPOperationFailed`,
+`ErrInvalidServerResponse`, `ErrInvalidChallenge`.
 
 **Fail closed:** an SPKI mismatch, an unavailable authenticator, an expired or
 invalid setup token, an origin or RP-id mismatch, or an expired ceremony session

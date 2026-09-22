@@ -150,9 +150,9 @@ func TestSDK_Embedded_KeyLifecycle(t *testing.T) {
 
 	// Generate key
 	genResp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
-		KeyID:      keyID,
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyID:   keyID,
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P-256",
 		Exportable: true,
 	})
@@ -231,8 +231,8 @@ func TestSDK_Embedded_SignVerify(t *testing.T) {
 	_, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -453,8 +453,8 @@ func TestSDK_Embedded_MultipleKeys(t *testing.T) {
 		_, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 			KeyID:   keyID,
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "P-256",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "P-256",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey failed for %s: %v", keyID, err)

@@ -50,9 +50,9 @@ store cannot break a working pinned invocation.
 yet.** It verifies the server before a credential is created for it.
 
 **Pass `--email`.** It is the canonical login key the server resolves the
-account by, and it has no default. The old `--username` default was the current
-OS user — in a container usually `root` or a numeric UID — which the ceremony
-then looked up as an email and missed.
+account by, and it has no default. There is no `--username` flag: the old
+default was the current OS user — in a container usually `root` or a numeric
+UID — which the ceremony then looked up as an email and missed.
 
 ### Supplying the authenticator's CTAP2 PIN
 

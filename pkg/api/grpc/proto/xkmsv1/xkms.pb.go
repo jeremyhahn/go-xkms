@@ -16319,7 +16319,6 @@ type PKCS11StateCASRequest struct {
 	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
 	Expected      []byte                 `protobuf:"bytes,4,opt,name=expected,proto3" json:"expected,omitempty"`
 	New           []byte                 `protobuf:"bytes,5,opt,name=new,proto3" json:"new,omitempty"`
-	ExpectAbsent  bool                   `protobuf:"varint,6,opt,name=expect_absent,json=expectAbsent,proto3" json:"expect_absent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -16387,13 +16386,6 @@ func (x *PKCS11StateCASRequest) GetNew() []byte {
 		return x.New
 	}
 	return nil
-}
-
-func (x *PKCS11StateCASRequest) GetExpectAbsent() bool {
-	if x != nil {
-		return x.ExpectAbsent
-	}
-	return false
 }
 
 type PKCS11StateCASResponse struct {
@@ -17770,8 +17762,7 @@ func (x *PasswordGenerateResponse) GetLength() int32 {
 type BeginRegistrationRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// email is the canonical tenant-unique login key of the account the
-	// credential is enrolled against. Field 1 used to be spelled "username";
-	// the number is unchanged, so the binary encoding is compatible.
+	// credential is enrolled against.
 	Email         string `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	DisplayName   string `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -18002,8 +17993,7 @@ func (x *FinishRegistrationResponse) GetMessage() string {
 type BeginAuthenticationRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// email is the canonical tenant-unique login key of the account whose
-	// credentials are challenged. Field 1 used to be spelled "username"; the
-	// number is unchanged, so the binary encoding is compatible.
+	// credentials are challenged.
 	Email         string `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -18105,7 +18095,6 @@ type FinishAuthenticationRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// email is the login key of the account whose credentials are asserted.
-	// Field 2 used to be spelled "username"; the number is unchanged.
 	Email         string `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
 	AssertionJson string `protobuf:"bytes,3,opt,name=assertion_json,json=assertionJson,proto3" json:"assertion_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -21060,14 +21049,13 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x03key\x18\x03 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x04 \x01(\fR\x05value\"8\n" +
 	"\x1ePKCS11StatePutIfAbsentResponse\x12\x16\n" +
-	"\x06stored\x18\x01 \x01(\bR\x06stored\"\xaf\x01\n" +
+	"\x06stored\x18\x01 \x01(\bR\x06stored\"\x9f\x01\n" +
 	"\x15PKCS11StateCASRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n" +
 	"\x03key\x18\x03 \x01(\tR\x03key\x12\x1a\n" +
 	"\bexpected\x18\x04 \x01(\fR\bexpected\x12\x10\n" +
-	"\x03new\x18\x05 \x01(\fR\x03new\x12#\n" +
-	"\rexpect_absent\x18\x06 \x01(\bR\fexpectAbsent\"L\n" +
+	"\x03new\x18\x05 \x01(\fR\x03newJ\x04\b\x06\x10\aR\rexpect_absent\"L\n" +
 	"\x16PKCS11StateCASResponse\x12\x18\n" +
 	"\aswapped\x18\x01 \x01(\bR\aswapped\x12\x18\n" +
 	"\acurrent\x18\x02 \x01(\fR\acurrent\"x\n" +

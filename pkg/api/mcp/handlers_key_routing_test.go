@@ -159,7 +159,7 @@ func TestHandler_GenerateKey_CreatesInNamedBackendNotDefault(t *testing.T) {
 	const keyID = "routed-to-named-backend"
 
 	result, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 
@@ -182,7 +182,7 @@ func TestHandler_GenerateKey_UnknownBackendRefused(t *testing.T) {
 	server := twoEmptyBackendServer(t)
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "unknown-backend-key", Backend: "nosuchbackend", KeyType: "rsa", KeySize: 2048,
+		KeyID: "unknown-backend-key", Backend: "nosuchbackend", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.Error(t, err)
 
@@ -307,7 +307,7 @@ func TestHandler_GenerateKey_StoreTypeMatchesBackend(t *testing.T) {
 	const keyID = "store-type-follows-backend"
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 
@@ -348,7 +348,7 @@ func TestHandler_GenerateKey_GeneratedKeyIsUsableThroughTheNamedBackend(t *testi
 	const keyID = "generated-then-signed"
 
 	result, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 	reported := rsaPublicFromPEM(t, result.(GenerateKeyResult).PublicKeyPEM)
@@ -380,7 +380,7 @@ func TestHandler_GenerateKey_KeySizeArrives(t *testing.T) {
 	server := twoEmptyBackendServer(t)
 
 	result, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "sized-key", Backend: "tpm2", KeyType: "rsa", KeySize: 3072,
+		KeyID: "sized-key", Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 3072,
 	})
 	require.NoError(t, err)
 
@@ -394,7 +394,7 @@ func TestHandler_GenerateKey_RejectsAnUnusableKeySize(t *testing.T) {
 	server := twoEmptyBackendServer(t)
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "tiny-key", Backend: "tpm2", KeyType: "rsa", KeySize: 17,
+		KeyID: "tiny-key", Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 17,
 	})
 	require.Error(t, err, "a key size no RSA implementation accepts must be refused")
 }
@@ -406,7 +406,7 @@ func TestHandler_GenerateKey_CurveArrives(t *testing.T) {
 	server := twoEmptyBackendServer(t)
 
 	result, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "curved-key", Backend: "tpm2", KeyType: "ecdsa", Curve: "P-384",
+		KeyID: "curved-key", Backend: "tpm2", KeyType: "ecdsa", Algorithm: "ecdsa", Curve: "P-384",
 	})
 	require.NoError(t, err)
 
@@ -429,7 +429,7 @@ func TestHandler_GenerateKey_RejectsAnUnknownCurve(t *testing.T) {
 	server := twoEmptyBackendServer(t)
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "bad-curve-key", Backend: "tpm2", KeyType: "ecdsa", Curve: "P-999",
+		KeyID: "bad-curve-key", Backend: "tpm2", KeyType: "ecdsa", Algorithm: "ecdsa", Curve: "P-999",
 	})
 	require.Error(t, err)
 
@@ -520,7 +520,7 @@ func TestHandler_GenerateKey_TenantIDForwarded(t *testing.T) {
 	const keyID = "tenant-vs-shared"
 
 	raw, err := json.Marshal(GenerateKeyParams{
-		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: raw, ID: 1}
@@ -552,7 +552,7 @@ func TestHandler_GenerateKey_DifferentTenantsDoNotCollide(t *testing.T) {
 	const keyID = "shared-name-two-tenants"
 
 	raw, err := json.Marshal(GenerateKeyParams{
-		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "tpm2", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: raw, ID: 1}
@@ -624,7 +624,7 @@ func TestHandler_GenerateKey_AsymmetricWithoutBackendUsesTheDefault(t *testing.T
 	const keyID = "default-asymmetric-key"
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: keyID, KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 

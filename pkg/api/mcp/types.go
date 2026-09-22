@@ -104,14 +104,17 @@ type ListBackendsResult struct {
 	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
-// GenerateKeyParams represents parameters for key generation
+// GenerateKeyParams represents parameters for key generation. Algorithm is
+// required (rsa, ecdsa, ed25519, aes128-gcm, aes192-gcm, aes256-gcm, ...);
+// KeyType is the key's purpose (signing, encryption, ca, tls, ...) and is no
+// longer read as an algorithm name when Algorithm is empty.
 type GenerateKeyParams struct {
 	KeyID      string `json:"key_id"`
 	Backend    string `json:"backend"`
 	KeyType    string `json:"key_type"`
 	KeySize    int    `json:"key_size,omitempty"`
 	Curve      string `json:"curve,omitempty"`
-	Algorithm  string `json:"algorithm,omitempty"` // For AES: "aes128-gcm", "aes192-gcm", "aes256-gcm"
+	Algorithm  string `json:"algorithm"`
 	Exportable bool   `json:"exportable,omitempty"`
 	Sensitive  bool   `json:"sensitive,omitempty"` // CKA_SENSITIVE: plaintext is never released
 }

@@ -1673,11 +1673,11 @@ func TestDefaultFIDO2HandlerFactory_VirtualWithoutStateDir(t *testing.T) {
 }
 
 // =============================================================================
-// Legacy hmac-secret derivation opt-in
+// hmac-secret derivation
 // =============================================================================
 
 // newAuthenticateFlagSet builds the flag set the authenticate command reads.
-func newAuthenticateFlagSet(credID, salt string, legacy bool) *cobra.Command {
+func newAuthenticateFlagSet(credID, salt string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("credential-id", credID, "")
 	cmd.Flags().String("salt", salt, "")
@@ -1686,14 +1686,14 @@ func newAuthenticateFlagSet(credID, salt string, legacy bool) *cobra.Command {
 	cmd.Flags().String("device", "", "")
 	cmd.Flags().Bool("user-verification", false, "")
 	cmd.Flags().Bool("hex", false, "")
-	cmd.Flags().Bool("legacy-hmac-derivation", legacy, "")
 	return cmd
 }
 
-// TestFIDO2AuthenticateCmd_LegacyDerivationOptIn checks that the deprecated
-// derivation is selected only by the explicit flag, and that using it warns
-// the operator that the key is not hardware-bound.
-func TestFIDO2AuthenticateCmd_LegacyDerivationOptIn(t *testing.T) {
+// TestFIDO2AuthenticateCmd_UsesCTAP2Derivation checks that the CLI always
+// selects the CTAP2 derivation and never warns: the deprecated
+// --legacy-hmac-derivation opt-in was removed outright (owner rule
+// 2026-09-22, PR 2).
+func TestFIDO2AuthenticateCmd_UsesCTAP2Derivation(t *testing.T) {
 	cleanup := testSetupFIDO2(t)
 	defer cleanup()
 
@@ -1708,51 +1708,16 @@ func TestFIDO2AuthenticateCmd_LegacyDerivationOptIn(t *testing.T) {
 	salt := base64.StdEncoding.EncodeToString([]byte("test-salt"))
 
 	var buf bytes.Buffer
-	runFIDO2AuthenticateWithWriter(newAuthenticateFlagSet(credID, salt, true), []string{}, &buf)
-
-	if mockHandler.lastAuthConfig == nil {
-		t.Fatal("expected UnlockWithKey to be called")
-	}
-	if mockHandler.lastAuthConfig.DerivationMode != fido2.DerivationModeLegacyInsecure { //nolint:staticcheck // SA1019: asserts the legacy migration path is selected
-		t.Errorf("expected the legacy derivation to be selected, got %v", mockHandler.lastAuthConfig.DerivationMode)
-	}
-
-	output := buf.String()
-	if !strings.Contains(output, "NOT bound to your security key") {
-		t.Errorf("expected a warning that the key is not hardware-bound, got: %s", output)
-	}
-	if !strings.Contains(output, "re-enroll") {
-		t.Errorf("expected the warning to demand re-enrollment, got: %s", output)
-	}
-}
-
-// TestFIDO2AuthenticateCmd_DefaultsToCTAP2Derivation checks that without the
-// flag the CLI never selects the deprecated derivation and never warns.
-func TestFIDO2AuthenticateCmd_DefaultsToCTAP2Derivation(t *testing.T) {
-	cleanup := testSetupFIDO2(t)
-	defer cleanup()
-
-	mockHandler := &mockFIDO2Handler{derivedKey: make([]byte, 64)}
-	fido2HandlerFactory = createMockFIDO2HandlerFactory(mockHandler, nil)
-
-	defer func(previous *Config) { globalConfig = previous }(globalConfig)
-	globalConfig = NewConfig()
-	globalConfig.OutputFormat = "text"
-
-	credID := base64.StdEncoding.EncodeToString([]byte("test-credential-id"))
-	salt := base64.StdEncoding.EncodeToString([]byte("test-salt"))
-
-	var buf bytes.Buffer
-	runFIDO2AuthenticateWithWriter(newAuthenticateFlagSet(credID, salt, false), []string{}, &buf)
+	runFIDO2AuthenticateWithWriter(newAuthenticateFlagSet(credID, salt), []string{}, &buf)
 
 	if mockHandler.lastAuthConfig == nil {
 		t.Fatal("expected UnlockWithKey to be called")
 	}
 	if mockHandler.lastAuthConfig.DerivationMode != fido2.DerivationModeCTAP2 {
-		t.Errorf("expected the CTAP2 derivation by default, got %v", mockHandler.lastAuthConfig.DerivationMode)
+		t.Errorf("expected the CTAP2 derivation, got %v", mockHandler.lastAuthConfig.DerivationMode)
 	}
 	if strings.Contains(buf.String(), "WARNING") {
-		t.Errorf("the default path must not warn, got: %s", buf.String())
+		t.Errorf("authentication must not warn, got: %s", buf.String())
 	}
 }
 

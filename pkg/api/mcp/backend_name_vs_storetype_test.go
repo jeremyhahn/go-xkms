@@ -153,7 +153,7 @@ func TestMCPRoundTrip_NonKeywordBackendName(t *testing.T) {
 
 	// --- generateKey ---
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "token-a-generated", Backend: "token-a", KeyType: "ecdsa", Exportable: true,
+		KeyID: "token-a-generated", Backend: "token-a", KeyType: "ecdsa", Algorithm: "ecdsa", Exportable: true,
 	})
 	require.NoError(t, err)
 

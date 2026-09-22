@@ -193,7 +193,7 @@ func TestService_GenerateKey(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-rsa-key",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -212,8 +212,8 @@ func TestService_GenerateKey(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-ecdsa-key",
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "P256",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "P256",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
@@ -231,7 +231,7 @@ func TestService_GenerateKey(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-ed25519-key",
 			Backend: "software",
-			KeyType: "ed25519",
+			KeyType: "ed25519", Algorithm: "ed25519",
 		})
 		if err != nil {
 			t.Fatalf("GenerateKey failed: %v", err)
@@ -245,7 +245,7 @@ func TestService_GenerateKey(t *testing.T) {
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		})
 		if err == nil {
 			t.Fatal("Expected error")
@@ -263,7 +263,7 @@ func TestService_GenerateKey(t *testing.T) {
 	t.Run("returns error for missing backend", func(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-key",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		})
 		if err == nil {
 			t.Fatal("Expected error")
@@ -300,7 +300,7 @@ func TestService_GenerateKey(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-key",
 			Backend: "nonexistent",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		})
 		if err == nil {
 			t.Fatal("Expected error")
@@ -319,8 +319,8 @@ func TestService_GenerateKey(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "test-key",
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "invalid-curve",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "invalid-curve",
 		})
 		if err == nil {
 			t.Fatal("Expected error")
@@ -344,8 +344,8 @@ func TestService_ListKeys(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "list-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
@@ -420,8 +420,8 @@ func TestService_GetKey(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "get-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
@@ -505,8 +505,8 @@ func TestService_Sign(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "sign-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
@@ -590,8 +590,8 @@ func TestService_Verify(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "verify-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
@@ -705,8 +705,8 @@ func TestService_DeleteKey(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "delete-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
@@ -787,8 +787,8 @@ func TestService_RotateKey(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "rotate-test-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)

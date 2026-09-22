@@ -81,7 +81,7 @@ func TestGetTLSCertificateWithFullSetup(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "tls-test-key",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -139,8 +139,8 @@ func TestFindKeyAttributes(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "find-attrs-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	})
 	if err != nil {
 		t.Fatalf("Failed to generate key: %v", err)
@@ -187,8 +187,8 @@ func TestGenerateKeyWithAllCurves(t *testing.T) {
 			resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 				KeyId:   "curve-test-" + curve,
 				Backend: "software",
-				KeyType: "ecdsa",
-				Curve:   curve,
+				KeyType: "ecdsa", Algorithm: "ecdsa",
+				Curve: curve,
 			})
 			if err != nil {
 				t.Fatalf("GenerateKey failed: %v", err)
@@ -213,7 +213,7 @@ func TestGenerateKeyWithAllRSASizes(t *testing.T) {
 			resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 				KeyId:   "rsa-size-test",
 				Backend: "software",
-				KeyType: "rsa",
+				KeyType: "rsa", Algorithm: "rsa",
 				KeySize: size,
 			})
 			if err != nil {
@@ -380,7 +380,7 @@ func TestGenerateKeyRSADefaultSize(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-default-size",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			// KeySize not specified - should use default
 		})
 		if err != nil {
@@ -402,7 +402,7 @@ func TestGenerateKeyECDSADefaultCurve(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "ecdsa-default-curve",
 			Backend: "software",
-			KeyType: "ecdsa",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
 			// Curve not specified - should use default
 		})
 		if err != nil {

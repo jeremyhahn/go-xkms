@@ -1082,7 +1082,7 @@ func TestListCertsHandler_BackendNotFound(t *testing.T) {
 
 func TestGenerateKeyHandler_MissingKeyID(t *testing.T) {
 	ctx := newTestHandlerContext()
-	body, _ := json.Marshal(GenerateKeyRequest{Backend: "test", KeyType: "rsa"})
+	body, _ := json.Marshal(GenerateKeyRequest{Backend: "test", KeyType: "rsa", Algorithm: "rsa"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	ctx.GenerateKeyHandler(w, req)

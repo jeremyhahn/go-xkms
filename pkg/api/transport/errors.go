@@ -39,16 +39,6 @@ var (
 	// ErrStreamClosed is returned when attempting to use a closed stream.
 	ErrStreamClosed = errors.New("transport: stream closed")
 
-	// ErrRegistrationLoginKeyConflict is returned when a registration request
-	// carries the login key under both "email" and the legacy "username" key
-	// with different values.
-	ErrRegistrationLoginKeyConflict = errors.New("transport: registration request carries different values for email and the legacy username key")
-
-	// ErrAuthenticationLoginKeyConflict is returned when an authentication
-	// request carries the login key under both "email" and the legacy
-	// "username" key with different values.
-	ErrAuthenticationLoginKeyConflict = errors.New("transport: authentication request carries different values for email and the legacy username key")
-
 	// ErrStreamNotSupported is returned when requesting a stream on a
 	// transport that doesn't support streaming.
 	ErrStreamNotSupported = errors.New("transport: streaming not supported")

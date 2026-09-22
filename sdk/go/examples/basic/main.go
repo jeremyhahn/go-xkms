@@ -51,10 +51,11 @@ func main() {
 
 	// Generate an EC key
 	keyResp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
-		KeyID:   "example-key",
-		Backend: "software",
-		KeyType: "EC",
-		Curve:   "P-256",
+		KeyID:     "example-key",
+		Backend:   "software",
+		KeyType:   "signing",
+		Algorithm: "EC",
+		Curve:     "P-256",
 	})
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)

@@ -41,25 +41,18 @@ var (
 // --- Barrier request/response types ---
 
 // BarrierInitializeRequest represents the request to initialize the
-// barrier. Password carries the secret inside a memguard enclave and
-// is preferred when non-empty; Secret is retained for backward
-// compatibility with clients that cannot yet produce a base64
-// field.
+// barrier. Password carries the secret inside a memguard enclave.
 //
-// Wire format note: clients using the enclaved path MUST submit the
-// secret in the password_b64 field (standard base64, no padding
-// stripped). The server destroys the Buffer via defer as soon as the
-// barrier call returns.
+// Wire format note: the secret MUST be submitted in the password_b64 field
+// (standard base64, no padding stripped). The server destroys the Buffer via
+// defer as soon as the barrier call returns.
 type BarrierInitializeRequest struct {
-	Secret   string                 `json:"secret,omitempty"`
 	Password secureio.PasswordField `json:"password_b64,omitempty"`
 }
 
-// BarrierUnsealRequest represents the request to unseal the barrier.
-// Password is preferred when non-empty; Secret remains for backward
-// compatibility. See BarrierInitializeRequest for wire-format notes.
+// BarrierUnsealRequest represents the request to unseal the barrier. See
+// BarrierInitializeRequest for wire-format notes.
 type BarrierUnsealRequest struct {
-	Secret   string                 `json:"secret,omitempty"`
 	Password secureio.PasswordField `json:"password_b64,omitempty"`
 }
 
@@ -141,7 +134,7 @@ func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	creds, ok, err := barrierCredentialsFromRequest(req.Password, req.Secret)
+	creds, ok, err := barrierCredentialsFromRequest(req.Password)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -185,7 +178,7 @@ func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	creds, ok, err := barrierCredentialsFromRequest(req.Password, req.Secret)
+	creds, ok, err := barrierCredentialsFromRequest(req.Password)
 	if err != nil {
 		writeError(w, err, http.StatusInternalServerError)
 		return
@@ -576,29 +569,21 @@ func handlePINError(w http.ResponseWriter, err error) {
 	}
 }
 
-// barrierCredentialsFromRequest prefers the enclaved password buffer
-// when present and non-empty; otherwise it falls back to the legacy
-// plaintext Secret string. Returns ok=false only when both sources
-// are empty — callers respond with ErrMissingSecret in that case.
+// barrierCredentialsFromRequest builds Credentials from the enclaved password
+// buffer. Returns ok=false when the buffer is absent or empty — callers
+// respond with ErrMissingSecret in that case.
 //
 // The secret is copied into protected memory with seal.CredentialsFor:
-// both pw.Buffer().Bytes() and fallback are borrowed from the decoded
-// request, which the caller (req.Password.Destroy(), the JSON decoder's
-// string) remains responsible for. The returned Credentials is owned by
-// the caller of this function, which must destroy it once the barrier
-// call it was built for returns.
-func barrierCredentialsFromRequest(pw secureio.PasswordField, fallback string) (seal.Credentials, bool, error) {
-	if buf := pw.Buffer(); buf != nil && buf.Size() > 0 {
-		creds, err := seal.CredentialsFor(buf.Bytes())
-		if err != nil {
-			return seal.Credentials{}, false, err
-		}
-		return creds, true, nil
-	}
-	if fallback == "" {
+// pw.Buffer().Bytes() is borrowed from the decoded request, which the caller
+// (req.Password.Destroy()) remains responsible for. The returned Credentials
+// is owned by the caller of this function, which must destroy it once the
+// barrier call it was built for returns.
+func barrierCredentialsFromRequest(pw secureio.PasswordField) (seal.Credentials, bool, error) {
+	buf := pw.Buffer()
+	if buf == nil || buf.Size() == 0 {
 		return seal.Credentials{}, false, nil
 	}
-	creds, err := seal.CredentialsFor([]byte(fallback))
+	creds, err := seal.CredentialsFor(buf.Bytes())
 	if err != nil {
 		return seal.Credentials{}, false, err
 	}

@@ -83,13 +83,11 @@ xkmsctl fido2 wait-device --timeout 2m
 | "credential not found" | `--rp-id` differs from enrollment | use the same value you registered with |
 | PIN rejected | wrong PIN | note the remaining attempts — keys lock out permanently |
 | key stopped responding entirely | it locked out after too many wrong PINs | that is the key's design; it cannot be reset |
-| **derived key changed after an upgrade** | the `hmac-secret` derivation changed | add `--legacy-hmac-derivation` |
-| the wrong key comes out, with no error | same cause as above | there is no error for this — try the legacy flag |
 | a specific device is picked and it is the wrong one | multiple keys attached | pass `--device` |
 
-The derivation mismatch deserves attention because it is silent: you get a
-wrong key, not a failure. If something that used to unlock stopped unlocking and
-nothing else changed, try `--legacy-hmac-derivation` before assuming data loss.
+**BREAKING (2026-09-22):** the `--legacy-hmac-derivation` flag is gone. The
+CTAP 2.1 §12.5 derivation is the only one; a volume keyed with the removed
+insecure derivation must be re-enrolled — there is no flag to unlock it.
 
 ## Where to go next
 

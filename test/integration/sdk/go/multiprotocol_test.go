@@ -423,9 +423,9 @@ func testKeyLifecycle(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Generate key
 	genResp, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
-		KeyID:      keyID,
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyID:   keyID,
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P-256",
 		Exportable: true,
 	})
@@ -493,8 +493,8 @@ func testSignVerify(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -562,7 +562,7 @@ func testEncryptDecrypt(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 256,
 	})
 	if err != nil {
@@ -627,8 +627,8 @@ func testSealUnseal(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	_, err = proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey for seal failed: %v", err)
@@ -679,8 +679,8 @@ func testCertificates(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -762,8 +762,8 @@ func testKeyRotation(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	})
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
@@ -793,9 +793,9 @@ func testImportExport(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Generate exportable key
 	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
-		KeyID:      keyID,
-		Backend:    "software",
-		KeyType:    "ecdsa",
+		KeyID:   keyID,
+		Backend: "software",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		Curve:      "P-256",
 		Exportable: true,
 	})
@@ -900,8 +900,8 @@ func TestMultiProtocolKeyOperationsConcurrent(t *testing.T) {
 			_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 				KeyID:   id,
 				Backend: "software",
-				KeyType: "ecdsa",
-				Curve:   "P-256",
+				KeyType: "ecdsa", Algorithm: "ecdsa",
+				Curve: "P-256",
 			})
 			errChan <- err
 		}(keyID)
@@ -943,7 +943,7 @@ func TestMultiProtocolDataIntegrity(t *testing.T) {
 	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
-		KeyType: "symmetric",
+		KeyType: "symmetric", Algorithm: "symmetric",
 		KeySize: 256,
 	})
 	if err != nil {

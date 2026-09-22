@@ -53,7 +53,7 @@
     const params: GenerateKeyParams = {
       key_id: keyId,
       backend,
-      key_type: keyType,
+      algorithm: keyType,
       exportable,
     };
     if (showCurve) params.curve = curve;

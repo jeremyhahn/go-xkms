@@ -10,7 +10,7 @@ import (
 )
 
 // TestBeginRegistrationRequest_DecodesEmail verifies the login key is read
-// from the "email" key, the field's name on the wire.
+// from the "email" key, the field's only name on the wire.
 func TestBeginRegistrationRequest_DecodesEmail(t *testing.T) {
 	var req BeginRegistrationRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"email":"alice@example.com","display_name":"Alice"}`), &req))
@@ -18,35 +18,15 @@ func TestBeginRegistrationRequest_DecodesEmail(t *testing.T) {
 	assert.Equal(t, "Alice", req.DisplayName)
 }
 
-// TestBeginRegistrationRequest_AcceptsLegacyUsernameKey verifies a client
-// built against the previous spelling, which sent the email under
-// "username", keeps working for the compatibility release.
-func TestBeginRegistrationRequest_AcceptsLegacyUsernameKey(t *testing.T) {
+// TestBeginRegistrationRequest_UsernameKeyIgnored verifies the removed
+// "username" spelling is no longer read: a body that carries the login key
+// only under that key decodes to an empty Email (owner rule 2026-09-22,
+// PR 2 — no aliases for old names).
+func TestBeginRegistrationRequest_UsernameKeyIgnored(t *testing.T) {
 	var req BeginRegistrationRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"username":"alice@example.com","display_name":"Alice"}`), &req))
-	assert.Equal(t, "alice@example.com", req.Email)
+	assert.Empty(t, req.Email)
 	assert.Equal(t, "Alice", req.DisplayName)
-}
-
-// TestBeginRegistrationRequest_AgreeingKeysAreAccepted verifies a body that
-// sends the same login key under both spellings is not refused.
-func TestBeginRegistrationRequest_AgreeingKeysAreAccepted(t *testing.T) {
-	var req BeginRegistrationRequest
-	require.NoError(t, json.Unmarshal([]byte(`{"email":"alice@example.com","username":"alice@example.com"}`), &req))
-	assert.Equal(t, "alice@example.com", req.Email)
-}
-
-// TestBeginRegistrationRequest_RefusesConflictingKeys verifies a body that
-// names different values under "email" and the legacy "username" key is
-// refused with the typed error rather than one value being chosen silently:
-// the wrong value would surface as "account not found" or as a credential
-// enrolled against the wrong account.
-func TestBeginRegistrationRequest_RefusesConflictingKeys(t *testing.T) {
-	var req BeginRegistrationRequest
-	err := json.Unmarshal([]byte(`{"email":"alice@example.com","username":"alice"}`), &req)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrRegistrationLoginKeyConflict))
-	assert.Empty(t, req.Email, "nothing is decoded from a refused body")
 }
 
 // TestBeginRegistrationRequest_MalformedBody verifies a body that is not an
@@ -59,28 +39,16 @@ func TestBeginRegistrationRequest_MalformedBody(t *testing.T) {
 	assert.True(t, errors.As(err, &syntax))
 }
 
-// TestBeginRegistrationRequest_EncodesBothKeys verifies the request is sent
-// under "email" and, for the compatibility release, under the legacy
-// "username" key with the same value, so a server that still reads the
-// legacy key does not receive an empty login key from this client.
-func TestBeginRegistrationRequest_EncodesBothKeys(t *testing.T) {
+// TestBeginRegistrationRequest_EncodesEmailOnly verifies the request is sent
+// under "email" alone; the removed "username" key is never emitted.
+func TestBeginRegistrationRequest_EncodesEmailOnly(t *testing.T) {
 	data, err := json.Marshal(BeginRegistrationRequest{Email: "alice@example.com", DisplayName: "Alice"})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"email":"alice@example.com","username":"alice@example.com","display_name":"Alice"}`, string(data))
-
-	// A pointer encodes the same way.
-	ptrData, err := json.Marshal(&BeginRegistrationRequest{Email: "alice@example.com", DisplayName: "Alice"})
-	require.NoError(t, err)
-	assert.JSONEq(t, string(data), string(ptrData))
-
-	// An empty login key is not duplicated into the legacy key.
-	empty, err := json.Marshal(BeginRegistrationRequest{DisplayName: "Alice"})
-	require.NoError(t, err)
-	assert.JSONEq(t, `{"email":"","display_name":"Alice"}`, string(empty))
+	assert.JSONEq(t, `{"email":"alice@example.com","display_name":"Alice"}`, string(data))
 }
 
-// TestBeginRegistrationRequest_RoundTrip verifies what this client encodes
-// is what this server decodes: the two agreeing keys yield one login key.
+// TestBeginRegistrationRequest_RoundTrip verifies what this client encodes is
+// what this server decodes.
 func TestBeginRegistrationRequest_RoundTrip(t *testing.T) {
 	data, err := json.Marshal(BeginRegistrationRequest{Email: "alice@example.com", DisplayName: "Alice"})
 	require.NoError(t, err)

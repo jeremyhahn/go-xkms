@@ -462,9 +462,8 @@ export interface RemoteBackendInfo {
 export interface GenerateKeyParams {
   key_id: string;
   backend: string;
-  purpose: string;
+  purpose?: string;
   algorithm: string;
-  key_type?: string;
   key_size?: number;
   curve?: string;
   exportable?: boolean;

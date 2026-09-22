@@ -297,7 +297,7 @@ func TestEncryptAsym_HashNONERefusedNotPanic(t *testing.T) {
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:   "none-hash-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	})
 	require.NoError(t, err)

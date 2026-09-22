@@ -73,7 +73,6 @@ real relying-party id, and set it the same way on both verbs.
 | `--device` | string | `""` | pin to a specific device |
 | `--user-verification` | bool | `false` | require a PIN |
 | `--hex` | bool | `false` | output the derived key as hex instead of base64 |
-| `--legacy-hmac-derivation` | bool | `false` | use the pre-existing derivation |
 
 ```
 xkmsctl fido2 authenticate \
@@ -87,10 +86,10 @@ The output is **key material**, not a status. It goes to stdout so it can be
 piped — which also means it goes into your terminal scrollback if you do not
 pipe it.
 
-**`--legacy-hmac-derivation` matters.** A credential enrolled under one
-derivation produces a *different* key under the other, and neither reports an
-error — you simply get the wrong key. If a previously working unlock stopped
-working after an upgrade, this flag is the first thing to try.
+**BREAKING (2026-09-22):** the `--legacy-hmac-derivation` flag and the
+insecure pre-fix derivation it selected have been deleted outright. Every
+credential now authenticates with the CTAP 2.1 §12.5 derivation only; a
+volume still keyed with the removed derivation must be re-enrolled.
 
 ## Exit codes
 

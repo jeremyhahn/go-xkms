@@ -43,9 +43,9 @@ func TestGenerateKeyHonoursExportableForSymmetricKeys(t *testing.T) {
 	t.Run("exportable is honoured", func(t *testing.T) {
 		const keyID = "exportable-secret"
 		_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID:      keyID,
-			Backend:    "software",
-			KeyType:    "Symmetric",
+			KeyID:   keyID,
+			Backend: "software",
+			KeyType: "Symmetric", Algorithm: "Symmetric",
 			KeySize:    256,
 			Exportable: true,
 		})
@@ -62,9 +62,9 @@ func TestGenerateKeyHonoursExportableForSymmetricKeys(t *testing.T) {
 	t.Run("a key that did not ask to be exportable stays protected", func(t *testing.T) {
 		const keyID = "protected-secret"
 		_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
-			KeyID:      keyID,
-			Backend:    "software",
-			KeyType:    "Symmetric",
+			KeyID:   keyID,
+			Backend: "software",
+			KeyType: "Symmetric", Algorithm: "Symmetric",
 			KeySize:    256,
 			Exportable: false,
 		})
@@ -86,7 +86,7 @@ func TestGenerateKeyHonoursExportableForSymmetricKeys(t *testing.T) {
 		_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{
 			KeyID:   keyID,
 			Backend: "software",
-			KeyType: "Symmetric",
+			KeyType: "Symmetric", Algorithm: "Symmetric",
 			KeySize: 256,
 		})
 		require.NoError(t, err)

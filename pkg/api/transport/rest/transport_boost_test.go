@@ -433,7 +433,7 @@ func TestGenerateKey_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
-		KeyID: "k1", Backend: "sw", KeyType: "ECDSA",
+		KeyID: "k1", Backend: "sw", KeyType: "ECDSA", Algorithm: "ECDSA",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")

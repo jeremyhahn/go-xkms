@@ -80,14 +80,18 @@ func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAl
 
 	printVerbose("Connected to xkmsd")
 
-	// For symmetric keys, don't set algorithm - handlers use defaults based on key_size
-	// For asymmetric keys, use the provided algorithm
+	// For symmetric keys, send the bare "symmetric" name (or the caller's
+	// explicit AEAD name) so the server picks a cipher from key_size; the
+	// field is required, so it can no longer be left empty. For asymmetric
+	// keys, use the provided key algorithm.
 	algoForRequest := keyAlgorithm
 	isSymmetric := client.AlgorithmSymmetric.Equals(keyType) || client.AlgorithmAES.Equals(keyType) ||
 		client.AEADAES128GCM.Equals(algorithm) || client.AEADAES192GCM.Equals(algorithm) || client.AEADAES256GCM.Equals(algorithm)
 	if isSymmetric {
-		// Let the server handlers determine the algorithm based on key_size
-		algoForRequest = ""
+		algoForRequest = algorithm
+		if algoForRequest == "" {
+			algoForRequest = "symmetric"
+		}
 		// Normalize key type to "symmetric" for the server
 		keyType = "symmetric"
 	}

@@ -214,7 +214,7 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-rotate-invalid-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -257,7 +257,7 @@ func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-enc-invalid-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -295,7 +295,7 @@ func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-dec-invalid-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)

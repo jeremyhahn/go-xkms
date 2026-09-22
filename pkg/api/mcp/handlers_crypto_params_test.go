@@ -67,7 +67,7 @@ func generateRSAKey(t *testing.T, server *Server, keyID string) *rsa.PublicKey {
 	t.Helper()
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: keyID, Backend: "software", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "software", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	})
 	require.NoError(t, err)
 
@@ -229,7 +229,7 @@ func TestHandler_Sign_PSSRejectedForNonRSAKey(t *testing.T) {
 	defer cleanupXKMS()
 
 	_, err := mcpCall(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: "mcp-ecdsa-pss", Backend: "software", KeyType: "ecdsa", Curve: "P-256",
+		KeyID: "mcp-ecdsa-pss", Backend: "software", KeyType: "ecdsa", Algorithm: "ecdsa", Curve: "P-256",
 	})
 	require.NoError(t, err)
 
@@ -825,7 +825,7 @@ func generateRSAKeyAs(t *testing.T, server *Server, keyID, tenantID string) {
 	t.Helper()
 
 	_, err := mcpCallAs(t, server.handleGenerateKey, "xkms.generateKey", GenerateKeyParams{
-		KeyID: keyID, Backend: "software", KeyType: "rsa", KeySize: 2048,
+		KeyID: keyID, Backend: "software", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048,
 	}, tenantID)
 	require.NoError(t, err)
 }

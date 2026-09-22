@@ -420,10 +420,11 @@ func main() {
 
 	// Generate a key
 	keyResp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
-		KeyID:   "embedded-key",
-		Backend: "software",
-		KeyType: "EC",
-		Curve:   "P-256",
+		KeyID:     "embedded-key",
+		Backend:   "software",
+		KeyType:   "signing",
+		Algorithm: "EC",
+		Curve:     "P-256",
 	})
 	if err != nil {
 		log.Fatalf("Failed to generate key: %v", err)

@@ -110,9 +110,9 @@ func TestTenantID_JSONTag(t *testing.T) {
 
 func TestTenantID_JSONMarshal_IncludedWhenSet(t *testing.T) {
 	req := GenerateKeyRequest{
-		KeyID:    "test-key",
-		Backend:  "pkcs8",
-		KeyType:  "ecdsa",
+		KeyID:   "test-key",
+		Backend: "pkcs8",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 		TenantID: "acme-corp",
 	}
 
@@ -132,7 +132,7 @@ func TestTenantID_JSONMarshal_OmittedWhenEmpty(t *testing.T) {
 	req := GenerateKeyRequest{
 		KeyID:   "test-key",
 		Backend: "pkcs8",
-		KeyType: "ecdsa",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
 	}
 
 	data, err := json.Marshal(req)

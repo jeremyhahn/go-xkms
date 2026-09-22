@@ -34,6 +34,7 @@ import (
 type mockKeyClient struct {
 	mockBackendsClient
 	generateKeyResp     *client.GenerateKeyResponse
+	generateKeyReq      *client.GenerateKeyRequest
 	generateKeyErr      error
 	listKeysResp        *client.ListKeysResponse
 	listKeysErr         error
@@ -69,6 +70,7 @@ type mockKeyClient struct {
 }
 
 func (m *mockKeyClient) GenerateKey(_ context.Context, req *client.GenerateKeyRequest) (*client.GenerateKeyResponse, error) {
+	m.generateKeyReq = req
 	return m.generateKeyResp, m.generateKeyErr
 }
 
@@ -339,6 +341,42 @@ func TestGenerateKey_SymmetricKey(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "Successfully generated") {
 		t.Errorf("generateKey output should contain success message, got: %s", output)
+	}
+	if mockClient.generateKeyReq == nil || mockClient.generateKeyReq.Algorithm != "aes-256-gcm" {
+		t.Errorf("expected Algorithm %q, got %+v", "aes-256-gcm", mockClient.generateKeyReq)
+	}
+}
+
+// TestGenerateKey_SymmetricKeyDefaultAlgorithm verifies a symmetric key
+// requested without an explicit --algorithm still sends a non-empty
+// Algorithm ("symmetric"): the server now requires the field, so the client
+// can no longer rely on an empty value falling back to key_type (owner rule
+// 2026-09-22, PR 2).
+func TestGenerateKey_SymmetricKeyDefaultAlgorithm(t *testing.T) {
+	mockClient := &mockKeyClient{
+		generateKeyResp: &client.GenerateKeyResponse{
+			KeyID:   "sym-key",
+			KeyType: "symmetric",
+		},
+	}
+
+	buf := new(bytes.Buffer)
+	printer := NewPrinter("json", buf)
+
+	cfg := &Config{
+		Backend: "software",
+		ClientFactory: func(cfg *Config) (client.Client, error) {
+			return mockClient, nil
+		},
+	}
+
+	generateKey(cfg, printer, "sym-key", "symmetric", "", "", 256, "", false, false)
+
+	if mockClient.generateKeyReq == nil || mockClient.generateKeyReq.Algorithm == "" {
+		t.Fatalf("Algorithm must never be empty, got %+v", mockClient.generateKeyReq)
+	}
+	if mockClient.generateKeyReq.Algorithm != "symmetric" {
+		t.Errorf("expected Algorithm %q, got %q", "symmetric", mockClient.generateKeyReq.Algorithm)
 	}
 }
 

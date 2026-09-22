@@ -76,8 +76,8 @@ Not applicable. `ListDevices()` returns the devices attached to this machine.
 CTAP2 is a FIDO Alliance standard; version negotiation is
 `authenticatorGetInfo`, not something go-xkms defines.
 
-One local versioning concern: the `hmac-secret` derivation has two forms, and
-`--legacy-hmac-derivation` selects the older one. Credentials enrolled under one
-derivation are not interchangeable with the other, and the mismatch produces a
-wrong key silently rather than an error. `hmac_secret_derivation_test.go` is the
-suite that keeps both paths honest.
+**BREAKING (2026-09-22):** the `hmac-secret` derivation used to have a second,
+insecure form selected by `--legacy-hmac-derivation`. That mode, the flag, and
+`DerivationModeLegacyInsecure` have been deleted outright; the CTAP 2.1 §12.5
+derivation is the only one. `hmac_secret_derivation_test.go` is the suite that
+keeps it honest.

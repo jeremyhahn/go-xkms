@@ -492,25 +492,26 @@ func TestKeyService_Coverage_GenerateKey_WithAuditLogger(t *testing.T) {
 	assert.True(t, al.entries[0].Success)
 }
 
-func TestKeyService_Coverage_GenerateKey_PurposeFallback(t *testing.T) {
+func TestKeyService_Coverage_GenerateKey_PassesPurposeAndAlgorithmThrough(t *testing.T) {
 	svc := NewKeyService()
 	svc.SetContext(context.Background())
 
 	mc := &mockClient{
 		generateKeyFn: func(ctx context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error) {
-			assert.Equal(t, "LEGACY_TYPE", req.KeyType)
-			return &transport.GenerateKeyResponse{KeyID: req.KeyID, KeyType: req.KeyType}, nil
+			assert.Equal(t, "", req.KeyType, "an unset purpose reaches the server unset so it applies its SIGNING default")
+			assert.Equal(t, "ecdsa", req.Algorithm)
+			return &transport.GenerateKeyResponse{KeyID: req.KeyID, KeyType: "SIGNING"}, nil
 		},
 	}
 	svc.SetLocalClient(mc)
 
 	result, err := svc.GenerateKey("local", &GenerateKeyParams{
-		KeyID:   "k2",
-		Backend: "sw",
-		KeyType: "LEGACY_TYPE",
+		KeyID:     "k2",
+		Backend:   "sw",
+		Algorithm: "ecdsa",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "LEGACY_TYPE", result.KeyType)
+	assert.Equal(t, "SIGNING", result.KeyType)
 }
 
 // ---------------------------------------------------------------------------

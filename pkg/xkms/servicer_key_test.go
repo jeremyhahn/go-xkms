@@ -48,19 +48,20 @@ func TestGenerateKey_RSA_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.PublicKeyPEM)
 }
 
-func TestGenerateKey_DefaultAlgorithm(t *testing.T) {
+// TestGenerateKey_MissingAlgorithm verifies Algorithm is required: it no
+// longer defaults to ECDSA P-256 nor falls back to KeyType (owner rule
+// 2026-09-22, PR 2).
+func TestGenerateKey_MissingAlgorithm(t *testing.T) {
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// Empty algorithm defaults to ECDSA P-256
-	resp, err := svc.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
+	_, err = svc.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
 		KeyID:   "default-key",
 		Backend: "software",
 	})
-	require.NoError(t, err)
-	assert.Equal(t, "default-key", resp.KeyID)
-	assert.NotEmpty(t, resp.PublicKeyPEM)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingAlgorithm)
 }
 
 func TestGenerateKey_NilRequest(t *testing.T) {

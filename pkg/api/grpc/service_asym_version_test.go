@@ -162,7 +162,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -189,7 +189,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-sha256",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -217,7 +217,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-sha384",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -245,7 +245,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-sha512",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -273,7 +273,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-sha1",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -301,7 +301,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-unknown-hash",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		})
 		if err != nil {
@@ -330,7 +330,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "ec-asym-key",
 			Backend: "software",
-			KeyType: "ecdsa",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
 			KeySize: 256,
 		})
 		if err != nil {
@@ -365,7 +365,7 @@ func TestService_EncryptAsym(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "ed25519-asym-key",
 			Backend: "software",
-			KeyType: "ed25519",
+			KeyType: "ed25519", Algorithm: "ed25519",
 		})
 		if err != nil {
 			t.Fatalf("Failed to generate Ed25519 key: %v", err)

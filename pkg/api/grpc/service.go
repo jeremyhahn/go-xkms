@@ -352,6 +352,9 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 	if req.KeyType == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_type is required")
 	}
+	if req.Algorithm == "" {
+		return nil, status.Error(codes.InvalidArgument, "algorithm is required")
+	}
 
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.KeyId); err != nil {
 		return nil, err
@@ -389,11 +392,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 
 	// Set algorithm-specific attributes
 	var privKey crypto.PrivateKey
-	// Use Algorithm field if provided, otherwise fall back to KeyType for backward compatibility
 	algorithm := req.Algorithm
-	if algorithm == "" {
-		algorithm = req.KeyType
-	}
 	switch {
 	case types.AlgorithmRSA.Equals(algorithm):
 		keySize := int(req.KeySize)

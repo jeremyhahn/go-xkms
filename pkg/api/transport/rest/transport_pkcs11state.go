@@ -82,10 +82,8 @@ func (t *Transport) PKCS11StatePutIfAbsent(ctx context.Context, req *transport.P
 	return &resp, nil
 }
 
-// PKCS11StateCAS atomically stores New only if the current value equals Expected
-// ExpectAbsent is a legacy field now redefined as "PutIfAbsent with New as the
-// value" rather than "require absent" (#186); see
-// transport.PKCS11StateCASRequest's doc comment for the full contract.
+// PKCS11StateCAS atomically stores New only if the current value equals
+// Expected exactly.
 func (t *Transport) PKCS11StateCAS(ctx context.Context, req *transport.PKCS11StateCASRequest) (*transport.PKCS11StateCASResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected

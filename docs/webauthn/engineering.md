@@ -141,11 +141,8 @@ though they must be indistinguishable to the client.
 
 **The SDK ceremony requests' login key** is the `Email` field of
 `BeginRegistrationRequest`, `BeginAuthenticationRequest` and
-`FinishAuthenticationRequest` (`pkg/api/transport/types.go`). Their decoders
-share one resolution (`loginKeyFromWire`): the legacy `username` JSON key is
-accepted for one release, and a body naming different values under both keys
-is refused with `transport.ErrRegistrationLoginKeyConflict` or
-`transport.ErrAuthenticationLoginKeyConflict`; see [api.md](api.md) §"SDK
+`FinishAuthenticationRequest` (`pkg/api/transport/types.go`), tagged
+`json:"email"` with no other spelling accepted; see [api.md](api.md) §"SDK
 ceremony bodies".
 
 **Fail closed:** unknown session, expired session, origin mismatch, RP id

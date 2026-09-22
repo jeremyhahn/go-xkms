@@ -95,24 +95,14 @@ type PKCS11StatePutIfAbsentResponse struct {
 // storage.CompareAndSwapper primitive over the remote backend so multiple
 // clients sharing one remote token can update the failed-attempt (lockout)
 // counter without losing writes: the counter is a read-modify-write, and only
-// a value-CAS makes concurrent increments safe.
-//
-// ExpectAbsent is REDEFINED from its original meaning ("require the key to be
-// absent," mirroring the storage.CompareAndSwapper contract before #186). A
-// swap no longer has a create precondition, so the field is kept on the wire
-// only for compatibility (no proto regeneration) and now selects a different
-// operation entirely: when true, the server performs PutIfAbsent using New as
-// the value, ignoring Expected. This client (pkg/pkcs11/module's
-// remoteBackend) never sets it — the create-if-absent precondition is the
-// dedicated PKCS11StatePutIfAbsent RPC, called directly — but a peer that
-// still sets the flag is served the equivalent operation rather than refused.
+// a value-CAS makes concurrent increments safe. The create-if-absent
+// precondition is served by the dedicated PKCS11StatePutIfAbsent RPC.
 type PKCS11StateCASRequest struct {
-	TenantID     string `json:"tenant_id,omitempty"`
-	Token        string `json:"token"`
-	Key          string `json:"key"`
-	Expected     []byte `json:"expected,omitempty"`
-	New          []byte `json:"new"`
-	ExpectAbsent bool   `json:"expect_absent,omitempty"` // Deprecated: see doc comment; now means "PutIfAbsent(New)".
+	TenantID string `json:"tenant_id,omitempty"`
+	Token    string `json:"token"`
+	Key      string `json:"key"`
+	Expected []byte `json:"expected,omitempty"`
+	New      []byte `json:"new"`
 }
 
 // PKCS11StateCASResponse reports whether the swap occurred. When Swapped is

@@ -112,38 +112,11 @@ func TestBarrierUnsealHandler_PasswordBase64_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestBarrierUnsealHandler_BothFieldsPresent_PrefersEnclaved verifies
-// that when both secret and password_b64 are present, the enclaved
-// form wins. The legacy fallback must not override the secure path.
-func TestBarrierUnsealHandler_BothFieldsPresent_PrefersEnclaved(t *testing.T) {
-	h, barrier := newTestBarrierHandler(t)
-
-	creds := seal.MustCredentials([]byte("the-enclaved-secret"))
-	defer creds.Secret.Destroy()
-	if err := barrier.Initialize(context.Background(), creds); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-	if err := barrier.Seal(); err != nil {
-		t.Fatalf("Seal: %v", err)
-	}
-
-	encoded := base64.StdEncoding.EncodeToString([]byte("the-enclaved-secret"))
-	// Legacy secret is intentionally wrong — enclaved must prevail.
-	body := `{"secret":"wrong-legacy","password_b64":"` + encoded + `"}`
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	h.BarrierUnsealHandler(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-}
-
-// TestBarrierInitializeHandler_LegacySecretStillWorks guards against
-// regression — existing clients on the `secret` string path must
-// keep working after the Phase 1d migration.
-func TestBarrierInitializeHandler_LegacySecretStillWorks(t *testing.T) {
+// TestBarrierInitializeHandler_PlaintextSecretKeyIgnored verifies the
+// removed plaintext "secret" JSON key carries no credential: a body that
+// sends it alone is refused as ErrMissingSecret rather than silently
+// accepted (owner rule 2026-09-22, PR 2 — no aliases for old names).
+func TestBarrierInitializeHandler_PlaintextSecretKeyIgnored(t *testing.T) {
 	h, _ := newTestBarrierHandler(t)
 
 	body := `{"secret":"legacy-path-ok"}`
@@ -151,14 +124,14 @@ func TestBarrierInitializeHandler_LegacySecretStillWorks(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.BarrierInitializeHandler(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
 }
 
-// TestBarrierUnsealHandler_MissingBothFields maps to the
-// ErrMissingSecret error path for both request types.
-func TestBarrierUnsealHandler_MissingBothFields(t *testing.T) {
+// TestBarrierUnsealHandler_MissingPassword maps to the ErrMissingSecret
+// error path.
+func TestBarrierUnsealHandler_MissingPassword(t *testing.T) {
 	h, _ := newTestBarrierHandler(t)
 	body := `{}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal", strings.NewReader(body))
@@ -169,10 +142,10 @@ func TestBarrierUnsealHandler_MissingBothFields(t *testing.T) {
 	}
 }
 
-// TestBarrierInitializeHandler_EmptyBothFields also yields a 400.
-func TestBarrierInitializeHandler_EmptyBothFields(t *testing.T) {
+// TestBarrierInitializeHandler_EmptyPassword also yields a 400.
+func TestBarrierInitializeHandler_EmptyPassword(t *testing.T) {
 	h, _ := newTestBarrierHandler(t)
-	body := `{"secret":"","password_b64":""}`
+	body := `{"password_b64":""}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.BarrierInitializeHandler(w, req)

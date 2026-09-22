@@ -87,7 +87,7 @@ func (s *Service) PKCS11StateCAS(ctx context.Context, req *pb.PKCS11StateCASRequ
 	}
 	resp, err := s.xkmsService.PKCS11StateCAS(ctx, &transport.PKCS11StateCASRequest{
 		TenantID: req.TenantId, Token: req.Token, Key: req.Key,
-		Expected: req.Expected, New: req.New, ExpectAbsent: req.ExpectAbsent,
+		Expected: req.Expected, New: req.New,
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

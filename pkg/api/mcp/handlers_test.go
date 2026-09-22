@@ -143,7 +143,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-rsa-key",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		paramsJSON, _ := json.Marshal(params)
@@ -169,8 +169,8 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-ecdsa-key",
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "P-256",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "P-256",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -194,7 +194,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-ed25519-key",
 			Backend: "software",
-			KeyType: "ed25519",
+			KeyType: "ed25519", Algorithm: "ed25519",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -217,7 +217,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 	t.Run("fails with missing key_id", func(t *testing.T) {
 		params := GenerateKeyParams{
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -250,7 +250,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-key",
 			Backend: "nonexistent",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -276,7 +276,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-key",
 			Backend: "software",
-			KeyType: "unsupported",
+			KeyType: "unsupported", Algorithm: "unsupported",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -295,7 +295,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 	t.Run("generates key with default backend", func(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-default-backend-key",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		paramsJSON, _ := json.Marshal(params)
@@ -319,7 +319,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-ecdsa-default-curve",
 			Backend: "software",
-			KeyType: "ecdsa",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -342,8 +342,8 @@ func TestHandler_GenerateKey(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-invalid-curve",
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "invalid-curve",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "invalid-curve",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -369,7 +369,7 @@ func TestHandler_GetKey(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-get-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -458,7 +458,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-delete-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -522,7 +522,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 		genParams := GenerateKeyParams{
 			KeyID:   "test-delete-no-backend",
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
@@ -559,7 +559,7 @@ func TestHandler_ListKeys(t *testing.T) {
 
 	// Generate some keys first
 	for _, keyID := range []string{"list-key-1", "list-key-2"} {
-		genParams := GenerateKeyParams{KeyID: keyID, Backend: "software", KeyType: "rsa", KeySize: 2048}
+		genParams := GenerateKeyParams{KeyID: keyID, Backend: "software", KeyType: "rsa", Algorithm: "rsa", KeySize: 2048}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 		_, err := server.handleGenerateKey(context.Background(), genReq)
@@ -591,7 +591,7 @@ func TestHandler_Sign(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-sign-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -687,7 +687,7 @@ func TestHandler_Verify(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -832,7 +832,7 @@ func TestHandler_RotateKey(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-rotate-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -930,7 +930,7 @@ func TestHandler_Certificates(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-cert-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -1452,7 +1452,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-encrypt-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -1540,8 +1540,8 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 		genParams := GenerateKeyParams{
 			KeyID:   "test-ecdsa-for-encrypt",
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "P-256",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "P-256",
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
 		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
@@ -1579,7 +1579,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-decrypt-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -2322,7 +2322,7 @@ func TestHandler_FindKeyByCN(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "find-key-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -2352,7 +2352,7 @@ func TestHandler_FindKeyInBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "find-backend-key-test",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -2761,7 +2761,7 @@ func TestHandler_Verify_InvalidSignature(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-invalid-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -2828,7 +2828,7 @@ func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-sym-default-alg",
 			Backend: "software",
-			KeyType: "symmetric",
+			KeyType: "symmetric", Algorithm: "symmetric",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -2857,8 +2857,8 @@ func TestHandler_Sign_WithECDSA(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-ecdsa-sign-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
@@ -2899,7 +2899,7 @@ func TestHandler_Sign_WithEd25519(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-ed25519-sign-key",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
@@ -2940,8 +2940,8 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-ecdsa-verify-key",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P-256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P-256",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
@@ -2997,7 +2997,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-ed25519-verify-key",
 		Backend: "software",
-		KeyType: "ed25519",
+		KeyType: "ed25519", Algorithm: "ed25519",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
@@ -3053,7 +3053,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-hash-sign-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3099,7 +3099,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-array-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3188,7 +3188,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-tls-cert-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3280,7 +3280,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-decrypt-path",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3518,7 +3518,7 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-rsa-not-sym",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3677,7 +3677,7 @@ func TestHandler_SHA1Hash(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-sha1-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3755,7 +3755,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-sha384-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3812,7 +3812,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-sha512-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -3869,7 +3869,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-tls-chain-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4092,9 +4092,9 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 
 	// Generate an exportable key
 	genParams := GenerateKeyParams{
-		KeyID:      "test-export-flow-key",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyID:   "test-export-flow-key",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: true,
 	}
@@ -4303,9 +4303,9 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 
 	// Generate a non-exportable key
 	genParams := GenerateKeyParams{
-		KeyID:      "test-export-nonexp",
-		Backend:    "software",
-		KeyType:    "rsa",
+		KeyID:   "test-export-nonexp",
+		Backend: "software",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize:    2048,
 		Exportable: false,
 	}
@@ -4430,7 +4430,7 @@ func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-delete-search-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4472,7 +4472,7 @@ func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 		genParams := GenerateKeyParams{
 			KeyID:   keyID,
 			Backend: "software",
-			KeyType: "rsa",
+			KeyType: "rsa", Algorithm: "rsa",
 			KeySize: 2048,
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
@@ -4506,7 +4506,7 @@ func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-sign-invalid-hash",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4545,7 +4545,7 @@ func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-invalid-hash",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4585,7 +4585,7 @@ func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-get-default-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4625,7 +4625,7 @@ func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-delete-with-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4716,7 +4716,7 @@ func TestHandler_GenerateKey_Ed25519(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-ed25519-gen",
 			Backend: "software",
-			KeyType: "ed25519",
+			KeyType: "ed25519", Algorithm: "ed25519",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -4745,7 +4745,7 @@ func TestHandler_Sign_DefaultHash(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-sign-default-hash",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4787,7 +4787,7 @@ func TestHandler_RotateKey_WithBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-rotate-with-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4827,7 +4827,7 @@ func TestHandler_Sign_WithoutBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-sign-no-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4869,7 +4869,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-no-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4949,7 +4949,7 @@ func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-enc-no-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -4990,7 +4990,7 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-dec-no-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -5085,7 +5085,7 @@ func TestHandler_ListKeys_WithBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-list-with-backend",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -5124,7 +5124,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-asym-decrypt-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -5343,7 +5343,7 @@ func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-unsupported",
 			Backend: "software",
-			KeyType: "unsupported-type",
+			KeyType: "unsupported-type", Algorithm: "unsupported-type",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -5538,7 +5538,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-decrypt-rsa-search",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -5635,7 +5635,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-struct-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
@@ -5708,7 +5708,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 	genParams := GenerateKeyParams{
 		KeyID:   "test-verify-bytes-key",
 		Backend: "software",
-		KeyType: "rsa",
+		KeyType: "rsa", Algorithm: "rsa",
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)

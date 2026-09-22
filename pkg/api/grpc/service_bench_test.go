@@ -132,7 +132,7 @@ func BenchmarkGRPC_GenerateKeyRSA(b *testing.B) {
 				req := &pb.GenerateKeyRequest{
 					KeyId:   fmt.Sprintf("bench-rsa-%d", i),
 					Backend: "software",
-					KeyType: "rsa",
+					KeyType: "rsa", Algorithm: "rsa",
 					KeySize: int32(keySize),
 				}
 
@@ -161,8 +161,8 @@ func BenchmarkGRPC_GenerateKeyECDSA(b *testing.B) {
 				req := &pb.GenerateKeyRequest{
 					KeyId:   fmt.Sprintf("bench-ecdsa-%d", i),
 					Backend: "software",
-					KeyType: "ecdsa",
-					Curve:   curve,
+					KeyType: "ecdsa", Algorithm: "ecdsa",
+					Curve: curve,
 				}
 
 				_, err := service.GenerateKey(ctx, req)
@@ -186,7 +186,7 @@ func BenchmarkGRPC_GenerateKeyEd25519(b *testing.B) {
 		req := &pb.GenerateKeyRequest{
 			KeyId:   fmt.Sprintf("bench-ed25519-%d", i),
 			Backend: "software",
-			KeyType: "ed25519",
+			KeyType: "ed25519", Algorithm: "ed25519",
 		}
 
 		_, err := service.GenerateKey(ctx, req)
@@ -205,8 +205,8 @@ func BenchmarkGRPC_SignData(b *testing.B) {
 	genReq := &pb.GenerateKeyRequest{
 		KeyId:   "bench-sign",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	}
 
 	_, err := service.GenerateKey(ctx, genReq)
@@ -242,8 +242,8 @@ func BenchmarkGRPC_GetKey(b *testing.B) {
 	genReq := &pb.GenerateKeyRequest{
 		KeyId:   "bench-getkey",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	}
 
 	_, err := service.GenerateKey(ctx, genReq)
@@ -281,8 +281,8 @@ func BenchmarkGRPC_ListKeys(b *testing.B) {
 				req := &pb.GenerateKeyRequest{
 					KeyId:   fmt.Sprintf("bench-list-%d", i),
 					Backend: "software",
-					KeyType: "ecdsa",
-					Curve:   "P256",
+					KeyType: "ecdsa", Algorithm: "ecdsa",
+					Curve: "P256",
 				}
 
 				_, err := service.GenerateKey(ctx, req)
@@ -317,8 +317,8 @@ func BenchmarkGRPC_ConcurrentOperations(b *testing.B) {
 	genReq := &pb.GenerateKeyRequest{
 		KeyId:   "bench-concurrent",
 		Backend: "software",
-		KeyType: "ecdsa",
-		Curve:   "P256",
+		KeyType: "ecdsa", Algorithm: "ecdsa",
+		Curve: "P256",
 	}
 
 	_, err := service.GenerateKey(ctx, genReq)
@@ -357,8 +357,8 @@ func BenchmarkGRPC_DeleteKey(b *testing.B) {
 		req := &pb.GenerateKeyRequest{
 			KeyId:   fmt.Sprintf("bench-delete-%d", i),
 			Backend: "software",
-			KeyType: "ecdsa",
-			Curve:   "P256",
+			KeyType: "ecdsa", Algorithm: "ecdsa",
+			Curve: "P256",
 		}
 
 		_, err := service.GenerateKey(ctx, req)

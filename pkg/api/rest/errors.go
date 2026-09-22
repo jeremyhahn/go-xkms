@@ -31,6 +31,7 @@ var (
 	ErrInvalidRequest      = errors.New("invalid request")
 	ErrInvalidBackend      = errors.New("invalid backend")
 	ErrInvalidKeyType      = errors.New("invalid key type")
+	ErrMissingAlgorithm    = errors.New("missing algorithm")
 	ErrMissingKeyID        = errors.New("missing key_id")
 	ErrMissingBackend      = errors.New("missing backend parameter")
 	ErrMissingData         = errors.New("missing data")
@@ -138,6 +139,7 @@ func mapErrorToStatusCode(err error) int {
 	case errors.Is(err, ErrInvalidRequest),
 		errors.Is(err, ErrInvalidBackend),
 		errors.Is(err, ErrInvalidKeyType),
+		errors.Is(err, ErrMissingAlgorithm),
 		errors.Is(err, ErrMissingKeyID),
 		errors.Is(err, ErrMissingBackend),
 		errors.Is(err, ErrMissingData),

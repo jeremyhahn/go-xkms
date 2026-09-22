@@ -243,10 +243,11 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 	// First generate a key to use in subsequent tests
 	genParams := map[string]interface{}{
-		"key_id":   "test-req-key",
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    "test-req-key",
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 
@@ -307,10 +308,11 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 	t.Run("routes xkms.deleteKey", func(t *testing.T) {
 		// First generate a key to delete
 		delParams := map[string]interface{}{
-			"key_id":   "test-delete-req-key",
-			"backend":  "software",
-			"key_type": "rsa",
-			"key_size": 2048,
+			"key_id":    "test-delete-req-key",
+			"backend":   "software",
+			"key_type":  "rsa",
+			"algorithm": "rsa",
+			"key_size":  2048,
 		}
 		delParamsJSON, _ := json.Marshal(delParams)
 
@@ -404,10 +406,11 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 
 	// Generate an RSA key first
 	genParams := map[string]interface{}{
-		"key_id":   "test-asym-req-key",
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    "test-asym-req-key",
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 
@@ -570,10 +573,11 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 
 	// Generate an RSA key first
 	genParams := map[string]interface{}{
-		"key_id":   "test-verify-route-key",
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    "test-verify-route-key",
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 
@@ -705,10 +709,11 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 
 	// Generate an RSA key
 	genParams := map[string]interface{}{
-		"key_id":   "test-asym-dec-route-key",
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    "test-asym-dec-route-key",
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
 

@@ -596,7 +596,7 @@ func TestGenerateKey_Connected(t *testing.T) {
 	resp, err := tr.GenerateKey(context.Background(), &transport.GenerateKeyRequest{
 		KeyID:   "new-key",
 		Backend: "software",
-		KeyType: "ECDSA",
+		KeyType: "ECDSA", Algorithm: "ECDSA",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "new-key", resp.KeyID)
