@@ -1,6 +1,6 @@
 # Agent Automation — User Guide
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## The problem this solves
 
@@ -114,6 +114,139 @@ Three consequences worth being clear-eyed about:
 that anything reachable can use to drive a Chrome virtual authenticator whose
 presence and verification are simulated by Chrome. Loopback only, and off
 outside tests.
+
+## Headless browsers and automation
+
+**Observed behaviour:** point a real browser at xkey's virtual authenticator
+(`xkey fido2` over its native UHID/USB path, no `--cdp`) and `getInfo` reports
+`uv=false`. Chrome reads that and raises its own native PIN dialog on every
+`GetAssertion` that requests user verification — a dialog that lives in the
+browser's UI, not on the wire, so nothing driving the page over CDP or a
+WebDriver session can answer it. Registration can look like it works around
+this because Chrome takes the `pinUvAuthToken` route there, but assertions
+stop cold.
+
+**Why xkms will not change this:** #395 asked for `uv=true` to be reported
+whenever the barrier is unsealed, on the reasoning that an unsealed barrier
+already proves a human was present. The owner's ruling (2026-09-21, option A)
+upholds #365/#280 instead: CTAP 2.1 §6.1.2/§6.2.2 define the UV flag as the
+outcome of a verification method — PIN, biometric — performed *inside that
+ceremony*, not a property inherited from an earlier, unrelated event such as
+unsealing at startup; WebAuthn L2 §5.2.1 lets a relying party gate
+`credProtect` level 3 credential selection and administrator enrolment on
+that bit being true, and go-quicbaas does exactly that, so a fabricated
+`uv=true` would satisfy those gates with no human anywhere in the ceremony
+that produced it. The fix belongs on the client driving the browser, not in
+the authenticator's answer to `getInfo`.
+
+Two client-side ways to get past the dialog, depending on what the test
+actually needs from the ceremony:
+
+### (a) Chrome's own virtual authenticator, via CDP
+
+Chrome DevTools Protocol's `WebAuthn` domain lets a test add a virtual
+authenticator that Chrome trusts directly — once one is added, Chrome never
+shows its native PIN/touch UI for that page, because the ceremony is answered
+by the virtual authenticator instead of the platform stack. Set
+`hasUserVerification: true` and `isUserVerified: true` on it and every
+assertion carries a genuine (for the test) UV bit with no dialog:
+
+Playwright:
+
+```js
+const context = await browser.newContext();
+const page = await context.newPage();
+const cdp = await context.newCDPSession(page);
+
+await cdp.send('WebAuthn.enable');
+const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+  options: {
+    protocol: 'ctap2',
+    transport: 'internal',
+    hasResidentKey: true,
+    hasUserVerification: true,
+    isUserVerified: true,
+  },
+});
+
+// … drive registration/login on the page as usual …
+
+await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
+```
+
+Raw CDP (`chrome-remote-interface`, or any client of `ws://…/json` targets):
+
+```js
+const CDP = require('chrome-remote-interface');
+
+const client = await CDP();
+const { WebAuthn } = client;
+
+await WebAuthn.enable();
+const { authenticatorId } = await WebAuthn.addVirtualAuthenticator({
+  options: {
+    protocol: 'ctap2',
+    transport: 'usb',
+    hasResidentKey: true,
+    hasUserVerification: true,
+    isUserVerified: true,
+  },
+});
+
+// … navigate the page and run the WebAuthn ceremony …
+
+await WebAuthn.removeVirtualAuthenticator({ authenticatorId });
+await client.close();
+```
+
+This is a *different* mechanism from xkey's own `--cdp` bridge
+([`../virtual-authenticator/user.md`](../virtual-authenticator/user.md#testing-in-a-browser-without-the-device)).
+`--cdp` connects xkey's real authenticator — real backend, real PIN, real
+`getInfo` — into Chrome's virtual-authenticator slot so a browser test can
+exercise xkey's own credential logic without a physical device on the bus;
+it inherits xkey's real UV rules and needs a real PIN, same as the USB path.
+`WebAuthn.addVirtualAuthenticator` on its own needs no xkey instance at all —
+Chrome supplies the authenticator entirely — which is the right tool when a
+test only needs *a* working WebAuthn credential (exercising a relying
+party's own registration/login flow) and has no reason to touch xkey.
+
+### (b) Ask the relying party for `userVerification: "discouraged"`
+
+If the flow under test does not need the UV bit, the simplest fix is on the
+relying party's assertion options — no browser trick required, and it works
+against real xkey hardware too:
+
+```js
+const options = {
+  challenge: challengeFromServer,
+  rpId: 'kms.example.com',
+  allowCredentials: [{ id: credentialId, type: 'public-key' }],
+  userVerification: 'discouraged',
+};
+
+const assertion = await navigator.credentials.get({ publicKey: options });
+```
+
+What the RP gives up: it can no longer treat this assertion as evidence a
+human was verified for that ceremony, only that a credential holder was
+present. Any policy gated on UV — administrator enrolment, `credProtect`
+level 3 selection, a step-up requirement — has to ask for
+`userVerification: "required"` (or leave it at the WebAuthn default,
+`"preferred"`, which most authenticators still satisfy) on the calls that
+actually need it, and keep `"discouraged"` scoped to the flows that do not.
+
+### `--auto-uv` does not exist, and would not help here anyway
+
+`--auto-uv` on `xkey fido2` was proposed and removed by #365 for the same
+reason `uv=true`-from-unseal was rejected above: it reported verification
+that had not happened. The trade that remains for machine identity is
+`--require-touch=false` with a real PIN sent on every ceremony (see "The
+flags", above) — the daemon still performs a verification, it just performs
+it against a PIN the machine holds rather than a human touching a key. That
+is a different trade from either recipe here: it changes what the
+*credential* means (a machine identity, not a claim of human presence),
+where the two recipes above only change how a *test* gets past a browser
+dialog that is not answerable over CDP.
 
 ## Troubleshooting
 

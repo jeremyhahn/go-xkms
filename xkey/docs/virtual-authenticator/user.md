@@ -116,6 +116,14 @@ xkey fido2 --cdp --cdp-port 9222
 This exposes the authenticator over Chrome's DevTools protocol. Anything that
 can reach that port can use it — keep it on loopback and off shared machines.
 
+This drives xkey's own authenticator — real backend, real PIN, real `getInfo`
+— through Chrome's virtual-authenticator slot instead of a physical device;
+it does not change what UV means or how it is reported, so a native PIN
+dialog is avoided but a genuine PIN is still needed for the ceremony to carry
+UV. A test that only needs *a* working credential and has no reason to touch
+xkey at all can use Chrome's virtual authenticator on its own instead — see
+[`../agent-automation/user.md`](../agent-automation/user.md#headless-browsers-and-automation).
+
 ## Troubleshooting
 
 | What you see | What it means | What to do |
