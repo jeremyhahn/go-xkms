@@ -1552,20 +1552,9 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
 	}
 
-	// Retrieve the key
-	keyID := attrs.ID()
-	keyData, err := storage.GetKey(ctx, b.storage, keyID)
+	rawKey, err := b.exportableKeyMaterial(ctx, attrs)
 	if err != nil {
-		if err == storage.ErrNotFound {
-			return nil, backend.ErrKeyNotFound
-		}
-		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
-	}
-
-	// Decode the key (handle password protection if necessary)
-	rawKey, err := b.decodeSymmetricKey(keyData, attrs.Password)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decode key", Err: err}
+		return nil, err
 	}
 
 	// Generate import parameters for wrapping
@@ -1581,6 +1570,76 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}
 
 	return wrapped, nil
+}
+
+// ExportKeyTo exports a key wrapped for dstParams -- the DESTINATION's own
+// import parameters -- instead of a wrapping key this backend mints and
+// tracks for itself. See backend.ExportBackend.ExportKeyTo and
+// software.SoftwareBackend.ExportKeyTo, whose reasoning this mirrors: WrapKey
+// here is a pure cryptographic operation over the ImportParameters it is
+// given, so wrapping under a caller-supplied destination's public key is
+// exactly as sound as wrapping under this backend's own (go-xkms#154).
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+
+	if !b.Capabilities().Export {
+		return nil, backend.ErrExportNotSupported
+	}
+	if !attrs.Exportable {
+		return nil, backend.ErrKeyNotExportable
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+
+	if err := attrs.Validate(); err != nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	if !attrs.IsSymmetric() {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: attrs.KeyAlgorithm.String()}
+	}
+
+	rawKey, err := b.exportableKeyMaterial(ctx, attrs)
+	if err != nil {
+		return nil, err
+	}
+
+	wrapped, err := b.WrapKey(ctx, rawKey, dstParams)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to wrap key material for destination", Err: err}
+	}
+
+	return wrapped, nil
+}
+
+// exportableKeyMaterial retrieves and decodes attrs' raw symmetric key
+// bytes. It is the common core of ExportKey and ExportKeyTo, which differ
+// only in which ImportParameters they wrap the result under.
+func (b *Backend) exportableKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+	keyID := attrs.ID()
+	keyData, err := storage.GetKey(ctx, b.storage, keyID)
+	if err != nil {
+		if err == storage.ErrNotFound {
+			return nil, backend.ErrKeyNotFound
+		}
+		return nil, &errs.Wrapped{Msg: "failed to retrieve key", Err: err}
+	}
+
+	rawKey, err := b.decodeSymmetricKey(keyData, attrs.Password)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to decode key", Err: err}
+	}
+	return rawKey, nil
 }
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.

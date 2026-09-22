@@ -74,6 +74,14 @@ func (m *MockImportExportBackend) ExportKey(_ context.Context, attrs *types.KeyA
 	return args.Get(0).(*backend.WrappedKeyMaterial), args.Error(1)
 }
 
+func (m *MockImportExportBackend) ExportKeyTo(_ context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	args := m.Called(attrs, dstParams)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*backend.WrappedKeyMaterial), args.Error(1)
+}
+
 func (m *MockImportExportBackend) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	args := m.Called(attrs)
 	if args.Get(0) == nil {

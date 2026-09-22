@@ -292,6 +292,20 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	return nil, &errs.Detail{Err: backend.ErrOperationNotSupported, Detail: ErrWrappedExportNotSupported.Error()}
 }
 
+// ExportKeyTo has the same absence of a genuine Vault-native equivalent as
+// ExportKey, for the same reason: Vault never releases the plaintext this
+// method would need to wrap under a destination's parameters, whether the
+// wrapping key is one Vault minted or one a caller supplied.
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+	return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: ErrWrappedExportNotSupported.Error()}
+}
+
 // ExportKeyMaterial returns the raw key material for a symmetric key created
 // with Exportable=true, using Vault Transit's own transit/export endpoint --
 // the one operation in this file's ceremony Vault performs exactly as

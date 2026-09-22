@@ -682,6 +682,10 @@ func (f *failingImportProvider) ExportKey(_ context.Context, _ *types.KeyAttribu
 	return nil, errFailingImport
 }
 
+func (f *failingImportProvider) ExportKeyTo(_ context.Context, _ *types.KeyAttributes, _ *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	return nil, errFailingImport
+}
+
 func (f *failingImportProvider) ExportKeyMaterial(_ context.Context, _ *types.KeyAttributes) ([]byte, error) {
 	return nil, errFailingImport
 }
@@ -1129,6 +1133,10 @@ func (a *acceptingImportProvider) ImportKey(_ context.Context, _ *types.KeyAttri
 }
 
 func (a *acceptingImportProvider) ExportKey(_ context.Context, _ *types.KeyAttributes, _ backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+	return nil, nil
+}
+
+func (a *acceptingImportProvider) ExportKeyTo(_ context.Context, _ *types.KeyAttributes, _ *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	return nil, nil
 }
 

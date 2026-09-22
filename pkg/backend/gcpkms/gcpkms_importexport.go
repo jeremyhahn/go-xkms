@@ -301,6 +301,20 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	return nil, backend.ErrExportNotSupported
 }
 
+// ExportKeyTo is not supported for the same reason ExportKey is not: GCP KMS
+// does not expose an API to release private key material, so there is no
+// plaintext for this backend to wrap for a destination's parameters in the
+// first place.
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+	return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: "GCP KMS does not support releasing private key material for re-wrapping"}
+}
+
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 // GCP KMS does not support exporting raw key material from HSM-protected keys.
 // This method returns ErrExportNotSupported.

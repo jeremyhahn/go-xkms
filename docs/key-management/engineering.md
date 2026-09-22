@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -88,6 +88,19 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   carries an exportability field, so a caller cannot assert one. The MCP
   handler used to build the source attributes by hand, which left the flag
   false and refused every copy (#155).
+- **`CopyKey` wraps for the DESTINATION's own key, never the source's.**
+  `CopyKey` calls the destination's `GetImportParameters` first, then the
+  source's `ExportKeyTo(ctx, attrs, dstParams)` — never plain `ExportKey`,
+  whose wrapping key the EXPORTING backend mints and tracks for itself and
+  names by its own import token, meaningless to any other backend instance's
+  `ImportKey`. `backend.ExportBackend.ExportKeyTo` is the method every
+  `ExportBackend` implements for this: the software and symmetric
+  key-provider backends perform a genuine re-wrap (`WrapKey` there is a pure
+  cryptographic operation over the `ImportParameters` it is given); every
+  hardware- or provider-bound backend — PKCS#11, TPM2, AWS KMS, GCP KMS,
+  Azure Key Vault, Vault, the phone backend — returns the typed
+  `backend.ErrExportToUnsupported` instead of emulating a wrap its wrap
+  primitive does not actually perform (#154, #567).
 - **Wrap/unwrap by ID never materialises plaintext outside the service.**
   `WrapKeyByID` reads the KEK and the target inside the process and returns
   only ciphertext.

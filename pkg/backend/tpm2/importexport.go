@@ -253,6 +253,21 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	return nil, &errs.Detail{Err: backend.ErrExportNotSupported, Detail: "TPM2 keys are hardware-bound and cannot be exported"}
 }
 
+// ExportKeyTo is not supported for the same reason ExportKey is not: this
+// backend's storage objects are fixedTPM/fixedParent and non-duplicable, so
+// there is no plaintext to wrap for a destination's parameters in the first
+// place, let alone a TPM2 primitive that would wrap it under an externally
+// supplied public key rather than a loaded TPM object.
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+	return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: "TPM2 keys are hardware-bound and cannot be re-wrapped for a foreign destination"}
+}
+
 // ExportKeyMaterial is not supported: TPM2 keys never release plaintext private
 // material outside the hardware boundary.
 func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {

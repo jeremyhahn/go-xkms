@@ -164,6 +164,20 @@ func (m *boostIEKeyProvider) ExportKey(_ context.Context, attrs *types.KeyAttrib
 	}, nil
 }
 
+func (m *boostIEKeyProvider) ExportKeyTo(_ context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if m.exportErr != nil {
+		return nil, m.exportErr
+	}
+	if dstParams == nil {
+		return nil, errors.New("destination import parameters cannot be nil")
+	}
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("exported-material"),
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+	}, nil
+}
+
 func (m *boostIEKeyProvider) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	return nil, errors.New("not supported")
 }

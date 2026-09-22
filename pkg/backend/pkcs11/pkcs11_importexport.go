@@ -910,6 +910,30 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	}, nil
 }
 
+// ExportKeyTo has no HSM-native equivalent: C_WrapKey wraps under a
+// wrapping-key HANDLE that must already exist as an object inside this
+// HSM's own token -- exactly the wrappingKeyLabel object GetImportParameters
+// finds or creates above. A destination backend's ImportParameters carry a
+// crypto.PublicKey value, not an HSM object handle, and there is no PKCS#11
+// primitive here to press an arbitrary externally supplied public key into
+// service as a C_WrapKey wrapping key without first provisioning it as a
+// CKA_WRAP object on this token -- a ceremony this backend does not perform
+// and should not invent unreviewed. Refuse rather than approximate it with a
+// software RSA-OAEP encrypt that never touches the HSM boundary this
+// backend's whole design exists to preserve (go-xkms#154).
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+	return nil, &errs.Detail{
+		Err:    backend.ErrExportToUnsupported,
+		Detail: "PKCS#11 C_WrapKey wraps under a wrapping-key object provisioned on this HSM's own token, not an arbitrary destination-supplied public key",
+	}
+}
+
 // findOneObject runs a complete C_FindObjectsInit / C_FindObjects /
 // C_FindObjectsFinal cycle and returns the first matching object handle, or
 // CK_INVALID_HANDLE (0) when nothing matches.

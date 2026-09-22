@@ -1909,12 +1909,18 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 		return &ErrImportExportOperation{Operation: "get import parameters", Err: err}
 	}
 
-	wrappedKey, err := sourceImportExport.ExportKey(ctx, sourceAttrs, algorithm)
+	// The material is wrapped for the DESTINATION's own import parameters via
+	// ExportKeyTo, never for a wrapping key the source mints and tracks for
+	// itself. Overwriting a plain ExportKey's ImportToken field with the
+	// destination's token (this function's own former behaviour) pointed
+	// ImportKey at a wrapping key the material was never wrapped under: the
+	// token named the destination's key, but the ciphertext was still
+	// encrypted under the source's self-minted one, so the destination's
+	// unwrap failed for every backend that honours its tokens (go-xkms#154).
+	wrappedKey, err := sourceImportExport.ExportKeyTo(ctx, sourceAttrs, importParams)
 	if err != nil {
 		return &ErrImportExportOperation{Operation: "export key", Err: err}
 	}
-
-	wrappedKey.ImportToken = importParams.ImportToken
 
 	return destImportExport.ImportKey(ctx, destAttrs, wrappedKey)
 }

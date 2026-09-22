@@ -48,11 +48,13 @@ type mockImportExportBackend struct {
 
 	// Configurable behavior
 	ExportKeyFunc           func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error)
+	ExportKeyToFunc         func(*types.KeyAttributes, *backend.ImportParameters) (*backend.WrappedKeyMaterial, error)
 	ImportKeyFunc           func(*types.KeyAttributes, *backend.WrappedKeyMaterial) error
 	GetImportParametersFunc func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.ImportParameters, error)
 
 	// Call tracking
 	ExportKeyCalls           []string
+	ExportKeyToCalls         []string
 	ImportKeyCalls           []string
 	GetImportParametersCalls []string
 }
@@ -108,6 +110,51 @@ func (m *mockImportExportBackend) ExportKey(ctx context.Context, attrs *types.Ke
 	}
 
 	return wrapped, nil
+}
+
+// ExportKeyTo exports a key wrapped for dstParams, mirroring ExportKey's
+// lookup but tagging the result with the caller-supplied destination
+// parameters instead of a canned mock token.
+func (m *mockImportExportBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	m.mu.Lock()
+	m.ExportKeyToCalls = append(m.ExportKeyToCalls, attrs.CN)
+	m.mu.Unlock()
+
+	if m.ExportKeyToFunc != nil {
+		return m.ExportKeyToFunc(attrs, dstParams)
+	}
+
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+
+	key, ok := m.keys[attrs.CN]
+	if !ok {
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
+	}
+
+	var keyBytes []byte
+	var err error
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		keyBytes = x509.MarshalPKCS1PrivateKey(k)
+	case *ecdsa.PrivateKey:
+		keyBytes, err = x509.MarshalECPrivateKey(k)
+		if err != nil {
+			return nil, err
+		}
+	case ed25519.PrivateKey:
+		keyBytes = []byte(k)
+	default:
+		return nil, &errs.Message{Msg: "unsupported key type"}
+	}
+
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  keyBytes,
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+		Metadata:    make(map[string]string),
+	}, nil
 }
 
 // ImportKey imports wrapped key material
@@ -340,8 +387,10 @@ func TestMigrateKey_Success(t *testing.T) {
 	_, err = dest.GetKey(context.Background(), attrs)
 	assert.NoError(t, err)
 
-	// Verify export and import were called
-	assert.Contains(t, source.ExportKeyCalls, attrs.CN)
+	// Verify export and import were called. MigrateKey wraps through
+	// ExportKeyTo -- for the destination's own import parameters -- not the
+	// self-minted ExportKey (go-xkms#154).
+	assert.Contains(t, source.ExportKeyToCalls, attrs.CN)
 	assert.Contains(t, dest.ImportKeyCalls, attrs.CN)
 }
 
@@ -448,8 +497,9 @@ func TestMigrateKey_ExportFailure(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	// Make export fail
-	source.ExportKeyFunc = func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+	// Make export fail. MigrateKey wraps through ExportKeyTo, not the
+	// self-minted ExportKey (go-xkms#154), so that is the func to fail.
+	source.ExportKeyToFunc = func(*types.KeyAttributes, *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 		return nil, &errs.Message{Msg: "export failed"}
 	}
 
@@ -457,7 +507,7 @@ func TestMigrateKey_ExportFailure(t *testing.T) {
 	source.keys[attrs.CN] = key
 
 	err := migrator.MigrateKey(context.Background(), attrs, nil)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to export key")
 }
 
@@ -1303,9 +1353,12 @@ func TestCheckCompatibility(t *testing.T) {
 	}
 }
 
-// TestExportKey tests the exportKey helper function
-func TestExportKey(t *testing.T) {
+// TestExportKeyTo tests the exportKeyTo helper function: the wrapped
+// material must be tagged with the DESTINATION's own import token, not one
+// the source mints for itself (go-xkms#154).
+func TestExportKeyTo(t *testing.T) {
 	source := newMockImportExportBackend()
+	dest := newMockImportExportBackend()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-export.example.com",
@@ -1319,22 +1372,29 @@ func TestExportKey(t *testing.T) {
 
 	migrator := &defaultMigrator{
 		source: source,
+		dest:   dest,
 	}
 
 	opts := &MigrateOptions{
 		WrappingAlgorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	wrapped, err := migrator.exportKey(context.Background(), source, attrs, opts)
+	wrapped, err := migrator.exportKeyTo(context.Background(), source, dest, attrs, opts)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	assert.Equal(t, backend.WrappingAlgorithmRSAES_OAEP_SHA_256, wrapped.Algorithm)
 	assert.NotEmpty(t, wrapped.WrappedKey)
+	assert.NotEmpty(t, wrapped.ImportToken)
+	assert.Equal(t, []string{attrs.CN}, dest.GetImportParametersCalls,
+		"exportKeyTo must ask the DESTINATION for its own import parameters")
+	assert.Equal(t, []string{attrs.CN}, source.ExportKeyToCalls,
+		"exportKeyTo must wrap through the SOURCE's ExportKeyTo, not ExportKey")
 }
 
-// TestExportKey_AutoSelectAlgorithm tests automatic algorithm selection
-func TestExportKey_AutoSelectAlgorithm(t *testing.T) {
+// TestExportKeyTo_AutoSelectAlgorithm tests automatic algorithm selection
+func TestExportKeyTo_AutoSelectAlgorithm(t *testing.T) {
 	source := newMockImportExportBackend()
+	dest := newMockImportExportBackend()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-auto.example.com",
@@ -1348,19 +1408,58 @@ func TestExportKey_AutoSelectAlgorithm(t *testing.T) {
 
 	migrator := &defaultMigrator{
 		source: source,
+		dest:   dest,
 	}
 
 	// Don't specify wrapping algorithm
 	opts := &MigrateOptions{}
 
-	wrapped, err := migrator.exportKey(context.Background(), source, attrs, opts)
+	wrapped, err := migrator.exportKeyTo(context.Background(), source, dest, attrs, opts)
 	require.NoError(t, err)
 	assert.NotNil(t, wrapped)
 	// RSA keys should use hybrid wrapping
 	assert.Equal(t, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256, wrapped.Algorithm)
 }
 
-// TestImportKey tests the importKey helper function
+// TestExportKeyTo_DestinationParamsFailure proves exportKeyTo surfaces a
+// failure to obtain the DESTINATION's own import parameters, before the
+// source is ever asked to wrap anything.
+func TestExportKeyTo_DestinationParamsFailure(t *testing.T) {
+	source := newMockImportExportBackend()
+	dest := newMockImportExportBackend()
+
+	dest.GetImportParametersFunc = func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+		return nil, &errs.Message{Msg: "parameters not available"}
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-params-fail.example.com",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreSoftware,
+		KeyAlgorithm: x509.RSA,
+	}
+
+	key := generateTestKey(t, x509.RSA)
+	source.keys[attrs.CN] = key
+
+	migrator := &defaultMigrator{
+		source: source,
+		dest:   dest,
+	}
+
+	_, err := migrator.exportKeyTo(context.Background(), source, dest, attrs, &MigrateOptions{
+		WrappingAlgorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get destination import parameters")
+	assert.Empty(t, source.ExportKeyToCalls, "the source must never be asked to wrap when the destination's own parameters could not be obtained")
+}
+
+// TestImportKey tests the importKey helper function. Unlike the pre-#154
+// helper, importKey no longer calls GetImportParameters or rewrites the
+// wrapped material's ImportToken itself -- that ceremony now happens once,
+// in exportKeyTo, before the material is wrapped at all -- so this proves
+// only that importKey forwards to the destination's ImportKey unchanged.
 func TestImportKey(t *testing.T) {
 	dest := newMockImportExportBackend()
 
@@ -1392,36 +1491,31 @@ func TestImportKey(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestImportKey_GetParametersFailure tests import when GetImportParameters fails
-func TestImportKey_GetParametersFailure(t *testing.T) {
+// TestImportKey_DestinationRefuses proves importKey surfaces the
+// destination's own ImportKey error unchanged.
+func TestImportKey_DestinationRefuses(t *testing.T) {
 	dest := newMockImportExportBackend()
-
-	dest.GetImportParametersFunc = func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
-		return nil, &errs.Message{Msg: "parameters not available"}
+	dest.ImportKeyFunc = func(*types.KeyAttributes, *backend.WrappedKeyMaterial) error {
+		return &errs.Message{Msg: "destination refused the import"}
 	}
 
 	attrs := &types.KeyAttributes{
-		CN:           "test-params-fail.example.com",
+		CN:           "test-import-refused.example.com",
 		KeyType:      types.KeyTypeSigning,
 		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
-	key := generateTestKey(t, x509.RSA)
-	keyBytes := x509.MarshalPKCS1PrivateKey(key.(*rsa.PrivateKey))
-
 	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey: keyBytes,
+		WrappedKey: []byte("wrapped"),
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	migrator := &defaultMigrator{
-		dest: dest,
-	}
+	migrator := &defaultMigrator{dest: dest}
 
 	err := migrator.importKey(context.Background(), dest, attrs, wrapped)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get import parameters")
+	assert.Contains(t, err.Error(), "destination refused the import")
 }
 
 // TestMigrateKeysSequential tests sequential migration

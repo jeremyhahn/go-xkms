@@ -132,6 +132,17 @@ func (p *fakeIEProvider) ExportKey(_ context.Context, attrs *types.KeyAttributes
 	return &backend.WrappedKeyMaterial{WrappedKey: []byte("exported-material"), Algorithm: algorithm}, nil
 }
 
+func (p *fakeIEProvider) ExportKeyTo(_ context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if dstParams == nil {
+		return nil, errors.New("fake provider: destination import parameters cannot be nil")
+	}
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("exported-material"),
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+	}, nil
+}
+
 func (p *fakeIEProvider) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if p.materialErr != nil {
 		return nil, p.materialErr

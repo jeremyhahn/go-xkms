@@ -221,6 +221,34 @@ type ExportBackend interface {
 	// Returns ErrOperationNotPermitted if the key's policy prevents export.
 	ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm WrappingAlgorithm) (*WrappedKeyMaterial, error)
 
+	// ExportKeyTo exports a key wrapped for dstParams -- the DESTINATION
+	// backend's own import parameters, obtained by calling that backend's
+	// GetImportParameters -- rather than a wrapping key this backend mints
+	// and tracks for itself the way ExportKey does.
+	//
+	// This is the one export path that produces material a DIFFERENT backend
+	// instance can actually unwrap. ExportKey's ImportToken names a wrapping
+	// key that exists only in the exporting backend's own state (an
+	// in-memory map, an HSM object, a cloud import job); handing that token
+	// to a second backend's ImportKey names nothing it has ever heard of.
+	// ExportKeyTo closes that gap by wrapping under the caller-supplied
+	// destination parameters directly, so the caller is responsible for
+	// having obtained dstParams from the actual destination first (see
+	// CopyKey for the canonical caller).
+	//
+	// Not every backend can honour an externally supplied wrapping key:
+	// PKCS#11's C_WrapKey, TPM2 duplication, and every cloud KMS's BYOK
+	// ceremony wrap under a key object the backend itself manages, not an
+	// arbitrary public key handed to it. Those backends return
+	// ErrExportToUnsupported rather than emulate a wrap their hardware or
+	// service does not actually perform.
+	//
+	// Returns ErrExportNotSupported if the backend doesn't support key
+	// export at all. Returns ErrKeyNotExportable if the key's policy
+	// prevents export. Returns ErrExportToUnsupported if the backend can
+	// export but cannot wrap for a foreign destination's parameters.
+	ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *ImportParameters) (*WrappedKeyMaterial, error)
+
 	// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 	// This method provides direct access to the plaintext key bytes without wrapping.
 	//

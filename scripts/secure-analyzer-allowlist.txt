@@ -85,8 +85,6 @@ pkg/luks/tpm.go:86	pre-existing: TPMSealResult.Passphrase; deferred pending desi
 pkg/fido2/webauthn_assertion.go:51	pre-existing: WebAuthnAuthenticationOptions.PIN; deferred pending design review (go-xkms#549 triage)
 pkg/fido2/webauthn_assertion.go:399	pre-existing: WebAuthnAssertionRequest.PIN; deferred pending design review (go-xkms#549 triage)
 pkg/fido2/webauthn_attestation.go:51	pre-existing: WebAuthnRegistrationOptions.PIN; deferred pending design review (go-xkms#549 triage)
-pkg/backend/mocks/mock_extended.go:340	pre-existing: MockSymmetricKey.keyMaterial (test double); deferred pending design review (go-xkms#549 triage)
-pkg/backend/mocks/mock_extended.go:363	pre-existing: MockSymmetricEncrypter.KeyMaterial (test double); deferred pending design review (go-xkms#549 triage)
 pkg/backup/backup.go:111	pre-existing: BackupKey.PrivateKey; deferred pending design review (go-xkms#549 triage)
 pkg/factor/fido2/ctap2.go:142	pre-existing: PIN configuration field; deferred pending design review (go-xkms#549 triage)
 pkg/pivcert/pivcert.go:492	pre-existing: PIN configuration field; deferred pending design review (go-xkms#549 triage)

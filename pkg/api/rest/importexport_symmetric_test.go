@@ -148,6 +148,7 @@ type mockImportExportSymmetricBackend struct {
 	UnwrapKeyFunc           func(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error)
 	ImportKeyFunc           func(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error
 	ExportKeyFunc           func(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error)
+	ExportKeyToFunc         func(attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error)
 	CopyKeyFunc             func(srcAttrs *types.KeyAttributes, dstAttrs *types.KeyAttributes, srcBackend, dstBackend backend.ImportExportBackend) error
 
 	GenerateSymmetricKeyFunc func(attrs *types.KeyAttributes) (types.SymmetricKey, error)
@@ -400,6 +401,33 @@ func (m *mockImportExportSymmetricBackend) ExportKey(ctx context.Context, attrs 
 		WrappedKey:  []byte("mock-wrapped-key-material"),
 		Algorithm:   algorithm,
 		ImportToken: []byte("mock-export-token"),
+	}, nil
+}
+
+// ExportKeyTo exports a key wrapped for dstParams -- the destination's own
+// import parameters -- rather than a canned mock token.
+func (m *mockImportExportSymmetricBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if m.ExportKeyToFunc != nil {
+		return m.ExportKeyToFunc(attrs, dstParams)
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, ok := m.keys[attrs.CN]; !ok {
+		if _, ok := m.symmetricKeys[attrs.CN]; !ok {
+			return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
+		}
+	}
+
+	if dstParams == nil {
+		return nil, &errs.Message{Msg: "destination import parameters cannot be nil"}
+	}
+
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("mock-wrapped-key-material"),
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
 	}, nil
 }
 

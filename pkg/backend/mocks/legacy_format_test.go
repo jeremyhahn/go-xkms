@@ -46,7 +46,8 @@ func mustHexBytes(t *testing.T, s string) []byte {
 // about the format it stands in for: it must read what the real backends wrote
 // before AES-GCM nonce generation moved inside the module boundary.
 func TestMockSymmetricEncrypter_DecryptsLegacyEncryptedData(t *testing.T) {
-	enc := &MockSymmetricEncrypter{KeyMaterial: mustHexBytes(t, legacyMockKeyHex)}
+	enc, err := NewMockSymmetricEncrypter(mustHexBytes(t, legacyMockKeyHex), "")
+	require.NoError(t, err)
 
 	got, err := enc.Decrypt(&types.EncryptedData{
 		Nonce:      mustHexBytes(t, legacyMockNonceHex),

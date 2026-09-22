@@ -29,9 +29,9 @@ func TestMockSymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 		t.Fatalf("failed to generate key: %v", err)
 	}
 
-	encrypter := &MockSymmetricEncrypter{
-		KeyMaterial: key,
-		Algorithm:   "aes256-gcm",
+	encrypter, err := NewMockSymmetricEncrypter(key, "aes256-gcm")
+	if err != nil {
+		t.Fatalf("NewMockSymmetricEncrypter() error = %v", err)
 	}
 
 	plaintext := []byte("mock backend plaintext")
@@ -63,9 +63,9 @@ func TestMockSymmetricEncrypter_Decrypt_WrongNonceLength(t *testing.T) {
 		t.Fatalf("failed to generate key: %v", err)
 	}
 
-	encrypter := &MockSymmetricEncrypter{
-		KeyMaterial: key,
-		Algorithm:   "aes256-gcm",
+	encrypter, err := NewMockSymmetricEncrypter(key, "aes256-gcm")
+	if err != nil {
+		t.Fatalf("NewMockSymmetricEncrypter() error = %v", err)
 	}
 
 	tests := []struct {
@@ -100,9 +100,9 @@ func TestMockSymmetricEncrypter_Decrypt_NilData(t *testing.T) {
 		t.Fatalf("failed to generate key: %v", err)
 	}
 
-	encrypter := &MockSymmetricEncrypter{
-		KeyMaterial: key,
-		Algorithm:   "aes256-gcm",
+	encrypter, err := NewMockSymmetricEncrypter(key, "aes256-gcm")
+	if err != nil {
+		t.Fatalf("NewMockSymmetricEncrypter() error = %v", err)
 	}
 
 	if _, err := encrypter.Decrypt(nil, nil); err == nil {

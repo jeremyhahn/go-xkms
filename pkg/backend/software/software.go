@@ -818,30 +818,9 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: algorithm.String()}
 	}
 
-	// Get the key material
-	var keyMaterial []byte
-	var err error
-
-	if attrs.IsSymmetric() {
-		// Get symmetric key
-		key, err := b.symmetricBackend.GetSymmetricKey(ctx, attrs)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to get symmetric key", Err: err}
-		}
-		keyMaterial, err = key.Raw()
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to get raw key material", Err: err}
-		}
-	} else {
-		// Get asymmetric key and marshal to PKCS8
-		privateKey, err := b.pkcs8Backend.GetKey(ctx, attrs)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to get private key", Err: err}
-		}
-		keyMaterial, err = x509.MarshalPKCS8PrivateKey(privateKey)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to marshal private key", Err: err}
-		}
+	keyMaterial, err := b.exportableKeyMaterial(ctx, attrs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Generate import parameters for wrapping
@@ -857,6 +836,90 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 	}
 
 	return wrapped, nil
+}
+
+// ExportKeyTo exports a key wrapped for dstParams -- the DESTINATION's own
+// import parameters -- instead of a wrapping key this backend mints and
+// tracks for itself. See backend.ExportBackend.ExportKeyTo.
+//
+// WrapKey is a pure cryptographic operation over the ImportParameters it is
+// given: it reads params.WrappingPublicKey and params.Algorithm and touches
+// none of this backend's own state, so wrapping under a caller-supplied
+// destination's public key is exactly as sound as wrapping under this
+// backend's own self-minted one. That is what makes a real cross-backend
+// copy possible: the material this method returns can only be unwrapped by
+// whichever backend produced dstParams (go-xkms#154).
+func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+
+	// Refused before the sub-backend is chosen: see ExportKey's identical
+	// guard (go-xkms#158).
+	if err := requireSingleAlgorithmFamily(attrs); err != nil {
+		return nil, err
+	}
+
+	if !b.Capabilities().Export {
+		return nil, backend.ErrExportNotSupported
+	}
+	if !attrs.Exportable {
+		return nil, backend.ErrKeyNotExportable
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+
+	if !isValidWrappingAlgorithm(dstParams.Algorithm) {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: dstParams.Algorithm.String()}
+	}
+
+	keyMaterial, err := b.exportableKeyMaterial(ctx, attrs)
+	if err != nil {
+		return nil, err
+	}
+
+	wrapped, err := b.WrapKey(ctx, keyMaterial, dstParams)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to wrap key for destination", Err: err}
+	}
+
+	return wrapped, nil
+}
+
+// exportableKeyMaterial reads attrs' private key material in the shape
+// WrapKey expects: raw bytes for a symmetric key, PKCS#8 DER for an
+// asymmetric one. It is the common core of ExportKey and ExportKeyTo, which
+// differ only in which ImportParameters they wrap the result under.
+func (b *SoftwareBackend) exportableKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+	if attrs.IsSymmetric() {
+		key, err := b.symmetricBackend.GetSymmetricKey(ctx, attrs)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to get symmetric key", Err: err}
+		}
+		raw, err := key.Raw()
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to get raw key material", Err: err}
+		}
+		return raw, nil
+	}
+
+	privateKey, err := b.pkcs8Backend.GetKey(ctx, attrs)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to get private key", Err: err}
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to marshal private key", Err: err}
+	}
+	return der, nil
 }
 
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.

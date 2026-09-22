@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // gcmNonceSize and gcmTagSize name the 96-bit GCM nonce and 128-bit
@@ -58,6 +59,7 @@ type ExtendedMockBackend struct {
 	UnwrapKeyFunc           func(*backend.WrappedKeyMaterial, *backend.ImportParameters) ([]byte, error)
 	ImportKeyFunc           func(*types.KeyAttributes, *backend.WrappedKeyMaterial) error
 	ExportKeyFunc           func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error)
+	ExportKeyToFunc         func(*types.KeyAttributes, *backend.ImportParameters) (*backend.WrappedKeyMaterial, error)
 	ExportKeyMaterialFunc   func(*types.KeyAttributes) ([]byte, error)
 
 	// Call tracking for symmetric operations
@@ -71,6 +73,7 @@ type ExtendedMockBackend struct {
 	UnwrapKeyCalls           int
 	ImportKeyCalls           []string
 	ExportKeyCalls           []string
+	ExportKeyToCalls         []string
 	ExportKeyMaterialCalls   []string
 }
 
@@ -114,9 +117,14 @@ func (m *ExtendedMockBackend) GenerateSymmetricKey(ctx context.Context, attrs *t
 
 	m.symmetricKeys[attrs.CN] = keyMaterial
 
+	buf, err := bufferizeKeyMaterial(keyMaterial)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to seal generated key material", Err: err}
+	}
+
 	return &MockSymmetricKey{
 		cn:          attrs.CN,
-		keyMaterial: keyMaterial,
+		keyMaterial: buf,
 		algorithm:   string(attrs.SymmetricAlgorithm),
 		keySize:     keySize * 8, // Convert bytes to bits
 	}, nil
@@ -138,9 +146,14 @@ func (m *ExtendedMockBackend) GetSymmetricKey(ctx context.Context, attrs *types.
 		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 
+	buf, err := bufferizeKeyMaterial(keyMaterial)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to seal key material", Err: err}
+	}
+
 	return &MockSymmetricKey{
 		cn:          attrs.CN,
-		keyMaterial: keyMaterial,
+		keyMaterial: buf,
 		algorithm:   string(attrs.SymmetricAlgorithm),
 		keySize:     len(keyMaterial) * 8,
 	}, nil
@@ -162,8 +175,13 @@ func (m *ExtendedMockBackend) SymmetricEncrypter(ctx context.Context, attrs *typ
 		return nil, &errs.Message{Msg: fmt.Sprintf("symmetric key not found: %s", attrs.CN)}
 	}
 
+	buf, err := bufferizeKeyMaterial(keyMaterial)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to seal key material", Err: err}
+	}
+
 	return &MockSymmetricEncrypter{
-		KeyMaterial: keyMaterial,
+		KeyMaterial: buf,
 		Algorithm:   string(attrs.SymmetricAlgorithm),
 	}, nil
 }
@@ -271,6 +289,44 @@ func (m *ExtendedMockBackend) ExportKey(ctx context.Context, attrs *types.KeyAtt
 	}, nil
 }
 
+// ExportKeyTo exports a key wrapped for dstParams -- the destination's own
+// import parameters -- rather than an algorithm this mock would otherwise
+// have to mint parameters for itself. Mirrors ExportKey's lookup, but tags
+// the result with dstParams' own Algorithm and ImportToken so a caller
+// asserting on the returned WrappedKeyMaterial sees exactly what a real
+// cross-backend ExportKeyTo would produce.
+func (m *ExtendedMockBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.ExportKeyToCalls = append(m.ExportKeyToCalls, attrs.CN)
+
+	if m.ExportKeyToFunc != nil {
+		return m.ExportKeyToFunc(attrs, dstParams)
+	}
+
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+
+	// Check if the key exists (try both asymmetric and symmetric)
+	var keyMaterial []byte
+	if key, ok := m.keys[attrs.CN]; ok {
+		// For asymmetric keys, serialize (mock)
+		keyMaterial = []byte(fmt.Sprintf("mock-exported-key:%v", key))
+	} else if symKey, ok := m.symmetricKeys[attrs.CN]; ok {
+		keyMaterial = symKey
+	} else {
+		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", attrs.CN)}
+	}
+
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  keyMaterial,
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+	}, nil
+}
+
 // ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
 // This method provides direct access to the plaintext key bytes without wrapping.
 func (m *ExtendedMockBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
@@ -334,10 +390,25 @@ func (m *ExtendedMockBackend) StoreSymmetricKey(cn string, keyMaterial []byte) {
 	m.symmetricKeys[cn] = keyMaterial
 }
 
+// bufferizeKeyMaterial copies material into a fresh *secure.Buffer without
+// consuming the caller's own slice. secure.NewBufferFromBytes wipes its
+// input on return, which is correct when the caller is done with the
+// slice -- but every call site here also keeps material in
+// ExtendedMockBackend.symmetricKeys, so wrapping that slice directly would
+// zero the mock's own store out from under later reads. Copying first keeps
+// the two independent, the same way software.SoftwareBackend keeps its
+// sealed wrapping key and its caller's slice independent (see
+// pkg/backend/software/software.go's GetImportParameters).
+func bufferizeKeyMaterial(material []byte) (*secure.Buffer, error) {
+	cp := make([]byte, len(material))
+	copy(cp, material)
+	return secure.NewBufferFromBytes(cp)
+}
+
 // MockSymmetricKey implements types.SymmetricKey for testing.
 type MockSymmetricKey struct {
 	cn          string
-	keyMaterial []byte
+	keyMaterial *secure.Buffer
 	algorithm   string
 	keySize     int
 }
@@ -352,15 +423,31 @@ func (k *MockSymmetricKey) KeySize() int {
 	return k.keySize
 }
 
-// Raw returns the raw key bytes.
+// Raw returns the raw key bytes. Buffer.Bytes() is nil-safe, so a
+// zero-value MockSymmetricKey (keyMaterial never set) returns nil rather
+// than panicking, matching the pre-*secure.Buffer zero-value behavior.
 func (k *MockSymmetricKey) Raw() ([]byte, error) {
-	return k.keyMaterial, nil
+	return k.keyMaterial.Bytes(), nil
+}
+
+// NewMockSymmetricEncrypter builds a MockSymmetricEncrypter sealing
+// keyMaterial into a *secure.Buffer, for callers that need to construct one
+// directly rather than through ExtendedMockBackend.SymmetricEncrypter.
+func NewMockSymmetricEncrypter(keyMaterial []byte, algorithm string) (*MockSymmetricEncrypter, error) {
+	buf, err := bufferizeKeyMaterial(keyMaterial)
+	if err != nil {
+		return nil, err
+	}
+	return &MockSymmetricEncrypter{KeyMaterial: buf, Algorithm: algorithm}, nil
 }
 
 // MockSymmetricEncrypter implements types.SymmetricEncrypter for testing.
 type MockSymmetricEncrypter struct {
-	// Exported fields for test construction
-	KeyMaterial []byte
+	// KeyMaterial is exported for test construction; use
+	// NewMockSymmetricEncrypter rather than a composite literal so the
+	// material is sealed the same way ExtendedMockBackend.SymmetricEncrypter
+	// seals it.
+	KeyMaterial *secure.Buffer
 	Algorithm   string
 
 	// Configurable error behavior
@@ -374,7 +461,7 @@ func (e *MockSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOp
 		return nil, e.EncryptError
 	}
 
-	block, err := aes.NewCipher(e.KeyMaterial)
+	block, err := aes.NewCipher(e.KeyMaterial.Bytes())
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
@@ -421,7 +508,7 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 		return nil, &errs.Message{Msg: "mocks: encrypted data is nil"}
 	}
 
-	block, err := aes.NewCipher(e.KeyMaterial)
+	block, err := aes.NewCipher(e.KeyMaterial.Bytes())
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}

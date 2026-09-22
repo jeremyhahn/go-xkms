@@ -508,16 +508,24 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		algorithm = backend.WrappingAlgorithm(req.Algorithm)
 	}
 
-	// The exported material is handed to the destination exactly as the source
-	// produced it. ExportKey wraps under the exporting backend's own freshly
-	// minted wrapping key and names that key by the import token it returns,
-	// so the token is part of the material, not a parameter of the
-	// destination. This used to ask the destination for fresh import
-	// parameters and overwrite the token with theirs, which pointed the import
-	// at a wrapping key the material was never wrapped under: every copy
-	// through a backend that honours its tokens -- the software backend
-	// included -- failed to unwrap (go-xkms#222).
-	wrappedKey, err := srcImportExport.ExportKey(ctx, srcAttrs, algorithm)
+	// The material is wrapped for the DESTINATION's own wrapping key, not one
+	// the source mints for itself. dstImportExport.GetImportParameters is the
+	// same ceremony step an external BYOK import would call first; the
+	// resulting ImportParameters -- and, critically, the ImportToken that
+	// names them inside the destination's own state -- come from the
+	// destination and only the destination. ExportKeyTo then wraps under
+	// those parameters directly, so the token ImportKey receives always names
+	// something the destination itself minted. This used to call ExportKey,
+	// which wraps under a key the EXPORTING backend mints for itself and
+	// names by ITS OWN token -- meaningless to any other backend instance's
+	// ImportKey, which looks the token up in its own state and finds nothing
+	// (go-xkms#154, go-xkms#222).
+	dstParams, err := dstImportExport.GetImportParameters(ctx, dstAttrs, algorithm)
+	if err != nil {
+		return nil, &ErrKeyOperation{Operation: "get destination import parameters", Err: err}
+	}
+
+	wrappedKey, err := srcImportExport.ExportKeyTo(ctx, srcAttrs, dstParams)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: "export key", Err: err}
 	}

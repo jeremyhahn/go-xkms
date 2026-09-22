@@ -514,6 +514,83 @@ func TestExportKeyErrors(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
 
+// TestExportKeyTo proves ExportKeyTo wraps under a genuinely different
+// destination's own import parameters -- not a wrapping key this backend
+// mints for itself, the way ExportKey does -- so the result only unwraps
+// under the DESTINATION's own private key (go-xkms#154).
+func TestExportKeyTo(t *testing.T) {
+	src := createTestBackend(t)
+	defer func() { _ = src.Close() }()
+	dst := createTestBackend(t)
+	defer func() { _ = dst.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "export-to-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+	}
+
+	key, err := src.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err)
+	originalKey, err := key.Raw()
+	require.NoError(t, err)
+
+	dstParams, err := dst.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	require.NoError(t, err)
+
+	wrapped, err := src.ExportKeyTo(context.Background(), attrs, dstParams)
+	require.NoError(t, err)
+	assert.Equal(t, dstParams.Algorithm, wrapped.Algorithm)
+	assert.Equal(t, dstParams.ImportToken, wrapped.ImportToken)
+
+	// Only the destination's own private key can recover this material.
+	recovered, err := dst.UnwrapKey(context.Background(), wrapped, dstParams)
+	require.NoError(t, err)
+	assert.Equal(t, originalKey, recovered)
+}
+
+// TestExportKeyToErrors tests error conditions in ExportKeyTo.
+func TestExportKeyToErrors(t *testing.T) {
+	src := createTestBackend(t)
+	defer func() { _ = src.Close() }()
+	dst := createTestBackend(t)
+	defer func() { _ = dst.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "export-to-error-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+	}
+
+	// Nil attributes.
+	_, err := src.ExportKeyTo(context.Background(), nil, &backend.ImportParameters{})
+	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
+
+	// Nil destination parameters.
+	_, err = src.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err)
+	_, err = src.ExportKeyTo(context.Background(), attrs, nil)
+	assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
+
+	// Key not marked Exportable.
+	notExportable := &types.KeyAttributes{
+		CN:                 "export-to-not-exportable",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	_, err = src.GenerateSymmetricKey(context.Background(), notExportable)
+	require.NoError(t, err)
+	dstParams, err := dst.GetImportParameters(context.Background(), notExportable, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	require.NoError(t, err)
+	_, err = src.ExportKeyTo(context.Background(), notExportable, dstParams)
+	assert.ErrorIs(t, err, backend.ErrKeyNotExportable)
+}
+
 // TestImportExportRoundTrip tests the complete import/export workflow.
 func TestImportExportRoundTrip(t *testing.T) {
 	// Create source backend

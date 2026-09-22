@@ -81,4 +81,14 @@ var (
 	// for an asymmetric key. Exporting raw asymmetric private key material is a security risk
 	// and is not permitted. Use ExportKey with wrapping for secure key transport instead.
 	ErrAsymmetricKeyExportNotAllowed = errors.New("backend: raw key material export not allowed for asymmetric keys")
+
+	// ErrExportToUnsupported is returned by ExportKeyTo when a backend cannot
+	// wrap key material under a destination-supplied set of import
+	// parameters. This is true of every hardware- or provider-bound wrap
+	// primitive in this project -- PKCS#11's C_WrapKey, TPM2 duplication, and
+	// every cloud KMS's BYOK ceremony all bind wrapping to a key object the
+	// backend itself manages, not an arbitrary public key handed to it by a
+	// caller -- so those backends refuse with this sentinel rather than
+	// silently producing material the destination can never unwrap.
+	ErrExportToUnsupported = errors.New("backend: cannot wrap key material for a destination-supplied set of import parameters")
 )

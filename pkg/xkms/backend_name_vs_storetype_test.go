@@ -302,9 +302,11 @@ func TestImportKey_NonKeywordBackendName(t *testing.T) {
 //
 // This uses the same boostIEKeyProvider-backed fixture as
 // TestBoostCopyKey_IEBackend_Success rather than two real software.Backend
-// instances: the real software backend's ImportKey validates that the
-// import token it is given was minted by that same instance, a constraint
-// orthogonal to Backend/StoreType and unrelated to what this test pins.
+// instances so the assertion stays on Backend/StoreType stamping alone,
+// without also exercising real PKCS#8/RSA wrapping -- that cross-backend
+// crypto path (ExportKeyTo wrapping under the destination's own minted
+// import parameters, go-xkms#154) has its own dedicated coverage in
+// TestCopyKeyAcrossDistinctSoftwareBackends.
 func TestCopyKey_ToNonKeywordBackendName(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)

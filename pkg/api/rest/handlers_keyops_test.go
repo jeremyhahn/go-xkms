@@ -167,6 +167,14 @@ func (p *capableKeyProvider) ExportKey(_ context.Context, _ *types.KeyAttributes
 	return &backend.WrappedKeyMaterial{WrappedKey: []byte("exported"), Algorithm: algorithm}, nil
 }
 
+func (p *capableKeyProvider) ExportKeyTo(_ context.Context, _ *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("exported"),
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+	}, nil
+}
+
 func (p *capableKeyProvider) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if p.exportErr != nil {
 		return nil, p.exportErr

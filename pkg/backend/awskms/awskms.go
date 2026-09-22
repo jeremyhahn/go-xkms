@@ -1116,6 +1116,20 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	return nil, backend.ErrExportNotSupported
 }
 
+// ExportKeyTo is not supported by AWS KMS for the same reason ExportKey is
+// not: AWS KMS never releases key material -- imported or generated --
+// outside the service boundary, so there is no plaintext for this backend to
+// wrap for a destination's parameters in the first place.
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+	if dstParams == nil {
+		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "destination import parameters cannot be nil"}
+	}
+	return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: "AWS KMS never releases key material outside the service boundary"}
+}
+
 // ExportKeyMaterial is not supported by AWS KMS, for the same reason as
 // ExportKey: AWS KMS never releases plaintext key material -- imported or
 // generated -- outside the service boundary, so there is no raw-bytes

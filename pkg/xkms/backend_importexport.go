@@ -52,6 +52,10 @@ type ImportExporter interface {
 	// See backend.ImportExportBackend.ExportKey.
 	ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error)
 
+	// ExportKeyTo exports a key wrapped for a destination's own import
+	// parameters. See backend.ExportBackend.ExportKeyTo.
+	ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error)
+
 	// ExportKeyMaterial returns raw key material for extractable symmetric
 	// keys. See backend.ImportExportBackend.ExportKeyMaterial.
 	ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)

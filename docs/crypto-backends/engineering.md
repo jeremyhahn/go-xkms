@@ -151,6 +151,32 @@ can be stricter than the backend's ceiling.
 - **Import and export capabilities are split.** A backend can implement `Import`
   independently from `Export`. Vault gained a real BYOK (Bring Your Own Key)
   import ceremony in place of simpler paste operations.
+- **`ExportBackend.ExportKeyTo(ctx, attrs, dstParams)` wraps for a
+  caller-supplied destination, `ExportKey` for a wrapping key the backend
+  mints and tracks for itself.** The two are not interchangeable for a
+  cross-backend copy: `ExportKey`'s `ImportToken` names a wrapping key that
+  exists only in the exporting backend's own state (an in-memory map, an HSM
+  object, a cloud import job), so handing it to a *different* backend
+  instance's `ImportKey` names nothing that backend has ever heard of.
+  `ExportKeyTo` takes `ImportParameters` obtained from the destination's own
+  `GetImportParameters` and wraps under those directly. The software and
+  symmetric key-provider backends implement it for real — their `WrapKey` is
+  a pure cryptographic operation over whatever `ImportParameters` it is
+  given, touching no backend-private state, so wrapping under a
+  caller-supplied destination key is exactly as sound as wrapping under the
+  backend's own. PKCS#11, TPM2, AWS KMS, GCP KMS, Azure Key Vault, Vault and
+  the phone backend return `backend.ErrExportToUnsupported`: their wrap
+  primitives (`C_WrapKey` against an HSM-resident wrapping-key handle, TPM
+  duplication, each provider's BYOK ceremony) bind to a key object the
+  backend itself manages, not an arbitrary public key handed to it by a
+  caller, and refuse rather than emulate a wrap that never touches the
+  boundary the backend exists to preserve. `xkms.CopyKey` and
+  `pkg/migration`'s `defaultMigrator.MigrateKey` are the two callers: both
+  resolve the destination's import parameters first, then call the source's
+  `ExportKeyTo` with them, so a copy or migration across two distinct backend
+  registrations — not merely two tenant-scoped views of the same one — only
+  succeeds when the material was genuinely wrapped for the destination
+  (#154, #567).
 - **A backend's registry name is never derived from its `StoreType`, or the
   reverse.** `StoreType` is what `Type()` reports about the backend's kind;
   the registry name is whatever string it was registered under and may be

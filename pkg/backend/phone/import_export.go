@@ -83,6 +83,14 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	return nil, ErrExportNotSupported
 }
 
+// ExportKeyTo returns ErrExportNotSupported for the same reason ExportKey
+// does: the phone's hardware keystore never releases private key material,
+// so there is nothing for this method to wrap under a destination's
+// parameters either.
+func (b *Backend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	return nil, ErrExportNotSupported
+}
+
 // ExportKeyMaterial returns ErrExportNotSupported since the phone's hardware
 // keystore does not support exporting raw key material.
 func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {

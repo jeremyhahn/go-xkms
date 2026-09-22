@@ -26,6 +26,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -35,15 +37,19 @@ import (
 // tenant's copy lands in the tenant's own namespace, an untenanted copy is
 // unchanged, and a tenant cannot copy a key it does not own.
 //
-// They also pin the ceremony itself against the software backend. The service
-// used to ask the destination for fresh import parameters and overwrite the
-// exported material's import token with theirs. ExportKey wraps under a
-// wrapping key the exporting backend mints for that export and names it by
-// that token, so the override pointed ImportKey at a different wrapping key
-// than the material was wrapped under, and every copy through a backend that
-// honours its tokens failed to unwrap. Asserting that the copy holds the
-// source's key material is what catches that: it can only pass if the unwrap
-// actually succeeded.
+// They also pin the ceremony itself against the software backend. CopyKey
+// asks the DESTINATION for its own import parameters, then has the source
+// wrap the material for those exact parameters via ExportKeyTo -- never for
+// a wrapping key the source mints and tracks for itself, the way plain
+// ExportKey does (go-xkms#154). Asserting that the copy holds the source's
+// key material is what catches a regression here: it can only pass if the
+// unwrap actually succeeded, which requires the material to have been
+// wrapped under the key ImportKey unwraps it with.
+//
+// TestCopyKeyAcrossDistinctSoftwareBackends below is the one test in this
+// file that registers two independent software.Backend instances rather
+// than two tenant-scoped views of the same one, so the wrapping keys really
+// do differ end to end.
 
 const copyWrapAlgorithm = string(backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 
@@ -178,4 +184,121 @@ func TestCopyKeyRejectsAnInvalidTenant(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTenantIDRequired), "unexpected error: %v", err)
 	assert.Nil(t, listedKey(t, svc, "shared-kek-copy", ""))
+}
+
+// TestCopyKeyAcrossDistinctSoftwareBackends proves a copy between two
+// independent software.Backend instances succeeds end to end. The two
+// instances share no state -- each has its own in-memory map of minted
+// wrapping keys -- so this can only pass if ExportKeyTo genuinely wrapped
+// the material under the DESTINATION's own import parameters rather than a
+// wrapping key the source mints and tracks for itself the way plain
+// ExportKey does (go-xkms#154).
+func TestCopyKeyAcrossDistinctSoftwareBackends(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	srcProvider, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	require.NoError(t, err)
+	srcBackend, err := New(&BackendConfig{Backend: srcProvider, CertStorage: storage.NewMemory()})
+	require.NoError(t, err)
+
+	dstProvider, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	require.NoError(t, err)
+	dstBackend, err := New(&BackendConfig{Backend: dstProvider, CertStorage: storage.NewMemory()})
+	require.NoError(t, err)
+
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends: map[string]Backend{
+			"software-a": srcBackend,
+			"software-b": dstBackend,
+		},
+		DefaultBackend: "software-a",
+	}))
+	svc, err := Get()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	priv, err := srcBackend.GenerateRSA(ctx, &types.KeyAttributes{
+		CN:            "cross-instance-kek",
+		KeyType:       types.KeyTypeEncryption,
+		StoreType:     types.StoreSoftware,
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+		Exportable:    true,
+	})
+	require.NoError(t, err)
+	sourcePub := rsaPublicOf(t, priv)
+
+	resp, err := svc.CopyKey(ctx, &transport.CopyKeyRequest{
+		SourceBackend: "software-a",
+		SourceKeyID:   "cross-instance-kek",
+		DestBackend:   "software-b",
+		DestKeyID:     "cross-instance-kek-copy",
+		Algorithm:     copyWrapAlgorithm,
+	})
+	require.NoError(t, err)
+	require.True(t, resp.Success)
+
+	dstKeys, err := dstBackend.ListKeys(ctx)
+	require.NoError(t, err)
+	var dstAttrs *types.KeyAttributes
+	for _, a := range dstKeys {
+		if a != nil && a.CN == "cross-instance-kek-copy" {
+			dstAttrs = a
+			break
+		}
+	}
+	require.NotNil(t, dstAttrs, "the copy must be reachable in the independent destination backend")
+
+	dstPriv, err := dstBackend.GetKey(ctx, dstAttrs)
+	require.NoError(t, err)
+	assert.Equal(t, sourcePub.N, rsaPublicOf(t, dstPriv).N,
+		"the copy in the independent destination backend must hold the source's key material")
+}
+
+// TestCopyKeyExportToUnsupportedLeavesDestinationUntouched proves that when
+// the source backend cannot re-wrap for the destination's own import
+// parameters, CopyKey surfaces the typed refusal and never reaches the
+// destination's ImportKey.
+func TestCopyKeyExportToUnsupportedLeavesDestinationUntouched(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	srcKP := newBoostIEKeyProvider()
+	srcKP.exportErr = backend.ErrExportToUnsupported
+	srcStore := newMockKeyStore("hw-source")
+	srcStore.backend = srcKP
+
+	dstKP := newBoostIEKeyProvider()
+	dstStore := newMockKeyStore("software-dest")
+	dstStore.backend = dstKP
+
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends: map[string]Backend{
+			"hw-source":     srcStore,
+			"software-dest": dstStore,
+		},
+		DefaultBackend: "software-dest",
+	}))
+	svc, err := Get()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	boostGenIEKey(t, srcStore, srcKP, &types.KeyAttributes{
+		CN:           "hw-key",
+		KeyAlgorithm: x509.ECDSA,
+	})
+
+	_, err = svc.CopyKey(ctx, &transport.CopyKeyRequest{
+		SourceBackend: "hw-source",
+		SourceKeyID:   "hw-key",
+		DestBackend:   "software-dest",
+		DestKeyID:     "hw-key-copy",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, backend.ErrExportToUnsupported), "unexpected error: %v", err)
+
+	_, imported := dstKP.importedKeys["hw-key-copy"]
+	assert.False(t, imported,
+		"the destination must never receive an import when the source cannot re-wrap for it")
 }

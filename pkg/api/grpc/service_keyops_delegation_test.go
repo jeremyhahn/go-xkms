@@ -166,6 +166,14 @@ func (p *capableProvider) ExportKey(_ context.Context, _ *types.KeyAttributes, a
 	return &backend.WrappedKeyMaterial{WrappedKey: []byte("exported"), Algorithm: algorithm}, nil
 }
 
+func (p *capableProvider) ExportKeyTo(_ context.Context, _ *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("exported"),
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+	}, nil
+}
+
 // ExportKeyMaterial returns a COPY of the fixture's material, never the field
 // itself.
 //

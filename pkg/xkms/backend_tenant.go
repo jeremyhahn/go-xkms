@@ -307,6 +307,16 @@ func (t *TenantScopedBackend) ExportKey(ctx context.Context, attrs *types.KeyAtt
 	return importExport.ExportKey(ctx, t.scopeAttrs(attrs), algorithm)
 }
 
+// ExportKeyTo exports a key wrapped for a destination's own import
+// parameters, scoped to this tenant.
+func (t *TenantScopedBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	importExport, err := t.importExporter()
+	if err != nil {
+		return nil, err
+	}
+	return importExport.ExportKeyTo(ctx, t.scopeAttrs(attrs), dstParams)
+}
+
 // ExportKeyMaterial returns raw key material for an extractable symmetric key
 // scoped to this tenant.
 func (t *TenantScopedBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {

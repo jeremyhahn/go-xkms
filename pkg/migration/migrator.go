@@ -95,8 +95,9 @@ func (m *defaultMigrator) MigrateKey(ctx context.Context, attrs *types.KeyAttrib
 		return ErrImportNotSupported
 	}
 
-	// Step 1: Export the key from source backend
-	wrapped, err := m.exportKey(ctx, sourceExportBackend, attrs, opts)
+	// Step 1: Export the key from source backend, wrapped for the
+	// destination's own import parameters.
+	wrapped, err := m.exportKeyTo(ctx, sourceExportBackend, destImportBackend, attrs, opts)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to export key", Err: err}
 	}
@@ -268,16 +269,41 @@ func (m *defaultMigrator) Close() error {
 
 // Helper functions
 
-// exportKey exports a key from the source backend using the specified algorithm.
-func (m *defaultMigrator) exportKey(ctx context.Context, backend backend.ImportExportBackend, attrs *types.KeyAttributes, opts *MigrateOptions) (*backend.WrappedKeyMaterial, error) {
+// exportKeyTo exports a key from the source backend, wrapped for the
+// DESTINATION's own import parameters via ExportKeyTo -- never a wrapping
+// key the source mints and tracks for itself, the way plain ExportKey does.
+//
+// This used to call source.ExportKey (self-minted wrap) and then have
+// importKey overwrite the resulting WrappedKeyMaterial.ImportToken with the
+// destination's own token. That pointed ImportKey at a wrapping key the
+// material was never wrapped under: the token named the destination's key,
+// but the ciphertext was still encrypted under the source's self-minted one,
+// so the destination's unwrap failed for every backend that honours its
+// tokens (go-xkms#154, mirroring the identical defect fixed in
+// xkms.CopyKey by go-xkms#567).
+func (m *defaultMigrator) exportKeyTo(ctx context.Context, source, dest backend.ImportExportBackend, attrs *types.KeyAttributes, opts *MigrateOptions) (*backend.WrappedKeyMaterial, error) {
 	// Determine wrapping algorithm
 	algorithm := opts.WrappingAlgorithm
 	if algorithm == "" {
 		algorithm = m.selectWrappingAlgorithm(attrs)
 	}
 
-	// Export the key
-	wrapped, err := backend.ExportKey(ctx, attrs, algorithm)
+	// Ask the destination for its own import parameters first -- the same
+	// ceremony step an external BYOK import would call first -- so the
+	// ImportToken that reaches ImportKey always names something the
+	// destination itself minted.
+	dstParams, err := dest.GetImportParameters(ctx, attrs, algorithm)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to get destination import parameters", Err: err}
+	}
+
+	// Wrap the key material for those exact parameters. A backend that
+	// cannot honour a foreign destination's parameters returns the typed
+	// backend.ErrExportToUnsupported here rather than emulating a wrap it
+	// does not genuinely perform; this function does not fall back to
+	// ExportKey for such a backend, since doing so would silently reproduce
+	// the token-mismatch defect this replaces.
+	wrapped, err := source.ExportKeyTo(ctx, attrs, dstParams)
 	if err != nil {
 		return nil, err
 	}
@@ -285,23 +311,12 @@ func (m *defaultMigrator) exportKey(ctx context.Context, backend backend.ImportE
 	return wrapped, nil
 }
 
-// importKey imports a wrapped key into the destination backend.
+// importKey imports a wrapped key into the destination backend. The
+// material was already wrapped for THIS backend's own import parameters by
+// exportKeyTo, so there is no token to reconcile here -- ImportKey unwraps
+// with the same key GetImportParameters just minted.
 func (m *defaultMigrator) importKey(ctx context.Context, backend backend.ImportExportBackend, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
-	// Get import parameters with the same algorithm that was used for export
-	params, err := backend.GetImportParameters(ctx, attrs, wrapped.Algorithm)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to get import parameters", Err: err}
-	}
-
-	// Update wrapped key with import token from destination backend
-	wrapped.ImportToken = params.ImportToken
-
-	// Import the key
-	if err := backend.ImportKey(ctx, attrs, wrapped); err != nil {
-		return err
-	}
-
-	return nil
+	return backend.ImportKey(ctx, attrs, wrapped)
 }
 
 // filterKeys filters the list of keys based on the provided filter criteria.

@@ -399,6 +399,10 @@ func (p *recordingIEProvider) ExportKey(context.Context, *types.KeyAttributes, b
 	return nil, errors.New("not supported")
 }
 
+func (p *recordingIEProvider) ExportKeyTo(context.Context, *types.KeyAttributes, *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	return nil, errors.New("not supported")
+}
+
 func (p *recordingIEProvider) ExportKeyMaterial(context.Context, *types.KeyAttributes) ([]byte, error) {
 	return nil, errors.New("not supported")
 }

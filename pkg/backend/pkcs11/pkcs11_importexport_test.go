@@ -1558,6 +1558,44 @@ func TestExportKey_WithoutAWrappingKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "wrapping key not found in HSM")
 }
 
+// TestExportKeyTo_RefusesAForeignDestination proves the PKCS#11 backend
+// refuses ExportKeyTo with the typed ErrExportToUnsupported sentinel rather
+// than emulating a re-wrap C_WrapKey does not perform: C_WrapKey wraps under
+// a wrapping-key HANDLE that must already exist as an object on this HSM's
+// own token, not an arbitrary crypto.PublicKey a caller hands in through
+// ImportParameters (go-xkms#154).
+func TestExportKeyTo_RefusesAForeignDestination(t *testing.T) {
+	b := newProvisionedBackend(t, "importexport-export-to-refused")
+
+	attrs := aesAttributes("export-to-refused-aes-key", true)
+	importAESKey(t, b, attrs, tokenHybridAlgorithm)
+
+	foreignParams := &backend.ImportParameters{
+		Algorithm: tokenOAEPAlgorithm,
+	}
+
+	_, err := b.ExportKeyTo(context.Background(), attrs, foreignParams)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, backend.ErrExportToUnsupported)
+}
+
+// TestExportKeyTo_InvalidInput asserts the specific error for each malformed
+// ExportKeyTo request.
+func TestExportKeyTo_InvalidInput(t *testing.T) {
+	b := newProvisionedBackend(t, "importexport-export-to-bad")
+	ctx := context.Background()
+
+	t.Run("nil attributes", func(t *testing.T) {
+		_, err := b.ExportKeyTo(ctx, nil, &backend.ImportParameters{Algorithm: tokenOAEPAlgorithm})
+		assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
+	})
+
+	t.Run("nil destination parameters", func(t *testing.T) {
+		_, err := b.ExportKeyTo(ctx, aesAttributes("export-to-nil-params", true), nil)
+		assert.ErrorIs(t, err, backend.ErrInvalidAttributes)
+	})
+}
+
 // TestImportExportRoundTrip tests a complete import/export round trip.
 //
 // The key material is generated in the test, wrapped, imported into the token,

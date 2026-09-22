@@ -1530,6 +1530,21 @@ func (m *mockExtendedBackend) ExportKey(_ context.Context, attrs *types.KeyAttri
 	}, nil
 }
 
+func (m *mockExtendedBackend) ExportKeyTo(_ context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	_, ok := m.keys[attrs.CN]
+	if !ok {
+		return nil, backend.ErrKeyNotFound
+	}
+	if dstParams == nil {
+		return nil, errors.New("destination import parameters cannot be nil")
+	}
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("wrapped:" + attrs.CN),
+		Algorithm:   dstParams.Algorithm,
+		ImportToken: dstParams.ImportToken,
+	}, nil
+}
+
 func (m *mockExtendedBackend) ExportKeyMaterial(_ context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	// Return mock key material for symmetric keys
 	key, ok := m.symKeys[attrs.CN]
