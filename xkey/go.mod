@@ -31,8 +31,8 @@ require (
 	github.com/jeremyhahn/go-luks2 v0.1.10-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms v0.15.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.15.0-alpha
+	github.com/jeremyhahn/go-xkms v0.16.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.16.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mdp/qrterminal/v3 v3.2.1

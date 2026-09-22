@@ -7,6 +7,212 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0-alpha] - 2026-09-22
+
+### Security
+
+- **xkmsd's bootstrap listener no longer keeps its Noise/P-256 static keys in
+  plaintext config or regenerates them every restart; they are now persisted
+  barrier-sealed (#35, #42, #436).** `bootstrap.noise.static_key_hex` /
+  `static_key_file` / `p256_static_key_hex` / `p256_static_key_file` put a
+  private key inline in YAML or in a plaintext file, and configuring neither
+  generated a fresh ephemeral key on every boot — silently invalidating every
+  client that had pinned the previous public key. The xkey pairing half of
+  this custody model landed first as #42
+  (`xkey/pkg/pairing/noise_key_seal.go`); this closes the xkmsd half.
+
+  `pkg/server/bootstrap_key_custody.go` resolves each suite's key on boot:
+  with a barrier configured (`s.barrier`, adopted from the embedded qrdb node
+  or built by `initializeBarrier` — the boot order already runs this
+  post-unseal, since `s.barrier` is only ever set once `initEmbeddedQRDBNode`
+  has confirmed the node unsealed), the hex-encoded key is read from and
+  written to the barrier's own key-value store
+  (`bootstrap-noise/x25519-static-key`, `bootstrap-noise/p256-static-key`) via
+  `seal.Barrier.Get`/`Put`, the same mechanism `pkg/server/credentials`
+  already uses for operator-owned secrets. The first boot after upgrade reads
+  the deprecated config field once, seals the key it names, and logs that the
+  field is deprecated; every later boot finds the sealed key and never reads
+  config again. With no barrier configured, the deprecated fields are still
+  honored unchanged, and a key with neither configured is persisted (not
+  regenerated) as a 0600 file in the server's data directory, with one warning
+  that it lacks barrier protection.
+
+  The four config fields are marked `Deprecated` in
+  `config.NoiseBootstrapConfig`'s doc comments; they still parse (the
+  migration depends on it) but are not read again once a key is sealed or
+  persisted. `pkg/server/bootstrap_key_custody.go`,
+  `pkg/server/bootstrap_key_custody_test.go`, `pkg/server/errors.go`,
+  `pkg/config/config.go`.
+
+### Added
+
+- **`xkey oidc` can now authenticate against providers with no discovery
+  document, and can address a token endpoint that expects a JSON body
+  instead of form encoding** (#4, gaps 2 and 3 of 4; gap 1, CLI token-store
+  custody, and gap 4, RFC 8628 device flow, remain open pending an owner
+  ruling). `pkg/oidc.ProviderConfig` gained `AuthorizationEndpoint`,
+  `TokenEndpoint`, `JwksURI`, and `UserinfoEndpoint` fields: setting any of
+  them makes `NewProvider` skip `.well-known/openid-configuration` entirely
+  and use the supplied endpoints, requiring the first three and validating
+  with the existing `ErrMissingAuthEndpoint`/`ErrMissingTokenEndpoint`/
+  `ErrMissingJWKSURI` family via the new `ErrIncompleteManualEndpoints`. A
+  bare `SkipDiscovery: true` with no manual endpoint keeps its prior
+  contract — an uninitialized `Provider` the caller populates itself. The
+  CLI exposes this through `--authorization-endpoint`, `--token-endpoint`,
+  `--jwks-uri`, and `--userinfo-endpoint` on `xkey oidc login` and
+  `xkey oidc providers add`; a partial set is refused with a typed error
+  (`ErrOIDCIncompleteEndpoints`) naming exactly which flags are missing,
+  and a saved provider's manual endpoints now carry into `xkey oidc refresh
+  --provider <name>` too, so a manual-endpoint provider survives past the
+  first login. A new `TokenEncoding` field (`pkg/oidc.TokenEncoding`, `form`
+  default or `json`) selects how the authorization-code exchange and
+  refresh requests are POSTed; `pkg/oidc.EncodeTokenRequestBody` is the one
+  place that makes this decision, used by `Client.doPlainTokenRequest` and
+  `Client.doDPoPTokenRequest` (and therefore by the GUI's `OIDCService`,
+  which already builds providers through `pkg/oidc.NewProvider`/`NewClient`)
+  and by the CLI's `exchangeCodeForTokens`/`refreshTokens` alike, so the
+  encoding decision lives in one place instead of being duplicated between
+  the CLI and the library. `--token-encoding` on `xkey oidc providers add`
+  and `xkey oidc login` persists the choice per provider
+  (`oidc-providers.json`'s `token_encoding` key); an unrecognized value is
+  refused via `oidc.ErrInvalidTokenEncoding`. Background auto-refresh
+  carries the resolved token endpoint and encoding across its re-exec the
+  same way it already carries the client ID. Files:
+  `xkey/pkg/oidc/provider.go`, `xkey/pkg/oidc/token_encoding.go`,
+  `xkey/pkg/oidc/client.go`, `xkey/pkg/oidc/errors.go`,
+  `xkey/cmd/xkey/cmd/oidc.go`. Tests: `pkg/oidc/provider_test.go`,
+  `pkg/oidc/token_encoding_test.go`, `pkg/oidc/client_test.go`,
+  `pkg/oidc/client_dpop_test.go`, `cmd/xkey/cmd/oidc_test.go`,
+  `cmd/xkey/cmd/oidc_cmds_test.go` cover manual-endpoint discovery skipping
+  against a server that never serves `.well-known`, partial-endpoint
+  refusal, form vs. json request bodies against a fake token endpoint for
+  both exchange and refresh (including the DPoP path), and refusal of an
+  unrecognized encoding.
+
+### Changed
+
+- **`scripts/secure-analyzer-allowlist.txt` now keys each exemption by path +
+  rule + the finding's own symbol, not by `path:line`** (#607, #549). A
+  `path:line` key breaks on any edit that shifts the exempted line — it broke
+  Lint on `main` twice in one week (`fido2.go` 208→207 after #181,
+  `mock_extended.go` after #154) — with no signal beyond a red job days
+  later. The symbol is the forbidden import path for rule 1, the call
+  expression's own source text for rule 2, or `<Struct>.<Field>` for rule 3;
+  rule 2 and rule 3's symbols aren't in the diagnostic message, so
+  `scripts/secure-analyzer.sh` reads them back out of the source at the
+  diagnostic's `file:line:col` via a new `go/ast`-based helper,
+  `scripts/secure-analyzer-symbol`. The matching and staleness-check logic
+  moved into a shared, sourced `scripts/secure-analyzer-key.sh` so
+  `scripts/secure-analyzer-selftest.sh` can exercise the real gate against a
+  throwaway fixture: its new case proves an entry survives a line shift and
+  that the stale check still catches a genuinely removed finding. All 38
+  existing entries are rewritten to the new key form (they collapse to 36
+  `path+rule+symbol` keys — three identical `ssh.ParsePrivateKey(buf.Bytes())`
+  call sites in `pkg/ssh/keys/signer.go` now share one entry).
+  `docs/development/lint-gates.md` documents the new format.
+  `make secure-analyzer` and `make secure-analyzer-selftest` both verified
+  green.
+- **A pooled PKCS#11 session's object search is now one critical section per
+  session handle (#24, #107).** `SessionPool` (`session_pool.go`) gains
+  `WithSearch`, which runs `FindObjectsInit` / `FindObjects` /
+  `FindObjectsFinal` under a lock keyed by the session handle, so a second
+  search on the same handle can never start while an earlier one on that
+  handle is still open — serialized per handle rather than across the whole
+  pool, and with the same panic-safety `discardAndReplace` already gives
+  `WithSession` (#107). The three search sites in
+  `pkg/storage/hardware/pkcs11_cert_storage.go` (`ListCerts`,
+  `findCertificateHandle`, `findChainMemberHandles`) route through it via a
+  new optional `PKCS11SearchProvider` interface, following the same
+  optional-interface pattern `PKCS11SOSessionProvider` already uses. The
+  equivalent pooled-session searches in `pkg/backend/pkcs11`
+  (`Backend.FindSecretKey`, `findKeyPairByID`, `findRSASigner`,
+  `findECDSASigner`) — the sites `golangci-lint` flagged for a discarded
+  `FindObjectsFinal` return — now go through the same lock via a new
+  `SessionPool.FindObjectHandle` helper instead of hand-rolling the
+  Init/Find/Final sequence. This closes a real, if narrow, defect: two
+  sequential borrowers of the same handle could previously have their
+  searches overlap if a caller's own `Init`/`Final` pairing were not
+  perfectly scoped. **It does not resolve #24's `CertificateRenewal` flake.**
+  Scored interleaved, run-by-run, against apt SoftHSM 2.6.1 in the
+  devcontainer (300 iterations per tree, same host load): fixed tree 13/300
+  (4.3%) vs. unfixed tree 18/300 (6.0%), z = 0.92 — not statistically
+  significant, and both trees still fail overwhelmingly with
+  `CKR_OPERATION_ACTIVE` (10/13 fixed, 15/18 unfixed) rather than a
+  converted error, so the flake's mechanism is unchanged by this fix. #24
+  stays open per its own prior conclusion: the defect is not reproducible in
+  this repository's session bookkeeping and likely sits in SoftHSM 2.6.1 or
+  the miekg binding.
+
+### Fixed
+
+- **The default AES-GCM `Encrypt` path now works under `GODEBUG=fips140=only`
+  instead of failing on every call.** `pkg/crypto/aead.NewGCM` built
+  `cipher.NewGCM`, the arbitrary-IV construction Go's FIPS 140-only mode
+  refuses outright ("use of GCM with arbitrary IVs is not allowed"), so the
+  symmetric (`pkg/keyprovider/symmetric`), Azure Key Vault
+  (`pkg/backend/azurekv`) and TPM2 (`pkg/tpm2`) `Encrypt` implementations
+  could not produce a single AES-GCM ciphertext in that mode, caller-supplied
+  nonce or not. New `aead.NewGCMForFreshEncrypt` substitutes
+  `cipher.NewGCMWithRandomNonce` under `fips140=only` for the one combination
+  it supports — no caller-supplied nonce, the default full 128-bit tag — and
+  reports the substitution through a new `types.EncryptedData.GCMNonceMode`
+  field so `aead.NewGCMForDecrypt` rebuilds the matching construction from the
+  ciphertext's own recorded framing rather than from the decrypting process's
+  FIPS posture: a `fips140=only`-written ciphertext still opens under
+  `fips140=on`, and a legacy explicit-nonce ciphertext still opens wherever
+  arbitrary-IV GCM is available. The on-disk TLV envelope
+  (`pkg/keyprovider/symmetric.Marshal`/`Unmarshal`) only spends a wire-format
+  version bump recording the mode when it is not the zero value, so every
+  ciphertext written before this change is byte-identical version-1 output
+  and keeps decoding unchanged. A caller that supplies its own nonce, or
+  requests a truncated tag — combinations `NewGCMWithRandomNonce` cannot
+  produce — still fails closed under `fips140=only` with the typed
+  `aead.ErrArbitraryIVGCMUnavailable`, extended to Vault Transit's BYOK key
+  wrap (`pkg/backend/vault/vault_importexport.go`), whose wire format
+  mandates a fixed all-zero nonce, using the same gate #292 established for
+  PKCS#11's authenticated-wrap verbs (refs #23, #292).
+- **Every permission the xkms API module contributes to go-qrdb now declares
+  its tenancy scope, so a role holding one can still obtain a token.**
+  go-qrdb#504 removed the implicit self-scope: under go-qrdb v0.19.0-alpha a
+  permission with no declared scope is refused rather than admitted as
+  `ScopeSelf`, and `rbac.ListPermissions` fails on the *first* unscoped
+  permission an identity holds — so one omission denies login, not one call.
+  `pkg/apimodule/module_grants.go` registered the module's 73-permission
+  vocabulary with `qrdbsdk.RegisterPermissions` and declared no scope for any
+  of it. 69 of those names are go-qrdb's own and carry go-qrdb's scope; the
+  four go-qrdb does not declare — `keys:read`, `keys:write`, `keys:update`,
+  `ssh:use` — had none, and on go-quicbaas v0.11.0-alpha (which composes
+  go-xkms v0.14.0-alpha) every login for a role carrying `keys:read` was
+  rejected with `permission: no scope declared for keys:read`. The new
+  `pkg/apimodule/module_scopes.go` declares those four — and only those four —
+  `PermissionScopeSelf` via `qrdbsdk.RegisterPermissionScope`, pinning each by
+  name with its rationale: `keys:read`/`keys:write`/`keys:update` gate the
+  PKCS#11 object-state and seal stores, which hold system-barrier state, and
+  go-qrdb declares the whole `seal:*` family `ScopeSelf` while reserving
+  `ScopeTenantOnly` for the per-tenant `tenant_barrier:*` custody; `ssh:use` is
+  the blanket gate on the SSH CA route group whose siblings `ssh:read`,
+  `ssh:write`, `ssh:delete` — and the matching `piv:use` — are all `ScopeSelf`
+  in go-qrdb. That is the reach all four had before go-qrdb#504, so no
+  deployment's authorization outcome changes; the omission simply becomes a
+  decision. Registration order in `registerRoleGrants` is now permissions →
+  scope → role grants, because the authorizer resolves scope before it
+  consults the grant. Files: `pkg/apimodule/module_grants.go` (permission
+  derivation extracted to `modulePermissions`),
+  `pkg/apimodule/module_scopes.go`, `pkg/testutil/permscope.go` (reads a
+  declared scope back through the SDK's `NewTenantScopeStore`, the same
+  resolution path the RBAC authorizer uses, since the SDK re-exports only the
+  write side of `RegisterPermissionScope`). Tests:
+  `pkg/apimodule/module_scopes_test.go` is the build gate — mirroring go-qrdb's
+  `TestEveryPermissionDeclaresItsScope` — asserting that every contributed
+  permission resolves a scope, that xkms declares a scope for no name go-qrdb
+  already owns (`RegisterPermissionScope` overwrites, so a duplicate would
+  silently replace an upstream decision), that no declaration names a
+  permission the module does not contribute, and that an undeclared permission
+  still surfaces `*PermissionUndeclaredScopeError` so the gate cannot pass
+  vacuously; `pkg/testutil/permscope_test.go` covers the resolver against
+  self-, tenant-only-, and cross-scoped built-ins plus the undeclared error
+  path.
+
 ## [0.15.0-alpha] - 2026-09-22
 
 ### Security
