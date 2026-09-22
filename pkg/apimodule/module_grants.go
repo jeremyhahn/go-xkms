@@ -44,52 +44,84 @@ var roleGrantOnce sync.Once
 // built-in role, locking out even the first-boot administrator: qrdb's own
 // grant lists know nothing about xkms resources.
 //
-// The set is DERIVED from the three declaration surfaces rather than
-// hand-copied so a new RPC/route/tool is granted the moment it is declared.
+// The set is DERIVED from the three declaration surfaces (modulePermissions)
+// rather than hand-copied so a new RPC/route/tool is granted the moment it is
+// declared. It also declares the tenancy scope of the permissions xkms owns;
+// since go-qrdb#504 a permission with no scope is refused rather than
+// admitted as ScopeSelf, so an undeclared one fails token issuance for every
+// identity holding it.
+//
 // The Security Officer role deliberately receives nothing here: xkms's
 // surface is overwhelmingly cryptographic and qrdb's SoD invariant
 // (FIPS 140-3 AS10.03) forbids crypto grants to SO.
 func registerRoleGrants() {
 	roleGrantOnce.Do(func() {
-		set := map[string]struct{}{}
+		perms := modulePermissions()
 
-		for _, spec := range xkmsrest.Routes() {
-			if spec.Auth == xkmsrest.RouteAuthPermission && spec.Resource != "" && spec.Action != "" {
-				set[spec.Resource+":"+spec.Action] = struct{}{}
-			}
-		}
-
-		for _, spec := range xkmsmcp.ModuleMethods() {
-			if spec.Resource != "" && spec.Action != "" {
-				set[spec.Resource+":"+spec.Action] = struct{}{}
-			}
-		}
-
-		services := pb.File_pkg_api_grpc_proto_xkmsv1_xkms_proto.Services()
-		for i := 0; i < services.Len(); i++ {
-			methods := services.Get(i).Methods()
-			for j := 0; j < methods.Len(); j++ {
-				opts, ok := methods.Get(j).Options().(*descriptorpb.MethodOptions)
-				if !ok || !proto.HasExtension(opts, qrdbv1.E_Permission) {
-					continue
-				}
-				if perm, ok := proto.GetExtension(opts, qrdbv1.E_Permission).(string); ok && perm != "" {
-					set[perm] = struct{}{}
-				}
-			}
-		}
-
-		perms := make([]qrdbsdk.Permission, 0, len(set))
-		for p := range set {
-			perms = append(perms, qrdbsdk.Permission(p))
-		}
-		sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
+		// ORDER: permissions, then scope, then role grants. qrdb's authorizer
+		// resolves a permission's scope before it consults the grant, and
+		// rbac.ListPermissions — the token-issuance path — fails outright on
+		// the first permission an identity holds that has no scope. A grant
+		// registered ahead of its scope is therefore a grant that cannot be
+		// exercised and, worse, one that breaks login for every identity
+		// holding it (go-qrdb#504).
 
 		// The permissions must exist in qrdb's global registry before any
 		// role may hold them: role creation validates every granted
 		// permission, so an unregistered grant fails first boot.
 		qrdbsdk.RegisterPermissions(perms...)
+
+		// Only the permissions xkms OWNS are scoped here; qrdb declares the
+		// rest itself and re-declaring one would overwrite its decision. See
+		// module_scopes.go for the four and the reasoning behind each.
+		qrdbsdk.RegisterPermissionScope(qrdbsdk.PermissionScopeSelf, selfScopedPermissions()...)
+
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perms...)
 		qrdbsdk.RegisterPermissionRoleGrant(qrdbsdk.RoleNameOwner, perms...)
 	})
+}
+
+// modulePermissions returns, sorted and de-duplicated, every permission the
+// xkms module declares across its three declaration surfaces: the REST route
+// table, the MCP method specs, and the qrdb.v1.permission options on its gRPC
+// method descriptors.
+//
+// It is DERIVED rather than hand-copied so a new RPC, route, or tool is
+// granted — and scope-checked — the moment it is declared, and so the
+// registration path and the scope gate that guards it read the same list.
+func modulePermissions() []qrdbsdk.Permission {
+	set := map[string]struct{}{}
+
+	for _, spec := range xkmsrest.Routes() {
+		if spec.Auth == xkmsrest.RouteAuthPermission && spec.Resource != "" && spec.Action != "" {
+			set[spec.Resource+":"+spec.Action] = struct{}{}
+		}
+	}
+
+	for _, spec := range xkmsmcp.ModuleMethods() {
+		if spec.Resource != "" && spec.Action != "" {
+			set[spec.Resource+":"+spec.Action] = struct{}{}
+		}
+	}
+
+	services := pb.File_pkg_api_grpc_proto_xkmsv1_xkms_proto.Services()
+	for i := 0; i < services.Len(); i++ {
+		methods := services.Get(i).Methods()
+		for j := 0; j < methods.Len(); j++ {
+			opts, ok := methods.Get(j).Options().(*descriptorpb.MethodOptions)
+			if !ok || !proto.HasExtension(opts, qrdbv1.E_Permission) {
+				continue
+			}
+			if perm, ok := proto.GetExtension(opts, qrdbv1.E_Permission).(string); ok && perm != "" {
+				set[perm] = struct{}{}
+			}
+		}
+	}
+
+	perms := make([]qrdbsdk.Permission, 0, len(set))
+	for p := range set {
+		perms = append(perms, qrdbsdk.Permission(p))
+	}
+	sort.Slice(perms, func(i, j int) bool { return perms[i] < perms[j] })
+	return perms
 }

@@ -92,6 +92,45 @@ record of the vocabulary: it maps every JSON-RPC method to the pair the
 equivalent REST / gRPC / QUIC operation already requires, with per-namespace
 citations of the transport it was taken from.
 
+## Permission scope
+
+Every permission also declares a **tenancy scope** — how far it reaches across
+tenants — and since go-qrdb#504 there is no default: a permission with no
+declared scope is refused by the authorizer, and `rbac.ListPermissions` fails
+on the first unscoped permission an identity holds, which fails token issuance
+rather than a single call. An omission therefore denies login.
+
+| Scope | Reach |
+|-------|-------|
+| `self` | the identity's own tenant, lifted across all tenants for a system-tenant identity |
+| `tenant-only` | the identity's own tenant only, denied to the system tenant — per-tenant custody a platform operator must not hold |
+| `cross` | across tenants, reserved for the system tenant |
+
+xkms registers no parallel vocabulary, so go-qrdb declares the scope of nearly
+every permission the module contributes. The exceptions — the names go-qrdb
+does not declare — are xkms's to own, and they are declared in
+`pkg/apimodule/module_scopes.go`:
+
+| Permission | Scope | Why |
+|------------|-------|-----|
+| `keys:read` | `self` | PKCS#11 object-state and seal-store reads; system-barrier state, and go-qrdb declares the whole `seal:*` family `self` |
+| `keys:write` | `self` | the mutating half of the same two stores; strictly less than `keys:delete`/`keys:import`, both `self` |
+| `keys:update` | `self` | one compare-and-swap route on the PKCS#11 state store — `keys:write` narrowed |
+| `ssh:use` | `self` | the blanket gate on the SSH CA route group, whose siblings `ssh:read`/`write`/`delete` and the matching `piv:use` are all `self` |
+
+Two rules govern that file. **Pin each member, not the family** — a family
+helper that later gains a member would scope it silently. **Declare only what
+xkms owns** — `RegisterPermissionScope` overwrites and runs after go-qrdb's
+package `init()`, so re-declaring a go-qrdb name would replace an upstream
+decision with a local one.
+
+`registerRoleGrants` (`pkg/apimodule/module_grants.go`) registers in the order
+permissions → scope → role grants, because the authorizer resolves a
+permission's scope before it consults the grant.
+`pkg/apimodule/module_scopes_test.go` is the build gate: every permission the
+module contributes must resolve a scope, through the same SDK path the
+authorizer uses.
+
 ## Transport enforcement
 
 Every transport authorizes through the same `auth.Authorizer`, so a role grant
