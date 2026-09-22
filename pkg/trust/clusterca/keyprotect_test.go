@@ -26,7 +26,34 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// mustSecret seals s into a *secure.Secret for test fixtures that need a
+// KeyProtection.Passphrase. Test-only: production callers resolve the
+// passphrase from config via Server.resolveClusterCAKeyPassphrase.
+func mustSecret(t *testing.T, s string) *secure.Secret {
+	t.Helper()
+	sec, err := secure.NewSecret([]byte(s))
+	require.NoError(t, err)
+	return sec
+}
+
+// secretBytes opens sec and returns a copy of its plaintext for test
+// assertions. A nil Secret (no passphrase configured) returns nil, matching
+// the empty-string behaviour the pre-enclave *KeyProtection.Passphrase had.
+func secretBytes(t *testing.T, sec *secure.Secret) []byte {
+	t.Helper()
+	if sec == nil {
+		return nil
+	}
+	buf, err := sec.Open()
+	require.NoError(t, err)
+	defer buf.Destroy()
+	out := make([]byte, buf.Size())
+	copy(out, buf.Bytes())
+	return out
+}
 
 // fakeSealer is an AES-256-GCM stand-in for a hardware types.Sealer, letting
 // the key-protection logic be exercised without a real TPM. It models the
@@ -83,7 +110,7 @@ func TestKeyProtection_AutoSelectsTPMWhenAvailable(t *testing.T) {
 	kp := &KeyProtection{
 		Mode:       KeyProtectAuto,
 		DataDir:    t.TempDir(),
-		Passphrase: "operator-secret",
+		Passphrase: mustSecret(t, "operator-secret"),
 		Sealer:     newFakeSealer(),
 	}
 	assert.Equal(t, KeyProtectTPM2, kp.effectiveMode())
@@ -93,7 +120,7 @@ func TestKeyProtection_AutoFallsBackToPassphrase(t *testing.T) {
 	kp := &KeyProtection{
 		Mode:       KeyProtectAuto,
 		DataDir:    t.TempDir(),
-		Passphrase: "operator-secret",
+		Passphrase: mustSecret(t, "operator-secret"),
 		Sealer:     nil,
 	}
 	assert.Equal(t, KeyProtectPassphrase, kp.effectiveMode())
@@ -119,7 +146,7 @@ func TestKeyProtection_AutoAllowsPlaintextOnlyWhenInsecure(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKeyProtection_Passphrase(t *testing.T) {
-	kp := &KeyProtection{Mode: KeyProtectPassphrase, DataDir: t.TempDir(), Passphrase: "hunter2"}
+	kp := &KeyProtection{Mode: KeyProtectPassphrase, DataDir: t.TempDir(), Passphrase: mustSecret(t, "hunter2")}
 	pw, allowPlaintext, err := kp.Resolve(context.Background())
 	require.NoError(t, err)
 	assert.False(t, allowPlaintext)

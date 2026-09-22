@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Config represents the complete server configuration
@@ -784,8 +785,12 @@ type RaftEnrollmentConfig struct {
 
 	// CAKeyPassphrase supplies the operator passphrase for the "passphrase"
 	// protection mode (and the passphrase fallback in auto mode). Supports
-	// credential:// references resolved at boot.
-	CAKeyPassphrase string `yaml:"ca_key_passphrase"`
+	// credential:// references resolved at boot. Declared as a
+	// types.SecretValue rather than a plain string so the resolved
+	// plaintext lives in its own memguard enclave rather than an unwipeable
+	// Go string; see types.SecretValue and the CA identity password
+	// resolution in Server.initializeCA for the same pattern.
+	CAKeyPassphrase types.SecretValue `yaml:"ca_key_passphrase"`
 
 	// CAKeyStrategy selects how the cluster CA signing key is made available
 	// across the cluster so that (per the custody model) the appropriate node(s)

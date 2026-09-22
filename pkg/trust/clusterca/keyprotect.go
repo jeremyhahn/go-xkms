@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // KeyProtectionMode selects how the node-local cluster CA keystore password is
@@ -71,8 +72,12 @@ type KeyProtection struct {
 	DataDir string
 
 	// Passphrase is the operator passphrase for KeyProtectPassphrase (and the
-	// passphrase fallback in KeyProtectAuto). Empty disables passphrase mode.
-	Passphrase string
+	// passphrase fallback in KeyProtectAuto), sealed in a long-lived memguard
+	// enclave. Nil disables passphrase mode. The composition root converts
+	// the resolved config-sourced types.SecretValue into this Secret (see
+	// Server.clusterCAKeyProtection) so the plaintext passphrase is never
+	// held as a plain Go string.
+	Passphrase *secure.Secret
 
 	// Sealer seals/unseals the random CA-keystore password for the hardware
 	// modes. Nil when no TPM/HSM is available; KeyProtectAuto then falls back
@@ -115,7 +120,7 @@ func (k *KeyProtection) Resolve(ctx context.Context) (types.Password, bool, erro
 
 	case KeyProtectPassphrase:
 		logger.Info("cluster CA keystore protected by operator passphrase")
-		pw, err := types.NewPasswordFromString(k.Passphrase)
+		pw, err := passwordFromSecret(k.Passphrase)
 		if err != nil {
 			return nil, false, err
 		}
@@ -151,7 +156,7 @@ func (k *KeyProtection) effectiveMode() KeyProtectionMode {
 				return KeyProtectPKCS11
 			}
 			return KeyProtectTPM2
-		case k.Passphrase != "":
+		case k.Passphrase != nil:
 			return KeyProtectPassphrase
 		case k.AllowInsecure:
 			return KeyProtectNone
@@ -204,6 +209,24 @@ func (k *KeyProtection) resolveSealed(ctx context.Context) (types.Password, erro
 		return nil, err
 	}
 	return types.NewPassword(secret)
+}
+
+// passwordFromSecret opens sec and converts its plaintext into a
+// types.Password, mirroring types.NewPasswordFromString's "empty is no
+// authentication, not an error" contract for the nil case: a nil Secret
+// (KeyProtection.Passphrase never set) still resolves to a usable,
+// passwordless Password rather than an error, matching the pre-enclave
+// behaviour of NewPasswordFromString("").
+func passwordFromSecret(sec *secure.Secret) (types.Password, error) {
+	if sec == nil {
+		return types.NewPassword(nil)
+	}
+	buf, err := sec.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer buf.Destroy()
+	return types.NewPassword(buf.Bytes())
 }
 
 // sealStrategyLabel returns a human label for the active hardware strategy.

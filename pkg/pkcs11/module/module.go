@@ -58,6 +58,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // CK_INFO represents the PKCS#11 library information structure.
@@ -2098,10 +2099,19 @@ func (m *Module) importCreatedKey(obj *Object) CK_RV {
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.Timeout)
 	defer cancel()
 
+	// keyMaterial is GetAttribute's own copy (see GetAttribute), so sealing
+	// it here -- which wipes the source slice -- cannot corrupt the object's
+	// stored CKA_VALUE.
+	keyMaterialBuf, err := secure.NewBufferFromBytes(keyMaterial)
+	if err != nil {
+		return CKR_DEVICE_ERROR
+	}
+	defer keyMaterialBuf.Destroy()
+
 	importedID, err := m.cryptoManager.ImportKeyMaterial(ctx, &ImportKeyMaterialRequest{
 		KeyID:       keyID,
 		Backend:     m.cryptoManager.config.DefaultBackend,
-		KeyMaterial: keyMaterial,
+		KeyMaterial: keyMaterialBuf,
 	})
 	if err != nil {
 		if FromError(err) == CKR_FUNCTION_NOT_SUPPORTED {
@@ -2322,6 +2332,13 @@ func anyAttributeUnavailable(attrs []Attribute) bool {
 //
 // A nil value with CKR_OK means the object simply has no backend material to
 // fetch; CKR_ATTRIBUTE_SENSITIVE means the fetch was attempted and refused.
+//
+// The backend fetch itself returns the material sealed in a *secure.Buffer
+// (ExportKeyMaterialResponse.KeyMaterial); this is the C boundary where that
+// protection necessarily ends -- the caller is filling a CK_ATTRIBUTE.Value
+// a C_GetAttributeValue caller reads directly, and PKCS#11's C ABI has no
+// enclaved equivalent. Only the copy made here, for that one crossing, is
+// unbounded Go-heap memory; the export path up to this point stays enclaved.
 func (m *Module) secretKeyValue(obj *Object) ([]byte, CK_RV) {
 	// Footnote 7 is settled before the material is read, not after: a sensitive
 	// or unextractable key withholds its value even when that value still sits
@@ -2351,8 +2368,18 @@ func (m *Module) secretKeyValue(obj *Object) ([]byte, CK_RV) {
 	if err != nil {
 		return nil, CKR_ATTRIBUTE_SENSITIVE
 	}
+	defer resp.KeyMaterial.Destroy()
 
-	return resp.KeyMaterial, CKR_OK
+	var value []byte
+	if err := resp.KeyMaterial.WithBytes(func(b []byte) error {
+		value = make([]byte, len(b))
+		copy(value, b)
+		return nil
+	}); err != nil {
+		return nil, CKR_ATTRIBUTE_SENSITIVE
+	}
+
+	return value, CKR_OK
 }
 
 // fillBackendKeyValue populates a revealable secret key's CKA_VALUE from its

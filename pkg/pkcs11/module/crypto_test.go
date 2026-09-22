@@ -39,6 +39,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // mockClient implements PKCS11Transport for testing.
@@ -5073,9 +5074,10 @@ func TestCryptoManager_ExportKeyMaterial_Success(t *testing.T) {
 		t.Fatal("expected non-nil response")
 	}
 
-	if len(resp.KeyMaterial) == 0 {
+	if resp.KeyMaterial.Size() == 0 {
 		t.Error("expected non-empty key material")
 	}
+	resp.KeyMaterial.Destroy()
 }
 
 func TestCryptoManager_ExportKeyMaterial_DefaultBackend(t *testing.T) {
@@ -5093,6 +5095,85 @@ func TestCryptoManager_ExportKeyMaterial_DefaultBackend(t *testing.T) {
 
 	if resp == nil {
 		t.Fatal("expected non-nil response with default backend")
+	}
+	resp.KeyMaterial.Destroy()
+}
+
+// ----------------------------------------------------------------
+// ImportKeyMaterial Tests
+// ----------------------------------------------------------------
+
+func TestCryptoManager_ImportKeyMaterial_NilRequest(t *testing.T) {
+	cm, _ := newTestCryptoManager()
+
+	_, err := cm.ImportKeyMaterial(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil request")
+	}
+
+	pkcsErr, ok := err.(*PKCS11Error)
+	if !ok {
+		t.Fatalf("expected PKCS11Error, got %T", err)
+	}
+	if pkcsErr.Code != CKR_ARGUMENTS_BAD {
+		t.Errorf("expected CKR_ARGUMENTS_BAD, got %s", pkcsErr.Code.String())
+	}
+}
+
+func TestCryptoManager_ImportKeyMaterial_EmptyKeyMaterial(t *testing.T) {
+	cm, _ := newTestCryptoManager()
+
+	req := &ImportKeyMaterialRequest{KeyID: "import-key"}
+
+	_, err := cm.ImportKeyMaterial(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for nil key material")
+	}
+
+	pkcsErr, ok := err.(*PKCS11Error)
+	if !ok {
+		t.Fatalf("expected PKCS11Error, got %T", err)
+	}
+	if pkcsErr.Code != CKR_ATTRIBUTE_VALUE_INVALID {
+		t.Errorf("expected CKR_ATTRIBUTE_VALUE_INVALID, got %s", pkcsErr.Code.String())
+	}
+}
+
+func TestCryptoManager_ImportKeyMaterial_Success(t *testing.T) {
+	cm, client := newTestCryptoManager()
+
+	keyMaterial, err := secure.NewBufferFromBytes(bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatalf("NewBufferFromBytes: %v", err)
+	}
+	defer keyMaterial.Destroy()
+
+	req := &ImportKeyMaterialRequest{
+		KeyID:       "import-key",
+		Backend:     "test-backend",
+		KeyMaterial: keyMaterial,
+	}
+
+	keyID, err := cm.ImportKeyMaterial(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ImportKeyMaterial failed: %v", err)
+	}
+	if keyID == "" {
+		t.Fatal("expected non-empty key id")
+	}
+	if !client.importKeyCalled {
+		t.Fatal("expected ImportKey to be called on the transport client")
+	}
+
+	// The material the mock's RSA-OAEP oracle recovered must match what was
+	// sealed into the request buffer — proving the wrap traveled the real
+	// plaintext, not zeroed-out memory left over from an early Destroy.
+	got, ok := client.importedMaterial[req.KeyID]
+	if !ok {
+		t.Fatalf("mock recorded no imported material for key id %q", req.KeyID)
+	}
+	if !bytes.Equal(got, bytes.Repeat([]byte{0x42}, 32)) {
+		t.Fatalf("imported material = %x, want 32 bytes of 0x42", got)
 	}
 }
 

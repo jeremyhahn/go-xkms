@@ -49,6 +49,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // GCM cipher constants for AEAD operations.
@@ -3224,8 +3225,13 @@ type ExportKeyMaterialRequest struct {
 
 // ExportKeyMaterialResponse contains the exported key material.
 type ExportKeyMaterialResponse struct {
-	// KeyMaterial is the raw key bytes
-	KeyMaterial []byte
+	// KeyMaterial is the raw key bytes, sealed in an mlocked, canary-guarded
+	// enclave rather than a plain []byte — this response is the in-process
+	// handoff of plaintext symmetric key material, and it must not sit on
+	// the ordinary Go heap between ExportKeyMaterial and its caller. Callers
+	// MUST call KeyMaterial.Destroy() once the material has been consumed
+	// (e.g. copied into a CKA_VALUE attribute at the C boundary).
+	KeyMaterial *secure.Buffer
 
 	// KeyType is the type of the key
 	KeyType string
@@ -3263,8 +3269,18 @@ func (cm *CryptoManager) ExportKeyMaterial(ctx context.Context, req *ExportKeyMa
 			"key material export failed", err)
 	}
 
+	// resp.KeyMaterial is the wire response (transport.ExportKeyMaterialResponse)
+	// and stays a plain []byte there — it is sealed into the enclave the moment
+	// it crosses into this process's module-level response, which is what every
+	// caller of ExportKeyMaterial holds from here on.
+	keyMaterial, err := secure.NewBufferFromBytes(resp.KeyMaterial)
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_DEVICE_ERROR,
+			"failed to seal exported key material", err)
+	}
+
 	return &ExportKeyMaterialResponse{
-		KeyMaterial: resp.KeyMaterial,
+		KeyMaterial: keyMaterial,
 		KeyType:     resp.KeyType,
 		KeySize:     resp.KeySize,
 	}, nil
@@ -3298,9 +3314,11 @@ type ImportKeyMaterialRequest struct {
 	// Backend names the backend to import into. Empty selects the default.
 	Backend string
 
-	// KeyMaterial is the plaintext secret key. It is wrapped before it leaves
-	// this process and is never sent in the clear.
-	KeyMaterial []byte
+	// KeyMaterial is the plaintext secret key, sealed in an mlocked,
+	// canary-guarded enclave. It is wrapped before it leaves this process
+	// and is never sent in the clear. The caller retains ownership and MUST
+	// call Destroy() once ImportKeyMaterial returns.
+	KeyMaterial *secure.Buffer
 }
 
 // ImportKeyMaterial imports plaintext secret key material into a backend and
@@ -3334,11 +3352,11 @@ func (cm *CryptoManager) ImportKeyMaterial(ctx context.Context, req *ImportKeyMa
 	if req.KeyID == "" {
 		return "", NewPKCS11ErrorWithMessage(CKR_ARGUMENTS_BAD, "key ID is empty")
 	}
-	if len(req.KeyMaterial) == 0 {
+	if req.KeyMaterial == nil || req.KeyMaterial.Size() == 0 {
 		return "", NewPKCS11ErrorWithMessage(CKR_ATTRIBUTE_VALUE_INVALID, "key material is empty")
 	}
 
-	keySize, ok := importSymmetricKeySizes[len(req.KeyMaterial)]
+	keySize, ok := importSymmetricKeySizes[req.KeyMaterial.Size()]
 	if !ok {
 		return "", NewPKCS11ErrorWithMessage(CKR_FUNCTION_NOT_SUPPORTED,
 			"this token imports only 16, 24 or 32 byte secret keys")
@@ -3373,8 +3391,18 @@ func (cm *CryptoManager) ImportKeyMaterial(ctx context.Context, req *ImportKeyMa
 			"the backend returned no wrapping public key for the import")
 	}
 
-	wrapped, err := wrapForImport(params.WrappingPublicKey, req.KeyMaterial)
-	if err != nil {
+	// The borrow is held for the whole wrap call — wrapForImport reaches
+	// nothing in the secure package, so nesting it inside WithBytes cannot
+	// deadlock against the borrow this holds.
+	var wrapped []byte
+	if err := req.KeyMaterial.WithBytes(func(b []byte) error {
+		w, werr := wrapForImport(params.WrappingPublicKey, b)
+		if werr != nil {
+			return werr
+		}
+		wrapped = w
+		return nil
+	}); err != nil {
 		return "", err
 	}
 

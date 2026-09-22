@@ -55,7 +55,7 @@ Cluster settings are configured via the `cluster:` block in `xkmsd.yaml` and ove
 | RaftEnrollment.ACME.DirectoryURL | `raft_enrollment.acme.directory_url` | (config only) | string | ACME directory of an existing node. Required on joining nodes; ignored on the first node (issues in-process). |
 | RaftEnrollment.ClusterCACN | `raft_enrollment.cluster_ca_cn` | (config only) | string | CN of the dedicated cluster intermediate that issues node transport certificates. Empty uses the CA's default issuing identity. |
 | RaftEnrollment.CAKeyProtection | `raft_enrollment.ca_key_protection` | (config only) | string | Protection at rest for the node-local cluster CA keystore: `""` (auto), `tpm2`/`pkcs11`, `passphrase`, or `none` (insecure). |
-| RaftEnrollment.CAKeyPassphrase | `raft_enrollment.ca_key_passphrase` | (config only) | string | Operator passphrase for `passphrase` protection (and auto fallback). Supports `credential://` references. |
+| RaftEnrollment.CAKeyPassphrase | `raft_enrollment.ca_key_passphrase` | (config only) | `types.SecretValue` | Operator passphrase for `passphrase` protection (and auto fallback). A plain string or a `credential://` reference in YAML either way; the resolved plaintext is held in protected memory, never a plain Go string — see [xkmsd-configuration](../xkmsd-configuration/engineering.md#decoding-notes). |
 | RaftEnrollment.CAKeyStrategy | `raft_enrollment.ca_key_strategy` | (config only) | string | Cluster CA key custody so any node can issue: `""`/`barrier` (replicated barrier-encrypted, default), `hsm` (shared PKCS#11), `tpm-kek` (planned). |
 
 ### Example: 3-Node Cluster via YAML

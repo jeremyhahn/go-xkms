@@ -255,7 +255,7 @@ func TestBarrierStrategy_RuntimePropagatesPromotionFailure(t *testing.T) {
 	deps := &StrategyDeps{
 		NodeLocalDataDir:      nodeLocalDataDir(t),
 		CAConfig:              ca.DefaultMultiIdentityCAConfigWithIntermediate(),
-		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "cluster-ca-secret"},
+		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "cluster-ca-secret")},
 		ReplicatedKeyStorage:  storage.NewMemory(),
 		ReplicatedCertStorage: storage.NewMemory(),
 	}

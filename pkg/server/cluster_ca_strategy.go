@@ -20,33 +20,88 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // clusterCAKeyProtection builds the KeyProtection for the cluster CA keystore
-// from the cluster enrollment configuration.
-func (s *Server) clusterCAKeyProtection() clustercapkg.KeyProtection {
+// from the cluster enrollment configuration, resolving any credential://
+// reference in CAKeyPassphrase through the server's secret registry.
+func (s *Server) clusterCAKeyProtection() (clustercapkg.KeyProtection, error) {
 	enr := s.config.Cluster.RaftEnrollment
+
+	passphrase, err := s.resolveClusterCAKeyPassphrase(&enr.CAKeyPassphrase)
+	if err != nil {
+		return clustercapkg.KeyProtection{}, &ErrServiceInit{
+			Service: "cluster CA key passphrase credential", Err: err,
+		}
+	}
+
 	return clustercapkg.KeyProtection{
 		Mode:       clustercapkg.KeyProtectionMode(enr.CAKeyProtection),
-		Passphrase: enr.CAKeyPassphrase,
+		Passphrase: passphrase,
 		// AllowInsecure is the clusterca library's own permission to write a
 		// plaintext key, and it is derived from the "none" mode alone. It is not
 		// a daemon override: config.ComplianceGaps reports "none" and cmd/xkmsd
 		// refuses to start with it, so only an embedded or test caller of this
 		// package reaches here with it set.
 		AllowInsecure: clustercapkg.KeyProtectionMode(enr.CAKeyProtection) == clustercapkg.KeyProtectNone,
+	}, nil
+}
+
+// resolveClusterCAKeyPassphrase resolves sv (a types.SecretValue carrying
+// either a plaintext passphrase or a credential:// reference) into a
+// *secure.Secret, the type clustercapkg.KeyProtection.Passphrase requires.
+// An empty/unset Raw — no passphrase configured — returns (nil, nil), which
+// KeyProtection treats identically to the pre-enclave empty-string default.
+//
+// The registry falls back to literal pass-through for non-URI values (the
+// same behaviour Server.initializeCA relies on for CA identity passwords),
+// so a plain operator-supplied passphrase resolves without a credential
+// round trip.
+func (s *Server) resolveClusterCAKeyPassphrase(sv *types.SecretValue) (*secure.Secret, error) {
+	if sv.Raw == "" {
+		return nil, nil
 	}
+	reg := s.buildSecretRegistry()
+	resolved, err := reg.Resolve(s.ctx, sv.Raw)
+	if err != nil {
+		return nil, err
+	}
+	var secret *secure.Secret
+	if err := resolved.WithBytes(func(b []byte) error {
+		if len(b) == 0 {
+			return nil
+		}
+		// A fresh copy: sec takes ownership and secure.NewSecret wipes it,
+		// so the resolved SecretValue's own enclave-backed buffer (b, live
+		// only for this callback) is left untouched.
+		plaintext := append([]byte(nil), b...)
+		sec, serr := secure.NewSecret(plaintext)
+		if serr != nil {
+			return serr
+		}
+		secret = sec
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return secret, nil
 }
 
 // clusterStrategyDeps assembles the dependencies a cluster CA key strategy
 // needs. Pre-node calls pass nil replicated storage (bootstrap); post-node calls
 // (initializeCA) pass the qrdb-routed replicated stores.
-func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert storage.Backend) *clustercapkg.StrategyDeps {
+func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert storage.Backend) (*clustercapkg.StrategyDeps, error) {
+	protection, err := s.clusterCAKeyProtection()
+	if err != nil {
+		return nil, err
+	}
 	deps := &clustercapkg.StrategyDeps{
 		NodeLocalDataDir:      filepath.Join(s.config.Storage.Path, clusterCACacheSubdir),
 		CAConfig:              s.config.CA,
-		Protection:            s.clusterCAKeyProtection(),
+		Protection:            protection,
 		ReplicatedKeyStorage:  replicatedKey,
 		ReplicatedCertStorage: replicatedCert,
 		TPMSealer:             s.nodeSealTPM,
@@ -67,7 +122,7 @@ func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert storage.Backe
 	if tpmBackend, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
 		deps.Credentials = tpmBackend.TPM()
 	}
-	return deps
+	return deps, nil
 }
 
 // ClusterSecretDeliveryService builds the post-enrollment secret-delivery
@@ -111,5 +166,9 @@ func (s *Server) resolveClusterCARuntimeBackend() (xkms.Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.clusterCAKeyStrategy.RuntimeBackend(s.ctx, s.clusterStrategyDeps(replicatedKey, replicatedCert))
+	deps, err := s.clusterStrategyDeps(replicatedKey, replicatedCert)
+	if err != nil {
+		return nil, err
+	}
+	return s.clusterCAKeyStrategy.RuntimeBackend(s.ctx, deps)
 }

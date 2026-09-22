@@ -109,15 +109,17 @@ viper reads the YAML into a map before mapstructure decodes it with
   string field receives `"432"`. The shipped configurations quote such values;
   operators must too;
 - a `types.SecretValue` field (`ca.identity[*].keys[*].password`,
-  `ca.identity[*].keystores.software.password`) does not decode through
+  `ca.identity[*].keystores.software.password`,
+  `cluster.raft_enrollment.ca_key_passphrase`) does not decode through
   `SecretValue.UnmarshalYAML` — mapstructure has no notion of `yaml.Unmarshaler`
   — so `Load` composes `stringToSecretValueHookFunc` onto the decoder to give
   it the same behaviour: the file's plain string (a literal password or a
   `credential://...` reference) lands unresolved in the field's `Raw`.
   Resolution into the field's memguard enclave happens later, wherever the
   field's owner has a `secret.ResolverRegistry` available (`pkg/server`'s
-  `initializeCA` for these two fields) — `Load` itself never resolves a
-  secret reference.
+  `initializeCA` for the first two fields, `resolveClusterCAKeyPassphrase`
+  for the cluster CA field) — `Load` itself never resolves a secret
+  reference.
 
 ## Errors
 

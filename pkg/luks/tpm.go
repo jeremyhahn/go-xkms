@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	libtpm2 "github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -80,10 +81,17 @@ type TPMToken struct {
 	TPM2PolicyHA string   `json:"tpm2-policy-hash,omitempty"` // base64
 }
 
-// TPMSealResult is the richer seal output: passphrase bytes plus the token
-// payload to persist in the LUKS2 header and the raw sealed blobs.
+// TPMSealResult is the richer seal output: the sealed passphrase plus the
+// token payload to persist in the LUKS2 header and the raw sealed blobs.
+//
+// Passphrase is protected memory: it lives in an mlocked, canary-guarded
+// *secure.Buffer rather than a plain []byte, so the LUKS passphrase never
+// sits on the ordinary Go heap between SealPassphrase and the caller
+// consuming it. Callers MUST call Passphrase.Destroy() once the passphrase
+// has been persisted (e.g. handed to a LUKS keyslot add) or otherwise
+// consumed.
 type TPMSealResult struct {
-	Passphrase   []byte
+	Passphrase   *secure.Buffer
 	TokenJSON    []byte
 	PublicBlob   []byte
 	PrivateBlob  []byte
@@ -143,7 +151,16 @@ func (h *TPMSealer) Seal(ctx context.Context, handle string, pcrs []int32) ([]by
 	if err != nil {
 		return nil, nil, err
 	}
-	return res.Passphrase, res.TokenJSON, nil
+	defer res.Passphrase.Destroy()
+	var passphrase []byte
+	if err := res.Passphrase.WithBytes(func(b []byte) error {
+		passphrase = make([]byte, len(b))
+		copy(passphrase, b)
+		return nil
+	}); err != nil {
+		return nil, nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("copy passphrase: %v", err)}
+	}
+	return passphrase, res.TokenJSON, nil
 }
 
 // SealPassphrase is the richer API used by callers that need the raw sealed
@@ -235,8 +252,17 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("marshal token: %v", err)}
 	}
 
+	// passphrase has already been consumed by the TPM2_Create command above;
+	// hand it to the enclave now. NewBufferFromBytes copies and wipes the
+	// source slice, so the plaintext no longer sits on the ordinary heap
+	// once this returns.
+	passBuf, err := secure.NewBufferFromBytes(passphrase)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrTPMSealFailed, Detail: fmt.Sprintf("seal passphrase enclave: %v", err)}
+	}
+
 	return &TPMSealResult{
-		Passphrase:   passphrase,
+		Passphrase:   passBuf,
 		TokenJSON:    tokenJSON,
 		PublicBlob:   createRsp.OutPublic.Bytes(),
 		PrivateBlob:  createRsp.OutPrivate.Buffer,

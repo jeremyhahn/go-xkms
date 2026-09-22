@@ -176,6 +176,7 @@ func TestTPMSealer_UnsealPassphrase_CommandFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SealPassphrase: %v", err)
 	}
+	defer res.Passphrase.Destroy()
 
 	tests := []struct {
 		name    string
@@ -217,6 +218,7 @@ func TestTPMSealer_UnsealPassphrase_FlushContextErrorIsLoggedNotFatal(t *testing
 	if err != nil {
 		t.Fatalf("SealPassphrase: %v", err)
 	}
+	defer res.Passphrase.Destroy()
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
@@ -229,8 +231,8 @@ func TestTPMSealer_UnsealPassphrase_FlushContextErrorIsLoggedNotFatal(t *testing
 	if err != nil {
 		t.Fatalf("UnsealPassphrase returned error despite flush-only failure: %v", err)
 	}
-	if !bytes.Equal(unsealed, res.Passphrase) {
-		t.Fatalf("unseal mismatch:\n  got  %x\n  want %x", unsealed, res.Passphrase)
+	if !bytes.Equal(unsealed, res.Passphrase.Bytes()) {
+		t.Fatalf("unseal mismatch:\n  got  %x\n  want %x", unsealed, res.Passphrase.Bytes())
 	}
 	if !strings.Contains(logBuf.String(), "tpm flush context failed") {
 		t.Fatalf("expected flush-context warning in log output, got: %s", logBuf.String())

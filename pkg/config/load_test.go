@@ -634,6 +634,99 @@ func TestLoad_CAKeyPassword_CredentialReferenceLoadsVerbatim(t *testing.T) {
 	}
 }
 
+// writeClusterCAKeyPassphraseConfig writes a valid daemon configuration whose
+// cluster.raft_enrollment carries the given ca_key_passphrase line, mirroring
+// writeCAPasswordConfig's shape for the same stringToSecretValueHookFunc path
+// (go-xkms#587).
+func writeClusterCAKeyPassphraseConfig(t *testing.T, passphraseLine string) string {
+	t.Helper()
+
+	content := `
+server:
+  rest_port: 8443
+  grpc_port: 9443
+
+protocols:
+  rest: true
+  grpc: true
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+
+auth:
+  enabled: false
+
+storage:
+  backend: "qrdb"
+  path: "/data"
+
+default_backend: "pkcs8"
+
+backends:
+  pkcs8:
+    enabled: true
+    path: "/data/pkcs8"
+
+cluster:
+  enabled: true
+  node_id: 1
+  raft_address: "10.0.0.1:63001"
+  peers: "1=10.0.0.1:63001"
+  raft_enrollment:
+    ca_key_protection: "passphrase"
+` + passphraseLine + `
+`
+	path := filepath.Join(t.TempDir(), "xkmsd.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+// TestLoad_ClusterCAKeyPassphrase_LoadsIntoSecretValueRaw proves that a
+// plain-string cluster.raft_enrollment.ca_key_passphrase loads through Load's
+// mapstructure chain into the field's SecretValue.Raw, unresolved — the same
+// contract TestLoad_CAKeyPassword_LoadsIntoSecretValueRaw proves for the CA
+// identity passwords (go-xkms#587, go-xkms#41).
+func TestLoad_ClusterCAKeyPassphrase_LoadsIntoSecretValueRaw(t *testing.T) {
+	path := writeClusterCAKeyPassphraseConfig(t, `    ca_key_passphrase: "cluster-ca-secret"`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	sv := cfg.Cluster.RaftEnrollment.CAKeyPassphrase
+	if sv.Raw != "cluster-ca-secret" {
+		t.Fatalf("CAKeyPassphrase.Raw = %q, want %q", sv.Raw, "cluster-ca-secret")
+	}
+	if sv.Strategy != "" {
+		t.Fatalf("CAKeyPassphrase.Strategy = %q, want empty (unresolved — Load never resolves)", sv.Strategy)
+	}
+}
+
+// TestLoad_ClusterCAKeyPassphrase_CredentialReferenceLoadsVerbatim proves
+// that a "credential://..." reference loads verbatim into Raw, exactly as a
+// literal passphrase does — Load's decode hook only stores the reference, it
+// never dereferences it. Server.resolveClusterCAKeyPassphrase performs the
+// actual resolution at cluster CA key-strategy setup.
+func TestLoad_ClusterCAKeyPassphrase_CredentialReferenceLoadsVerbatim(t *testing.T) {
+	path := writeClusterCAKeyPassphraseConfig(t, `    ca_key_passphrase: "credential://cluster-ca-pw"`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if got := cfg.Cluster.RaftEnrollment.CAKeyPassphrase.Raw; got != "credential://cluster-ca-pw" {
+		t.Fatalf("CAKeyPassphrase.Raw = %q, want the URI verbatim", got)
+	}
+}
+
 // TestStringToSecretValueHookFunc exercises the mapstructure decode hook
 // directly: a string decoding into a SecretValue field stores the reference
 // unresolved in Raw, and every other type combination passes data through

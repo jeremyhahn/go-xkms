@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // clusterSeedOID identifies the tpm-kek cluster-seed provisioning material in a
@@ -87,7 +88,17 @@ func (s *tpmKEKStrategy) kekProtection() (KeyProtection, error) {
 	if _, err := io.ReadFull(r, kek); err != nil {
 		return KeyProtection{}, err
 	}
-	return KeyProtection{Mode: KeyProtectPassphrase, Passphrase: hex.EncodeToString(kek)}, nil
+	// The keystore passphrase has always been the hex STRING, not the raw
+	// KEK bytes — preserving that exactly matters here, since it is what
+	// every already-sealed keystore on disk was encrypted under.
+	// secure.NewSecret wipes its source slice, so hexKEK is not reused
+	// after this call.
+	hexKEK := []byte(hex.EncodeToString(kek))
+	secret, err := secure.NewSecret(hexKEK)
+	if err != nil {
+		return KeyProtection{}, err
+	}
+	return KeyProtection{Mode: KeyProtectPassphrase, Passphrase: secret}, nil
 }
 
 // ensureSeed makes the cluster seed available: from memory, then the TPM-sealed

@@ -368,7 +368,7 @@ func TestKeyProtection_AutoIgnoresSealerThatCannotSeal(t *testing.T) {
 	kp := &KeyProtection{
 		Mode:       KeyProtectAuto,
 		DataDir:    t.TempDir(),
-		Passphrase: "operator-secret",
+		Passphrase: mustSecret(t, "operator-secret"),
 		Sealer:     &errSealer{canSeal: false},
 	}
 	assert.Equal(t, KeyProtectPassphrase, kp.effectiveMode())
@@ -712,7 +712,7 @@ func TestNodeLocalBackendSet_RejectsUnusableDataDir(t *testing.T) {
 
 	_, err := NewNodeLocalBackends(context.Background(), &NodeLocalBackendsParams{
 		DataDir:    blocker,
-		Protection: KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "x"},
+		Protection: KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
 	})
 	require.Error(t, err)
 }
@@ -725,7 +725,7 @@ func TestNodeLocalBackends_TPMBackendUsedWhenItIsAKeyProvider(t *testing.T) {
 	// rather than being handed out as a key backend.
 	resolve, err := NewNodeLocalBackends(context.Background(), &NodeLocalBackendsParams{
 		DataDir:     nodeLocalDataDir(t),
-		Protection:  KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "x"},
+		Protection:  KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
 		HardwareTPM: newFakeSealer(),
 	})
 	require.NoError(t, err)

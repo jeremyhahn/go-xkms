@@ -109,8 +109,9 @@ func TestTPMSealer_SealUnsealRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SealPassphrase: %v", err)
 	}
-	if len(res.Passphrase) != 32 {
-		t.Fatalf("passphrase length = %d, want 32", len(res.Passphrase))
+	defer res.Passphrase.Destroy()
+	if res.Passphrase.Size() != 32 {
+		t.Fatalf("passphrase length = %d, want 32", res.Passphrase.Size())
 	}
 	if len(res.TokenJSON) == 0 {
 		t.Fatal("empty token json")
@@ -140,8 +141,8 @@ func TestTPMSealer_SealUnsealRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnsealPassphrase: %v", err)
 	}
-	if !bytes.Equal(unsealed, res.Passphrase) {
-		t.Fatalf("unseal mismatch:\n  got  %x\n  want %x", unsealed, res.Passphrase)
+	if !bytes.Equal(unsealed, res.Passphrase.Bytes()) {
+		t.Fatalf("unseal mismatch:\n  got  %x\n  want %x", unsealed, res.Passphrase.Bytes())
 	}
 }
 
@@ -171,6 +172,7 @@ func TestTPMSealer_Seal_PolicyBindsPCRState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SealPassphrase: %v", err)
 	}
+	defer res.Passphrase.Destroy()
 
 	// Perturb PCR 7 so the policy digest no longer matches.
 	if _, err := (libtpm2.PCRExtend{

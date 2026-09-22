@@ -86,8 +86,9 @@ func TestTPMKEKStrategy_KEKIsSeedDerivedAndDistinct(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, KeyProtectPassphrase, pa.Mode)
-	assert.NotEqual(t, pa.Passphrase, pb.Passphrase, "a one-bit seed change must change the KEK")
-	assert.Len(t, pa.Passphrase, 64, "the KEK is a hex-encoded 32-byte value")
+	assert.NotEqual(t, secretBytes(t, pa.Passphrase), secretBytes(t, pb.Passphrase),
+		"a one-bit seed change must change the KEK")
+	assert.Len(t, secretBytes(t, pa.Passphrase), 64, "the KEK is a hex-encoded 32-byte value")
 }
 
 // TestTPMKEKStrategy_EnsureSeedRequiresTPM verifies seed handling refuses to

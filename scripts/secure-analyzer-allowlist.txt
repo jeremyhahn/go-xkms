@@ -110,7 +110,6 @@ pkg/ssh/keys/signer.go	2	ssh.ParsePrivateKey(buf.Bytes())	rule-2 narrowing filed
 # adding a new one for a field this gate has never seen is not -- that is a
 # new violation, not a pre-existing one, and must be fixed or scoped instead.
 pkg/crypto/rand/rand.go	3	PKCS11Config.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
-pkg/luks/tpm.go	3	TPMSealResult.Passphrase	pre-existing: deferred pending design review (go-xkms#549 triage)
 pkg/fido2/webauthn_assertion.go	3	WebAuthnAuthenticationOptions.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
 pkg/fido2/webauthn_assertion.go	3	WebAuthnAssertionRequest.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
 pkg/fido2/webauthn_attestation.go	3	WebAuthnRegistrationOptions.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
@@ -119,10 +118,6 @@ pkg/factor/fido2/ctap2.go	3	LocalEnrollRequest.PIN	pre-existing: deferred pendin
 pkg/pivcert/pivcert.go	3	PKCS11StorageConfig.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
 examples/symmetric-encryption/aes/aes-encryption.go	3	simplePassword.password	pre-existing: an SDK usage example implementing types.Password; deferred pending design review (go-xkms#549 triage)
 pkg/auth/pkcs11_tls.go	3	PKCS11TLSConfig.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
-pkg/pkcs11/module/crypto.go	3	ExportKeyMaterialResponse.KeyMaterial	pre-existing: deferred pending design review (go-xkms#549 triage)
-pkg/pkcs11/module/crypto.go	3	ImportKeyMaterialRequest.KeyMaterial	pre-existing: deferred pending design review (go-xkms#549 triage)
-pkg/trust/clusterca/keyprotect.go	3	KeyProtection.Passphrase	pre-existing: deferred pending design review (go-xkms#549 triage)
-pkg/acme/client/types.go	3	CertificateResource.PrivateKey	pre-existing: json:"-" (not a wire boundary per scope.go); deferred pending design review (go-xkms#549 triage)
 sdk/go/piv_signer.go	3	PIVCryptoSigner.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
 xkey/pkg/backup/service.go	3	OATHCredentialInfo.Secret	pre-existing: deferred pending design review (go-xkms#549 triage)
 xkey/pkg/backup/service.go	3	PasswordInfo.Password	pre-existing: deferred pending design review (go-xkms#549 triage)

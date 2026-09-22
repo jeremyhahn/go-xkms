@@ -602,10 +602,18 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Err: err}
 	}
 
+	// The response's KeyMaterial is caller-owned: a caller seals and wipes it
+	// (the PKCS#11 module does), and over the embedded transport that caller
+	// is in-process, so handing back the backend's own slice would let the
+	// wipe zero the backend's stored key. Copy once here, at the ownership
+	// boundary, instead of trusting every backend to return a fresh slice.
+	owned := make([]byte, len(keyMaterial))
+	copy(owned, keyMaterial)
+
 	// KeySize is documented as bits, and types.SymmetricAlgorithm.KeySize()
 	// already returns bits (128/192/256), so it is reported verbatim.
 	return &transport.ExportKeyMaterialResponse{
-		KeyMaterial: keyMaterial,
+		KeyMaterial: owned,
 		KeyType:     string(attrs.SymmetricAlgorithm),
 		KeySize:     attrs.SymmetricAlgorithm.KeySize(),
 	}, nil

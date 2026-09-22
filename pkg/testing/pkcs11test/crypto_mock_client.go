@@ -610,8 +610,13 @@ func (c *CryptoMockClient) ExportKeyMaterial(ctx context.Context, req *transport
 		return nil, err
 	}
 
+	// Caller-owned, like XKMSService.ExportKeyMaterial: the module seals and
+	// wipes what it receives, so the fake must not hand back its stored key.
+	owned := make([]byte, len(key))
+	copy(owned, key)
+
 	return &transport.ExportKeyMaterialResponse{
-		KeyMaterial: key,
+		KeyMaterial: owned,
 		KeyType:     "aes256-gcm",
 		KeySize:     256,
 	}, nil

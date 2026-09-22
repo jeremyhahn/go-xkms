@@ -69,8 +69,8 @@ func TestTPMKEKStrategy_BootstrapGeneratesSeed(t *testing.T) {
 	require.NoError(t, err)
 	p2, err := s.kekProtection()
 	require.NoError(t, err)
-	require.Equal(t, p1.Passphrase, p2.Passphrase)
-	require.NotEmpty(t, p1.Passphrase)
+	require.Equal(t, secretBytes(t, p1.Passphrase), secretBytes(t, p2.Passphrase))
+	require.NotEmpty(t, secretBytes(t, p1.Passphrase))
 }
 
 // TestTPMKEKStrategy_JoinerNeedsSeed verifies a joining node (not bootstrapping,
@@ -127,7 +127,7 @@ func TestTPMKEKStrategy_SeedDeliveryRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	jp, err := joiner.kekProtection()
 	require.NoError(t, err)
-	require.Equal(t, fp.Passphrase, jp.Passphrase)
+	require.Equal(t, secretBytes(t, fp.Passphrase), secretBytes(t, jp.Passphrase))
 
 	// And the joiner can now build a runtime backend.
 	backend, err := joiner.RuntimeBackend(ctx, joinerDeps)

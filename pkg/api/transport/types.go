@@ -1307,7 +1307,9 @@ type ExportKeyMaterialRequest struct {
 // SECURITY WARNING: The KeyMaterial field contains plaintext secret key bytes.
 // Handle with extreme care.
 type ExportKeyMaterialResponse struct {
-	// KeyMaterial is the raw key bytes (plaintext symmetric key material)
+	// KeyMaterial is the raw key bytes (plaintext symmetric key material).
+	// It is caller-owned: the receiver may seal and wipe it, so an
+	// implementation must never return a slice it still holds.
 	KeyMaterial []byte `json:"key_material"`
 
 	// KeyType is the type of the key (e.g., "aes256-gcm", "chacha20-poly1305")

@@ -100,7 +100,7 @@ func TestNodeLocalBackends_ReusesSharedTPMForHardwareKeys(t *testing.T) {
 
 	resolve, err := NewNodeLocalBackends(context.Background(), &NodeLocalBackendsParams{
 		DataDir:     nodeLocalDataDir(t),
-		Protection:  KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "cluster-ca-secret"},
+		Protection:  KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "cluster-ca-secret")},
 		HardwareTPM: tpmBackend,
 		Logger:      testLogger(),
 	})

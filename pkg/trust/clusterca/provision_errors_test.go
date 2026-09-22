@@ -258,7 +258,7 @@ func TestBarrierStrategy_BootstrapFailsOnUnusableDataDir(t *testing.T) {
 	s := &barrierStrategy{}
 	resolve, err := s.BootstrapBackends(context.Background(), &StrategyDeps{
 		NodeLocalDataDir: blocker,
-		Protection:       KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "x"},
+		Protection:       KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
 	})
 	require.Error(t, err)
 	assert.Nil(t, resolve)
@@ -283,7 +283,7 @@ func TestBarrierStrategy_CloseBootstrapStorageReleasesBothStores(t *testing.T) {
 	_, err := s.BootstrapBackends(ctx, &StrategyDeps{
 		NodeLocalDataDir: nodeLocalDataDir(t),
 		CAConfig:         ca.DefaultMultiIdentityCAConfigWithIntermediate(),
-		Protection:       KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "secret"},
+		Protection:       KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "secret")},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, s.bootstrapKeyStorage)
@@ -302,7 +302,7 @@ func TestBarrierStrategy_RuntimeRejectsMissingCertStorage(t *testing.T) {
 	s := &barrierStrategy{}
 	_, err := s.RuntimeBackend(context.Background(), &StrategyDeps{
 		NodeLocalDataDir:     t.TempDir(),
-		Protection:           KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "x"},
+		Protection:           KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
 		ReplicatedKeyStorage: storage.NewMemory(),
 	})
 	require.ErrorIs(t, err, ErrStrategyMisconfigured)

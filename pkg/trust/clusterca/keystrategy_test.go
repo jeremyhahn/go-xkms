@@ -86,7 +86,7 @@ func TestBarrierStrategy_RuntimeRequiresReplicatedStorage(t *testing.T) {
 	s := &barrierStrategy{}
 	_, err := s.RuntimeBackend(context.Background(), &StrategyDeps{
 		NodeLocalDataDir: t.TempDir(),
-		Protection:       KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "x"},
+		Protection:       KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
 	})
 	require.ErrorIs(t, err, ErrStrategyMisconfigured)
 }
@@ -119,7 +119,7 @@ func TestBarrierStrategy_BootstrapThenPromote(t *testing.T) {
 	deps := &StrategyDeps{
 		NodeLocalDataDir:      nodeLocalDataDir(t),
 		CAConfig:              ca.DefaultMultiIdentityCAConfigWithIntermediate(),
-		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "cluster-ca-secret"},
+		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "cluster-ca-secret")},
 		ReplicatedKeyStorage:  storage.NewMemory(),
 		ReplicatedCertStorage: storage.NewMemory(),
 	}
@@ -159,7 +159,7 @@ func TestBarrierStrategy_JoinerNoPromotion(t *testing.T) {
 	deps := &StrategyDeps{
 		NodeLocalDataDir:      nodeLocalDataDir(t),
 		CAConfig:              ca.DefaultMultiIdentityCAConfigWithIntermediate(),
-		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "cluster-ca-secret"},
+		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "cluster-ca-secret")},
 		ReplicatedKeyStorage:  storage.NewMemory(),
 		ReplicatedCertStorage: storage.NewMemory(),
 	}

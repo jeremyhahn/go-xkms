@@ -42,7 +42,7 @@ func TestNewNodeLocalBackends_PassphraseInjectsCAPassword(t *testing.T) {
 		CAConfig: caCfg,
 		Protection: KeyProtection{
 			Mode:       KeyProtectPassphrase,
-			Passphrase: "unit-test-cluster-ca-secret",
+			Passphrase: mustSecret(t, "unit-test-cluster-ca-secret"),
 		},
 	})
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestNewNodeLocalBackends_NoneRequiresInsecure(t *testing.T) {
 func TestNewNodeLocalBackends_NoHardwareFallsBackToSoftware(t *testing.T) {
 	backends, err := NewNodeLocalBackends(context.Background(), &NodeLocalBackendsParams{
 		DataDir:    t.TempDir(),
-		Protection: KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "x"},
+		Protection: KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
 	})
 	require.NoError(t, err)
 
