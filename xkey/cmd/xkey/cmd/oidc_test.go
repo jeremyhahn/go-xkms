@@ -416,38 +416,61 @@ func TestExpandPath(t *testing.T) {
 	}
 }
 
+// oidcExplicitStoreCmd builds a minimal cobra.Command carrying an explicit
+// --token-store flag (Flags().Changed == true), exercising the
+// plain-file-at-this-exact-path branch of openOIDCTokenStore the same way an
+// operator-supplied --token-store does, independent of any barrier state.
+func oidcExplicitStoreCmd(t *testing.T, storePath string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "oidc-test"}
+	cmd.Flags().String("token-store", "", "")
+	if err := cmd.Flags().Set("token-store", storePath); err != nil {
+		t.Fatalf("failed to set --token-store: %v", err)
+	}
+	return cmd
+}
+
 func TestStoreAndLoadToken(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "tokens.json")
+	cmd := oidcExplicitStoreCmd(t, storePath)
 
-	token := OIDCStoredToken{
-		Provider:     "https://example.com",
-		Issuer:       "https://example.com",
-		ClientID:     "test-client",
-		AccessToken:  "access-token-123",
-		RefreshToken: "refresh-token-456",
-		IDToken:      "id-token-789",
-		ExpiresAt:    time.Now().Add(time.Hour),
-		Scopes:       []string{"openid", "profile", "email"},
+	token := &OIDCStoredToken{
+		Provider:  "https://example.com",
+		Issuer:    "https://example.com",
+		ClientID:  "test-client",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Scopes:    []string{"openid", "profile", "email"},
 	}
+	if err := token.SetAccessToken("access-token-123"); err != nil {
+		t.Fatalf("SetAccessToken failed: %v", err)
+	}
+	if err := token.SetRefreshToken("refresh-token-456"); err != nil {
+		t.Fatalf("SetRefreshToken failed: %v", err)
+	}
+	if err := token.SetIDToken("id-token-789"); err != nil {
+		t.Fatalf("SetIDToken failed: %v", err)
+	}
+	defer token.Destroy()
 
 	// Store token
-	err := storeToken(storePath, token)
+	err := storeToken(cmd, storePath, token)
 	if err != nil {
 		t.Fatalf("storeToken failed: %v", err)
 	}
 
 	// Load token
-	loaded, err := loadToken(storePath)
+	loaded, err := loadToken(cmd, storePath)
 	if err != nil {
 		t.Fatalf("loadToken failed: %v", err)
 	}
+	defer loaded.Destroy()
 
-	if loaded.AccessToken != token.AccessToken {
-		t.Errorf("AccessToken = %q, want %q", loaded.AccessToken, token.AccessToken)
+	if loaded.AccessToken() != token.AccessToken() {
+		t.Errorf("AccessToken = %q, want %q", loaded.AccessToken(), token.AccessToken())
 	}
-	if loaded.RefreshToken != token.RefreshToken {
-		t.Errorf("RefreshToken = %q, want %q", loaded.RefreshToken, token.RefreshToken)
+	if loaded.RefreshToken() != token.RefreshToken() {
+		t.Errorf("RefreshToken = %q, want %q", loaded.RefreshToken(), token.RefreshToken())
 	}
 	if loaded.ClientID != token.ClientID {
 		t.Errorf("ClientID = %q, want %q", loaded.ClientID, token.ClientID)
@@ -457,8 +480,9 @@ func TestStoreAndLoadToken(t *testing.T) {
 func TestLoadToken_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "nonexistent.json")
+	cmd := oidcExplicitStoreCmd(t, storePath)
 
-	_, err := loadToken(storePath)
+	_, err := loadToken(cmd, storePath)
 	if err != ErrOIDCNoTokensFound {
 		t.Errorf("loadToken error = %v, want %v", err, ErrOIDCNoTokensFound)
 	}
@@ -467,15 +491,16 @@ func TestLoadToken_NotFound(t *testing.T) {
 func TestLoadToken_EmptyStore(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "tokens.json")
+	cmd := oidcExplicitStoreCmd(t, storePath)
 
-	// Write empty store
-	store := OIDCTokenStore{Tokens: []OIDCStoredToken{}}
-	data, _ := json.Marshal(store)
-	if err := os.WriteFile(storePath, data, 0600); err != nil {
+	// Write an empty JSON object: go-xkms#4 replaced the old {"tokens":[]}
+	// envelope with one object per store, so the analogous "nothing here"
+	// case is a zero-value object rather than an empty list.
+	if err := os.WriteFile(storePath, []byte("{}"), 0600); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	_, err := loadToken(storePath)
+	_, err := loadToken(cmd, storePath)
 	if err != ErrOIDCNoTokensFound {
 		t.Errorf("loadToken error = %v, want %v", err, ErrOIDCNoTokensFound)
 	}
@@ -638,13 +663,15 @@ func TestGetConfigPath(t *testing.T) {
 func TestOIDCTokenStore_FilePermissions(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "tokens.json")
+	cmd := oidcExplicitStoreCmd(t, storePath)
 
-	token := OIDCStoredToken{
-		Provider:    "https://example.com",
-		AccessToken: "secret-token",
+	token := &OIDCStoredToken{Provider: "https://example.com"}
+	if err := token.SetAccessToken("secret-token"); err != nil {
+		t.Fatalf("SetAccessToken failed: %v", err)
 	}
+	defer token.Destroy()
 
-	err := storeToken(storePath, token)
+	err := storeToken(cmd, storePath, token)
 	if err != nil {
 		t.Fatalf("storeToken failed: %v", err)
 	}
@@ -938,17 +965,27 @@ func TestRefreshTokens_UnknownEncodingRefused(t *testing.T) {
 }
 
 func TestOIDCStoredToken_JSON(t *testing.T) {
-	token := OIDCStoredToken{
-		Provider:     "https://example.com",
-		Issuer:       "https://example.com",
-		ClientID:     "test-client",
-		AccessToken:  "access-token",
-		RefreshToken: "refresh-token",
-		IDToken:      "id-token",
-		ExpiresAt:    time.Date(2025, 1, 31, 12, 0, 0, 0, time.UTC),
-		Scopes:       []string{"openid", "profile"},
+	token := &OIDCStoredToken{
+		Provider:  "https://example.com",
+		Issuer:    "https://example.com",
+		ClientID:  "test-client",
+		ExpiresAt: time.Date(2025, 1, 31, 12, 0, 0, 0, time.UTC),
+		Scopes:    []string{"openid", "profile"},
 	}
+	if err := token.SetAccessToken("access-token"); err != nil {
+		t.Fatalf("SetAccessToken failed: %v", err)
+	}
+	if err := token.SetRefreshToken("refresh-token"); err != nil {
+		t.Fatalf("SetRefreshToken failed: %v", err)
+	}
+	if err := token.SetIDToken("id-token"); err != nil {
+		t.Fatalf("SetIDToken failed: %v", err)
+	}
+	defer token.Destroy()
 
+	// token must be marshaled through its pointer: MarshalJSON has a pointer
+	// receiver, and json.Marshal only promotes a value argument to its
+	// pointer type inside an addressable field, not at the top level.
 	data, err := json.Marshal(token)
 	if err != nil {
 		t.Fatalf("failed to marshal token: %v", err)
@@ -958,6 +995,7 @@ func TestOIDCStoredToken_JSON(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("failed to unmarshal token: %v", err)
 	}
+	defer decoded.Destroy()
 
 	if decoded.Provider != token.Provider {
 		t.Errorf("Provider = %q, want %q", decoded.Provider, token.Provider)
@@ -965,9 +1003,102 @@ func TestOIDCStoredToken_JSON(t *testing.T) {
 	if decoded.ClientID != token.ClientID {
 		t.Errorf("ClientID = %q, want %q", decoded.ClientID, token.ClientID)
 	}
+	if decoded.AccessToken() != token.AccessToken() {
+		t.Errorf("AccessToken = %q, want %q", decoded.AccessToken(), token.AccessToken())
+	}
+	if decoded.RefreshToken() != token.RefreshToken() {
+		t.Errorf("RefreshToken = %q, want %q", decoded.RefreshToken(), token.RefreshToken())
+	}
+	if decoded.IDToken() != token.IDToken() {
+		t.Errorf("IDToken = %q, want %q", decoded.IDToken(), token.IDToken())
+	}
 	if len(decoded.Scopes) != len(token.Scopes) {
 		t.Errorf("Scopes length = %d, want %d", len(decoded.Scopes), len(token.Scopes))
 	}
+}
+
+func TestNewOIDCStoredToken_Success(t *testing.T) {
+	resp := &OIDCTokenResponse{
+		AccessToken:  "access-xyz",
+		RefreshToken: "refresh-xyz",
+		IDToken:      "id-xyz",
+	}
+	expiresAt := time.Now().Add(time.Hour)
+
+	tok, err := newOIDCStoredToken("https://example.com", "https://example.com", "client-1",
+		resp, expiresAt, []string{"openid", "email"})
+	if err != nil {
+		t.Fatalf("newOIDCStoredToken failed: %v", err)
+	}
+	defer tok.Destroy()
+
+	if tok.Provider != "https://example.com" || tok.Issuer != "https://example.com" {
+		t.Errorf("Provider/Issuer = %q/%q, want both https://example.com", tok.Provider, tok.Issuer)
+	}
+	if tok.ClientID != "client-1" {
+		t.Errorf("ClientID = %q, want client-1", tok.ClientID)
+	}
+	if !tok.ExpiresAt.Equal(expiresAt) {
+		t.Errorf("ExpiresAt = %v, want %v", tok.ExpiresAt, expiresAt)
+	}
+	if tok.AccessToken() != "access-xyz" {
+		t.Errorf("AccessToken() = %q, want access-xyz", tok.AccessToken())
+	}
+	if tok.RefreshToken() != "refresh-xyz" {
+		t.Errorf("RefreshToken() = %q, want refresh-xyz", tok.RefreshToken())
+	}
+	if !tok.HasRefreshToken() {
+		t.Error("HasRefreshToken() = false, want true")
+	}
+	if tok.IDToken() != "id-xyz" {
+		t.Errorf("IDToken() = %q, want id-xyz", tok.IDToken())
+	}
+}
+
+// TestNewOIDCStoredToken_NoRefreshToken covers the real "degenerate input"
+// case newOIDCStoredToken actually sees in production: a token response
+// from a Servicer-plane ceremony that never mints a refresh token (an empty
+// string, not an error) -- as opposed to a protected-memory allocation
+// failure inside secure.NewBufferFromBytes, which -- like the identical
+// situation in xkey/pkg/oath's Credential.SetSecret -- has no way to be
+// triggered from a Go unit test without OS-level intervention and is not
+// separately tested there either.
+func TestNewOIDCStoredToken_NoRefreshToken(t *testing.T) {
+	resp := &OIDCTokenResponse{AccessToken: "access-only"}
+
+	tok, err := newOIDCStoredToken("https://example.com", "https://example.com", "client-1",
+		resp, time.Now().Add(time.Hour), nil)
+	if err != nil {
+		t.Fatalf("newOIDCStoredToken failed: %v", err)
+	}
+	defer tok.Destroy()
+
+	if tok.HasRefreshToken() {
+		t.Error("HasRefreshToken() = true, want false for a response with no refresh token")
+	}
+	if tok.RefreshToken() != "" {
+		t.Errorf("RefreshToken() = %q, want empty", tok.RefreshToken())
+	}
+}
+
+// TestOIDCStoredToken_DestroyIsIdempotentAndSafeOnNil covers Destroy's two
+// documented safety properties: calling it more than once, and calling it
+// on a nil receiver (mirrors secure.Buffer.Destroy's own contract).
+func TestOIDCStoredToken_DestroyIsIdempotentAndSafeOnNil(t *testing.T) {
+	tok := &OIDCStoredToken{}
+	if err := tok.SetAccessToken("a"); err != nil {
+		t.Fatalf("SetAccessToken failed: %v", err)
+	}
+
+	tok.Destroy()
+	tok.Destroy() // must not panic
+
+	if tok.AccessToken() != "" {
+		t.Errorf("AccessToken() after Destroy = %q, want empty", tok.AccessToken())
+	}
+
+	var nilTok *OIDCStoredToken
+	nilTok.Destroy() // must not panic
 }
 
 func TestOIDCProvider_JSON(t *testing.T) {
@@ -1088,13 +1219,15 @@ func TestDiscoverOIDCProvider_InvalidJSON(t *testing.T) {
 func TestStoreToken_CreatesDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	storePath := filepath.Join(tmpDir, "subdir", "nested", "tokens.json")
+	cmd := oidcExplicitStoreCmd(t, storePath)
 
-	token := OIDCStoredToken{
-		Provider:    "https://example.com",
-		AccessToken: "test-token",
+	token := &OIDCStoredToken{Provider: "https://example.com"}
+	if err := token.SetAccessToken("test-token"); err != nil {
+		t.Fatalf("SetAccessToken failed: %v", err)
 	}
+	defer token.Destroy()
 
-	err := storeToken(storePath, token)
+	err := storeToken(cmd, storePath, token)
 	if err != nil {
 		t.Fatalf("storeToken failed: %v", err)
 	}

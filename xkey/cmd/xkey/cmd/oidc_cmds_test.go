@@ -36,7 +36,11 @@ import (
 )
 
 // oidcTestCmd builds a detached cobra command carrying every flag the OIDC
-// handlers read, wired to a token store inside a temp directory.
+// handlers read, wired to a token store inside a temp directory. --token-store
+// is explicitly Set (not just defaulted), so openOIDCTokenStore always takes
+// the plain-file-at-this-exact-path branch here -- exactly like `xkey oath`'s
+// --store override -- keeping these tests independent of barrier state. See
+// oidc_barrier_test.go for the barrier-auto-detection behavior itself.
 func oidcTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 	t.Helper()
 
@@ -44,7 +48,10 @@ func oidcTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 
 	cmd := &cobra.Command{Use: "oidc-test"}
 	fs := cmd.Flags()
-	fs.String("token-store", store, "")
+	fs.String("token-store", "", "")
+	require.NoError(t, fs.Set("token-store", store))
+	fs.String("barrier-password", "", "")
+	fs.String("barrier-password-file", "", "")
 	for _, name := range []string{
 		"name", "type", "issuer", "client-id", "client-secret", "redirect-url",
 		"scopes", "exec", "log-file", "region", "profile", "credentials-file",
@@ -71,6 +78,20 @@ func setOIDCFlags(t *testing.T, cmd *cobra.Command, values map[string]string) {
 	for k, v := range values {
 		require.NoError(t, cmd.Flags().Set(k, v), "set --%s", k)
 	}
+}
+
+// mustOIDCStoredToken builds an OIDCStoredToken for tests, moving access,
+// refresh, and id into protected memory the way production code does
+// (newOIDCStoredToken) rather than via a struct literal, which the
+// unexported protected fields make impossible outside this package's own
+// production code. The caller owns the result and should defer Destroy.
+func mustOIDCStoredToken(t *testing.T, provider, issuer, clientID, access, refresh, idTok string, expiresAt time.Time, scopes []string) *OIDCStoredToken {
+	t.Helper()
+	tok := &OIDCStoredToken{Provider: provider, Issuer: issuer, ClientID: clientID, ExpiresAt: expiresAt, Scopes: scopes}
+	require.NoError(t, tok.SetAccessToken(access))
+	require.NoError(t, tok.SetRefreshToken(refresh))
+	require.NoError(t, tok.SetIDToken(idTok))
+	return tok
 }
 
 // --- path helpers ---
@@ -620,14 +641,8 @@ func TestRunOIDCToken_TruncatesSecretsByDefault(t *testing.T) {
 		Email:  "alice@example.com",
 		Name:   "Alice",
 	})
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer:       "https://example.okta.com",
-		AccessToken:  access,
-		IDToken:      idToken,
-		RefreshToken: strings.Repeat("R", 80),
-		ExpiresAt:    time.Now().Add(time.Hour),
-		Scopes:       []string{"openid", "email"},
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://example.okta.com", "",
+		access, strings.Repeat("R", 80), idToken, time.Now().Add(time.Hour), []string{"openid", "email"})))
 
 	require.NoError(t, runOIDCToken(cmd, nil))
 	out := buf.String()
@@ -650,13 +665,9 @@ func TestRunOIDCToken_ShowFullRevealsTokens(t *testing.T) {
 
 	access := strings.Repeat("A", 120)
 	refresh := strings.Repeat("R", 80)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer:       "https://example.okta.com",
-		AccessToken:  access,
-		IDToken:      signedTestIDToken(t, OIDCIDTokenClaims{Claims: jwt.Claims{Subject: "u"}}),
-		RefreshToken: refresh,
-		ExpiresAt:    time.Now().Add(time.Hour),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://example.okta.com", "",
+		access, refresh, signedTestIDToken(t, OIDCIDTokenClaims{Claims: jwt.Claims{Subject: "u"}}),
+		time.Now().Add(time.Hour), nil)))
 
 	require.NoError(t, runOIDCToken(cmd, nil))
 	out := buf.String()
@@ -666,11 +677,8 @@ func TestRunOIDCToken_ShowFullRevealsTokens(t *testing.T) {
 
 func TestRunOIDCToken_ExpiredTokenIsFlagged(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer:      "https://example.okta.com",
-		AccessToken: "token",
-		ExpiresAt:   time.Now().Add(-time.Hour),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://example.okta.com", "",
+		"token", "", "", time.Now().Add(-time.Hour), nil)))
 
 	require.NoError(t, runOIDCToken(cmd, nil))
 	assert.Contains(t, buf.String(), "(EXPIRED)")
@@ -678,12 +686,8 @@ func TestRunOIDCToken_ExpiredTokenIsFlagged(t *testing.T) {
 
 func TestRunOIDCToken_UnparseableIDTokenStillPrintsWhatItHas(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer:      "https://example.okta.com",
-		AccessToken: "token",
-		IDToken:     "garbage",
-		ExpiresAt:   time.Now().Add(time.Hour),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://example.okta.com", "",
+		"token", "", "garbage", time.Now().Add(time.Hour), nil)))
 
 	require.NoError(t, runOIDCToken(cmd, nil),
 		"a malformed ID token must not abort the command")
@@ -696,24 +700,25 @@ func TestRunOIDCToken_UnparseableIDTokenStillPrintsWhatItHas(t *testing.T) {
 
 func TestRunOIDCLogout_ClearsCurrentTokens(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer: "https://i", AccessToken: "t", ExpiresAt: time.Now().Add(time.Hour),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://i", "",
+		"t", "", "", time.Now().Add(time.Hour), nil)))
 
 	require.NoError(t, runOIDCLogout(cmd, nil))
 	assert.Contains(t, buf.String(), "Tokens cleared.")
 
-	_, err := loadToken(store)
+	_, err := loadToken(cmd, store)
 	assert.ErrorIs(t, err, ErrOIDCNoTokensFound)
-	assert.FileExists(t, expandPath(store), "the store file survives so permissions stay pinned")
+	// The CLI's token store reduces logout to deleting the one stored key
+	// (oidcCLITokenStore.Clear), so the backing file is gone -- there is no
+	// "empty envelope" form to leave behind and no permissions left to pin.
+	assert.NoFileExists(t, expandPath(store))
 }
 
 func TestRunOIDCLogout_AllRemovesStoreFile(t *testing.T) {
 	cmd, buf, store := oidcTestCmd(t)
 	require.NoError(t, cmd.Flags().Set("all", "true"))
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer: "https://i", AccessToken: "t", ExpiresAt: time.Now().Add(time.Hour),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://i", "",
+		"t", "", "", time.Now().Add(time.Hour), nil)))
 
 	require.NoError(t, runOIDCLogout(cmd, nil))
 	assert.Contains(t, buf.String(), "All tokens cleared.")
@@ -739,9 +744,8 @@ func TestRunOIDCRefresh_NoTokens(t *testing.T) {
 
 func TestRunOIDCRefresh_RequiresRefreshToken(t *testing.T) {
 	cmd, _, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer: "https://i", AccessToken: "t", ExpiresAt: time.Now().Add(time.Hour),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://i", "",
+		"t", "", "", time.Now().Add(time.Hour), nil)))
 
 	assert.ErrorIs(t, runOIDCRefresh(cmd, nil), ErrOIDCInvalidRefreshToken)
 }
@@ -776,22 +780,18 @@ func TestRunOIDCRefresh_RotatesStoredTokens(t *testing.T) {
 	issuer = server.URL
 
 	cmd, buf, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer:       issuer,
-		ClientID:     "client",
-		AccessToken:  "old-access",
-		RefreshToken: "old-refresh",
-		ExpiresAt:    time.Now().Add(-time.Minute),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", issuer, "client",
+		"old-access", "old-refresh", "", time.Now().Add(-time.Minute), nil)))
 
 	require.NoError(t, runOIDCRefresh(cmd, nil))
 	assert.Contains(t, buf.String(), "Token refreshed successfully!")
 
-	token, err := loadToken(store)
+	token, err := loadToken(cmd, store)
 	require.NoError(t, err)
-	assert.Equal(t, "new-access", token.AccessToken)
-	assert.Equal(t, "new-refresh", token.RefreshToken, "a rotated refresh token must be persisted")
-	assert.Equal(t, "new-id", token.IDToken)
+	defer token.Destroy()
+	assert.Equal(t, "new-access", token.AccessToken())
+	assert.Equal(t, "new-refresh", token.RefreshToken(), "a rotated refresh token must be persisted")
+	assert.Equal(t, "new-id", token.IDToken())
 	assert.True(t, token.ExpiresAt.After(time.Now()))
 }
 
@@ -802,10 +802,8 @@ func TestRunOIDCRefresh_ReportsDiscoveryFailure(t *testing.T) {
 	defer server.Close()
 
 	cmd, _, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer: server.URL, ClientID: "c", RefreshToken: "r",
-		ExpiresAt: time.Now().Add(-time.Minute),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", server.URL, "c",
+		"", "r", "", time.Now().Add(-time.Minute), nil)))
 
 	err := runOIDCRefresh(cmd, nil)
 	require.Error(t, err)
@@ -828,10 +826,8 @@ func TestRunOIDCRefresh_ReportsTokenEndpointFailure(t *testing.T) {
 	issuer = server.URL
 
 	cmd, _, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer: issuer, ClientID: "c", RefreshToken: "expired",
-		ExpiresAt: time.Now().Add(-time.Minute),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", issuer, "c",
+		"", "expired", "", time.Now().Add(-time.Minute), nil)))
 
 	err := runOIDCRefresh(cmd, nil)
 	require.Error(t, err)
@@ -874,29 +870,23 @@ func TestRunOIDCRefresh_WithProviderSkipsDiscoveryAndHonoursEncoding(t *testing.
 		"token-encoding":         "json",
 	})
 
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer:       "https://issuer.invalid",
-		ClientID:     "client",
-		AccessToken:  "old-access",
-		RefreshToken: "old-refresh",
-		ExpiresAt:    time.Now().Add(-time.Minute),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://issuer.invalid", "client",
+		"old-access", "old-refresh", "", time.Now().Add(-time.Minute), nil)))
 
 	require.NoError(t, cmd.Flags().Set("provider", "manual"))
 	require.NoError(t, runOIDCRefresh(cmd, nil))
 	assert.Contains(t, buf.String(), "Token refreshed successfully!")
 
-	token, err := loadToken(store)
+	token, err := loadToken(cmd, store)
 	require.NoError(t, err)
-	assert.Equal(t, "new-access", token.AccessToken)
+	defer token.Destroy()
+	assert.Equal(t, "new-access", token.AccessToken())
 }
 
 func TestRunOIDCRefresh_UnknownProviderReturnsTypedError(t *testing.T) {
 	cmd, _, store := oidcTestCmd(t)
-	require.NoError(t, storeToken(store, OIDCStoredToken{
-		Issuer: "https://issuer.invalid", ClientID: "c", RefreshToken: "r",
-		ExpiresAt: time.Now().Add(-time.Minute),
-	}))
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://issuer.invalid", "c",
+		"", "r", "", time.Now().Add(-time.Minute), nil)))
 
 	require.NoError(t, cmd.Flags().Set("provider", "does-not-exist"))
 	err := runOIDCRefresh(cmd, nil)

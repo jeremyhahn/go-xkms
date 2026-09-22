@@ -17,6 +17,7 @@ tell.
 |---------|----------------|------------------------|
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
+| [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
@@ -39,7 +40,7 @@ progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
 Still owed a folder: `agent/`, `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
-`oidc/`, `password/`, `phone/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
+`password/`, `phone/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
 

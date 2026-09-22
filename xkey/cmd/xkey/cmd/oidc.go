@@ -113,17 +113,12 @@ type OIDCTokenResponse struct {
 	Scope        string `json:"scope,omitempty"`
 }
 
-// OIDCStoredToken represents a token stored in the token store.
-type OIDCStoredToken struct {
-	Provider     string    `json:"provider"`
-	Issuer       string    `json:"issuer"`
-	ClientID     string    `json:"client_id"`
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
-	IDToken      string    `json:"id_token,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Scopes       []string  `json:"scopes"`
-}
+// OIDCStoredToken represents a token stored in the token store. See
+// oidc_token_store.go for its definition: AccessToken, RefreshToken, and
+// IDToken live in mlocked protected memory (go-xkms#4) rather than as plain
+// Go string fields, reached through the AccessToken()/RefreshToken()/
+// IDToken() accessors and the SetAccessToken/SetRefreshToken/SetIDToken
+// setters.
 
 // OIDCIDTokenClaims represents standard OIDC ID token claims.
 type OIDCIDTokenClaims struct {
@@ -202,11 +197,6 @@ type OIDCRefreshStatus struct {
 // OIDCConfig represents the OIDC configuration file structure.
 type OIDCConfig struct {
 	Providers []OIDCProvider `json:"providers"`
-}
-
-// OIDCTokenStore represents the token storage file structure.
-type OIDCTokenStore struct {
-	Tokens []OIDCStoredToken `json:"tokens"`
 }
 
 // OIDCCmd represents the OIDC parent command.
@@ -671,19 +661,22 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenValidationFailed, Cause: err}
 	}
 
-	// Store tokens
-	storedToken := OIDCStoredToken{
-		Provider:     issuer,
-		Issuer:       issuer,
-		ClientID:     clientID,
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
-		IDToken:      tokens.IDToken,
-		ExpiresAt:    time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second),
-		Scopes:       scopes,
+	// Store tokens. AccessToken/RefreshToken/IDToken move into mlocked
+	// protected memory here (go-xkms#4); storedToken.Destroy wipes them once
+	// this command has no further use for them.
+	storedToken, err := newOIDCStoredToken(issuer, issuer, clientID, tokens,
+		time.Now().Add(time.Duration(tokens.ExpiresIn)*time.Second), scopes)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
+	}
+	defer storedToken.Destroy()
+
+	tokenCLIStore, err := openOIDCTokenStore(cmd, tokenStore)
+	if err != nil {
+		return err
 	}
 
-	if err := storeToken(tokenStore, storedToken); err != nil {
+	if err := tokenCLIStore.Save(storedToken); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
 
@@ -744,14 +737,18 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 			if providerName == "" {
 				providerName = "default"
 			}
-			return startBackgroundRefresh(out, providerName, discovery.TokenEndpoint, clientID, tokenStore, execCmd, logFile, autoRefresh, tokenEncoding)
+			barrierPasswordFile, _ := cmd.Flags().GetString("barrier-password-file")
+			return startBackgroundRefresh(out, providerName, discovery.TokenEndpoint, clientID, tokenStore, execCmd, logFile, barrierPasswordFile, autoRefresh, tokenEncoding)
 		}
 
 		_, _ = fmt.Fprintf(out, "\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
 		_, _ = fmt.Fprintln(out, "Press Ctrl+C to stop...")
 		_, _ = fmt.Fprintln(out)
 
-		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil, tokenEncoding)
+		// tokenCLIStore is opened once, here, and reused for every refresh
+		// tick below -- not reopened (and, for a barrier-backed store, not
+		// re-unsealed) on every interval.
+		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenCLIStore, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil, tokenEncoding, nil)
 	}
 
 	return nil
@@ -763,7 +760,7 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	showFull, _ := cmd.Flags().GetBool("show-full")
 
-	token, err := loadToken(tokenStore)
+	token, err := loadToken(cmd, tokenStore)
 	if err != nil {
 		if errors.Is(err, ErrOIDCNoTokensFound) {
 			_, _ = fmt.Fprintln(out, "No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
@@ -771,9 +768,10 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 		}
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenLoadFailed, Cause: err}
 	}
+	defer token.Destroy()
 
 	// Parse ID token for claims
-	claims, err := parseIDToken(token.IDToken)
+	claims, err := parseIDToken(token.IDToken())
 	if err != nil {
 		// If we can't parse the ID token, still show what we have
 		claims = &OIDCIDTokenClaims{}
@@ -808,17 +806,17 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintln(out)
 	if showFull {
-		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", token.AccessToken)
-		if token.IDToken != "" {
-			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", token.IDToken)
+		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", token.AccessToken())
+		if token.IDToken() != "" {
+			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", token.IDToken())
 		}
-		if token.RefreshToken != "" {
-			_, _ = fmt.Fprintf(out, "Refresh Token: %s\n", token.RefreshToken)
+		if token.HasRefreshToken() {
+			_, _ = fmt.Fprintf(out, "Refresh Token: %s\n", token.RefreshToken())
 		}
 	} else {
-		_, _ = fmt.Fprintf(out, "Access Token:  %s... (truncated)\n", truncateToken(token.AccessToken, 40))
-		if token.IDToken != "" {
-			_, _ = fmt.Fprintf(out, "ID Token:      %s... (truncated)\n", truncateToken(token.IDToken, 40))
+		_, _ = fmt.Fprintf(out, "Access Token:  %s... (truncated)\n", truncateToken(token.AccessToken(), 40))
+		if token.IDToken() != "" {
+			_, _ = fmt.Fprintf(out, "ID Token:      %s... (truncated)\n", truncateToken(token.IDToken(), 40))
 		}
 	}
 
@@ -831,7 +829,12 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	providerName, _ := cmd.Flags().GetString("provider")
 
-	token, err := loadToken(tokenStore)
+	tokenCLIStore, err := openOIDCTokenStore(cmd, tokenStore)
+	if err != nil {
+		return err
+	}
+
+	token, err := tokenCLIStore.Load()
 	if err != nil {
 		if errors.Is(err, ErrOIDCNoTokensFound) {
 			_, _ = fmt.Fprintln(out, "No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
@@ -839,8 +842,9 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 		}
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenLoadFailed, Cause: err}
 	}
+	defer token.Destroy()
 
-	if token.RefreshToken == "" {
+	if !token.HasRefreshToken() {
 		return ErrOIDCInvalidRefreshToken
 	}
 
@@ -878,22 +882,28 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	}
 
 	// Refresh tokens
-	newTokens, err := refreshTokens(tokenEndpoint, token.ClientID, token.RefreshToken, tokenEncoding)
+	newTokens, err := refreshTokens(tokenEndpoint, token.ClientID, token.RefreshToken(), tokenEncoding)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenRefreshFailed, Cause: err}
 	}
 
 	// Update stored token
-	token.AccessToken = newTokens.AccessToken
+	if err := token.SetAccessToken(newTokens.AccessToken); err != nil {
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
+	}
 	if newTokens.RefreshToken != "" {
-		token.RefreshToken = newTokens.RefreshToken
+		if err := token.SetRefreshToken(newTokens.RefreshToken); err != nil {
+			return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
+		}
 	}
 	if newTokens.IDToken != "" {
-		token.IDToken = newTokens.IDToken
+		if err := token.SetIDToken(newTokens.IDToken); err != nil {
+			return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
+		}
 	}
 	token.ExpiresAt = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
 
-	if err := storeToken(tokenStore, *token); err != nil {
+	if err := tokenCLIStore.Save(token); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
 
@@ -903,32 +913,34 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runOIDCLogout clears stored tokens.
+// runOIDCLogout clears stored tokens. The CLI keeps exactly one active
+// session (openOIDCTokenStore), so --all and the default form are
+// equivalent: both remove that one stored entry. --all is kept only for
+// CLI-surface compatibility with earlier releases' flag set.
 func runOIDCLogout(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	tokenStore, _ := cmd.Flags().GetString("token-store")
 	all, _ := cmd.Flags().GetBool("all")
 
-	storePath := expandPath(tokenStore)
+	tokenCLIStore, err := openOIDCTokenStore(cmd, tokenStore)
+	if err != nil {
+		return err
+	}
 
-	if all {
-		if err := os.Remove(storePath); err != nil {
-			if os.IsNotExist(err) {
-				_, _ = fmt.Fprintln(out, "No tokens to clear.")
-				return nil
-			}
-			return &MessageError{Msg: fmt.Sprintf("failed to clear tokens: %v", err)}
-		}
-		_, _ = fmt.Fprintln(out, "All tokens cleared.")
+	existed, err := tokenCLIStore.Clear()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
+	}
+
+	if !existed {
+		_, _ = fmt.Fprintln(out, "No tokens to clear.")
 		return nil
 	}
 
-	// Clear current token
-	store := OIDCTokenStore{Tokens: []OIDCStoredToken{}}
-	if err := saveTokenStore(storePath, store); err != nil {
-		return &MessageError{Msg: fmt.Sprintf("failed to clear tokens: %v", err)}
+	if all {
+		_, _ = fmt.Fprintln(out, "All tokens cleared.")
+		return nil
 	}
-
 	_, _ = fmt.Fprintln(out, "Tokens cleared.")
 	return nil
 }
@@ -1514,53 +1526,6 @@ func expandPath(path string) string {
 	return path
 }
 
-// storeToken stores a token in the token store.
-func storeToken(storePath string, token OIDCStoredToken) error {
-	path := expandPath(storePath)
-
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-
-	store := OIDCTokenStore{Tokens: []OIDCStoredToken{token}}
-	return saveTokenStore(path, store)
-}
-
-// loadToken loads the current token from the token store.
-func loadToken(storePath string) (*OIDCStoredToken, error) {
-	path := expandPath(storePath)
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrOIDCNoTokensFound
-		}
-		return nil, err
-	}
-
-	var store OIDCTokenStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		return nil, err
-	}
-
-	if len(store.Tokens) == 0 {
-		return nil, ErrOIDCNoTokensFound
-	}
-
-	return &store.Tokens[0], nil
-}
-
-// saveTokenStore saves the token store to disk.
-func saveTokenStore(path string, store OIDCTokenStore) error {
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0600)
-}
-
 // getConfigPath returns the OIDC config path based on the token store path.
 func getConfigPath(tokenStore string) string {
 	path := expandPath(tokenStore)
@@ -1639,10 +1604,18 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%d hours", hours)
 }
 
-// runAutoRefresh runs a loop that periodically refreshes the token.
-// If logWriter is nil, output goes to stdout. encoding selects the token
-// request body format used for every refresh in the loop.
-func runAutoRefresh(tokenEndpoint, clientID, tokenStorePath, execCmd, providerName string, interval time.Duration, logWriter io.Writer, encoding oidc.TokenEncoding) error {
+// runAutoRefresh runs a loop that periodically refreshes the token. store is
+// opened once by the caller (runOIDCLogin or runBackgroundWorker) and reused
+// for every tick below, so a barrier-backed store is unsealed once for the
+// life of the loop rather than on every interval (go-xkms#4). If logWriter
+// is nil, output goes to stdout. encoding selects the token request body
+// format used for every refresh in the loop.
+//
+// stop, when non-nil, ends the loop the same way an OS interrupt does; every
+// production call site passes nil, so only an OS signal can stop it there.
+// It exists so a test can end the loop deterministically after a known
+// number of ticks instead of sending the process a real signal.
+func runAutoRefresh(tokenEndpoint, clientID string, store *oidcCLITokenStore, tokenStorePath, execCmd, providerName string, interval time.Duration, logWriter io.Writer, encoding oidc.TokenEncoding, stop <-chan struct{}) error {
 	if logWriter == nil {
 		logWriter = os.Stdout
 	}
@@ -1675,82 +1648,113 @@ func runAutoRefresh(tokenEndpoint, clientID, tokenStorePath, execCmd, providerNa
 		}
 	}
 
+	// doTick performs one load -> refresh -> save -> (optional exec) cycle.
+	// It is a function literal, not inlined in the select below, so that
+	// `defer token.Destroy()` fires at the end of THIS call rather than at
+	// the end of runAutoRefresh: without that, a long-running background
+	// worker would accumulate one mlocked buffer per tick for the life of
+	// the process instead of releasing each one before the next tick loads
+	// a fresh token. Returns true when the loop must stop.
+	doTick := func() (stop bool) {
+		refreshCount++
+		log("[%s] Refreshing token (#%d)...\n", time.Now().Format("2006-01-02 15:04:05"), refreshCount)
+
+		// Load current token
+		token, err := store.Load()
+		if err != nil {
+			log("  Error loading token: %v\n", err)
+			updateStatus("error", fmt.Sprintf("failed to load token: %v", err))
+			return false
+		}
+		defer token.Destroy()
+
+		if !token.HasRefreshToken() {
+			log("  Error: No refresh token available. Stopping auto-refresh.\n")
+			updateStatus("error", "no refresh token available")
+			return true
+		}
+
+		// Refresh the token
+		newTokens, err := refreshTokens(tokenEndpoint, clientID, token.RefreshToken(), encoding)
+		if err != nil {
+			log("  Error refreshing: %v\n", err)
+			updateStatus("error", fmt.Sprintf("refresh failed: %v", err))
+			return false
+		}
+
+		// Update stored token
+		if err := token.SetAccessToken(newTokens.AccessToken); err != nil {
+			log("  Error storing token: %v\n", err)
+			updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
+			return false
+		}
+		if newTokens.RefreshToken != "" {
+			if err := token.SetRefreshToken(newTokens.RefreshToken); err != nil {
+				log("  Error storing token: %v\n", err)
+				updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
+				return false
+			}
+		}
+		if newTokens.IDToken != "" {
+			if err := token.SetIDToken(newTokens.IDToken); err != nil {
+				log("  Error storing token: %v\n", err)
+				updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
+				return false
+			}
+		}
+		token.ExpiresAt = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
+
+		if err := store.Save(token); err != nil {
+			log("  Error storing token: %v\n", err)
+			updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
+			return false
+		}
+
+		log("  Token refreshed. New expiration: %s\n", token.ExpiresAt.Format(time.RFC3339))
+		updateStatus("success", "")
+
+		// Execute script if specified
+		if execCmd != "" {
+			claims, _ := parseIDToken(token.IDToken())
+			if claims == nil {
+				claims = &OIDCIDTokenClaims{}
+			}
+
+			payload := OIDCExecPayload{
+				Provider:     token.Issuer,
+				Issuer:       token.Issuer,
+				ClientID:     token.ClientID,
+				AccessToken:  token.AccessToken(),
+				RefreshToken: token.RefreshToken(),
+				IDToken:      token.IDToken(),
+				ExpiresAt:    token.ExpiresAt.Format(time.RFC3339),
+				ExpiresIn:    newTokens.ExpiresIn,
+				Scopes:       token.Scopes,
+				Subject:      claims.Subject,
+				Email:        claims.Email,
+				Name:         claims.Name,
+			}
+
+			if err := executeOIDCScript(logWriter, execCmd, payload); err != nil {
+				log("  Script error: %v\n", err)
+			}
+		}
+		return false
+	}
+
 	for {
 		select {
 		case <-sigChan:
 			log("\n[%s] Auto-refresh stopped.\n", time.Now().Format("2006-01-02 15:04:05"))
 			return nil
 
+		case <-stop:
+			log("\n[%s] Auto-refresh stopped.\n", time.Now().Format("2006-01-02 15:04:05"))
+			return nil
+
 		case <-ticker.C:
-			refreshCount++
-			log("[%s] Refreshing token (#%d)...\n", time.Now().Format("2006-01-02 15:04:05"), refreshCount)
-
-			// Load current token
-			token, err := loadToken(tokenStorePath)
-			if err != nil {
-				log("  Error loading token: %v\n", err)
-				updateStatus("error", fmt.Sprintf("failed to load token: %v", err))
-				continue
-			}
-
-			if token.RefreshToken == "" {
-				log("  Error: No refresh token available. Stopping auto-refresh.\n")
-				updateStatus("error", "no refresh token available")
+			if doTick() {
 				return ErrOIDCInvalidRefreshToken
-			}
-
-			// Refresh the token
-			newTokens, err := refreshTokens(tokenEndpoint, clientID, token.RefreshToken, encoding)
-			if err != nil {
-				log("  Error refreshing: %v\n", err)
-				updateStatus("error", fmt.Sprintf("refresh failed: %v", err))
-				continue
-			}
-
-			// Update stored token
-			token.AccessToken = newTokens.AccessToken
-			if newTokens.RefreshToken != "" {
-				token.RefreshToken = newTokens.RefreshToken
-			}
-			if newTokens.IDToken != "" {
-				token.IDToken = newTokens.IDToken
-			}
-			token.ExpiresAt = time.Now().Add(time.Duration(newTokens.ExpiresIn) * time.Second)
-
-			if err := storeToken(tokenStorePath, *token); err != nil {
-				log("  Error storing token: %v\n", err)
-				updateStatus("error", fmt.Sprintf("failed to store token: %v", err))
-				continue
-			}
-
-			log("  Token refreshed. New expiration: %s\n", token.ExpiresAt.Format(time.RFC3339))
-			updateStatus("success", "")
-
-			// Execute script if specified
-			if execCmd != "" {
-				claims, _ := parseIDToken(token.IDToken)
-				if claims == nil {
-					claims = &OIDCIDTokenClaims{}
-				}
-
-				payload := OIDCExecPayload{
-					Provider:     token.Issuer,
-					Issuer:       token.Issuer,
-					ClientID:     token.ClientID,
-					AccessToken:  token.AccessToken,
-					RefreshToken: token.RefreshToken,
-					IDToken:      token.IDToken,
-					ExpiresAt:    token.ExpiresAt.Format(time.RFC3339),
-					ExpiresIn:    newTokens.ExpiresIn,
-					Scopes:       token.Scopes,
-					Subject:      claims.Subject,
-					Email:        claims.Email,
-					Name:         claims.Name,
-				}
-
-				if err := executeOIDCScript(logWriter, execCmd, payload); err != nil {
-					log("  Script error: %v\n", err)
-				}
 			}
 		}
 	}
@@ -1860,7 +1864,17 @@ func loadRefreshStatus(tokenStore, providerName string) (*OIDCRefreshStatus, err
 }
 
 // startBackgroundRefresh starts a background refresh process.
-func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID, tokenStorePath, execCmd, logFile string, autoRefresh int, encoding oidc.TokenEncoding) error {
+//
+// barrierPasswordFile, if non-empty, is forwarded to the detached process as
+// --barrier-password-file so it can unseal a barrier-backed token store
+// non-interactively (go-xkms#4). A --barrier-password VALUE is never
+// forwarded on argv: that would put the barrier password in `ps` output for
+// any local user to read. A password supplied only via --barrier-password
+// (not --barrier-password-file or XKEY_BARRIER_PASSWORD, which the detached
+// process inherits from its environment like any other exec.Command with no
+// Env override) does not reach the background worker; use one of the other
+// two non-interactive sources for --background --auto-refresh.
+func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID, tokenStorePath, execCmd, logFile, barrierPasswordFile string, autoRefresh int, encoding oidc.TokenEncoding) error {
 	// Ensure log directory exists
 	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
@@ -1907,6 +1921,9 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 	}
 	if encoding != "" {
 		args = append(args, "--token-encoding", string(encoding))
+	}
+	if barrierPasswordFile != "" {
+		args = append(args, "--barrier-password-file", barrierPasswordFile)
 	}
 
 	cmd := exec.Command(executable, args...)
@@ -1973,7 +1990,15 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintf(logWriter, "\n")
 
-	return runAutoRefresh(tokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter, tokenEncoding)
+	// Opened once for the life of this (detached) process, exactly as the
+	// foreground loop opens it once for the life of runOIDCLogin: a
+	// barrier-backed store is unsealed here, not re-unsealed on every tick.
+	tokenCLIStore, err := openOIDCTokenStore(cmd, tokenStore)
+	if err != nil {
+		return err
+	}
+
+	return runAutoRefresh(tokenEndpoint, clientID, tokenCLIStore, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, logWriter, tokenEncoding, nil)
 }
 
 // isProcessRunning checks if a process with the given PID file is running.
@@ -2286,6 +2311,7 @@ func init() {
 	oidcLoginCmd.Flags().String("jwks-uri", "", "Manual JWKS URI (skips discovery; requires --authorization-endpoint and --token-endpoint)")
 	oidcLoginCmd.Flags().String("userinfo-endpoint", "", "Manual userinfo endpoint (optional; only used with manual endpoints)")
 	oidcLoginCmd.Flags().String("token-encoding", "", "Token request body encoding: form (default) or json")
+	addBarrierPasswordFlags(oidcLoginCmd)
 
 	// Hidden flags for background worker mode (used internally). Note
 	// --token-endpoint above is dual-purpose: a user-supplied manual
@@ -2298,14 +2324,17 @@ func init() {
 	// oidc token flags
 	oidcTokenCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
 	oidcTokenCmd.Flags().Bool("show-full", false, "Show full token values")
+	addBarrierPasswordFlags(oidcTokenCmd)
 
 	// oidc refresh flags
 	oidcRefreshCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
 	oidcRefreshCmd.Flags().String("provider", "", "Use saved provider configuration by name (required for manual-endpoint providers)")
+	addBarrierPasswordFlags(oidcRefreshCmd)
 
 	// oidc logout flags
 	oidcLogoutCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
 	oidcLogoutCmd.Flags().Bool("all", false, "Clear all stored tokens")
+	addBarrierPasswordFlags(oidcLogoutCmd)
 
 	// oidc status flags
 	oidcStatusCmd.Flags().String("token-store", defaultOIDCTokenStorePath, "Path to token store")
