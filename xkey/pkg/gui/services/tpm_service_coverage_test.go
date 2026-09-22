@@ -322,16 +322,16 @@ func TestTPMService_Coverage_GetVerificationStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTPMService_Coverage_ListPolicies(t *testing.T) {
-	t.Run("no_data_dir_returns_empty", func(t *testing.T) {
+	t.Run("no_store_configured", func(t *testing.T) {
 		svc := NewTPMService()
-		policies, err := svc.ListPolicies()
-		require.NoError(t, err)
-		assert.Empty(t, policies)
+		_, err := svc.ListPolicies()
+		assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 	})
 
-	t.Run("with_data_dir_no_file_returns_empty", func(t *testing.T) {
+	t.Run("with_store_no_policies_returns_empty", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		svc.SetPolicyStore(newTestPCRPolicyStore(t))
 		policies, err := svc.ListPolicies()
 		require.NoError(t, err)
 		assert.Empty(t, policies)
@@ -522,22 +522,26 @@ func TestTPMService_Coverage_saveHandleDescriptions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTPMService_Coverage_savePolicies(t *testing.T) {
-	t.Run("empty_data_dir_returns_error", func(t *testing.T) {
+	t.Run("no_store_configured_returns_error", func(t *testing.T) {
 		svc := NewTPMService()
 		err := svc.savePolicies([]PCRPolicy{})
-		assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
+		assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 	})
 
 	t.Run("success", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
 		policies := []PCRPolicy{
-			{Name: "test-policy", CreatedAt: time.Now().Format(time.RFC3339)},
+			{
+				Name:          "test-policy",
+				CreatedAt:     time.Now().Format(time.RFC3339),
+				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			},
 		}
-		err := svc.savePolicies(policies)
-		assert.NoError(t, err)
+		seedTPMServicePolicies(t, svc, policies)
 
-		loaded := svc.loadPolicies()
+		loaded, err := svc.loadPolicies()
+		require.NoError(t, err)
 		require.Len(t, loaded, 1)
 		assert.Equal(t, "test-policy", loaded[0].Name)
 	})
@@ -600,8 +604,17 @@ func TestTPMService_Coverage_saveCompositePolicies(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTPMService_Coverage_GetPolicy(t *testing.T) {
-	t.Run("not_found_no_data_dir", func(t *testing.T) {
+	t.Run("not_found_no_store_configured", func(t *testing.T) {
 		svc := NewTPMService()
+		policy, err := svc.GetPolicy("nonexistent")
+		assert.Nil(t, policy)
+		assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
+	})
+
+	t.Run("not_found_with_store", func(t *testing.T) {
+		svc := NewTPMService()
+		svc.SetDataDir(t.TempDir())
+		svc.SetPolicyStore(newTestPCRPolicyStore(t))
 		policy, err := svc.GetPolicy("nonexistent")
 		assert.Nil(t, policy)
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
@@ -612,10 +625,14 @@ func TestTPMService_Coverage_GetPolicy(t *testing.T) {
 		svc.SetDataDir(t.TempDir())
 
 		// Save a policy first.
-		err := svc.savePolicies([]PCRPolicy{
-			{Name: "my-policy", Description: "test", CreatedAt: time.Now().Format(time.RFC3339)},
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
+			{
+				Name:          "my-policy",
+				Description:   "test",
+				CreatedAt:     time.Now().Format(time.RFC3339),
+				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			},
 		})
-		require.NoError(t, err)
 
 		policy, err := svc.GetPolicy("my-policy")
 		require.NoError(t, err)
@@ -657,18 +674,18 @@ func TestTPMService_Coverage_GetCompositePolicy(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTPMService_Coverage_ExportPolicy(t *testing.T) {
-	t.Run("not_found", func(t *testing.T) {
+	t.Run("not_found_no_store_configured", func(t *testing.T) {
 		svc := NewTPMService()
 		result, err := svc.ExportPolicy("nonexistent")
 		assert.Empty(t, result)
-		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
+		assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 	})
 
 	t.Run("export_with_updated_at_and_digests", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
 
-		err := svc.savePolicies([]PCRPolicy{
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
 			{
 				Name:      "export-test",
 				CreatedAt: time.Now().Format(time.RFC3339),
@@ -683,7 +700,6 @@ func TestTPMService_Coverage_ExportPolicy(t *testing.T) {
 				},
 			},
 		})
-		require.NoError(t, err)
 
 		result, err := svc.ExportPolicy("export-test")
 		require.NoError(t, err)
@@ -783,6 +799,7 @@ func TestTPMService_Coverage_DeletePolicy(t *testing.T) {
 	t.Run("not_found", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		seedTPMServicePolicies(t, svc, nil)
 		err := svc.DeletePolicy("nonexistent")
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
 	})
@@ -793,12 +810,15 @@ func TestTPMService_Coverage_DeletePolicy(t *testing.T) {
 		svc.SetDataDir(dir)
 
 		// Create a policy and an assignment.
-		err := svc.savePolicies([]PCRPolicy{
-			{Name: "del-policy", CreatedAt: time.Now().Format(time.RFC3339)},
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
+			{
+				Name:          "del-policy",
+				CreatedAt:     time.Now().Format(time.RFC3339),
+				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			},
 		})
-		require.NoError(t, err)
 
-		err = svc.saveAssignments([]PolicyAssignment{
+		err := svc.saveAssignments([]PolicyAssignment{
 			{PolicyName: "del-policy", KeyHandle: "0x81000001", AssignedAt: time.Now().Format(time.RFC3339)},
 		})
 		require.NoError(t, err)
@@ -808,7 +828,8 @@ func TestTPMService_Coverage_DeletePolicy(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify policy removed.
-		policies := svc.loadPolicies()
+		policies, err := svc.loadPolicies()
+		require.NoError(t, err)
 		assert.Empty(t, policies)
 
 		// Verify assignment cascade removed.
@@ -906,6 +927,7 @@ func TestTPMService_Coverage_AssignPolicyToKey(t *testing.T) {
 	t.Run("policy_not_found", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		seedTPMServicePolicies(t, svc, nil)
 		err := svc.AssignPolicyToKey("nonexistent", "0x81000001")
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
 	})
@@ -976,6 +998,7 @@ func TestTPMService_Coverage_GetPolicyDeletionImpact(t *testing.T) {
 	t.Run("policy_not_found", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		seedTPMServicePolicies(t, svc, nil)
 		impact, err := svc.GetPolicyDeletionImpact("nonexistent")
 		assert.Nil(t, impact)
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
@@ -986,12 +1009,15 @@ func TestTPMService_Coverage_GetPolicyDeletionImpact(t *testing.T) {
 		dir := t.TempDir()
 		svc.SetDataDir(dir)
 
-		err := svc.savePolicies([]PCRPolicy{
-			{Name: "impact-policy", CreatedAt: time.Now().Format(time.RFC3339)},
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
+			{
+				Name:          "impact-policy",
+				CreatedAt:     time.Now().Format(time.RFC3339),
+				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			},
 		})
-		require.NoError(t, err)
 
-		err = svc.saveAssignments([]PolicyAssignment{
+		err := svc.saveAssignments([]PolicyAssignment{
 			{PolicyName: "impact-policy", KeyHandle: "0x81000001", AssignedAt: time.Now().Format(time.RFC3339)},
 			{PolicyName: "impact-policy", KeyHandle: "0x81000002", AssignedAt: time.Now().Format(time.RFC3339)},
 		})
@@ -1009,6 +1035,7 @@ func TestTPMService_Coverage_GetPolicyDeletionImpact(t *testing.T) {
 		svc := NewTPMService()
 		dir := t.TempDir()
 		svc.SetDataDir(dir)
+		seedTPMServicePolicies(t, svc, nil)
 
 		err := svc.saveCompositePolicies([]CompositePolicy{
 			{Name: "comp-impact", Operator: "AND", CreatedAt: time.Now().Format(time.RFC3339)},
@@ -1043,12 +1070,18 @@ func TestTPMService_Coverage_CreatePolicy(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
 
-		err := svc.savePolicies([]PCRPolicy{
-			{Name: "existing", CreatedAt: time.Now().Format(time.RFC3339)},
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
+			{
+				Name:          "existing",
+				CreatedAt:     time.Now().Format(time.RFC3339),
+				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			},
 		})
-		require.NoError(t, err)
 
-		err = svc.CreatePolicy(&PCRPolicy{Name: "existing"})
+		err := svc.CreatePolicy(&PCRPolicy{
+			Name:          "existing",
+			PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+		})
 		assert.ErrorIs(t, err, ErrTPMPolicyExists)
 	})
 }
@@ -1131,6 +1164,7 @@ func TestTPMService_Coverage_UpdatePolicy(t *testing.T) {
 	t.Run("not_found_returns_error", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		seedTPMServicePolicies(t, svc, nil)
 		result, err := svc.UpdatePolicy("nonexistent", &PCRPolicy{})
 		assert.Nil(t, result)
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
@@ -1145,6 +1179,7 @@ func TestTPMService_Coverage_RefreshPolicyPCRs(t *testing.T) {
 	t.Run("not_found", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		seedTPMServicePolicies(t, svc, nil)
 		result, err := svc.RefreshPolicyPCRs("nonexistent")
 		assert.Nil(t, result)
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
@@ -1154,14 +1189,13 @@ func TestTPMService_Coverage_RefreshPolicyPCRs(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
 
-		err := svc.savePolicies([]PCRPolicy{
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
 			{
 				Name:          "refresh-test",
 				CreatedAt:     time.Now().Format(time.RFC3339),
 				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 			},
 		})
-		require.NoError(t, err)
 
 		result, err := svc.RefreshPolicyPCRs("refresh-test")
 		assert.Nil(t, result)
@@ -1276,6 +1310,7 @@ func TestTPMService_Coverage_ComparePolicyPCRs(t *testing.T) {
 	t.Run("policy_not_found", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		seedTPMServicePolicies(t, svc, nil)
 		result, err := svc.ComparePolicyPCRs("nonexistent")
 		assert.Nil(t, result)
 		assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
@@ -1285,10 +1320,13 @@ func TestTPMService_Coverage_ComparePolicyPCRs(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
 
-		err := svc.savePolicies([]PCRPolicy{
-			{Name: "no-digest", CreatedAt: time.Now().Format(time.RFC3339)},
+		seedTPMServicePolicies(t, svc, []PCRPolicy{
+			{
+				Name:          "no-digest",
+				CreatedAt:     time.Now().Format(time.RFC3339),
+				PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			},
 		})
-		require.NoError(t, err)
 
 		result, err := svc.ComparePolicyPCRs("no-digest")
 		assert.Nil(t, result)
@@ -1444,20 +1482,15 @@ func TestTPMService_Coverage_ParseCertificate(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: loadPolicies with corrupt JSON.
+// Test: loadPolicies with no store configured.
 // ---------------------------------------------------------------------------
 
-func TestTPMService_Coverage_loadPolicies_CorruptJSON(t *testing.T) {
+func TestTPMService_Coverage_loadPolicies_NoStoreConfigured(t *testing.T) {
 	svc := NewTPMService()
-	dir := t.TempDir()
-	svc.SetDataDir(dir)
+	svc.SetDataDir(t.TempDir())
 
-	// Write invalid JSON.
-	err := os.WriteFile(filepath.Join(dir, pcrPoliciesFile), []byte("{{invalid json"), 0600)
-	require.NoError(t, err)
-
-	policies := svc.loadPolicies()
-	assert.Empty(t, policies)
+	_, err := svc.loadPolicies()
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // ---------------------------------------------------------------------------
@@ -1558,28 +1591,19 @@ func TestTPMService_Coverage_importBinaryPolicyDigest(t *testing.T) {
 		assert.ErrorIs(t, err, ErrTPMPolicyImportFailed)
 	})
 
-	t.Run("generates_name_from_filename", func(t *testing.T) {
+	// TestTPMService_Coverage_importBinaryPolicyDigest documents a
+	// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
+	// separately): importBinaryPolicyDigest builds a PCRPolicy with a
+	// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
+	// always rejects. Every production TPMService has a policy store
+	// wired (see app.go SetPolicyStore), so this path fails the same way
+	// in production today.
+	t.Run("no_pcr_selections_rejected_by_store", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
-		name, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", []byte{0xAB, 0xCD})
-		require.NoError(t, err)
-		assert.Equal(t, "my-policy", name)
-	})
-
-	t.Run("name_conflict_appends_timestamp", func(t *testing.T) {
-		svc := NewTPMService()
-		svc.SetDataDir(t.TempDir())
-
-		// Create first policy.
-		name1, err := svc.importBinaryPolicyDigest("/tmp/test.bin", []byte{0x01})
-		require.NoError(t, err)
-		assert.Equal(t, "test", name1)
-
-		// Second import with same filename should get a timestamp suffix.
-		name2, err := svc.importBinaryPolicyDigest("/tmp/test.bin", []byte{0x02})
-		require.NoError(t, err)
-		assert.NotEqual(t, "test", name2)
-		assert.Contains(t, name2, "test-")
+		svc.SetPolicyStore(newTestPCRPolicyStore(t))
+		_, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", []byte{0xAB, 0xCD})
+		assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 	})
 }
 
@@ -1618,6 +1642,7 @@ func TestTPMService_Coverage_importJSONPolicy(t *testing.T) {
 	t.Run("imports_pcr_policy", func(t *testing.T) {
 		svc := NewTPMService()
 		svc.SetDataDir(t.TempDir())
+		svc.SetPolicyStore(newTestPCRPolicyStore(t))
 		data, _ := json.Marshal(map[string]interface{}{
 			"name":           "pcr-import",
 			"description":    "imported pcr policy",

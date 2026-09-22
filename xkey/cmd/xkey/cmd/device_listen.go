@@ -202,15 +202,15 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 		return &WrappedError{Msg: "failed to decode phone public key", Err: err}
 	}
 
-	// Unseal our local static key (#42). This accepts both the current
-	// barrier-sealed form and a legacy plaintext-base64 record left over
-	// from before #42, so an existing pairing keeps listening. barrier is
-	// nil here only because openDeviceBarrier found none initialized (any
-	// other resolution failure already returned above), so a legacy record
-	// read with it is exactly the unencrypted case the owner ruling on #42
-	// wants logged, once, per operation.
-	wasLegacyKey := !pairing.IsSealedNoiseKey(targetDevice.LocalNoisePrivateKey)
-	if barrier == nil && wasLegacyKey {
+	// Unseal our local static key (#42). barrier is nil here only because
+	// openDeviceBarrier found none initialized (any other resolution
+	// failure already returned above); a nil barrier means this record is
+	// expected to be the legacy plaintext form, logged once per operation.
+	// pairing.UnsealLocalNoiseKey requires the stored form to match the
+	// barrier's presence and returns pairing.ErrNoiseKeyFormMismatch
+	// (telling the operator to re-pair) when it does not -- there is no
+	// migration between the two forms.
+	if barrier == nil && !pairing.IsSealedNoiseKey(targetDevice.LocalNoisePrivateKey) {
 		logger.Warn(noBarrierConfiguredWarning, "device", targetDevice.Name)
 	}
 	localPrivateKey, err := pairing.UnsealLocalNoiseKey(barrier, targetDevice.LocalNoisePrivateKey)
@@ -221,15 +221,6 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	// decode failure on any other field returns in between, and the raw
 	// scalar would be left sitting in protected memory nothing releases.
 	defer localPrivateKey.Destroy()
-
-	// A legacy plaintext record that unsealed successfully is migrated now,
-	// while the key is already in hand, re-sealed under the barrier this
-	// command already opened (#42). barrier == nil is skipped rather than
-	// attempted: it means no barrier is initialized on this host at all,
-	// already warned about once above, and there is nowhere to seal into yet.
-	if wasLegacyKey && barrier != nil {
-		migrateLegacyNoiseKeyAndSave(cfg, targetDevice, barrier, localPrivateKey.Bytes(), logger)
-	}
 
 	// Reconstruct the Noise static key from stored private key
 	localStaticKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())

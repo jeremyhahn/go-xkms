@@ -380,12 +380,14 @@ func TestP6B_SealService_SealData_PanicRecovery(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSealInvalidLabel)
 
 	// Empty label
-	entry, err = svc.SealData(&SealRequest{Label: "", Data: "aGVsbG8="})
+	entry, err = svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "", Data: "aGVsbG8="})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidLabel)
 
 	// Empty data
-	entry, err = svc.SealData(&SealRequest{Label: "test", Data: ""})
+	entry, err = svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "test", Data: ""})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
 }
@@ -395,7 +397,8 @@ func TestP6B_SealService_SealData_Base64DecodeError(t *testing.T) {
 	svc := NewSealService(dir)
 	svc.SetContext(context.Background())
 
-	entry, err := svc.SealData(&SealRequest{Label: "test", Data: "not-valid-base64!!!"})
+	entry, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "test", Data: "not-valid-base64!!!"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
 }
@@ -406,7 +409,8 @@ func TestP6B_SealService_SealData_BackendNotFound(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	data := base64.StdEncoding.EncodeToString([]byte("secret"))
-	entry, err := svc.SealData(&SealRequest{Label: "test", Data: data, Backend: "nonexistent"})
+	entry, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "test", Data: data, Backend: "nonexistent"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealBackendNotFound)
 }
@@ -418,7 +422,8 @@ func TestP6B_SealService_SealData_CanSealFalse(t *testing.T) {
 	wireSealMockClient(svc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: false, sealErr: ErrSealNotSupported})
 
 	data := base64.StdEncoding.EncodeToString([]byte("secret"))
-	entry, err := svc.SealData(&SealRequest{Label: "test", Data: data, Backend: "mock"})
+	entry, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "test", Data: data, Backend: "mock"})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealNotSupported)
 }
@@ -554,7 +559,9 @@ func TestP6B_SealService_SaveBlob_MarshalError(t *testing.T) {
 	svc := NewSealService("relative-path")
 	svc.SetContext(context.Background())
 
-	err := svc.saveBlob(&sealedBlobStorage{ID: "test"})
+	err := svc.saveBlob(&sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software", ID: "test"})
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
 }
 
@@ -564,8 +571,10 @@ func TestP6B_SealService_SaveBlob_WriteSuccess(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		ID:    "test-blob-123",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob-123",
+		Label:      "test",
 	}
 	err := svc.saveBlob(blob)
 	assert.NoError(t, err)
@@ -1776,7 +1785,8 @@ func TestP6B_SealService_ClassifyCategory(t *testing.T) {
 func TestP6B_SealService_HandlePolicyPlatformPolicy_NilService(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	opts := &xkms.SealOptions{}
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, opts)
+	err := handlePolicyPlatformPolicy(svc, &SealRequest{
+		PolicyType: "none"}, opts)
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }
 
@@ -1788,13 +1798,15 @@ func TestP6B_SealService_HandlePolicyPlatformPolicy_NotConfigured(t *testing.T) 
 	svc.policyService = policySvc
 
 	opts := &xkms.SealOptions{}
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, opts)
+	err := handlePolicyPlatformPolicy(svc, &SealRequest{
+		PolicyType: "none"}, opts)
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }
 
 func TestP6B_SealService_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
 	opts := &xkms.SealOptions{}
-	err := handlePolicyCustomPCR(nil, &SealRequest{PCRs: nil}, opts)
+	err := handlePolicyCustomPCR(nil, &SealRequest{
+		PolicyType: "none", PCRs: nil}, opts)
 	assert.NoError(t, err)
 	assert.Nil(t, opts.TPMPolicy)
 }
@@ -1802,8 +1814,9 @@ func TestP6B_SealService_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
 func TestP6B_SealService_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PCRs:    []int{0, 7},
-		PCRBank: "sha256",
+		PolicyType: "none",
+		PCRs:       []int{0, 7},
+		PCRBank:    "sha256",
 	}, opts)
 	assert.NoError(t, err)
 	assert.NotNil(t, opts.TPMPolicy)
@@ -1812,8 +1825,9 @@ func TestP6B_SealService_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 func TestP6B_SealService_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
 	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
-		PCRs:    []int{0},
-		PCRBank: "unknown_bank",
+		PolicyType: "none",
+		PCRs:       []int{0},
+		PCRBank:    "unknown_bank",
 	}, opts)
 	assert.NoError(t, err)
 	// Should default to SHA256.
@@ -1821,12 +1835,14 @@ func TestP6B_SealService_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
 }
 
 func TestP6B_SealService_HandlePolicyPassword_EmptyPassword(t *testing.T) {
-	err := handlePolicyPassword(nil, &SealRequest{Password: ""}, nil)
+	err := handlePolicyPassword(nil, &SealRequest{
+		PolicyType: "none", Password: ""}, nil)
 	assert.ErrorIs(t, err, ErrSealPasswordRequired)
 }
 
 func TestP6B_SealService_HandlePolicyPassword_WithPassword(t *testing.T) {
-	err := handlePolicyPassword(nil, &SealRequest{Password: "secret"}, nil)
+	err := handlePolicyPassword(nil, &SealRequest{
+		PolicyType: "none", Password: "secret"}, nil)
 	assert.NoError(t, err)
 }
 
@@ -1902,8 +1918,10 @@ func TestP6B_SealService_LoadBlob_ValidJSON(t *testing.T) {
 	path := filepath.Join(dir, "good.json")
 
 	blob := &sealedBlobStorage{
-		ID:    "test-id",
-		Label: "test-label",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-id",
+		Label:      "test-label",
 	}
 	data, err := json.Marshal(blob)
 	require.NoError(t, err)

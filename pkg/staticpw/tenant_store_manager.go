@@ -37,10 +37,6 @@ type tenantPasswordState struct {
 	locked   atomic.Bool     // starts locked (true)
 	backend  storage.Backend // the TenantBarrier backend
 	tenantID string
-
-	// store is the legacy shared store for backward compatibility with
-	// ResolveStore and StoreForTenant. It points to the same shared store.
-	store *BackendStore
 }
 
 // TenantPasswordStoreManager manages per-tenant password stores and
@@ -97,7 +93,7 @@ func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, err
 		if state.locked.Load() {
 			return nil, ErrStoreLocked
 		}
-		return state.store, nil
+		return state.shared, nil
 	}
 
 	// Verify tenant exists in registry.
@@ -118,7 +114,6 @@ func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, err
 
 	state := &tenantPasswordState{
 		shared:   shared,
-		store:    shared,
 		backend:  backend,
 		tenantID: tenantID,
 	}
@@ -133,7 +128,7 @@ func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, err
 		if existing.locked.Load() {
 			return nil, ErrStoreLocked
 		}
-		return existing.store, nil
+		return existing.shared, nil
 	}
 
 	// We stored our state — it starts locked.
@@ -185,7 +180,6 @@ func (m *TenantPasswordStoreManager) UnlockTenant(tenantID string) error {
 
 		state := &tenantPasswordState{
 			shared:   shared,
-			store:    shared,
 			backend:  backend,
 			tenantID: tenantID,
 		}

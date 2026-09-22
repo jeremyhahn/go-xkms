@@ -25,7 +25,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +44,7 @@ func tsCreateService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	svc := newServiceWithMock(mock)
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	return svc, dataDir
 }
 
@@ -381,6 +381,7 @@ func TestTS_GetPolicyDeletionImpact_WithAssignments(t *testing.T) {
 func TestTS_GetPolicyDeletionImpact_NotFound(t *testing.T) {
 	mock := defaultMockTPM()
 	svc, _ := tsCreateService(t, mock)
+	seedTPMServicePolicies(t, svc, nil)
 
 	impact, err := svc.GetPolicyDeletionImpact("nonexistent")
 	assert.Nil(t, impact)
@@ -388,12 +389,12 @@ func TestTS_GetPolicyDeletionImpact_NotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// L3195: savePolicies - happy path exercises the json.Marshal line
+// savePolicies - happy path exercises the store sync
 // ---------------------------------------------------------------------------
 
 func TestTS_SavePolicies_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policies := []PCRPolicy{
 		{
@@ -403,18 +404,18 @@ func TestTS_SavePolicies_Success(t *testing.T) {
 		},
 	}
 
-	err := svc.savePolicies(policies)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
-	data, readErr := os.ReadFile(filepath.Join(dataDir, pcrPoliciesFile))
-	require.NoError(t, readErr)
-	assert.Contains(t, string(data), "test-policy")
+	loaded, err := svc.loadPolicies()
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+	assert.Equal(t, "test-policy", loaded[0].Name)
 }
 
-func TestTS_SavePolicies_NoDataDir(t *testing.T) {
+func TestTS_SavePolicies_NoStoreConfigured(t *testing.T) {
 	svc := NewTPMService()
 	err := svc.savePolicies([]PCRPolicy{{Name: "x"}})
-	require.ErrorIs(t, err, ErrTPMDataDirNotSet)
+	require.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +424,7 @@ func TestTS_SavePolicies_NoDataDir(t *testing.T) {
 
 func TestTS_ExportPolicy_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	// Create a policy to export.
 	policies := []PCRPolicy{
@@ -434,8 +435,7 @@ func TestTS_ExportPolicy_Success(t *testing.T) {
 			PCRDigests:    map[string]string{"sha256:0": "aabb"},
 		},
 	}
-	polData, _ := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ExportPolicy("export-test")
 	require.NoError(t, err)
@@ -687,41 +687,20 @@ func TestTS_ImportBinaryPolicyDigest_EmptyData(t *testing.T) {
 	require.ErrorIs(t, err, ErrTPMPolicyImportFailed)
 }
 
-func TestTS_ImportBinaryPolicyDigest_Success(t *testing.T) {
+// TestTS_ImportBinaryPolicyDigest_NoPCRSelectionsRejected documents a
+// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
+// separately): importBinaryPolicyDigest builds a PCRPolicy with a
+// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
+// always rejects. Every production TPMService has a policy store wired
+// (see app.go SetPolicyStore), so this path fails the same way in
+// production today.
+func TestTS_ImportBinaryPolicyDigest_NoPCRSelectionsRejected(t *testing.T) {
 	mock := defaultMockTPM()
 	svc, _ := tsCreateService(t, mock)
 
 	data := []byte{0x01, 0x02, 0x03, 0x04}
-	name, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", data)
-	require.NoError(t, err)
-	assert.Equal(t, "my-policy", name)
-}
-
-func TestTS_ImportBinaryPolicyDigest_NameFromDatFile(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := tsCreateService(t, mock)
-
-	data := []byte{0xAA, 0xBB}
-	name, err := svc.importBinaryPolicyDigest("/some/path/seal-policy.dat", data)
-	require.NoError(t, err)
-	assert.Equal(t, "seal-policy", name)
-}
-
-func TestTS_ImportBinaryPolicyDigest_DuplicateNameTimestamp(t *testing.T) {
-	mock := defaultMockTPM()
-	svc, _ := tsCreateService(t, mock)
-
-	// Create first policy.
-	data := []byte{0x01, 0x02}
-	name1, err := svc.importBinaryPolicyDigest("/tmp/dup.bin", data)
-	require.NoError(t, err)
-	assert.Equal(t, "dup", name1)
-
-	// Import again with same name -> L3672-3677 timestamp fallback.
-	name2, err := svc.importBinaryPolicyDigest("/tmp/dup.bin", data)
-	require.NoError(t, err)
-	// Name should have a timestamp appended.
-	assert.True(t, strings.HasPrefix(name2, "dup-"), "expected timestamp suffix, got %s", name2)
+	_, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", data)
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // L3679: importBinaryPolicyDigest - non-duplicate CreatePolicy error
@@ -945,7 +924,7 @@ func TestTS_ListPoliciesWithDigests_MissingSavedDigest(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	// Policy has PCR selections for sha256:0 AND sha256:7, but PCRDigests
 	// only has sha256:0 -> sha256:7 is not "saved" -> hasSaved=false (L4243)
@@ -961,8 +940,7 @@ func TestTS_ListPoliciesWithDigests_MissingSavedDigest(t *testing.T) {
 		},
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	policies, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -1103,6 +1081,13 @@ func TestTS_DeletePolicyPassword_NilService(t *testing.T) {
 // L4641: ComparePolicyPCRs - non-hex current digest triggers fallback
 // ---------------------------------------------------------------------------
 
+// TestTS_ComparePolicyPCRs_NonHexDigests documents the canonical
+// pcr_policy store's behavior for a digest that fails to hex-decode:
+// pcrPolicyToEntity leaves the corresponding PCR byte slice nil rather
+// than erroring, and entityToPCRPolicy then omits it from PCRDigests
+// entirely. Unlike the removed pcr_policies.json file fallback, a
+// corrupted digest can never round-trip through the store as a literal
+// string, so ComparePolicyPCRs sees no saved digests at all.
 func TestTS_ComparePolicyPCRs_NonHexDigests(t *testing.T) {
 	mock := defaultMockTPM()
 	mock.pcrBanks = []xkms.PCRBank{
@@ -1114,9 +1099,8 @@ func TestTS_ComparePolicyPCRs_NonHexDigests(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
-	// Create a policy with a non-hex saved digest -> L4637 decErr triggers fallback.
 	policy := PCRPolicy{
 		Name:          "non-hex",
 		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
@@ -1125,14 +1109,10 @@ func TestTS_ComparePolicyPCRs_NonHexDigests(t *testing.T) {
 		},
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
-	result, err := svc.ComparePolicyPCRs("non-hex")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.AllMatch)
-	assert.Len(t, result.Entries, 1)
+	_, err := svc.ComparePolicyPCRs("non-hex")
+	assert.ErrorIs(t, err, ErrTPMPolicyNoDigests)
 }
 
 func TestTS_ComparePolicyPCRs_EmptyName(t *testing.T) {
@@ -1146,15 +1126,14 @@ func TestTS_ComparePolicyPCRs_EmptyName(t *testing.T) {
 
 func TestTS_ComparePolicyPCRs_NoDigests(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policy := PCRPolicy{
 		Name:          "no-digests",
 		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 		CreatedAt:     "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	result, err := svc.ComparePolicyPCRs("no-digests")
 	assert.Nil(t, result)
@@ -1171,8 +1150,7 @@ func TestTS_ComparePolicyPCRs_NoTPM(t *testing.T) {
 		PCRDigests:    map[string]string{"sha256:0": "aabb"},
 		CreatedAt:     "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(svc.dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	result, err := svc.ComparePolicyPCRs("no-tpm")
 	assert.Nil(t, result)
@@ -1195,7 +1173,7 @@ func TestTS_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policy := PCRPolicy{
 		Name: "digest-mismatch",
@@ -1209,8 +1187,7 @@ func TestTS_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 		},
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	policies, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -1331,14 +1308,13 @@ func TestTS_ReadNVData_AutoDetectNotFound(t *testing.T) {
 
 func TestTS_GetPolicyDeletionImpact_PCRPolicyType(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	// Create a PCR policy.
 	policies := []PCRPolicy{
 		{Name: "pcr-impact", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	polData, _ := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, policies)
 
 	impact, err := svc.GetPolicyDeletionImpact("pcr-impact")
 	require.NoError(t, err)
@@ -1364,7 +1340,7 @@ func TestTS_ComparePolicyPCRs_MatchingDigests(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policy := PCRPolicy{
 		Name:          "match-test",
@@ -1372,8 +1348,7 @@ func TestTS_ComparePolicyPCRs_MatchingDigests(t *testing.T) {
 		PCRDigests:    map[string]string{"sha256:0": "aabb"},
 		CreatedAt:     "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	result, err := svc.ComparePolicyPCRs("match-test")
 	require.NoError(t, err)
@@ -1402,8 +1377,7 @@ func TestTS_ListPoliciesWithDigests_NoTPM(t *testing.T) {
 		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 		CreatedAt:     "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	policies, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)

@@ -300,7 +300,7 @@ func TestPairRecordsAVerifiedAttestation(t *testing.T) {
 	require.False(t, rec.PairedAt.IsZero())
 
 	// And the record is one the reconnect path will DEMAND a proof for.
-	require.True(t, xkeyAttestation.DeviceBindingFor(*rec).RequiresLiveAttestation())
+	require.NoError(t, xkeyAttestation.DeviceBindingFor(*rec).Validate())
 
 	evts := h.attestationEvents()
 	require.Len(t, evts, 1)

@@ -70,14 +70,18 @@ xkey device pair --barrier-password-file /run/secrets/xkey-barrier
 XKEY_BARRIER_PASSWORD="$(cat /run/secrets/xkey-barrier)" xkey device listen
 ```
 
-A device paired before a barrier existed, or paired on a host that still has
-none, keeps connecting: its key is read as legacy plaintext and re-sealed the
-next time `device attest-device` or `device listen` succeeds against it
-**after** `xkey barrier init` has been run, after which only the sealed form
-is on disk for that device. Every other device-backed verb below
+**There is no migration between the two forms.** Which form a reader expects
+is decided by this host's barrier state at read time, not by inspecting the
+stored record: with a barrier open, only the sealed form is accepted; with
+none open, only the legacy plaintext form is. A device paired before a
+barrier existed keeps connecting as long as that stays true — but running
+`xkey barrier init` on a host with existing legacy-plaintext pairings does
+**not** upgrade them: the next `device listen` or `device attest-device`
+against one now refuses with a re-pair message (`pairing:` `... re-pair this
+device`) instead of connecting. Re-pair the device (`xkey device pair`) to
+write a fresh sealed record. Every other device-backed verb below
 (`oath-sync`, `share`, `import`, `sync-*`, `enroll-phone`, `fido2 --backend
-phone`) reads a legacy record the same way with no barrier needed, and reads a
-sealed one from `XKEY_BARRIER_PASSWORD` alone if it is set.
+phone`) follows the same rule through `unsealDeviceLocalKey`.
 
 ## Using the phone as the key backend
 

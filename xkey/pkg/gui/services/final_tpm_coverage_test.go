@@ -42,6 +42,7 @@ func ftCreateService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	svc := newServiceWithMock(mock)
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	return svc, dataDir
 }
 
@@ -171,26 +172,22 @@ func TestFT_GetVerificationStatus_WithTPM(t *testing.T) {
 // ListPolicies (60%) - only defer is uncovered
 // ---------------------------------------------------------------------------
 
-func TestFT_ListPolicies_EmptyDataDir(t *testing.T) {
+func TestFT_ListPolicies_NoStoreConfigured(t *testing.T) {
 	mock := defaultMockTPM()
 	svc := newServiceWithMock(mock)
-	// No dataDir set -> loadPolicies returns empty
-	policies, err := svc.ListPolicies()
-	require.NoError(t, err)
-	assert.Empty(t, policies)
+	// No policy store wired -> ErrTPMPolicyStoreNotSet.
+	_, err := svc.ListPolicies()
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 func TestFT_ListPolicies_WithPolicies(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
+	svc, _ := ftCreateService(t, mock)
 
-	// Write a policy file manually
 	policies := []PCRPolicy{
 		{Name: "test-policy", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600))
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPolicies()
 	require.NoError(t, err)
@@ -531,20 +528,19 @@ func TestFT_GetCompositePolicy_Found(t *testing.T) {
 func TestFT_GetPolicy_NotFound(t *testing.T) {
 	mock := defaultMockTPM()
 	svc, _ := ftCreateService(t, mock)
+	seedTPMServicePolicies(t, svc, nil)
 	_, err := svc.GetPolicy("nonexistent")
 	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
 }
 
 func TestFT_GetPolicy_Found(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := ftCreateService(t, mock)
+	svc, _ := ftCreateService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "my-pol", PCRSelections: []PCRSelection{{Index: 7, Bank: "sha256"}}},
 	}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600))
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.GetPolicy("my-pol")
 	require.NoError(t, err)
@@ -856,11 +852,11 @@ func TestFT_SaveCompositePolicies_NoDataDir(t *testing.T) {
 // savePolicies (88.9%) - dataDir not set
 // ---------------------------------------------------------------------------
 
-func TestFT_SavePolicies_NoDataDir(t *testing.T) {
+func TestFT_SavePolicies_NoStoreConfigured(t *testing.T) {
 	mock := defaultMockTPM()
 	svc := newServiceWithMock(mock)
 	err := svc.savePolicies([]PCRPolicy{})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // ---------------------------------------------------------------------------

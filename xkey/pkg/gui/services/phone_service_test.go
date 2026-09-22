@@ -61,7 +61,7 @@ func TestPhoneService_ListDevices_NoConfig(t *testing.T) {
 func TestPhoneService_ListDevices_WithConfig(t *testing.T) {
 	// Write a temporary config file.
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "phone.yaml")
+	configPath := filepath.Join(tmpDir, "devices.yaml")
 	cfg := phoneConfig{
 		Devices: []phoneConfigDevice{
 			{
@@ -83,7 +83,7 @@ func TestPhoneService_ListDevices_WithConfig(t *testing.T) {
 
 	// Create the .xkey directory structure.
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".xkey"), 0700))
-	finalPath := filepath.Join(tmpDir, ".xkey", "phone.yaml")
+	finalPath := filepath.Join(tmpDir, ".xkey", "devices.yaml")
 	require.NoError(t, os.WriteFile(finalPath, data, 0600))
 
 	svc := NewPhoneService()
@@ -178,7 +178,7 @@ func TestPhoneService_Unpair_WithConfig(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -231,7 +231,7 @@ func TestPhoneService_Connect_ValidDevice_BLEUnavailable(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -261,7 +261,7 @@ func TestPhoneService_Connect_MissingKeys(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -286,7 +286,7 @@ func TestPhoneService_Connect_DeviceNotFound(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -318,7 +318,7 @@ func TestPhoneService_Connect_PolicyNotEnabled_MissingKeys(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -348,7 +348,7 @@ func TestPhoneService_Connect_NoPolicySet_MissingKeys(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -430,7 +430,7 @@ func TestPhoneService_AttestDevice_ConnectedDeviceNotInConfig(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -470,7 +470,7 @@ func TestPhoneService_AttestDevice_NoActiveConnection(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -642,7 +642,7 @@ func TestPhoneService_AttestDevice_EmitsEvent(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -723,7 +723,7 @@ func TestPhoneService_ListDevices_ShowsConnected(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -762,7 +762,7 @@ func TestPhoneService_Unpair_DisconnectsIfConnected(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -847,7 +847,7 @@ func TestPhoneService_SetAttestationPolicy_DeviceNotFound(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -871,7 +871,7 @@ func TestPhoneService_SetAttestationPolicy_NoLastAttestation(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -908,7 +908,7 @@ func TestPhoneService_SetAttestationPolicy_Success(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -959,7 +959,7 @@ func TestPhoneService_ClearAttestationPolicy_DeviceNotFound(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -991,7 +991,7 @@ func TestPhoneService_ClearAttestationPolicy_Success(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -1036,7 +1036,7 @@ func TestPhoneService_GetAttestationPolicy_DeviceNotFound(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -1060,7 +1060,7 @@ func TestPhoneService_GetAttestationPolicy_NilPolicy(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -1589,7 +1589,7 @@ func TestPhoneService_Connect_InvalidLocalKey(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -1619,7 +1619,7 @@ func TestPhoneService_Connect_InvalidRemoteKey(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -1856,7 +1856,7 @@ func TestPhoneService_Unpair_SetsNewDefault(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)
@@ -1896,7 +1896,7 @@ func TestPhoneService_Connect_InvalidFingerprint(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	origHome := os.Getenv("HOME")
 	defer os.Setenv("HOME", origHome)

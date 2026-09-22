@@ -249,7 +249,7 @@ func getSharePolicyPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Replace phone.yaml with sharing-policies.json in the same directory
+	// Replace devices.yaml with sharing-policies.json in the same directory
 	dir := configPath[:len(configPath)-len(devicesConfigFileName)]
 	return dir + sharingPoliciesFileName, nil
 }

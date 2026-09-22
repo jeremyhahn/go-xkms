@@ -317,7 +317,7 @@ func TestFinalCoveragePush_PairingService_SetAuditLogger_Replace(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFinalCoveragePush_PasswordProtectionService_SetAuditLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	assert.Nil(t, svc.auditLog.Load())
 
 	logger := &fcpMockAuditLogger{}
@@ -329,7 +329,7 @@ func TestFinalCoveragePush_PasswordProtectionService_SetAuditLogger(t *testing.T
 }
 
 func TestFinalCoveragePush_PasswordProtectionService_SetAuditLogger_Replace(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	logger1 := &fcpMockAuditLogger{}
 	logger2 := &fcpMockAuditLogger{}
 
@@ -1102,11 +1102,11 @@ func TestFinalCoveragePush_StaticPWService_GetPassword_NotFound(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestFinalCoveragePush_StaticPWService_AddPasswordV2_InvalidExpiry(t *testing.T) {
+func TestFinalCoveragePush_StaticPWService_AddPassword_InvalidExpiry(t *testing.T) {
 	svc := NewStaticPasswordService(&fcpMockStaticPWStore{})
 	svc.SetContext(context.Background())
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:      "test",
 		Password:  "pass",
 		ExpiresAt: "not-a-date",
@@ -1114,12 +1114,12 @@ func TestFinalCoveragePush_StaticPWService_AddPasswordV2_InvalidExpiry(t *testin
 	assert.ErrorIs(t, err, ErrStaticPWInvalidExpiresAt)
 }
 
-func TestFinalCoveragePush_StaticPWService_AddPasswordV2_WithExpiry(t *testing.T) {
+func TestFinalCoveragePush_StaticPWService_AddPassword_WithExpiry(t *testing.T) {
 	svc := NewStaticPasswordService(&fcpMockStaticPWStore{})
 	svc.SetContext(context.Background())
 
 	expires := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:      "test-expiry",
 		Password:  "pass",
 		ExpiresAt: expires,
@@ -1141,7 +1141,7 @@ func TestFinalCoveragePush_StaticPWService_DeletePassword_ReadOnly(t *testing.T)
 	assert.ErrorIs(t, err, ErrStaticPWReadOnly)
 }
 
-func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_ReadOnly(t *testing.T) {
+func TestFinalCoveragePush_StaticPWService_UpdatePassword_ReadOnly(t *testing.T) {
 	store := &fcpMockStaticPWStore{
 		passwords: []*staticpw.StaticPassword{
 			{ID: "ro-1", Name: "readonly-entry", ReadOnly: true},
@@ -1150,14 +1150,14 @@ func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_ReadOnly(t *testing.
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())
 
-	err := svc.UpdatePasswordV2(UpdatePasswordParams{
+	err := svc.UpdatePassword(UpdatePasswordParams{
 		ID:   "ro-1",
 		Name: "renamed",
 	})
 	assert.ErrorIs(t, err, ErrStaticPWReadOnly)
 }
 
-func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_InvalidExpiry(t *testing.T) {
+func TestFinalCoveragePush_StaticPWService_UpdatePassword_InvalidExpiry(t *testing.T) {
 	store := &fcpMockStaticPWStore{
 		passwords: []*staticpw.StaticPassword{
 			{ID: "pw-1", Name: "test-entry", ReadOnly: false},
@@ -1166,7 +1166,7 @@ func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_InvalidExpiry(t *tes
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())
 
-	err := svc.UpdatePasswordV2(UpdatePasswordParams{
+	err := svc.UpdatePassword(UpdatePasswordParams{
 		ID:        "pw-1",
 		Name:      "test-entry",
 		ExpiresAt: "bad-date",
@@ -1174,7 +1174,7 @@ func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_InvalidExpiry(t *tes
 	assert.ErrorIs(t, err, ErrStaticPWInvalidExpiresAt)
 }
 
-func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_ClearExpiry(t *testing.T) {
+func TestFinalCoveragePush_StaticPWService_UpdatePassword_ClearExpiry(t *testing.T) {
 	store := &fcpMockStaticPWStore{
 		passwords: []*staticpw.StaticPassword{
 			{
@@ -1188,7 +1188,7 @@ func TestFinalCoveragePush_StaticPWService_UpdatePasswordV2_ClearExpiry(t *testi
 	svc.SetContext(context.Background())
 
 	// Empty ExpiresAt should clear the expiry.
-	err := svc.UpdatePasswordV2(UpdatePasswordParams{
+	err := svc.UpdatePassword(UpdatePasswordParams{
 		ID:        "pw-1",
 		Name:      "test-entry",
 		ExpiresAt: "",
@@ -1286,7 +1286,7 @@ func TestFinalCoveragePush_StaticPWService_AddPassword_Legacy(t *testing.T) {
 	svc := NewStaticPasswordService(&fcpMockStaticPWStore{})
 	svc.SetContext(context.Background())
 
-	entry, err := svc.AddPassword("legacy-test", "password123", "some notes")
+	entry, err := svc.AddPassword(AddPasswordParams{Name: "legacy-test", Password: "password123", Notes: "some notes"})
 	require.NoError(t, err)
 	assert.Equal(t, "legacy-test", entry.Name)
 }
@@ -1300,7 +1300,7 @@ func TestFinalCoveragePush_StaticPWService_UpdatePassword_Legacy(t *testing.T) {
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())
 
-	err := svc.UpdatePassword("pw-1", "new-name", "new-pass", "new-notes")
+	err := svc.UpdatePassword(UpdatePasswordParams{ID: "pw-1", Name: "new-name", Password: "new-pass", Notes: "new-notes"})
 	require.NoError(t, err)
 }
 
@@ -1309,7 +1309,7 @@ func TestFinalCoveragePush_StaticPWService_UpdatePassword_Legacy(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFinalCoveragePush_PasswordProtectionService_logPasswordStoreOp_WithLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	logger := &fcpMockAuditLogger{}
 	svc.SetAuditLogger(logger)
 
@@ -1321,7 +1321,7 @@ func TestFinalCoveragePush_PasswordProtectionService_logPasswordStoreOp_WithLogg
 }
 
 func TestFinalCoveragePush_PasswordProtectionService_logPasswordStoreOp_NoLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	// No logger - should not panic.
 	svc.logPasswordStoreOp(audit.OpPasswordStoreUnlocked, "test", true, nil, nil)
 }
@@ -1536,7 +1536,7 @@ func TestFinalCoveragePush_SealProtectionService_GetStatus_NilSealSvc(t *testing
 }
 
 func TestFinalCoveragePush_PasswordProtectionService_GetStatus_NilDeps(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	status, err := svc.GetStatus()
 	require.NoError(t, err)
 	assert.Equal(t, "barrier", status.Mode)
@@ -1552,7 +1552,7 @@ func TestFinalCoveragePush_PasswordProtectionService_GetStatus_WithStore(t *test
 		},
 	}
 	pwSvc := NewStaticPasswordService(store)
-	svc := NewPasswordProtectionService("", pwSvc, nil)
+	svc := NewPasswordProtectionService(pwSvc, nil)
 
 	status, err := svc.GetStatus()
 	require.NoError(t, err)
@@ -1560,7 +1560,7 @@ func TestFinalCoveragePush_PasswordProtectionService_GetStatus_WithStore(t *test
 }
 
 func TestFinalCoveragePush_PasswordProtectionService_ExportPasswordsDecrypted_NilStore(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	// Starts unlocked.
 
 	_, err := svc.ExportPasswordsDecrypted("")
@@ -1574,7 +1574,7 @@ func TestFinalCoveragePush_PasswordProtectionService_ExportPasswordsDecrypted_Su
 		},
 	}
 	pwSvc := NewStaticPasswordService(store)
-	svc := NewPasswordProtectionService("", pwSvc, nil)
+	svc := NewPasswordProtectionService(pwSvc, nil)
 	// Starts unlocked.
 
 	passwords, err := svc.ExportPasswordsDecrypted("")

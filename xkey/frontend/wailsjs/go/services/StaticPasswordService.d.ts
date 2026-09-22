@@ -5,9 +5,7 @@ import {transport} from '../models';
 import {context} from '../models';
 import {staticpw} from '../models';
 
-export function AddPassword(arg1:string,arg2:string,arg3:string):Promise<services.StaticPasswordEntry>;
-
-export function AddPasswordV2(arg1:services.AddPasswordParams):Promise<services.StaticPasswordEntry>;
+export function AddPassword(arg1:services.AddPasswordParams):Promise<services.StaticPasswordEntry>;
 
 export function BackupPasswords(arg1:string,arg2:boolean,arg3:string,arg4:string):Promise<void>;
 
@@ -67,6 +65,4 @@ export function TryAutoUnlock():Promise<void>;
 
 export function Unlock(arg1:string):Promise<void>;
 
-export function UpdatePassword(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
-
-export function UpdatePasswordV2(arg1:services.UpdatePasswordParams):Promise<void>;
+export function UpdatePassword(arg1:services.UpdatePasswordParams):Promise<void>;

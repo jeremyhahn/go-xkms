@@ -1192,13 +1192,13 @@ func TestCoverageBoostPhase3_SealProtectionService_LogEvent_WithError(t *testing
 // ===========================================================================
 
 func TestCoverageBoostPhase3_PasswordProtection_LogOp_NilLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	// No audit logger set, should be a no-op.
 	svc.logPasswordStoreOp(audit.OpPasswordStoreUnlocked, "user", true, nil, nil)
 }
 
 func TestCoverageBoostPhase3_PasswordProtection_LogOp_WithLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	logger := &phase3AuditLogger{}
 	svc.SetAuditLogger(logger)
 
@@ -1214,7 +1214,7 @@ func TestCoverageBoostPhase3_PasswordProtection_LogOp_WithLogger(t *testing.T) {
 // ===========================================================================
 
 func TestCoverageBoostPhase3_PasswordProtection_Export_NilStore(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	// Starts unlocked, no static pw store.
 	_, err := svc.ExportPasswordsDecrypted("")
 	assert.ErrorIs(t, err, ErrPPNotConfigured)

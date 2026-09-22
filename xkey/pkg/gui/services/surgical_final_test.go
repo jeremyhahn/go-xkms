@@ -138,7 +138,9 @@ func TestSurg_SealListBlobs_UnreadableDir(t *testing.T) {
 // TestSurg_SealSaveBlob_StorageDirNotSet covers saveBlob with empty storageDir.
 func TestSurg_SealSaveBlob_StorageDirNotSet(t *testing.T) {
 	svc := NewSealService("")
-	err := svc.saveBlob(&sealedBlobStorage{ID: "test"})
+	err := svc.saveBlob(&sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software", ID: "test"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSealStorageFailed))
 }
@@ -146,7 +148,9 @@ func TestSurg_SealSaveBlob_StorageDirNotSet(t *testing.T) {
 // TestSurg_SealSaveBlob_RelativePath covers saveBlob with relative storageDir.
 func TestSurg_SealSaveBlob_RelativePath(t *testing.T) {
 	svc := NewSealService("relative/path")
-	err := svc.saveBlob(&sealedBlobStorage{ID: "test"})
+	err := svc.saveBlob(&sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software", ID: "test"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSealStorageFailed))
 }
@@ -354,8 +358,9 @@ func TestSurg_AutoUnsealReseal_ConfigSaveFailsDeleteCleanup(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		Label: "auto-unseal-passphrase",
-		Data:  base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
+		PolicyType: "none",
+		Label:      "auto-unseal-passphrase",
+		Data:       base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -377,8 +382,9 @@ func TestSurg_AutoUnsealReseal_DeleteOldBlobFails(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		Label: "auto-unseal-passphrase",
-		Data:  base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
+		PolicyType: "none",
+		Label:      "auto-unseal-passphrase",
+		Data:       base64.StdEncoding.EncodeToString([]byte("longpassphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)

@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,14 +37,15 @@ import (
 // whether failing to obtain one refuses the connection. Whether the evidence
 // is judged correctly is covered where the decision lives.
 
-// TestProveDeviceLivenessSkipsALegacyRecord covers the pairing that predates
-// #129.
+// TestProveDeviceLivenessRefusesALegacyRecord covers the pairing that
+// predates #129 (BREAKING, go-xkms compat cleanup PR5: the #129/#130 grace
+// period for an absent/version-1 record is removed).
 //
 // Such a record has no attested key registered, so there is nothing to prove
-// possession of and demanding a proof would refuse every legacy device rather
-// than protect it. It must skip before touching a trust store or a session —
-// this passes nil for both, so anything that reached for either would panic.
-func TestProveDeviceLivenessSkipsALegacyRecord(t *testing.T) {
+// possession of, and it is refused rather than admitted -- the operator must
+// re-pair. It must refuse before touching a trust store or a session -- this
+// passes nil for both, so anything that reached for either would panic.
+func TestProveDeviceLivenessRefusesALegacyRecord(t *testing.T) {
 	svc := &PhoneService{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	legacy := &phoneConfigDevice{
@@ -51,7 +53,9 @@ func TestProveDeviceLivenessSkipsALegacyRecord(t *testing.T) {
 		DeviceFingerprint: "aa",
 	}
 
-	require.NoError(t, svc.proveDeviceLiveness(context.Background(), nil, nil, legacy))
+	err := svc.proveDeviceLiveness(context.Background(), nil, nil, legacy)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, xkeyAttestation.ErrDeviceAttestationVersionUnsupported)
 }
 
 // TestProveDeviceLivenessRefusesWithoutATrustStore is the fail-closed case.
@@ -67,7 +71,7 @@ func TestProveDeviceLivenessRefusesWithoutATrustStore(t *testing.T) {
 
 	bound := &phoneConfigDevice{
 		Name:                       "bound",
-		DeviceFingerprint:          "bb",
+		DeviceFingerprint:          strings.Repeat("bb", pairing.AttestFingerprintSize), // well-formed, so Validate passes and the trust-store check is what's under test
 		AttestationProtocolVersion: pairing.AttestProtocolV2,
 	}
 
@@ -85,15 +89,17 @@ func TestProveDeviceLivenessRefusesWithoutATrustStore(t *testing.T) {
 // unbound and the requirement evaporated. The field is carried now, and this
 // asserts the projection the verifier consumes actually reflects it.
 func TestAttestationBindingReadsTheRecordNotThePeer(t *testing.T) {
+	fp := strings.Repeat("cc", pairing.AttestFingerprintSize)
 	bound := &phoneConfigDevice{
-		DeviceFingerprint:          "cc",
+		DeviceFingerprint:          fp,
 		AttestationProtocolVersion: pairing.AttestProtocolV2,
 	}
-	legacy := &phoneConfigDevice{DeviceFingerprint: "cc"}
+	legacy := &phoneConfigDevice{DeviceFingerprint: fp}
 
-	assert.True(t, xkeyAttestation.DeviceBindingFor(*bound).RequiresLiveAttestation(),
-		"a v2 record must demand the proof in the GUI exactly as it does in the CLI")
-	assert.Equal(t, "cc", xkeyAttestation.DeviceBindingFor(*bound).Fingerprint)
+	assert.NoError(t, xkeyAttestation.DeviceBindingFor(*bound).Validate(),
+		"a v2 record must validate in the GUI exactly as it does in the CLI")
+	assert.Equal(t, fp, xkeyAttestation.DeviceBindingFor(*bound).Fingerprint)
 
-	assert.False(t, xkeyAttestation.DeviceBindingFor(*legacy).RequiresLiveAttestation())
+	assert.ErrorIs(t, xkeyAttestation.DeviceBindingFor(*legacy).Validate(),
+		xkeyAttestation.ErrDeviceAttestationVersionUnsupported)
 }

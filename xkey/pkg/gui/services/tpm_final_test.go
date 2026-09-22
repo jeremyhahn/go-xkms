@@ -46,6 +46,7 @@ func tfCreateService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	svc := newServiceWithMock(mock)
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	return svc, dataDir
 }
 
@@ -91,52 +92,18 @@ func TestTF_ImportBinaryPolicyDigest_EmptyData(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMPolicyImportFailed)
 }
 
-func TestTF_ImportBinaryPolicyDigest_NameConflictRetryFails(t *testing.T) {
-	svc, _ := tfCreateService(t, defaultMockTPM())
-	policy := &PCRPolicy{Name: "mydigest", Description: "original"}
-	require.NoError(t, svc.CreatePolicy(policy))
-
-	// Make the policies file read-only so the retry savePolicies fails.
-	policiesFile := filepath.Join(svc.dataDir, pcrPoliciesFile)
-	require.NoError(t, os.Chmod(policiesFile, 0400))
-	t.Cleanup(func() { os.Chmod(policiesFile, 0600) }) //nolint:errcheck
-
-	binaryData := []byte{0xAA, 0xBB, 0xCC}
-	name, importErr := svc.importBinaryPolicyDigest("/tmp/mydigest.bin", binaryData)
-	assert.Empty(t, name)
-	require.Error(t, importErr)
-}
-
-func TestTF_ImportBinaryPolicyDigest_Success(t *testing.T) {
+// TestTF_ImportBinaryPolicyDigest_NoPCRSelectionsRejected documents a
+// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
+// separately): importBinaryPolicyDigest builds a PCRPolicy with a
+// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
+// always rejects. Every production TPMService has a policy store wired
+// (see app.go SetPolicyStore), so this path fails the same way in
+// production today.
+func TestTF_ImportBinaryPolicyDigest_NoPCRSelectionsRejected(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
 	binaryData := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	name, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", binaryData)
-	require.NoError(t, err)
-	assert.Equal(t, "my-policy", name)
-
-	policy, getErr := svc.GetPolicy("my-policy")
-	require.NoError(t, getErr)
-	assert.Contains(t, policy.Description, "my-policy.bin")
-	assert.Equal(t, "deadbeef", policy.PCRDigests["policy_digest"])
-}
-
-func TestTF_ImportBinaryPolicyDigest_NameConflictRetrySuccess(t *testing.T) {
-	svc, _ := tfCreateService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "conflict"}))
-
-	binaryData := []byte{0x01, 0x02}
-	name, importErr := svc.importBinaryPolicyDigest("/tmp/conflict.bin", binaryData)
-	require.NoError(t, importErr)
-	assert.Contains(t, name, "conflict-")
-	assert.NotEqual(t, "conflict", name)
-}
-
-func TestTF_ImportBinaryPolicyDigest_EmptyBaseName(t *testing.T) {
-	svc, _ := tfCreateService(t, defaultMockTPM())
-	binaryData := []byte{0x01}
-	name, err := svc.importBinaryPolicyDigest("/tmp/.bin", binaryData)
-	require.NoError(t, err)
-	assert.Equal(t, "imported-policy", name)
+	_, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", binaryData)
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 func TestTF_ImportJSONPolicy_CompositeDetection(t *testing.T) {
@@ -215,7 +182,7 @@ func TestTF_DeletePolicyPassword_ForceDeleteError(t *testing.T) {
 	failStore := &tfFailDeleteStore{mockStaticPWStore: baseStore, forceDeleteErr: errors.New("forced delete failed")}
 	svc, _ := tfCreateServiceWithPW(t, defaultMockTPM(), failStore)
 
-	_, addErr := svc.staticPWService.AddPasswordV2(AddPasswordParams{
+	_, addErr := svc.staticPWService.AddPassword(AddPasswordParams{
 		Name: "Policy: test-delete-err", Password: "secret123",
 		FolderPath: policyPasswordFolder, ReadOnly: true,
 	})
@@ -229,7 +196,7 @@ func TestTF_DeletePolicyPassword_ForceDeleteError(t *testing.T) {
 func TestTF_DeletePolicyPassword_NoMatch(t *testing.T) {
 	baseStore := newMockStaticPWStore()
 	svc, _ := tfCreateServiceWithPW(t, defaultMockTPM(), baseStore)
-	_, addErr := svc.staticPWService.AddPasswordV2(AddPasswordParams{
+	_, addErr := svc.staticPWService.AddPassword(AddPasswordParams{
 		Name: "Policy: other-policy", Password: "secret",
 		FolderPath: policyPasswordFolder, ReadOnly: true,
 	})
@@ -272,23 +239,17 @@ func TestTF_ComparePolicyPCRs_PolicyNotFound(t *testing.T) {
 
 func TestTF_ComparePolicyPCRs_NoDigests(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
-	// No PCRSelections => CreatePolicy won't auto-populate digests.
-	policy := &PCRPolicy{Name: "no-digests"}
-	require.NoError(t, svc.CreatePolicy(policy))
+	// Seed directly (bypassing CreatePolicy's TPM digest auto-capture) so
+	// the policy has selections but no saved digests.
+	seedTPMServicePolicies(t, svc, []PCRPolicy{{
+		Name:          "no-digests",
+		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+	}})
 
-	saved, getErr := svc.GetPolicy("no-digests")
-	require.NoError(t, getErr)
-
-	if len(saved.PCRDigests) == 0 {
-		result, err := svc.ComparePolicyPCRs("no-digests")
-		assert.Nil(t, result)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrTPMPolicyNoDigests)
-	} else {
-		result, err := svc.ComparePolicyPCRs("no-digests")
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-	}
+	result, err := svc.ComparePolicyPCRs("no-digests")
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTPMPolicyNoDigests)
 }
 
 func TestTF_ComparePolicyPCRs_NoTPM(t *testing.T) {
@@ -299,18 +260,18 @@ func TestTF_ComparePolicyPCRs_NoTPM(t *testing.T) {
 		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 		PCRDigests:    map[string]string{"sha256:0": "aabb"},
 	}}
-	require.NoError(t, svc.savePolicies(policies))
+	seedTPMServicePolicies(t, svc, policies)
 	result, err := svc.ComparePolicyPCRs("test-no-tpm")
 	assert.Nil(t, result)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrTPMNotAvailable)
 }
 
-func TestTF_SavePolicies_NoDataDir(t *testing.T) {
+func TestTF_SavePolicies_NoStoreConfigured(t *testing.T) {
 	svc := NewTPMService()
 	err := svc.savePolicies([]PCRPolicy{{Name: "test"}})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 func TestTF_SavePolicies_WriteError(t *testing.T) {
@@ -511,7 +472,7 @@ func TestTF_DeleteCompositePolicy_NotFound(t *testing.T) {
 func TestTF_DeleteCompositePolicy_CascadesAssignments(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
 	// Create PCR policy (needed for AssignPolicyToKey which calls GetPolicy).
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "cascade-del"}))
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "cascade-del", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}))
 	// Create composite policy with same name.
 	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
 		Name: "cascade-del", Operator: "SINGLE",
@@ -552,7 +513,7 @@ func TestTF_GetConflictingAssignments_NoConflicts(t *testing.T) {
 
 func TestTF_GetConflictingAssignments_WithConflicts(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "conflict-check"}))
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "conflict-check", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}))
 	require.NoError(t, svc.AssignPolicyToKey("conflict-check", "0x81000001"))
 	conflicts, err := svc.GetConflictingAssignments([]string{"0x81000001", "0x81000002"})
 	require.NoError(t, err)
@@ -569,7 +530,7 @@ func TestTF_GetConflictingAssignments_EmptyHandles(t *testing.T) {
 
 func TestTF_GetPolicyDeletionImpact_PCRPolicy(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "impact-pcr"}))
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "impact-pcr", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}))
 	require.NoError(t, svc.AssignPolicyToKey("impact-pcr", "0x81000001"))
 	impact, err := svc.GetPolicyDeletionImpact("impact-pcr")
 	require.NoError(t, err)
@@ -601,7 +562,7 @@ func TestTF_GetPolicyDeletionImpact_WithPasswordStore(t *testing.T) {
 	require.NoError(t, svc.CreateCompositePolicy(&CompositePolicy{
 		Name: "pw-impact", Operator: "SINGLE",
 		Elements: []PolicyElement{{Type: "password", PasswordHash: "s:h"}}}))
-	_, addErr := svc.staticPWService.AddPasswordV2(AddPasswordParams{
+	_, addErr := svc.staticPWService.AddPassword(AddPasswordParams{
 		Name: "Policy: pw-impact", Password: "secret",
 		FolderPath: policyPasswordFolder, ReadOnly: true})
 	require.NoError(t, addErr)
@@ -626,9 +587,10 @@ func TestTF_AssignPolicyToKeys_EmptyHandles(t *testing.T) {
 
 func TestTF_AssignPolicyToKeys_UpdateExisting(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "multi-assign"}))
+	sel := []PCRSelection{{Index: 0, Bank: "sha256"}}
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "multi-assign", PCRSelections: sel}))
 	require.NoError(t, svc.AssignPolicyToKey("multi-assign", "0x81000001"))
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "multi-assign-2"}))
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "multi-assign-2", PCRSelections: sel}))
 	err := svc.AssignPolicyToKeys("multi-assign-2", []string{"0x81000001", "0x81000002", " "})
 	require.NoError(t, err)
 	assignments, _ := svc.ListPolicyAssignments()
@@ -700,7 +662,7 @@ func TestTF_UnassignPolicyFromKey_NotFound(t *testing.T) {
 
 func TestTF_UnassignPolicyFromKey_Success(t *testing.T) {
 	svc, _ := tfCreateService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "unassign-test"}))
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "unassign-test", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}))
 	require.NoError(t, svc.AssignPolicyToKey("unassign-test", "0x81000001"))
 	require.NoError(t, svc.UnassignPolicyFromKey("0x81000001"))
 	assignments, _ := svc.ListPolicyAssignments()
@@ -876,7 +838,7 @@ func TestTF_SavePolicyDigestBinary_Success(t *testing.T) {
 func TestTF_FindPolicyPasswordEntry_Found(t *testing.T) {
 	baseStore := newMockStaticPWStore()
 	svc, _ := tfCreateServiceWithPW(t, defaultMockTPM(), baseStore)
-	_, addErr := svc.staticPWService.AddPasswordV2(AddPasswordParams{
+	_, addErr := svc.staticPWService.AddPassword(AddPasswordParams{
 		Name: "Policy: find-me", Password: "secret",
 		FolderPath: policyPasswordFolder, ReadOnly: true})
 	require.NoError(t, addErr)

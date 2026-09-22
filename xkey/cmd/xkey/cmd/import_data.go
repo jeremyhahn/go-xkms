@@ -24,6 +24,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // ImportData command errors.
@@ -86,22 +87,18 @@ func runImportData(cmd *cobra.Command, args []string) error {
 		return luks.ErrPermissionDenied
 	}
 
-	// Resolve LUKS path, source directory, and mount point from xhome
-	// or legacy defaults.
+	// Resolve LUKS path, source directory, and mount point from xhome.
 	var defaultLUKS, defaultMount string
 	if h := GetHome(); h != nil {
 		defaultLUKS = h.LUKSPath()
 		defaultMount = h.MountPoint()
 	} else {
-		var pathErr error
-		defaultLUKS, pathErr = luks.GetDefaultLUKSPath()
-		if pathErr != nil {
-			return pathErr
+		h, err := xhome.Resolve()
+		if err != nil {
+			return err
 		}
-		defaultMount, pathErr = luks.GetDefaultDataDir()
-		if pathErr != nil {
-			return pathErr
-		}
+		defaultLUKS = h.LUKSPath()
+		defaultMount = h.MountPoint()
 	}
 
 	luksPath := importDataPath

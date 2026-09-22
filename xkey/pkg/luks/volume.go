@@ -22,6 +22,8 @@ import (
 	"strconv"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Volume represents a LUKS encrypted volume.
@@ -32,23 +34,14 @@ type Volume struct {
 	LoopDevice string // Loop device path (set after setup)
 }
 
-// NewVolume creates a new Volume instance with default paths.
+// NewVolume creates a new Volume instance with paths resolved through
+// xhome.Resolve.
 func NewVolume() (*Volume, error) {
-	luksPath, err := GetDefaultLUKSPath()
+	h, err := xhome.Resolve()
 	if err != nil {
 		return nil, err
 	}
-
-	dataDir, err := GetDefaultDataDir()
-	if err != nil {
-		return nil, err
-	}
-
-	return &Volume{
-		LUKSPath:   luksPath,
-		MountPoint: dataDir,
-		MapperName: MapperName,
-	}, nil
+	return NewVolumeFromHome(h), nil
 }
 
 // NewVolumeWithPaths creates a Volume with custom paths.

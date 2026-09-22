@@ -113,8 +113,19 @@ func TestUnsealLocalNoiseKey_SealedFormWithoutBarrierIsRefused(t *testing.T) {
 
 	_, err = UnsealLocalNoiseKey(nil, sealed)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNoiseKeyUnsealBarrierRequired,
+	assert.ErrorIs(t, err, ErrNoiseKeyFormMismatch,
 		"a sealed key must never fall back to being read as plaintext")
+}
+
+func TestUnsealLocalNoiseKey_LegacyFormWithBarrierIsRefused(t *testing.T) {
+	priv := []byte("legacy-plaintext-private-scalar")
+	legacy := base64.StdEncoding.EncodeToString(priv)
+
+	barrier := xorTestBarrier{key: 0x42}
+	_, err := UnsealLocalNoiseKey(barrier, legacy)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoiseKeyFormMismatch,
+		"a barrier open on this host must not read a legacy plaintext record as-is -- there is no migration; re-pair")
 }
 
 func TestUnsealLocalNoiseKey_SealedBarrierFailureIsWrapped(t *testing.T) {

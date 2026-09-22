@@ -102,6 +102,13 @@ var (
 	// ErrDecryptFailed is returned when password decryption fails.
 	ErrDecryptFailed = errors.New("staticpw: decrypt failed")
 
+	// ErrPasswordNotEncrypted is returned when EncryptedStore reads a stored
+	// password value with no "ENC:" prefix. Every password EncryptedStore
+	// writes carries the prefix; a record without one predates encryption
+	// and cannot be read through this store (BREAKING, go-xkms compat
+	// cleanup PR5, removing the plaintext pass-through).
+	ErrPasswordNotEncrypted = errors.New("staticpw: stored password is not encrypted")
+
 	// ErrNilBarrierRegistry is returned when a nil BarrierRegistry is provided
 	// to the TenantPasswordStoreManager constructor.
 	ErrNilBarrierRegistry = errors.New("staticpw: barrier registry is nil")

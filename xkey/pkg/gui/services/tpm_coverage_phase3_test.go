@@ -468,12 +468,11 @@ func TestP3_GetVerificationStatus_DelegatesToVerifyTPM(t *testing.T) {
 // ListPolicies: with data (60% -> higher)
 // ---------------------------------------------------------------------------
 
-func TestP3_ListPolicies_NoDataDir(t *testing.T) {
+func TestP3_ListPolicies_NoStoreConfigured(t *testing.T) {
 	svc := newServiceWithMock(defaultMockTPM())
-	// No dataDir set, returns empty list
-	policies, err := svc.ListPolicies()
-	require.NoError(t, err)
-	assert.Empty(t, policies)
+	// No policy store wired.
+	_, err := svc.ListPolicies()
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 func TestP3_ListPolicies_WithSavedPolicies(t *testing.T) {
@@ -511,28 +510,20 @@ func TestP3_GetPolicy_Found(t *testing.T) {
 	assert.Equal(t, "test policy", policy.Description)
 }
 
-func TestP3_GetPolicy_NoDataDir(t *testing.T) {
+func TestP3_GetPolicy_NoStoreConfigured(t *testing.T) {
 	svc := newServiceWithMock(defaultMockTPM())
 	_, err := svc.GetPolicy("anything")
-	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // ---------------------------------------------------------------------------
-// savePolicies: write error path (66.7% -> higher)
+// savePolicies: no store configured
 // ---------------------------------------------------------------------------
 
-func TestP3_SavePolicies_WriteError(t *testing.T) {
-	svc := newServiceWithMock(defaultMockTPM())
-	svc.SetDataDir("/proc/nonexistent_dir_for_test")
-	err := svc.savePolicies([]PCRPolicy{{Name: "x"}})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "write policies")
-}
-
-func TestP3_SavePolicies_NoDataDir(t *testing.T) {
+func TestP3_SavePolicies_NoStoreConfigured(t *testing.T) {
 	svc := newServiceWithMock(defaultMockTPM())
 	err := svc.savePolicies([]PCRPolicy{{Name: "x"}})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // ---------------------------------------------------------------------------
@@ -576,19 +567,14 @@ func TestP3_ExportPolicy_WithDigests(t *testing.T) {
 	assert.NotEmpty(t, digests)
 }
 
-func TestP3_ExportPolicy_NoPCRSelections(t *testing.T) {
+func TestP3_CreatePolicy_NoPCRSelectionsRejected(t *testing.T) {
+	// A plain PCRPolicy with no PCR selections cannot be represented in the
+	// canonical pcr_policy store.
 	svc, _ := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
+	err := svc.CreatePolicy(&PCRPolicy{
 		Name: "export-nopcr",
-	}))
-
-	exported, err := svc.ExportPolicy("export-nopcr")
-	require.NoError(t, err)
-	var parsed map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(exported), &parsed))
-	// No pcr_bank or pcr_selections keys should be present
-	_, hasBankKey := parsed["pcr_bank"]
-	assert.False(t, hasBankKey)
+	})
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // ---------------------------------------------------------------------------

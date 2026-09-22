@@ -602,6 +602,7 @@ func TestP4A_ComparePolicyPCRs_NoDigests(t *testing.T) {
 	svc := NewTPMService()
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 
 	policy := PCRPolicy{
 		Name:          "no-digests",
@@ -618,6 +619,7 @@ func TestP4A_ComparePolicyPCRs_NoDigests(t *testing.T) {
 func TestP4A_ComparePolicyPCRs_TPMUnavailable(t *testing.T) {
 	svc := NewTPMService()
 	svc.SetDataDir(t.TempDir())
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	policy := PCRPolicy{
 		Name:          "offline-cmp",
 		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
@@ -1162,7 +1164,7 @@ func TestP4A_CreateDefaultPlatformPolicy_Idempotent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// loadAssignments / loadPolicies: corrupt JSON
+// loadAssignments: corrupt JSON; loadPolicies: no store configured
 // ---------------------------------------------------------------------------
 
 func TestP4A_LoadAssignments_CorruptJSON(t *testing.T) {
@@ -1171,10 +1173,11 @@ func TestP4A_LoadAssignments_CorruptJSON(t *testing.T) {
 	assert.Empty(t, svc.loadAssignments())
 }
 
-func TestP4A_LoadPolicies_CorruptJSON(t *testing.T) {
-	svc, dataDir := createTestTPMService(t, defaultMockTPM())
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), []byte("not-json"), 0644))
-	assert.Empty(t, svc.loadPolicies())
+func TestP4A_LoadPolicies_NoStoreConfigured(t *testing.T) {
+	svc := newServiceWithMock(defaultMockTPM())
+	svc.SetDataDir(t.TempDir())
+	_, err := svc.loadPolicies()
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // ---------------------------------------------------------------------------

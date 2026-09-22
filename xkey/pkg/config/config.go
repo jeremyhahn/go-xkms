@@ -206,8 +206,10 @@ type AutoUnsealConfig struct {
 }
 
 // BackendsConfig holds the multi-backend configuration for xkey.
-// When this section is absent from the config file, xkey auto-populates
-// it from the legacy Backend.Default field for backward compatibility.
+// DefaultConfig populates it with a single "software" local backend; an
+// existing config file with an empty Backends section registers no
+// local/remote backends at load time (the software backend the app
+// registers unconditionally covers core functionality regardless).
 type BackendsConfig struct {
 	Defaults map[string]string     `yaml:"defaults,omitempty" json:"defaults,omitempty" mapstructure:"defaults"`
 	Local    []LocalBackendConfig  `yaml:"local,omitempty" json:"local,omitempty" mapstructure:"local"`
@@ -318,6 +320,11 @@ func DefaultConfig() *Config {
 		Policy: *DefaultPolicy(),
 		Backend: BackendConfig{
 			Default: "software",
+		},
+		Backends: BackendsConfig{
+			Local: []LocalBackendConfig{
+				{ID: "software", Category: "software", Name: "Local software"},
+			},
 		},
 		FIDO2: FIDO2Config{
 			Storage:     "file",
@@ -475,38 +482,4 @@ func (c *Config) validateBackends() error {
 	}
 
 	return nil
-}
-
-// AutoPopulateBackends creates a BackendsConfig from the legacy Backend.Default
-// field when the Backends section has no local or remote entries. This ensures
-// backward compatibility with older config files.
-func (c *Config) AutoPopulateBackends() {
-	if len(c.Backends.Local) > 0 || len(c.Backends.Remote) > 0 {
-		return
-	}
-
-	defaultBackend := c.Backend.Default
-	if defaultBackend == "" {
-		defaultBackend = "software"
-	}
-
-	localBackend := LocalBackendConfig{
-		ID:       defaultBackend,
-		Category: defaultBackend,
-		Name:     "Local " + defaultBackend,
-	}
-
-	// Populate backend-specific config from legacy fields.
-	if defaultBackend == "tpm2" && c.Backend.TPM2.Device != "" {
-		localBackend.TPM2 = &TPM2BackendConfig{
-			Device:    c.Backend.TPM2.Device,
-			Simulator: c.Backend.TPM2.Simulator,
-		}
-	}
-
-	c.Backends.Local = []LocalBackendConfig{localBackend}
-
-	if c.Backends.Defaults == nil {
-		c.Backends.Defaults = make(map[string]string)
-	}
 }

@@ -24,6 +24,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Unseal command errors.
@@ -134,15 +135,12 @@ func createUnsealVolume() (*luks.Volume, error) {
 		luksPath = h.LUKSPath()
 		mountPoint = h.MountPoint()
 	} else {
-		var err error
-		luksPath, err = luks.GetDefaultLUKSPath()
+		h, err := xhome.Resolve()
 		if err != nil {
 			return nil, err
 		}
-		mountPoint, err = luks.GetDefaultDataDir()
-		if err != nil {
-			return nil, err
-		}
+		luksPath = h.LUKSPath()
+		mountPoint = h.MountPoint()
 	}
 
 	if unsealPath != "" {

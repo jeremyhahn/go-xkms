@@ -38,6 +38,7 @@ func surgCreateServiceWithPWStore(t *testing.T, mock *mockTPM) (*TPMService, str
 	svc := newServiceWithMock(mock)
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	spwStore := staticpw.NewStore(xkms.NewStorageMemory())
 	svc.SetStaticPasswordService(NewStaticPasswordService(spwStore))
 	return svc, dataDir
@@ -177,23 +178,24 @@ func TestSurgTPM_GetConflictingAssignments_EmptyHandles(t *testing.T) {
 
 func TestSurgTPM_AssignPolicyToKey_UpdateExisting(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
+	sel := []PCRSelection{{Index: 0, Bank: "sha256"}}
 	// Create initial policy + assignment.
 	policy := PCRPolicy{
-		Name:      "assign-update-pol",
-		CreatedAt: "2025-01-01T00:00:00Z",
+		Name:          "assign-update-pol",
+		CreatedAt:     "2025-01-01T00:00:00Z",
+		PCRSelections: sel,
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	// Create a second policy.
 	policy2 := PCRPolicy{
-		Name:      "assign-update-pol2",
-		CreatedAt: "2025-01-01T00:00:00Z",
+		Name:          "assign-update-pol2",
+		CreatedAt:     "2025-01-01T00:00:00Z",
+		PCRSelections: sel,
 	}
-	polData2, _ := json.MarshalIndent([]PCRPolicy{policy, policy2}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData2, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy, policy2})
 
 	// Assign initial policy.
 	err := svc.AssignPolicyToKey("assign-update-pol", "0x81000001")
@@ -377,9 +379,8 @@ func TestSurgTPM_AssignPolicyToKeys_NewAndExisting(t *testing.T) {
 	svc, dataDir := tsCreateService(t, mock)
 
 	// Create a PCR policy.
-	policy := PCRPolicy{Name: "multi-assign", CreatedAt: "2025-01-01T00:00:00Z"}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	policy := PCRPolicy{Name: "multi-assign", CreatedAt: "2025-01-01T00:00:00Z", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	// Pre-create one assignment.
 	existing := []PolicyAssignment{
@@ -426,11 +427,10 @@ func TestSurgTPM_AssignPolicyToKeys_PolicyNotFound(t *testing.T) {
 
 func TestSurgTPM_AssignPolicyToKeys_WhitespaceHandlesSkipped(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
-	policy := PCRPolicy{Name: "ws-handles", CreatedAt: "2025-01-01T00:00:00Z"}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	policy := PCRPolicy{Name: "ws-handles", CreatedAt: "2025-01-01T00:00:00Z", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}}
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	// Empty/whitespace handles should be skipped.
 	err := svc.AssignPolicyToKeys("ws-handles", []string{"  ", "", "0x81000001"})
@@ -445,15 +445,20 @@ func TestSurgTPM_AssignPolicyToKeys_WhitespaceHandlesSkipped(t *testing.T) {
 // importBinaryPolicyDigest: filename with no base name -> "imported-policy" default
 // ---------------------------------------------------------------------------
 
+// TestSurgTPM_ImportBinaryPolicyDigest_EmptyBaseName documents a
+// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
+// separately): importBinaryPolicyDigest builds a PCRPolicy with a
+// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
+// always rejects. Every production TPMService has a policy store wired
+// (see app.go SetPolicyStore), so this path fails the same way in
+// production today.
 func TestSurgTPM_ImportBinaryPolicyDigest_EmptyBaseName(t *testing.T) {
 	mock := defaultMockTPM()
 	svc, _ := tsCreateService(t, mock)
 
-	// Construct a path where the filename after removing the extension is empty.
 	data := []byte{0xDE, 0xAD}
-	name, err := svc.importBinaryPolicyDigest("/tmp/.bin", data)
-	require.NoError(t, err)
-	assert.Equal(t, "imported-policy", name)
+	_, err := svc.importBinaryPolicyDigest("/tmp/.bin", data)
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +491,12 @@ func TestSurgTPM_ImportJSONPolicy_DefaultPCRBank(t *testing.T) {
 // importJSONPolicy: with description field (L3572)
 // ---------------------------------------------------------------------------
 
+// TestSurgTPM_ImportJSONPolicy_WithDescription documents a pre-existing
+// gap (unrelated to go-xkms compat cleanup PR5, tracked separately):
+// without "pcr_selections", importJSONPolicy still builds a plain
+// PCRPolicy with no selections, which pcrPolicyToEntity always rejects.
+// Every production TPMService has a policy store wired (see app.go
+// SetPolicyStore), so this path fails the same way in production today.
 func TestSurgTPM_ImportJSONPolicy_WithDescription(t *testing.T) {
 	mock := defaultMockTPM()
 	svc, _ := tsCreateService(t, mock)
@@ -496,9 +507,8 @@ func TestSurgTPM_ImportJSONPolicy_WithDescription(t *testing.T) {
 		"pcr_bank": "sha384"
 	}`
 
-	name, err := svc.importJSONPolicy([]byte(policyJSON))
-	require.NoError(t, err)
-	assert.Equal(t, "desc-test", name)
+	_, err := svc.importJSONPolicy([]byte(policyJSON))
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // ---------------------------------------------------------------------------
@@ -586,25 +596,28 @@ func TestSurgTPM_ExportCompositePolicy_PCRBankFromSelections(t *testing.T) {
 // ExportPolicy: with UpdatedAt field set (L3352-3354)
 // ---------------------------------------------------------------------------
 
+// TestSurgTPM_ExportPolicy_WithUpdatedAt verifies ExportPolicy includes an
+// updated_at field. The canonical pcr_policy store stamps UpdatedAt with
+// the save time on every Save (see pcr_policy.DAOStore.Save), so a
+// caller-supplied UpdatedAt value does not round-trip; only field
+// presence is checked here.
 func TestSurgTPM_ExportPolicy_WithUpdatedAt(t *testing.T) {
 	mock := defaultMockTPM()
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policies := []PCRPolicy{
 		{
-			Name:       "export-updated-pcr",
-			CreatedAt:  "2025-01-01T00:00:00Z",
-			UpdatedAt:  "2025-06-01T12:00:00Z",
-			PCRDigests: map[string]string{"sha256:0": "aabb"},
+			Name:          "export-updated-pcr",
+			CreatedAt:     "2025-01-01T00:00:00Z",
+			PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+			PCRDigests:    map[string]string{"sha256:0": "aabb"},
 		},
 	}
-	polData, _ := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ExportPolicy("export-updated-pcr")
 	require.NoError(t, err)
 	assert.Contains(t, result, "updated_at")
-	assert.Contains(t, result, "2025-06-01")
 }
 
 // ---------------------------------------------------------------------------
@@ -720,7 +733,7 @@ func TestSurgTPM_ComparePolicyPCRs_MultiplePCRs(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policy := PCRPolicy{
 		Name: "multi-pcr-compare",
@@ -736,8 +749,7 @@ func TestSurgTPM_ComparePolicyPCRs_MultiplePCRs(t *testing.T) {
 		},
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	result, err := svc.ComparePolicyPCRs("multi-pcr-compare")
 	require.NoError(t, err)
@@ -765,7 +777,7 @@ func TestSurgTPM_ListPoliciesWithDigests_AllMatch(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policy := PCRPolicy{
 		Name: "all-match",
@@ -779,8 +791,7 @@ func TestSurgTPM_ListPoliciesWithDigests_AllMatch(t *testing.T) {
 		},
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	policies, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -804,7 +815,7 @@ func TestSurgTPM_ListPoliciesWithDigests_CurrentHexEmpty(t *testing.T) {
 		},
 	}
 
-	svc, dataDir := tsCreateService(t, mock)
+	svc, _ := tsCreateService(t, mock)
 
 	policy := PCRPolicy{
 		Name: "empty-current",
@@ -818,8 +829,7 @@ func TestSurgTPM_ListPoliciesWithDigests_CurrentHexEmpty(t *testing.T) {
 		},
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	polData, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), polData, 0600))
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	policies, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)

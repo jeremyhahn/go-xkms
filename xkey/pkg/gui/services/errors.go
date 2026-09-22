@@ -105,6 +105,11 @@ var (
 	// ErrTPMDataDirNotSet indicates the data directory has not been configured.
 	ErrTPMDataDirNotSet = errors.New("tpm_service: data directory not set")
 
+	// ErrTPMPolicyStoreNotSet indicates SetPolicyStore has not been called.
+	// PCR policy CRUD requires the canonical pcr_policy store wired by the
+	// composition root; there is no file-backed fallback.
+	ErrTPMPolicyStoreNotSet = errors.New("tpm_service: PCR policy store not set")
+
 	// ErrTPMInvalidHandle indicates an invalid TPM handle value was provided.
 	ErrTPMInvalidHandle = errors.New("tpm_service: invalid handle")
 

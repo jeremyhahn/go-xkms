@@ -167,7 +167,7 @@ func TestSB_AdminService_ExportAuditLogs(t *testing.T) {
 func TestSB_PP_GetStatus_SealServiceNil(t *testing.T) {
 	store := &sbMockStaticPWStore{}
 	staticSvc := NewStaticPasswordService(store)
-	svc := NewPasswordProtectionService("", staticSvc, nil)
+	svc := NewPasswordProtectionService(staticSvc, nil)
 
 	status, err := svc.GetStatus()
 	if err != nil {

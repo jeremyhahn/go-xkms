@@ -46,13 +46,12 @@ where data lives or how it's protected.
 | Initialized (encrypted at rest) | Namespaced under the barrier via a `"ssh/"` prefix backend — keys, profiles, and pins are encrypted at rest with everything else in the barrier. |
 | Not initialized | A plain engine store at `<data-dir>/ssh` (file/pebble/memory, per the configured storage engine). |
 
-The first time a barrier-backed store is opened, `sshstore.MigrateLegacyStores`
-does a **one-shot import** of any pre-barrier plaintext data — from
-`<data-dir>/ssh` and the old `$HOME/.xkey-store/ssh` default — into the
-encrypted store, then renames the source directory to `*.pre-barrier.bak` so
-it is never re-imported. The old hardcoded `~/.xkey-store/ssh` default path
-itself is gone; the shared resolver always derives its root from the app's
-data directory.
+There is no migration between the two forms: a plaintext store from before
+the barrier was initialized is not imported into the barrier-encrypted
+store. Initialize the barrier first, then re-add SSH keys, profiles, and
+host-key pins through the CLI or GUI. The old hardcoded `~/.xkey-store/ssh`
+default path is gone; the shared resolver always derives its root from the
+app's data directory.
 
 The CLI has no barrier-unlock flow of its own. If the store is
 barrier-encrypted, SSH commands fail with:

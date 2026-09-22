@@ -103,7 +103,7 @@ type StaticPasswordEntry struct {
 	ReadOnly        bool     `json:"read_only"`
 }
 
-// AddPasswordParams holds parameters for AddPasswordV2.
+// AddPasswordParams holds parameters for AddPassword.
 type AddPasswordParams struct {
 	Name          string   `json:"name"`
 	Title         string   `json:"title"`
@@ -117,7 +117,7 @@ type AddPasswordParams struct {
 	ReadOnly      bool     `json:"read_only"`
 }
 
-// UpdatePasswordParams holds parameters for UpdatePasswordV2.
+// UpdatePasswordParams holds parameters for UpdatePassword.
 type UpdatePasswordParams struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name"`
@@ -225,20 +225,8 @@ func (s *StaticPasswordService) GetPassword(idOrName string) (*StaticPasswordEnt
 	return &entry, nil
 }
 
-// AddPassword creates a new static password entry with the given name, password,
-// and notes. The name must not be empty. Returns the created entry with its
-// generated ID and timestamps. This method is kept for backward compatibility
-// and delegates to AddPasswordV2.
-func (s *StaticPasswordService) AddPassword(name, password, notes string) (*StaticPasswordEntry, error) {
-	return s.AddPasswordV2(AddPasswordParams{
-		Name:     name,
-		Password: password,
-		Notes:    notes,
-	})
-}
-
-// AddPasswordV2 creates a new static password entry with all supported fields.
-func (s *StaticPasswordService) AddPasswordV2(params AddPasswordParams) (*StaticPasswordEntry, error) {
+// AddPassword creates a new static password entry with all supported fields.
+func (s *StaticPasswordService) AddPassword(params AddPasswordParams) (*StaticPasswordEntry, error) {
 	if s.store == nil {
 		return nil, ErrStaticPWStoreNotSet
 	}
@@ -274,22 +262,9 @@ func (s *StaticPasswordService) AddPasswordV2(params AddPasswordParams) (*Static
 	return &entry, nil
 }
 
-// UpdatePassword modifies an existing static password entry identified by ID.
-// It fetches the current entry, applies the provided field values, and persists
-// the update. This method is kept for backward compatibility and delegates to
-// UpdatePasswordV2.
-func (s *StaticPasswordService) UpdatePassword(id, name, password, notes string) error {
-	return s.UpdatePasswordV2(UpdatePasswordParams{
-		ID:       id,
-		Name:     name,
-		Password: password,
-		Notes:    notes,
-	})
-}
-
-// UpdatePasswordV2 modifies an existing static password entry with all
+// UpdatePassword modifies an existing static password entry with all
 // supported fields.
-func (s *StaticPasswordService) UpdatePasswordV2(params UpdatePasswordParams) error {
+func (s *StaticPasswordService) UpdatePassword(params UpdatePasswordParams) error {
 	if s.store == nil {
 		return ErrStaticPWStoreNotSet
 	}

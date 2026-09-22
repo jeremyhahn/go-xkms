@@ -884,7 +884,7 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	saveUserPin := (choices.QuickSetup && choices.DeploymentMode == "personal") || choices.SavePinsToStore
 	if dataDirReady && saveUserPin && s.staticPwSvc != nil {
 		if choices.UserPin != "" {
-			if _, err := s.staticPwSvc.AddPasswordV2(AddPasswordParams{
+			if _, err := s.staticPwSvc.AddPassword(AddPasswordParams{
 				Name:       "User PIN",
 				Password:   choices.UserPin,
 				Notes:      "User PIN — auto-generated during setup. Used to unlock the app.",
@@ -1342,12 +1342,6 @@ func (s *SetupWizardService) ApplySOProvisioning(choices *SetupChoices) (result 
 	policy := config.DefaultPolicy()
 
 	// Core security requirements — PlatformSRK is always created.
-	//
-	// RequirePlatformPolicy is deliberately not set here. It used to be
-	// hardcoded true regardless of anything the operator chose, and nothing
-	// ever read it back (#313 ruling #19) -- the wizard's own checkbox for
-	// it had no effect either way. Leave it at DefaultPolicy()'s zero value
-	// until #313 (A)/(B) gives it an enforcement path to write for.
 	policy.PlatformPCRs = []int{0, 7, 9}
 	policy.PlatformPCRBank = "sha256"
 	if choices.StorageType != "" {

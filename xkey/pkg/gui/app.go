@@ -341,8 +341,10 @@ func (a *App) BackendRegistry() backendregistry.Registry {
 }
 
 // populateBackendRegistry loads the unified config and registers backends
-// in the registry. When no BackendsConfig is present, it auto-creates a
-// single software backend from the legacy Backend.Default field.
+// in the registry. A fresh config's Backends section is pre-populated by
+// config.DefaultConfig(); an existing config with an empty Backends section
+// registers no local/remote entries here, but the software backend below is
+// always registered regardless, so the registry is never empty.
 func (a *App) populateBackendRegistry() {
 	ucfg, err := config.Load()
 	if err != nil {
@@ -352,9 +354,6 @@ func (a *App) populateBackendRegistry() {
 		a.registerDefaultSoftwareBackend()
 		return
 	}
-
-	// Auto-populate backends from legacy config if the section is empty.
-	ucfg.AutoPopulateBackends()
 
 	registered := 0
 
@@ -1009,12 +1008,8 @@ func (a *App) initializeDataDir() error {
 		a.pivStorageBE = pivStorageBE
 	}
 
-	// Relocate sealed blob storage from config dir to data dir.
+	// Sealed blob storage lives under the data directory.
 	newSealDir := filepath.Join(dir, "sealed")
-	legacyCfgSealDir := ""
-	if a.configDirPath != "" {
-		legacyCfgSealDir = filepath.Join(a.configDirPath, "sealed")
-	}
 	if err := a.sealService.SetStorageDir(newSealDir); err != nil {
 		a.log.Warn("failed to set seal storage directory", "dir", newSealDir, "error", err)
 	}
@@ -1022,15 +1017,6 @@ func (a *App) initializeDataDir() error {
 	if barrierBackend != nil {
 		a.sealService.SetBackend(barrierBackend, "sealed/")
 		a.log.Info("sealed blob store using barrier backend")
-	}
-	if legacyCfgSealDir != "" {
-		if migrated, migErr := a.sealService.MigrateFrom(legacyCfgSealDir); migErr != nil {
-			a.log.Warn("failed to migrate sealed blobs from config dir",
-				"from", legacyCfgSealDir, "error", migErr)
-		} else if migrated > 0 {
-			a.log.Info("migrated sealed blobs from config dir to data dir",
-				"from", legacyCfgSealDir, "to", newSealDir, "count", migrated)
-		}
 	}
 
 	// Audit store — migrate to barrier-encrypted persistence.
@@ -1051,9 +1037,6 @@ func (a *App) initializeDataDir() error {
 	// dataDir/ssh. Wired here (not in NewApp) so the barrier decision and
 	// the resolved data directory are both known.
 	a.initializeSSHServices(dir, barrierBackend)
-
-	// Migrate old barrier data from config dir to data dir.
-	a.migrateBarrierData()
 
 	// NOTE: PIN service is initialized in postDataDirStartup(), which always
 	// follows initializeDataDir() in all call paths. No need to call it here.
@@ -1091,9 +1074,8 @@ func (a *App) initializeDataDir() error {
 
 // initializeSSHServices wires the SSH key, profile, connect, console, and
 // local services over the shared SSH store (xkey/pkg/sshstore). When the
-// barrier is active the store is barrier-routed (encrypted at rest) and any
-// legacy plaintext store under dir/ssh is migrated once; otherwise a plain
-// engine store rooted at dir/ssh is used.
+// barrier is active the store is barrier-routed (encrypted at rest);
+// otherwise a plain engine store rooted at dir/ssh is used.
 //
 // All five ssh*Service fields are unconditionally constructed in NewApp
 // (the only production App constructor), so they are never nil here.
@@ -1106,11 +1088,6 @@ func (a *App) initializeSSHServices(dir string, barrierBackend xkmssdk.StorageBa
 	if sshStoreErr != nil {
 		a.log.Warn("SSH service disabled: failed to open ssh store", "error", sshStoreErr)
 		return
-	}
-	if barrierBackend != nil {
-		if merr := sshstore.MigrateLegacyStores(context.Background(), dir, sshStorage); merr != nil {
-			a.log.Warn("SSH store: legacy migration failed", "error", merr)
-		}
 	}
 
 	provider, perr := sshclient.NewBackendProvider(func(_ context.Context, backendID string) (xkmssdk.KeyProvider, error) {
@@ -1599,75 +1576,6 @@ func (a *App) buildXKMSBackendConfigs() map[xkmssdk.ServiceBackendType]map[strin
 	return configs
 }
 
-// migrateBarrierData copies encrypted data from the legacy barrier directory
-// (~/.config/xkey/barrier/) to the data directory (~/.xkey/data/) when the
-// barrier has been reconfigured to use the data directory.
-func (a *App) migrateBarrierData() {
-	if a.configDirPath == "" || a.dataDir == "" {
-		return
-	}
-
-	oldBarrierDir := filepath.Join(a.configDirPath, "barrier")
-
-	// Only migrate if old barrier dir exists.
-	entries, err := os.ReadDir(oldBarrierDir)
-	if err != nil || len(entries) == 0 {
-		return
-	}
-
-	// Check if barrier root key exists in old location but not new.
-	oldRootKey := filepath.Join(oldBarrierDir, "barrier", "root_key")
-	newRootKey := filepath.Join(a.dataDir, "barrier", "root_key")
-
-	if _, statErr := os.Stat(oldRootKey); statErr != nil {
-		return // No old root key, nothing to migrate
-	}
-	if _, statErr := os.Stat(newRootKey); statErr == nil {
-		return // New root key already exists, already migrated
-	}
-
-	a.log.Info("migrating barrier data from config dir to data dir",
-		"from", oldBarrierDir, "to", a.dataDir)
-
-	if walkErr := filepath.WalkDir(oldBarrierDir, func(path string, d fs.DirEntry, wErr error) error {
-		if wErr != nil {
-			return wErr
-		}
-
-		relPath, relErr := filepath.Rel(oldBarrierDir, path)
-		if relErr != nil {
-			return relErr
-		}
-
-		dstPath := filepath.Join(a.dataDir, relPath)
-
-		if d.IsDir() {
-			return os.MkdirAll(dstPath, 0700)
-		}
-
-		// Don't overwrite existing files.
-		if _, existErr := os.Stat(dstPath); existErr == nil {
-			return nil
-		}
-
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-
-		if mkErr := os.MkdirAll(filepath.Dir(dstPath), 0700); mkErr != nil {
-			return mkErr
-		}
-
-		return os.WriteFile(dstPath, data, 0600)
-	}); walkErr != nil {
-		a.log.Warn("barrier data migration failed", "error", walkErr)
-		return
-	}
-
-	a.log.Info("barrier data migration complete")
-}
-
 // InitializeDataDir is the public Wails-bound method that triggers data
 // directory creation. It is called from the setup wizard callback or
 // after a manual LUKS unlock.
@@ -1807,7 +1715,7 @@ func NewApp(cfg *GUIConfig) *App {
 
 	// Password protection service starts without a config path.
 	// The config path is set by initializeDataDir() after data dir creation.
-	ppSvc := services.NewPasswordProtectionService("", staticPWSvc, sealSvc)
+	ppSvc := services.NewPasswordProtectionService(staticPWSvc, sealSvc)
 
 	// Seal protection service: global lock/unlock gate for sealed data.
 	sealProtSvc := services.NewSealProtectionService(sealSvc)
@@ -2009,9 +1917,8 @@ func NewApp(cfg *GUIConfig) *App {
 	// service.
 	authSvc.SetVerifiedPolicyHandler(a.applyVerifiedEnterprisePolicy)
 
-	// Populate backend registry from the unified config. When the backends
-	// section is absent, AutoPopulateBackends creates a single entry from
-	// the legacy Backend.Default field for backward compatibility.
+	// Populate backend registry from the unified config's Backends section
+	// (pre-populated by config.DefaultConfig() for a fresh config).
 	a.populateBackendRegistry()
 
 	// Re-register persisted PKCS#11 modules with the PKCS#11 manager so
@@ -3111,20 +3018,6 @@ func (a *App) postDataDirStartup() {
 	// Initialize PIN service for cross-subsystem PIN management.
 	a.initPINService()
 
-	// Remove legacy PIN artifacts (pin-state.json, tpm/pin_state.json, user_pin blobs).
-	// Idempotent: safe to run on every startup.
-	a.migratePINArtifacts()
-
-	// Migrate legacy static password entries.
-	if a.staticpwStore != nil {
-		migrated, migrateErr := staticpw.MigrateStore(a.staticpwStore)
-		if migrateErr != nil {
-			a.log.Warn("static password migration failed", "error", migrateErr)
-		} else if migrated > 0 {
-			a.log.Info("migrated static password entries", "count", migrated)
-		}
-	}
-
 	// Start password expiry checker (1-hour interval).
 	if a.staticpwStore != nil {
 		a.expiryChecker = staticpw.NewExpiryChecker(a.staticpwStore, time.Hour, func(pw *staticpw.StaticPassword) {
@@ -3170,17 +3063,12 @@ func (a *App) initPINService() {
 	}
 
 	backend, strategy, err := services.ResolvePINBackend(
-		a.tpmAccessor, a.dataDir, a.config.PINStrategy, a.storageEngineKind(), a.log)
+		a.tpmAccessor, a.dataDir, a.storageEngineKind(), a.log)
 	if err != nil {
 		a.log.Error("initPINService: failed to resolve PIN backend", "error", err)
 		return
 	}
 	strategyID := string(strategy)
-
-	// GUIConfig.PINStrategy is retained read-only, for
-	// services.ResolvePINBackend's one-time migration on older installs;
-	// the shared PIN dir is now the single source of truth, so it is not
-	// written here.
 
 	svc := qrdbsdk.NewPINService(backend, a.log)
 

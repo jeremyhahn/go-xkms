@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Migrate command errors.
@@ -142,15 +143,16 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	var sourceVol *luks.Volume
 	var err error
 	if migrateSourcePath != "" {
-		// Use custom source path — resolve mount point from home or legacy default.
+		// Use custom source path — resolve mount point from xhome.
 		var mountPoint string
 		if h := GetHome(); h != nil {
 			mountPoint = h.MountPoint()
 		} else {
-			mountPoint, err = luks.GetDefaultDataDir()
-			if err != nil {
-				return err
+			h, resolveErr := xhome.Resolve()
+			if resolveErr != nil {
+				return resolveErr
 			}
+			mountPoint = h.MountPoint()
 		}
 		sourceVol = luks.NewVolumeWithPaths(migrateSourcePath, mountPoint)
 	} else if h := GetHome(); h != nil {

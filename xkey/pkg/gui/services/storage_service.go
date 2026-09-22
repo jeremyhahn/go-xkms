@@ -20,6 +20,7 @@ import (
 	"os"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 const (
@@ -209,14 +210,11 @@ func (s *StorageService) MigrateToEncrypted(sizeGB int, passphrase string, backu
 		return s.migrateToEncryptedDirect(sizeGB, passphrase, backupOriginal)
 	}
 
-	luksPath, err := luks.GetDefaultLUKSPath()
+	h, err := xhome.Resolve()
 	if err != nil {
 		return err
 	}
-	dataDir, err := luks.GetDefaultDataDir()
-	if err != nil {
-		return err
-	}
+	luksPath, dataDir := h.LUKSPath(), h.MountPoint()
 
 	// If the volume doesn't exist, create it first with --skip-migrate
 	vol := luks.NewVolumeWithPaths(luksPath, "")
@@ -253,14 +251,11 @@ func (s *StorageService) MigrateToEncrypted(sizeGB int, passphrase string, backu
 
 // migrateToEncryptedDirect creates and imports data directly when running as root.
 func (s *StorageService) migrateToEncryptedDirect(sizeGB int, passphrase string, backupOriginal bool) error {
-	luksPath, err := luks.GetDefaultLUKSPath()
+	h, err := xhome.Resolve()
 	if err != nil {
 		return err
 	}
-	dataDir, err := luks.GetDefaultDataDir()
-	if err != nil {
-		return err
-	}
+	luksPath, dataDir := h.LUKSPath(), h.MountPoint()
 
 	// Create volume if it doesn't exist
 	vol := luks.NewVolumeWithPaths(luksPath, "")
@@ -374,15 +369,11 @@ func (s *StorageService) WipeVolume(standard string) error {
 // current user's home directory. This prevents path resolution issues
 // when the command is re-invoked via sudo (where $HOME becomes /root).
 func luksPathArgs() []string {
-	luksPath, err := luks.GetDefaultLUKSPath()
+	h, err := xhome.Resolve()
 	if err != nil {
 		return nil
 	}
-	mountPoint, err := luks.GetDefaultDataDir()
-	if err != nil {
-		return nil
-	}
-	return []string{"--path", luksPath, "--mount-point", mountPoint}
+	return []string{"--path", h.LUKSPath(), "--mount-point", h.MountPoint()}
 }
 
 // runElevatedCmd executes the xkey CLI with the given arguments and stdin

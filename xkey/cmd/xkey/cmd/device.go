@@ -73,9 +73,6 @@ var (
 const (
 	defaultDeviceScanTimeout = 30 * time.Second
 	devicesConfigFileName    = "devices.yaml"
-
-	// legacyPhoneConfigFileName is the old config file name for migration.
-	legacyPhoneConfigFileName = "phone.yaml"
 )
 
 // Duration wraps time.Duration for YAML marshaling. The type itself is owned
@@ -465,32 +462,12 @@ func resolveInvokingUserHome() (*xhome.Home, error) {
 // getDevicesConfigPath returns the path to the devices configuration file.
 // When running under sudo, it resolves to the invoking user's home directory
 // (via SUDO_USER) so that pair and fido2 commands use the same config file.
-//
-// Migration: if the legacy phone.yaml exists but devices.yaml does not,
-// the old file is automatically renamed.
 func getDevicesConfigPath() (string, error) {
 	home, err := resolveInvokingUserHome()
 	if err != nil {
 		return "", err
 	}
-	configDir := home.Root
-	newPath := filepath.Join(configDir, devicesConfigFileName)
-	legacyPath := filepath.Join(configDir, legacyPhoneConfigFileName)
-
-	// Migrate phone.yaml → devices.yaml if the new file does not exist
-	if _, err := os.Stat(newPath); errors.Is(err, os.ErrNotExist) {
-		if _, err := os.Stat(legacyPath); err == nil {
-			if renameErr := os.Rename(legacyPath, newPath); renameErr != nil {
-				slog.Warn("failed to migrate phone.yaml to devices.yaml",
-					slog.String("error", renameErr.Error()))
-				// Fall through — caller will get ErrNotExist from newPath
-			} else {
-				slog.Info("migrated config", slog.String("from", legacyPath), slog.String("to", newPath))
-			}
-		}
-	}
-
-	return newPath, nil
+	return filepath.Join(home.Root, devicesConfigFileName), nil
 }
 
 // truncateKey truncates a base64 key for display.

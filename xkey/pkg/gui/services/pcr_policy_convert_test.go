@@ -14,9 +14,6 @@
 package services
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -185,49 +182,23 @@ func TestTPMService_PolicyStore_CreateDuplicateFails(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy JSON migration (requirement #4)
+// PCR policy CRUD requires an explicitly wired store (no file fallback)
 // ---------------------------------------------------------------------------
 
-func TestTPMService_SetPolicyStore_MigratesLegacyJSONOnce(t *testing.T) {
-	svc, dataDir := createTestTPMService(t, &mockTPM{})
+func TestTPMService_ListPolicies_NoStoreConfiguredReturnsTypedError(t *testing.T) {
+	svc := newServiceWithMock(&mockTPM{})
+	svc.SetDataDir(t.TempDir())
 
-	legacy := []PCRPolicy{
-		{
-			Name:          "legacy-policy",
-			Description:   "migrated from json",
-			PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
-			PCRDigests:    map[string]string{"sha256:0": "aabbccdd"},
-		},
-	}
-	data, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	legacyPath := filepath.Join(dataDir, pcrPoliciesFile)
-	require.NoError(t, os.WriteFile(legacyPath, data, 0600))
-
-	svc.SetPolicyStore(newTestPCRPolicyStore(t))
-
-	policies, err := svc.ListPolicies()
-	require.NoError(t, err)
-	require.Len(t, policies, 1)
-	assert.Equal(t, "legacy-policy", policies[0].Name)
-	assert.Equal(t, "migrated from json", policies[0].Description)
-
-	// The legacy file must be renamed so migration never runs twice.
-	_, statErr := os.Stat(legacyPath)
-	assert.True(t, os.IsNotExist(statErr), "legacy file should have been renamed")
-	_, statErr = os.Stat(legacyPath + ".migrated")
-	assert.NoError(t, statErr, "renamed .migrated file should exist")
+	_, err := svc.ListPolicies()
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
-func TestTPMService_SetPolicyStore_NoLegacyFileIsNoop(t *testing.T) {
-	svc, _ := createTestTPMService(t, &mockTPM{})
+func TestTPMService_CreatePolicy_NoStoreConfiguredReturnsTypedError(t *testing.T) {
+	svc := newServiceWithMock(&mockTPM{})
+	svc.SetDataDir(t.TempDir())
 
-	// No pcr_policies.json present; SetPolicyStore must not error or panic.
-	svc.SetPolicyStore(newTestPCRPolicyStore(t))
-
-	policies, err := svc.ListPolicies()
-	require.NoError(t, err)
-	assert.Empty(t, policies)
+	err := svc.CreatePolicy(&PCRPolicy{Name: "no-store", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}})
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 func TestTPMService_SyncPoliciesToStore_Error(t *testing.T) {

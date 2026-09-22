@@ -867,12 +867,7 @@
     browserLoading = true;
     const config = await callBackend<BrowserConfig>('BrowserService', 'GetConfig');
     if (config) {
-      // Normalize profile mode defaults for legacy configs missing these fields.
-      browserConfig = {
-        ...config,
-        chrome_profile_mode: config.chrome_profile_mode || 'isolated',
-        firefox_profile_mode: config.firefox_profile_mode || 'isolated',
-      };
+      browserConfig = config;
     }
     const browsers = await callBackend<BrowserInfo[]>('BrowserService', 'DetectBrowsers');
     if (browsers && browsers.length > 0) {

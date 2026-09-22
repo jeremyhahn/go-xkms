@@ -23,41 +23,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
-const (
-	// DefaultLUKSFile is the default LUKS container file path.
-	//
-	// Deprecated: Use xhome.Home.LUKSPath() for unified path resolution.
-	DefaultLUKSFile = ".xkey.luks"
-
-	// DefaultDataDir is the default data directory (mount point).
-	//
-	// Deprecated: Use xhome.Home.MountPoint() for unified path resolution.
-	DefaultDataDir = ".xkey"
-
-	// MapperName is the device-mapper name for the LUKS volume.
-	MapperName = "xkey"
-)
+// MapperName is the device-mapper name for the LUKS volume.
+const MapperName = "xkey"
 
 // LUKS2 magic bytes: "LUKS" followed by 0xba 0xbe.
 var luks2Magic = []byte{'L', 'U', 'K', 'S', 0xba, 0xbe}
-
-// GetDefaultLUKSPath returns the default LUKS file path.
-func GetDefaultLUKSPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", &VolumeError{Operation: "get_home", Err: err}
-	}
-	return filepath.Join(home, DefaultLUKSFile), nil
-}
-
-// GetDefaultDataDir returns the default data directory path.
-func GetDefaultDataDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", &VolumeError{Operation: "get_home", Err: err}
-	}
-	return filepath.Join(home, DefaultDataDir), nil
-}
 
 // IsLUKSVolume checks if the given file is a LUKS volume by reading the magic header.
 func IsLUKSVolume(path string) bool {

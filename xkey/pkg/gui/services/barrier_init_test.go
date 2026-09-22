@@ -69,10 +69,12 @@ func TestBarrierService_Initialize_GetSealInfo_WithDataDir(t *testing.T) {
 	assert.Equal(t, string(xkms.StrategyPassphrase), info.Strategy)
 }
 
-// TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit reproduces a
+// TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit covers a
 // scenario where SetDataDir is called AFTER Initialize(). The root key was
-// written to configDir/barrier/ but GetSealInfo now probes dataDir first.
-// It must still find the root key via the fallback configDir/barrier/ path.
+// written to configDir/barrier/, and storageDir() now points at dataDir
+// instead: there is no cross-directory probing (go-xkms compat cleanup
+// PR5), so GetSealInfo.Initialized reports false even though the live
+// barrier object, held in memory since Initialize(), is still unsealed.
 func TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit(t *testing.T) {
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -88,10 +90,10 @@ func TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit(t *testing.T)
 
 	info := svc.GetSealInfo()
 	require.NotNil(t, info)
-	assert.True(t, info.Initialized,
-		"GetSealInfo must find root key via fallback path after dataDir change")
+	assert.False(t, info.Initialized,
+		"GetSealInfo must not probe configDir/barrier/ once dataDir is set")
 	assert.False(t, info.Sealed,
-		"barrier object is still live, should report unsealed")
+		"the live barrier object held since Initialize() is still unsealed")
 }
 
 // ---------------------------------------------------------------------------
@@ -302,8 +304,9 @@ func TestBarrierService_GetSealInfo_FreshServiceAfterInit_WithDataDir(t *testing
 
 // TestBarrierService_GetSealInfo_FreshServiceAfterInit_DataDirMismatch
 // simulates the case where the first session used configDir/barrier/ but
-// the second session has dataDir set to a different location. The root
-// key must be found via the fallback path.
+// the second session has dataDir set to a different location: there is no
+// cross-directory probing (go-xkms compat cleanup PR5), so the fresh
+// service reports not initialized.
 func TestBarrierService_GetSealInfo_FreshServiceAfterInit_DataDirMismatch(t *testing.T) {
 	configDir := t.TempDir()
 	dataDir := t.TempDir() // different from where root key is
@@ -319,10 +322,10 @@ func TestBarrierService_GetSealInfo_FreshServiceAfterInit_DataDirMismatch(t *tes
 
 	info := svc2.GetSealInfo()
 	require.NotNil(t, info)
-	assert.True(t, info.Initialized,
-		"root key in configDir/barrier/ must be found via fallback path")
-	assert.True(t, info.Sealed,
-		"fresh service has no live barrier, must report Sealed=true")
+	assert.False(t, info.Initialized,
+		"root key in configDir/barrier/ must not be found once dataDir points elsewhere")
+	assert.False(t, info.Sealed,
+		"not initialized: Sealed reports false, matching the zero BarrierSealInfo")
 }
 
 // ---------------------------------------------------------------------------

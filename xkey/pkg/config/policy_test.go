@@ -55,7 +55,6 @@ func TestDefaultPolicyZeroFields(t *testing.T) {
 
 	// These fields must NOT be set by DefaultPolicy.
 	assert.False(t, p.RequireTPM)
-	assert.False(t, p.RequirePlatformPolicy)
 	assert.Nil(t, p.PlatformPCRs)
 	assert.Empty(t, p.PlatformPCRBank)
 	assert.False(t, p.RequirePasswordProtection)
@@ -201,7 +200,6 @@ func TestPolicyCanonicalJSON_FieldOrder(t *testing.T) {
 		"require_encrypted_storage",
 		"storage_type",
 		"require_tpm",
-		"require_platform_policy",
 		"platform_pcrs",
 		"platform_pcr_bank",
 		"require_password_protection",
@@ -252,7 +250,6 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 		RequireEncryptedStorage:        true,
 		StorageType:                    "barrier",
 		RequireTPM:                     true,
-		RequirePlatformPolicy:          true,
 		PlatformPCRs:                   []int{0, 1, 7},
 		PlatformPCRBank:                "sha256",
 		RequirePasswordProtection:      true,
@@ -303,7 +300,6 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 	assert.Equal(t, p.RequireEncryptedStorage, restored.RequireEncryptedStorage)
 	assert.Equal(t, p.StorageType, restored.StorageType)
 	assert.Equal(t, p.RequireTPM, restored.RequireTPM)
-	assert.Equal(t, p.RequirePlatformPolicy, restored.RequirePlatformPolicy)
 	assert.Equal(t, p.PlatformPCRs, restored.PlatformPCRs)
 	assert.Equal(t, p.PlatformPCRBank, restored.PlatformPCRBank)
 	assert.Equal(t, p.RequirePasswordProtection, restored.RequirePasswordProtection)

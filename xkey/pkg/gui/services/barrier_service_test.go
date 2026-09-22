@@ -382,19 +382,18 @@ func TestBarrierService_GetSealInfo_FallbackStrategy_WhenBarrierNil(t *testing.T
 }
 
 // ---------------------------------------------------------------------------
-// checkInitialized (dual-path probing)
+// checkInitialized
 // ---------------------------------------------------------------------------
 
-func TestBarrierService_CheckInitialized_PrimaryPath(t *testing.T) {
-	// Initialize in the primary storageDir (dataDir), then verify
-	// checkInitialized returns the primary path.
+func TestBarrierService_CheckInitialized_WithDataDir(t *testing.T) {
+	// Initialize in the storageDir (dataDir), then verify checkInitialized
+	// returns it.
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
 
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetDataDir(dataDir)
 
-	// Initialize writes the root key to dataDir (primary).
 	err := svc.Initialize("primary-path-pw", "passphrase")
 	require.NoError(t, err)
 
@@ -404,13 +403,12 @@ func TestBarrierService_CheckInitialized_PrimaryPath(t *testing.T) {
 
 	found := probe.checkInitialized()
 	assert.Equal(t, dataDir, found,
-		"checkInitialized should return dataDir when root key is in primary path")
+		"checkInitialized should return dataDir when root key is present")
 	assert.True(t, probe.IsInitialized())
 }
 
-func TestBarrierService_CheckInitialized_PrimaryPath_NoDataDir(t *testing.T) {
-	// When dataDir is not set, primary == fallback (configDir/barrier/).
-	// Initialize without dataDir and verify it is found.
+func TestBarrierService_CheckInitialized_NoDataDir(t *testing.T) {
+	// When dataDir is not set, storageDir() is configDir/barrier/.
 	configDir := t.TempDir()
 
 	svc := NewBarrierService(configDir, slog.Default())
@@ -426,32 +424,28 @@ func TestBarrierService_CheckInitialized_PrimaryPath_NoDataDir(t *testing.T) {
 	assert.True(t, probe.IsInitialized())
 }
 
-func TestBarrierService_CheckInitialized_FallbackPath(t *testing.T) {
-	// Initialize via configDir/barrier/ (no dataDir), then create a new
-	// service with dataDir set to a directory WITHOUT a root key.
-	// checkInitialized must find the root key in the fallback path.
+func TestBarrierService_CheckInitialized_DataDirChangeIsNotFound(t *testing.T) {
+	// A root key written to configDir/barrier/ (no dataDir) is NOT found by
+	// a service later given a dataDir pointing elsewhere: there is no
+	// cross-directory probing, deliberately (go-xkms compat cleanup PR5).
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
 
-	// Initialize without dataDir -- root key goes to configDir/barrier/.
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize("fallback-path-pw", "passphrase")
+	err := svc.Initialize("moved-datadir-pw", "passphrase")
 	require.NoError(t, err)
 
-	// Create a new service with dataDir set (primary path is now dataDir,
-	// which has no root key). The fallback configDir/barrier/ should be found.
 	probe := NewBarrierService(configDir, slog.Default())
 	probe.SetDataDir(dataDir)
 
 	found := probe.checkInitialized()
-	expected := filepath.Join(configDir, barrierSubdir)
-	assert.Equal(t, expected, found,
-		"checkInitialized should fall back to configDir/barrier/ when primary has no root key")
-	assert.True(t, probe.IsInitialized())
+	assert.Empty(t, found,
+		"checkInitialized must not probe configDir/barrier/ once dataDir is set")
+	assert.False(t, probe.IsInitialized())
 }
 
-func TestBarrierService_CheckInitialized_NeitherPath(t *testing.T) {
-	// No root key in either primary or fallback path.
+func TestBarrierService_CheckInitialized_NotInitialized(t *testing.T) {
+	// No root key at storageDir().
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
 
@@ -460,11 +454,11 @@ func TestBarrierService_CheckInitialized_NeitherPath(t *testing.T) {
 
 	found := svc.checkInitialized()
 	assert.Empty(t, found,
-		"checkInitialized should return empty when no root key exists anywhere")
+		"checkInitialized should return empty when no root key exists")
 	assert.False(t, svc.IsInitialized())
 }
 
-func TestBarrierService_CheckInitialized_NeitherPath_NoDataDir(t *testing.T) {
+func TestBarrierService_CheckInitialized_NotInitialized_NoDataDir(t *testing.T) {
 	// No root key, no dataDir set.
 	configDir := t.TempDir()
 
@@ -510,41 +504,8 @@ func TestBarrierService_ProbeRootKey_WithRootKey(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// GetSealInfo with fallback path (dual-path probing)
+// GetSealInfo
 // ---------------------------------------------------------------------------
-
-func TestBarrierService_GetSealInfo_InitializedViaFallback(t *testing.T) {
-	// Initialize via the fallback configDir/barrier/ path (no dataDir).
-	// Then create a new service with dataDir set to a different directory.
-	// GetSealInfo must report Initialized=true via the fallback probe.
-	configDir := t.TempDir()
-	dataDir := t.TempDir()
-
-	// Initialize without dataDir.
-	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize("seal-info-fallback-pw", "passphrase")
-	require.NoError(t, err)
-
-	// Create a new service with dataDir set (primary has no root key).
-	probe := NewBarrierService(configDir, slog.Default())
-	probe.SetDataDir(dataDir)
-
-	info := probe.GetSealInfo()
-	require.NotNil(t, info)
-	assert.True(t, info.Initialized,
-		"GetSealInfo should report initialized via fallback path")
-	assert.True(t, info.Sealed,
-		"barrier object is nil, should report sealed")
-	assert.NotEmpty(t, info.Strategy,
-		"should fall back to best available strategy")
-	assert.NotEmpty(t, info.StrategyLabel,
-		"should have a strategy label")
-
-	// Verify the RootKeyPath points to the actual fallback location.
-	expectedPath := filepath.Join(configDir, barrierSubdir, barrierRootKeyPath)
-	assert.Equal(t, expectedPath, info.RootKeyPath,
-		"RootKeyPath should point to the fallback location where root key was found")
-}
 
 func TestBarrierService_GetSealInfo_NotInitializedWithDataDir(t *testing.T) {
 	// No root key anywhere. dataDir is set but empty.
@@ -568,36 +529,12 @@ func TestBarrierService_GetSealInfo_NotInitializedWithDataDir(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Unseal with fallback path (dual-path probing)
+// Unseal
 // ---------------------------------------------------------------------------
 
-func TestBarrierService_Unseal_ViaFallbackPath(t *testing.T) {
-	// Initialize via the fallback path (no dataDir). Then create a new
-	// service with dataDir set, and verify Unseal succeeds by finding
-	// the root key in the fallback path.
-	configDir := t.TempDir()
-	dataDir := t.TempDir()
-	password := "unseal-fallback-pw"
-
-	// Initialize without dataDir.
-	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize(password, "passphrase")
-	require.NoError(t, err)
-
-	// Create a new service with dataDir pointing somewhere else.
-	svc2 := NewBarrierService(configDir, slog.Default())
-	svc2.SetDataDir(dataDir)
-
-	// Unseal should find the root key in configDir/barrier/ fallback.
-	err = svc2.Unseal(password, "passphrase")
-	require.NoError(t, err)
-	assert.True(t, svc2.IsUnsealed(),
-		"barrier should be unsealed after finding root key in fallback path")
-}
-
-func TestBarrierService_Unseal_ViaFallbackPath_TransparentInit(t *testing.T) {
-	// Neither primary nor fallback has a root key. With the new behavior,
-	// Unseal transparently calls Initialize to create the barrier.
+func TestBarrierService_Unseal_TransparentInitWhenNoRootKey(t *testing.T) {
+	// No root key at storageDir(). With the new behavior, Unseal
+	// transparently calls Initialize to create the barrier.
 	configDir := t.TempDir()
 	dataDir := t.TempDir()
 

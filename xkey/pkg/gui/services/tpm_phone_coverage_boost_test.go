@@ -178,12 +178,13 @@ func TestTPMPhoneCoverageBoost_GetPolicy_FoundAmongMany(t *testing.T) {
 	dir := t.TempDir()
 	svc.SetDataDir(dir)
 
+	sel := []PCRSelection{{Index: 0, Bank: "sha256"}}
 	policies := []PCRPolicy{
-		{Name: "first-policy", Description: "first"},
-		{Name: "second-policy", Description: "second"},
-		{Name: "target-policy", Description: "target"},
+		{Name: "first-policy", Description: "first", PCRSelections: sel},
+		{Name: "second-policy", Description: "second", PCRSelections: sel},
+		{Name: "target-policy", Description: "target", PCRSelections: sel},
 	}
-	require.NoError(t, svc.savePolicies(policies))
+	seedTPMServicePolicies(t, svc, policies)
 
 	policy, err := svc.GetPolicy("target-policy")
 	require.NoError(t, err)
@@ -198,11 +199,12 @@ func TestTPMPhoneCoverageBoost_GetPolicy_NotFoundAmongMany(t *testing.T) {
 	dir := t.TempDir()
 	svc.SetDataDir(dir)
 
+	sel := []PCRSelection{{Index: 0, Bank: "sha256"}}
 	policies := []PCRPolicy{
-		{Name: "alpha", Description: "a"},
-		{Name: "beta", Description: "b"},
+		{Name: "alpha", Description: "a", PCRSelections: sel},
+		{Name: "beta", Description: "b", PCRSelections: sel},
 	}
-	require.NoError(t, svc.savePolicies(policies))
+	seedTPMServicePolicies(t, svc, policies)
 
 	policy, err := svc.GetPolicy("nonexistent")
 	assert.Nil(t, policy)
@@ -259,11 +261,12 @@ func TestTPMPhoneCoverageBoost_ListPolicies_WithSavedData(t *testing.T) {
 	dir := t.TempDir()
 	svc.SetDataDir(dir)
 
+	sel := []PCRSelection{{Index: 0, Bank: "sha256"}}
 	policies := []PCRPolicy{
-		{Name: "p1", Description: "first"},
-		{Name: "p2", Description: "second"},
+		{Name: "p1", Description: "first", PCRSelections: sel},
+		{Name: "p2", Description: "second", PCRSelections: sel},
 	}
-	require.NoError(t, svc.savePolicies(policies))
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPolicies()
 	require.NoError(t, err)

@@ -56,10 +56,10 @@ func TestStaticPasswordService_ListPasswords(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add two passwords.
-	_, err := svc.AddPassword("BetaPass", "secret1", "first note")
+	_, err := svc.AddPassword(AddPasswordParams{Name: "BetaPass", Password: "secret1", Notes: "first note"})
 	require.NoError(t, err)
 
-	_, err = svc.AddPassword("AlphaPass", "secret2", "second note")
+	_, err = svc.AddPassword(AddPasswordParams{Name: "AlphaPass", Password: "secret2", Notes: "second note"})
 	require.NoError(t, err)
 
 	entries, err := svc.ListPasswords()
@@ -86,54 +86,15 @@ func TestStaticPasswordService_ListPasswords_NilStore(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrStaticPWStoreNotSet))
 }
 
-// --- AddPassword ---
-
-func TestStaticPasswordService_AddPassword(t *testing.T) {
-	svc, _ := newTestStaticPWService(t)
-
-	entry, err := svc.AddPassword("MyPassword", "s3cret!", "test notes")
-	require.NoError(t, err)
-	require.NotNil(t, entry)
-
-	assert.NotEmpty(t, entry.ID)
-	assert.Equal(t, "MyPassword", entry.Name)
-	assert.Equal(t, "s3cret!", entry.Password)
-	assert.Equal(t, "test notes", entry.Notes)
-	assert.NotEmpty(t, entry.CreatedAt)
-	assert.NotEmpty(t, entry.UpdatedAt)
-}
-
-func TestStaticPasswordService_AddPassword_EmptyName(t *testing.T) {
-	svc, _ := newTestStaticPWService(t)
-
-	_, err := svc.AddPassword("", "password123", "")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStaticPWInvalidName))
-}
-
-func TestStaticPasswordService_AddPassword_EmptyPassword(t *testing.T) {
-	svc, _ := newTestStaticPWService(t)
-
-	// The underlying store validates that password is non-empty.
-	_, err := svc.AddPassword("TestEntry", "", "")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrEmptyPassword))
-}
-
-func TestStaticPasswordService_AddPassword_NilStore(t *testing.T) {
-	svc := NewStaticPasswordService(nil)
-	_, err := svc.AddPassword("Test", "password", "")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStaticPWStoreNotSet))
-}
+// --- AddPassword duplicate-name guard ---
 
 func TestStaticPasswordService_AddPassword_Duplicate(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPassword("UniqueEntry", "pass1", "")
+	_, err := svc.AddPassword(AddPasswordParams{Name: "UniqueEntry", Password: "pass1"})
 	require.NoError(t, err)
 
-	_, err = svc.AddPassword("UniqueEntry", "pass2", "")
+	_, err = svc.AddPassword(AddPasswordParams{Name: "UniqueEntry", Password: "pass2"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, staticpw.ErrPasswordExists))
 }
@@ -143,7 +104,7 @@ func TestStaticPasswordService_AddPassword_Duplicate(t *testing.T) {
 func TestStaticPasswordService_GetPassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPassword("LookupTest", "pw123", "some notes")
+	added, err := svc.AddPassword(AddPasswordParams{Name: "LookupTest", Password: "pw123", Notes: "some notes"})
 	require.NoError(t, err)
 
 	// Get by ID.
@@ -183,46 +144,14 @@ func TestStaticPasswordService_GetPassword_NilStore(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrStaticPWStoreNotSet))
 }
 
-// --- UpdatePassword ---
-
-func TestStaticPasswordService_UpdatePassword(t *testing.T) {
-	svc, _ := newTestStaticPWService(t)
-
-	added, err := svc.AddPassword("OriginalName", "origPW", "orig notes")
-	require.NoError(t, err)
-
-	err = svc.UpdatePassword(added.ID, "UpdatedName", "newPW", "new notes")
-	require.NoError(t, err)
-
-	// Name changed, so the store regenerated the ID. Look up by new name.
-	entry, err := svc.GetPassword("UpdatedName")
-	require.NoError(t, err)
-	assert.Equal(t, "UpdatedName", entry.Name)
-	assert.Equal(t, "newPW", entry.Password)
-	assert.Equal(t, "new notes", entry.Notes)
-}
+// --- UpdatePassword not-found guard ---
 
 func TestStaticPasswordService_UpdatePassword_NotFound(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	err := svc.UpdatePassword("nonexistent-id", "Name", "pw", "")
+	err := svc.UpdatePassword(UpdatePasswordParams{ID: "nonexistent-id", Name: "Name", Password: "pw"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, staticpw.ErrPasswordNotFound))
-}
-
-func TestStaticPasswordService_UpdatePassword_EmptyID(t *testing.T) {
-	svc, _ := newTestStaticPWService(t)
-
-	err := svc.UpdatePassword("", "Name", "pw", "")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStaticPWInvalidID))
-}
-
-func TestStaticPasswordService_UpdatePassword_NilStore(t *testing.T) {
-	svc := NewStaticPasswordService(nil)
-	err := svc.UpdatePassword("id", "Name", "pw", "")
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrStaticPWStoreNotSet))
 }
 
 // --- DeletePassword ---
@@ -230,7 +159,7 @@ func TestStaticPasswordService_UpdatePassword_NilStore(t *testing.T) {
 func TestStaticPasswordService_DeletePassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPassword("ToDelete", "delPW", "")
+	added, err := svc.AddPassword(AddPasswordParams{Name: "ToDelete", Password: "delPW", Notes: ""})
 	require.NoError(t, err)
 
 	err = svc.DeletePassword(added.ID)
@@ -245,7 +174,7 @@ func TestStaticPasswordService_DeletePassword(t *testing.T) {
 func TestStaticPasswordService_DeletePassword_ByName(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPassword("DeleteByName", "pw", "")
+	_, err := svc.AddPassword(AddPasswordParams{Name: "DeleteByName", Password: "pw", Notes: ""})
 	require.NoError(t, err)
 
 	err = svc.DeletePassword("DeleteByName")
@@ -327,13 +256,13 @@ func TestStaticPasswordService_GeneratePassword_AllCharset(t *testing.T) {
 	assert.Len(t, pw, 32)
 }
 
-// --- AddPasswordV2 ---
+// --- AddPassword ---
 
-func TestStaticPasswordService_AddPasswordV2(t *testing.T) {
+func TestStaticPasswordService_AddPassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	expires := time.Now().Add(30 * 24 * time.Hour).Format(time.RFC3339)
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:       "GitHub",
 		Title:      "GitHub Enterprise",
 		Username:   "user@example.com",
@@ -361,26 +290,26 @@ func TestStaticPasswordService_AddPasswordV2(t *testing.T) {
 	assert.Greater(t, entry.DaysUntilExpiry, 0)
 }
 
-func TestStaticPasswordService_AddPasswordV2_NilStore(t *testing.T) {
+func TestStaticPasswordService_AddPassword_NilStore(t *testing.T) {
 	svc := NewStaticPasswordService(nil)
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Test",
 		Password: "pw",
 	})
 	assert.ErrorIs(t, err, ErrStaticPWStoreNotSet)
 }
 
-func TestStaticPasswordService_AddPasswordV2_EmptyName(t *testing.T) {
+func TestStaticPasswordService_AddPassword_EmptyName(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Password: "pw",
 	})
 	assert.ErrorIs(t, err, ErrStaticPWInvalidName)
 }
 
-func TestStaticPasswordService_AddPasswordV2_InvalidExpiresAt(t *testing.T) {
+func TestStaticPasswordService_AddPassword_InvalidExpiresAt(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:      "Test",
 		Password:  "pw",
 		ExpiresAt: "not-a-date",
@@ -388,10 +317,10 @@ func TestStaticPasswordService_AddPasswordV2_InvalidExpiresAt(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStaticPWInvalidExpiresAt)
 }
 
-func TestStaticPasswordService_AddPasswordV2_NoExpiry(t *testing.T) {
+func TestStaticPasswordService_AddPassword_NoExpiry(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:     "NoExpiry",
 		Password: "pw",
 	})
@@ -401,12 +330,12 @@ func TestStaticPasswordService_AddPasswordV2_NoExpiry(t *testing.T) {
 	assert.Equal(t, -1, entry.DaysUntilExpiry)
 }
 
-func TestStaticPasswordService_AddPasswordV2_ExpiredEntry(t *testing.T) {
+func TestStaticPasswordService_AddPassword_ExpiredEntry(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Set expiry in the past.
 	pastExpiry := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:      "Expired",
 		Password:  "pw",
 		ExpiresAt: pastExpiry,
@@ -416,19 +345,19 @@ func TestStaticPasswordService_AddPasswordV2_ExpiredEntry(t *testing.T) {
 	assert.Equal(t, 0, entry.DaysUntilExpiry)
 }
 
-// --- UpdatePasswordV2 ---
+// --- UpdatePassword ---
 
-func TestStaticPasswordService_UpdatePasswordV2(t *testing.T) {
+func TestStaticPasswordService_UpdatePassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Original",
 		Password: "pw1",
 	})
 	require.NoError(t, err)
 
 	expires := time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339)
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:         added.ID,
 		Name:       "Updated",
 		Title:      "Updated Title",
@@ -453,9 +382,9 @@ func TestStaticPasswordService_UpdatePasswordV2(t *testing.T) {
 	assert.NotEmpty(t, got.ExpiresAt)
 }
 
-func TestStaticPasswordService_UpdatePasswordV2_NilStore(t *testing.T) {
+func TestStaticPasswordService_UpdatePassword_NilStore(t *testing.T) {
 	svc := NewStaticPasswordService(nil)
-	err := svc.UpdatePasswordV2(UpdatePasswordParams{
+	err := svc.UpdatePassword(UpdatePasswordParams{
 		ID:       "id",
 		Name:     "Test",
 		Password: "pw",
@@ -463,25 +392,25 @@ func TestStaticPasswordService_UpdatePasswordV2_NilStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStaticPWStoreNotSet)
 }
 
-func TestStaticPasswordService_UpdatePasswordV2_EmptyID(t *testing.T) {
+func TestStaticPasswordService_UpdatePassword_EmptyID(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
-	err := svc.UpdatePasswordV2(UpdatePasswordParams{
+	err := svc.UpdatePassword(UpdatePasswordParams{
 		Name:     "Test",
 		Password: "pw",
 	})
 	assert.ErrorIs(t, err, ErrStaticPWInvalidID)
 }
 
-func TestStaticPasswordService_UpdatePasswordV2_InvalidExpiresAt(t *testing.T) {
+func TestStaticPasswordService_UpdatePassword_InvalidExpiresAt(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Test",
 		Password: "pw",
 	})
 	require.NoError(t, err)
 
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:        added.ID,
 		Name:      "Test",
 		Password:  "pw",
@@ -490,11 +419,11 @@ func TestStaticPasswordService_UpdatePasswordV2_InvalidExpiresAt(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStaticPWInvalidExpiresAt)
 }
 
-func TestStaticPasswordService_UpdatePasswordV2_ClearsExpiry(t *testing.T) {
+func TestStaticPasswordService_UpdatePassword_ClearsExpiry(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	expires := time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339)
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:      "WithExpiry",
 		Password:  "pw",
 		ExpiresAt: expires,
@@ -503,7 +432,7 @@ func TestStaticPasswordService_UpdatePasswordV2_ClearsExpiry(t *testing.T) {
 	assert.NotEmpty(t, added.ExpiresAt)
 
 	// Update without expiry to clear it.
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:       added.ID,
 		Name:     "WithExpiry",
 		Password: "pw",
@@ -521,17 +450,17 @@ func TestStaticPasswordService_UpdatePasswordV2_ClearsExpiry(t *testing.T) {
 func TestStaticPasswordService_ListFolders(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "Entry1", Password: "pw1", FolderPath: "Work",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "Entry2", Password: "pw2", FolderPath: "Work/Email",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "Entry3", Password: "pw3", FolderPath: "Personal",
 	})
 	require.NoError(t, err)
@@ -560,12 +489,12 @@ func TestStaticPasswordService_ListFolders_NilStore(t *testing.T) {
 func TestStaticPasswordService_ListPasswordsByFolder(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "WorkItem", Password: "pw1", FolderPath: "Work",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "RootItem", Password: "pw2",
 	})
 	require.NoError(t, err)
@@ -580,12 +509,12 @@ func TestStaticPasswordService_ListPasswordsByFolder(t *testing.T) {
 func TestStaticPasswordService_ListPasswordsByFolder_Root(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "RootItem", Password: "pw1",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "FolderItem", Password: "pw2", FolderPath: "Work",
 	})
 	require.NoError(t, err)
@@ -607,7 +536,7 @@ func TestStaticPasswordService_ListPasswordsByFolder_NilStore(t *testing.T) {
 func TestStaticPasswordService_MovePassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name: "GitHub", Password: "secret",
 	})
 	require.NoError(t, err)
@@ -645,17 +574,17 @@ func TestStaticPasswordService_MovePassword_NilStore(t *testing.T) {
 func TestStaticPasswordService_RenameFolder(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "Entry1", Password: "pw1", FolderPath: "OldName",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "Entry2", Password: "pw2", FolderPath: "OldName/Sub",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "Unaffected", Password: "pw3", FolderPath: "Other",
 	})
 	require.NoError(t, err)
@@ -703,17 +632,17 @@ func TestStaticPasswordService_RenameFolder_NilStore(t *testing.T) {
 func TestStaticPasswordService_DeleteFolder(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "ToDelete1", Password: "pw1", FolderPath: "Trash",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "ToDelete2", Password: "pw2", FolderPath: "Trash/Sub",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name: "Keep", Password: "pw3", FolderPath: "Safe",
 	})
 	require.NoError(t, err)
@@ -762,7 +691,7 @@ func TestStaticPasswordService_DeleteFolder_NonexistentFolder(t *testing.T) {
 func TestStaticPasswordService_SearchPasswords(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "GitHub",
 		Title:    "GitHub Enterprise",
 		Username: "user@github.com",
@@ -772,7 +701,7 @@ func TestStaticPasswordService_SearchPasswords(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name:     "AWS",
 		Title:    "Amazon Web Services",
 		Username: "admin@aws.com",
@@ -782,7 +711,7 @@ func TestStaticPasswordService_SearchPasswords(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.AddPasswordV2(AddPasswordParams{
+	_, err = svc.AddPassword(AddPasswordParams{
 		Name:     "Netflix",
 		Password: "pw3",
 		Notes:    "Family plan",
@@ -828,7 +757,7 @@ func TestStaticPasswordService_SearchPasswords(t *testing.T) {
 func TestStaticPasswordService_SearchPasswords_CaseInsensitive(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "GitHub",
 		Password: "pw1",
 	})
@@ -849,7 +778,7 @@ func TestStaticPasswordService_SearchPasswords_NilStore(t *testing.T) {
 func TestStaticPasswordService_SearchPasswords_EmptyQuery(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "Entry", Password: "pw",
 	})
 	require.NoError(t, err)
@@ -934,13 +863,13 @@ func TestStaticPWToEntry_DisplayTitleFallback(t *testing.T) {
 	assert.Equal(t, "FallbackName", entry.Title)
 }
 
-// --- ReadOnly: AddPasswordV2 ---
+// --- ReadOnly: AddPassword ---
 
-func TestAddPasswordV2_ReadOnly(t *testing.T) {
+func TestAddPassword_ReadOnly(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a read-only entry and verify ReadOnly=true is returned.
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:     "TPM Policy Auth",
 		Password: "auto-generated-pw-xyz",
 		ReadOnly: true,
@@ -958,11 +887,11 @@ func TestAddPasswordV2_ReadOnly(t *testing.T) {
 	assert.True(t, got.ReadOnly)
 }
 
-func TestAddPasswordV2_ReadOnly_DefaultFalse(t *testing.T) {
+func TestAddPassword_ReadOnly_DefaultFalse(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// When ReadOnly is not set, the entry should default to false.
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Regular Entry",
 		Password: "regular-pw",
 	})
@@ -972,13 +901,13 @@ func TestAddPasswordV2_ReadOnly_DefaultFalse(t *testing.T) {
 	assert.False(t, entry.ReadOnly)
 }
 
-// --- ReadOnly: UpdatePasswordV2 blocked ---
+// --- ReadOnly: UpdatePassword blocked ---
 
-func TestUpdatePasswordV2_ReadOnlyBlocked(t *testing.T) {
+func TestUpdatePassword_ReadOnlyBlocked(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a read-only entry.
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Immutable Entry",
 		Password: "locked-pw",
 		ReadOnly: true,
@@ -986,7 +915,7 @@ func TestUpdatePasswordV2_ReadOnlyBlocked(t *testing.T) {
 	require.NoError(t, err)
 
 	// Attempt to update the read-only entry.
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:       added.ID,
 		Name:     "Renamed",
 		Password: "new-pw",
@@ -1001,18 +930,18 @@ func TestUpdatePasswordV2_ReadOnlyBlocked(t *testing.T) {
 	assert.True(t, got.ReadOnly)
 }
 
-func TestUpdatePasswordV2_NonReadOnly_Succeeds(t *testing.T) {
+func TestUpdatePassword_NonReadOnly_Succeeds(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a mutable entry (ReadOnly=false).
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Mutable",
 		Password: "old-pw",
 	})
 	require.NoError(t, err)
 
 	// Update should succeed.
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:       added.ID,
 		Name:     "Mutable Updated",
 		Password: "new-pw",
@@ -1026,31 +955,13 @@ func TestUpdatePasswordV2_NonReadOnly_Succeeds(t *testing.T) {
 	assert.Equal(t, "new-pw", got.Password)
 }
 
-// --- ReadOnly: UpdatePassword (v1 compat) blocked ---
-
-func TestUpdatePassword_ReadOnlyBlocked(t *testing.T) {
-	svc, _ := newTestStaticPWService(t)
-
-	// Add a read-only entry via V2.
-	added, err := svc.AddPasswordV2(AddPasswordParams{
-		Name:     "V1 Compat Lock",
-		Password: "locked",
-		ReadOnly: true,
-	})
-	require.NoError(t, err)
-
-	// The v1 UpdatePassword delegates to UpdatePasswordV2, so the guard applies.
-	err = svc.UpdatePassword(added.ID, "Changed", "new", "notes")
-	assert.ErrorIs(t, err, ErrStaticPWReadOnly)
-}
-
 // --- ReadOnly: DeletePassword blocked ---
 
 func TestDeletePassword_ReadOnlyBlocked(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a read-only entry.
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Protected Entry",
 		Password: "do-not-delete",
 		ReadOnly: true,
@@ -1071,7 +982,7 @@ func TestDeletePassword_ReadOnlyBlocked(t *testing.T) {
 func TestDeletePassword_ReadOnlyBlocked_ByName(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "NameProtected",
 		Password: "locked-pw",
 		ReadOnly: true,
@@ -1086,7 +997,7 @@ func TestDeletePassword_ReadOnlyBlocked_ByName(t *testing.T) {
 func TestDeletePassword_NonReadOnly_Succeeds(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Deletable",
 		Password: "bye-pw",
 	})
@@ -1106,7 +1017,7 @@ func TestDeletePasswordForce_ReadOnly(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a read-only entry.
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Force Delete Target",
 		Password: "auto-pw",
 		ReadOnly: true,
@@ -1126,7 +1037,7 @@ func TestDeletePasswordForce_NonReadOnly(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Force delete also works on regular entries.
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "Regular Force",
 		Password: "pw",
 	})
@@ -1540,24 +1451,24 @@ func TestStaticPasswordService_GeneratePassword_DefaultCharset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AddPasswordV2 - additional field coverage
+// AddPassword - additional field coverage
 // ---------------------------------------------------------------------------
 
-func TestStaticPasswordService_AddPasswordV2_EmptyPassword(t *testing.T) {
+func TestStaticPasswordService_AddPassword_EmptyPassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Name is set but password is empty; the underlying store rejects it.
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name: "EmptyPWEntry",
 	})
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, staticpw.ErrEmptyPassword)
 }
 
-func TestStaticPasswordService_AddPasswordV2_WithFolder(t *testing.T) {
+func TestStaticPasswordService_AddPassword_WithFolder(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:       "FolderItem",
 		Password:   "pw123",
 		FolderPath: "Work/Engineering",
@@ -1572,11 +1483,11 @@ func TestStaticPasswordService_AddPasswordV2_WithFolder(t *testing.T) {
 	assert.Equal(t, expectedID, entry.ID)
 }
 
-func TestStaticPasswordService_AddPasswordV2_WithExpiry(t *testing.T) {
+func TestStaticPasswordService_AddPassword_WithExpiry(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	futureExpiry := time.Now().Add(90 * 24 * time.Hour).Format(time.RFC3339)
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:      "ExpiringEntry",
 		Password:  "pw",
 		ExpiresAt: futureExpiry,
@@ -1589,11 +1500,11 @@ func TestStaticPasswordService_AddPasswordV2_WithExpiry(t *testing.T) {
 	assert.Greater(t, entry.DaysUntilExpiry, 0)
 }
 
-func TestStaticPasswordService_AddPasswordV2_WithMatchPatterns(t *testing.T) {
+func TestStaticPasswordService_AddPassword_WithMatchPatterns(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	patterns := []string{"*.github.com", "github.com/*"}
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:          "GitHub",
 		Password:      "secret",
 		URL:           "https://github.com",
@@ -1611,13 +1522,13 @@ func TestStaticPasswordService_AddPasswordV2_WithMatchPatterns(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// UpdatePasswordV2 - rename changes deterministic ID
+// UpdatePassword - rename changes deterministic ID
 // ---------------------------------------------------------------------------
 
-func TestStaticPasswordService_UpdatePasswordV2_RenameChangesID(t *testing.T) {
+func TestStaticPasswordService_UpdatePassword_RenameChangesID(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	added, err := svc.AddPasswordV2(AddPasswordParams{
+	added, err := svc.AddPassword(AddPasswordParams{
 		Name:     "OrigName",
 		Password: "pw",
 	})
@@ -1625,7 +1536,7 @@ func TestStaticPasswordService_UpdatePasswordV2_RenameChangesID(t *testing.T) {
 	origID := added.ID
 
 	// Rename the entry.
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:       origID,
 		Name:     "RenamedEntry",
 		Password: "pw",

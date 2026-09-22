@@ -177,18 +177,22 @@ governing. The existing step ordering (barrier, then data directory
 initialization, then PIN calls) already satisfies this — `initPINService`
 runs once per app startup, well before the wizard's PIN steps.
 
-### `require_platform_policy` is reserved, not wired (#313)
+### `require_platform_policy` removed (#313, BREAKING)
 
-The enterprise wizard no longer offers a "Require platform policy" choice,
-and `ApplySOProvisioning` no longer writes `PolicySection.RequirePlatformPolicy`.
+The enterprise wizard no longer offers a "Require platform policy" choice.
 The field previously had two write paths and no reader: `SetupChoices`
 carried a `require_platform_policy` value the frontend checkbox set, which
 nothing ever consulted, while `ApplySOProvisioning` separately wrote
 `policy.RequirePlatformPolicy = true` into the persisted config
-unconditionally — regardless of what the checkbox held. Both writes are
-removed. `PolicySection.RequirePlatformPolicy`
-(`xkey/pkg/config/policy.go`) stays, at its zero value (`false`), so configs
-written before this change keep parsing; giving it an enforcement path is
+unconditionally — regardless of what the checkbox held. Both write paths
+and the field itself (`PolicySection.RequirePlatformPolicy`,
+`xkey/pkg/config/policy.go`) are removed outright: a stale
+`require_platform_policy` key in an existing `config.yaml` is now ignored
+by the lenient YAML loader rather than round-tripped. Removing the field
+changes `PolicyCanonicalJSON`'s byte output, so a sealed enterprise policy
+must be re-sealed (`ComputePolicyHMAC`) after upgrading to a build with
+this change — an unsealed upgrade reads as tampered, which is the correct
+failure direction. Wiring an actual PCR-policy precondition remains
 tracked as #313 (A)/(B), along with the other 20 inert `PolicySection`
 fields the same audit found.
 
@@ -224,7 +228,6 @@ allow several minutes). The #290 contract lives in
 | `TestNewSetupWizardService_NilPINService_ReturnsError` | the constructor refuses a nil `pinSvc` with `ErrSetupWizardPINServiceRequired` |
 | `TestNewSetupWizardService_WithPINService_Succeeds` | the constructor wires a non-nil `pinSvc` through |
 | `TestFactoryReset_RefusesWhenPINServiceUnwired` (`setup_wizard_factory_reset_test.go`) | `FactoryReset`'s own guard still fails closed on a struct-literal-constructed service (the only way to reach a nil `pinSvc` now), independent of the constructor check |
-| `TestApplySOProvisioning_DoesNotWriteRequirePlatformPolicy` | `ApplySOProvisioning` no longer writes `require_platform_policy`, enterprise org or not |
 
 Mutation checks recorded on go-xkms#290: reinstating the `SO PIN` store
 write fails the first two tests at the name, value and lookup assertions;

@@ -63,16 +63,18 @@ var (
 	// closed, or an underlying storage error) while sealing.
 	ErrNoiseKeySealFailed = errors.New("pairing: failed to seal the local Noise private key")
 
-	// ErrNoiseKeyUnsealBarrierRequired is returned by UnsealLocalNoiseKey
-	// when the stored value carries the sealed marker (NoiseKeySealedPrefix)
-	// but no barrier was supplied to open it. The legacy plaintext form does
-	// not return this error -- it never needed a barrier to read, which is
-	// exactly the exposure #42 closes going forward.
-	ErrNoiseKeyUnsealBarrierRequired = errors.New("pairing: the stored local Noise private key is sealed and requires an unsealed barrier to read")
-
 	// ErrNoiseKeyUnsealFailed wraps a decode or decrypt failure while
 	// unsealing, sealed or legacy.
 	ErrNoiseKeyUnsealFailed = errors.New("pairing: failed to unseal the local Noise private key")
+
+	// ErrNoiseKeyFormMismatch is returned by UnsealLocalNoiseKey when the
+	// stored record's form does not match the barrier's current presence: a
+	// barrier is open but the record is the legacy plaintext form, or no
+	// barrier is available but the record is the sealed form. There is no
+	// migration between the two forms (go-xkms compat cleanup PR5) -- the
+	// operator must re-pair the device so a fresh record is written in the
+	// form that matches this host's current barrier state.
+	ErrNoiseKeyFormMismatch = errors.New("pairing: stored local Noise private key form does not match the barrier state; re-pair this device")
 
 	// ErrNoiseKeyEmpty is returned when there is no stored value to seal or
 	// unseal.
@@ -108,17 +110,12 @@ func SealLocalNoiseKey(barrier NoiseKeyBarrier, priv []byte) (string, error) {
 }
 
 // UnsealLocalNoiseKey reads a PairedDevice's LocalNoisePrivateKey field into
-// protected memory. It accepts both forms:
-//
-//   - The barrier-sealed form (IsSealedNoiseKey): base64-decoded and
-//     decrypted under barrier, which must be open. barrier == nil returns
-//     ErrNoiseKeyUnsealBarrierRequired; a sealed barrier returns whatever
-//     error its own Decrypt reports (wrapped in ErrNoiseKeyUnsealFailed).
-//   - The legacy raw-base64 plaintext form, kept working so an existing
-//     pairing is not broken (#42): decoded directly, no barrier needed. The
-//     caller is expected to reseal (SealLocalNoiseKey) and persist the
-//     record on its next successful use, so the plaintext form does not
-//     outlive that -- see IsSealedNoiseKey to detect which form was read.
+// protected memory. The expected form is chosen by barrier presence, not by
+// inspecting the stored value: a non-nil barrier means the record must be
+// the barrier-sealed form (IsSealedNoiseKey); a nil barrier means it must be
+// the legacy plaintext-base64 form. A record in the other form returns
+// ErrNoiseKeyFormMismatch -- there is no migration between the two forms
+// (go-xkms compat cleanup PR5); the operator must re-pair the device.
 //
 // The returned Buffer is the caller's to Destroy.
 func UnsealLocalNoiseKey(barrier NoiseKeyBarrier, stored string) (*secure.Buffer, error) {
@@ -126,9 +123,11 @@ func UnsealLocalNoiseKey(barrier NoiseKeyBarrier, stored string) (*secure.Buffer
 		return nil, ErrNoiseKeyEmpty
 	}
 
-	if IsSealedNoiseKey(stored) {
-		if barrier == nil {
-			return nil, ErrNoiseKeyUnsealBarrierRequired
+	sealed := IsSealedNoiseKey(stored)
+
+	if barrier != nil {
+		if !sealed {
+			return nil, ErrNoiseKeyFormMismatch
 		}
 		ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, NoiseKeySealedPrefix))
 		if err != nil {
@@ -148,7 +147,11 @@ func UnsealLocalNoiseKey(barrier NoiseKeyBarrier, stored string) (*secure.Buffer
 		return buf, nil
 	}
 
-	// Legacy plaintext base64 -- the pre-#42 migration path.
+	if sealed {
+		return nil, ErrNoiseKeyFormMismatch
+	}
+
+	// Legacy plaintext base64: the expected form when no barrier is open.
 	raw, err := base64.StdEncoding.DecodeString(stored)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrNoiseKeyUnsealFailed, Cause: err}

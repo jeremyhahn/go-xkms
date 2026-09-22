@@ -674,6 +674,7 @@ func TestCoverageBoostPhase2_StorageService_MigrateToEncrypted_RequiresRoot(t *t
 		t.Log("running as root; skipping root-requirement assertion")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	err := svc.MigrateToEncrypted(5, "validpassphrase", false)
 	assert.ErrorIs(t, err, ErrStorageRequiresRoot)
@@ -684,6 +685,7 @@ func TestCoverageBoostPhase2_StorageService_MigrateToEncrypted_WithElevator(t *t
 		t.Log("running as root; skipping elevation test")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	mock := &mockElevator{available: true}
 	svc.SetElevator(mock)
@@ -698,6 +700,7 @@ func TestCoverageBoostPhase2_StorageService_MigrateToEncrypted_ElevatorError(t *
 		t.Log("running as root; skipping elevation test")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	mock := &mockElevator{available: true, err: ErrElevationDenied}
 	svc.SetElevator(mock)

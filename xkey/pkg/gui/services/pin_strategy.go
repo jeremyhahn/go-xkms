@@ -14,7 +14,6 @@
 package services
 
 import (
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -32,19 +31,12 @@ import (
 // logic behind App.initPINService, kept in the service layer (rather than
 // the Wails-bound App type) so it is unit-testable without a GUI runtime.
 //
-// legacyGUIStrategy is GUIConfig.PINStrategy: a data directory whose PIN
-// strategy was only ever recorded there (installs that predate this
-// package) gets it copied into the shared location before resolving, a
-// one-time migration so an established TPM2 device is not treated as a
-// fresh install and silently re-probed down to software.
-//
 // tpmAccessor may be nil (no TPM in this environment); ResolvePINBackend
 // still resolves, falling through to the software strategy exactly as
 // pinselect does when its TPM provider reports unavailable.
 func ResolvePINBackend(
 	tpmAccessor *TPMAccessor,
 	dataDir string,
-	legacyGUIStrategy string,
 	engine xkmssdk.StorageEngineKind,
 	log *slog.Logger,
 ) (qrdbsdk.PINBackend, qrdbsdk.PINStrategyID, error) {
@@ -53,15 +45,6 @@ func ResolvePINBackend(
 	}
 
 	pinDir := filepath.Join(dataDir, "pin")
-
-	migrated, migrateErr := migrateLegacyPINStrategy(pinDir, legacyGUIStrategy)
-	switch {
-	case migrateErr != nil:
-		log.Warn("ResolvePINBackend: failed to migrate legacy GUI PIN strategy", "error", migrateErr)
-	case migrated:
-		log.Info("ResolvePINBackend: migrated PIN strategy from GUI config to shared PIN state",
-			"strategy", legacyGUIStrategy)
-	}
 
 	persisted, loadErr := pinstrategy.Load(pinDir)
 	persistedTPM2 := loadErr == nil && persisted == qrdbsdk.PINStrategyTPM2
@@ -86,32 +69,6 @@ func ResolvePINBackend(
 			Logger:   log,
 		},
 	})
-}
-
-// migrateLegacyPINStrategy copies legacyStrategy into the shared PIN
-// strategy file at pinDir exactly once: only when pinDir has no strategy
-// of its own yet and legacyStrategy is non-empty. Returns whether a
-// migration was performed.
-func migrateLegacyPINStrategy(pinDir, legacyStrategy string) (bool, error) {
-	if legacyStrategy == "" {
-		return false, nil
-	}
-
-	_, err := pinstrategy.Load(pinDir)
-	switch {
-	case err == nil:
-		// Already governed by its own record; the legacy field is stale.
-		return false, nil
-	case errors.Is(err, pinstrategy.ErrStrategyNotPersisted):
-		// Fall through to migrate.
-	default:
-		return false, err
-	}
-
-	if saveErr := pinstrategy.Save(pinDir, qrdbsdk.PINStrategyID(legacyStrategy)); saveErr != nil {
-		return false, saveErr
-	}
-	return true, nil
 }
 
 // softwarePINProvider persists software PIN state under <dataDir>/pin and

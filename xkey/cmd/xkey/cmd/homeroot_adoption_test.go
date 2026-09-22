@@ -65,23 +65,6 @@ func TestGetDevicesConfigPath_LivesUnderTheResolvedHome(t *testing.T) {
 	assert.Equal(t, filepath.Join(root, devicesConfigFileName), path)
 }
 
-// The phone.yaml -> devices.yaml migration still runs against the resolved
-// home, so a user with a legacy file is not silently given an empty one.
-func TestGetDevicesConfigPath_MigratesTheLegacyFileInTheResolvedHome(t *testing.T) {
-	root := t.TempDir()
-	xhome.SetRoot(root)
-	t.Cleanup(xhome.ResetRoot)
-	t.Setenv("SUDO_USER", "")
-	legacy := filepath.Join(root, legacyPhoneConfigFileName)
-	require.NoError(t, os.WriteFile(legacy, []byte("devices: []\n"), 0o600))
-
-	path, err := getDevicesConfigPath()
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(root, devicesConfigFileName), path)
-	assert.FileExists(t, path, "the legacy file is renamed into place")
-	assert.NoFileExists(t, legacy)
-}
-
 // Under sudo the devices file is the invoking user's, so `sudo xkey device
 // pair` and the user's own GUI session read the same file; the account
 // database is stood in for, so the test touches no real home.

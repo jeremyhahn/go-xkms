@@ -156,6 +156,7 @@ func testConfigDataWithAutoUnseal(blobID string) *GUIConfigData {
 	cfg.AutoUnsealBlobID = blobID
 	cfg.AutoUnsealPCRs = []int{0, 7}
 	cfg.AutoUnsealPCRBank = "sha256"
+	cfg.AutoUnsealPolicyType = "none"
 	return cfg
 }
 

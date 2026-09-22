@@ -393,8 +393,11 @@ record carries `attestation_protocol_version`, which only ever moves up
 (`recordDeviceAttestation`), so a device bound under challenge-response cannot
 shed the liveness proof by claiming it cannot produce one — otherwise the
 protocol version would be chosen at connect time by the party being checked.
-Records established before #129 keep the weaker mode until the device is
-re-paired, and are not reported as though they had the stronger binding.
+Records established before #129 are refused outright (BREAKING, go-xkms
+compat cleanup PR5, removing the original grace period that kept them
+connecting in the weaker mode) -- `DeviceBinding.Validate` rejects any
+`ProtocolVersion` below 2 with `ErrDeviceAttestationVersionUnsupported`, and
+the device must be re-paired.
 
 **Rotation.** The fingerprint changes only when the device regenerates its DAK.
 `device attest-device` refuses fail-closed on a change
@@ -556,17 +559,20 @@ type NoiseKeyBarrier interface {
   keeps under the barrier, without going through the KV-store surface (the
   private scalar stays embedded in the `devices.yaml` record rather than
   becoming its own storage entry).
-- **Legacy** (pre-#42): raw base64 of the private scalar, no prefix.
-  `UnsealLocalNoiseKey` still reads this form, with `barrier == nil`
-  accepted, so an existing pairing is not broken by the fix that stops
-  writing it.
+- **Legacy** (no barrier on this host): raw base64 of the private scalar, no
+  prefix.
 
-`UnsealLocalNoiseKey` refuses (`ErrNoiseKeyUnsealBarrierRequired`) a sealed
-value handed a nil barrier — there is no fallback to reading it as plaintext.
-The unsealed material never exists as a Go string: `SealLocalNoiseKey` takes
-the raw scalar as `[]byte` (typically `phone.StaticKey.Private`, itself
-memguard-backed) and `UnsealLocalNoiseKey` returns an `sdk/go/secure.Buffer`,
-mlocked and wiped on `Destroy`.
+`UnsealLocalNoiseKey` picks which form it expects from barrier presence
+alone, not from the stored value: a non-nil barrier means the record must be
+sealed, a nil barrier means it must be legacy plaintext. A record in the
+other form is refused with `ErrNoiseKeyFormMismatch` — there is no migration
+between the two forms (BREAKING, go-xkms compat cleanup PR5, removing the
+reseal-on-use path #42 originally shipped); the operator re-pairs the device
+so a fresh record is written in the form that matches this host's current
+barrier state. The unsealed material never exists as a Go string:
+`SealLocalNoiseKey` takes the raw scalar as `[]byte` (typically
+`phone.StaticKey.Private`, itself memguard-backed) and `UnsealLocalNoiseKey`
+returns an `sdk/go/secure.Buffer`, mlocked and wiped on `Destroy`.
 
 #### The barrier-absent case degrades, it does not refuse (owner ruling, recorded on #42)
 
@@ -578,8 +584,7 @@ is a policy question one level up, decided per surface:
 - **No barrier initialized on this host at all**: never refused. `Pair`
   writes the legacy plaintext form and logs `slog.Warn` once, pointing at
   `xkey barrier init`; `Connect`/`device listen`/`device attest-device` read
-  a (necessarily legacy) record the same way, with the same warning, and
-  skip migration since there is nowhere yet to seal into.
+  a (necessarily legacy) record the same way, with the same warning.
 - **A barrier exists but cannot currently be opened** (sealed — an app lock
   — or the CLI wasn't given a working password): still refused
   (`ErrPhoneBarrierRequired` / `ErrDeviceBarrierUnsealFailed`). The operator
@@ -620,17 +625,15 @@ does.
 | CLI `device pair`, `device listen`, `device attest-device` | `cmd/xkey/cmd/device_barrier.go` (`openDeviceBarrier`) | `--barrier-password`/`--barrier-password-file` flags, then `XKEY_BARRIER_PASSWORD`; resolved before the devices file is even read | legacy plaintext + one `slog.Warn` | refuses (`ErrDeviceBarrierUnsealFailed`) |
 | Every other device-backed command (OATH sync, backup, sharing, re-attest, phone enrollment, FIDO2 phone backend) | `cmd/xkey/cmd/device_session.go` (`unsealDeviceLocalKey`, behind `openDeviceSession`/`newPairedDeviceBackendConfig`) | `XKEY_BARRIER_PASSWORD` only, opened and closed around the one unseal | unaffected — a legacy record already needed no barrier | refuses (only reached for an already-sealed record, which always needs a barrier) |
 
-**Migration** happens the first time a legacy record is successfully used
-*and* a barrier is actually open: the caller re-seals the key with whatever
-barrier it has and rewrites `devices.yaml` (`PhoneService.migrateLocalNoiseKey`,
-`migrateLegacyNoiseKeyAndSave` in `device_barrier.go`, and the inline reseal
-in `device attest-device`), so a device's record holds the sealed form from
-its next successful connect or re-attestation *after a barrier exists*.
-`device listen` migrates but never otherwise saves; the
-OATH/backup/sharing/enrollment/FIDO2 paths read through `unsealDeviceLocalKey`
-without migrating, on the reasoning that GUI `Connect` or the two CLI verbs
-above will do it the first time any of them runs against a host that now has
-a barrier.
+**No migration.** A device's record stays in whichever form it was written
+in until the operator re-pairs it. There is no reseal-on-use: a legacy
+plaintext record on a host that later gets a barrier initialized is not
+transparently upgraded to the sealed form by `Connect`, `device listen`, or
+`device attest-device` — those now return `ErrNoiseKeyFormMismatch`
+(surfaced as `ErrPhoneMissingKeys` on the GUI side) once the barrier is
+open, telling the operator to re-pair. Re-pairing (`xkey device pair` /
+the GUI pairing flow) always writes the form that matches the barrier state
+at pairing time, via `sealOrWarnLocalNoiseKey`.
 
 ## Test strategy
 

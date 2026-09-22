@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Seal command errors.
@@ -149,15 +150,12 @@ func createSealVolume() (*luks.Volume, error) {
 		luksPath = h.LUKSPath()
 		mountPoint = h.MountPoint()
 	} else {
-		var err error
-		luksPath, err = luks.GetDefaultLUKSPath()
+		h, err := xhome.Resolve()
 		if err != nil {
 			return nil, err
 		}
-		mountPoint, err = luks.GetDefaultDataDir()
-		if err != nil {
-			return nil, err
-		}
+		luksPath = h.LUKSPath()
+		mountPoint = h.MountPoint()
 	}
 
 	// Custom flags override resolved defaults.

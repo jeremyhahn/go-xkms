@@ -461,33 +461,10 @@ func TestPhoneService_Coverage_SaveConfig_CreatesDirectory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// phoneConfigPath migration path (was 90%)
+// phoneConfigPath
 // ---------------------------------------------------------------------------
 
-func TestPhoneService_Coverage_PhoneConfigPath_LegacyMigration(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Cleanup(func() { os.Setenv("HOME", origHome) })
-	os.Setenv("HOME", tmpDir)
-
-	// Create legacy phone.yaml but no devices.yaml.
-	xkeyDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(xkeyDir, 0700))
-	legacyData := []byte("devices:\n- name: Legacy Phone\n  address: FF:EE:DD:CC:BB:AA\n")
-	require.NoError(t, os.WriteFile(filepath.Join(xkeyDir, legacyPhoneConfigFileName), legacyData, 0600))
-
-	path, err := phoneConfigPath()
-	require.NoError(t, err)
-	assert.Contains(t, path, devicesConfigFileName)
-
-	// Verify the legacy file was renamed.
-	_, err = os.Stat(filepath.Join(xkeyDir, legacyPhoneConfigFileName))
-	assert.True(t, os.IsNotExist(err), "legacy file should be renamed")
-	_, err = os.Stat(filepath.Join(xkeyDir, devicesConfigFileName))
-	assert.NoError(t, err, "new config file should exist after migration")
-}
-
-func TestPhoneService_Coverage_PhoneConfigPath_NoLegacyNoNew(t *testing.T) {
+func TestPhoneService_Coverage_PhoneConfigPath_NoXkeyDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	origHome := os.Getenv("HOME")
 	t.Cleanup(func() { os.Setenv("HOME", origHome) })
@@ -499,7 +476,7 @@ func TestPhoneService_Coverage_PhoneConfigPath_NoLegacyNoNew(t *testing.T) {
 	assert.Contains(t, path, devicesConfigFileName)
 }
 
-func TestPhoneService_Coverage_PhoneConfigPath_BothExist(t *testing.T) {
+func TestPhoneService_Coverage_PhoneConfigPath_ExistingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	origHome := os.Getenv("HOME")
 	t.Cleanup(func() { os.Setenv("HOME", origHome) })
@@ -507,17 +484,11 @@ func TestPhoneService_Coverage_PhoneConfigPath_BothExist(t *testing.T) {
 
 	xkeyDir := filepath.Join(tmpDir, ".xkey")
 	require.NoError(t, os.MkdirAll(xkeyDir, 0700))
-	// Both files exist -- no migration should happen, new file takes precedence.
 	require.NoError(t, os.WriteFile(filepath.Join(xkeyDir, devicesConfigFileName), []byte("devices: []\n"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(xkeyDir, legacyPhoneConfigFileName), []byte("devices: []\n"), 0600))
 
 	path, err := phoneConfigPath()
 	require.NoError(t, err)
 	assert.Contains(t, path, devicesConfigFileName)
-
-	// Legacy file should still exist (no migration needed).
-	_, err = os.Stat(filepath.Join(xkeyDir, legacyPhoneConfigFileName))
-	assert.NoError(t, err, "legacy file should still exist when new file also exists")
 }
 
 // ---------------------------------------------------------------------------

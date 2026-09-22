@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Lock command errors.
@@ -94,15 +95,12 @@ func createLockVolume() (*luks.Volume, error) {
 		luksPath = h.LUKSPath()
 		mountPoint = h.MountPoint()
 	} else {
-		var err error
-		luksPath, err = luks.GetDefaultLUKSPath()
+		h, err := xhome.Resolve()
 		if err != nil {
 			return nil, err
 		}
-		mountPoint, err = luks.GetDefaultDataDir()
-		if err != nil {
-			return nil, err
-		}
+		luksPath = h.LUKSPath()
+		mountPoint = h.MountPoint()
 	}
 
 	if lockPath != "" {

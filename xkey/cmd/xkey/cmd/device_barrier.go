@@ -207,29 +207,3 @@ func sealOrWarnLocalNoiseKey(logger *slog.Logger, deviceName string, barrier pai
 // compile-time checks: *xkms.Barrier is what openDeviceBarrier actually
 // returns behind the pairing.NoiseKeyBarrier interface.
 var _ pairing.NoiseKeyBarrier = (*xkms.Barrier)(nil)
-
-// migrateLegacyNoiseKeyAndSave re-seals device's Noise private key under
-// barrier and rewrites cfg to disk, completing the migration of a legacy
-// plaintext record to the sealed form (#42). device must alias an entry
-// inside cfg.Devices (as findDeviceByName/findDeviceByAddress return), so
-// mutating it in place is enough for the save below to persist the update.
-//
-// It is best-effort and logs rather than returning an error: a command that
-// otherwise succeeded at its actual job (re-attesting, listening) must not
-// fail because migration could not complete, and failing to migrate leaves
-// the record exactly as it was for the next call that has a barrier open.
-func migrateLegacyNoiseKeyAndSave(cfg *DevicesConfig, device *PairedDevice, barrier pairing.NoiseKeyBarrier, priv []byte, logger *slog.Logger) {
-	sealed, err := pairing.SealLocalNoiseKey(barrier, priv)
-	if err != nil {
-		logger.Warn("failed to seal legacy local Noise private key during migration",
-			"device", device.Name, "error", err)
-		return
-	}
-	device.LocalNoisePrivateKey = sealed
-	if err := saveDevicesConfig(cfg); err != nil {
-		logger.Warn("failed to persist the sealed local Noise private key",
-			"device", device.Name, "error", err)
-		return
-	}
-	logger.Info("migrated local Noise private key from legacy plaintext to sealed storage", "device", device.Name)
-}

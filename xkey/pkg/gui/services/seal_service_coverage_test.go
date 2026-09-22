@@ -304,19 +304,44 @@ func TestSealService_Coverage_ClassifyCategory(t *testing.T) {
 // blobToEntry
 // ---------------------------------------------------------------------------
 
-func TestSealService_Coverage_BlobToEntry_DefaultValues(t *testing.T) {
+func TestSealService_Coverage_BlobToEntry_MissingPolicyType(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:        "test-id",
 		Label:     "test-label",
 		SizeBytes: 100,
 		CreatedAt: time.Now(),
 	}
-	entry := blobToEntry(blob)
+	_, err := blobToEntry(blob)
+	assert.ErrorIs(t, err, ErrSealBlobPolicyTypeMissing)
+}
+
+func TestSealService_Coverage_BlobToEntry_MissingBackendID(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:         "test-id",
+		Label:      "test-label",
+		SizeBytes:  100,
+		PolicyType: "none",
+		CreatedAt:  time.Now(),
+	}
+	_, err := blobToEntry(blob)
+	assert.ErrorIs(t, err, ErrSealBlobBackendIDMissing)
+}
+
+func TestSealService_Coverage_BlobToEntry_DefaultCategoryAndStorageType(t *testing.T) {
+	blob := &sealedBlobStorage{
+		ID:         "test-id",
+		Label:      "test-label",
+		SizeBytes:  100,
+		PolicyType: "none",
+		BackendID:  "software",
+		CreatedAt:  time.Now(),
+	}
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
 
 	assert.Equal(t, "test-id", entry.ID)
 	assert.Equal(t, "test-label", entry.Label)
 	assert.Equal(t, 100, entry.SizeBytes)
-	assert.Equal(t, string(PolicyTypeNone), entry.PolicyType)   // default
 	assert.Equal(t, "user", entry.Category)                     // default for non-system label
 	assert.Equal(t, string(StorageTypeDisk), entry.StorageType) // default
 }
@@ -333,7 +358,8 @@ func TestSealService_Coverage_BlobToEntry_AllFields(t *testing.T) {
 		StorageType: "nvram",
 		CreatedAt:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
-	entry := blobToEntry(blob)
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
 
 	assert.Equal(t, "full-id", entry.ID)
 	assert.Equal(t, "password_master_key", entry.Label)
@@ -348,11 +374,14 @@ func TestSealService_Coverage_BlobToEntry_AllFields(t *testing.T) {
 
 func TestSealService_Coverage_BlobToEntry_SystemCategory(t *testing.T) {
 	blob := &sealedBlobStorage{
-		ID:        "sys-id",
-		Label:     "barrier_password",
-		CreatedAt: time.Now(),
+		ID:         "sys-id",
+		Label:      "barrier_password",
+		PolicyType: "none",
+		BackendID:  "software",
+		CreatedAt:  time.Now(),
 	}
-	entry := blobToEntry(blob)
+	entry, err := blobToEntry(blob)
+	require.NoError(t, err)
 	assert.Equal(t, "system", entry.Category)
 }
 
@@ -428,19 +457,22 @@ func TestSealService_Coverage_HandlePolicyNone(t *testing.T) {
 }
 
 func TestSealService_Coverage_HandlePolicyPassword_Empty(t *testing.T) {
-	req := &SealRequest{Password: ""}
+	req := &SealRequest{
+		PolicyType: "none", Password: ""}
 	err := handlePolicyPassword(nil, req, nil)
 	assert.ErrorIs(t, err, ErrSealPasswordRequired)
 }
 
 func TestSealService_Coverage_HandlePolicyPassword_Valid(t *testing.T) {
-	req := &SealRequest{Password: "mysecret"}
+	req := &SealRequest{
+		PolicyType: "none", Password: "mysecret"}
 	err := handlePolicyPassword(nil, req, nil)
 	assert.NoError(t, err)
 }
 
 func TestSealService_Coverage_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
-	req := &SealRequest{}
+	req := &SealRequest{
+		PolicyType: "none"}
 	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
 	assert.NoError(t, err)
@@ -449,8 +481,9 @@ func TestSealService_Coverage_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
 
 func TestSealService_Coverage_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 	req := &SealRequest{
-		PCRs:    []int{0, 7},
-		PCRBank: "sha256",
+		PolicyType: "none",
+		PCRs:       []int{0, 7},
+		PCRBank:    "sha256",
 	}
 	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
@@ -461,8 +494,9 @@ func TestSealService_Coverage_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 
 func TestSealService_Coverage_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
 	req := &SealRequest{
-		PCRs:    []int{0},
-		PCRBank: "", // should default to sha256
+		PolicyType: "none",
+		PCRs:       []int{0},
+		PCRBank:    "", // should default to sha256
 	}
 	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
@@ -473,8 +507,9 @@ func TestSealService_Coverage_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
 
 func TestSealService_Coverage_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
 	req := &SealRequest{
-		PCRs:    []int{0},
-		PCRBank: "md5", // not in pcrBankAlgMap
+		PolicyType: "none",
+		PCRs:       []int{0},
+		PCRBank:    "md5", // not in pcrBankAlgMap
 	}
 	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
@@ -487,7 +522,8 @@ func TestSealService_Coverage_HandlePolicyPlatformPolicy_NilService(t *testing.T
 	svc := NewSealService(t.TempDir())
 	svc.policyService = nil
 
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, &xkms.SealOptions{})
+	err := handlePolicyPlatformPolicy(svc, &SealRequest{
+		PolicyType: "none"}, &xkms.SealOptions{})
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }
 
@@ -621,9 +657,11 @@ func TestSealService_Coverage_SaveAndLoadBlob_Direct(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		ID:        "test-blob",
-		Label:     "test-label",
-		SizeBytes: 42,
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob",
+		Label:      "test-label",
+		SizeBytes:  42,
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("ciphertext"),
@@ -674,9 +712,11 @@ func TestSealService_Coverage_SaveAndLoadBlob_ViaBackend(t *testing.T) {
 	svc.SetBackend(backend, "sealed/")
 
 	blob := &sealedBlobStorage{
-		ID:        "backend-blob",
-		Label:     "backend-label",
-		SizeBytes: 100,
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "backend-blob",
+		Label:      "backend-label",
+		SizeBytes:  100,
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("test"),
@@ -740,9 +780,11 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_WithBlobs(t *testing.T) {
 	// Save two blobs.
 	for _, id := range []string{"blob-1", "blob-2"} {
 		blob := &sealedBlobStorage{
-			ID:        id,
-			Label:     "label-" + id,
-			SizeBytes: 50,
+			PolicyType: "none",
+			BackendID:  "software",
+			ID:         id,
+			Label:      "label-" + id,
+			SizeBytes:  50,
 			SealedData: &xkms.SealedData{
 				Backend: xkms.BackendTypeSoftware,
 			},
@@ -764,6 +806,8 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_SkipsInvalidJSON(t *testing.T
 
 	// Write valid blob.
 	validBlob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "valid",
 		Label:      "valid-label",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
@@ -808,6 +852,8 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend(t *testing.T) {
 
 	// Save a blob then delete it.
 	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "delete-me",
 		Label:      "to-delete",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
@@ -842,6 +888,8 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend_WithAudit(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "audit-delete",
 		Label:      "audit-label",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
@@ -863,6 +911,8 @@ func TestSealService_Coverage_DeleteBlob_NilContext(t *testing.T) {
 
 	// Create blob on disk.
 	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "ctx-nil",
 		Label:      "ctx-nil-label",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
@@ -874,75 +924,6 @@ func TestSealService_Coverage_DeleteBlob_NilContext(t *testing.T) {
 
 	err := svc.DeleteBlob("ctx-nil")
 	require.NoError(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// MigrateFrom
-// ---------------------------------------------------------------------------
-
-func TestSealService_Coverage_MigrateFrom_SkipsNonJSON(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := t.TempDir()
-	svc := NewSealService(dstDir)
-
-	// Create a non-JSON file in source.
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "data.txt"), []byte("text"), 0600))
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestSealService_Coverage_MigrateFrom_SkipsSubdirs(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := t.TempDir()
-	svc := NewSealService(dstDir)
-
-	// Create a subdirectory in source.
-	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "subdir"), 0700))
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestSealService_Coverage_MigrateFrom_CopiesJSON(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := filepath.Join(t.TempDir(), "dest")
-	svc := NewSealService(dstDir)
-
-	// Create JSON files in source.
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "blob1.json"), []byte(`{"id":"b1"}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "blob2.json"), []byte(`{"id":"b2"}`), 0600))
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 2, migrated)
-
-	// Verify files exist in destination.
-	_, err1 := os.Stat(filepath.Join(dstDir, "blob1.json"))
-	_, err2 := os.Stat(filepath.Join(dstDir, "blob2.json"))
-	assert.NoError(t, err1)
-	assert.NoError(t, err2)
-}
-
-func TestSealService_Coverage_MigrateFrom_DoesNotOverwrite(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := t.TempDir()
-	svc := NewSealService(dstDir)
-
-	// Write a file in both source and destination.
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "exist.json"), []byte(`{"from":"src"}`), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dstDir, "exist.json"), []byte(`{"from":"dst"}`), 0600))
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated) // Should not overwrite
-
-	// Verify destination content unchanged.
-	data, readErr := os.ReadFile(filepath.Join(dstDir, "exist.json"))
-	require.NoError(t, readErr)
-	assert.Contains(t, string(data), "dst")
 }
 
 // ---------------------------------------------------------------------------
@@ -1065,8 +1046,10 @@ func TestSealService_Coverage_UnsealData_BackendIDFallback(t *testing.T) {
 
 	// Create a blob directly with empty BackendID.
 	blob := &sealedBlobStorage{
-		ID:    "no-backend",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "no-backend",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("data"),
@@ -1090,8 +1073,10 @@ func TestSealService_Coverage_UnsealData_FullBackendIDFallback(t *testing.T) {
 
 	// Create a blob with empty BackendID and empty SealedData.Backend.
 	blob := &sealedBlobStorage{
-		ID:    "empty-backend",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "empty-backend",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Ciphertext: []byte("data"),
 		},
@@ -1195,8 +1180,9 @@ func TestSealService_Coverage_SealData_SystemCategory(t *testing.T) {
 	svc.SetClientFunc(func() xkms.Client { return mc })
 
 	req := &SealRequest{
-		Label: "password_master_key",
-		Data:  base64.StdEncoding.EncodeToString([]byte("master-key-data")),
+		PolicyType: "none",
+		Label:      "password_master_key",
+		Data:       base64.StdEncoding.EncodeToString([]byte("master-key-data")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -1256,8 +1242,9 @@ func TestSealService_Coverage_ErrorSentinels(t *testing.T) {
 		ErrSealStorageDirRelative,
 		ErrSealBackendNotFound,
 		ErrSealPolicyRequiresTPM,
-		ErrSealMigrationFailed,
 		ErrSealNoClient,
+		ErrSealBlobPolicyTypeMissing,
+		ErrSealBlobBackendIDMissing,
 	}
 
 	seen := make(map[string]bool, len(sentinels))
@@ -1544,6 +1531,8 @@ func TestSealService_Coverage_SaveBlob_BackendPutError(t *testing.T) {
 	svc.SetBackend(&errorBackend{}, "sealed/")
 
 	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "err-blob",
 		Label:      "err-label",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
@@ -1604,6 +1593,8 @@ func TestSealService_Coverage_SaveBlob_EmptyStorageDir(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "no-dir",
 		Label:      "no-dir-label",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
@@ -1625,6 +1616,8 @@ func TestSealService_Coverage_SaveBlob_NilContext_ViaBackend(t *testing.T) {
 	svc.SetBackend(backend, "sealed/")
 
 	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software",
 		ID:         "nil-ctx",
 		Label:      "nil-ctx-label",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},

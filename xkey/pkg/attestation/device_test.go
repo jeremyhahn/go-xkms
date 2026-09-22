@@ -663,19 +663,21 @@ func TestAVersionTwoBindingWithoutAFingerprintIsRefused(t *testing.T) {
 	}
 }
 
-// TestALegacyBindingWithoutAFingerprintIsStillAnEnrolment is the other half.
-//
-// Without it the test above would pass against a Validate that refused every
-// empty fingerprint, which would break the first `device attest-device` on a
-// device that has never been attested — a state that is legitimately different
-// from having had an identity and lost it.
-func TestALegacyBindingWithoutAFingerprintIsStillAnEnrolment(t *testing.T) {
+// TestALegacyBindingIsRejected documents the removal of the #129/#130 grace
+// period for a record with no protocol version, or version 1 (BREAKING,
+// go-xkms compat cleanup PR5): such a record no longer enrolls on its first
+// attestation, it is refused outright and the operator must re-pair.
+func TestALegacyBindingIsRejected(t *testing.T) {
 	legacy := attestation.DeviceBinding{}
 
-	require.NoError(t, legacy.Validate(),
-		"a legacy record claims nothing, so there is nothing incomplete about it")
-	require.NoError(t, legacy.ValidateAttestedKeyMatch("whatever-the-first-attestation-yields"),
-		"the first attestation of a never-attested device records the identity")
+	require.ErrorIs(t, legacy.Validate(), attestation.ErrDeviceAttestationVersionUnsupported,
+		"a record below version 2 must be refused, not treated as a first enrolment")
+	require.ErrorIs(t, legacy.ValidateAttestedKeyMatch("whatever-the-first-attestation-yields"),
+		attestation.ErrDeviceAttestationVersionUnsupported)
+
+	v1 := attestation.DeviceBinding{ProtocolVersion: pairing.AttestProtocolV1}
+	require.ErrorIs(t, v1.Validate(), attestation.ErrDeviceAttestationVersionUnsupported,
+		"an explicit version 1 record is refused the same as an absent version")
 }
 
 // TestVerifyReattestationRefusesAnIncompleteBindingBeforeAsking pins WHERE the

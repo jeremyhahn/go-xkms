@@ -113,11 +113,6 @@ const (
 	TPMStatusLevelManufacturer   = "manufacturer"    // EK exists but no SRK
 	TPMStatusLevelOwner          = "owner"           // SRK exists but no IDevID key+cert
 	TPMStatusLevelDeviceIdentity = "device_identity" // IDevID key AND certificate present
-
-	// Deprecated: kept for backward compatibility in JSON responses.
-	TPMStatusLevelDefault     = "default"
-	TPMStatusLevelProvisioned = "provisioned"
-	TPMStatusLevelVerified    = "verified"
 )
 
 // Provision modes.
@@ -128,9 +123,6 @@ const (
 
 // handleDescriptionsFile is the JSON file name for persisted handle descriptions.
 const handleDescriptionsFile = "handle_descriptions.json"
-
-// pcrPoliciesFile is the JSON file name for persisted PCR policies.
-const pcrPoliciesFile = "pcr_policies.json"
 
 // policyAssignmentsFile is the JSON file name for persisted policy-to-key assignments.
 const policyAssignmentsFile = "policy_assignments.json"
@@ -650,10 +642,7 @@ func (s *TPMService) SetPlatformPolicyService(svc *PlatformPolicyService) {
 }
 
 // getPolicyStore returns the currently configured canonical PCR policy
-// store, or nil if SetPolicyStore has not been called yet. When nil, PCR
-// policy CRUD methods (ListPolicies, CreatePolicy, etc.) fall back to the
-// legacy pcr_policies.json file under the data directory for backward
-// compatibility.
+// store, or nil if SetPolicyStore has not been called yet.
 func (s *TPMService) getPolicyStore() pcrpolicy.PolicyStore {
 	if p := s.policyStore.Load(); p != nil {
 		return *p
@@ -664,65 +653,10 @@ func (s *TPMService) getPolicyStore() pcrpolicy.PolicyStore {
 // SetPolicyStore injects the canonical PCR policy store (xkey/pkg/pcr_policy),
 // unifying GUI policy persistence with the store used by the CLI and by
 // BarrierAutoUnsealService. This is called by the composition root once the
-// data directory is available.
-//
-// On first call, if a legacy pcr_policies.json file exists under the
-// configured data directory, its entries are imported into the store
-// exactly once; the legacy file is then renamed to
-// pcr_policies.json.migrated so the migration never runs again.
+// data directory is available. PCR policy CRUD methods return
+// ErrTPMPolicyStoreNotSet until this has been called.
 func (s *TPMService) SetPolicyStore(store pcrpolicy.PolicyStore) {
 	s.policyStore.Store(&store)
-	if store != nil {
-		s.migrateLegacyPCRPolicies(store)
-	}
-}
-
-// migrateLegacyPCRPolicies imports policies from the legacy JSON file (if
-// present) into store, then renames the legacy file so this only ever runs
-// once. Failures are logged but non-fatal: the legacy file is left in place
-// (untouched) so the migration can be retried on the next start.
-func (s *TPMService) migrateLegacyPCRPolicies(store pcrpolicy.PolicyStore) {
-	if s.dataDir == "" {
-		return
-	}
-
-	legacyPath := filepath.Join(s.dataDir, pcrPoliciesFile)
-	data, err := os.ReadFile(legacyPath)
-	if err != nil {
-		// No legacy file to migrate — this is the common case.
-		return
-	}
-
-	var legacy []PCRPolicy
-	if jsonErr := json.Unmarshal(data, &legacy); jsonErr != nil {
-		s.log.Warn("pcr policy migration: failed to parse legacy pcr_policies.json", "error", jsonErr)
-		return
-	}
-
-	ctx := context.Background()
-	migrated := 0
-	for _, p := range legacy {
-		entity, convErr := pcrPolicyToEntity(p)
-		if convErr != nil {
-			s.log.Warn("pcr policy migration: skipping incompatible legacy policy",
-				"policy", p.Name, "error", convErr)
-			continue
-		}
-		if saveErr := store.Save(ctx, entity); saveErr != nil {
-			s.log.Warn("pcr policy migration: failed to save policy",
-				"policy", p.Name, "error", saveErr)
-			continue
-		}
-		migrated++
-	}
-
-	migratedPath := legacyPath + ".migrated"
-	if renameErr := os.Rename(legacyPath, migratedPath); renameErr != nil {
-		s.log.Warn("pcr policy migration: failed to rename legacy pcr_policies.json", "error", renameErr)
-		return
-	}
-	s.log.Info("pcr policy migration: imported legacy PCR policies into unified store",
-		"migrated", migrated, "total", len(legacy))
 }
 
 // isPlatformPolicyName returns true when the given name matches the
@@ -3517,7 +3451,7 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 // --- PCR Policy CRUD ---
 
 // ListPolicies returns all saved PCR policies. Returns an empty slice
-// if no policies file exists yet.
+// if no policies exist yet.
 func (s *TPMService) ListPolicies() (retVal []PCRPolicy, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -3526,7 +3460,7 @@ func (s *TPMService) ListPolicies() (retVal []PCRPolicy, retErr error) {
 		}
 	}()
 
-	return s.loadPolicies(), nil
+	return s.loadPolicies()
 }
 
 // CreatePolicy creates a new named PCR policy. The policy name must be
@@ -3543,7 +3477,10 @@ func (s *TPMService) CreatePolicy(policy *PCRPolicy) (retErr error) {
 		return ErrTPMInvalidPolicyName
 	}
 
-	policies := s.loadPolicies()
+	policies, err := s.loadPolicies()
+	if err != nil {
+		return err
+	}
 	for _, p := range policies {
 		if p.Name == policy.Name {
 			return ErrTPMPolicyExists
@@ -3587,7 +3524,10 @@ func (s *TPMService) GetPolicyDeletionImpact(name string) (retVal *PolicyDeletio
 	}
 
 	// Determine policy type.
-	pcrPolicies := s.loadPolicies()
+	pcrPolicies, err := s.loadPolicies()
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range pcrPolicies {
 		if p.Name == name {
 			impact.PolicyType = "pcr"
@@ -3635,7 +3575,10 @@ func (s *TPMService) DeletePolicy(name string) (retErr error) {
 		}
 	}()
 
-	policies := s.loadPolicies()
+	policies, err := s.loadPolicies()
+	if err != nil {
+		return err
+	}
 	found := false
 	filtered := make([]PCRPolicy, 0, len(policies))
 	for _, p := range policies {
@@ -3669,7 +3612,10 @@ func (s *TPMService) GetPolicy(name string) (retVal *PCRPolicy, retErr error) {
 		}
 	}()
 
-	policies := s.loadPolicies()
+	policies, err := s.loadPolicies()
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range policies {
 		if p.Name == name {
 			return &p, nil
@@ -3679,71 +3625,40 @@ func (s *TPMService) GetPolicy(name string) (retVal *PCRPolicy, retErr error) {
 	return nil, ErrTPMPolicyNotFound
 }
 
-// loadPolicies reads the persisted PCR policies. When a canonical
-// pcr_policy store has been configured via SetPolicyStore, policies are
-// read from it (the unified store shared with the CLI and
-// BarrierAutoUnsealService). Otherwise, it falls back to the legacy
-// pcr_policies.json file under the data directory for backward
-// compatibility with callers that never wire a store (e.g. unit tests).
-func (s *TPMService) loadPolicies() []PCRPolicy {
-	if store := s.getPolicyStore(); store != nil {
-		entities, err := store.List(context.Background())
-		if err != nil {
-			s.log.Warn("failed to list PCR policies from store", "error", err)
-			return []PCRPolicy{}
-		}
-		policies := make([]PCRPolicy, 0, len(entities))
-		for _, e := range entities {
-			policies = append(policies, entityToPCRPolicy(e))
-		}
-		return policies
+// loadPolicies reads the persisted PCR policies from the canonical
+// pcr_policy store (the unified store shared with the CLI and
+// BarrierAutoUnsealService). Returns ErrTPMPolicyStoreNotSet if
+// SetPolicyStore has not been called.
+func (s *TPMService) loadPolicies() ([]PCRPolicy, error) {
+	store := s.getPolicyStore()
+	if store == nil {
+		return nil, ErrTPMPolicyStoreNotSet
 	}
 
-	if s.dataDir == "" {
-		return []PCRPolicy{}
-	}
-
-	filePath := filepath.Join(s.dataDir, pcrPoliciesFile)
-	data, err := os.ReadFile(filePath)
+	entities, err := store.List(context.Background())
 	if err != nil {
-		return []PCRPolicy{}
+		s.log.Warn("failed to list PCR policies from store", "error", err)
+		return nil, err
 	}
-
-	var policies []PCRPolicy
-	if jsonErr := json.Unmarshal(data, &policies); jsonErr != nil {
-		s.log.Warn("failed to parse PCR policies", "error", jsonErr)
-		return []PCRPolicy{}
+	policies := make([]PCRPolicy, 0, len(entities))
+	for _, e := range entities {
+		policies = append(policies, entityToPCRPolicy(e))
 	}
-
-	return policies
+	return policies, nil
 }
 
-// savePolicies persists the full set of PCR policies, mirroring the
-// "overwrite whole file" semantics every CRUD call site (ListPolicies,
-// CreatePolicy, DeletePolicy, UpdatePolicy, ...) already relies on: load the
-// full list, mutate it, and save the full list back. When a canonical
-// pcr_policy store is configured, this is implemented as a diff-based sync
-// against the store; otherwise it falls back to the legacy JSON file.
+// savePolicies persists the full set of PCR policies to the canonical
+// pcr_policy store, mirroring the "overwrite whole list" semantics every
+// CRUD call site (ListPolicies, CreatePolicy, DeletePolicy, UpdatePolicy,
+// ...) already relies on: load the full list, mutate it, and save the full
+// list back. Implemented as a diff-based sync against the store. Returns
+// ErrTPMPolicyStoreNotSet if SetPolicyStore has not been called.
 func (s *TPMService) savePolicies(policies []PCRPolicy) error {
-	if store := s.getPolicyStore(); store != nil {
-		return s.syncPoliciesToStore(store, policies)
+	store := s.getPolicyStore()
+	if store == nil {
+		return ErrTPMPolicyStoreNotSet
 	}
-
-	if s.dataDir == "" {
-		return ErrTPMDataDirNotSet
-	}
-
-	filePath := filepath.Join(s.dataDir, pcrPoliciesFile)
-	data, err := json.MarshalIndent(policies, "", "  ")
-	if err != nil {
-		return &WrappedError{Msg: "tpm_service: marshal policies", Err: err}
-	}
-
-	if writeErr := os.WriteFile(filePath, data, 0600); writeErr != nil {
-		return &WrappedError{Msg: "tpm_service: write policies", Err: writeErr}
-	}
-
-	return nil
+	return s.syncPoliciesToStore(store, policies)
 }
 
 // syncPoliciesToStore replaces the full set of PCR policies held in store
@@ -3844,7 +3759,10 @@ func (s *TPMService) UpdatePolicy(name string, updated *PCRPolicy) (retVal *PCRP
 		return nil, ErrTPMInvalidPolicyName
 	}
 
-	policies := s.loadPolicies()
+	policies, err := s.loadPolicies()
+	if err != nil {
+		return nil, err
+	}
 	idx := -1
 	for i, p := range policies {
 		if p.Name == name {
@@ -3891,7 +3809,10 @@ func (s *TPMService) RefreshPolicyPCRs(name string) (retVal *PCRPolicy, retErr e
 		}
 	}()
 
-	policies := s.loadPolicies()
+	policies, err := s.loadPolicies()
+	if err != nil {
+		return nil, err
+	}
 	idx := -1
 	for i, p := range policies {
 		if p.Name == name {
@@ -3903,8 +3824,8 @@ func (s *TPMService) RefreshPolicyPCRs(name string) (retVal *PCRPolicy, retErr e
 		return nil, ErrTPMPolicyNotFound
 	}
 
-	tpm, err := s.getTPM()
-	if err != nil {
+	tpm, tpmErr := s.getTPM()
+	if tpmErr != nil {
 		return nil, ErrTPMNotAvailable
 	}
 	defer s.tpmAccessor.Release()
@@ -4764,13 +4685,16 @@ func (s *TPMService) ListPoliciesWithDigests() (retVal []PCRPolicy, retErr error
 		}
 	}()
 
-	policies := s.loadPolicies()
+	policies, err := s.loadPolicies()
+	if err != nil {
+		return nil, err
+	}
 	if len(policies) == 0 {
 		return policies, nil
 	}
 
-	tpm, err := s.getTPM()
-	if err != nil {
+	tpm, tpmErr := s.getTPM()
+	if tpmErr != nil {
 		// Graceful degradation: return policies without digests.
 		s.log.Debug("TPM unavailable for digest population, returning policies as-is")
 		return policies, nil
@@ -5081,7 +5005,7 @@ func (s *TPMService) savePolicyPassword(policyName, operator, rawPassword string
 		return
 	}
 
-	_, err := s.staticPWService.AddPasswordV2(AddPasswordParams{
+	_, err := s.staticPWService.AddPassword(AddPasswordParams{
 		Name:       fmt.Sprintf("Policy: %s", policyName),
 		Password:   rawPassword,
 		FolderPath: policyPasswordFolder,

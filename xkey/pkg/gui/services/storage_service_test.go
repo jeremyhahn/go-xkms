@@ -44,6 +44,7 @@ func TestStorageService_SetElevator(t *testing.T) {
 }
 
 func TestStorageService_GetStatus(t *testing.T) {
+	isolateHome(t)
 	svc := NewStorageService()
 	status, err := svc.GetStatus()
 	require.NoError(t, err)
@@ -165,6 +166,7 @@ func TestStorageService_CreateVolume_WithElevator(t *testing.T) {
 		t.Log("running as root; skipping elevation test")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	mock := &mockElevator{available: true, output: []byte(`{"status":"ok"}`)}
 	svc.SetElevator(mock)
@@ -227,6 +229,7 @@ func TestStorageService_UnlockVolume_WithElevator(t *testing.T) {
 		t.Log("running as root; skipping elevation test")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	mock := &mockElevator{available: true, output: []byte(`{"status":"ok"}`)}
 	svc.SetElevator(mock)
@@ -261,6 +264,7 @@ func TestStorageService_LockVolume_WithElevator(t *testing.T) {
 		t.Log("running as root; skipping elevation test")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	mock := &mockElevator{available: true, output: []byte(`{"status":"ok"}`)}
 	svc.SetElevator(mock)
@@ -320,6 +324,7 @@ func TestStorageService_WipeVolume_WithElevator(t *testing.T) {
 		t.Log("running as root; skipping elevation test")
 		return
 	}
+	isolateHome(t)
 	svc := NewStorageService()
 	mock := &mockElevator{available: true, output: []byte(`{"status":"ok"}`)}
 	svc.SetElevator(mock)

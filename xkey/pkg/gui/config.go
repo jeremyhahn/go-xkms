@@ -161,16 +161,6 @@ type GUIConfig struct {
 	// Empty means auto-select the best available.
 	SealerBackend string `mapstructure:"sealer_backend" json:"sealer_backend,omitempty"`
 
-	// PINStrategy is DEPRECATED (go-xkms#307): the governing PIN strategy
-	// now lives at <dataDir>/pin/strategy, shared with the headless daemon
-	// and `xkey pin` (see pkg/gui/services.ResolvePINBackend), because a
-	// GUI-only record let a PIN set through the GUI's TPM2 wizard
-	// authenticate against a different backend than `xkey pin` or the
-	// daemon read. This field is read once, to migrate an older install's
-	// value into the shared location; initPINService no longer writes it.
-	// Kept for that migration and for backward JSON compatibility only.
-	PINStrategy string `mapstructure:"pin_strategy" json:"pin_strategy,omitempty"`
-
 	// APIExplorerSandboxPolicy is the iframe sandbox directives for the API Explorer preview.
 	// Default: "allow-same-origin allow-scripts allow-forms allow-popups"
 	APIExplorerSandboxPolicy string `mapstructure:"api_explorer_sandbox_policy" json:"api_explorer_sandbox_policy"`
@@ -290,16 +280,6 @@ func guiConfigPath() (string, error) {
 	return filepath.Join(cfgDir, "gui.json"), nil
 }
 
-// legacyGUIConfigPath returns the old config file location (~/.xkey/gui.json)
-// used before the config/data directory separation.
-func legacyGUIConfigPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", &SentinelCauseError{Sentinel: ErrConfigLoad, Cause: err}
-	}
-	return filepath.Join(homeDir, ".xkey", "gui.json"), nil
-}
-
 // LoadGUIConfig loads the GUI configuration from viper settings and the
 // GUI-specific JSON file. Viper values take precedence, then the JSON file,
 // then defaults.
@@ -310,21 +290,6 @@ func LoadGUIConfig() (*GUIConfig, error) {
 	cfgPath, err := guiConfigPath()
 	if err != nil {
 		return cfg, nil // Return defaults on path error.
-	}
-
-	// Migrate from legacy path (~/.xkey/gui.json) if the new config
-	// does not exist yet. This is a non-destructive copy so existing
-	// LUKS setups that already have gui.json inside the mount point
-	// keep their original file intact.
-	if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
-		if legacyPath, legErr := legacyGUIConfigPath(); legErr == nil {
-			if legacyData, readErr := os.ReadFile(legacyPath); readErr == nil {
-				dir := filepath.Dir(cfgPath)
-				if mkErr := os.MkdirAll(dir, 0700); mkErr == nil {
-					_ = os.WriteFile(cfgPath, legacyData, 0600)
-				}
-			}
-		}
 	}
 
 	data, err := os.ReadFile(cfgPath)
@@ -433,9 +398,6 @@ func LoadGUIConfig() (*GUIConfig, error) {
 	}
 	if viper.IsSet("gui.sealer_backend") {
 		cfg.SealerBackend = viper.GetString("gui.sealer_backend")
-	}
-	if viper.IsSet("gui.pin_strategy") {
-		cfg.PINStrategy = viper.GetString("gui.pin_strategy")
 	}
 	if viper.IsSet("gui.api_explorer_sandbox_policy") {
 		cfg.APIExplorerSandboxPolicy = viper.GetString("gui.api_explorer_sandbox_policy")

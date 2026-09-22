@@ -281,8 +281,10 @@ func TestAppService_GetStatus_AllCallbacks(t *testing.T) {
 func TestSealService_saveBlob_EmptyStorageDir(t *testing.T) {
 	svc := NewSealService("")
 	blob := &sealedBlobStorage{
-		ID:    "test-blob",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -297,8 +299,10 @@ func TestSealService_saveBlob_EmptyStorageDir(t *testing.T) {
 func TestSealService_saveBlob_RelativeStorageDir(t *testing.T) {
 	svc := NewSealService("relative/path")
 	blob := &sealedBlobStorage{
-		ID:    "test-blob",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1036,8 +1040,9 @@ func TestSealService_UnsealData_PasswordEmptyOnNonPasswordBlob(t *testing.T) {
 	// Seal without password.
 	original := "test-data"
 	req := &SealRequest{
-		Label: "no-pw",
-		Data:  base64.StdEncoding.EncodeToString([]byte(original)),
+		PolicyType: "none",
+		Label:      "no-pw",
+		Data:       base64.StdEncoding.EncodeToString([]byte(original)),
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)

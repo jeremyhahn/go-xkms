@@ -38,7 +38,7 @@ func newTestPasswordProtectionService(t *testing.T) (
 	staticPWSvc := NewStaticPasswordService(store)
 	staticPWSvc.SetContext(context.Background())
 
-	ppSvc := NewPasswordProtectionService("", staticPWSvc, nil)
+	ppSvc := NewPasswordProtectionService(staticPWSvc, nil)
 	ppSvc.SetContext(context.Background())
 
 	return ppSvc, staticPWSvc
@@ -47,13 +47,13 @@ func newTestPasswordProtectionService(t *testing.T) (
 // --- NewPasswordProtectionService ---
 
 func TestNewPasswordProtectionService(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	assert.NotNil(t, svc)
 	assert.NotNil(t, svc.log)
 }
 
 func TestPasswordProtectionService_SetContext(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	svc.SetContext(context.Background())
 	assert.NotNil(t, svc.ctx)
 }
@@ -91,7 +91,7 @@ func TestPasswordProtectionService_GetStatus_WithPasswords(t *testing.T) {
 // --- ExportPasswordsDecrypted ---
 
 func TestPasswordProtectionService_ExportPasswordsDecrypted_NilStaticPWSvc(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 
 	passwords, err := svc.ExportPasswordsDecrypted("")
 	assert.Error(t, err)
@@ -101,7 +101,7 @@ func TestPasswordProtectionService_ExportPasswordsDecrypted_NilStaticPWSvc(t *te
 
 func TestPasswordProtectionService_ExportPasswordsDecrypted_NilStore(t *testing.T) {
 	staticPWSvc := NewStaticPasswordService(nil)
-	svc := NewPasswordProtectionService("", staticPWSvc, nil)
+	svc := NewPasswordProtectionService(staticPWSvc, nil)
 
 	passwords, err := svc.ExportPasswordsDecrypted("")
 	assert.Error(t, err)
@@ -130,7 +130,7 @@ func TestPasswordProtectionService_ExportPasswordsDecrypted_Success(t *testing.T
 // --- Audit logging ---
 
 func TestPasswordProtectionService_SetAuditLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	logger := &ppTestAuditLogger{}
 	svc.SetAuditLogger(logger)
 
@@ -139,13 +139,13 @@ func TestPasswordProtectionService_SetAuditLogger(t *testing.T) {
 }
 
 func TestPasswordProtectionService_LogPasswordStoreOp_NoLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	// Should not panic when no logger is set.
 	svc.logPasswordStoreOp(audit.OpPasswordStoreLocked, "test", true, nil, nil)
 }
 
 func TestPasswordProtectionService_LogPasswordStoreOp_WithLogger(t *testing.T) {
-	svc := NewPasswordProtectionService("", nil, nil)
+	svc := NewPasswordProtectionService(nil, nil)
 	logger := &ppTestAuditLogger{}
 	svc.SetAuditLogger(logger)
 

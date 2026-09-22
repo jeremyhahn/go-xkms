@@ -69,8 +69,17 @@ var (
 	ErrSealStorageDirRelative = errors.New("seal_service: storage directory must be an absolute path")
 	ErrSealBackendNotFound    = errors.New("seal_service: requested backend not registered")
 	ErrSealPolicyRequiresTPM  = errors.New("seal_service: PCR-based policies require TPM backend")
-	ErrSealMigrationFailed    = errors.New("seal_service: migration failed")
 	ErrSealNoClient           = errors.New("seal_service: SDK client not available")
+
+	// ErrSealBlobPolicyTypeMissing indicates a sealed blob record on disk has
+	// no policy_type. Every blob written by this version sets it; a record
+	// without one predates that and cannot be read.
+	ErrSealBlobPolicyTypeMissing = errors.New("seal_service: sealed blob record has no policy_type")
+
+	// ErrSealBlobBackendIDMissing indicates a sealed blob record on disk has
+	// no backend_id. Every blob written by this version sets it; a record
+	// without one predates that and cannot be read.
+	ErrSealBlobBackendIDMissing = errors.New("seal_service: sealed blob record has no backend_id")
 )
 
 // pcrBankAlgMap maps user-facing PCR bank names to TPM algorithm identifiers.
@@ -493,80 +502,6 @@ func (s *SealService) StorageDir() string {
 	return s.storageDir
 }
 
-// MigrateFrom copies sealed blobs from srcDir into the current storage
-// directory. Existing files in the destination are not overwritten. This
-// is a non-destructive copy used during startup to migrate blobs from
-// the legacy config directory (~/.config/xkey/sealed/) to the data
-// directory (~/.xkey/data/sealed/).
-func (s *SealService) MigrateFrom(srcDir string) (int, error) {
-	if srcDir == "" {
-		return 0, ErrSealStorageDirNotSet
-	}
-	if !filepath.IsAbs(srcDir) {
-		return 0, ErrSealStorageDirRelative
-	}
-
-	// Nothing to migrate if the source and destination are the same.
-	if srcDir == s.storageDir {
-		return 0, nil
-	}
-
-	// Read source directory entries.
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
-		// Source directory does not exist; nothing to migrate.
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, ErrSealMigrationFailed
-	}
-	if len(entries) == 0 {
-		return 0, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if mkErr := s.ensureStorageDir(); mkErr != nil {
-		return 0, ErrSealMigrationFailed
-	}
-
-	migrated := 0
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
-		dst := filepath.Join(s.storageDir, entry.Name())
-
-		// Do not overwrite existing files in the destination.
-		if _, statErr := os.Stat(dst); statErr == nil {
-			continue
-		}
-
-		src := filepath.Join(srcDir, entry.Name())
-		data, readErr := os.ReadFile(src)
-		if readErr != nil {
-			s.log.Warn("failed to read legacy sealed blob for migration",
-				"file", src, "error", readErr)
-			continue
-		}
-		if writeErr := os.WriteFile(dst, data, 0600); writeErr != nil {
-			s.log.Warn("failed to write migrated sealed blob",
-				"file", dst, "error", writeErr)
-			continue
-		}
-		migrated++
-	}
-
-	if migrated > 0 {
-		s.log.Info("migrated sealed blobs to data directory",
-			"from", srcDir, "to", s.storageDir, "count", migrated)
-	}
-
-	return migrated, nil
-}
-
 // CanSeal returns true if the default backend is available and supports sealing.
 func (s *SealService) CanSeal() (bool, error) {
 	defer func() {
@@ -643,8 +578,13 @@ func (s *SealService) listBlobsViaBackend(ctx context.Context) ([]SealedBlobEntr
 		if unmarshalErr := json.Unmarshal(data, &blob); unmarshalErr != nil {
 			continue
 		}
+		entry, entryErr := blobToEntry(&blob)
+		if entryErr != nil {
+			s.log.Warn("skipping sealed blob record", "key", key, "error", entryErr)
+			continue
+		}
 		items = append(items, blobWithTime{
-			entry:     blobToEntry(&blob),
+			entry:     entry,
 			createdAt: blob.CreatedAt,
 		})
 	}
@@ -674,8 +614,13 @@ func (s *SealService) listBlobsDirect() ([]SealedBlobEntry, error) {
 			s.log.Warn("failed to load sealed blob", "file", de.Name(), "error", loadErr)
 			continue
 		}
+		entry, entryErr := blobToEntry(blob)
+		if entryErr != nil {
+			s.log.Warn("skipping sealed blob record", "file", de.Name(), "error", entryErr)
+			continue
+		}
 		items = append(items, blobWithTime{
-			entry:     blobToEntry(blob),
+			entry:     entry,
 			createdAt: blob.CreatedAt,
 		})
 	}
@@ -683,11 +628,16 @@ func (s *SealService) listBlobsDirect() ([]SealedBlobEntry, error) {
 	return sortAndCollectEntries(items), nil
 }
 
-// blobToEntry converts an internal sealedBlobStorage to a frontend SealedBlobEntry.
-func blobToEntry(blob *sealedBlobStorage) SealedBlobEntry {
-	policyType := blob.PolicyType
-	if policyType == "" {
-		policyType = string(PolicyTypeNone)
+// blobToEntry converts an internal sealedBlobStorage to a frontend
+// SealedBlobEntry. Returns ErrSealBlobPolicyTypeMissing or
+// ErrSealBlobBackendIDMissing if the record predates those fields being
+// required; those records cannot be represented.
+func blobToEntry(blob *sealedBlobStorage) (SealedBlobEntry, error) {
+	if blob.PolicyType == "" {
+		return SealedBlobEntry{}, ErrSealBlobPolicyTypeMissing
+	}
+	if blob.BackendID == "" {
+		return SealedBlobEntry{}, ErrSealBlobBackendIDMissing
 	}
 	category := blob.Category
 	if category == "" {
@@ -702,12 +652,12 @@ func blobToEntry(blob *sealedBlobStorage) SealedBlobEntry {
 		Label:       blob.Label,
 		SizeBytes:   blob.SizeBytes,
 		PCRBound:    blob.PCRBound,
-		PolicyType:  policyType,
+		PolicyType:  blob.PolicyType,
 		CreatedAt:   blob.CreatedAt.Format(time.RFC3339),
 		Category:    category,
 		BackendID:   blob.BackendID,
 		StorageType: storageType,
-	}
+	}, nil
 }
 
 // sortAndCollectEntries sorts blob entries newest-first and returns the slice.
@@ -755,12 +705,9 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		backend = s.defaultBackend
 	}
 
-	// Resolve policy type (default to "none" for backward compatibility).
-	policyTypeStr := req.PolicyType
-	if policyTypeStr == "" {
-		policyTypeStr = string(PolicyTypeNone)
-	}
-	pt, ok := policyTypeMap[policyTypeStr]
+	// Resolve policy type. Required: policyTypeMap has no "" entry, so an
+	// empty request field is rejected the same way as an unrecognized one.
+	pt, ok := policyTypeMap[req.PolicyType]
 	if !ok {
 		return nil, ErrSealInvalidPolicyType
 	}
@@ -850,7 +797,7 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		PCRBound:    len(req.PCRs) > 0 || pt == PolicyTypePlatformPolicy,
 		PCRs:        req.PCRs,
 		PCRBank:     req.PCRBank,
-		PolicyType:  policyTypeStr,
+		PolicyType:  req.PolicyType,
 		Category:    classifyCategory(req.Label),
 		BackendID:   backend,
 		StorageType: storageType,
@@ -874,7 +821,10 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		return nil, err
 	}
 
-	result := blobToEntry(blob)
+	result, entryErr := blobToEntry(blob)
+	if entryErr != nil {
+		return nil, entryErr
+	}
 	s.logSealEvent(audit.OpSealData, true, nil, map[string]any{"label": req.Label, "backend": backend})
 	return &result, nil
 }
@@ -911,15 +861,12 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 		}
 	}
 
-	// Determine which backend sealed this data.
-	// Priority: stored BackendID > SealedData.Backend > default (backward compat).
+	// Determine which backend sealed this data. Required: every blob written
+	// by this version records its BackendID.
+	if blob.BackendID == "" {
+		return "", ErrSealBlobBackendIDMissing
+	}
 	backend := blob.BackendID
-	if backend == "" {
-		backend = string(blob.SealedData.Backend)
-	}
-	if backend == "" {
-		backend = s.defaultBackend
-	}
 
 	client, err := s.getClient()
 	if err != nil {

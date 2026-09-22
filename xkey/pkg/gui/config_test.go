@@ -317,62 +317,6 @@ func TestConfigDir_CreatesDirectory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy migration tests
-// ---------------------------------------------------------------------------
-
-func TestLoadGUIConfig_MigratesFromLegacyPath(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer func() { _ = os.Setenv("HOME", origHome) }()
-
-	// Write config at the legacy path.
-	legacyDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(legacyDir, 0700))
-	legacyCfg := `{"theme":"dark","window_width":1920,"window_height":1080}`
-	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "gui.json"), []byte(legacyCfg), 0600))
-
-	// Load should migrate and succeed.
-	cfg, err := LoadGUIConfig()
-	require.NoError(t, err)
-	assert.Equal(t, ThemeDark, cfg.Theme)
-	assert.Equal(t, 1920, cfg.WindowWidth)
-
-	// New config file should now exist.
-	newPath := filepath.Join(tmpDir, ".config", "xkey", "gui.json")
-	assert.FileExists(t, newPath)
-}
-
-func TestLoadGUIConfig_NewPathTakesPrecedenceOverLegacy(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	t.Setenv("HOME", tmpDir)
-	defer func() { _ = os.Setenv("HOME", origHome) }()
-
-	// Write config at both old and new paths with different themes.
-	legacyDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(legacyDir, 0700))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(legacyDir, "gui.json"),
-		[]byte(`{"theme":"dark","window_width":1024,"window_height":768}`),
-		0600,
-	))
-
-	newDir := filepath.Join(tmpDir, ".config", "xkey")
-	require.NoError(t, os.MkdirAll(newDir, 0700))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(newDir, "gui.json"),
-		[]byte(`{"theme":"light","window_width":1024,"window_height":768}`),
-		0600,
-	))
-
-	// New path should take precedence.
-	cfg, err := LoadGUIConfig()
-	require.NoError(t, err)
-	assert.Equal(t, ThemeLight, cfg.Theme)
-}
-
-// ---------------------------------------------------------------------------
 // Error sentinel tests for new errors
 // ---------------------------------------------------------------------------
 
@@ -432,7 +376,6 @@ func TestSaveLoadGUIConfig_AllBarrierFieldsPreserved(t *testing.T) {
 	cfg.BarrierStrategy = "tpm2"
 	cfg.BarrierAutoUnsealBlobID = "blob-barrier-99"
 	cfg.StorageType = "barrier"
-	cfg.PINStrategy = "tpm2"
 	cfg.SealerBackend = "tpm2"
 
 	err := SaveGUIConfig(cfg)
@@ -445,7 +388,6 @@ func TestSaveLoadGUIConfig_AllBarrierFieldsPreserved(t *testing.T) {
 	assert.Equal(t, "tpm2", loaded.BarrierStrategy)
 	assert.Equal(t, "blob-barrier-99", loaded.BarrierAutoUnsealBlobID)
 	assert.Equal(t, "barrier", loaded.StorageType)
-	assert.Equal(t, "tpm2", loaded.PINStrategy)
 	assert.Equal(t, "tpm2", loaded.SealerBackend)
 }
 

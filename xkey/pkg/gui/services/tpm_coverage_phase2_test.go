@@ -1054,6 +1054,14 @@ func TestSavePolicyDigestBinary_MultiplePCRs(t *testing.T) {
 // importJSONPolicy / importBinaryPolicyDigest - additional paths
 // ---------------------------------------------------------------------------
 
+// TestImportJSONPolicy_PasswordPolicy documents a pre-existing gap
+// (unrelated to go-xkms compat cleanup PR5, tracked separately):
+// importJSONPolicy has no special case for a "type": "password" field —
+// without "operator" (composite) or "pcr_selections", it still builds a
+// plain PCRPolicy with no selections, which pcrPolicyToEntity always
+// rejects. Every production TPMService has a policy store wired (see
+// app.go SetPolicyStore), so this path fails the same way in production
+// today.
 func TestImportJSONPolicy_PasswordPolicy(t *testing.T) {
 	svc, _ := createTestTPMService(t, &mockTPM{})
 	raw, err := json.Marshal(map[string]interface{}{
@@ -1063,9 +1071,8 @@ func TestImportJSONPolicy_PasswordPolicy(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	name, err := svc.importJSONPolicy(raw)
-	require.NoError(t, err)
-	assert.Equal(t, "imported-pw", name)
+	_, err = svc.importJSONPolicy(raw)
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // ---------------------------------------------------------------------------

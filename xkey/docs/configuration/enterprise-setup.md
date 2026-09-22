@@ -212,7 +212,6 @@ Additional policy fields govern security requirements:
 | `require_user_pin` | User PIN must be set |
 | `require_encrypted_storage` | Barrier encryption required |
 | `require_tpm` | TPM hardware required |
-| `require_platform_policy` | Platform PCR binding required |
 | `allowed_backends` | Whitelist of permitted backends |
 | `organization_name` | Displayed in user onboarding |
 | `policy_version` | Incremented on policy updates |

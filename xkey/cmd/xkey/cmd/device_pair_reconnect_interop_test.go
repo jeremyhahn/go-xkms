@@ -340,18 +340,18 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 		require.NoError(t, err, "the whole point is that a genuine device still works")
 	})
 
-	t.Run("a legacy record is left alone", func(t *testing.T) {
+	t.Run("a legacy record is refused", func(t *testing.T) {
 		// The phone answers version 1, as an un-upgraded app would. A legacy
-		// record must still connect: enforcement begins when a record says it
-		// was bound under challenge-response.
+		// record is now refused outright (BREAKING, go-xkms compat cleanup
+		// PR5: the #129/#130 grace period for a record below version 2 is
+		// removed) -- the operator must re-pair.
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
 		err := runReattestAgainst(t, logger, ca, legacy, device, func(r *phone.LocalAttestDeviceResult) {
 			r.ProtocolVersion = phone.AttestProtocolV1
 			r.Signature = nil
 		})
-		require.NoError(t, err,
-			"a record with no registered attested key has nothing to prove; refusing it "+
-				"would break every pairing that predates this change")
+		require.Error(t, err)
+		require.ErrorIs(t, err, attestation.ErrDeviceAttestationVersionUnsupported)
 	})
 
 	t.Run("a missing signature refuses the session", func(t *testing.T) {
@@ -515,7 +515,12 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 			"these helpers keep nothing, so the backend must own the key or it is never released")
 	})
 
-	t.Run("a legacy record demands nothing but still binds what it has", func(t *testing.T) {
+	t.Run("a legacy record still demands the proof, which its own verifier then refuses", func(t *testing.T) {
+		// BREAKING, go-xkms compat cleanup PR5: RequireLiveAttestation is now
+		// unconditional -- there is no #129/#130 grace period for a record
+		// below version 2. LiveAttest's closure (newLiveAttestor) is what
+		// actually refuses a legacy record, via DeviceBinding.Validate, the
+		// first time the backend calls it.
 		legacy := *v2
 		legacy.AttestationProtocolVersion = 0
 
@@ -523,8 +528,10 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 		require.NoError(t, err)
 		defer cfg.LocalStaticKey.Destroy()
 
-		assert.False(t, cfg.RequireLiveAttestation,
-			"a pairing predating #129 has no attested key to prove possession of")
+		assert.True(t, cfg.RequireLiveAttestation)
+		require.NotNil(t, cfg.LiveAttest)
+		err = cfg.LiveAttest(context.Background(), nil, nil)
+		require.ErrorIs(t, err, attestation.ErrDeviceAttestationVersionUnsupported)
 		assert.Equal(t, dak.Fingerprint(), cfg.ExpectedDeviceFingerprint,
 			"the fingerprint binding is not conditional on the protocol version")
 	})

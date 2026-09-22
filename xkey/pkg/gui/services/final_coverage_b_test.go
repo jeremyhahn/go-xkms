@@ -771,6 +771,7 @@ func TestFB_TPM_LoadAssignments_Empty(t *testing.T) {
 func TestFB_TPM_ListPolicies_NilAccessor(t *testing.T) {
 	svc := fbTPMSvcNilTPM()
 	svc.SetDataDir(t.TempDir())
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	policies, err := svc.ListPolicies()
 	assert.NoError(t, err)
 	assert.Empty(t, policies)
@@ -795,14 +796,16 @@ func TestFB_TPM_ViewKey_NilAccessor(t *testing.T) {
 func TestFB_SealService_SealData_InvalidBase64(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	fbWireSealClient(svc, &fbMockSealer{canSeal: true})
-	r, err := svc.SealData(&SealRequest{Label: "test", Data: "!!!invalid!!!"})
+	r, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "test", Data: "!!!invalid!!!"})
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
 }
 
 func TestFB_SealService_SealData_BackendNotFound(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	r, err := svc.SealData(&SealRequest{Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s")), Backend: "missing"})
+	r, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s")), Backend: "missing"})
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrSealBackendNotFound)
 }
@@ -810,7 +813,8 @@ func TestFB_SealService_SealData_BackendNotFound(t *testing.T) {
 func TestFB_SealService_SealData_CannotSeal(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	fbWireSealClient(svc, &fbMockSealer{canSeal: false, sealErr: ErrSealNotSupported})
-	r, err := svc.SealData(&SealRequest{Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
+	r, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
 	assert.Nil(t, r)
 	assert.ErrorIs(t, err, ErrSealNotSupported)
 }
@@ -837,14 +841,17 @@ func TestFB_SealService_SealData_PolicyRequiresTPM(t *testing.T) {
 func TestFB_SealService_SealData_SealError(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	fbWireSealClient(svc, &fbMockSealer{canSeal: true, sealErr: errors.New("seal failed")})
-	r, err := svc.SealData(&SealRequest{Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
+	r, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "t", Data: base64.StdEncoding.EncodeToString([]byte("s"))})
 	assert.Nil(t, r)
 	assert.Error(t, err)
 }
 
 func TestFB_SealService_SaveBlob_BadDir(t *testing.T) {
 	svc := NewSealService("/dev/null/impossible")
-	assert.ErrorIs(t, svc.saveBlob(&sealedBlobStorage{ID: "id", Label: "l"}), ErrSealStorageFailed)
+	assert.ErrorIs(t, svc.saveBlob(&sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software", ID: "id", Label: "l"}), ErrSealStorageFailed)
 }
 
 func TestFB_SealService_CanSeal_NoBackend(t *testing.T) {

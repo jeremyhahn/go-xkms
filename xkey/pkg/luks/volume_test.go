@@ -24,6 +24,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Test VolumeError implementation
@@ -146,50 +148,29 @@ func TestExpandPath(t *testing.T) {
 	}
 }
 
-// Test GetDefaultLUKSPath
-func TestGetDefaultLUKSPath(t *testing.T) {
-	path, err := GetDefaultLUKSPath()
-	require.NoError(t, err)
-
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	expected := filepath.Join(home, DefaultLUKSFile)
-	assert.Equal(t, expected, path)
-	assert.Contains(t, path, ".xkey.luks")
-}
-
-// Test GetDefaultDataDir
-func TestGetDefaultDataDir(t *testing.T) {
-	path, err := GetDefaultDataDir()
-	require.NoError(t, err)
-
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	expected := filepath.Join(home, DefaultDataDir)
-	assert.Equal(t, expected, path)
-	assert.Contains(t, path, ".xkey")
-}
-
 // Test constants
 func TestConstants(t *testing.T) {
-	assert.Equal(t, ".xkey.luks", DefaultLUKSFile)
-	assert.Equal(t, ".xkey", DefaultDataDir)
 	assert.Equal(t, "xkey", MapperName)
 }
 
-// Test NewVolume
+// Test NewVolume resolves its paths through xhome.Resolve, not a
+// legacy home-relative default (BREAKING, go-xkms compat cleanup PR5:
+// DefaultLUKSFile/DefaultDataDir/GetDefaultLUKSPath/GetDefaultDataDir were
+// deleted; every caller now resolves through xhome).
 func TestNewVolume(t *testing.T) {
+	dir := t.TempDir()
+	xhome.SetRoot(dir)
+	defer xhome.ResetRoot()
+
 	vol, err := NewVolume()
 	require.NoError(t, err)
 	require.NotNil(t, vol)
 
-	home, err := os.UserHomeDir()
+	h, err := xhome.Resolve()
 	require.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(home, DefaultLUKSFile), vol.LUKSPath)
-	assert.Equal(t, filepath.Join(home, DefaultDataDir), vol.MountPoint)
+	assert.Equal(t, h.LUKSPath(), vol.LUKSPath)
+	assert.Equal(t, h.MountPoint(), vol.MountPoint)
 	assert.Equal(t, MapperName, vol.MapperName)
 	assert.Empty(t, vol.LoopDevice)
 }

@@ -25,8 +25,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -431,10 +429,12 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend(t *testing.T) {
 
 	// Store a valid blob.
 	blob := sealedBlobStorage{
-		ID:        "test-blob-1",
-		Label:     "test label",
-		SizeBytes: 256,
-		CreatedAt: time.Now().UTC(),
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob-1",
+		Label:      "test label",
+		SizeBytes:  256,
+		CreatedAt:  time.Now().UTC(),
 	}
 	data, err := json.Marshal(blob)
 	require.NoError(t, err)
@@ -489,10 +489,12 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend_MultipleBlobs(t *te
 	// Store multiple blobs with different timestamps.
 	for i, label := range []string{"first", "second", "third"} {
 		blob := sealedBlobStorage{
-			ID:        label,
-			Label:     label,
-			SizeBytes: 100 * (i + 1),
-			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Hour),
+			PolicyType: "none",
+			BackendID:  "software",
+			ID:         label,
+			Label:      label,
+			SizeBytes:  100 * (i + 1),
+			CreatedAt:  time.Now().UTC().Add(time.Duration(i) * time.Hour),
 		}
 		data, err := json.Marshal(blob)
 		require.NoError(t, err)
@@ -540,101 +542,6 @@ func TestFinalCoveragePush4_SealService_VerifyPassword_InvalidHash(t *testing.T)
 
 	// Empty string.
 	assert.False(t, verifyPassword("anything", ""))
-}
-
-// ---------------------------------------------------------------------------
-// SealService.MigrateFrom - various branches
-// ---------------------------------------------------------------------------
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_NonExistentSource(t *testing.T) {
-	storageDir := t.TempDir()
-	svc := NewSealService(storageDir)
-
-	migrated, err := svc.MigrateFrom("/tmp/nonexistent-seal-migration-dir-fcp4")
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_EmptySource(t *testing.T) {
-	storageDir := t.TempDir()
-	svc := NewSealService(storageDir)
-
-	_, err := svc.MigrateFrom("")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrSealStorageDirNotSet)
-}
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_RelativePath(t *testing.T) {
-	storageDir := t.TempDir()
-	svc := NewSealService(storageDir)
-
-	_, err := svc.MigrateFrom("relative/path")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrSealStorageDirRelative)
-}
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_SameDir(t *testing.T) {
-	storageDir := t.TempDir()
-	svc := NewSealService(storageDir)
-
-	migrated, err := svc.MigrateFrom(storageDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_WithFiles(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := t.TempDir()
-	svc := NewSealService(dstDir)
-
-	// Create source blob file.
-	blob := sealedBlobStorage{
-		ID:    "migrate-test",
-		Label: "migration blob",
-	}
-	data, err := json.Marshal(blob)
-	require.NoError(t, err)
-
-	err = os.WriteFile(filepath.Join(srcDir, "migrate-test.json"), data, 0600)
-	require.NoError(t, err)
-
-	// Non-JSON file should be skipped.
-	err = os.WriteFile(filepath.Join(srcDir, "readme.txt"), []byte("skip me"), 0600)
-	require.NoError(t, err)
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 1, migrated)
-}
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_SkipsExisting(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := t.TempDir()
-	svc := NewSealService(dstDir)
-
-	blob := sealedBlobStorage{ID: "existing-blob"}
-	data, err := json.Marshal(blob)
-	require.NoError(t, err)
-
-	// Put the file in both source and destination.
-	err = os.WriteFile(filepath.Join(srcDir, "existing-blob.json"), data, 0600)
-	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(dstDir, "existing-blob.json"), data, 0600)
-	require.NoError(t, err)
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated, "should not migrate files that already exist in destination")
-}
-
-func TestFinalCoveragePush4_SealService_MigrateFrom_EmptyDir(t *testing.T) {
-	srcDir := t.TempDir()
-	dstDir := t.TempDir()
-	svc := NewSealService(dstDir)
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
 }
 
 // ---------------------------------------------------------------------------

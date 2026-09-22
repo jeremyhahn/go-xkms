@@ -16,7 +16,7 @@ The token store decouples token acquisition (OIDC, FIDO2, bootstrap) from token 
 |------|-------------|
 | `TokenEntry` | JWT with metadata: ServerURL, TokenType, Source, Token, ExpiresAt, IssuedAt, Issuer, Subject |
 | `TokenStore` | Persistence interface |
-| `BackendTokenStore` | Barrier-encrypted persistence via `storage.Backend` |
+| `DAOStore` | Barrier-encrypted persistence via a go-qrdb `GenericDAO` over a `kvstore.KVStore` |
 | `MemoryTokenStore` | In-memory store for testing/ephemeral use |
 
 ### Constants
@@ -48,11 +48,11 @@ The token store decouples token acquisition (OIDC, FIDO2, bootstrap) from token 
 
 ## Configuration
 
-`BackendTokenStore` requires a `storage.Backend` and a key prefix. When the backend is backed by a barrier, all token data is encrypted at rest with AES-256-GCM.
+`DAOStore` requires a `qrdbsdk.KVStore` (built from a `storage.Backend` via `xkms.NewKVStoreAdapter`). When the backend is backed by a barrier, all token data is encrypted at rest with AES-256-GCM. There is no `BackendTokenStore` wrapper (removed, go-xkms compat cleanup PR5) — construct the KV adapter and the DAO store directly:
 
 ```go
-store, err := tokenstore.NewBackendTokenStore(barrierBackend, "tokens/")
-// Storage keys: tokens/https_xkms_company_com_8443.json
+kvStore, err := xkms.NewKVStoreAdapter(barrierBackend)
+store, err := tokenstore.NewDAOStore(kvStore)
 ```
 
 ### URL Normalization

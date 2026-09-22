@@ -341,44 +341,6 @@ func TestApplySOProvisioning_ExtensionFieldsDefaults(t *testing.T) {
 	assert.Equal(t, "ZeroFieldsOrg", saved.Policy.OrganizationName)
 }
 
-// TestApplySOProvisioning_DoesNotWriteRequirePlatformPolicy is the
-// regression guard for #313 ruling #19. ApplySOProvisioning used to write
-// policy.RequirePlatformPolicy = true unconditionally, regardless of the
-// (now-withdrawn) wizard checkbox for it, into a field nothing read back.
-// The field stays in PolicySection for config-parse compatibility, but the
-// wizard must no longer write it, enterprise org or not.
-func TestApplySOProvisioning_DoesNotWriteRequirePlatformPolicy(t *testing.T) {
-	tmpDir := t.TempDir()
-	config.SetConfigDir(tmpDir)
-	t.Cleanup(config.ResetConfigDir)
-
-	defaultCfg := config.DefaultConfig()
-	require.NoError(t, config.Save(defaultCfg))
-
-	tw := newTestSetupWizard(&GUIConfigData{})
-	tw.svc.SetConfigDir(tmpDir)
-
-	pinSvc := NewPINService()
-	tw.svc.SetPINService(pinSvc)
-	tw.svc.SetInitDataDirFunc(func() error { return nil })
-
-	choices := &SetupChoices{
-		Mode:             "standalone",
-		SOPin:            testSOPin,
-		OrganizationName: "PlatformPolicyOrg",
-	}
-
-	result, err := tw.svc.ApplySOProvisioning(choices)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	saved, loadErr := config.Load()
-	require.NoError(t, loadErr)
-
-	assert.False(t, saved.Policy.RequirePlatformPolicy,
-		"ApplySOProvisioning must not write require_platform_policy; the field is reserved pending #313 (A)/(B)")
-}
-
 // ---------------------------------------------------------------------------
 // PIN verification regression tests
 // ---------------------------------------------------------------------------

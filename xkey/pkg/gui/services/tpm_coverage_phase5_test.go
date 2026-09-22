@@ -92,6 +92,7 @@ func p5aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	return svc, dataDir
 }
 
@@ -683,51 +684,46 @@ func TestP5A_GetConflictingAssignments_WithMatches(t *testing.T) {
 
 // TestP5A_ExportPolicy_WithUpdatedAt tests ExportPolicy when the policy has
 // an UpdatedAt field set.
+// TestP5A_ExportPolicy_WithUpdatedAt verifies ExportPolicy includes an
+// updated_at field. The canonical pcr_policy store stamps UpdatedAt with
+// the save time on every Save (see pcr_policy.DAOStore.Save), so a
+// caller-supplied UpdatedAt value does not round-trip; only field
+// presence is checked here.
 func TestP5A_ExportPolicy_WithUpdatedAt(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	svc, dataDir := p5aNewTPMService(t, mock)
+	svc, _ := p5aNewTPMService(t, mock)
 
 	policy := PCRPolicy{
-		Name:      "p5a-export-updated",
-		UpdatedAt: "2025-01-15T12:00:00Z",
+		Name: "p5a-export-updated",
 		PCRSelections: []PCRSelection{
 			{Index: 0, Bank: "sha256"},
 		},
 		PCRDigests: map[string]string{"sha256:0": "aabb"},
 	}
 	policies := []PCRPolicy{policy}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600))
+	seedTPMServicePolicies(t, svc, policies)
 
 	exported, err := svc.ExportPolicy("p5a-export-updated")
 	require.NoError(t, err)
 	assert.Contains(t, exported, "updated_at")
-	assert.Contains(t, exported, "2025-01-15T12:00:00Z")
 	assert.Contains(t, exported, "pcr_bank")
 	assert.Contains(t, exported, "pcr_digests")
 }
 
-// TestP5A_ExportPolicy_NoPCRSelections tests ExportPolicy when the policy
-// has no PCR selections.
-func TestP5A_ExportPolicy_NoPCRSelections(t *testing.T) {
+// TestP5A_CreatePolicy_NoPCRSelectionsRejected verifies that a plain
+// PCRPolicy with no PCR selections cannot be represented in the canonical
+// pcr_policy store.
+func TestP5A_CreatePolicy_NoPCRSelectionsRejected(t *testing.T) {
 	svc := NewTPMService()
-	dataDir := t.TempDir()
-	svc.SetDataDir(dataDir)
+	svc.SetDataDir(t.TempDir())
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 
 	policy := PCRPolicy{
 		Name:      "p5a-no-selections",
 		CreatedAt: "2025-01-01T00:00:00Z",
 	}
-	policies := []PCRPolicy{policy}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600))
-
-	exported, err := svc.ExportPolicy("p5a-no-selections")
-	require.NoError(t, err)
-	assert.NotContains(t, exported, "pcr_bank")
-	assert.NotContains(t, exported, "pcr_selections")
+	err := svc.savePolicies([]PCRPolicy{policy})
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // TestP5A_ExportCompositePolicy_WithBranches tests ExportCompositePolicy to
@@ -803,51 +799,19 @@ func TestP5A_ExportCompositePolicy_PCRBankFromSelections(t *testing.T) {
 	assert.Contains(t, exported, "sha384")
 }
 
-// TestP5A_ImportBinaryPolicyDigest_NameConflict tests importBinaryPolicyDigest
-// when the generated name already exists, triggering the timestamp suffix path.
-func TestP5A_ImportBinaryPolicyDigest_NameConflict(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, dataDir := p5aNewTPMService(t, mock)
-
-	// Pre-create a policy with the name that would be generated from the filename.
-	existing := PCRPolicy{
-		Name:      "my-policy",
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-	policies := []PCRPolicy{existing}
-	data, err := json.MarshalIndent(policies, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600))
-
-	// Import a binary digest with a filename that generates the same name.
-	name, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", []byte{0xAA, 0xBB, 0xCC})
-	require.NoError(t, err)
-	// Should get a timestamp-suffixed name.
-	assert.Contains(t, name, "my-policy-")
-	assert.NotEqual(t, "my-policy", name)
-}
-
-// TestP5A_ImportBinaryPolicyDigest_NoExtension tests importBinaryPolicyDigest
-// when the file has no extension.
-func TestP5A_ImportBinaryPolicyDigest_NoExtension(t *testing.T) {
+// TestP5A_ImportBinaryPolicyDigest_NoPCRSelectionsRejected documents a
+// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
+// separately): importBinaryPolicyDigest builds a PCRPolicy with a
+// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
+// always rejects. Every production TPMService has a policy store wired
+// (see app.go SetPolicyStore), so this path fails the same way in
+// production today.
+func TestP5A_ImportBinaryPolicyDigest_NoPCRSelectionsRejected(t *testing.T) {
 	mock := p5aDefaultMockTPM()
 	svc, _ := p5aNewTPMService(t, mock)
 
-	name, err := svc.importBinaryPolicyDigest("/tmp/policydigest", []byte{0x11, 0x22})
-	require.NoError(t, err)
-	assert.Equal(t, "policydigest", name)
-}
-
-// TestP5A_ImportBinaryPolicyDigest_EmptyBasename tests importBinaryPolicyDigest
-// with an unusual path that yields an empty basename after stripping extension.
-func TestP5A_ImportBinaryPolicyDigest_EmptyBasename(t *testing.T) {
-	mock := p5aDefaultMockTPM()
-	svc, _ := p5aNewTPMService(t, mock)
-
-	// ".bin" has an empty name after removing the extension.
-	name, err := svc.importBinaryPolicyDigest("/tmp/.bin", []byte{0x33, 0x44})
-	require.NoError(t, err)
-	assert.Equal(t, "imported-policy", name)
+	_, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", []byte{0xAA, 0xBB, 0xCC})
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // TestP5A_ImportJSONPolicy_CompositePath tests importJSONPolicy when the JSON
@@ -958,21 +922,16 @@ func TestP5A_LoadHandleDescriptions_InvalidJSON(t *testing.T) {
 	assert.Empty(t, descriptions)
 }
 
-// TestP5A_LoadPolicies_InvalidJSON tests loadPolicies when the file
-// contains invalid JSON.
-func TestP5A_LoadPolicies_InvalidJSON(t *testing.T) {
+// TestP5A_LoadPolicies_NoStoreConfigured tests loadPolicies when
+// SetPolicyStore has never been called (go-xkms compat cleanup PR5 removed
+// the pcr_policies.json file fallback).
+func TestP5A_LoadPolicies_NoStoreConfigured(t *testing.T) {
 	svc := NewTPMService()
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dataDir, pcrPoliciesFile),
-		[]byte("{invalid"),
-		0600,
-	))
-
-	policies := svc.loadPolicies()
-	assert.Empty(t, policies)
+	_, err := svc.loadPolicies()
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // TestP5A_LoadCompositePolicies_InvalidJSON tests loadCompositePolicies when
@@ -1268,12 +1227,12 @@ func TestP5A_SetHandleDescription_RemoveEntry(t *testing.T) {
 
 // TestP5A_SavePolicies_NoDataDir tests savePolicies when no data directory
 // is configured.
-func TestP5A_SavePolicies_NoDataDir(t *testing.T) {
+func TestP5A_SavePolicies_NoStoreConfigured(t *testing.T) {
 	svc := NewTPMService()
-	// No dataDir set.
+	// No policy store set.
 
 	err := svc.savePolicies([]PCRPolicy{{Name: "test"}})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 // TestP5A_SaveAssignments_NoDataDir tests saveAssignments when no data

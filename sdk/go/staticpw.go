@@ -65,12 +65,6 @@ var GenerateStaticPassword = staticpw.GeneratePassword
 // GenerateStaticPasswordID derives a deterministic entry ID.
 var GenerateStaticPasswordID = staticpw.GenerateID
 
-// MigrateStaticPasswordEntry migrates a single entry to the current schema.
-var MigrateStaticPasswordEntry = staticpw.MigrateEntry
-
-// MigrateStaticPasswordStore migrates all entries in a store to the current schema.
-var MigrateStaticPasswordStore = staticpw.MigrateStore
-
 // --- Generation constants ---
 
 const (

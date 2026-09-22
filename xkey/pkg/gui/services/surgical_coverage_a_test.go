@@ -769,6 +769,7 @@ func TestSA_SealService_ListBlobs_WithBlobs(t *testing.T) {
 
 	// Create two blobs with different timestamps.
 	blob1 := &sealedBlobStorage{
+		BackendID:  "software",
 		ID:         "blob-older",
 		Label:      "user_pin", // user category (deletable from UI)
 		SizeBytes:  100,
@@ -777,9 +778,11 @@ func TestSA_SealService_ListBlobs_WithBlobs(t *testing.T) {
 		CreatedAt:  now.Add(-1 * time.Hour),
 	}
 	blob2 := &sealedBlobStorage{
+		BackendID:  "software",
 		ID:         "blob-newer",
-		Label:      "my-secret", // user category, no PolicyType (defaults to "none")
+		Label:      "my-secret", // user category
 		SizeBytes:  200,
+		PolicyType: "none",
 		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2, Ciphertext: []byte("b")},
 		CreatedAt:  now,
 	}
@@ -824,8 +827,9 @@ func TestSA_SealService_SealData_Panic(t *testing.T) {
 	saWirePanicClient(svc)
 
 	req := &SealRequest{
-		Label: "test",
-		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
+		PolicyType: "none",
+		Label:      "test",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -841,8 +845,9 @@ func TestSA_SealService_SealData_DecodeFail(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	req := &SealRequest{
-		Label: "test",
-		Data:  "not-valid-base64!!!",
+		PolicyType: "none",
+		Label:      "test",
+		Data:       "not-valid-base64!!!",
 	}
 
 	entry, err := svc.SealData(req)
@@ -859,9 +864,10 @@ func TestSA_SealService_SealData_BackendNotFound(t *testing.T) {
 	// No SDK client configured, so SealData/UnsealData will return ErrSealBackendNotFound.
 
 	req := &SealRequest{
-		Label:   "test",
-		Data:    base64.StdEncoding.EncodeToString([]byte("hello")),
-		Backend: "nonexistent",
+		PolicyType: "none",
+		Label:      "test",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Backend:    "nonexistent",
 	}
 
 	entry, err := svc.SealData(req)
@@ -895,8 +901,9 @@ func TestSA_SealService_SealData_NilContext(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true})
 
 	req := &SealRequest{
-		Label: "test-nil-ctx",
-		Data:  base64.StdEncoding.EncodeToString([]byte("data")),
+		PolicyType: "none",
+		Label:      "test-nil-ctx",
+		Data:       base64.StdEncoding.EncodeToString([]byte("data")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -912,8 +919,9 @@ func TestSA_SealService_SealData_NormalSealPath(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true})
 
 	req := &SealRequest{
-		Label: "test-secret",
-		Data:  base64.StdEncoding.EncodeToString([]byte("sensitive data")),
+		PolicyType: "none",
+		Label:      "test-secret",
+		Data:       base64.StdEncoding.EncodeToString([]byte("sensitive data")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -955,8 +963,9 @@ func TestSA_SealService_SealData_SaveBlobFail(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 
 	req := &SealRequest{
-		Label: "test",
-		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
+		PolicyType: "none",
+		Label:      "test",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -970,7 +979,8 @@ func TestSA_SealService_SealData_LabelEmpty(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
 
-	entry, err := svc.SealData(&SealRequest{Label: "", Data: "aGVsbG8="})
+	entry, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "", Data: "aGVsbG8="})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidLabel)
 }
@@ -981,7 +991,8 @@ func TestSA_SealService_SealData_DataEmpty(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
 
-	entry, err := svc.SealData(&SealRequest{Label: "test", Data: ""})
+	entry, err := svc.SealData(&SealRequest{
+		PolicyType: "none", Label: "test", Data: ""})
 	assert.Nil(t, entry)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
 }
@@ -1007,8 +1018,10 @@ func TestSA_SealService_UnsealData_Panic(t *testing.T) {
 
 	// Create a blob file that can be loaded, so the unseal reaches the sealer.
 	blob := &sealedBlobStorage{
-		ID:    "test-blob-id",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob-id",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("encrypted"),
@@ -1049,8 +1062,10 @@ func TestSA_SealService_SaveBlob_StorageDirNotSet(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		ID:    "test-id",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-id",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1074,8 +1089,10 @@ func TestSA_SealService_SaveBlob_WriteFileFail(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 
 	blob := &sealedBlobStorage{
-		ID:    "test-id",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-id",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1094,8 +1111,10 @@ func TestSA_SealService_SaveBlob_Success(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
-		ID:    "test-save",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-save",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
@@ -1127,7 +1146,8 @@ func TestSA_SealService_HandlePolicyPlatformPolicy_UnknownBank(t *testing.T) {
 	})
 	svc.SetPlatformPolicyService(ppSvc)
 
-	req := &SealRequest{Label: "test", Data: base64.StdEncoding.EncodeToString([]byte("data"))}
+	req := &SealRequest{
+		PolicyType: "none", Label: "test", Data: base64.StdEncoding.EncodeToString([]byte("data"))}
 	opts := &xkms.SealOptions{}
 
 	err := handlePolicyPlatformPolicy(svc, req, opts)
@@ -1161,8 +1181,9 @@ func TestSA_SealService_SealData_NotSupported(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: false, sealErr: ErrSealNotSupported})
 
 	req := &SealRequest{
-		Label: "test",
-		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
+		PolicyType: "none",
+		Label:      "test",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -1196,8 +1217,9 @@ func TestSA_SealService_SealData_SealerError(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true, sealErr: errSeal})
 
 	req := &SealRequest{
-		Label: "test",
-		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
+		PolicyType: "none",
+		Label:      "test",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
 	}
 
 	entry, err := svc.SealData(req)
@@ -1214,8 +1236,9 @@ func TestSA_SealService_SealData_DefaultBackendFallback(t *testing.T) {
 	svc.SetDefaultBackend("custom")
 
 	req := &SealRequest{
-		Label: "test-default",
-		Data:  base64.StdEncoding.EncodeToString([]byte("hello")),
+		PolicyType: "none",
+		Label:      "test-default",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
 		// Backend intentionally empty to use default
 	}
 
@@ -1233,9 +1256,10 @@ func TestSA_SealService_SealData_ExplicitBackend(t *testing.T) {
 	svc.SetDefaultBackend(string(xkms.BackendTypeTPM2)) // set a different default
 
 	req := &SealRequest{
-		Label:   "test-explicit",
-		Data:    base64.StdEncoding.EncodeToString([]byte("hello")),
-		Backend: "explicit-backend",
+		PolicyType: "none",
+		Label:      "test-explicit",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello")),
+		Backend:    "explicit-backend",
 	}
 
 	entry, err := svc.SealData(req)
@@ -1252,8 +1276,10 @@ func TestSA_SealService_UnsealData_BackendNotFound(t *testing.T) {
 	// No SDK client configured, so SealData/UnsealData will return ErrSealBackendNotFound.
 
 	blob := &sealedBlobStorage{
-		ID:    "test-unseal-nobe",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-unseal-nobe",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendType("nonexistent"),
 			Ciphertext: []byte("data"),
@@ -1278,8 +1304,10 @@ func TestSA_SealService_UnsealData_Success(t *testing.T) {
 
 	plaintext := []byte("sensitive-data-1234")
 	blob := &sealedBlobStorage{
-		ID:    "test-unseal-ok",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-unseal-ok",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: plaintext,
@@ -1334,6 +1362,7 @@ func TestSA_SealService_UnsealData_PasswordRequired(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true})
 
 	blob := &sealedBlobStorage{
+		BackendID:  "software",
 		ID:         "test-pw-required",
 		Label:      "test",
 		PolicyType: string(PolicyTypePassword),
@@ -1365,6 +1394,7 @@ func TestSA_SealService_UnsealData_PasswordMismatch(t *testing.T) {
 	require.NoError(t, hashErr)
 
 	blob := &sealedBlobStorage{
+		BackendID:  "software",
 		ID:         "test-pw-mismatch",
 		Label:      "test",
 		PolicyType: string(PolicyTypePassword),
@@ -1396,6 +1426,7 @@ func TestSA_SealService_UnsealData_PasswordSuccess(t *testing.T) {
 
 	plaintext := []byte("secret-data")
 	blob := &sealedBlobStorage{
+		BackendID:  "software",
 		ID:         "test-pw-success",
 		Label:      "test",
 		PolicyType: string(PolicyTypePassword),
@@ -1457,8 +1488,10 @@ func TestSA_SealService_UnsealData_UnsealerError(t *testing.T) {
 	saWireSealClient(svc, &saSealer{canSeal: true, unsealErr: errUnseal})
 
 	blob := &sealedBlobStorage{
-		ID:    "test-unseal-err",
-		Label: "test",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-unseal-err",
+		Label:      "test",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),

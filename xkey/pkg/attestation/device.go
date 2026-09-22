@@ -72,6 +72,14 @@ var (
 	// matches the one bound at pairing. Re-attestation refuses fail-closed on
 	// this; rebinding a legitimately rotated key is an explicit re-pair (#93).
 	ErrDeviceIdentityChanged = errors.New("attestation: attested key changed since pairing - re-pair to rebind, or investigate if unexpected")
+
+	// ErrDeviceAttestationVersionUnsupported indicates the record predates
+	// the challenge-response attestation model (#129) or carries no protocol
+	// version at all. There is no live-attestation grace period for such a
+	// record anymore (BREAKING, go-xkms compat cleanup PR5, removing the
+	// original #129/#130 backward-compat grace) -- the operator re-pairs the
+	// device so a fresh version 2 binding is established.
+	ErrDeviceAttestationVersionUnsupported = errors.New("attestation: record predates the challenge-response attestation model - re-pair the device")
 )
 
 // DeviceBinding is everything the verifier needs to know about a pairing
@@ -135,20 +143,15 @@ func ApplyVerifiedAttestation(d *pairing.PairedDevice, result *Result) {
 	}
 }
 
-// RequiresLiveAttestation reports whether this binding was established under
-// the challenge-response model and must therefore prove liveness on every
-// connect.
+// Validate refuses a record that predates the challenge-response attestation
+// model, or that demands the liveness proof but has nothing to judge the
+// answer against.
 //
-// The answer comes from the RECORD, never from anything the peer says. A
-// device that could talk its way out of the requirement by claiming an older
-// protocol version would make the check optional at the peer's choice, which
-// is the defect the identity-ack "unknown" path was fixed for.
-func (b DeviceBinding) RequiresLiveAttestation() bool {
-	return b.ProtocolVersion >= pairing.AttestProtocolV2
-}
-
-// Validate refuses a record that demands the liveness proof but has nothing to
-// judge the answer against.
+// Every record is now required to carry a version 2 (challenge-response)
+// binding (BREAKING, go-xkms compat cleanup PR5, removing the #129/#130
+// grace period for absent/version-1 records): ProtocolVersion < 2 refuses
+// with ErrDeviceAttestationVersionUnsupported, telling the operator to
+// re-pair the device rather than connecting under the weaker model.
 //
 // A version 2 binding with an empty or malformed fingerprint used to FAIL OPEN,
 // and the path there is short: the version says "require the proof", so the
@@ -163,12 +166,9 @@ func (b DeviceBinding) RequiresLiveAttestation() bool {
 // The binding is therefore validated AS A WHOLE, before the proof is even
 // requested: what makes a version 2 record safe is the pair of claims
 // together, and half of that pair is not a weaker version of it.
-//
-// A legacy record claims nothing and is left alone — it has no attested key
-// registered, which is a different state from having one and losing it.
 func (b DeviceBinding) Validate() error {
-	if !b.RequiresLiveAttestation() {
-		return nil
+	if b.ProtocolVersion < pairing.AttestProtocolV2 {
+		return ErrDeviceAttestationVersionUnsupported
 	}
 	if b.Fingerprint == "" {
 		return fmt.Errorf("%w: fingerprint is empty", ErrDeviceBindingIncomplete)
@@ -194,12 +194,11 @@ func (b DeviceBinding) Validate() error {
 // Legitimate key rotation is an explicit re-pair, which establishes a fresh
 // binding on purpose.
 //
-// An empty stored fingerprint is the first attestation and matches nothing yet
-// — but ONLY for a record that does not claim a version 2 binding. For one that
-// does, an empty fingerprint is an incomplete record, not an enrolment: see
-// Validate. Keeping that distinction here as well as at the entry points means
-// a future caller that reaches this method directly cannot reintroduce the
-// fail-open by skipping Validate.
+// Validate() guarantees that if it returns nil, b.Fingerprint is a non-empty,
+// well-formed hex string (every valid binding is now version 2 — BREAKING,
+// go-xkms compat cleanup PR5 — and Validate rejects a version 2 record with
+// an empty fingerprint as incomplete), so the comparison below is always
+// against a real stored identity.
 func (b DeviceBinding) ValidateAttestedKeyMatch(freshFingerprint string) error {
 	// Completeness before comparison, and the ORDER carries the diagnosis. A
 	// malformed stored fingerprint can never equal a real one, so comparing
@@ -209,9 +208,6 @@ func (b DeviceBinding) ValidateAttestedKeyMatch(freshFingerprint string) error {
 	// investigate. Getting the reason right is part of failing closed usefully.
 	if err := b.Validate(); err != nil {
 		return err
-	}
-	if b.Fingerprint == "" {
-		return nil // First attestation of a device that has never been attested
 	}
 	if b.Fingerprint != freshFingerprint {
 		return ErrDeviceIdentityChanged
@@ -587,13 +583,13 @@ func AttestOverSession(
 }
 
 // VerifyReattestation runs the liveness proof on a freshly handshaken session
-// for a device whose record requires it, and confirms the identity has not
-// changed.
+// and confirms the identity has not changed.
 //
-// A record predating #129 carries no protocol version and is left alone: those
-// devices have no attested key registered to prove possession of, so demanding
-// a proof would refuse every legacy pairing rather than protect it. They are
-// upgraded by re-pairing, or by an explicit re-attestation.
+// A record predating #129, or otherwise below version 2, is refused by
+// binding.Validate() before the proof is even requested (BREAKING, go-xkms
+// compat cleanup PR5): those devices have no attested key registered to
+// prove possession of, so there is nothing to run the proof against, and
+// the operator must re-pair rather than connect under the weaker model.
 //
 // For a version 2 record the proof is mandatory and every failure is fatal to
 // the connection. That includes a device that answers with protocol version 1:
@@ -611,9 +607,6 @@ func VerifyReattestation(
 	trust *Trust,
 	logger *slog.Logger,
 ) error {
-	if !binding.RequiresLiveAttestation() {
-		return nil
-	}
 	// Before the proof is requested, not after it is judged: a record with
 	// nothing to compare against cannot be made safe by a valid signature from
 	// someone.

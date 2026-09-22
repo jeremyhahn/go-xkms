@@ -16,7 +16,6 @@ package services
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,8 +97,9 @@ func newSealServiceWithMockClient(t *testing.T, mc *sealMockClient) *SealService
 // validSealRequest returns a SealRequest with valid base64-encoded data.
 func validSealRequest() *SealRequest {
 	return &SealRequest{
-		Label: "test-secret",
-		Data:  base64.StdEncoding.EncodeToString([]byte("hello world")),
+		PolicyType: "none",
+		Label:      "test-secret",
+		Data:       base64.StdEncoding.EncodeToString([]byte("hello world")),
 	}
 }
 
@@ -339,156 +339,6 @@ func TestSealService_StorageDir(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MigrateFrom
-// ---------------------------------------------------------------------------
-
-func TestSealService_MigrateFrom_Success(t *testing.T) {
-	// Create a source directory with sealed blobs.
-	srcDir := filepath.Join(t.TempDir(), "legacy-sealed")
-	require.NoError(t, os.MkdirAll(srcDir, 0700))
-
-	blob1 := &sealedBlobStorage{
-		ID:    "blob-001",
-		Label: "legacy-secret-1",
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: []byte("data-1"),
-		},
-		CreatedAt: time.Now(),
-	}
-	blob2 := &sealedBlobStorage{
-		ID:    "blob-002",
-		Label: "legacy-secret-2",
-		SealedData: &xkms.SealedData{
-			Backend:    xkms.BackendTypeTPM2,
-			Ciphertext: []byte("data-2"),
-		},
-		CreatedAt: time.Now(),
-	}
-
-	for _, blob := range []*sealedBlobStorage{blob1, blob2} {
-		data, err := json.Marshal(blob)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(
-			filepath.Join(srcDir, blob.ID+".sealed.json"), data, 0600))
-	}
-
-	// Create seal service with a different destination directory.
-	dstDir := filepath.Join(t.TempDir(), "new-sealed")
-	svc := NewSealService(dstDir)
-
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 2, migrated)
-
-	// Verify blobs exist in destination.
-	for _, id := range []string{"blob-001", "blob-002"} {
-		path := filepath.Join(dstDir, id+".sealed.json")
-		_, statErr := os.Stat(path)
-		assert.NoError(t, statErr, "blob %s should exist in destination", id)
-	}
-
-	// Verify source blobs were NOT deleted (non-destructive).
-	for _, id := range []string{"blob-001", "blob-002"} {
-		path := filepath.Join(srcDir, id+".sealed.json")
-		_, statErr := os.Stat(path)
-		assert.NoError(t, statErr, "blob %s should still exist in source", id)
-	}
-}
-
-func TestSealService_MigrateFrom_SkipsExistingFiles(t *testing.T) {
-	srcDir := filepath.Join(t.TempDir(), "legacy")
-	dstDir := filepath.Join(t.TempDir(), "new")
-	require.NoError(t, os.MkdirAll(srcDir, 0700))
-	require.NoError(t, os.MkdirAll(dstDir, 0700))
-
-	// Create a blob in source.
-	srcContent := []byte(`{"id":"dup-001","label":"source","sealed_data":{"backend":"tpm2"}}`)
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "dup-001.sealed.json"), srcContent, 0600))
-
-	// Create a blob with the same name but different content in destination.
-	dstContent := []byte(`{"id":"dup-001","label":"destination","sealed_data":{"backend":"tpm2"}}`)
-	require.NoError(t, os.WriteFile(filepath.Join(dstDir, "dup-001.sealed.json"), dstContent, 0600))
-
-	svc := NewSealService(dstDir)
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-
-	// Verify destination content was NOT overwritten.
-	data, readErr := os.ReadFile(filepath.Join(dstDir, "dup-001.sealed.json"))
-	require.NoError(t, readErr)
-	var blob sealedBlobStorage
-	require.NoError(t, json.Unmarshal(data, &blob))
-	assert.Equal(t, "destination", blob.Label)
-}
-
-func TestSealService_MigrateFrom_EmptySrcDir(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	_, err := svc.MigrateFrom("")
-	assert.ErrorIs(t, err, ErrSealStorageDirNotSet)
-}
-
-func TestSealService_MigrateFrom_RelativeSrcDir(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	_, err := svc.MigrateFrom("relative/path")
-	assert.ErrorIs(t, err, ErrSealStorageDirRelative)
-}
-
-func TestSealService_MigrateFrom_SameSrcAndDst(t *testing.T) {
-	dir := t.TempDir()
-	svc := NewSealService(dir)
-	migrated, err := svc.MigrateFrom(dir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestSealService_MigrateFrom_NonExistentSrcDir(t *testing.T) {
-	svc := NewSealService(t.TempDir())
-	migrated, err := svc.MigrateFrom(filepath.Join(t.TempDir(), "does-not-exist"))
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestSealService_MigrateFrom_EmptySrcDirectory(t *testing.T) {
-	srcDir := filepath.Join(t.TempDir(), "empty")
-	require.NoError(t, os.MkdirAll(srcDir, 0700))
-
-	svc := NewSealService(t.TempDir())
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestSealService_MigrateFrom_SkipsNonJSONFiles(t *testing.T) {
-	srcDir := filepath.Join(t.TempDir(), "legacy")
-	require.NoError(t, os.MkdirAll(srcDir, 0700))
-
-	// Create non-JSON files.
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "readme.txt"), []byte("text"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "backup.bak"), []byte("bak"), 0600))
-
-	svc := NewSealService(filepath.Join(t.TempDir(), "dst"))
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 0, migrated)
-}
-
-func TestSealService_MigrateFrom_SkipsDirectories(t *testing.T) {
-	srcDir := filepath.Join(t.TempDir(), "legacy")
-	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "subdir"), 0700))
-
-	// Also add a real blob to verify it still works.
-	blobData := []byte(`{"id":"real-001","label":"real","sealed_data":{"backend":"tpm2"}}`)
-	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "real-001.sealed.json"), blobData, 0600))
-
-	svc := NewSealService(filepath.Join(t.TempDir(), "dst"))
-	migrated, err := svc.MigrateFrom(srcDir)
-	require.NoError(t, err)
-	assert.Equal(t, 1, migrated)
-}
-
-// ---------------------------------------------------------------------------
 // CanSeal
 // ---------------------------------------------------------------------------
 
@@ -680,8 +530,9 @@ func TestSealService_SealData_EmptyLabel(t *testing.T) {
 func TestSealService_SealData_EmptyData(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 	req := &SealRequest{
-		Label: "my-label",
-		Data:  "",
+		PolicyType: "none",
+		Label:      "my-label",
+		Data:       "",
 	}
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealInvalidData)
@@ -690,8 +541,9 @@ func TestSealService_SealData_EmptyData(t *testing.T) {
 func TestSealService_SealData_InvalidBase64(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 	req := &SealRequest{
-		Label: "my-label",
-		Data:  "not!valid!base64!!",
+		PolicyType: "none",
+		Label:      "my-label",
+		Data:       "not!valid!base64!!",
 	}
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
@@ -1024,8 +876,9 @@ func TestSealService_UnsealData_Success(t *testing.T) {
 	// Seal first.
 	original := "hello world"
 	req := &SealRequest{
-		Label: "unseal-test",
-		Data:  base64.StdEncoding.EncodeToString([]byte(original)),
+		PolicyType: "none",
+		Label:      "unseal-test",
+		Data:       base64.StdEncoding.EncodeToString([]byte(original)),
 	}
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -1106,8 +959,10 @@ func TestSealService_UnsealData_BackwardCompatEmptyBackend(t *testing.T) {
 
 	// Create a blob file manually with empty Backend (simulates pre-Phase 3 blob).
 	blob := &sealedBlobStorage{
-		ID:    "legacy-blob",
-		Label: "legacy",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "legacy-blob",
+		Label:      "legacy",
 		SealedData: &xkms.SealedData{
 			Backend:    "", // empty = pre-Phase 3
 			Ciphertext: []byte("old-data"),
@@ -1272,8 +1127,10 @@ func TestSealService_saveBlob_And_loadBlob(t *testing.T) {
 	svc := NewSealService(dir)
 
 	blob := &sealedBlobStorage{
-		ID:    "test-blob-001",
-		Label: "test-label",
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob-001",
+		Label:      "test-label",
 		SealedData: &xkms.SealedData{
 			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("sealed-data"),
@@ -1548,8 +1405,9 @@ func TestSealServiceErrors_Distinct(t *testing.T) {
 		ErrSealStorageDirRelative,
 		ErrSealBackendNotFound,
 		ErrSealPolicyRequiresTPM,
-		ErrSealMigrationFailed,
 		ErrSealNoClient,
+		ErrSealBlobPolicyTypeMissing,
+		ErrSealBlobBackendIDMissing,
 	}
 	for i := range errs {
 		for j := range errs {

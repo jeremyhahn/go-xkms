@@ -54,8 +54,9 @@ var (
 // source that does not need a *cobra.Command threaded through this whole call
 // graph -- and closes it again immediately: nothing else in these flows needs
 // it once the key is in hand. There is no fallback to reading a sealed record
-// as plaintext: with no password available, UnsealLocalNoiseKey itself
-// refuses via ErrNoiseKeyUnsealBarrierRequired.
+// as plaintext: with no password available, this refuses via
+// pairing.ErrNoiseKeyFormMismatch before ever calling UnsealLocalNoiseKey
+// (which would refuse the same way, since it also has no barrier).
 func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Buffer, error) {
 	if !pairing.IsSealedNoiseKey(device.LocalNoisePrivateKey) {
 		return pairing.UnsealLocalNoiseKey(nil, device.LocalNoisePrivateKey)
@@ -63,7 +64,7 @@ func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Bu
 
 	password := os.Getenv("XKEY_BARRIER_PASSWORD")
 	if password == "" {
-		return nil, &SentinelCauseError{Sentinel: ErrSessionKeyDecode, Cause: pairing.ErrNoiseKeyUnsealBarrierRequired}
+		return nil, &SentinelCauseError{Sentinel: ErrSessionKeyDecode, Cause: pairing.ErrNoiseKeyFormMismatch}
 	}
 	barrier, closeBarrier, err := openDeviceBarrierWithPassword(password)
 	if err != nil {
@@ -254,13 +255,14 @@ func (s *deviceSession) Call(ctx context.Context, method string, params any) ([]
 const defaultSessionTimeout = 120 * time.Second
 
 // enforceReattestation runs the challenge-response liveness proof on a freshly
-// handshaken session, for devices whose record says they were bound under it.
+// handshaken session. Every record is required to carry a version 2 binding
+// (BREAKING, go-xkms compat cleanup PR5, removing the #129/#130 grace period
+// for a legacy record): attestation.VerifyReattestation refuses one that
+// does not, via DeviceBinding.Validate, telling the operator to re-pair.
 //
 // The decision is attestation.VerifyReattestation — the same one the backend
 // path, `device attest-device` and the GUI use. What stays here is opening
-// THIS machine's trust store, and only for a record that actually requires the
-// proof: a legacy pairing on a machine with no Android roots installed must
-// still connect.
+// THIS machine's trust store.
 func enforceReattestation(
 	ctx context.Context,
 	transport phone.Transport,
@@ -269,8 +271,12 @@ func enforceReattestation(
 	logger *slog.Logger,
 ) error {
 	binding := attestation.DeviceBindingFor(*device)
-	if !binding.RequiresLiveAttestation() {
-		return nil
+
+	// Checked before opening the trust store, so a record that predates the
+	// challenge-response model is refused with a re-pair message rather than
+	// whatever error trust-store resolution happens to produce.
+	if err := binding.Validate(); err != nil {
+		return err
 	}
 
 	trust, err := loadPairingAttestationTrust()
@@ -353,10 +359,14 @@ func newPairedDeviceBackendConfig(
 		ExpectedRemoteStatic:      remotePublicKey,
 		ExpectedDeviceFingerprint: expectedFingerprint,
 
+		// Every record must now carry a version 2 binding (BREAKING, go-xkms
+		// compat cleanup PR5, removing the #129/#130 grace period), so live
+		// attestation is always required; newLiveAttestor's closure refuses
+		// via DeviceBinding.Validate for a record that does not have one.
 		// Set together: RequireLiveAttestation without LiveAttest is a
 		// refusal, so an edit that drops the verifier fails closed rather than
 		// silently skipping the proof.
-		RequireLiveAttestation: attestation.DeviceBindingFor(*device).RequiresLiveAttestation(),
+		RequireLiveAttestation: true,
 		LiveAttest:             newLiveAttestor(device, logger),
 
 		ScanTimeout:      30 * time.Second,

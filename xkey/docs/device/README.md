@@ -13,7 +13,7 @@ xKey supports pairing with multiple device types through a unified `xkey device`
 
 ## Configuration
 
-Paired devices are stored in `~/.xkey/devices.yaml`. Legacy `phone.yaml` files are automatically migrated on first access.
+Paired devices are stored in `~/.xkey/devices.yaml`. The old `phone.yaml` filename is no longer read (BREAKING, go-xkms compat cleanup PR5, removing the automatic rename) — rename an existing `phone.yaml` to `devices.yaml` by hand, or re-pair your devices.
 
 ```yaml
 devices:

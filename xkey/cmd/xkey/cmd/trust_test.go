@@ -1109,8 +1109,10 @@ func TestRunTrustBootstrap_WithAllMethodConfigs(t *testing.T) {
 	cmd.Flags().Duration("timeout", 2*time.Second, "timeout")
 	require.NoError(t, cmd.Flags().Set("method", "direct"))
 
-	// Will fail because server does not exist, but exercises the full path
-	// through buildBootstrapConfig with all sections populated.
+	// trust.bootstrap.server_url is unset, so this fails with
+	// ErrServerURLRequired (wrapped in ErrTrustBootstrapFailed) before any
+	// network I/O, but still exercises the full path through
+	// buildBootstrapConfig with all sections populated.
 	err := runTrustBootstrap(cmd, nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTrustBootstrapFailed))
@@ -1315,6 +1317,7 @@ func TestBuildBootstrapConfig_InvalidPerMethodTimeout(t *testing.T) {
 func TestBuildBootstrapConfig_DANEConfig(t *testing.T) {
 	resetViperForTest(t)
 
+	viper.Set("trust.bootstrap.server_url", "https://dane.example.com")
 	viper.Set("trust.bootstrap.dane.server_url", "https://dane.example.com")
 	viper.Set("trust.bootstrap.dane.hostname", "example.com")
 	viper.Set("trust.bootstrap.dane.dns_server", "8.8.8.8:53")
@@ -1372,6 +1375,7 @@ func TestBuildBootstrapConfig_NoNoiseWithoutServerAddr(t *testing.T) {
 func TestBuildBootstrapConfig_SPKIConfig(t *testing.T) {
 	resetViperForTest(t)
 
+	viper.Set("trust.bootstrap.server_url", "https://spki.example.com")
 	viper.Set("trust.bootstrap.spki.server_url", "https://spki.example.com")
 	viper.Set("trust.bootstrap.spki.pin_sha256", "abc123pin")
 
@@ -1399,6 +1403,7 @@ func TestBuildBootstrapConfig_NoSPKIWithoutServerURL(t *testing.T) {
 func TestBuildBootstrapConfig_DirectConfig(t *testing.T) {
 	resetViperForTest(t)
 
+	viper.Set("trust.bootstrap.server_url", "https://direct.example.com")
 	viper.Set("trust.bootstrap.direct.server_url", "https://direct.example.com")
 
 	cmd := &cobra.Command{}
@@ -1424,6 +1429,7 @@ func TestBuildBootstrapConfig_NoDirectWithoutServerURL(t *testing.T) {
 func TestBuildBootstrapConfig_AllSections(t *testing.T) {
 	resetViperForTest(t)
 
+	viper.Set("trust.bootstrap.server_url", "https://dane.example.com")
 	viper.Set("trust.bootstrap.per_method_timeout", "10s")
 	viper.Set("trust.bootstrap.dane.server_url", "https://dane.example.com")
 	viper.Set("trust.bootstrap.dane.hostname", "example.com")
@@ -1447,6 +1453,28 @@ func TestBuildBootstrapConfig_AllSections(t *testing.T) {
 	require.NotNil(t, cfg.Noise)
 	require.NotNil(t, cfg.SPKI)
 	require.NotNil(t, cfg.Direct)
+}
+
+// TestBuildBootstrapConfig_ServerURLNotDerivedFromPerModeURLs is the
+// regression guard for go-xkms compat cleanup PR5: buildBootstrapConfig no
+// longer falls back to the first configured per-mode server_url (DANE, then
+// SPKI, then Direct) when trust.bootstrap.server_url is unset.
+// bootstrap.Fetch is left to return ErrServerURLRequired for an empty
+// ServerURL.
+func TestBuildBootstrapConfig_ServerURLNotDerivedFromPerModeURLs(t *testing.T) {
+	resetViperForTest(t)
+
+	viper.Set("trust.bootstrap.dane.server_url", "https://dane.example.com")
+	viper.Set("trust.bootstrap.spki.server_url", "https://spki.example.com")
+	viper.Set("trust.bootstrap.direct.server_url", "https://direct.example.com")
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringSlice("method", nil, "bootstrap methods")
+
+	cfg, err := buildBootstrapConfig(cmd)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.ServerURL,
+		"trust.bootstrap.server_url must be set explicitly; per-mode URLs are no longer a fallback")
 }
 
 func TestBuildBootstrapConfig_EmptyConfig(t *testing.T) {

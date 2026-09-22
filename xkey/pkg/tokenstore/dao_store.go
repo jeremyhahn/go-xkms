@@ -16,10 +16,16 @@ package tokenstore
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
+
+// normalizeServer normalizes a server URL for consistent key derivation.
+func normalizeServer(serverURL string) string {
+	return strings.TrimSuffix(strings.ToLower(serverURL), "/")
+}
 
 // DAOStore implements TokenStore using a go-qrdb GenericDAO backed by
 // a kvstore.KVStore. Each token entry is stored as a TokenEntity with

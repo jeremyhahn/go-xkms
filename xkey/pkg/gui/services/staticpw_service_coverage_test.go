@@ -37,7 +37,7 @@ func TestStaticPWService_Coverage_BackupPasswords_Plaintext(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a password to back up.
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "backup-entry",
 		Password: "secret123",
 		Notes:    "test notes",
@@ -61,7 +61,7 @@ func TestStaticPWService_Coverage_BackupPasswords_Plaintext(t *testing.T) {
 func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES256(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "encrypted-entry",
 		Password: "pw",
 	})
@@ -81,7 +81,7 @@ func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES256(t *testing.T)
 
 func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES128(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
-	_, err := svc.AddPasswordV2(AddPasswordParams{Name: "e128", Password: "p"})
+	_, err := svc.AddPassword(AddPasswordParams{Name: "e128", Password: "p"})
 	require.NoError(t, err)
 
 	outFile := filepath.Join(t.TempDir(), "backup128.enc")
@@ -94,7 +94,7 @@ func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES128(t *testing.T)
 
 func TestStaticPWService_Coverage_BackupPasswords_Encrypted_AES192(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
-	_, err := svc.AddPasswordV2(AddPasswordParams{Name: "e192", Password: "p"})
+	_, err := svc.AddPassword(AddPasswordParams{Name: "e192", Password: "p"})
 	require.NoError(t, err)
 
 	outFile := filepath.Join(t.TempDir(), "backup192.enc")
@@ -175,7 +175,7 @@ func TestStaticPWService_Coverage_RestorePasswords_Encrypted(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Add a password and backup encrypted.
-	_, err := svc.AddPasswordV2(AddPasswordParams{Name: "round-trip", Password: "rt-pw"})
+	_, err := svc.AddPassword(AddPasswordParams{Name: "round-trip", Password: "rt-pw"})
 	require.NoError(t, err)
 
 	backupFile := filepath.Join(t.TempDir(), "rt-backup.enc")
@@ -198,7 +198,7 @@ func TestStaticPWService_Coverage_RestorePasswords_SkipsDuplicates(t *testing.T)
 	svc, _ := newTestStaticPWService(t)
 
 	// Pre-populate with an entry.
-	_, err := svc.AddPasswordV2(AddPasswordParams{Name: "existing", Password: "pw1"})
+	_, err := svc.AddPassword(AddPasswordParams{Name: "existing", Password: "pw1"})
 	require.NoError(t, err)
 
 	// Create a backup containing the same name plus a new one.
@@ -297,7 +297,7 @@ func TestStaticPWService_Coverage_RestorePasswords_InvalidJSON(t *testing.T) {
 
 func TestStaticPWService_Coverage_RestorePasswords_WrongDecryptionPassword(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
-	_, err := svc.AddPasswordV2(AddPasswordParams{Name: "decrypt-test", Password: "pw"})
+	_, err := svc.AddPassword(AddPasswordParams{Name: "decrypt-test", Password: "pw"})
 	require.NoError(t, err)
 
 	backupFile := filepath.Join(t.TempDir(), "encrypted.enc")
@@ -568,7 +568,7 @@ func backupRestoreRoundTrip(t *testing.T, algorithm string) {
 	t.Helper()
 
 	svc, _ := newTestStaticPWService(t)
-	_, err := svc.AddPasswordV2(AddPasswordParams{
+	_, err := svc.AddPassword(AddPasswordParams{
 		Name:     "rt-" + algorithm,
 		Password: "secret",
 		Title:    "Title-" + algorithm,
@@ -729,7 +729,7 @@ func TestStaticPWService_Coverage_BackupPasswords_MultipleEntries(t *testing.T) 
 	svc, _ := newTestStaticPWService(t)
 
 	for i := 0; i < 5; i++ {
-		_, err := svc.AddPasswordV2(AddPasswordParams{
+		_, err := svc.AddPassword(AddPasswordParams{
 			Name:       "entry-" + string(rune('A'+i)),
 			Password:   "pw",
 			FolderPath: "folder",
@@ -839,15 +839,15 @@ func TestStaticPWService_Coverage_RestorePasswords_StoreListError(t *testing.T) 
 }
 
 // ---------------------------------------------------------------------------
-// AddPasswordV2 with all optional fields (URL, Username, Title, MatchPatterns)
+// AddPassword with all optional fields (URL, Username, Title, MatchPatterns)
 // ---------------------------------------------------------------------------
 
-func TestStaticPWService_Coverage_AddPasswordV2_AllOptionalFields(t *testing.T) {
+func TestStaticPWService_Coverage_AddPassword_AllOptionalFields(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	expiry := time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339)
 
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:          "full-entry",
 		Title:         "My Service",
 		Username:      "admin",
@@ -870,14 +870,14 @@ func TestStaticPWService_Coverage_AddPasswordV2_AllOptionalFields(t *testing.T) 
 }
 
 // ---------------------------------------------------------------------------
-// UpdatePasswordV2 with all optional fields
+// UpdatePassword with all optional fields
 // ---------------------------------------------------------------------------
 
-func TestStaticPWService_Coverage_UpdatePasswordV2_AllOptionalFields(t *testing.T) {
+func TestStaticPWService_Coverage_UpdatePassword_AllOptionalFields(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
 	// Create first.
-	entry, err := svc.AddPasswordV2(AddPasswordParams{
+	entry, err := svc.AddPassword(AddPasswordParams{
 		Name:     "update-all",
 		Password: "oldpw",
 	})
@@ -885,7 +885,7 @@ func TestStaticPWService_Coverage_UpdatePasswordV2_AllOptionalFields(t *testing.
 
 	expiry := time.Now().Add(14 * 24 * time.Hour).Format(time.RFC3339)
 
-	err = svc.UpdatePasswordV2(UpdatePasswordParams{
+	err = svc.UpdatePassword(UpdatePasswordParams{
 		ID:            entry.ID,
 		Name:          "update-all-renamed",
 		Title:         "Updated Title",
@@ -918,13 +918,13 @@ func TestStaticPWService_Coverage_MovePassword_NotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AddPassword (v1 compat) delegates to AddPasswordV2
+// AddPassword (v1 compat) delegates to AddPassword
 // ---------------------------------------------------------------------------
 
 func TestStaticPWService_Coverage_AddPassword_DelegatesToV2(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	entry, err := svc.AddPassword("compat-name", "compat-pw", "compat-notes")
+	entry, err := svc.AddPassword(AddPasswordParams{Name: "compat-name", Password: "compat-pw", Notes: "compat-notes"})
 	require.NoError(t, err)
 	assert.Equal(t, "compat-name", entry.Name)
 	assert.Equal(t, "compat-pw", entry.Password)
@@ -932,16 +932,16 @@ func TestStaticPWService_Coverage_AddPassword_DelegatesToV2(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// UpdatePassword (v1 compat) delegates to UpdatePasswordV2
+// UpdatePassword (v1 compat) delegates to UpdatePassword
 // ---------------------------------------------------------------------------
 
 func TestStaticPWService_Coverage_UpdatePassword_DelegatesToV2(t *testing.T) {
 	svc, _ := newTestStaticPWService(t)
 
-	entry, err := svc.AddPassword("compat-update", "pw1", "notes1")
+	entry, err := svc.AddPassword(AddPasswordParams{Name: "compat-update", Password: "pw1", Notes: "notes1"})
 	require.NoError(t, err)
 
-	err = svc.UpdatePassword(entry.ID, "renamed", "pw2", "notes2")
+	err = svc.UpdatePassword(UpdatePasswordParams{ID: entry.ID, Name: "renamed", Password: "pw2", Notes: "notes2"})
 	require.NoError(t, err)
 
 	got, getErr := svc.GetPassword("renamed")
@@ -958,7 +958,7 @@ func TestStaticPWService_Coverage_BackupPasswords_MultipleEncrypted(t *testing.T
 	svc, _ := newTestStaticPWService(t)
 
 	for i := 0; i < 3; i++ {
-		_, err := svc.AddPasswordV2(AddPasswordParams{
+		_, err := svc.AddPassword(AddPasswordParams{
 			Name:     "multi-" + string(rune('A'+i)),
 			Password: "pw",
 		})
@@ -1008,14 +1008,14 @@ func TestStaticPWService_Coverage_GetPassword_StoreError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// UpdatePasswordV2 with store.Get error
+// UpdatePassword with store.Get error
 // ---------------------------------------------------------------------------
 
-func TestStaticPWService_Coverage_UpdatePasswordV2_StoreGetError(t *testing.T) {
+func TestStaticPWService_Coverage_UpdatePassword_StoreGetError(t *testing.T) {
 	svc := NewStaticPasswordService(&storeGetError{})
 	svc.SetContext(context.Background())
 
-	err := svc.UpdatePasswordV2(UpdatePasswordParams{
+	err := svc.UpdatePassword(UpdatePasswordParams{
 		ID:   "some-id",
 		Name: "test",
 	})
@@ -1230,7 +1230,7 @@ func (s *storeForceDeleteError) ListByFolder(_ string) ([]*staticpw.StaticPasswo
 func (s *storeForceDeleteError) MoveToFolder(_, _ string) error { return nil }
 
 // ---------------------------------------------------------------------------
-// AddPasswordV2 store.Add error
+// AddPassword store.Add error
 // ---------------------------------------------------------------------------
 
 // storeAddError returns an error from Add.
@@ -1252,11 +1252,11 @@ func (s *storeAddError) ListByFolder(_ string) ([]*staticpw.StaticPassword, erro
 }
 func (s *storeAddError) MoveToFolder(_, _ string) error { return nil }
 
-func TestStaticPWService_Coverage_AddPasswordV2_StoreAddError(t *testing.T) {
+func TestStaticPWService_Coverage_AddPassword_StoreAddError(t *testing.T) {
 	svc := NewStaticPasswordService(&storeAddError{})
 	svc.SetContext(context.Background())
 
-	_, err := svc.AddPasswordV2(AddPasswordParams{Name: "test", Password: "pw"})
+	_, err := svc.AddPassword(AddPasswordParams{Name: "test", Password: "pw"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "add failed")
 }

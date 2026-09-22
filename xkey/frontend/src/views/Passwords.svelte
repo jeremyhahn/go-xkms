@@ -249,7 +249,7 @@
   async function handleAddSave(params: AddPasswordParams | UpdatePasswordParams): Promise<void> {
     const result = await callBackend<StaticPasswordEntry>(
       'StaticPasswordService',
-      'AddPasswordV2',
+      'AddPassword',
       params,
     );
     if (result !== null) {
@@ -275,7 +275,7 @@
   async function handleEditSave(params: AddPasswordParams | UpdatePasswordParams): Promise<void> {
     const ok = await callBackendVoid(
       'StaticPasswordService',
-      'UpdatePasswordV2',
+      'UpdatePassword',
       params,
     );
     if (ok) {

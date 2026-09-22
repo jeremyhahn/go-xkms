@@ -234,7 +234,7 @@ func TestSharePolicySet_AndList(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
 
-	// Create the .xkey directory and phone.yaml so getDevicesConfigPath works
+	// Create the .xkey directory and devices.yaml so getDevicesConfigPath works
 	xkeyDir := filepath.Join(tempDir, ".xkey")
 	err := os.MkdirAll(xkeyDir, 0700)
 	require.NoError(t, err)

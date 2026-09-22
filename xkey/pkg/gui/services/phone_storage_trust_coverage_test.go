@@ -280,7 +280,7 @@ func TestPhoneService_Unpair_ConnectedDeviceDisconnectsAndClears(t *testing.T) {
 	}
 	data, err := yaml.Marshal(&cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 
 	svc := NewPhoneService()
 	// Simulate connected state for the device being unpaired.

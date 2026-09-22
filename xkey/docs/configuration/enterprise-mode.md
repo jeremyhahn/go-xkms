@@ -31,7 +31,6 @@ The `policy:` section of the unified config holds 24 SO-controlled fields that g
 | `require_encrypted_storage` | bool | true | Require encrypted storage backend |
 | `storage_type` | string | "barrier" | Storage type: barrier, luks |
 | `require_tpm` | bool | false | Require TPM hardware |
-| `require_platform_policy` | bool | false | Require PCR-based platform policy |
 | `platform_pcrs` | []int | nil | PCR indices for platform binding |
 | `platform_pcr_bank` | string | "" | PCR hash bank (sha256, sha384) |
 | `require_password_protection` | bool | false | Require password store encryption |

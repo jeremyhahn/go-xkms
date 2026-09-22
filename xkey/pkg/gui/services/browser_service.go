@@ -406,15 +406,6 @@ func (s *BrowserService) loadConfig() error {
 		return err
 	}
 
-	// Backfill profile mode defaults for legacy configs persisted before
-	// these fields existed.
-	if config.ChromeProfileMode == "" {
-		config.ChromeProfileMode = ProfileModeIsolated
-	}
-	if config.FirefoxProfileMode == "" {
-		config.FirefoxProfileMode = ProfileModeIsolated
-	}
-
 	s.mu.Lock()
 	s.config = config
 	s.mu.Unlock()

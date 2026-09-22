@@ -352,6 +352,7 @@ func panicTPMService(t *testing.T) *TPMService {
 	t.Helper()
 	svc := NewTPMService()
 	svc.SetDataDir(t.TempDir())
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &allPanicTPM{}
 	}))
@@ -364,6 +365,7 @@ func panicTPMServiceWithSafeMock(t *testing.T) *TPMService {
 	t.Helper()
 	svc := NewTPMService()
 	svc.SetDataDir(t.TempDir())
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return defaultMockTPM()
 	}))
@@ -943,7 +945,10 @@ func TestPanic_TPMService_CreatePCRAndPasswordPolicy(t *testing.T) {
 func TestPanic_TPMService_AssignPolicyToKeys(t *testing.T) {
 	// Use safe mock for creation so the policy is saved to disk.
 	svc := panicTPMServiceWithSafeMock(t)
-	require.NoError(t, svc.CreatePolicy(&PCRPolicy{Name: "assign-test"}))
+	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
+		Name:          "assign-test",
+		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
+	}))
 	// AssignPolicyToKeys is file-only, no panic expected.
 	err := svc.AssignPolicyToKeys("assign-test", []string{"0x81000001"})
 	assert.NoError(t, err)

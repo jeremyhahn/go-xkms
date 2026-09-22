@@ -493,50 +493,11 @@ func TestValidate_BackendsCrossTypeDuplicate(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate")
 }
 
-func TestAutoPopulateBackends_FromLegacy(t *testing.T) {
-	cfg := DefaultConfig() // Backend.Default = "software"
-	cfg.AutoPopulateBackends()
+func TestDefaultConfig_PopulatesSoftwareBackend(t *testing.T) {
+	cfg := DefaultConfig()
 
 	require.Len(t, cfg.Backends.Local, 1)
 	assert.Equal(t, "software", cfg.Backends.Local[0].ID)
 	assert.Equal(t, "software", cfg.Backends.Local[0].Category)
 	assert.Equal(t, "Local software", cfg.Backends.Local[0].Name)
-	assert.NotNil(t, cfg.Backends.Defaults)
-}
-
-func TestAutoPopulateBackends_FromLegacyTPM2(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Backend.Default = "tpm2"
-	cfg.Backend.TPM2.Device = "/dev/tpmrm0"
-	cfg.AutoPopulateBackends()
-
-	require.Len(t, cfg.Backends.Local, 1)
-	assert.Equal(t, "tpm2", cfg.Backends.Local[0].ID)
-	assert.Equal(t, "tpm2", cfg.Backends.Local[0].Category)
-	require.NotNil(t, cfg.Backends.Local[0].TPM2)
-	assert.Equal(t, "/dev/tpmrm0", cfg.Backends.Local[0].TPM2.Device)
-}
-
-func TestAutoPopulateBackends_SkipsWhenPresent(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Backends = BackendsConfig{
-		Local: []LocalBackendConfig{
-			{ID: "already-there", Category: "software", Name: "Existing"},
-		},
-	}
-	cfg.AutoPopulateBackends()
-
-	// Should NOT add more entries.
-	require.Len(t, cfg.Backends.Local, 1)
-	assert.Equal(t, "already-there", cfg.Backends.Local[0].ID)
-}
-
-func TestAutoPopulateBackends_EmptyDefault(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Backend.Default = ""
-	cfg.AutoPopulateBackends()
-
-	require.Len(t, cfg.Backends.Local, 1)
-	assert.Equal(t, "software", cfg.Backends.Local[0].ID)
-	assert.Equal(t, "software", cfg.Backends.Local[0].Category)
 }

@@ -51,10 +51,7 @@ type PasswordProtectionService struct {
 }
 
 // NewPasswordProtectionService creates a new PasswordProtectionService.
-// The configPath parameter is unused and retained only for backward
-// compatibility with callers that pass it.
 func NewPasswordProtectionService(
-	_ string,
 	staticPWSvc *StaticPasswordService,
 	sealSvc *SealService,
 ) *PasswordProtectionService {

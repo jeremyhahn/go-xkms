@@ -1093,7 +1093,13 @@ func openTokenStore(logger *slog.Logger) (tokenstore.TokenStore, func(), error) 
 		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
 	}
 
-	store, err := tokenstore.NewBackendTokenStore(backend, "tokens/")
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
+	if err != nil {
+		_ = backend.Close()
+		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err)
+	}
+
+	store, err := tokenstore.NewDAOStore(kvStore)
 	if err != nil {
 		_ = backend.Close()
 		return nil, nil, errors.Join(ErrAuthTokenStoreCreationFailed, err)

@@ -26,6 +26,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testEntry returns a fresh TokenEntry for use in tests.
+func testEntry(serverURL string) *TokenEntry {
+	return &TokenEntry{
+		ServerURL: serverURL,
+		TokenType: TypeBearer,
+		Source:    SourceOIDC,
+		Token:     "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test-payload.signature",
+		ExpiresAt: time.Now().UTC().Add(1 * time.Hour),
+		IssuedAt:  time.Now().UTC(),
+		Issuer:    "https://auth.example.com",
+		Subject:   "user-123",
+	}
+}
+
 // newTestDAOStore creates a DAOStore backed by in-memory storage for testing.
 func newTestDAOStore(t *testing.T) *DAOStore {
 	t.Helper()

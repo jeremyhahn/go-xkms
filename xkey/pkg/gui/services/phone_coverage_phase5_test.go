@@ -45,7 +45,7 @@ func p5cSetupHomeWithConfig(t *testing.T, cfg *phoneConfig) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".xkey"), 0700))
 	data, err := yaml.Marshal(cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "devices.yaml"), data, 0600))
 	origHome := os.Getenv("HOME")
 	t.Cleanup(func() { os.Setenv("HOME", origHome) })
 	os.Setenv("HOME", tmpDir)
@@ -112,7 +112,7 @@ func TestP5C_ListDevices_InvalidYAML(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".xkey"), 0700))
 	// Write invalid YAML content.
 	require.NoError(t, os.WriteFile(
-		filepath.Join(tmpDir, ".xkey", "phone.yaml"),
+		filepath.Join(tmpDir, ".xkey", "devices.yaml"),
 		[]byte("{{{{invalid yaml content!!!"),
 		0600,
 	))
@@ -167,7 +167,7 @@ func TestP5C_LoadConfig_InvalidYAMLReturnsError(t *testing.T) {
 	tmpDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".xkey"), 0700))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(tmpDir, ".xkey", "phone.yaml"),
+		filepath.Join(tmpDir, ".xkey", "devices.yaml"),
 		[]byte("\t\ttabs: [are: {invalid: yaml: ["),
 		0600,
 	))
@@ -536,11 +536,11 @@ func TestP5C_SaveAttestationResult_SaveConfigError(t *testing.T) {
 	}
 	data, err := yaml.Marshal(cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(xkeyDir, "phone.yaml"), data, 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(xkeyDir, "devices.yaml"), data, 0600))
 	// Make the file read-only so saving fails.
-	require.NoError(t, os.Chmod(filepath.Join(xkeyDir, "phone.yaml"), 0400))
+	require.NoError(t, os.Chmod(filepath.Join(xkeyDir, "devices.yaml"), 0400))
 	t.Cleanup(func() {
-		os.Chmod(filepath.Join(xkeyDir, "phone.yaml"), 0600)
+		os.Chmod(filepath.Join(xkeyDir, "devices.yaml"), 0600)
 	})
 
 	origHome := os.Getenv("HOME")

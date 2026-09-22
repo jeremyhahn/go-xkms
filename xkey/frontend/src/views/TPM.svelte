@@ -335,24 +335,18 @@
 
   $: provisioningBadgeStatus = (() => {
     switch (statusLevel) {
-      case 'verified': return 'verified' as const;
       case 'device_identity': return 'verified' as const;
-      case 'provisioned': return 'connected' as const;
       case 'owner': return 'connected' as const;
       case 'manufacturer': return 'warning' as const;
-      case 'default': return 'warning' as const;
       default: return 'neutral' as const;
     }
   })();
 
   $: provisioningLabel = (() => {
     switch (statusLevel) {
-      case 'verified': return 'Verified';
       case 'device_identity': return 'Device Identity';
-      case 'provisioned': return 'Provisioned';
       case 'owner': return 'Owner Provisioned';
       case 'manufacturer': return 'Manufacturer Default';
-      case 'default': return 'Default (EK only)';
       default: return 'Not Provisioned';
     }
   })();

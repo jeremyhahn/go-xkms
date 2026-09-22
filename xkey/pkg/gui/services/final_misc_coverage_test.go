@@ -557,10 +557,9 @@ func TestFM_FindMatchingTrustRoot_EmptyChain(t *testing.T) {
 // TestFM_PasswordProtection_GetStatus_NilConfig covers line 141-143:
 // GetStatus with nil config returns mode "none".
 func TestFM_PasswordProtection_GetStatus_NilConfig(t *testing.T) {
-	dir := t.TempDir()
 	pwStore := staticpw.NewStore(xkms.NewStorageMemory())
 	staticSvc := NewStaticPasswordService(pwStore)
-	svc := NewPasswordProtectionService(filepath.Join(dir, "enc.json"), staticSvc, nil)
+	svc := NewPasswordProtectionService(staticSvc, nil)
 
 	status, err := svc.GetStatus()
 	require.NoError(t, err)
@@ -587,9 +586,11 @@ func TestFM_SealService_SaveBlob_MarshalAndWrite(t *testing.T) {
 	svc := NewSealService(dir)
 
 	blob := &sealedBlobStorage{
-		ID:        "test-blob-1",
-		Label:     "test",
-		CreatedAt: time.Now(),
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         "test-blob-1",
+		Label:      "test",
+		CreatedAt:  time.Now(),
 	}
 	err := svc.saveBlob(blob)
 	assert.NoError(t, err)
@@ -637,8 +638,9 @@ func TestFM_SealService_SealData_DecodeFailure(t *testing.T) {
 	svc := fmNewSealSvc(t, mock)
 
 	req := &SealRequest{
-		Label: "test",
-		Data:  "not!!!valid!!!base64",
+		PolicyType: "none",
+		Label:      "test",
+		Data:       "not!!!valid!!!base64",
 	}
 	_, err := svc.SealData(req)
 	assert.ErrorIs(t, err, ErrSealDecodeFailed)
@@ -850,9 +852,11 @@ func TestFM_AutoUnseal_TryAutoUnseal_InvalidBase64(t *testing.T) {
 	blobDir := sealSvc.storageDir
 	blobID := "bad-b64-blob"
 	rawBlob := &sealedBlobStorage{
-		ID:        blobID,
-		Label:     "auto-unseal-passphrase",
-		CreatedAt: time.Now(),
+		PolicyType: "none",
+		BackendID:  "software",
+		ID:         blobID,
+		Label:      "auto-unseal-passphrase",
+		CreatedAt:  time.Now(),
 		SealedData: &xkms.SealedData{
 			Ciphertext: []byte("not-base64-at-all!!!"),
 		},

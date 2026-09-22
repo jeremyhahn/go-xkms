@@ -833,16 +833,11 @@ func buildBootstrapConfig(cmd *cobra.Command) (*bootstrap.Config, error) {
 		cfg.Direct = &bootstrap.DirectConfig{}
 	}
 
-	// bootstrap.Config carries one ServerURL shared by every mode, where the
-	// legacy go-truststrap AutoConfig this replaced carried one per sub-config
-	// (in practice always the same host — every mode bootstraps the same
-	// xkms server). Prefer an explicit top-level setting; otherwise take the
-	// first per-mode URL configured, in DANE/SPKI/Direct priority, so a
-	// config written before this change keeps working unchanged.
+	// bootstrap.Config carries one ServerURL shared by every mode (every mode
+	// bootstraps the same xkms server). It must be set explicitly at
+	// trust.bootstrap.server_url; bootstrap.Fetch returns
+	// bootstrap.ErrServerURLRequired if it is empty.
 	cfg.ServerURL = viper.GetString("trust.bootstrap.server_url")
-	if cfg.ServerURL == "" {
-		cfg.ServerURL = firstNonEmpty(daneServerURL, spkiServerURL, directServerURL)
-	}
 
 	return cfg, nil
 }

@@ -254,22 +254,6 @@ func TestEncryptedStore_DoubleEncryptPrevention(t *testing.T) {
 	assert.Equal(t, "ENC:already-encrypted", retrieved.Password)
 }
 
-func TestEncryptedStore_PlaintextBackwardCompat(t *testing.T) {
-	inner := NewStore(storage.New())
-	es, err := NewEncryptedStore(inner, &mockEncrypter{})
-	require.NoError(t, err)
-	defer func() { _ = es.Close() }()
-
-	// Store plaintext directly in inner store
-	pw := &StaticPassword{Name: "legacy", Password: "plaintext-password"}
-	require.NoError(t, inner.Add(pw))
-
-	// GetDecrypted should handle plaintext gracefully
-	decrypted, err := es.GetDecrypted("legacy")
-	require.NoError(t, err)
-	assert.Equal(t, "plaintext-password", decrypted.Password)
-}
-
 func TestEncryptedStore_EncryptError(t *testing.T) {
 	inner := NewStore(storage.New())
 	es, err := NewEncryptedStore(inner, &mockEncrypter{
@@ -340,72 +324,24 @@ func TestEncryptedStore_ForceDelete_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPasswordNotFound)
 }
 
-func TestEncryptedStore_MigrateToEncrypted_Success(t *testing.T) {
+// TestEncryptedStore_GetDecrypted_PlaintextRecordRejected documents the
+// removal of the plaintext pass-through (BREAKING, go-xkms compat cleanup
+// PR5): a stored password with no "ENC:" prefix predates encryption and can
+// no longer be read through EncryptedStore -- there is no MigrateToEncrypted
+// to transparently upgrade it, and GetDecrypted returns
+// ErrPasswordNotEncrypted instead of the raw plaintext.
+func TestEncryptedStore_GetDecrypted_PlaintextRecordRejected(t *testing.T) {
 	inner := NewStore(storage.New())
 	es, err := NewEncryptedStore(inner, &mockEncrypter{})
 	require.NoError(t, err)
 	defer func() { _ = es.Close() }()
 
-	// Add plaintext entries directly to the inner store (simulating legacy data).
+	// Add a plaintext entry directly to the inner store (simulating a
+	// pre-encryption record).
 	require.NoError(t, inner.Add(&StaticPassword{Name: "pw1", Password: "plaintext1"}))
-	require.NoError(t, inner.Add(&StaticPassword{Name: "pw2", Password: "plaintext2"}))
 
-	// Run migration.
-	err = es.MigrateToEncrypted()
-	require.NoError(t, err)
-
-	// Verify all entries are now encrypted in the inner store.
-	entries, err := inner.List()
-	require.NoError(t, err)
-	assert.Len(t, entries, 2)
-	for _, e := range entries {
-		assert.True(t, strings.HasPrefix(e.Password, encryptedPrefix),
-			"entry %s should be encrypted after migration", e.Name)
-	}
-
-	// Verify decryption round-trip works.
-	d1, err := es.GetDecrypted("pw1")
-	require.NoError(t, err)
-	assert.Equal(t, "plaintext1", d1.Password)
-
-	d2, err := es.GetDecrypted("pw2")
-	require.NoError(t, err)
-	assert.Equal(t, "plaintext2", d2.Password)
-}
-
-func TestEncryptedStore_MigrateToEncrypted_SkipsAlreadyEncrypted(t *testing.T) {
-	inner := NewStore(storage.New())
-	es, err := NewEncryptedStore(inner, &mockEncrypter{})
-	require.NoError(t, err)
-	defer func() { _ = es.Close() }()
-
-	// Add one plaintext entry and one encrypted entry.
-	require.NoError(t, inner.Add(&StaticPassword{Name: "plain", Password: "plaintext"}))
-	require.NoError(t, es.Add(&StaticPassword{Name: "already-enc", Password: "secret"}))
-
-	// Run migration.
-	err = es.MigrateToEncrypted()
-	require.NoError(t, err)
-
-	// Both should be encrypted.
-	entries, err := inner.List()
-	require.NoError(t, err)
-	assert.Len(t, entries, 2)
-	for _, e := range entries {
-		assert.True(t, strings.HasPrefix(e.Password, encryptedPrefix),
-			"entry %s should be encrypted", e.Name)
-	}
-}
-
-func TestEncryptedStore_MigrateToEncrypted_EmptyStore(t *testing.T) {
-	inner := NewStore(storage.New())
-	es, err := NewEncryptedStore(inner, &mockEncrypter{})
-	require.NoError(t, err)
-	defer func() { _ = es.Close() }()
-
-	// Migration on an empty store should succeed with no-op.
-	err = es.MigrateToEncrypted()
-	require.NoError(t, err)
+	_, err = es.GetDecrypted("pw1")
+	assert.ErrorIs(t, err, ErrPasswordNotEncrypted)
 }
 
 func TestEncryptedStore_Update_EncryptError(t *testing.T) {

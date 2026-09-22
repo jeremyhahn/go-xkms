@@ -38,14 +38,12 @@ store.Lock()
 
 The `EncryptedStore` wraps any `Store` implementation and transparently encrypts the password field using a `types.SymmetricEncrypter`. The encrypter is provided by the active backend (software AES-GCM, TPM2 symmetric, PKCS#11, cloud KMS, etc.).
 
-Encrypted passwords are stored as `ENC:<base64(json(EncryptedData)))>`. The `EncryptedStore` prevents double-encryption and supports backward-compatible reads of plaintext entries.
+Encrypted passwords are stored as `ENC:<base64(json(EncryptedData)))>`. The `EncryptedStore` prevents double-encryption. A stored value without the `ENC:` prefix predates encryption and is refused: `GetDecrypted` returns `ErrPasswordNotEncrypted` instead of returning it as plaintext (BREAKING, no migration path between the two forms; delete and re-add the entry through `EncryptedStore` to have it written back out encrypted).
 
 ```
 Write:  plaintext --> SymmetricEncrypter.Encrypt() --> "ENC:..." --> storage
 Read:   storage --> "ENC:..." --> SymmetricEncrypter.Decrypt() --> plaintext
 ```
-
-Migration from plaintext to encrypted storage is handled by `EncryptedStore.MigrateToEncrypted()`, which re-writes all plaintext entries in place.
 
 ## Auto-Unseal via PlatformStore
 

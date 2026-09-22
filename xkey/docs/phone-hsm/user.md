@@ -251,9 +251,10 @@ you asked for, without telling you, is reason enough to refuse.
 > reset or a reinstall — and dishonestly if it is not your phone. Investigate
 > before re-pairing.
 >
-> One caveat worth knowing: a device paired **before** this check existed keeps
-> the older, weaker binding until you re-pair it. `xkey device attest-device`
-> upgrades it.
+> One caveat worth knowing: a device paired **before** this check existed is no
+> longer connectable at all — there is no weaker binding to keep working under.
+> Re-pair it with `xkey device pair` (or the GUI pairing flow) to establish a
+> fresh challenge-response binding.
 
 Recovery is to **re-pair the device**, which writes a fresh record. The error
 names the offending value — truncated, with its true length — so you can tell

@@ -229,7 +229,7 @@ func TestP9_AgentService_ListAgents_StoreError(t *testing.T) {
 
 func TestP9_PasswordProtection_GetStatus_WithSealService(t *testing.T) {
 	sealSvc := NewSealService(t.TempDir())
-	ppSvc := NewPasswordProtectionService("", nil, sealSvc)
+	ppSvc := NewPasswordProtectionService(nil, sealSvc)
 
 	status, err := ppSvc.GetStatus()
 	require.NoError(t, err)

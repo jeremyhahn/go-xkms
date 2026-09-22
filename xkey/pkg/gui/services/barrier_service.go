@@ -168,10 +168,6 @@ func (s *BarrierService) logBarrierEvent(op audit.OperationType, success bool, e
 // A barrier can be initialized but sealed (not yet unlocked with the
 // correct password). Just having the storage directory is not sufficient;
 // the root key must exist for the barrier to be considered initialized.
-//
-// Both the primary storageDir (dataDir if set) and the fallback
-// configDir/barrier/ path are probed so that an initialization performed
-// before dataDir was configured is still detected.
 func (s *BarrierService) IsInitialized() bool {
 	return s.checkInitialized() != ""
 }
@@ -339,10 +335,6 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 // The strategyID parameter specifies which sealing strategy was used to
 // initialize the barrier. This must match the strategy persisted in config
 // — no auto-detection or fallback is performed.
-//
-// Both the primary storageDir and the fallback configDir/barrier/ path are
-// probed so that an initialization performed before dataDir was configured
-// is still found.
 func (s *BarrierService) Unseal(password, strategyID string) error {
 	s.mu.Lock()
 
@@ -576,7 +568,7 @@ func (s *BarrierService) GetBackend() xkms.StorageBackend {
 
 // storageDir returns the directory used for barrier encrypted data storage.
 // If dataDir has been set via SetDataDir, it is returned. Otherwise, the
-// default configDir/barrier/ path is used for backward compatibility.
+// default configDir/barrier/ path is used.
 func (s *BarrierService) storageDir() string {
 	if s.dataDir != "" {
 		return s.dataDir
@@ -584,24 +576,15 @@ func (s *BarrierService) storageDir() string {
 	return filepath.Join(s.configDir, barrierSubdir)
 }
 
-// checkInitialized probes both the primary storageDir and the fallback
-// configDir/barrier/ path for an existing root key. Returns the directory
-// where the root key was found, or empty string if not initialized.
-// This method is safe to call without holding s.mu as it performs
-// read-only filesystem operations.
+// checkInitialized probes storageDir() for an existing root key. Returns
+// the directory where the root key was found, or empty string if not
+// initialized. This method is safe to call without holding s.mu as it
+// performs read-only filesystem operations.
 func (s *BarrierService) checkInitialized() string {
-	// Probe primary path first.
-	primary := s.storageDir()
-	if s.probeRootKey(primary) {
-		return primary
+	dir := s.storageDir()
+	if s.probeRootKey(dir) {
+		return dir
 	}
-
-	// If primary differs from fallback, probe fallback.
-	fallback := filepath.Join(s.configDir, barrierSubdir)
-	if fallback != primary && s.probeRootKey(fallback) {
-		return fallback
-	}
-
 	return ""
 }
 
@@ -672,10 +655,6 @@ type BarrierSealInfo struct {
 // on the Sealed Data page. It checks whether the barrier directory and
 // root key exist (initialized), whether the barrier is sealed or unsealed,
 // and what strategy is active.
-//
-// Both the primary storageDir and the fallback configDir/barrier/ path are
-// probed so that an initialization performed before dataDir was configured
-// is detected correctly.
 func (s *BarrierService) GetSealInfo() *BarrierSealInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -97,9 +97,6 @@ var (
 // devicesConfigFileName is the config file shared with the CLI.
 const devicesConfigFileName = "devices.yaml"
 
-// legacyPhoneConfigFileName is the old config file name for migration.
-const legacyPhoneConfigFileName = "phone.yaml"
-
 // PhoneEventEmitter is called to emit phone-related events to the frontend.
 type PhoneEventEmitter func(evt events.Event)
 
@@ -1025,46 +1022,6 @@ func (s *PhoneService) GetBackendDevices() ([]PairedDevice, error) {
 	return devices, nil
 }
 
-// migrateLocalNoiseKey re-seals device's Noise private key under the barrier
-// and persists it, completing the migration of a legacy plaintext record to
-// the sealed form (#42). priv is the already-unsealed raw private scalar;
-// device aliases the entry inside cfg.Devices, so mutating it in place is
-// enough for saveConfig to write the update.
-//
-// It is best-effort and never returns an error to its caller: a connect that
-// otherwise succeeded must not fail because migration could not run, and a
-// migration that could not run leaves the record exactly as it was for the
-// next call that has a barrier open.
-func (s *PhoneService) migrateLocalNoiseKey(cfg *phoneConfig, device *phoneConfigDevice, priv []byte) {
-	barrier, noBarrierConfigured := s.resolveNoiseKeyBarrier()
-	if barrier == nil {
-		if noBarrierConfigured {
-			s.log.Warn("pairing key stored unencrypted: no barrier is initialized on this host; "+
-				"run `xkey barrier init` to protect it",
-				"device", device.Name)
-		} else {
-			s.log.Warn("local Noise private key is still stored as legacy plaintext; a barrier is initialized but not open, so it cannot be migrated right now",
-				"device", device.Name)
-		}
-		return
-	}
-
-	sealed, err := pairing.SealLocalNoiseKey(barrier, priv)
-	if err != nil {
-		s.log.Warn("failed to seal legacy local Noise private key during migration",
-			"device", device.Name, "error", err)
-		return
-	}
-
-	device.LocalNoisePrivateKey = sealed
-	if err := s.saveConfig(cfg); err != nil {
-		s.log.Warn("failed to persist the sealed local Noise private key",
-			"device", device.Name, "error", err)
-		return
-	}
-	s.log.Info("migrated local Noise private key from legacy plaintext to sealed storage", "device", device.Name)
-}
-
 // Connect establishes a real BLE connection and Noise handshake to the named paired device.
 func (s *PhoneService) Connect(name string) error {
 	if name == "" {
@@ -1094,16 +1051,15 @@ func (s *PhoneService) Connect(name string) error {
 		return ErrPhoneMissingKeys
 	}
 
-	// Unseal the saved local Noise private key (#42). This accepts both the
-	// current barrier-sealed form and a legacy plaintext-base64 record left
-	// over from before #42, so an existing pairing keeps connecting; a sealed
-	// record with no barrier open is refused rather than left unreadable.
-	wasLegacy := !pairing.IsSealedNoiseKey(device.LocalNoisePrivateKey)
+	// Unseal the saved local Noise private key (#42). The expected form is
+	// chosen by barrier presence, not the stored value: a record in the
+	// other form returns pairing.ErrNoiseKeyFormMismatch, telling the
+	// operator to re-pair (there is no migration between the two forms).
 	localPrivateKey, err := pairing.UnsealLocalNoiseKey(s.noiseKeyBarrier(), device.LocalNoisePrivateKey)
 	if err != nil {
 		s.log.Error("failed to unseal local noise key", "device", name, "error", err)
-		if errors.Is(err, pairing.ErrNoiseKeyUnsealBarrierRequired) {
-			return errors.Join(ErrPhoneBarrierRequired, err)
+		if errors.Is(err, pairing.ErrNoiseKeyFormMismatch) {
+			return errors.Join(ErrPhoneMissingKeys, err)
 		}
 		return ErrPhoneMissingKeys
 	}
@@ -1131,16 +1087,6 @@ func (s *PhoneService) Connect(name string) error {
 			localKey.Destroy()
 		}
 	}()
-
-	// A legacy plaintext record that unsealed successfully is migrated now,
-	// while the key is already in hand: re-sealed under the barrier and
-	// rewritten, so this device's row holds only the sealed form from here
-	// on (#42). Best effort -- with no barrier open there is nothing to seal
-	// into yet, and the record is left as it was for the next call that has
-	// one.
-	if wasLegacy {
-		s.migrateLocalNoiseKey(cfg, device, localKey.Private)
-	}
 
 	// Decode the expected device fingerprint. A stored-but-malformed value is
 	// refused rather than treated as "no fingerprint configured" — see
@@ -1245,12 +1191,14 @@ func (s *PhoneService) Connect(name string) error {
 }
 
 // proveDeviceLiveness runs the challenge-response attestation for a device
-// whose record says it was bound under it (#129/#130).
+// (#129/#130).
 //
-// A record predating #129 carries no protocol version and is left alone: those
-// devices have no attested key registered to prove possession of, so demanding
-// a proof would refuse every legacy pairing rather than protect it. The answer
-// comes from the RECORD, never from anything the peer says.
+// Every record is now required to carry a version 2 binding (BREAKING,
+// go-xkms compat cleanup PR5, removing the original #129/#130 grace period
+// for a record with no protocol version or version 1): DeviceBinding.Validate,
+// called inside VerifyReattestation, refuses one that does not and tells the
+// operator to re-pair. The answer comes from the RECORD, never from anything
+// the peer says.
 //
 // The trust pool is built the same way the GUI's attestation display builds
 // it, and per connection rather than captured, so a root an operator installs
@@ -1262,8 +1210,13 @@ func (s *PhoneService) proveDeviceLiveness(
 	device *phoneConfigDevice,
 ) error {
 	binding := xkeyAttestation.DeviceBindingFor(*device)
-	if !binding.RequiresLiveAttestation() {
-		return nil
+
+	// Checked before the trust store, so a record that predates the
+	// challenge-response model is refused with a re-pair message rather than
+	// a "no trust store configured" one that misdiagnoses the actual problem.
+	if err := binding.Validate(); err != nil {
+		s.log.Error("device attestation binding is invalid", "device", device.Name, "error", err)
+		return err
 	}
 
 	if s.trustStore == nil {
@@ -2210,24 +2163,14 @@ func (s *PhoneService) saveConfig(cfg *phoneConfig) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// phoneConfigPath returns the path to the shared devices config file (~/.xkey/devices.yaml).
-// Migrates from legacy phone.yaml if the new file does not exist.
+// phoneConfigPath returns the path to the shared devices config file
+// (~/.xkey/devices.yaml).
 func phoneConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	configDir := filepath.Join(home, ".xkey")
-	newPath := filepath.Join(configDir, devicesConfigFileName)
-	legacyPath := filepath.Join(configDir, legacyPhoneConfigFileName)
-
-	// Migrate phone.yaml → devices.yaml if the new file does not exist
-	if _, err := os.Stat(newPath); errors.Is(err, os.ErrNotExist) {
-		if _, err := os.Stat(legacyPath); err == nil {
-			_ = os.Rename(legacyPath, newPath)
-		}
-	}
-	return newPath, nil
+	return filepath.Join(home, ".xkey", devicesConfigFileName), nil
 }
 
 // hostname returns the local hostname.

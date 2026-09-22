@@ -110,22 +110,16 @@ func TestNewVolumeFromHome(t *testing.T) {
 	assert.Equal(t, MapperName, v.MapperName)
 }
 
-// TestDefaultPaths_WithoutHomeDirectory covers the error branches of the
-// default path helpers when the home directory cannot be resolved.
-func TestDefaultPaths_WithoutHomeDirectory(t *testing.T) {
+// TestNewVolume_WithoutHomeDirectory covers the error branch of NewVolume
+// when xhome cannot resolve a home directory (no XKEY_HOME, no per-user
+// home, no system-wide fallback). NewVolume resolves its paths through
+// xhome.Resolve (BREAKING, go-xkms compat cleanup PR5: the deprecated
+// GetDefaultLUKSPath/GetDefaultDataDir/DefaultLUKSFile/DefaultDataDir home
+// -relative defaults were deleted), so the error it returns is whatever
+// xhome.Resolve returns.
+func TestNewVolume_WithoutHomeDirectory(t *testing.T) {
 	t.Setenv("HOME", "")
-
-	luksPath, err := GetDefaultLUKSPath()
-	require.Error(t, err)
-	assert.Empty(t, luksPath)
-
-	var volErr *VolumeError
-	require.ErrorAs(t, err, &volErr)
-	assert.Equal(t, "get_home", volErr.Operation)
-
-	dataDir, err := GetDefaultDataDir()
-	require.Error(t, err)
-	assert.Empty(t, dataDir)
+	t.Setenv(xhome.EnvHome, "")
 
 	volume, err := NewVolume()
 	require.Error(t, err)

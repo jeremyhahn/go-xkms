@@ -62,12 +62,6 @@ var (
 	// GeneratePassword produces a cryptographically random password.
 	GeneratePassword = xkms.GenerateStaticPassword
 
-	// MigrateEntry populates Title from Name if Title is empty.
-	MigrateEntry = xkms.MigrateStaticPasswordEntry
-
-	// MigrateStore iterates all entries and migrates each one.
-	MigrateStore = xkms.MigrateStaticPasswordStore
-
 	// GenerateID creates a deterministic identifier from the entry name
 	// and optional folder path.
 	GenerateID = xkms.GenerateStaticPasswordID

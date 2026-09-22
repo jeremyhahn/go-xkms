@@ -370,14 +370,18 @@ func TestSealService_SealData_PasswordPolicyHashSuccess(t *testing.T) {
 
 func TestSealService_SaveBlob_StorageDirNotSetFC4(t *testing.T) {
 	svc := NewSealService("")
-	blob := &sealedBlobStorage{ID: "test"}
+	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software", ID: "test"}
 	err := svc.saveBlob(blob)
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
 }
 
 func TestSealService_SaveBlob_RelativeDirFC4(t *testing.T) {
 	svc := NewSealService("relative/path")
-	blob := &sealedBlobStorage{ID: "test"}
+	blob := &sealedBlobStorage{
+		PolicyType: "none",
+		BackendID:  "software", ID: "test"}
 	err := svc.saveBlob(blob)
 	assert.ErrorIs(t, err, ErrSealStorageFailed)
 }
@@ -493,8 +497,9 @@ func TestAutoUnseal_TryAutoUnseal_UnlockVolumePathFC4(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		Label: "auto-unseal-passphrase",
-		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase-12345")),
+		PolicyType: "none",
+		Label:      "auto-unseal-passphrase",
+		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase-12345")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -512,8 +517,9 @@ func TestAutoUnseal_Reseal_ConfigSaveFailCleanupFC4(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		Label: "auto-unseal-passphrase",
-		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		PolicyType: "none",
+		Label:      "auto-unseal-passphrase",
+		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -538,8 +544,9 @@ func TestAutoUnseal_Reseal_DeleteOldBlobFailsFC4(t *testing.T) {
 	autoSvc, sealSvc, _ := newAutoUnsealTestSvc(t, mock)
 
 	req := &SealRequest{
-		Label: "auto-unseal-passphrase",
-		Data:  base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
+		PolicyType: "none",
+		Label:      "auto-unseal-passphrase",
+		Data:       base64.StdEncoding.EncodeToString([]byte("test-passphrase")),
 	}
 	entry, err := sealSvc.SealData(req)
 	require.NoError(t, err)
@@ -587,12 +594,16 @@ func TestAutoUnseal_TryAutoUnseal_UnsealFailsFC4(t *testing.T) {
 // Additional edge cases
 // ==========================================================================
 
-func TestSealService_ListBlobs_WithBlobFilesFC4(t *testing.T) {
+// TestSealService_ListBlobs_SkipsRecordMissingPolicyType documents that
+// ListBlobs skips (rather than defaults) a sealed blob record with no
+// policy_type: that field is required (go-xkms compat cleanup PR5).
+func TestSealService_ListBlobs_SkipsRecordMissingPolicyType(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewSealService(dir)
 	svc.SetContext(context.Background())
 
 	blob := &sealedBlobStorage{
+		BackendID:  "software",
 		ID:         "test-blob-1",
 		Label:      "user_data",
 		SizeBytes:  100,
@@ -610,8 +621,7 @@ func TestSealService_ListBlobs_WithBlobFilesFC4(t *testing.T) {
 
 	entries, err := svc.ListBlobs()
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "none", entries[0].PolicyType)
+	assert.Empty(t, entries)
 }
 
 func TestBarrierService_Context_FallbackFC4(t *testing.T) {

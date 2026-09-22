@@ -49,7 +49,7 @@ Setting the TPMAccessor automatically registers a `tpmSealerAdapter` under the `
 
 ### Backend Tracking
 
-Every `SealedData` returned by `types.Sealer.Seal()` carries a `Backend` field that records which backend performed the seal. On unseal, this field is used to route the request to the correct sealer. Empty backend fields (pre-Phase 3 blobs) fall back to the configured default backend for backward compatibility.
+Every `SealedData` returned by `types.Sealer.Seal()` carries a `Backend` field that records which backend performed the seal. Every sealed blob record also carries its own `backend_id` (the `SealedBlobEntry.BackendID` / `sealedBlobStorage.BackendID` field), set unconditionally by `SealData`. On unseal, `backend_id` is used to route the request to the correct sealer — it is required: a blob record with no `backend_id` predates that field and is rejected with `ErrSealBlobBackendIDMissing` rather than falling back to a default backend (BREAKING, go-xkms compat cleanup PR5).
 
 ## Policy Types
 
@@ -110,7 +110,8 @@ Filename: `{id}.sealed.json`
 | `pcr_bound` | bool | True if sealed with PCR policy |
 | `pcrs` | []int | PCR indices (if PCR-bound) |
 | `pcr_bank` | string | Hash algorithm (`sha256`, `sha384`, `sha512`) |
-| `policy_type` | string | One of: `none`, `password`, `platform_policy`, `custom_pcr` |
+| `policy_type` | string | Required. One of: `none`, `password`, `platform_policy`, `custom_pcr`. A record with no `policy_type` (or no `backend_id`, below) predates those fields being required and is rejected — `ErrSealBlobPolicyTypeMissing` / `ErrSealBlobBackendIDMissing` — rather than defaulted (BREAKING, go-xkms compat cleanup PR5). |
+| `backend_id` | string | Required. The backend that performed the seal (also see Backend Tracking above). |
 | `password` | string | Argon2id hash (only for `password` policy) |
 | `category` | string | `system` or `user` |
 | `sealed_data` | SealedData | Backend-specific sealed payload |
@@ -164,7 +165,7 @@ System blobs are managed by internal services and are typically not displayed to
 1. **Validate inputs** -- `label` must be non-empty. `data` must be non-empty base64.
 2. **Resolve backend** -- If `SealRequest.Backend` is empty, use `SealService.defaultBackend` (default: `"tpm2"`).
 3. **Look up sealer** -- Map lookup in the sealer registry. Returns `ErrSealBackendNotFound` if the backend is not registered.
-4. **Validate policy** -- Parse `policy_type` string via `policyTypeMap`. If the policy is TPM-only (`platform_policy` or `custom_pcr`) but the backend is not `tpm2`, return `ErrSealPolicyRequiresTPM`.
+4. **Validate policy** -- `policy_type` is required; parse it via `policyTypeMap` (an empty or unrecognized value returns `ErrSealInvalidPolicyType` — there is no default). If the policy is TPM-only (`platform_policy` or `custom_pcr`) but the backend is not `tpm2`, return `ErrSealPolicyRequiresTPM`.
 5. **Apply policy handler** -- The handler populates `SealOptions` (e.g., `TPMPolicy.PCRSelection` for PCR-based policies). Password policy validates the password is non-empty.
 6. **Seal** -- Call the sealer's `Seal` method with the populated options.
 7. **Generate ID** -- 16 random bytes, hex-encoded to 32 characters.
@@ -178,7 +179,7 @@ type SealRequest struct {
     Data       string `json:"data"`        // base64-encoded plaintext
     PCRs       []int  `json:"pcrs"`        // optional PCR binding
     PCRBank    string `json:"pcr_bank"`    // default "sha256"
-    PolicyType string `json:"policy_type"` // "none"|"password"|"platform_policy"|"custom_pcr"
+    PolicyType string `json:"policy_type"` // required: "none"|"password"|"platform_policy"|"custom_pcr"
     Password   string `json:"password"`    // for password policy
     Backend    string `json:"backend"`     // "tpm2", "software", etc. Empty = default
 }
@@ -193,7 +194,7 @@ type SealRequest struct {
        |
   2. Verify password (if password policy)
        |
-  3. Determine backend from SealedData.Backend
+  3. Require blob.BackendID
        |
   4. Look up sealer from registry
        |
@@ -206,7 +207,7 @@ type SealRequest struct {
 
 1. **Load blob** -- Read `{storageDir}/{id}.sealed.json`. Returns `ErrSealBlobNotFound` if the file does not exist.
 2. **Verify password** -- If `policy_type` is `"password"`, require a non-empty password and verify it against the stored Argon2id hash using constant-time comparison.
-3. **Determine backend** -- Read `SealedData.Backend` from the blob. Empty values (pre-registry blobs) fall back to `SealService.defaultBackend`.
+3. **Determine backend** -- Read `BackendID` from the blob. Returns `ErrSealBlobBackendIDMissing` if empty; there is no fallback to `SealedData.Backend` or `SealService.defaultBackend` (BREAKING, go-xkms compat cleanup PR5).
 4. **Look up sealer** -- Same registry lookup as seal.
 5. **Unseal** -- Call the sealer's `Unseal` method with default `UnsealOptions`.
 6. **Encode** -- Return base64-encoded plaintext to the frontend.

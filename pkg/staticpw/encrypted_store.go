@@ -183,33 +183,6 @@ func (s *EncryptedStore) Close() error {
 	return s.inner.Close()
 }
 
-// MigrateToEncrypted reads all existing plaintext entries and re-writes
-// them with encrypted password fields. Already-encrypted entries are skipped.
-func (s *EncryptedStore) MigrateToEncrypted() error {
-	passwords, err := s.inner.List()
-	if err != nil {
-		return err
-	}
-
-	for _, pw := range passwords {
-		// Skip already-encrypted entries.
-		if strings.HasPrefix(pw.Password, encryptedPrefix) {
-			continue
-		}
-
-		encrypted, encErr := s.encryptPassword(pw.Password)
-		if encErr != nil {
-			return encErr
-		}
-		pw.Password = encrypted
-		if updErr := s.inner.Update(pw); updErr != nil {
-			return updErr
-		}
-	}
-
-	return nil
-}
-
 // encryptPassword encrypts a plaintext password using the SymmetricEncrypter.
 // The result is "ENC:" + base64(json(EncryptedData)).
 func (s *EncryptedStore) encryptPassword(plaintext string) (string, error) {
@@ -231,12 +204,12 @@ func (s *EncryptedStore) encryptPassword(plaintext string) (string, error) {
 	return encryptedPrefix + base64.StdEncoding.EncodeToString(jsonBytes), nil
 }
 
-// decryptPassword decrypts an "ENC:<base64>" password using the SymmetricEncrypter.
-// If the password is not encrypted (no prefix), it is returned as-is for
-// backward compatibility.
+// decryptPassword decrypts an "ENC:<base64>" password using the
+// SymmetricEncrypter. A stored value without the prefix is a typed error
+// (ErrPasswordNotEncrypted): there is no plaintext pass-through.
 func (s *EncryptedStore) decryptPassword(stored string) (string, error) {
 	if !strings.HasPrefix(stored, encryptedPrefix) {
-		return stored, nil
+		return "", ErrPasswordNotEncrypted
 	}
 
 	encoded := strings.TrimPrefix(stored, encryptedPrefix)

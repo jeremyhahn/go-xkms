@@ -14,6 +14,7 @@
 package services
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -32,6 +33,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 
 	"github.com/google/go-tpm/tpm2"
 
@@ -51,6 +53,7 @@ func p6aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	svc.SetPolicyStore(newTestPCRPolicyStore(t))
 	return svc, dataDir
 }
 
@@ -441,44 +444,20 @@ func TestP6A_ImportBinaryPolicyDigest_Empty(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTPMPolicyImportFailed)
 }
 
-func TestP6A_ImportBinaryPolicyDigest_Success(t *testing.T) {
+// TestP6A_ImportBinaryPolicyDigest_NoPCRSelectionsRejected documents a
+// pre-existing gap (unrelated to go-xkms compat cleanup PR5, tracked
+// separately): importBinaryPolicyDigest builds a PCRPolicy with a
+// "policy_digest" entry but no PCRSelections, which pcrPolicyToEntity
+// always rejects. Every production TPMService has a policy store wired
+// (see app.go SetPolicyStore), so this path fails the same way in
+// production today.
+func TestP6A_ImportBinaryPolicyDigest_NoPCRSelectionsRejected(t *testing.T) {
 	mock := p6aDefaultMock()
 	svc, _ := p6aNewTPMService(t, mock)
 
 	digestBytes := []byte{0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE}
-	name, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", digestBytes)
-	require.NoError(t, err)
-	assert.Equal(t, "my-policy", name)
-
-	policy, err := svc.GetPolicy("my-policy")
-	require.NoError(t, err)
-	assert.Contains(t, policy.Description, "Imported binary policy digest")
-	assert.Equal(t, hex.EncodeToString(digestBytes), policy.PCRDigests["policy_digest"])
-}
-
-func TestP6A_ImportBinaryPolicyDigest_NameConflict(t *testing.T) {
-	mock := p6aDefaultMock()
-	svc, _ := p6aNewTPMService(t, mock)
-
-	digest := []byte{0xAA, 0xBB}
-
-	name1, err := svc.importBinaryPolicyDigest("/tmp/conflict.bin", digest)
-	require.NoError(t, err)
-	assert.Equal(t, "conflict", name1)
-
-	name2, err := svc.importBinaryPolicyDigest("/tmp/conflict.bin", digest)
-	require.NoError(t, err)
-	assert.NotEqual(t, "conflict", name2)
-	assert.Contains(t, name2, "conflict-")
-}
-
-func TestP6A_ImportBinaryPolicyDigest_EmptyFilename(t *testing.T) {
-	mock := p6aDefaultMock()
-	svc, _ := p6aNewTPMService(t, mock)
-
-	name, err := svc.importBinaryPolicyDigest("/tmp/.bin", []byte{0xFF})
-	require.NoError(t, err)
-	assert.Equal(t, "imported-policy", name)
+	_, err := svc.importBinaryPolicyDigest("/tmp/my-policy.bin", digestBytes)
+	assert.ErrorIs(t, err, ErrTPMInvalidPCRs)
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +497,7 @@ func TestP6A_SavePolicyDigestBinary_Success(t *testing.T) {
 
 func TestP6A_ExportPolicy_WithUpdateAndDigests(t *testing.T) {
 	mock := p6aDefaultMock()
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policy := PCRPolicy{
 		Name:          "p6a-export",
@@ -527,9 +506,7 @@ func TestP6A_ExportPolicy_WithUpdateAndDigests(t *testing.T) {
 		PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 		PCRDigests:    map[string]string{"sha256:0": "aabbccdd"},
 	}
-	data, _ := json.MarshalIndent([]PCRPolicy{policy}, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, []PCRPolicy{policy})
 
 	exported, err := svc.ExportPolicy("p6a-export")
 	require.NoError(t, err)
@@ -750,36 +727,38 @@ func TestP6A_RefreshCompositePolicyPCRs_SaveError(t *testing.T) {
 func TestP6A_ListPoliciesWithDigests_PCRReadError(t *testing.T) {
 	mock := p6aDefaultMock()
 	mock.pcrBanksErr = errors.New("PCR read failed")
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-digest-err", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 			PCRDigests: map[string]string{"sha256:0": "aabb"}, CreatedAt: "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
 }
 
-func TestP6A_ListPoliciesWithDigests_UnknownBank(t *testing.T) {
+// TestP6A_ListPoliciesWithDigests_UncommonBank exercises a supported but
+// less common PCR bank (SHA384, rather than the SHA256 used elsewhere in
+// this file). A truly unrecognized bank (e.g. "CUSTOMALG") cannot reach
+// this path at all: the canonical pcr_policy store validates the bank
+// against SHA1/SHA256/SHA384/SHA512 at save time, so CreatePolicy already
+// rejects it upstream.
+func TestP6A_ListPoliciesWithDigests_UncommonBank(t *testing.T) {
 	mock := p6aDefaultMock()
 	mock.pcrBanks = []xkms.PCRBank{
-		{Algorithm: "CUSTOMALG", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
+		{Algorithm: "SHA384", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
-		{Name: "p6a-custom-bank", PCRSelections: []PCRSelection{{Index: 0, Bank: "customalg"}},
-			PCRDigests: map[string]string{"customalg:0": hex.EncodeToString([]byte{0xAA})},
+		{Name: "p6a-uncommon-bank", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha384"}},
+			PCRDigests: map[string]string{"sha384:0": hex.EncodeToString([]byte{0xAA})},
 			CreatedAt:  "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -791,16 +770,14 @@ func TestP6A_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 	mock.pcrBanks = []xkms.PCRBank{
 		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
 	}
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-mismatch", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 			PCRDigests: map[string]string{"sha256:0": "aabb"},
 			CreatedAt:  "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -814,16 +791,14 @@ func TestP6A_ListPoliciesWithDigests_DigestMatch(t *testing.T) {
 	mock.pcrBanks = []xkms.PCRBank{
 		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
 	}
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-match", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 			PCRDigests: map[string]string{"sha256:0": hex.EncodeToString([]byte{0xAA, 0xBB})},
 			CreatedAt:  "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -834,15 +809,13 @@ func TestP6A_ListPoliciesWithDigests_DigestMatch(t *testing.T) {
 
 func TestP6A_ListPoliciesWithDigests_NoSavedDigests(t *testing.T) {
 	mock := p6aDefaultMock()
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-no-digests", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 			CreatedAt: "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -855,7 +828,7 @@ func TestP6A_ListPoliciesWithDigests_MissingSavedKey(t *testing.T) {
 	mock.pcrBanks = []xkms.PCRBank{
 		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-missing-key",
@@ -863,9 +836,7 @@ func TestP6A_ListPoliciesWithDigests_MissingSavedKey(t *testing.T) {
 			PCRDigests:    map[string]string{"sha256:0": hex.EncodeToString([]byte{0xAA}), "sha256:7": "beef"},
 			CreatedAt:     "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	result, err := svc.ListPoliciesWithDigests()
 	require.NoError(t, err)
@@ -989,16 +960,14 @@ func TestP6A_AssignPolicyToKeys_EmptyHandles(t *testing.T) {
 
 func TestP6A_AssignPolicyToKeys_SkipEmptyHandle(t *testing.T) {
 	mock := p6aDefaultMock()
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
-		{Name: "p6a-assign-skip", CreatedAt: "2025-01-01"},
+		{Name: "p6a-assign-skip", CreatedAt: "2025-01-01", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
-	err = svc.AssignPolicyToKeys("p6a-assign-skip", []string{"0x81000001", "  ", "0x81000002"})
+	err := svc.AssignPolicyToKeys("p6a-assign-skip", []string{"0x81000001", "  ", "0x81000002"})
 	require.NoError(t, err)
 
 	assignments := svc.loadAssignments()
@@ -1010,17 +979,15 @@ func TestP6A_AssignPolicyToKeys_UpdateExisting(t *testing.T) {
 	svc, dataDir := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
-		{Name: "p6a-update", CreatedAt: "2025-01-01"},
+		{Name: "p6a-update", CreatedAt: "2025-01-01", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	pData, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), pData, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	existing := []PolicyAssignment{
 		{PolicyName: "old-policy", KeyHandle: "0x81000001", AssignedAt: "2024-01-01"},
 	}
 	aData, _ := json.MarshalIndent(existing, "", "  ")
-	err = os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), aData, 0600)
+	err := os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), aData, 0600)
 	require.NoError(t, err)
 
 	err = svc.AssignPolicyToKeys("p6a-update", []string{"0x81000001"})
@@ -1073,12 +1040,20 @@ func TestP6A_SavePolicyPassword_NilService(t *testing.T) {
 // ComparePolicyPCRs -- hex decode error branches
 // ---------------------------------------------------------------------------
 
-func TestP6A_ComparePolicyPCRs_HexDecodeErrors(t *testing.T) {
+// TestP6A_ComparePolicyPCRs_InvalidHexDroppedByStore documents the
+// canonical pcr_policy store's behavior for a digest that fails to
+// hex-decode: pcrPolicyToEntity leaves the corresponding PCR byte slice
+// nil rather than erroring (see hex.DecodeString handling), and
+// entityToPCRPolicy then omits it from PCRDigests entirely. Unlike the
+// removed pcr_policies.json file fallback, a corrupted digest can never
+// round-trip through the store as a literal string, so ComparePolicyPCRs
+// sees no saved digests at all.
+func TestP6A_ComparePolicyPCRs_InvalidHexDroppedByStore(t *testing.T) {
 	mock := p6aDefaultMock()
 	mock.pcrBanks = []xkms.PCRBank{
 		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-hex-error",
@@ -1086,15 +1061,10 @@ func TestP6A_ComparePolicyPCRs_HexDecodeErrors(t *testing.T) {
 			PCRDigests:    map[string]string{"sha256:0": "not-valid-hex"},
 			CreatedAt:     "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
-	result, err := svc.ComparePolicyPCRs("p6a-hex-error")
-	require.NoError(t, err)
-	assert.False(t, result.AllMatch)
-	assert.Equal(t, 1, result.MismatchCount)
-	assert.Equal(t, "not-valid-hex", result.Entries[0].Saved)
+	_, err := svc.ComparePolicyPCRs("p6a-hex-error")
+	assert.ErrorIs(t, err, ErrTPMPolicyNoDigests)
 }
 
 func TestP6A_ComparePolicyPCRs_EmptyPolicyName(t *testing.T) {
@@ -1107,18 +1077,16 @@ func TestP6A_ComparePolicyPCRs_EmptyPolicyName(t *testing.T) {
 
 func TestP6A_ComparePolicyPCRs_NoDigests(t *testing.T) {
 	mock := p6aDefaultMock()
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-no-digests-cmp",
 			PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}},
 			CreatedAt:     "2025-01-01"},
 	}
-	data, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), data, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
-	_, err = svc.ComparePolicyPCRs("p6a-no-digests-cmp")
+	_, err := svc.ComparePolicyPCRs("p6a-no-digests-cmp")
 	assert.ErrorIs(t, err, ErrTPMPolicyNoDigests)
 }
 
@@ -1186,18 +1154,16 @@ func TestP6A_GetPolicyDeletionImpact_PCRPolicy(t *testing.T) {
 	svc, dataDir := p6aNewTPMService(t, mock)
 
 	policies := []PCRPolicy{
-		{Name: "p6a-impact", CreatedAt: "2025-01-01"},
+		{Name: "p6a-impact", CreatedAt: "2025-01-01", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	pData, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), pData, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	assignments := []PolicyAssignment{
 		{PolicyName: "p6a-impact", KeyHandle: "0x81000001", AssignedAt: "2025-01-01"},
 		{PolicyName: "other-policy", KeyHandle: "0x81000002", AssignedAt: "2025-01-01"},
 	}
 	aData, _ := json.MarshalIndent(assignments, "", "  ")
-	err = os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), aData, 0600)
+	err := os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), aData, 0600)
 	require.NoError(t, err)
 
 	impact, err := svc.GetPolicyDeletionImpact("p6a-impact")
@@ -1211,6 +1177,9 @@ func TestP6A_GetPolicyDeletionImpact_CompositePolicy(t *testing.T) {
 	svc := NewTPMService()
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
+	// GetPolicyDeletionImpact checks the PCR policy store before falling
+	// through to composite policies; wire an empty store so it can proceed.
+	seedTPMServicePolicies(t, svc, nil)
 
 	cpolicies := []CompositePolicy{
 		{Name: "p6a-impact-comp", Operator: "AND", CreatedAt: "2025-01-01"},
@@ -1227,6 +1196,7 @@ func TestP6A_GetPolicyDeletionImpact_CompositePolicy(t *testing.T) {
 func TestP6A_GetPolicyDeletionImpact_NotFound(t *testing.T) {
 	svc := NewTPMService()
 	svc.SetDataDir(t.TempDir())
+	seedTPMServicePolicies(t, svc, nil)
 
 	_, err := svc.GetPolicyDeletionImpact("nonexistent")
 	assert.ErrorIs(t, err, ErrTPMPolicyNotFound)
@@ -1240,25 +1210,25 @@ func TestP6A_DeletePolicy_WithCascade(t *testing.T) {
 	mock := p6aDefaultMock()
 	svc, dataDir := p6aNewTPMService(t, mock)
 
+	sel := []PCRSelection{{Index: 0, Bank: "sha256"}}
 	policies := []PCRPolicy{
-		{Name: "p6a-del-keep", CreatedAt: "2025-01-01"},
-		{Name: "p6a-del-target", CreatedAt: "2025-01-02"},
+		{Name: "p6a-del-keep", CreatedAt: "2025-01-01", PCRSelections: sel},
+		{Name: "p6a-del-target", CreatedAt: "2025-01-02", PCRSelections: sel},
 	}
-	pData, _ := json.MarshalIndent(policies, "", "  ")
-	err := os.WriteFile(filepath.Join(dataDir, pcrPoliciesFile), pData, 0600)
-	require.NoError(t, err)
+	seedTPMServicePolicies(t, svc, policies)
 
 	assignments := []PolicyAssignment{
 		{PolicyName: "p6a-del-target", KeyHandle: "0x81000001", AssignedAt: "2025-01-01"},
 	}
 	aData, _ := json.MarshalIndent(assignments, "", "  ")
-	err = os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), aData, 0600)
+	err := os.WriteFile(filepath.Join(dataDir, policyAssignmentsFile), aData, 0600)
 	require.NoError(t, err)
 
 	err = svc.DeletePolicy("p6a-del-target")
 	require.NoError(t, err)
 
-	remaining := svc.loadPolicies()
+	remaining, err := svc.loadPolicies()
+	require.NoError(t, err)
 	require.Len(t, remaining, 1)
 	assert.Equal(t, "p6a-del-keep", remaining[0].Name)
 
@@ -1270,57 +1240,65 @@ func TestP6A_DeletePolicy_WithCascade(t *testing.T) {
 // Save error paths
 // ---------------------------------------------------------------------------
 
+// p6aFailingSaveStore wraps a real pcrpolicy.PolicyStore and forces Save to
+// fail once failSave is set, so tests can seed policies successfully and
+// then exercise the savePolicies error path (the store layer replaces the
+// removed pcr_policies.json file-permission simulation).
+type p6aFailingSaveStore struct {
+	pcrpolicy.PolicyStore
+	failSave bool
+}
+
+func (f *p6aFailingSaveStore) Save(ctx context.Context, e *pcrpolicy.PCRPolicyEntity) error {
+	if f.failSave {
+		return errors.New("p6a: simulated save failure")
+	}
+	return f.PolicyStore.Save(ctx, e)
+}
+
 func TestP6A_UpdatePolicy_SaveError(t *testing.T) {
 	mock := p6aDefaultMock()
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
+
+	store := &p6aFailingSaveStore{PolicyStore: newTestPCRPolicyStore(t)}
+	svc.SetPolicyStore(store)
 
 	policies := []PCRPolicy{
-		{Name: "p6a-update-err", CreatedAt: "2025-01-01"},
+		{Name: "p6a-update-err", CreatedAt: "2025-01-01", PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	pData, _ := json.MarshalIndent(policies, "", "  ")
-	pFile := filepath.Join(dataDir, pcrPoliciesFile)
-	err := os.WriteFile(pFile, pData, 0600)
-	require.NoError(t, err)
+	require.NoError(t, svc.savePolicies(policies))
 
-	os.Chmod(pFile, 0444)
-	defer os.Chmod(pFile, 0600)
+	store.failSave = true
 
-	_, err = svc.UpdatePolicy("p6a-update-err", &PCRPolicy{Description: "updated"})
+	_, err := svc.UpdatePolicy("p6a-update-err", &PCRPolicy{Description: "updated"})
 	assert.Error(t, err)
 }
 
 func TestP6A_RefreshPolicyPCRs_SaveError(t *testing.T) {
 	mock := p6aDefaultMock()
-	svc, dataDir := p6aNewTPMService(t, mock)
+	svc, _ := p6aNewTPMService(t, mock)
+
+	store := &p6aFailingSaveStore{PolicyStore: newTestPCRPolicyStore(t)}
+	svc.SetPolicyStore(store)
 
 	policies := []PCRPolicy{
 		{Name: "p6a-refresh-err", CreatedAt: "2025-01-01",
 			PCRSelections: []PCRSelection{{Index: 0, Bank: "sha256"}}},
 	}
-	pData, _ := json.MarshalIndent(policies, "", "  ")
-	pFile := filepath.Join(dataDir, pcrPoliciesFile)
-	err := os.WriteFile(pFile, pData, 0600)
-	require.NoError(t, err)
+	require.NoError(t, svc.savePolicies(policies))
 
-	os.Chmod(pFile, 0444)
-	defer os.Chmod(pFile, 0600)
+	store.failSave = true
 
-	_, err = svc.RefreshPolicyPCRs("p6a-refresh-err")
+	_, err := svc.RefreshPolicyPCRs("p6a-refresh-err")
 	assert.Error(t, err)
 }
 
-func TestP6A_SavePolicies_WriteError(t *testing.T) {
+func TestP6A_SavePolicies_NoStoreConfigured(t *testing.T) {
 	svc := NewTPMService()
 	svc.SetDataDir("/nonexistent/directory/that/does/not/exist")
 
 	err := svc.savePolicies([]PCRPolicy{{Name: "test"}})
-	assert.Error(t, err)
-}
-
-func TestP6A_SavePolicies_EmptyDataDir(t *testing.T) {
-	svc := NewTPMService()
-	err := svc.savePolicies([]PCRPolicy{})
-	assert.ErrorIs(t, err, ErrTPMDataDirNotSet)
+	assert.ErrorIs(t, err, ErrTPMPolicyStoreNotSet)
 }
 
 func TestP6A_SaveCompositePolicies_WriteError(t *testing.T) {

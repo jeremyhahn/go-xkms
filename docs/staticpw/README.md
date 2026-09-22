@@ -102,15 +102,7 @@ entry, err := encStore.Get("GitHub")
 entry, err := encStore.GetDecrypted("GitHub")
 ```
 
-Encrypted passwords are stored as `ENC:<base64(json(EncryptedData))>`. Plaintext entries (pre-encryption migration) are returned as-is for backward compatibility.
-
-### Migration
-
-`MigrateToEncrypted` reads all existing plaintext entries and re-writes them with encrypted password fields, skipping already-encrypted entries:
-
-```go
-err := encStore.MigrateToEncrypted()
-```
+Encrypted passwords are stored as `ENC:<base64(json(EncryptedData))>`. A stored value without the `ENC:` prefix predates encryption and is refused: `GetDecrypted` returns `ErrPasswordNotEncrypted` rather than returning it as plaintext. There is no migration path between the two forms; a rejected entry must be deleted and re-added through `EncryptedStore` so it is written back out encrypted.
 
 ## Access Modes
 
@@ -209,6 +201,7 @@ All errors are declared as typed package-level variables:
 | `ErrInvalidTenantID` | Invalid tenant identifier |
 | `ErrEncryptFailed` | Password encryption failed |
 | `ErrDecryptFailed` | Password decryption failed |
+| `ErrPasswordNotEncrypted` | Stored password has no `ENC:` prefix; predates encryption and cannot be decrypted |
 | `ErrStoreNotLocked` | Unlock called when already unlocked |
 | `ErrStoreAlreadyLocked` | Lock called when already locked |
 | `ErrNilBarrierRegistry` | Barrier registry is nil |
@@ -311,16 +304,6 @@ Shared passwords track their creator via the `OwnerID` field, which is stamped a
 | Any other user | No — returns `ErrNotOwner` |
 
 Personal passwords (`Shared=false`) skip ownership checks entirely — they are inherently scoped to the owner by key prefix isolation. Ownership enforcement is applied at the servicer layer, not the store layer.
-
-### Migration
-
-To migrate legacy tenant entries (from `{tenantID}/staticpw/` to `{tenantID}/staticpw/shared/`):
-
-```go
-count, err := staticpw.MigrateToScopedLayout(backend, "acme")
-```
-
-This moves existing entries to the shared prefix and marks them with `Shared: true`. Already-migrated entries (under `shared/` or `users/`) are skipped. The migration is idempotent.
 
 ### New Errors
 
