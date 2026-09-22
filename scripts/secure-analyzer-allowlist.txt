@@ -106,6 +106,6 @@ xkey/pkg/authenticator/user_presence.go:101	pre-existing: UserVerificationResult
 xkey/pkg/authenticator/user_presence_interactive.go:204	pre-existing: pinReadResult.pin; deferred pending design review (go-xkms#549 triage)
 xkey/pkg/gui/services/elevation_sudo.go:32	pre-existing: SudoElevator.password; deferred pending design review (go-xkms#549 triage)
 xkey/cmd/xkey/cmd/device_share.go:70	pre-existing: sharedKeyMaterial.KeyMaterial; deferred pending design review (go-xkms#549 triage)
-xkey/cmd/xkey/cmd/fido2.go:208	pre-existing: FIDO2Config.PIN; deferred pending design review (go-xkms#549 triage)
+xkey/cmd/xkey/cmd/fido2.go:207	pre-existing: FIDO2Config.PIN; deferred pending design review (go-xkms#549 triage)
 xkey/cmd/xkey/cmd/password.go:519	pre-existing: passwordListEntry.Password; deferred pending design review (go-xkms#549 triage)
 xkey/cmd/xkey/cmd/webauthn_ceremony.go:102	pre-existing: CeremonyRequest.PIN; deferred pending design review (go-xkms#549 triage)

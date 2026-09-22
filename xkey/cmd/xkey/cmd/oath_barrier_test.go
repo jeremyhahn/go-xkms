@@ -56,19 +56,6 @@ func initTestOATHBarrier(t *testing.T, home, password string) string {
 	return dataDir
 }
 
-// captureDefaultLog swaps slog's default logger for a buffer-backed one for
-// the duration of the test, restoring the previous default on cleanup.
-func captureDefaultLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-
-	var buf bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	return &buf
-}
-
 // newDetachedOATHCmd builds a private copy of an oath subcommand's flags, the
 // same way newOATHCmd (oath_run_test.go) does, but WITHOUT forcing --store.
 // newOATHCmd cannot be reused here: it always sets --store, which is exactly
