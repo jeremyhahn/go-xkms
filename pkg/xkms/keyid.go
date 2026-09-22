@@ -549,8 +549,12 @@ func algorithmToRSAAttributes() *types.RSAAttributes {
 //   - "pkcs11:::my-key" - specify backend only
 //   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
 //
-// Returns KeyAttributes populated with the parsed values.
-// Empty segments result in zero values in the attributes.
+// Returns KeyAttributes populated with the parsed values. Empty segments
+// result in zero values in the attributes. When the backend segment is
+// present, both StoreType and Backend are set from it -- Backend is what
+// BackendFor resolves the registry lookup by (go-xkms#312) -- so a Key ID
+// string addresses the same backend a caller who names it directly through
+// Backend would reach.
 func ParseKeyIDToAttributes(keyID string) (*types.KeyAttributes, error) {
 	backend, keyType, algo, keyname, err := ParseKeyID(keyID)
 	if err != nil {
@@ -561,13 +565,20 @@ func ParseKeyIDToAttributes(keyID string) (*types.KeyAttributes, error) {
 		CN: keyname,
 	}
 
-	// Set StoreType if backend was specified
+	// Set StoreType and Backend if a backend segment was specified. The Key
+	// ID format only ever names a store-type keyword (e.g. "pkcs11"), never
+	// a backend's registered instance name (e.g. "token-a" for a second
+	// PKCS#11 token) -- there is no room in the format for one -- so Backend
+	// is set to that same keyword, matching what the registry looks the
+	// backend up under for every backend registered under its store-type
+	// keyword, which is every backend a Key ID string can address at all.
 	if backend != "" {
 		bt, err := keyIDToBackendType(backend)
 		if err != nil {
 			return nil, err
 		}
 		attrs.StoreType = backendTypeToStoreType(bt)
+		attrs.Backend = string(attrs.StoreType)
 	}
 
 	// Set KeyType if type was specified

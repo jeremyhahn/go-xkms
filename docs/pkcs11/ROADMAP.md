@@ -462,8 +462,10 @@ linearizable cross-node value-CAS, as the KEY FINDING above predicted).
   `ModuleStorage.IncrementFailedAttempt` uses a CAS retry loop on a
   `CompareAndSwapper` backend (remote/clustered) and a mutex read-modify-write on a
   single-writer local backend; `ResetFailedAttempt` clears; `LoadFailedAttempts`
-  prefers the dedicated key and seeds (PutIfAbsent) from the record snapshot for
-  pre-split tokens (migration). `SessionManager` now holds the local atomics as an
+  reads the dedicated key directly, with no parameters and no record-snapshot
+  fallback (go-xkms compat cleanup, 2026-09-22: an absent dedicated key is zero
+  attempts, not a migrated value — this is pre-release alpha, so no migration
+  path was kept). `SessionManager` now holds the local atomics as an
   optimistic cache: `recordFailedAttempt` stores back the authoritative
   post-increment value (`SetAttemptPersistence` replaced `SetAttemptPersister`);
   `loadPersistedState` restores from `LoadFailedAttempts`. Documented the bounded
@@ -471,7 +473,7 @@ linearizable cross-node value-CAS, as the KEY FINDING above predicted).
   increment still reads the durable value and locks, so the budget is never
   exceeded). Tests: `TestModuleStorage_FailedAttemptCounter_CAS`,
   `_ConcurrentAccumulates` (50 increments / 2 clients / `-race`, zero lost updates),
-  `_MigratesFromRecord`, `_NilBackend`; existing `session_pin_lockout_test.go` (lockout
+  `_AbsentKeyIsZero`, `_NilBackend`; existing `session_pin_lockout_test.go` (lockout
   survives restart / resets on success) still green through the new path.
 
 **Remaining:** E2 (live multi-client devcontainer E2E) can now be written — the

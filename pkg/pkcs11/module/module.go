@@ -705,11 +705,11 @@ func (m *Module) loadPersistedState() CK_RV {
 			// Reloading one without the other is what let C_Finalize followed by
 			// C_Initialize hand an attacker three fresh attempts, indefinitely.
 			//
-			// The authoritative counters live in dedicated storage keys (so several
-			// remote-mode clients can increment them atomically); the record's
-			// embedded fields are only the migration fallback for tokens written
-			// before the counters were split out.
-			failedUser, failedSO, err := m.storage.LoadFailedAttempts(slotID, state.FailedUserPIN, state.FailedSOPIN)
+			// The authoritative counters live in dedicated storage keys, so several
+			// remote-mode clients can increment them atomically; the record's
+			// embedded fields are a snapshot for operators inspecting the record,
+			// not a source LoadFailedAttempts reads from.
+			failedUser, failedSO, err := m.storage.LoadFailedAttempts(slotID)
 			if err != nil {
 				m.logStorageError("load persisted lockout counters", err)
 				return CKR_DEVICE_ERROR

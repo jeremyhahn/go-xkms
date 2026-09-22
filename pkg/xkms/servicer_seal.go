@@ -239,23 +239,14 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 	if req.KeyID != "" {
 		attrs, parseErr := ParseKeyIDToAttributes(req.KeyID)
 		if parseErr != nil {
-			// KeyID may use the legacy ID() format (storeType:keyType:CN:algo)
-			// which is not parseable by ParseKeyID. For non-TPM2 backends, fall
-			// through to auto-resolve using the well-known sealing key. For TPM2
-			// or if the KeyID is clearly invalid (e.g. empty keyname), return error.
-			kp := b.KeyProvider()
-			if kp == nil || kp.Type() == types.BackendTypeTPM2 {
-				return nil, &ErrKeyIDParse{Err: parseErr}
-			}
-			// Fall through — auto-resolve will use defaultSealingKeyAttributes
-		} else {
-			opts.KeyAttributes = attrs
+			return nil, &ErrKeyIDParse{Err: parseErr}
 		}
+		opts.KeyAttributes = attrs
 	}
 
 	// Auto-resolve sealing key for software/PKCS11 backends when no KeyID
-	// was provided (or legacy KeyID parse failed). Use the well-known sealing
-	// key CN so it matches the key that was auto-generated during Seal().
+	// was provided. Use the well-known sealing key CN so it matches the key
+	// that was auto-generated during Seal().
 	if opts.KeyAttributes == nil {
 		kp := b.KeyProvider()
 		if kp != nil && kp.Type() != types.BackendTypeTPM2 {

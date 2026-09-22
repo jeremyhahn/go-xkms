@@ -313,17 +313,14 @@ route through this pair rather than calling `NewGCM` directly.
 
 This changes the ciphertext framing -- `NewGCMWithRandomNonce`'s `Seal`
 generates a 96-bit nonce, prepends it to its output, and reports `Overhead()`
-as nonce+tag combined -- so nothing about an *existing* wrapped blob is
-disturbed: `GCMNonceMode` is `GCMNonceModeExplicit`, the zero value, unless a
-`fips140=only` process actually produced the ciphertext with the
-random-nonce construction, which means every blob written before this
-capability existed keeps decoding exactly as it always did, on any process
-that can still construct arbitrary-IV GCM. The on-disk TLV envelope
-(`pkg/keyprovider/symmetric.Marshal`/`Unmarshal`) only spends a wire-format
-version bump (and one marker byte) recording the mode when it is not the
-zero value, for the same reason: a version-1 blob and a version-1 write are
-byte-identical whether or not this capability exists in the binary that
-wrote them.
+as nonce+tag combined -- so `GCMNonceMode` is `GCMNonceModeExplicit`, the
+zero value, unless a `fips140=only` process actually produced the ciphertext
+with the random-nonce construction. The on-disk TLV envelope
+(`pkg/keyprovider/symmetric.Marshal`/`Unmarshal`) records the mode in one
+marker byte that always follows the version byte; there is only one wire
+version, and the earlier version that had no marker byte is no longer
+accepted -- `Unmarshal` refuses it with a typed error naming the removed
+format, rather than reading it through a dual reader.
 
 A `fips140=only` process cannot open a `GCMNonceModeExplicit` (legacy,
 caller-nonce) ciphertext either, for the identical reason `NewGCM` itself is

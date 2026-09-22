@@ -287,21 +287,21 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		}
 
 		// Reload the metadata record to recover attributes the key ID string
-		// has no room to encode. A missing/corrupt record (a key that
-		// predates metadata persistence) is not an error: loadKeyMetadata
-		// returns the safe Exportable=false default and ListKeys carries on.
-		metadata := b.loadKeyMetadata(ctx, id)
+		// has no room to encode. Every key this package creates has one, so
+		// a key with no readable record fails ListKeys outright rather than
+		// silently misreporting Exportable or Sensitive.
+		metadata, err := b.loadKeyMetadata(ctx, id)
+		if err != nil {
+			return nil, err
+		}
 		attr.Exportable = metadata.Exportable
 		attr.Sensitive = metadata.Sensitive
-		// TenantID and Partition are trusted only from a record that
-		// actually carries them. The segment-count parse above cannot tell
-		// a tenant from a partition -- both produce five segments -- so a
-		// version 3 record's explicit values replace the guess; an older
-		// record leaves the parsed values exactly as they always were.
-		if metadata.SchemaVersion >= keyMetadataSchemaVersion3 {
-			attr.TenantID = metadata.TenantID
-			attr.Partition = types.Partition(metadata.Partition)
-		}
+		// TenantID and Partition are trusted from the record, not the
+		// segment-count parse above: that parse cannot tell a tenant from a
+		// partition -- both produce five segments -- so the record's
+		// explicit values always replace the guess.
+		attr.TenantID = metadata.TenantID
+		attr.Partition = types.Partition(metadata.Partition)
 
 		attrs = append(attrs, attr)
 	}

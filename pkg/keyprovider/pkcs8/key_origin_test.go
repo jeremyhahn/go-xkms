@@ -20,16 +20,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestResolveKeyOrigin is the single point where the legacy inference is
-// applied, so it is the single point worth pinning.
-//
-// The distinction that matters is between a record that could not carry an
-// origin and one that should have. The first predates every import path and
-// resolves to generated; the second was written by a build that had the field
-// and did not set it, which is a defect and must stay unknown so a consumer
-// failing closed refuses it. Collapsing the two would let a future write path
-// that forgets to stamp the origin silently inherit the trust of a genuinely
-// old key.
+// TestResolveKeyOrigin proves resolveKeyOrigin is a plain read: whatever the
+// record's KeyOrigin field decodes to is what comes back, with no
+// version-gated inference substituting a different value for a record that
+// carries no origin. A record (or no record at all) with nothing recorded
+// resolves to types.KeyOriginUnknown -- the absence of a claim, not a claim
+// of generation -- so a consumer that fails closed on unknown origin (see
+// pkg/xkms.refuseUnattestableKey) refuses it rather than silently trusting
+// it as generated.
 func TestResolveKeyOrigin(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -40,38 +38,26 @@ func TestResolveKeyOrigin(t *testing.T) {
 		{
 			name:     "no record at all",
 			metadata: nil,
-			want:     types.KeyOriginGenerated,
-			why:      "predates the record entirely, so predates every import path",
+			want:     types.KeyOriginUnknown,
+			why:      "no record means no claim of origin",
 		},
 		{
-			name:     "record from before the field existed",
-			metadata: &keyMetadata{SchemaVersion: 0},
-			want:     types.KeyOriginGenerated,
-			why:      "schema 0 could not carry an origin",
+			name:     "record with no origin recorded",
+			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion},
+			want:     types.KeyOriginUnknown,
+			why:      "an empty key_origin field is read as unknown, not inferred as generated",
 		},
 		{
-			name:     "schema v1 record",
-			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion1},
-			want:     types.KeyOriginGenerated,
-			why:      "v1 predates the origin field",
-		},
-		{
-			name:     "schema v2 recording generated",
-			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion2, KeyOrigin: "generated"},
+			name:     "record recording generated",
+			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion, KeyOrigin: "generated"},
 			want:     types.KeyOriginGenerated,
 			why:      "the record says so",
 		},
 		{
-			name:     "schema v2 recording imported",
-			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion2, KeyOrigin: "imported"},
+			name:     "record recording imported",
+			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion, KeyOrigin: "imported"},
 			want:     types.KeyOriginImported,
 			why:      "the record says so",
-		},
-		{
-			name:     "schema v2 with no origin is a defect, not a legacy key",
-			metadata: &keyMetadata{SchemaVersion: keyMetadataSchemaVersion2},
-			want:     types.KeyOriginUnknown,
-			why:      "a build that had the field did not set it; must not inherit legacy trust",
 		},
 	}
 
@@ -88,7 +74,7 @@ func TestResolveKeyOrigin(t *testing.T) {
 func TestNewKeyMetadata_CarriesOrigin(t *testing.T) {
 	for _, origin := range []types.KeyOrigin{types.KeyOriginGenerated, types.KeyOriginImported} {
 		record := newKeyMetadata(&types.KeyAttributes{CN: "roundtrip", KeyOrigin: origin})
-		assert.Equal(t, keyMetadataSchemaVersionCurrent, record.SchemaVersion)
+		assert.Equal(t, keyMetadataSchemaVersion, record.SchemaVersion)
 		assert.Equal(t, string(origin), record.KeyOrigin)
 		assert.Equal(t, origin, resolveKeyOrigin(record))
 	}

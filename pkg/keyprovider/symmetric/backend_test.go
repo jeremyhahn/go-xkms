@@ -4681,7 +4681,12 @@ func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 	}
 	defer func() { _ = b.Close() }()
 
-	// Manually insert a key with < 4 parts (malformed)
+	// Manually insert a key with < 4 parts (malformed). ListKeys still
+	// resolves it through the fallback CN=full-ID parse and calls
+	// loadKeyMetadata for it -- every key it lists needs a record -- so this
+	// key is given one directly, exercising the parse path in isolation
+	// from metadata enforcement (see TestListKeys_KeyWithNoMetadataRecord_FailsWithTypedError
+	// for the no-record case).
 	malformedKeyID := "malformed:key"
 	keyData := make([]byte, 32)
 	if _, err := rand.Read(keyData); err != nil {
@@ -4690,8 +4695,13 @@ func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
 	if err := storage.SaveKey(context.Background(), s, malformedKeyID, keyData); err != nil {
 		t.Fatal(err)
 	}
+	if err := storage.SaveKeyMetadata(context.Background(), s, malformedKeyID,
+		[]byte(`{"schema_version":3,"exportable":false,"sensitive":false}`)); err != nil {
+		t.Fatal(err)
+	}
 
-	// Manually insert a key with non-secret keytype (should be skipped)
+	// Manually insert a key with non-secret keytype (should be skipped
+	// before ListKeys ever reaches loadKeyMetadata for it).
 	asymmetricKeyID := "sw:rsa:test-rsa:rsa-2048"
 	if err := storage.SaveKey(context.Background(), s, asymmetricKeyID, keyData); err != nil {
 		t.Fatal(err)
@@ -4805,7 +4815,9 @@ func TestListKeys_WithMetadataLoading(t *testing.T) {
 	}
 }
 
-// TestListKeys_WithInvalidMetadata tests ListKeys handles invalid metadata gracefully
+// TestListKeys_WithInvalidMetadata tests that ListKeys refuses a key whose
+// metadata record cannot be parsed, rather than silently defaulting its
+// attributes.
 func TestListKeys_WithInvalidMetadata(t *testing.T) {
 	s := storage.New()
 	config := &Config{KeyStorage: s}
@@ -4835,23 +4847,14 @@ func TestListKeys_WithInvalidMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// List keys - should handle invalid metadata gracefully
-	keys, err := b.ListKeys(context.Background())
-	if err != nil {
-		t.Fatalf("ListKeys failed: %v", err)
+	// List keys - a key with a corrupt metadata record must fail ListKeys
+	// with a typed error rather than being silently defaulted.
+	_, err = b.ListKeys(context.Background())
+	if err == nil {
+		t.Fatal("expected ListKeys to fail for a key with a corrupt metadata record")
 	}
-
-	if len(keys) != 1 {
-		t.Errorf("Expected 1 key, got %d", len(keys))
-	}
-
-	// Key should still be listed, just without metadata, and must fall back
-	// to the safe Exportable=false default rather than erroring or guessing.
-	if keys[0].CN != "test-key" {
-		t.Errorf("Expected CN 'test-key', got '%s'", keys[0].CN)
-	}
-	if keys[0].Exportable {
-		t.Error("key with corrupt metadata should default to Exportable=false")
+	if !strings.Contains(err.Error(), "failed to parse key metadata") {
+		t.Errorf("expected a parse-failure error, got: %v", err)
 	}
 }
 

@@ -275,36 +275,34 @@ whatever was stamped in memory — the same "computed by the system, never
 trusted from a caller" rule `KeyOrigin` follows, applied even more strongly
 because there is no legitimate case where this backend answers `Hardware`.
 
-### The legacy rule, and where it lives
+### The origin rule, and where it lives
 
 Attestation **fails closed on the origin**: anything that is not `generated` is
-refused. It does not refuse only the values known to be bad, because a check
-shaped that way would start attesting silently the day a new write path forgot
-to record an origin — nothing would fail, and nothing would warn.
+refused, except `unknown` -- see below. It does not refuse only the values
+known to be bad, because a check shaped that way would start attesting
+silently the day a new write path forgot to record an origin — nothing would
+fail, and nothing would warn.
 
-Keys written before the field existed still attest, but the reasoning for that
-is applied **once, where the record is read** (`resolveKeyOrigin` in
-`pkg/keyprovider/pkcs8`), not as a permanent exception inside the security
-check:
+`resolveKeyOrigin` in `pkg/keyprovider/pkcs8` is a plain read of the
+persisted record, with no inference substituting a different value: there is
+a single supported record shape, and whatever its `key_origin` field decodes
+to is the answer.
 
 | What was found | Resolves to | Why |
 |---|---|---|
-| no metadata record, or schema < 2 | `generated` | the record could not carry an origin; such a key predates every PIV import path, so it cannot have been imported |
-| schema 2 with an origin | that origin | the record says so |
-| **schema 2 with no origin** | `unknown` → **refused** | a build that *had* the field did not set it — a defect, not a legacy key |
-
-That last row is the point of putting the inference at the boundary. A record
-written by a future path that forgets to stamp the origin is refused, rather
-than silently inheriting the trust of a genuinely old key.
+| no metadata record | `unknown` → attests | the record cannot say how the key arrived; unknown is not a claim of import |
+| a record with no origin recorded | `unknown` → attests | the field was never stamped; same reasoning as no record at all |
+| a record with an origin | that origin | the record says so |
+| a value this build does not recognise | refused | a vocabulary from a later version, or a defect |
 
 Only the pkcs8 provider persists an origin today, so a key held by a hardware
-backend reports none. That attests rather than refusing — refusing would make
-every hardware-backed slot unattestable, including keys generated in the slot,
-which is the case attestation exists for. It is safe because `ImportPIVKey`
-reads the provenance back after writing it and **rolls the import back** if the
-backend did not record it, so a backend that records nothing cannot be holding
-an imported key. A non-empty origin this build does not recognise is still
-refused.
+backend reports `unknown`. That attests rather than refusing — refusing would
+make every hardware-backed slot unattestable, including keys generated in the
+slot, which is the case attestation exists for. It is safe because
+`ImportPIVKey` reads the provenance back after writing it and **rolls the
+import back** if the backend did not record it, so a backend that records
+nothing cannot be holding an imported key. A non-empty origin this build does
+not recognise is still refused.
 
 That safety is a property of there being exactly one import path. `ImportPIVKey`
 is the only way an outside key reaches a slot and `PIVKeyImporter` the only

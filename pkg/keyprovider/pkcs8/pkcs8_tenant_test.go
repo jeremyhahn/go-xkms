@@ -274,11 +274,14 @@ func TestListKeys_NoMetadataRecordFallsBackToIdentifier(t *testing.T) {
 	}
 }
 
-// TestListKeys_LegacyMetadataRecordFallsBackToIdentifier covers a record
-// written before the schema recorded a tenant. Such a record says nothing
-// about ownership, so the identifier's own reading must stand rather than the
-// record's zero value being taken as "no tenant, authoritatively".
-func TestListKeys_LegacyMetadataRecordFallsBackToIdentifier(t *testing.T) {
+// TestListKeys_OldSchemaMetadataRecordIsRefused proves a record stamped
+// with any schema version other than the single one this package supports
+// -- including a pre-tenant record with SchemaVersion omitted, which decodes
+// as 0 -- is discarded exactly like a corrupt record: there is no
+// version-gated interpretation of an old shape. The identifier's own
+// reading of the partition stands, and Exportable falls back to its safe
+// default rather than trusting the discarded record's claim.
+func TestListKeys_OldSchemaMetadataRecordIsRefused(t *testing.T) {
 	be, keyStorage := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
@@ -287,7 +290,7 @@ func TestListKeys_LegacyMetadataRecordFallsBackToIdentifier(t *testing.T) {
 	if err := storage.SaveKey(ctx, keyStorage, keyID, []byte("dummy")); err != nil {
 		t.Fatalf("SaveKey failed: %v", err)
 	}
-	legacy, err := json.Marshal(map[string]interface{}{
+	oldSchema, err := json.Marshal(map[string]interface{}{
 		"cn":            "legacy-meta.com",
 		"key_type":      "TLS",
 		"store_type":    "sw",
@@ -295,10 +298,10 @@ func TestListKeys_LegacyMetadataRecordFallsBackToIdentifier(t *testing.T) {
 		"exportable":    true,
 	})
 	if err != nil {
-		t.Fatalf("marshal legacy metadata: %v", err)
+		t.Fatalf("marshal old-schema metadata: %v", err)
 	}
-	if err := keyStorage.Put(ctx, metadataPath(keyID), legacy); err != nil {
-		t.Fatalf("Put legacy metadata failed: %v", err)
+	if err := keyStorage.Put(ctx, metadataPath(keyID), oldSchema); err != nil {
+		t.Fatalf("Put old-schema metadata failed: %v", err)
 	}
 
 	listed, err := be.ListKeys(ctx)
@@ -309,10 +312,13 @@ func TestListKeys_LegacyMetadataRecordFallsBackToIdentifier(t *testing.T) {
 		t.Fatalf("expected one key, got %d", len(listed))
 	}
 	if got := listed[0].Partition; got != types.Partition("legacy-slot") {
-		t.Errorf("a pre-tenant record must not erase the identifier's partition, got %q", got)
+		t.Errorf("a discarded old-schema record must not erase the identifier's partition, got %q", got)
 	}
-	if !listed[0].Exportable {
-		t.Error("a pre-tenant record's exportable flag must still be honored")
+	if listed[0].Exportable {
+		t.Error("a discarded old-schema record's exportable claim must not be honored")
+	}
+	if listed[0].KeyOrigin != types.KeyOriginUnknown {
+		t.Errorf("a discarded old-schema record must resolve KeyOrigin to unknown, got %q", listed[0].KeyOrigin)
 	}
 }
 

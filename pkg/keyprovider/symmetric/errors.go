@@ -101,6 +101,13 @@ var (
 	// padding oracle.
 	ErrCiphertextNotBlockAligned = errors.New("symmetric: ciphertext is not a whole number of AES blocks")
 
+	// ErrKeyMetadataNotFound is returned when a key's metadata record is
+	// absent. Every key this package creates writes its metadata record in
+	// the same operation as the key material, so a missing record means the
+	// key was not created through this package; there is no legacy shape to
+	// fall back to.
+	ErrKeyMetadataNotFound = errors.New("symmetric: key metadata not found")
+
 	// ErrInvalidPadding is returned when PKCS#7 unpadding fails after a
 	// successful AES-CBC-PAD decryption, whether because the trailing
 	// padding-length byte is out of range or because the padding bytes

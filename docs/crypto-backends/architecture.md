@@ -120,18 +120,19 @@ directly. `StoreType` is also a segment of `types.KeyAttributes.ID()`
 (`storetype:keytype:cn:algorithm`), so the same conflation put the wrong
 word in the storage identifier for such a backend's keys.
 
-`BackendFor` and `getBackendForKID` now resolve `attrs.Backend` first. A key
-whose attributes carry no `Backend` — every key persisted, listed, or parsed
-before this field existed, since a backend's own `ListKeys` has no way to
-learn the registry name it was registered under — falls back to treating
-`StoreType` as the name, exactly as every caller depended on before. That
-fallback is permanent, not a migration step to complete later: no backend's
-storage format is rewritten by `Backend`'s addition. `ID()` is unaffected for
-every key that already exists, because a backend registered under a
-store-type keyword reports that same keyword from `Type()`; a backend
-registered under a non-keyword name now stores *new* keys under its real
-kind instead of the `unknown` segment `ParseStoreType(backendName)` used to
-produce.
+`BackendFor` and `getBackendForKID` resolve `attrs.Backend` only — there is
+no `StoreType` fallback (removed 2026-09-22, pre-release alpha, no migration
+kept). Every producer of `KeyAttributes` that has a name to give it sets
+`Backend` directly: `ParseKeyIDToAttributes` sets it from a Key ID string's
+backend segment, and the Simplified API's `ListKeys` stamps it from the
+registry name it listed under (`stampBackendName`), since a backend's own
+`ListKeys` has no way to learn that name itself. Attributes that carry no
+`Backend` resolve to `DefaultBackend`, exactly like attributes with neither
+field set. `ID()` is unaffected for every key that already exists, because a
+backend registered under a store-type keyword reports that same keyword from
+`Type()`; a backend registered under a non-keyword name stores keys under its
+real kind instead of the `unknown` segment `ParseStoreType(backendName)` used
+to produce.
 
 ## Data flow
 

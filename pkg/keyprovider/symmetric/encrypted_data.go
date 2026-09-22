@@ -24,20 +24,19 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// wireVersionExplicitNonce is every ciphertext this format produced before
-// FIPS 140-only support: EncryptedData.GCMNonceMode is always the zero
-// value (GCMNonceModeExplicit), so there is nothing to record and the wire
-// bytes are unchanged from the original version-1 layout. This keeps every
-// existing ciphertext, and every existing caller of Marshal, byte-for-byte
-// compatible.
-const wireVersionExplicitNonce byte = 0x01
+// wireVersionRemovedExplicitNonce was the wire version written before FIPS
+// 140-only support existed: it carries no GCM nonce mode marker, so a
+// reader cannot tell which AEAD construction produced the ciphertext. It is
+// no longer accepted -- see wireVersion.
+const wireVersionRemovedExplicitNonce byte = 0x01
 
-// wireVersionWithNonceMode is written only when GCMNonceMode is not the
-// zero value: one extra marker byte follows the version, naming which AEAD
-// construction produced Nonce, so Unmarshal (and, in turn, Decrypt) can
-// reconstruct the same construction regardless of the FIPS posture of the
-// process that reads it back. See types.GCMNonceMode.
-const wireVersionWithNonceMode byte = 0x02
+// wireVersion is the only version Marshal produces and Unmarshal accepts:
+// one GCM nonce mode marker byte (0x00 explicit, 0x01 random) always
+// follows the version byte, naming which AEAD construction produced Nonce
+// so Unmarshal (and, in turn, Decrypt) can reconstruct the same
+// construction regardless of the FIPS posture of the process that reads it
+// back. See types.GCMNonceMode.
+const wireVersion byte = 0x02
 
 const (
 	nonceModeMarkerExplicit byte = 0x00
@@ -72,10 +71,13 @@ func gcmNonceModeFromMarker(marker byte) (types.GCMNonceMode, error) {
 // Marshal serializes EncryptedData to bytes for storage/transmission.
 // This implements a wire format that includes version, algorithm, nonce, tag, and ciphertext.
 //
-// Wire Format (version 1, ed.GCMNonceMode == types.GCMNonceModeExplicit):
+// Wire Format:
 //
 //	┌────────────────────────────────────────────────────┐
-//	│ Version: 1 byte (0x01)                             │
+//	│ Version: 1 byte (0x02)                             │
+//	├────────────────────────────────────────────────────┤
+//	│ GCM Nonce Mode Marker: 1 byte (0x00 explicit,      │
+//	│                                0x01 random)        │
 //	├────────────────────────────────────────────────────┤
 //	│ Algorithm Length: 2 bytes (big-endian uint16)      │
 //	│ Algorithm: variable bytes (UTF-8 string)           │
@@ -90,15 +92,10 @@ func gcmNonceModeFromMarker(marker byte) (types.GCMNonceMode, error) {
 //	│ Ciphertext: variable bytes                         │
 //	└────────────────────────────────────────────────────┘
 //
-// Wire Format (version 2, ed.GCMNonceMode != types.GCMNonceModeExplicit):
-// identical to version 1, except one GCM nonce mode marker byte (0x00
-// explicit, 0x01 random) is inserted immediately after the version byte, so
-// Decrypt knows which AEAD construction to rebuild. Unmarshal accepts both
-// versions; Marshal only ever emits version 2 when there is a non-explicit
-// mode to record, so every ciphertext produced before this mode existed --
-// and every ciphertext this format still produces for every non-GCM
-// algorithm and every AES-GCM ciphertext outside FIPS 140-only -- keeps the
-// version-1 wire bytes.
+// The version-1 layout (no marker byte, GCMNonceMode always implicitly
+// explicit) is no longer produced or accepted; Unmarshal rejects it with a
+// typed error. There is no dual reader: every ciphertext this package
+// stores must be re-encrypted through the current version.
 func Marshal(ed *types.EncryptedData) ([]byte, error) {
 	if ed == nil {
 		return nil, &errs.Message{Msg: "EncryptedData is nil"}
@@ -106,25 +103,18 @@ func Marshal(ed *types.EncryptedData) ([]byte, error) {
 
 	buf := new(bytes.Buffer)
 
-	version := wireVersionExplicitNonce
-	if ed.GCMNonceMode != types.GCMNonceModeExplicit {
-		version = wireVersionWithNonceMode
-	}
-
 	// Version
-	if err := buf.WriteByte(version); err != nil {
+	if err := buf.WriteByte(wireVersion); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to write version", Err: err}
 	}
 
-	// GCM nonce mode marker (version 2 only)
-	if version == wireVersionWithNonceMode {
-		marker, err := gcmNonceModeMarker(ed.GCMNonceMode)
-		if err != nil {
-			return nil, err
-		}
-		if err := buf.WriteByte(marker); err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to write GCM nonce mode marker", Err: err}
-		}
+	// GCM nonce mode marker
+	marker, err := gcmNonceModeMarker(ed.GCMNonceMode)
+	if err != nil {
+		return nil, err
+	}
+	if err := buf.WriteByte(marker); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to write GCM nonce mode marker", Err: err}
 	}
 
 	// Algorithm
@@ -194,21 +184,20 @@ func Unmarshal(data []byte) (*types.EncryptedData, error) {
 		return nil, &errs.Wrapped{Msg: "failed to read version", Err: err}
 	}
 
-	var nonceMode types.GCMNonceMode
-	switch version {
-	case wireVersionExplicitNonce:
-		nonceMode = types.GCMNonceModeExplicit
-	case wireVersionWithNonceMode:
-		marker, err := buf.ReadByte()
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to read GCM nonce mode marker", Err: err}
-		}
-		nonceMode, err = gcmNonceModeFromMarker(marker)
-		if err != nil {
-			return nil, err
-		}
-	default:
+	if version == wireVersionRemovedExplicitNonce {
+		return nil, &errs.Message{Msg: "encrypted data uses removed wire version 1 (no GCM nonce mode marker); re-encrypt with the current format"}
+	}
+	if version != wireVersion {
 		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported version: 0x%02x", version)}
+	}
+
+	marker, err := buf.ReadByte()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to read GCM nonce mode marker", Err: err}
+	}
+	nonceMode, err := gcmNonceModeFromMarker(marker)
+	if err != nil {
+		return nil, err
 	}
 
 	ed := &types.EncryptedData{GCMNonceMode: nonceMode}

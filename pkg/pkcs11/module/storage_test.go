@@ -633,37 +633,39 @@ func TestModuleStorage_FailedAttemptCounter_CAS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint32(1), v)
 
-	// Load returns the dedicated-key values, ignoring the record fallback.
-	user, so, err := s.LoadFailedAttempts(0, 99, 99)
+	// Load returns the dedicated-key values.
+	user, so, err := s.LoadFailedAttempts(0)
 	require.NoError(t, err)
 	require.Equal(t, uint32(2), user)
 	require.Equal(t, uint32(1), so)
 
 	// Reset clears only the user counter.
 	require.NoError(t, s.ResetFailedAttempt(0, CKU_USER))
-	user, so, err = s.LoadFailedAttempts(0, 0, 0)
+	user, so, err = s.LoadFailedAttempts(0)
 	require.NoError(t, err)
 	require.Equal(t, uint32(0), user)
 	require.Equal(t, uint32(1), so)
 }
 
-// TestModuleStorage_LoadFailedAttempts_MigratesFromRecord verifies that a token
-// with no dedicated counter key seeds from the record snapshot, and that the seed
-// then serves as the base for a subsequent atomic increment.
-func TestModuleStorage_LoadFailedAttempts_MigratesFromRecord(t *testing.T) {
+// TestModuleStorage_LoadFailedAttempts_AbsentKeyIsZero verifies that a token
+// with no dedicated counter key reads back zero attempts -- there is no
+// record snapshot to seed from -- and that a subsequent atomic increment
+// starts from that zero, not from any value the caller might have supplied
+// before the dedicated counter existed.
+func TestModuleStorage_LoadFailedAttempts_AbsentKeyIsZero(t *testing.T) {
 	s := NewModuleStorage(storage.NewMemory())
 	t.Cleanup(func() { _ = s.Close() })
 
-	// No dedicated key exists yet: the record snapshot (2, 1) is adopted.
-	user, so, err := s.LoadFailedAttempts(0, 2, 1)
+	// No dedicated key exists yet: absent reads as zero.
+	user, so, err := s.LoadFailedAttempts(0)
 	require.NoError(t, err)
-	require.Equal(t, uint32(2), user)
-	require.Equal(t, uint32(1), so)
+	require.Equal(t, uint32(0), user)
+	require.Equal(t, uint32(0), so)
 
-	// The seed became authoritative: the next increment builds on 2, not 0.
+	// The next increment builds on 0.
 	v, _, err := s.IncrementFailedAttempt(0, CKU_USER)
 	require.NoError(t, err)
-	require.Equal(t, uint32(3), v)
+	require.Equal(t, uint32(1), v)
 }
 
 // TestModuleStorage_FailedAttemptCounter_NilBackend confirms a store-less module
@@ -678,10 +680,10 @@ func TestModuleStorage_FailedAttemptCounter_NilBackend(t *testing.T) {
 
 	require.NoError(t, s.ResetFailedAttempt(0, CKU_USER))
 
-	user, so, err := s.LoadFailedAttempts(0, 5, 6)
+	user, so, err := s.LoadFailedAttempts(0)
 	require.NoError(t, err)
-	require.Equal(t, uint32(5), user)
-	require.Equal(t, uint32(6), so)
+	require.Equal(t, uint32(0), user)
+	require.Equal(t, uint32(0), so)
 }
 
 // TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates is the property
@@ -711,7 +713,7 @@ func TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates(t *testing.T) 
 	}
 	wg.Wait()
 
-	user, _, err := a.LoadFailedAttempts(0, 0, 0)
+	user, _, err := a.LoadFailedAttempts(0)
 	require.NoError(t, err)
 	require.Equal(t, uint32(2*perClient), user,
 		"every concurrent increment across both clients must be counted; a lower total is a lost update")

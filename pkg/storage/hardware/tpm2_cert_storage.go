@@ -19,10 +19,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
-	"strconv"
-	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/cespare/xxhash/v2"
 
@@ -214,7 +213,14 @@ func (t *TPM2CertStorage) saveRecord(id string, pemData []byte, op string) error
 		return NewOperationError(op, err)
 	}
 	if err == nil {
-		if existingID, _, ok := decodeCertRecord(existing); ok && existingID != id {
+		existingID, _, ok := decodeCertRecord(existing)
+		if !ok {
+			return &errs.Detail{
+				Err:    ErrCertRecordMissingHeader,
+				Detail: fmt.Sprintf("index %#x", nvIndex),
+			}
+		}
+		if existingID != id {
 			return &errs.Detail{
 				Err:    ErrNVIndexUnavailable,
 				Detail: fmt.Sprintf("index %#x holds certificate %q", nvIndex, existingID),
@@ -321,20 +327,14 @@ func (t *TPM2CertStorage) releaseRecordLocked(id string, wantChain bool, op stri
 }
 
 // recordIsChain reports whether an NV payload is a chain record: one whose
-// PEM blocks carry the chain marker, or, for a record written before the
-// marker existed, one holding more than one certificate. A single unmarked
-// block is a certificate record; a one-member chain written before the marker
-// is indistinguishable from it and is treated as the certificate it also is.
+// PEM blocks carry the chain marker SaveCertChain stamps on every block it
+// writes. A block with no marker is a certificate record.
 func recordIsChain(payload []byte) bool {
-	block, rest := pem.Decode(payload)
+	block, _ := pem.Decode(payload)
 	if block == nil {
 		return false
 	}
-	if block.Headers[recordKindHeader] == recordKindChain {
-		return true
-	}
-	next, _ := pem.Decode(rest)
-	return next != nil
+	return block.Headers[recordKindHeader] == recordKindChain
 }
 
 // DeleteCertChain removes the chain stored under id. TPM2 keeps the
@@ -458,9 +458,9 @@ func (t *TPM2CertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 //
 // Every ID returned here is accepted by GetCert, GetCertChain, CertExists and
 // DeleteCert: the ID is read back out of the record header stored in NV RAM.
-// Records written before the header existed cannot report their original ID,
-// so they are reported by NV handle ("0x01800000"), a form the lookup path
-// also accepts.
+// An NV index in range that holds data without that header belongs to
+// another subsystem, not to this storage, and is skipped -- every record
+// this storage writes carries the header.
 //
 // Note: This is expensive as it requires querying TPM capabilities and reading
 // every NV index in the certificate range.
@@ -573,73 +573,35 @@ func (t *TPM2CertStorage) certIndexFromID(id string) uint32 {
 // lookupCert resolves a certificate ID to the NV index that holds it and
 // returns that index along with the PEM payload stored there.
 //
-// IDs are resolved by hash first, and the ID in the record header must match:
-// an index whose record belongs to a different ID is a hash collision, not a
-// hit. An ID in NV handle form ("0x01800000"), as reported by ListCerts for
-// records without an ID header, resolves directly to that index.
+// IDs are resolved by hash, and the ID in the record header must match: an
+// index whose record belongs to a different ID is a hash collision, not a
+// hit.
 //
-// Returns storage.ErrNotFound if no NV index holds the certificate.
+// Returns storage.ErrNotFound if no NV index holds the certificate, and
+// ErrCertRecordMissingHeader if the index this lookup lands on holds data
+// without the required ID header -- every record this storage writes has
+// one, so that data is not a certificate this storage produced.
 func (t *TPM2CertStorage) lookupCert(id string) (uint32, []byte, error) {
 	hashedIndex := t.certIndexFromID(id)
 
 	data, err := t.readNVIndex(hashedIndex)
-	switch {
-	case err == nil:
-		recordID, payload, ok := decodeCertRecord(data)
-		if !ok {
-			// A record without an ID header can only have been filed under the
-			// hash of this ID, so the index binding is the identity.
-			return hashedIndex, data, nil
-		}
-		if recordID == id {
-			return hashedIndex, payload, nil
-		}
-		// Hash collision: this index belongs to a different certificate.
-	case !errors.Is(err, storage.ErrNotFound):
+	if err != nil {
 		return 0, nil, err
 	}
 
-	handleIndex, ok := t.indexFromNVHandle(id)
+	recordID, payload, ok := decodeCertRecord(data)
 	if !ok {
+		return 0, nil, &errs.Detail{
+			Err:    ErrCertRecordMissingHeader,
+			Detail: fmt.Sprintf("index %#x", hashedIndex),
+		}
+	}
+	if recordID != id {
+		// Hash collision: this index belongs to a different certificate.
 		return 0, nil, storage.ErrNotFound
 	}
 
-	data, err = t.readNVIndex(handleIndex)
-	if err != nil {
-		return 0, nil, err
-	}
-
-	_, payload, ok := decodeCertRecord(data)
-	if !ok {
-		return handleIndex, data, nil
-	}
-
-	return handleIndex, payload, nil
-}
-
-// indexFromNVHandle parses an NV handle string ("0x01800000") and reports
-// whether it names an index inside this storage's certificate range.
-func (t *TPM2CertStorage) indexFromNVHandle(id string) (uint32, bool) {
-	if !strings.HasPrefix(id, "0x") {
-		return 0, false
-	}
-
-	value, err := strconv.ParseUint(id[2:], 16, 32)
-	if err != nil {
-		return 0, false
-	}
-
-	index := uint32(value)
-	if index < t.baseIndex || index >= t.baseIndex+certIndexSpan {
-		return 0, false
-	}
-
-	return index, true
-}
-
-// formatNVHandle renders an NV index in the handle form accepted by lookupCert.
-func formatNVHandle(index uint32) string {
-	return fmt.Sprintf("0x%08x", index)
+	return hashedIndex, payload, nil
 }
 
 // recordKindHeader is the PEM header SaveCertChain stamps on every block of
@@ -672,8 +634,10 @@ func encodeCertRecord(id string, payload []byte) ([]byte, error) {
 }
 
 // decodeCertRecord splits an NV blob into its certificate ID and PEM payload.
-// The final return value reports whether the blob carries an ID header; blobs
-// written before the header existed are returned to the caller untouched.
+// The final return value reports whether the blob carries a well-formed ID
+// header; every record this storage writes has one, so a caller reading
+// false back is holding a blob this storage did not write, or one it wrote
+// and something else corrupted -- either way, not a shape to interpret.
 func decodeCertRecord(data []byte) (string, []byte, bool) {
 	if len(data) < certRecordHeaderSize || string(data[:len(certRecordMagic)]) != certRecordMagic {
 		return "", data, false
@@ -951,22 +915,24 @@ func (t *TPM2CertStorage) listCertsUnlocked() ([]string, error) {
 			continue
 		}
 
+		// A record without the required ID header was not written by this
+		// storage -- every record it writes carries one -- so it belongs to
+		// another subsystem sharing the NV index range, exactly like an
+		// index that cannot be read at all.
+		recordID, payload, ok := decodeCertRecord(data)
+		if !ok {
+			continue
+		}
+
 		// A chain record is not a certificate: the certificate reads treat
 		// it as absent, so listing it would hand a caller a key it cannot
 		// read. ListCerts lists certificate records only, as it does on
 		// every other store.
-		recordID, payload, ok := decodeCertRecord(data)
 		if recordIsChain(payload) {
 			continue
 		}
-		if ok {
-			certIDs = append(certIDs, recordID)
-			continue
-		}
 
-		// Legacy blob without an ID header: report the handle, which the
-		// lookup path resolves directly.
-		certIDs = append(certIDs, formatNVHandle(uint32(handle)))
+		certIDs = append(certIDs, recordID)
 	}
 
 	return certIDs, nil

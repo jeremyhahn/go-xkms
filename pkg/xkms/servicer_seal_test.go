@@ -392,17 +392,39 @@ func TestUnseal_InvalidKeyID_TPM2_ReturnsError(t *testing.T) {
 	assert.True(t, errors.As(err, &keyIDErr))
 }
 
-func TestUnseal_LegacyKeyID_SoftwareBackend_FallsBackToDefaults(t *testing.T) {
+// TestUnseal_LegacyKeyIDFormat_SoftwareBackend_ReturnsError proves the
+// removed dual reader: a KeyID in the legacy ID() format (storeType:keyType:
+// CN:algo, unparseable by ParseKeyID) is refused with ErrKeyIDParse, on a
+// software backend exactly as on TPM2 -- there is no longer a fallback to
+// the default sealing key when parsing fails, only when no KeyID is
+// supplied at all (see TestUnseal_NoKeyID_SoftwareBackend_UsesDefaultSealingKey).
+func TestUnseal_LegacyKeyIDFormat_SoftwareBackend_ReturnsError(t *testing.T) {
 	setupSealableService(t)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	// A legacy ID() format KeyID that ParseKeyID can't parse — software backend
-	// should fall back to default sealing key attributes rather than returning error.
-	resp, err := svc.Unseal(context.Background(), &transport.UnsealRequest{
+	_, err = svc.Unseal(context.Background(), &transport.UnsealRequest{
 		Backend:    "software",
 		Ciphertext: []byte("sealed"),
 		KeyID:      "software:encryption:xkms-sealing-key-software:ecdsa",
+	})
+	require.Error(t, err)
+	var keyIDErr *ErrKeyIDParse
+	assert.True(t, errors.As(err, &keyIDErr))
+}
+
+// TestUnseal_NoKeyID_SoftwareBackend_UsesDefaultSealingKey proves the
+// surviving default: a request with no KeyID at all still resolves the
+// well-known auto-generated sealing key, matching Seal's own behavior when
+// no KeyID is supplied.
+func TestUnseal_NoKeyID_SoftwareBackend_UsesDefaultSealingKey(t *testing.T) {
+	setupSealableService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	resp, err := svc.Unseal(context.Background(), &transport.UnsealRequest{
+		Backend:    "software",
+		Ciphertext: []byte("sealed"),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("decrypted-data"), resp.Plaintext)

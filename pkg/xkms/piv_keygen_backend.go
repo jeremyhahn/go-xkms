@@ -282,8 +282,8 @@ func (g *backendPIVKeyGenerator) ImportPIVKey(ctx context.Context, slot pivcert.
 	//
 	// It also means a slot key whose origin reads back unknown provably did
 	// not arrive by import, which is what lets attestation treat unknown as
-	// legacy instead of refusing every backend that has no provenance
-	// plumbing yet.
+	// safe instead of refusing every backend that has no provenance plumbing
+	// (see refuseUnattestableKey).
 	recorded, found, originErr := g.PIVKeyOrigin(slot, cn)
 	if originErr != nil {
 		return nil, errors.Join(ErrPIVImportProvenanceNotRecorded, originErr)
@@ -320,10 +320,10 @@ func (g *backendPIVKeyGenerator) PIVKeyOrigin(_ pivcert.PIVSlot, cn string) (typ
 	}
 	for _, ka := range stored {
 		if ka != nil && ka.CN == cn {
-			// The origin the backend read back is authoritative: the legacy
-			// inference for records that predate the field is applied once,
-			// where the record is read, so anything still unknown here was
-			// written without an origin by a build that had one.
+			// The origin the backend read back is authoritative: it is a
+			// plain read of the persisted record (see
+			// pkg/keyprovider/pkcs8.resolveKeyOrigin), with no inference
+			// substituting a different value.
 			return ka.KeyOrigin, true, nil
 		}
 	}

@@ -256,13 +256,14 @@ whether there is any evidence to check.
   anything that is not `types.KeyOriginGenerated`, not merely `imported`. A
   check that refuses only the known-bad values starts attesting silently the
   day a write path forgets to record an origin.
-- **The legacy inference lives at the metadata boundary, once.**
-  `pkcs8.resolveKeyOrigin` resolves a record with no origin field — schema < 2,
-  or no record at all — to `generated`, because such a key predates every PIV
-  import path. A schema-2 record with **no** origin is a defect rather than a
-  legacy key and stays unknown, so it is refused. Do not move this inference
-  into the attestation check; that is what makes it a fallback instead of a
-  bounded resolution.
+- **`resolveKeyOrigin` is a plain read, with no inference.** There is a
+  single supported `keyMetadata` schema; whatever the record's `key_origin`
+  field decodes to (including the zero value, when there is no record or the
+  field was never stamped) is what `pkg/keyprovider/pkcs8.resolveKeyOrigin`
+  returns. `refuseUnattestableKey` is the only place that decides what to do
+  with `types.KeyOriginUnknown` — it attests, per the bullet below — so a
+  future record shape must not reintroduce version-gated inference here to
+  influence that decision.
 - **"Not held here" is not "unknown origin".** `PIVKeyOrigin` returns a found
   flag. A generator holding no key for the slot reports not-found, and
   attestation of the stored certificate proceeds — refusing there would make

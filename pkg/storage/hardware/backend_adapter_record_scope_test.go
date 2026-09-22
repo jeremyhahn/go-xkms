@@ -233,18 +233,22 @@ func TestTPM2CertStorage_DeleteReleasesOnlyTheRecordOfItsKind(t *testing.T) {
 	require.ErrorIs(t, hw.DeleteCert("rewritten"), storage.ErrNotFound, "absent is ErrNotFound, not success")
 }
 
-// A record written before the chain marker existed carries no header. More
-// than one certificate in it can only be a chain; a single unmarked
-// certificate is the certificate it also is.
-func TestTPM2CertStorage_LegacyUnmarkedRecordsClassifyByMemberCount(t *testing.T) {
+// recordIsChain classifies purely by the explicit chain marker header, with
+// no member-count inference: an unmarked record is a certificate record
+// regardless of how many PEM blocks it holds. A record with more than one
+// unmarked block cannot occur through this package's own SaveCert (which
+// writes exactly one block), but if a record ends up in that shape by some
+// other means, it must still be read as a certificate, not guessed at as a
+// chain.
+func TestTPM2CertStorage_UnmarkedMultiBlockRecordIsNotAChain(t *testing.T) {
 	tpm := newMockTPM(t)
 	defer func() { _ = tpm.Close() }()
 	store, err := NewTPM2CertStorage(tpm, &TPM2CertStorageConfig{BaseIndex: 0x01800000, MaxCertSize: 4096})
 	require.NoError(t, err)
 	hw, ok := store.(*TPM2CertStorage)
 	require.True(t, ok)
-	leaf := generateSmallTestCert(t, "legacy-leaf")
-	issuer := generateSmallTestCert(t, "legacy-issuer")
+	leaf := generateSmallTestCert(t, "unmarked-leaf")
+	issuer := generateSmallTestCert(t, "unmarked-issuer")
 
 	unmarked := func(certs ...*x509.Certificate) []byte {
 		var out []byte
@@ -254,14 +258,16 @@ func TestTPM2CertStorage_LegacyUnmarkedRecordsClassifyByMemberCount(t *testing.T
 		return out
 	}
 	hw.mu.Lock()
-	require.NoError(t, hw.saveRecord("legacy-chain-rec", unmarked(leaf, issuer), "write"))
-	require.NoError(t, hw.saveRecord("legacy-cert", unmarked(leaf), "write"))
+	require.NoError(t, hw.saveRecord("unmarked-multi-rec", unmarked(leaf, issuer), "write"))
+	require.NoError(t, hw.saveRecord("unmarked-single-rec", unmarked(leaf), "write"))
 	hw.mu.Unlock()
 
-	require.ErrorIs(t, hw.DeleteCert("legacy-chain-rec"), storage.ErrNotFound)
-	require.NoError(t, hw.DeleteCertChain("legacy-chain-rec"))
-	require.ErrorIs(t, hw.DeleteCertChain("legacy-cert"), storage.ErrNotFound)
-	require.NoError(t, hw.DeleteCert("legacy-cert"))
+	// Both records are read as certificates: DeleteCertChain finds neither,
+	// DeleteCert releases both.
+	require.ErrorIs(t, hw.DeleteCertChain("unmarked-multi-rec"), storage.ErrNotFound)
+	require.NoError(t, hw.DeleteCert("unmarked-multi-rec"))
+	require.ErrorIs(t, hw.DeleteCertChain("unmarked-single-rec"), storage.ErrNotFound)
+	require.NoError(t, hw.DeleteCert("unmarked-single-rec"))
 }
 
 // The hybrid store over TPM2 needs no special case: each side answers for the

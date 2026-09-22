@@ -3049,21 +3049,21 @@ func TestTLSCertificate_NotFound_PrimaryAPI(t *testing.T) {
 // Test BackendFor
 // ========================================================================
 
-func TestBackendFor_WithStoreType(t *testing.T) {
+func TestBackendFor_WithBackendName(t *testing.T) {
 	software, pkcs11 := setupExtendedService(t)
 
-	// Test with PKCS11 StoreType
+	// Backend, not StoreType, is what BackendFor resolves the registry
+	// lookup by (go-xkms#312).
 	attrs := &types.KeyAttributes{
-		CN:        "test-key",
-		StoreType: "pkcs11",
+		CN:      "test-key",
+		Backend: "pkcs11",
 	}
 
 	ks, err := BackendFor(attrs)
 	assert.NoError(t, err)
 	assert.Equal(t, pkcs11, ks)
 
-	// Test with Software StoreType
-	attrs.StoreType = "software"
+	attrs.Backend = "software"
 	ks, err = BackendFor(attrs)
 	assert.NoError(t, err)
 	assert.Equal(t, software, ks)
@@ -3092,12 +3092,31 @@ func TestBackendFor_NilAttrs(t *testing.T) {
 	assert.Equal(t, software, ks)
 }
 
-func TestBackendFor_InvalidStoreType(t *testing.T) {
-	setupExtendedService(t)
+// TestBackendFor_InvalidStoreTypeUsesDefault proves StoreType is a label,
+// never a registry lookup key: an unrecognised StoreType with no Backend
+// set does not error, it resolves the default backend exactly like an
+// attrs with neither field set would.
+func TestBackendFor_InvalidStoreTypeUsesDefault(t *testing.T) {
+	software, _ := setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{
 		CN:        "test-key",
 		StoreType: "nonexistent",
+	}
+
+	ks, err := BackendFor(attrs)
+	assert.NoError(t, err)
+	assert.Equal(t, software, ks)
+}
+
+// TestBackendFor_InvalidBackendName proves an unresolvable Backend name
+// does error, unlike StoreType.
+func TestBackendFor_InvalidBackendName(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN:      "test-key",
+		Backend: "nonexistent",
 	}
 
 	_, err := BackendFor(attrs)
@@ -3660,66 +3679,69 @@ func TestGenerateSymmetricKey_InvalidTenantAccess(t *testing.T) {
 }
 
 // --- BackendFor error path for wrapper functions ---
-// These tests exercise the error from BackendFor when StoreType
-// doesn't match any registered backend.
+// These tests exercise the error from BackendFor when Backend doesn't match
+// any registered backend. StoreType no longer participates in backend
+// resolution (go-xkms#312) -- see TestBackendFor_InvalidStoreTypeUsesDefault
+// -- so an invalid StoreType alone no longer produces this error; Backend is
+// the field that does.
 
-func TestSigner_InvalidStoreType(t *testing.T) {
+func TestSigner_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	_, err := Signer(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := Signer(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestDecrypter_InvalidStoreType(t *testing.T) {
+func TestDecrypter_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	_, err := Decrypter(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := Decrypter(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestDeleteKey_InvalidStoreType(t *testing.T) {
+func TestDeleteKey_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	err := DeleteKey(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	err := DeleteKey(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestCertificate_InvalidStoreType(t *testing.T) {
+func TestCertificate_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	_, err := Certificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := Certificate(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestSaveCertificate_InvalidStoreType(t *testing.T) {
+func TestSaveCertificate_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	err := SaveCertificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"}, nil)
+	err := SaveCertificate(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"}, nil)
 	require.Error(t, err)
 }
 
-func TestDeleteCertificate_InvalidStoreType(t *testing.T) {
+func TestDeleteCertificate_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	err := DeleteCertificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	err := DeleteCertificate(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestCertificateChain_InvalidStoreType(t *testing.T) {
+func TestCertificateChain_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	_, err := CertificateChain(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := CertificateChain(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestSaveCertificateChain_InvalidStoreType(t *testing.T) {
+func TestSaveCertificateChain_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	err := SaveCertificateChain(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"}, nil)
+	err := SaveCertificateChain(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"}, nil)
 	require.Error(t, err)
 }
 
-func TestCertificateExists_InvalidStoreType(t *testing.T) {
+func TestCertificateExists_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	_, err := CertificateExists(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := CertificateExists(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 
-func TestTLSCertificate_InvalidStoreType(t *testing.T) {
+func TestTLSCertificate_InvalidBackendName(t *testing.T) {
 	setupService(t)
-	_, err := TLSCertificate(context.Background(), &types.KeyAttributes{CN: "key", StoreType: "nonexistent"})
+	_, err := TLSCertificate(context.Background(), &types.KeyAttributes{CN: "key", Backend: "nonexistent"})
 	require.Error(t, err)
 }
 

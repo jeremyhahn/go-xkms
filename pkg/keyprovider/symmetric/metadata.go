@@ -23,30 +23,15 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// keyMetadataSchemaVersion1 is the first schema version of keyMetadata. A
-// key ID string (format [partition:]sw:secret:cn:algorithm, see
-// Backend.ListKeys) has no room for anything beyond the fields it already
-// encodes, so any key attribute that must survive a restart -- currently
-// just Exportable -- needs a separate persisted record. Recording the
-// schema explicitly, rather than inferring the shape from which fields are
-// present, lets loadKeyMetadata evolve the format later without guessing
-// at an older record's intent.
-const keyMetadataSchemaVersion1 = 1
-
-// keyMetadataSchemaVersion2 adds Sensitive, the PKCS#11 CKA_SENSITIVE the
-// service layer checks before releasing a key's plaintext. It was added
-// because that decision was previously reachable only through the calling
-// module's own object store, which is client-side state.
-const keyMetadataSchemaVersion2 = 2
-
-// keyMetadataSchemaVersion3 adds TenantID and Partition. The identifier
-// cannot distinguish the two: a tenanted key without a partition and a
-// partitioned key without a tenant both produce five segments, and ListKeys'
-// segment-count parse read the tenant back as a partition — so a tenant's
-// imported key was invisible to that tenant's scoped view (go-xkms#162,
-// go-xkms#163). The record states both explicitly, exactly as the PKCS#8
-// provider's record has since its schema version 1.
-const keyMetadataSchemaVersion3 = 3
+// keyMetadataSchemaVersion is the schema version of keyMetadata: it carries
+// SchemaVersion, Exportable, Sensitive, TenantID and Partition. A key ID
+// string (format [partition:]sw:secret:cn:algorithm, see Backend.ListKeys)
+// has no room for anything beyond the fields it already encodes, so any key
+// attribute that must survive a restart needs this separate persisted
+// record. loadKeyMetadata requires an exact match: there is no older shape
+// to fall back to, and a record from any other version is a typed error
+// rather than a guess at its intent.
+const keyMetadataSchemaVersion = 3
 
 // keyMetadata is the versioned record persisted alongside a symmetric key's
 // raw bytes to carry attributes that the key ID string cannot encode. It is
@@ -73,19 +58,12 @@ type keyMetadata struct {
 	// at key creation or import time, and is what the service layer consults
 	// before releasing plaintext. Like Exportable, only newKeyMetadata sets it,
 	// so nothing downstream of creation can clear it.
-	//
-	// Present from schema version 2. A version 1 record has no such field, so it
-	// decodes to false and loadKeyMetadata corrects it to true -- see there for
-	// why an unrecorded sensitivity must be read as the protective value.
 	Sensitive bool `json:"sensitive"`
 
 	// TenantID is the tenant that owns the key, empty for an untenanted key.
-	// Present from schema version 3; readers must not trust it on an older
-	// record, where it merely decoded to its zero value.
 	TenantID string `json:"tenant_id,omitempty"`
 
-	// Partition is the key's partition, empty when unpartitioned. Present
-	// from schema version 3, under the same rule as TenantID.
+	// Partition is the key's partition, empty when unpartitioned.
 	Partition string `json:"partition,omitempty"`
 }
 
@@ -94,7 +72,7 @@ type keyMetadata struct {
 // only ever come from the caller's own attributes at creation time.
 func newKeyMetadata(attrs *types.KeyAttributes) *keyMetadata {
 	return &keyMetadata{
-		SchemaVersion: keyMetadataSchemaVersion3,
+		SchemaVersion: keyMetadataSchemaVersion,
 		Exportable:    attrs.Exportable,
 		Sensitive:     attrs.Sensitive,
 		TenantID:      attrs.TenantID,
@@ -161,75 +139,44 @@ func (b *Backend) SaveKeyMetadata(ctx context.Context, keyID string, attrs *type
 	return b.saveKeyMetadata(ctx, keyID, attrs)
 }
 
-// loadKeyMetadata retrieves metadata for keyID, falling back to the safe
-// defaults (Exportable=false, Sensitive=true) when no record exists or the
-// stored record cannot be parsed.
+// loadKeyMetadata retrieves metadata for keyID.
 //
-// A missing or corrupt record is intentionally not an error: every key
-// created before metadata persistence existed has no record at all, and
-// failing ListKeys or any other reader for that reason would break every
-// pre-existing key. Exportable=false is the same default attrs.Validate
-// already applies to a freshly constructed types.KeyAttributes, so keys
-// that predate this format behave exactly as they did before it existed.
-//
-// # Sensitive on a version 1 record
-//
-// A version 1 record predates the field and says nothing about sensitivity, so
-// it is read as sensitive: the safe value, not the convenient one.
-//
-// PKCS#11 makes this the only defensible reading. CKA_SENSITIVE carries
-// footnote 11 -- "attribute cannot be changed once set to CK_TRUE" -- and
-// CKA_EXTRACTABLE carries footnote 12, the same rule for CK_FALSE. Both
-// ratchets turn one way only, toward more protection, and a conforming token
-// has no operation that weakens a key. Supplying "not sensitive" for a key
-// whose sensitivity was never recorded would be this store asserting the less
-// protective of the two values on the key's behalf, which is the single
-// direction the specification does not permit.
-//
-// Nothing is stranded by this. ExportKeyMaterial releases plaintext, and
-// plaintext release is the path CKA_SENSITIVE exists to close; a version 1 key
-// with Exportable=true is still wrappable through C_WrapKey, which is governed
-// by CKA_EXTRACTABLE and is the ordinary way a key leaves an HSM. Failing
-// closed here withdraws the unsafe path and leaves the safe one intact.
-func (b *Backend) loadKeyMetadata(ctx context.Context, keyID string) *keyMetadata {
+// Every key this package creates writes its metadata record in the same
+// operation that writes the key material (see saveKeyMetadataOrRollback and
+// SaveKeyMetadata), so a missing record, an unparseable record, or a record
+// stamped with any schema version other than the current one means the key
+// was not created through a supported path. loadKeyMetadata reports that as
+// a typed error rather than substituting a guessed default: ListKeys and
+// every other caller must fail rather than silently misreport a key's
+// Exportable or Sensitive attribute.
+func (b *Backend) loadKeyMetadata(ctx context.Context, keyID string) (*keyMetadata, error) {
 	data, err := storage.GetKeyMetadata(ctx, b.storage, keyID)
 	if err != nil {
-		return legacyKeyMetadata()
+		if err == storage.ErrNotFound {
+			return nil, &errs.Detail{Err: ErrKeyMetadataNotFound, Detail: keyID}
+		}
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read key metadata for %s", keyID), Err: err}
 	}
 	var metadata keyMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return legacyKeyMetadata()
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to parse key metadata for %s", keyID), Err: err}
 	}
-	if metadata.SchemaVersion < keyMetadataSchemaVersion2 {
-		// The field is absent from the stored JSON, so it decoded to false.
-		// Restore the protective reading the record itself cannot supply.
-		metadata.Sensitive = true
+	if metadata.SchemaVersion != keyMetadataSchemaVersion {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"key metadata for %s uses unsupported schema version %d, want %d",
+			keyID, metadata.SchemaVersion, keyMetadataSchemaVersion)}
 	}
-	return &metadata
-}
-
-// legacyKeyMetadata is the record assumed for a key with no readable metadata:
-// one that predates metadata persistence entirely, or whose record cannot be
-// parsed. Both protections are at their safe setting, so a key the store cannot
-// describe is neither exportable nor revealable.
-func legacyKeyMetadata() *keyMetadata {
-	return &keyMetadata{
-		SchemaVersion: keyMetadataSchemaVersion1,
-		Exportable:    false,
-		Sensitive:     true,
-	}
+	return &metadata, nil
 }
 
 // deleteKeyMetadata removes the metadata record for keyID so a deleted key
-// leaves no orphaned record behind.
-//
-// storage.ErrNotFound is swallowed rather than propagated: keys created
-// before metadata persistence existed never had a record to begin with, and
-// DeleteKey must still succeed for them.
+// leaves no orphaned record behind. Every key created through this package
+// has a metadata record, so a missing record is reported as
+// ErrKeyMetadataNotFound rather than treated as the ordinary case.
 func (b *Backend) deleteKeyMetadata(ctx context.Context, keyID string) error {
 	if err := storage.DeleteKeyMetadata(ctx, b.storage, keyID); err != nil {
 		if err == storage.ErrNotFound {
-			return nil
+			return &errs.Detail{Err: ErrKeyMetadataNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
 	}

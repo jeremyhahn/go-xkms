@@ -684,16 +684,14 @@ func BackendFor(attrs *types.KeyAttributes) (Backend, error) {
 // always been service.backends[name], and StoreType is a label the resolved
 // backend reports, not a second name for the same map.
 //
-// attrs.Backend, when set, names the registered backend directly. Keys
-// persisted, listed, or parsed before that field existed carry no Backend
-// value, and for those StoreType is the only surviving pointer to one -- it
-// happens to equal the registered name for every backend registered under a
-// store-type keyword, which was the only shape that existed before this
-// field did. That fallback is permanent, not a migration step: no backend's
-// storage format is rewritten by Backend's addition, so a key with no
-// Backend on read stays that way for as long as it is not rewritten by its
-// own backend, and BackendFor must keep resolving it the way every caller
-// already depended on.
+// attrs.Backend, when set, names the registered backend directly. Every
+// producer of KeyAttributes that has a name to give it sets this field --
+// ParseKeyIDToAttributes from the Key ID string's backend segment, the
+// Simplified API's ListKeys from the registry name it listed under (see
+// stampBackendName) -- so there is no supported path left that carries a
+// backend selection only in StoreType. Attributes with no Backend resolve
+// to DefaultBackend, exactly as attributes with neither field set always
+// have.
 func resolveBackendFromAttrs(attrs *types.KeyAttributes) (Backend, error) {
 	if attrs == nil {
 		return DefaultBackend()
@@ -701,10 +699,6 @@ func resolveBackendFromAttrs(attrs *types.KeyAttributes) (Backend, error) {
 
 	if attrs.Backend != "" {
 		return GetBackend(attrs.Backend)
-	}
-
-	if attrs.StoreType != "" {
-		return GetBackend(string(attrs.StoreType))
 	}
 
 	return DefaultBackend()

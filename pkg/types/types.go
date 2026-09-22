@@ -164,10 +164,14 @@ var Partitions = []Partition{
 type KeyOrigin string
 
 const (
-	// KeyOriginUnknown is the zero value. It is what a key record written
-	// before this field existed reads back as. Such a record predates any
-	// import path, so the key cannot have been imported — but unknown is the
-	// absence of a claim, not a claim of generation.
+	// KeyOriginUnknown is the zero value. It is what a key with no persisted
+	// origin reads back as -- currently every backend except pkcs8, since
+	// only pkcs8 records this field (pkg/keyprovider/pkcs8.resolveKeyOrigin
+	// is a plain read of that record, with no inference substituting a
+	// different value). ImportPIVKey verifies provenance was recorded and
+	// rolls back otherwise, so a key with no provenance plumbing at all
+	// cannot have arrived by import — but unknown is the absence of a claim,
+	// not a claim of generation.
 	KeyOriginUnknown KeyOrigin = ""
 
 	// KeyOriginGenerated marks a key the backend produced in place. Such a key
@@ -1041,21 +1045,17 @@ type KeyAttributes struct {
 	// config's `name:`, e.g. "token-a" for a second PKCS#11 token. It is
 	// what BackendFor and getBackendForKID key their lookup on
 	// (go-xkms#312): the registry has always been keyed by name
-	// (service.backends[name]), but before this field existed the only
-	// value carried on attributes for that purpose was StoreType, which
-	// only ever matched the registered name by coincidence, for backends
-	// registered under a store-type keyword.
+	// (service.backends[name]), and StoreType is a label the resolved
+	// backend reports about itself, never a second name for the same map.
 	//
-	// Empty on attributes read back from a key persisted before this field
-	// existed, and on attributes ListKeys reconstructs from backend-local
-	// storage, which has no way to learn its own registered name. Both are
-	// permanent, not a migration step to be completed later: no backend's
-	// storage format is rewritten by this field's addition, and a caller
-	// that already has the name (everything that addresses a backend by
-	// name in the first place) can still supply it directly. BackendFor and
-	// getBackendForKID fall back to treating StoreType as the name in
-	// exactly that terminal case, which reproduces the behaviour every
-	// caller depended on before Backend existed.
+	// A backend's own ListKeys has no way to learn its own registered name,
+	// so the Simplified API's top-level ListKeys stamps this field itself
+	// from the name it listed under (see stampBackendName); a Key ID string
+	// carries only a store-type keyword, so ParseKeyIDToAttributes sets this
+	// from that keyword. Empty when neither producer supplied it resolves to
+	// DefaultBackend, not to a StoreType-keyed guess: there is no supported
+	// producer of KeyAttributes left that carries a backend selection only
+	// in StoreType.
 	Backend string `json:"backend,omitempty" yaml:"backend,omitempty" mapstructure:"backend" cbor:"backend,omitempty"`
 
 	// ECCAttributes contains ECC-specific configuration
@@ -1123,11 +1123,10 @@ type KeyAttributes struct {
 	// same reason. A provenance field a caller can set is worse than no field,
 	// because it looks authoritative and is not.
 	//
-	// The zero value is KeyOriginUnknown, which is what a key record written
-	// before this field existed reads back as. Such a key predates any import
-	// path, so it cannot be an imported key; consumers may treat unknown as
-	// not-imported, but must not treat it as a positive assertion of
-	// generation.
+	// The zero value is KeyOriginUnknown, which is what a key with no
+	// persisted origin reads back as. Consumers may treat unknown as
+	// not-imported (see KeyOriginUnknown), but must not treat it as a
+	// positive assertion of generation.
 	KeyOrigin KeyOrigin `json:"key_origin,omitempty" yaml:"key_origin,omitempty"`
 
 	// AttestLevel records what is known about the key's backing at the

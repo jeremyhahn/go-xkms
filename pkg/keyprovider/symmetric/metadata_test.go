@@ -50,7 +50,7 @@ func TestNewKeyMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			attrs := &types.KeyAttributes{CN: "k", Exportable: tt.exportable, Sensitive: tt.sensitive}
 			meta := newKeyMetadata(attrs)
-			assert.Equal(t, keyMetadataSchemaVersion3, meta.SchemaVersion)
+			assert.Equal(t, keyMetadataSchemaVersion, meta.SchemaVersion)
 			assert.Equal(t, tt.exportable, meta.Exportable)
 			assert.Equal(t, tt.sensitive, meta.Sensitive)
 		})
@@ -77,43 +77,7 @@ func TestBackend_saveKeyMetadata(t *testing.T) {
 		assert.True(t, meta.Exportable)
 		assert.True(t, meta.Sensitive,
 			"Sensitive decides whether plaintext is ever released, so it has to reach the record")
-		assert.Equal(t, keyMetadataSchemaVersion3, meta.SchemaVersion)
-	})
-
-	// A version 1 record predates the Sensitive field, so the JSON has no such
-	// key and it decodes to false. loadKeyMetadata must not pass that on: false
-	// is the *less* protective value, and PKCS#11 v3.2 §4.9 footnote 11 makes
-	// CKA_SENSITIVE a one-way ratchet ("cannot be changed once set to CK_TRUE").
-	// Supplying "not sensitive" for a key that never recorded its sensitivity
-	// would be this store weakening a key on its own initiative, which is the
-	// one direction the specification forbids.
-	//
-	// The assertion is on loadKeyMetadata rather than on json.Unmarshal because
-	// the raw decode genuinely does yield false; the correction is the seam's
-	// job, and testing the decode alone would pin the bug instead of the fix.
-	t.Run("a version 1 record is read as sensitive", func(t *testing.T) {
-		tb := createTestBackend(t)
-		defer func() { _ = tb.Close() }()
-
-		require.NoError(t, storage.SaveKeyMetadata(context.Background(), tb.storage,
-			"v1-id", []byte(`{"schema_version":1,"exportable":true}`)))
-
-		meta := tb.loadKeyMetadata(context.Background(), "v1-id")
-		assert.True(t, meta.Exportable,
-			"the record does state exportability, so that much must be honoured")
-		assert.True(t, meta.Sensitive,
-			"a record that says nothing about sensitivity must be read as protective")
-	})
-
-	// The same rule for a key with no record at all, which is every key created
-	// before metadata persistence existed.
-	t.Run("a key with no record is read as sensitive", func(t *testing.T) {
-		tb := createTestBackend(t)
-		defer func() { _ = tb.Close() }()
-
-		meta := tb.loadKeyMetadata(context.Background(), "never-saved")
-		assert.False(t, meta.Exportable)
-		assert.True(t, meta.Sensitive)
+		assert.Equal(t, keyMetadataSchemaVersion, meta.SchemaVersion)
 	})
 
 	t.Run("bad input: empty key ID", func(t *testing.T) {
@@ -126,8 +90,8 @@ func TestBackend_saveKeyMetadata(t *testing.T) {
 	})
 }
 
-// TestBackend_loadKeyMetadata tests the success and backward-compatibility
-// (bad-input) paths of loadKeyMetadata directly.
+// TestBackend_loadKeyMetadata tests the success and bad-input paths of
+// loadKeyMetadata directly.
 func TestBackend_loadKeyMetadata(t *testing.T) {
 	t.Run("success: round trip", func(t *testing.T) {
 		tb := createTestBackend(t)
@@ -136,19 +100,23 @@ func TestBackend_loadKeyMetadata(t *testing.T) {
 		attrs := &types.KeyAttributes{CN: "round-trip", Exportable: true}
 		require.NoError(t, tb.saveKeyMetadata(context.Background(), "round-trip-id", attrs))
 
-		meta := tb.loadKeyMetadata(context.Background(), "round-trip-id")
+		meta, err := tb.loadKeyMetadata(context.Background(), "round-trip-id")
+		require.NoError(t, err)
 		assert.True(t, meta.Exportable)
 	})
 
-	t.Run("bad input: no record for key ID", func(t *testing.T) {
+	// A key with no record at all -- there is no supported way to produce
+	// one, since every key this package creates writes its record in the
+	// same operation -- is refused with the typed sentinel rather than
+	// defaulted to a safe-but-invented shape.
+	t.Run("bad input: no record for key ID is a typed error", func(t *testing.T) {
 		tb := createTestBackend(t)
 		defer func() { _ = tb.Close() }()
 
-		// No metadata was ever saved for this ID -- this is exactly the
-		// state of every key that predates metadata persistence. It must
-		// not be an error, and it must default to the safe Exportable=false.
-		meta := tb.loadKeyMetadata(context.Background(), "never-saved-id")
-		assert.False(t, meta.Exportable)
+		meta, err := tb.loadKeyMetadata(context.Background(), "never-saved-id")
+		require.Error(t, err)
+		assert.Nil(t, meta)
+		assert.ErrorIs(t, err, ErrKeyMetadataNotFound)
 	})
 
 	t.Run("bad input: corrupt record", func(t *testing.T) {
@@ -157,8 +125,26 @@ func TestBackend_loadKeyMetadata(t *testing.T) {
 
 		require.NoError(t, storage.SaveKeyMetadata(context.Background(), tb.storage, "corrupt-id", []byte("not json")))
 
-		meta := tb.loadKeyMetadata(context.Background(), "corrupt-id")
-		assert.False(t, meta.Exportable)
+		meta, err := tb.loadKeyMetadata(context.Background(), "corrupt-id")
+		require.Error(t, err)
+		assert.Nil(t, meta)
+		assert.Contains(t, err.Error(), "failed to parse key metadata")
+	})
+
+	// The removed multi-version format: a record stamped with a schema
+	// version other than the current one is refused with a typed error
+	// rather than read through version-specific inference.
+	t.Run("bad input: unsupported schema version is a typed error", func(t *testing.T) {
+		tb := createTestBackend(t)
+		defer func() { _ = tb.Close() }()
+
+		require.NoError(t, storage.SaveKeyMetadata(context.Background(), tb.storage,
+			"old-schema-id", []byte(`{"schema_version":1,"exportable":true}`)))
+
+		meta, err := tb.loadKeyMetadata(context.Background(), "old-schema-id")
+		require.Error(t, err)
+		assert.Nil(t, meta)
+		assert.Contains(t, err.Error(), "unsupported schema version")
 	})
 }
 
@@ -176,13 +162,15 @@ func TestBackend_deleteKeyMetadata(t *testing.T) {
 		assert.ErrorIs(t, err, storage.ErrNotFound)
 	})
 
-	t.Run("no record present is not an error", func(t *testing.T) {
-		// DeleteKey must succeed for keys that predate metadata persistence,
-		// which never had a metadata record to remove in the first place.
+	// Every key this package creates has a metadata record, so a missing
+	// record is not the ordinary case: it is reported as the typed sentinel.
+	t.Run("no record present is a typed error", func(t *testing.T) {
 		tb := createTestBackend(t)
 		defer func() { _ = tb.Close() }()
 
-		assert.NoError(t, tb.deleteKeyMetadata(context.Background(), "never-existed"))
+		err := tb.deleteKeyMetadata(context.Background(), "never-existed")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrKeyMetadataNotFound)
 	})
 
 	t.Run("bad input: storage error surfaces as a wrapped error", func(t *testing.T) {
@@ -238,17 +226,16 @@ func TestGenerateSymmetricKey_ExportableSurvivesReload(t *testing.T) {
 	assert.Equal(t, rawKey, material)
 }
 
-// TestListKeys_KeyWithNoMetadataRecord_DefaultsNonExportable proves the
-// backward-compatibility path: a key written directly to storage (as every
-// key created before metadata persistence existed would have been, since
-// nothing wrote a metadata record for it) must still list cleanly, with
-// Exportable defaulting to false rather than ListKeys failing outright.
-func TestListKeys_KeyWithNoMetadataRecord_DefaultsNonExportable(t *testing.T) {
+// TestListKeys_KeyWithNoMetadataRecord_FailsWithTypedError proves ListKeys
+// refuses a key with no metadata record rather than silently defaulting its
+// Exportable/Sensitive attributes: there is no supported way for a key
+// created through this package to be missing one.
+func TestListKeys_KeyWithNoMetadataRecord_FailsWithTypedError(t *testing.T) {
 	tb := createTestBackend(t)
 	defer func() { _ = tb.Close() }()
 
 	attrs := &types.KeyAttributes{
-		CN:                 "pre-existing-key",
+		CN:                 "no-metadata-key",
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
@@ -258,15 +245,12 @@ func TestListKeys_KeyWithNoMetadataRecord_DefaultsNonExportable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Bypass GenerateSymmetricKey entirely so no metadata record is ever
-	// written -- this is exactly the on-disk state of a key that predates
-	// this feature.
+	// written -- this is the state loadKeyMetadata treats as invalid.
 	require.NoError(t, storage.SaveKey(context.Background(), tb.storage, attrs.ID(), keyData))
 
-	keys, err := tb.ListKeys(context.Background())
-	require.NoError(t, err)
-	require.Len(t, keys, 1)
-	assert.Equal(t, "pre-existing-key", keys[0].CN)
-	assert.False(t, keys[0].Exportable)
+	_, err = tb.ListKeys(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrKeyMetadataNotFound)
 }
 
 // TestDeleteKey_RemovesMetadataRecord proves DeleteKey leaves no orphaned
@@ -383,35 +367,23 @@ func TestImportKey_TenantSurvivesReload(t *testing.T) {
 	assert.Empty(t, reloadedAttrs.Partition, "the tenant must not be misread as a partition")
 }
 
-// TestListKeys_PreVersion3RecordKeepsParsedValues pins the legacy behavior:
-// a record written before schema version 3 carries no tenant or partition, so
-// ListKeys must keep whatever the identifier parse produced rather than
-// overwrite it with the record's zero values. Only a record that actually
-// states the fields may replace the guess.
-func TestListKeys_PreVersion3RecordKeepsParsedValues(t *testing.T) {
+// TestListKeys_OldSchemaRecordIsRefused proves a record written under a
+// removed schema version (here, the pre-TenantID/Partition shape) is refused
+// with the typed error rather than read through version-specific inference:
+// there is a single supported schema version, and an older record is invalid
+// data, not a compatibility case to interpret.
+func TestListKeys_OldSchemaRecordIsRefused(t *testing.T) {
 	tb := createTestBackend(t)
 	defer func() { _ = tb.Close() }()
 
-	// A five-segment identifier, stored with a version 2 record: the parse
-	// reads the first segment as the partition, exactly as it always has.
+	// A five-segment identifier, stored with a removed version 2 record
+	// (no tenant_id/partition fields).
 	const keyID = "legacy-part:software:secret:legacy-key:aes256-gcm"
 	require.NoError(t, storage.SaveKey(context.Background(), tb.storage, keyID, []byte("opaque")))
 	require.NoError(t, storage.SaveKeyMetadata(context.Background(), tb.storage,
 		keyID, []byte(`{"schema_version":2,"exportable":true,"sensitive":false}`)))
 
-	reloaded, err := tb.ListKeys(context.Background())
-	require.NoError(t, err)
-
-	var reloadedAttrs *types.KeyAttributes
-	for _, a := range reloaded {
-		if a.CN == "legacy-key" {
-			reloadedAttrs = a
-		}
-	}
-	require.NotNil(t, reloadedAttrs, "legacy key must be present in ListKeys")
-	assert.Equal(t, types.Partition("legacy-part"), reloadedAttrs.Partition,
-		"a pre-version-3 record must not overwrite the parsed partition")
-	assert.Empty(t, reloadedAttrs.TenantID,
-		"a pre-version-3 record states no tenant and must not invent one")
-	assert.True(t, reloadedAttrs.Exportable)
+	_, err := tb.ListKeys(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported schema version")
 }

@@ -390,32 +390,30 @@ func (s *ModuleStorage) ResetFailedAttempt(slotID SlotID, userType UserType) err
 	return nil
 }
 
-// LoadFailedAttempts returns the durable failed-attempt counters for a token,
-// preferring the dedicated counter keys and falling back to the token record's
-// embedded snapshot for tokens persisted before the counters were split out.
-// When it falls back, it seeds the dedicated key (write-if-absent) so subsequent
-// atomic increments build on the migrated value rather than restarting from zero.
-func (s *ModuleStorage) LoadFailedAttempts(slotID SlotID, recordUser, recordSO uint32) (user, so uint32, err error) {
+// LoadFailedAttempts returns the durable failed-attempt counters for a
+// token, read directly from the dedicated counter keys. An absent key is
+// zero attempts: there is no other source to seed it from.
+func (s *ModuleStorage) LoadFailedAttempts(slotID SlotID) (user, so uint32, err error) {
 	if s.backend == nil {
-		return recordUser, recordSO, nil
+		return 0, 0, nil
 	}
-	user, err = s.loadOrSeedAttempt(slotID, CKU_USER, recordUser)
+	user, err = s.loadAttempt(slotID, CKU_USER)
 	if err != nil {
 		return 0, 0, err
 	}
-	so, err = s.loadOrSeedAttempt(slotID, CKU_SO, recordSO)
+	so, err = s.loadAttempt(slotID, CKU_SO)
 	if err != nil {
 		return 0, 0, err
 	}
 	return user, so, nil
 }
 
-// loadOrSeedAttempt reads one dedicated counter, seeding it from the record
-// snapshot when absent so a pre-split token keeps the budget it had already spent.
-func (s *ModuleStorage) loadOrSeedAttempt(slotID SlotID, userType UserType, recordValue uint32) (uint32, error) {
+// loadAttempt reads one dedicated counter key, reporting zero attempts when
+// the key is absent.
+func (s *ModuleStorage) loadAttempt(slotID SlotID, userType UserType) (uint32, error) {
 	key, ok := failedAttemptKey(slotID, userType)
 	if !ok {
-		return recordValue, nil
+		return 0, nil
 	}
 
 	s.mu.Lock()
@@ -428,26 +426,10 @@ func (s *ModuleStorage) loadOrSeedAttempt(slotID SlotID, userType UserType, reco
 	if err == nil {
 		return parseAttemptCounter(data)
 	}
-	if !errors.Is(err, storage.ErrNotFound) {
-		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: err}
+	if errors.Is(err, storage.ErrNotFound) {
+		return 0, nil
 	}
-
-	// Absent: migrate from the record snapshot. PutIfAbsent makes the seed
-	// idempotent if two clients start together; the loser re-reads the winner's
-	// value below.
-	seed := []byte(strconv.FormatUint(uint64(recordValue), 10))
-	stored, err := s.backend.PutIfAbsent(ctx, key, seed)
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to seed lockout counter", Err: err}
-	}
-	if stored {
-		return recordValue, nil
-	}
-	existing, err := s.backend.Get(ctx, key)
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to read seeded lockout counter", Err: err}
-	}
-	return parseAttemptCounter(existing)
+	return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: err}
 }
 
 // LoadTokenState loads the token state for a slot.

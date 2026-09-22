@@ -109,7 +109,7 @@ material on every login once the level is on record.
 | other PIV tools stopped recognising the card | something took a standard slot | move it to a retired slot |
 | the attestation certificate in `f9` "proves" nothing | it was never chain-verified | verify it against the manufacturer chain |
 | attestation fails on a slot that clearly holds a certificate | the key was **imported**, and an imported key cannot be attested | expected — generate the key in the slot if you need attestation |
-| an attestation does not prove the key is unique to this card | it predates provenance recording | keys written by older builds could not be imported; generate in-slot when you need exclusivity guaranteed |
+| an attestation does not prove the key is unique to this card | this backend does not record how the key arrived | only the software (PKCS#8) backend records provenance today; a hardware backend's attestation still proves residency, not exclusivity |
 
 ## Where to go next
 

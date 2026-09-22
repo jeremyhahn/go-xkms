@@ -87,7 +87,7 @@ func TestMarshalNil(t *testing.T) {
 }
 
 func TestUnmarshalInvalidVersion(t *testing.T) {
-	data := []byte{0x02} // Invalid version
+	data := []byte{0xFF} // Invalid version
 	_, err := Unmarshal(data)
 	if err == nil {
 		t.Error("Expected error for invalid version")
@@ -149,8 +149,16 @@ func TestMarshalEdgeCases(t *testing.T) {
 }
 
 func TestUnmarshalEdgeCases(t *testing.T) {
+	t.Run("truncated at GCM nonce mode marker", func(t *testing.T) {
+		data := []byte{0x02} // Just version, no marker byte
+		_, err := Unmarshal(data)
+		if err == nil {
+			t.Error("Expected error for truncated data at GCM nonce mode marker")
+		}
+	})
+
 	t.Run("truncated at algorithm length", func(t *testing.T) {
-		data := []byte{0x01} // Just version, no algorithm length
+		data := []byte{0x02, 0x00} // Version + marker, no algorithm length
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at algorithm length")
@@ -158,7 +166,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at algorithm data", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x05} // Version + algo length = 5, but no algo data
+		data := []byte{0x02, 0x00, 0x00, 0x05} // Version + marker + algo length = 5, but no algo data
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at algorithm")
@@ -166,7 +174,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at nonce length", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x03, 'A', 'E', 'S'} // Version + algo, no nonce length
+		data := []byte{0x02, 0x00, 0x00, 0x03, 'A', 'E', 'S'} // Version + marker + algo, no nonce length
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at nonce length")
@@ -174,7 +182,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at nonce data", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x0C} // + nonce len = 12, no data
+		data := []byte{0x02, 0x00, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x0C} // + nonce len = 12, no data
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at nonce")
@@ -182,7 +190,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at tag length", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2} // Version + algo + nonce, no tag len
+		data := []byte{0x02, 0x00, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2} // Version + marker + algo + nonce, no tag len
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at tag length")
@@ -190,7 +198,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at tag data", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2, 0x00, 0x04} // + tag len = 4, no data
+		data := []byte{0x02, 0x00, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2, 0x00, 0x04} // + tag len = 4, no data
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at tag")
@@ -198,7 +206,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at ciphertext length", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2, 0x00, 0x02, 3, 4} // No ciphertext len
+		data := []byte{0x02, 0x00, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2, 0x00, 0x02, 3, 4} // No ciphertext len
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at ciphertext length")
@@ -206,7 +214,7 @@ func TestUnmarshalEdgeCases(t *testing.T) {
 	})
 
 	t.Run("truncated at ciphertext data", func(t *testing.T) {
-		data := []byte{0x01, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2, 0x00, 0x02, 3, 4, 0x00, 0x00, 0x00, 0x05} // cipher len = 5, no data
+		data := []byte{0x02, 0x00, 0x00, 0x03, 'A', 'E', 'S', 0x00, 0x02, 1, 2, 0x00, 0x02, 3, 4, 0x00, 0x00, 0x00, 0x05} // cipher len = 5, no data
 		_, err := Unmarshal(data)
 		if err == nil {
 			t.Error("Expected error for truncated data at ciphertext")
@@ -719,8 +727,8 @@ func TestMarshalAllFields(t *testing.T) {
 	}
 
 	// Verify version byte
-	if marshaled[0] != 0x01 {
-		t.Errorf("Expected version 0x01, got 0x%02x", marshaled[0])
+	if marshaled[0] != 0x02 {
+		t.Errorf("Expected version 0x02, got 0x%02x", marshaled[0])
 	}
 
 	// Round-trip test
@@ -1008,9 +1016,16 @@ func TestUnmarshalErrorMessages(t *testing.T) {
 		assert.Contains(t, err.Error(), "unsupported version")
 	})
 
+	t.Run("removed version 0x01 names the removed format", func(t *testing.T) {
+		_, err := Unmarshal([]byte{0x01})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "removed")
+		assert.Contains(t, err.Error(), "version 1")
+	})
+
 	t.Run("truncated algorithm length mentions failure", func(t *testing.T) {
-		// Version byte only, no room for the uint16 algorithm length
-		_, err := Unmarshal([]byte{0x01, 0x00})
+		// Version + marker only, no room for the uint16 algorithm length
+		_, err := Unmarshal([]byte{0x02, 0x00, 0x00})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "algorithm")
 	})
@@ -1018,7 +1033,8 @@ func TestUnmarshalErrorMessages(t *testing.T) {
 	t.Run("truncated ciphertext data mentions failure", func(t *testing.T) {
 		// Valid header up through ciphertext length, but ciphertext data missing
 		data := []byte{
-			0x01,       // version
+			0x02,       // version
+			0x00,       // GCM nonce mode marker (explicit)
 			0x00, 0x01, // algo len = 1
 			'A',        // algo
 			0x00, 0x01, // nonce len = 1
@@ -1194,7 +1210,8 @@ func TestMarshalWireFormatStructure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Expected wire layout:
-	// [0x01]                      version
+	// [0x02]                      version
+	// [0x00]                      GCM nonce mode marker (explicit)
 	// [0x00, 0x03]                algorithm length = 3
 	// [0x41, 0x45, 0x53]          "AES"
 	// [0x00, 0x02]                nonce length = 2
@@ -1204,7 +1221,8 @@ func TestMarshalWireFormatStructure(t *testing.T) {
 	// [0x00, 0x00, 0x00, 0x03]    ciphertext length = 3
 	// [0xDD, 0xEE, 0xFF]          ciphertext
 	expected := []byte{
-		0x01,       // version
+		0x02,       // version
+		0x00,       // GCM nonce mode marker
 		0x00, 0x03, // algorithm length
 		0x41, 0x45, 0x53, // "AES"
 		0x00, 0x02, // nonce length
@@ -1221,30 +1239,30 @@ func TestMarshalWireFormatStructure(t *testing.T) {
 // TestUnmarshalPartialByte verifies unmarshal rejects data that has only a
 // partial uint16 length field (1 byte instead of 2).
 func TestUnmarshalPartialLengthFields(t *testing.T) {
-	t.Run("single byte after version for algorithm length", func(t *testing.T) {
-		// Version + only 1 byte of 2-byte algorithm length
-		_, err := Unmarshal([]byte{0x01, 0x00})
+	t.Run("single byte after marker for algorithm length", func(t *testing.T) {
+		// Version + marker + only 1 byte of 2-byte algorithm length
+		_, err := Unmarshal([]byte{0x02, 0x00, 0x00})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "algorithm length")
 	})
 
 	t.Run("partial nonce length", func(t *testing.T) {
-		// Version + algo (len=0) + only 1 byte of nonce length
-		_, err := Unmarshal([]byte{0x01, 0x00, 0x00, 0x00})
+		// Version + marker + algo (len=0) + only 1 byte of nonce length
+		_, err := Unmarshal([]byte{0x02, 0x00, 0x00, 0x00, 0x00})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "nonce")
 	})
 
 	t.Run("partial tag length", func(t *testing.T) {
-		// Version + algo (len=0) + nonce (len=0) + 1 byte of tag length
-		_, err := Unmarshal([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00})
+		// Version + marker + algo (len=0) + nonce (len=0) + 1 byte of tag length
+		_, err := Unmarshal([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "tag")
 	})
 
 	t.Run("partial ciphertext length", func(t *testing.T) {
-		// Version + algo (len=0) + nonce (len=0) + tag (len=0) + 2 bytes of 4-byte cipher length
-		_, err := Unmarshal([]byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		// Version + marker + algo (len=0) + nonce (len=0) + tag (len=0) + 2 bytes of 4-byte cipher length
+		_, err := Unmarshal([]byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ciphertext")
 	})
@@ -1324,11 +1342,11 @@ func TestMarshalUnmarshalRoundTrip_UnicodeAlgorithm(t *testing.T) {
 	assert.Equal(t, data.Algorithm, unmarshaled.Algorithm)
 }
 
-// TestMarshal_ExplicitNonceModeWritesVersion1 pins that the zero-value
+// TestMarshal_ExplicitNonceModeWritesVersion2 pins that the zero-value
 // GCMNonceMode (the mode every ciphertext had before FIPS 140-only support)
-// produces byte-identical version-1 output, so this feature changes nothing
-// about a ciphertext that never uses the random-nonce construction.
-func TestMarshal_ExplicitNonceModeWritesVersion1(t *testing.T) {
+// still writes the current wire version with an explicit-mode marker byte:
+// Marshal has no other version to fall back to.
+func TestMarshal_ExplicitNonceModeWritesVersion2(t *testing.T) {
 	data := &types.EncryptedData{
 		Algorithm:    string(types.SymmetricAES256GCM),
 		Nonce:        []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
@@ -1339,12 +1357,13 @@ func TestMarshal_ExplicitNonceModeWritesVersion1(t *testing.T) {
 
 	marshaled, err := Marshal(data)
 	require.NoError(t, err)
-	assert.Equal(t, byte(0x01), marshaled[0], "explicit nonce mode must write the legacy version-1 layout")
+	assert.Equal(t, byte(0x02), marshaled[0], "Marshal always writes the current wire version")
+	assert.Equal(t, byte(0x00), marshaled[1], "explicit nonce mode marks its marker byte 0x00")
 }
 
 // TestMarshalUnmarshal_RandomNonceModeRoundTrips verifies GCMNonceModeRandom
-// survives Marshal/Unmarshal, upgrading the wire version so a reader can
-// recover which AEAD construction produced the ciphertext.
+// survives Marshal/Unmarshal, with the marker byte recording which AEAD
+// construction produced the ciphertext.
 func TestMarshalUnmarshal_RandomNonceModeRoundTrips(t *testing.T) {
 	data := &types.EncryptedData{
 		Algorithm:    string(types.SymmetricAES256GCM),
@@ -1356,7 +1375,7 @@ func TestMarshalUnmarshal_RandomNonceModeRoundTrips(t *testing.T) {
 
 	marshaled, err := Marshal(data)
 	require.NoError(t, err)
-	require.Equal(t, byte(0x02), marshaled[0], "a non-explicit nonce mode must upgrade to version 2")
+	require.Equal(t, byte(0x02), marshaled[0], "Marshal always writes the current wire version")
 	require.Equal(t, byte(0x01), marshaled[1], "the marker byte must name the random-nonce mode")
 
 	unmarshaled, err := Unmarshal(marshaled)
@@ -1368,16 +1387,14 @@ func TestMarshalUnmarshal_RandomNonceModeRoundTrips(t *testing.T) {
 	assert.Equal(t, data.Ciphertext, unmarshaled.Ciphertext)
 }
 
-// TestUnmarshal_LegacyVersion1GoldenFixture is a golden fixture pinned to
-// the exact version-1 wire bytes this package has always produced. It must
-// keep decoding, byte for byte, forever: every ciphertext ever written by a
-// version of this package before types.GCMNonceMode existed is a version-1
-// blob on disk today, and this is the only guarantee that it keeps opening.
-func TestUnmarshal_LegacyVersion1GoldenFixture(t *testing.T) {
-	// Captured from TestMarshalWireFormatStructure's expected output: the
-	// version-1 layout this package produced before this change, for
+// TestUnmarshal_RemovedVersion1IsRejected proves the removed version-1 wire
+// layout (the shape this package produced before types.GCMNonceMode
+// existed, with no marker byte) is refused with a typed error naming the
+// removed format, rather than silently decoded through a dual reader.
+func TestUnmarshal_RemovedVersion1IsRejected(t *testing.T) {
+	// The exact version-1 bytes this package used to produce for
 	// Algorithm="AES", Nonce=[0xAA,0xBB], Tag=[0xCC], Ciphertext=[0xDD,0xEE,0xFF].
-	golden := []byte{
+	removed := []byte{
 		0x01,       // version
 		0x00, 0x03, // algorithm length
 		0x41, 0x45, 0x53, // "AES"
@@ -1389,21 +1406,10 @@ func TestUnmarshal_LegacyVersion1GoldenFixture(t *testing.T) {
 		0xDD, 0xEE, 0xFF, // ciphertext
 	}
 
-	unmarshaled, err := Unmarshal(golden)
-	require.NoError(t, err, "a version-1 golden fixture must always decode")
-
-	assert.Equal(t, types.GCMNonceModeExplicit, unmarshaled.GCMNonceMode,
-		"a version-1 blob predates GCMNonceMode and must decode as explicit")
-	assert.Equal(t, "AES", unmarshaled.Algorithm)
-	assert.Equal(t, []byte{0xAA, 0xBB}, unmarshaled.Nonce)
-	assert.Equal(t, []byte{0xCC}, unmarshaled.Tag)
-	assert.Equal(t, []byte{0xDD, 0xEE, 0xFF}, unmarshaled.Ciphertext)
-
-	// Re-marshaling an explicit-mode struct must reproduce the identical
-	// version-1 bytes: round-tripping a legacy blob must not upgrade it.
-	remarshaled, err := Marshal(unmarshaled)
-	require.NoError(t, err)
-	assert.Equal(t, golden, remarshaled, "re-marshaling a version-1 blob must reproduce it exactly")
+	_, err := Unmarshal(removed)
+	require.Error(t, err, "a version-1 blob must be refused, not silently decoded")
+	assert.Contains(t, err.Error(), "removed")
+	assert.Contains(t, err.Error(), "version 1")
 }
 
 // TestUnmarshal_UnknownNonceModeMarkerIsRejected is the bad-input case for

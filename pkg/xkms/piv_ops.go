@@ -89,14 +89,12 @@ var (
 	ErrPIVKeyImportedNotAttestable = errors.New("piv: an imported key cannot be attested: attestation would assert residency but not exclusivity")
 
 	// ErrPIVKeyOriginUnknown is returned when attestation is requested for a
-	// slot whose key is present but carries no recorded origin.
-	//
-	// This is not the legacy case: a record written before the origin field
-	// existed resolves to generated where it is read, because such a key
-	// predates every import path. Reaching this error means a key record was
-	// written by a build that had the field and did not set it, which is a
-	// defect in that write path. Attestation fails closed rather than
-	// inheriting the trust of a genuinely old key.
+	// slot whose key reports an origin value this build does not recognise --
+	// a vocabulary from a later version, or a defect that wrote something
+	// other than "generated" or "imported". It is distinct from
+	// KeyOriginUnknown (no origin recorded at all, which is the ordinary
+	// state for every non-pkcs8 backend and is not refused; see
+	// refuseUnattestableKey).
 	ErrPIVKeyOriginUnknown = errors.New("piv: the key's origin was not recorded, so it cannot be attested")
 
 	// ErrPIVImportProvenanceNotRecorded is returned when a backend accepted an
@@ -255,13 +253,11 @@ func SignPIVSlot(_ context.Context, req *transport.PIVSignRequest) (*transport.P
 // decided once, by the code path that placed it, and can never become false.
 //
 // It fails CLOSED on the origin: anything that is not KeyOriginGenerated is
-// refused, rather than refusing only the values known to be bad. A check that
-// refuses only "imported" would silently start attesting the day a new write
-// path forgot to record an origin, and nothing would fail or warn. The
-// inference that covers keys written before the field existed is applied once,
-// where the record is read (pkg/keyprovider/pkcs8.resolveKeyOrigin), so it is
-// a documented resolution with a version guard rather than a permanent
-// fallback inside this security check.
+// refused, rather than refusing only the values known to be bad -- except
+// KeyOriginUnknown, which is deliberately not refused; see the switch below.
+// A check that refuses only "imported" would silently start attesting the
+// day a new write path forgot to record an origin, and nothing would fail
+// or warn.
 //
 // Whether a key is HELD here is a separate question from its origin. A slot
 // may carry a certificate whose key this process does not have — the key lives
@@ -295,10 +291,11 @@ func refuseUnattestableKey(backendName string, slot pivcert.PIVSlot) error {
 		// ImportPIVKey reads the provenance back after writing it and rolls
 		// the import back if the backend did not record it
 		// (ErrPIVImportProvenanceNotRecorded), so a backend with no provenance
-		// plumbing cannot be holding an imported key at all. Combined with the
-		// legacy resolution applied where the record is read, an unrecorded
-		// origin is a key that predates the field or a backend that does not
-		// yet persist it — neither of which is an import.
+		// plumbing cannot be holding an imported key at all. Only pkcs8
+		// persists an origin today (pkg/keyprovider/pkcs8.resolveKeyOrigin is
+		// a plain read of that record, with no inference); every other
+		// backend -- PKCS#11, TPM2, the cloud KMSes -- reports
+		// KeyOriginUnknown for every key it holds, generated or not.
 		//
 		// Refusing here instead would make every slot on such a backend
 		// unattestable, including keys generated in the slot, which is the

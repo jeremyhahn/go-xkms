@@ -124,27 +124,36 @@ func TestBackendFor_ResolvesNonKeywordBackendName(t *testing.T) {
 	assert.Same(t, want, got, "Backend must be the field BackendFor resolves by")
 }
 
-// TestBackendFor_LegacyAttributesWithoutBackend_FallsBackToStoreType covers
-// the permanent compatibility path: a key persisted before the Backend field
-// existed carries no Backend value, and StoreType is the only surviving
-// pointer to which backend it lives in. That fallback only ever resolves
-// correctly for a backend registered under a name that is also a store-type
-// keyword -- which is every backend that could have produced such a key,
-// since Backend did not exist yet.
-func TestBackendFor_LegacyAttributesWithoutBackend_FallsBackToStoreType(t *testing.T) {
-	setupTokenABackendService(t)
+// TestBackendFor_StoreTypeAloneIsNotAName proves the StoreType-as-name
+// fallback is gone: attributes that carry only StoreType, with no Backend,
+// resolve to DefaultBackend rather than to whichever registered backend
+// happens to report that StoreType. Registering "token-a" as the default
+// makes the point unambiguous -- if any StoreType-keyed guess survived, this
+// would resolve to "software" (the backend that actually reports
+// StoreSoftware) instead of the configured default.
+func TestBackendFor_StoreTypeAloneIsNotAName(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
 
-	want, err := LookupBackendForTest("software")
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends: map[string]Backend{
+			"software": newRealSoftwareBackend(t),
+			"token-a":  newRealSoftwareBackend(t),
+		},
+		DefaultBackend: "token-a",
+	}))
+
+	want, err := LookupBackendForTest("token-a")
 	require.NoError(t, err)
 
 	attrs := &types.KeyAttributes{
-		CN:        "legacy-key",
+		CN:        "no-backend-key",
 		StoreType: types.StoreSoftware,
 		// Backend intentionally left empty.
 	}
 	got, err := BackendFor(attrs)
 	require.NoError(t, err)
-	assert.Same(t, want, got)
+	assert.Same(t, want, got, "StoreType alone must not resolve a name; DefaultBackend must win")
 }
 
 // TestBackendFor_NoBackendOrStoreType_UsesDefault covers the case neither
@@ -160,14 +169,14 @@ func TestBackendFor_NoBackendOrStoreType_UsesDefault(t *testing.T) {
 	assert.Same(t, want, got)
 }
 
-// TestGetBackendForKID_LegacyFallback pins that the Key-ID-string entry
-// point resolves through the same fallback BackendFor does: the 4-part kid
-// format's backend segment is restricted to store-type keywords
-// (ParseKeyIDToAttributes never sets Backend), so every kid string resolves
-// through the legacy StoreType-as-name path. That is not a regression --
-// the kid format could never address a non-keyword name before #312 either
-// -- but it must keep resolving a keyword-named backend exactly as before.
-func TestGetBackendForKID_LegacyFallback(t *testing.T) {
+// TestGetBackendForKID_SetsBackendFromKeyword pins that the Key-ID-string
+// entry point resolves through Backend, not a StoreType fallback:
+// ParseKeyIDToAttributes sets attrs.Backend from the kid's backend segment,
+// so getBackendForKID resolves the registry entry directly by that name.
+// The 4-part kid format is still restricted to store-type keywords -- it has
+// no segment for a non-keyword registry name like "token-a" -- but the name
+// it does carry now reaches BackendFor as Backend, not as a StoreType guess.
+func TestGetBackendForKID_SetsBackendFromKeyword(t *testing.T) {
 	setupTokenABackendService(t)
 
 	want, err := LookupBackendForTest("software")
@@ -176,7 +185,7 @@ func TestGetBackendForKID_LegacyFallback(t *testing.T) {
 	got, attrs, err := getBackendForKID("software:::mykey")
 	require.NoError(t, err)
 	assert.Same(t, want, got)
-	assert.Empty(t, attrs.Backend, "the 4-part kid format has no segment for a registry name")
+	assert.Equal(t, "software", attrs.Backend, "the kid's backend segment must set Backend directly")
 	assert.Equal(t, types.StoreSoftware, attrs.StoreType)
 }
 

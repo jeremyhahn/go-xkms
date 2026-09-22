@@ -51,6 +51,13 @@ var (
 	// ErrInvalidCertificate indicates certificate is invalid or corrupted
 	ErrInvalidCertificate = errors.New("invalid or corrupted certificate")
 
+	// ErrCertRecordMissingHeader is returned when a TPM2 NV blob at a
+	// certificate index does not carry the required magic header and ID
+	// length field. Every record this storage writes carries one; a blob
+	// without it is not a supported shape to read, not a legacy layout to
+	// infer an identity for.
+	ErrCertRecordMissingHeader = errors.New("TPM2 NV certificate record is missing its magic header")
+
 	// ErrTokenFull indicates PKCS#11 token has no free object slots
 	ErrTokenFull = errors.New("PKCS#11 token is full")
 

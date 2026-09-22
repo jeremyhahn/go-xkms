@@ -21,6 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
 	"strconv"
@@ -277,21 +278,25 @@ func TestTPM2CertStorage_MalformedID(t *testing.T) {
 	}
 }
 
-// TestTPM2CertStorage_LegacyBlobRoundTrip covers records written before the ID
-// header existed: they are listed by NV handle and both the handle form and
-// the original ID resolve to the stored certificate.
-func TestTPM2CertStorage_LegacyBlobRoundTrip(t *testing.T) {
+// TestTPM2CertStorage_HeaderlessBlobIsRefused covers the removed pre-header
+// record shape: an NV blob with no magic header is not listed and not
+// resolved by GetCert -- it is skipped by ListCerts (indistinguishable from
+// another subsystem's use of the same NV index range) and refused with
+// ErrCertRecordMissingHeader when addressed directly by the ID that hashes
+// to its index. There is no dual reader and no NV-handle addressing form
+// left to fall back to.
+func TestTPM2CertStorage_HeaderlessBlobIsRefused(t *testing.T) {
 	tpm := newMockTPM(t)
 	defer func() { _ = tpm.Close() }()
 
 	store := newTPM2Store(t, tpm)
 	defer func() { _ = store.Close() }()
 
-	cert := generateNamedCert(t, "Legacy Cert", 99)
-	legacyPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	cert := generateNamedCert(t, "Headerless Cert", 99)
+	headerlessPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 
-	index := store.certIndexFromID("legacy-id")
-	if err := store.writeNVIndex(index, legacyPEM); err != nil {
+	index := store.certIndexFromID("headerless-id")
+	if err := store.writeNVIndex(index, headerlessPEM); err != nil {
 		t.Fatalf("writeNVIndex() error = %v", err)
 	}
 
@@ -299,28 +304,12 @@ func TestTPM2CertStorage_LegacyBlobRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListCerts() error = %v", err)
 	}
-
-	want := formatNVHandle(index)
-	if len(ids) != 1 || ids[0] != want {
-		t.Fatalf("ListCerts() = %v, want [%s]", ids, want)
+	if len(ids) != 0 {
+		t.Fatalf("ListCerts() = %v, want none: a headerless record is not this storage's", ids)
 	}
 
-	// The handle form reported by ListCerts resolves.
-	byHandle, err := store.GetCert(ids[0])
-	if err != nil {
-		t.Fatalf("GetCert(%q) error = %v", ids[0], err)
-	}
-	if byHandle.Subject.CommonName != "Legacy Cert" {
-		t.Errorf("GetCert(handle).CommonName = %q, want Legacy Cert", byHandle.Subject.CommonName)
-	}
-
-	// The original ID still resolves through the hashed index.
-	byID, err := store.GetCert("legacy-id")
-	if err != nil {
-		t.Fatalf("GetCert(legacy-id) error = %v", err)
-	}
-	if byID.Subject.CommonName != "Legacy Cert" {
-		t.Errorf("GetCert(legacy-id).CommonName = %q, want Legacy Cert", byID.Subject.CommonName)
+	if _, err := store.GetCert("headerless-id"); !errors.Is(err, ErrCertRecordMissingHeader) {
+		t.Fatalf("GetCert(headerless-id) error = %v, want ErrCertRecordMissingHeader", err)
 	}
 }
 
@@ -480,42 +469,6 @@ func TestEncodeCertRecord_IDTooLong(t *testing.T) {
 	}
 }
 
-// TestTPM2CertStorage_IndexFromNVHandle covers handle parsing bounds.
-func TestTPM2CertStorage_IndexFromNVHandle(t *testing.T) {
-	tpm := newMockTPM(t)
-	defer func() { _ = tpm.Close() }()
-
-	store := newTPM2Store(t, tpm)
-	defer func() { _ = store.Close() }()
-
-	tests := []struct {
-		name      string
-		id        string
-		wantIndex uint32
-		wantOK    bool
-	}{
-		{"base index", "0x01800000", 0x01800000, true},
-		{"in range", "0x01a00000", 0x01a00000, true},
-		{"upper bound exclusive", "0x01c00000", 0, false},
-		{"below range", "0x01700000", 0, false},
-		{"no prefix", "01800000", 0, false},
-		{"not hex", "0xnothex", 0, false},
-		{"plain id", "root-ca", 0, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			index, ok := store.indexFromNVHandle(tt.id)
-			if ok != tt.wantOK {
-				t.Fatalf("indexFromNVHandle(%q) ok = %v, want %v", tt.id, ok, tt.wantOK)
-			}
-			if index != tt.wantIndex {
-				t.Errorf("indexFromNVHandle(%q) = %#x, want %#x", tt.id, index, tt.wantIndex)
-			}
-		})
-	}
-}
-
 // TestTPM2CertStorage_SaveCertTooLargeWithHeader verifies the record header is
 // counted against the NV size budget: a certificate that fits with one byte to
 // spare on its own no longer fits once the ID header is prepended.
@@ -668,9 +621,12 @@ func TestTPM2CertStorage_ClosedStorage(t *testing.T) {
 	}
 }
 
-// TestTPM2CertStorage_GetByNVHandle verifies a record with an ID header is also
-// reachable through its NV handle.
-func TestTPM2CertStorage_GetByNVHandle(t *testing.T) {
+// TestTPM2CertStorage_NVHandleAddressingIsRemoved proves the removed
+// NV-handle addressing form ("0x01800000") is no longer a special ID shape:
+// a record is only reachable by the ID it was saved under. A handle string
+// is now just an ordinary (and, absent a coincidental match, unresolvable)
+// ID like any other.
+func TestTPM2CertStorage_NVHandleAddressingIsRemoved(t *testing.T) {
 	tpm := newMockTPM(t)
 	defer func() { _ = tpm.Close() }()
 
@@ -681,21 +637,19 @@ func TestTPM2CertStorage_GetByNVHandle(t *testing.T) {
 		t.Fatalf("SaveCert() error = %v", err)
 	}
 
-	handle := formatNVHandle(store.certIndexFromID("handle-cert"))
+	handle := fmt.Sprintf("0x%08x", store.certIndexFromID("handle-cert"))
 
-	cert, err := store.GetCert(handle)
+	if _, err := store.GetCert(handle); !errors.Is(err, storagepkg.ErrNotFound) {
+		t.Fatalf("GetCert(%q) error = %v, want ErrNotFound: NV-handle addressing must not resolve the record", handle, err)
+	}
+
+	// The ID it was actually saved under still works.
+	cert, err := store.GetCert("handle-cert")
 	if err != nil {
-		t.Fatalf("GetCert(%q) error = %v", handle, err)
+		t.Fatalf("GetCert(handle-cert) error = %v", err)
 	}
 	if cert.Subject.CommonName != "By Handle" {
 		t.Errorf("CommonName = %q, want By Handle", cert.Subject.CommonName)
-	}
-
-	// The record is a certificate, so addressing it as a chain, by handle
-	// as by id, is absence: the kind rule does not depend on how the record
-	// was named.
-	if _, err := store.GetCertChain(handle); !errors.Is(err, storagepkg.ErrNotFound) {
-		t.Fatalf("GetCertChain(%q) error = %v, want ErrNotFound for a certificate record", handle, err)
 	}
 }
 
