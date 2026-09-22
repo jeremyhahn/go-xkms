@@ -343,27 +343,18 @@ pin:
     backoff: true
 ```
 
-## Unified PIN Mode (xkey)
+## `xkey --unified-pin` (out of scope for this page)
 
-When running the xkey FIDO2 daemon with `--unified-pin` (default: `true`), PIN changes made via CLI commands propagate to the FIDO2 authenticator and PKCS#11 token automatically. The PINCoordinator uses an observer pattern to fan out changes across all registered subsystems.
-
-Standalone CLI commands (without the FIDO2 daemon running) only affect the file-based PIN state. Cross-system synchronization requires the daemon to be active so that the coordinator and its subscribers are wired up.
-
-**Examples:**
-
-```bash
-# Start the FIDO2 daemon with cross-system PIN sync (default)
-sudo xkey fido2 --unified-pin
-
-# Start with independent PINs per subsystem
-sudo xkey fido2 --unified-pin=false
-```
-
-See [Unified PIN Architecture](../../architecture/pin-architecture.md) for the full design.
+This page is about the go-xkms **server** CLI, `xkmsctl pin` (see the scope
+note at the top); `--unified-pin` is an `xkey fido2` flag, not one of these
+commands. It does not synchronize a "PINCoordinator" across FIDO2, PKCS#11
+and file PIN systems — no such coordinator exists. It propagates the *xkey*
+host PIN service's user PIN to the virtual FIDO2 authenticator's own CTAP2
+PIN hash; see
+[`../../fido2/daemon-configuration.md`](../../fido2/daemon-configuration.md)
+and go-xkms#307 for what actually governs a PIN across `xkey`'s subsystems.
 
 ## See Also
 
-- [PIN Management Architecture](../../seal/pin.md)
-- [Unified PIN Architecture](../../architecture/pin-architecture.md)
 - [Barrier Commands](barrier.md)
 - [Configuration Reference](../../configuration/README.md)

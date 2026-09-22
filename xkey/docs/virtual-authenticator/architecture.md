@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Architecture
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## The problem
 
@@ -111,8 +111,11 @@ bridge, for driving browser tests without a real device on the bus.
 - **`--attestation` decides what the authenticator says about itself.** It does
   not claim to be someone else's hardware.
 - **The PIN protects the authenticator, not the machine.** `--unified-pin`
-  (default true) shares one PIN across xkey's subsystems, which is a usability
-  decision with a blast-radius consequence.
+  (default true) propagates the host PIN service's user PIN to this
+  authenticator's own CTAP2 PIN hash (it does not synchronize a separate
+  PKCS#11 or file PIN store — go-xkms has exactly one governing PIN backend
+  per device, see go-xkms#307), which is a usability decision with a
+  blast-radius consequence: the one PIN a person types opens both.
 - **`--cdp` opens a bridge to a Chrome debugging port** (default `9222`).
   Anything that can reach that port can drive the authenticator.
 

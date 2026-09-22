@@ -161,9 +161,14 @@ type GUIConfig struct {
 	// Empty means auto-select the best available.
 	SealerBackend string `mapstructure:"sealer_backend" json:"sealer_backend,omitempty"`
 
-	// PINStrategy records which PIN backend was successfully configured
-	// ("tpm2" or "software"). On restart, initPINService uses this to
-	// restore the correct backend without re-probing auth.
+	// PINStrategy is DEPRECATED (go-xkms#307): the governing PIN strategy
+	// now lives at <dataDir>/pin/strategy, shared with the headless daemon
+	// and `xkey pin` (see pkg/gui/services.ResolvePINBackend), because a
+	// GUI-only record let a PIN set through the GUI's TPM2 wizard
+	// authenticate against a different backend than `xkey pin` or the
+	// daemon read. This field is read once, to migrate an older install's
+	// value into the shared location; initPINService no longer writes it.
+	// Kept for that migration and for backward JSON compatibility only.
 	PINStrategy string `mapstructure:"pin_strategy" json:"pin_strategy,omitempty"`
 
 	// APIExplorerSandboxPolicy is the iframe sandbox directives for the API Explorer preview.

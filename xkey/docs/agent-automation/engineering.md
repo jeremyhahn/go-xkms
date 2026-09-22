@@ -1,6 +1,6 @@
 # Agent Automation — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 ## Exported surface
 
@@ -46,6 +46,20 @@ Takes the PIN flags above plus `--socket` (auto-detect). Errors:
 `ErrUnlockStillLocked`, `ErrUnlockIncomplete`. The last two are what a script
 gates on: the daemon granted the unlock but still reports itself locked, or
 released some subsystems and left others (the barrier) locked.
+
+The PIN `unlock` verifies against is resolved by `xkey/pkg/pinstrategy`
+(go-xkms#307): the persisted strategy at `<dataDir>/pin/strategy`, read by
+the GUI, `xkey extension serve` and `xkey pin` alike, so the same value
+authenticates everywhere. `xkey extension serve` resolves it once at
+startup; when the persisted strategy needs a provider unavailable on that
+host (typically `tpm2` on a container with no TPM), the daemon refuses to
+start at all — `ErrServePINManagerInitFailed` wrapping
+`*pinstrategy.ProviderUnavailableError` — rather than starting against a
+different backend than the one governing the device. `unlock` against such
+a host then fails closed as `ErrUnlockDaemonNotRunning`, not
+`ErrUnlockFailed`: there is no daemon to answer. An automation pipeline
+driving a device it did not provision itself should check `xkey pin
+status` for the governing strategy before relying on `unlock` there.
 
 ### `xkey touch` (`xkey/cmd/xkey/cmd/touch.go`)
 

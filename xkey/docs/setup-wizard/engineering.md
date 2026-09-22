@@ -138,6 +138,35 @@ return an error.
 `setup_complete` in the GUI config file (`~/.xkey/gui.json`). `false` shows
 the wizard; `true` bypasses it. Nothing about PINs is written there.
 
+## Shared governing PIN strategy (go-xkms#307)
+
+The wizard sets `SOPin`/`UserPin` through whichever `qrdbsdk.PINBackend`
+`App.initPINService` wired into the `PINService` setter before `ApplySetup`
+runs — software, or TPM2 when a Platform SRK is enrolled. That backend
+choice is what governs, and it must be the *same* choice `xkey pin` and the
+headless daemon see, or a PIN the wizard just set fails to verify through
+the other entry point. Before this fix the GUI alone persisted its choice,
+in `GUIConfig.PINStrategy` (`~/.config/xkey/gui.json`); `xkey pin` and the
+daemon always hard-coded software, so a PIN enrolled through a TPM2 wizard
+run authenticated through the GUI but not through either of them.
+
+The choice now lives at `<dataDir>/pin/strategy`, beside the PIN state
+itself, written and read by `xkey/pkg/pinstrategy` — a plain package with
+no cgo or Wails dependency, so the GUI, `xkey pin` and `xkey extension
+serve` all resolve it the same way (`pinstrategy.Resolve`,
+`services.ResolvePINBackend` on the GUI side). `App.initPINService`
+migrates an older install's `GUIConfig.PINStrategy` into that file once,
+the first time it runs against a data directory with no strategy record of
+its own yet; `GUIConfig.PINStrategy` is otherwise read-only from then on.
+
+A consequence for this package: `ApplySetup`'s TPM2 path (`SetTPMService`,
+`ApplySOProvisioning`'s hierarchy-auth step) must run after
+`initPINService` has resolved and persisted a strategy, or the wizard would
+enroll a PIN against a backend that has not yet been recorded as
+governing. The existing step ordering (barrier, then data directory
+initialization, then PIN calls) already satisfies this — `initPINService`
+runs once per app startup, well before the wizard's PIN steps.
+
 ### `require_platform_policy` is reserved, not wired (#313)
 
 The enterprise wizard no longer offers a "Require platform policy" choice,

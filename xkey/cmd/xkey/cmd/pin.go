@@ -29,6 +29,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 )
 
 const (
@@ -40,6 +41,15 @@ const (
 var (
 	// pinDataDir is the --data-dir flag for pin commands.
 	pinDataDir string
+
+	// pinTPMDevice is the --tpm-device flag for pin commands: the device
+	// path probed when the persisted governing strategy is tpm2. Device
+	// selection follows the same --tpm-device/TPM_DEVICE_PATH priority as
+	// "xkey barrier" and "xkey extension serve" (see resolveTPMDevice).
+	pinTPMDevice string
+
+	// pinTPMSimulator is the --tpm-simulator flag for pin commands.
+	pinTPMSimulator bool
 
 	// pinStdinMu guards pinStdin and pinStdinReader.
 	pinStdinMu sync.Mutex
@@ -129,6 +139,10 @@ func init() {
 	// Add persistent flags available to all pin subcommands.
 	pinCmd.PersistentFlags().StringVar(&pinDataDir, "data-dir", "",
 		"data directory for PIN state (default: ~/.xkey/data)")
+	pinCmd.PersistentFlags().StringVar(&pinTPMDevice, "tpm-device", "",
+		"TPM device path probed when the governing PIN strategy is tpm2 (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
+	pinCmd.PersistentFlags().BoolVar(&pinTPMSimulator, "tpm-simulator", false,
+		"use the in-process TPM simulator instead of a hardware device (requires a simulator build)")
 }
 
 // getPINStdinReader returns the shared buffered reader for piped stdin.
@@ -193,7 +207,7 @@ func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
 			Err:       err,
 		}
 	}
-	return newPINService(pinDir)
+	return newPINService(dataDir)
 }
 
 // openPINService creates a qrdbsdk.PINService over an existing PIN state
@@ -207,43 +221,68 @@ func openPINService(dataDir string) (*qrdbsdk.PINService, error) {
 	if err != nil || !info.IsDir() {
 		return nil, &PINStoreNotFoundError{Dir: pinDir}
 	}
-	return newPINService(pinDir)
+	return newPINService(dataDir)
 }
 
-// newPINService wires the file storage, PIN store adapter and software
-// backend into a qrdbsdk.PINService over pinDir.
-func newPINService(pinDir string) (*qrdbsdk.PINService, error) {
-	fileStore, err := xkms.NewFileStorageBackend(pinDir)
-	if err != nil {
-		return nil, &PINCommandError{
-			Operation: "create_service",
-			Err:       err,
-		}
-	}
+// cliSoftwarePINProvider persists software PIN state under pinDir and
+// routes through the PIN adapter so the qrdb software backend observes
+// the canonical pin.ErrNotFound on a fresh install rather than xkey's
+// storage.ErrNotFound (which it would treat as a load failure).
+type cliSoftwarePINProvider struct {
+	pinDir string
+}
 
-	// Wrap the file storage in the PIN adapter so the qrdb software backend
-	// observes the canonical pin.ErrNotFound on a fresh install rather than
-	// xkey's storage.ErrNotFound (which it would treat as a load failure).
-	pinStore, err := xkms.NewPINStoreAdapter(fileStore)
+// Storage implements xkms.PINSoftwareProvider.
+func (p cliSoftwarePINProvider) Storage() (qrdbsdk.PINStorage, error) {
+	fileStore, err := xkms.NewFileStorageBackend(p.pinDir)
 	if err != nil {
-		return nil, &PINCommandError{
-			Operation: "create_service",
-			Err:       err,
-		}
+		return nil, err
 	}
+	return xkms.NewPINStoreAdapter(fileStore)
+}
 
-	hashConfig := qrdbsdk.AutoDetectHashConfig()
-	backend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
-	if err != nil {
-		return nil, &PINCommandError{
-			Operation: "create_service",
-			Err:       err,
-		}
-	}
+// HashConfig implements xkms.PINSoftwareProvider.
+func (p cliSoftwarePINProvider) HashConfig() qrdbsdk.PINHashConfig {
+	return qrdbsdk.AutoDetectHashConfig()
+}
 
+// newPINService resolves the PIN backend that governs the PIN state under
+// dataDir through the shared pinstrategy package — the same resolution
+// rule the xKey GUI and the headless daemon use — and wires it into a
+// qrdbsdk.PINService.
+//
+// A PIN store with no persisted strategy yet (a fresh install, or PIN
+// state that predates this package) auto-selects hardware-first and
+// persists the choice. A PIN store whose persisted strategy needs a
+// provider unavailable in this build/host (a device set up through the
+// GUI's TPM2 wizard, probed here without a TPM present) returns
+// *pinstrategy.ProviderUnavailableError instead of silently answering
+// from the software store: that silent fallback is the bug go-xkms#307
+// reports.
+func newPINService(dataDir string) (*qrdbsdk.PINService, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelWarn,
 	}))
+
+	pinDir := pinStateDir(dataDir)
+
+	persisted, loadErr := pinstrategy.Load(pinDir)
+	persistedTPM2 := loadErr == nil && persisted == qrdbsdk.PINStrategyTPM2
+
+	backend, _, err := pinstrategy.Resolve(pinstrategy.Config{
+		PINDir: pinDir,
+		PINSelectConfig: xkms.PINSelectConfig{
+			TPM:      newPINTPMProvider(logger, dataDir, pinTPMDevice, pinTPMSimulator, persistedTPM2),
+			Software: cliSoftwarePINProvider{pinDir: pinDir},
+			Logger:   logger,
+		},
+	})
+	if err != nil {
+		return nil, &PINCommandError{
+			Operation: "create_service",
+			Err:       err,
+		}
+	}
 
 	return qrdbsdk.NewPINService(backend, logger), nil
 }

@@ -21,7 +21,10 @@ import (
 // PIN-backend selection surface re-exported so the xkey GUI/CLI choose and
 // construct a software or TPM-platform PIN backend through the SDK. The
 // pinselect Config identifier is prefixed PINSelect* to stay unambiguous in
-// the flat SDK namespace.
+// the flat SDK namespace. xkey depends only on this package (sdk/go) and
+// its subpackages, never on go-xkms/pkg/* directly (Architecture Gates);
+// every pinselect/pintpm2 symbol a consumer needs is re-exported here
+// rather than imported from pkg/* downstream.
 
 // PINSelectConfig configures PIN-backend selection.
 type PINSelectConfig = pinselect.Config
@@ -35,5 +38,23 @@ type PINTPMProvider = pinselect.TPMProvider
 // SelectPINBackend selects a PIN backend per the given configuration.
 var SelectPINBackend = pinselect.Select
 
+// ErrPINSelectNoSoftwareProvider is returned by SelectPINBackend when
+// Config.Software is nil. The software backend is the mandatory fallback;
+// without it SelectPINBackend cannot guarantee a usable PIN backend.
+var ErrPINSelectNoSoftwareProvider = pinselect.ErrNoSoftwareProvider
+
+// PINSelectSoftwareStorageError wraps a failure opening the software PIN
+// store or constructing the software backend during SelectPINBackend.
+type PINSelectSoftwareStorageError = pinselect.SoftwareStorageError
+
 // TPMPlatformAuthProvider supplies TPM platform authorization for PIN-gated keys.
 type TPMPlatformAuthProvider = pintpm2.PlatformAuthProvider
+
+// PINTPMBackend is the TPM 2.0-backed PINBackend implementation: user PIN
+// verification is delegated to a TPMPlatformAuthProvider (a TPM
+// PlatformSRK's password auth), with no SO PIN of its own.
+type PINTPMBackend = pintpm2.TPM2Backend
+
+// NewPINTPMBackend creates a PINTPMBackend that delegates PIN verification
+// to the given TPMPlatformAuthProvider.
+var NewPINTPMBackend = pintpm2.NewTPM2Backend

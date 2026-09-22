@@ -62,7 +62,7 @@ Any other `--storage` value is rejected. `file` requires `--storage-path`, and
 |------|---------|-------------|
 | `--pin` | `true` | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--set-pin` | (none) | Set initial PIN (requires `--pin`) |
-| `--unified-pin` | `true` | Synchronize the PIN across FIDO2, PKCS#11, and file PIN systems |
+| `--unified-pin` | `true` | Propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash (not a PKCS#11/file sync -- go-xkms has one governing PIN backend per device, see go-xkms#307) |
 
 The Security Officer PIN is **not** configured from `xkey fido2`. It is managed
 by the `xkey pin` command group — `xkey pin set-so`, `xkey pin change-so`,

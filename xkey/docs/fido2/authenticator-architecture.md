@@ -167,18 +167,22 @@ Platform                Authenticator
    |<------------------------|
 ```
 
-### Unified PIN Coordination
+### PIN hash propagation from the host PIN service
 
-The authenticator's `pinCoordinator` field dispatches PIN change notifications to
-registered subscribers (e.g., KeyManager). `SetPIN` and `ChangePIN` in
-`cmd_clientpin.go` fire async notifications after state is persisted, providing
-both the new PIN and its hash. `handleVendorResetUserPIN` fires hash-only
-notifications for admin-initiated resets. When a PIN change occurs while the
-KeyManager is locked, `PINSyncPending` is set on the authenticator state;
-`KeyManager.UnlockWithSOPIN()` resolves the pending flag and re-derives its
-wrapping key from the updated PIN hash.
-
-See [Unified PIN Architecture](../../../docs/architecture/pin-architecture.md) for the full design.
+`Authenticator.SetFIDO2PINHash` (`authenticator.go`) is the entry point an
+external caller uses to hand the authenticator a CTAP2 PIN hash without
+going through a CTAP `setPIN`/`changePIN` ceremony. The GUI and headless
+daemon wire it as the callback `qrdbsdk.PINService.SetFIDO2HashSetter`
+consumes, so every set/change/verify against the *host* PIN service — the
+one `xkey/pkg/pinstrategy` resolves (go-xkms#307) — also updates the
+authenticator's own cached hash; that is what `--unified-pin` enables (see
+[`daemon-configuration.md`](daemon-configuration.md)). When a PIN change
+occurs while the KeyManager is locked, `PINSyncPending` is set on the
+authenticator state; `KeyManager.UnlockWithSOPIN()` resolves the pending
+flag and re-derives its wrapping key from the updated PIN hash.
+`authenticatorClientPIN`'s own `setPIN`/`changePIN` (`cmd_clientpin.go`)
+persist through the same state, independent of whether a host PIN service
+is wired up at all.
 
 ### hmac-secret Extension Flow
 

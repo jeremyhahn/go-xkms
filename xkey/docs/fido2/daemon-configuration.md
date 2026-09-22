@@ -76,7 +76,7 @@ guessing.
 |------|---------|-------------|
 | `--pin` | `true` | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--set-pin` | (none) | Establish the initial PIN when the store has none (requires `--pin`; refused when a PIN is already set) |
-| `--unified-pin` | `true` | Synchronize the PIN across FIDO2, PKCS#11, and file PIN systems |
+| `--unified-pin` | `true` | Propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash (not a PKCS#11/file sync -- go-xkms has one governing PIN backend per device, see go-xkms#307) |
 
 The Security Officer PIN is not set here, and — despite the name — **not** by
 `xkey pin set-so` either. That command group drives the qrdb PIN service, a

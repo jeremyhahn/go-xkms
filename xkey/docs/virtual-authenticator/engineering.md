@@ -74,7 +74,7 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | `--default-password` | `""` | password name typed on a bare touch |
 | `--notify-command` | `""` | custom notification command |
 | `--notify` | `dialog` | `dialog`, `passive`, `log`, or `none` |
-| `--unified-pin` | `true` | share one PIN across xkey subsystems |
+| `--unified-pin` | `true` | propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash on set/change/verify (`authenticator.Config.UnifiedPIN`); not a PKCS#11 or file PIN sync — go-xkms has one governing PIN backend per device, see go-xkms#307 |
 | `--cdp` | `false` | Chrome DevTools virtual-authenticator bridge |
 | `--cdp-host` | `localhost` | DevTools host |
 | `--cdp-port` | `9222` | DevTools debugging port |

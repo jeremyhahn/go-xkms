@@ -965,8 +965,8 @@ func TestProbeTPMSealer_HardwareMode_DeviceNotFound(t *testing.T) {
 	if closer != nil {
 		t.Fatal("expected nil closer for missing device")
 	}
-	if !strings.Contains(buf.String(), "TPM device not found") {
-		t.Fatalf("expected 'TPM device not found' log message, got: %s", buf.String())
+	if !strings.Contains(buf.String(), "tpm device") || !strings.Contains(buf.String(), "not found") {
+		t.Fatalf("expected a 'tpm device ... not found' log message, got: %s", buf.String())
 	}
 }
 
@@ -981,15 +981,15 @@ func TestProbeTPMSealer_SimulatorMode_SkipsDeviceStat(t *testing.T) {
 	logger := newBufferedLogger(&buf)
 
 	// The device path does not exist on disk; if the stat-skip logic were
-	// broken, probeTPMSealer would short-circuit here with the "TPM device
-	// not found" debug message instead of attempting to open the TPM.
+	// broken, probeTPMSealer would short-circuit here with a "tpm device
+	// ... not found" debug message instead of attempting to open the TPM.
 	sealer, closer := probeTPMSealer(logger, t.TempDir(), "/nonexistent-tpm-device-for-test", true)
 	if closer != nil {
 		defer closer.Close()
 	}
 	_ = sealer
 
-	if strings.Contains(buf.String(), "TPM device not found") {
+	if strings.Contains(buf.String(), "not found") {
 		t.Fatalf("expected device stat to be skipped in simulator mode, got: %s", buf.String())
 	}
 }

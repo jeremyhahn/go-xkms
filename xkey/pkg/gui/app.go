@@ -3142,115 +3142,34 @@ func (a *App) postDataDirStartup() {
 	a.startIPCServer()
 }
 
-// initPINService creates a qrdbsdk.PINService with the appropriate backend and
-// wires it to the GUI PINService. Prefers TPM2 when available, falls back
-// to software-based PIN management.
-//
-// Backend selection uses two signals:
-//  1. In-session: PlatformKeyStore.IsAuthReady() (set when Initialize/ensureSRKAuth
-//     succeeds during the wizard)
-//  2. Across restarts: GUIConfig.PINStrategy (persisted after first successful selection)
-//
-// An SRK from a prior TPM owner may exist (IsInitialized=true) but have unknown
-// auth. Using IsInitialized alone would select TPM2 and break every PIN check.
-// guiTPMProvider adapts the xKey GUI's TPM accessor and wizard/GUIConfig
-// auth-readiness model to the shared xkmssdk.PINTPMProvider contract. A
-// persisted PINStrategy="tpm2" keeps the TPM backend selected across
-// restarts, but it does not make the SRK's auth value confirmed: that comes
-// only from this session setting or verifying it. The backend reports the
-// credential as unset until then, so an unverified SRK is never offered
-// attempts that would spend the TPM's dictionary-attack retries.
-type guiTPMProvider struct{ app *App }
-
-// PlatformAuth implements xkmssdk.PINTPMProvider.
-func (p guiTPMProvider) PlatformAuth() (xkmssdk.TPMPlatformAuthProvider, bool) {
-	tpmImpl, err := p.app.tpmAccessor.Acquire()
-	if err != nil {
-		return nil, false
-	}
-	p.app.tpmAccessor.Release()
-	pks := tpmImpl.PlatformKeyStore()
-	if pks == nil || !pks.IsInitialized() {
-		return nil, false
-	}
-	if !pks.IsAuthReady() {
-		if p.app.config.PINStrategy != "tpm2" {
-			p.app.log.Warn("PIN backend: TPM2 SRK exists but auth not confirmed, falling back to software")
-			return nil, false
-		}
-		// The persisted strategy says tpm2, so keep selecting the TPM
-		// backend across restarts. Do NOT assert readiness on the key
-		// store: this session has not verified the SRK auth value, and
-		// SetAuthReady is consumed elsewhere (enrollment skips, key
-		// creation) as proof that the auth is known-good. Marking an
-		// unverified SRK ready makes the PIN backend claim a credential it
-		// has never seen, and every attempt against it spends one of the
-		// TPM's dictionary-attack retries. The backend reports the PIN as
-		// unset until a successful verification confirms the auth value.
-		p.app.log.Warn("PIN backend: TPM2 selected from persisted strategy, SRK auth unconfirmed this session")
-	}
-	concrete, ok := pks.(*xkmssdk.PlatformKeyStore)
-	if !ok {
-		return nil, false
-	}
-	return concrete, true
-}
-
-// guiSoftwarePINProvider persists software PIN state under <dataDir>/pin and
-// routes through pinadapter so the qrdb software backend observes the
-// canonical not-found error on a fresh install (a correctness fix over passing
-// the raw file storage backend directly).
-type guiSoftwarePINProvider struct {
-	dataDir string
-	engine  xkmssdk.StorageEngineKind
-}
-
-// Storage implements xkmssdk.PINSoftwareProvider.
-func (p guiSoftwarePINProvider) Storage() (qrdbsdk.PINStorage, error) {
-	pinDir := filepath.Join(p.dataDir, "pin")
-	if err := os.MkdirAll(pinDir, 0700); err != nil {
-		return nil, err
-	}
-	fs, err := xkmssdk.StorageOpenEngine(xkmssdk.StorageEngineConfig{Kind: p.engine, Path: pinDir})
-	if err != nil {
-		return nil, err
-	}
-	return xkmssdk.NewPINStoreAdapter(fs)
-}
-
-// HashConfig implements xkmssdk.PINSoftwareProvider.
-func (p guiSoftwarePINProvider) HashConfig() qrdbsdk.PINHashConfig {
-	return qrdbsdk.AutoDetectHashConfig()
-}
-
+// initPINService creates a qrdbsdk.PINService with the appropriate backend
+// and wires it to the GUI PINService. The backend itself is resolved by
+// services.ResolvePINBackend through the shared pinstrategy package
+// (go-xkms#307): the same PIN strategy governs the xKey GUI, the headless
+// daemon and `xkey pin`, all read from <dataDir>/pin/strategy rather than
+// a GUI-only config file, so a PIN set through any one of them
+// authenticates through the others. Keeping the resolution logic in the
+// service layer (rather than here, the Wails-bound public interface) is
+// deliberate: App wires its own dependencies and reports the result, and
+// nothing more.
 func (a *App) initPINService() {
 	if a.dataDir == "" {
 		a.log.Warn("initPINService: dataDir not set, skipping")
 		return
 	}
 
-	// Select the PIN backend via the shared pinselect decision point so the
-	// xKey GUI and the quicbaasd daemon use ONE selection rule (TPM2 →
-	// software) rather than duplicated inline logic. The GUI supplies its own
-	// environment adapters: TPM auth-readiness comes from the wizard /
-	// persisted GUIConfig, and software state persists under <dataDir>/pin.
-	backend, err := xkmssdk.SelectPINBackend(xkmssdk.PINSelectConfig{
-		TPM:      guiTPMProvider{app: a},
-		Software: guiSoftwarePINProvider{dataDir: a.dataDir, engine: a.storageEngineKind()},
-	})
+	backend, strategy, err := services.ResolvePINBackend(
+		a.tpmAccessor, a.dataDir, a.config.PINStrategy, a.storageEngineKind(), a.log)
 	if err != nil {
-		a.log.Error("initPINService: failed to select PIN backend", "error", err)
+		a.log.Error("initPINService: failed to resolve PIN backend", "error", err)
 		return
 	}
+	strategyID := string(strategy)
 
-	// Persist the selected strategy so restarts use the same backend.
-	strategyID := string(backend.Strategy())
-	if a.config.PINStrategy != strategyID {
-		a.config.PINStrategy = strategyID
-		if saveErr := SaveGUIConfig(a.config); saveErr != nil {
-			a.log.Warn("initPINService: failed to persist PIN strategy", "error", saveErr)
-		}
-	}
+	// GUIConfig.PINStrategy is retained read-only, for
+	// services.ResolvePINBackend's one-time migration on older installs;
+	// the shared PIN dir is now the single source of truth, so it is not
+	// written here.
 
 	svc := qrdbsdk.NewPINService(backend, a.log)
 

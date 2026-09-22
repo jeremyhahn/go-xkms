@@ -317,9 +317,13 @@ type Config struct {
 	// page navigations that would otherwise trigger credential filling.
 	OnAssertionCompleted func(rpID string) `yaml:"-" json:"-" mapstructure:"-"`
 
-	// UnifiedPIN enables unified PIN coordination across FIDO2, PKCS#11, and
-	// file-based PIN managers. When enabled, a PIN change in any subsystem
-	// propagates to all other registered subsystems.
+	// UnifiedPIN enables propagating the host PIN service's user PIN to the
+	// virtual FIDO2 authenticator's CTAP2 PIN hash (SHA-256(PIN)[:16]) on
+	// every set/change/verify, via qrdbsdk.PINService.SetFIDO2HashSetter.
+	// It does NOT synchronize a separate PKCS#11 or file-based PIN store:
+	// go-xkms has exactly one governing PIN backend per device, resolved
+	// by xkey/pkg/pinstrategy (see go-xkms#307); this flag only concerns
+	// the FIDO2 authenticator's own cached hash of that one PIN.
 	// Default: true
 	UnifiedPIN bool `yaml:"unified-pin" json:"unified_pin" mapstructure:"unified-pin"`
 

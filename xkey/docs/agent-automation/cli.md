@@ -1,6 +1,6 @@
 # Agent Automation — CLI
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
 
 Binary: `xkey`. This feature is a set of flags and two verbs rather than a
 command group of its own.
@@ -88,6 +88,24 @@ fi
 authenticator refuses CTAP2 operations with `operation denied`, which reads as
 a declined touch rather than a lock — which is why `unlock` must not report a
 success it has not confirmed.
+
+### The PIN `unlock` checks is the one `xkey pin status` names
+
+`unlock`'s PIN goes to the same governing backend as `xkey pin verify --type
+user` and the GUI's own unlock — software, TPM2 or PKCS#11, resolved once
+per data directory and recorded at `<dataDir>/pin/strategy` (go-xkms#307).
+A device provisioned through the desktop GUI's TPM2 wizard, then driven
+headlessly from a container or CI runner with no TPM reachable, has a
+governing strategy the automation host cannot serve. `xkey extension serve`
+resolves it once at startup and refuses to come up at all rather than
+starting against a different backend than the one that governs the device
+— so `unlock` against such a host fails as "daemon not running", not a live
+PIN rejection. `xkey pin verify` (no daemon involved) refuses per call with
+a typed error naming the unreachable strategy, for the same reason. Run
+`xkey pin status` first to see which backend governs before scripting
+against a device you did not provision yourself; a `tpm2` answer on a host
+with no TPM device means the automation cannot authenticate there, full
+stop — there is no software fallback to reach for.
 
 ## `xkey touch`
 

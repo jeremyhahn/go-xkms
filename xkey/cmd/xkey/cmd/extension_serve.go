@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pinstrategy"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -248,6 +249,14 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	// 6. Initialize PIN manager.
+	//
+	// The backend is resolved through the shared pinstrategy package — the
+	// same rule the xKey GUI and `xkey pin` use — instead of hard-coding
+	// the software backend. A device whose PIN was set up through the
+	// GUI's TPM2 wizard persists strategy=tpm2 beside the PIN state; this
+	// daemon must authenticate against that same backend, or refuse to
+	// start, rather than silently answering from a different store
+	// (go-xkms#307).
 	pinDir, _ := cmd.Flags().GetString("pin-state")
 	if pinDir == "" {
 		pinDir = filepath.Join(dataDir, "pin")
@@ -255,21 +264,39 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	if err := os.MkdirAll(pinDir, 0700); err != nil {
 		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
-	fileStore, err := xkms.NewFileStorageBackend(pinDir)
+
+	pinTPMDevice, _ := cmd.Flags().GetString("tpm-device")
+	pinTPMSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
+
+	persistedStrategy, loadErr := pinstrategy.Load(pinDir)
+	persistedTPM2 := loadErr == nil && persistedStrategy == qrdbsdk.PINStrategyTPM2
+
+	// Capture the TPM connection's closer (if PlatformAuth ends up opening
+	// one) so it outlives Resolve: the daemon keeps using it for every
+	// subsequent PIN verification, not just the one Resolve performs here.
+	var pinTPMCloser io.Closer
+	pinTPMProvider := pinstrategy.NewTPMProvider(func() (pinstrategy.PlatformKeyStoreProvider, error) {
+		tpm, closer, err := openTPMModule(logger, dataDir, pinTPMDevice, pinTPMSimulator)
+		if err != nil {
+			return nil, err
+		}
+		pinTPMCloser = closer
+		return tpm, nil
+	}, persistedTPM2, logger)
+
+	pinBackend, _, err := pinstrategy.Resolve(pinstrategy.Config{
+		PINDir: pinDir,
+		PINSelectConfig: xkms.PINSelectConfig{
+			TPM:      pinTPMProvider,
+			Software: cliSoftwarePINProvider{pinDir: pinDir},
+			Logger:   logger,
+		},
+	})
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
-	// Wrap the file storage in the PIN adapter so the qrdb software backend
-	// observes the canonical pin.ErrNotFound on a fresh install rather than
-	// xkey's storage.ErrNotFound (which it would treat as a load failure).
-	pinStore, err := xkms.NewPINStoreAdapter(fileStore)
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
-	}
-	hashConfig := qrdbsdk.AutoDetectHashConfig()
-	pinBackend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
+	if pinTPMCloser != nil {
+		defer func() { _ = pinTPMCloser.Close() }()
 	}
 	pinBackendSvc := qrdbsdk.NewPINService(pinBackend, logger)
 	pinSvc.SetPINService(pinBackendSvc)
@@ -805,51 +832,17 @@ func resolveTPMDevice(device string) string {
 // useSimulator is true. Returns (sealer, closer) if the TPM is available,
 // or (nil, nil) if not. The caller must close the returned io.Closer when
 // the TPM is no longer needed.
+//
+// It delegates to openTPMModule, the same TPM-opening primitive
+// newPINTPMProvider uses for PIN backend resolution, so the barrier and
+// PIN code paths never drift into different TPM configurations.
 func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.Sealer, io.Closer) {
-	resolvedDevice := resolveTPMDevice(device)
-
-	// The simulator has no backing device file to stat; only hardware mode
-	// requires the device to be present before attempting to open it.
-	if !useSimulator {
-		if _, err := os.Stat(resolvedDevice); err != nil {
-			logger.Debug("TPM device not found, barrier TPM2 strategy unavailable",
-				"device", resolvedDevice)
-			return nil, nil
-		}
-	}
-
-	tpmDataDir := filepath.Join(dataDir, "tpm")
-	factory, err := xkms.NewTPMStorageFactory(logger, tpmDataDir)
+	tpm, closer, err := openTPMModule(logger, dataDir, device, useSimulator)
 	if err != nil {
-		logger.Warn("failed to create TPM storage factory", "error", err)
+		logger.Debug("TPM unavailable, barrier TPM2 strategy unavailable", "error", err)
 		return nil, nil
 	}
-
-	cfg := xkms.DefaultTPMConfig
-	cfg.Device = resolvedDevice
-	cfg.UseSimulator = useSimulator
-
-	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
-		Logger:    logger,
-		Config:    &cfg,
-		BlobStore: factory.BlobStore(),
-		Backend:   factory.KeyBackend(),
-	})
-	if err != nil {
-		// ErrTPMNotInitialized only means the EK/IDevID provisioning workflow
-		// has not run; the returned tpm still has a live transport and can
-		// seal/unseal via its SRK (see TPM2.CanSeal and defaultSealKeyAttributes'
-		// SSRK fallback), exactly as openTPMForProvisioning already tolerates
-		// this same sentinel for the `tpm provision` command.
-		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
-			return tpm, tpm
-		}
-		logger.Warn("failed to open TPM", "error", err)
-		_ = factory.Close()
-		return nil, nil
-	}
-
-	return tpm, tpm
+	return tpm, closer
 }
 
 // Compile-time interface satisfaction checks.

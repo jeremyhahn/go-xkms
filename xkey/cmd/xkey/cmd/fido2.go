@@ -409,7 +409,8 @@ func init() {
 
 	// Unified PIN flag
 	fido2Cmd.Flags().Bool("unified-pin", true,
-		"Enable unified PIN synchronization across FIDO2, PKCS#11, and file PIN systems")
+		"Propagate the host PIN service's user PIN to the virtual FIDO2 authenticator's CTAP2 PIN hash on every set/change/verify "+
+			"(it does not sync a separate PKCS#11 or file PIN store: there is exactly one governing PIN backend, see 'xkey pin status')")
 
 	// CDP bridge flags
 	fido2Cmd.Flags().Bool("cdp", false, "Enable Chrome DevTools virtual authenticator bridge")

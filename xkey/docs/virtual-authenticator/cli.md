@@ -54,7 +54,7 @@ credentials are hardware-backed, `--backend` is the flag that makes that true.
 | `--pin` | `true` | require a PIN |
 | `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
 | `--require-touch` | `true` | **require a touch even after a verified PIN** |
-| `--unified-pin` | `true` | one PIN across xkey's subsystems |
+| `--unified-pin` | `true` | propagate the host PIN service's user PIN to this authenticator's CTAP2 PIN hash — not a separate PKCS#11/file sync; see [the setup-wizard doc on the one governing PIN backend](../setup-wizard/engineering.md#shared-governing-pin-strategy-go-xkms307) |
 | `--timeout` | `30s` | how long to wait for presence |
 
 `--set-pin` is a first-PIN operation. It runs the authenticator's
