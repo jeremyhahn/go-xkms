@@ -131,7 +131,12 @@ type CAKeystoreSoftwareConfig struct {
 	// key-level password for any key in this identity whose KeyConfig.Password
 	// is empty. Operators SHOULD source this from a secrets manager or the
 	// node's PIN backend rather than embedding it directly in YAML.
-	Password string `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	//
+	// Password decodes from, and re-encodes to, a plain reference string in
+	// YAML/JSON; the resolved plaintext is sealed into this field's own
+	// memguard enclave rather than kept as a plain Go string. See
+	// types.SecretValue and types.NewPasswordFromSecretValue.
+	Password types.SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
 }
 
 // CAKeystoreTPM2Config carries per-identity configuration for the tpm2 backend.
@@ -572,11 +577,8 @@ func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 
 	// Apply identity-level software keystore password as fallback when the
 	// per-key password was not set (Password is nil after KeyAttributesFromConfig).
-	if attrs.Password == nil &&
-		id.Keystores != nil &&
-		id.Keystores.Software != nil &&
-		id.Keystores.Software.Password != "" {
-		pw, err := types.NewPasswordFromString(id.Keystores.Software.Password)
+	if attrs.Password == nil && id.Keystores != nil && id.Keystores.Software != nil {
+		pw, err := types.NewPasswordFromSecretValue(&id.Keystores.Software.Password)
 		if err != nil {
 			return nil, err
 		}

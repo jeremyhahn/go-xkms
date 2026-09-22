@@ -2154,38 +2154,29 @@ func (s *Server) initializeCA() error {
 	// internal ToKeyAttributes path reads them. The registry falls back to literal
 	// pass-through for non-URI values, so existing plaintext passwords are unchanged.
 	// Modifications are made directly on the in-memory config; the loaded YAML is
-	// never re-serialised, so resolved plaintext does not persist to disk.
+	// never re-serialised, so resolved plaintext does not persist to disk. Each
+	// field is a types.SecretValue: the resolved value is moved into the field by
+	// custody transfer (id.Keys[j].Password = *sv), so the plaintext is never
+	// materialized as a Go string outside its enclave here.
 	reg := s.buildSecretRegistry()
 	for i := range s.config.CA.Identity {
 		id := &s.config.CA.Identity[i]
 		for j := range id.Keys {
-			if id.Keys[j].Password == "" {
+			if id.Keys[j].Password.Raw == "" {
 				continue
 			}
-			sv, resolveErr := reg.Resolve(s.ctx, id.Keys[j].Password)
+			sv, resolveErr := reg.Resolve(s.ctx, id.Keys[j].Password.Raw)
 			if resolveErr != nil {
 				return &ErrCAInit{Operation: "resolve key password credential", Err: resolveErr}
 			}
-			// nolint:staticcheck // go-xkms#41: SecretValue.String copies the
-			// plaintext into an unwipeable heap string. The replacement
-			// (WithBytes, or a SecretValue-typed config field) is borrow-scoped
-			// and changes who owns this password for the life of the config, so
-			// it is a custody change rather than a call-site swap. Delete this
-			// directive when #41 lands.
-			id.Keys[j].Password = sv.String()
-			sv.Clear()
+			id.Keys[j].Password = *sv
 		}
-		if id.Keystores != nil && id.Keystores.Software != nil && id.Keystores.Software.Password != "" {
-			sv, resolveErr := reg.Resolve(s.ctx, id.Keystores.Software.Password)
+		if id.Keystores != nil && id.Keystores.Software != nil && id.Keystores.Software.Password.Raw != "" {
+			sv, resolveErr := reg.Resolve(s.ctx, id.Keystores.Software.Password.Raw)
 			if resolveErr != nil {
 				return &ErrCAInit{Operation: "resolve software keystore password credential", Err: resolveErr}
 			}
-			// nolint:staticcheck // go-xkms#41: same custody change as above —
-			// String hands back an unwipeable heap copy, and the borrow-scoped
-			// replacement cannot outlive its callback the way this field does.
-			// Delete this directive when #41 lands.
-			id.Keystores.Software.Password = sv.String()
-			sv.Clear()
+			id.Keystores.Software.Password = *sv
 		}
 	}
 

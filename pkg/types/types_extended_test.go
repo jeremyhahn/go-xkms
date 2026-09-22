@@ -808,7 +808,7 @@ func TestKeyAttributesFromConfig_PasswordWired(t *testing.T) {
 		Hash:         HashSHA256,
 		StoreType:    StoreSoftware,
 		ECCConfig:    &ECCConfig{Curve: CurveP256},
-		Password:     "at-rest-passphrase",
+		Password:     SecretValue{Raw: "at-rest-passphrase"},
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)
@@ -827,7 +827,7 @@ func TestKeyAttributesFromConfig_EmptyPasswordLeavesNil(t *testing.T) {
 		Hash:         HashSHA256,
 		StoreType:    StoreSoftware,
 		ECCConfig:    &ECCConfig{Curve: CurveP256},
-		Password:     "", // empty — must NOT create a Password object
+		// Password left zero-valued — must NOT create a Password object
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)

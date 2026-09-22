@@ -1,6 +1,6 @@
 # xkmsd Configuration — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-21
 
 ## Exported surface — `pkg/config`
 
@@ -21,6 +21,8 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
 | `legacyEnv(legacyName, key)` | Reads a legacy name only when non-empty and only when the key's canonical name is absent (`os.LookupEnv`). Legacy names are never bound in viper: `AllowEmptyEnv` would turn `XKMS_HOST=` into a bind-all request. |
 | `canonicalEnvName(key)` | `server.host` → `XKMS_SERVER_HOST`. |
 | `applyEnvOverrides(cfg)` | The legacy ladder (`XKMS_HOST`, `XKMS_REST_PORT`, …), every read through `legacyEnv`. Runs after unmarshal; same layer as viper's environment. Shrinks as clusters are remediated. |
+| `stringToSecretValueHookFunc` | mapstructure decode hook, composed onto viper's default hook in `Load`. Decodes a scalar string into a `types.SecretValue` field's `Raw` (unresolved), giving mapstructure the same behaviour `SecretValue.UnmarshalYAML` provides for a direct `yaml.Unmarshal`. |
+| `secretValueType` | `reflect.TypeOf(types.SecretValue{})`. Used by both the decode hook and `walkYAMLKeys` to give `SecretValue` leaf-value treatment instead of struct-section treatment. |
 
 ## Exported surface — `cmd/xkmsd`
 
@@ -57,7 +59,11 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
    `attestation`, `trust`, `backends.*`) through their element type. A bound
    key carries no value, so a pointer section stays nil unless the file or
    the environment sets a key in it. Hyphens in a key (`trust.server-url`)
-   become underscores in the name (`XKMS_TRUST_SERVER_URL`).
+   become underscores in the name (`XKMS_TRUST_SERVER_URL`). A `types.SecretValue`
+   field is walked as a leaf, never descended into as a section — its wire
+   shape is a single scalar reference string, and descending into its
+   unexported enclave field would register zero leaf keys, silently dropping
+   it from environment resolution.
 4. **A present environment variable is a value, empty included.**
    `XKMS_SERVER_HOST=""` clears a pinned host to bind every interface and wins
    over the file and over `XKMS_HOST` (`AllowEmptyEnv`; the legacy ladder
@@ -90,7 +96,17 @@ viper reads the YAML into a map before mapstructure decodes it with
   matched case-insensitively by its consumer, so nothing changes);
 - an unquoted scalar such as `socket_mode: 0660` is a YAML integer, so a
   string field receives `"432"`. The shipped configurations quote such values;
-  operators must too.
+  operators must too;
+- a `types.SecretValue` field (`ca.identity[*].keys[*].password`,
+  `ca.identity[*].keystores.software.password`) does not decode through
+  `SecretValue.UnmarshalYAML` — mapstructure has no notion of `yaml.Unmarshaler`
+  — so `Load` composes `stringToSecretValueHookFunc` onto the decoder to give
+  it the same behaviour: the file's plain string (a literal password or a
+  `credential://...` reference) lands unresolved in the field's `Raw`.
+  Resolution into the field's memguard enclave happens later, wherever the
+  field's owner has a `secret.ResolverRegistry` available (`pkg/server`'s
+  `initializeCA` for these two fields) — `Load` itself never resolves a
+  secret reference.
 
 ## Errors
 

@@ -48,10 +48,16 @@ func TestNewNodeLocalBackends_PassphraseInjectsCAPassword(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, backends)
 
-	// Every identity's software keystore password must now be the passphrase.
+	// Every identity's software keystore password must now be the passphrase,
+	// sealed in its own enclave (NewLiteralSecretValue carries no Raw
+	// reference), so borrow it via WithBytes to assert on the plaintext.
 	for i := range caCfg.Identity {
-		require.Equal(t, "unit-test-cluster-ca-secret",
-			caCfg.Identity[i].Keystores.Software.Password,
+		var got string
+		require.NoError(t, caCfg.Identity[i].Keystores.Software.Password.WithBytes(func(b []byte) error {
+			got = string(b)
+			return nil
+		}))
+		require.Equal(t, "unit-test-cluster-ca-secret", got,
 			"identity %d keystore password not injected", i)
 	}
 

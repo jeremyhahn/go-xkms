@@ -67,17 +67,22 @@ func injectKeystorePassword(ctx context.Context, protection *KeyProtection, caCo
 	if plaintext || password == nil || caConfig == nil {
 		return nil
 	}
-	pw, pwErr := password.String()
-	if pwErr != nil {
-		return pwErr
-	}
+	pwBytes := password.Bytes()
+	defer func() {
+		for i := range pwBytes {
+			pwBytes[i] = 0
+		}
+	}()
+	// Each target field gets its own enclave (NewLiteralSecretValue reseals
+	// pwBytes afresh per call) rather than sharing one SecretValue struct
+	// copy across every identity's key and keystore password fields.
 	for i := range caConfig.Identity {
 		id := &caConfig.Identity[i]
 		for j := range id.Keys {
-			id.Keys[j].Password = pw
+			id.Keys[j].Password = types.NewLiteralSecretValue(pwBytes)
 		}
 		if id.Keystores != nil && id.Keystores.Software != nil {
-			id.Keystores.Software.Password = pw
+			id.Keystores.Software.Password = types.NewLiteralSecretValue(pwBytes)
 		}
 	}
 	return nil

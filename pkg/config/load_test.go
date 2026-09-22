@@ -16,7 +16,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // writeServerConfig writes a minimal valid daemon configuration whose server
@@ -512,4 +515,200 @@ func TestLoad_ACMEEnrollmentAllowLoopbackIdentifier(t *testing.T) {
 			t.Fatalf("ACME = %+v, want Enrollment.AllowLoopbackIdentifier true from the environment", cfg.ACME)
 		}
 	})
+}
+
+// writeCAPasswordConfig writes a valid daemon configuration whose ca.identity
+// carries the given per-key and keystore-level password lines (go-xkms#41),
+// mirroring the shape of the shipped configs/xkmsd-dev.yaml ca: block.
+func writeCAPasswordConfig(t *testing.T, keyPasswordLine, keystorePasswordLine string) string {
+	t.Helper()
+
+	content := `
+server:
+  rest_port: 8443
+  grpc_port: 9443
+
+protocols:
+  rest: true
+  grpc: true
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+
+auth:
+  enabled: false
+
+storage:
+  backend: "qrdb"
+  path: "/data"
+
+default_backend: "pkcs8"
+
+backends:
+  pkcs8:
+    enabled: true
+    path: "/data/pkcs8"
+
+ca:
+  identity:
+    - subject:
+        cn: "Test Root CA"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+` + keyPasswordLine + `
+      keystore-type: "software"
+      is-root: true
+      keystores:
+        software:
+` + keystorePasswordLine + `
+  selected-ca: 0
+  default-validity-days: 365
+`
+	path := filepath.Join(t.TempDir(), "xkmsd.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+// TestLoad_CAKeyPassword_LoadsIntoSecretValueRaw proves that a plain-string
+// ca.identity[*].keys[*].password still loads through Load's mapstructure
+// chain into the field's SecretValue.Raw, unresolved — Load itself never
+// resolves a secret reference, only stringToSecretValueHookFunc's decode
+// (go-xkms#41).
+func TestLoad_CAKeyPassword_LoadsIntoSecretValueRaw(t *testing.T) {
+	path := writeCAPasswordConfig(t,
+		`          password: "per-key-secret"`,
+		`          password: "keystore-secret"`,
+	)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.CA.Identity) != 1 || len(cfg.CA.Identity[0].Keys) != 1 {
+		t.Fatalf("CA.Identity = %+v, want exactly one identity with one key", cfg.CA.Identity)
+	}
+
+	key := cfg.CA.Identity[0].Keys[0]
+	if key.Password.Raw != "per-key-secret" {
+		t.Fatalf("Keys[0].Password.Raw = %q, want %q", key.Password.Raw, "per-key-secret")
+	}
+	if key.Password.Strategy != "" {
+		t.Fatalf("Keys[0].Password.Strategy = %q, want empty (unresolved — Load never resolves)", key.Password.Strategy)
+	}
+
+	software := cfg.CA.Identity[0].Keystores.Software
+	if software == nil || software.Password.Raw != "keystore-secret" {
+		t.Fatalf("Keystores.Software.Password.Raw = %+v, want %q", software, "keystore-secret")
+	}
+}
+
+// TestLoad_CAKeyPassword_CredentialReferenceLoadsVerbatim proves that a
+// "credential://..." reference string loads verbatim into Raw, exactly as a
+// literal password does — Load's decode hook only stores the reference, it
+// never dereferences it.
+func TestLoad_CAKeyPassword_CredentialReferenceLoadsVerbatim(t *testing.T) {
+	path := writeCAPasswordConfig(t,
+		`          password: "credential://ca-key-pw"`,
+		`          password: "credential://ca-keystore-pw"`,
+	)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if got := cfg.CA.Identity[0].Keys[0].Password.Raw; got != "credential://ca-key-pw" {
+		t.Fatalf("Keys[0].Password.Raw = %q, want the URI verbatim", got)
+	}
+	if got := cfg.CA.Identity[0].Keystores.Software.Password.Raw; got != "credential://ca-keystore-pw" {
+		t.Fatalf("Keystores.Software.Password.Raw = %q, want the URI verbatim", got)
+	}
+}
+
+// TestStringToSecretValueHookFunc exercises the mapstructure decode hook
+// directly: a string decoding into a SecretValue field stores the reference
+// unresolved in Raw, and every other type combination passes data through
+// unchanged so the hook composes safely with mapstructure's other hooks and
+// its default struct/scalar decoding (go-xkms#41).
+func TestStringToSecretValueHookFunc(t *testing.T) {
+	secretValueRT := reflect.TypeOf(types.SecretValue{})
+	stringRT := reflect.TypeOf("")
+	intRT := reflect.TypeOf(0)
+
+	t.Run("string to SecretValue stores Raw unresolved", func(t *testing.T) {
+		out, err := stringToSecretValueHookFunc(stringRT, secretValueRT, "credential://x")
+		if err != nil {
+			t.Fatalf("stringToSecretValueHookFunc() error = %v", err)
+		}
+		sv, ok := out.(types.SecretValue)
+		if !ok {
+			t.Fatalf("stringToSecretValueHookFunc() returned %T, want types.SecretValue", out)
+		}
+		if sv.Raw != "credential://x" || sv.Strategy != "" {
+			t.Fatalf("got SecretValue{Raw: %q, Strategy: %q}, want Raw=credential://x, Strategy empty", sv.Raw, sv.Strategy)
+		}
+	})
+
+	t.Run("non-SecretValue destination passes data through", func(t *testing.T) {
+		out, err := stringToSecretValueHookFunc(stringRT, stringRT, "unchanged")
+		if err != nil {
+			t.Fatalf("stringToSecretValueHookFunc() error = %v", err)
+		}
+		if out != "unchanged" {
+			t.Fatalf("stringToSecretValueHookFunc() = %v, want data passed through unchanged", out)
+		}
+	})
+
+	t.Run("non-string source passes data through", func(t *testing.T) {
+		out, err := stringToSecretValueHookFunc(intRT, secretValueRT, 42)
+		if err != nil {
+			t.Fatalf("stringToSecretValueHookFunc() error = %v", err)
+		}
+		if out != 42 {
+			t.Fatalf("stringToSecretValueHookFunc() = %v, want data passed through unchanged", out)
+		}
+	})
+}
+
+// TestWalkYAMLKeys_SecretValueTreatedAsLeaf proves walkYAMLKeys registers a
+// types.SecretValue field as one leaf key rather than descending into its
+// unexported enclave field and registering zero keys for it — the defect
+// that would silently drop a SecretValue field from environment-variable
+// resolution (go-xkms#41). Today's two SecretValue fields live inside
+// ca.Identity, itself under a slice walkYAMLKeys never descends into, so this
+// exercises the guard directly against a struct shaped to need it.
+func TestWalkYAMLKeys_SecretValueTreatedAsLeaf(t *testing.T) {
+	type withSecret struct {
+		Name   string            `yaml:"name"`
+		Secret types.SecretValue `yaml:"secret"`
+	}
+
+	var got []string
+	visit := func(key ...string) error {
+		got = append(got, key[0])
+		return nil
+	}
+
+	if err := walkYAMLKeys(reflect.TypeOf(withSecret{}), "", visit); err != nil {
+		t.Fatalf("walkYAMLKeys() error = %v", err)
+	}
+
+	want := []string{"name", "secret"}
+	if len(got) != len(want) {
+		t.Fatalf("walkYAMLKeys() visited %v, want exactly %v (secret must be one leaf, not zero keys from descending into it)", got, want)
+	}
+	for i, k := range want {
+		if got[i] != k {
+			t.Fatalf("walkYAMLKeys() visited %v, want %v", got, want)
+		}
+	}
 }

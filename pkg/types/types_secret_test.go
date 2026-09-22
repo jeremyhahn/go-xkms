@@ -52,7 +52,7 @@ func TestKeyAttributesFromConfigResolved_CredentialURI(t *testing.T) {
 		CN:           "test-ca",
 		KeyAlgorithm: AlgorithmECDSA,
 		KeyType:      KeyTypeStringCA,
-		Password:     "credential://capw",
+		Password:     SecretValue{Raw: "credential://capw"},
 	}
 
 	attrs, err := KeyAttributesFromConfigResolved(context.Background(), cfg, reg)
@@ -75,7 +75,7 @@ func TestKeyAttributesFromConfigResolved_LiteralPassthrough(t *testing.T) {
 		CN:           "test-ca",
 		KeyAlgorithm: AlgorithmECDSA,
 		KeyType:      KeyTypeStringCA,
-		Password:     "my-literal-password",
+		Password:     SecretValue{Raw: "my-literal-password"},
 	}
 
 	attrs, err := KeyAttributesFromConfigResolved(context.Background(), cfg, reg)
@@ -96,7 +96,7 @@ func TestKeyAttributesFromConfigResolved_NilRegistry(t *testing.T) {
 		CN:           "test-ca",
 		KeyAlgorithm: AlgorithmECDSA,
 		KeyType:      KeyTypeStringCA,
-		Password:     "direct-password",
+		Password:     SecretValue{Raw: "direct-password"},
 	}
 
 	attrsDirect, err := KeyAttributesFromConfig(cfg)
@@ -133,12 +133,12 @@ func TestKeyAttributesFromConfigResolved_ParentPasswordResolved(t *testing.T) {
 		CN:           "child-ca",
 		KeyAlgorithm: AlgorithmECDSA,
 		KeyType:      KeyTypeStringCA,
-		Password:     "credential://child-pw",
+		Password:     SecretValue{Raw: "credential://child-pw"},
 		Parent: &KeyConfig{
 			CN:           "parent-ca",
 			KeyAlgorithm: AlgorithmECDSA,
 			KeyType:      KeyTypeStringCA,
-			Password:     "credential://parent-pw",
+			Password:     SecretValue{Raw: "credential://parent-pw"},
 		},
 	}
 
@@ -172,7 +172,7 @@ func TestKeyAttributesFromConfigResolved_EmptyPasswordNilAttrs(t *testing.T) {
 		CN:           "test-ca",
 		KeyAlgorithm: AlgorithmECDSA,
 		KeyType:      KeyTypeStringCA,
-		Password:     "credential://empty-pw",
+		Password:     SecretValue{Raw: "credential://empty-pw"},
 	}
 
 	attrs, err := KeyAttributesFromConfigResolved(context.Background(), cfg, reg)
@@ -192,7 +192,7 @@ func TestKeyAttributesFromConfigResolved_ResolutionFailure(t *testing.T) {
 		CN:           "test-ca",
 		KeyAlgorithm: AlgorithmECDSA,
 		KeyType:      KeyTypeStringCA,
-		Password:     "credential://nonexistent",
+		Password:     SecretValue{Raw: "credential://nonexistent"},
 	}
 
 	_, err := KeyAttributesFromConfigResolved(context.Background(), cfg, reg)
@@ -233,7 +233,7 @@ func TestKeyAttributesFromConfigResolved_ParentPasswordResolutionError(t *testin
 			CN:           "parent-ca",
 			KeyAlgorithm: AlgorithmECDSA,
 			KeyType:      KeyTypeStringCA,
-			Password:     "credential://missing-parent-pw",
+			Password:     SecretValue{Raw: "credential://missing-parent-pw"},
 		},
 	}
 

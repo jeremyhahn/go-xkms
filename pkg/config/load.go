@@ -23,7 +23,16 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
+
+// secretValueType is the reflect.Type of a types.SecretValue field, used to
+// give it leaf-value treatment in the mapstructure decode hook and the
+// env-key walk below — both of which otherwise treat any struct-kinded field
+// as a section to descend into. SecretValue is a struct on the wire, but on
+// the wire it is a single scalar reference string (a literal password or a
+// "credential://..." URI), never a nested document section.
+var secretValueType = reflect.TypeOf(types.SecretValue{})
 
 // envPrefix is the environment namespace of the daemon: the product name, so
 // server.host is XKMS_SERVER_HOST (nesting joined by underscores).
@@ -73,6 +82,7 @@ func Load(path string) (*Config, error) {
 	cfg := Defaults()
 	if err := v.Unmarshal(cfg, func(dc *mapstructure.DecoderConfig) {
 		dc.TagName = "yaml"
+		dc.DecodeHook = mapstructure.ComposeDecodeHookFunc(dc.DecodeHook, stringToSecretValueHookFunc)
 	}); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse config file", Err: err}
 	}
@@ -152,7 +162,10 @@ func registerEnvKeys(v *viper.Viper) error {
 
 // walkYAMLKeys calls visit with the dotted yaml path of every leaf field
 // reachable from t. A struct-typed field (directly or through a pointer) is a
-// section and is descended into; everything else is a leaf.
+// section and is descended into, EXCEPT types.SecretValue: on the wire it is
+// a scalar reference string, not a nested document section, and descending
+// into its unexported enclave field would register zero leaf keys for it —
+// silently dropping it from environment-variable resolution.
 func walkYAMLKeys(t reflect.Type, prefix string, visit func(key ...string) error) error {
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -171,7 +184,7 @@ func walkYAMLKeys(t reflect.Type, prefix string, visit func(key ...string) error
 		if ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
-		if ft.Kind() == reflect.Struct {
+		if ft.Kind() == reflect.Struct && ft != secretValueType {
 			if err := walkYAMLKeys(ft, key, visit); err != nil {
 				return err
 			}
@@ -182,6 +195,25 @@ func walkYAMLKeys(t reflect.Type, prefix string, visit func(key ...string) error
 		}
 	}
 	return nil
+}
+
+// stringToSecretValueHookFunc is a mapstructure.DecodeHookFuncType that
+// converts a scalar string source into a types.SecretValue destination field.
+//
+// The main Load path decodes through viper's mapstructure chain, not
+// yaml.v3, so SecretValue's yaml.Unmarshaler never runs there — mapstructure
+// has no notion of it and would otherwise fail trying to decode a plain
+// string into a struct. This hook gives mapstructure the same behaviour
+// yaml.v3 already provides: the raw reference string (a literal password or
+// a "credential://..." URI) is stored unresolved in Raw, exactly as
+// SecretValue.UnmarshalYAML documents. Resolution into the enclave happens
+// later, wherever the field's owner has a ResolverRegistry available.
+func stringToSecretValueHookFunc(from reflect.Type, to reflect.Type, data any) (any, error) {
+	if to != secretValueType || from.Kind() != reflect.String {
+		return data, nil
+	}
+	raw, _ := data.(string)
+	return types.SecretValue{Raw: raw}, nil
 }
 
 // configToMap renders a Config to a generic map keyed by its yaml tags, used

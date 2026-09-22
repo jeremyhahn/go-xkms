@@ -3379,11 +3379,16 @@ type KeyConfig struct {
 	ECCConfig          *ECCConfig             `yaml:"ecc,omitempty" json:"ecc,omitempty" mapstructure:"ecc"`
 	RSAConfig          *RSAConfig             `yaml:"rsa,omitempty" json:"rsa,omitempty" mapstructure:"rsa"`
 	Parent             *KeyConfig             `yaml:"parent,omitempty" json:"parent,omitempty" mapstructure:"parent"`
-	Password           string                 `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
-	Secret             string                 `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
-	PlatformPolicy     bool                   `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
-	Debug              bool                   `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
-	Default            bool                   `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
+	// Password is the passphrase that protects this key at rest. It decodes
+	// from, and re-encodes to, a plain reference string in YAML/JSON (a
+	// literal password or a "credential://..." URI); the resolved plaintext
+	// is sealed into this field's own memguard enclave rather than kept as a
+	// plain Go string. See SecretValue and NewPasswordFromSecretValue.
+	Password       SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Secret         string      `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
+	PlatformPolicy bool        `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
+	Debug          bool        `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
+	Default        bool        `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
 }
 
 // KeySerializer provides key serialization capabilities
@@ -3433,15 +3438,14 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	}
 
 	// Wire password from config so software (PKCS#8) backends write
-	// encrypted-at-rest keys. When config.Password is empty, attrs.Password
-	// stays nil and the pkcs8 backend enforces its AllowPlaintextKeys policy.
-	if config.Password != "" {
-		pw, err := NewPasswordFromString(config.Password)
-		if err != nil {
-			return nil, err
-		}
-		attrs.Password = pw
+	// encrypted-at-rest keys. When config.Password carries no material,
+	// attrs.Password stays nil and the pkcs8 backend enforces its
+	// AllowPlaintextKeys policy.
+	pw, err := NewPasswordFromSecretValue(&config.Password)
+	if err != nil {
+		return nil, err
 	}
+	attrs.Password = pw
 
 	// Parse algorithm-specific config from nested structs
 	if config.ECCConfig != nil {

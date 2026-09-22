@@ -63,13 +63,17 @@ func TestBuildSecretRegistry_WithCredentialService(t *testing.T) {
 	assert.True(t, reg.IsSecretURI("credential://"+credName),
 		"registry must recognise credential:// URIs after registration")
 
-	// Full resolution round-trip.
+	// Full resolution round-trip. WithBytes borrows the plaintext for the
+	// duration of the callback — the same shape the production path uses to
+	// move a resolved credential into a types.SecretValue-typed config field
+	// without ever materializing it as a Go string.
 	sv, err := reg.Resolve(context.Background(), "credential://"+credName)
 	require.NoError(t, err)
-	// nolint:staticcheck // go-xkms#41: this asserts the round trip the
-	// production path still performs. It migrates WITH those sites, not before
-	// them — asserting on String is only wrong once production stops using it.
-	// Delete this directive when #41 lands.
-	assert.Equal(t, credValue, sv.String())
+	var got string
+	require.NoError(t, sv.WithBytes(func(b []byte) error {
+		got = string(b)
+		return nil
+	}))
+	assert.Equal(t, credValue, got)
 	sv.Clear()
 }

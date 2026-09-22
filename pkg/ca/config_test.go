@@ -1350,7 +1350,7 @@ func TestToKeyAttributes_KeyConfigPasswordWired(t *testing.T) {
 				Hash:         types.HashSHA256,
 				StoreType:    types.StoreSoftware,
 				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
-				Password:     "per-key-secret",
+				Password:     types.SecretValue{Raw: "per-key-secret"},
 			},
 		},
 		IsRoot: true,
@@ -1391,7 +1391,7 @@ func TestToKeyAttributes_SoftwareKeystorePasswordFallback(t *testing.T) {
 		IsRoot: true,
 		Keystores: &CAKeystoresConfig{
 			Software: &CAKeystoreSoftwareConfig{
-				Password: "keystore-level-secret",
+				Password: types.SecretValue{Raw: "keystore-level-secret"},
 			},
 		},
 	}
@@ -1423,13 +1423,13 @@ func TestToKeyAttributes_KeyConfigPasswordTakesPrecedence(t *testing.T) {
 				Hash:         types.HashSHA256,
 				StoreType:    types.StoreSoftware,
 				ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
-				Password:     "per-key-wins",
+				Password:     types.SecretValue{Raw: "per-key-wins"},
 			},
 		},
 		IsRoot: true,
 		Keystores: &CAKeystoresConfig{
 			Software: &CAKeystoreSoftwareConfig{
-				Password: "keystore-level-loses",
+				Password: types.SecretValue{Raw: "keystore-level-loses"},
 			},
 		},
 	}
