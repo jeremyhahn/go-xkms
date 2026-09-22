@@ -1,6 +1,6 @@
 # Lint gates
 
-Status: current. Last verified: 2026-09-21.
+Status: current. Last verified: 2026-09-22.
 
 What CI's Lint job (`.github/workflows/ci.yml`) enforces on every push and
 pull request, in order, and the Make target behind each step so a developer
@@ -68,12 +68,32 @@ nothing.
 ### The allowlist
 
 `scripts/secure-analyzer-allowlist.txt` is the exemption list — not a
-baseline. Every entry is `<repo-relative path>:<line><TAB><reason>`, matched
-against a diagnostic's exact file and line; the sweep script fails on any
-finding not in this file, and separately fails on any allowlist entry that
-matched **nothing** across the whole sweep (a stale exemption), so an entry
-cannot silently outlive the code it was written for. The file's own header
-documents three classes:
+baseline. Every entry is
+`<repo-relative path><TAB><rule><TAB><symbol><TAB><reason>`: `<rule>` is `1`,
+`2` or `3`, and `<symbol>` is the finding's own stable text — the forbidden
+import path for rule 1, the call expression's source text for rule 2
+(e.g. `ssh.ParsePrivateKey(buf.Bytes())`), or `<Struct>.<Field>` for rule 3
+(e.g. `PKCS11Config.PIN`). The sweep matches a diagnostic's path + rule +
+symbol against those first three fields, VERBATIM — not a glob — and fails
+on any finding that doesn't match, and separately on any allowlist entry
+that matched **nothing** across the whole sweep (a stale exemption), so an
+entry cannot silently outlive the code it was written for.
+
+This is the second key scheme (go-xkms#607). The first keyed on
+`<path>:<line>`, and an edit anywhere above an exempted line silently
+invalidated the entry by shifting the line number, with no signal beyond a
+red Lint job on `main` days later — it broke twice within a week before
+being replaced. Rule 2 and rule 3's symbols aren't present in the
+diagnostic message (rule 2's message is the same fixed string for every
+call site; rule 3's never names the struct), so `scripts/secure-analyzer.sh`
+reads them back out of the source at the diagnostic's own `file:line:col`
+using `scripts/secure-analyzer-symbol`, a small `go/ast`-based helper built
+alongside the analyzer itself. One consequence: multiple call sites in the
+same file with textually identical call expressions collapse onto the same
+rule-2 key — correct when, as in `pkg/ssh/keys/signer.go`, they really are
+the same shape for the same reason.
+
+The file's own header documents three classes:
 
 - **A go-truststrap-forced signature** (rule 1): a small number of sites
   where an upstream function (`p256proto.{NewStaticKey,EncodeStaticKey,

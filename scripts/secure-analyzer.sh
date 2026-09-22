@@ -4,10 +4,11 @@
 # sweep it, as `go vet -vettool=...`, over every Go module in this tree under
 # every tag combination the Makefile already declares for testing that
 # module. Called by `make secure-analyzer`; `make secure-analyzer-selftest`
-# uses --build directly (see secure-analyzer-selftest.sh).
+# uses --build and --build-symtool directly (see secure-analyzer-selftest.sh).
 #
-#   secure-analyzer.sh --build <abs-out>   build the tool at <abs-out>
-#   secure-analyzer.sh --sweep             build + sweep + report
+#   secure-analyzer.sh --build <abs-out>           build the analyzer at <abs-out>
+#   secure-analyzer.sh --build-symtool <abs-out>   build the symbol helper at <abs-out>
+#   secure-analyzer.sh --sweep                     build both + sweep + report
 #
 # WHY THIS EXISTS (go-xkms#549)
 #
@@ -35,11 +36,38 @@
 # other finding fails the sweep. An allowlist entry that stops matching
 # ANYTHING across the whole sweep is stale and fails the sweep too (see
 # check_stale) -- silence is not evidence the exemption is still needed.
+#
+# KEYING (go-xkms#607): an entry keys on path + rule + the finding's own
+# symbol text, NOT path:line. A path:line key breaks on any edit that shifts
+# the line -- happened twice on 2026-09-21 (fido2.go 208->207, mock_extended
+# after go-xkms#154) -- with no signal beyond a red Lint on main days later.
+# The symbol is: rule 1, the forbidden import path (constant, and already in
+# the diagnostic message -- no parsing needed beyond the message itself);
+# rule 2, the call expression's own source text; rule 3, "<Struct>.<Field>".
+# Rule 2 and 3's symbols are not in the diagnostic message (rule 2's message
+# is the same fixed string for every call site; rule 3's never names the
+# struct), so both are read back out of the source at the reported
+# file:line:col by scripts/secure-analyzer-symbol, a small go/ast-based
+# helper built alongside the analyzer itself (see symbol_for below).
 set -eu
 
+# ROOT is canonicalized to an absolute path once, here, rather than left as
+# the default "." (or whatever relative value SECURE_ANALYZER_ROOT carries):
+# every "$ROOT/$module" built below is handed to
+# scripts/secure-analyzer-symbol as both its -root and (joined with a
+# diagnostic's own relative file) the file to read, and that tool's
+# containment check (resolveFile) treats a relative FILE as relative to
+# root -- a relative ROOT would make "$ROOT/$module/$relfile" relative to
+# the PROCESS's cwd instead, which is a different base, and got silently
+# double-joined onto -root before this line existed.
 ROOT="${SECURE_ANALYZER_ROOT:-.}"
+ROOT=$(cd "$ROOT" && pwd) || {
+	printf 'secure-analyzer: SECURE_ANALYZER_ROOT %s does not resolve to a directory\n' "$ROOT" >&2
+	exit 1
+}
 GO="${GO:-go}"
 TOOL_PKG=github.com/jeremyhahn/go-qrdb/pkg/secure/analyzer/cmd/secure-analyzer
+SYMBOL_PKG=./scripts/secure-analyzer-symbol
 ALLOWLIST="${SECURE_ANALYZER_ALLOWLIST:-$ROOT/scripts/secure-analyzer-allowlist.txt}"
 
 # The module/tags matrix. One "module tags" pair per rung; tags is "-" for no
@@ -51,6 +79,15 @@ ALLOWLIST="${SECURE_ANALYZER_ALLOWLIST:-$ROOT/scripts/secure-analyzer-allowlist.
 RUNGS="${SECURE_ANALYZER_RUNGS:-}"
 
 die() { printf '%s\n' "$@" >&2; exit 1; }
+
+# rule_for, symbol_for, allowed_reason, process_diagnostics and check_stale
+# live in secure-analyzer-key.sh, shared with secure-analyzer-selftest.sh so
+# the selftest's keying regression case exercises this exact matching logic
+# rather than a second copy of it (go-xkms#607).
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) ||
+	die "secure-analyzer: could not resolve this script's own directory"
+# shellcheck source=scripts/secure-analyzer-key.sh
+. "$SCRIPT_DIR/secure-analyzer-key.sh"
 
 # build_tool compiles the singlechecker to an ABSOLUTE path.
 #
@@ -71,15 +108,34 @@ build_tool() {
 	[ -x "$1" ] || die "secure-analyzer: build reported success but produced no executable at $1"
 }
 
+# build_symtool compiles scripts/secure-analyzer-symbol (see the KEYING
+# comment above) to an ABSOLUTE path, for the same reason build_tool's does:
+# the sweep cd's into each module before it is needed.
+build_symtool() {
+	[ -n "${1:-}" ] || die "secure-analyzer: build_symtool needs an output path"
+	case "$1" in
+	/*) ;;
+	*) die "secure-analyzer: output path must be absolute, got [$1]" ;;
+	esac
+	(cd "$ROOT" && $GO build -o "$1" "$SYMBOL_PKG") ||
+		die "secure-analyzer: scripts/secure-analyzer-symbol does not build." \
+			"  Rule 2 and rule 3 findings cannot be keyed without it."
+	[ -x "$1" ] || die "secure-analyzer: symtool build reported success but produced no executable at $1"
+}
+
 case "${1:---sweep}" in
 --build)
 	build_tool "${2:-}"
 	exit 0
 	;;
+--build-symtool)
+	build_symtool "${2:-}"
+	exit 0
+	;;
 --sweep)
 	;;
 *)
-	die "usage: secure-analyzer.sh [--build <abs-out> | --sweep]" ;;
+	die "usage: secure-analyzer.sh [--build <abs-out> | --build-symtool <abs-out> | --sweep]" ;;
 esac
 
 [ -n "$RUNGS" ] || die "secure-analyzer: SECURE_ANALYZER_RUNGS is empty; make must pass it"
@@ -92,22 +148,16 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 TOOL="$WORK/secure-analyzer"
 build_tool "$TOOL"
 
+SYMTOOL="$WORK/secure-analyzer-symbol"
+build_symtool "$SYMTOOL"
+
 fails=0
 rungs_run=0
 
-# allowed prints the reason for KEY (repo-relative path:line) if KEY is a
-# non-comment, non-blank line in the allowlist, or nothing if it is not.
-allowed_reason() {
-	awk -F'\t' -v k="$1" '
-		/^[[:space:]]*#/ { next }
-		NF < 2 { next }
-		$1 == k { print $2; found=1; exit }
-		END { if (!found) exit 1 }
-	' "$ALLOWLIST"
-}
-
 # run_rung sweeps one module under one tag set. $1 = module dir ("." for the
-# root), $2 = tags ("-" for none).
+# root), $2 = tags ("-" for none). Classification, keying and allowlist
+# matching happen in process_diagnostics (secure-analyzer-key.sh), which
+# also appends every allowed finding's key to "$WORK/hits" for check_stale.
 run_rung() {
 	module="$1"
 	tags="$2"
@@ -141,43 +191,7 @@ run_rung() {
 	rungs_run=$((rungs_run + 1))
 	[ -s "$out" ] || { echo "  clean -- $pkgcount packages"; return; }
 
-	while IFS= read -r line; do
-		[ -n "$line" ] || continue
-		if ! printf '%s\n' "$line" | grep -Eq '^[^:]+\.go:[0-9]+:[0-9]+: '; then
-			# Not a diagnostic line (a build failure, a tool-start failure, a
-			# panic) -- never suppressible, always a hard failure.
-			fails=$((fails + 1))
-			echo "  FAIL (not a securecheck diagnostic): $line"
-			continue
-		fi
-		key=$(printf '%s\n' "$line" | grep -Eo '^[^:]+:[0-9]+')
-		fullkey="${prefix}${key}"
-		if reason=$(allowed_reason "$fullkey"); then
-			echo "$fullkey" >>"$WORK/hits"
-			echo "  ALLOWED $fullkey -- $reason"
-		else
-			fails=$((fails + 1))
-			echo "  FAIL $fullkey: $line"
-		fi
-	done <"$out"
-}
-
-# check_stale fails on any allowlist entry that scored zero hits across the
-# WHOLE sweep -- an exemption nothing matched is either already fixed (drop
-# it) or was never reachable under any declared tag set (drop it or the
-# reasoning that added it is wrong).
-check_stale() {
-	while IFS= read -r entry; do
-		case "$entry" in
-		''|'#'*) continue ;;
-		esac
-		key=$(printf '%s\n' "$entry" | cut -f1)
-		[ -n "$key" ] || continue
-		if ! grep -qxF "$key" "$WORK/hits" 2>/dev/null; then
-			fails=$((fails + 1))
-			echo "  FAIL: stale allowlist entry never matched by the sweep: $key"
-		fi
-	done <"$ALLOWLIST"
+	process_diagnostics "$out" "$prefix" "$ROOT/$module"
 }
 
 echo "secure-analyzer: securecheck rules 1-3, every module, every declared combination"
@@ -202,4 +216,4 @@ if [ "$fails" -ne 0 ]; then
 		"  anything other than a pre-existing finding or one of the two named classes."
 fi
 
-echo "secure-analyzer: clean -- $rungs_run rung(s), $(awk '!/^[[:space:]]*#/ && NF>=2' "$ALLOWLIST" | wc -l | tr -d ' ') allowlist entries all still needed"
+echo "secure-analyzer: clean -- $rungs_run rung(s), $(awk -F'\t' '!/^[[:space:]]*#/ && NF>=4' "$ALLOWLIST" | wc -l | tr -d ' ') allowlist entries all still needed"

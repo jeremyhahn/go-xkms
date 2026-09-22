@@ -22,6 +22,16 @@
 # Exit status is checked separately from message text: a diagnostic printed
 # by a `go vet` that still exits 0 fails to block a merge, which is the whole
 # job of the gate this selftest is proving works.
+#
+# A SECOND case, below the bad/clean pair, proves the allowlist's keying
+# itself (go-xkms#607): that an entry survives an edit that only shifts the
+# exempted finding's line number, and that the stale check still catches an
+# entry whose finding is genuinely gone. It sources
+# scripts/secure-analyzer-key.sh -- the same rule_for/symbol_for/
+# allowed_reason/process_diagnostics/check_stale functions
+# scripts/secure-analyzer.sh's real sweep uses -- against a throwaway
+# module and a throwaway allowlist built at run time, never against
+# scripts/secure-analyzer-allowlist.txt itself.
 set -eu
 
 ROOT="${SECURE_ANALYZER_ROOT:-.}"
@@ -94,6 +104,138 @@ if [ -s "$clean_out" ]; then
       $(cat "$clean_out")"
 else
 	note "ok: clean fixture produced no diagnostics"
+fi
+
+# --- KEYING regression (go-xkms#607): a line shift must not invalidate an
+#     allowlist entry, and a genuinely removed finding must still go stale. -
+echo "secure-analyzer selftest: keying regression (go-xkms#607)"
+
+SYMTOOL="$WORK/secure-analyzer-symbol"
+"$ROOT/scripts/secure-analyzer.sh" --build-symtool "$SYMTOOL"
+
+# shellcheck source=scripts/secure-analyzer-key.sh
+. "$ROOT/scripts/secure-analyzer-key.sh"
+
+KEYWORK="$WORK/keying"
+mkdir -p "$KEYWORK"
+cat >"$KEYWORK/go.mod" <<-'EOF'
+	module secureanalyzerkeyingfixture
+
+	go 1.21
+	EOF
+
+write_keyed_baseline() {
+	cat >"$KEYWORK/keyed.go" <<-'EOF'
+		package keyed
+
+		// holder is go-xkms#607's own throwaway rule-3 fixture: it is built and
+		// vetted only inside this selftest's scratch directory, never as part
+		// of this repository's real module tree or its real allowlist.
+		type holder struct {
+			Password string
+		}
+		EOF
+}
+
+write_keyed_baseline
+keyed_out="$WORK/keyed.out"
+(cd "$KEYWORK" && $GO vet -vettool="$TOOL" ./...) >"$keyed_out" 2>&1 || true
+diagline=$(grep -E '^[^:]+\.go:[0-9]+:[0-9]+: field "Password"' "$keyed_out" || true)
+if [ -z "$diagline" ]; then
+	fail "keying fixture: expected a rule-3 finding on the baseline fixture, got:
+      $(cat "$keyed_out")"
+else
+	relfile=$(printf '%s\n' "$diagline" | grep -Eo '^[^:]+')
+	lineno=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:([0-9]+):[0-9]+:.*/\1/')
+	colno=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:[0-9]+:([0-9]+):.*/\1/')
+	msg=$(printf '%s\n' "$diagline" | sed -E 's/^[^:]+:[0-9]+:[0-9]+: //')
+	rule=$(rule_for "$msg") || fail "keying fixture: baseline diagnostic did not classify as a known securecheck rule"
+	symbol=$(symbol_for "$rule" "$KEYWORK/$relfile" "$lineno" "$colno" "$msg" "$KEYWORK") || fail "keying fixture: could not derive a symbol for the baseline finding"
+
+	ALLOWLIST="$WORK/keying-allowlist.txt"
+	printf '%s\t%s\t%s\treason: go-xkms#607 selftest fixture\n' "$relfile" "$rule" "$symbol" >"$ALLOWLIST"
+
+	: >"$WORK/hits"
+	before=$fails
+	process_diagnostics "$keyed_out" "" "$KEYWORK"
+	if [ "$fails" -eq "$before" ]; then
+		note "ok: the baseline finding matches its freshly derived allowlist entry ($relfile [$rule] $symbol)"
+	else
+		fail "keying fixture: the baseline finding did not match its own freshly derived allowlist entry"
+	fi
+
+	# A comment inserted directly ABOVE the field shifts its line number and
+	# changes nothing else about it -- go-xkms#607 exists because the
+	# previous path:line key would stop matching here; path+rule+symbol
+	# must not.
+	cat >"$KEYWORK/keyed.go" <<-'EOF'
+		package keyed
+
+		// holder is go-xkms#607's own throwaway rule-3 fixture: it is built and
+		// vetted only inside this selftest's scratch directory, never as part
+		// of this repository's real module tree or its real allowlist.
+		type holder struct {
+			// This comment, inserted directly above the field by the selftest,
+			// exists only to shift Password's line number.
+			//
+			//
+			Password string
+		}
+		EOF
+	shifted_out="$WORK/keyed-shifted.out"
+	(cd "$KEYWORK" && $GO vet -vettool="$TOOL" ./...) >"$shifted_out" 2>&1 || true
+	shifted_diag=$(grep -E '^[^:]+\.go:[0-9]+:[0-9]+: field "Password"' "$shifted_out" || true)
+	if [ -z "$shifted_diag" ]; then
+		fail "keying fixture: expected a rule-3 finding after shifting the field, got:
+      $(cat "$shifted_out")"
+	else
+		shifted_line=$(printf '%s\n' "$shifted_diag" | sed -E 's/^[^:]+:([0-9]+):[0-9]+:.*/\1/')
+		if [ "$shifted_line" = "$lineno" ]; then
+			fail "keying fixture: the inserted comment did not move the field's line number ($lineno); this case proves nothing"
+		else
+			note "ok: the field's reported line moved $lineno -> $shifted_line"
+			: >"$WORK/hits"
+			before=$fails
+			process_diagnostics "$shifted_out" "" "$KEYWORK"
+			if [ "$fails" -eq "$before" ]; then
+				note "ok: the SAME allowlist entry still matches after only a line shift -- go-xkms#607 is fixed"
+			else
+				fail "keying fixture: the allowlist entry stopped matching after only a line shift (the path:line regression go-xkms#607 fixes)"
+			fi
+		fi
+	fi
+
+	# Removing the field entirely makes the rule-3 finding, and so any hit
+	# for it, disappear. check_stale -- the mechanism that actually protects
+	# scripts/secure-analyzer-allowlist.txt from an outlived exemption -- must
+	# still flag the now-unmatched entry rather than treat old hits as
+	# current.
+	cat >"$KEYWORK/keyed.go" <<-'EOF'
+		package keyed
+
+		type holder struct {
+			Note string
+		}
+		EOF
+	removed_out="$WORK/keyed-removed.out"
+	(cd "$KEYWORK" && $GO vet -vettool="$TOOL" ./...) >"$removed_out" 2>&1 || true
+	if grep -q 'field "Password"' "$removed_out"; then
+		fail "keying fixture: the Password finding is still present after removing the field; this case proves nothing"
+	else
+		: >"$WORK/hits"
+		before=$fails
+		check_stale
+		if [ "$fails" -gt "$before" ]; then
+			note "ok: removing the field leaves the allowlist entry unmatched, and check_stale catches it"
+			# check_stale's increment IS the assertion this branch just
+			# confirmed -- a deliberately provoked, expected signal, not a
+			# real selftest failure. Net it back out so it does not also
+			# trip the overall pass/fail tally below.
+			fails=$before
+		else
+			fail "keying fixture: check_stale did not flag an allowlist entry that matched nothing after its field was removed"
+		fi
+	fi
 fi
 
 if [ "$fails" -ne 0 ]; then

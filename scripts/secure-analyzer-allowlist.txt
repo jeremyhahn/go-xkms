@@ -1,17 +1,48 @@
-# secure-analyzer allowlist (go-xkms#549)
+# secure-analyzer allowlist (go-xkms#549, re-keyed by go-xkms#607)
 #
 # Every non-comment line is one exempted finding, in the form:
 #
-#   <repo-relative path>:<line><TAB><reason>
+#   <repo-relative path><TAB><rule><TAB><symbol><TAB><reason>
 #
-# scripts/secure-analyzer.sh matches a diagnostic's file:line against the
-# first field, VERBATIM -- not a glob, not a package, a single line. Moving a
-# call, reformatting a file, or fixing the finding all change the line
-# number and the entry stops matching, which is deliberate: an entry that no
-# longer matches anything is stale, and the sweep fails on ANY allowlist
-# line that scored zero hits across the whole run (see check_stale in the
-# script) rather than let the exemption quietly outlive the code it was
-# written for.
+# scripts/secure-analyzer.sh matches a diagnostic's path + rule + symbol
+# against the first three fields, VERBATIM -- not a glob, not a package, an
+# exact triple. <rule> is 1, 2 or 3, matching pkg/secure/analyzer's three
+# rules. <symbol> is:
+#
+#   rule 1 -- the forbidden import path (always "github.com/awnumar/memguard";
+#             go-qrdb's analyzer bans exactly one import).
+#   rule 2 -- the call expression's own source text, e.g.
+#             "ssh.ParsePrivateKey(buf.Bytes())".
+#   rule 3 -- "<Struct>.<Field>", e.g. "PKCS11Config.PIN".
+#
+# rule 1's symbol is read straight out of the diagnostic message (the
+# message quotes the constant it banned); rule 2 and rule 3's are not --
+# rule 2's message is the identical fixed string for every call site, and
+# rule 3's never names the struct -- so both are read back out of the
+# source at the diagnostic's own file:line:col by
+# scripts/secure-analyzer-symbol, a go/ast-based helper built alongside the
+# analyzer itself.
+#
+# THIS IS THE SECOND KEY SCHEME. The first (go-xkms#549) keyed on
+# <path>:<line>, and an edit anywhere above an exempted line silently
+# invalidated the entry by shifting the line number -- with no signal
+# beyond a red Lint job on main days later. It broke twice within a week
+# (fido2.go 208->207 after go-xkms#181, mock_extended.go after go-xkms#154)
+# before go-xkms#607 replaced it with this one. A symbol survives everything
+# that does not touch the finding itself: reformatting, adding code above
+# it, renaming the file's OTHER fields. It stops matching only when the
+# finding's own shape changes -- the call is rewritten, the field is
+# renamed, the struct is renamed, or the field is fixed -- which is exactly
+# when the exemption SHOULD stop matching.
+#
+# One consequence of keying on the call expression's source text rather
+# than its line: multiple call sites in the same file that are textually
+# identical (same receiver, same arguments) collapse onto the same key. See
+# pkg/ssh/keys/signer.go below -- three call sites, one entry -- which is
+# correct here because the three call sites really are the same shape for
+# the same reason (see that entry's reason). A file whose sites differ in
+# any way (different variable, different argument) still gets one entry per
+# distinct call text.
 #
 # This file is not a baseline. Rules 1 and 2 (raw memguard import,
 # ssh.ParsePrivateKey) are absolute everywhere except the two classes below;
@@ -31,8 +62,8 @@
 #    EncodeStaticKey/DecodeStaticKey cited as the shape that already works.
 #    Every other memguard call in each of these files IS the SDK wrapper
 #    (secure.Wipe, secure.Buffer) and is not part of the exemption; only the
-#    import line and the lines that construct or destroy the forced
-#    LockedBuffer are listed.
+#    import line is listed -- the symbol is always the banned import path
+#    itself, and a file only ever imports a given path once.
 #
 # 2. rule-2 narrowing filed on go-qrdb (rule 2) -- pkg/ssh/keys already
 #    parses only *secure.Buffer/*secure.Secret-backed bytes at every one of
@@ -51,17 +82,15 @@
 # applies to them; see that section's own header.
 
 # --- go-truststrap#60: forced *memguard.LockedBuffer (rule 1) --------------
-cmd/xkmsctl/bootstrap_p256.go:22	go-truststrap#60: p256proto.{NewStaticKey,EncodeStaticKey,DecodeStaticKey} take *memguard.LockedBuffer; secure.Buffer exposes no accessor to supply one
-cmd/xkmsctl/bootstrap_p256_test.go:22	go-truststrap#60: exercises the same forced p256proto signature directly
-pkg/server/bootstrap_suite.go:20	go-truststrap#60: bootstrap.DecodeP256StaticKey (p256proto.DecodeStaticKey) forces a *memguard.LockedBuffer
-pkg/server/bootstrap_suite_test.go:33	go-truststrap#60: exercises bootstrap.EncodeP256StaticKey's forced *memguard.LockedBuffer signature directly
-pkg/trust/bootstrap/suite_test.go:20	go-truststrap#60: exercises p256proto.EncodeStaticKey/DecodeStaticKey's forced *memguard.LockedBuffer signature directly
+cmd/xkmsctl/bootstrap_p256.go	1	github.com/awnumar/memguard	go-truststrap#60: p256proto.{NewStaticKey,EncodeStaticKey,DecodeStaticKey} take *memguard.LockedBuffer; secure.Buffer exposes no accessor to supply one
+cmd/xkmsctl/bootstrap_p256_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises the same forced p256proto signature directly
+pkg/server/bootstrap_suite.go	1	github.com/awnumar/memguard	go-truststrap#60: bootstrap.DecodeP256StaticKey (p256proto.DecodeStaticKey) forces a *memguard.LockedBuffer
+pkg/server/bootstrap_suite_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises bootstrap.EncodeP256StaticKey's forced *memguard.LockedBuffer signature directly
+pkg/trust/bootstrap/suite_test.go	1	github.com/awnumar/memguard	go-truststrap#60: exercises p256proto.EncodeStaticKey/DecodeStaticKey's forced *memguard.LockedBuffer signature directly
 
 # --- rule-2 narrowing filed on go-qrdb: already Buffer/Secret-backed -------
-pkg/ssh/keys/parse.go:60	rule-2 narrowing filed on go-qrdb: pemBytes is the caller's *secure.Buffer-backed bytes (see ParsePEM's pemBuf parameter); ParsePrivateKey is the only way to detect an unencrypted key before falling back to ParsePrivateKeyWithPassphrase
-pkg/ssh/keys/signer.go:88	rule-2 narrowing filed on go-qrdb: buf.Bytes() is opened from k.Material, a *secure.Secret
-pkg/ssh/keys/signer.go:166	rule-2 narrowing filed on go-qrdb: buf.Bytes() is opened from k.Material, a *secure.Secret
-pkg/ssh/keys/signer.go:185	rule-2 narrowing filed on go-qrdb: buf.Bytes() is opened from k.Material, a *secure.Secret
+pkg/ssh/keys/parse.go	2	ssh.ParsePrivateKey(pemBytes)	rule-2 narrowing filed on go-qrdb: pemBytes is the caller's *secure.Buffer-backed bytes (see ParsePEM's pemBuf parameter); ParsePrivateKey is the only way to detect an unencrypted key before falling back to ParsePrivateKeyWithPassphrase
+pkg/ssh/keys/signer.go	2	ssh.ParsePrivateKey(buf.Bytes())	rule-2 narrowing filed on go-qrdb: buf.Bytes() is opened from k.Material or s.key.Material, both *secure.Secret, at all three call sites this text matches (persistentSigner construction, enclaveSigner.Sign, enclaveSigner.SignWithAlgorithm)
 
 # --- Pre-existing rule-3 findings (holder fields typed string/[]byte) ------
 #
@@ -80,32 +109,32 @@ pkg/ssh/keys/signer.go:185	rule-2 narrowing filed on go-qrdb: buf.Bytes() is ope
 # are real work"). Removing an entry as its struct is converted is expected;
 # adding a new one for a field this gate has never seen is not -- that is a
 # new violation, not a pre-existing one, and must be fixed or scoped instead.
-pkg/crypto/rand/rand.go:219	pre-existing: PKCS11Config.PIN; deferred pending design review (go-xkms#549 triage)
-pkg/luks/tpm.go:86	pre-existing: TPMSealResult.Passphrase; deferred pending design review (go-xkms#549 triage)
-pkg/fido2/webauthn_assertion.go:51	pre-existing: WebAuthnAuthenticationOptions.PIN; deferred pending design review (go-xkms#549 triage)
-pkg/fido2/webauthn_assertion.go:399	pre-existing: WebAuthnAssertionRequest.PIN; deferred pending design review (go-xkms#549 triage)
-pkg/fido2/webauthn_attestation.go:51	pre-existing: WebAuthnRegistrationOptions.PIN; deferred pending design review (go-xkms#549 triage)
-pkg/backup/backup.go:111	pre-existing: BackupKey.PrivateKey; deferred pending design review (go-xkms#549 triage)
-pkg/factor/fido2/ctap2.go:142	pre-existing: PIN configuration field; deferred pending design review (go-xkms#549 triage)
-pkg/pivcert/pivcert.go:492	pre-existing: PIN configuration field; deferred pending design review (go-xkms#549 triage)
-examples/symmetric-encryption/aes/aes-encryption.go:40	pre-existing: simplePassword.password in an SDK usage example implementing types.Password; deferred pending design review (go-xkms#549 triage)
-pkg/auth/pkcs11_tls.go:57	pre-existing: PKCS11TLSConfig.PIN; deferred pending design review (go-xkms#549 triage)
-pkg/pkcs11/module/crypto.go:3228	pre-existing: ExportKeyMaterialResponse.KeyMaterial; deferred pending design review (go-xkms#549 triage)
-pkg/pkcs11/module/crypto.go:3303	pre-existing: ImportKeyMaterialRequest.KeyMaterial; deferred pending design review (go-xkms#549 triage)
-pkg/trust/clusterca/keyprotect.go:75	pre-existing: KeyProtectConfig.Passphrase; deferred pending design review (go-xkms#549 triage)
-pkg/acme/client/types.go:123	pre-existing: PrivateKey field, json:"-" (not a wire boundary per scope.go); deferred pending design review (go-xkms#549 triage)
-sdk/go/piv_signer.go:63	pre-existing: PIN configuration field; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/backup/service.go:80	pre-existing: OATHCredentialInfo.Secret; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/backup/service.go:104	pre-existing: PasswordInfo.Password; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/usb/image.go:50	pre-existing: ImageConfig.Passphrase; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/cdp/bridge.go:44	pre-existing: StoredCredential.PrivateKey; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/pivcert/pivcert.go:492	pre-existing: PIN configuration field; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/pwimport/types.go:103	pre-existing: ParsedEntry.Password; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/authenticator/config.go:143	pre-existing: StoredCredential.PrivateKey; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/authenticator/user_presence.go:101	pre-existing: UserVerificationResult.PIN; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/authenticator/user_presence_interactive.go:204	pre-existing: pinReadResult.pin; deferred pending design review (go-xkms#549 triage)
-xkey/pkg/gui/services/elevation_sudo.go:32	pre-existing: SudoElevator.password; deferred pending design review (go-xkms#549 triage)
-xkey/cmd/xkey/cmd/device_share.go:70	pre-existing: sharedKeyMaterial.KeyMaterial; deferred pending design review (go-xkms#549 triage)
-xkey/cmd/xkey/cmd/fido2.go:207	pre-existing: FIDO2Config.PIN; deferred pending design review (go-xkms#549 triage)
-xkey/cmd/xkey/cmd/password.go:519	pre-existing: passwordListEntry.Password; deferred pending design review (go-xkms#549 triage)
-xkey/cmd/xkey/cmd/webauthn_ceremony.go:102	pre-existing: CeremonyRequest.PIN; deferred pending design review (go-xkms#549 triage)
+pkg/crypto/rand/rand.go	3	PKCS11Config.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/luks/tpm.go	3	TPMSealResult.Passphrase	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/fido2/webauthn_assertion.go	3	WebAuthnAuthenticationOptions.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/fido2/webauthn_assertion.go	3	WebAuthnAssertionRequest.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/fido2/webauthn_attestation.go	3	WebAuthnRegistrationOptions.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/backup/backup.go	3	BackupKey.PrivateKey	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/factor/fido2/ctap2.go	3	LocalEnrollRequest.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/pivcert/pivcert.go	3	PKCS11StorageConfig.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+examples/symmetric-encryption/aes/aes-encryption.go	3	simplePassword.password	pre-existing: an SDK usage example implementing types.Password; deferred pending design review (go-xkms#549 triage)
+pkg/auth/pkcs11_tls.go	3	PKCS11TLSConfig.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/pkcs11/module/crypto.go	3	ExportKeyMaterialResponse.KeyMaterial	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/pkcs11/module/crypto.go	3	ImportKeyMaterialRequest.KeyMaterial	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/trust/clusterca/keyprotect.go	3	KeyProtection.Passphrase	pre-existing: deferred pending design review (go-xkms#549 triage)
+pkg/acme/client/types.go	3	CertificateResource.PrivateKey	pre-existing: json:"-" (not a wire boundary per scope.go); deferred pending design review (go-xkms#549 triage)
+sdk/go/piv_signer.go	3	PIVCryptoSigner.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/backup/service.go	3	OATHCredentialInfo.Secret	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/backup/service.go	3	PasswordInfo.Password	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/usb/image.go	3	ImageConfig.Passphrase	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/cdp/bridge.go	3	StoredCredential.PrivateKey	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/pivcert/pivcert.go	3	PKCS11StorageConfig.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/pwimport/types.go	3	ParsedEntry.Password	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/authenticator/config.go	3	StoredCredential.PrivateKey	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/authenticator/user_presence.go	3	UserVerificationResult.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/authenticator/user_presence_interactive.go	3	pinReadResult.pin	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/pkg/gui/services/elevation_sudo.go	3	SudoElevator.password	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/cmd/xkey/cmd/device_share.go	3	sharedKeyMaterial.KeyMaterial	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/cmd/xkey/cmd/fido2.go	3	FIDO2Config.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/cmd/xkey/cmd/password.go	3	passwordListEntry.Password	pre-existing: deferred pending design review (go-xkms#549 triage)
+xkey/cmd/xkey/cmd/webauthn_ceremony.go	3	CeremonyRequest.PIN	pre-existing: deferred pending design review (go-xkms#549 triage)
