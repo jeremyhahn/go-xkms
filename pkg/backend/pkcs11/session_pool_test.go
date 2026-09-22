@@ -953,3 +953,123 @@ func TestSessionPool_CloseWaitsForAReplacementInFlight(t *testing.T) {
 		"Close must drain the replacement it waited for; a handle left here is "+
 			"an open session in a closed pool that nothing will ever close")
 }
+
+// TestSessionPool_WithSearch_SerializesPerHandle proves that WithSearch makes
+// FindObjectsInit/FindObjects/FindObjectsFinal one critical section per
+// session handle: many goroutines hammering WithSearch on the SAME handle can
+// never have two of those sequences in flight at once.
+//
+// This is the shape of #24: a second C_FindObjectsInit landing on a handle
+// while an earlier search on that same handle is still open fails the token
+// with CKR_OPERATION_ACTIVE. The pool's channel already keeps two goroutines
+// from holding one handle at the same time through WithSession, so this test
+// bypasses that by driving WithSearch directly against a single handle taken
+// out of the pool once -- the scenario the per-handle lock exists for.
+func TestSessionPool_WithSearch_SerializesPerHandle(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-search-serialize")
+	pool := newTestPool(t, b, 1)
+
+	// Whitebox: take the pool's one session directly so every goroutine below
+	// targets the identical handle, then hand it back so pool.Close (via
+	// t.Cleanup) has something to drain.
+	session := <-pool.pool
+	t.Cleanup(func() { pool.pool <- session })
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+	}
+
+	var active int32
+	var overlapped atomic.Bool
+	const goroutines = 8
+	const iterations = 50
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < iterations; i++ {
+				err := pool.WithSearch(session, template, func() error {
+					// A goroutine that slipped past the lock would land here
+					// while active is already 1 and get caught by the CAS
+					// below, not by a PKCS#11 error -- this is checking the
+					// Go-level critical section, not relying on the token to
+					// report the race.
+					if !atomic.CompareAndSwapInt32(&active, 0, 1) {
+						overlapped.Store(true)
+					}
+					_, _, findErr := pool.ctx.FindObjects(session, 1)
+					atomic.StoreInt32(&active, 0)
+					return findErr
+				})
+				require.NoError(t, err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	require.False(t, overlapped.Load(),
+		"two goroutines interleaved a search on the same session handle")
+}
+
+// TestSessionPool_WithSearch_FindErrorStillFinalizes verifies that WithSearch
+// calls FindObjectsFinal even when find returns an error, and that the error
+// find returned is the one the caller sees. If Final did not run, the next
+// search on the same handle would fail with CKR_OPERATION_ACTIVE instead of
+// succeeding, which is what the second WithSearch call below checks for.
+func TestSessionPool_WithSearch_FindErrorStillFinalizes(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-search-final-on-error")
+	pool := newTestPool(t, b, 1)
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+	}
+
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		sentinel := errors.New("boom")
+		err := pool.WithSearch(session, template, func() error {
+			return sentinel
+		})
+		require.ErrorIs(t, err, sentinel, "find's own error must reach the caller unchanged")
+
+		err = pool.WithSearch(session, template, func() error {
+			_, _, findErr := pool.ctx.FindObjects(session, 1)
+			return findErr
+		})
+		require.NoError(t, err, "a prior search that errored must still have been finalized")
+
+		return nil
+	}))
+}
+
+// TestSessionPool_WithSearch_InitError verifies that a FindObjectsInit
+// failure is reported to the caller and that find never runs -- there is no
+// search for it to operate on.
+func TestSessionPool_WithSearch_InitError(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-search-init-error")
+	pool := newTestPool(t, b, 1)
+
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		require.NoError(t, b.p11ctx.CloseSession(session), "kill the session before WithSearch uses it")
+
+		called := false
+		err := pool.WithSearch(session, nil, func() error {
+			called = true
+			return nil
+		})
+
+		require.Error(t, err, "FindObjectsInit on a closed session must fail")
+		require.False(t, called, "find must not run when FindObjectsInit fails")
+		require.ErrorIs(t, err, pkcs11.Error(pkcs11.CKR_SESSION_HANDLE_INVALID))
+
+		// The session this callback was handed is dead; hand back a value so
+		// WithSession's own bookkeeping has something to return, matching
+		// what TestFindRSASigner_DeadSession's WithSession does after
+		// closing its session the same way.
+		return nil
+	}))
+}

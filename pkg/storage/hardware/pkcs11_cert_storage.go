@@ -46,6 +46,17 @@ type PKCS11SOSessionProvider interface {
 	WithSOSession(soPin, userPin string, fn func(session pkcs11.SessionHandle) error) error
 }
 
+// PKCS11SearchProvider is an optional interface implemented by session
+// providers that can run FindObjectsInit/FindObjects/FindObjectsFinal as one
+// critical section per session handle, serialized against every other search
+// on that handle. The backend/pkcs11 SessionPool satisfies this via
+// WithSearch; a provider that doesn't (e.g. a single-session, unpooled
+// wrapper) has no concurrent borrower to race, so this storage falls back to
+// calling Init/Final directly (see doSearch). See #24.
+type PKCS11SearchProvider interface {
+	WithSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) error
+}
+
 // PKCS11CertStorage implements HardwareCertStorage for PKCS#11 HSMs.
 // Certificates are stored as CKO_CERTIFICATE objects on the token.
 //
@@ -118,6 +129,31 @@ func (p *PKCS11CertStorage) runWrite(fn func(session pkcs11.SessionHandle) error
 		return sp.WithSOSession(p.soPin, p.userPin, fn)
 	}
 	return p.pool.WithSession(fn)
+}
+
+// doSearch runs a FindObjectsInit(template) / find / FindObjectsFinal
+// sequence on session as one critical section. When the pool implements
+// PKCS11SearchProvider (the backend/pkcs11 SessionPool always does), the
+// section is serialized against every other search on the same session
+// handle, closing the window that let a search opened by one borrower still
+// be active when the same handle reached the next one (#24). Providers that
+// don't implement it fall back to calling Init/Final directly -- there is no
+// pool of concurrent borrowers to race in that case.
+//
+// find must not call FindObjectsInit or FindObjectsFinal itself.
+func (p *PKCS11CertStorage) doSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) error {
+	if sp, ok := p.pool.(PKCS11SearchProvider); ok {
+		return sp.WithSearch(session, template, find)
+	}
+
+	if err := p.pool.Ctx().FindObjectsInit(session, template); err != nil {
+		return err
+	}
+	defer func() {
+		_ = p.pool.Ctx().FindObjectsFinal(session)
+	}()
+
+	return find()
 }
 
 // SaveCert stores a certificate as a CKO_CERTIFICATE object.
@@ -457,14 +493,22 @@ func (p *PKCS11CertStorage) ListCerts() ([]string, error) {
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 		}
 
-		if err := p.pool.Ctx().FindObjectsInit(session, template); err != nil {
-			return NewOperationError("init certificate search", err)
-		}
-		defer p.pool.Ctx().FindObjectsFinal(session)
-
-		handles, err := p.findAllObjects(session)
+		var handles []pkcs11.ObjectHandle
+		err := p.doSearch(session, template, func() error {
+			var findErr error
+			handles, findErr = p.findAllObjects(session)
+			if findErr != nil {
+				return NewOperationError("find certificates", findErr)
+			}
+			return nil
+		})
 		if err != nil {
-			return NewOperationError("find certificates", err)
+			// A failure from doSearch's own FindObjectsInit surfaces raw, not
+			// wrapped by the closure above, so it is distinguishable here.
+			if _, ok := err.(*OperationError); ok {
+				return err
+			}
+			return NewOperationError("init certificate search", err)
 		}
 
 		ids := make(map[string]bool)
@@ -588,14 +632,20 @@ func (p *PKCS11CertStorage) findCertificateHandle(session pkcs11.SessionHandle, 
 		pkcs11.NewAttribute(pkcs11.CKA_ID, []byte(id)),
 	}
 
-	if err := p.pool.Ctx().FindObjectsInit(session, template); err != nil {
-		return 0, NewOperationError("init object search", err)
-	}
-	defer p.pool.Ctx().FindObjectsFinal(session)
-
-	handles, _, err := p.pool.Ctx().FindObjects(session, 1)
+	var handles []pkcs11.ObjectHandle
+	err := p.doSearch(session, template, func() error {
+		var findErr error
+		handles, _, findErr = p.pool.Ctx().FindObjects(session, 1)
+		if findErr != nil {
+			return NewOperationError("find objects", findErr)
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, NewOperationError("find objects", err)
+		if _, ok := err.(*OperationError); ok {
+			return 0, err
+		}
+		return 0, NewOperationError("init object search", err)
 	}
 
 	if len(handles) == 0 {
@@ -636,14 +686,20 @@ func (p *PKCS11CertStorage) findChainMemberHandles(session pkcs11.SessionHandle,
 	template := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 	}
-	if err := p.pool.Ctx().FindObjectsInit(session, template); err != nil {
-		return nil, NewOperationError("init object search", err)
-	}
-	defer p.pool.Ctx().FindObjectsFinal(session)
-
-	allHandles, err := p.findAllObjects(session)
+	var allHandles []pkcs11.ObjectHandle
+	err := p.doSearch(session, template, func() error {
+		var findErr error
+		allHandles, findErr = p.findAllObjects(session)
+		if findErr != nil {
+			return NewOperationError("find objects", findErr)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, NewOperationError("find objects", err)
+		if _, ok := err.(*OperationError); ok {
+			return nil, err
+		}
+		return nil, NewOperationError("init object search", err)
 	}
 
 	type member struct {

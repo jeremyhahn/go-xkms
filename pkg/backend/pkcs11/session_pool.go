@@ -92,6 +92,22 @@ type SessionPool struct {
 	// panics, and both transitions can reach it.
 	done       chan struct{}
 	doneClosed bool
+
+	// searchLocks holds one *sync.Mutex per session handle, so WithSearch can
+	// make FindObjectsInit/FindObjects/FindObjectsFinal a single critical
+	// section on that handle without a lock across the whole pool -- the rest
+	// of the pool's traffic (other handles, non-search operations) is
+	// unaffected. See #24.
+	//
+	// Entries are created lazily on first use and are never removed. A
+	// *sync.Mutex carries no state tied to a particular open session, so if
+	// the driver ever reissues a numeric handle after this pool closed and
+	// replaced it (discardAndReplace, Close), the reused entry is still
+	// correct -- merely a mutex nothing is contending for. Session handles
+	// are bounded by how many this pool ever opens over its lifetime (its
+	// fixed size, plus one replacement per panic recovered), so the map
+	// cannot grow unbounded.
+	searchLocks sync.Map // pkcs11.SessionHandle -> *sync.Mutex
 }
 
 // state reports why the pool cannot serve a session, or nil if it can.
@@ -365,6 +381,75 @@ func (p *SessionPool) signalDoneLocked() {
 	}
 	p.doneClosed = true
 	close(p.done)
+}
+
+// searchLock returns the mutex that serializes searches on session, creating
+// it on first use.
+func (p *SessionPool) searchLock(session pkcs11.SessionHandle) *sync.Mutex {
+	v, _ := p.searchLocks.LoadOrStore(session, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// WithSearch runs a PKCS#11 object search on session as a single critical
+// section: FindObjectsInit(template), then find -- which performs the
+// FindObjects call or calls the search needs -- then FindObjectsFinal. The
+// whole sequence is serialized against every other WithSearch call on the
+// same session handle by a per-handle lock, so a second FindObjectsInit on
+// that handle can never start while this one's search is still open.
+//
+// PKCS#11 permits at most one active search per session (v3.2 SS5.7.7);
+// C_FindObjectsInit on a session that already has one active returns
+// CKR_OPERATION_ACTIVE (#24). session must already be checked out --
+// typically from within the fn passed to WithSession or WithSOSession -- and
+// must not be used concurrently with itself outside this call.
+//
+// find must not call FindObjectsInit or FindObjectsFinal itself; WithSearch
+// owns both ends of the search it opens.
+func (p *SessionPool) WithSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) error {
+	lock := p.searchLock(session)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if err := p.ctx.FindObjectsInit(session, template); err != nil {
+		return err
+	}
+	defer func() {
+		// The search is being torn down regardless of find's outcome, and a
+		// Final that fails here has no direct recourse -- the caller already
+		// has find's error, if any, to report. Discarding it here does leave
+		// the next searcher on this handle to discover a still-open search
+		// the hard way, via its own Init, but that failure carries the same
+		// information a checked return here would have, and this keeps the
+		// one Final call this method makes on find's behalf from masking
+		// find's own error with an unrelated one.
+		_ = p.ctx.FindObjectsFinal(session)
+	}()
+
+	return find()
+}
+
+// FindObjectHandle runs template through WithSearch and returns the first
+// matching object handle, or 0 if template matched nothing.
+//
+// This is the single-object-lookup shape the pool's callers repeat most --
+// find one key or certificate by class, ID or label -- factored out so each
+// of them gets the same critical section instead of hand-rolling their own
+// Init/Find/Final sequence around p.ctx. Use WithSearch directly for a search
+// that pages through more than one handle.
+func (p *SessionPool) FindObjectHandle(session pkcs11.SessionHandle, template []*pkcs11.Attribute) (pkcs11.ObjectHandle, error) {
+	var handles []pkcs11.ObjectHandle
+	err := p.WithSearch(session, template, func() error {
+		var findErr error
+		handles, _, findErr = p.ctx.FindObjects(session, 1)
+		return findErr
+	})
+	if err != nil {
+		return 0, err
+	}
+	if len(handles) == 0 {
+		return 0, nil
+	}
+	return handles[0], nil
 }
 
 // WithSOSession temporarily switches the token login to CKU_SO (Security Officer),

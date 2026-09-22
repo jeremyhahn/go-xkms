@@ -1307,21 +1307,14 @@ func (b *Backend) FindSecretKey(attrs *types.KeyAttributes) (pkcs11.ObjectHandle
 
 	var handle pkcs11.ObjectHandle
 	err := b.pool.WithSession(func(session pkcs11.SessionHandle) error {
-		if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-			return &errs.Wrapped{Msg: "failed to init object search", Err: err}
+		found, searchErr := b.pool.FindObjectHandle(session, template)
+		if searchErr != nil {
+			return &errs.Wrapped{Msg: "failed to find objects", Err: searchErr}
 		}
-		handles, _, err := b.p11ctx.FindObjects(session, 1)
-		if err != nil {
-			b.p11ctx.FindObjectsFinal(session)
-			return &errs.Wrapped{Msg: "failed to find objects", Err: err}
-		}
-		if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-			return &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
-		}
-		if len(handles) == 0 {
+		if found == 0 {
 			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
-		handle = handles[0]
+		handle = found
 		return nil
 	})
 	if err != nil {
@@ -1782,24 +1775,17 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 
 	err := pool.WithSession(func(session pkcs11.SessionHandle) error {
 		// Find private key (any type)
-		if err := pool.Ctx().FindObjectsInit(session, []*pkcs11.Attribute{
+		priv, err := pool.FindObjectHandle(session, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-		}); err != nil {
-			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for private key", Err: err}
-		}
-		privObjs, _, err := pool.Ctx().FindObjects(session, 1)
+		})
 		if err != nil {
-			pool.Ctx().FindObjectsFinal(session)
-			return &errs.Wrapped{Msg: "pkcs11: FindObjects for private key", Err: err}
+			return &errs.Wrapped{Msg: "pkcs11: find private key", Err: err}
 		}
-		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for private key", Err: err}
-		}
-		if len(privObjs) == 0 {
+		if priv == 0 {
 			return nil // not found
 		}
-		privHandle = privObjs[0]
+		privHandle = priv
 
 		// Get key type
 		attrs, err := pool.Ctx().GetAttributeValue(session, privHandle, []*pkcs11.Attribute{
@@ -1814,23 +1800,14 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 		keyType = ckULong(attrs[0].Value)
 
 		// Find public key
-		if err := pool.Ctx().FindObjectsInit(session, []*pkcs11.Attribute{
+		pub, err := pool.FindObjectHandle(session, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-		}); err != nil {
-			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for public key", Err: err}
-		}
-		pubObjs, _, err := pool.Ctx().FindObjects(session, 1)
+		})
 		if err != nil {
-			pool.Ctx().FindObjectsFinal(session)
-			return &errs.Wrapped{Msg: "pkcs11: FindObjects for public key", Err: err}
+			return &errs.Wrapped{Msg: "pkcs11: find public key", Err: err}
 		}
-		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for public key", Err: err}
-		}
-		if len(pubObjs) > 0 {
-			pubHandle = pubObjs[0]
-		}
+		pubHandle = pub
 		found = true
 		return nil
 	})

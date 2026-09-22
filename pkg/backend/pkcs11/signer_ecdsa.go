@@ -340,46 +340,32 @@ func findECDSASigner(pool *SessionPool, id []byte) (*pkcs11ECDSASigner, error) {
 
 	err := pool.WithSession(func(session pkcs11.SessionHandle) error {
 		// Find private key
-		if err := pool.Ctx().FindObjectsInit(session, []*pkcs11.Attribute{
+		priv, err := pool.FindObjectHandle(session, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-		}); err != nil {
+		})
+		if err != nil {
 			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for ECDSA private key", Err: err}
 		}
-		privObjs, _, err := pool.Ctx().FindObjects(session, 1)
-		if err != nil {
-			pool.Ctx().FindObjectsFinal(session)
-			return &errs.Wrapped{Msg: "pkcs11: FindObjects for ECDSA private key", Err: err}
-		}
-		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for ECDSA private key", Err: err}
-		}
-		if len(privObjs) == 0 {
+		if priv == 0 {
 			return nil // not found
 		}
-		privHandle = privObjs[0]
+		privHandle = priv
 
 		// Find public key
-		if err := pool.Ctx().FindObjectsInit(session, []*pkcs11.Attribute{
+		pub, err := pool.FindObjectHandle(session, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-		}); err != nil {
+		})
+		if err != nil {
 			return &errs.Wrapped{Msg: "pkcs11: FindObjectsInit for ECDSA public key", Err: err}
 		}
-		pubObjs, _, err := pool.Ctx().FindObjects(session, 1)
-		if err != nil {
-			pool.Ctx().FindObjectsFinal(session)
-			return &errs.Wrapped{Msg: "pkcs11: FindObjects for ECDSA public key", Err: err}
-		}
-		if err := pool.Ctx().FindObjectsFinal(session); err != nil {
-			return &errs.Wrapped{Msg: "pkcs11: FindObjectsFinal for ECDSA public key", Err: err}
-		}
-		if len(pubObjs) == 0 {
+		if pub == 0 {
 			return nil
 		}
-		pubHandle = pubObjs[0]
+		pubHandle = pub
 		found = true
 		return nil
 	})
