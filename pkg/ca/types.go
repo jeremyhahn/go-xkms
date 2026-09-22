@@ -325,7 +325,9 @@ type CertificateRequest struct {
 
 	// TPMManufacturer is the TCG TPM manufacturer code of the device's TPM,
 	// e.g. "id:49465800". IssueEKCertificate records it under
-	// tcg-at-tpmManufacturer; SignTCGCSRIDevID uses it as the first component
+	// tcg-at-tpmManufacturer in a subjectAltName directoryName, and refuses a
+	// value that is not in that form (ValidateTCGTPMManufacturer);
+	// SignTCGCSRIDevID uses it as the first component
 	// of the TCG DevID v1 r12 §8.1 hardwareModuleName when — and only when —
 	// the endorsement key certificate in the request records no code of its
 	// own. The code in the certificate always wins, and a DevID enrollment with

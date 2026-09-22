@@ -432,6 +432,7 @@ func TestBuildSubjectAltName_KeepsStandardNames(t *testing.T) {
 		nil,
 		nil,
 		[]OtherName{{TypeID: OIDPermanentIdentifier, Value: value}},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("BuildSubjectAltName: %v", err)
@@ -455,16 +456,20 @@ func TestBuildSubjectAltName_KeepsStandardNames(t *testing.T) {
 // extension with no names at all is prohibited by RFC 5280, and an otherName
 // without a type or a value cannot be encoded.
 func TestBuildSubjectAltName_RefusesEmptyAndMalformed(t *testing.T) {
-	if _, err := BuildSubjectAltName(pkix.Name{CommonName: "d"}, nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalidCertificate) {
+	if _, err := BuildSubjectAltName(pkix.Name{CommonName: "d"}, nil, nil, nil, nil, nil, nil); !errors.Is(err, ErrInvalidCertificate) {
 		t.Errorf("error for no names = %v, want %v", err, ErrInvalidCertificate)
 	}
 	if _, err := BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil,
-		[]OtherName{{Value: []byte{0x05, 0x00}}}); !errors.Is(err, ErrTCGExtensionEncoding) {
+		[]OtherName{{Value: []byte{0x05, 0x00}}}, nil); !errors.Is(err, ErrTCGExtensionEncoding) {
 		t.Errorf("error for a typeless otherName = %v, want %v", err, ErrTCGExtensionEncoding)
 	}
 	if _, err := BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil,
-		[]OtherName{{TypeID: OIDPermanentIdentifier}}); !errors.Is(err, ErrTCGExtensionEncoding) {
+		[]OtherName{{TypeID: OIDPermanentIdentifier}}, nil); !errors.Is(err, ErrTCGExtensionEncoding) {
 		t.Errorf("error for a valueless otherName = %v, want %v", err, ErrTCGExtensionEncoding)
+	}
+	if _, err := BuildSubjectAltName(pkix.Name{}, nil, nil, nil, nil, nil,
+		[]pkix.Name{{}}); !errors.Is(err, ErrTCGExtensionEncoding) {
+		t.Errorf("error for an empty directoryName = %v, want %v", err, ErrTCGExtensionEncoding)
 	}
 }
 
@@ -500,4 +505,71 @@ func mustMarshalRawUTF8(t *testing.T, value string) asn1.RawValue {
 		t.Fatalf("marshal utf8 string: %v", err)
 	}
 	return asn1.RawValue{FullBytes: der}
+}
+
+// TestValidateTCGTPMManufacturer pins the tcg-at-tpmManufacturer value form
+// the tpm2 package reports: "id:" and eight uppercase hexadecimal digits.
+func TestValidateTCGTPMManufacturer(t *testing.T) {
+	for _, code := range []string{"id:49465800", "id:494E5443", "id:00000000"} {
+		if err := ValidateTCGTPMManufacturer(code); err != nil {
+			t.Errorf("ValidateTCGTPMManufacturer(%q) = %v, want nil", code, err)
+		}
+	}
+	for _, code := range []string{"", "Infineon", "49465800", "id:", "id:4946580", "id:494658000", "id:49465g00", "id:49465a00", "ID:49465800"} {
+		if err := ValidateTCGTPMManufacturer(code); !errors.Is(err, ErrTCGInvalidManufacturerCode) {
+			t.Errorf("ValidateTCGTPMManufacturer(%q) = %v, want %v", code, err, ErrTCGInvalidManufacturerCode)
+		}
+	}
+}
+
+// TestTCGTPMManufacturerFromCSR_ReadsSubjectAltNameDirectoryName covers the
+// placement an endorse-01 client uses to ask for the code to be recorded.
+func TestTCGTPMManufacturerFromCSR_ReadsSubjectAltNameDirectoryName(t *testing.T) {
+	const manufacturer = "id:49465800"
+	san, err := BuildSubjectAltName(pkix.Name{CommonName: "lab-node-5-ek"}, nil, nil, nil, nil, nil,
+		[]pkix.Name{tpmManufacturerDirectoryName(manufacturer)})
+	if err != nil {
+		t.Fatalf("BuildSubjectAltName: %v", err)
+	}
+
+	got, err := TCGTPMManufacturerFromCSR(createTestCSRWithExtensions(t, []pkix.Extension{san}))
+	if err != nil {
+		t.Fatalf("TCGTPMManufacturerFromCSR: %v", err)
+	}
+	if got != manufacturer {
+		t.Errorf("manufacturer = %q, want %q", got, manufacturer)
+	}
+}
+
+// TestTCGTPMManufacturerFromCSR_Absent covers the error paths: a request that
+// asks for no code, and no request at all.
+func TestTCGTPMManufacturerFromCSR_Absent(t *testing.T) {
+	if _, err := TCGTPMManufacturerFromCSR(createTestCSRWithExtensions(t, nil)); !errors.Is(err, ErrTCGEKManufacturerUnknown) {
+		t.Errorf("error for a request with no code = %v, want %v", err, ErrTCGEKManufacturerUnknown)
+	}
+	if _, err := TCGTPMManufacturerFromCSR(nil); !errors.Is(err, ErrInvalidCSR) {
+		t.Errorf("error for a nil request = %v, want %v", err, ErrInvalidCSR)
+	}
+}
+
+// createTestCSRWithExtensions signs and parses a certificate request carrying
+// the given extensions.
+func createTestCSRWithExtensions(t *testing.T, extensions []pkix.Extension) *x509.CertificateRequest {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:         pkix.Name{CommonName: "lab-node-5-ek"},
+		ExtraExtensions: extensions,
+	}, key)
+	if err != nil {
+		t.Fatalf("create certificate request: %v", err)
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil {
+		t.Fatalf("parse certificate request: %v", err)
+	}
+	return csr
 }

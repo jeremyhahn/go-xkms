@@ -28,10 +28,11 @@ var oidSubjectAltNameExt = asn1.ObjectIdentifier{2, 5, 29, 17}
 
 // GeneralName CHOICE tags from RFC 5280 section 4.2.1.6.
 const (
-	tagRFC822Name = 1
-	tagDNSName    = 2
-	tagURI        = 6
-	tagIPAddress  = 7
+	tagRFC822Name    = 1
+	tagDNSName       = 2
+	tagDirectoryName = 4
+	tagURI           = 6
+	tagIPAddress     = 7
 )
 
 // generalName is one primitive, context-tagged GeneralName awaiting encoding.
@@ -74,6 +75,10 @@ type OtherName struct {
 // line 2860) restates for a DevID: "the subjectAltName SHOULD NOT be critical,
 // as this could introduce interoperability concerns."
 //
+// directoryNames carry attributes that have no GeneralName of their own. The
+// TCG EK Credential Profile places tcg-at-tpmManufacturer in one, because an
+// endorsement key certificate's subject is usually empty.
+//
 // Returns ErrTCGExtensionEncoding when a name cannot be encoded, and
 // ErrInvalidCertificate when no names were supplied at all — an empty
 // subjectAltName is prohibited by RFC 5280 and every caller here has names.
@@ -83,6 +88,7 @@ func BuildSubjectAltName(
 	ipAddresses []net.IP,
 	uris []*url.URL,
 	others []OtherName,
+	directoryNames []pkix.Name,
 ) (pkix.Extension, error) {
 	var names []byte
 
@@ -119,6 +125,13 @@ func BuildSubjectAltName(
 		primitives = append(primitives, generalName{tagURI, []byte(u.String())})
 	}
 
+	for _, name := range directoryNames {
+		encoded, err := marshalDirectoryName(name)
+		if err != nil {
+			return pkix.Extension{}, err
+		}
+		names = append(names, encoded...)
+	}
 	for _, name := range primitives {
 		encoded, err := marshalGeneralName(name.tag, name.content)
 		if err != nil {
@@ -181,6 +194,30 @@ func marshalOtherName(other OtherName) ([]byte, error) {
 		Tag:        0,
 		IsCompound: true,
 		Bytes:      append(typeID, value...),
+	})
+	if err != nil {
+		return nil, ErrTCGExtensionEncoding
+	}
+	return encoded, nil
+}
+
+// marshalDirectoryName encodes one GeneralName of CHOICE directoryName, which
+// is context tag [4] EXPLICIT over the Name — explicit because Name is itself a
+// CHOICE.
+func marshalDirectoryName(name pkix.Name) ([]byte, error) {
+	rdns := name.ToRDNSequence()
+	if len(rdns) == 0 {
+		return nil, &errs.Detail{Err: ErrTCGExtensionEncoding, Detail: "directoryName requires at least one attribute"}
+	}
+	encodedName, err := asn1.Marshal(rdns)
+	if err != nil {
+		return nil, ErrTCGExtensionEncoding
+	}
+	encoded, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tagDirectoryName,
+		IsCompound: true,
+		Bytes:      encodedName,
 	})
 	if err != nil {
 		return nil, ErrTCGExtensionEncoding

@@ -582,8 +582,7 @@ func TestCov92_OrderFinalizeHandler_EKCertLargeSerialNumber(t *testing.T) {
 		},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
@@ -639,8 +638,7 @@ func TestCov92_OrderFinalizeHandler_EKCertNilSerialNumber(t *testing.T) {
 		},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
@@ -1059,8 +1057,7 @@ func TestCov92_OrderFinalizeHandler_EKCertIssueFailure(t *testing.T) {
 		},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
@@ -1122,8 +1119,7 @@ func TestCov92_OrderFinalizeHandler_EKCertWithOrgFields(t *testing.T) {
 		},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),

@@ -90,11 +90,22 @@ Attestation* v1.00 r12 §8.1 and §8.2:
 - `TCGTPMManufacturer(ekCert)` reads tcg-at-tpmManufacturer (2.23.133.2.1)
   from the subject, the subjectDirectoryAttributes extension, or a
   directoryName inside subjectAltName, in that order.
-- `BuildSubjectAltName(subject, dns, email, ip, uri, others)` is the only
-  GeneralNames encoder in go-xkms. `CertificateSpec.OtherNames` routes
-  otherNames through it; crypto/x509 has none and skips its own
-  subjectAltName once one is supplied, so the standard names are encoded here
-  too.
+  `TCGTPMManufacturerFromCSR(csr)` searches a certificate request the same way.
+- `ValidateTCGTPMManufacturer(code)` accepts only the form the attribute
+  carries and the tpm2 package reports in `PropertiesFixed.ManufacturerCode`:
+  `id:` and eight uppercase hexadecimal digits (`id:49465800` is Infineon).
+  Anything else is `ErrTCGInvalidManufacturerCode`.
+- `IssueEKCertificate` records `CertificateRequest.TPMManufacturer` as
+  tcg-at-tpmManufacturer inside a subjectAltName directoryName, the placement
+  the TCG EK Credential Profile uses and `TCGTPMManufacturer` reads, so a
+  TPM endorsed here can later enroll an IDevID with no manufacturer override.
+  `TCGTPMManufacturerSubjectAltName(subject, code)` builds the same extension
+  for a certificate request.
+- `BuildSubjectAltName(subject, dns, email, ip, uri, others, directoryNames)`
+  is the only GeneralNames encoder in go-xkms. `CertificateSpec.OtherNames`
+  and `CertificateSpec.DirectoryNames` route through it; crypto/x509 has
+  neither and skips its own subjectAltName once one is supplied, so the
+  standard names are encoded here too.
 - `OtherName`, `MarshalHardwareModuleName`, `MarshalPermanentIdentifier`,
   `ParseHardwareModuleNameExtension`, `ParsePermanentIdentifierExtension`,
   and the OIDs `OIDTCGHwTypeTPM2` (2.23.133.1.2) and
@@ -145,6 +156,14 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   verifiedTPMResidency and verifiedTPMRestricted; an IDevID carries
   verifiedTPMResidency and verifiedTPMFixed. §8.2 makes each pairing with the
   other a MUST NOT.
+- **TCG TPM attributes are subjectAltName directoryName entries, never
+  standalone extensions.** tcg-at-tpmManufacturer, tpmModel and tpmVersion
+  are attribute types, not extension identifiers; an extension under one of
+  those OIDs is read by nothing. An EK certificate once recorded its
+  manufacturer that way, and every IDevID enrollment of a TPM endorsed here was
+  refused with `ErrTCGEKManufacturerUnknown`. The standalone encoders
+  (`CreateTPMManufacturerExtension`, `CreateTPMModelExtension`,
+  `CreateTPMVersionExtension`) were removed with it.
 - **The device serial number lives in the subject, the device model under
   tcg-at-platformModel.** Neither belongs under tcg-at-tpmModel or
   tcg-at-tpmVersion, which name the TPM's own model and firmware version.

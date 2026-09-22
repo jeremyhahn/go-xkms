@@ -33,6 +33,7 @@ import (
 	"golang.org/x/crypto/acme"
 
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // TPM enrollment errors
@@ -475,6 +476,27 @@ func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *E
 	// Use base64 encoded EK public key as permanent identifier
 	ekIdentifier := base64.RawURLEncoding.EncodeToString(ekPubKeyBytes)
 
+	// Format CommonName as "{hostname}-ek" for clarity (e.g., "client0-ek", "server-ek")
+	commonName := "ek"
+	if config.CommonName != "" {
+		commonName = fmt.Sprintf("%s-ek", config.CommonName)
+	}
+
+	subject := pkix.Name{CommonName: commonName}
+
+	// Ask for the TPM's manufacturer code to be recorded in the EK
+	// certificate. A later enroll-01 names the TPM by it (TCG DevID v1 r12
+	// §8.1), and a TPM that needs endorse-01 has no manufacturer EK
+	// certificate to supply it from.
+	manufacturer, err := config.TPMModule.TPMManufacturer()
+	if err != nil {
+		return nil, caerrors.BadCSRError("endorsement failed: %v", err)
+	}
+	manufacturerSAN, err := ca.TCGTPMManufacturerSubjectAltName(subject, manufacturer)
+	if err != nil {
+		return nil, caerrors.BadCSRError("endorsement failed: %v", err)
+	}
+
 	c.logger.Info("requesting EK certificate via endorse-01",
 		"challenge", config.Challenge)
 
@@ -550,18 +572,11 @@ func (c *Client) RequestEndorsementKeyCertificate(ctx context.Context, config *E
 		return nil, caerrors.InternalServerError("order not ready: order status is %s, expected ready", order.Status)
 	}
 
-	// Create CSR for EK certificate using the EK public key
-	// The CSR contains the EK public key as the subject public key
-	// Format CommonName as "{hostname}-ek" for clarity (e.g., "client0-ek", "server-ek")
-	commonName := "ek"
-	if config.CommonName != "" {
-		commonName = fmt.Sprintf("%s-ek", config.CommonName)
-	}
-
+	// Create CSR for EK certificate. The CA issues the certificate for the
+	// EK public key named by the order's permanent identifier.
 	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: commonName,
-		},
+		Subject:         subject,
+		ExtraExtensions: []pkix.Extension{manufacturerSAN},
 	}
 
 	// Create CSR with the account signer (the CA will issue a certificate

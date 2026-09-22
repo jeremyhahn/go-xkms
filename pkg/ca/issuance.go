@@ -122,6 +122,12 @@ type CertificateSpec struct {
 	// carried this way.
 	OtherNames []OtherName
 
+	// DirectoryNames are subjectAltName entries of GeneralName CHOICE
+	// directoryName. Like OtherNames, supplying any makes this package encode
+	// the whole extension. The TCG EK Credential Profile carries
+	// tcg-at-tpmManufacturer this way.
+	DirectoryNames []pkix.Name
+
 	// ExtraExtensions are caller-owned extensions — TCG device attributes, a
 	// Certificate Transparency poison or SCT list, a network-zone extension —
 	// appended after the CA and the profile have added their own.
@@ -201,14 +207,15 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 
 	applyRevocationEndpoints(template, iss.Identity)
 
-	// An otherName can only reach the certificate through an extension this
-	// package encodes, and that extension carries every other name too.
-	if len(spec.OtherNames) > 0 {
+	// An otherName or directoryName can only reach the certificate through an
+	// extension this package encodes, and that extension carries every other
+	// name too.
+	if len(spec.OtherNames) > 0 || len(spec.DirectoryNames) > 0 {
 		for _, ext := range spec.ExtraExtensions {
 			if ext.Id.Equal(oidSubjectAltNameExt) {
 				return nil, &errs.Detail{
 					Err:    ErrInvalidCertificate,
-					Detail: "subject alternative names were supplied both as otherNames and as a pre-encoded extension",
+					Detail: "subject alternative names were supplied both as otherNames or directoryNames and as a pre-encoded extension",
 				}
 			}
 		}
@@ -219,6 +226,7 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 			template.IPAddresses,
 			template.URIs,
 			spec.OtherNames,
+			spec.DirectoryNames,
 		)
 		if err != nil {
 			return nil, err

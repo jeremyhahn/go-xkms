@@ -938,3 +938,50 @@ func TestEndorseEABValidator_FullWorkflow_BatchDeviceProvisioning(t *testing.T) 
 	assert.Equal(t, "manufacturing-batch-2024-Q4", result.ExternalAccountID)
 	assert.Empty(t, result.AuthorizedDeviceID) // Not set when not validating
 }
+
+// --- Tests for EndorseEABValidator.BoundTPMManufacturer ---
+
+func TestEndorseEABValidator_BoundTPMManufacturer_ReturnsBoundCode(t *testing.T) {
+	dao := NewMockEABDAO()
+	binding := createTestEABBinding("mfg-kid-001", 12345, entities.EABStatusUsed)
+	binding.DeviceInfo = &entities.EABDeviceInfo{TPMManufacturer: "id:49465800"}
+	require.NoError(t, dao.Save(context.Background(), binding))
+	validator := NewEndorseEABValidator(dao, false, "")
+
+	got, err := validator.BoundTPMManufacturer(context.Background(), createTestAccountWithEAB(12345, "mfg-kid-001"))
+
+	require.NoError(t, err)
+	assert.Equal(t, "id:49465800", got)
+}
+
+func TestEndorseEABValidator_BoundTPMManufacturer_NothingBound(t *testing.T) {
+	dao := NewMockEABDAO()
+	require.NoError(t, dao.Save(context.Background(), createTestEABBinding("mfg-kid-002", 12345, entities.EABStatusUsed)))
+	validator := NewEndorseEABValidator(dao, false, "")
+
+	got, err := validator.BoundTPMManufacturer(context.Background(), createTestAccountWithoutEAB(12345))
+	require.NoError(t, err)
+	assert.Empty(t, got, "an account with no binding binds no manufacturer")
+
+	got, err = validator.BoundTPMManufacturer(context.Background(), createTestAccountWithEAB(12345, "mfg-kid-002"))
+	require.NoError(t, err)
+	assert.Empty(t, got, "a binding with no device info binds no manufacturer")
+}
+
+func TestEndorseEABValidator_BoundTPMManufacturer_Errors(t *testing.T) {
+	dao := NewMockEABDAO()
+	require.NoError(t, dao.Save(context.Background(), createTestEABBinding("mfg-kid-003", 99999, entities.EABStatusUsed)))
+	validator := NewEndorseEABValidator(dao, false, "")
+
+	_, err := validator.BoundTPMManufacturer(context.Background(), createTestAccountWithEAB(12345, "missing-kid"))
+	assert.ErrorIs(t, err, ErrEndorseEABNotFound)
+
+	_, err = validator.BoundTPMManufacturer(context.Background(), createTestAccountWithEAB(12345, "mfg-kid-003"))
+	assert.ErrorIs(t, err, ErrEndorseEABInvalid)
+
+	dao.getError = errors.New("storage offline")
+	_, err = validator.BoundTPMManufacturer(context.Background(), createTestAccountWithEAB(12345, "mfg-kid-003"))
+	var caErr *caerrors.TrustedCAError
+	require.ErrorAs(t, err, &caErr)
+	assert.Equal(t, caerrors.StorageFailure, caErr.Type)
+}

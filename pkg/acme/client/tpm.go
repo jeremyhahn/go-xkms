@@ -103,6 +103,17 @@ type TPMModule interface {
 	//   - Any other error that occurred during retrieval
 	EKAttributes() (*KeyAttributes, error)
 
+	// TPMManufacturer returns the TCG TPM manufacturer code the TPM reports
+	// in TPM_PT_MANUFACTURER, in the form tcg-at-tpmManufacturer carries it,
+	// e.g. "id:49465800". endorse-01 asks the CA to record it in the EK
+	// certificate, because a later IDevID enrollment names the TPM by it
+	// (TCG DevID v1 r12 §8.1).
+	//
+	// Returns:
+	//   - The manufacturer code
+	//   - An error if the TPM's fixed properties cannot be read
+	TPMManufacturer() (string, error)
+
 	// IAKAttributes returns the Initial Attestation Key (IAK) attributes.
 	// The IAK is used to sign attestation data and create IDevID credentials.
 	//
@@ -314,6 +325,19 @@ func (a *XKMSTPMAdapter) EKAttributes() (*KeyAttributes, error) {
 	}
 	a.ekAttrs = attrs
 	return convertKeyAttributes(attrs), nil
+}
+
+// TPMManufacturer returns the TCG TPM manufacturer code from the TPM's fixed
+// properties.
+func (a *XKMSTPMAdapter) TPMManufacturer() (string, error) {
+	props, err := a.tpm.FixedProperties()
+	if err != nil {
+		return "", caerrors.NotFoundError("TPM manufacturer not available: %v", err)
+	}
+	if props.ManufacturerCode == "" {
+		return "", caerrors.NotFoundError("TPM manufacturer not available: the TPM reported no manufacturer code")
+	}
+	return props.ManufacturerCode, nil
 }
 
 // IAKAttributes returns the Initial Attestation Key attributes

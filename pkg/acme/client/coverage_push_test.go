@@ -79,6 +79,8 @@ func (m *coveragePushTPMModule) EKAttributes() (*KeyAttributes, error) {
 	return m.ekAttrs, nil
 }
 
+func (m *coveragePushTPMModule) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
+
 func (m *coveragePushTPMModule) IAKAttributes() (*KeyAttributes, error) {
 	if m.iakAttrsError != nil {
 		return nil, m.iakAttrsError

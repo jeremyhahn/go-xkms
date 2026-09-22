@@ -667,7 +667,7 @@ func TestSDK_Tenant_BarrierInit(t *testing.T) {
 	// supplied by the caller (ErrTenantPassphraseRequired otherwise).
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
-		Passphrase: "tenant-barrier-init-passphrase",
+		Passphrase: []byte("tenant-barrier-init-passphrase"),
 		Threshold:  2,
 		Shares:     3,
 	})
@@ -723,7 +723,7 @@ func TestSDK_Tenant_BarrierUnseal(t *testing.T) {
 	// The server holds no tenant secret; supply caller credentials.
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
-		Passphrase: "tenant-barrier-unseal-passphrase",
+		Passphrase: []byte("tenant-barrier-unseal-passphrase"),
 	})
 	if err != nil {
 		t.Fatalf("TenantBarrierInit: %v", err)

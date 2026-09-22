@@ -156,45 +156,6 @@ type TCGNetworkZone struct {
 	Zone string `asn1:"utf8"`
 }
 
-// CreateTPMManufacturerExtension creates an X.509 extension for TPM manufacturer.
-func CreateTPMManufacturerExtension(manufacturer string) (pkix.Extension, error) {
-	value, err := asn1.Marshal(manufacturer)
-	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
-	}
-	return pkix.Extension{
-		Id:       OIDTCGAttributeTPMManufacturer,
-		Critical: false,
-		Value:    value,
-	}, nil
-}
-
-// CreateTPMModelExtension creates an X.509 extension for TPM model.
-func CreateTPMModelExtension(model string) (pkix.Extension, error) {
-	value, err := asn1.Marshal(model)
-	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
-	}
-	return pkix.Extension{
-		Id:       OIDTCGAttributeTPMModel,
-		Critical: false,
-		Value:    value,
-	}, nil
-}
-
-// CreateTPMVersionExtension creates an X.509 extension for TPM version.
-func CreateTPMVersionExtension(version string) (pkix.Extension, error) {
-	value, err := asn1.Marshal(version)
-	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
-	}
-	return pkix.Extension{
-		Id:       OIDTCGAttributeTPMVersion,
-		Critical: false,
-		Value:    value,
-	}, nil
-}
-
 // CreateTPMSpecificationExtension creates an X.509 extension for TPM specification.
 func CreateTPMSpecificationExtension(spec TCGTPMSpecification) (pkix.Extension, error) {
 	value, err := asn1.Marshal(spec)

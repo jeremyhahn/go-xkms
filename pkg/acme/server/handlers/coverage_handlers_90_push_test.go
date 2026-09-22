@@ -879,8 +879,7 @@ func TestOrderFinalizeHandler_EKCertWithMinimalCSRFields(t *testing.T) {
 		// No Organization, OrganizationalUnit, Country, etc.
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
@@ -1001,8 +1000,7 @@ func TestOrderFinalizeHandler_EKCertWithIPAddresses(t *testing.T) {
 		IPAddresses: []net.IP{net.ParseIP("192.168.1.100"), net.ParseIP("10.0.0.1")},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),

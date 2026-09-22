@@ -349,6 +349,7 @@ func addSANsExtension(template *x509.CertificateRequest, sans *SubjectAlternativ
 			template.IPAddresses,
 			template.URIs,
 			[]OtherName{{TypeID: OIDHardwareModuleName, Value: value}},
+			nil,
 		)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to build hardware module name extension", Err: err}

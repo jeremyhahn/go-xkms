@@ -40,6 +40,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // fullACMEMockServer is a complete ACME server mock for integration testing
@@ -55,6 +58,7 @@ type fullACMEMockServer struct {
 	authorizations map[string]*mockAuthz
 	challenges     map[string]*mockChallenge
 	certificates   map[string][]byte
+	finalizeCSRs   [][]byte
 
 	// Test control
 	orderStatusOverride string
@@ -416,9 +420,13 @@ func (m *fullACMEMockServer) handleFinalize(w http.ResponseWriter, r *http.Reque
 	m.setHeaders(w)
 
 	orderID := strings.TrimPrefix(r.URL.Path, "/acme/finalize/")
+	csrDER := m.decodeFinalizeCSR(r)
 
 	m.mu.Lock()
 	order, exists := m.orders[orderID]
+	if csrDER != nil {
+		m.finalizeCSRs = append(m.finalizeCSRs, csrDER)
+	}
 	if exists {
 		order.Status = "valid"
 
@@ -442,6 +450,32 @@ func (m *fullACMEMockServer) handleFinalize(w http.ResponseWriter, r *http.Reque
 		"finalize":    order.FinalizeURL,
 		"certificate": order.CertificateURL,
 	})
+}
+
+// decodeFinalizeCSR extracts the DER certificate request from a finalize
+// JWS body, or returns nil when the body does not carry one.
+func (m *fullACMEMockServer) decodeFinalizeCSR(r *http.Request) []byte {
+	var jws struct {
+		Payload string `json:"payload"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&jws); err != nil {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(jws.Payload)
+	if err != nil {
+		return nil
+	}
+	var finalize struct {
+		CSR string `json:"csr"`
+	}
+	if err := json.Unmarshal(payload, &finalize); err != nil {
+		return nil
+	}
+	csrDER, err := base64.RawURLEncoding.DecodeString(finalize.CSR)
+	if err != nil {
+		return nil
+	}
+	return csrDER
 }
 
 func (m *fullACMEMockServer) handleCert(w http.ResponseWriter, r *http.Request) {
@@ -592,6 +626,8 @@ func (m *integrationTPM) EKAttributes() (*KeyAttributes, error) {
 		SignatureAlgorithm: x509.SHA256WithRSA,
 	}, nil
 }
+
+func (m *integrationTPM) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
 
 func (m *integrationTPM) IAKAttributes() (*KeyAttributes, error) {
 	return m.iakAttrs, nil
@@ -762,16 +798,62 @@ func TestClient_RequestEndorsementKeyCertificate_FullFlow(t *testing.T) {
 
 	// Run endorsement
 	cert, err := client.RequestEndorsementKeyCertificate(ctx, config)
+	require.NoError(t, err)
+	assert.NotNil(t, cert)
 
-	if err != nil {
-		assert.NotContains(t, err.Error(), "invalid enrollment config")
-		t.Logf("EK cert request completed with error (expected in mock): %v", err)
-	} else {
-		assert.NotNil(t, cert)
+	// The certificate request asks for the TPM's manufacturer code to be
+	// recorded, in the subjectAltName directoryName the CA reads it from.
+	server.mu.RLock()
+	csrs := server.finalizeCSRs
+	server.mu.RUnlock()
+	require.Len(t, csrs, 1)
+	csr, err := x509.ParseCertificateRequest(csrs[0])
+	require.NoError(t, err)
+	manufacturer, err := ca.TCGTPMManufacturerFromCSR(csr)
+	require.NoError(t, err)
+	assert.Equal(t, testTPMManufacturer, manufacturer)
+}
+
+// TestClient_RequestEndorsementKeyCertificate_ManufacturerUnavailable covers
+// the error path: a TPM that cannot report its manufacturer code is refused
+// before an order is opened, because the EK certificate issued without it
+// could never be used for enroll-01.
+func TestClient_RequestEndorsementKeyCertificate_ManufacturerUnavailable(t *testing.T) {
+	server := newFullACMEMockServer(t)
+	defer server.Close()
+
+	client := createRealClientWithMockServer(t, server)
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := client.RegisterAccount()
+	require.NoError(t, err)
+
+	config := &EnrollmentConfig{
+		Challenge: "endorse-01",
+		IPAddress: "192.168.1.1",
+		Port:      "19993",
+		TPMModule: &manufacturerlessTPM{integrationTPM: newIntegrationTPM(t)},
+		Timeout:   10 * time.Second,
 	}
 
-	// Verify requests were made
-	assert.Contains(t, server.requestLog, "GET /directory")
+	cert, err := client.RequestEndorsementKeyCertificate(ctx, config)
+	assert.Nil(t, cert)
+	var caErr *caerrors.TrustedCAError
+	require.ErrorAs(t, err, &caErr)
+	assert.Equal(t, caerrors.BadCSR, caErr.Type)
+	assert.NotContains(t, server.requestLog, "POST /acme/new-order")
+}
+
+// manufacturerlessTPM is a TPM whose fixed properties cannot be read.
+type manufacturerlessTPM struct {
+	*integrationTPM
+}
+
+func (m *manufacturerlessTPM) TPMManufacturer() (string, error) {
+	return "", caerrors.NotFoundError("TPM manufacturer not available")
 }
 
 // TestClient_RegisterAccount tests account registration

@@ -10131,6 +10131,8 @@ func (m *MockTPM) EKAttributes() (*KeyAttributes, error) {
 	return m.ekAttrs, nil
 }
 
+func (m *MockTPM) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
+
 func (m *MockTPM) IAKAttributes() (*KeyAttributes, error) {
 	if m.iakAttrsErr != nil {
 		return nil, m.iakAttrsErr

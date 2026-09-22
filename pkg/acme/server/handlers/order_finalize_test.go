@@ -57,6 +57,7 @@ type MockCAForFinalize struct {
 	returnedCert              *x509.Certificate
 	returnCertWithNilSerial   bool
 	returnCertWithLargeSerial bool
+	lastEKRequest             *ca.CertificateRequest
 }
 
 func (m *MockCAForFinalize) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
@@ -111,6 +112,7 @@ func (m *MockCAForFinalize) SignCSR(_ context.Context, csrPEM []byte, opts *ca.S
 }
 
 func (m *MockCAForFinalize) IssueEKCertificate(_ context.Context, req *ca.CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+	m.lastEKRequest = req
 	if m.shouldFailIssueEK {
 		return nil, caerrors.KeyGenerationFailureError("mock issue EK error")
 	}
@@ -1480,8 +1482,7 @@ func TestOrderFinalizeHandler_PermanentIdentifierEKCertificate(t *testing.T) {
 		},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
@@ -1602,8 +1603,7 @@ func TestOrderFinalizeHandler_IssueEKCertificateFailure(t *testing.T) {
 		},
 	}
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csrDER := createEndorse01CSR(t, template, csrKey)
 
 	payload := OrderFinalizeRequest{
 		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
@@ -2009,4 +2009,184 @@ func TestOrderFinalizeHandler_OrderStatusUpdateFailure(t *testing.T) {
 	service.OrderFinalizeHandler(resp, req)
 
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
+
+// testEndorseTPMManufacturer is the TCG manufacturer code an endorse-01 test
+// device asserts: swtpm's ("IBM").
+const testEndorseTPMManufacturer = "id:49424D00"
+
+// createEndorse01CSR signs an endorse-01 certificate request that asserts
+// testEndorseTPMManufacturer, the way the endorse-01 client does.
+func createEndorse01CSR(t *testing.T, template *x509.CertificateRequest, key crypto.Signer) []byte {
+	t.Helper()
+	return createEndorse01CSRWithManufacturer(t, template, key, testEndorseTPMManufacturer)
+}
+
+// createEndorse01CSRWithManufacturer signs a certificate request whose
+// subjectAltName carries the template's DNS and IP names and a directoryName
+// asserting manufacturer. crypto/x509 drops the template's own names once a
+// subjectAltName extension is supplied, so all of them are encoded here.
+func createEndorse01CSRWithManufacturer(t *testing.T, template *x509.CertificateRequest, key crypto.Signer, manufacturer string) []byte {
+	t.Helper()
+	san, err := ca.BuildSubjectAltName(template.Subject, template.DNSNames, nil, template.IPAddresses, nil, nil,
+		[]pkix.Name{{ExtraNames: []pkix.AttributeTypeAndValue{
+			{Type: ca.OIDTCGAttributeTPMManufacturer, Value: manufacturer},
+		}}})
+	require.NoError(t, err)
+
+	withSAN := *template
+	withSAN.ExtraExtensions = append(append([]pkix.Extension(nil), template.ExtraExtensions...), san)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &withSAN, key)
+	require.NoError(t, err)
+	return csrDER
+}
+
+// endorse01Fixture is an account with a ready endorse-01 order awaiting
+// finalize.
+type endorse01Fixture struct {
+	service  *RestService
+	mockCA   *MockCAForFinalize
+	key      *TestKey
+	account  *entities.ACMEAccount
+	order    *entities.ACMEOrder
+	orderDAO qrdbsdk.GenericDAO[*entities.ACMEOrder]
+}
+
+// newEndorse01Fixture creates the account and its ready endorse-01 order.
+func newEndorse01Fixture(t *testing.T) *endorse01Fixture {
+	t.Helper()
+	service, mockCA, cleanup := setupTestServiceWithMockCA(t)
+	t.Cleanup(cleanup)
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	ekKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	ekPubKeyBytes, err := x509.MarshalPKIXPublicKey(&ekKey.PublicKey)
+	require.NoError(t, err)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+	order.Identifiers = []entities.ACMEIdentifier{
+		{Type: common.AuthzTypePermanentIdentifier, Value: base64.RawURLEncoding.EncodeToString(ekPubKeyBytes)},
+	}
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(context.Background(), order))
+
+	return &endorse01Fixture{service: service, mockCA: mockCA, key: key, account: account, order: order, orderDAO: orderDAO}
+}
+
+// bindEAB records an endorse-01 external account binding for the fixture's
+// account, authorizing the given TPM manufacturer code.
+func (f *endorse01Fixture) bindEAB(t *testing.T, manufacturer string) {
+	t.Helper()
+	ctx := context.Background()
+	binding := createTestEABBinding("endorse-kid-"+manufacturer, f.account.ID, entities.EABStatusUsed)
+	binding.DeviceInfo = &entities.EABDeviceInfo{TPMManufacturer: manufacturer}
+	eabDAO, err := f.service.storageFactory.ExternalAccountBindingDAO()
+	require.NoError(t, err)
+	require.NoError(t, eabDAO.Save(ctx, binding))
+
+	f.account.ExternalAccountBinding = map[string]interface{}{"kid": binding.ID}
+	accountDAO, err := f.service.storageFactory.AccountDAO()
+	require.NoError(t, err)
+	require.NoError(t, accountDAO.Save(ctx, f.account))
+}
+
+// finalize submits csrDER to the fixture's order.
+func (f *endorse01Fixture) finalize(t *testing.T, csrDER []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString(csrDER)}
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", f.service.baseRESTURI, f.order.ID)
+	req := createJWSRequest(t, f.service, f.key, url, payload, true, f.account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", f.order.ID)})
+	resp := httptest.NewRecorder()
+	f.service.OrderFinalizeHandler(resp, req)
+	return resp
+}
+
+// endorse01CSRKey returns a fresh key to sign an endorse-01 request with.
+func endorse01CSRKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	return key
+}
+
+// TestOrderFinalizeHandler_Endorse01RecordsAssertedManufacturer is the
+// regression for EK certificates that could never be used for enroll-01: the
+// manufacturer code the device asserts must reach the EK certificate request.
+func TestOrderFinalizeHandler_Endorse01RecordsAssertedManufacturer(t *testing.T) {
+	f := newEndorse01Fixture(t)
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "lab-node-5-ek"}}
+
+	resp := f.finalize(t, createEndorse01CSR(t, template, endorse01CSRKey(t)))
+
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+	require.NotNil(t, f.mockCA.lastEKRequest)
+	assert.Equal(t, testEndorseTPMManufacturer, f.mockCA.lastEKRequest.TPMManufacturer)
+}
+
+// TestOrderFinalizeHandler_Endorse01RefusesMissingOrMalformedManufacturer
+// covers the error paths: without a well-formed code the EK certificate would
+// name no TPM, so finalize is refused with badCSR, nothing is issued, and the
+// order stays ready for a corrected request.
+func TestOrderFinalizeHandler_Endorse01RefusesMissingOrMalformedManufacturer(t *testing.T) {
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "lab-node-5-ek"}}
+
+	t.Run("missing", func(t *testing.T) {
+		f := newEndorse01Fixture(t)
+		csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, endorse01CSRKey(t))
+		require.NoError(t, err)
+
+		resp := f.finalize(t, csrDER)
+
+		assertErrorType(t, resp, common.ErrTypeBadCSR, http.StatusBadRequest)
+		assert.Nil(t, f.mockCA.lastEKRequest)
+		updated, err := f.orderDAO.Get(context.Background(), f.order.ID)
+		require.NoError(t, err)
+		assert.Equal(t, common.StatusReady, updated.Status)
+	})
+
+	t.Run("malformed", func(t *testing.T) {
+		f := newEndorse01Fixture(t)
+
+		resp := f.finalize(t, createEndorse01CSRWithManufacturer(t, template, endorse01CSRKey(t), "Infineon"))
+
+		assertErrorType(t, resp, common.ErrTypeBadCSR, http.StatusBadRequest)
+		assert.Nil(t, f.mockCA.lastEKRequest)
+	})
+}
+
+// TestOrderFinalizeHandler_Endorse01ManufacturerBoundByEAB covers the binding:
+// an operator who registered the device with a manufacturer code limits what
+// the device may assert.
+func TestOrderFinalizeHandler_Endorse01ManufacturerBoundByEAB(t *testing.T) {
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "lab-node-5-ek"}}
+
+	t.Run("matching", func(t *testing.T) {
+		f := newEndorse01Fixture(t)
+		f.bindEAB(t, testEndorseTPMManufacturer)
+
+		resp := f.finalize(t, createEndorse01CSR(t, template, endorse01CSRKey(t)))
+
+		require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+		require.NotNil(t, f.mockCA.lastEKRequest)
+		assert.Equal(t, testEndorseTPMManufacturer, f.mockCA.lastEKRequest.TPMManufacturer)
+	})
+
+	t.Run("mismatched", func(t *testing.T) {
+		f := newEndorse01Fixture(t)
+		f.bindEAB(t, "id:49465800")
+
+		resp := f.finalize(t, createEndorse01CSR(t, template, endorse01CSRKey(t)))
+
+		assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
+		assert.Nil(t, f.mockCA.lastEKRequest)
+		updated, err := f.orderDAO.Get(context.Background(), f.order.ID)
+		require.NoError(t, err)
+		assert.Equal(t, common.StatusReady, updated.Status)
+	})
 }

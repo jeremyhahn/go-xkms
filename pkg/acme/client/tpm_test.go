@@ -147,6 +147,8 @@ func (s *simpleTPM) EKAttributes() (*KeyAttributes, error) {
 	}, nil
 }
 
+func (s *simpleTPM) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
+
 func (s *simpleTPM) IAKAttributes() (*KeyAttributes, error) {
 	if s.iakAttrs != nil {
 		return s.iakAttrs, nil
@@ -494,6 +496,10 @@ func TestEnrollmentResult_IAKCertificate(t *testing.T) {
 // =====================================
 
 type mockXKMSTPM struct {
+	// Fixed properties configuration
+	fixedProps      *xkmssdk.PropertiesFixed
+	fixedPropsError error
+
 	// EK configuration
 	ekPublicKey  crypto.PublicKey
 	ekCert       *x509.Certificate
@@ -688,7 +694,7 @@ func (m *mockXKMSTPM) EventLog() ([]byte, error) {
 }
 
 func (m *mockXKMSTPM) FixedProperties() (*xkmssdk.PropertiesFixed, error) {
-	return nil, nil
+	return m.fixedProps, m.fixedPropsError
 }
 
 func (m *mockXKMSTPM) Flush(handle tpm2.TPMHandle) {}
@@ -2145,5 +2151,46 @@ func TestTPMQuote_Structure(t *testing.T) {
 		require.NotEmpty(t, quote.Nonce)
 		require.Equal(t, x509.ECDSAWithSHA256, quote.SignatureAlgorithm)
 		require.NotEmpty(t, quote.PCRDigest)
+	})
+}
+
+// testTPMManufacturer is the TCG manufacturer code swtpm reports ("IBM"),
+// returned by every TPM test double.
+const testTPMManufacturer = "id:49424D00"
+
+func TestXKMSTPMAdapter_TPMManufacturer(t *testing.T) {
+	t.Run("returns the code the TPM reports", func(t *testing.T) {
+		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{
+			fixedProps: &xkmssdk.PropertiesFixed{Manufacturer: "Infineon", ManufacturerCode: "id:49465800"},
+		})
+
+		code, err := adapter.TPMManufacturer()
+
+		require.NoError(t, err)
+		assert.Equal(t, "id:49465800", code)
+	})
+
+	t.Run("fails when the fixed properties cannot be read", func(t *testing.T) {
+		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{fixedPropsError: errors.New("tpm unavailable")})
+
+		code, err := adapter.TPMManufacturer()
+
+		assert.Empty(t, code)
+		var caErr *caerrors.TrustedCAError
+		require.ErrorAs(t, err, &caErr)
+		assert.Equal(t, caerrors.NotFound, caErr.Type)
+	})
+
+	t.Run("fails when the TPM reports no code", func(t *testing.T) {
+		adapter := NewXKMSTPMAdapter(&mockXKMSTPM{
+			fixedProps: &xkmssdk.PropertiesFixed{Manufacturer: "Infineon"},
+		})
+
+		code, err := adapter.TPMManufacturer()
+
+		assert.Empty(t, code)
+		var caErr *caerrors.TrustedCAError
+		require.ErrorAs(t, err, &caErr)
+		assert.Equal(t, caerrors.NotFound, caErr.Type)
 	})
 }

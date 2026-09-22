@@ -513,30 +513,6 @@ func TestCABundleCertPool_WithIntermediate_B11(t *testing.T) {
 // Manufacturer-specific OID tests (tcg_oids.go) — all at 75%
 // =============================================================================
 
-// TestCreateTPMManufacturerExtension_Success_B11 exercises the success path.
-func TestCreateTPMManufacturerExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPMManufacturerExtension("id:INTC")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateTPMModelExtension_Success_B11 exercises the success path.
-func TestCreateTPMModelExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPMModelExtension("Intel PTT")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateTPMVersionExtension_Success_B11 exercises the success path.
-func TestCreateTPMVersionExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPMVersionExtension("id:00070002")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
 // TestCreateTPMSpecificationExtension_Success_B11 exercises the success path.
 func TestCreateTPMSpecificationExtension_Success_B11(t *testing.T) {
 	t.Parallel()

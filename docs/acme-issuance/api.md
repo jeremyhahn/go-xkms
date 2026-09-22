@@ -61,6 +61,32 @@ account-scoped objects.
 `enroll-01` and `endorse-01` are go-xkms extensions. A standard client never
 selects them and is unaffected by their presence.
 
+### endorse-01 finalize
+
+An endorse-01 order's finalize CSR MUST carry the TPM's TCG manufacturer code
+as tcg-at-tpmManufacturer (2.23.133.2.1) in a subjectAltName directoryName, in
+the form `id:` and eight uppercase hexadecimal digits — the TPM's
+`TPM_PT_MANUFACTURER` value. The CA records it in the issued EK certificate,
+because a later `enroll-01` names the TPM by it (TCG DevID v1 r12 §8.1) and a
+TPM that needs endorse-01 has no manufacturer EK certificate to supply it.
+`acmeclient.RequestEndorsementKeyCertificate` reads it through
+`TPMModule.TPMManufacturer` and fails before opening an order when the TPM
+cannot report it.
+
+| Condition | Problem |
+|---|---|
+| no manufacturer code in the CSR, or one not in the `id:XXXXXXXX` form | `badCSR` (400) |
+| the account's external account binding names a different `deviceInfo.tpmManufacturer` | `unauthorized` (401) |
+| the account names a binding that does not exist or belongs to another account | `unauthorized` (401) |
+
+Each is refused before the order moves to `processing`, so the order stays
+`ready` and a corrected request can finalize it.
+
+The code is the device's own assertion, carrying the same assurance as the EK
+public key the order asserts. An operator who registers the device through an
+EAB with `deviceInfo.tpmManufacturer` bounds it: the device may assert only
+that code, whether or not EAB is required for endorse-01.
+
 ## Transport adapters
 
 | Transport | What it carries | Package |

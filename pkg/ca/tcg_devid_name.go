@@ -19,6 +19,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/hex"
+	"fmt"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -183,28 +184,105 @@ func TCGTPMManufacturer(ekCert *x509.Certificate) (string, error) {
 	if ekCert == nil {
 		return "", &errs.Detail{Err: ErrTCGMissingEKCert, Detail: "no certificate to read the manufacturer from"}
 	}
-
-	if value := attributeValue(ekCert.Subject.Names, OIDTCGAttributeTPMManufacturer); value != "" {
+	if value := manufacturerFromNames(ekCert.Subject.Names, ekCert.Extensions); value != "" {
 		return value, nil
 	}
-
-	for _, ext := range ekCert.Extensions {
-		switch {
-		case ext.Id.Equal(oidSubjectDirectoryAttributes):
-			if value := manufacturerFromDirectoryAttributes(ext.Value); value != "" {
-				return value, nil
-			}
-		case ext.Id.Equal(oidSubjectAltNameExt):
-			if value := manufacturerFromSubjectAltName(ext.Value); value != "" {
-				return value, nil
-			}
-		}
-	}
-
 	return "", &errs.Detail{
 		Err:    ErrTCGEKManufacturerUnknown,
 		Detail: "the endorsement key certificate records no tcg-at-tpmManufacturer (2.23.133.2.1) attribute",
 	}
+}
+
+// TCGTPMManufacturerFromCSR returns the TCG TPM manufacturer code a
+// certificate signing request asks to have recorded, read from the same three
+// places TCGTPMManufacturer searches in a certificate. An endorse-01 client
+// places it in a subjectAltName directoryName, so the endorsement key
+// certificate issued for it carries the code a later DevID enrollment needs.
+//
+// The value is the requester's claim and is returned as found; callers
+// validate it with ValidateTCGTPMManufacturer. Returns
+// ErrTCGEKManufacturerUnknown when the request carries no code.
+func TCGTPMManufacturerFromCSR(csr *x509.CertificateRequest) (string, error) {
+	if csr == nil {
+		return "", &errs.Detail{Err: ErrInvalidCSR, Detail: "no certificate request to read the manufacturer from"}
+	}
+	if value := manufacturerFromNames(csr.Subject.Names, csr.Extensions); value != "" {
+		return value, nil
+	}
+	return "", &errs.Detail{
+		Err:    ErrTCGEKManufacturerUnknown,
+		Detail: "the certificate request carries no tcg-at-tpmManufacturer (2.23.133.2.1) attribute",
+	}
+}
+
+// ValidateTCGTPMManufacturer reports whether code is a TCG TPM manufacturer
+// code in the form tcg-at-tpmManufacturer carries: "id:" followed by the
+// 32-bit TPM_PT_MANUFACTURER value as eight uppercase hexadecimal digits, e.g.
+// "id:49465800" for Infineon. This is the form the tpm2 package reports in
+// PropertiesFixed.ManufacturerCode. Returns ErrTCGInvalidManufacturerCode.
+func ValidateTCGTPMManufacturer(code string) error {
+	digits, ok := strings.CutPrefix(code, tcgManufacturerCodePrefix)
+	if !ok || len(digits) != tcgManufacturerCodeDigits {
+		return &errs.Detail{Err: ErrTCGInvalidManufacturerCode, Detail: fmt.Sprintf("%q", code)}
+	}
+	for _, digit := range digits {
+		if (digit < '0' || digit > '9') && (digit < 'A' || digit > 'F') {
+			return &errs.Detail{Err: ErrTCGInvalidManufacturerCode, Detail: fmt.Sprintf("%q", code)}
+		}
+	}
+	return nil
+}
+
+// tcgManufacturerCodePrefix and tcgManufacturerCodeDigits describe the
+// tcg-at-tpmManufacturer value form: "id:" and eight hexadecimal digits.
+const (
+	tcgManufacturerCodePrefix = "id:"
+	tcgManufacturerCodeDigits = 8
+)
+
+// TCGTPMManufacturerSubjectAltName builds a subjectAltName extension carrying
+// only tcg-at-tpmManufacturer, in the directoryName the TCG EK Credential
+// Profile uses. An endorse-01 client puts it in its certificate request so the
+// endorsement key certificate issued for it records the code, which
+// TCGTPMManufacturerFromCSR reads back. Returns ErrTCGInvalidManufacturerCode
+// for a code not in the tcg-at-tpmManufacturer form.
+func TCGTPMManufacturerSubjectAltName(subject pkix.Name, code string) (pkix.Extension, error) {
+	if err := ValidateTCGTPMManufacturer(code); err != nil {
+		return pkix.Extension{}, err
+	}
+	return BuildSubjectAltName(subject, nil, nil, nil, nil, nil, []pkix.Name{tpmManufacturerDirectoryName(code)})
+}
+
+// tpmManufacturerDirectoryName is the subjectAltName directoryName the TCG EK
+// Credential Profile uses to carry tcg-at-tpmManufacturer.
+func tpmManufacturerDirectoryName(code string) pkix.Name {
+	return pkix.Name{
+		ExtraNames: []pkix.AttributeTypeAndValue{
+			{Type: OIDTCGAttributeTPMManufacturer, Value: code},
+		},
+	}
+}
+
+// manufacturerFromNames searches a distinguished name, then the
+// subjectDirectoryAttributes and subjectAltName extensions, for
+// tcg-at-tpmManufacturer, and returns the empty string when none records it.
+func manufacturerFromNames(subject []pkix.AttributeTypeAndValue, extensions []pkix.Extension) string {
+	if value := attributeValue(subject, OIDTCGAttributeTPMManufacturer); value != "" {
+		return value
+	}
+	for _, ext := range extensions {
+		switch {
+		case ext.Id.Equal(oidSubjectDirectoryAttributes):
+			if value := manufacturerFromDirectoryAttributes(ext.Value); value != "" {
+				return value
+			}
+		case ext.Id.Equal(oidSubjectAltNameExt):
+			if value := manufacturerFromSubjectAltName(ext.Value); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 // directoryAttribute is one entry of an RFC 5280 subjectDirectoryAttributes

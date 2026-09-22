@@ -93,6 +93,16 @@ once, to the externally visible base.
   against). This rule applies to both the standard finalize path and the
   endorse-01 flow. Prior to this, only the Common Name was compared, which
   allowed unauthorized SANs through.
+- **An endorse-01 EK certificate records the TPM's manufacturer code, or it is
+  not issued.** A TPM endorsed through endorse-01 has no manufacturer EK
+  certificate, so the EK certificate issued here is the only place a later
+  enroll-01 can read the code that heads its §8.1 hardwareModuleName. The
+  finalize handler takes the code from the CSR's subjectAltName directoryName,
+  validates its form, holds it to any code the account's EAB `deviceInfo`
+  names, and passes it to `IssueEKCertificate` (`endorse01TPMManufacturer`,
+  `EndorseEABValidator.BoundTPMManufacturer`). Before this the handler passed
+  none, and every enroll-01 of an endorsed TPM failed with a bare
+  `Failed to sign TCG-CSR-IDEVID`; that failure now logs the CA's error.
 - **Revocation requires byte-equality with the stored certificate.** The
   submitted certificate's serial number is looked up, but because the returned
   record's identities must authorize the revocation and the submitted bytes are

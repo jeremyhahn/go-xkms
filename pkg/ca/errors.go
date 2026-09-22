@@ -290,6 +290,11 @@ var (
 	// certificate that does not identify the TPM it claims to.
 	ErrTCGEKManufacturerUnknown = errors.New("ca: tcg tpm manufacturer code unknown")
 
+	// ErrTCGInvalidManufacturerCode indicates a TCG TPM manufacturer code is
+	// not in the form tcg-at-tpmManufacturer carries: "id:" followed by the
+	// 32-bit TPM_PT_MANUFACTURER value as eight uppercase hexadecimal digits.
+	ErrTCGInvalidManufacturerCode = errors.New("ca: invalid tcg tpm manufacturer code")
+
 	// ErrTCGMandatoryExtension indicates an extension TCG DevID v1 r12 §8.1
 	// requires could not be built, so no certificate was issued.
 	//

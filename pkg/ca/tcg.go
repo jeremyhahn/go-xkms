@@ -109,16 +109,20 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 	}
 	extraExtensions = append(extraExtensions, specExt)
 
-	// The TPM manufacturer this endorsement key belongs to. A DevID enrollment
-	// reads it back out of this certificate to build the hardwareModuleName of
-	// TCG DevID v1 r12 §8.1, so a certificate issued without it forces the
-	// enrolling device's operator to supply the code again by configuration.
+	// The TPM manufacturer this endorsement key belongs to, as the TCG EK
+	// Credential Profile places it: tcg-at-tpmManufacturer inside a
+	// subjectAltName directoryName. A DevID enrollment reads it back out of
+	// this certificate to build the hardwareModuleName of TCG DevID v1 r12
+	// §8.1 (TCGTPMManufacturer), so it must be written where that reader
+	// looks. It was once a bare extension under the attribute's own OID,
+	// which no reader recognises, and every IDevID enrollment of a TPM
+	// endorsed here was refused with ErrTCGEKManufacturerUnknown.
+	var directoryNames []pkix.Name
 	if request.TPMManufacturer != "" {
-		manufacturerExt, err := CreateTPMManufacturerExtension(request.TPMManufacturer)
-		if err != nil {
-			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "tpm manufacturer", Cause: err}
+		if err := ValidateTCGTPMManufacturer(request.TPMManufacturer); err != nil {
+			return nil, err
 		}
-		extraExtensions = append(extraExtensions, manufacturerExt)
+		directoryNames = append(directoryNames, tpmManufacturerDirectoryName(request.TPMManufacturer))
 	}
 
 	// The device's model. It was written under tcg-at-tpmModel (2.23.133.2.2)
@@ -188,6 +192,7 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		SANS:               request.SANS,
 		ExtraExtensions:    extraExtensions,
 		OtherNames:         otherNames,
+		DirectoryNames:     directoryNames,
 	})
 	if err != nil {
 		return nil, err

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1508,5 +1509,73 @@ func TestIssueEKCertificate_ECDSA_P384(t *testing.T) {
 
 	if cert.SignatureAlgorithm != x509.ECDSAWithSHA384 {
 		t.Errorf("SignatureAlgorithm = %v, want ECDSAWithSHA384", cert.SignatureAlgorithm)
+	}
+}
+
+// TestIssueEKCertificate_ManufacturerReadableByDevIDEnrollment is the
+// regression for an endorse-01 EK certificate whose manufacturer code no DevID
+// enrollment could read: it was written as a bare extension under the
+// attribute's own OID, so SignTCGCSRIDevID refused every TPM endorsed here with
+// ErrTCGEKManufacturerUnknown. The code must round-trip through the reader the
+// DevID path uses, with no override supplied.
+func TestIssueEKCertificate_ManufacturerReadableByDevIDEnrollment(t *testing.T) {
+	ca := createTestCAForTCG(t)
+	signerKey := generateTestECDSAKey(t)
+	issuerCert := createSelfSignedCACert(t, signerKey)
+	ekKey := generateTestECDSAKey(t)
+
+	const manufacturer = "id:49465800"
+	request := createTestCertRequest(t, signerKey, issuerCert)
+	request.Subject.CommonName = "lab-node-5-ek"
+	request.PermanentID = "device-001"
+	request.TPMManufacturer = manufacturer
+
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
+	if err != nil {
+		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
+	}
+
+	if hasExtensionOID(cert, OIDTCGAttributeTPMManufacturer) {
+		t.Error("tcg-at-tpmManufacturer must not be a standalone extension")
+	}
+	got, err := TCGTPMManufacturer(cert)
+	if err != nil {
+		t.Fatalf("TCGTPMManufacturer() = %v, want the issued code", err)
+	}
+	if got != manufacturer {
+		t.Errorf("TCGTPMManufacturer() = %q, want %q", got, manufacturer)
+	}
+
+	identity, err := TCGDeviceIdentityFromEKCertificate(cert, "")
+	if err != nil {
+		t.Fatalf("TCGDeviceIdentityFromEKCertificate() with no override = %v", err)
+	}
+	if !strings.HasPrefix(identity.HardwareSerialNumber, manufacturer+":") {
+		t.Errorf("HardwareSerialNumber = %q, want the %q prefix", identity.HardwareSerialNumber, manufacturer)
+	}
+	if _, ok := parsedOtherNames(t, cert)[OIDPermanentIdentifier.String()]; !ok {
+		t.Error("the permanent identifier must share the subjectAltName with the manufacturer")
+	}
+}
+
+// TestIssueEKCertificate_RefusesMalformedManufacturer covers the error path:
+// a code that is not in the tcg-at-tpmManufacturer form would identify no TPM,
+// so no certificate is issued.
+func TestIssueEKCertificate_RefusesMalformedManufacturer(t *testing.T) {
+	ca := createTestCAForTCG(t)
+	signerKey := generateTestECDSAKey(t)
+	issuerCert := createSelfSignedCACert(t, signerKey)
+	ekKey := generateTestECDSAKey(t)
+
+	request := createTestCertRequest(t, signerKey, issuerCert)
+	request.Subject.CommonName = "bad-manufacturer-ek"
+	request.TPMManufacturer = "Infineon"
+
+	cert, err := ca.IssueEKCertificate(context.Background(), request, ekKey.Public())
+	if !errors.Is(err, ErrTCGInvalidManufacturerCode) {
+		t.Fatalf("IssueEKCertificate() error = %v, want %v", err, ErrTCGInvalidManufacturerCode)
+	}
+	if cert != nil {
+		t.Error("no certificate may be issued for a malformed manufacturer code")
 	}
 }

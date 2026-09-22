@@ -84,6 +84,8 @@ func (m *mockTPM) EKAttributes() (*KeyAttributes, error) {
 	}, nil
 }
 
+func (m *mockTPM) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
+
 func (m *mockTPM) IAKAttributes() (*KeyAttributes, error) {
 	if m.iakAttributesFunc != nil {
 		return m.iakAttributesFunc()
@@ -1159,6 +1161,8 @@ func (m *coverageBoostTPM) EKAttributes() (*KeyAttributes, error) {
 		SignatureAlgorithm: x509.SHA256WithRSA,
 	}, nil
 }
+
+func (m *coverageBoostTPM) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
 
 func (m *coverageBoostTPM) IAKAttributes() (*KeyAttributes, error) {
 	if m.iakAttributesFunc != nil {
@@ -2435,6 +2439,8 @@ func (m *enrollmentTestTPM) EKAttributes() (*KeyAttributes, error) {
 		SignatureAlgorithm: x509.SHA256WithRSA,
 	}, nil
 }
+
+func (m *enrollmentTestTPM) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
 
 func (m *enrollmentTestTPM) IAKAttributes() (*KeyAttributes, error) {
 	if m.iakAttributesFunc != nil {
@@ -4383,6 +4389,8 @@ func (m *testTPME2E) EKAttributes() (*KeyAttributes, error) {
 	}, nil
 }
 
+func (m *testTPME2E) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
+
 func (m *testTPME2E) IAKAttributes() (*KeyAttributes, error) {
 	return &KeyAttributes{
 		KeyID:              "test-iak",
@@ -5155,11 +5163,13 @@ type mockTPMForActivation struct {
 func (m *mockTPMForActivation) EK() crypto.PublicKey                      { return nil }
 func (m *mockTPMForActivation) EKCertificate() (*x509.Certificate, error) { return nil, nil }
 func (m *mockTPMForActivation) EKAttributes() (*KeyAttributes, error)     { return nil, nil }
-func (m *mockTPMForActivation) IAKAttributes() (*KeyAttributes, error)    { return nil, nil }
-func (m *mockTPMForActivation) CreateIDevID([]byte) (*IDevIDCSR, error)   { return nil, nil }
-func (m *mockTPMForActivation) ProvisionEKCert([]byte) error              { return nil }
-func (m *mockTPMForActivation) Quote([]byte, []int) (*TPMQuote, error)    { return nil, nil }
-func (m *mockTPMForActivation) Close() error                              { return nil }
+
+func (m *mockTPMForActivation) TPMManufacturer() (string, error)        { return testTPMManufacturer, nil }
+func (m *mockTPMForActivation) IAKAttributes() (*KeyAttributes, error)  { return nil, nil }
+func (m *mockTPMForActivation) CreateIDevID([]byte) (*IDevIDCSR, error) { return nil, nil }
+func (m *mockTPMForActivation) ProvisionEKCert([]byte) error            { return nil }
+func (m *mockTPMForActivation) Quote([]byte, []int) (*TPMQuote, error)  { return nil, nil }
+func (m *mockTPMForActivation) Close() error                            { return nil }
 func (m *mockTPMForActivation) ActivateCredential(_, _ []byte) ([]byte, error) {
 	if m.shouldFail {
 		return nil, assert.AnError
@@ -5435,6 +5445,8 @@ func (m *mockTPMWithErrors) EKAttributes() (*KeyAttributes, error) {
 	}
 	return &KeyAttributes{}, nil
 }
+
+func (m *mockTPMWithErrors) TPMManufacturer() (string, error)               { return testTPMManufacturer, nil }
 func (m *mockTPMWithErrors) IAKAttributes() (*KeyAttributes, error)         { return nil, nil }
 func (m *mockTPMWithErrors) CreateIDevID([]byte) (*IDevIDCSR, error)        { return nil, nil }
 func (m *mockTPMWithErrors) ActivateCredential(_, _ []byte) ([]byte, error) { return nil, nil }
@@ -5476,6 +5488,8 @@ func (m *mockTPMModuleForEnroll) EKAttributes() (*KeyAttributes, error) {
 		SignatureAlgorithm: x509.SHA256WithRSA,
 	}, nil
 }
+
+func (m *mockTPMModuleForEnroll) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
 
 func (m *mockTPMModuleForEnroll) IAKAttributes() (*KeyAttributes, error) {
 	return &KeyAttributes{
@@ -5970,6 +5984,8 @@ func (m *serverCoverageTPMModule) EKAttributes() (*KeyAttributes, error) {
 		SignatureAlgorithm: x509.SHA256WithRSA,
 	}, nil
 }
+
+func (m *serverCoverageTPMModule) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
 
 func (m *serverCoverageTPMModule) IAKAttributes() (*KeyAttributes, error) {
 	if m.iakAttrsError != nil {
@@ -7018,9 +7034,11 @@ func TestExpandEnvVars_ServerCoverage(t *testing.T) {
 
 type mockTPMModule struct{}
 
-func (m *mockTPMModule) EK() crypto.PublicKey                                   { return nil }
-func (m *mockTPMModule) EKCertificate() (*x509.Certificate, error)              { return nil, nil }
-func (m *mockTPMModule) EKAttributes() (*KeyAttributes, error)                  { return nil, nil }
+func (m *mockTPMModule) EK() crypto.PublicKey                      { return nil }
+func (m *mockTPMModule) EKCertificate() (*x509.Certificate, error) { return nil, nil }
+func (m *mockTPMModule) EKAttributes() (*KeyAttributes, error)     { return nil, nil }
+
+func (m *mockTPMModule) TPMManufacturer() (string, error)                       { return testTPMManufacturer, nil }
 func (m *mockTPMModule) IAKAttributes() (*KeyAttributes, error)                 { return nil, nil }
 func (m *mockTPMModule) CreateIDevID(qualifyingData []byte) (*IDevIDCSR, error) { return nil, nil }
 func (m *mockTPMModule) ActivateCredential(credBlob, encSecret []byte) ([]byte, error) {

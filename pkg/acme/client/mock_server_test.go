@@ -490,6 +490,8 @@ func (m *mockTPMForEnrollment) EKAttributes() (*KeyAttributes, error) {
 	}, nil
 }
 
+func (m *mockTPMForEnrollment) TPMManufacturer() (string, error) { return testTPMManufacturer, nil }
+
 func (m *mockTPMForEnrollment) IAKAttributes() (*KeyAttributes, error) {
 	if err, ok := m.errors["IAKAttributes"]; ok {
 		return nil, err

@@ -183,6 +183,48 @@ func (v *EndorseEABValidator) ValidateEndorseAuthorization(
 	return result, nil
 }
 
+// BoundTPMManufacturer returns the TCG TPM manufacturer code the account's
+// external account binding authorizes for endorse-01, or the empty string
+// when the account has no binding or its binding names no manufacturer.
+//
+// An endorse-01 device asserts its manufacturer code itself. When an operator
+// registered the device with a code, the device may assert only that one, so
+// this is consulted whether or not EAB is required for endorse-01.
+//
+// Returns ErrEndorseEABNotFound when the account names a binding that does not
+// exist, and ErrEndorseEABInvalid when the binding belongs to another account.
+func (v *EndorseEABValidator) BoundTPMManufacturer(
+	ctx context.Context,
+	account *entities.ACMEAccount,
+) (string, error) {
+
+	if account.ExternalAccountBinding == nil {
+		return "", nil
+	}
+	eabKID, err := extractEABKeyID(account.ExternalAccountBinding)
+	if err != nil {
+		return "", caerrors.MalformedError("invalid EAB binding: %v", err)
+	}
+	if eabKID == "" {
+		return "", nil
+	}
+
+	binding, err := v.eabDAO.Get(ctx, entities.StringToEntityID(eabKID))
+	if err != nil {
+		if qrdbsdk.IsDAONotFound(err) {
+			return "", ErrEndorseEABNotFound
+		}
+		return "", caerrors.StorageFailureError("failed to retrieve EAB binding: %v", err)
+	}
+	if binding.AccountID != account.ID {
+		return "", ErrEndorseEABInvalid
+	}
+	if binding.DeviceInfo == nil {
+		return "", nil
+	}
+	return binding.DeviceInfo.TPMManufacturer, nil
+}
+
 // extractEABKeyID extracts the key identifier from an account's EAB binding reference.
 // The account stores EAB as interface{} which may be a map or struct.
 func extractEABKeyID(eabRef interface{}) (string, error) {

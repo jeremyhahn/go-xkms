@@ -496,6 +496,19 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// An endorse-01 CSR must also assert the TPM's manufacturer code for the
+	// EK certificate to record. Checked here, before the order moves, so a
+	// device that sends a bad request can correct it and retry.
+	var endorse01Manufacturer string
+	if isEndorse01 {
+		var problem *entities.Error
+		endorse01Manufacturer, problem = s.endorse01TPMManufacturer(ctx, account, csr)
+		if problem != nil {
+			writeError(w, problem)
+			return
+		}
+	}
+
 	// The CSR and its identifiers are now validated: only from this point can
 	// the order meaningfully move to "processing". Any failure past this line
 	// must drive the order to a terminal "invalid" state via failOrder rather
@@ -623,6 +636,9 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				},
 				PermanentID: order.Identifiers[0].Value,
 			}
+
+			// Validated with the CSR, before the order moved to processing.
+			ekRequest.TPMManufacturer = endorse01Manufacturer
 
 			// Copy organization info from CSR if available
 			if len(csr.Subject.Organization) > 0 {
@@ -985,6 +1001,56 @@ func matchesEndorse01Identifier(
 	return true, nil
 }
 
+// endorse01TPMManufacturer returns the TCG TPM manufacturer code to record in
+// an endorse-01 EK certificate.
+//
+// A TPM that needs endorse-01 has no manufacturer EK certificate, so the code a
+// later enroll-01 names it by (TCG DevID v1 r12 §8.1) can come only from the
+// device: it asserts the code in its certificate request, as a subjectAltName
+// directoryName in the TCG EK Credential Profile form. The claim carries no
+// more assurance than the EK public key the same order asserts. When the
+// account's external account binding names a manufacturer, the claim must
+// match it, so an operator who registered the device bounds what it may assert.
+func (s *RestService) endorse01TPMManufacturer(
+	ctx context.Context,
+	account *entities.ACMEAccount,
+	csr *x509.CertificateRequest) (string, *entities.Error) {
+
+	manufacturer, err := ca.TCGTPMManufacturerFromCSR(csr)
+	if err != nil {
+		return "", common.BadCSR("endorse-01 certificate request must carry the TPM manufacturer code " +
+			"(tcg-at-tpmManufacturer in a subjectAltName directoryName)")
+	}
+	if err := ca.ValidateTCGTPMManufacturer(manufacturer); err != nil {
+		return "", common.BadCSR(err.Error())
+	}
+
+	eabDAO, err := s.storageFactory.ExternalAccountBindingDAO()
+	if err != nil {
+		s.logger.Error("Failed to create EAB DAO for endorse-01 manufacturer binding",
+			"error", err.Error(), "account_id", account.ID)
+		return "", common.ServerInternal("Failed to resolve external account binding")
+	}
+	validator := NewEndorseEABValidator(eabDAO, s.endorseEABRequired, s.endorseDeviceIDMetaKey)
+	bound, err := validator.BoundTPMManufacturer(ctx, account)
+	if err != nil {
+		s.logger.Error("Failed to resolve the TPM manufacturer bound by the external account binding",
+			"error", err.Error(), "account_id", account.ID)
+		if errors.Is(err, ErrEndorseEABNotFound) || errors.Is(err, ErrEndorseEABInvalid) {
+			return "", common.Unauthorized("Account not authorized for endorse-01: " + err.Error())
+		}
+		return "", common.ServerInternal("Failed to resolve external account binding")
+	}
+	if bound != "" && !strings.EqualFold(bound, manufacturer) {
+		s.logger.Warn("endorse-01 TPM manufacturer does not match the external account binding",
+			"account_id", account.ID, "asserted", manufacturer, "authorized", bound)
+		return "", common.Unauthorized(fmt.Sprintf(
+			"TPM manufacturer %s does not match %s authorized by the external account binding",
+			manufacturer, bound))
+	}
+	return manufacturer, nil
+}
+
 // decodeEndorse01PublicKey attempts to decode a permanent-identifier order's
 // identifier value as a base64url-encoded PKIX public key. This is what
 // distinguishes an endorse-01 order - where the identifier IS the EK public
@@ -1195,6 +1261,11 @@ func (s *RestService) finalizeTCGCSR(
 	// Sign the TCG-CSR-IDEVID
 	iakDER, idevidDER, err := s.ca.SignTCGCSRIDevID(ctx, tcgCSR, tcgCSRRequest)
 	if err != nil {
+		s.logger.Error("Failed to sign TCG-CSR-IDEVID",
+			"order_id", order.ID,
+			"account_id", account.ID,
+			"permanent_identifier", idevidCN,
+			"error", err.Error())
 		return 0, nil, common.ServerInternal("Failed to sign TCG-CSR-IDEVID")
 	}
 

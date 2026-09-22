@@ -458,78 +458,6 @@ func requireBoolExtensionValue(t *testing.T, extValue []byte, expected bool) {
 	}
 }
 
-func TestCreateTPMManufacturerExtension_Success(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateTPMManufacturerExtension("INTC")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGAttributeTPMManufacturer)
-	requireStringExtensionValue(t, ext.Value, "INTC")
-}
-
-func TestCreateTPMManufacturerExtension_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	// Empty string is valid ASN.1 UTF8String; function should succeed
-	ext, err := CreateTPMManufacturerExtension("")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	requireValidExtension(t, ext, OIDTCGAttributeTPMManufacturer)
-	requireStringExtensionValue(t, ext.Value, "")
-}
-
-func TestCreateTPMModelExtension_Success(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateTPMModelExtension("SLB 9670")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGAttributeTPMModel)
-	requireStringExtensionValue(t, ext.Value, "SLB 9670")
-}
-
-func TestCreateTPMModelExtension_LongString(t *testing.T) {
-	t.Parallel()
-
-	longModel := "Infineon SLB 9670 TPM 2.0 - Enterprise Grade Hardware Security Module v3"
-	ext, err := CreateTPMModelExtension(longModel)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGAttributeTPMModel)
-	requireStringExtensionValue(t, ext.Value, longModel)
-}
-
-func TestCreateTPMVersionExtension_Success(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateTPMVersionExtension("7.85")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGAttributeTPMVersion)
-	requireStringExtensionValue(t, ext.Value, "7.85")
-}
-
-func TestCreateTPMVersionExtension_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateTPMVersionExtension("")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	requireValidExtension(t, ext, OIDTCGAttributeTPMVersion)
-	requireStringExtensionValue(t, ext.Value, "")
-}
-
 func TestCreatePlatformManufacturerExtension_Success(t *testing.T) {
 	t.Parallel()
 
@@ -1211,9 +1139,6 @@ func TestAllCreateExtensions_AreNonCritical(t *testing.T) {
 	}
 
 	builders := []extensionBuilder{
-		{name: "TPMManufacturer", builder: func() (pkix.Extension, error) { return CreateTPMManufacturerExtension("INTC") }},
-		{name: "TPMModel", builder: func() (pkix.Extension, error) { return CreateTPMModelExtension("SLB9670") }},
-		{name: "TPMVersion", builder: func() (pkix.Extension, error) { return CreateTPMVersionExtension("7.85") }},
 		{name: "TPMSpecification", builder: func() (pkix.Extension, error) { return CreateTPMSpecificationExtension(spec) }},
 		{name: "PlatformManufacturer", builder: func() (pkix.Extension, error) { return CreatePlatformManufacturerExtension("Dell") }},
 		{name: "PlatformModel", builder: func() (pkix.Extension, error) { return CreatePlatformModelExtension("R750") }},
@@ -1263,13 +1188,7 @@ func TestAllCreateExtensions_HaveDistinctOIDs(t *testing.T) {
 		extensions = append(extensions, namedExt{name: name, ext: ext})
 	}
 
-	ext, err := CreateTPMManufacturerExtension("INTC")
-	addExt("TPMManufacturer", ext, err)
-	ext, err = CreateTPMModelExtension("SLB9670")
-	addExt("TPMModel", ext, err)
-	ext, err = CreateTPMVersionExtension("7.85")
-	addExt("TPMVersion", ext, err)
-	ext, err = CreateTPMSpecificationExtension(spec)
+	ext, err := CreateTPMSpecificationExtension(spec)
 	addExt("TPMSpecification", ext, err)
 	ext, err = CreatePlatformManufacturerExtension("Dell")
 	addExt("PlatformManufacturer", ext, err)
@@ -1302,31 +1221,6 @@ func TestAllCreateExtensions_HaveDistinctOIDs(t *testing.T) {
 // =============================================================================
 // Edge Case Tests
 // =============================================================================
-
-func TestCreateTPMManufacturerExtension_SpecialCharacters(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name         string
-		manufacturer string
-	}{
-		{name: "WithNewline", manufacturer: "INTC\nCorp"},
-		{name: "WithTab", manufacturer: "INTC\tCorp"},
-		{name: "WithNullByte", manufacturer: "INTC\x00Corp"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			ext, err := CreateTPMManufacturerExtension(tt.manufacturer)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			requireValidExtension(t, ext, OIDTCGAttributeTPMManufacturer)
-		})
-	}
-}
 
 func TestOIDTCGBase_Value(t *testing.T) {
 	t.Parallel()
