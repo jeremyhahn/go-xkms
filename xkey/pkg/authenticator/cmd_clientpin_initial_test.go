@@ -36,7 +36,7 @@ func TestSetInitialPIN_EstablishesPINWhenNoneSet(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 	require.False(t, auth.IsPINSet(), "precondition: fresh authenticator has no PIN")
 
-	require.NoError(t, auth.SetInitialPIN("123456"))
+	require.NoError(t, auth.SetInitialPIN([]byte("123456")))
 
 	require.True(t, auth.IsPINSet())
 	require.Equal(t, auth.config.PINMaxRetries, auth.PINRetries())
@@ -62,7 +62,7 @@ func TestSetInitialPIN_InvalidatesOutstandingPinUvAuthToken(t *testing.T) {
 	token := installOutstandingToken(t, auth)
 	oldToken := append([]byte(nil), token...)
 
-	require.NoError(t, auth.SetInitialPIN("123456"))
+	require.NoError(t, auth.SetInitialPIN([]byte("123456")))
 
 	require.Nil(t, auth.GetPinUvAuthToken(),
 		"a token minted before the PIN existed must not survive SetInitialPIN")
@@ -82,7 +82,7 @@ func TestSetInitialPIN_InvalidatesOutstandingPinUvAuthToken(t *testing.T) {
 func TestSetInitialPIN_RefusedWhenPINAlreadySet(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetInitialPIN("123456"))
+	require.NoError(t, auth.SetInitialPIN([]byte("123456")))
 
 	// Spend some retries so a silent retry-counter reset is observable.
 	auth.mu.Lock()
@@ -92,7 +92,7 @@ func TestSetInitialPIN_RefusedWhenPINAlreadySet(t *testing.T) {
 	beginPINCeremony(t, auth)
 	token := installOutstandingToken(t, auth)
 
-	err := auth.SetInitialPIN("654321")
+	err := auth.SetInitialPIN([]byte("654321"))
 	require.ErrorIs(t, err, ErrPINAlreadySet)
 
 	wantHash := sha256.Sum256([]byte("123456"))
@@ -120,7 +120,7 @@ func TestSetInitialPIN_RefusesPolicyViolatingPIN(t *testing.T) {
 	beginPINCeremony(t, auth)
 	token := installOutstandingToken(t, auth)
 
-	err := auth.SetInitialPIN("123")
+	err := auth.SetInitialPIN([]byte("123"))
 	require.ErrorIs(t, err, ErrPINPolicyViolation)
 
 	require.False(t, auth.IsPINSet(), "a refused PIN must not be set")
@@ -158,7 +158,7 @@ func TestSetInitialPIN_StorageFailureIsTyped(t *testing.T) {
 	beginPINCeremony(t, auth)
 	installOutstandingToken(t, auth)
 
-	err = auth.SetInitialPIN("123456")
+	err = auth.SetInitialPIN([]byte("123456"))
 	require.ErrorIs(t, err, ErrStorageError)
 	require.ErrorIs(t, err, cause, "the backend's cause must be reachable through the typed error")
 	require.Nil(t, auth.GetPinUvAuthToken(),
@@ -179,14 +179,14 @@ func TestSetPINCeremonyAndSetInitialPINShareEstablishment(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, byte(StatusOK), resp[0])
 
-		require.ErrorIs(t, auth.SetInitialPIN("654321"), ErrPINAlreadySet)
+		require.ErrorIs(t, auth.SetInitialPIN([]byte("654321")), ErrPINAlreadySet)
 	})
 
 	t.Run("in-process then wire", func(t *testing.T) {
 		auth := createTestAuthenticatorWithPIN(t)
 		defer func() { _ = auth.Close() }()
 
-		require.NoError(t, auth.SetInitialPIN("123456"))
+		require.NoError(t, auth.SetInitialPIN([]byte("123456")))
 
 		ceremony := beginPINCeremony(t, auth)
 		resp, err := auth.ProcessCBOR(CmdClientPIN, setPINRequest(t, ceremony, "654321"))

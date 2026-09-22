@@ -65,7 +65,9 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 	// Parse root group and all subgroups.
 	if db.Content != nil && db.Content.Root != nil {
 		for i := range db.Content.Root.Groups {
-			p.parseGroup(&db.Content.Root.Groups[i], "", opts, &entries)
+			if err := p.parseGroup(&db.Content.Root.Groups[i], "", opts, &entries); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -77,7 +79,7 @@ func (p *KDBXParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry
 }
 
 // parseGroup recursively parses a group and its subgroups.
-func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) {
+func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) error {
 	// Build current path.
 	currentPath := parentPath
 	if group.Name != "" && group.Name != "Root" {
@@ -90,7 +92,10 @@ func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, op
 
 	// Parse entries in this group.
 	for i := range group.Entries {
-		entry := p.parseEntry(&group.Entries[i], currentPath, opts)
+		entry, err := p.parseEntry(&group.Entries[i], currentPath, opts)
+		if err != nil {
+			return err
+		}
 		if entry != nil {
 			*entries = append(*entries, entry)
 		}
@@ -98,21 +103,30 @@ func (p *KDBXParser) parseGroup(group *gokeepasslib.Group, parentPath string, op
 
 	// Recursively parse subgroups.
 	for i := range group.Groups {
-		p.parseGroup(&group.Groups[i], currentPath, opts, entries)
+		if err := p.parseGroup(&group.Groups[i], currentPath, opts, entries); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // parseEntry converts a gokeepasslib entry to a ParsedEntry.
-func (p *KDBXParser) parseEntry(entry *gokeepasslib.Entry, folderPath string, opts *ImportOptions) *ParsedEntry {
+func (p *KDBXParser) parseEntry(entry *gokeepasslib.Entry, folderPath string, opts *ImportOptions) (*ParsedEntry, error) {
 	password := p.getValue(entry, "Password")
 	if password == "" {
-		return nil // Skip entries without passwords
+		return nil, nil // Skip entries without passwords
+	}
+
+	passwordSecret, err := newParsedPassword(password)
+	if err != nil {
+		return nil, err
 	}
 
 	parsed := &ParsedEntry{
 		Title:    p.getValue(entry, "Title"),
 		Username: p.getValue(entry, "UserName"),
-		Password: password,
+		Password: passwordSecret,
 		URL:      p.getValue(entry, "URL"),
 		Notes:    p.getValue(entry, "Notes"),
 		IconID:   int(entry.IconID),
@@ -165,7 +179,7 @@ func (p *KDBXParser) parseEntry(entry *gokeepasslib.Entry, folderPath string, op
 		}
 	}
 
-	return parsed
+	return parsed, nil
 }
 
 // getValue retrieves a value from the entry's Values slice by key.

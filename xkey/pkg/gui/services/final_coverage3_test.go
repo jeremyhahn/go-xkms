@@ -947,7 +947,9 @@ func TestFC3_SudoElevator_Run_WithSudoAvailable(t *testing.T) {
 			return exec.Command("sh", "-c", "exit 1")
 		}
 
-		e := NewSudoElevator("badpassword")
+		pwBuf := testSecretBuffer(t, "badpassword")
+		defer pwBuf.Destroy()
+		e := NewSudoElevator(pwBuf)
 		require.True(t, e.IsAvailable())
 
 		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
@@ -960,7 +962,9 @@ func TestFC3_SudoElevator_Run_WithSudoAvailable(t *testing.T) {
 			return exec.Command("sh", "-c", "echo boom >&2; exit 3")
 		}
 
-		e := NewSudoElevator("password")
+		pwBuf := testSecretBuffer(t, "password")
+		defer pwBuf.Destroy()
+		e := NewSudoElevator(pwBuf)
 		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
 		assert.Nil(t, out)
 		assert.ErrorIs(t, err, ErrElevationFailed)
@@ -973,7 +977,9 @@ func TestFC3_SudoElevator_Run_WithSudoAvailable(t *testing.T) {
 			return exec.Command("/nonexistent/xkey-test-binary")
 		}
 
-		e := NewSudoElevator("password")
+		pwBuf := testSecretBuffer(t, "password")
+		defer pwBuf.Destroy()
+		e := NewSudoElevator(pwBuf)
 		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
 		assert.Nil(t, out)
 		assert.ErrorIs(t, err, ErrElevationFailed)
@@ -984,10 +990,29 @@ func TestFC3_SudoElevator_Run_WithSudoAvailable(t *testing.T) {
 			return exec.Command("sh", "-c", "printf elevated-output")
 		}
 
-		e := NewSudoElevator("password")
+		pwBuf := testSecretBuffer(t, "password")
+		defer pwBuf.Destroy()
+		e := NewSudoElevator(pwBuf)
 		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "elevated-output", string(out))
+	})
+
+	t.Run("nil password sends no password bytes", func(t *testing.T) {
+		// A nil password must not synthesize password bytes -- required
+		// for NOPASSWD sudoers configurations, where sudo never reads the
+		// line. cat echoes exactly what was piped: just the separator
+		// newline, since stdinData is also nil here.
+		sudoCommand = func(_ string, _ ...string) *exec.Cmd {
+			return exec.Command("cat")
+		}
+
+		e := NewSudoElevator(nil)
+		require.True(t, e.IsAvailable())
+
+		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "\n", string(out))
 	})
 }
 
@@ -998,7 +1023,9 @@ func TestFC3_SudoElevator_IsAvailable_NoSudo(t *testing.T) {
 	t.Cleanup(func() { sudoLookPath = origLook })
 	sudoLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
 
-	e := NewSudoElevator("password")
+	pwBuf := testSecretBuffer(t, "password")
+	defer pwBuf.Destroy()
+	e := NewSudoElevator(pwBuf)
 	assert.False(t, e.IsAvailable())
 
 	out, err := e.Run([]string{"trust", "install", "abc"}, nil)
@@ -1006,42 +1033,44 @@ func TestFC3_SudoElevator_IsAvailable_NoSudo(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSudoUnavailable)
 }
 
-// TestFC3_SudoElevator_Run_PasswordZeroed exercises L143-147 where sudo
-// succeeds. We verify password zeroing occurs after Run completes.
-func TestFC3_SudoElevator_Run_PasswordZeroed(t *testing.T) {
-	password := []byte("testpass123")
+// TestFC3_SudoElevator_Run_PasswordNotOwned exercises L143-147 where sudo
+// succeeds. The caller-owned password Buffer is never destroyed or wiped
+// by Run -- only the transient stdin payload assembled for the pipe is.
+func TestFC3_SudoElevator_Run_PasswordNotOwned(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "testpass123")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      slog.Default().With("component", "test"),
 		execPath: "/bin/echo", // Use echo so sudo runs a harmless command.
-		password: password,
+		password: pwBuf,
 	}
 
 	if !e.IsAvailable() {
-		// If sudo is not available, the Run should return ErrSudoUnavailable
-		// and NOT zero the password (returns before zeroing).
+		// If sudo is not available, Run returns ErrSudoUnavailable and
+		// never touches the password.
 		out, err := e.Run([]string{"hello"}, nil)
 		assert.Nil(t, out)
 		assert.ErrorIs(t, err, ErrSudoUnavailable)
 		return
 	}
 
-	// When sudo IS available, Run will attempt to execute and zero the
-	// password regardless of the outcome.
+	// When sudo IS available, Run executes regardless of outcome, but the
+	// password Buffer it borrowed from remains valid and unchanged --
+	// SudoElevator does not own its lifecycle.
 	_, _ = e.Run([]string{"hello"}, nil)
 
-	// Verify password was zeroed after Run.
-	for i, b := range password {
-		assert.Equal(t, byte(0), b, "password byte %d should be zeroed", i)
-	}
+	assert.Equal(t, "testpass123", string(pwBuf.Bytes()))
 }
 
 // TestFC3_SudoElevator_Run_WithStdinData exercises the stdinData concatenation
 // path at L86-88.
 func TestFC3_SudoElevator_Run_WithStdinData(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "pass")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      slog.Default().With("component", "test"),
 		execPath: "",
-		password: []byte("pass"),
+		password: pwBuf,
 	}
 
 	// With empty execPath, should return ErrElevationUnavailable immediately.

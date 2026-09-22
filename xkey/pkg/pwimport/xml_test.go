@@ -127,8 +127,8 @@ func TestXMLParser_Parse_ValidFile(t *testing.T) {
 	if entry1.Username != "testuser" {
 		t.Errorf("Entry 1 Username = %q, want %q", entry1.Username, "testuser")
 	}
-	if entry1.Password != "secretpass" {
-		t.Errorf("Entry 1 Password = %q, want %q", entry1.Password, "secretpass")
+	if got := openSecretString(t, entry1.Password); got != "secretpass" {
+		t.Errorf("Entry 1 Password = %q, want %q", got, "secretpass")
 	}
 	if entry1.URL != "https://example.com" {
 		t.Errorf("Entry 1 URL = %q, want %q", entry1.URL, "https://example.com")

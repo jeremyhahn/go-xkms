@@ -92,7 +92,15 @@ func (i *Importer) Import(opts *ImportOptions) (*ImportResult, error) {
 
 	// Import each entry.
 	for _, entry := range entries {
-		sp := entry.ToStaticPassword()
+		sp, err := entry.ToStaticPassword()
+		if err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, ImportError{
+				EntryName: entry.Title,
+				Error:     err.Error(),
+			})
+			continue
+		}
 
 		// Check for existing entry.
 		existing, _ := i.store.Get(sp.ID)

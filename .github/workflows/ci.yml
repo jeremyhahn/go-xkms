@@ -524,7 +524,7 @@ jobs:
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
             ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
             ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
-            ./pkg/pcr_policy ./pkg/pivcert ./pkg/pivcert/file ./pkg/pkcs11mgr \
+            ./pkg/pcr_policy ./pkg/pkcs11mgr \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
             ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
             ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \

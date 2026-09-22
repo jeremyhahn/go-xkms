@@ -131,7 +131,9 @@ func (p *XMLParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 	}
 
 	entries := make([]*ParsedEntry, 0)
-	p.parseGroup(&kpFile.Root.Group, "", opts, &entries)
+	if err := p.parseGroup(&kpFile.Root.Group, "", opts, &entries); err != nil {
+		return nil, err
+	}
 
 	if len(entries) == 0 {
 		return nil, ErrNoEntriesFound
@@ -141,7 +143,7 @@ func (p *XMLParser) Parse(filePath string, opts *ImportOptions) ([]*ParsedEntry,
 }
 
 // parseGroup recursively parses a group and its subgroups.
-func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) {
+func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *ImportOptions, entries *[]*ParsedEntry) error {
 	// Build current path.
 	currentPath := parentPath
 	if group.Name != "" && group.Name != "Root" {
@@ -154,7 +156,10 @@ func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *Imp
 
 	// Parse entries in this group.
 	for i := range group.Entries {
-		entry := p.parseEntry(&group.Entries[i], currentPath, opts)
+		entry, err := p.parseEntry(&group.Entries[i], currentPath, opts)
+		if err != nil {
+			return err
+		}
 		if entry != nil {
 			*entries = append(*entries, entry)
 		}
@@ -162,12 +167,16 @@ func (p *XMLParser) parseGroup(group *keePassGroup, parentPath string, opts *Imp
 
 	// Recursively parse subgroups.
 	for i := range group.Groups {
-		p.parseGroup(&group.Groups[i], currentPath, opts, entries)
+		if err := p.parseGroup(&group.Groups[i], currentPath, opts, entries); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 // parseEntry converts a KeePass entry to a ParsedEntry.
-func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *ImportOptions) *ParsedEntry {
+func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *ImportOptions) (*ParsedEntry, error) {
 	// Build string map for easy access.
 	stringMap := make(map[string]string)
 	for _, s := range entry.Strings {
@@ -176,13 +185,18 @@ func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *Imp
 
 	password := stringMap["Password"]
 	if password == "" {
-		return nil // Skip entries without passwords
+		return nil, nil // Skip entries without passwords
+	}
+
+	passwordSecret, err := newParsedPassword(password)
+	if err != nil {
+		return nil, err
 	}
 
 	parsed := &ParsedEntry{
 		Title:    stringMap["Title"],
 		Username: stringMap["UserName"],
-		Password: password,
+		Password: passwordSecret,
 		URL:      stringMap["URL"],
 		Notes:    stringMap["Notes"],
 		IconID:   entry.IconID,
@@ -234,7 +248,7 @@ func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *Imp
 		parsed.ExpiresAt = p.parseKeePassTime(entry.Times.ExpiryTime)
 	}
 
-	return parsed
+	return parsed, nil
 }
 
 // parseKeePassTime parses KeePass base64-encoded timestamps.

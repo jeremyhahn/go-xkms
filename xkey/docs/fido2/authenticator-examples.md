@@ -709,18 +709,6 @@ func setupAutoGrant() (*authenticator.Authenticator, error) {
 }
 ```
 
-### Auto-Grant with Simulated PIN
-
-```go
-func setupAutoGrantWithPIN() (*authenticator.Authenticator, error) {
-    config := authenticator.DefaultConfig()
-    config.Storage = authenticator.NewMemoryStorage()
-    config.UserPresenceHandler = authenticator.NewAutoGrantHandlerWithPIN("123456")
-
-    return authenticator.NewAuthenticator(config)
-}
-```
-
 ### Interactive Terminal Handler
 
 ```go

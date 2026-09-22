@@ -728,7 +728,12 @@ func (s *TrustService) InstallToSystem(fingerprint string, password string) erro
 	// self-contained: it opens the trust store, finds the cert by
 	// fingerprint, writes it to the OS cert dir, and runs the
 	// update command.
-	elevator := NewSudoElevator(password)
+	pwBuf, err := newSudoBufferFromString(password)
+	if err != nil {
+		return err
+	}
+	defer pwBuf.Destroy()
+	elevator := NewSudoElevator(pwBuf)
 	args := []string{"trust", "install", fingerprint}
 	if _, err := elevator.Run(args, nil); err != nil {
 		s.log.Debug("InstallToSystem failed",
@@ -762,7 +767,12 @@ func (s *TrustService) RemoveFromSystem(fingerprint string, password string) err
 	// Use sudo to invoke the CLI trust uninstall command which is
 	// self-contained: it removes the file from the OS cert dir
 	// and runs the update command.
-	elevator := NewSudoElevator(password)
+	pwBuf, err := newSudoBufferFromString(password)
+	if err != nil {
+		return err
+	}
+	defer pwBuf.Destroy()
+	elevator := NewSudoElevator(pwBuf)
 	args := []string{"trust", "uninstall", fingerprint}
 	if _, err := elevator.Run(args, nil); err != nil {
 		return err

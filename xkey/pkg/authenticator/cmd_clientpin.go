@@ -462,11 +462,15 @@ func (a *Authenticator) establishPINLocked(newPIN []byte) error {
 // existing PIN is replaced only through changePIN, which proves the current
 // one. A PIN shorter than the configured minimum is refused with
 // ErrPINPolicyViolation.
-func (a *Authenticator) SetInitialPIN(pin string) error {
+//
+// pin is not retained beyond the call: establishPINLocked only hashes it.
+// Callers holding the PIN in protected memory should borrow it (e.g. via
+// secure.Secret.Open/Buffer.WithBytes) rather than materializing a string.
+func (a *Authenticator) SetInitialPIN(pin []byte) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	return a.establishPINLocked([]byte(pin))
+	return a.establishPINLocked(pin)
 }
 
 // handleChangePIN changes an existing PIN.

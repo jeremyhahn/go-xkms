@@ -23,6 +23,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ---------------------------------------------------------------
@@ -228,6 +230,16 @@ func TestImportDataError_Message(t *testing.T) {
 // usb
 // ---------------------------------------------------------------
 
+// openSecretString opens secret and returns a copy of its contents as a
+// string, for asserting on test fixtures only.
+func openSecretString(t *testing.T, secret *secure.Secret) string {
+	t.Helper()
+	buf, err := secret.Open()
+	require.NoError(t, err)
+	defer buf.Destroy()
+	return string(buf.Bytes())
+}
+
 func TestReadUSBPassphrase_RejectsMismatchedPipedLines(t *testing.T) {
 	pipeStdin(t, "one\ntwo\n")
 
@@ -251,7 +263,8 @@ func TestReadUSBPassphrase_AcceptsMatchingPipedLines(t *testing.T) {
 
 	got, err := readUSBPassphrase(cmd)
 	require.NoError(t, err)
-	assert.Equal(t, "correct-horse", got)
+	defer got.Destroy()
+	assert.Equal(t, "correct-horse", openSecretString(t, got))
 }
 
 func TestUSBCmdError_Message(t *testing.T) {

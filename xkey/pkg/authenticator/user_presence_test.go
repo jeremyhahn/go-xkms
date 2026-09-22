@@ -137,7 +137,6 @@ func TestAutoGrantHandler_RequestUserVerification(t *testing.T) {
 		handler      *AutoGrantHandler
 		request      *UserVerificationRequest
 		wantVerified bool
-		wantPIN      string
 		wantErr      bool
 	}{
 		{
@@ -152,29 +151,16 @@ func TestAutoGrantHandler_RequestUserVerification(t *testing.T) {
 				PINRequired: false,
 			},
 			wantVerified: true,
-			wantPIN:      "",
 			wantErr:      false,
 		},
 		{
-			name:    "returns simulated PIN when required",
-			handler: NewAutoGrantHandlerWithPIN("123456"),
-			request: &UserVerificationRequest{
-				RPID:        "example.com",
-				PINRequired: true,
-			},
-			wantVerified: true,
-			wantPIN:      "123456",
-			wantErr:      false,
-		},
-		{
-			name:    "returns empty PIN when not set but required",
+			name:    "verifies when PIN required",
 			handler: NewAutoGrantHandler(),
 			request: &UserVerificationRequest{
 				RPID:        "example.com",
 				PINRequired: true,
 			},
 			wantVerified: true,
-			wantPIN:      "",
 			wantErr:      false,
 		},
 		{
@@ -184,7 +170,6 @@ func TestAutoGrantHandler_RequestUserVerification(t *testing.T) {
 				RPID: "example.com",
 			},
 			wantVerified: true,
-			wantPIN:      "",
 			wantErr:      false,
 		},
 		{
@@ -192,7 +177,6 @@ func TestAutoGrantHandler_RequestUserVerification(t *testing.T) {
 			handler:      NewAutoGrantHandler(),
 			request:      &UserVerificationRequest{},
 			wantVerified: true,
-			wantPIN:      "",
 			wantErr:      false,
 		},
 	}
@@ -220,10 +204,6 @@ func TestAutoGrantHandler_RequestUserVerification(t *testing.T) {
 			if result.Verified != tt.wantVerified {
 				t.Errorf("Verified = %v, want %v", result.Verified, tt.wantVerified)
 			}
-
-			if result.PIN != tt.wantPIN {
-				t.Errorf("PIN = %q, want %q", result.PIN, tt.wantPIN)
-			}
 		})
 	}
 }
@@ -233,7 +213,7 @@ func TestAutoGrantHandler_RequestUserVerification(t *testing.T) {
 func TestAutoGrantHandler_RequestUserVerification_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	handler := NewAutoGrantHandlerWithPIN("123456")
+	handler := NewAutoGrantHandler()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
@@ -262,10 +242,9 @@ func TestAutoGrantHandler_RequestUserVerification_ContextCancellation(t *testing
 func TestAutoGrantHandler_ImplementsInterface(t *testing.T) {
 	t.Parallel()
 
-	// Compile-time interface satisfaction checks via assignment.
-	// These constructors return concrete types, so the result is never nil.
+	// Compile-time interface satisfaction check via assignment.
+	// The constructor returns a concrete type, so the result is never nil.
 	var _ UserPresenceHandler = NewAutoGrantHandler()
-	var _ UserPresenceHandler = NewAutoGrantHandlerWithPIN("test")
 }
 
 // TestAutoGrantHandler_ConcurrentAccess tests that the handler is safe
@@ -273,7 +252,7 @@ func TestAutoGrantHandler_ImplementsInterface(t *testing.T) {
 func TestAutoGrantHandler_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
-	handler := NewAutoGrantHandlerWithPIN("concurrent-pin")
+	handler := NewAutoGrantHandler()
 	ctx := context.Background()
 
 	done := make(chan struct{})
@@ -309,9 +288,6 @@ func TestAutoGrantHandler_ConcurrentAccess(t *testing.T) {
 			}
 			if !verifyResult.Verified {
 				t.Errorf("worker %d: not verified", id)
-			}
-			if verifyResult.PIN != "concurrent-pin" {
-				t.Errorf("worker %d: wrong PIN %q", id, verifyResult.PIN)
 			}
 		}(i)
 	}
@@ -509,7 +485,6 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 		input        string
 		request      *UserVerificationRequest
 		wantVerified bool
-		wantPIN      string
 		wantErr      error
 		wantPrompt   []string
 	}{
@@ -525,7 +500,6 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 				Timeout:     5 * time.Second,
 			},
 			wantVerified: true,
-			wantPIN:      "123456",
 			wantErr:      nil,
 			wantPrompt:   []string{"authenticate", "Example Corp", "testuser", "PIN"},
 		},
@@ -539,7 +513,6 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 				Timeout:     5 * time.Second,
 			},
 			wantVerified: true,
-			wantPIN:      "",
 			wantErr:      nil,
 			wantPrompt:   []string{"register", "'y'"},
 		},
@@ -552,7 +525,6 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 				Timeout:     5 * time.Second,
 			},
 			wantVerified: true,
-			wantPIN:      "pin123",
 			wantErr:      nil,
 			wantPrompt:   []string{"auth.example.com"},
 		},
@@ -565,7 +537,6 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 				Timeout:     5 * time.Second,
 			},
 			wantVerified: true,
-			wantPIN:      "mypin",
 			wantErr:      nil,
 			wantPrompt:   []string{"operation"},
 		},
@@ -578,7 +549,6 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 				Timeout:     5 * time.Second,
 			},
 			wantVerified: true,
-			wantPIN:      "pin with spaces",
 			wantErr:      nil,
 		},
 	}
@@ -612,15 +582,47 @@ func TestInteractiveHandler_RequestUserVerification(t *testing.T) {
 				t.Errorf("Verified = %v, want %v", result.Verified, tt.wantVerified)
 			}
 
-			if result.PIN != tt.wantPIN {
-				t.Errorf("PIN = %q, want %q", result.PIN, tt.wantPIN)
-			}
-
 			output := writer.String()
 			for _, s := range tt.wantPrompt {
 				if !strings.Contains(output, s) {
 					t.Errorf("output missing %q:\n%s", s, output)
 				}
+			}
+		})
+	}
+}
+
+// TestInteractiveHandler_ReadPIN_TrimsAndSealsPIN verifies that readPIN
+// trims surrounding whitespace and returns the PIN sealed in a protected
+// Buffer rather than a plain string.
+func TestInteractiveHandler_ReadPIN_TrimsAndSealsPIN(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "no whitespace", input: "123456\n", want: "123456"},
+		{name: "surrounding whitespace", input: "  pin with spaces  \n", want: "pin with spaces"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reader := strings.NewReader(tt.input)
+			writer := &bytes.Buffer{}
+			handler := NewInteractiveHandlerWithIO(reader, writer, -1)
+
+			buf, err := handler.readPIN(context.Background())
+			if err != nil {
+				t.Fatalf("readPIN: %v", err)
+			}
+			defer buf.Destroy()
+
+			if got := string(buf.Bytes()); got != tt.want {
+				t.Errorf("readPIN = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -883,16 +885,10 @@ func TestUserPresenceResult_Fields(t *testing.T) {
 func TestUserVerificationResult_Fields(t *testing.T) {
 	t.Parallel()
 
-	result := UserVerificationResult{
-		Verified: true,
-		PIN:      "123456",
-	}
+	result := UserVerificationResult{Verified: true}
 
 	if !result.Verified {
 		t.Error("Verified = false, want true")
-	}
-	if result.PIN != "123456" {
-		t.Errorf("PIN = %q, want %q", result.PIN, "123456")
 	}
 }
 

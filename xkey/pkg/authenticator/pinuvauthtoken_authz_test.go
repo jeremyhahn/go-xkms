@@ -343,7 +343,7 @@ func TestAuthorizePinUvAuthTokenSucceedsForGrantedPermission(t *testing.T) {
 // permissions from a previous token.
 func TestGetPinTokenGrantsMakeCredentialAndGetAssertion(t *testing.T) {
 	auth := newAuthzTestAuthenticator(t)
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	// A previous ceremony left a config-scoped token bound to another RP.
 	auth.pinState.protocol = livePinTokenGrant(authzTestToken(), PINPermissionAuthenticatorCfg)
@@ -376,7 +376,7 @@ func TestGetPinTokenGrantsMakeCredentialAndGetAssertion(t *testing.T) {
 // itself supplied by an in-process caller and set the UV flag on the result.
 func TestGetAssertionInternalPINHashDoesNotSetUV(t *testing.T) {
 	auth := newAuthzTestAuthenticator(t)
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	clientDataHash := authzClientDataHash()
 	token := authzTestToken()
@@ -411,7 +411,7 @@ func TestGetAssertionInternalPINHashDoesNotSetUV(t *testing.T) {
 // TestMakeCredentialInternalPINHashDoesNotSetUV proves the same for registration.
 func TestMakeCredentialInternalPINHashDoesNotSetUV(t *testing.T) {
 	auth := newAuthzTestAuthenticator(t)
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	clientDataHash := authzClientDataHash()
 	resp, err := auth.MakeCredential(clientDataHash,

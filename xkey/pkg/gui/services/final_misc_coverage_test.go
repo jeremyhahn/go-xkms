@@ -905,10 +905,12 @@ func TestFM_AutoUnseal_Reseal_ConfigSaveNil(t *testing.T) {
 // TestFM_SudoElevator_Run_EmptyExecPath covers line 74-77:
 // Run returns ErrElevationUnavailable when execPath is empty.
 func TestFM_SudoElevator_Run_EmptyExecPath(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "password")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      slog.Default(),
 		execPath: "",
-		password: []byte("password"),
+		password: pwBuf,
 	}
 	_, err := e.Run([]string{"test"}, nil)
 	assert.ErrorIs(t, err, ErrElevationUnavailable)

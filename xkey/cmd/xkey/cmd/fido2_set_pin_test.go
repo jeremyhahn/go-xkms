@@ -42,7 +42,7 @@ func seedPINConfig(t *testing.T, storageType FIDO2StorageType, storagePath, pin 
 		AttestationFormat: "none",
 		NotifyType:        "none",
 		EnablePIN:         true,
-		PIN:               pin,
+		PIN:               fido2PINSecret(pin),
 	}
 }
 

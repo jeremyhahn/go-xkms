@@ -18,22 +18,12 @@ import "context"
 // AutoGrantHandler always grants user presence and verification requests.
 // This is the default handler for automation and testing scenarios.
 // All methods are safe for concurrent use.
-type AutoGrantHandler struct {
-	// simulatedPIN is the PIN to return for verification requests
-	// when PINRequired is true. If empty, verification succeeds without PIN.
-	simulatedPIN string
-}
+type AutoGrantHandler struct{}
 
 // NewAutoGrantHandler creates a new AutoGrantHandler that automatically
 // approves all user presence and verification requests.
 func NewAutoGrantHandler() *AutoGrantHandler {
 	return &AutoGrantHandler{}
-}
-
-// NewAutoGrantHandlerWithPIN creates an AutoGrantHandler that returns
-// a simulated PIN for verification requests requiring PIN entry.
-func NewAutoGrantHandlerWithPIN(pin string) *AutoGrantHandler {
-	return &AutoGrantHandler{simulatedPIN: pin}
 }
 
 // RequestUserPresence always returns approved.
@@ -47,17 +37,14 @@ func (h *AutoGrantHandler) RequestUserPresence(ctx context.Context, req *UserPre
 	}
 }
 
-// RequestUserVerification always returns verified with the simulated PIN if set.
+// RequestUserVerification always returns verified.
 // It respects context cancellation.
 func (h *AutoGrantHandler) RequestUserVerification(ctx context.Context, req *UserVerificationRequest) (*UserVerificationResult, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		return &UserVerificationResult{
-			Verified: true,
-			PIN:      h.simulatedPIN,
-		}, nil
+		return &UserVerificationResult{Verified: true}, nil
 	}
 }
 

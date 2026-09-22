@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // SudoElevator uses sudo to re-execute the current binary with CLI
@@ -29,12 +31,14 @@ import (
 type SudoElevator struct {
 	log      *slog.Logger
 	execPath string
-	password []byte
+	password *secure.Buffer
 }
 
 // NewSudoElevator creates a SudoElevator with the given password that
-// re-invokes the current executable via sudo with CLI subcommands.
-func NewSudoElevator(password string) *SudoElevator {
+// re-invokes the current executable via sudo with CLI subcommands. A nil
+// password pipes no password bytes on Run, which is valid for NOPASSWD
+// sudoers configurations and for callers that only need IsAvailable.
+func NewSudoElevator(password *secure.Buffer) *SudoElevator {
 	path, _ := os.Executable()
 	log := slog.Default().With("component", "sudo_elevator")
 
@@ -45,8 +49,19 @@ func NewSudoElevator(password string) *SudoElevator {
 	return &SudoElevator{
 		log:      log,
 		execPath: path,
-		password: []byte(password),
+		password: password,
 	}
+}
+
+// newSudoBufferFromString seals s into a *secure.Buffer for NewSudoElevator.
+// An empty s returns (nil, nil): NewSudoElevator and Run treat a nil
+// password as "no password set" rather than an empty one, matching how the
+// wails request boundary represents "not supplied".
+func newSudoBufferFromString(s string) (*secure.Buffer, error) {
+	if s == "" {
+		return nil, nil
+	}
+	return secure.NewBufferFromBytes([]byte(s))
 }
 
 // IsAvailable returns true if both sudo and the current executable path
@@ -69,7 +84,7 @@ func (e *SudoElevator) IsAvailable() bool {
 // Run executes the current binary via sudo with --no-gui and the given
 // CLI arguments. The sudo password and any stdin data are passed on stdin
 // to avoid leaking secrets in the process argument list. After execution
-// completes, the password is zeroed in memory.
+// completes, the assembled stdin payload is wiped from memory.
 func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 	if e.execPath == "" {
 		e.log.Debug("Run aborted: executable path not found")
@@ -81,11 +96,26 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 		return nil, ErrSudoUnavailable
 	}
 
-	// Build stdin: password + newline + stdinData
-	var stdinBuf bytes.Buffer
-	stdinBuf.Write(e.password)
-	stdinBuf.WriteByte('\n')
-	stdinBuf.Write(stdinData)
+	// Build stdin: password + newline + stdinData. A nil password (no
+	// password configured) writes no password bytes, matching the
+	// historical behavior for NOPASSWD sudoers configurations where sudo
+	// never reads the line. Assembled into a caller-owned slice (rather
+	// than a bytes.Buffer, whose read cursor would leave nothing to wipe
+	// once sudo has consumed it) so it can be wiped after the pipe closes
+	// -- the pageable copy cmd.Stdin requires cannot be swept the way the
+	// password's own enclave can.
+	var stdin []byte
+	if e.password != nil {
+		if err := e.password.WithBytes(func(b []byte) error {
+			stdin = append(stdin, b...)
+			return nil
+		}); err != nil {
+			return nil, &DetailError{Err: ErrElevationFailed, Detail: fmt.Sprintf(": %v", err)}
+		}
+	}
+	stdin = append(stdin, '\n')
+	stdin = append(stdin, stdinData...)
+	defer secure.Wipe(stdin)
 
 	e.log.Debug("Run executing sudo command",
 		"args", args,
@@ -98,7 +128,7 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 	cmdArgs = append(cmdArgs, args...)
 
 	cmd := sudoCommand("sudo", cmdArgs...) // #nosec G204 -- re-invoking self
-	cmd.Stdin = &stdinBuf
+	cmd.Stdin = bytes.NewReader(stdin)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -106,9 +136,6 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-
-	// Zero the password after use regardless of outcome.
-	zeroBytes(e.password)
 
 	if err != nil {
 		stderrStr := strings.TrimSpace(stderr.String())

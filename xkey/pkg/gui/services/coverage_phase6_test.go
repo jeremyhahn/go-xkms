@@ -1261,7 +1261,9 @@ func TestP6B_StaticPW_SearchPasswords_NoStore(t *testing.T) {
 // ===========================================================================
 
 func TestP6B_SudoElevator_Run_NoExecPath(t *testing.T) {
-	e := NewSudoElevator("password")
+	pwBuf := testSecretBuffer(t, "password")
+	defer pwBuf.Destroy()
+	e := NewSudoElevator(pwBuf)
 	e.execPath = ""
 
 	out, err := e.Run([]string{"test"}, nil)
@@ -1270,7 +1272,9 @@ func TestP6B_SudoElevator_Run_NoExecPath(t *testing.T) {
 }
 
 func TestP6B_SudoElevator_Run_SudoUnavailable(t *testing.T) {
-	e := NewSudoElevator("password")
+	pwBuf := testSecretBuffer(t, "password")
+	defer pwBuf.Destroy()
+	e := NewSudoElevator(pwBuf)
 	e.execPath = "/nonexistent/binary"
 
 	// IsAvailable checks for sudo.

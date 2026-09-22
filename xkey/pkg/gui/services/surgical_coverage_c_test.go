@@ -746,21 +746,27 @@ func TestSC_StaticPW_SearchPasswords_ListError(t *testing.T) {
 
 // TestSC_SudoElevator_RunNoExecPath covers L74-77 (execPath empty).
 func TestSC_SudoElevator_RunNoExecPath(t *testing.T) {
-	e := &SudoElevator{log: slog.Default(), execPath: "", password: []byte("pw")}
+	pwBuf := testSecretBuffer(t, "pw")
+	defer pwBuf.Destroy()
+	e := &SudoElevator{log: slog.Default(), execPath: "", password: pwBuf}
 	_, err := e.Run([]string{"test"}, nil)
 	assert.True(t, errors.Is(err, ErrElevationUnavailable))
 }
 
 // TestSC_SudoElevator_RunSudoUnavailable covers L79-82.
 func TestSC_SudoElevator_RunSudoUnavailable(t *testing.T) {
-	e := &SudoElevator{log: slog.Default(), execPath: "/nonexistent/path", password: []byte("pw")}
+	pwBuf := testSecretBuffer(t, "pw")
+	defer pwBuf.Destroy()
+	e := &SudoElevator{log: slog.Default(), execPath: "/nonexistent/path", password: pwBuf}
 	_, err := e.Run([]string{"test"}, nil)
 	assert.Error(t, err)
 }
 
 // TestSC_SudoElevator_RunExitError covers L127-129 and L135-147.
 func TestSC_SudoElevator_RunExitError(t *testing.T) {
-	e := &SudoElevator{log: slog.Default(), execPath: "/bin/false", password: []byte("wrong")}
+	pwBuf := testSecretBuffer(t, "wrong")
+	defer pwBuf.Destroy()
+	e := &SudoElevator{log: slog.Default(), execPath: "/bin/false", password: pwBuf}
 	_, err := e.Run([]string{}, nil)
 	assert.Error(t, err)
 }

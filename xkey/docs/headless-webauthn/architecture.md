@@ -47,7 +47,7 @@ Rejected alternatives:
 | Authenticator | `xkey/pkg/authenticator`, `xkey/pkg/uhid` |
 | CLI | `xkey/cmd/xkey/cmd/auth.go` |
 | Session and token storage | `xkey/pkg/tokenstore`, `xkey/pkg/serverregistry` |
-| PIV login alternative | `xkey/cmd/xkey/cmd/auth_piv.go`, `xkey/pkg/pivcert` |
+| PIV login alternative | `xkey/cmd/xkey/cmd/auth_piv.go`, `pkg/pivcert` |
 | Relying party | `go-xkms/pkg/webauthn` |
 
 Capability row: **"Headless WebAuthn registration/login (no browser)"** under the

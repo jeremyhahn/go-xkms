@@ -357,17 +357,14 @@ type UserVerificationResult struct {
 Automatically approves all user presence and verification requests. Default for automation scenarios.
 
 ```go
-type AutoGrantHandler struct {
-    simulatedPIN string // PIN to return for verification requests
-}
+type AutoGrantHandler struct{}
 
 func NewAutoGrantHandler() *AutoGrantHandler
-func NewAutoGrantHandlerWithPIN(pin string) *AutoGrantHandler
 ```
 
 Behavior:
 - `RequestUserPresence` always returns `Approved: true`
-- `RequestUserVerification` always returns `Verified: true` with configured PIN
+- `RequestUserVerification` always returns `Verified: true`
 
 ### InteractiveHandler
 
@@ -626,7 +623,7 @@ func (h *MyHandler) RequestUserPresence(ctx context.Context, req *UserPresenceRe
 
 func (h *MyHandler) RequestUserVerification(ctx context.Context, req *UserVerificationRequest) (*UserVerificationResult, error) {
     // Custom verification logic
-    return &UserVerificationResult{Verified: true, PIN: "..."}, nil
+    return &UserVerificationResult{Verified: true}, nil
 }
 ```
 

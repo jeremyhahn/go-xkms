@@ -57,8 +57,8 @@ func TestCSVParser_Parse_ValidFile(t *testing.T) {
 	if entry1.Username != "testuser" {
 		t.Errorf("Entry 1 Username = %q, want %q", entry1.Username, "testuser")
 	}
-	if entry1.Password != "secretpass" {
-		t.Errorf("Entry 1 Password = %q, want %q", entry1.Password, "secretpass")
+	if got := openSecretString(t, entry1.Password); got != "secretpass" {
+		t.Errorf("Entry 1 Password = %q, want %q", got, "secretpass")
 	}
 	if entry1.URL != "https://example.com" {
 		t.Errorf("Entry 1 URL = %q, want %q", entry1.URL, "https://example.com")
@@ -146,8 +146,8 @@ func TestCSVParser_Parse_AlternativeColumnNames(t *testing.T) {
 	if entry.Username != "bankuser" {
 		t.Errorf("Username = %q, want %q", entry.Username, "bankuser")
 	}
-	if entry.Password != "bankpass" {
-		t.Errorf("Password = %q, want %q", entry.Password, "bankpass")
+	if got := openSecretString(t, entry.Password); got != "bankpass" {
+		t.Errorf("Password = %q, want %q", got, "bankpass")
 	}
 	if entry.FolderPath != "Work" {
 		t.Errorf("FolderPath = %q, want %q", entry.FolderPath, "Work")

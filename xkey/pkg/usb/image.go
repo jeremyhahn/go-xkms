@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -46,8 +47,9 @@ type ImageConfig struct {
 	// (the full device size is used).
 	SizeBytes int64
 
-	// Passphrase is the LUKS passphrase for the data partition.
-	Passphrase string
+	// Passphrase is the LUKS passphrase for the data partition, held in
+	// protected memory. Nil means no passphrase, which CreateImage rejects.
+	Passphrase *secure.Secret
 
 	// Binaries is a list of paths to xkey binaries to copy onto the
 	// FAT32 partition.
@@ -82,7 +84,7 @@ func CreateImage(cfg ImageConfig) error {
 		return ErrPermissionDenied
 	}
 
-	if cfg.Passphrase == "" {
+	if cfg.Passphrase == nil {
 		return &USBError{
 			Operation: "validate_config",
 			Err:       &DetailError{Err: ErrInvalidSize, Detail: ": passphrase is required"},
@@ -269,47 +271,61 @@ func formatFAT32(partition string) error {
 	return nil
 }
 
-// formatLUKS formats a partition as LUKS2 using the go-luks2 library.
-func formatLUKS(partition, passphrase string) error {
-	opts := luks2.FormatOptions{
-		Device:     partition,
-		Passphrase: []byte(passphrase),
-	}
-	if err := luksFormat(opts); err != nil {
+// formatLUKS formats a partition as LUKS2 using the go-luks2 library. The
+// passphrase is opened into protected memory for the duration of the call
+// and never copied to the ordinary heap.
+func formatLUKS(partition string, passphrase *secure.Secret) error {
+	buf, err := passphrase.Open()
+	if err != nil {
 		return &USBError{
-			Operation: "format_luks",
-			Path:      partition,
-			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
-		}
-	}
-
-	// Unlock, create ext4 filesystem, then lock.
-	if err := luksUnlock(partition, []byte(passphrase), luksMapperName); err != nil {
-		return &USBError{
-			Operation: "unlock_luks",
+			Operation: "open_passphrase",
 			Path:      partition,
 			Err:       err,
 		}
 	}
+	defer buf.Destroy()
 
-	if err := luksMakeFilesystem(luksMapperName, "ext4", luksLabel); err != nil {
-		_ = luksLock(luksMapperName)
-		return &USBError{
-			Operation: "create_ext4",
-			Path:      partition,
-			Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
+	return buf.WithBytes(func(pass []byte) error {
+		opts := luks2.FormatOptions{
+			Device:     partition,
+			Passphrase: pass,
 		}
-	}
-
-	if err := luksLock(luksMapperName); err != nil {
-		return &USBError{
-			Operation: "lock_luks",
-			Path:      partition,
-			Err:       err,
+		if err := luksFormat(opts); err != nil {
+			return &USBError{
+				Operation: "format_luks",
+				Path:      partition,
+				Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
+			}
 		}
-	}
 
-	return nil
+		// Unlock, create ext4 filesystem, then lock.
+		if err := luksUnlock(partition, pass, luksMapperName); err != nil {
+			return &USBError{
+				Operation: "unlock_luks",
+				Path:      partition,
+				Err:       err,
+			}
+		}
+
+		if err := luksMakeFilesystem(luksMapperName, "ext4", luksLabel); err != nil {
+			_ = luksLock(luksMapperName)
+			return &USBError{
+				Operation: "create_ext4",
+				Path:      partition,
+				Err:       &SentinelCauseError{Sentinel: ErrFormatFailed, Cause: err},
+			}
+		}
+
+		if err := luksLock(luksMapperName); err != nil {
+			return &USBError{
+				Operation: "lock_luks",
+				Path:      partition,
+				Err:       err,
+			}
+		}
+
+		return nil
+	})
 }
 
 // populateFAT32 mounts the FAT32 partition, copies binaries and

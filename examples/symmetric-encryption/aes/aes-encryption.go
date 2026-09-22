@@ -35,29 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// simplePassword implements types.Password for examples
-type simplePassword struct {
-	password []byte
-}
-
-func newPassword(pwd []byte) types.Password {
-	return &simplePassword{password: pwd}
-}
-
-func (p *simplePassword) Bytes() []byte {
-	return p.password
-}
-
-func (p *simplePassword) String() (string, error) {
-	return string(p.password), nil
-}
-
-func (p *simplePassword) Clear() {
-	for i := range p.password {
-		p.password[i] = 0
-	}
-}
-
 func main() {
 	fmt.Println("=== Symmetric Encryption Example (AES-256-GCM) ===")
 
@@ -166,8 +143,14 @@ func basicEncryption(b types.SymmetricKeyProvider) error {
 // passwordProtectedEncryption demonstrates AES-256-GCM encryption
 // with password-protected key storage.
 func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
-	// Define a password for key encryption
-	password := newPassword([]byte("my-secure-password"))
+	// Define a password for key encryption. NewPassword seals it into a
+	// memguard-backed enclave; the plaintext never sits on the ordinary
+	// Go heap.
+	password, err := types.NewPassword([]byte("my-secure-password"))
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to create password", Err: err}
+	}
+	defer password.Clear()
 
 	// Define key attributes with password protection
 	attrs := &types.KeyAttributes{
@@ -221,12 +204,18 @@ func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 
 	// Demonstrate wrong password fails
 	fmt.Println("\n5. Testing wrong password...")
+	wrongPassword, err := types.NewPassword([]byte("wrong-password"))
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to create password", Err: err}
+	}
+	defer wrongPassword.Clear()
+
 	wrongAttrs := &types.KeyAttributes{
 		CN:                 "password-protected-key",
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		Password:           newPassword([]byte("wrong-password")),
+		Password:           wrongPassword,
 	}
 
 	_, err = b.SymmetricEncrypter(context.Background(), wrongAttrs)

@@ -176,7 +176,7 @@ func TestHandleConfigEnableEnterpriseAttestation(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
-		err := auth.SetInitialPIN("123456")
+		err := auth.SetInitialPIN([]byte("123456"))
 		require.NoError(t, err)
 
 		data, err := cbor.Marshal(map[int]interface{}{
@@ -231,7 +231,7 @@ func TestHandleConfigToggleAlwaysUv(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
-		err := auth.SetInitialPIN("123456")
+		err := auth.SetInitialPIN([]byte("123456"))
 		require.NoError(t, err)
 
 		data, err := cbor.Marshal(map[int]interface{}{
@@ -1122,7 +1122,7 @@ func TestVerifyConfigPinUvAuth(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
-		err := auth.SetInitialPIN("123456")
+		err := auth.SetInitialPIN([]byte("123456"))
 		require.NoError(t, err)
 
 		req := &configRequest{
@@ -1138,7 +1138,7 @@ func TestVerifyConfigPinUvAuth(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
-		err := auth.SetInitialPIN("123456")
+		err := auth.SetInitialPIN([]byte("123456"))
 		require.NoError(t, err)
 
 		req := &configRequest{
@@ -1187,7 +1187,7 @@ func TestVerifyConfigPinUvAuth(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
-		err := auth.SetInitialPIN("123456")
+		err := auth.SetInitialPIN([]byte("123456"))
 		require.NoError(t, err)
 
 		// Initialize PIN protocol without config permission
@@ -1526,7 +1526,7 @@ func createTestConfigAuthenticatorWithPINToken(t *testing.T) *Authenticator {
 	auth := createTestConfigAuthenticator(t)
 
 	// Set PIN
-	err := auth.SetInitialPIN("123456")
+	err := auth.SetInitialPIN([]byte("123456"))
 	require.NoError(t, err)
 
 	// Get key agreement
@@ -1608,7 +1608,7 @@ func createTestConfigAuthenticatorWithPINTokenV2(t *testing.T) *Authenticator {
 	auth := createTestConfigAuthenticator(t)
 
 	// Set PIN
-	err := auth.SetInitialPIN("123456")
+	err := auth.SetInitialPIN([]byte("123456"))
 	require.NoError(t, err)
 
 	// Get key agreement

@@ -39,7 +39,7 @@ func TestChangePINWithPINBlocked(t *testing.T) {
 
 	// Set initial PIN.
 	initialPIN := "1234"
-	if err := auth.SetInitialPIN(initialPIN); err != nil {
+	if err := auth.SetInitialPIN([]byte(initialPIN)); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestChangePINMissingKeyAgreement(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set initial PIN.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestChangePINMissingPinUvAuthParam(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set initial PIN.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -191,7 +191,7 @@ func TestChangePINInvalidAuthParam(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set initial PIN.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -253,7 +253,7 @@ func TestChangePINNewPINTooShort(t *testing.T) {
 
 	// Set initial PIN.
 	initialPIN := "1234"
-	if err := auth.SetInitialPIN(initialPIN); err != nil {
+	if err := auth.SetInitialPIN([]byte(initialPIN)); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -319,7 +319,7 @@ func TestChangePINDecryptBlockFails(t *testing.T) {
 
 	// Set initial PIN.
 	initialPIN := "1234"
-	if err := auth.SetInitialPIN(initialPIN); err != nil {
+	if err := auth.SetInitialPIN([]byte(initialPIN)); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -389,7 +389,7 @@ func TestChangePINDecryptBlockFailsUntilBlocked(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set initial PIN with only 1 retry left.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 	auth.state.SetPINRetries(1)
@@ -450,7 +450,7 @@ func TestChangePINWrongPINUntilBlocked(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set initial PIN with only 1 retry left.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 	auth.state.SetPINRetries(1)
@@ -520,7 +520,7 @@ func TestGetPinUvAuthTokenWithPermissionsMissingPermissions(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -572,7 +572,7 @@ func TestGetPinUvAuthTokenWithPermissionsBlocked(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN and exhaust retries.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 	auth.state.SetPINRetries(0)
@@ -624,7 +624,7 @@ func TestGetPinUvAuthTokenWithPermissionsWrongPIN(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -683,7 +683,7 @@ func TestGetPinUvAuthTokenWithPermissionsDecryptFails(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -732,7 +732,7 @@ func TestGetPinUvAuthTokenWithPermissionsDecryptFailsUntilBlocked(t *testing.T) 
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN with only 1 retry.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 	auth.state.SetPINRetries(1)
@@ -782,7 +782,7 @@ func TestGetPinUvAuthTokenWithPermissionsWrongPINUntilBlocked(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN with only 1 retry.
-	if err := auth.SetInitialPIN("1234"); err != nil {
+	if err := auth.SetInitialPIN([]byte("1234")); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 	auth.state.SetPINRetries(1)

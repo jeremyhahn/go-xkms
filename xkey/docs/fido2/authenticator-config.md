@@ -290,7 +290,6 @@ config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 
 **Notes:**
 - When nil, an `AutoGrantHandler` is created internally
-- `AutoGrantHandler` supports optional simulated PIN via `NewAutoGrantHandlerWithPIN(pin)`
 - `InteractiveHandler` requires a terminal (returns `ErrTerminalUnavailable` if unavailable)
 
 #### UserPresenceTimeout
@@ -531,7 +530,7 @@ config := &authenticator.Config{
     EnableResidentKey:      true,
     EnableCredentialManagement: true,
     EnableHMACSecret:       true,
-    UserPresenceHandler:    authenticator.NewAutoGrantHandlerWithPIN("1234"),
+    UserPresenceHandler:    authenticator.NewAutoGrantHandler(),
     Storage:                authenticator.NewMemoryStorage(),
 }
 ```

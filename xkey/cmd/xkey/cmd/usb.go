@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/usb"
 )
 
@@ -196,6 +197,7 @@ func runUSBCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer passphrase.Destroy()
 
 	cfg := usb.ImageConfig{
 		Path:       targetPath,
@@ -316,8 +318,9 @@ func runUSBUpdate(cmd *cobra.Command, args []string) error {
 }
 
 // readUSBPassphrase reads a passphrase from the terminal with
-// confirmation, or from stdin when piped.
-func readUSBPassphrase(cmd *cobra.Command) (string, error) {
+// confirmation, or from stdin when piped, and seals it into a
+// *secure.Secret. The caller owns the returned Secret and must Destroy it.
+func readUSBPassphrase(cmd *cobra.Command) (*secure.Secret, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return readUSBPassphraseFromStdin()
 	}
@@ -326,61 +329,76 @@ func readUSBPassphrase(cmd *cobra.Command) (string, error) {
 	pass1, err := term.ReadPassword(int(os.Stdin.Fd()))
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	if err != nil {
-		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
+		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
 
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), "Confirm passphrase: ")
 	pass2, err := term.ReadPassword(int(os.Stdin.Fd()))
 	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	if err != nil {
-		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
+		secure.Wipe(pass1)
+		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
 
-	if !bytes.Equal(pass1, pass2) {
-		return "", &USBCmdError{
+	matches := bytes.Equal(pass1, pass2)
+	secure.Wipe(pass2)
+	if !matches {
+		secure.Wipe(pass1)
+		return nil, &USBCmdError{
 			Operation: "confirm_passphrase",
 			Message:   "passphrases do not match",
 		}
 	}
 
 	if len(pass1) == 0 {
-		return "", &USBCmdError{
+		return nil, &USBCmdError{
 			Operation: "validate_passphrase",
 			Message:   "passphrase cannot be empty",
 		}
 	}
 
-	return string(pass1), nil
+	// NewSecret wipes pass1 on return.
+	secret, err := secure.NewSecret(pass1)
+	if err != nil {
+		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
+	}
+	return secret, nil
 }
 
-// readUSBPassphraseFromStdin reads passphrase from piped stdin.
-func readUSBPassphraseFromStdin() (string, error) {
+// readUSBPassphraseFromStdin reads passphrase from piped stdin and seals
+// it into a *secure.Secret. The caller owns the returned Secret and must
+// Destroy it.
+func readUSBPassphraseFromStdin() (*secure.Secret, error) {
 	var pass1, pass2 string
 
 	if _, err := fmt.Scanln(&pass1); err != nil {
-		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
+		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
 	if _, err := fmt.Scanln(&pass2); err != nil {
 		if !errors.Is(err, &MessageError{Msg: ""}) {
-			return "", &USBCmdError{Operation: "read_passphrase", Err: err}
+			return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
 		}
 	}
 
 	if pass1 != pass2 {
-		return "", &USBCmdError{
+		return nil, &USBCmdError{
 			Operation: "confirm_passphrase",
 			Message:   "passphrases do not match",
 		}
 	}
 
 	if pass1 == "" {
-		return "", &USBCmdError{
+		return nil, &USBCmdError{
 			Operation: "validate_passphrase",
 			Message:   "passphrase cannot be empty",
 		}
 	}
 
-	return pass1, nil
+	secret, err := secure.NewSecret([]byte(pass1))
+	if err != nil {
+		return nil, &USBCmdError{Operation: "read_passphrase", Err: err}
+	}
+	return secret, nil
 }
 
 // USBCmdError represents a USB CLI command error.

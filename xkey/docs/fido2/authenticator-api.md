@@ -675,7 +675,6 @@ type UserVerificationRequest struct {
 ```go
 type UserVerificationResult struct {
     Verified bool
-    PIN      string // populated when PINRequired was true
 }
 ```
 
@@ -683,7 +682,6 @@ type UserVerificationResult struct {
 
 ```go
 func NewAutoGrantHandler() *AutoGrantHandler
-func NewAutoGrantHandlerWithPIN(pin string) *AutoGrantHandler
 ```
 
 Automatically approves all user presence and verification requests. Never

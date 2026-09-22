@@ -164,7 +164,7 @@ func TestFIDO2Config_Validate(t *testing.T) {
 				Backend:           "software",
 				AttestationFormat: "none",
 				EnablePIN:         false,
-				PIN:               "123456",
+				PIN:               fido2PINSecret("123456"),
 			},
 			wantErr: ErrFIDO2SetPINRequiresPINEnabled,
 		},

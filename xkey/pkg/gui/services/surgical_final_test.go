@@ -598,10 +598,12 @@ func TestSurg_PkexecElevator_IsAvailableNoExecPath(t *testing.T) {
 
 // TestSurg_SudoElevator_RunNoExecPath covers L74-77.
 func TestSurg_SudoElevator_RunNoExecPath(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      slog.Default(),
 		execPath: "",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 
 	_, err := e.Run([]string{"test"}, nil)
@@ -611,10 +613,12 @@ func TestSurg_SudoElevator_RunNoExecPath(t *testing.T) {
 
 // TestSurg_SudoElevator_IsAvailableEmptyPath covers IsAvailable with empty path.
 func TestSurg_SudoElevator_IsAvailableEmptyPath(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      slog.Default(),
 		execPath: "",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 	assert.False(t, e.IsAvailable())
 }
@@ -622,10 +626,12 @@ func TestSurg_SudoElevator_IsAvailableEmptyPath(t *testing.T) {
 // TestSurg_SudoElevator_RunSudoAuthFails covers L117-132:
 // SudoElevator.Run where sudo authentication fails with wrong password.
 func TestSurg_SudoElevator_RunSudoAuthFails(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "wrongpassword")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      slog.Default(),
 		execPath: "/nonexistent/binary",
-		password: []byte("wrongpassword"),
+		password: pwBuf,
 	}
 
 	// If sudo is not available on this system, the test exercises L79-82

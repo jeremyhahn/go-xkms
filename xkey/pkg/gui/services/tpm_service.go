@@ -5475,7 +5475,12 @@ func (s *TPMService) ForceClearTPM(req *TPMClearRequest) (*TPMClearResult, error
 	s.log.Info("scheduling TPM force clear via UEFI PPI")
 
 	// Use sudo elevator with the user's password
-	elevator := NewSudoElevator(req.SudoPassword)
+	pwBuf, err := newSudoBufferFromString(req.SudoPassword)
+	if err != nil {
+		return nil, err
+	}
+	defer pwBuf.Destroy()
+	elevator := NewSudoElevator(pwBuf)
 	if !elevator.IsAvailable() {
 		return &TPMClearResult{
 			Success: false,
@@ -5487,7 +5492,7 @@ func (s *TPMService) ForceClearTPM(req *TPMClearRequest) (*TPMClearResult, error
 	args := []string{"tpm", "clear", "--force", "--yes"}
 
 	s.log.Debug("executing elevated TPM force clear", "args", args)
-	_, err := elevator.Run(args, nil)
+	_, err = elevator.Run(args, nil)
 	if err != nil {
 		s.log.Error("TPM force clear failed", "error", err)
 

@@ -50,7 +50,7 @@ func newConsumptionAuthenticator(t *testing.T) *Authenticator {
 
 	auth := newAuthzTestAuthenticator(t)
 	t.Cleanup(func() { _ = auth.Close() })
-	require.NoError(t, auth.SetInitialPIN(consumptionTestPIN))
+	require.NoError(t, auth.SetInitialPIN([]byte(consumptionTestPIN)))
 	return auth
 }
 

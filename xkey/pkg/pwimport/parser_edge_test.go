@@ -49,7 +49,7 @@ func TestCSVParser_Parse_EmbeddedDelimitersAndNewlines(t *testing.T) {
 	require.Len(t, entries, 1)
 
 	assert.Equal(t, "Acme, Inc.", entries[0].Title)
-	assert.Equal(t, "p@ss,word", entries[0].Password, "an embedded delimiter must not truncate the password")
+	assert.Equal(t, "p@ss,word", openSecretString(t, entries[0].Password), "an embedded delimiter must not truncate the password")
 	assert.Equal(t, "line one\nline two", entries[0].Notes)
 }
 
@@ -179,23 +179,27 @@ func TestParsedEntry_ToStaticPassword_NameFallbacks(t *testing.T) {
 	t.Parallel()
 
 	t.Run("title wins", func(t *testing.T) {
-		sp := (&ParsedEntry{Title: "GitHub", Username: "alice", Password: "s"}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "GitHub", Username: "alice", Password: testSecret(t, "s")}).ToStaticPassword()
+		require.NoError(t, err)
 		assert.Equal(t, "GitHub", sp.Name)
 	})
 
 	t.Run("falls back to username", func(t *testing.T) {
-		sp := (&ParsedEntry{Username: "alice", Password: "s"}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Username: "alice", Password: testSecret(t, "s")}).ToStaticPassword()
+		require.NoError(t, err)
 		assert.Equal(t, "alice", sp.Name)
 	})
 
 	t.Run("falls back to a placeholder", func(t *testing.T) {
-		sp := (&ParsedEntry{Password: "s"}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Password: testSecret(t, "s")}).ToStaticPassword()
+		require.NoError(t, err)
 		assert.Equal(t, "Unnamed Entry", sp.Name)
 	})
 
 	t.Run("missing timestamps default to now", func(t *testing.T) {
 		before := time.Now()
-		sp := (&ParsedEntry{Title: "x", Password: "s"}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "x", Password: testSecret(t, "s")}).ToStaticPassword()
+		require.NoError(t, err)
 		assert.False(t, sp.CreatedAt.Before(before))
 		assert.False(t, sp.UpdatedAt.Before(before))
 	})
@@ -203,9 +207,16 @@ func TestParsedEntry_ToStaticPassword_NameFallbacks(t *testing.T) {
 	t.Run("supplied timestamps are preserved", func(t *testing.T) {
 		created := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 		updated := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
-		sp := (&ParsedEntry{Title: "x", Password: "s", CreatedAt: created, UpdatedAt: updated}).ToStaticPassword()
+		sp, err := (&ParsedEntry{Title: "x", Password: testSecret(t, "s"), CreatedAt: created, UpdatedAt: updated}).ToStaticPassword()
+		require.NoError(t, err)
 		assert.True(t, created.Equal(sp.CreatedAt))
 		assert.True(t, updated.Equal(sp.UpdatedAt))
+	})
+
+	t.Run("nil password produces an empty StaticPassword.Password", func(t *testing.T) {
+		sp, err := (&ParsedEntry{Title: "x"}).ToStaticPassword()
+		require.NoError(t, err)
+		assert.Empty(t, sp.Password)
 	})
 }
 
@@ -279,11 +290,15 @@ func FuzzCSVParser_Parse(f *testing.F) {
 			if entry == nil {
 				t.Fatal("parser returned a nil entry")
 			}
-			if entry.Password == "" {
+			if entry.Password == nil {
 				t.Fatal("parser returned an entry without a password")
 			}
 			// Every successful entry must convert without panicking.
-			if sp := entry.ToStaticPassword(); sp.Name == "" {
+			sp, err := entry.ToStaticPassword()
+			if err != nil {
+				t.Fatalf("ToStaticPassword: %v", err)
+			}
+			if sp.Name == "" {
 				t.Fatal("converted entry has an empty name")
 			}
 		}

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
@@ -202,9 +203,9 @@ type FIDO2Config struct {
 	DeviceName   string
 	SerialNumber string
 
-	// PIN configuration
+	// PIN configuration. PIN is nil when --set-pin was not provided.
 	EnablePIN bool
-	PIN       string
+	PIN       *secure.Secret
 
 	// User presence mode
 	Interactive         bool
@@ -281,7 +282,7 @@ func (c *FIDO2Config) Validate() error {
 	}
 
 	// Validate PIN configuration
-	if c.PIN != "" && !c.EnablePIN {
+	if c.PIN != nil && !c.EnablePIN {
 		return ErrFIDO2SetPINRequiresPINEnabled
 	}
 
@@ -531,7 +532,7 @@ func buildFIDO2Config() *FIDO2Config {
 		DeviceName:          viper.GetString("fido2.name"),
 		SerialNumber:        viper.GetString("fido2.serial"),
 		EnablePIN:           viper.GetBool("fido2.pin"),
-		PIN:                 viper.GetString("fido2.set_pin"),
+		PIN:                 fido2PINSecret(viper.GetString("fido2.set_pin")),
 		Interactive:         viper.GetBool("fido2.interactive"),
 		RequireTouch:        viper.GetBool("fido2.require_touch"),
 		UserPresenceTimeout: viper.GetDuration("fido2.timeout"),
@@ -551,6 +552,27 @@ func buildFIDO2Config() *FIDO2Config {
 	}
 
 	return cfg
+}
+
+// fido2PINSecret seals s into a *secure.Secret for FIDO2Config.PIN. An
+// empty s returns nil: no --set-pin was provided.
+//
+// buildFIDO2Config has no error return -- it is called from more than a
+// dozen commands that are not themselves fallible at this point -- so a
+// sealing failure is logged and treated as "no PIN provided" rather than
+// propagated. In practice this path is unreachable: the underlying
+// memguard allocator panics the whole process on allocation failure before
+// NewSecret could return an error here.
+func fido2PINSecret(s string) *secure.Secret {
+	if s == "" {
+		return nil
+	}
+	secret, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		slog.Default().Error("fido2: failed to seal --set-pin into protected memory", "error", err)
+		return nil
+	}
+	return secret
 }
 
 // setupFIDO2SignalHandler creates a context that is cancelled on SIGTERM/SIGINT.
@@ -722,8 +744,15 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	// that only exists to authenticate a remote platform. It refuses to
 	// overwrite a PIN a persistent store already holds; the old testing
 	// helper silently replaced it and reset the retry counter (#377).
-	if cfg.EnablePIN && cfg.PIN != "" {
-		if err := auth.SetInitialPIN(cfg.PIN); err != nil {
+	if cfg.EnablePIN && cfg.PIN != nil {
+		pinBuf, openErr := cfg.PIN.Open()
+		if openErr != nil {
+			_ = auth.Close()
+			return nil, errors.Join(ErrFIDO2PINSetFailed, openErr)
+		}
+		err := auth.SetInitialPIN(pinBuf.Bytes())
+		pinBuf.Destroy()
+		if err != nil {
 			_ = auth.Close()
 			if errors.Is(err, authenticator.ErrPINAlreadySet) {
 				return nil, errors.Join(ErrFIDO2PINAlreadySet, err)

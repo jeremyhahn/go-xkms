@@ -18,10 +18,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/spf13/cobra"
@@ -486,10 +488,13 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(out, "  Username:   %s\n", entry.Username)
 		}
 		if showPasswords {
-			_, _ = fmt.Fprintf(out, "  Password:   %s\n", entry.Password)
+			_, _ = fmt.Fprint(out, "  Password:   ")
+			writePasswordValue(out, entry.Password)
+			_, _ = fmt.Fprintln(out)
 		} else {
 			_, _ = fmt.Fprintf(out, "  Password:   ********\n")
 		}
+		entry.Password.Destroy()
 		if entry.URL != "" {
 			_, _ = fmt.Fprintf(out, "  URL:        %s\n", entry.URL)
 		}
@@ -511,16 +516,35 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 }
 
 // passwordListEntry is the CLI-facing view of one stored password. Password
-// is populated only on the on-disk path; the daemon never sends values.
+// is populated only on the on-disk path; the daemon never sends values. A
+// nil Password means no value is available for this entry.
 type passwordListEntry struct {
 	Name      string
 	Title     string
 	Username  string
-	Password  string
+	Password  *secure.Secret
 	URL       string
 	Notes     string
 	CreatedAt string
 	UpdatedAt string
+}
+
+// writePasswordValue writes secret's plaintext directly to w, borrowed from
+// protected memory for the duration of the write rather than materialized
+// into a Go string via a %s verb. A nil secret writes nothing.
+func writePasswordValue(w io.Writer, secret *secure.Secret) {
+	if secret == nil {
+		return
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		return
+	}
+	defer buf.Destroy()
+	_ = buf.WithBytes(func(b []byte) error {
+		_, werr := w.Write(b)
+		return werr
+	})
 }
 
 // resolvePasswordList asks the daemon first and reads the on-disk store only
@@ -581,16 +605,23 @@ func readPasswordListFromDisk(cmd *cobra.Command) ([]passwordListEntry, string, 
 
 	entries := make([]passwordListEntry, 0, len(passwords))
 	for _, pw := range passwords {
-		entries = append(entries, passwordListEntry{
+		entry := passwordListEntry{
 			Name:      pw.Name,
 			Title:     pw.Title,
 			Username:  pw.Username,
-			Password:  pw.Password,
 			URL:       pw.URL,
 			Notes:     pw.Notes,
 			CreatedAt: pw.CreatedAt.Format(passwordTimeLayout),
 			UpdatedAt: pw.UpdatedAt.Format(passwordTimeLayout),
-		})
+		}
+		if pw.Password != "" {
+			secret, secretErr := secure.NewSecret([]byte(pw.Password))
+			if secretErr != nil {
+				return nil, storePath, &SentinelCauseError{Sentinel: ErrPasswordListFailed, Cause: secretErr}
+			}
+			entry.Password = secret
+		}
+		entries = append(entries, entry)
 	}
 	return entries, storePath, nil
 }

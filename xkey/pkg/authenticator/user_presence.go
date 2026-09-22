@@ -95,10 +95,6 @@ type UserVerificationRequest struct {
 type UserVerificationResult struct {
 	// Verified indicates whether user verification succeeded.
 	Verified bool
-
-	// PIN contains the entered PIN when PINRequired was true.
-	// Empty if PIN was not required.
-	PIN string
 }
 
 // UserPresenceHandler defines the interface for handling user presence and verification.

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Import format constants.
@@ -40,6 +41,11 @@ var (
 	ErrDuplicateEntry      = errors.New("pwimport: duplicate entry")
 	ErrInvalidCSVHeader    = errors.New("pwimport: invalid CSV header")
 	ErrInvalidXMLStructure = errors.New("pwimport: invalid XML structure")
+
+	// ErrProtectedMemory reports that a parsed password could not be sealed
+	// into mlocked protected memory. The password is never kept on the
+	// ordinary heap as a fallback.
+	ErrProtectedMemory = errors.New("pwimport: protected memory allocation failed")
 )
 
 // ImportOptions configures the import behavior.
@@ -98,9 +104,13 @@ type ImportError struct {
 // with additional metadata that may not map directly to StaticPassword.
 type ParsedEntry struct {
 	// Core fields that map to StaticPassword.
-	Title      string
-	Username   string
-	Password   string
+	Title    string
+	Username string
+
+	// Password holds the entry's shared secret in protected memory. It is
+	// never nil for an entry returned by a Parser — every parser skips
+	// entries without a password before constructing a ParsedEntry.
+	Password   *secure.Secret
 	URL        string
 	Notes      string
 	FolderPath string
@@ -115,8 +125,36 @@ type ParsedEntry struct {
 	HasTOTP bool
 }
 
-// ToStaticPassword converts a ParsedEntry to a StaticPassword.
-func (p *ParsedEntry) ToStaticPassword() *xkms.StaticPassword {
+// newParsedPassword seals raw into a *secure.Secret for a ParsedEntry.
+// Callers must not reuse raw afterward: the copy handed to the enclave is
+// wiped on return, but the Go string itself cannot be.
+func newParsedPassword(raw string) (*secure.Secret, error) {
+	secret, err := secure.NewSecret([]byte(raw))
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	return secret, nil
+}
+
+// passwordString returns a copy of the entry's password as a string, or ""
+// when no password is set. It exists for the StaticPassword serialization
+// boundary in ToStaticPassword; callers that only need to compare or hash
+// the password should borrow it via Password.Open/WithBytes instead.
+func (p *ParsedEntry) passwordString() (string, error) {
+	if p.Password == nil {
+		return "", nil
+	}
+	buf, err := p.Password.Open()
+	if err != nil {
+		return "", &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	defer buf.Destroy()
+	return string(buf.Bytes()), nil
+}
+
+// ToStaticPassword converts a ParsedEntry to a StaticPassword. Returns
+// ErrProtectedMemory (wrapped) if the protected password cannot be opened.
+func (p *ParsedEntry) ToStaticPassword() (*xkms.StaticPassword, error) {
 	now := time.Now()
 
 	createdAt := p.CreatedAt
@@ -137,11 +175,16 @@ func (p *ParsedEntry) ToStaticPassword() *xkms.StaticPassword {
 		name = "Unnamed Entry"
 	}
 
+	password, err := p.passwordString()
+	if err != nil {
+		return nil, err
+	}
+
 	sp := &xkms.StaticPassword{
 		Name:       name,
 		Title:      p.Title,
 		Username:   p.Username,
-		Password:   p.Password,
+		Password:   password,
 		URL:        p.URL,
 		Notes:      p.Notes,
 		FolderPath: p.FolderPath,
@@ -153,7 +196,7 @@ func (p *ParsedEntry) ToStaticPassword() *xkms.StaticPassword {
 	// Generate deterministic ID.
 	sp.ID = xkms.GenerateStaticPasswordID(sp.Name, sp.FolderPath)
 
-	return sp
+	return sp, nil
 }
 
 // Parser defines the interface for import file parsers.

@@ -140,7 +140,7 @@ func TestKDBXParser_Parse_RealDatabase(t *testing.T) {
 	github := byTitle["GitHub"]
 	require.NotNil(t, github)
 	assert.Equal(t, "alice", github.Username)
-	assert.Equal(t, "gh-s3cret", github.Password, "protected values must be unlocked")
+	assert.Equal(t, "gh-s3cret", openSecretString(t, github.Password), "protected values must be unlocked")
 	assert.Equal(t, "https://github.com", github.URL)
 	assert.Equal(t, "work account", github.Notes)
 	assert.Equal(t, "Personal", github.FolderPath, "the Root group must not appear in the path")

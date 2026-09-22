@@ -15,6 +15,7 @@ package authenticator
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -25,6 +26,8 @@ import (
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // DefaultUserPresenceTimeout is the default timeout for user presence requests
@@ -156,26 +159,22 @@ func (h *InteractiveHandler) RequestUserVerification(ctx context.Context, req *U
 	// Display verification prompt
 	h.displayVerificationPrompt(req)
 
-	var pin string
-	var err error
-
 	if req.PINRequired {
-		pin, err = h.readPIN(timeoutCtx)
+		pinBuf, err := h.readPIN(timeoutCtx)
 		if err != nil {
 			return nil, err
 		}
+		// Nothing downstream consumes the PIN value itself; entry is only
+		// used to confirm the user knows it. Destroy immediately.
+		pinBuf.Destroy()
 	} else {
-		err = h.waitForConfirmation(timeoutCtx)
-		if err != nil {
+		if err := h.waitForConfirmation(timeoutCtx); err != nil {
 			return nil, err
 		}
 	}
 
 	_, _ = fmt.Fprintf(h.writer, "   User verified\n")
-	return &UserVerificationResult{
-		Verified: true,
-		PIN:      pin,
-	}, nil
+	return &UserVerificationResult{Verified: true}, nil
 }
 
 // displayVerificationPrompt writes the user verification prompt to the output.
@@ -199,14 +198,45 @@ func (h *InteractiveHandler) displayVerificationPrompt(req *UserVerificationRequ
 	h.syncOutput()
 }
 
-// pinReadResult holds the result of a PIN read operation.
+// pinReadResult holds the result of a PIN read operation. pin is already
+// sealed in protected memory by the time it crosses the channel, so the
+// raw terminal bytes never sit on the ordinary heap longer than the read
+// itself requires.
 type pinReadResult struct {
-	pin []byte
+	pin *secure.Buffer
 	err error
 }
 
-// readPIN reads a PIN from the terminal with hidden input.
-func (h *InteractiveHandler) readPIN(ctx context.Context) (string, error) {
+// newPinReadResult trims surrounding whitespace from raw and seals the
+// result into a protected Buffer. raw is consumed: NewBufferFromBytes wipes
+// the bytes it copies, and the un-copied whitespace it trimmed away carries
+// no PIN material. An all-whitespace or empty raw yields a zero-value
+// result (pin == nil, err == nil), which readPIN reports as an empty PIN.
+func newPinReadResult(raw []byte) pinReadResult {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		secure.Wipe(raw)
+		return pinReadResult{}
+	}
+	buf, err := secure.NewBufferFromBytes(trimmed)
+	if err != nil {
+		return pinReadResult{err: err}
+	}
+	return pinReadResult{pin: buf}
+}
+
+// drainPinReadResult destroys a pin buffer that arrives after readPIN has
+// already returned via context cancellation, so a late terminal read does
+// not leak mlocked memory.
+func drainPinReadResult(ch <-chan pinReadResult) {
+	result := <-ch
+	result.pin.Destroy()
+}
+
+// readPIN reads a PIN from the terminal with hidden input, sealing it into
+// a protected buffer. The caller owns the returned Buffer and must Destroy
+// it.
+func (h *InteractiveHandler) readPIN(ctx context.Context) (*secure.Buffer, error) {
 	_, _ = fmt.Fprintf(h.writer, "\n   Enter PIN: ")
 	h.syncOutput()
 
@@ -216,36 +246,40 @@ func (h *InteractiveHandler) readPIN(ctx context.Context) (string, error) {
 		// Check if we have a real terminal
 		if term.IsTerminal(h.fd) {
 			pinBytes, err := term.ReadPassword(h.fd)
-			pinCh <- pinReadResult{pin: pinBytes, err: err}
+			if err != nil {
+				pinCh <- pinReadResult{err: err}
+				return
+			}
+			pinCh <- newPinReadResult(pinBytes)
 		} else {
 			// Fallback for testing - read line normally
 			scanner := bufio.NewScanner(h.reader)
 			if scanner.Scan() {
-				pinCh <- pinReadResult{pin: []byte(scanner.Text()), err: nil}
+				pinCh <- newPinReadResult([]byte(scanner.Text()))
 			} else {
-				pinCh <- pinReadResult{pin: nil, err: scanner.Err()}
+				pinCh <- pinReadResult{err: scanner.Err()}
 			}
 		}
 	}()
 
 	select {
 	case <-ctx.Done():
+		go drainPinReadResult(pinCh)
 		if ctx.Err() == context.DeadlineExceeded {
 			_, _ = fmt.Fprintf(h.writer, "\n   Timeout - verification failed\n")
-			return "", ErrUserPresenceTimeout
+			return nil, ErrUserPresenceTimeout
 		}
-		return "", ctx.Err()
+		return nil, ctx.Err()
 	case result := <-pinCh:
 		_, _ = fmt.Fprintf(h.writer, "\n") // New line after hidden input
 		if result.err != nil {
-			return "", ErrUserVerificationDenied
+			return nil, ErrUserVerificationDenied
 		}
-		pin := strings.TrimSpace(string(result.pin))
-		if pin == "" {
+		if result.pin == nil {
 			_, _ = fmt.Fprintf(h.writer, "   Verification failed - empty PIN\n")
-			return "", ErrUserVerificationDenied
+			return nil, ErrUserVerificationDenied
 		}
-		return pin, nil
+		return result.pin, nil
 	}
 }
 

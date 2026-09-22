@@ -1437,7 +1437,7 @@ func TestWebAuthnSignatureVerificationWithPIN(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN to enable UV
-	err = auth.SetInitialPIN("123456")
+	err = auth.SetInitialPIN([]byte("123456"))
 	require.NoError(t, err)
 	require.True(t, auth.IsPINSet(), "PIN should be set")
 

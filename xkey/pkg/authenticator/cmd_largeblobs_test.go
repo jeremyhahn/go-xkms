@@ -379,7 +379,7 @@ func TestLargeBlobs_Set_BadChecksum(t *testing.T) {
 func TestLargeBlobs_Set_MissingAuthWhenPINSet(t *testing.T) {
 	auth := createTestAuthenticatorWithLargeBlobs(t, true)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	array := buildValidArray(40)
 	length := uint32(len(array))
@@ -395,7 +395,7 @@ func TestLargeBlobs_Set_MissingAuthWhenPINSet(t *testing.T) {
 func TestLargeBlobs_Set_InvalidAuthParam(t *testing.T) {
 	auth := createTestAuthenticatorWithLargeBlobs(t, true)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	array := buildValidArray(40)
 	length := uint32(len(array))
@@ -427,7 +427,7 @@ func TestLargeBlobs_Set_InvalidAuthParam(t *testing.T) {
 func TestLargeBlobs_Set_ValidAuth_Succeeds(t *testing.T) {
 	auth := createTestAuthenticatorWithLargeBlobs(t, true)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	token := authzTestToken()
 	auth.mu.Lock()
@@ -594,7 +594,7 @@ func TestLargeBlobs_AlwaysUV_RequiresAuthWithoutPIN(t *testing.T) {
 func TestLargeBlobs_Set_PinUvAuthProtocol_AbsentVsUnsupported(t *testing.T) {
 	auth := createTestAuthenticatorWithLargeBlobs(t, true)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	array := buildValidArray(40)
 	length := uint32(len(array))
@@ -630,7 +630,7 @@ func TestLargeBlobs_Set_PinUvAuthProtocol_AbsentVsUnsupported(t *testing.T) {
 func TestLargeBlobs_Set_OrderingBeforeAuth(t *testing.T) {
 	auth := createTestAuthenticatorWithLargeBlobs(t, true)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetInitialPIN("1234"))
+	require.NoError(t, auth.SetInitialPIN([]byte("1234")))
 
 	token := authzTestToken()
 	auth.mu.Lock()

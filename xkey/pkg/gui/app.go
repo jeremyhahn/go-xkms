@@ -1763,7 +1763,7 @@ func NewApp(cfg *GUIConfig) *App {
 	// Prefer PolicyKit (pkexec) when available, fall back to sudo.
 	var elevator services.Elevator = services.NewPkexecElevator()
 	if !elevator.IsAvailable() {
-		sudoElev := services.NewSudoElevator("")
+		sudoElev := services.NewSudoElevator(nil)
 		if sudoElev.IsAvailable() {
 			elevator = sudoElev
 			log.Info("using sudo elevator (pkexec unavailable)")

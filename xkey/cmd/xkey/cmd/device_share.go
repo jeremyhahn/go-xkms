@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
@@ -67,7 +68,7 @@ type sharedKeyMaterial struct {
 	Algorithm      string
 	PublicKeyPEM   []byte
 	CertificatePEM []byte
-	KeyMaterial    []byte
+	KeyMaterial    *secure.Buffer
 	KeySize        int
 }
 
@@ -188,10 +189,11 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer material.KeyMaterial.Destroy()
 	if policy.SharePublic && len(material.PublicKeyPEM) == 0 {
 		return &DetailError{Err: ErrShareNoPublicKey, Detail: fmt.Sprintf(": %s/%s", backend, keyID)}
 	}
-	if policy.ShareSymmetric && len(material.KeyMaterial) == 0 {
+	if policy.ShareSymmetric && material.KeyMaterial.Size() == 0 {
 		return &DetailError{Err: ErrShareNoKeyMaterial, Detail: fmt.Sprintf(": %s/%s", backend, keyID)}
 	}
 
@@ -265,18 +267,26 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	if policy.ShareSymmetric {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending symmetric key material to phone...")
 
-		req := phone.NewRequest(phone.MethodLocalShareSymmetric, &phone.LocalShareSymmetricParams{
-			Backend:    backend,
-			KeyID:      keyID,
-			WrappedKey: material.KeyMaterial,
-			Algorithm:  material.Algorithm,
-			KeySize:    material.KeySize,
-			Label:      label,
-		})
+		// The plaintext key material only materializes for the duration of
+		// the request marshal + send, borrowed from protected memory rather
+		// than copied into a long-lived local.
+		var resp *phone.Response
+		withErr := material.KeyMaterial.WithBytes(func(b []byte) error {
+			req := phone.NewRequest(phone.MethodLocalShareSymmetric, &phone.LocalShareSymmetricParams{
+				Backend:    backend,
+				KeyID:      keyID,
+				WrappedKey: b,
+				Algorithm:  material.Algorithm,
+				KeySize:    material.KeySize,
+				Label:      label,
+			})
 
-		resp, err := phoneBackend.SendRequest(ctx, req)
-		if err != nil {
-			return &SentinelCauseError{Sentinel: ErrShareRequestFailed, Cause: err}
+			var sendErr error
+			resp, sendErr = phoneBackend.SendRequest(ctx, req)
+			return sendErr
+		})
+		if withErr != nil {
+			return &SentinelCauseError{Sentinel: ErrShareRequestFailed, Cause: withErr}
 		}
 		if resp.Error != nil {
 			return &DetailError{Err: ErrShareRequestFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
@@ -339,7 +349,13 @@ func loadSharedKeyMaterial(backend, keyID string, includeSecret bool, logger *sl
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrShareKeyLoadFailed, Cause: err}
 	}
-	material.KeyMaterial = export.KeyMaterial
+	if len(export.KeyMaterial) > 0 {
+		buf, bufErr := secure.NewBufferFromBytes(export.KeyMaterial)
+		if bufErr != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrShareKeyLoadFailed, Cause: bufErr}
+		}
+		material.KeyMaterial = buf
+	}
 	material.KeySize = export.KeySize
 	if material.Algorithm == "" {
 		material.Algorithm = export.KeyType

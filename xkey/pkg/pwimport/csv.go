@@ -161,10 +161,15 @@ func (p *CSVParser) parseRow(row []string, idx *csvColumnIndex, opts *ImportOpti
 		return nil, nil // Skip entries without passwords
 	}
 
+	passwordSecret, err := newParsedPassword(password)
+	if err != nil {
+		return nil, err
+	}
+
 	entry := &ParsedEntry{
 		Title:    getField(idx.Title),
 		Username: getField(idx.Username),
-		Password: password,
+		Password: passwordSecret,
 		URL:      getField(idx.URL),
 		Notes:    getField(idx.Notes),
 		TOTPURL:  getField(idx.TOTP),

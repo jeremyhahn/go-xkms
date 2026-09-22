@@ -20,7 +20,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// testSecretBuffer seals s into a *secure.Buffer for test fixtures.
+func testSecretBuffer(t *testing.T, s string) *secure.Buffer {
+	t.Helper()
+	buf, err := secure.NewBufferFromBytes([]byte(s))
+	require.NoError(t, err)
+	return buf
+}
 
 // mockElevator implements the Elevator interface for testing.
 type mockElevator struct {
@@ -86,26 +96,32 @@ func TestPkexecElevator_Run_MissingPkexec(t *testing.T) {
 // --- SudoElevator tests ---
 
 func TestNewSudoElevator(t *testing.T) {
-	e := NewSudoElevator("testpass")
+	pwBuf := testSecretBuffer(t, "testpass")
+	defer pwBuf.Destroy()
+	e := NewSudoElevator(pwBuf)
 	assert.NotNil(t, e)
 	// The constructor should resolve the current executable path.
 	assert.NotEmpty(t, e.execPath, "execPath should be set from os.Executable()")
 }
 
 func TestSudoElevator_IsAvailable_NoExecPath(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      testSudoLogger(),
 		execPath: "",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 	assert.False(t, e.IsAvailable())
 }
 
 func TestSudoElevator_Run_NoExecPath(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      testSudoLogger(),
 		execPath: "",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 	out, err := e.Run([]string{"trust", "install", "abc123"}, nil)
 	assert.Nil(t, out)
@@ -115,10 +131,12 @@ func TestSudoElevator_Run_NoExecPath(t *testing.T) {
 func TestSudoElevator_Run_SudoUnavailable(t *testing.T) {
 	// Use a nonexistent exec path that passes the empty check
 	// but will cause IsAvailable to fail (sudo not on PATH or exec missing).
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      testSudoLogger(),
 		execPath: "/nonexistent/xkey",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 	// On systems without sudo or with this nonexistent path,
 	// IsAvailable returns false and Run should return ErrSudoUnavailable.
@@ -129,20 +147,20 @@ func TestSudoElevator_Run_SudoUnavailable(t *testing.T) {
 	}
 }
 
-func TestSudoElevator_ZerosBytesAfterRun(t *testing.T) {
-	password := []byte("secretpass")
+func TestSudoElevator_PasswordNotDestroyedOnEarlyReturn(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "secretpass")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      testSudoLogger(),
 		execPath: "", // Will return ErrElevationUnavailable immediately.
-		password: password,
+		password: pwBuf,
 	}
 
 	_, _ = e.Run([]string{"trust", "install", "abc123"}, nil)
 
-	// With execPath empty, Run returns before zeroing. This tests the
-	// constructor stores the password correctly.
-	assert.Equal(t, []byte("secretpass"), password,
-		"password not zeroed when Run returns early due to empty execPath")
+	// With execPath empty, Run returns before touching the password
+	// buffer at all -- the caller-owned buffer must be left intact.
+	assert.Equal(t, "secretpass", string(pwBuf.Bytes()))
 }
 
 // --- zeroBytes tests ---
@@ -276,25 +294,29 @@ func TestPkexecElevator_Run_EmptyArgs(t *testing.T) {
 // --- SudoElevator constructor stores password ---
 
 func TestSudoElevator_PasswordStored(t *testing.T) {
-	e := NewSudoElevator("mypassword")
-	assert.Equal(t, []byte("mypassword"), e.password)
+	pwBuf := testSecretBuffer(t, "mypassword")
+	defer pwBuf.Destroy()
+	e := NewSudoElevator(pwBuf)
+	assert.Equal(t, "mypassword", string(e.password.Bytes()))
 }
 
-// --- SudoElevator constructor with empty password ---
+// --- SudoElevator constructor with nil password ---
 
-func TestSudoElevator_EmptyPassword(t *testing.T) {
-	e := NewSudoElevator("")
-	assert.Equal(t, []byte(""), e.password)
+func TestSudoElevator_NilPassword(t *testing.T) {
+	e := NewSudoElevator(nil)
+	assert.Nil(t, e.password)
 	assert.NotEmpty(t, e.execPath)
 }
 
 // --- SudoElevator Run with nil stdinData ---
 
 func TestSudoElevator_Run_NilStdinData(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      testSudoLogger(),
 		execPath: "",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 	out, err := e.Run([]string{"test"}, nil)
 	assert.Nil(t, out)
@@ -304,10 +326,12 @@ func TestSudoElevator_Run_NilStdinData(t *testing.T) {
 // --- SudoElevator Run with empty args ---
 
 func TestSudoElevator_Run_EmptyArgs(t *testing.T) {
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
 	e := &SudoElevator{
 		log:      testSudoLogger(),
 		execPath: "",
-		password: []byte("test"),
+		password: pwBuf,
 	}
 	out, err := e.Run([]string{}, nil)
 	assert.Nil(t, out)
@@ -336,7 +360,9 @@ func TestZeroBytes_LargeSlice(t *testing.T) {
 // --- SudoElevator IsAvailable with valid sudo (system-dependent) ---
 
 func TestSudoElevator_IsAvailable_WithValidPath(t *testing.T) {
-	e := NewSudoElevator("test")
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
+	e := NewSudoElevator(pwBuf)
 	// On systems with sudo installed, this should return true.
 	// On systems without sudo, false. Either way, no panic.
 	_ = e.IsAvailable()
@@ -350,6 +376,8 @@ func TestPkexecElevator_ImplementsElevator(t *testing.T) {
 }
 
 func TestSudoElevator_ImplementsElevator(t *testing.T) {
-	var e Elevator = NewSudoElevator("test")
+	pwBuf := testSecretBuffer(t, "test")
+	defer pwBuf.Destroy()
+	var e Elevator = NewSudoElevator(pwBuf)
 	assert.NotNil(t, e)
 }
