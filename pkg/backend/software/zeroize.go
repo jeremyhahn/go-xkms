@@ -66,7 +66,10 @@ import (
 // Reaching either needs unsafe pointer arithmetic over another package's
 // private layout, which trades a bounded, documented residue for an unbounded
 // one that breaks silently on a toolchain bump. The residue is therefore
-// accepted and recorded (go-xkms#133) rather than hidden.
+// accepted and recorded (go-xkms#133) rather than hidden — see the repo
+// policy at docs/development/lint-gates.md, section "Accepted residue:
+// stdlib copies no exported API can wipe", which also covers the same class
+// of residue in crypto/hmac (go-xkms#134, go-xkms#41).
 func zeroizeParsedPrivateKey(key crypto.PrivateKey) {
 	switch k := key.(type) {
 	case *rsa.PrivateKey:

@@ -114,10 +114,12 @@ func TestZeroizeParsedPrivateKey_Ed25519(t *testing.T) {
 	}
 }
 
-// The documented residue, asserted rather than described: crypto/ecdh keeps its
-// scalar in an unexported field, so this key type is passed over. The test
-// exists so that the day a zeroization route appears, the expectation recorded
-// here is the thing that has to change -- and so that passing one never panics.
+// This pins ACCEPTED RESIDUE (go-xkms#133), not a bug: crypto/ecdh keeps its
+// scalar in an unexported field, so this key type is passed over by design --
+// see docs/development/lint-gates.md, section "Accepted residue: stdlib
+// copies no exported API can wipe". The test exists so that the day a
+// zeroization route appears upstream, the expectation recorded here is the
+// thing that has to change, and so that passing one never panics.
 func TestZeroizeParsedPrivateKey_ECDHIsNotWipeable(t *testing.T) {
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	require.NoError(t, err)

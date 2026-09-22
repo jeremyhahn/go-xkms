@@ -104,3 +104,53 @@ Both exit non-zero on failure. A new finding not covered by one of the
 three allowlist classes above must be fixed, not silenced — adding a
 fourth reason to the allowlist without one of those three labels is not
 how this gate is meant to be extended; ask before adding a new class.
+
+## Accepted residue: stdlib copies no exported API can wipe
+
+The secure-analyzer gate enforces protected-memory handling at the source
+level — imports, parse calls, struct fields. It cannot reach a second copy
+of a secret that a standard-library package holds in a field of its own,
+unexported type. That is a distinct, narrower class of exception, ruled on
+separately (owner ruling 2026-09-21, go-xkms#133): the residue is accepted
+and documented in place rather than reached with `unsafe` pointer
+arithmetic over another package's private layout. `unsafe` layout pokes are
+declined here for the same reason a stale allowlist entry is refused above
+— a wipe reading the wrong offsets on a toolchain bump does not fail, it
+silently stops wiping.
+
+Accepted, each pinned by a regression test so a future stdlib release that
+adds a zeroization route is caught by that test failing rather than by
+manual audit:
+
+- **`rsa.PrivateKey.Precomputed`** — `crypto/rsa` caches bigmod-form copies
+  of the modulus and the primes in unexported fields of
+  `rsa.PrecomputedValues`. `zeroizeParsedPrivateKey`
+  (`pkg/backend/software/zeroize.go`) clears `D`, `Primes[]`, and every
+  *exported* `Precomputed` field it can reach; the unexported cache is out
+  of reach. go-xkms#133.
+- **`ecdh.PrivateKey`'s X25519/NIST scalar** — lives in an unexported field
+  with no zeroization method; `Bytes()` returns a copy, so wiping what it
+  returns wipes the copy, not the key. Pinned by
+  `TestZeroizeParsedPrivateKey_ECDHIsNotWipeable`
+  (`pkg/backend/software/zeroize_test.go`) — the test documents the
+  accepted residue, not a bug to fix. go-xkms#133.
+- **`hmac.New`'s ipad/opad blocks** — `crypto/hmac` copies the key into its
+  own heap-backed internal state, with no exported route to clear it.
+  Hand-rolling HMAC to keep the key wipeable is exactly what "never
+  hand-roll crypto" forbids, so this copy is accepted the same way; xkey's
+  `oath` package documents the identical residue at its own call site
+  (`xkey/pkg/oath/generator.go`). go-xkms#134, go-xkms#41.
+- Every stdlib parse path this policy covers materializes a **second**
+  representation of the bytes it decoded, independent of the source the
+  caller can zeroize — `x509.ParsePKCS8PrivateKey` (`zeroizeParsedPrivateKey`'s
+  one caller) is the current instance; the same reasoning applies to any
+  future parse call that hands back a stdlib type holding its own
+  unexported copy.
+
+What mitigates it, in every case above: the second copy's lifetime is
+bounded by the process — never persisted, never exported over any
+transport — the caller zeroizes every field an exported API reaches, and no
+current code path keeps a parsed key value alive longer than the operation
+that needs it. A long-lived parsed private key is the shape that would turn
+a bounded residue into a real exposure; none of the call sites named here
+do that.
