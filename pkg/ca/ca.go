@@ -419,6 +419,7 @@ func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *Mult
 		Identity:            []Identity{identity},
 		SelectedCA:          0,
 		DefaultValidityDays: defaultValidityDays,
+		TCGConfig:           cfg.TCGConfig,
 	}
 }
 
@@ -590,6 +591,7 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 		StoreType:               issuingIdentity.GetStoreType(),
 		DefaultCertValidityDays: mp.Config.GetDefaultValidityDays(),
 		CRLValidityDays:         issuingIdentity.GetCRLValidityDays(),
+		TCGConfig:               mp.Config.TCGConfig,
 	}
 
 	return New(&Params{

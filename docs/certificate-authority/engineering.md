@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/ca`
 
@@ -177,11 +177,29 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   public area: `TPM2_CreatePrimary` consumes the unique string as derivation
   input and returns a public area holding the generated key instead, so
   demanding it server-side would refuse every genuine device.
-- **The EK certificate chain is NOT verified against a manufacturer
-  truststore.** §6.2.2 step 7b calls for it and no code path in this
-  repository does it; what enrollment proves today is residency in *a* TPM,
-  not in one a manufacturer vouched for. Tracked as an open gap, not a
-  property to rely on.
+- **The EK certificate chain IS verified against a configured
+  TPM-manufacturer truststore**, per §6.1.2 step 5b and §6.2.2 step 4b
+  (`verifyEKCertificateChain`, `pkg/ca/tcg_ek_trust.go`), before
+  `SignTCGCSRIDevID`, `EnrollDevice` or `VerifyTCG_CSR_IDevIDBytes` do
+  anything else with the EK certificate -- including generating the
+  `TPM2_MakeCredential` challenge, which only proves possession of the EK
+  private key, not that the EK belongs to a genuine TPM. The trust anchors
+  are `MultiIdentityCAConfig.TCGConfig.TrustAnchors`
+  (`pkg/attestation/truststore.Config` -- the same shape
+  `pkg/config.AttestationConfig` uses for the "tpm2" attestation format,
+  reused rather than duplicated). **A CA with no anchors configured refuses
+  every EK certificate with `ErrTCGEKCertUntrusted`; there is no fallback to
+  residency-only proof.** This is a breaking behavior change for any
+  deployment enrolling TCG-CSR-IDEVID devices: `ca.tcg-config.trust-anchors`
+  (or the equivalent `CAConfig.TCGConfig`) must name at least one
+  TPM-manufacturer root before enrollment will succeed.
+  `requireTCGEKCertificateEKU` additionally requires the tcg-kp-EKCertificate
+  extended key usage (2.23.133.8.1) or anyExtendedKeyUsage on the leaf.
+  `parseEKCertificateChain` accepts intermediates the device concatenated
+  after the leaf in a PEM-encoded EkCert field; `stripTCGEKQuirks` accepts
+  the TCG EK Credential Profile's critical-subjectAltName-with-only-a-
+  directoryName encoding without weakening any other check
+  `x509.Certificate.Verify` performs.
 
 ## Error semantics
 
@@ -202,8 +220,11 @@ to `404`; `ErrNotInitialized` maps to `503`; both are declared in
 expired issuer; an attestation quote that does not verify; a TCG CSR whose
 IDevID signature does not check; a TCG CSR with no EK certificate, with no
 determinable TPM manufacturer code, or whose IDevID/IAK public area departs
-from TCG Template H-0 or carries a foreign `authPolicy`. None of these fall
-back to issuing.
+from TCG Template H-0 or carries a foreign `authPolicy`; an EK certificate
+that does not chain to a configured TPM-manufacturer trust anchor, lacks the
+tcg-kp-EKCertificate extended key usage, or is presented with no trust
+anchors configured at all (`ErrTCGEKCertUntrusted`). None of these fall back
+to issuing.
 
 ## Configuration
 
@@ -214,6 +235,16 @@ behaviour rather than naming:
 - `DefaultKeyAlgorithm` / `DefaultSignatureAlgorithm` — what a request gets when
   it does not ask.
 - `DefaultValidityPeriod` — days, applied when the request omits validity.
+- `TCGConfig.TrustAnchors` (`MultiIdentityCAConfig.TCGConfig`, or the flat
+  `CAConfig.TCGConfig`) — CA-wide, not per-identity: the
+  `pkg/attestation/truststore.Config` naming the TPM-manufacturer root (and,
+  concatenated into the same file, any issuing intermediate) certificates an
+  endorsement key certificate must chain to before `IssueEKCertificate`'s
+  sibling issuance paths (`SignTCGCSRIDevID`, `EnrollDevice`,
+  `VerifyTCG_CSR_IDevIDBytes`) trust it. `NewFromMultiIdentityConfig`,
+  `NewHierarchicalCA`, `NewParentCA` and `NewIntermediateCA` all carry it
+  through from `Params.Config` / `MultiIdentityParams.Config` into the
+  constructed `CA`; there is no separate wiring step.
 - `IsAutoImportingIssuerCAs()` — whether the AIA walk runs automatically on
   import. Off means chains must be supplied.
 - Multi-keystore identities — one CA name, several `{storeType, keyAlgorithm}`
@@ -272,7 +303,14 @@ directly, skipping both freshness checks.
   `crl_persistence_test.go` (round trip across independent `*CA` instances
   sharing a backend, refresh-on-revoke, regenerate-on-read past/before
   `NextUpdate` via an injected `Clock`, force-regenerate) and
-  `ocsp_revocationstore_test.go` (the OCSP cold-path fix).
+  `ocsp_revocationstore_test.go` (the OCSP cold-path fix). EK chain trust:
+  `tcg_ek_trust_test.go` — real generated root/intermediate/leaf chains
+  covering a trusted root, a trusted configured intermediate, a
+  request-supplied intermediate, an unknown root, a missing
+  tcg-kp-EKCertificate EKU, an expired leaf, no anchors configured, and the
+  critical-directory-name-only-SAN quirk; `tcg_iak_certstore_test.go`'s
+  `enrollSoftwareDevice` fixture configures a trust anchor per test so the
+  full `SignTCGCSRIDevID` path exercises the real check rather than a mock.
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,

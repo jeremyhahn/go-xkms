@@ -260,6 +260,16 @@ type MultiIdentityCAConfig struct {
 	// an independent, lower-level control for callers that use the raw
 	// pkcs8.PKCS8Backend directly.
 	RequireKeyPassword bool `yaml:"require-key-password" json:"require_key_password" mapstructure:"require-key-password"`
+
+	// TCGConfig holds the CA-wide TCG TPM 2.0 Keys for Device Identity and
+	// Attestation settings: the pool of TPM-manufacturer trust anchors an
+	// endorsement key certificate must chain to before the CA issues an IAK
+	// or IDevID credential (TPM 2.0 Keys for Device Identity and Attestation
+	// v1.10r9 §6.1.2 step 5b, §6.2.2 step 4b). Applies regardless of which
+	// identity issues the credential, so it is CA-wide rather than
+	// per-identity. Optional for a CA that never issues TCG credentials;
+	// required (and enforced with no fallback) for one that does.
+	TCGConfig *TCGConfig `yaml:"tcg-config,omitempty" json:"tcg_config,omitempty" mapstructure:"tcg-config"`
 }
 
 // Validate checks that the configuration is valid.

@@ -1,6 +1,6 @@
 # TPM 2.0 — User Guide
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## What a TPM gives you that software cannot
 
@@ -148,7 +148,10 @@ name are not found by the new one. A configured `iak.cn` is unaffected.
 
 **Provisioning either completes or refuses.** With an `idevid` section
 configured, `Install` needs the TPM's EK certificate: the enrollment CSR
-carries it and the CA checks it before issuing an identity. If the
+carries it and the CA checks it -- both that it is present and that it
+chains to a TPM-manufacturer trust anchor the CA operator configured (see
+[`../certificate-authority/user.md`](../certificate-authority/user.md)
+"Enrolling a device with a TPM") -- before issuing an identity. If the
 certificate is not in NV RAM (`ek.cert-handle`) or the certificate store,
 provisioning stops with `ErrDevIDProvisionEKCert` and mints no IDevID —
 previously it logged "continuing without it" and reported success, leaving a
@@ -194,6 +197,7 @@ The simulator covers the whole surface. Two things surprise people:
 | TPM refuses everything | dictionary-attack lockout | `pin lockout-reset --so-pin -`, or wait out the interval |
 | NV space exhausted | too many NV indices | free some, or review the PIV NV base index |
 | attestation rejected | the EK does not chain to a trusted manufacturer root | import the manufacturer chain server-side |
+| IAK/IDevID enrollment refused, "endorsement key certificate is not chained to a trusted tpm manufacturer root" | `ca.tcg-config.trust-anchors` is unset or does not name this device's manufacturer | see [`../certificate-authority/user.md`](../certificate-authority/user.md) "Enrolling a device with a TPM" |
 | the TPM "stops working" after hours of uptime | leaked sessions or object contexts | a code defect — the leak test suites exist for this |
 | a node's TPM behaves oddly in ways nothing explains | firmware bugs are real | check the chip's firmware revision before the code |
 

@@ -416,9 +416,12 @@ func (ca *CA) SignTCGCSRIDevID(
 	//
 	// This is a SHALL, so a CSR from which they cannot be derived is refused
 	// rather than certified without them.
-	ekCert, err := x509.ParseCertificate(unpacked.CsrContents.EkCert)
+	ekCert, ekIntermediates, err := parseEKCertificateChain(unpacked.CsrContents.EkCert)
 	if err != nil {
-		return nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("%v", err)}
+		return nil, nil, err
+	}
+	if err := ca.verifyEKCertificateChain(ekCert, ekIntermediates); err != nil {
+		return nil, nil, err
 	}
 	deviceIdentity, err := TCGDeviceIdentityFromEKCertificate(ekCert, request.TPMManufacturer)
 	if err != nil {

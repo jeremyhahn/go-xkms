@@ -325,6 +325,19 @@ var (
 	// TPM holds the key; a relying party reading it would conclude only that
 	// the CA had verified less than it did. Issuance refuses instead.
 	ErrTCGMandatoryExtension = errors.New("ca: mandatory tcg certificate extension could not be built")
+
+	// ErrTCGEKCertUntrusted indicates the endorsement key certificate could
+	// not be chained to a configured TPM-manufacturer trust anchor, or does
+	// not carry the tcg-kp-EKCertificate extended key usage (or the
+	// anyExtendedKeyUsage purpose that subsumes it).
+	//
+	// TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b
+	// and §6.2.2 step 4b make this a SHALL before the CA issues an IAK or
+	// IDevID: TPM2_ActivateCredential proves the requester holds the EK
+	// private key, not that the EK belongs to a genuine TPM. A CA with no EK
+	// trust anchors configured returns this error for every request rather
+	// than skipping the check.
+	ErrTCGEKCertUntrusted = errors.New("ca: endorsement key certificate is not chained to a trusted tpm manufacturer root")
 )
 
 // FIDO2 attestation errors indicate that a certificate signing request cannot

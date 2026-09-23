@@ -36,8 +36,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/binary"
+	"encoding/pem"
 	"errors"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +49,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 )
 
 const (
@@ -200,6 +205,11 @@ func buildSoftwareTCGCSRWithEK(t *testing.T, model, serial string, withEKCert bo
 		AuthorityKeyId: softwareCSREKAuthorityKeyID,
 		NotBefore:      time.Now().Add(-time.Hour),
 		NotAfter:       time.Now().Add(time.Hour),
+		// A real manufacturer EK certificate identifies itself with the
+		// tcg-kp-EKCertificate extended key usage, or (as here)
+		// anyExtendedKeyUsage; verifyEKCertificateChain requires one of the
+		// two before trusting the chain.
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}
 	ekDER, err := x509.CreateCertificate(rand.Reader, ekTemplate, ekTemplate, &ekKey.PublicKey, ekKey)
 	if err != nil {
@@ -256,11 +266,33 @@ func buildSoftwareTCGCSRWithEK(t *testing.T, model, serial string, withEKCert bo
 	return &softwareTCGCSR{csr: csr, iakKey: iakKey, idevidKey: idevidKey}
 }
 
+// trustSoftwareCSREKCertificate configures ca's TCG EK trust anchors to
+// accept the (self-signed) endorsement key certificate the software CSR
+// fixture generated, by writing it PEM-encoded to a file under t.TempDir()
+// and pointing MultiIdentityCAConfig.TCGConfig at it (via
+// pkg/attestation/truststore, the same trust-anchor config shape
+// pkg/config.AttestationConfig uses for the "tpm2" attestation format). The
+// fixture's EK certificate has no CA the test suite already trusts, so every
+// test that drives SignTCGCSRIDevID or EnrollDevice through a real
+// verifyEKCertificateChain call needs its own anchor.
+func trustSoftwareCSREKCertificate(t *testing.T, ca *CA, device *softwareTCGCSR) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ek-roots.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: device.csr.CsrContents.EkCert})
+	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
+		t.Fatalf("write ek trust anchor: %v", err)
+	}
+	ca.config = &MultiIdentityCAConfig{TCGConfig: &TCGConfig{
+		TrustAnchors: &truststore.Config{ExternalRootPaths: []string{path}},
+	}}
+}
+
 // enrollSoftwareDevice runs SignTCGCSRIDevID for a software device whose
 // IDevID subject mirrors the ACME enroll-01 handler: "<model>-<serial>".
 func enrollSoftwareDevice(t *testing.T, ca *CA, model, serial string) (*softwareTCGCSR, *CertificateRequest, []byte, []byte) {
 	t.Helper()
 	device := buildSoftwareTCGCSR(t, model, serial)
+	trustSoftwareCSREKCertificate(t, ca, device)
 
 	signerKey := generateTestECDSAKey(t)
 	issuerCert := createSelfSignedCACert(t, signerKey)
@@ -440,6 +472,7 @@ func TestSignTCGCSRIDevID_IAKStoreErrorFailsIssuance(t *testing.T) {
 	store.storeError = errors.New("disk full")
 
 	device := buildSoftwareTCGCSR(t, softwareCSRModel, softwareCSRSerial)
+	trustSoftwareCSREKCertificate(t, ca, device)
 	signerKey := generateTestECDSAKey(t)
 	request := createTestCertRequest(t, signerKey, createSelfSignedCACert(t, signerKey))
 
