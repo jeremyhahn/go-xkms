@@ -85,14 +85,11 @@ func TestFileBackupAdapter_CreateBackup_VersionDefaultWithExistingMetadata(t *te
 	assert.Equal(t, DefaultBackupVersion, metadata.Version)
 }
 
-// TestFileBackupAdapter_CreateBackup_RestoresTPMSessionCloserOnError exercises
-// the SessionCloser clear/restore closures in CreateBackup. encoding/json
-// rejects a struct containing a func-typed field based on its static type
-// regardless of whether the value is nil, so once any key carries a non-nil
-// TPMAttributes, serialization always fails - but the clear-then-restore
-// defer must still run, leaving the caller's in-memory SessionCloser intact
-// and uninvoked.
-func TestFileBackupAdapter_CreateBackup_RestoresTPMSessionCloserOnError(t *testing.T) {
+// TestFileBackupAdapter_CreateBackup_TPMAttributesBackUp proves a key whose
+// TPM attributes carry a live session closer backs up: the closer is tagged
+// json:"-", so it is left out of the backup, and CreateBackup neither invokes
+// nor clears the caller's in-memory closer.
+func TestFileBackupAdapter_CreateBackup_TPMAttributesBackUp(t *testing.T) {
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
@@ -112,8 +109,7 @@ func TestFileBackupAdapter_CreateBackup_RestoresTPMSessionCloserOnError(t *testi
 	}
 
 	_, err = adapter.CreateBackup(ctx, data, &BackupOptions{Format: BackupFormatJSON})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to serialize backup")
+	require.NoError(t, err)
 
 	for i, key := range data.Keys {
 		require.NotNil(t, key.Attributes.TPMAttributes.SessionCloser)
@@ -239,7 +235,7 @@ func TestFileBackupAdapter_ImportBackup_MetadataFileWriteError(t *testing.T) {
 	// The key carries no Attributes, so the func-typed SessionCloser reachable
 	// through them is never marshaled -- the same reason the production
 	// serializer at file.go carries this suppression.
-	sourceBytes, err := json.Marshal(backupData) //nolint:staticcheck // SA1026: SessionCloser is unreachable here
+	sourceBytes, err := json.Marshal(backupData)
 	require.NoError(t, err)
 
 	sourcePath := filepath.Join(t.TempDir(), "source.backup")

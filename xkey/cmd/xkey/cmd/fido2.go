@@ -1193,7 +1193,7 @@ func (d *fido2Device) persistCapturedCredential(cred cdp.StoredCredential) error
 		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
 	}
 
-	pkcs8Key, err := decodeCDPField(cred.PrivateKey)
+	pkcs8Key, err := decodeCDPField(cred.PrivateKeyString())
 	if err != nil {
 		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
 	}
@@ -1215,11 +1215,13 @@ func (d *fido2Device) persistCapturedCredential(cred cdp.StoredCredential) error
 		CredentialID:  credID,
 		RPID:          cred.RpID,
 		UserID:        userID,
-		PrivateKey:    pkcs8Key,
 		PublicKeyCOSE: publicKeyCOSE,
 		Algorithm:     algorithm,
 		SignCount:     uint32(cred.SignCount),
 		Discoverable:  cred.IsResidentCredential,
+	}
+	if err := stored.SetPrivateKey(pkcs8Key); err != nil {
+		return errors.Join(ErrFIDO2CDPCaptureDecodeFailed, err)
 	}
 
 	if err := d.storage.Store(stored); err != nil {
@@ -1347,8 +1349,8 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 		// credentials minted by xkey's own software backend.
 		var pkcs8Key []byte
 		switch {
-		case len(sc.PrivateKey) > 0:
-			pkcs8Key = sc.PrivateKey
+		case sc.HasPrivateKey():
+			pkcs8Key = sc.PrivateKeyBytes()
 		case d.keyBackend != nil:
 			handle, loadKeyErr := d.keyBackend.LoadKey(sc.CredentialID, sc.Algorithm)
 			if loadKeyErr != nil {
@@ -1373,14 +1375,21 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 		// CDP expects standard base64 (with padding) for the binary credential
 		// fields; encode with the standard alphabet so the round-trip matches
 		// what Chrome accepts on WebAuthn.addCredential.
-		cdpCreds = append(cdpCreds, cdp.StoredCredential{
+		cdpCred := cdp.StoredCredential{
 			CredentialID:         encodeCDPField(sc.CredentialID),
 			IsResidentCredential: sc.Discoverable,
 			RpID:                 sc.RPID,
-			PrivateKey:           encodeCDPField(pkcs8Key),
 			UserHandle:           encodeCDPField(sc.UserID),
 			SignCount:            int(sc.SignCount),
-		})
+		}
+		if err := cdpCred.SetPrivateKey(encodeCDPField(pkcs8Key)); err != nil {
+			secure.Wipe(pkcs8Key)
+			d.logger.Debug("skipping credential for CDP (protect failed)",
+				slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))
+			continue
+		}
+		secure.Wipe(pkcs8Key)
+		cdpCreds = append(cdpCreds, cdpCred)
 	}
 
 	if len(cdpCreds) > 0 {

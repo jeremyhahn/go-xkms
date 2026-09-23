@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -77,12 +78,129 @@ type OATHCredentialInfo struct {
 	Name        string
 	Issuer      string
 	AccountName string
-	Secret      string
-	Type        string
-	Algorithm   string
-	Digits      int
-	Period      int
-	Counter     int64
+
+	// secret holds the Base32-encoded shared secret in mlocked,
+	// guard-paged protected memory (go-xkms#587), matching the same
+	// oath.Credential.secret field this value is routed into by an
+	// OATHWriter (via oath.Credential.SetSecret). It is unexported so no
+	// consumer can hold the key material as an unwipeable Go string; use
+	// SetSecret to store it and SecretString to export a copy at a
+	// serialization boundary. The persisted JSON form keeps the
+	// historical "Secret" key via MarshalJSON/UnmarshalJSON.
+	secret *secure.Buffer
+
+	Type      string
+	Algorithm string
+	Digits    int
+	Period    int
+	Counter   int64
+}
+
+// SetSecret stores the Base32-encoded shared secret in protected memory,
+// replacing (and destroying) any previous value. The value is stored
+// verbatim — exactly what field assignment used to do. An empty string
+// clears the secret.
+//
+// The input string itself cannot be wiped; callers holding one already sit
+// at a serialization boundary (an OATHReader/OATHWriter implementation,
+// the backup archive) this package cannot reach.
+//
+// Returns a wrapped ErrProtectedMemory if the protected allocation fails.
+func (c *OATHCredentialInfo) SetSecret(secret string) error {
+	if secret == "" {
+		c.secret.Destroy()
+		c.secret = nil
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes([]byte(secret))
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	c.secret.Destroy()
+	c.secret = buf
+	return nil
+}
+
+// HasSecret reports whether the credential holds a shared secret.
+func (c *OATHCredentialInfo) HasSecret() bool {
+	return c != nil && c.secret != nil
+}
+
+// SecretString returns a copy of the Base32-encoded shared secret as a
+// string, or "" when no secret is set.
+//
+// A Go string cannot be wiped, so calling this re-mints exactly the
+// exposure the protected field exists to remove — it is for serialization
+// boundaries only (the backup archive, routing into
+// oath.Credential.SetSecret), where the surrounding format is a string
+// anyway.
+func (c *OATHCredentialInfo) SecretString() string {
+	if c == nil || c.secret == nil {
+		return ""
+	}
+	var out string
+	if err := c.secret.WithBytes(func(b []byte) error {
+		out = string(b)
+		return nil
+	}); err != nil {
+		return ""
+	}
+	return out
+}
+
+// oathCredentialInfoJSON is the persisted JSON form of OATHCredentialInfo.
+// It exists so the protected in-memory secret round-trips through the
+// historical wire format unchanged: the "Secret" key carries the Base32
+// string exactly as it did when Secret was an exported string field.
+type oathCredentialInfoJSON struct {
+	ID          string `json:"ID"`
+	Name        string `json:"Name"`
+	Issuer      string `json:"Issuer"`
+	AccountName string `json:"AccountName"`
+	Secret      string `json:"Secret"`
+	Type        string `json:"Type"`
+	Algorithm   string `json:"Algorithm"`
+	Digits      int    `json:"Digits"`
+	Period      int    `json:"Period"`
+	Counter     int64  `json:"Counter"`
+}
+
+// MarshalJSON implements json.Marshaler, exporting the protected secret
+// into the historical "Secret" JSON key. Serialization necessarily
+// materializes the secret on the heap; that residue belongs to the
+// persistence boundary, not to this type.
+func (c *OATHCredentialInfo) MarshalJSON() ([]byte, error) {
+	return json.Marshal(oathCredentialInfoJSON{
+		ID:          c.ID,
+		Name:        c.Name,
+		Issuer:      c.Issuer,
+		AccountName: c.AccountName,
+		Secret:      c.SecretString(),
+		Type:        c.Type,
+		Algorithm:   c.Algorithm,
+		Digits:      c.Digits,
+		Period:      c.Period,
+		Counter:     c.Counter,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler, adopting the "Secret" JSON
+// key into protected memory.
+func (c *OATHCredentialInfo) UnmarshalJSON(data []byte) error {
+	var aux oathCredentialInfoJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.ID = aux.ID
+	c.Name = aux.Name
+	c.Issuer = aux.Issuer
+	c.AccountName = aux.AccountName
+	c.Type = aux.Type
+	c.Algorithm = aux.Algorithm
+	c.Digits = aux.Digits
+	c.Period = aux.Period
+	c.Counter = aux.Counter
+	return c.SetSecret(aux.Secret)
 }
 
 // OATHWriter provides write access for restoring OATH credentials.
@@ -97,14 +215,121 @@ type PasswordReader interface {
 
 // PasswordInfo is simplified password data for backup.
 type PasswordInfo struct {
-	ID         string
-	Name       string
-	Title      string
-	Username   string
-	Password   string
+	ID       string
+	Name     string
+	Title    string
+	Username string
+
+	// password holds the stored password in mlocked, guard-paged
+	// protected memory (go-xkms#587). It is unexported so no consumer can
+	// hold the value as an unwipeable Go string; use SetPassword to store
+	// it and PasswordString to export a copy at a serialization boundary.
+	// The persisted JSON form keeps the historical "Password" key via
+	// MarshalJSON/UnmarshalJSON.
+	password *secure.Buffer
+
 	URL        string
 	Notes      string
 	FolderPath string
+}
+
+// SetPassword stores the password in protected memory, replacing (and
+// destroying) any previous value. The value is stored verbatim — exactly
+// what field assignment used to do. An empty string clears the password.
+//
+// The input string itself cannot be wiped; callers holding one already sit
+// at a serialization boundary (a PasswordReader/PasswordWriter
+// implementation, the backup archive) this package cannot reach.
+//
+// Returns a wrapped ErrProtectedMemory if the protected allocation fails.
+func (p *PasswordInfo) SetPassword(password string) error {
+	if password == "" {
+		p.password.Destroy()
+		p.password = nil
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes([]byte(password))
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	p.password.Destroy()
+	p.password = buf
+	return nil
+}
+
+// HasPassword reports whether the entry holds a password.
+func (p *PasswordInfo) HasPassword() bool {
+	return p != nil && p.password != nil
+}
+
+// PasswordString returns a copy of the password as a string, or "" when no
+// password is set.
+//
+// A Go string cannot be wiped, so calling this re-mints exactly the
+// exposure the protected field exists to remove — it is for serialization
+// boundaries only (the backup archive), where the surrounding format is a
+// string anyway.
+func (p *PasswordInfo) PasswordString() string {
+	if p == nil || p.password == nil {
+		return ""
+	}
+	var out string
+	if err := p.password.WithBytes(func(b []byte) error {
+		out = string(b)
+		return nil
+	}); err != nil {
+		return ""
+	}
+	return out
+}
+
+// passwordInfoJSON is the persisted JSON form of PasswordInfo. It exists so
+// the protected in-memory password round-trips through the historical wire
+// format unchanged: the "Password" key carries the string exactly as it
+// did when Password was an exported string field.
+type passwordInfoJSON struct {
+	ID         string `json:"ID"`
+	Name       string `json:"Name"`
+	Title      string `json:"Title"`
+	Username   string `json:"Username"`
+	Password   string `json:"Password"`
+	URL        string `json:"URL"`
+	Notes      string `json:"Notes"`
+	FolderPath string `json:"FolderPath"`
+}
+
+// MarshalJSON implements json.Marshaler, exporting the protected password
+// into the historical "Password" JSON key. Serialization necessarily
+// materializes the password on the heap; that residue belongs to the
+// persistence boundary, not to this type.
+func (p *PasswordInfo) MarshalJSON() ([]byte, error) {
+	return json.Marshal(passwordInfoJSON{
+		ID:         p.ID,
+		Name:       p.Name,
+		Title:      p.Title,
+		Username:   p.Username,
+		Password:   p.PasswordString(),
+		URL:        p.URL,
+		Notes:      p.Notes,
+		FolderPath: p.FolderPath,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler, adopting the "Password" JSON
+// key into protected memory.
+func (p *PasswordInfo) UnmarshalJSON(data []byte) error {
+	var aux passwordInfoJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	p.ID = aux.ID
+	p.Name = aux.Name
+	p.Title = aux.Title
+	p.Username = aux.Username
+	p.URL = aux.URL
+	p.Notes = aux.Notes
+	p.FolderPath = aux.FolderPath
+	return p.SetPassword(aux.Password)
 }
 
 // PasswordWriter provides write access for restoring static passwords.
@@ -395,12 +620,17 @@ func (s *Service) RestoreOATH(archive *Archive, writer OATHWriter) (*RestoreResu
 			Name:        c.Name,
 			Issuer:      c.Issuer,
 			AccountName: c.AccountName,
-			Secret:      c.Secret,
 			Type:        c.Type,
 			Algorithm:   c.Algorithm,
 			Digits:      c.Digits,
 			Period:      c.Period,
 			Counter:     c.Counter,
+		}
+		if err := info.SetSecret(c.Secret); err != nil {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("oath %s: %v", c.ID, err))
+			result.Skipped++
+			continue
 		}
 		if err := writer.Add(info); err != nil {
 			result.Errors = append(result.Errors,
@@ -426,10 +656,15 @@ func (s *Service) RestorePasswords(archive *Archive, writer PasswordWriter) (*Re
 			Name:       p.Name,
 			Title:      p.Title,
 			Username:   p.Username,
-			Password:   p.Password,
 			URL:        p.URL,
 			Notes:      p.Notes,
 			FolderPath: p.FolderPath,
+		}
+		if err := info.SetPassword(p.Password); err != nil {
+			result.Errors = append(result.Errors,
+				fmt.Sprintf("password %s: %v", p.ID, err))
+			result.Skipped++
+			continue
 		}
 		if err := writer.Add(info); err != nil {
 			result.Errors = append(result.Errors,
@@ -577,7 +812,7 @@ func (s *Service) collectOATH(a *Archive) (bool, error) {
 			Name:        c.Name,
 			Issuer:      c.Issuer,
 			AccountName: c.AccountName,
-			Secret:      c.Secret,
+			Secret:      c.SecretString(),
 			Type:        c.Type,
 			Algorithm:   c.Algorithm,
 			Digits:      c.Digits,
@@ -613,7 +848,7 @@ func (s *Service) collectPasswords(a *Archive) (bool, error) {
 			Name:       p.Name,
 			Title:      p.Title,
 			Username:   p.Username,
-			Password:   p.Password,
+			Password:   p.PasswordString(),
 			URL:        p.URL,
 			Notes:      p.Notes,
 			FolderPath: p.FolderPath,

@@ -155,22 +155,20 @@ func TestBridge_SyncCredentials(t *testing.T) {
 	require.NoError(t, bridge.Start(context.Background()))
 
 	creds := []StoredCredential{
-		{
+		withPrivateKey(StoredCredential{
 			CredentialID:         "Y3JlZC0x",
 			IsResidentCredential: true,
 			RpID:                 "example.com",
-			PrivateKey:           "cHJpdmF0ZS1rZXk",
 			UserHandle:           "dXNlci0x",
 			SignCount:            0,
-		},
-		{
+		}, "cHJpdmF0ZS1rZXk"),
+		withPrivateKey(StoredCredential{
 			CredentialID:         "Y3JlZC0y",
 			IsResidentCredential: true,
 			RpID:                 "example.com",
-			PrivateKey:           "cHJpdmF0ZS1rZXky",
 			UserHandle:           "dXNlci0y",
 			SignCount:            5,
-		},
+		}, "cHJpdmF0ZS1rZXky"),
 	}
 
 	err := bridge.SyncCredentials(context.Background(), creds)
@@ -181,7 +179,7 @@ func TestBridge_SyncCredentials_NotStarted(t *testing.T) {
 	bridge := NewBridge(nil, testLogger())
 
 	err := bridge.SyncCredentials(context.Background(), []StoredCredential{
-		{CredentialID: "x", RpID: "y", PrivateKey: "z"},
+		withPrivateKey(StoredCredential{CredentialID: "x", RpID: "y"}, "z"),
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBridgeNotStarted))
@@ -225,9 +223,9 @@ func TestBridge_SyncCredentials_PartialFailure(t *testing.T) {
 	require.NoError(t, bridge.Start(context.Background()))
 
 	creds := []StoredCredential{
-		{CredentialID: "ok-1", RpID: "a.com", PrivateKey: "k1"},
-		{CredentialID: "fail-2", RpID: "b.com", PrivateKey: "k2"},
-		{CredentialID: "ok-3", RpID: "c.com", PrivateKey: "k3"},
+		withPrivateKey(StoredCredential{CredentialID: "ok-1", RpID: "a.com"}, "k1"),
+		withPrivateKey(StoredCredential{CredentialID: "fail-2", RpID: "b.com"}, "k2"),
+		withPrivateKey(StoredCredential{CredentialID: "ok-3", RpID: "c.com"}, "k3"),
 	}
 
 	err := bridge.SyncCredentials(context.Background(), creds)
@@ -334,21 +332,25 @@ func TestBridge_AuthenticatorID_AfterStart(t *testing.T) {
 // --- StoredCredential tests ---
 
 func TestStoredCredential_Marshal(t *testing.T) {
-	sc := StoredCredential{
+	sc := withPrivateKey(StoredCredential{
 		CredentialID:         "cred-1",
 		IsResidentCredential: true,
 		RpID:                 "example.com",
-		PrivateKey:           "private-key-data",
 		UserHandle:           "user-handle",
 		SignCount:            7,
-	}
+	}, "private-key-data")
 
 	data, err := json.Marshal(sc)
 	require.NoError(t, err)
 
 	var decoded StoredCredential
 	require.NoError(t, json.Unmarshal(data, &decoded))
-	assert.Equal(t, sc, decoded)
+	assert.Equal(t, sc.CredentialID, decoded.CredentialID)
+	assert.Equal(t, sc.IsResidentCredential, decoded.IsResidentCredential)
+	assert.Equal(t, sc.RpID, decoded.RpID)
+	assert.Equal(t, sc.UserHandle, decoded.UserHandle)
+	assert.Equal(t, sc.SignCount, decoded.SignCount)
+	assert.Equal(t, sc.PrivateKeyString(), decoded.PrivateKeyString())
 }
 
 func TestStoredCredential_ZeroValue(t *testing.T) {

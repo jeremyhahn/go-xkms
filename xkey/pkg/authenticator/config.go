@@ -18,11 +18,13 @@
 package authenticator
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -139,8 +141,15 @@ type StoredCredential struct {
 	// UserDisplayName is the user display name
 	UserDisplayName string
 
-	// PrivateKey is the credential private key (PKCS#8 encoded)
-	PrivateKey []byte
+	// privateKey holds the credential private key (PKCS#8 encoded) in
+	// mlocked, guard-paged protected memory (go-xkms#587). It is unexported
+	// so no consumer can hold the key material as an unwipeable Go byte
+	// slice; use SetPrivateKey to store it and PrivateKeyBytes to export a
+	// copy at a serialization or signing boundary. nil means no private key
+	// is stored, which is the normal state for hardware-backed credentials
+	// whose key backend does not support export. The persisted JSON form
+	// keeps the historical "PrivateKey" key via MarshalJSON/UnmarshalJSON.
+	privateKey *secure.Buffer
 
 	// PublicKeyCOSE is the COSE-encoded public key
 	PublicKeyCOSE []byte
@@ -184,6 +193,145 @@ type StoredCredential struct {
 	// Values: "software", "tpm2", "pkcs11", "phone". Empty string means software
 	// (backward compatibility with credentials created before this field existed).
 	BackendID xkms.BackendType `json:"backend_id,omitempty"`
+}
+
+// SetPrivateKey stores the credential's private key (PKCS#8 encoded) in
+// protected memory, replacing (and destroying) any previous value. key is
+// ADOPTED: secure.NewBufferFromBytes wipes it as part of construction, so
+// the caller must not reuse key afterwards — copy first if the original is
+// still needed elsewhere. An empty key clears the stored value, which is
+// the normal state for hardware-backed credentials whose key backend does
+// not support export.
+//
+// Returns ErrKeyManagerProtectedMemory (wrapped) if the protected
+// allocation fails.
+func (c *StoredCredential) SetPrivateKey(key []byte) error {
+	if len(key) == 0 {
+		c.privateKey.Destroy()
+		c.privateKey = nil
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes(key)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
+	}
+	c.privateKey.Destroy()
+	c.privateKey = buf
+	return nil
+}
+
+// HasPrivateKey reports whether the credential holds private key material.
+func (c *StoredCredential) HasPrivateKey() bool {
+	return c != nil && c.privateKey != nil
+}
+
+// PrivateKeyBytes returns a heap copy of the PKCS#8 encoded private key, or
+// nil when no private key is stored (e.g. a hardware-backed credential
+// whose key backend does not support export).
+//
+// A []byte copy cannot be wiped by this package once returned, so calling
+// this re-mints exactly the exposure the protected field exists to remove —
+// it is for serialization boundaries and signing operations only, where the
+// surrounding format is a []byte anyway. The caller owns the copy and
+// SHOULD wipe it (secure.Wipe) when done.
+func (c *StoredCredential) PrivateKeyBytes() []byte {
+	if c == nil || c.privateKey == nil {
+		return nil
+	}
+	var out []byte
+	if err := c.privateKey.WithBytes(func(b []byte) error {
+		out = make([]byte, len(b))
+		copy(out, b)
+		return nil
+	}); err != nil {
+		return nil
+	}
+	return out
+}
+
+// storedCredentialJSON is the persisted JSON form of StoredCredential. It
+// exists so the protected in-memory private key round-trips through the
+// historical wire format unchanged: the "PrivateKey" key carries the PKCS#8
+// bytes exactly as it did when PrivateKey was an exported []byte field.
+type storedCredentialJSON struct {
+	CredentialID        []byte           `json:"CredentialID"`
+	RPID                string           `json:"RPID"`
+	RPName              string           `json:"RPName"`
+	UserID              []byte           `json:"UserID"`
+	UserName            string           `json:"UserName"`
+	UserDisplayName     string           `json:"UserDisplayName"`
+	PrivateKey          []byte           `json:"PrivateKey"`
+	PublicKeyCOSE       []byte           `json:"PublicKeyCOSE"`
+	Algorithm           int              `json:"Algorithm"`
+	SignCount           uint32           `json:"SignCount"`
+	Discoverable        bool             `json:"Discoverable"`
+	HMACSecretKey       []byte           `json:"HMACSecretKey"`
+	CredProtect         uint8            `json:"CredProtect"`
+	CreatedAt           int64            `json:"CreatedAt"`
+	RPUVPolicy          string           `json:"rp_uv_policy,omitempty"`
+	RPUPPolicy          bool             `json:"rp_up_policy"`
+	RPResidentKeyPolicy string           `json:"rp_resident_key_policy,omitempty"`
+	RPAttestationPref   string           `json:"rp_attestation_pref,omitempty"`
+	BackendID           xkms.BackendType `json:"backend_id,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler, exporting the protected private
+// key into the historical "PrivateKey" JSON key. Serialization necessarily
+// materializes the key on the heap; that residue belongs to the
+// persistence boundary (the same bytes are about to be written to
+// storage), not to this type.
+func (c *StoredCredential) MarshalJSON() ([]byte, error) {
+	privateKey := c.PrivateKeyBytes()
+	defer secure.Wipe(privateKey)
+	return json.Marshal(storedCredentialJSON{
+		CredentialID:        c.CredentialID,
+		RPID:                c.RPID,
+		RPName:              c.RPName,
+		UserID:              c.UserID,
+		UserName:            c.UserName,
+		UserDisplayName:     c.UserDisplayName,
+		PrivateKey:          privateKey,
+		PublicKeyCOSE:       c.PublicKeyCOSE,
+		Algorithm:           c.Algorithm,
+		SignCount:           c.SignCount,
+		Discoverable:        c.Discoverable,
+		HMACSecretKey:       c.HMACSecretKey,
+		CredProtect:         c.CredProtect,
+		CreatedAt:           c.CreatedAt,
+		RPUVPolicy:          c.RPUVPolicy,
+		RPUPPolicy:          c.RPUPPolicy,
+		RPResidentKeyPolicy: c.RPResidentKeyPolicy,
+		RPAttestationPref:   c.RPAttestationPref,
+		BackendID:           c.BackendID,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler, adopting the "PrivateKey" JSON
+// key into protected memory.
+func (c *StoredCredential) UnmarshalJSON(data []byte) error {
+	var aux storedCredentialJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.CredentialID = aux.CredentialID
+	c.RPID = aux.RPID
+	c.RPName = aux.RPName
+	c.UserID = aux.UserID
+	c.UserName = aux.UserName
+	c.UserDisplayName = aux.UserDisplayName
+	c.PublicKeyCOSE = aux.PublicKeyCOSE
+	c.Algorithm = aux.Algorithm
+	c.SignCount = aux.SignCount
+	c.Discoverable = aux.Discoverable
+	c.HMACSecretKey = aux.HMACSecretKey
+	c.CredProtect = aux.CredProtect
+	c.CreatedAt = aux.CreatedAt
+	c.RPUVPolicy = aux.RPUVPolicy
+	c.RPUPPolicy = aux.RPUPPolicy
+	c.RPResidentKeyPolicy = aux.RPResidentKeyPolicy
+	c.RPAttestationPref = aux.RPAttestationPref
+	c.BackendID = aux.BackendID
+	return c.SetPrivateKey(aux.PrivateKey)
 }
 
 // Config contains authenticator configuration options.

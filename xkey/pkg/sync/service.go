@@ -198,7 +198,7 @@ func (s *Service) ComputeLocalOATHDelta() (*OATHDelta, error) {
 			Name:        c.Name,
 			Issuer:      c.Issuer,
 			AccountName: c.AccountName,
-			Secret:      c.Secret,
+			Secret:      c.SecretString(),
 			Type:        c.Type,
 			Algorithm:   c.Algorithm,
 			Digits:      c.Digits,
@@ -231,7 +231,7 @@ func (s *Service) ComputeLocalPasswordDelta() (*PasswordDelta, error) {
 			Name:       p.Name,
 			Title:      p.Title,
 			Username:   p.Username,
-			Password:   p.Password,
+			Password:   p.PasswordString(),
 			URL:        p.URL,
 			Notes:      p.Notes,
 			FolderPath: p.FolderPath,
@@ -342,7 +342,13 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 		local, err := s.oath.Get(remote.ID)
 		if err != nil {
 			// Credential does not exist locally, add it.
-			info := oathSyncToInfo(&remote)
+			info, convErr := oathSyncToInfo(&remote)
+			if convErr != nil {
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("oath %s: protect: %v", remote.ID, convErr))
+				result.Skipped++
+				continue
+			}
 			if addErr := s.oath.Add(info); addErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("oath %s: add: %v", remote.ID, addErr))
@@ -358,7 +364,13 @@ func (s *Service) ApplyOATHDelta(delta *OATHDelta) (*SyncItemResult, error) {
 		// info does not carry an UpdatedAt, so we treat it as zero time
 		// (always older) unless the remote timestamp is also zero.
 		if !remote.UpdatedAt.IsZero() {
-			info := oathSyncToInfo(&remote)
+			info, convErr := oathSyncToInfo(&remote)
+			if convErr != nil {
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("oath %s: protect: %v", remote.ID, convErr))
+				result.Skipped++
+				continue
+			}
 			if updateErr := s.oath.Update(info); updateErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("oath %s: update: %v", remote.ID, updateErr))
@@ -395,7 +407,13 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 		local, err := s.passwords.Get(remote.ID)
 		if err != nil {
 			// Password does not exist locally, add it.
-			info := passwordSyncToInfo(&remote)
+			info, convErr := passwordSyncToInfo(&remote)
+			if convErr != nil {
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("password %s: protect: %v", remote.ID, convErr))
+				result.Skipped++
+				continue
+			}
 			if addErr := s.passwords.Add(info); addErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("password %s: add: %v", remote.ID, addErr))
@@ -408,7 +426,13 @@ func (s *Service) ApplyPasswordDelta(delta *PasswordDelta) (*SyncItemResult, err
 
 		// Password exists locally. Use last-modified-wins resolution.
 		if !remote.UpdatedAt.IsZero() {
-			info := passwordSyncToInfo(&remote)
+			info, convErr := passwordSyncToInfo(&remote)
+			if convErr != nil {
+				result.Errors = append(result.Errors,
+					fmt.Sprintf("password %s: protect: %v", remote.ID, convErr))
+				result.Skipped++
+				continue
+			}
 			if updateErr := s.passwords.Update(info); updateErr != nil {
 				result.Errors = append(result.Errors,
 					fmt.Sprintf("password %s: update: %v", remote.ID, updateErr))
@@ -547,31 +571,37 @@ func encodeCertPEM(cert *x509.Certificate) string {
 }
 
 // oathSyncToInfo converts an OATHCredentialSync to a backup.OATHCredentialInfo.
-func oathSyncToInfo(cs *OATHCredentialSync) *backup.OATHCredentialInfo {
-	return &backup.OATHCredentialInfo{
+func oathSyncToInfo(cs *OATHCredentialSync) (*backup.OATHCredentialInfo, error) {
+	info := &backup.OATHCredentialInfo{
 		ID:          cs.ID,
 		Name:        cs.Name,
 		Issuer:      cs.Issuer,
 		AccountName: cs.AccountName,
-		Secret:      cs.Secret,
 		Type:        cs.Type,
 		Algorithm:   cs.Algorithm,
 		Digits:      cs.Digits,
 		Period:      cs.Period,
 		Counter:     cs.Counter,
 	}
+	if err := info.SetSecret(cs.Secret); err != nil {
+		return nil, err
+	}
+	return info, nil
 }
 
 // passwordSyncToInfo converts a PasswordSync to a backup.PasswordInfo.
-func passwordSyncToInfo(ps *PasswordSync) *backup.PasswordInfo {
-	return &backup.PasswordInfo{
+func passwordSyncToInfo(ps *PasswordSync) (*backup.PasswordInfo, error) {
+	info := &backup.PasswordInfo{
 		ID:         ps.ID,
 		Name:       ps.Name,
 		Title:      ps.Title,
 		Username:   ps.Username,
-		Password:   ps.Password,
 		URL:        ps.URL,
 		Notes:      ps.Notes,
 		FolderPath: ps.FolderPath,
 	}
+	if err := info.SetPassword(ps.Password); err != nil {
+		return nil, err
+	}
+	return info, nil
 }

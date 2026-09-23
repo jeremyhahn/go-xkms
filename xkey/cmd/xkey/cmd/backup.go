@@ -840,7 +840,11 @@ func (a *oathStoreAdapter) List() ([]*backup.OATHCredentialInfo, error) {
 	}
 	out := make([]*backup.OATHCredentialInfo, 0, len(creds))
 	for _, cred := range creds {
-		out = append(out, oathCredentialToInfo(cred))
+		info, convErr := oathCredentialToInfo(cred)
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }
@@ -853,7 +857,7 @@ func (a *oathStoreAdapter) Get(id string) (*backup.OATHCredentialInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return oathCredentialToInfo(cred), nil
+	return oathCredentialToInfo(cred)
 }
 
 // Add writes one restored OATH credential back to the store.
@@ -882,20 +886,25 @@ func (a *oathStoreAdapter) Update(info *backup.OATHCredentialInfo) error {
 func (a *oathStoreAdapter) Close() error { return a.store.Close() }
 
 // oathCredentialToInfo converts a stored credential to the service-facing
-// form shared by the backup and sync services.
-func oathCredentialToInfo(cred *oath.Credential) *backup.OATHCredentialInfo {
-	return &backup.OATHCredentialInfo{
+// form shared by the backup and sync services. The secret is adopted into
+// protected memory; the returned error is backup.ErrProtectedMemory
+// (wrapped) when that allocation fails.
+func oathCredentialToInfo(cred *oath.Credential) (*backup.OATHCredentialInfo, error) {
+	info := &backup.OATHCredentialInfo{
 		ID:          cred.ID,
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
-		Secret:      cred.SecretString(),
 		Type:        cred.Type,
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
 		Period:      cred.Period,
 		Counter:     oathCounterToInt64(cred.Counter),
 	}
+	if err := info.SetSecret(cred.SecretString()); err != nil {
+		return nil, err
+	}
+	return info, nil
 }
 
 // oathInfoToCredential converts the service-facing form back to a stored
@@ -915,7 +924,7 @@ func oathInfoToCredential(info *backup.OATHCredentialInfo, createdAt time.Time) 
 		Counter:     oathCounterFromInt64(info.Counter),
 		CreatedAt:   createdAt,
 	}
-	if err := cred.SetSecret(info.Secret); err != nil {
+	if err := cred.SetSecret(info.SecretString()); err != nil {
 		return nil, err
 	}
 	return cred, nil
@@ -955,7 +964,11 @@ func (a *passwordStoreAdapter) List() ([]*backup.PasswordInfo, error) {
 	}
 	out := make([]*backup.PasswordInfo, 0, len(passwords))
 	for _, pw := range passwords {
-		out = append(out, passwordToInfo(pw))
+		info, convErr := passwordToInfo(pw)
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }
@@ -968,7 +981,7 @@ func (a *passwordStoreAdapter) Get(id string) (*backup.PasswordInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return passwordToInfo(pw), nil
+	return passwordToInfo(pw)
 }
 
 // Add writes one restored static password back to the store. The store
@@ -979,7 +992,7 @@ func (a *passwordStoreAdapter) Add(info *backup.PasswordInfo) error {
 		Name:       info.Name,
 		Title:      info.Title,
 		Username:   info.Username,
-		Password:   info.Password,
+		Password:   info.PasswordString(),
 		URL:        info.URL,
 		Notes:      info.Notes,
 		FolderPath: info.FolderPath,
@@ -999,26 +1012,31 @@ func (a *passwordStoreAdapter) Update(info *backup.PasswordInfo) error {
 		Name:       info.Name,
 		Title:      info.Title,
 		Username:   info.Username,
-		Password:   info.Password,
+		Password:   info.PasswordString(),
 		URL:        info.URL,
 		Notes:      info.Notes,
 		FolderPath: info.FolderPath,
 	})
 }
 
-// passwordToInfo converts a stored password to the service-facing form shared
-// by the backup and sync services.
-func passwordToInfo(pw *xkms.StaticPassword) *backup.PasswordInfo {
-	return &backup.PasswordInfo{
+// passwordToInfo converts a stored password to the service-facing form
+// shared by the backup and sync services. The password is adopted into
+// protected memory; the returned error is backup.ErrProtectedMemory
+// (wrapped) when that allocation fails.
+func passwordToInfo(pw *xkms.StaticPassword) (*backup.PasswordInfo, error) {
+	info := &backup.PasswordInfo{
 		ID:         pw.ID,
 		Name:       pw.Name,
 		Title:      pw.Title,
 		Username:   pw.Username,
-		Password:   pw.Password,
 		URL:        pw.URL,
 		Notes:      pw.Notes,
 		FolderPath: pw.FolderPath,
 	}
+	if err := info.SetPassword(pw.Password); err != nil {
+		return nil, err
+	}
+	return info, nil
 }
 
 // Close releases the underlying password store.

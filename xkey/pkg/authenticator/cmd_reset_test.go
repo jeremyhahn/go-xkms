@@ -940,12 +940,13 @@ func createTestStoredCredentialForReset(t *testing.T, id []byte, rpID string, di
 		UserID:          []byte("testuser"),
 		UserName:        "testuser@example.com",
 		UserDisplayName: "Test User",
-		PrivateKey:      nil, // Would be PKCS#8 encoded in real implementation
-		PublicKeyCOSE:   pubKeyCOSE,
-		Algorithm:       COSEAlgES256,
-		SignCount:       0,
-		Discoverable:    discoverable,
-		HMACSecretKey:   nil,
-		CreatedAt:       1234567890,
+		// PrivateKey intentionally left unset: would be PKCS#8 encoded in a
+		// real implementation.
+		PublicKeyCOSE: pubKeyCOSE,
+		Algorithm:     COSEAlgES256,
+		SignCount:     0,
+		Discoverable:  discoverable,
+		HMACSecretKey: nil,
+		CreatedAt:     1234567890,
 	}
 }

@@ -189,32 +189,13 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		data.Metadata.KeyIDs[i] = key.ID
 	}
 
-	// Serialize the backup data with SessionCloser handling
+	// Serialize the backup data. TPM session closers are tagged json:"-".
 	var serialized []byte
 	var err error
 
 	switch opts.Format {
 	case BackupFormatJSON, BackupFormatEncrypted:
-		// Clear SessionCloser from all keys before marshaling (cannot marshal func)
-		var sessionClosers []func() error
-		for i := range data.Keys {
-			if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil {
-				sessionClosers = append(sessionClosers, data.Keys[i].Attributes.TPMAttributes.SessionCloser)
-				data.Keys[i].Attributes.TPMAttributes.SessionCloser = nil
-			}
-		}
-		// Restore SessionCloser after marshaling
-		defer func() {
-			closerIdx := 0
-			for i := range data.Keys {
-				if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil && closerIdx < len(sessionClosers) {
-					data.Keys[i].Attributes.TPMAttributes.SessionCloser = sessionClosers[closerIdx]
-					closerIdx++
-				}
-			}
-		}()
-
-		serialized, err = json.Marshal(data) //nolint:staticcheck // SA1026: SessionCloser is cleared before marshaling
+		serialized, err = json.Marshal(data)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to serialize backup", Err: err}
 		}

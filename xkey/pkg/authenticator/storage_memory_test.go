@@ -736,23 +736,26 @@ func TestMemoryStorage_CopyCredential(t *testing.T) {
 	t.Run("creates deep copy of all fields", func(t *testing.T) {
 		storage := NewMemoryStorage()
 
-		original := &StoredCredential{
+		original := withPrivateKey(&StoredCredential{
 			CredentialID:    []byte{1, 2, 3, 4},
 			RPID:            "example.com",
 			RPName:          "Example",
 			UserID:          []byte{5, 6, 7, 8},
 			UserName:        "user@example.com",
 			UserDisplayName: "Test User",
-			PrivateKey:      []byte{9, 10, 11, 12},
 			PublicKeyCOSE:   []byte{13, 14, 15, 16},
 			Algorithm:       COSEAlgES256,
 			SignCount:       42,
 			Discoverable:    true,
 			HMACSecretKey:   []byte{17, 18, 19, 20},
 			CreatedAt:       time.Now().Unix(),
-		}
+		}, []byte{9, 10, 11, 12})
+		originalPrivateKey := original.PrivateKeyBytes()
 
-		copied := storage.copyCredential(original)
+		copied, err := storage.copyCredential(original)
+		if err != nil {
+			t.Fatalf("copyCredential returned an error: %v", err)
+		}
 
 		// Verify all fields are copied
 		if !bytes.Equal(copied.CredentialID, original.CredentialID) {
@@ -761,7 +764,7 @@ func TestMemoryStorage_CopyCredential(t *testing.T) {
 		if !bytes.Equal(copied.UserID, original.UserID) {
 			t.Error("UserID not copied")
 		}
-		if !bytes.Equal(copied.PrivateKey, original.PrivateKey) {
+		if !bytes.Equal(copied.PrivateKeyBytes(), originalPrivateKey) {
 			t.Error("PrivateKey not copied")
 		}
 		if !bytes.Equal(copied.PublicKeyCOSE, original.PublicKeyCOSE) {
@@ -785,7 +788,10 @@ func TestMemoryStorage_CopyCredential(t *testing.T) {
 
 	t.Run("handles nil credential", func(t *testing.T) {
 		storage := NewMemoryStorage()
-		copied := storage.copyCredential(nil)
+		copied, err := storage.copyCredential(nil)
+		if err != nil {
+			t.Fatalf("copyCredential returned an error: %v", err)
+		}
 		if copied != nil {
 			t.Error("copying nil should return nil")
 		}
@@ -799,11 +805,17 @@ func TestMemoryStorage_CopyCredential(t *testing.T) {
 			RPID:         "example.com",
 		}
 
-		copied := storage.copyCredential(original)
+		copied, err := storage.copyCredential(original)
+		if err != nil {
+			t.Fatalf("copyCredential returned an error: %v", err)
+		}
 		if copied.UserID != nil {
 			t.Error("empty UserID should remain nil")
 		}
-		if copied.PrivateKey != nil {
+		if copied.HasPrivateKey() {
+			t.Error("empty PrivateKey should remain unset")
+		}
+		if copied.PrivateKeyBytes() != nil {
 			t.Error("empty PrivateKey should remain nil")
 		}
 	})
@@ -1503,21 +1515,20 @@ func TestSerializationRoundTrip(t *testing.T) {
 
 func createTestCredential(t *testing.T, id []byte, rpID string, discoverable bool) *StoredCredential {
 	t.Helper()
-	return &StoredCredential{
+	return withPrivateKey(&StoredCredential{
 		CredentialID:    id,
 		RPID:            rpID,
 		RPName:          "Test RP",
 		UserID:          []byte("user-123"),
 		UserName:        "testuser",
 		UserDisplayName: "Test User",
-		PrivateKey:      []byte{1, 2, 3, 4, 5, 6, 7, 8},
 		PublicKeyCOSE:   []byte{9, 10, 11, 12, 13, 14, 15, 16},
 		Algorithm:       COSEAlgES256,
 		SignCount:       0,
 		Discoverable:    discoverable,
 		HMACSecretKey:   make([]byte, 32),
 		CreatedAt:       time.Now().Unix(),
-	}
+	}, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 }
 
 func createTestState(t *testing.T) *AuthenticatorState {

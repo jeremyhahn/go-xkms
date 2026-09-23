@@ -51,21 +51,20 @@ func createAssertionTestCredential(t *testing.T, auth *Authenticator, rpID strin
 	hmacSecretKey, err := GenerateHMACSecretKey()
 	require.NoError(t, err)
 
-	cred := &StoredCredential{
+	cred := withPrivateKey(&StoredCredential{
 		CredentialID:    credID,
 		RPID:            rpID,
 		RPName:          "Test RP",
 		UserID:          []byte("user-123"),
 		UserName:        "testuser@example.com",
 		UserDisplayName: "Test User",
-		PrivateKey:      privateKeyBytes,
 		PublicKeyCOSE:   publicKeyCOSE,
 		Algorithm:       COSEAlgES256,
 		SignCount:       0,
 		Discoverable:    discoverable,
 		HMACSecretKey:   hmacSecretKey,
 		CreatedAt:       time.Now().Unix(),
-	}
+	}, privateKeyBytes)
 
 	err = auth.storage.Store(cred)
 	require.NoError(t, err)

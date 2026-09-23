@@ -1039,7 +1039,7 @@ func TestFileBackupAdapter_VerifyBackup_CorruptedKeys(t *testing.T) {
 	data.Keys[0].ID = "" // Corrupt the key ID
 
 	// Manually serialize and save to bypass validation
-	serialized, err := marshalBackupDataSafe(data)
+	serialized, err := json.Marshal(data)
 	require.NoError(t, err)
 
 	backupID := uuid.New().String()
@@ -1112,17 +1112,16 @@ func TestFileBackupAdapter_ImportBackup_NoMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a backup data without metadata
+	key := &BackupKey{
+		ID:        "test-key",
+		PublicKey: []byte("public"),
+	}
+	require.NoError(t, key.SetPrivateKey([]byte("private")))
 	data := &BackupData{
-		Keys: []*BackupKey{
-			{
-				ID:         "test-key",
-				PrivateKey: []byte("private"),
-				PublicKey:  []byte("public"),
-			},
-		},
+		Keys: []*BackupKey{key},
 	}
 
-	serialized, err := marshalBackupDataSafe(data)
+	serialized, err := json.Marshal(data)
 	require.NoError(t, err)
 
 	// Write to a file
@@ -1717,7 +1716,7 @@ func TestFileBackupAdapter_ImportBackup_EmptyID(t *testing.T) {
 	}
 
 	// Serialize and write to file
-	serialized, err := marshalBackupDataSafe(data)
+	serialized, err := json.Marshal(data)
 	require.NoError(t, err)
 
 	sourcePath := filepath.Join(t.TempDir(), "backup-no-id.json")
@@ -1944,7 +1943,7 @@ func TestFileBackupAdapter_CreateBackup_GzipWriteError(t *testing.T) {
 	for i := range largeData {
 		largeData[i] = byte(i % 256)
 	}
-	data.Keys[0].PrivateKey = largeData
+	require.NoError(t, data.Keys[0].SetPrivateKey(largeData))
 
 	opts := &BackupOptions{
 		Format:   BackupFormatJSON,
@@ -2315,30 +2314,6 @@ func TestFileBackupAdapter_ListBackups_WithOffsetAndLimit(t *testing.T) {
 
 // Helper functions
 
-// marshalBackupDataSafe safely marshals BackupData by temporarily clearing SessionCloser
-func marshalBackupDataSafe(data *BackupData) ([]byte, error) {
-	// Clear SessionCloser from all keys before marshaling (cannot marshal func)
-	var sessionClosers []func() error
-	for i := range data.Keys {
-		if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil {
-			sessionClosers = append(sessionClosers, data.Keys[i].Attributes.TPMAttributes.SessionCloser)
-			data.Keys[i].Attributes.TPMAttributes.SessionCloser = nil
-		}
-	}
-	// Restore SessionCloser after marshaling
-	defer func() {
-		closerIdx := 0
-		for i := range data.Keys {
-			if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil && closerIdx < len(sessionClosers) {
-				data.Keys[i].Attributes.TPMAttributes.SessionCloser = sessionClosers[closerIdx]
-				closerIdx++
-			}
-		}
-	}()
-
-	return json.Marshal(data) //nolint:staticcheck // SA1026: SessionCloser is cleared before marshaling
-}
-
 func createTestBackupData(t *testing.T, keyCount int) *BackupData {
 	t.Helper()
 
@@ -2349,14 +2324,14 @@ func createTestBackupData(t *testing.T, keyCount int) *BackupData {
 		keyID := time.Now().Format("20060102150405") + "-" + string(rune('A'+i))
 
 		keys[i] = &BackupKey{
-			ID:         keyID,
-			PrivateKey: []byte("private-key-data-" + keyID),
-			PublicKey:  []byte("public-key-data-" + keyID),
-			Created:    time.Now(),
-			Modified:   time.Now(),
-			Version:    1,
-			Metadata:   map[string]interface{}{"index": i},
+			ID:        keyID,
+			PublicKey: []byte("public-key-data-" + keyID),
+			Created:   time.Now(),
+			Modified:  time.Now(),
+			Version:   1,
+			Metadata:  map[string]interface{}{"index": i},
 		}
+		require.NoError(t, keys[i].SetPrivateKey([]byte("private-key-data-"+keyID)))
 
 		attrs[i] = &types.KeyAttributes{
 			CN:           keyID,

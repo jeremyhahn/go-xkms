@@ -55,7 +55,10 @@ func (m *MemoryStorage) Store(credential *StoredCredential) error {
 	key := hex.EncodeToString(credential.CredentialID)
 
 	// Make a deep copy to prevent external mutation
-	stored := m.copyCredential(credential)
+	stored, err := m.copyCredential(credential)
+	if err != nil {
+		return err
+	}
 	m.credentials[key] = stored
 
 	return nil
@@ -84,7 +87,7 @@ func (m *MemoryStorage) Load(credentialID []byte) (*StoredCredential, error) {
 	}
 
 	// Return a copy to prevent external mutation
-	return m.copyCredential(cred), nil
+	return m.copyCredential(cred)
 }
 
 // LoadByRPID retrieves all credentials for a relying party.
@@ -106,7 +109,11 @@ func (m *MemoryStorage) LoadByRPID(rpID string) ([]*StoredCredential, error) {
 	var result []*StoredCredential
 	for _, cred := range m.credentials {
 		if cred.RPID == rpID {
-			result = append(result, m.copyCredential(cred))
+			copied, err := m.copyCredential(cred)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, copied)
 		}
 	}
 
@@ -185,7 +192,11 @@ func (m *MemoryStorage) EnumerateDiscoverable() ([]*StoredCredential, error) {
 	var result []*StoredCredential
 	for _, cred := range m.credentials {
 		if cred.Discoverable {
-			result = append(result, m.copyCredential(cred))
+			copied, err := m.copyCredential(cred)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, copied)
 		}
 	}
 
@@ -288,10 +299,12 @@ func (m *MemoryStorage) ListAll() ([][]byte, error) {
 }
 
 // copyCredential creates a deep copy of a StoredCredential.
-// This prevents external mutation of stored data.
-func (m *MemoryStorage) copyCredential(cred *StoredCredential) *StoredCredential {
+// This prevents external mutation of stored data. Returns
+// ErrKeyManagerProtectedMemory (wrapped) if cloning the protected private
+// key into a fresh protected buffer fails.
+func (m *MemoryStorage) copyCredential(cred *StoredCredential) (*StoredCredential, error) {
 	if cred == nil {
-		return nil
+		return nil, nil
 	}
 
 	copied := &StoredCredential{
@@ -322,9 +335,13 @@ func (m *MemoryStorage) copyCredential(cred *StoredCredential) *StoredCredential
 		copy(copied.UserID, cred.UserID)
 	}
 
-	if len(cred.PrivateKey) > 0 {
-		copied.PrivateKey = make([]byte, len(cred.PrivateKey))
-		copy(copied.PrivateKey, cred.PrivateKey)
+	if cred.HasPrivateKey() {
+		// PrivateKeyBytes returns a fresh copy; SetPrivateKey adopts (and
+		// wipes) that same copy when cloning it into the new credential, so
+		// no separate wipe is needed here.
+		if err := copied.SetPrivateKey(cred.PrivateKeyBytes()); err != nil {
+			return nil, err
+		}
 	}
 
 	if len(cred.PublicKeyCOSE) > 0 {
@@ -337,7 +354,7 @@ func (m *MemoryStorage) copyCredential(cred *StoredCredential) *StoredCredential
 		copy(copied.HMACSecretKey, cred.HMACSecretKey)
 	}
 
-	return copied
+	return copied, nil
 }
 
 // copyState creates a deep copy of an AuthenticatorState.

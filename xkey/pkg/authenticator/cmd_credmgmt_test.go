@@ -61,7 +61,7 @@ func createCredMgmtTestCredential(t *testing.T, rpID, rpName, userID, userName, 
 	credID, err := GenerateCredentialID()
 	require.NoError(t, err)
 
-	return &StoredCredential{
+	return withPrivateKey(&StoredCredential{
 		CredentialID:    credID,
 		RPID:            rpID,
 		RPName:          rpName,
@@ -69,12 +69,11 @@ func createCredMgmtTestCredential(t *testing.T, rpID, rpName, userID, userName, 
 		UserName:        userName,
 		UserDisplayName: displayName,
 		Algorithm:       COSEAlgES256,
-		PrivateKey:      credMgmtMustMarshalPrivateKey(privateKey),
 		PublicKeyCOSE:   publicKeyCOSE,
 		SignCount:       0,
 		Discoverable:    discoverable,
 		CreatedAt:       time.Now().Unix(),
-	}
+	}, credMgmtMustMarshalPrivateKey(privateKey))
 }
 
 // setupPINTokenForCredMgmt sets up a PIN token with credential management permission.

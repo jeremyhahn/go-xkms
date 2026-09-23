@@ -271,35 +271,57 @@ func testCertFingerprint(cert *x509.Certificate) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// withOATHSecret stores secret on cred and returns cred, preserving the
+// shape of the composite-literal tests written when Secret was an exported
+// string field. It panics on a protected-memory failure, which in a test
+// is a legitimate abort.
+func withOATHSecret(cred *backup.OATHCredentialInfo, secret string) *backup.OATHCredentialInfo {
+	if err := cred.SetSecret(secret); err != nil {
+		panic(err)
+	}
+	return cred
+}
+
+// withPassword stores password on info and returns info, preserving the
+// shape of the composite-literal tests written when Password was an
+// exported string field. It panics on a protected-memory failure, which in
+// a test is a legitimate abort.
+func withPassword(info *backup.PasswordInfo, password string) *backup.PasswordInfo {
+	if err := info.SetPassword(password); err != nil {
+		panic(err)
+	}
+	return info
+}
+
 func testOATHCreds() []*backup.OATHCredentialInfo {
 	return []*backup.OATHCredentialInfo{
-		{
+		withOATHSecret(&backup.OATHCredentialInfo{
 			ID: "oath-1", Name: "GitHub", Issuer: "GitHub",
-			AccountName: "user@example.com", Secret: "JBSWY3DPEHPK3PXP",
-			Type: "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
-		},
-		{
+			AccountName: "user@example.com",
+			Type:        "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
+		}, "JBSWY3DPEHPK3PXP"),
+		withOATHSecret(&backup.OATHCredentialInfo{
 			ID: "oath-2", Name: "AWS", Issuer: "Amazon",
-			AccountName: "admin@corp.com", Secret: "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ",
-			Type: "totp", Algorithm: "SHA256", Digits: 8, Period: 30,
-		},
+			AccountName: "admin@corp.com",
+			Type:        "totp", Algorithm: "SHA256", Digits: 8, Period: 30,
+		}, "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ"),
 	}
 }
 
 func testPasswords() []*backup.PasswordInfo {
 	return []*backup.PasswordInfo{
-		{
+		withPassword(&backup.PasswordInfo{
 			ID: "pw-1", Name: "Server SSH", Title: "Production Server",
-			Username: "admin", Password: "s3cret!",
-			URL: "ssh://prod.example.com", Notes: "Primary server",
+			Username: "admin",
+			URL:      "ssh://prod.example.com", Notes: "Primary server",
 			FolderPath: "/servers",
-		},
-		{
+		}, "s3cret!"),
+		withPassword(&backup.PasswordInfo{
 			ID: "pw-2", Name: "Database", Title: "Postgres Master",
-			Username: "dbadmin", Password: "db-p@ss",
+			Username:   "dbadmin",
 			URL:        "postgres://db.local:5432",
 			FolderPath: "/databases",
-		},
+		}, "db-p@ss"),
 	}
 }
 
@@ -814,9 +836,9 @@ func TestApplyOATHDelta_NewCredsAdded(t *testing.T) {
 
 func TestApplyOATHDelta_ExistingUpdatedWhenRemoteNewer(t *testing.T) {
 	oa := newMockOATHAccessor()
-	oa.creds["oath-1"] = &backup.OATHCredentialInfo{
-		ID: "oath-1", Name: "GitHub", Secret: "OLD_SECRET",
-	}
+	oa.creds["oath-1"] = withOATHSecret(&backup.OATHCredentialInfo{
+		ID: "oath-1", Name: "GitHub",
+	}, "OLD_SECRET")
 
 	svc, err := NewService(testConfig(), WithOATH(oa))
 	require.NoError(t, err)
@@ -842,9 +864,9 @@ func TestApplyOATHDelta_ExistingUpdatedWhenRemoteNewer(t *testing.T) {
 
 func TestApplyOATHDelta_ExistingSkippedWhenZeroTimestamp(t *testing.T) {
 	oa := newMockOATHAccessor()
-	oa.creds["oath-1"] = &backup.OATHCredentialInfo{
-		ID: "oath-1", Name: "GitHub", Secret: "LOCAL_SECRET",
-	}
+	oa.creds["oath-1"] = withOATHSecret(&backup.OATHCredentialInfo{
+		ID: "oath-1", Name: "GitHub",
+	}, "LOCAL_SECRET")
 
 	svc, err := NewService(testConfig(), WithOATH(oa))
 	require.NoError(t, err)
@@ -970,9 +992,9 @@ func TestApplyPasswordDelta_NewPasswordsAdded(t *testing.T) {
 
 func TestApplyPasswordDelta_ExistingUpdatedWhenRemoteNewer(t *testing.T) {
 	pw := newMockPasswordAccessor()
-	pw.passwords["pw-1"] = &backup.PasswordInfo{
-		ID: "pw-1", Name: "Server SSH", Password: "old-pass",
-	}
+	pw.passwords["pw-1"] = withPassword(&backup.PasswordInfo{
+		ID: "pw-1", Name: "Server SSH",
+	}, "old-pass")
 
 	svc, err := NewService(testConfig(), WithPasswords(pw))
 	require.NoError(t, err)
@@ -996,9 +1018,9 @@ func TestApplyPasswordDelta_ExistingUpdatedWhenRemoteNewer(t *testing.T) {
 
 func TestApplyPasswordDelta_ExistingSkippedWhenZeroTimestamp(t *testing.T) {
 	pw := newMockPasswordAccessor()
-	pw.passwords["pw-1"] = &backup.PasswordInfo{
-		ID: "pw-1", Name: "Server SSH", Password: "local-pass",
-	}
+	pw.passwords["pw-1"] = withPassword(&backup.PasswordInfo{
+		ID: "pw-1", Name: "Server SSH",
+	}, "local-pass")
 
 	svc, err := NewService(testConfig(), WithPasswords(pw))
 	require.NoError(t, err)
@@ -1629,12 +1651,13 @@ func TestOATHSyncToInfo(t *testing.T) {
 		Counter: 42,
 	}
 
-	info := oathSyncToInfo(cs)
+	info, err := oathSyncToInfo(cs)
+	require.NoError(t, err)
 	assert.Equal(t, cs.ID, info.ID)
 	assert.Equal(t, cs.Name, info.Name)
 	assert.Equal(t, cs.Issuer, info.Issuer)
 	assert.Equal(t, cs.AccountName, info.AccountName)
-	assert.Equal(t, cs.Secret, info.Secret)
+	assert.Equal(t, cs.Secret, info.SecretString())
 	assert.Equal(t, cs.Type, info.Type)
 	assert.Equal(t, cs.Algorithm, info.Algorithm)
 	assert.Equal(t, cs.Digits, info.Digits)
@@ -1650,12 +1673,13 @@ func TestPasswordSyncToInfo(t *testing.T) {
 		FolderPath: "/servers",
 	}
 
-	info := passwordSyncToInfo(ps)
+	info, err := passwordSyncToInfo(ps)
+	require.NoError(t, err)
 	assert.Equal(t, ps.ID, info.ID)
 	assert.Equal(t, ps.Name, info.Name)
 	assert.Equal(t, ps.Title, info.Title)
 	assert.Equal(t, ps.Username, info.Username)
-	assert.Equal(t, ps.Password, info.Password)
+	assert.Equal(t, ps.Password, info.PasswordString())
 	assert.Equal(t, ps.URL, info.URL)
 	assert.Equal(t, ps.Notes, info.Notes)
 	assert.Equal(t, ps.FolderPath, info.FolderPath)

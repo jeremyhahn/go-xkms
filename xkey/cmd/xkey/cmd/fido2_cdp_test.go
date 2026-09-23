@@ -80,10 +80,10 @@ func TestPersistCapturedCredential_RoundTrip(t *testing.T) {
 		CredentialID:         base64.StdEncoding.EncodeToString(credIDRaw),
 		IsResidentCredential: true,
 		RpID:                 "example.com",
-		PrivateKey:           base64.StdEncoding.EncodeToString(pkcs8),
 		UserHandle:           base64.StdEncoding.EncodeToString(userRaw),
 		SignCount:            0,
 	}
+	require.NoError(t, captured.SetPrivateKey(base64.StdEncoding.EncodeToString(pkcs8)))
 
 	require.NoError(t, d.persistCapturedCredential(captured))
 
@@ -91,7 +91,7 @@ func TestPersistCapturedCredential_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "example.com", loaded.RPID)
 	assert.Equal(t, userRaw, loaded.UserID)
-	assert.Equal(t, pkcs8, loaded.PrivateKey, "PKCS#8 key must be persisted verbatim")
+	assert.Equal(t, pkcs8, loaded.PrivateKeyBytes(), "PKCS#8 key must be persisted verbatim")
 	assert.True(t, loaded.Discoverable)
 	assert.Equal(t, keybackend.COSEAlgES256, loaded.Algorithm)
 	assert.NotEmpty(t, loaded.PublicKeyCOSE, "COSE public key must be derived")
@@ -101,9 +101,9 @@ func TestPersistCapturedCredential_RoundTrip(t *testing.T) {
 // is absent.
 func TestPersistCapturedCredential_NoStorage(t *testing.T) {
 	d := &fido2Device{cfg: &FIDO2Config{CDPEnabled: true}, logger: slog.Default()}
-	err := d.persistCapturedCredential(cdp.StoredCredential{
-		CredentialID: "x", PrivateKey: "y",
-	})
+	cred := cdp.StoredCredential{CredentialID: "x"}
+	require.NoError(t, cred.SetPrivateKey("y"))
+	err := d.persistCapturedCredential(cred)
 	require.ErrorIs(t, err, ErrFIDO2CDPCaptureNoStorage)
 }
 
@@ -114,10 +114,9 @@ func TestPersistCapturedCredential_BadBase64(t *testing.T) {
 		logger:  slog.Default(),
 		storage: authenticator.NewMemoryStorage(),
 	}
-	err := d.persistCapturedCredential(cdp.StoredCredential{
-		CredentialID: "!!!not-base64!!!",
-		PrivateKey:   base64.StdEncoding.EncodeToString(newTestPKCS8EC(t)),
-	})
+	cred := cdp.StoredCredential{CredentialID: "!!!not-base64!!!"}
+	require.NoError(t, cred.SetPrivateKey(base64.StdEncoding.EncodeToString(newTestPKCS8EC(t))))
+	err := d.persistCapturedCredential(cred)
 	require.ErrorIs(t, err, ErrFIDO2CDPCaptureDecodeFailed)
 }
 
@@ -129,10 +128,9 @@ func TestPersistCapturedCredential_BadKey(t *testing.T) {
 		logger:  slog.Default(),
 		storage: authenticator.NewMemoryStorage(),
 	}
-	err := d.persistCapturedCredential(cdp.StoredCredential{
-		CredentialID: base64.StdEncoding.EncodeToString([]byte("id")),
-		PrivateKey:   base64.StdEncoding.EncodeToString([]byte("not-a-key")),
-	})
+	cred := cdp.StoredCredential{CredentialID: base64.StdEncoding.EncodeToString([]byte("id"))}
+	require.NoError(t, cred.SetPrivateKey(base64.StdEncoding.EncodeToString([]byte("not-a-key"))))
+	err := d.persistCapturedCredential(cred)
 	require.ErrorIs(t, err, ErrFIDO2CDPCaptureDecodeFailed)
 }
 
@@ -149,8 +147,8 @@ func TestPersistCapturedCredential_ExistingIsNoop(t *testing.T) {
 	captured := cdp.StoredCredential{
 		CredentialID: base64.StdEncoding.EncodeToString([]byte("dup")),
 		RpID:         "example.com",
-		PrivateKey:   base64.StdEncoding.EncodeToString(newTestPKCS8EC(t)),
 	}
+	require.NoError(t, captured.SetPrivateKey(base64.StdEncoding.EncodeToString(newTestPKCS8EC(t))))
 	require.NoError(t, d.persistCapturedCredential(captured))
 	require.NoError(t, d.persistCapturedCredential(captured), "duplicate capture must be a no-op")
 }
@@ -180,13 +178,14 @@ func TestSyncCredentialsToCDP_UsesStoredKey(t *testing.T) {
 
 	pkcs8 := newTestPKCS8EC(t)
 	credID := []byte("captured-cred")
-	require.NoError(t, storage.Store(&authenticator.StoredCredential{
+	storedCred := &authenticator.StoredCredential{
 		CredentialID: credID,
 		RPID:         "example.com",
-		PrivateKey:   pkcs8,
 		Algorithm:    keybackend.COSEAlgES256,
 		Discoverable: true,
-	}))
+	}
+	require.NoError(t, storedCred.SetPrivateKey(append([]byte(nil), pkcs8...)))
+	require.NoError(t, storage.Store(storedCred))
 
 	rec := &recordingBridge{}
 	d := &fido2Device{
@@ -201,7 +200,7 @@ func TestSyncCredentialsToCDP_UsesStoredKey(t *testing.T) {
 
 	require.Len(t, rec.creds, 1)
 	assert.Equal(t, base64.StdEncoding.EncodeToString(credID), rec.creds[0].CredentialID)
-	assert.Equal(t, base64.StdEncoding.EncodeToString(pkcs8), rec.creds[0].PrivateKey)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(pkcs8), rec.creds[0].PrivateKeyString())
 	assert.Equal(t, "example.com", rec.creds[0].RpID)
 }
 
@@ -234,10 +233,10 @@ func TestPersistCapturedCredential_StandardBase64WithSlash(t *testing.T) {
 		CredentialID:         realCredID,
 		IsResidentCredential: true,
 		RpID:                 "localhost",
-		PrivateKey:           base64.StdEncoding.EncodeToString(pkcs8),
 		UserHandle:           userEnc,
 		SignCount:            0,
 	}
+	require.NoError(t, captured.SetPrivateKey(base64.StdEncoding.EncodeToString(pkcs8)))
 
 	require.NoError(t, d.persistCapturedCredential(captured),
 		"standard base64 credentialId containing '/' must decode and persist")
@@ -247,7 +246,7 @@ func TestPersistCapturedCredential_StandardBase64WithSlash(t *testing.T) {
 	assert.Equal(t, credIDRaw, loaded.CredentialID)
 	assert.Equal(t, "localhost", loaded.RPID)
 	assert.Equal(t, userRaw, loaded.UserID)
-	assert.Equal(t, pkcs8, loaded.PrivateKey, "PKCS#8 key must be persisted verbatim")
+	assert.Equal(t, pkcs8, loaded.PrivateKeyBytes(), "PKCS#8 key must be persisted verbatim")
 	assert.Equal(t, keybackend.COSEAlgES256, loaded.Algorithm)
 }
 
@@ -283,12 +282,13 @@ func TestCDPCredential_StdBase64RoundTrip(t *testing.T) {
 	pkEnc := base64.StdEncoding.EncodeToString(pkcs8)
 
 	// Inbound: capture exactly what CDP delivers (standard base64).
-	require.NoError(t, d.persistCapturedCredential(cdp.StoredCredential{
+	inbound := cdp.StoredCredential{
 		CredentialID:         realCredID,
 		IsResidentCredential: true,
 		RpID:                 "localhost",
-		PrivateKey:           pkEnc,
-	}))
+	}
+	require.NoError(t, inbound.SetPrivateKey(pkEnc))
+	require.NoError(t, d.persistCapturedCredential(inbound))
 
 	// Outbound: re-sync to a (recording) Chrome virtual authenticator.
 	rec := &recordingBridge{}
@@ -299,7 +299,7 @@ func TestCDPCredential_StdBase64RoundTrip(t *testing.T) {
 	// values Chrome originally sent, so addCredential restores the credential.
 	assert.Equal(t, realCredID, rec.creds[0].CredentialID,
 		"sync-out credentialId must match the std-base64 CDP sent")
-	assert.Equal(t, pkEnc, rec.creds[0].PrivateKey,
+	assert.Equal(t, pkEnc, rec.creds[0].PrivateKeyString(),
 		"sync-out privateKey must be std-base64 of the verbatim PKCS#8")
 
 	// And decoding the re-emitted value yields the original raw bytes.

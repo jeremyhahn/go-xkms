@@ -1143,8 +1143,8 @@ func TestCoverageBoostPhase2_StoredToFIDO2Credential_NoBackendID_WithPrivateKey(
 		RPID:         "example.com",
 		Algorithm:    -7,
 		BackendID:    "",
-		PrivateKey:   []byte{0x01, 0x02, 0x03},
 	}
+	require.NoError(t, stored.SetPrivateKey([]byte{0x01, 0x02, 0x03}))
 	cred := storedToFIDO2Credential(stored)
 	assert.Equal(t, "software", cred.BackendType)
 }
@@ -1155,7 +1155,6 @@ func TestCoverageBoostPhase2_StoredToFIDO2Credential_NoBackendID_NilPrivateKey(t
 		RPID:         "example.com",
 		Algorithm:    -7,
 		BackendID:    "",
-		PrivateKey:   nil,
 	}
 	cred := storedToFIDO2Credential(stored)
 	assert.Equal(t, "hardware", cred.BackendType)

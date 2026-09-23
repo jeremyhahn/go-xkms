@@ -1090,21 +1090,20 @@ func TestBackendStorage_JSONSerialization(t *testing.T) {
 		s := createBackendStorage(t)
 		defer func() { _ = s.Close() }()
 
-		original := &StoredCredential{
+		original := withPrivateKey(&StoredCredential{
 			CredentialID:    []byte{1, 2, 3, 4, 5, 6, 7, 8},
 			RPID:            "example.com",
 			RPName:          "Example Corp",
 			UserID:          []byte{9, 10, 11, 12},
 			UserName:        "user@example.com",
 			UserDisplayName: "Test User",
-			PrivateKey:      []byte{13, 14, 15, 16},
 			PublicKeyCOSE:   []byte{17, 18, 19, 20},
 			Algorithm:       COSEAlgES256,
 			SignCount:       999,
 			Discoverable:    true,
 			HMACSecretKey:   make([]byte, 32),
 			CreatedAt:       time.Now().Unix(),
-		}
+		}, []byte{13, 14, 15, 16})
 
 		if err := s.Store(original); err != nil {
 			t.Fatalf("Store failed: %v", err)
@@ -1134,7 +1133,7 @@ func TestBackendStorage_JSONSerialization(t *testing.T) {
 		if loaded.UserDisplayName != original.UserDisplayName {
 			t.Error("UserDisplayName mismatch")
 		}
-		if !bytes.Equal(loaded.PrivateKey, original.PrivateKey) {
+		if !bytes.Equal(loaded.PrivateKeyBytes(), original.PrivateKeyBytes()) {
 			t.Error("PrivateKey mismatch")
 		}
 		if !bytes.Equal(loaded.PublicKeyCOSE, original.PublicKeyCOSE) {

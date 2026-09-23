@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync/atomic"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // StoredCredential holds the credential data needed to register a FIDO2
@@ -40,14 +42,125 @@ type StoredCredential struct {
 	// RpID is the relying party identifier (e.g., "example.com").
 	RpID string
 
-	// PrivateKey is the standard-base64-encoded PKCS#8 private key.
-	PrivateKey string
+	// privateKey holds the standard-base64-encoded PKCS#8 private key in
+	// mlocked, guard-paged protected memory (go-xkms#587). It is
+	// unexported so no consumer can hold the key material as an
+	// unwipeable Go string; use SetPrivateKey to store it and
+	// PrivateKeyString to export a copy at a serialization boundary. nil
+	// means no private key is set. The persisted JSON form keeps the
+	// historical "PrivateKey" key via MarshalJSON/UnmarshalJSON.
+	privateKey *secure.Buffer
 
 	// UserHandle is the standard-base64-encoded user handle (may be empty).
 	UserHandle string
 
 	// SignCount is the current signature counter value.
 	SignCount int
+}
+
+// SetPrivateKey stores the standard-base64-encoded PKCS#8 private key in
+// protected memory, replacing (and destroying) any previous value. The
+// value is stored verbatim — exactly what field assignment used to do. An
+// empty key clears the stored value.
+//
+// The input string itself cannot be wiped; callers holding one already sit
+// at a serialization boundary (the CDP WebAuthn wire JSON) this package
+// cannot reach.
+//
+// Returns a wrapped ErrProtectedMemory if the protected allocation fails.
+func (c *StoredCredential) SetPrivateKey(key string) error {
+	if key == "" {
+		c.privateKey.Destroy()
+		c.privateKey = nil
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes([]byte(key))
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	c.privateKey.Destroy()
+	c.privateKey = buf
+	return nil
+}
+
+// HasPrivateKey reports whether the credential holds private key material.
+func (c *StoredCredential) HasPrivateKey() bool {
+	return c != nil && c.privateKey != nil
+}
+
+// PrivateKeyString returns a copy of the standard-base64-encoded PKCS#8
+// private key as a string, or "" when no private key is set.
+//
+// A Go string cannot be wiped, so calling this re-mints exactly the
+// exposure the protected field exists to remove — it is for serialization
+// boundaries only (the CDP WebAuthn wire JSON, credential capture/sync),
+// where the surrounding format is a string anyway.
+func (c *StoredCredential) PrivateKeyString() string {
+	if c == nil || c.privateKey == nil {
+		return ""
+	}
+	var out string
+	if err := c.privateKey.WithBytes(func(b []byte) error {
+		out = string(b)
+		return nil
+	}); err != nil {
+		return ""
+	}
+	return out
+}
+
+// storedCredentialJSON is the persisted JSON form of StoredCredential. It
+// exists so the protected in-memory private key round-trips through the
+// historical wire format unchanged: the "PrivateKey" key carries the
+// base64 string exactly as it did when PrivateKey was an exported string
+// field.
+type storedCredentialJSON struct {
+	CredentialID         string `json:"CredentialID"`
+	IsResidentCredential bool   `json:"IsResidentCredential"`
+	RpID                 string `json:"RpID"`
+	PrivateKey           string `json:"PrivateKey"`
+	UserHandle           string `json:"UserHandle"`
+	SignCount            int    `json:"SignCount"`
+}
+
+// MarshalJSON implements json.Marshaler, exporting the protected private
+// key into the historical "PrivateKey" JSON key. Serialization necessarily
+// materializes the key on the heap; that residue belongs to the
+// persistence boundary (the same string is about to be sent over the CDP
+// wire), not to this type.
+//
+// The receiver is a value, not a pointer: StoredCredential's public API
+// (CredentialSink, SyncCredentials) passes it by value throughout this
+// package, and a pointer-receiver Marshaler is silently skipped by
+// encoding/json for a non-addressable value held in an interface — it
+// would fall back to the default struct encoding and drop the unexported
+// privateKey field with no error. A value receiver is in the method set of
+// both StoredCredential and *StoredCredential, so json.Marshal reaches it
+// either way.
+func (c StoredCredential) MarshalJSON() ([]byte, error) {
+	return json.Marshal(storedCredentialJSON{
+		CredentialID:         c.CredentialID,
+		IsResidentCredential: c.IsResidentCredential,
+		RpID:                 c.RpID,
+		PrivateKey:           c.PrivateKeyString(),
+		UserHandle:           c.UserHandle,
+		SignCount:            c.SignCount,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler, adopting the "PrivateKey"
+// JSON key into protected memory.
+func (c *StoredCredential) UnmarshalJSON(data []byte) error {
+	var aux storedCredentialJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.CredentialID = aux.CredentialID
+	c.IsResidentCredential = aux.IsResidentCredential
+	c.RpID = aux.RpID
+	c.UserHandle = aux.UserHandle
+	c.SignCount = aux.SignCount
+	return c.SetPrivateKey(aux.PrivateKey)
 }
 
 // CredentialSink persists a credential captured from the Chrome virtual
@@ -133,9 +246,15 @@ func (b *Bridge) persistCaptured(cred Credential) {
 		CredentialID:         cred.CredentialID,
 		IsResidentCredential: cred.IsResidentCredential,
 		RpID:                 cred.RpID,
-		PrivateKey:           cred.PrivateKey,
 		UserHandle:           cred.UserHandle,
 		SignCount:            cred.SignCount,
+	}
+	if err := sc.SetPrivateKey(cred.PrivateKey); err != nil {
+		b.logger.Warn("CDP credential capture protect failed",
+			slog.String("credentialId", cred.CredentialID),
+			slog.String("rpId", cred.RpID),
+			slog.String("error", err.Error()))
+		return
 	}
 
 	if err := b.sink(sc); err != nil {
@@ -214,7 +333,7 @@ func (b *Bridge) SyncCredentials(ctx context.Context, credentials []StoredCreden
 			CredentialID:         credentials[i].CredentialID,
 			IsResidentCredential: credentials[i].IsResidentCredential,
 			RpID:                 credentials[i].RpID,
-			PrivateKey:           credentials[i].PrivateKey,
+			PrivateKey:           credentials[i].PrivateKeyString(),
 			UserHandle:           credentials[i].UserHandle,
 			SignCount:            credentials[i].SignCount,
 		}

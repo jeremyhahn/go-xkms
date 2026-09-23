@@ -373,11 +373,11 @@ func TestP9_FIDO2_StoredToFIDO2Credential_KnownCredProtect(t *testing.T) {
 		RPID:         "example.com",
 		RPName:       "Example",
 		UserName:     "bob",
-		Algorithm:    -7,           // ES256
-		CredProtect:  3,            // UV Required
-		PrivateKey:   []byte{0x01}, // Non-nil = software backend
+		Algorithm:    -7, // ES256
+		CredProtect:  3,  // UV Required
 		CreatedAt:    time.Now().Unix(),
 	}
+	require.NoError(t, stored.SetPrivateKey([]byte{0x01})) // Non-nil = software backend
 
 	cred := storedToFIDO2Credential(stored)
 	assert.Equal(t, 3, cred.CredProtect)
@@ -397,9 +397,9 @@ func TestP9_FIDO2_StoredToFIDO2Credential_HardwareHeuristic(t *testing.T) {
 		UserName:     "carol",
 		Algorithm:    -7,
 		CredProtect:  255, // Unknown - covers line 634-636 too
-		PrivateKey:   nil, // No exportable key = hardware
-		BackendID:    "",  // Empty backend ID triggers heuristic
-		CreatedAt:    time.Now().Unix(),
+		// PrivateKey intentionally unset: no exportable key = hardware
+		BackendID: "", // Empty backend ID triggers heuristic
+		CreatedAt: time.Now().Unix(),
 	}
 
 	cred := storedToFIDO2Credential(stored)

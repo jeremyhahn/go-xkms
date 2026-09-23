@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -1083,8 +1084,10 @@ func (a *Authenticator) buildSignedAssertion(
 			return nil, mapKeyBackendError(err)
 		}
 	} else {
-		debugLog("parsing private key, length=%d bytes", len(credential.PrivateKey))
-		privateKey, parseErr := parseAssertionPrivateKey(credential.PrivateKey)
+		privateKeyBytes := credential.PrivateKeyBytes()
+		debugLog("parsing private key, length=%d bytes", len(privateKeyBytes))
+		privateKey, parseErr := parseAssertionPrivateKey(privateKeyBytes)
+		secure.Wipe(privateKeyBytes)
 		if parseErr != nil {
 			debugLog("parseAssertionPrivateKey failed: %v", parseErr)
 			return nil, ErrCryptoError

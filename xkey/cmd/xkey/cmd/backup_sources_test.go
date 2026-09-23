@@ -471,25 +471,26 @@ func TestOATHStoreAdapter_ListAndAdd(t *testing.T) {
 
 	adapter := &oathStoreAdapter{store: store, path: path}
 
-	require.NoError(t, adapter.Add(&backup.OATHCredentialInfo{
+	restoredCred := &backup.OATHCredentialInfo{
 		ID:          "restored-id",
 		Name:        "Restored",
 		Issuer:      "Example",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        oath.TypeTOTP,
 		Algorithm:   oath.AlgorithmSHA1,
 		Digits:      6,
 		Period:      30,
 		Counter:     7,
-	}))
+	}
+	require.NoError(t, restoredCred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, adapter.Add(restoredCred))
 
 	creds, err := adapter.List()
 	require.NoError(t, err)
 	require.Len(t, creds, 1)
 	assert.Equal(t, "restored-id", creds[0].ID)
 	assert.Equal(t, "Restored", creds[0].Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", creds[0].Secret)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", creds[0].SecretString())
 	assert.Equal(t, int64(7), creds[0].Counter)
 }
 
@@ -515,20 +516,21 @@ func TestPasswordStoreAdapter_ListAndAdd(t *testing.T) {
 
 	adapter := &passwordStoreAdapter{store: store, path: path}
 
-	require.NoError(t, adapter.Add(&backup.PasswordInfo{
+	restoredPW := &backup.PasswordInfo{
 		Name:     "Restored",
 		Title:    "Restored Entry",
 		Username: "operator",
-		Password: "s3cret",
 		URL:      "https://example.com",
 		Notes:    "note",
-	}))
+	}
+	require.NoError(t, restoredPW.SetPassword("s3cret"))
+	require.NoError(t, adapter.Add(restoredPW))
 
 	entries, err := adapter.List()
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "Restored", entries[0].Name)
-	assert.Equal(t, "s3cret", entries[0].Password)
+	assert.Equal(t, "s3cret", entries[0].PasswordString())
 	assert.NotEmpty(t, entries[0].ID, "the store must derive an entry ID")
 }
 
@@ -540,7 +542,7 @@ func TestPasswordStoreAdapter_AddInvalidEntry(t *testing.T) {
 
 	adapter := &passwordStoreAdapter{store: store, path: path}
 
-	err = adapter.Add(&backup.PasswordInfo{Name: "", Password: ""})
+	err = adapter.Add(&backup.PasswordInfo{Name: ""})
 	assert.Error(t, err, "an entry with no name and no password must be rejected")
 }
 

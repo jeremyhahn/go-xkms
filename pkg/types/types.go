@@ -765,8 +765,10 @@ type TPMAttributes struct {
 	// Signature contains the signature from attestation
 	Signature []byte
 
-	// SessionCloser provides a function to close TPM sessions
-	SessionCloser func() error
+	// SessionCloser provides a function to close TPM sessions. It is a
+	// process-local closure, never serialized: encoding/json cannot encode a
+	// func, so without the tag marshaling any TPM-backed key's attributes fails.
+	SessionCloser func() error `json:"-"`
 }
 
 // Password is an interface for accessing key authentication credentials.

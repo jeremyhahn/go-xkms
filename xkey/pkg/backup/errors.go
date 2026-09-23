@@ -55,6 +55,12 @@ var (
 	// ErrBackupNotFound is returned when the requested backup does not
 	// exist.
 	ErrBackupNotFound = errors.New("backup: backup not found")
+
+	// ErrProtectedMemory reports that an OATHCredentialInfo secret or a
+	// PasswordInfo password could not be placed in mlocked protected
+	// memory. The value is never kept on the ordinary heap as a fallback
+	// (go-xkms#587).
+	ErrProtectedMemory = errors.New("backup: protected memory allocation failed")
 )
 
 // DetailError appends detail text directly after a wrapped error while

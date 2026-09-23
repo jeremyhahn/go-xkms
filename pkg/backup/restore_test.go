@@ -114,7 +114,7 @@ func TestFileBackupAdapter_RestoreBackup_WritesKeysToTarget(t *testing.T) {
 	for id, source := range sourceKeys {
 		restored, ok := store.key(id)
 		require.True(t, ok, "key %s was reported restored but is not in the target", id)
-		assert.Equal(t, source.PrivateKey, restored.PrivateKey)
+		assert.Equal(t, source.PrivateKeyBytes(), restored.PrivateKeyBytes())
 		assert.Equal(t, source.PublicKey, restored.PublicKey)
 		require.NotNil(t, restored.Attributes)
 		assert.Equal(t, source.Attributes.CN, restored.Attributes.CN)
@@ -131,7 +131,7 @@ func TestFileBackupAdapter_RestoreBackup_EncryptedRoundTripLandsInTarget(t *test
 
 	data := createTestBackupData(t, 2)
 	keyID := data.Keys[0].ID
-	privateKey := data.Keys[0].PrivateKey
+	privateKey := data.Keys[0].PrivateKeyBytes()
 
 	metadata, err := adapter.CreateBackup(ctx, data, &BackupOptions{
 		Format:        BackupFormatEncrypted,
@@ -146,7 +146,7 @@ func TestFileBackupAdapter_RestoreBackup_EncryptedRoundTripLandsInTarget(t *test
 
 	restored, ok := store.key(keyID)
 	require.True(t, ok)
-	assert.Equal(t, privateKey, restored.PrivateKey)
+	assert.Equal(t, privateKey, restored.PrivateKeyBytes())
 }
 
 func TestFileBackupAdapter_RestoreBackup_FilteredRestoreWritesOnlySelected(t *testing.T) {
@@ -201,7 +201,9 @@ func TestFileBackupAdapter_RestoreBackup_ExistingKeyRefusedWithoutOverwrite(t *t
 	require.NoError(t, err)
 
 	// Seed the destination with one of the backed-up keys.
-	require.NoError(t, store.RestoreKey(ctx, &BackupKey{ID: conflicting.ID, PrivateKey: []byte("existing")}))
+	seed := &BackupKey{ID: conflicting.ID}
+	require.NoError(t, seed.SetPrivateKey([]byte("existing")))
+	require.NoError(t, store.RestoreKey(ctx, seed))
 
 	count, err := adapter.RestoreBackup(ctx, metadata.ID, &RestoreOptions{})
 	require.Error(t, err)
@@ -211,7 +213,7 @@ func TestFileBackupAdapter_RestoreBackup_ExistingKeyRefusedWithoutOverwrite(t *t
 	assert.Equal(t, 1, store.count(), "a refused restore must leave the destination untouched")
 	existing, ok := store.key(conflicting.ID)
 	require.True(t, ok)
-	assert.Equal(t, []byte("existing"), existing.PrivateKey, "the existing key must not be overwritten")
+	assert.Equal(t, []byte("existing"), existing.PrivateKeyBytes(), "the existing key must not be overwritten")
 }
 
 func TestFileBackupAdapter_RestoreBackup_OverwriteReplacesExisting(t *testing.T) {
@@ -224,7 +226,9 @@ func TestFileBackupAdapter_RestoreBackup_OverwriteReplacesExisting(t *testing.T)
 	metadata, err := adapter.CreateBackup(ctx, data, &BackupOptions{Format: BackupFormatJSON})
 	require.NoError(t, err)
 
-	require.NoError(t, store.RestoreKey(ctx, &BackupKey{ID: conflicting.ID, PrivateKey: []byte("stale")}))
+	stale := &BackupKey{ID: conflicting.ID}
+	require.NoError(t, stale.SetPrivateKey([]byte("stale")))
+	require.NoError(t, store.RestoreKey(ctx, stale))
 
 	count, err := adapter.RestoreBackup(ctx, metadata.ID, &RestoreOptions{Overwrite: true})
 	require.NoError(t, err)
@@ -232,7 +236,7 @@ func TestFileBackupAdapter_RestoreBackup_OverwriteReplacesExisting(t *testing.T)
 
 	restored, ok := store.key(conflicting.ID)
 	require.True(t, ok)
-	assert.Equal(t, conflicting.PrivateKey, restored.PrivateKey)
+	assert.Equal(t, conflicting.PrivateKeyBytes(), restored.PrivateKeyBytes())
 }
 
 func TestFileBackupAdapter_RestoreBackup_DryRunWritesNothing(t *testing.T) {

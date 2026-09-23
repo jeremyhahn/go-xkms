@@ -49,6 +49,11 @@ var (
 	ErrBridgeNilClient      = errors.New("cdp/bridge: client is nil")
 )
 
+// ErrProtectedMemory reports that a StoredCredential's private key could
+// not be placed in mlocked protected memory. The key is never kept on the
+// ordinary heap as a fallback (go-xkms#587).
+var ErrProtectedMemory = errors.New("cdp: protected memory allocation failed")
+
 // DetailError appends detail text directly after a wrapped error while
 // preserving errors.Is / errors.As matching of the wrapped error through
 // Unwrap. The detail text carries its own leading separator.

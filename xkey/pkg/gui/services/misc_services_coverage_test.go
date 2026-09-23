@@ -1313,9 +1313,9 @@ func TestMiscServices_Coverage_StoredToFIDO2Credential(t *testing.T) {
 		SignCount:       10,
 		Discoverable:    true,
 		CreatedAt:       time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).Unix(),
-		PrivateKey:      []byte("some-key"),
 		BackendID:       "software",
 	}
+	require.NoError(t, stored.SetPrivateKey([]byte("some-key")))
 	cred := storedToFIDO2Credential(stored)
 	assert.Equal(t, hex.EncodeToString(credID), cred.ID)
 	assert.Equal(t, "example.com", cred.RelyingPartyID)
@@ -1353,8 +1353,8 @@ func TestMiscServices_Coverage_StoredToFIDO2Credential_UnknownAlgorithm(t *testi
 	stored := &authenticator.StoredCredential{
 		CredentialID: []byte{0x01},
 		Algorithm:    -999,
-		PrivateKey:   []byte("key"),
 	}
+	require.NoError(t, stored.SetPrivateKey([]byte("key")))
 	cred := storedToFIDO2Credential(stored)
 	assert.Equal(t, "COSE(-999)", cred.Algorithm)
 	assert.Contains(t, cred.KeyType, "Unknown(-999)")

@@ -1061,7 +1061,6 @@ func (a *Authenticator) storeCredentialWithPolicy(p *storeCredentialParams) erro
 		UserID:              p.user.ID,
 		UserName:            p.user.Name,
 		UserDisplayName:     p.user.DisplayName,
-		PrivateKey:          p.privateKeyBytes,
 		PublicKeyCOSE:       p.publicKeyCOSE,
 		Algorithm:           p.algorithm,
 		SignCount:           0,
@@ -1074,6 +1073,11 @@ func (a *Authenticator) storeCredentialWithPolicy(p *storeCredentialParams) erro
 		RPResidentKeyPolicy: p.rpRKPolicy,
 		RPAttestationPref:   p.rpAttestPref,
 		BackendID:           p.backendID,
+	}
+	// SetPrivateKey adopts and wipes p.privateKeyBytes; it is not read again
+	// after this call in either MakeCredential path.
+	if err := storedCred.SetPrivateKey(p.privateKeyBytes); err != nil {
+		return err
 	}
 
 	if err := a.storage.Store(storedCred); err != nil {

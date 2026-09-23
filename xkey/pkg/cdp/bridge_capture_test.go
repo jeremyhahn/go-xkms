@@ -168,7 +168,7 @@ func TestBridge_CredentialAddedEventPersists(t *testing.T) {
 	case got := <-captured:
 		assert.Equal(t, stdCredID, got.CredentialID)
 		assert.Equal(t, "example.com", got.RpID)
-		assert.Equal(t, "cGtjczgta2V5", got.PrivateKey)
+		assert.Equal(t, "cGtjczgta2V5", got.PrivateKeyString())
 		assert.True(t, got.IsResidentCredential)
 	case <-bridgeTestTimeout():
 		t.Fatal("sink was not invoked for credentialAdded event")

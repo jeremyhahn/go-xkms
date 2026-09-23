@@ -730,7 +730,7 @@ func storedToFIDO2Credential(stored *authenticator.StoredCredential) FIDO2Creden
 	backendID := stored.BackendID
 	if backendID != "" {
 		backendType = string(backendID)
-	} else if stored.PrivateKey == nil {
+	} else if !stored.HasPrivateKey() {
 		// No exportable private key means a hardware backend (TPM, phone, etc.)
 		backendType = "hardware"
 	}

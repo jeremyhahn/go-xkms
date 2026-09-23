@@ -1010,21 +1010,20 @@ func TestProcessHMACSecretExtensionNoKey(t *testing.T) {
 	privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	require.NoError(t, err)
 
-	cred := &StoredCredential{
+	cred := withPrivateKey(&StoredCredential{
 		CredentialID:    credID,
 		RPID:            rpID,
 		RPName:          "Test RP",
 		UserID:          []byte("user-123"),
 		UserName:        "testuser@example.com",
 		UserDisplayName: "Test User",
-		PrivateKey:      privateKeyBytes,
 		PublicKeyCOSE:   publicKeyCOSE,
 		Algorithm:       COSEAlgES256,
 		SignCount:       0,
 		Discoverable:    false,
 		HMACSecretKey:   nil, // No HMAC secret key
 		CreatedAt:       time.Now().Unix(),
-	}
+	}, privateKeyBytes)
 
 	err = auth.storage.Store(cred)
 	require.NoError(t, err)

@@ -108,8 +108,3 @@ pkg/ssh/keys/signer.go	2	ssh.ParsePrivateKey(buf.Bytes())	rule-2 narrowing filed
 # are real work"). Removing an entry as its struct is converted is expected;
 # adding a new one for a field this gate has never seen is not -- that is a
 # new violation, not a pre-existing one, and must be fixed or scoped instead.
-pkg/backup/backup.go	3	BackupKey.PrivateKey	pre-existing: deferred pending design review (go-xkms#549 triage)
-xkey/pkg/backup/service.go	3	OATHCredentialInfo.Secret	pre-existing: deferred pending design review (go-xkms#549 triage)
-xkey/pkg/backup/service.go	3	PasswordInfo.Password	pre-existing: deferred pending design review (go-xkms#549 triage)
-xkey/pkg/cdp/bridge.go	3	StoredCredential.PrivateKey	pre-existing: deferred pending design review (go-xkms#549 triage)
-xkey/pkg/authenticator/config.go	3	StoredCredential.PrivateKey	pre-existing: deferred pending design review (go-xkms#549 triage)

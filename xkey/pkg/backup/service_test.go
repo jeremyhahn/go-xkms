@@ -195,33 +195,33 @@ func testConfig() *Config {
 
 func testOATHCreds() []*OATHCredentialInfo {
 	return []*OATHCredentialInfo{
-		{
+		withSecret(&OATHCredentialInfo{
 			ID: "oath-1", Name: "GitHub", Issuer: "GitHub",
-			AccountName: "user@example.com", Secret: "JBSWY3DPEHPK3PXP",
-			Type: "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
-		},
-		{
+			AccountName: "user@example.com",
+			Type:        "totp", Algorithm: "SHA1", Digits: 6, Period: 30,
+		}, "JBSWY3DPEHPK3PXP"),
+		withSecret(&OATHCredentialInfo{
 			ID: "oath-2", Name: "AWS", Issuer: "Amazon",
-			AccountName: "admin@corp.com", Secret: "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ",
-			Type: "totp", Algorithm: "SHA256", Digits: 8, Period: 30,
-		},
+			AccountName: "admin@corp.com",
+			Type:        "totp", Algorithm: "SHA256", Digits: 8, Period: 30,
+		}, "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ"),
 	}
 }
 
 func testPasswords() []*PasswordInfo {
 	return []*PasswordInfo{
-		{
+		withPassword(&PasswordInfo{
 			ID: "pw-1", Name: "Server SSH", Title: "Production Server",
-			Username: "admin", Password: "s3cret!",
-			URL: "ssh://prod.example.com", Notes: "Primary server",
+			Username: "admin",
+			URL:      "ssh://prod.example.com", Notes: "Primary server",
 			FolderPath: "/servers",
-		},
-		{
+		}, "s3cret!"),
+		withPassword(&PasswordInfo{
 			ID: "pw-2", Name: "Database", Title: "Postgres Master",
-			Username: "dbadmin", Password: "db-p@ss",
+			Username:   "dbadmin",
 			URL:        "postgres://db.local:5432",
 			FolderPath: "/databases",
-		},
+		}, "db-p@ss"),
 	}
 }
 
@@ -537,12 +537,12 @@ func TestCreateDecryptRoundTrip(t *testing.T) {
 	// Verify OATH round-trip.
 	require.Len(t, archive.OATHCreds, 2)
 	assert.Equal(t, oathCreds[0].ID, archive.OATHCreds[0].ID)
-	assert.Equal(t, oathCreds[0].Secret, archive.OATHCreds[0].Secret)
+	assert.Equal(t, oathCreds[0].SecretString(), archive.OATHCreds[0].Secret)
 	assert.Equal(t, oathCreds[1].AccountName, archive.OATHCreds[1].AccountName)
 
 	// Verify password round-trip.
 	require.Len(t, archive.Passwords, 2)
-	assert.Equal(t, passwords[0].Password, archive.Passwords[0].Password)
+	assert.Equal(t, passwords[0].PasswordString(), archive.Passwords[0].Password)
 	assert.Equal(t, passwords[1].FolderPath, archive.Passwords[1].FolderPath)
 
 	// Verify CA round-trip.
@@ -732,7 +732,7 @@ func TestRestorePasswords(t *testing.T) {
 	assert.Equal(t, 0, result.Skipped)
 	assert.Empty(t, result.Errors)
 	assert.Len(t, writer.passwords, 2)
-	assert.Equal(t, "s3cret!", writer.passwords[0].Password)
+	assert.Equal(t, "s3cret!", writer.passwords[0].PasswordString())
 }
 
 func TestRestorePasswords_NilArchive(t *testing.T) {
