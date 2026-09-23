@@ -266,6 +266,22 @@ jobs:
             echo "Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
           fi
 
+      # coverage-threshold-report pulls in two extra lanes make coverage
+      # (above) doesn't run: the tpm2 simulator suite (links -lcrypto) and
+      # the pkcs11-tagged suite (SoftHSM2, already installed and initialized
+      # by this job's "Install and configure SoftHSM2" step above -- the
+      # token directory persists for the rest of this job).
+      - name: Install tpm2 simulator coverage dependencies
+        run: sudo .github/scripts/apt-deps.sh libssl-dev
+
+      - name: Report per-package coverage (issue #703)
+        # Non-blocking: collects packages below 90% for tracking in #704, #705, #706
+        # This will be blocking once those issues are resolved
+        continue-on-error: true
+        run: make coverage-threshold-report
+        env:
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         continue-on-error: true
@@ -1277,11 +1293,11 @@ jobs:
       # dump shows argon2 mid-computation, not a deadlock. 30m keeps a real
       # hang bounded while leaving 5x headroom over the healthy cost.
       # The durable fix is to stop paying production Argon2 cost in tests.
-      - name: Run tests with race detector (all backends)
+      - name: Run tests with race detector (all backends including FROST)
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
+        run: go test -race -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
 
   # Job 7b: pkg/tpm2 on the in-process TPM simulator
   #

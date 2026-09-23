@@ -601,6 +601,11 @@ var (
 
 	// ErrTPMHandleOutOfRange indicates the provided handle value is outside the valid range.
 	ErrTPMHandleOutOfRange = errors.New("tpm_handle_allocator: handle out of range")
+
+	// ErrTPMHandlePersistFailed indicates the allocator advanced its
+	// in-memory counter but could not persist the new value, so the
+	// allocated handle is withheld rather than handed to the caller.
+	ErrTPMHandlePersistFailed = errors.New("tpm_handle_allocator: failed to persist handle counter")
 )
 
 // NV index allocator errors.
@@ -610,6 +615,11 @@ var (
 
 	// ErrNVIndexOutOfRange indicates the provided NV index value is outside the valid range.
 	ErrNVIndexOutOfRange = errors.New("nv_index_allocator: NV index out of valid range")
+
+	// ErrNVIndexPersistFailed indicates the allocator advanced its
+	// in-memory counter but could not persist the new value, so the
+	// allocated NV index is withheld rather than handed to the caller.
+	ErrNVIndexPersistFailed = errors.New("nv_index_allocator: failed to persist index counter")
 )
 
 // Policy errors.

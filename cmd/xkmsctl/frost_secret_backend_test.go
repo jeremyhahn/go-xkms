@@ -161,35 +161,12 @@ func storeFrostGroupPackage(t *testing.T, keyID string) (backend *fileSecretBack
 	return backend, pubPkg.GroupPublicKey
 }
 
-func TestFileSecretBackend_Signer_ReturnsGroupSigner(t *testing.T) {
-	backend, groupPublicKey := storeFrostGroupPackage(t, "signer-key")
-
-	signer, err := backend.Signer(context.Background(), &client.KeyAttributes{
-		CN:        "signer-key",
-		StoreType: client.StoreFrost,
-		FrostAttributes: &client.FrostAttributes{
-			Algorithm:     client.FrostAlgorithmEd25519,
-			Threshold:     2,
-			Total:         2,
-			ParticipantID: 1,
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, signer)
-
-	pub, ok := signer.Public().([]byte)
-	require.True(t, ok, "FrostSigner.Public() must return the group public key bytes")
-	assert.Equal(t, groupPublicKey, pub)
-}
-
-// TestFileSecretBackend_Signer_ThresholdSigningNotOrchestrated pins the
-// upstream, already-accepted limitation this fix delegates to rather than
-// hides: client.FrostBackend's Signer only orchestrates a single-shot
-// crypto.Signer.Sign for a 1-of-1 key. For a genuine M-of-N group (any real
-// key this stack can generate, since the dealer itself rejects threshold < 2)
-// Sign reports that distributed signing needs the explicit round API, instead
-// of silently producing an invalid signature from one participant's share.
-func TestFileSecretBackend_Signer_ThresholdSigningNotOrchestrated(t *testing.T) {
+// TestFileSecretBackend_Signer_RefusesThresholdKey pins the FrostBackend
+// contract from go-xkms#663: a crypto.Signer can't do M-of-N signing, so
+// Signer refuses a threshold-2+ key when the signer is created rather than
+// failing later inside Sign. The dealer rejects threshold < 2, so this
+// covers every real key; distributed signing uses the round-based API.
+func TestFileSecretBackend_Signer_RefusesThresholdKey(t *testing.T) {
 	backend, _ := storeFrostGroupPackage(t, "signer-key")
 
 	signer, err := backend.Signer(context.Background(), &client.KeyAttributes{
@@ -202,11 +179,9 @@ func TestFileSecretBackend_Signer_ThresholdSigningNotOrchestrated(t *testing.T) 
 			ParticipantID: 1,
 		},
 	})
-	require.NoError(t, err)
-
-	_, err = signer.Sign(nil, []byte("digest-to-sign-1234567890123456"), nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "distributed signing")
+	assert.Nil(t, signer)
+	assert.ErrorIs(t, err, client.ErrFrostThresholdSigningNotSupported)
 }
 
 func TestFileSecretBackend_Signer_RequiresPublicStorage(t *testing.T) {

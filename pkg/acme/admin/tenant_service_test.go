@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
@@ -801,6 +802,51 @@ func TestTenantAwareAdminService_CreateTenantIntermediateCA_NoTenantRoot(t *test
 
 	require.Error(t, err)
 	assert.Equal(t, ErrTenantRootCANotFound, err)
+}
+
+// TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentSuccess
+// proves the default ("global") parent path resolves the global CA's
+// trusted root and issues the intermediate CA against it.
+func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentSuccess(t *testing.T) {
+	testCA := createRootOnlyTestCA(t)
+
+	logger := slog.Default()
+	qrdbSvc := newTestQRDB()
+	service := NewTenantAwareAdminService(testCA, nil, qrdbSvc, logger, "1.0.0")
+
+	intCA, err := service.CreateTenantIntermediateCA(context.Background(), "tenant-global-parent", CreateTenantIntermediateCARequest{
+		CommonName:    "Global Parent Intermediate CA",
+		KeyAlgorithm:  "RSA",
+		ValidityYears: 3,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, intCA)
+	assert.Equal(t, "Global Parent Intermediate CA", intCA.CommonName)
+}
+
+// TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentTrustedRootFailurePropagates
+// is the failure-injection test for issue #687: `s.ca.TrustedRoot()`'s error
+// used to be discarded (`parentCert, _ = s.ca.TrustedRoot()`), so an
+// intermediate CA could be signed with a nil parent certificate — missing
+// chain data — whenever the global CA's root was unavailable. An
+// uninitialized *ca.CA reliably reproduces that failure (TrustedRoot returns
+// ca.ErrNotInitialized), and the request must now fail instead of silently
+// issuing a chain-broken certificate.
+func TestTenantAwareAdminService_CreateTenantIntermediateCA_GlobalParentTrustedRootFailurePropagates(t *testing.T) {
+	logger := slog.Default()
+	qrdbSvc := newTestQRDB()
+	uninitializedCA := &ca.CA{}
+	service := NewTenantAwareAdminService(uninitializedCA, nil, qrdbSvc, logger, "1.0.0")
+
+	intCA, err := service.CreateTenantIntermediateCA(context.Background(), "tenant-global-parent-fail", CreateTenantIntermediateCARequest{
+		CommonName:   "Global Parent Intermediate CA",
+		KeyAlgorithm: "RSA",
+	})
+
+	require.Error(t, err, "a discarded TrustedRoot failure must now surface instead of issuing a chain-broken certificate")
+	assert.Nil(t, intCA)
+	assert.ErrorIs(t, err, ca.ErrNotInitialized)
 }
 
 func TestTenantAwareAdminService_CreateTenantIntermediateCA_MissingCommonName(t *testing.T) {

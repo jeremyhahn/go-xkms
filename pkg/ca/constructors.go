@@ -152,8 +152,11 @@ func (p *Params) ResolveStores(cn string) (xkms.Backend, certstore.CertStore, ob
 // config carries the subject, validity, store type, IsRoot flag, and
 // distribution/OCSP/AIA URLs from the identity. DefaultCertValidity is
 // supplied via the defaultCertValidity argument; 0 means use the package
-// default (DefaultCertValidityDays).
-func caConfigFromIdentity(id Identity, defaultCertValidity int) *CAConfig {
+// default (DefaultCertValidityDays). tcgConfig is CA-wide rather than
+// per-identity (see MultiIdentityCAConfig.TCGConfig) and is carried through
+// verbatim; nil leaves TCG credential issuance refusing every EK
+// certificate.
+func caConfigFromIdentity(id Identity, defaultCertValidity int, tcgConfig *TCGConfig) *CAConfig {
 	subject := id.Subject
 	cfg := &CAConfig{
 		Identity:               subject.CommonName,
@@ -168,6 +171,7 @@ func caConfigFromIdentity(id Identity, defaultCertValidity int) *CAConfig {
 		PolicyIdentifiers:      id.PolicyIdentifiers,
 		StoreType:              id.GetStoreType(),
 		CRLValidityDays:        id.GetCRLValidityDays(),
+		TCGConfig:              tcgConfig,
 	}
 	if defaultCertValidity > 0 {
 		cfg.DefaultCertValidityDays = defaultCertValidity
@@ -218,10 +222,12 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 	}
 
 	defaultValidity := 0
+	var tcgConfig *TCGConfig
 	if params.Config != nil {
 		defaultValidity = params.Config.DefaultCertValidityDays
+		tcgConfig = params.Config.TCGConfig
 	}
-	cfg := caConfigFromIdentity(root, defaultValidity)
+	cfg := caConfigFromIdentity(root, defaultValidity, tcgConfig)
 
 	instance, err := New(&Params{
 		Config:             cfg,
@@ -299,10 +305,12 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 	}
 
 	defaultValidity := 0
+	var tcgConfig *TCGConfig
 	if params.Config != nil {
 		defaultValidity = params.Config.DefaultCertValidityDays
+		tcgConfig = params.Config.TCGConfig
 	}
-	cfg := caConfigFromIdentity(intermediateID, defaultValidity)
+	cfg := caConfigFromIdentity(intermediateID, defaultValidity, tcgConfig)
 	// The intermediate is not a root.
 	cfg.IsRootCA = false
 

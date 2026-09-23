@@ -519,54 +519,142 @@ func TestRequestStreamNotSupported(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStreamNotSupported)
 }
 
-func TestPasswordOperationsNotSupported(t *testing.T) {
+// TestPasswordStoreSetAccessModeNotSupported pins the one Password method
+// this transport does not yet proxy: access-mode changes are handled
+// separately (go-xkms#691).
+func TestPasswordStoreSetAccessModeNotSupported(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
-	ctx := context.Background()
+	err = tr.PasswordStoreSetAccessMode(context.Background(), nil)
+	assert.ErrorIs(t, err, ErrNotSupported)
+}
 
-	tests := []struct {
-		name string
-		fn   func() error
-	}{
-		{"PasswordAdd", func() error { _, e := tr.PasswordAdd(ctx, nil); return e }},
-		{"PasswordGet", func() error { _, e := tr.PasswordGet(ctx, nil); return e }},
-		{"PasswordList", func() error { _, e := tr.PasswordList(ctx, nil); return e }},
-		{"PasswordUpdate", func() error { return tr.PasswordUpdate(ctx, nil) }},
-		{"PasswordDelete", func() error { return tr.PasswordDelete(ctx, nil) }},
-		{"PasswordStoreUnlock", func() error { return tr.PasswordStoreUnlock(ctx, nil) }},
-		{"PasswordStoreLock", func() error { return tr.PasswordStoreLock(ctx) }},
-		{"PasswordStoreStatus", func() error { _, e := tr.PasswordStoreStatus(ctx); return e }},
-		{"PasswordStoreSetAccessMode", func() error { return tr.PasswordStoreSetAccessMode(ctx, nil) }},
-		{"PasswordGenerate", func() error { _, e := tr.PasswordGenerate(ctx, nil); return e }},
+// passwordSealStoreOp describes one Password/SealStore method under test:
+// the RPC method name it must send, and a call that invokes the transport
+// method with a representative request against whatever fakePhone the
+// transport is currently paired with.
+type passwordSealStoreOp struct {
+	name   string
+	method string
+	call   func(ctx context.Context, tr *Transport) error
+}
+
+func passwordSealStoreOps() []passwordSealStoreOp {
+	return []passwordSealStoreOp{
+		{"PasswordAdd", methodPasswordAdd, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.PasswordAdd(ctx, &transport.PasswordAddRequest{Name: "site", Password: "hunter2"})
+			return err
+		}},
+		{"PasswordGet", methodPasswordGet, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.PasswordGet(ctx, &transport.PasswordGetRequest{ID: "pw-1"})
+			return err
+		}},
+		{"PasswordList", methodPasswordList, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.PasswordList(ctx, &transport.PasswordListRequest{})
+			return err
+		}},
+		{"PasswordUpdate", methodPasswordUpdate, func(ctx context.Context, tr *Transport) error {
+			return tr.PasswordUpdate(ctx, &transport.PasswordUpdateRequest{ID: "pw-1"})
+		}},
+		{"PasswordDelete", methodPasswordDelete, func(ctx context.Context, tr *Transport) error {
+			return tr.PasswordDelete(ctx, &transport.PasswordDeleteRequest{ID: "pw-1"})
+		}},
+		{"PasswordStoreUnlock", methodPasswordStoreUnlock, func(ctx context.Context, tr *Transport) error {
+			return tr.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{UserPIN: "123456"})
+		}},
+		{"PasswordStoreLock", methodPasswordStoreLock, func(ctx context.Context, tr *Transport) error {
+			return tr.PasswordStoreLock(ctx)
+		}},
+		{"PasswordStoreStatus", methodPasswordStoreStatus, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.PasswordStoreStatus(ctx)
+			return err
+		}},
+		{"PasswordGenerate", methodPasswordGenerate, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{Length: 16})
+			return err
+		}},
+		{"SealStorePut", methodSealStorePut, func(ctx context.Context, tr *Transport) error {
+			return tr.SealStorePut(ctx, &transport.SealStorePutRequest{Name: "s1", Secret: []byte("shh")})
+		}},
+		{"SealStoreGet", methodSealStoreGet, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{Name: "s1"})
+			return err
+		}},
+		{"SealStoreDelete", methodSealStoreDelete, func(ctx context.Context, tr *Transport) error {
+			return tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: "s1"})
+		}},
+		{"SealStoreList", methodSealStoreList, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.SealStoreList(ctx)
+			return err
+		}},
+		{"SealStoreReseal", methodSealStoreReseal, func(ctx context.Context, tr *Transport) error {
+			return tr.SealStoreReseal(ctx, &transport.SealStoreResealRequest{Name: "s1"})
+		}},
+		{"SealStoreStatus", methodSealStoreStatus, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.SealStoreStatus(ctx)
+			return err
+		}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.fn()
-			assert.ErrorIs(t, err, ErrNotSupported)
+}
+
+// TestPasswordSealStoreOperationsRoundTrip proves each method sends its own
+// RPC method name over the wire and decodes the phone's JSON result back into
+// the typed response, exercising the real Noise-encrypted round trip through
+// a fakePhone rather than asserting against ErrNotSupported.
+func TestPasswordSealStoreOperationsRoundTrip(t *testing.T) {
+	for _, op := range passwordSealStoreOps() {
+		t.Run(op.name, func(t *testing.T) {
+			var seenMethod string
+			fake := &fakePhone{
+				handler: func(req *pairing.Request) *pairing.Response {
+					seenMethod = req.Method
+					return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{}`)}
+				},
+			}
+			tr := newPairedTransport(t, fake)
+
+			require.NoError(t, op.call(context.Background(), tr))
+			assert.Equal(t, op.method, seenMethod)
 		})
 	}
 }
 
-func TestSealStoreOperationsNotSupported(t *testing.T) {
-	tr, err := New()
-	require.NoError(t, err)
-	ctx := context.Background()
+// TestPasswordSealStoreOperationsPropagateRPCError proves a JSON-RPC error
+// from the phone surfaces as ErrRequestFailed rather than being swallowed,
+// for every Password/SealStore method this transport now implements.
+func TestPasswordSealStoreOperationsPropagateRPCError(t *testing.T) {
+	for _, op := range passwordSealStoreOps() {
+		t.Run(op.name, func(t *testing.T) {
+			fake := &fakePhone{
+				handler: func(req *pairing.Request) *pairing.Response {
+					return &pairing.Response{
+						JSONRPC: "2.0",
+						ID:      req.ID,
+						Error:   &pairing.RPCError{Code: -32000, Message: "denied"},
+					}
+				},
+			}
+			tr := newPairedTransport(t, fake)
 
-	tests := []struct {
-		name string
-		fn   func() error
-	}{
-		{"SealStorePut", func() error { return tr.SealStorePut(ctx, nil) }},
-		{"SealStoreGet", func() error { _, e := tr.SealStoreGet(ctx, nil); return e }},
-		{"SealStoreDelete", func() error { return tr.SealStoreDelete(ctx, nil) }},
-		{"SealStoreList", func() error { _, e := tr.SealStoreList(ctx); return e }},
-		{"SealStoreReseal", func() error { return tr.SealStoreReseal(ctx, nil) }},
-		{"SealStoreStatus", func() error { _, e := tr.SealStoreStatus(ctx); return e }},
+			err := op.call(context.Background(), tr)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrRequestFailed)
+		})
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.fn()
-			assert.ErrorIs(t, err, ErrNotSupported)
+}
+
+// TestPasswordSealStoreOperationsNotConnected proves every Password/SealStore
+// method refuses to proceed on a transport that never connected, rather than
+// panicking on a nil phoneUSB or silently succeeding.
+func TestPasswordSealStoreOperationsNotConnected(t *testing.T) {
+	for _, op := range passwordSealStoreOps() {
+		t.Run(op.name, func(t *testing.T) {
+			tr, err := New()
+			require.NoError(t, err)
+
+			callErr := op.call(context.Background(), tr)
+			require.Error(t, callErr)
+			assert.ErrorIs(t, callErr, ErrNotConnected)
 		})
 	}
 }

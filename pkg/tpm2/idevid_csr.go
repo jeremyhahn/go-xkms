@@ -1028,8 +1028,14 @@ func (tpm *TPM2) VerifyTCGCSR(
 // c. Verify the attributes (TPMA_OBJECT bits) of the IAK Public Area to ensure
 // that the key is a Restricted, fixedTPM, fixedParent signing key. Ensure all
 // other attributes meet CA policy.
-// NOTE: Step b is not implemented here. The EK certificate should be verified by
-// the CA package using the Verify(certificate *x509.Certificate) method.
+// Step b is implemented in the pkg/ca package, not here: TPM2 is the device
+// side of this exchange (it also drives the EK's own certificate issuance in
+// tpm2/ek.go), while the EK certificate's chain of trust is a CA policy
+// decision -- which TPM-manufacturer roots to accept -- configured per CA
+// (ca.TCGConfig). The CA verifies it, and the tcg-kp-EKCertificate extended
+// key usage, before signing an IAK from a CSR this method has verified;
+// see (*ca.CA).SignTCGCSRIDevID and the unexported
+// (*ca.CA).verifyEKCertificateChain it calls.
 func (tpm *TPM2) VerifyTCG_CSR_IAK(
 	csr *TCG_CSR_IDEVID,
 	signatureAlgorithm x509.SignatureAlgorithm) (*types.KeyAttributes, *UNPACKED_TCG_CSR_IDEVID, error) {
@@ -1126,8 +1132,9 @@ func (tpm *TPM2) VerifyTCG_CSR_IAK(
 // the device. When building this encrypted structure, objectName is the Name of the IAK calculated in
 // step 'a' and Certificate (which is the payload field) holds a nonce (whose size matches the Name
 // hash). Retain the nonce for use in later steps.
-// NOTE: Step b is not implemented here. The EK certificate should be verified by
-// the CA package using the Verify(certificate *x509.Certificate) method.
+// Step b is implemented in the pkg/ca package, not here -- see the note on
+// VerifyTCG_CSR_IAK above; (*ca.CA).SignTCGCSRIDevID is the entry point for
+// this enrollment path and calls the same EK chain verification.
 func (tpm *TPM2) VerifyTCG_CSR_IDevID(
 	csr *TCG_CSR_IDEVID,
 	signatureAlgorithm x509.SignatureAlgorithm) (*types.KeyAttributes, *UNPACKED_TCG_CSR_IDEVID, error) {

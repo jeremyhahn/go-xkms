@@ -210,6 +210,19 @@ var methodPermissions = map[string]permission{
 	"credentials.submit":   {auth.ResourceCredentials, auth.ActionSubmit},
 	"credentials.strategy": {auth.ResourceCredentials, auth.ActionStrategy},
 
+	// User management. Mirrors pkg/api/rest/routes.go's /api/v1/users
+	// decorators exactly: create/list/read/delete carry their ordinary CRUD
+	// actions, enable/disable/bindCert all carry update since each mutates an
+	// existing user's state rather than replacing it.
+	"user.create":          {auth.ResourceUsers, auth.ActionCreate},
+	"user.list":            {auth.ResourceUsers, auth.ActionList},
+	"user.get":             {auth.ResourceUsers, auth.ActionRead},
+	"user.delete":          {auth.ResourceUsers, auth.ActionDelete},
+	"user.enable":          {auth.ResourceUsers, auth.ActionUpdate},
+	"user.disable":         {auth.ResourceUsers, auth.ActionUpdate},
+	"user.bindCert":        {auth.ResourceUsers, auth.ActionUpdate},
+	"user.listCredentials": {auth.ResourceUsers, auth.ActionRead},
+
 	// Password store.
 	"password.add":      {auth.ResourcePasswords, auth.ActionWrite},
 	"password.get":      {auth.ResourcePasswords, auth.ActionRead},

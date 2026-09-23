@@ -1,6 +1,6 @@
 # Platform Secrets — API
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -22,8 +22,11 @@ Routes are `RouteAuthSession` under `/api/v1/platform`, registered on the
 **This feature exists on REST, QUIC and embedded only.** Twelve gaps across gRPC,
 Unix and MCP — proportionally the weakest transport coverage of any feature in
 this repo. There is no `SealStore*` RPC in `xkmsv1` and no `platform.*` MCP
-method; the USB transport implements the `SealStoreService` methods and returns
-`ErrNotSupported` for every one.
+method. The USB transport (a seventh, product-specific transport, not part of
+the six above) is the exception: it proxies all six `SealStoreService` methods
+to the phone's embedded xkmsd instance over the Noise-encrypted USB channel
+(`pkg/api/transport/usb/transport.go`), using the servicer's own method names
+verbatim (`SealStorePut`, `SealStoreGet`, ...).
 
 Recorded as gaps rather than presented as a design choice, because nothing in
 the code argues for the omission — unlike, say, the absence of a Unix-socket

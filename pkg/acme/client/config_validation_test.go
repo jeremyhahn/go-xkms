@@ -108,6 +108,14 @@ func TestValidateACMEConfig_ExternalURLInvalid(t *testing.T) {
 	assert.Contains(t, err.Error(), "external_url")
 }
 
+func TestValidateACMEConfig_MissingCAIdentifiers(t *testing.T) {
+	acme := validACMEConfig()
+	acme.CAIdentifiers = nil
+	err := acme.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "acme.ca_identifiers is required")
+}
+
 func TestValidateACMEConfig_InvalidTLS(t *testing.T) {
 	acme := validACMEConfig()
 	acme.TLS.MinVersion = "1.2"
@@ -307,9 +315,10 @@ func TestValidateMultiTenantConfig_EnabledMissingTenantID(t *testing.T) {
 
 func validACMEConfig() TCAACMEConfig {
 	return TCAACMEConfig{
-		HTTPSAddr:   ":8443",
-		ExternalURL: "https://acme.example.com",
-		TLS:         TCATLSConfig{MinVersion: "1.3", MaxVersion: "1.3"},
+		HTTPSAddr:     ":8443",
+		ExternalURL:   "https://acme.example.com",
+		CAIdentifiers: []string{"ca.example.com"},
+		TLS:           TCATLSConfig{MinVersion: "1.3", MaxVersion: "1.3"},
 	}
 }
 

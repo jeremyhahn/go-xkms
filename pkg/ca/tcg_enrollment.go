@@ -15,8 +15,6 @@ package ca
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -85,19 +83,21 @@ func (ca *CA) EnrollDevice(ctx context.Context, packedCSR []byte, request *Certi
 		return nil, ErrTCGMissingEKCert
 	}
 
-	// Parse EK certificate - try PEM first, then DER
-	var ekCert *x509.Certificate
-	block, _ := pem.Decode(csrContent.EkCert)
-	if block != nil {
-		ekCert, err = x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("pem: %v", err)}
-		}
-	} else {
-		ekCert, err = x509.ParseCertificate(csrContent.EkCert)
-		if err != nil {
-			return nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("der: %v", err)}
-		}
+	// Parse EK certificate and any intermediates the request supplied
+	// alongside it (PEM), or the sole leaf (DER).
+	ekCert, ekIntermediates, err := parseEKCertificateChain(csrContent.EkCert)
+	if err != nil {
+		return nil, err
+	}
+
+	// TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b
+	// / §6.2.2 step 4b: the EK certificate is verified against a configured
+	// TPM-manufacturer trust anchor before the CA does anything else with
+	// it, including generating the MakeCredential challenge below --
+	// TPM2_ActivateCredential proves possession of the EK, not that the EK
+	// belongs to a genuine TPM.
+	if err := ca.verifyEKCertificateChain(ekCert, ekIntermediates); err != nil {
+		return nil, err
 	}
 
 	slog.Debug("EnrollDevice: generating MakeCredential challenge",

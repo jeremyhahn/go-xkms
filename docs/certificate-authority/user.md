@@ -1,6 +1,6 @@
 # Certificate Authority — User Guide
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Prerequisites
 
@@ -110,6 +110,13 @@ API side. The evidence is stored with the CA and can be verified later. Details
 and the attestation semantics are in
 [`../tpm2/user.md`](../tpm2/user.md).
 
+Before any device can enroll an IAK/IDevID (`ca tcg enroll`), the CA needs at
+least one TPM-manufacturer trust anchor configured under
+`ca.tcg-config.trust-anchors`, naming the PEM file(s) with the manufacturer's
+root (and, concatenated into the same file, its issuing intermediate if it
+has one). With none configured, enrollment refuses every device with
+`ErrTCGEKCertUntrusted` — there is no lesser check it falls back to.
+
 ## Troubleshooting
 
 | What you see | What it means | What to do |
@@ -121,6 +128,8 @@ and the attestation semantics are in
 | revocation "worked" but clients still accept the certificate | the CRL you generated is not where clients look | publish the new CRL |
 | serial not found | wrong serial format | hex, no `0x`, no colons |
 | `GET /api/v1/ca/crl` is missing a very recent revocation from another cluster node | the refresh-on-revoke CRL update is best-effort; it can lag replication under load | wait for `NextUpdate` to pass (the next read self-heals), or force it with `xkmsctl ca crl` / `POST /api/v1/ca/crl` |
+| `ca tcg enroll` / `EnrollDevice` fails with "endorsement key certificate is not chained to a trusted tpm manufacturer root" | `ca.tcg-config.trust-anchors` is unset, or does not name the device's manufacturer | configure `ExternalRootPaths` with the manufacturer's root (and intermediate) PEM |
+| enrollment fails with "does not carry the tcg-kp-EKCertificate extended key usage" | the EK certificate has neither anyExtendedKeyUsage nor the TCG EKU | this is the device's certificate, not a CA setting — get a conformant EK certificate from the manufacturer |
 
 ## Where to go next
 
