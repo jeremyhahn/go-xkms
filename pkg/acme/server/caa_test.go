@@ -42,6 +42,10 @@ func newMockDNSServer() *mockDNSServer {
 }
 
 func (m *mockDNSServer) addCAARecord(domain, tag, value string) {
+	m.addCAARecordWithFlag(domain, tag, value, 0)
+}
+
+func (m *mockDNSServer) addCAARecordWithFlag(domain, tag, value string, flag uint8) {
 	fqdn := dns.Fqdn(domain)
 	m.caaRecords[fqdn] = append(m.caaRecords[fqdn], &dns.CAA{
 		Hdr: dns.RR_Header{
@@ -52,7 +56,7 @@ func (m *mockDNSServer) addCAARecord(domain, tag, value string) {
 		},
 		Tag:   tag,
 		Value: value,
-		Flag:  0,
+		Flag:  flag,
 	})
 }
 
@@ -374,6 +378,53 @@ func TestCAAValidator_Validate_Iodef(t *testing.T) {
 	assert.NoError(t, err, "Should handle iodef records and allow issuance")
 }
 
+// TestCAAValidator_Validate_CriticalUnknownTag verifies RFC 8659 Section 4:
+// an unrecognized property tag with the critical flag set MUST prevent
+// issuance, even though a matching issue record is also present.
+func TestCAAValidator_Validate_CriticalUnknownTag(t *testing.T) {
+	mock := newMockDNSServer()
+	mock.addCAARecord("example.com", "issue", "ca.example.com")
+	mock.addCAARecordWithFlag("example.com", "unknowntag", "somevalue", 0x80)
+	addr := startMockDNSServer(t, mock)
+
+	validator, err := NewCAAValidator(&CAAValidatorParams{
+		Logger:        slog.Default(),
+		Resolver:      addr,
+		Timeout:       2 * time.Second,
+		CAAIdentities: []string{"ca.example.com"},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	err = validator.Validate(ctx, "example.com", false)
+
+	var caaErr *ErrCAAValidationFailed
+	require.True(t, errors.As(err, &caaErr), "Should deny issuance for an unrecognized critical property")
+	assert.Contains(t, err.Error(), "unrecognized critical CAA property tag")
+}
+
+// TestCAAValidator_Validate_NonCriticalUnknownTag verifies that an
+// unrecognized property tag WITHOUT the critical flag is merely ignored,
+// per RFC 8659 Section 4.
+func TestCAAValidator_Validate_NonCriticalUnknownTag(t *testing.T) {
+	mock := newMockDNSServer()
+	mock.addCAARecord("example.com", "issue", "ca.example.com")
+	mock.addCAARecordWithFlag("example.com", "unknowntag", "somevalue", 0)
+	addr := startMockDNSServer(t, mock)
+
+	validator, err := NewCAAValidator(&CAAValidatorParams{
+		Logger:        slog.Default(),
+		Resolver:      addr,
+		Timeout:       2 * time.Second,
+		CAAIdentities: []string{"ca.example.com"},
+	})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	err = validator.Validate(ctx, "example.com", false)
+	assert.NoError(t, err, "A non-critical unrecognized property must be ignored, not fail issuance")
+}
+
 func TestCAAValidator_Validate_DNSServfail(t *testing.T) {
 	mock := newMockDNSServer()
 	mock.setRcode("example.com", dns.RcodeServerFailure)
@@ -389,8 +440,11 @@ func TestCAAValidator_Validate_DNSServfail(t *testing.T) {
 
 	ctx := context.Background()
 	err = validator.Validate(ctx, "example.com", false)
-	// Per RFC 8659 Section 3, SERVFAIL should "proceed with caution"
-	assert.NoError(t, err, "Should proceed with caution on SERVFAIL")
+	// Per RFC 8659 Section 5.1, a CA MUST NOT issue if it cannot determine
+	// the relevant CAA RRset for any reason, including SERVFAIL. This is a
+	// fail-closed design, not "proceed with caution".
+	var dnsErr *ErrCAADNSError
+	assert.True(t, errors.As(err, &dnsErr), "Should deny issuance on SERVFAIL (fail closed)")
 }
 
 func TestCAAValidator_Validate_DNSNxdomain(t *testing.T) {
@@ -554,8 +608,11 @@ func TestCAAValidator_NoCAAIdentities(t *testing.T) {
 
 	ctx := context.Background()
 	err = validator.Validate(ctx, "example.com", false)
-	// Should allow issuance when no identities are configured
-	assert.NoError(t, err, "Should allow issuance when no CAA identities configured")
+	// A validator with no configured identities cannot determine whether it
+	// is among the authorized issuers, so with a CAA RRset present it fails
+	// closed per RFC 8659 Section 5.1 rather than assuming authorization.
+	var caaErr *ErrCAAValidationFailed
+	assert.True(t, errors.As(err, &caaErr), "Should deny issuance when no CAA identities are configured and a CAA record exists")
 }
 
 func TestCAAValidator_ContextCancellation(t *testing.T) {
@@ -761,10 +818,12 @@ func TestCAAValidator_ValidateRecords_OnlyIodef(t *testing.T) {
 	assert.NoError(t, err, "Should allow when only iodef records exist")
 }
 
-// TestCAAValidator_ValidateRecords_PrefixMatch tests that prefix matching works
-func TestCAAValidator_ValidateRecords_PrefixMatch(t *testing.T) {
+// TestCAAValidator_ValidateRecords_IssuerWithParameters tests that an
+// issue value's trailing RFC 8657 parameters (";key=value") are stripped
+// before comparing the issuer-domain-name, per RFC 8659 Section 4.2.
+func TestCAAValidator_ValidateRecords_IssuerWithParameters(t *testing.T) {
 	mock := newMockDNSServer()
-	// Add issue with extra parameters after domain
+	// Add issue with extra parameters after the issuer domain.
 	mock.addCAARecord("example.com", "issue", "ca.example.com;policy=ev")
 	addr := startMockDNSServer(t, mock)
 
@@ -778,7 +837,23 @@ func TestCAAValidator_ValidateRecords_PrefixMatch(t *testing.T) {
 
 	ctx := context.Background()
 	err = validator.Validate(ctx, "example.com", false)
-	assert.NoError(t, err, "Should allow when CAA value has matching prefix")
+	assert.NoError(t, err, "Should allow when the issuer domain matches, ignoring trailing parameters")
+}
+
+// TestCAAValidator_IsAuthorized_RejectsSuffixSpoofing is the regression test
+// for the prefix-matching bug this validator used to have: a CAA value whose
+// issuer domain merely starts with an authorized identity (but is a
+// different, longer domain) must NOT be treated as authorizing this CA.
+func TestCAAValidator_IsAuthorized_RejectsSuffixSpoofing(t *testing.T) {
+	validator := &CAAValidator{
+		logger:        slog.Default(),
+		caaIdentities: []string{"ca.example.com"},
+	}
+
+	assert.False(t, validator.isAuthorized("ca.example.com.attacker.example"),
+		"a domain that merely begins with the identity must not match")
+	assert.True(t, validator.isAuthorized("ca.example.com"),
+		"the exact identity must still match")
 }
 
 // TestCAAValidator_DNSError_OtherRcode tests handling of non-SERVFAIL/NXDOMAIN errors
@@ -796,10 +871,11 @@ func TestCAAValidator_DNSError_OtherRcode(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	// DNS error during lookup should allow issuance (proceed with caution)
+	// Any non-success, non-NXDOMAIN rcode means the RRset could not be
+	// determined, so issuance is denied per RFC 8659 Section 5.1.
 	err = validator.Validate(ctx, "example.com", false)
-	// On error in lookupCAA, we return nil to allow issuance
-	assert.NoError(t, err)
+	var dnsErr *ErrCAADNSError
+	assert.True(t, errors.As(err, &dnsErr), "Should deny issuance on a non-NXDOMAIN DNS error (fail closed)")
 }
 
 // TestErrCAAValidationFailed_Error tests error message formatting
@@ -1016,8 +1092,11 @@ func TestCAAValidator_CNAME_LookupError(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	// Should handle CNAME error and continue with original domain
+	// The CNAME lookup itself tolerates failure and continues with the
+	// original domain, but the subsequent CAA query at that same name also
+	// gets SERVFAIL (the mock returns it for every query type at this
+	// owner name), which fails closed per RFC 8659 Section 5.1.
 	err = validator.Validate(ctx, "alias.example.com", false)
-	// SERVFAIL returns nil (proceed with caution)
-	assert.NoError(t, err)
+	var dnsErr *ErrCAADNSError
+	assert.True(t, errors.As(err, &dnsErr), "Should deny issuance when the CAA query itself SERVFAILs")
 }
