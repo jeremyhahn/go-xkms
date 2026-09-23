@@ -46,6 +46,7 @@ import (
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -486,7 +487,6 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 				},
 				Valid:         ca.DefaultRootValidityYears,
 				Keys:          []*types.KeyConfig{ecdsaKey},
-				KeystoreType:  types.StoreSoftware,
 				IsRoot:        true,
 				MaxPathLength: 1,
 			},
@@ -496,10 +496,9 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 					Organization: "Test Organization",
 					Country:      "US",
 				},
-				Valid:        ca.DefaultIntermediateValidityYears,
-				Keys:         []*types.KeyConfig{ecdsaKey},
-				KeystoreType: types.StoreSoftware,
-				ParentCA:     "Test Root CA",
+				Valid:    ca.DefaultIntermediateValidityYears,
+				Keys:     []*types.KeyConfig{ecdsaKey},
+				ParentCA: "Test Root CA",
 			},
 		},
 		Config: &ca.CAConfig{
@@ -507,6 +506,11 @@ func newTestCA(t *testing.T) (ca.TCGCA, func()) {
 		},
 		KeyStore:  keyStore,
 		CertStore: certStore,
+		// One software backend serves every CA and StoreType in this test.
+		BackendForStore: func(string, types.StoreType) (xkms.Backend, error) {
+			return keyStore, nil
+		},
+		RevocationStore: xkmsstorage.NewMemory(),
 	}
 
 	ctx := context.Background()

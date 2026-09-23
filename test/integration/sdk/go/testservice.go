@@ -32,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	xkmssvc "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -995,6 +996,13 @@ func (s *TestXKMSService) BarrierSeal(ctx context.Context) error {
 
 func (s *TestXKMSService) BarrierStatus(ctx context.Context) (*xkms.BarrierStatusResponse, error) {
 	return &xkms.BarrierStatusResponse{Sealed: false, Strategy: "test"}, nil
+}
+
+// BootstrapListenerKeys reports that no trust-bootstrap listener runs in the
+// in-memory test service, which is the contract's answer for a server whose
+// listener is not enabled.
+func (s *TestXKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, xkmssvc.ErrBootstrapListenerNotEnabled
 }
 
 func (s *TestXKMSService) BarrierInitializeShamir(ctx context.Context, req *xkms.BarrierInitializeShamirRequest) (*xkms.BarrierInitializeShamirResponse, error) {
