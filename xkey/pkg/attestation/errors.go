@@ -46,6 +46,15 @@ var (
 	// bound to the supplied nonce: the key attestation extension was absent,
 	// unparseable, or carried a different challenge.
 	ErrChallengeVerification = errors.New("attestation: challenge verification failed")
+
+	// ErrAttestationKeyOriginNotGenerated indicates the attested key's
+	// TEE-enforced Origin claim is not GENERATED: the key was derived,
+	// imported, or the TEE made no origin claim at all (go-xkms#132).
+	ErrAttestationKeyOriginNotGenerated = errors.New("attestation: attested key's TEE-enforced origin is not GENERATED")
+
+	// ErrAttestationKeyPurposeNotSign indicates the attested key's
+	// TEE-enforced Purpose set does not include SIGN (go-xkms#132).
+	ErrAttestationKeyPurposeNotSign = errors.New("attestation: attested key's TEE-enforced purpose does not include SIGN")
 )
 
 // SentinelCauseError attaches an underlying cause to a package sentinel

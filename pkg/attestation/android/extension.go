@@ -136,7 +136,10 @@ type KeyDescription struct {
 
 // AuthorizationList contains key authorization properties.
 type AuthorizationList struct {
-	// Purpose contains the allowed key usages.
+	// Purpose contains the allowed key usages (tag 1), one of the
+	// Purpose* constants per entry. Nil means the list carried no purpose
+	// claim, which is not the same as an explicit empty set -- ASN.1 has no
+	// way to tell those apart here, so both parse to nil.
 	Purpose []int
 
 	// Algorithm is the cryptographic algorithm of the key.
@@ -148,7 +151,11 @@ type AuthorizationList struct {
 	// EcCurve is the elliptic curve identifier for EC keys.
 	EcCurve int
 
-	// Origin indicates how the key was created.
+	// Origin indicates how the key was created (tag 702), one of the
+	// Origin* constants. It is OriginUnknown when the list carried no
+	// origin claim at all, never the bare zero value -- OriginGenerated is
+	// also zero, and an absent claim must not read as a claim of GENERATED
+	// (go-xkms#132).
 	Origin int
 
 	// RootOfTrust contains device boot state information, if present.
@@ -366,8 +373,49 @@ func ParseKeyAttestation(cert *x509.Certificate) (*KeyDescription, error) {
 // Context-specific tag numbers inside an AuthorizationList, from the Android
 // KeyMint attestation schema.
 const (
+	tagPurpose                  = 1
+	tagOrigin                   = 702
 	tagRootOfTrust              = 704
 	tagAttestationApplicationID = 709
+)
+
+// Well-known key-origin values (KeyMint tag ORIGIN / keymaster_key_origin_t).
+// Origin records how the key came to exist inside the enforcement domain
+// that authorized it -- generated in place, derived in place, or imported
+// from outside it.
+const (
+	// OriginGenerated means the key was generated inside the enforcement
+	// domain and never existed anywhere else.
+	OriginGenerated = 0
+
+	// OriginDerived means the key was derived inside the enforcement domain
+	// from other key material, and never existed outside it in this form.
+	OriginDerived = 1
+
+	// OriginImported means the key material entered the enforcement domain
+	// from outside it, and may therefore exist elsewhere too.
+	OriginImported = 2
+
+	// OriginUnknown is what some Keymaster implementations report for keys
+	// that predate the origin tag. It is also parseAuthorizationList's
+	// default when an AuthorizationList carries no origin claim at all: zero
+	// is OriginGenerated's value, and a claim that was never made must not
+	// read as a claim of GENERATED.
+	OriginUnknown = 3
+)
+
+// Well-known key-purpose values (KeyMint tag PURPOSE / keymaster_purpose_t).
+// Purpose is the set of operations the key's enforcement domain will
+// perform with it.
+const (
+	PurposeEncrypt   = 0
+	PurposeDecrypt   = 1
+	PurposeSign      = 2
+	PurposeVerify    = 3
+	PurposeDeriveKey = 4
+	PurposeWrapKey   = 5
+	PurposeAgreeKey  = 6
+	PurposeAttestKey = 7
 )
 
 // attestationApplicationIDASN1 mirrors the DER inside the tag-709 OCTET STRING.
@@ -432,13 +480,17 @@ func findAttestationApplicationID(data []byte) *AttestationApplicationID {
 }
 
 func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
-	authList := AuthorizationList{}
+	authList := AuthorizationList{Origin: OriginUnknown}
 
 	// The AuthorizationList is a SEQUENCE of IMPLICIT tagged values.
 	// We do not attempt full parsing here since the tag assignments
-	// vary across Keymaster/KeyMint versions. RootOfTrust parsing
-	// would require walking the SEQUENCE and matching tag 704.
-	// This is left intentionally minimal for forward compatibility.
+	// vary across Keymaster/KeyMint versions. Instead each field this
+	// package consumes is located by its own context-specific tag,
+	// independent of the others' presence or absence.
+	//
+	// The zero value is not returned for Origin, deliberately: the caller
+	// must be able to tell "the TEE never claimed an origin" apart from "the
+	// TEE claimed origin 0 (GENERATED)" (go-xkms#132).
 
 	if len(rawVal.FullBytes) == 0 {
 		return authList
@@ -455,7 +507,78 @@ func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 		authList.AttestationApplicationID = appID
 	}
 
+	if origin, ok := findOrigin(rawVal.FullBytes); ok {
+		authList.Origin = origin
+	}
+
+	authList.Purpose = findPurpose(rawVal.FullBytes)
+
 	return authList
+}
+
+// findOrigin walks the AuthorizationList for tag 702 and decodes the
+// EXPLICIT INTEGER inside it -- the enforcement domain's claim about how the
+// key came to exist (go-xkms#132). ok is false when the tag is absent or
+// does not decode; the caller must treat that as "no claim", never as
+// OriginGenerated, because zero is also OriginGenerated's value.
+func findOrigin(data []byte) (origin int, ok bool) {
+	var outer asn1.RawValue
+	rest, err := asn1.Unmarshal(data, &outer)
+	if err != nil || len(rest) > 0 {
+		return 0, false
+	}
+
+	remaining := outer.Bytes
+	for len(remaining) > 0 {
+		var elem asn1.RawValue
+		remaining, err = asn1.Unmarshal(remaining, &elem)
+		if err != nil {
+			break
+		}
+		if elem.Class != asn1.ClassContextSpecific || elem.Tag != tagOrigin {
+			continue
+		}
+
+		var value int
+		if _, unmarshalErr := asn1.Unmarshal(elem.Bytes, &value); unmarshalErr != nil {
+			return 0, false
+		}
+		return value, true
+	}
+
+	return 0, false
+}
+
+// findPurpose walks the AuthorizationList for tag 1 and decodes the EXPLICIT
+// SET OF INTEGER inside it -- the operations the enforcement domain will
+// perform with the key (go-xkms#132). Returns nil if the tag is absent or
+// does not decode.
+func findPurpose(data []byte) []int {
+	var outer asn1.RawValue
+	rest, err := asn1.Unmarshal(data, &outer)
+	if err != nil || len(rest) > 0 {
+		return nil
+	}
+
+	remaining := outer.Bytes
+	for len(remaining) > 0 {
+		var elem asn1.RawValue
+		remaining, err = asn1.Unmarshal(remaining, &elem)
+		if err != nil {
+			break
+		}
+		if elem.Class != asn1.ClassContextSpecific || elem.Tag != tagPurpose {
+			continue
+		}
+
+		var purposes []int
+		if _, unmarshalErr := asn1.UnmarshalWithParams(elem.Bytes, &purposes, "set"); unmarshalErr != nil {
+			return nil
+		}
+		return purposes
+	}
+
+	return nil
 }
 
 // findRootOfTrust attempts to locate and parse a RootOfTrust SEQUENCE
@@ -600,22 +723,73 @@ func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now
 	return nil
 }
 
-// buildMinimalAttestationExtension constructs a minimal ASN.1-encoded
-// Android Key Attestation extension for testing purposes. This is exported
-// so that test packages can create synthetic attestation certificates.
-// BuildAttestationExtension builds a KeyDescription extension whose teeEnforced
-// AuthorizationList carries a RootOfTrust.
+// AttestationExtensionOptions carries the teeEnforced AuthorizationList
+// claims a fixture can assert beyond RootOfTrust: Origin and Purpose
+// (go-xkms#132).
 //
-// BuildMinimalAttestationExtension writes both authorization lists as empty
-// SEQUENCEs, so nothing it produces can exercise any RootOfTrust check --
-// VerifyKeyAttestation's boot-state branch, or a caller that requires the
-// device be locked. A consumer testing those had no fixture and could only
-// assert that it ASKED for them.
+// It exists as a sibling to BuildAttestationExtension's rot parameter rather
+// than a further positional argument, per the doc comment BuildAttestation
+// Extension already carried: that function cannot grow again without
+// breaking its callers a second time.
+//
+// HasOrigin distinguishes an explicit teeEnforced claim of Origin=GENERATED
+// (0) from no origin claim at all -- the same distinction findOrigin makes
+// when parsing one back.
+type AttestationExtensionOptions struct {
+	// RootOfTrust is teeEnforced's boot-state claim. Nil omits tag 704.
+	RootOfTrust *RootOfTrust
+
+	// Origin is teeEnforced's key-origin claim, encoded as tag 702 only
+	// when HasOrigin is true.
+	Origin    int
+	HasOrigin bool
+
+	// Purpose is teeEnforced's key-purpose claim, encoded as tag 1 when
+	// non-empty. A nil or empty slice omits the tag.
+	Purpose []int
+}
+
+// marshalExplicitInt DER-encodes an EXPLICIT context-specific INTEGER tag,
+// matching how findOrigin reads it back: the tag's content is the DER of a
+// plain INTEGER.
+func marshalExplicitInt(tag, value int) ([]byte, error) {
+	body, err := asn1.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tag,
+		IsCompound: true,
+		Bytes:      body,
+	})
+}
+
+// marshalExplicitIntSet DER-encodes an EXPLICIT context-specific SET OF
+// INTEGER tag, matching how findPurpose reads it back.
+func marshalExplicitIntSet(tag int, values []int) ([]byte, error) {
+	body, err := asn1.MarshalWithParams(values, "set")
+	if err != nil {
+		return nil, err
+	}
+	return asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tag,
+		IsCompound: true,
+		Bytes:      body,
+	})
+}
+
+// BuildAttestationExtension builds a KeyDescription extension whose
+// teeEnforced AuthorizationList carries a RootOfTrust.
 //
 // rot may be nil, which reproduces the minimal builder's shape: a verified,
 // nonce-matching chain that says nothing at all about boot state. That case
 // exists to be REFUSED by a caller that requires the claim, so it needs to be
 // constructible on purpose.
+//
+// This is BuildAttestationExtensionWithOptions with only RootOfTrust set; a
+// fixture that also needs Origin or Purpose claims calls that instead.
 func BuildAttestationExtension(
 	version int,
 	attestSecLevel SecurityLevel,
@@ -625,13 +799,56 @@ func BuildAttestationExtension(
 	uniqueID []byte,
 	rot *RootOfTrust,
 ) ([]byte, error) {
-	teeEnforced := []byte(nil)
-	if rot != nil {
+	return BuildAttestationExtensionWithOptions(version, attestSecLevel, kmVersion, kmSecLevel,
+		challenge, uniqueID, &AttestationExtensionOptions{RootOfTrust: rot})
+}
+
+// BuildAttestationExtensionWithOptions builds a KeyDescription extension
+// whose teeEnforced AuthorizationList carries the claims in opts:
+// RootOfTrust, Origin, and Purpose (go-xkms#132).
+//
+// A nil opts reproduces BuildMinimalAttestationExtension's shape: neither
+// authorization list makes any claim.
+func BuildAttestationExtensionWithOptions(
+	version int,
+	attestSecLevel SecurityLevel,
+	kmVersion int,
+	kmSecLevel SecurityLevel,
+	challenge []byte,
+	uniqueID []byte,
+	opts *AttestationExtensionOptions,
+) ([]byte, error) {
+	if opts == nil {
+		opts = &AttestationExtensionOptions{}
+	}
+
+	var teeEnforced bytes.Buffer
+
+	// Ordered to match the schema's own field order (tags 1, 702, 704), not
+	// that findOrigin/findPurpose/findRootOfTrust care: each looks up its own
+	// tag independent of position.
+	if len(opts.Purpose) > 0 {
+		tagged, err := marshalExplicitIntSet(tagPurpose, opts.Purpose)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal purpose", Err: err}
+		}
+		teeEnforced.Write(tagged)
+	}
+
+	if opts.HasOrigin {
+		tagged, err := marshalExplicitInt(tagOrigin, opts.Origin)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal origin", Err: err}
+		}
+		teeEnforced.Write(tagged)
+	}
+
+	if opts.RootOfTrust != nil {
 		body, err := asn1.Marshal(rootOfTrustASN1{
-			VerifiedBootKey:   rot.VerifiedBootKey,
-			DeviceLocked:      rot.DeviceLocked,
-			VerifiedBootState: asn1.Enumerated(rot.VerifiedBootState),
-			VerifiedBootHash:  rot.VerifiedBootHash,
+			VerifiedBootKey:   opts.RootOfTrust.VerifiedBootKey,
+			DeviceLocked:      opts.RootOfTrust.DeviceLocked,
+			VerifiedBootState: asn1.Enumerated(opts.RootOfTrust.VerifiedBootState),
+			VerifiedBootHash:  opts.RootOfTrust.VerifiedBootHash,
 		})
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "android: failed to marshal root of trust", Err: err}
@@ -648,13 +865,18 @@ func BuildAttestationExtension(
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "android: failed to marshal tagged root of trust", Err: err}
 		}
-		teeEnforced = tagged
+		teeEnforced.Write(tagged)
 	}
 
 	return buildAttestationExtension(version, attestSecLevel, kmVersion, kmSecLevel,
-		challenge, uniqueID, teeEnforced)
+		challenge, uniqueID, teeEnforced.Bytes())
 }
 
+// BuildMinimalAttestationExtension builds a KeyDescription extension whose
+// authorization lists are both empty SEQUENCEs, so nothing it produces can
+// exercise any TeeEnforced check -- RootOfTrust, Origin, or Purpose. A
+// fixture that needs to make one of those claims calls
+// BuildAttestationExtension or BuildAttestationExtensionWithOptions instead.
 func BuildMinimalAttestationExtension(
 	version int,
 	attestSecLevel SecurityLevel,
