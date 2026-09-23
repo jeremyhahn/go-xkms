@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"encoding/asn1"
 	"math/big"
 
@@ -30,12 +31,25 @@ const (
 	COSEAlgES384 = -35
 	COSEAlgES512 = -36
 	COSEAlgEdDSA = -8
+
+	// RSASSA-PKCS1-v1_5 with SHA-2. Only ever produced by an attesting key an
+	// authenticator does not choose itself -- a TPM's Initial Attestation Key
+	// provisioned as RSA -- never as a FIDO2 credential key algorithm.
+	COSEAlgRS256 = -257
+	COSEAlgRS384 = -258
+	COSEAlgRS512 = -259
+
+	// RSASSA-PSS with SHA-2, for the same restricted use as the RS* family.
+	COSEAlgPS256 = -37
+	COSEAlgPS384 = -38
+	COSEAlgPS512 = -39
 )
 
 // COSE key type and curve constants.
 const (
 	COSEKeyTypeEC2 = 2
 	COSEKeyTypeOKP = 1
+	COSEKeyTypeRSA = 3
 
 	COSECurveP256    = 1
 	COSECurveP384    = 2
@@ -74,6 +88,12 @@ func EncodeCOSEPublicKey(publicKey crypto.PublicKey, algorithm int) ([]byte, err
 			return nil, ErrUnsupportedAlgorithm
 		}
 		return encodeCOSEOKPKey(edKey)
+	case COSEAlgRS256, COSEAlgRS384, COSEAlgRS512, COSEAlgPS256, COSEAlgPS384, COSEAlgPS512:
+		rsaKey, ok := publicKey.(*rsa.PublicKey)
+		if !ok {
+			return nil, ErrUnsupportedAlgorithm
+		}
+		return encodeCOSERSAKey(rsaKey, algorithm)
 	default:
 		return nil, ErrUnsupportedAlgorithm
 	}
@@ -105,6 +125,22 @@ func encodeCOSEEC2Key(publicKey *ecdsa.PublicKey, algorithm int) ([]byte, error)
 		-1: curve,          // crv
 		-2: x,              // x
 		-3: y,              // y
+	}
+
+	return coseCBOREncMode.Marshal(coseKey)
+}
+
+// encodeCOSERSAKey encodes an RSA public key as a COSE RSA key (RFC 8230),
+// used only for a TPM Initial Attestation Key's public key: no FIDO2
+// credential key algorithm in this package is RSA.
+func encodeCOSERSAKey(publicKey *rsa.PublicKey, algorithm int) ([]byte, error) {
+	e := big.NewInt(int64(publicKey.E)).Bytes()
+
+	coseKey := map[int]interface{}{
+		1:  COSEKeyTypeRSA,      // kty: RSA
+		3:  algorithm,           // alg
+		-1: publicKey.N.Bytes(), // n
+		-2: e,                   // e
 	}
 
 	return coseCBOREncMode.Marshal(coseKey)

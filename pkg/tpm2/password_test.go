@@ -155,6 +155,9 @@ func TestPlatformPasswordString(t *testing.T) {
 				if err == nil {
 					t.Error("PlatformPassword.String() expected error but got nil")
 				}
+				if !errors.Is(err, ErrPlatformPasswordUnavailable) {
+					t.Errorf("PlatformPassword.String() err = %v, want errors.Is match against ErrPlatformPasswordUnavailable", err)
+				}
 				return
 			}
 

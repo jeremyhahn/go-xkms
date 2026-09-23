@@ -1154,6 +1154,7 @@ func TestOpenWithSimulator(t *testing.T) {
 		err := tpmInstance.Open()
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid TPM transport configuration")
+		assert.ErrorIs(t, err, ErrInvalidTPMTransport)
 	})
 
 	t.Run("opens socket connection error with nonexistent socket", func(t *testing.T) {

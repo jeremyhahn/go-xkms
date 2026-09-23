@@ -554,6 +554,7 @@ func TestSignValidate_NilTPMAttrsError(t *testing.T) {
 	_, err := tpm.SignValidate(keyAttrs, []byte("digest"), []byte("validation"))
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "TPMAttributes.Public is required")
+	assert.ErrorIs(t, err, ErrSignValidatePublicRequired)
 }
 
 func TestSignValidate_ZeroPublicTypeError(t *testing.T) {
@@ -572,6 +573,7 @@ func TestSignValidate_ZeroPublicTypeError(t *testing.T) {
 	_, err := tpm.SignValidate(keyAttrs, []byte("digest"), []byte("validation"))
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "TPMAttributes.Public is required")
+	assert.ErrorIs(t, err, ErrSignValidatePublicRequired)
 }
 
 func TestSignValidate_ZeroHashAlgError(t *testing.T) {
@@ -591,6 +593,7 @@ func TestSignValidate_ZeroHashAlgError(t *testing.T) {
 	_, err := tpm.SignValidate(keyAttrs, []byte("digest"), []byte("validation"))
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Error(), "TPMAttributes.HashAlg is required")
+	assert.ErrorIs(t, err, ErrSignValidateHashAlgRequired)
 }
 
 // ===========================================

@@ -20,7 +20,6 @@ package ca
 
 import (
 	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"log/slog"
 
@@ -67,17 +66,18 @@ func (ca *CA) VerifyTCG_CSR_IDevIDBytes(
 		return nil, nil, nil, ErrTCGMissingEKCert
 	}
 
-	var ekCert *x509.Certificate
-	if block, _ := pem.Decode(csrContent.EkCert); block != nil {
-		ekCert, err = x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return nil, nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("pem: %v", err)}
-		}
-	} else {
-		ekCert, err = x509.ParseCertificate(csrContent.EkCert)
-		if err != nil {
-			return nil, nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("der: %v", err)}
-		}
+	ekCert, ekIntermediates, err := parseEKCertificateChain(csrContent.EkCert)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b
+	// / §6.2.2 step 4b: verify the EK certificate against a configured
+	// TPM-manufacturer trust anchor before generating the MakeCredential
+	// challenge below -- TPM2_ActivateCredential proves possession of the
+	// EK, not that the EK belongs to a genuine TPM.
+	if err := ca.verifyEKCertificateChain(ekCert, ekIntermediates); err != nil {
+		return nil, nil, nil, err
 	}
 
 	slog.Debug("VerifyTCG_CSR_IDevIDBytes: generating MakeCredential challenge",

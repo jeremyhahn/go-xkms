@@ -24,6 +24,7 @@ type Service struct {
 	config       *Config
 	accounts     AccountManager
 	certificates CertificateManager
+	devices      DeviceManager
 	renewal      *RenewalOrchestrator
 	deployer     *Deployer
 	logger       *slog.Logger
@@ -34,12 +35,14 @@ func NewService(config *Config, logger *slog.Logger) (*Service, error) {
 	deployer := NewDeployer(logger)
 	accounts := NewAccountManager(config, logger)
 	certificates := NewCertificateManager(config, accounts, deployer, logger)
+	devices := NewDeviceManager(config, accounts, logger)
 	renewal := NewRenewalOrchestrator(config, certificates, logger)
 
 	return &Service{
 		config:       config,
 		accounts:     accounts,
 		certificates: certificates,
+		devices:      devices,
 		renewal:      renewal,
 		deployer:     deployer,
 		logger:       logger,
@@ -54,6 +57,11 @@ func (s *Service) Accounts() AccountManager {
 // Certificates returns the certificate manager.
 func (s *Service) Certificates() CertificateManager {
 	return s.certificates
+}
+
+// Devices returns the device manager.
+func (s *Service) Devices() DeviceManager {
+	return s.devices
 }
 
 // Deployer returns the certificate deployer.

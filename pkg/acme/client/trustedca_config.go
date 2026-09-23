@@ -81,8 +81,18 @@ type TCAACMEConfig struct {
 	// Website is the URL to the CA website.
 	Website string `yaml:"website" json:"website"`
 
-	// CAIdentifiers are the CA identifiers for the directory.
+	// CAIdentifiers are the issuer domain names this CA is known by in CAA
+	// (RFC 8659) issue/issuewild records — advertised in the directory meta
+	// object per RFC 8555 Section 9.7.6, and the identities order finalize
+	// checks a domain's CAA RRset against before issuing. Required: see
+	// TCAACMEConfig.Validate.
 	CAIdentifiers []string `yaml:"ca_identifiers" json:"ca_identifiers"`
+
+	// CAADNSServer optionally pins the recursive resolver (host:port, e.g.
+	// "8.8.8.8:53") used for CAA lookups at order finalize. Empty uses the
+	// same default resolver the dns-01 challenge tooling uses
+	// (pkg/acme/challenges/dns-01/providers.DefaultNameservers).
+	CAADNSServer string `yaml:"caa_dns_server" json:"caa_dns_server"`
 
 	// SupportedChallenges lists the supported challenge types.
 	SupportedChallenges []string `yaml:"supported_challenges" json:"supported_challenges"`
@@ -229,6 +239,9 @@ func (c *TrustedCAConfig) Validate() error {
 
 // Validate validates the ACME server configuration.
 // HTTPSAddr and ExternalURL are required. ExternalURL must be a valid HTTPS URL.
+// CAIdentifiers is required: RFC 8555 Section 8.1 requires this CA to check
+// CAA (RFC 8659) records before issuing, and without at least one identity
+// the CA has nothing to compare a domain's issue/issuewild record against.
 func (a *TCAACMEConfig) Validate() error {
 	if a.HTTPSAddr == "" {
 		return errors.MalformedError("acme.https_addr is required")
@@ -245,6 +258,9 @@ func (a *TCAACMEConfig) Validate() error {
 	}
 	if parsed.Host == "" {
 		return errors.MalformedError("acme.external_url must include a host")
+	}
+	if len(a.CAIdentifiers) == 0 {
+		return errors.MalformedError("acme.ca_identifiers is required")
 	}
 	if err := a.TLS.Validate(); err != nil {
 		return err

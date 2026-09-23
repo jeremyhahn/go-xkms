@@ -37,6 +37,18 @@
   complete addresses and is not re-ported).
 - `sdk/go/acme` — the SDK surface, including `sdk/go/acme/trustedca.go` and
   `sdk/go/acme/transport/quic`.
+- `pkg/acme/client/service` — the multi-account service layer:
+  `AccountManager`, `CertificateManager` and `DeviceManager`, each keyed by a
+  named spec in `service.Config` (`Accounts`, `Certificates`, `Devices`) and
+  each resolving its account through `AccountManager.Client`.
+  `DeviceManager.Enroll`/`.Attest` open the `DeviceSpec.TPM` device (a real
+  TPM, or go-xkms's own simulator-backed defaults when left unset — see
+  [cli.md](cli.md#trusted-acme-client-device)) and drive
+  `pkg/acme/client.Client.EnrollDevice`/`.DeviceAttest` over the enroll-01 /
+  device-attest-01 challenges. `pkg/acme/gui/client/api` exposes the same
+  three managers as `/api/v1/accounts`, `/api/v1/certificates` and
+  `/api/v1/device/{enroll,attest}` for the desktop GUI and
+  `trusted-acme-client serve`.
 - `cmd/acme-client` — the `trusted-acme-client` binary
   (`account`, `cert`, `device`, `service`, `serve`, `version` groups).
 
@@ -74,7 +86,19 @@ once, to the externally visible base.
 - **`enroll-01` succeeds only if the TPM can activate the credential.** The
   server never accepts a secret it did not itself protect with
   `TPM2_MakeCredential` against the verified EK.
-- **CAA is checked before issuance**, not after.
+- **CAA (RFC 8659) is checked before issuance**, not after. Order finalize
+  (`order_finalize.go`) calls `Params.CAAValidator.Validate` for every DNS
+  identifier on the order before the CA signs; a rejection moves the order to
+  `invalid` with the `caa` problem type. The validator itself
+  (`pkg/acme/server/caa.go`) climbs the label tree to the closest non-empty
+  CAA RRset, checks `issuewild` for wildcard identifiers and falls back to
+  `issue` when no `issuewild` record exists, rejects an unrecognized
+  property tag carrying the critical flag regardless of any authorizing
+  record, and compares the `issue`/`issuewild` value's issuer-domain-name to
+  `acme.caa_identities` as a full domain name — never a prefix. A DNS
+  failure that prevents determining the RRset (SERVFAIL, timeout, any
+  non-NXDOMAIN error) fails closed per RFC 8659 Section 5.1: it denies
+  issuance rather than "proceeding with caution".
 - **Rate limits are per account and per tenant.** Exceeding either refuses the
   order; it does not queue it.
 - **Under pressure the circuit breaker refuses new orders.** Degradation never
@@ -88,14 +112,36 @@ once, to the externally visible base.
   `serve.api_base_url` follows the same rule. Deriving from an address with no
   port is an `AdvertisedURLError` (#140).
 - **A CSR's complete identity set must correspond exactly to the order's
-  authorized identifiers.** The CSR's Common Name (if present) and every DNS and
-  IP Subject Alternative Name must cover the authorized set completely: a name
-  the order authorized but the CSR omits is rejected, as is a name the CSR
-  carries that the order did not authorize. Email and URI SANs in the CSR are
-  rejected outright (the CA has no order-identifier type to authorize them
-  against). This rule applies to both the standard finalize path and the
-  endorse-01 flow. Prior to this, only the Common Name was compared, which
-  allowed unauthorized SANs through.
+  authorized identifiers.** For a `dns`/`ip` order, the CSR's Common Name (if
+  present) and every DNS and IP Subject Alternative Name must cover the
+  authorized set completely: a name the order authorized but the CSR omits is
+  rejected, as is a name the CSR carries that the order did not authorize.
+  Email and URI SANs in the CSR are rejected outright (the CA has no
+  order-identifier type to authorize them against). Prior to this, only the
+  Common Name was compared, which allowed unauthorized SANs through.
+- **A `permanent-identifier` order (`enroll-01`'s non-TCG-CSR path,
+  `device-attest-01`) never reads the identifier from the Common Name.** The
+  CSR's RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`)
+  inside its `subjectAltName` is the only source: `ca.ParseOtherNames`
+  (`pkg/ca/san.go`) decodes the extension by hand, since `crypto/x509` drops
+  otherNames when it parses a CSR. A CSR missing the otherName, carrying more
+  than one, or carrying any other otherName is `badCSR` — the shape of the
+  request is wrong regardless of the order. A CSR whose otherName decodes but
+  names a value the order did not authorize, or whose DNS/IP SANs are not
+  exactly the order's authorized `dns`/`ip` identifiers (if any accompany the
+  permanent identifier), is `rejectedIdentifier` — well-formed but asserting
+  an identity the order does not grant (`matchesPermanentIdentifierOrder`,
+  `pkg/acme/server/handlers/order_finalize.go`). Before this, the permanent
+  identifier fell back to the Common Name whenever the otherName was absent or
+  malformed, and the branch returned as soon as it found the first
+  `permanent-identifier` order entry without ever checking the CSR's DNS/IP
+  SANs or the order's remaining identifiers (go-xkms#684) — a CSR whose Common
+  Name matched could carry an arbitrary, unauthorized DNS or IP SAN straight
+  into the issued certificate.
+  The `endorse-01` flow is unaffected: its permanent identifier is the EK
+  public key being certified rather than a name the CSR carries, so
+  `matchesEndorse01Identifier` never compares it against the CSR at all,
+  only the CSR's DNS/IP SANs and the blanket email/URI rejection.
 - **An endorse-01 EK certificate records the TPM's manufacturer code, or it is
   not issued.** A TPM endorsed through endorse-01 has no manufacturer EK
   certificate, so the EK certificate issued here is the only place a later
@@ -144,10 +190,13 @@ The mapping an implementer needs:
 | challenge validation failed | `incorrectResponse` / `connection` / `dns` | 403 |
 | rate limit exceeded | `rateLimited` | 429 |
 | order not ready to finalize | `orderNotReady` | 403 |
-| CSR does not match the order | `badCSR` | 400 |
+| CSR does not match the order (`dns`/`ip` orders) | `badCSR` | 400 |
+| permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
+| permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
 
-**Fail closed:** unvalidated authorization, failed CAA, failed attestation,
-exceeded rate limit, open circuit breaker. Every one of them refuses to issue.
+**Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
+RRset (DNS failure), failed attestation, exceeded rate limit, open circuit
+breaker. Every one of them refuses to issue.
 
 ## Configuration
 
@@ -225,6 +274,28 @@ environment name for it (#140).
 The standalone `TrustedCA` also carries its own advertised URL,
 `acme.external_url`; `Validate` requires it, and a caller that skips
 validation gets the derived default described under Invariants.
+
+**CAA configuration (`ACMEConfig`, `pkg/config/acme.go`).**
+`acme.caa_identities` is the list of issuer domain names this CA is known by
+in `issue`/`issuewild` CAA records, and is **required whenever `acme.enabled`
+is true** — `Validate` returns `ErrACMEMissingCAAIdentities` otherwise, so a
+deployment can never silently run with CAA advertised in the directory but
+unenforceable at finalize. `acme.caa_dns_server` optionally pins the
+recursive resolver (`host:port`) the validator queries; empty uses the same
+default the `dns-01` challenge tooling does
+(`pkg/acme/challenges/dns-01/providers.DefaultNameservers[0]`). xkmsd's ACME
+composition (`cmd/xkmsd/acme.go`) builds the validator with
+`server.NewCAAValidator` and sets it on `handlers.Params.CAAValidator` before
+constructing the REST service — this is the one construction path for a CAA
+validator. The standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) builds
+one from the same constructor and its own `TCAACMEConfig.CAIdentifiers` /
+`CAADNSServer`; unlike xkmsd it only warns (does not refuse to start) when
+`ca_identifiers` is empty, because `CAAValidator.Validate` itself already
+fails closed for any domain that actually publishes a CAA record — an
+embedder that never expects one to is not blocked from starting. SDK
+consumers composing their own `ACMERestServiceParams` construct the same
+validator through `acmesdk.NewACMECAAValidator` (`sdk/go/acme`) rather than
+implementing `ACMECAAValidatorInterface` themselves.
 The standalone client's browser UI is told the origin the API is reachable at
 by `serve.api_base_url` (`--api-base-url`, `ACME_CLIENT_SERVE_API_BASE_URL`),
 derived from `serve.addr` when empty. The UI appends `/api/v1` and the
@@ -275,6 +346,14 @@ storage. Changing the storage layout requires a data migration step.
   (`account_test.go`, `authorization_test.go`, `challenge_test.go`,
   `certificate_test.go`, `directory_test.go`, `caa_test.go`,
   `rate_limiter_test.go`, `circuit_breaker_test.go`).
+  `pkg/acme/server/caa_test.go` covers the validator against a mock DNS
+  server: tree climbing, CNAME following, wildcard `issuewild`, exact
+  (non-prefix) issuer matching, a critical unrecognized property tag, and
+  fail-closed behavior on SERVFAIL/other DNS errors.
+  `pkg/acme/server/handlers/caa_finalize_test.go` drives the same real
+  validator through `OrderFinalizeHandler`, asserting the order lands
+  `invalid` with the `caa` problem type on a forbidden or undetermined CAA
+  outcome, and `valid` when permitted or when no CAA record exists.
 - **Hermetic** — no unit test in `pkg/acme/client` may reach the public
   internet. `golang.org/x/crypto/acme` substitutes Let's Encrypt production
   for an empty `DirectoryURL`, so every `acme.Client` literal in the tests

@@ -542,6 +542,74 @@ func TestProvisionEKCertNilCertStoreCoverage(t *testing.T) {
 	err = tpmObj.ProvisionEKCert(nil, cert.Raw)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "certificate store not initialized")
+	assert.ErrorIs(t, err, ErrCertStoreNotInitialized)
+}
+
+// TestDownloadEKCertFromManufacturer_RejectsECCEK proves that the
+// manufacturer EK-certificate download fallback refuses an ECC EK with the
+// typed ErrECCEKCertUnsupported sentinel, reachable with errors.Is, rather
+// than an inline error, and never reaches the network for an EK type the
+// download endpoint cannot serve.
+func TestDownloadEKCertFromManufacturer_RejectsECCEK(t *testing.T) {
+	logger := slog.Default()
+	sim, err := OpenSimulator()
+	require.NoError(t, err,
+		"the in-process TPM simulator must open; build with -tags tpm_simulator")
+
+	storageFactory, err := store.NewStorageFactory(logger, "")
+	require.NoError(t, err)
+
+	config := &Config{
+		UseSimulator:    true,
+		Hash:            "SHA-256",
+		PlatformPCR:     debugPCR,
+		PlatformPCRBank: debugPCRBank,
+		GoldenPCRs:      []uint{0, 7},
+		EK: &EKConfig{
+			CertHandle:    0,
+			Handle:        0x81010001,
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+			ECCConfig:     &store.ECCConfig{Curve: "P-256"},
+		},
+		SSRK: &SRKConfig{
+			Handle:       0x81000001,
+			KeyAlgorithm: x509.RSA.String(),
+			RSAConfig:    &store.RSAConfig{KeySize: 2048},
+		},
+		IAK: &IAKConfig{
+			CN:                 "device-id-001",
+			Hash:               crypto.SHA256.String(),
+			Handle:             uint32(0x81010002),
+			KeyAlgorithm:       x509.RSA.String(),
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+		},
+	}
+
+	params := &Params{
+		Logger:    logger,
+		Config:    config,
+		BlobStore: storageFactory.BlobStore(),
+		Backend:   storageFactory.KeyBackend(),
+		Transport: sim.Transport(),
+	}
+
+	tpmObj, err := NewTPM2(params)
+	if err == ErrNotInitialized {
+		err = tpmObj.Provision(nil)
+		require.NoError(t, err)
+	} else {
+		require.NoError(t, err)
+	}
+	defer func() {
+		_ = tpmObj.Close()
+		_ = sim.Close()
+	}()
+
+	tpm2Impl := tpmObj.(*TPM2)
+	_, err = tpm2Impl.downloadEKCertFromManufacturer(tpm2.TPMHandle(ekIndex))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrECCEKCertUnsupported)
 }
 
 // =====================================================
@@ -814,7 +882,7 @@ func TestFactoryReset_Success(t *testing.T) {
 	// Install's doc comment) matches reality instead of the static
 	// DEFAULT_PASSWORD template value createSim seeds EKConfig with for
 	// unrelated tests that never change the hierarchy auth.
-	tpmImpl.config.EK.HierarchyAuth = types.SecretValue{}
+	tpmImpl.config.EK.HierarchyAuth = nil
 
 	// createSim's shared IAK config (used by ~20 other tests) hardcodes
 	// Handle 0x81010002, which is the TCG-reserved ECC EK persistent

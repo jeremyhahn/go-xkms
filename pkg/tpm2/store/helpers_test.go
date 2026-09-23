@@ -11,10 +11,12 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,6 +138,8 @@ func TestDecodePEM(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, decoded)
 		assert.Contains(t, err.Error(), "failed to decode PEM block")
+		var typed *errs.Message
+		assert.True(t, errors.As(err, &typed), "err = %v, want *errs.Message", err)
 	})
 
 	t.Run("empty input", func(t *testing.T) {

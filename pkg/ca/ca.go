@@ -287,6 +287,17 @@ type CA struct {
 	// real validity window.
 	clock Clock
 
+	// secondaryKeyErr records the error from the most recent
+	// initSecondaryKeys call during Init, or nil if every secondary key
+	// (Keys[1..n] of the identity) generated successfully or the identity
+	// has none. Secondary-key generation is deliberately best-effort during
+	// Init — the CA is usable once the primary (Keys[0]) certificate
+	// exists, so a secondary-key failure must not fail Init — but the
+	// failure is not discarded: it is retained here so SecondaryKeyInitError
+	// lets a caller detect a partially provisioned multi-key CA instead of
+	// the failure vanishing silently. Guarded by mu.
+	secondaryKeyErr error
+
 	// State management
 	// Using atomic for lock-free read of initialized state
 	initialized atomic.Bool
@@ -419,6 +430,7 @@ func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *Mult
 		Identity:            []Identity{identity},
 		SelectedCA:          0,
 		DefaultValidityDays: defaultValidityDays,
+		TCGConfig:           cfg.TCGConfig,
 	}
 }
 
@@ -590,6 +602,7 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 		StoreType:               issuingIdentity.GetStoreType(),
 		DefaultCertValidityDays: mp.Config.GetDefaultValidityDays(),
 		CRLValidityDays:         issuingIdentity.GetCRLValidityDays(),
+		TCGConfig:               mp.Config.TCGConfig,
 	}
 
 	return New(&Params{
@@ -683,6 +696,21 @@ func (ca *CA) ObjectStore() objstore.Storage {
 	return ca.objectStore
 }
 
+// SecondaryKeyInitError returns the error from the most recent
+// initSecondaryKeys attempt made by Init, or nil when every secondary key
+// (Keys[1..n] of the identity) generated successfully or the identity has
+// none. Init never fails because of this error — the CA is usable once the
+// primary (Keys[0]) certificate exists — so a caller that needs every
+// configured key actually provisioned (not just the primary) should check
+// this after Init and alert or retry out of band.
+//
+// Thread-safe: Yes
+func (ca *CA) SecondaryKeyInitError() error {
+	ca.mu.RLock()
+	defer ca.mu.RUnlock()
+	return ca.secondaryKeyErr
+}
+
 // Init initializes a new Certificate Authority by generating the root
 // and/or intermediate certificates based on the CA configuration.
 //
@@ -716,8 +744,12 @@ func (ca *CA) Init(ctx context.Context) error {
 	// This is best-effort: the CA is functional once the primary (Keys[0])
 	// certificate exists, so a secondary-key failure must not fail Init.
 	// initSecondaryKeys is a no-op unless a multi-key Identity was preserved
-	// (NewParentCA / NewCA path) and BackendForStore routing is in play.
-	_ = ca.initSecondaryKeys(ctx, ca.config.RootIdentity())
+	// (NewParentCA / NewCA path) and BackendForStore routing is in play. The
+	// error is not discarded, though: it is retained on ca.secondaryKeyErr
+	// (see SecondaryKeyInitError) so a caller that needs every configured
+	// key provisioned can detect and act on a partial failure Init itself
+	// must not fail on.
+	ca.secondaryKeyErr = ca.initSecondaryKeys(ctx, ca.config.RootIdentity())
 
 	// Create intermediate CA certificates if configured
 	if ca.config.HasIntermediate() {

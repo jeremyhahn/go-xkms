@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -165,14 +165,17 @@ SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.
   that every issuer is trusted.
 - **Attestation import is not attestation trust.** `ImportAttestation*` stores
   evidence; `VerifyAttestationQuote` is the check. Storing is not verifying.
-- **A TCG DevID enrollment proves TPM residency, not TPM provenance.** The
-  stateless verifier establishes that the IDevID and IAK are Template H-0 keys
-  in one TPM, and that the IAK certified the IDevID. It does not verify the
-  endorsement key certificate against the manufacturer's roots, which TCG
-  DevID v1 r12 §6.2.2 step 7b calls for; nothing in this repository does. Until
-  a manufacturer truststore exists, a device that supplies its own EK
-  certificate is trusted to name its own TPM, and the hardwareModuleName in
-  the issued certificate inherits that limit.
+- **A TCG DevID enrollment proves both TPM residency and TPM provenance.**
+  The stateless verifier establishes that the IDevID and IAK are Template H-0
+  keys in one TPM, and that the IAK certified the IDevID; `verifyEKCertificateChain`
+  (`pkg/ca/tcg_ek_trust.go`) separately verifies the endorsement key
+  certificate against the CA's configured TPM-manufacturer trust anchors, per
+  TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b and
+  §6.2.2 step 4b, before either check's result is trusted enough to issue
+  from. **A CA with no anchors configured refuses every EK certificate**
+  (`ErrTCGEKCertUntrusted`) rather than falling back to residency-only proof
+  -- there is no permissive default a device can rely on by supplying its own
+  EK certificate.
 - **Multi-keystore CAs** (`pkg/ca/multi_keystore*.go`) let one CA identity hold
   parallel keys of different algorithms in different backends. Each is a
   distinct trust root even though they share a name — `CABundleFiltered(storeType, keyAlgorithm)`
@@ -194,7 +197,10 @@ SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.
   `pkg/acme/server/handlers/ocsp.go`'s `OCSPHandler` adapts it to
   `net/http`, but no route registers that handler today; a caller mounts it
   or feeds the responder DER-encoded requests directly.
-- **It does not anchor endorsement key certificates.** No manufacturer
-  truststore, no vendor root distribution, no AIA walk for EK issuers. Adding
-  one is an architecture decision about where manufacturer roots come from and
-  what an unanchored enrollment should do, not a local change to the CSR path.
+- **It does not distribute vendor roots or walk AIA for EK issuers.** It
+  anchors EK certificates against the operator-configured
+  `TCGConfig.TrustAnchors` (`pkg/attestation/truststore.Config`) -- see
+  "Trust boundaries" above -- but does not ship, fetch, or auto-discover a
+  TPM manufacturer's root; the operator supplies it, the same way
+  `pkg/config.AttestationConfig` requires an operator-supplied trust store
+  per attestation format.

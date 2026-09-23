@@ -89,7 +89,7 @@ func TestSSHBackend_CloudReal(t *testing.T) {
 			VaultURL:     vault,
 			TenantID:     os.Getenv("AZURE_TENANT_ID"),
 			ClientID:     os.Getenv("AZURE_CLIENT_ID"),
-			ClientSecret: types.SecretValue{Raw: os.Getenv("AZURE_CLIENT_SECRET")},
+			ClientSecret: &types.SecretValue{Raw: os.Getenv("AZURE_CLIENT_SECRET")},
 			KeyStorage:   mustMemory(t),
 			CertStorage:  mustMemory(t),
 		})

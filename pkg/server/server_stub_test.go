@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,7 +99,10 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 		Enabled: true,
 		Library: "/usr/lib/softhsm/libsofthsm2.so",
 		Token:   "test",
-		Pin:     types.NewLiteralSecretValue([]byte("1234")),
+		// Pin stays nil: this stub build never reaches a real PKCS#11
+		// login, and a *types.SecretValue reachable from *config.Config
+		// must reference a secret held elsewhere (go-xkms#654) --
+		// unconfigured is the correct shape for this test's purpose.
 	}
 
 	server, err := New(cfg)
@@ -120,7 +122,10 @@ func TestServer_InitVaultBackend_Stub(t *testing.T) {
 	cfg.Backends.Vault = &config.VaultConfig{
 		Enabled: true,
 		Address: "http://localhost:8200",
-		Token:   types.NewLiteralSecretValue([]byte("test-token")),
+		// Token stays nil: this stub build never reaches a real Vault
+		// call, and a *types.SecretValue reachable from *config.Config
+		// must reference a secret held elsewhere (go-xkms#654) --
+		// unconfigured is the correct shape for this test's purpose.
 	}
 
 	server, err := New(cfg)

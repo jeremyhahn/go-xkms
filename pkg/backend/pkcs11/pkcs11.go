@@ -157,7 +157,7 @@ func (b *Backend) Config() *Config {
 // leaves the PIN's SecretValue enclave only for the duration of this
 // accessor's return value. Returns "" when no PIN is configured.
 func (b *Backend) userPIN() (string, error) {
-	pin, err := types.SecretValueBytes(&b.config.PIN)
+	pin, err := types.SecretValueBytes(b.config.PIN)
 	if err != nil {
 		return "", err
 	}
@@ -168,7 +168,7 @@ func (b *Backend) userPIN() (string, error) {
 // the same miekg/pkcs11 boundary userPIN documents. Returns "" when no SO
 // PIN is configured.
 func (b *Backend) soPIN() (string, error) {
-	pin, err := types.SecretValueBytes(&b.config.SOPIN)
+	pin, err := types.SecretValueBytes(b.config.SOPIN)
 	if err != nil {
 		return "", err
 	}
@@ -430,7 +430,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 		return b.deleteKeyInSession(session, id, attrs.CN)
 	}
 
-	if b.config.IsYubiKeyPIV() && types.SecretValueSet(&b.config.SOPIN) {
+	if b.config.IsYubiKeyPIV() && b.config.SOPIN != nil {
 		soPIN, err := b.soPIN()
 		if err != nil {
 			return err
@@ -717,7 +717,7 @@ func (b *Backend) Login() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if !types.SecretValueSet(&b.config.PIN) {
+	if b.config.PIN == nil {
 		return ErrInvalidUserPIN
 	}
 

@@ -134,6 +134,10 @@ var (
 	// ErrTPMClearFailed indicates the TPM clear operation failed.
 	ErrTPMClearFailed = errors.New("tpm_service: TPM clear failed")
 
+	// ErrTPMNilClearRequest indicates ClearTPM or ForceClearTPM was called
+	// with a nil request.
+	ErrTPMNilClearRequest = errors.New("tpm_service: nil clear request")
+
 	// ErrTPMForceClearFailed indicates the TPM force clear via PPI failed.
 	ErrTPMForceClearFailed = errors.New("tpm_service: TPM force clear via PPI failed")
 
@@ -597,6 +601,11 @@ var (
 
 	// ErrTPMHandleOutOfRange indicates the provided handle value is outside the valid range.
 	ErrTPMHandleOutOfRange = errors.New("tpm_handle_allocator: handle out of range")
+
+	// ErrTPMHandlePersistFailed indicates the allocator advanced its
+	// in-memory counter but could not persist the new value, so the
+	// allocated handle is withheld rather than handed to the caller.
+	ErrTPMHandlePersistFailed = errors.New("tpm_handle_allocator: failed to persist handle counter")
 )
 
 // NV index allocator errors.
@@ -606,6 +615,11 @@ var (
 
 	// ErrNVIndexOutOfRange indicates the provided NV index value is outside the valid range.
 	ErrNVIndexOutOfRange = errors.New("nv_index_allocator: NV index out of valid range")
+
+	// ErrNVIndexPersistFailed indicates the allocator advanced its
+	// in-memory counter but could not persist the new value, so the
+	// allocated NV index is withheld rather than handed to the caller.
+	ErrNVIndexPersistFailed = errors.New("nv_index_allocator: failed to persist index counter")
 )
 
 // Policy errors.

@@ -35,6 +35,10 @@ const secretSealerInfo = "go-xkms/seal/secret-sealer/v1"
 // with no key material.
 var ErrSecretSealerEmptySecret = errors.New("seal: secret sealer requires non-empty secret")
 
+// ErrSecretSealerNilSealedData is returned when Unseal is called with a nil
+// sealed data envelope.
+var ErrSecretSealerNilSealedData = errors.New("seal: sealed data is nil")
+
 // SecretSealer is a types.Sealer that encrypts arbitrary values with
 // AES-256-GCM under a key derived (HKDF-SHA256) from a caller-supplied secret.
 // It is the software bridge that lets a node-local key store be sealed under a
@@ -98,7 +102,7 @@ func (s *SecretSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions
 // Unseal decrypts sealed data produced by Seal.
 func (s *SecretSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
-		return nil, errors.New("seal: sealed data is nil")
+		return nil, ErrSecretSealerNilSealedData
 	}
 	if !s.CanSeal() {
 		return nil, ErrSecretSealerEmptySecret

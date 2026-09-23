@@ -14,6 +14,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -650,5 +651,84 @@ func TestWalkYAMLKeys_SecretValueTreatedAsLeaf(t *testing.T) {
 		if got[i] != k {
 			t.Fatalf("walkYAMLKeys() visited %v, want %v", got, want)
 		}
+	}
+}
+
+// TestLoad_BarrierPassphraseInFile_Rejected proves go-xkms#653: an old
+// config file that still sets the removed barrier.passphrase field fails
+// Load with a typed *RemovedFieldError naming the field and the
+// replacement, rather than the key being silently dropped by mapstructure
+// because it no longer names a struct field.
+func TestLoad_BarrierPassphraseInFile_Rejected(t *testing.T) {
+	path := writeServerConfig(t, `
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "stale-boot-secret"
+`)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil, want *RemovedFieldError for barrier.passphrase")
+	}
+
+	var removed *RemovedFieldError
+	if !errors.As(err, &removed) {
+		t.Fatalf("Load() error = %v, want it to unwrap to *RemovedFieldError", err)
+	}
+	if removed.Field != "barrier.passphrase" {
+		t.Fatalf("RemovedFieldError.Field = %q, want %q", removed.Field, "barrier.passphrase")
+	}
+	if removed.Replacement == "" {
+		t.Fatal("RemovedFieldError.Replacement is empty, want it to name what to use instead")
+	}
+}
+
+// TestLoad_BarrierPassphraseViaEnv_Rejected proves the same rejection holds
+// for the environment variable a stale deployment might still set
+// (XKMS_BARRIER_PASSPHRASE), not only the file: go-xkms#653 removed every
+// config-sourced avenue for the field, not just the YAML key.
+func TestLoad_BarrierPassphraseViaEnv_Rejected(t *testing.T) {
+	t.Setenv("XKMS_BARRIER_PASSPHRASE", "stale-boot-secret")
+
+	path := writeServerConfig(t, `
+barrier:
+  enabled: true
+  strategy: "passphrase"
+`)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil, want *RemovedFieldError for XKMS_BARRIER_PASSPHRASE")
+	}
+
+	var removed *RemovedFieldError
+	if !errors.As(err, &removed) {
+		t.Fatalf("Load() error = %v, want it to unwrap to *RemovedFieldError", err)
+	}
+	if removed.Field != "barrier.passphrase" {
+		t.Fatalf("RemovedFieldError.Field = %q, want %q", removed.Field, "barrier.passphrase")
+	}
+}
+
+// TestLoad_BarrierWithoutPassphrase_Succeeds proves the replacement config
+// shape (no passphrase field at all) loads cleanly, so the rejection above
+// is scoped to the removed field and not to the barrier section generally.
+func TestLoad_BarrierWithoutPassphrase_Succeeds(t *testing.T) {
+	path := writeServerConfig(t, `
+barrier:
+  enabled: true
+  strategy: "passphrase"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if !cfg.Barrier.Enabled {
+		t.Fatal("cfg.Barrier.Enabled = false, want true")
+	}
+	if cfg.Barrier.Strategy != "passphrase" {
+		t.Fatalf("cfg.Barrier.Strategy = %q, want %q", cfg.Barrier.Strategy, "passphrase")
 	}
 }

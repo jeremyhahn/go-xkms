@@ -674,14 +674,6 @@ func (ca *CA) TLSConfigWithXSigner(
 
 Creates a TLS configuration with cross-signer support.
 
-### QuantumSafeTLSConfig
-
-```go
-func (ca *CA) QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
-```
-
-Creates a TLS configuration optimized for post-quantum algorithms.
-
 ### TLSBundleWithCrossSigner
 
 ```go

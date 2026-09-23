@@ -14,7 +14,6 @@
 package tpm2
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -107,7 +106,7 @@ func (p *PlatformPassword) cacheTTL() time.Duration {
 func (p *PlatformPassword) String() (string, error) {
 	secret := p.Bytes()
 	if secret == nil {
-		return "", errors.New("failed to retrieve platform password")
+		return "", ErrPlatformPasswordUnavailable
 	}
 	return string(secret), nil
 }

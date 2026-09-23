@@ -120,11 +120,16 @@ type CryptoConfig struct {
 // BarrierConfig configures the barrier (seal/unseal) subsystem. The barrier is
 // the go-qrdb node's own StorageBarrier: when Enabled, the node encrypts its
 // data-plane KV (encfs, AES-256-GCM) so every value at rest — including the
-// crypto backends' key stores — is encrypted, and it auto-unseals at boot per
-// the resolved Strategy + Passphrase. This is the same barrier go-quicbaas uses;
-// xkms provisions its own instance through this config (config/CLI/env), the
-// same shared mechanism every product in the stack drives through its own
-// front door.
+// crypto backends' key stores — is encrypted. It auto-unseals at boot only
+// through a registered hardware seal strategy (tpm2/pkcs11) or the explicit
+// "none" strategy; software strategies (passphrase/shamir) never auto-unseal
+// from configuration — matching go-qrdb's own SealConfig, which carries no
+// passphrase field at all. An operator supplies the passphrase or Shamir
+// quorum at Initialize/Unseal time through `xkmsctl barrier unseal` (or
+// `unseal-shares`) or the equivalent API call, every time the process
+// restarts. This is the same barrier go-quicbaas uses; xkms provisions its
+// own instance through this config (config/CLI/env), the same shared
+// mechanism every product in the stack drives through its own front door.
 type BarrierConfig struct {
 	// Enabled turns the node barrier on. When false the node boots unsealed
 	// with a plaintext data plane, which ComplianceGaps reports and the daemon
@@ -135,23 +140,14 @@ type BarrierConfig struct {
 	// none | passphrase | shamir | tpm2 | pkcs11 | awskms | gcpkms | azurekv |
 	// vault. Empty defaults to passphrase. Hardware/cloud strategies are
 	// resolved and injected as a SealingStrategy; passphrase/shamir/none map to
-	// the node's native SealConfig.Strategy.
+	// the node's native SealConfig.Strategy. A "passphrase" or "shamir"
+	// strategy never auto-unseals from configuration: there is no config field
+	// for the secret. It is supplied by the operator at Initialize/Unseal time
+	// (see BarrierConfig's doc comment).
 	Strategy string `yaml:"strategy,omitempty"`
 
 	// RootKeyPath is the barrier root-key location in the seal store.
 	RootKeyPath string `yaml:"root_key_path,omitempty"`
-
-	// Passphrase supplies the boot-time unseal secret for the passphrase
-	// strategy (and the auto-unseal fallback). Supports credential:// references
-	// and ${ENV} expansion, resolved at boot. Hardware strategies need no
-	// passphrase (PCR-policy / empty-creds auto-unseal). Prefer the
-	// XKMS_BARRIER_PASSPHRASE env var or a credential:// reference over a literal.
-	//
-	// Passphrase decodes from, and re-encodes to, a plain reference string in
-	// YAML/JSON; the resolved plaintext is sealed into this field's own
-	// memguard enclave rather than kept as a plain Go string. See
-	// types.SecretValue and types.SecretValueBytes.
-	Passphrase types.SecretValue `yaml:"passphrase,omitempty"`
 
 	// ShamirThreshold and ShamirTotal configure the Shamir M-of-N quorum for the
 	// shamir strategy. Shamir never auto-unseals (operator quorum required).
@@ -228,6 +224,32 @@ func (b BarrierConfig) SealStrategy() string {
 func (b BarrierConfig) IsHardwareSealStrategy() bool {
 	switch b.SealStrategy() {
 	case "tpm2", "pkcs11", "awskms", "gcpkms", "azurekv", "vault":
+		return true
+	default:
+		return false
+	}
+}
+
+// NodeFlipWired reports whether the configured strategy can be driven
+// through the qrdb node's OWN barrier (pkg/server's "flip") — go-qrdb's
+// node-embedded seal subsystem (sdk/go/node's buildNodeSealSubsystem)
+// natively handles "none", "passphrase" (deferred) and "shamir" from
+// SealConfig alone, and xkms additionally wires "tpm2" by injecting a
+// pre-built hardware SealingStrategy built directly from
+// Backends.TPM2 (pkg/server/node_seal.go's resolveNodeSeal). The
+// remaining hardware/cloud strategies (pkcs11, awskms, gcpkms, azurekv,
+// vault) are not wired through the flip: each needs credentials that are
+// only resolvable once the credential service exists, which — for a
+// strategy that would also need to seal the very barrier that credential
+// service sits behind — is a cycle (pkcs11), or needs cloud-KMS wiring
+// that has not been scoped (the rest). A strategy this reports false for
+// falls back to xkms's own (non-node) barrier: the qrdb node's own data
+// plane is NOT encrypted in that case, only whatever the fallback barrier
+// separately protects — see resolveNodeSeal and Config.ComplianceGaps,
+// which both consult this so the two stay in lock-step by construction.
+func (b BarrierConfig) NodeFlipWired() bool {
+	switch b.SealStrategy() {
+	case "none", "passphrase", "shamir", "tpm2":
 		return true
 	default:
 		return false
@@ -793,7 +815,7 @@ type RaftEnrollmentConfig struct {
 	// plaintext lives in its own memguard enclave rather than an unwipeable
 	// Go string; see types.SecretValue and the CA identity password
 	// resolution in Server.initializeCA for the same pattern.
-	CAKeyPassphrase types.SecretValue `yaml:"ca_key_passphrase"`
+	CAKeyPassphrase *types.SecretValue `yaml:"ca_key_passphrase"`
 
 	// CAKeyStrategy selects how the cluster CA signing key is made available
 	// across the cluster so that (per the custody model) the appropriate node(s)
@@ -977,7 +999,7 @@ type RNGPKCS11Config struct {
 	// kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
 	// Note: Consider using environment variable XKMS_RNG_PKCS11_PIN instead
-	PIN types.SecretValue `yaml:"pin,omitempty"`
+	PIN *types.SecretValue `yaml:"pin,omitempty"`
 }
 
 // DefaultConfig specifies the default backend for key operations
@@ -1041,7 +1063,7 @@ type PKCS11Config struct {
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
 	// this field's own memguard enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
-	Pin types.SecretValue `yaml:"pin"`
+	Pin *types.SecretValue `yaml:"pin"`
 }
 
 // AWSKMSConfig contains AWS KMS backend settings
@@ -1053,8 +1075,8 @@ type AWSKMSConfig struct {
 	// to, a plain reference string in YAML/JSON; the resolved plaintext is
 	// sealed into this field's own memguard enclave rather than kept as a
 	// plain Go string. See types.SecretValue and types.SecretValueBytes.
-	SecretKey types.SecretValue `yaml:"secret_key"`
-	Endpoint  string            `yaml:"endpoint"`
+	SecretKey *types.SecretValue `yaml:"secret_key"`
+	Endpoint  string             `yaml:"endpoint"`
 }
 
 // GCPKMSConfig contains GCP KMS backend settings
@@ -1077,7 +1099,7 @@ type AzureKVConfig struct {
 	// resolved plaintext is sealed into this field's own memguard enclave
 	// rather than kept as a plain Go string. See types.SecretValue and
 	// types.SecretValueBytes.
-	ClientSecret types.SecretValue `yaml:"client_secret"`
+	ClientSecret *types.SecretValue `yaml:"client_secret"`
 
 	// AllowLocalVaultURL permits VaultURL to name localhost or 127.0.0.1
 	// instead of an Azure vault domain, for local development against an
@@ -1094,9 +1116,9 @@ type VaultConfig struct {
 	// to, a plain reference string in YAML/JSON; the resolved plaintext is
 	// sealed into this field's own memguard enclave rather than kept as a
 	// plain Go string. See types.SecretValue and types.SecretValueBytes.
-	Token     types.SecretValue `yaml:"token"`
-	Namespace string            `yaml:"namespace"`
-	MountPath string            `yaml:"mount_path"`
+	Token     *types.SecretValue `yaml:"token"`
+	Namespace string             `yaml:"namespace"`
+	MountPath string             `yaml:"mount_path"`
 }
 
 // PhoneConfig contains phone backend settings for proxying key operations
@@ -1117,7 +1139,7 @@ type PhoneConfig struct {
 	// YAML/JSON; the resolved plaintext is sealed into this field's own
 	// memguard enclave rather than kept as a plain Go string. See
 	// types.SecretValue and types.SecretValueBytes.
-	NoiseStaticKey types.SecretValue `yaml:"noise_static_key"`
+	NoiseStaticKey *types.SecretValue `yaml:"noise_static_key"`
 
 	// PhoneStaticKey is the hex-encoded Noise static public key of the paired phone
 	PhoneStaticKey string `yaml:"phone_static_key"`
@@ -1203,14 +1225,21 @@ func (c *Config) ComplianceGaps() []string {
 	if !c.Barrier.Enabled {
 		gaps = append(gaps, "encryption-at-rest disabled (barrier.enabled=false): data is stored in plaintext")
 	} else if strings.EqualFold(c.Storage.Backend, "qrdb") && c.barrierLeavesKeysPlaintext() {
-		// On an embedded qrdb node the barrier encrypts the data plane (and thus
-		// the crypto backends' key stores) only when it can auto-unseal at boot —
-		// a TPM/hardware strategy or a boot passphrase. A passphrase strategy with
-		// no boot secret cannot auto-unseal, so the node falls back to a plaintext
-		// data plane; the backend key stores would be written in the clear.
-		gaps = append(gaps, "barrier cannot auto-unseal (barrier.strategy=\""+c.Barrier.SealStrategy()+
-			"\" with no passphrase and no hardware backend): the embedded data plane — including backend key stores — "+
-			"would be stored in plaintext. Provide XKMS_BARRIER_PASSPHRASE (or barrier.passphrase), or configure a TPM/HSM seal strategy")
+		// On an embedded qrdb node the barrier encrypts the data plane (and
+		// thus the crypto backends' key stores) whenever the strategy is
+		// wired through the node's own barrier (BarrierConfig.NodeFlipWired:
+		// none, passphrase, shamir, tpm2) — "none" and a provisioned tpm2
+		// auto-unseal unattended; "passphrase"/"shamir" encrypt exactly the
+		// same way, they just block boot behind the sealed-window listener
+		// until an operator drives `xkmsctl barrier unseal` (or
+		// `unseal-shares`) — genuinely encrypted-then-gated, not plaintext.
+		// A strategy NOT wired through the flip (pkcs11, awskms, gcpkms,
+		// azurekv, vault) falls back to xkms's own (non-node) barrier, which
+		// does not protect the qrdb node's own data plane at all: that is
+		// the actual plaintext case this gap reports.
+		gaps = append(gaps, "barrier strategy \""+c.Barrier.SealStrategy()+
+			"\" is not wired to the qrdb node's own barrier: the embedded data plane — including backend "+
+			"key stores — would be stored in plaintext. Use \"none\", \"passphrase\", \"shamir\" or \"tpm2\"")
 	}
 	if !c.TLS.Enabled {
 		gaps = append(gaps, "TLS disabled (tls.enabled=false): traffic is sent in cleartext")
@@ -1285,23 +1314,17 @@ func (c *Config) ComplianceGaps() []string {
 	return gaps
 }
 
-// barrierLeavesKeysPlaintext reports whether the configured barrier would leave
-// the qrdb node's data plane unencrypted because it cannot auto-unseal at boot:
-// a passphrase/software/none strategy with no boot passphrase and no hardware
-// backend to seal against. A hardware strategy (tpm2/pkcs11/cloud) or a
-// configured passphrase can auto-unseal, so the data plane is encrypted.
+// barrierLeavesKeysPlaintext reports whether the configured barrier would
+// leave the qrdb node's data plane unencrypted: true exactly when the
+// strategy is NOT wired through the node's own barrier
+// (BarrierConfig.NodeFlipWired is false — pkcs11, awskms, gcpkms, azurekv,
+// vault today). "none", "passphrase", "shamir" and "tpm2" are all wired: the
+// node's own barrier genuinely encrypts the data plane for every one of
+// them, whether it auto-unseals unattended ("none", a provisioned "tpm2")
+// or requires an operator to complete the sealed-window ceremony
+// ("passphrase", "shamir") — gated access to encrypted data, not plaintext.
 func (c *Config) barrierLeavesKeysPlaintext() bool {
-	if c.Barrier.IsHardwareSealStrategy() {
-		return false
-	}
-	switch c.Barrier.SealStrategy() {
-	case "passphrase":
-		return !types.SecretValueSet(&c.Barrier.Passphrase)
-	case "none":
-		return true
-	default: // shamir and anything else never auto-unseals at boot
-		return true
-	}
+	return !c.Barrier.NodeFlipWired()
 }
 
 // Validate checks if the configuration is valid

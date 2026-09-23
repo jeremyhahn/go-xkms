@@ -360,8 +360,8 @@ config.AttestationFormat = "none"
 | Format | Description |
 |--------|-------------|
 | "none" | No attestation statement |
-| "packed" | Self-attestation with packed format |
-| "tpm" | TPM attestation (requires TPM2 key backend) |
+| "packed" | Basic/AttCA attestation signed by the device's provisioned attestation key, with its x5c certificate chain (WebAuthn L2 §8.2). Requires a Security Officer to have installed an attestation certificate via `InstallAttestationCertificate`; degrades to "none" if none is installed. |
+| "tpm" | WebAuthn L2 §8.3 TPM attestation. Requires the TPM2 key backend, which certifies each credential key with TPM2_Certify under the device's Initial Attestation Key (IAK) and returns the full `ver`/`alg`/`x5c`/`sig`/`certInfo`/`pubArea` statement. Requires the device's IAK to be provisioned (`xkey tpm iak create`) and its certificate installed (`xkey tpm iak csr` + `ProvisionIAKCert`); degrades to "none" if either is missing. |
 
 ### Storage Backend
 

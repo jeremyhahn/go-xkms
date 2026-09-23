@@ -1745,7 +1745,15 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	}
 
 	logger.Info("using TPM2 key backend", slog.String("device", cfg.TPMDevice))
-	return keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2), nil
+
+	// The TPM2 backend attests in hardware: it certifies each credential key
+	// with TPM2_Certify under the device's own Initial Attestation Key, rather
+	// than delegating to the generic software device-attestation identity
+	// NewAuthenticator wraps every other backend with. Wrapping here, not
+	// there, is what lets NewAuthenticator tell the two apart (see
+	// FIDO2AttestingKeyBackend's doc comment).
+	adapter := keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2)
+	return keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend), nil
 }
 
 // formatCID formats a channel ID from a HID packet for logging.

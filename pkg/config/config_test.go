@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestLoad_Success tests successful loading of a valid config file
@@ -1921,13 +1920,16 @@ func TestConfig_ComplianceGaps_ClusterCAKeyProtection(t *testing.T) {
 func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
 	// baseline returns a config that is compliant on every other dimension, so
 	// any gap reported is attributable to the RBAC/storage combination alone.
-	// The barrier passphrase matters: selecting the qrdb backend also brings the
-	// embedded data plane under the auto-unseal check, and without a boot secret
-	// that would report its own gap and mask the one under test.
+	// The barrier strategy matters: selecting the qrdb backend also brings the
+	// embedded data plane under the auto-unseal check, and a software strategy
+	// never auto-unseals (there is no config-sourced secret), which would
+	// report its own gap and mask the one under test. A hardware strategy
+	// auto-unseals, so it closes that gap without requiring real hardware —
+	// this check is config-only (BarrierConfig.IsHardwareSealStrategy).
 	baseline := func() *Config {
 		c := &Config{}
 		c.Barrier.Enabled = true
-		c.Barrier.Passphrase = types.SecretValue{Raw: "test-boot-secret"}
+		c.Barrier.Strategy = "tpm2"
 		c.TLS.Enabled = true
 		c.Auth.Enabled = true
 		c.Auth.Type = "mtls"

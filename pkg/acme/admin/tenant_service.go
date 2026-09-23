@@ -375,7 +375,12 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 		if err == nil && roles != nil {
 			for _, role := range roles.Roles {
 				if !role.System {
-					_ = s.qrdbService.Roles().DeleteRole(ctx, role.ID)
+					if err := s.qrdbService.Roles().DeleteRole(ctx, role.ID); err != nil {
+						s.logger.Warn("failed to delete tenant RBAC role",
+							slog.String("tenant_id", tenantID),
+							slog.String("role_id", role.ID),
+							slog.String("error", err.Error()))
+					}
 				}
 			}
 		}
@@ -403,7 +408,12 @@ func (s *TenantAwareAdminService) DeleteTenant(ctx context.Context, tenantID str
 
 		// Delete default CA setting
 		defaultCAKey := fmt.Sprintf("tenants/%s/default_intermediate_ca", tenantID)
-		_ = s.qrdbService.KV().Delete(ctx, defaultCAKey)
+		if err := s.qrdbService.KV().Delete(ctx, defaultCAKey); err != nil {
+			s.logger.Warn("failed to delete tenant default CA setting",
+				slog.String("tenant_id", tenantID),
+				slog.String("key", defaultCAKey),
+				slog.String("error", err.Error()))
+		}
 	}
 
 	// Canonical deletion: hard delete of the tenant's identity record in qrdb.
@@ -723,8 +733,16 @@ func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context
 		parentSigner = entry.rootSigner
 		parentCert = entry.rootCA
 	} else {
-		// Use global CA as parent (default)
-		parentCert, _ = s.ca.TrustedRoot()
+		// Use global CA as parent (default). Its error is no longer
+		// discarded: proceeding with a nil parentCert would sign the new
+		// intermediate CA without the parent chain data it needs, silently
+		// producing a certificate that cannot be chained back to a trusted
+		// root.
+		root, err := s.ca.TrustedRoot()
+		if err != nil {
+			return nil, caerrors.Wrap(caerrors.StorageFailure, err, "admin: failed to load global CA trusted root: %s", err)
+		}
+		parentCert = root
 		parentSigner = s.ca
 	}
 

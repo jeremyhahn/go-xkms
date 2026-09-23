@@ -2120,13 +2120,16 @@ func TestNew_WithCAConfig_Succeeds(t *testing.T) {
 	assert.NotNil(t, server)
 }
 
-// TestNew_WithCAConfig_LiteralKeyPasswordSucceeds proves that a CA identity
-// key password given as a plain literal (no "scheme://" reference) survives
-// New()'s full boot sequence -- resolveConfigSecrets leaves it exactly as
-// decoded, and initializeCA's ToKeyAttributes path reads it back through
-// types.NewPasswordFromSecretValue's literal fallback -- end to end, not
-// through a hand-built *Server.
-func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
+// TestNew_WithCAConfig_LiteralKeyPasswordFailsClosed proves go-xkms#654's
+// core fix: a CA identity key password given as a plain literal (no
+// "scheme://" reference) no longer survives New()'s boot sequence.
+// resolveConfigSecrets now propagates go-qrdb's protected-target contract
+// unmodified (pkg/secret.ConfigProcessor): a protected *types.SecretValue
+// target must reference a secret held elsewhere, and an inline literal is
+// refused rather than honoured, so New() fails at the config-secret-
+// resolution stage instead of quietly booting a CA whose key password came
+// to rest in a Go string.
+func TestNew_WithCAConfig_LiteralKeyPasswordFailsClosed(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -2147,7 +2150,7 @@ func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
 					{
 						KeyAlgorithm: types.AlgorithmECDSA,
 						ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
-						Password:     types.SecretValue{Raw: "dev-only-ca-key-password"},
+						Password:     &types.SecretValue{Raw: "dev-only-ca-key-password"},
 					},
 				},
 			},
@@ -2156,23 +2159,14 @@ func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
 	cfg.TLS.Enabled = false
 
 	server, err := New(cfg)
-	if err != nil {
-		var caInit *ErrCAInit
-		if errors.As(err, &caInit) {
-			t.Logf("CA init failed (acceptable in unit test without full storage): %v", err)
-			return
-		}
-		require.NoError(t, err)
+	require.Error(t, err, "a literal CA key password must fail closed, not boot")
+	if server != nil {
+		defer func() { _ = server.Shutdown() }()
 	}
-	defer func() { _ = server.Shutdown() }()
-	require.NotNil(t, server)
 
-	// The literal survives untouched: resolveConfigSecrets does not treat a
-	// bare value as a reference, and SecretValueBytes reads it back exactly
-	// as configured.
-	got, err := types.SecretValueBytes(&cfg.CA.Identity[0].Keys[0].Password)
-	require.NoError(t, err)
-	assert.Equal(t, "dev-only-ca-key-password", string(got))
+	var secretErr *ErrConfigSecretResolution
+	require.True(t, errors.As(err, &secretErr),
+		"error must unwrap to *ErrConfigSecretResolution, got %v", err)
 }
 
 // ============================================================================

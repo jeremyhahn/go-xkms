@@ -25,6 +25,17 @@ var (
 	ErrCSRGenerationFailed = errors.New("ca: csr generation failed")
 )
 
+// SubjectAltName errors indicate issues decoding a GeneralNames extension by
+// hand. crypto/x509 parses dNSName, iPAddress, rfc822Name and
+// uniformResourceIdentifier GeneralNames but silently discards otherName, so
+// recovering an RFC 4043 permanentIdentifier or RFC 4108 hardwareModuleName
+// from a request or certificate requires decoding the extension directly.
+var (
+	// ErrSANDecoding indicates a subjectAltName extension's GeneralNames
+	// SEQUENCE, or one of its otherName entries, could not be ASN.1 decoded.
+	ErrSANDecoding = errors.New("ca: subjectAltName decoding failed")
+)
+
 // Certificate errors indicate issues with certificate operations.
 var (
 	// ErrInvalidCertificate indicates the certificate is malformed or invalid.
@@ -314,6 +325,19 @@ var (
 	// TPM holds the key; a relying party reading it would conclude only that
 	// the CA had verified less than it did. Issuance refuses instead.
 	ErrTCGMandatoryExtension = errors.New("ca: mandatory tcg certificate extension could not be built")
+
+	// ErrTCGEKCertUntrusted indicates the endorsement key certificate could
+	// not be chained to a configured TPM-manufacturer trust anchor, or does
+	// not carry the tcg-kp-EKCertificate extended key usage (or the
+	// anyExtendedKeyUsage purpose that subsumes it).
+	//
+	// TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b
+	// and §6.2.2 step 4b make this a SHALL before the CA issues an IAK or
+	// IDevID: TPM2_ActivateCredential proves the requester holds the EK
+	// private key, not that the EK belongs to a genuine TPM. A CA with no EK
+	// trust anchors configured returns this error for every request rather
+	// than skipping the check.
+	ErrTCGEKCertUntrusted = errors.New("ca: endorsement key certificate is not chained to a trusted tpm manufacturer root")
 )
 
 // FIDO2 attestation errors indicate that a certificate signing request cannot

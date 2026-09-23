@@ -15,15 +15,25 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
@@ -84,6 +94,16 @@ func TestACMEConfig_Validate(t *testing.T) {
 			"missing_keystore_backend",
 			&config.ACMEConfig{Enabled: true, HTTPSAddr: ":8443", ExternalURL: "https://acme.example.com"},
 			config.ErrACMEMissingKeystoreBackend,
+		},
+		{
+			"missing_caa_identities",
+			&config.ACMEConfig{
+				Enabled:         true,
+				HTTPSAddr:       ":8443",
+				ExternalURL:     "https://acme.example.com",
+				KeystoreBackend: "software",
+			},
+			config.ErrACMEMissingCAAIdentities,
 		},
 	}
 	for _, tc := range cases {
@@ -313,6 +333,73 @@ func TestBuildACMETLSConfig_RejectsReuse(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error when reuse_tls is set")
 	}
+}
+
+// TestBuildACMETLSConfig_RejectsUnparseableClientCA proves that a
+// client_cas file with no PEM certificate blocks fails with the typed
+// ErrACMENoClientCAPEM sentinel, reachable with errors.Is, rather than an
+// inline error (#700).
+func TestBuildACMETLSConfig_RejectsUnparseableClientCA(t *testing.T) {
+	dir := t.TempDir()
+
+	certFile, keyFile := writeTestCertKeyPair(t, dir)
+
+	garbageCA := filepath.Join(dir, "client-ca.pem")
+	if err := os.WriteFile(garbageCA, []byte("not a PEM certificate"), 0o600); err != nil {
+		t.Fatalf("write garbage client CA: %v", err)
+	}
+
+	_, err := buildACMETLSConfig(&config.ACMEConfig{
+		TLS: config.ACMETLSConfig{
+			CertFile:   certFile,
+			KeyFile:    keyFile,
+			ClientAuth: "require_and_verify",
+			ClientCAs:  []string{garbageCA},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for a client CA file with no PEM certificates")
+	}
+	if !errors.Is(err, ErrACMENoClientCAPEM) {
+		t.Errorf("err = %v, want errors.Is match against ErrACMENoClientCAPEM", err)
+	}
+}
+
+// writeTestCertKeyPair writes a minimal self-signed certificate and its
+// private key, PEM-encoded, under dir, and returns their paths.
+func writeTestCertKeyPair(t *testing.T, dir string) (certFile, keyFile string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "acme-test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+
+	certFile = filepath.Join(dir, "cert.pem")
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyFile = filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	return certFile, keyFile
 }
 
 // TestBuildClusterPreSignHooks_GatedOff verifies that the SPIFFE URI-SAN hook

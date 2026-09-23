@@ -1,6 +1,6 @@
 # TPM 2.0 — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -87,16 +87,29 @@ EK (endorsement key, manufacturer-rooted)
       → pkg/attestation verifier: EK chain, AK certification, quote signature,
         PCR values against expectation
 IDevID: TCG-CSR-IDEVID  →  tcg_csr_serverside.go  →  CATCGEnrollment
+                             → pkg/ca verifyEKCertificateChain: EK chain,
+                               tcg-kp-EKCertificate EKU
 ```
 
 `TPM2_MakeCredential` / `TPM2_ActivateCredential` is what makes this
 unforgeable: a secret encrypted to the EK can only be recovered inside that
-TPM. It is the mechanism behind the ACME `enroll-01` challenge.
+TPM. It is the mechanism behind the ACME `enroll-01` challenge. But
+possession alone is not provenance: the CA verifies the EK certificate's
+chain (`pkg/ca/tcg_ek_trust.go`, `verifyEKCertificateChain`) before it will
+generate the `TPM2_MakeCredential` challenge or issue an IAK/IDevID, exactly
+as it verifies the AK's EK chain before trusting a quote (below) — the two
+checks share the same `pkg/attestation/truststore` trust-anchor
+configuration shape, configured independently
+(`ca.tcg-config.trust-anchors` for issuance,
+`attestation.formats.tpm2` for quote verification).
 
 ## Trust boundaries
 
 - **The EK chains to the manufacturer.** Attestation is only as good as the
-  manufacturer root you accept — `pkg/attestation/truststore`.
+  manufacturer root you accept — `pkg/attestation/truststore`. The same is
+  true of IAK/IDevID issuance: see
+  [`../certificate-authority/architecture.md`](../certificate-authority/architecture.md)
+  "Trust boundaries".
 - **Restricted and unrestricted signing keys are not interchangeable, and the
   device identity keys are one of each.** TCG "TPM 2.0 Keys for Device Identity
   and Attestation" v1.00 r12 (checked in under `docs/references/`) makes the

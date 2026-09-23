@@ -16,6 +16,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -237,6 +238,7 @@ func TestRunSSHProfileAdd_RequiresNameAndTarget(t *testing.T) {
 	err := runSSHProfileAdd(cmd, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--name and (--host or --ssh-config-alias) are required")
+	assert.True(t, errors.Is(err, ErrSSHProfileAddRequired))
 
 	require.NoError(t, cmd.Flags().Set("name", "bastion"))
 	err = runSSHProfileAdd(cmd, nil)
@@ -345,6 +347,7 @@ func TestRunSSHProfileMove_RequiresFolder(t *testing.T) {
 	err := runSSHProfileMove(cmd, []string{"bastion"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--folder is required")
+	assert.True(t, errors.Is(err, ErrSSHProfileMoveFolder))
 }
 
 func TestXKeyHostKeyStore_OpensUnderResolvedHome(t *testing.T) {

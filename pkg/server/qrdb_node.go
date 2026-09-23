@@ -37,12 +37,15 @@ import (
 // its single core: the node is the one database and the source of identity,
 // bootstrap, and clustering.
 //
-// The node runs with its own seal subsystem DISABLED. xkms's barrier is the
-// single barrier in the system — it is qrdb's StorageBarrier implementation
-// (pkg/seal aliases it directly), layered over the node's KV by
-// initializeBarrier with xkms's hardware seal strategies on top. Enabling the
-// node's own seal as well would create a redundant second barrier, which is
-// exactly the duplication this unification removes.
+// There is exactly ONE barrier in the system, never two. When the barrier
+// strategy is one BarrierConfig.NodeFlipWired reports true for ("none",
+// "passphrase", "shamir", "tpm2"), the node's own seal subsystem is enabled
+// and IS that barrier — xkms adopts it (initEmbeddedQRDBNode) rather than
+// building a second one. Otherwise the node's own seal stays disabled and
+// xkms's own StorageBarrier (initializeBarrier, layered over the node's KV,
+// with xkms's hardware seal strategies built from already-initialized
+// backends) is the barrier instead. Enabling both would be exactly the
+// duplication this unification removes.
 //
 // Standalone hosting maps:
 //   - Storage.Path  -> Raft.DataDir (Pebble root)
@@ -79,21 +82,30 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	}
 
 	// Barrier: when the flip is engaged (resolveNodeSeal set nodeSealEnabled —
-	// Storage.Backend=="qrdb" + Barrier.Enabled + auto-unseal creds), the node's
-	// OWN barrier encrypts the data-plane KV (encfs) and auto-unseals at
-	// construction, so node.Client() is immediately available and every backend
-	// key store is encrypted at rest. Otherwise Seal stays disabled and xkms's
-	// own StorageBarrier (initializeBarrier) is the barrier — identical to the
+	// Storage.Backend=="qrdb" + Barrier.Enabled + BarrierConfig.NodeFlipWired),
+	// the node's OWN barrier encrypts the data-plane KV (encfs). "none" and a
+	// provisioned tpm2 auto-unseal unattended at construction; "passphrase"
+	// and "shamir" leave the node sealed until initEmbeddedQRDBNode's
+	// serveSealedWindow completes the operator-driven ceremony. Either way
+	// node.Client() and every backend key store are encrypted at rest once
+	// New returns. Otherwise Seal stays disabled and xkms's own
+	// StorageBarrier (initializeBarrier) is the barrier — identical to the
 	// prior behavior.
 	if s.nodeSealEnabled {
 		qcfg.Seal.Enabled = true
-		if s.config.Barrier.SealStrategy() == "none" {
-			qcfg.Seal.Strategy = "none"
-		} else {
-			// passphrase native, or hardware injected via WithSealStrategy (the
-			// node consults the injected strategy only for a non-shamir/non-none
-			// Strategy, so leave it at the passphrase default).
-			qcfg.Seal.Strategy = "passphrase"
+		// go-qrdb's own node seal subsystem (sdk/go/node's
+		// buildNodeSealSubsystem) switches on this exact string:
+		// "none"/"passphrase"/"shamir" are its own native cases, built from
+		// DaemonConfig.Seal alone with no Go strategy object from xkms; any
+		// other string falls to its default (hardware/cloud) branch, which is
+		// what actually consults the SealingStrategy resolveNodeSeal injects
+		// via qrdbnode.WithSealStrategy below (tpm2 today). Naming the real
+		// strategy ID here — never a placeholder — is what makes the right
+		// branch reachable for every strategy NodeFlipWired allows.
+		qcfg.Seal.Strategy = s.config.Barrier.SealStrategy()
+		if qcfg.Seal.Strategy == "shamir" {
+			qcfg.Seal.ShamirThreshold = s.config.Barrier.ShamirThreshold
+			qcfg.Seal.ShamirTotal = s.config.Barrier.ShamirTotal
 		}
 		if s.config.Barrier.RootKeyPath != "" {
 			qcfg.Seal.RootKeyPath = s.config.Barrier.RootKeyPath
@@ -300,9 +312,6 @@ func (s *Server) initEmbeddedQRDBNode() error {
 				s.logger.Warn("node barrier: could not build hardware strategy registry", "error", regErr)
 			}
 		}
-		if len(s.nodeSealPassphrase) > 0 {
-			nodeOpts = append(nodeOpts, qrdbnode.WithSealPassphrase(s.nodeSealPassphrase))
-		}
 		// Enable per-tenant isolation on the node so it builds the volume pool +
 		// tenant service and restores dedicated-isolation tenants itself.
 		nodeOpts = append(nodeOpts, qrdbnode.WithTenantIsolation())
@@ -343,7 +352,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		}
 		if node.IsSealed() {
 			return &QRDBNodeError{Stage: "node barrier auto-unseal", Err: &NodeSealError{
-				Reason: "barrier did not auto-unseal with the supplied credentials (check the passphrase or TPM PCR state)"}}
+				Reason: "barrier did not auto-unseal with the supplied credentials (check the TPM PCR state)"}}
 		}
 		if inner := node.BarrierRegistry(); inner != nil {
 			s.barrier = inner.SystemBarrier()

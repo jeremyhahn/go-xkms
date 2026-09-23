@@ -81,6 +81,25 @@ linters:
   enable:
     - misspell
     - gocritic
+    # err113 was evaluated for #700 (the typed-error migration) and is NOT
+    # enabled repo-wide yet: golangci-lint v2.13.2's err113, run with every
+    # other setting in this file unchanged, reports 107 pre-existing findings
+    # across 41 files outside the 12 packages #700 migrated (pkg/acme/admin,
+    # pkg/acme/audit, pkg/acme/challenges/..., pkg/acme/client/...,
+    # pkg/api/mcp, pkg/api/rest/..., pkg/api/transport/...,
+    # pkg/keyprovider/..., pkg/pkcs11/module, pkg/storage/hardware,
+    # pkg/ssh/..., pkg/tpm2 (multiple files, some under other open PRs),
+    # pkg/xkms/servicer_tenant.go, pkg/server/server.go,
+    # scripts/exportsurface/main.go, cmd/xkmsctl (2 files)). Turning it on
+    # here would fail `make lint` on files #700 never touched, several of
+    # them locked by concurrent PRs (#681 owns pkg/tpm2/key.go and
+    # platform_keystore.go). The two failure modes it finds are real
+    # (inline errors.New/fmt.Errorf returned as a value instead of a
+    # declared sentinel or typed struct; direct == / != against an error
+    # instead of errors.Is) and it correctly leaves sentinel declarations
+    # (`var Err... = errors.New(...)`) alone, so it is the right guard once
+    # a follow-up issue clears the backlog -- see docs/ pointer in the #700
+    # PR description for the full file list.
   settings:
     gocritic:
       # Diagnostics and performance only. The style and opinionated tags flag

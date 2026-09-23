@@ -1137,7 +1137,7 @@ func TestConfigStructTags_Extended(t *testing.T) {
 	assert.Equal(t, uint(16), config.PlatformPCR)
 	assert.Equal(t, "sha256", config.PlatformPCRBank)
 	assert.True(t, config.UseEntropy)
-	assert.Equal(t, []byte("test-lockout"), secretBytes(t, &config.LockoutAuth))
+	assert.Equal(t, []byte("test-lockout"), secretBytes(t, config.LockoutAuth))
 	assert.Equal(t, "localhost:2322", config.PlatformAddress)
 	assert.Equal(t, []uint{0, 7, 9, 10}, config.GoldenPCRs)
 	assert.Equal(t, []string{"/etc", "/usr/bin"}, config.FileIntegrity)
@@ -1161,9 +1161,9 @@ func TestEKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "test-ek", config.CN)
 	assert.True(t, config.Debug)
 	assert.Equal(t, uint32(0x81010001), config.Handle)
-	assert.Equal(t, []byte("test-auth"), secretBytes(t, &config.HierarchyAuth))
+	assert.Equal(t, []byte("test-auth"), secretBytes(t, config.HierarchyAuth))
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
-	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
+	assert.Equal(t, []byte("test-password"), secretBytes(t, config.Password))
 	assert.True(t, config.PlatformPolicy)
 }
 
@@ -1181,9 +1181,9 @@ func TestSRKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "test-srk", config.CN)
 	assert.True(t, config.Debug)
 	assert.Equal(t, uint32(0x81000001), config.Handle)
-	assert.Equal(t, []byte("test-auth"), secretBytes(t, &config.HierarchyAuth))
+	assert.Equal(t, []byte("test-auth"), secretBytes(t, config.HierarchyAuth))
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
-	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
+	assert.Equal(t, []byte("test-password"), secretBytes(t, config.Password))
 }
 
 func TestIDevIDConfigStructure_Extended(t *testing.T) {
@@ -1214,7 +1214,7 @@ func TestIDevIDConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "Test Manufacturer", config.Manufacturer)
 	assert.Equal(t, "Test Model", config.Model)
 	assert.True(t, config.Pad)
-	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
+	assert.Equal(t, []byte("test-password"), secretBytes(t, config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "12345", config.Serial)
 	assert.Equal(t, "SHA256WithRSAPSS", config.SignatureAlgorithm)
@@ -1241,7 +1241,7 @@ func TestIAKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, uint32(0x81010002), config.Handle)
 	assert.Equal(t, "SHA-256", config.Hash)
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
-	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
+	assert.Equal(t, []byte("test-password"), secretBytes(t, config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "SHA256WithRSAPSS", config.SignatureAlgorithm)
 }
@@ -1285,7 +1285,7 @@ func TestLDevIDConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
 	assert.Equal(t, "Test Model", config.Model)
 	assert.True(t, config.Pad)
-	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
+	assert.Equal(t, []byte("test-password"), secretBytes(t, config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "67890", config.Serial)
 	assert.Equal(t, "SHA256WithRSA", config.SignatureAlgorithm)
@@ -1311,7 +1311,7 @@ func TestLAKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, uint32(0x81020011), config.Handle)
 	assert.Equal(t, "SHA-256", config.Hash)
 	assert.Equal(t, "ECDSA", config.KeyAlgorithm)
-	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
+	assert.Equal(t, []byte("test-password"), secretBytes(t, config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "ECDSAWithSHA256", config.SignatureAlgorithm)
 }

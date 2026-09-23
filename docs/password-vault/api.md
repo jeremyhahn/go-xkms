@@ -1,6 +1,6 @@
 # Password Vault — API
 
-> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -31,10 +31,13 @@ method but no gRPC RPC and no MCP method. Given that the access mode is a
 security policy rather than an operation, restricting where it can be changed is
 defensible — but it is an inconsistency, not a stated decision.
 
-The seventh, product-specific **USB** transport implements every
-`PasswordService` method and returns `ErrNotSupported` for all of them
-(`pkg/api/transport/usb/transport.go`). The phone channel does not carry the
-vault.
+The seventh, product-specific **USB** transport (`pkg/api/transport/usb/transport.go`)
+proxies nine of the ten `PasswordService` methods to the phone's embedded
+xkmsd instance over the Noise-encrypted USB channel, using the same JSON-RPC
+envelope (`Request`/`Response`) as its other operations, with method names
+matching the servicer verbatim (`PasswordAdd`, `PasswordGet`, ...). The tenth,
+`PasswordStoreSetAccessMode`, still returns `ErrNotSupported` — access-mode
+changes are scoped separately (go-xkms#691).
 
 ## The plaintext boundary is in the request
 

@@ -2019,7 +2019,9 @@ func TestBuildAttestationStatement(t *testing.T) {
 				Format:    AttestationFormatTPM,
 				Algorithm: COSEAlgES256,
 				Signature: []byte("tpm-signature"),
-				TPMData:   []byte("tpm-certinfo-and-pubarea"),
+				Ver:       "2.0",
+				CertInfo:  []byte("tpm-certinfo"),
+				PubArea:   []byte("tpm-pubarea"),
 				CertificateChain: []*x509.Certificate{
 					{Raw: []byte("aik-cert")},
 				},
@@ -2047,14 +2049,57 @@ func TestBuildAttestationStatement(t *testing.T) {
 
 		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatTPM, fmt)
+		require.Equal(t, "2.0", attStmt["ver"])
 		require.Equal(t, COSEAlgES256, attStmt["alg"])
 		require.Equal(t, []byte("tpm-signature"), attStmt["sig"])
-		require.Equal(t, []byte("tpm-certinfo-and-pubarea"), attStmt["certInfo"])
+		require.Equal(t, []byte("tpm-certinfo"), attStmt["certInfo"])
+		require.Equal(t, []byte("tpm-pubarea"), attStmt["pubArea"])
 
 		x5c, ok := attStmt["x5c"].([][]byte)
 		require.True(t, ok)
 		require.Len(t, x5c, 1)
 		require.Equal(t, []byte("aik-cert"), x5c[0])
+	})
+
+	t.Run("tpm format with incomplete statement falls back to none", func(t *testing.T) {
+		storage := NewMemoryStorage()
+		mockBackend := &mockAttestingKeyBackend{
+			backendType: xkms.BackendTypeTPM2,
+			attestationStmt: &keybackend.FIDO2AttestationStatement{
+				Format:    AttestationFormatTPM,
+				Algorithm: COSEAlgES256,
+				Signature: []byte("tpm-signature"),
+				Ver:       "2.0",
+				// CertInfo and PubArea are both required by WebAuthn L2 §8.3
+				// and are intentionally left unset.
+				CertificateChain: []*x509.Certificate{
+					{Raw: []byte("aik-cert")},
+				},
+			},
+		}
+
+		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
+			AAGUID:              DefaultAAGUID,
+			SupportedAlgorithms: []int{COSEAlgES256},
+			MaxCredentials:      100,
+			PINMinLength:        4,
+			PINMaxRetries:       8,
+			AttestationFormat:   AttestationFormatTPM,
+			KeyBackend:          mockBackend,
+			Storage:             storage,
+		}
+
+		auth, err := NewAuthenticator(config)
+		require.NoError(t, err)
+		defer func() { _ = auth.Close() }()
+
+		authData := []byte("mock-auth-data")
+		clientDataHash := make([]byte, 32)
+
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
+		require.Equal(t, AttestationFormatNone, fmt)
+		require.Empty(t, attStmt)
 	})
 
 	t.Run("attestation fallback when backend does not support attestation", func(t *testing.T) {
@@ -2236,7 +2281,9 @@ func TestMakeCredential_WithTPMAttestation(t *testing.T) {
 			Format:    AttestationFormatTPM,
 			Algorithm: COSEAlgES256,
 			Signature: []byte("tpm-attestation-signature"),
-			TPMData:   []byte("tpm-certinfo-data"),
+			Ver:       "2.0",
+			CertInfo:  []byte("tpm-certinfo-data"),
+			PubArea:   []byte("tpm-pubarea-data"),
 			CertificateChain: []*x509.Certificate{
 				{Raw: []byte("aik-certificate")},
 			},
@@ -2273,9 +2320,11 @@ func TestMakeCredential_WithTPMAttestation(t *testing.T) {
 	require.NotEmpty(t, resp.AuthData)
 
 	// Verify TPM attestation statement contains expected fields
+	require.Equal(t, "2.0", resp.AttStmt["ver"])
 	require.Equal(t, COSEAlgES256, resp.AttStmt["alg"])
 	require.Equal(t, []byte("tpm-attestation-signature"), resp.AttStmt["sig"])
 	require.Equal(t, []byte("tpm-certinfo-data"), resp.AttStmt["certInfo"])
+	require.Equal(t, []byte("tpm-pubarea-data"), resp.AttStmt["pubArea"])
 
 	x5c, ok := resp.AttStmt["x5c"].([][]byte)
 	require.True(t, ok)

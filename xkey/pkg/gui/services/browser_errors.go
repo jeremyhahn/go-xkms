@@ -34,4 +34,9 @@ var (
 
 	// ErrBrowserTrustBundleExport indicates the browser trust bundle could not be exported.
 	ErrBrowserTrustBundleExport = errors.New("browser_service: trust bundle export failed")
+
+	// ErrBrowserTrustBundleManifestWrite indicates the trust bundle's
+	// staleness-detection manifest sidecar could not be written after the
+	// bundle itself was exported successfully.
+	ErrBrowserTrustBundleManifestWrite = errors.New("browser_service: trust bundle manifest write failed")
 )

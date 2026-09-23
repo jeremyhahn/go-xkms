@@ -1,6 +1,6 @@
 # ACME Issuance — User Guide
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Prerequisites
 
@@ -82,11 +82,25 @@ Reason `1` is key compromise, `4` is superseded, `0` is unspecified.
 
 ## Enrolling hardware
 
-This is the path the platform uses to admit a node.
+This is the path the platform uses to admit a node. Devices, like
+certificates, are named specs in the config file — configure the account,
+the TPM, the common name and the PCR selection once under `devices.<name>`,
+then act on the name:
+
+```yaml
+devices:
+  node-07:
+    account: prod
+    common-name: node-07.example.com
+    identifier: node-07.example.com
+    pcr-selection: [0, 1, 2, 3, 4, 5, 6, 7]
+    tpm:
+      config:
+        device: /dev/tpmrm0
+```
 
 ```
-trusted-acme-client device enroll --account prod --device-id node-07 \
-    --cn node-07.example.com --output-cert node.crt --output-iak node-iak.crt
+trusted-acme-client device enroll node-07
 ```
 
 The server sends a challenge only the real TPM can answer: it encrypts a secret
@@ -96,14 +110,18 @@ substitutes for the hardware.
 To bind the certificate to the machine's measured state as well as its identity:
 
 ```
-trusted-acme-client device attest --account prod --device-id node-07 \
-    --pcrs 0,1,2,3,4,5,6,7 --output-cert node-attested.crt
+trusted-acme-client device attest node-07
 ```
 
 Choose the PCR set deliberately. The default covers firmware and boot. Including
 a PCR that changes on every kernel update means the attestation stops matching
 after the next update — which is either the security property you wanted or an
 outage you did not, depending on what the certificate is for.
+
+`tpm` is optional; leaving it unset opens go-xkms's own simulator-backed TPM2
+defaults, which is development and testing only. A production spec always
+sets `tpm.config.device` to an already-provisioned TPM — see
+[cli.md](cli.md#trusted-acme-client-device).
 
 ## Joining a cluster with attested enrollment
 
@@ -133,10 +151,12 @@ node pinned to one interface serves the exchange on that interface only.
 | `badNonce` on every request | the client is not reading the `Replay-Nonce` header | use a compliant client; nonces are single-use |
 | doubled path in the directory, `/api/v1/api/v1/acme/...` | the server's base URI is misconfigured | fix the server's `baseRESTURI`; the client is fine |
 | `rejectedIdentifier` | policy will not issue for that name | check the CA's issuance policy |
-| `caa` error | a CAA record forbids this CA | fix DNS, or use a CA the record allows |
+| `caa` error | a CAA record forbids this CA, or the server could not determine the CAA RRset at all (DNS failure fails closed, RFC 8659 §5.1) | fix the CAA record to allow this CA, or retry once DNS is reachable |
 | `rateLimited` | per-account or per-tenant limit hit | back off; the response carries `Retry-After` |
 | `orderNotReady` on finalize | an authorization is still pending | complete the challenge first |
 | `badCSR` | the CSR does not match the order's identifiers | regenerate the CSR from the order |
+| `badCSR` on a `device-attest-01`/`enroll-01` CSR finalize | the CSR has no RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`) in its `subjectAltName` | the identifier is never read from the Common Name; encode it as the otherName |
+| `rejectedIdentifier` on finalize with a correct otherName | the CSR carries a DNS/IP SAN, or a permanent identifier value, the order did not authorize | regenerate the CSR with only the names the order's identifiers list |
 | `enroll-01` never completes | the TPM's EK does not chain to a manufacturer root the CA trusts | import the manufacturer chain server-side |
 | joining node hangs during enrollment | the server cannot reach `challenge_port` on the node | open it, or fix the advertised address |
 | new orders refused under load | the circuit breaker is open | this is deliberate; the server will not issue unvalidated certificates |

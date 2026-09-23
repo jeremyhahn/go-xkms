@@ -39,6 +39,7 @@ import (
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
@@ -79,6 +80,10 @@ var (
 	// loaded from disk.
 	ErrACMEClientCALoad = errors.New("acme: failed to load client CA bundle")
 
+	// ErrACMENoClientCAPEM is returned when a client CA bundle file
+	// contains no parseable PEM certificates.
+	ErrACMENoClientCAPEM = errors.New("acme: no PEM certificates parsed")
+
 	// ErrACMEListen is returned when the ACME listener cannot be bound.
 	ErrACMEListen = errors.New("acme: failed to bind listener")
 
@@ -86,6 +91,10 @@ var (
 	// The ACME CA does not start without it: a CA that issues and revokes
 	// certificates it cannot record is not a CA any compliance regime accepts.
 	ErrACMEAuditLogger = errors.New("acme: failed to open audit trail")
+
+	// ErrACMECAAValidator is returned when the CAA validator cannot be
+	// constructed from the supplied configuration.
+	ErrACMECAAValidator = errors.New("acme: failed to create CAA validator")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -227,6 +236,23 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 	directoryPath = "/" + strings.Trim(directoryPath, "/")
 
+	// Build the CAA (RFC 8659) validator that order finalize consults before
+	// signing (pkg/acme/server/handlers/order_finalize.go), per the RFC 8555
+	// Section 8.1 requirement to check CAA before issuance. This is the one
+	// construction path for a CAA validator; pkg/acme/client/trustedca.go's
+	// standalone TrustedCA composition builds its own from the same
+	// server.NewCAAValidator constructor. pkg/config/acme.go's Validate
+	// requires CAAIdentities whenever ACME is enabled, so acmeCfg.CAAIdentities
+	// is never empty here in a validated configuration.
+	caaValidator, err := acmeserver.NewCAAValidator(&acmeserver.CAAValidatorParams{
+		CAAIdentities: acmeCfg.CAAIdentities,
+		Logger:        logger,
+		Resolver:      acmeCfg.CAADNSServer,
+	})
+	if err != nil {
+		return nil, &acmeInitError{Stage: "create CAA validator", Sentinel: ErrACMECAAValidator, Err: err}
+	}
+
 	// Construct the REST service that implements all ACME HTTP handlers.
 	// tcgCA is the primary xkmsd TrustedCA asserted to TCGCA above; the
 	// ACME handlers rely on the TCG extensions (IssueEKCertificate,
@@ -237,6 +263,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		BaseRESTURI:             acmeCfg.ExternalURL,
 		CA:                      tcgCA,
 		CAAIdentities:           acmeCfg.CAAIdentities,
+		CAAValidator:            caaValidator,
 		ChallengeMap:            challengeMap,
 		ClusterCACN:             clusterACMEIssuerCN(cfg),
 		EndorseEABRequired:      acmeCfg.EndorseEABRequired,
@@ -533,7 +560,7 @@ func buildACMETLSConfig(cfg *config.ACMEConfig) (*tls.Config, error) {
 				return nil, &acmeInitError{Stage: "read client CA " + path, Sentinel: ErrACMEClientCALoad, Err: err}
 			}
 			if !pool.AppendCertsFromPEM(data) {
-				return nil, &acmeInitError{Stage: "parse client CA " + path, Sentinel: ErrACMEClientCALoad, Err: errors.New("no PEM certificates parsed")}
+				return nil, &acmeInitError{Stage: "parse client CA " + path, Sentinel: ErrACMEClientCALoad, Err: ErrACMENoClientCAPEM}
 			}
 		}
 		tlsCfg.ClientCAs = pool
@@ -583,9 +610,15 @@ func (e *acmeInitError) Error() string {
 	return "acme: " + e.Stage + ": " + e.Err.Error()
 }
 
-func (e *acmeInitError) Unwrap() error {
-	if e.Sentinel != nil {
-		return e.Sentinel
+// Unwrap returns both the classifying sentinel and the underlying cause, so
+// errors.Is matches either: callers typically match Sentinel, but the cause
+// (e.g. a typed error stored in Err) must also be reachable.
+func (e *acmeInitError) Unwrap() []error {
+	if e.Sentinel != nil && e.Err != nil {
+		return []error{e.Sentinel, e.Err}
 	}
-	return e.Err
+	if e.Sentinel != nil {
+		return []error{e.Sentinel}
+	}
+	return []error{e.Err}
 }

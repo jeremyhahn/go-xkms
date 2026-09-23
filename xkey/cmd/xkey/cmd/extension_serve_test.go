@@ -669,6 +669,9 @@ func TestReadBarrierStrategy_MissingStrategyField(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing strategy field")
 	}
+	if !errors.Is(err, ErrServeRootKeyMissingStrategy) {
+		t.Fatalf("err = %v, want errors.Is match against ErrServeRootKeyMissingStrategy", err)
+	}
 }
 
 func TestServeErrors_AreDistinct(t *testing.T) {

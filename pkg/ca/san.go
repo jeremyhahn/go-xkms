@@ -247,3 +247,66 @@ func marshalGeneralName(tag int, content []byte) ([]byte, error) {
 func subjectDNIsEmpty(subject pkix.Name) bool {
 	return len(subject.ToRDNSequence()) == 0
 }
+
+// ParseOtherNames decodes every otherName GeneralName inside a certificate's
+// or certificate request's subjectAltName extension, in the order they
+// appear. It is the one place go-xkms decodes an otherName back out of an
+// extension; BuildSubjectAltName is the one place it encodes one, and a
+// caller that needs to read an RFC 4043 permanentIdentifier or RFC 4108
+// hardwareModuleName back off a request or certificate must go through this
+// function rather than decoding the GeneralNames SEQUENCE itself.
+//
+// Returns (nil, nil) when extensions carries no subjectAltName extension at
+// all: an absent extension is not malformed, and whether that absence is an
+// error is the caller's decision, not this function's. Returns
+// ErrSANDecoding when the extension is present but its GeneralNames SEQUENCE,
+// or one of its otherName entries, cannot be ASN.1 decoded.
+func ParseOtherNames(extensions []pkix.Extension) ([]OtherName, error) {
+	var raw []byte
+	present := false
+	for _, ext := range extensions {
+		if ext.Id.Equal(oidSubjectAltNameExt) {
+			raw = ext.Value
+			present = true
+		}
+	}
+	if !present {
+		return nil, nil
+	}
+
+	var generalNames asn1.RawValue
+	if _, err := asn1.Unmarshal(raw, &generalNames); err != nil {
+		return nil, &errs.Detail{Err: ErrSANDecoding, Detail: "GeneralNames sequence"}
+	}
+
+	var others []OtherName
+	rest := generalNames.Bytes
+	for len(rest) > 0 {
+		var name asn1.RawValue
+		remaining, err := asn1.Unmarshal(rest, &name)
+		if err != nil {
+			return nil, &errs.Detail{Err: ErrSANDecoding, Detail: "GeneralName"}
+		}
+		rest = remaining
+
+		// otherName is GeneralName CHOICE [0]; every other choice (dNSName,
+		// iPAddress, rfc822Name, uniformResourceIdentifier, directoryName) is
+		// already exposed by crypto/x509's own SAN parsing and is of no
+		// interest here.
+		if name.Class != asn1.ClassContextSpecific || name.Tag != 0 {
+			continue
+		}
+
+		var typeID asn1.ObjectIdentifier
+		valueBytes, err := asn1.Unmarshal(name.Bytes, &typeID)
+		if err != nil {
+			return nil, &errs.Detail{Err: ErrSANDecoding, Detail: "otherName type-id"}
+		}
+		var wrapped asn1.RawValue
+		if _, err := asn1.Unmarshal(valueBytes, &wrapped); err != nil {
+			return nil, &errs.Detail{Err: ErrSANDecoding, Detail: "otherName value"}
+		}
+		others = append(others, OtherName{TypeID: typeID, Value: wrapped.Bytes})
+	}
+	return others, nil
+}

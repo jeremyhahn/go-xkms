@@ -347,7 +347,7 @@ func TestTPMKEKStrategy_ConsumeEnrollmentSecretRejectsBadInput(t *testing.T) {
 		require.NoError(t, err)
 
 		err = s.ConsumeEnrollmentSecret(ctx, &ProvisionedSecret{OID: clusterSeedOID, Data: blob})
-		require.Error(t, err)
+		require.ErrorIs(t, err, ErrSeedLengthMismatch)
 		assert.Contains(t, err.Error(), "unexpected length")
 		assert.Empty(t, s.seed)
 	})
@@ -380,17 +380,17 @@ func TestTPMKEKSecretProvider_RejectsIncompleteRequests(t *testing.T) {
 
 	t.Run("nil request", func(t *testing.T) {
 		_, err := seeded(t).ProvisionFor(ctx, nil)
-		require.Error(t, err)
+		require.ErrorIs(t, err, ErrNodeSecretRequestIncomplete)
 	})
 
 	t.Run("missing EK certificate", func(t *testing.T) {
 		_, err := seeded(t).ProvisionFor(ctx, &NodeSecretRequest{IAKPublic: []byte("iak")})
-		require.Error(t, err)
+		require.ErrorIs(t, err, ErrNodeSecretRequestIncomplete)
 	})
 
 	t.Run("missing IAK public area", func(t *testing.T) {
 		_, err := seeded(t).ProvisionFor(ctx, &NodeSecretRequest{EKCertificate: &x509.Certificate{}})
-		require.Error(t, err)
+		require.ErrorIs(t, err, ErrNodeSecretRequestIncomplete)
 	})
 
 	t.Run("credential wrapping fails", func(t *testing.T) {

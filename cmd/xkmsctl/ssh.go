@@ -51,6 +51,10 @@ var (
 	// ErrSSHParsePublicKey is the classifying sentinel for an
 	// unparseable authorized_keys line.
 	ErrSSHParsePublicKey = errors.New("ssh: cannot parse public key line")
+
+	// ErrSSHServerRequired is returned when a non-embedded SSH transport is
+	// selected without a --server URL.
+	ErrSSHServerRequired = errors.New("ssh: --server is required for non-embedded transports")
 )
 
 var sshCmd = &cobra.Command{
@@ -266,7 +270,7 @@ func xkmsctlSSHClient() (sshsdk.Client, func(), error) {
 		return c, func() { _ = c.Close() }, nil
 	}
 	if strings.TrimSpace(cfg.Server) == "" {
-		return nil, nil, errors.New("ssh: --server is required for non-embedded transports")
+		return nil, nil, ErrSSHServerRequired
 	}
 	c, err := sshsdk.NewClientForServer(cfg.Server, cfg.TLSCACert, cfg.JWTToken)
 	if err != nil {

@@ -21,7 +21,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // enabledACME returns a valid, minimal ACME section so audit assertions are not
@@ -32,6 +31,7 @@ func enabledACME() *ACMEConfig {
 		HTTPSAddr:       ":8443",
 		ExternalURL:     "https://acme.example.com",
 		KeystoreBackend: "software",
+		CAAIdentities:   []string{"ca.example.com"},
 		Challenges:      ACMEChallengesConfig{HTTP01: true},
 		TLS:             ACMETLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"},
 	}
@@ -217,7 +217,7 @@ func TestACMEConfig_ValidateRejectsBadAudit(t *testing.T) {
 func TestComplianceGaps_ACMEAuditDisabled(t *testing.T) {
 	secure := func() *Config {
 		return &Config{
-			Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase", Passphrase: types.SecretValue{Raw: "unseal"}},
+			Barrier: BarrierConfig{Enabled: true, Strategy: "passphrase"},
 			TLS:     TLSConfig{Enabled: true},
 			Auth:    AuthConfig{Enabled: true, Type: "jwt"},
 			CA:      &ca.MultiIdentityCAConfig{},
