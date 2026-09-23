@@ -117,7 +117,7 @@ RUN mkdir -p /app /data /var/run/xkms /etc/xkms
 ENV PKCS11_MODULE=/usr/local/lib/libxkms_pkcs11.so
 ENV XKMS_PKCS11_CONFIG=/etc/xkms/pkcs11.yaml
 ENV XKMS_UNIX_SOCKET=/var/run/xkms/xkms.sock
-ENV XKMS_DATA_DIR=/data
+ENV XKMS_STORAGE_PATH=/data
 
 WORKDIR /app
 

@@ -36,7 +36,7 @@ const serveOrigin = "https://" + serveHost
 func networkRouter(t *testing.T) http.Handler {
 	t.Helper()
 	h := newHandlersFor(nil, nil, nil)
-	return NewRouter(nil, h.service, h.cfg, slog.Default())
+	return NewRouter(nil, h.service, slog.Default())
 }
 
 // inProcessRouter builds the router the way the desktop application does:
@@ -44,7 +44,7 @@ func networkRouter(t *testing.T) http.Handler {
 func inProcessRouter(t *testing.T) http.Handler {
 	t.Helper()
 	h := newHandlersFor(nil, nil, nil)
-	return NewRouter(nil, h.service, h.cfg, slog.Default(), WithInProcessTransport())
+	return NewRouter(nil, h.service, slog.Default(), WithInProcessTransport())
 }
 
 // apiRequest builds a request addressed to the network deployment's host.
@@ -87,11 +87,6 @@ var apiRoutes = []struct {
 	{http.MethodPost, "/api/v1/certificates/web/deploy", nil},
 	{http.MethodPost, "/api/v1/device/enroll", []byte(`{}`)},
 	{http.MethodPost, "/api/v1/device/attest", []byte(`{}`)},
-	{http.MethodGet, "/api/v1/config", nil},
-	{http.MethodPut, "/api/v1/config", []byte(`{}`)},
-	{http.MethodGet, "/api/v1/renewal/status", nil},
-	{http.MethodGet, "/api/v1/renewal/config", nil},
-	{http.MethodPut, "/api/v1/renewal/config", []byte(`{}`)},
 }
 
 // =============================================================================

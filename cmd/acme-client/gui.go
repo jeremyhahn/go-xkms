@@ -50,7 +50,7 @@ func runGUI() error {
 	}
 
 	guiCfg := clientgui.DefaultGUIConfig()
-	app := clientgui.NewApp(guiCfg, svc, nil, cfg, logger)
+	app := clientgui.NewApp(guiCfg, svc, nil, logger)
 
 	assets, err := fs.Sub(webui.ClientAssets, "dist")
 	if err != nil {

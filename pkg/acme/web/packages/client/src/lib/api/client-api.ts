@@ -20,11 +20,6 @@ import type {
   EnrollResponse,
   AttestRequest,
   AttestResponse,
-  ClientConfig,
-  ClientConfigUpdate,
-  RenewalStatus,
-  RenewalConfig,
-  RenewalConfigUpdate,
   AccountConfig,
   CertificateSpec,
   ManagedCertInfo,
@@ -47,29 +42,12 @@ export const clientApi = {
   revokeCertificate: (req: RevokeClientRequest) =>
     apiClient.post(`${API_V1}/certificate/revoke`, req),
 
-  // Configuration
-  getConfig: () =>
-    apiClient.get<ClientConfig>(`${API_V1}/config`),
-
-  updateConfig: (cfg: ClientConfigUpdate) =>
-    apiClient.put(`${API_V1}/config`, cfg),
-
   // Device operations (TPM)
   deviceEnroll: (req: EnrollRequest) =>
     apiClient.post<EnrollResponse>(`${API_V1}/device/enroll`, req),
 
   deviceAttest: (req: AttestRequest) =>
     apiClient.post<AttestResponse>(`${API_V1}/device/attest`, req),
-
-  // Auto-renewal
-  getRenewalStatus: () =>
-    apiClient.get<RenewalStatus>(`${API_V1}/renewal/status`),
-
-  getRenewalConfig: () =>
-    apiClient.get<RenewalConfig>(`${API_V1}/renewal/config`),
-
-  updateRenewalConfig: (cfg: RenewalConfigUpdate) =>
-    apiClient.put(`${API_V1}/renewal/config`, cfg),
 
   // Multi-account management
   listAccounts: () =>

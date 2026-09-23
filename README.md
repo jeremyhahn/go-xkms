@@ -340,7 +340,7 @@ logging:
 ```
 
 The literal `barrier.passphrase` above exists so a throwaway local daemon needs
-no out-of-band setup. **A real deployment supplies `XKMS_SEAL_PASSPHRASE` or a
+no out-of-band setup. **A real deployment supplies `XKMS_BARRIER_PASSPHRASE` or a
 `credential://` reference instead** — or lets `xkmsd init` provision one.
 
 ### 2. Provision the Deployment

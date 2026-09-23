@@ -78,14 +78,3 @@ func TestComplianceGaps_QRDBBarrierAutoUnseal(t *testing.T) {
 	fileCfg.Storage.Backend = "file"
 	assert.False(t, hasAutoUnsealGap(fileCfg), "file storage uses xkms's own barrier")
 }
-
-func TestApplyEnvOverrides_Seal(t *testing.T) {
-	t.Setenv("XKMS_SEAL_STRATEGY", "tpm2")
-	t.Setenv("XKMS_SEAL_PASSPHRASE", "s3cr3t-boot-secret")
-
-	cfg := &Config{}
-	applyEnvOverrides(cfg)
-
-	assert.Equal(t, "tpm2", cfg.Barrier.Strategy)
-	assert.Equal(t, "s3cr3t-boot-secret", cfg.Barrier.Passphrase)
-}

@@ -18,7 +18,6 @@ Registered on the root command (`cmd/xkmsctl/root.go`), available to every verb.
 | `--output`, `-o` | string | `text` | Output format (`text`, `json`) |
 | `--verbose`, `-v` | bool | `false` | Verbose logging |
 | `--transport` | string | build default | `embedded`, `rest`, `grpc`, `quic`, `unix`, `mcp` |
-| `--protocol`, `-P` | string | build default | **Deprecated** — use `--transport` |
 | `--server`, `-s` | string | — | Server address |
 | `--tls-cert` / `--tls-key` / `--tls-ca` | string | — | Client mTLS material |
 | `--token` | string | — | JWT bearer token |

@@ -141,7 +141,7 @@ storage:
 Environment variables override config file settings:
 
 ```bash
-export XKMS_DATA_DIR=/mnt/fast-storage
+export XKMS_STORAGE_PATH=/mnt/fast-storage
 xkmsd
 ```
 

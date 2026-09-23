@@ -74,19 +74,6 @@ func New(opts ...ServiceOption) (Service, error) {
 			Backend: qrdbsdk.BackendPebble,
 		}
 
-		// Pass barrier config if enabled.
-		if sc.config.Barrier != nil && sc.config.Barrier.Enabled {
-			serverCfg.Barrier = &embedded.BarrierConfig{
-				Strategy: sc.config.Barrier.Strategy,
-			}
-			if sc.config.Barrier.Shamir != nil {
-				serverCfg.Barrier.Shamir = &embedded.ShamirConfig{
-					Threshold: sc.config.Barrier.Shamir.Threshold,
-					Total:     sc.config.Barrier.Shamir.Total,
-				}
-			}
-		}
-
 		server, err := embedded.NewServer(context.Background(), serverCfg)
 		if err != nil {
 			return nil, NewError(ErrorCodeServiceInit, "failed to create embedded QRDB server").

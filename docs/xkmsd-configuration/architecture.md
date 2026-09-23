@@ -67,18 +67,15 @@ Every listener consumes `config.Server.Host`; none holds an address literal.
 The library gRPC server (`pkg/api/grpc`) takes `ServerConfig.Host` from its
 caller and binds `net.JoinHostPort(host, port)`.
 
-## Legacy environment names
+## Environment names
 
-`applyEnvOverrides` in `pkg/config/config.go` is the pre-viper ladder of
-legacy names (`XKMS_HOST`, `XKMS_REST_PORT`, …), each read through
-`legacyEnv`. It runs after viper's unmarshal and sits in the same environment
-layer. A legacy name applies only when non-empty and only when the key's
-canonical name is absent, so the canonical name wins when both are set, and
-an empty legacy variable in an old unit file changes nothing. Legacy names are
-kept out of viper's bindings on purpose: with `AllowEmptyEnv` an empty
-`XKMS_HOST` would otherwise clear a pinned host. Each name leaves the ladder
-when its cluster is remediated and operators have moved to the canonical
-form.
+There is no pre-viper alias ladder: `pkg/config/config.go`'s
+`applyEnvOverrides`/`legacyEnv` ladder was removed outright. Every
+configuration key resolves from exactly one environment name,
+`XKMS_<SECTION>_<KEY>` (`canonicalEnvName` in `pkg/config/load.go`), bound
+generically by `registerEnvKeys`/`walkYAMLKeys`. A variable spelled any other
+way is simply not read — there is no fallback, no warning, and no precedence
+contest to resolve.
 
 ## Rejected alternatives
 

@@ -37,37 +37,28 @@ const StrategyManual = "manual"
 const credentialPrefix = "credentials/"
 
 // validStrategies maps all supported strategy names to true for O(1) validation.
-// The canonical cloud-KMS names match the seal layer's StrategyID constants
-// (awskms/gcpkms/azurekv, no underscores); the underscored spellings are
-// retained as backward-compatible aliases so an operator can configure seal the
-// same way across the stack.
+// The cloud-KMS names match the seal layer's StrategyID constants
+// (awskms/gcpkms/azurekv, no underscores); there is no underscored alias.
 var validStrategies = map[string]bool{
 	StrategyManual: true,
 	"barrier":      true,
 	"tpm2":         true,
 	"pkcs11":       true,
-	// Canonical cloud-KMS names (align with pkg/seal StrategyAWSKMS/GCPKMS/AzureKV).
+	// Cloud-KMS names (align with pkg/seal StrategyAWSKMS/GCPKMS/AzureKV).
 	"awskms":  true,
 	"gcpkms":  true,
 	"azurekv": true,
-	// Underscored spellings retained as backward-compatible aliases.
-	"aws_kms":  true,
-	"gcp_kms":  true,
-	"azure_kv": true,
-	"vault":    true,
-	// "passphrase" is the canonical name for password/software-derived sealing
+	"vault":   true,
+	// "passphrase" is the name for password/software-derived sealing
 	// (aligns with the seal layer's StrategyPassphrase and qrdb's naming).
 	"passphrase": true,
-	// "software" is retained as a backward-compatible alias for "passphrase".
-	"software": true,
 }
 
 // Config holds credential service configuration.
 type Config struct {
 	// Strategy determines how backend credentials are sealed at rest.
-	// Valid values: "manual", "barrier", "tpm2", "pkcs11", "aws_kms",
-	// "gcp_kms", "azure_kv", "vault", "passphrase" ("software" is a
-	// backward-compatible alias for "passphrase").
+	// Valid values: "manual", "barrier", "tpm2", "pkcs11", "awskms",
+	// "gcpkms", "azurekv", "vault", "passphrase".
 	// Default: "manual" -- operator enters credentials at each startup.
 	Strategy string
 }

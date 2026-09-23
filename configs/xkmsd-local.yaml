@@ -102,7 +102,6 @@ ca:
 bootstrap:
   noise:
     enabled: true
-    static_key_file: "/tmp/xkms-local/noise.key"
     max_connections: 100
     read_timeout: "10s"
     write_timeout: "10s"

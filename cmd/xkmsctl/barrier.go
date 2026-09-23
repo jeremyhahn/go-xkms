@@ -287,7 +287,7 @@ consistent surface across the stack:
   status         Show current barrier status
   init           Initialize with a single passphrase (or --barrier-strategy=none)
   init-shamir    Initialize with Shamir M-of-N secret sharing
-  unseal         Unseal with --passphrase (single-secret; --passphrase is a deprecated alias)
+  unseal         Unseal with --passphrase (single-secret)
   unseal-shares  Unseal with one or more Shamir shares (--share / --shares-file)
   seal           Seal the barrier
   rekey          Regenerate Shamir shares (--threshold/--total; no secret on the wire)

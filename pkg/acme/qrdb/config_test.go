@@ -14,7 +14,6 @@
 package qrdb
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,30 +183,4 @@ func TestConfigValidate(t *testing.T) {
 		assert.True(t, IsInvalidConfig(err))
 	})
 
-	t.Run("barrier enabled is rejected", func(t *testing.T) {
-		cfg := &Config{
-			Mode:     ModeStandalone,
-			Protocol: ProtocolEmbedded,
-			DataDir:  "/tmp/data",
-			Barrier: &BarrierConfig{
-				Enabled: true,
-			},
-		}
-		err := cfg.Validate()
-		require.Error(t, err)
-		assert.True(t, errors.Is(err, ErrBarrierCredentialUnsupported))
-		assert.True(t, IsInvalidConfig(err))
-	})
-
-	t.Run("barrier disabled is accepted", func(t *testing.T) {
-		cfg := &Config{
-			Mode:     ModeStandalone,
-			Protocol: ProtocolEmbedded,
-			DataDir:  "/tmp/data",
-			Barrier: &BarrierConfig{
-				Enabled: false,
-			},
-		}
-		assert.NoError(t, cfg.Validate())
-	})
 }

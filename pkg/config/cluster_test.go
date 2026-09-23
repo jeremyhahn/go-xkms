@@ -102,22 +102,6 @@ func TestValidate_ClusterBootstrapMustIncludeSelf(t *testing.T) {
 	}
 }
 
-func TestApplyEnvOverrides_Cluster(t *testing.T) {
-	t.Setenv("XKMS_CLUSTER_ENABLED", "true")
-	t.Setenv("XKMS_CLUSTER_NODE_ID", "7")
-	t.Setenv("XKMS_CLUSTER_RAFT_ADDRESS", "10.1.2.3:63001")
-	t.Setenv("XKMS_CLUSTER_PEERS", "7=10.1.2.3:63001")
-	t.Setenv("XKMS_CLUSTER_JOIN", "true")
-
-	cfg := &Config{}
-	applyEnvOverrides(cfg)
-
-	if !cfg.Cluster.Enabled || cfg.Cluster.NodeID != 7 ||
-		cfg.Cluster.RaftAddress != "10.1.2.3:63001" || cfg.Cluster.Peers != "7=10.1.2.3:63001" || !cfg.Cluster.Join {
-		t.Fatalf("env overrides not applied: %+v", cfg.Cluster)
-	}
-}
-
 func TestRaftTLSConfig_EnabledAndComplete(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -198,21 +182,6 @@ func TestValidate_ClusterRaftTLSIgnoredWhenDisabled(t *testing.T) {
 	c.Cluster.RaftTLS = RaftTLSConfig{CACertFile: "only-ca.pem"}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("Validate(disabled cluster, partial raft_tls) = %v, want nil", err)
-	}
-}
-
-func TestApplyEnvOverrides_ClusterRaftTLS(t *testing.T) {
-	t.Setenv("XKMS_CLUSTER_RAFT_CA_CERT", "/env/ca.pem")
-	t.Setenv("XKMS_CLUSTER_RAFT_CERT", "/env/cert.pem")
-	t.Setenv("XKMS_CLUSTER_RAFT_KEY", "/env/key.pem")
-
-	cfg := &Config{}
-	applyEnvOverrides(cfg)
-
-	if cfg.Cluster.RaftTLS.CACertFile != "/env/ca.pem" ||
-		cfg.Cluster.RaftTLS.CertFile != "/env/cert.pem" ||
-		cfg.Cluster.RaftTLS.KeyFile != "/env/key.pem" {
-		t.Fatalf("raft_tls env overrides not applied: %+v", cfg.Cluster.RaftTLS)
 	}
 }
 

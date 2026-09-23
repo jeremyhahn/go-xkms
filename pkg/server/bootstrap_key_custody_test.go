@@ -25,12 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
-
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // custodyQuietLogger returns a logger that discards output, for tests that
@@ -109,57 +106,10 @@ func TestNoiseKeyCustody_SealedRoundTrip(t *testing.T) {
 		"the second construction must load the key the first one sealed, not generate a new one")
 }
 
-// TestNoiseKeyCustody_MigratesLegacyHexAndDeprecates covers the one-time
-// migration path: a barrier is configured, nothing is sealed yet, and the
-// deprecated bootstrap.noise.static_key_hex config still carries a key. The
-// loader must use that key (not generate a different one), seal it, warn
-// that the config key is deprecated, and -- on the NEXT boot, exercised here
-// via a second Server that does not even have the legacy config set -- load
-// it straight from the barrier without touching config again.
-func TestNoiseKeyCustody_MigratesLegacyHexAndDeprecates(t *testing.T) {
-	if !noiseRunnable() {
-		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
-		return
-	}
-
-	original, err := noiseproto.GenerateStaticKey()
-	require.NoError(t, err)
-	defer original.Destroy()
-
-	b1, b2 := newCustodyBarrierPair(t)
-
-	var logBuf bytes.Buffer
-	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex: encodeKeyHex(original.Private), //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	}
-	s1 := &Server{config: cfg, logger: custodyCapturingLogger(&logBuf), barrier: b1}
-
-	migrated, err := s1.loadNoiseStaticKey()
-	require.NoError(t, err)
-	defer migrated.Destroy()
-	assert.Equal(t, original.Public, migrated.Public, "the migrated key must be the configured legacy key")
-	assert.Contains(t, logBuf.String(), "deprecated", "migrating a legacy key must warn that the config key is deprecated")
-
-	// Second boot: no legacy config at all, different barrier object but the
-	// SAME underlying storage -- the sealed key must still be found.
-	var logBuf2 bytes.Buffer
-	s2 := &Server{config: &config.Config{}, logger: custodyCapturingLogger(&logBuf2), barrier: b2}
-	reloaded, err := s2.loadNoiseStaticKey()
-	require.NoError(t, err)
-	defer reloaded.Destroy()
-
-	assert.Equal(t, original.Public, reloaded.Public, "the sealed key must survive independently of the legacy config")
-	assert.NotContains(t, logBuf2.String(), "deprecated", "a key already sealed must not re-trigger the migration warning")
-}
-
 // TestNoiseKeyCustody_BarrierGetErrorWraps proves that a barrier failure
 // other than "nothing sealed yet" is reported as a typed error rather than
-// silently falling through to legacy config or generation, which would mask
-// a sealed (or otherwise broken) barrier as first-time setup.
+// silently falling through to generation, which would mask a sealed (or
+// otherwise broken) barrier as first-time setup.
 func TestNoiseKeyCustody_BarrierGetErrorWraps(t *testing.T) {
 	b1, _ := newCustodyBarrierPair(t)
 	require.NoError(t, b1.Seal())
@@ -297,44 +247,6 @@ func TestP256KeyCustody_SealedRoundTrip(t *testing.T) {
 
 	assert.Equal(t, key1.PublicBytes(), key2.PublicBytes(),
 		"the second construction must load the key the first one sealed, not generate a new one")
-}
-
-// TestP256KeyCustody_MigratesLegacyFileAndDeprecates is
-// TestNoiseKeyCustody_MigratesLegacyHexAndDeprecates's P-256 counterpart,
-// using the file form (P256StaticKeyFile) rather than inline hex to cover
-// both legacy input shapes across the two key types.
-func TestP256KeyCustody_MigratesLegacyFileAndDeprecates(t *testing.T) {
-	original, err := bootstrap.GenerateP256StaticKey()
-	require.NoError(t, err)
-	defer original.Destroy()
-
-	path := filepath.Join(t.TempDir(), "p256.key")
-	require.NoError(t, os.WriteFile(path, []byte(encodeP256Hex(t, original)), 0600))
-
-	b1, b2 := newCustodyBarrierPair(t)
-
-	var logBuf bytes.Buffer
-	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{P256StaticKeyFile: path}, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-		},
-	}
-	s1 := &Server{config: cfg, logger: custodyCapturingLogger(&logBuf), barrier: b1}
-
-	migrated, err := s1.loadP256StaticKey()
-	require.NoError(t, err)
-	defer migrated.Destroy()
-	assert.Equal(t, original.PublicBytes(), migrated.PublicBytes())
-	assert.Contains(t, logBuf.String(), "deprecated")
-
-	var logBuf2 bytes.Buffer
-	s2 := &Server{config: &config.Config{}, logger: custodyCapturingLogger(&logBuf2), barrier: b2}
-	reloaded, err := s2.loadP256StaticKey()
-	require.NoError(t, err)
-	defer reloaded.Destroy()
-
-	assert.Equal(t, original.PublicBytes(), reloaded.PublicBytes())
-	assert.NotContains(t, logBuf2.String(), "deprecated")
 }
 
 // TestP256KeyCustody_BarrierGetErrorWraps is

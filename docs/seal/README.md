@@ -41,7 +41,7 @@ product uses):**
 - `barrier.strategy`: `none | passphrase | shamir | tpm2 | pkcs11 | awskms |
   gcpkms | azurekv | vault` (canonical vocabulary).
 - Boot passphrase (passphrase strategy): `--seal-passphrase` flag >
-  `XKMS_SEAL_PASSPHRASE` env > `barrier.passphrase` config (supports
+  `XKMS_BARRIER_PASSPHRASE` env > `barrier.passphrase` config (supports
   `credential://`). Precedence CLI > env > config.
 - Hardware strategies (`tpm2`/…) auto-unseal from the device (PCR policy / empty
   credentials) — no boot secret needed. The TPM seal open is shared with the

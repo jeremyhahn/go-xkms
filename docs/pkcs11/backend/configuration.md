@@ -36,14 +36,10 @@ type PKCS11Config struct {
 Validation: with `enabled: true`, an empty `library` fails config validation
 with `PKCS11 library is required`. `ListEnabledBackends()` reports `pkcs11`.
 
-Environment override — only the library path has one:
-
-```go
-	// PKCS#11 settings
-	if pkcs11Lib := os.Getenv("PKCS11_LIBRARY"); pkcs11Lib != "" && cfg.Backends.PKCS11 != nil {
-		cfg.Backends.PKCS11.Library = pkcs11Lib
-	}
-```
+Environment override: `XKMS_BACKENDS_PKCS11_LIBRARY` resolves
+`backends.pkcs11.library` the same way every other config key resolves
+(`XKMS_<SECTION>_<KEY>`, bound generically — there is no field-specific
+override code).
 
 ## `pkcs11.Config` fields
 

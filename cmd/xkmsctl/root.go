@@ -84,18 +84,8 @@ func init() {
 		"verbose output")
 
 	// Transport flag - selects the SDK transport used to reach xkmsd.
-	// This is the canonical flag; --protocol (-P) is retained below as a
-	// deprecated alias for backwards compatibility with existing scripts
-	// and integration tests.
 	rootCmd.PersistentFlags().StringVar(&globalConfig.Protocol, "transport", DefaultTransport,
 		transportFlagUsage)
-	rootCmd.PersistentFlags().StringVarP(&globalConfig.Protocol, "protocol", "P", DefaultTransport,
-		transportFlagUsage+" (deprecated: use --transport)")
-	if err := rootCmd.PersistentFlags().MarkDeprecated("protocol", "use --transport instead"); err != nil {
-		// MarkDeprecated only errors when the flag does not exist; we
-		// just registered it, so a panic here indicates a programmer error.
-		panic(fmt.Sprintf("xkmsctl: failed to deprecate --protocol: %v", err))
-	}
 
 	// Server connection flags
 	rootCmd.PersistentFlags().StringVarP(&globalConfig.Server, "server", "s", "",

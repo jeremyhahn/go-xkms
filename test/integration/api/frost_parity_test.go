@@ -48,7 +48,7 @@ func TestFROST_KeygenAllProtocols(t *testing.T) {
 			// Test participant mode keygen
 			t.Run("participant-mode", func(t *testing.T) {
 				args := []string{
-					"--protocol", "embedded",
+					"--transport", "embedded",
 					"--key-dir", keyDir,
 					"frost", "keygen",
 					"--key-id", keyID,
@@ -94,7 +94,7 @@ func TestFROST_TrustedDealerAllProtocols(t *testing.T) {
 			}
 
 			args := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "keygen",
 				"--key-id", keyID,
@@ -144,7 +144,7 @@ func TestFROST_FullSigningCeremony(t *testing.T) {
 	// Using --participant-id stores the key in the backend so list/info work
 	t.Run("participant-keygen", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "keygen",
 			"--key-id", keyID,
@@ -167,7 +167,7 @@ func TestFROST_FullSigningCeremony(t *testing.T) {
 	// Step 2: List the generated key
 	t.Run("list-key", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "list",
 			"-o", "json",
@@ -187,7 +187,7 @@ func TestFROST_FullSigningCeremony(t *testing.T) {
 	// Step 3: Get key info
 	t.Run("key-info", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "info", keyID,
 			"-o", "json",
@@ -208,7 +208,7 @@ func TestFROST_FullSigningCeremony(t *testing.T) {
 	// Step 4: Delete the key
 	t.Run("delete-key", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "delete", keyID,
 			"--force",
@@ -224,7 +224,7 @@ func TestFROST_FullSigningCeremony(t *testing.T) {
 	// Step 5: Verify key is deleted
 	t.Run("verify-deleted", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "list",
 			"-o", "json",
@@ -256,7 +256,7 @@ func TestFROST_ListKeysAllProtocols(t *testing.T) {
 
 			// Generate a key first
 			genArgs := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "keygen",
 				"--key-id", keyID,
@@ -272,7 +272,7 @@ func TestFROST_ListKeysAllProtocols(t *testing.T) {
 
 			// List keys
 			listArgs := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "list",
 			}
@@ -309,7 +309,7 @@ func TestFROST_DeleteKeyAllProtocols(t *testing.T) {
 
 			// Generate a key
 			genArgs := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "keygen",
 				"--key-id", keyID,
@@ -325,7 +325,7 @@ func TestFROST_DeleteKeyAllProtocols(t *testing.T) {
 
 			// Delete key
 			delArgs := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "delete", keyID,
 				"--force", // Skip confirmation prompt
@@ -338,7 +338,7 @@ func TestFROST_DeleteKeyAllProtocols(t *testing.T) {
 
 			// Verify deletion
 			listArgs := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "list",
 			}
@@ -371,7 +371,7 @@ func TestFROST_AllCiphersuites(t *testing.T) {
 			keyID := commands.GenerateUniqueKeyID("frost-suite")
 
 			args := []string{
-				"--protocol", "embedded",
+				"--transport", "embedded",
 				"--key-dir", keyDir,
 				"frost", "keygen",
 				"--key-id", keyID,
@@ -411,7 +411,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 	// Step 1: Participant mode keygen
 	t.Run("participant-keygen", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "keygen",
 			"--key-id", participantKeyID,
@@ -432,7 +432,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 	// Step 2: Key info
 	t.Run("key-info", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "info", participantKeyID,
 		}
@@ -450,7 +450,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 	// Step 3: Dealer mode keygen
 	t.Run("dealer-keygen", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "keygen",
 			"--key-id", dealerKeyID,
@@ -481,7 +481,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 	// Step 4: List keys
 	t.Run("list-keys", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "list",
 		}
@@ -499,7 +499,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 	// Step 5: Delete participant key
 	t.Run("delete-participant-key", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "delete", participantKeyID,
 			"--force",
@@ -516,7 +516,7 @@ func TestFROST_CLIWorkflow(t *testing.T) {
 	// Step 6: Verify deletion
 	t.Run("verify-deletion", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "list",
 		}
@@ -564,7 +564,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 1: Generate FROST key (participant mode)
 			t.Run("keygen", func(t *testing.T) {
 				args := []string{
-					"--protocol", "embedded",
+					"--transport", "embedded",
 					"--key-dir", keyDir,
 					"frost", "keygen",
 					"--key-id", keyID,
@@ -586,7 +586,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 2: List FROST keys
 			t.Run("list", func(t *testing.T) {
 				args := []string{
-					"--protocol", "embedded",
+					"--transport", "embedded",
 					"--key-dir", keyDir,
 					"frost", "list",
 				}
@@ -602,7 +602,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 3: Get FROST key info
 			t.Run("info", func(t *testing.T) {
 				args := []string{
-					"--protocol", "embedded",
+					"--transport", "embedded",
 					"--key-dir", keyDir,
 					"frost", "info", keyID,
 				}
@@ -622,7 +622,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 5: Delete FROST key
 			t.Run("delete", func(t *testing.T) {
 				args := []string{
-					"--protocol", "embedded",
+					"--transport", "embedded",
 					"--key-dir", keyDir,
 					"frost", "delete", keyID,
 					"--force", // Skip confirmation prompt
@@ -654,7 +654,7 @@ func TestProtocolParity_FrostTrustedDealer(t *testing.T) {
 	// Generate keys using trusted dealer
 	t.Run("dealer-keygen", func(t *testing.T) {
 		args := []string{
-			"--protocol", "embedded",
+			"--transport", "embedded",
 			"--key-dir", keyDir,
 			"frost", "keygen",
 			"--key-id", keyID,

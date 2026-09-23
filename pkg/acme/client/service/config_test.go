@@ -100,9 +100,6 @@ func TestDefaultConfig_NotNilFields(t *testing.T) {
 	assert.NotZero(t, cfg.Challenge.DNS01.TTL)
 	assert.NotNil(t, cfg.Accounts)
 	assert.NotNil(t, cfg.Certificates)
-	assert.NotZero(t, cfg.Client.Timeout)
-	assert.NotZero(t, cfg.Client.RetryAttempts)
-	assert.NotZero(t, cfg.Renewal.CheckInterval)
 }
 
 // TestConfig_Validate_Success verifies that a valid config with one account

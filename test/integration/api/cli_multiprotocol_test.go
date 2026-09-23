@@ -59,11 +59,11 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 	return stdout.String(), stderr.String(), err
 }
 
-// execCLIWithLocal executes the CLI binary with the "--protocol", "embedded" flag for embedded mode
+// execCLIWithLocal executes the CLI binary with the "--transport", "embedded" flag for embedded mode
 func execCLIWithLocal(t *testing.T, cfg *TestConfig, args ...string) (string, string, error) {
 	t.Helper()
 
-	prefixArgs := []string{"--protocol", "embedded"}
+	prefixArgs := []string{"--transport", "embedded"}
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, args...)
 
@@ -554,25 +554,25 @@ func TestCLIServerFlagFormats(t *testing.T) {
 	}
 }
 
-// TestCLILocalFlag tests the "--protocol", "embedded" flag for embedded mode
+// TestCLILocalFlag tests the "--transport", "embedded" flag for embedded mode
 func TestCLILocalFlag(t *testing.T) {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)
 
-	// Test that --protocol embedded flag works for version command
+	// Test that --transport embedded flag works for version command
 	stdout, stderr, err := execCLIWithLocal(t, cfg, "version")
 	if err != nil {
 		t.Logf("stdout: %s", stdout)
 		t.Logf("stderr: %s", stderr)
-		t.Fatalf("Version command with --protocol embedded failed: %v", err)
+		t.Fatalf("Version command with --transport embedded failed: %v", err)
 	}
 
 	output := stdout + stderr
 	if output == "" {
-		t.Fatal("Version command with --protocol embedded produced no output")
+		t.Fatal("Version command with --transport embedded produced no output")
 	}
 
-	t.Logf("CLI --protocol embedded flag works correctly for embedded mode")
+	t.Logf("CLI --transport embedded flag works correctly for embedded mode")
 }
 
 // TestCLIMCPProtocol tests MCP protocol specifically.

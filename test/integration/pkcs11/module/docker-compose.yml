@@ -103,7 +103,7 @@ services:
       - XKMS_GRPC_ADDR=xkms-server:9443
       - XKMS_GRPC_TLS_CA=/etc/xkms/certs/ca.crt
       # Data directory
-      - XKMS_DATA_DIR=/data
+      - XKMS_STORAGE_PATH=/data
       # Test configuration
       - INTEGRATION_TIMEOUT=120s
       - GO_TEST_FLAGS=-v -tags=integration,pkcs11

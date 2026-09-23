@@ -23,8 +23,6 @@ protocols:
 bootstrap:
   noise:
     enabled: true
-    static_key_file: /etc/xkms/noise-static.key
-    # static_key_hex: "3a4b5c6d..."  # Alternative: inline hex key
     max_connections: 100
     read_timeout: "10s"
     write_timeout: "10s"
@@ -32,6 +30,12 @@ bootstrap:
     enabled: true
     pin_sha256: "e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6"
 ```
+
+The listener's own static keys are not a config field: the server persists
+and seals them itself (barrier-sealed when a barrier is configured, a
+persisted file otherwise). See
+[Trust Bootstrap](../trust-bootstrap/engineering.md#configuration) for that
+custody decision.
 
 ### Server Fields
 
@@ -44,7 +48,7 @@ TCP port for the Noise_NK bootstrap listener.
 | Type | int |
 | Default | none on the server; clients dial 8445 |
 | YAML key | `server.noise_port` |
-| Environment | `XKMS_NOISE_PORT` |
+| Environment | `XKMS_SERVER_NOISE_PORT` |
 | Required | Yes, when `protocols.noise` is true |
 
 The loader applies no default: `ServerConfig.NoisePort` is a plain `int`
@@ -85,42 +89,21 @@ Controls whether the Noise bootstrap handler is active.
 | Type | bool |
 | Default | false |
 | YAML key | `bootstrap.noise.enabled` |
-| Environment | `XKMS_NOISE_ENABLED` |
+| Environment | `XKMS_BOOTSTRAP_NOISE_ENABLED` |
 | Required | No |
 
 Both `protocols.noise` and `bootstrap.noise.enabled` must be true for the Noise bootstrap server to accept connections.
 
-#### `bootstrap.noise.static_key_file`
-
-Path to a file containing the hex-encoded Noise static private key (64 hex characters on a single line).
-
-| Property | Value |
-|----------|-------|
-| Type | string |
-| Default | (none) |
-| YAML key | `bootstrap.noise.static_key_file` |
-| Environment | `XKMS_NOISE_STATIC_KEY_FILE` |
-| Required | One of `static_key_file` or `static_key_hex` |
-
-The file should have restrictive permissions (0600). Generate the key with:
-
-```bash
-xkmsctl bootstrap noise generate-key --output /etc/xkms/noise-static.key
-```
-
-#### `bootstrap.noise.static_key_hex`
-
-Inline hex-encoded Noise static private key (64 hex characters).
-
-| Property | Value |
-|----------|-------|
-| Type | string |
-| Default | (none) |
-| YAML key | `bootstrap.noise.static_key_hex` |
-| Environment | `XKMS_NOISE_STATIC_KEY` |
-| Required | One of `static_key_file` or `static_key_hex` |
-
-If both `static_key_file` and `static_key_hex` are set, `static_key_file` takes precedence. Inline keys are convenient for containerized deployments where the key is injected via environment variable.
+There is no config field for the listener's static key. The server persists
+and seals its own key on first boot -- barrier-sealed when a barrier is
+configured, or a persisted plaintext-hex file at
+`<storage.path>/bootstrap-noise-x25519.key` (P-256:
+`bootstrap-noise-p256.key`) otherwise -- and reuses it on every subsequent
+boot. Without a barrier, an operator with filesystem access to the data
+directory can derive the public key from that file with
+`xkmsctl bootstrap noise show-key --key-file <path>` (P-256:
+`show-p256-key`); distribute the printed public key to clients before their
+first connection.
 
 #### `bootstrap.noise.max_connections`
 
@@ -185,7 +168,7 @@ The hex-encoded SHA-256 hash of the server's SubjectPublicKeyInfo. This value is
 | Type | string (64 hex characters) |
 | Default | (none) |
 | YAML key | `bootstrap.spki.pin_sha256` |
-| Environment | `XKMS_SPKI_PIN` |
+| Environment | `XKMS_BOOTSTRAP_SPKI_PIN_SHA256` |
 | Required | No (computed from server certificate) |
 
 This field is informational on the server side. It is primarily used in documentation and provisioning templates to record which pin value should be distributed to clients.
@@ -307,13 +290,13 @@ All server-side bootstrap settings can be overridden with environment variables:
 
 | Variable | Config Path | Description |
 |----------|-------------|-------------|
-| `XKMS_NOISE_ENABLED` | `bootstrap.noise.enabled` | Enable Noise bootstrap (`true`/`false`) |
-| `XKMS_NOISE_STATIC_KEY` | `bootstrap.noise.static_key_hex` | Inline Noise static private key (hex) |
-| `XKMS_NOISE_STATIC_KEY_FILE` | `bootstrap.noise.static_key_file` | Path to Noise static private key file |
-| `XKMS_NOISE_PORT` | `server.noise_port` | Noise bootstrap TCP port |
-| `XKMS_SPKI_PIN` | `bootstrap.spki.pin_sha256` | SPKI SHA-256 pin (also enables SPKI) |
+| `XKMS_BOOTSTRAP_NOISE_ENABLED` | `bootstrap.noise.enabled` | Enable Noise bootstrap (`true`/`false`) |
+| `XKMS_SERVER_NOISE_PORT` | `server.noise_port` | Noise bootstrap TCP port |
+| `XKMS_BOOTSTRAP_SPKI_PIN_SHA256` | `bootstrap.spki.pin_sha256` | SPKI SHA-256 pin (also enables SPKI) |
 
-Environment variables take precedence over YAML file values.
+Environment variables take precedence over YAML file values. There is no
+variable for the listener's static key: it is never config-supplied (see
+above).
 
 ## Example Configurations
 
@@ -333,12 +316,15 @@ protocols:
 bootstrap:
   noise:
     enabled: true
-    static_key_hex: "3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b"
 ```
 
-### Production (File-Based Key)
+The server generates and persists its own key on first boot (see
+[above](#bootstrapnoiseenabled)); nothing further to configure.
 
-Production configuration with key stored on disk:
+### Production (Barrier-Sealed Key)
+
+Production configuration; the listener's key is sealed under the barrier
+rather than left as a plaintext file:
 
 ```yaml
 server:
@@ -352,10 +338,12 @@ protocols:
   grpc: true
   noise: true
 
+barrier:
+  enabled: true
+
 bootstrap:
   noise:
     enabled: true
-    static_key_file: /etc/xkms/noise-static.key
     max_connections: 50
     read_timeout: "5s"
     write_timeout: "5s"
@@ -366,12 +354,11 @@ bootstrap:
 
 ### Container Deployment (Environment Variables)
 
-When running in a container, inject the key via environment:
+When running in a container:
 
 ```bash
-docker run -e XKMS_NOISE_ENABLED=true \
-           -e XKMS_NOISE_STATIC_KEY="3a4b5c6d..." \
-           -e XKMS_NOISE_PORT=8445 \
+docker run -e XKMS_BOOTSTRAP_NOISE_ENABLED=true \
+           -e XKMS_SERVER_NOISE_PORT=8445 \
            -p 8443:8443 \
            -p 8445:8445 \
            xkmsd
@@ -391,7 +378,6 @@ protocols:
 bootstrap:
   noise:
     enabled: true
-    static_key_file: /etc/xkms/noise-static.key
   spki:
     enabled: false
 ```
@@ -428,7 +414,7 @@ Controls whether the DANE/TLSA bootstrap path is advertised and available.
 | Type | bool |
 | Default | false |
 | YAML key | `bootstrap.dane.enabled` |
-| Environment | `XKMS_DANE_ENABLED` |
+| Environment | `XKMS_BOOTSTRAP_DANE_ENABLED` |
 | Required | No |
 
 When enabled, clients using DANE bootstrap can fetch the CA bundle over HTTPS and verify it against TLSA DNS records. No special server-side listener is needed -- the existing REST API serves the bundle at `/api/v1/ca/bundle`.
@@ -442,7 +428,7 @@ The hostname published in TLSA DNS records. This is the hostname clients use for
 | Type | string |
 | Default | (none) |
 | YAML key | `bootstrap.dane.hostname` |
-| Environment | `XKMS_DANE_HOSTNAME` |
+| Environment | `XKMS_BOOTSTRAP_DANE_HOSTNAME` |
 | Required | Yes, when `bootstrap.dane.enabled` is true |
 
 Must match the DNS name where TLSA records are published (e.g., `kms.example.com`).
@@ -456,7 +442,7 @@ The port number published in TLSA DNS records. This forms the `_<port>._tcp.<hos
 | Type | uint16 |
 | Default | (none; typically matches `rest_port`) |
 | YAML key | `bootstrap.dane.port` |
-| Environment | `XKMS_DANE_PORT` |
+| Environment | `XKMS_BOOTSTRAP_DANE_PORT` |
 | Required | Yes, when `bootstrap.dane.enabled` is true |
 
 #### `bootstrap.dane.dns_server`
@@ -468,7 +454,7 @@ DNS resolver address for TLSA lookups. When empty, the system resolver from `/et
 | Type | string |
 | Default | (system resolver) |
 | YAML key | `bootstrap.dane.dns_server` |
-| Environment | `XKMS_DANE_DNS_SERVER` |
+| Environment | `XKMS_BOOTSTRAP_DANE_DNS_SERVER` |
 | Required | No |
 
 Format: `host:port` (e.g., `8.8.8.8:53`). If the port is omitted, port 53 is used.
@@ -576,10 +562,10 @@ If a method does not complete within this timeout, it fails and the next method 
 
 | Variable | Config Path | Description |
 |----------|-------------|-------------|
-| `XKMS_DANE_ENABLED` | `bootstrap.dane.enabled` | Enable DANE bootstrap (`true`/`false`) |
-| `XKMS_DANE_HOSTNAME` | `bootstrap.dane.hostname` | TLSA DNS lookup hostname |
-| `XKMS_DANE_PORT` | `bootstrap.dane.port` | TLSA DNS lookup port |
-| `XKMS_DANE_DNS_SERVER` | `bootstrap.dane.dns_server` | DNS resolver address |
+| `XKMS_BOOTSTRAP_DANE_ENABLED` | `bootstrap.dane.enabled` | Enable DANE bootstrap (`true`/`false`) |
+| `XKMS_BOOTSTRAP_DANE_HOSTNAME` | `bootstrap.dane.hostname` | TLSA DNS lookup hostname |
+| `XKMS_BOOTSTRAP_DANE_PORT` | `bootstrap.dane.port` | TLSA DNS lookup port |
+| `XKMS_BOOTSTRAP_DANE_DNS_SERVER` | `bootstrap.dane.dns_server` | DNS resolver address |
 
 ## Example Configurations
 
@@ -604,7 +590,6 @@ bootstrap:
     port: 8443
   noise:
     enabled: true
-    static_key_file: /etc/xkms/noise-static.key
     max_connections: 50
   spki:
     enabled: true
@@ -652,11 +637,10 @@ bootstrap:
 ### Container Deployment with DANE
 
 ```bash
-docker run -e XKMS_DANE_ENABLED=true \
-           -e XKMS_DANE_HOSTNAME="kms.example.com" \
-           -e XKMS_DANE_PORT=8443 \
-           -e XKMS_NOISE_ENABLED=true \
-           -e XKMS_NOISE_STATIC_KEY="3a4b5c6d..." \
+docker run -e XKMS_BOOTSTRAP_DANE_ENABLED=true \
+           -e XKMS_BOOTSTRAP_DANE_HOSTNAME="kms.example.com" \
+           -e XKMS_BOOTSTRAP_DANE_PORT=8443 \
+           -e XKMS_BOOTSTRAP_NOISE_ENABLED=true \
            -p 8443:8443 \
            -p 8445:8445 \
            xkmsd

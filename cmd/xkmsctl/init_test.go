@@ -36,6 +36,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 // ---------------------------------------------------------------------------
@@ -530,27 +532,44 @@ func TestCreateInitHTTPClient_TestFactory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// initCmd subcommand registration tests
+// ceremonyCmd subcommand registration tests
 // ---------------------------------------------------------------------------
 
-func TestInitCmd_SubcommandRegistration(t *testing.T) {
-	subcommands := initCmd.Commands()
+// TestCeremonyCmd_SubcommandRegistration proves status / claim-cert /
+// claim-share / sign-csr are registered exactly once, under "ceremony" --
+// not also under "init", which has no subcommands of its own.
+func TestCeremonyCmd_SubcommandRegistration(t *testing.T) {
+	var ceremony *cobra.Command
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "ceremony" {
+			ceremony = cmd
+			break
+		}
+	}
+	if ceremony == nil {
+		t.Fatal("expected a \"ceremony\" command registered on rootCmd")
+	}
+
 	expected := map[string]bool{
 		"status":      false,
 		"claim-cert":  false,
 		"claim-share": false,
 		"sign-csr":    false,
 	}
-
-	for _, cmd := range subcommands {
+	for _, cmd := range ceremony.Commands() {
 		if _, ok := expected[cmd.Name()]; ok {
 			expected[cmd.Name()] = true
 		}
 	}
-
 	for name, found := range expected {
 		if !found {
-			t.Errorf("expected subcommand %q not found on initCmd", name)
+			t.Errorf("expected subcommand %q not found on ceremonyCmd", name)
+		}
+	}
+
+	for _, cmd := range initCmd.Commands() {
+		if _, ok := expected[cmd.Name()]; ok {
+			t.Errorf("initCmd carries %q; status/claim-cert/claim-share/sign-csr live only under ceremony", cmd.Name())
 		}
 	}
 }

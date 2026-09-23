@@ -62,7 +62,7 @@ var sshCmd = &cobra.Command{
 	Short: "SSH key management",
 	Long: `SSH key management over any protocol.
 
-The transport is selected by the global --protocol / --server flags, so the
+The transport is selected by the global --transport / --server flags, so the
 same commands work over embedded, rest, grpc, quic, mcp, and unix transports.`,
 }
 

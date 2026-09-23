@@ -12,10 +12,8 @@
   import RequestCert from './views/RequestCert.svelte';
   import RenewCert from './views/RenewCert.svelte';
   import RevokeCert from './views/RevokeCert.svelte';
-  import AutoRenewal from './views/AutoRenewal.svelte';
   import DeviceEnroll from './views/DeviceEnroll.svelte';
   import DeviceAttest from './views/DeviceAttest.svelte';
-  import Configuration from './views/Configuration.svelte';
   import ChallengeConfig from './views/ChallengeConfig.svelte';
   import Settings from './views/Settings.svelte';
 
@@ -29,10 +27,8 @@
     { label: 'Request Cert', icon: 'request', view: 'request-cert' },
     { label: 'Renew Cert', icon: 'renew', view: 'renew-cert' },
     { label: 'Revoke Cert', icon: 'revoke', view: 'revoke-cert' },
-    { label: 'Auto-Renewal', icon: 'autorenew', view: 'auto-renewal' },
     { label: 'Device Enroll', icon: 'device', view: 'device-enroll' },
     { label: 'Device Attest', icon: 'device', view: 'device-attest' },
-    { label: 'Configuration', icon: 'config', view: 'configuration' },
     { label: 'Challenges', icon: 'challenge', view: 'challenges' },
     { label: 'Settings', icon: 'settings', view: 'settings' },
   ];
@@ -70,14 +66,10 @@
       <RenewCert />
     {:else if activeView === 'revoke-cert'}
       <RevokeCert />
-    {:else if activeView === 'auto-renewal'}
-      <AutoRenewal />
     {:else if activeView === 'device-enroll'}
       <DeviceEnroll />
     {:else if activeView === 'device-attest'}
       <DeviceAttest />
-    {:else if activeView === 'configuration'}
-      <Configuration />
     {:else if activeView === 'challenges'}
       <ChallengeConfig />
     {:else if activeView === 'settings'}

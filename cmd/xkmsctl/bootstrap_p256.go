@@ -65,7 +65,12 @@ printed: stdout is read by terminal scrollback, shell history, pipes and CI
 logs, none of which can be wiped. The public key is displayed for distribution
 to clients, which pin it as the server's responder key.
 
-Configure the resulting file as bootstrap.noise.p256_static_key_file.`,
+There is no config field to point the server at this file: the bootstrap
+listener's own key is barrier-sealed, or persisted at a fixed path inside
+its data directory, never config-supplied. To use a key generated here
+instead of one the server generates for itself, place this file at
+<storage.path>/bootstrap-noise-p256.key before the server's first boot --
+that is the exact path the no-barrier custody path reads.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		outputFile, _ := cmd.Flags().GetString("output")
 		generateP256Key(outputFile)

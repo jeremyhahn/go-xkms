@@ -420,75 +420,18 @@ export interface AttestResponse {
   certificate_pem?: string;
 }
 
-// ClientConfig mirrors pkg/gui/client/api/config_handlers.go:configResponseBody.
-export interface ClientConfig {
-  directoryURL: string;
-  accountEmail: string;
-  timeout: string;
-  requestServerBundle: boolean;
-  challengeType: string;
-  challengePort: string;
-  challengeWebRoot: string;
-  storageBackend: string;
-  xkmsBackend: string;
-  logLevel: string;
-  logFormat: string;
-}
-
-// ClientConfigUpdate mirrors pkg/gui/client/api/config_handlers.go:configUpdateBody.
-// All fields are optional — only provided fields are applied by the handler.
-export interface ClientConfigUpdate {
-  directoryURL?: string;
-  accountEmail?: string;
-  timeout?: string;
-  requestServerBundle?: boolean;
-  challengePort?: string;
-  challengeWebRoot?: string;
-  logLevel?: string;
-  logFormat?: string;
-}
-
-// RenewalStatus mirrors pkg/gui/client/api/renewal_handlers.go:renewalStatusResponse.
-export interface RenewalStatus {
-  enabled: boolean;
-  checkInterval: string;
-  renewalThreshold: string;
-}
-
-// RenewalConfig mirrors pkg/gui/client/api/renewal_handlers.go:renewalConfigResponse.
-export interface RenewalConfig {
-  enabled: boolean;
-  checkInterval: string;
-  renewalThreshold: number;
-  maxRetries: number;
-  retryInterval: string;
-  notifyOnSuccess: boolean;
-  notifyOnFailure: boolean;
-}
-
-// RenewalConfigUpdate mirrors pkg/gui/client/api/renewal_handlers.go:renewalConfigUpdateBody.
-export interface RenewalConfigUpdate {
-  enabled?: boolean;
-  checkInterval?: string;
-  renewalThreshold?: number;
-  maxRetries?: number;
-  retryInterval?: string;
-  notifyOnSuccess?: boolean;
-  notifyOnFailure?: boolean;
-}
-
-// RenewalCertInfo is a client-side type for displaying certificate renewal
-// state in the UI. It is not returned by any current Go endpoint — the
-// renewal/status endpoint returns aggregate status only.
-export interface RenewalCertInfo {
-  subject: string;
-  notAfter: string;
-  daysRemaining: number;
-  autoRenew: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Multi-account client types
+//
+// There is no single-account ClientConfig/RenewalConfig any more: the
+// service is multi-account (Accounts/Certificates) end to end. Per-account
+// settings (directory, email, key, ...) live on AccountConfig below, read
+// and written through /api/v1/accounts[/{name}]; per-certificate renewal
+// policy (auto/days-before) is CertificateSpec.renewal, read through
+// /api/v1/certificates[/{name}]. Neither carries a process-wide "renewal
+// check interval" or "threshold" concept — the global config that used to
+// pretend they did was removed outright, since nothing ever read the
+// stored values back into renewal behavior.
 // ---------------------------------------------------------------------------
 
 export interface KeyConfig {

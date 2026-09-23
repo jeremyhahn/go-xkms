@@ -51,7 +51,7 @@ func newTestApp(t *testing.T) *App {
 	if err != nil {
 		t.Fatalf("service: %v", err)
 	}
-	return NewApp(DefaultGUIConfig(), service, nil, cfg, logger)
+	return NewApp(DefaultGUIConfig(), service, nil, logger)
 }
 
 // mountedAPI returns the handler the app hands to the Wails AssetServer, which
@@ -97,9 +97,6 @@ var apiRoutes = []string{
 	"/api/v1/certificates/web/deploy",
 	"/api/v1/device/enroll",
 	"/api/v1/device/attest",
-	"/api/v1/config",
-	"/api/v1/renewal/status",
-	"/api/v1/renewal/config",
 }
 
 // =============================================================================
@@ -158,7 +155,7 @@ func TestApp_MountedAPIServesRequests(t *testing.T) {
 	})
 
 	t.Run("the webview needs no credential", func(t *testing.T) {
-		rec := request(t, handler, http.MethodGet, "/api/v1/config", nil)
+		rec := request(t, handler, http.MethodGet, "/api/v1/accounts", nil)
 		if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
 			t.Fatalf("an in-process request must not be challenged, got %d: %s", rec.Code, rec.Body.String())
 		}

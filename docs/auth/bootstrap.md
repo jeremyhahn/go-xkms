@@ -401,9 +401,9 @@ has a Viper-bound `XKMS_*` fallback (`cmd/xkmsd/init.go:464`):
 
 The credential seal strategy is validated against `validStrategies`
 (`pkg/server/credentials/service.go:43`): `manual`, `barrier`, `tpm2`,
-`pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase`, plus the
-underscored aliases `aws_kms`/`gcp_kms`/`azure_kv` and `software` for
-`passphrase`.
+`pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase`. There is no
+underscored alias and no `software` alias; `passphrase` is the only spelling
+for password/software-derived sealing.
 
 ## Service API
 

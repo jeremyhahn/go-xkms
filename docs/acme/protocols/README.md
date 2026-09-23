@@ -62,7 +62,7 @@ xkmsctl --transport mcp --server https://localhost:8445 cert list
 ```
 
 `--transport` also accepts `embedded`, which runs the service in-process with no
-server at all. `--protocol`/`-P` is a deprecated alias for `--transport`.
+server at all.
 
 ## Protocol Characteristics
 
@@ -131,9 +131,9 @@ unix:
   protocol: "grpc"
 ```
 
-Each port also has an environment override — `XKMS_REST_PORT`, `XKMS_GRPC_PORT`,
-`XKMS_QUIC_PORT`, `XKMS_MCP_PORT`, `XKMS_NOISE_PORT` — applied when the value
-parses as a valid port.
+Each port also has an environment override — `XKMS_SERVER_REST_PORT`,
+`XKMS_SERVER_GRPC_PORT`, `XKMS_SERVER_QUIC_PORT`, `XKMS_SERVER_MCP_PORT`,
+`XKMS_SERVER_NOISE_PORT` — applied when the value parses as a valid port.
 
 ## See Also
 

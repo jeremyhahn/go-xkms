@@ -14,7 +14,7 @@ or `--host`, both forms are accepted.
 | `--host` | string | *(unset)* | bind host for every network listener. Sets `server.host`; wins over `XKMS_SERVER_HOST` and the file. Applied only when given, so `--host ""` explicitly selects every interface |
 | `--daemon`, `-d` | bool | `false` | run as daemon |
 | `--pid-file` | path | `""` | write the PID file |
-| `--seal-passphrase` | string | `""` | barrier auto-unseal passphrase; wins over `XKMS_SEAL_PASSPHRASE` and the file |
+| `--seal-passphrase` | string | `""` | barrier auto-unseal passphrase; wins over `XKMS_BARRIER_PASSPHRASE` and the file |
 | `--version` | bool | `false` | print version and exit |
 
 ## Examples

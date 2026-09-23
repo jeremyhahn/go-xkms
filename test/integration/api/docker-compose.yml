@@ -36,11 +36,11 @@ services:
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
-      - TPM_DEVICE_PATH=tcp://swtpm:2321
+      - XKMS_BACKENDS_TPM2_DEVICE_PATH=tcp://swtpm:2321
       - TPM_USE_SIMULATOR=true
       # PKCS#11 configuration (in-process SoftHSM2 in THIS container;
       # token initialized by the entrypoint)
-      - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
+      - XKMS_BACKENDS_PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
       # Certificate directory
       - CERT_DIR=/etc/xkms/certs

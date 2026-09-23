@@ -110,9 +110,9 @@ xkmsctl bootstrap noise show-p256-key --key-file p256.key
 
 A FIPS build cannot run Noise_NK — it mandates X25519, which SP 800-56A Rev. 3
 does not approve — so the P-256 key is the only one such a server can serve.
-Point `bootstrap.noise.p256_static_key_file` at the file and distribute the
-public point to clients. A non-FIPS server can serve both suites at once by
-configuring both keys; it selects per connection from what the client offers.
+The server persists and serves its own key (see below); distribute the public
+point `show-p256-key` prints to clients. A non-FIPS server serves both suites
+at once, selecting per connection from what the client offers.
 
 **On a FIPS client, pass the P-256 public point:**
 
@@ -131,24 +131,15 @@ it offers whichever its build can run, so one configuration serves a mixed
 fleet. In the resolver's config file the same pair is `server-static-key` and
 `server-p256-static-key` under the scope's `noise:` block.
 
-If you configure **neither** key, the server persists one for you (go-xkms#35)
-instead of generating a fresh one on every restart: sealed under the barrier
-when you have one configured (`barrier.enabled: true`), or as a plaintext hex
-file inside the server's data directory with a one-time warning if you don't.
-Either way, the key it serves on the next boot is the same one, so a public
-key you have already distributed to clients keeps working across restarts.
-Configure `barrier.enabled: true` in production so this key gets the same
-at-rest protection as everything else the barrier covers.
-
-**Upgrading from a server that used `static_key_file` / `static_key_hex` /
-`p256_static_key_file` / `p256_static_key_hex`:** leave the field in place for
-one more restart. The server reads it exactly once, seals the key it names
-into the barrier (or, with no barrier, into the persisted file above), and
-logs that the config field is now deprecated. After that restart, confirm the
-public key clients have did not change (`xkmsctl bootstrap noise show-key` /
-`show-p256-key` against the key file you originally generated, or simply that
-existing clients still connect), then delete the field from your
-configuration — it will not be read again.
+There is no config field for the listener's own key (go-xkms#35): the server
+persists one for you instead of generating a fresh one on every restart —
+sealed under the barrier when you have one configured (`barrier.enabled:
+true`), or as a plaintext hex file inside the server's data directory with a
+one-time warning if you don't. Either way, the key it serves on the next boot
+is the same one, so a public key you have already distributed to clients
+keeps working across restarts. Configure `barrier.enabled: true` in
+production so this key gets the same at-rest protection as everything else
+the barrier covers.
 
 If the server can run **no** suite at all it refuses at startup with
 `bootstrap is enabled but this build can run no handshake suite`, naming why
@@ -192,7 +183,7 @@ you get a pin-mismatch error and should investigate before clearing the pin
 | SPKI pin mismatch | the certificate changed, or something is in the middle | do not "fix" it by re-pinning without finding out which |
 | Noise connection refused | port collision with MCP (8445) | set `noise_port` explicitly, pass `--noise-addr` |
 | `no bootstrap suite can be offered … suite unavailable in this build` | a FIPS client was given only `--noise-key` | pass `--p256-key` (from `show-p256-key` on the server) |
-| `auto` with only `--p256-key` fails at the handshake | the server serves no P-256 suite (no `p256_static_key_file`), or the point is not the one `show-p256-key` prints | configure the server key (#435) and copy the point verbatim |
+| `auto` with only `--p256-key` fails at the handshake | the server has not persisted/sealed a P-256 key yet, or the point is not the one `show-p256-key` prints | start the server so it persists its key (#435) and copy the point verbatim |
 | `suite Noise_NK_25519_ChaChaPoly_SHA256: … suite unavailable` | Noise_NK was pinned on a FIPS client | unpin it, or pin `SuiteP256AESGCM` |
 | `server static key invalid for suite` | the key is not hex or the wrong length for its suite (64 chars Noise, 130 chars P-256) | check which key went into which flag |
 | TOFU pin changed | either a legitimate rotation or an attack | investigate before clearing the pin |

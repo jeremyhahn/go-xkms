@@ -38,7 +38,7 @@ auth:
   type: "composite"
 
 # Encryption at rest. The passphrase is deliberately absent from this file --
-# supply it out of band via XKMS_SEAL_PASSPHRASE, a credential:// reference, or
+# supply it out of band via XKMS_BARRIER_PASSPHRASE, a credential:// reference, or
 # --seal-passphrase (in that order of preference; a secret on the command line
 # is visible in the process list). `xkmsd init` provisions one for you.
 barrier:

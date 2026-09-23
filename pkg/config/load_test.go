@@ -129,35 +129,6 @@ func TestLoad_ServerHost_EnvWithoutFileKey(t *testing.T) {
 	}
 }
 
-// TestLoad_ServerHost_LegacyAlias proves the pre-viper XKMS_HOST name still
-// resolves server.host, and that the canonical name wins when both are set.
-func TestLoad_ServerHost_LegacyAlias(t *testing.T) {
-	t.Run("alias alone", func(t *testing.T) {
-		t.Setenv("XKMS_HOST", "10.0.0.8")
-
-		cfg, err := Load(writeServerConfig(t, `  host: "10.0.0.5"`))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Server.Host != "10.0.0.8" {
-			t.Fatalf("Server.Host = %q, want legacy alias value 10.0.0.8", cfg.Server.Host)
-		}
-	})
-
-	t.Run("canonical wins over alias", func(t *testing.T) {
-		t.Setenv("XKMS_HOST", "10.0.0.8")
-		t.Setenv("XKMS_SERVER_HOST", "10.0.0.9")
-
-		cfg, err := Load(writeServerConfig(t, `  host: "10.0.0.5"`))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Server.Host != "10.0.0.9" {
-			t.Fatalf("Server.Host = %q, want canonical value 10.0.0.9", cfg.Server.Host)
-		}
-	})
-}
-
 // TestLoad_CanonicalEnvResolvesEveryKey proves the binding is generic: a
 // server key that has no alias resolves through XKMS_<SECTION>_<KEY> with a
 // typed conversion, so later remediation slices add nothing but aliases.
@@ -219,95 +190,11 @@ func TestCanonicalEnvName(t *testing.T) {
 	}
 }
 
-// TestLoad_LegacyLadderCedesToCanonicalName proves the documented rule for
-// every name the legacy ladder owns: where both the canonical XKMS_<SECTION>_<KEY> form and the
-// legacy form are set, the canonical form wins. Before this the ladder ran
-// after viper and over its result, so the legacy name won silently and an
-// operator migrating to the dotted names who left an old variable in a unit
-// file got the old value.
-func TestLoad_LegacyLadderCedesToCanonicalName(t *testing.T) {
-	t.Run("rest port: canonical over legacy", func(t *testing.T) {
-		t.Setenv("XKMS_SERVER_REST_PORT", "1")
-		t.Setenv("XKMS_REST_PORT", "9999")
-
-		cfg, err := Load(writeServerConfig(t, ""))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Server.RESTPort != 1 {
-			t.Fatalf("Server.RESTPort = %d, want the canonical value 1 over the legacy 9999", cfg.Server.RESTPort)
-		}
-	})
-
-	t.Run("log level: canonical over legacy", func(t *testing.T) {
-		t.Setenv("XKMS_LOGGING_LEVEL", "debug")
-		t.Setenv("XKMS_LOG_LEVEL", "error")
-
-		cfg, err := Load(writeServerConfig(t, ""))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Logging.Level != "debug" {
-			t.Fatalf("Logging.Level = %q, want the canonical value debug over the legacy error", cfg.Logging.Level)
-		}
-	})
-
-	t.Run("legacy alone still applies", func(t *testing.T) {
-		t.Setenv("XKMS_REST_PORT", "9999")
-
-		cfg, err := Load(writeServerConfig(t, ""))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Server.RESTPort != 9999 {
-			t.Fatalf("Server.RESTPort = %d, want the legacy value 9999 with no canonical set", cfg.Server.RESTPort)
-		}
-	})
-
-	t.Run("a legacy name that is the canonical spelling is still read", func(t *testing.T) {
-		// rng.tpm2 is a pointer section the file omits, so viper does not
-		// resolve XKMS_RNG_TPM2_DEVICE for it; the ladder must not mistake
-		// its own name for a competing canonical form and drop the value.
-		t.Setenv("XKMS_RNG_TPM2_DEVICE", "/dev/tpmrm0")
-
-		cfg, err := Load(writeServerConfig(t, ""))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.RNG.TPM2 == nil || cfg.RNG.TPM2.Device != "/dev/tpmrm0" {
-			t.Fatalf("RNG.TPM2 = %+v, want Device /dev/tpmrm0 from the ladder", cfg.RNG.TPM2)
-		}
-	})
-}
-
-// TestLegacyEnv pins the helper's three cases directly.
-func TestLegacyEnv(t *testing.T) {
-	t.Run("canonical set: legacy yields nothing", func(t *testing.T) {
-		t.Setenv("XKMS_SERVER_REST_PORT", "1")
-		t.Setenv("XKMS_REST_PORT", "2")
-		if got := legacyEnv("XKMS_REST_PORT", "server.rest_port"); got != "" {
-			t.Fatalf("legacyEnv = %q, want empty when the canonical name is set", got)
-		}
-	})
-	t.Run("canonical unset: legacy read", func(t *testing.T) {
-		t.Setenv("XKMS_REST_PORT", "2")
-		if got := legacyEnv("XKMS_REST_PORT", "server.rest_port"); got != "2" {
-			t.Fatalf("legacyEnv = %q, want 2", got)
-		}
-	})
-	t.Run("legacy is the canonical spelling: read as is", func(t *testing.T) {
-		t.Setenv("XKMS_STORAGE_BACKEND", "memory")
-		if got := legacyEnv("XKMS_STORAGE_BACKEND", "storage.backend"); got != "memory" {
-			t.Fatalf("legacyEnv = %q, want memory", got)
-		}
-	})
-}
-
 // TestLoad_EmptyEnvIsAValue proves a present-but-empty variable is honoured:
 // XKMS_SERVER_HOST="" is the documented way to clear a pinned host and bind
-// every interface, and it must win over the file and over the legacy alias
-// exactly as a non-empty value does. Before this viper read an empty
-// variable as unset and the daemon stayed on the file's host.
+// every interface, and it must win over the file exactly as a non-empty
+// value does. Before this viper read an empty variable as unset and the
+// daemon stayed on the file's host.
 func TestLoad_EmptyEnvIsAValue(t *testing.T) {
 	t.Run("empty canonical over the file host", func(t *testing.T) {
 		t.Setenv("XKMS_SERVER_HOST", "")
@@ -318,46 +205,6 @@ func TestLoad_EmptyEnvIsAValue(t *testing.T) {
 		}
 		if cfg.Server.Host != "" {
 			t.Fatalf("Server.Host = %q, want the empty env value over the file", cfg.Server.Host)
-		}
-	})
-
-	t.Run("empty canonical over the legacy alias", func(t *testing.T) {
-		t.Setenv("XKMS_HOST", "10.0.0.8")
-		t.Setenv("XKMS_SERVER_HOST", "")
-
-		cfg, err := Load(writeServerConfig(t, `  host: "10.0.0.5"`))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Server.Host != "" {
-			t.Fatalf("Server.Host = %q, want the empty canonical value over XKMS_HOST", cfg.Server.Host)
-		}
-	})
-
-	t.Run("empty canonical silences the legacy ladder", func(t *testing.T) {
-		t.Setenv("XKMS_BOOTSTRAP_DANE_HOSTNAME", "")
-		t.Setenv("XKMS_DANE_HOSTNAME", "kms.example.com")
-
-		cfg, err := Load(writeServerConfig(t, ""))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Bootstrap.DANE.Hostname != "" {
-			t.Fatalf("Bootstrap.DANE.Hostname = %q, want the empty canonical value; the ladder must not fill it back in", cfg.Bootstrap.DANE.Hostname)
-		}
-	})
-
-	t.Run("an empty legacy alias is ignored", func(t *testing.T) {
-		// A unit file carrying XKMS_HOST= must not clear a pinned host:
-		// empty-as-value is a property of the canonical names only.
-		t.Setenv("XKMS_HOST", "")
-
-		cfg, err := Load(writeServerConfig(t, `  host: "10.0.0.5"`))
-		if err != nil {
-			t.Fatalf("Load() error = %v", err)
-		}
-		if cfg.Server.Host != "10.0.0.5" {
-			t.Fatalf("Server.Host = %q, want the file host: an empty legacy variable is an absence", cfg.Server.Host)
 		}
 	})
 

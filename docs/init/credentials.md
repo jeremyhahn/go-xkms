@@ -16,11 +16,11 @@ The SO PIN is **never stored** by go-xkms. It is verified against the actual PKC
 | `barrier` | Barrier-encrypted blob | High | Auto-start after barrier unseal |
 | `tpm2` | TPM2-sealed blob | High | Hardware-bound, auto-start with TPM |
 | `pkcs11` | HSM-wrapped blob | High | HSM-bound, auto-start with HSM |
-| `aws_kms` | AWS KMS envelope encryption | High | Cloud-native, auto-start with IAM |
-| `gcp_kms` | GCP KMS envelope encryption | High | Cloud-native, auto-start with SA |
-| `azure_kv` | Azure KV envelope encryption | High | Cloud-native, auto-start with MI |
+| `awskms` | AWS KMS envelope encryption | High | Cloud-native, auto-start with IAM |
+| `gcpkms` | GCP KMS envelope encryption | High | Cloud-native, auto-start with SA |
+| `azurekv` | Azure KV envelope encryption | High | Cloud-native, auto-start with MI |
 | `vault` | Vault transit encryption | High | HashiCorp Vault-backed |
-| `software` | Password-encrypted file | Medium | Development, testing |
+| `passphrase` | Password-encrypted file | Medium | Development, testing |
 
 ### Default: `manual`
 
@@ -91,15 +91,15 @@ The User PIN is envelope-encrypted using a cloud KMS key. The server must have I
 ```yaml
 # AWS KMS
 credentials:
-  seal_strategy: aws_kms
-  aws_kms:
+  seal_strategy: awskms
+  awskms:
     region: us-east-1
     key_id: arn:aws:kms:us-east-1:123456789012:key/...
 
 # GCP KMS
 credentials:
-  seal_strategy: gcp_kms
-  gcp_kms:
+  seal_strategy: gcpkms
+  gcpkms:
     project_id: my-project
     location: us-central1
     key_ring: credentials
@@ -107,8 +107,8 @@ credentials:
 
 # Azure Key Vault
 credentials:
-  seal_strategy: azure_kv
-  azure_kv:
+  seal_strategy: azurekv
+  azurekv:
     vault_url: https://my-vault.vault.azure.net/
     key_name: pin-seal
 ```
@@ -126,14 +126,14 @@ credentials:
     auth_method: approle
 ```
 
-### Opt-In: `software`
+### Opt-In: `passphrase`
 
 The User PIN is encrypted with a password-derived key (Argon2id) and stored as a file. Suitable for development and testing only.
 
 ```yaml
 credentials:
-  seal_strategy: software
-  software:
+  seal_strategy: passphrase
+  passphrase:
     key_file: /var/lib/xkms/credential-key.enc
 ```
 
@@ -208,7 +208,7 @@ This is useful when the credential seal strategy is `barrier` or another auto-se
 credentials:
   # How to protect the User PIN at rest.
   # Default: manual (operator enters PIN at every startup)
-  seal_strategy: manual    # manual | barrier | tpm2 | pkcs11 | aws_kms | gcp_kms | azure_kv | vault | software
+  seal_strategy: manual    # manual | barrier | tpm2 | pkcs11 | awskms | gcpkms | azurekv | vault | passphrase
 
   # Strategy-specific configuration (only the selected strategy is used)
 
@@ -222,17 +222,17 @@ credentials:
     token_label: credential-hsm
     key_label: pin-wrap-key
 
-  aws_kms:
+  awskms:
     region: us-east-1
     key_id: arn:aws:kms:us-east-1:123456789012:key/...
 
-  gcp_kms:
+  gcpkms:
     project_id: my-project
     location: us-central1
     key_ring: credentials
     key_name: pin-seal
 
-  azure_kv:
+  azurekv:
     vault_url: https://my-vault.vault.azure.net/
     key_name: pin-seal
 
@@ -241,7 +241,7 @@ credentials:
     transit_key: xkms-pin-seal
     auth_method: approle
 
-  software:
+  passphrase:
     key_file: /var/lib/xkms/credential-key.enc
 ```
 
@@ -262,13 +262,13 @@ Do you need unattended restarts?
                               |
                               +-- No  --> Is a cloud KMS available?
                                             |
-                                            +-- Yes --> aws_kms | gcp_kms | azure_kv
+                                            +-- Yes --> awskms | gcpkms | azurekv
                                             |
                                             +-- No  --> Is Vault available?
                                                           |
                                                           +-- Yes --> vault
                                                           |
-                                                          +-- No  --> software (dev only)
+                                                          +-- No  --> passphrase (dev only)
 ```
 
 ## Related Documentation

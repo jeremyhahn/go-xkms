@@ -2,7 +2,8 @@
 # Generates an ephemeral test CA + one certificate per Raft node for the 3-node
 # mTLS cluster. go-quicraft mandates MTLSConfig when the QUIC raft transport is
 # enabled, so the harness supplies operator-style PEM (CA / cert / key) exactly
-# as a production deployment would via XKMS_CLUSTER_RAFT_{CA_CERT,CERT,KEY}.
+# as a production deployment would via
+# XKMS_CLUSTER_RAFT_TLS_{CA_CERT,CERT,KEY}_FILE.
 #
 # Each node gets its OWN keypair whose only hostname SAN is that node. A single
 # shared certificate carrying every node's SAN is refused by the transport, and

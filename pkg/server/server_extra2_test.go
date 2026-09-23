@@ -1370,61 +1370,8 @@ func TestSyncExistingTLSCert_GetCertError(t *testing.T) {
 // Tests — loadNoiseStaticKey branches
 // ============================================================================
 
-// TestLoadNoiseStaticKey_HexKey exercises the StaticKeyHex path.
-func TestLoadNoiseStaticKey_HexKey(t *testing.T) {
-	// Use a valid 32-byte (64 hex chars) Noise private key
-	hexKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-	s := newMinimalServer(t, &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex: hexKey, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	})
-	key, err := s.loadNoiseStaticKey()
-	// The call either succeeds (valid Noise DH key) or returns a typed parse error —
-	// both are acceptable; what we verify is the branch is exercised.
-	if err == nil {
-		assert.NotNil(t, key)
-	}
-}
-
-// TestLoadNoiseStaticKey_KeyFile exercises the StaticKeyFile path with an
-// existing key file.
-func TestLoadNoiseStaticKey_KeyFile(t *testing.T) {
-	hexKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-	keyFile := filepath.Join(t.TempDir(), "noise.key")
-	require.NoError(t, os.WriteFile(keyFile, []byte(hexKey), 0600))
-
-	s := newMinimalServer(t, &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: keyFile, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	})
-	_, err := s.loadNoiseStaticKey()
-	// Parse result depends on key format; branch execution is what matters.
-	_ = err
-}
-
-// TestLoadNoiseStaticKey_KeyFileMissing exercises the missing file error path.
-func TestLoadNoiseStaticKey_KeyFileMissing(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: "/nonexistent/noise.key", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	})
-	_, err := s.loadNoiseStaticKey()
-	require.Error(t, err)
-	var fileErr *ErrFileRead
-	assert.True(t, errors.As(err, &fileErr))
-}
-
 // TestLoadNoiseStaticKey_Generate exercises the ephemeral key generation path
-// (no hex key, no key file configured).
+// with no barrier and no data directory configured.
 func TestLoadNoiseStaticKey_Generate(t *testing.T) {
 	// A build that cannot run Noise has no Noise key to load; assert that
 	// contract instead of the one below, which presumes the suite exists.
@@ -1433,14 +1380,7 @@ func TestLoadNoiseStaticKey_Generate(t *testing.T) {
 		return
 	}
 
-	s := newMinimalServer(t, &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex:  "", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-				StaticKeyFile: "", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	})
+	s := newMinimalServer(t, &config.Config{})
 	key, err := s.loadNoiseStaticKey()
 	require.NoError(t, err)
 	assert.NotNil(t, key)
@@ -3669,21 +3609,20 @@ func TestInitializeHealth_BackendUnhealthy(t *testing.T) {
 // Tests — startNoiseBootstrap static key load error (lines 2018-2021)
 // ============================================================================
 
-// TestStartNoiseBootstrap_BadKeyFilePath verifies that when the Noise static
-// key file does not exist, startNoiseBootstrap logs the error and returns
-// without hanging.
+// TestStartNoiseBootstrap_BadKeyFilePath verifies that when the persisted
+// Noise static key file exists but does not decode, startNoiseBootstrap logs
+// the error and returns without hanging.
 func TestStartNoiseBootstrap_BadKeyFilePath(t *testing.T) {
 	bundler := &mockCABundlerForNoise{cert: selfSignedCert(t)}
 	grpcinternal.SetCABundler(bundler)
 	defer grpcinternal.SetCABundler(nil)
 
+	dataDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, noiseStaticKeyFileName), []byte("not-a-valid-key"), 0600))
+
 	s := newMinimalServer(t, &config.Config{
-		Server: config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: "/nonexistent/path/to/key.hex", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
+		Server:  config.ServerConfig{Host: "127.0.0.1", NoisePort: 0},
+		Storage: config.StorageConfig{Path: dataDir},
 	})
 
 	s.wg.Add(1)

@@ -92,7 +92,6 @@ func newHandlersFor(wf workflow.Workflow, accounts map[string]*svc.AccountConfig
 	return &handlers{
 		wf:      wf,
 		service: makeSvcFromConfig(cfg),
-		cfg:     cfg,
 		logger:  slog.Default(),
 	}
 }
@@ -100,7 +99,7 @@ func newHandlersFor(wf workflow.Workflow, accounts map[string]*svc.AccountConfig
 // routerFor builds a full gorilla/mux router for the given test fixture.
 func routerFor(wf workflow.Workflow, accounts map[string]*svc.AccountConfig, certs map[string]*svc.CertificateSpec) http.Handler {
 	h := newHandlersFor(wf, accounts, certs)
-	return NewRouter(wf, h.service, h.cfg, h.logger)
+	return NewRouter(wf, h.service, h.logger)
 }
 
 // emptyRouter returns a router with no accounts or certs and no workflow.
@@ -621,173 +620,33 @@ func TestDeviceAttest_Returns501(t *testing.T) {
 }
 
 // =============================================================================
-// config handlers
+// single-config / single-renewal-policy endpoints: removed outright
 // =============================================================================
 
-func TestGetConfig_ReturnsOK(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/config", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestUpdateConfig_BasicFields(t *testing.T) {
-	body := map[string]interface{}{
-		"directoryURL": "https://new.ca.example.com",
-		"accountEmail": "new@example.com",
-		"timeout":      "120s",
-	}
-	rec := doRequest(emptyRouter(), http.MethodPut, "/api/v1/config", jsonBody(t, body))
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestUpdateConfig_AllOptionalFields(t *testing.T) {
-	t_ := true
-	body := map[string]interface{}{
-		"requestServerBundle": t_,
-		"challengePort":       "8080",
-		"challengeWebRoot":    "/var/www/.well-known",
-		"logLevel":            "debug",
-		"logFormat":           "text",
-	}
-	rec := doRequest(emptyRouter(), http.MethodPut, "/api/v1/config", jsonBody(t, body))
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestUpdateConfig_InvalidDurationIsIgnored(t *testing.T) {
-	body := map[string]interface{}{"timeout": "not-a-duration"}
-	rec := doRequest(emptyRouter(), http.MethodPut, "/api/v1/config", jsonBody(t, body))
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 even with invalid timeout, got %d", rec.Code)
-	}
-}
-
-func TestUpdateConfig_InvalidJSON(t *testing.T) {
-	h := newHandlersFor(nil, nil, nil)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader([]byte("bad")))
-	req.Header.Set("Content-Type", "application/json")
-	h.updateConfig(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
-}
-
-// =============================================================================
-// renewal handlers
-// =============================================================================
-
-func TestRenewalStatus_ReturnsOK(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/renewal/status", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestGetRenewalConfig_ReturnsOK(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/renewal/config", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestUpdateRenewalConfig_AllFields(t *testing.T) {
-	threshold := 0.25
-	maxRetries := 3
-	body := map[string]interface{}{
-		"enabled":          true,
-		"checkInterval":    "12h",
-		"renewalThreshold": threshold,
-		"maxRetries":       maxRetries,
-		"retryInterval":    "30m",
-		"notifyOnSuccess":  true,
-		"notifyOnFailure":  false,
-	}
-	rec := doRequest(emptyRouter(), http.MethodPut, "/api/v1/renewal/config", jsonBody(t, body))
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestUpdateRenewalConfig_InvalidCheckInterval(t *testing.T) {
-	body := map[string]interface{}{"checkInterval": "not-a-duration"}
-	rec := doRequest(emptyRouter(), http.MethodPut, "/api/v1/renewal/config", jsonBody(t, body))
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 for invalid checkInterval (warn+ignore), got %d", rec.Code)
-	}
-}
-
-func TestUpdateRenewalConfig_InvalidRetryInterval(t *testing.T) {
-	body := map[string]interface{}{"retryInterval": "bad-duration"}
-	rec := doRequest(emptyRouter(), http.MethodPut, "/api/v1/renewal/config", jsonBody(t, body))
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 for invalid retryInterval (warn+ignore), got %d", rec.Code)
-	}
-}
-
-func TestUpdateRenewalConfig_InvalidJSON(t *testing.T) {
-	h := newHandlersFor(nil, nil, nil)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader([]byte("bad")))
-	req.Header.Set("Content-Type", "application/json")
-	h.updateRenewalConfig(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
-}
-
-// =============================================================================
-// formatThreshold / formatFloat
-// =============================================================================
-
-func TestFormatThreshold(t *testing.T) {
-	tests := []struct {
-		threshold float64
-		want      string
+// TestSingleConfigEndpoints_Removed pins the removal of the single-account
+// /api/v1/config and /api/v1/renewal/{status,config} endpoints. The service
+// is multi-account (Accounts/Certificates); these handlers used to paper
+// over that with a made-up "default" account/certificate key. The real
+// per-account settings live at /api/v1/accounts[/​{name}], and per-certificate
+// renewal policy (auto/days-before) is part of the CertificateSpec returned
+// by /api/v1/certificates[/​{name}] — there is no global config or renewal
+// policy left to expose.
+func TestSingleConfigEndpoints_Removed(t *testing.T) {
+	router := emptyRouter()
+	for _, tt := range []struct {
+		method string
+		path   string
 	}{
-		{0.33, "33%"},
-		{0.25, "25%"},
-		{0.50, "50%"},
-		{0.10, "10%"},
-		{0.20, "20%"},
-		{0.30, "30%"},
-		{0.40, "40%"},
-		{0.60, "60%"},
-		{0.70, "70%"},
-		{0.80, "80%"},
-		{0.90, "90%"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.want, func(t *testing.T) {
-			got := formatThreshold(tc.threshold)
-			if got != tc.want {
-				t.Errorf("formatThreshold(%v) = %q, want %q", tc.threshold, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestFormatFloat(t *testing.T) {
-	tests := []struct {
-		input float64
-		want  string
-	}{
-		{0.0, "0"},
-		{5.0, "5"},
-		{10.0, "10"},
-		{33.0, "33"},
-		{100.0, "100"},
-		{33.5, "33.5"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.want, func(t *testing.T) {
-			got := formatFloat(tc.input)
-			if got != tc.want {
-				t.Errorf("formatFloat(%v) = %q, want %q", tc.input, got, tc.want)
+		{http.MethodGet, "/api/v1/config"},
+		{http.MethodPut, "/api/v1/config"},
+		{http.MethodGet, "/api/v1/renewal/status"},
+		{http.MethodGet, "/api/v1/renewal/config"},
+		{http.MethodPut, "/api/v1/renewal/config"},
+	} {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			rec := doRequest(router, tt.method, tt.path, nil)
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("expected 404 (route removed), got %d: %s", rec.Code, rec.Body.String())
 			}
 		})
 	}

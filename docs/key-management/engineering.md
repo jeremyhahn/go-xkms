@@ -302,7 +302,7 @@ DefaultMCPAddress   = "localhost:9444"
 `xkmsctl` persistent flags (`cmd/xkmsctl/root.go`) set the client side:
 `--config`, `--backend` (default `software`), `--key-dir` (default
 `xkms-data/keys`), `--output/-o` (default `text`), `--verbose/-v`,
-`--transport` (`--protocol/-P` is deprecated), `--server/-s`, `--tls-cert`,
+`--transport`, `--server/-s`, `--tls-cert`,
 `--tls-key`, `--tls-ca`, `--token`, `--spki-pin`, `--so-pin`,
 `--pkcs11-module`, `--pkcs11-slot`, `--pkcs11-pin`.
 

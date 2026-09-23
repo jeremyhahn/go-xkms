@@ -170,7 +170,7 @@ func TestNewService_BarrierStrategy_NilBarrier(t *testing.T) {
 }
 
 func TestNewService_PlatformStrategy_NilStore(t *testing.T) {
-	strategies := []string{"tpm2", "pkcs11", "aws_kms", "gcp_kms", "azure_kv", "vault", "software"}
+	strategies := []string{"tpm2", "pkcs11", "awskms", "gcpkms", "azurekv", "vault", "passphrase"}
 	for _, strategy := range strategies {
 		t.Run(strategy, func(t *testing.T) {
 			_, err := New(&Config{Strategy: strategy}, nil, nil, testLogger())
@@ -543,7 +543,7 @@ func TestStrategy(t *testing.T) {
 	}{
 		{"manual", StrategyManual, StrategyManual, false, false},
 		{"barrier", "barrier", "barrier", true, false},
-		{"software", "software", "software", false, true},
+		{"passphrase", "passphrase", "passphrase", false, true},
 	}
 
 	for _, tt := range tests {
@@ -646,7 +646,7 @@ func TestRetrieveCredential_Barrier_NotFound(t *testing.T) {
 func TestStoreRetrieveCredential_PlatformStore(t *testing.T) {
 	barrier := newTestBarrier(t)
 	store := newTestPlatformStore(t, barrier)
-	svc, err := New(&Config{Strategy: "software"}, store, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -670,7 +670,7 @@ func TestStoreRetrieveCredential_PlatformStore(t *testing.T) {
 func TestDeleteCredential_PlatformStore(t *testing.T) {
 	barrier := newTestBarrier(t)
 	store := newTestPlatformStore(t, barrier)
-	svc, err := New(&Config{Strategy: "software"}, store, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestDeleteCredential_PlatformStore(t *testing.T) {
 func TestDeleteCredential_PlatformStore_NotFound(t *testing.T) {
 	barrier := newTestBarrier(t)
 	store := newTestPlatformStore(t, barrier)
-	svc, err := New(&Config{Strategy: "software"}, store, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestDeleteCredential_PlatformStore_NotFound(t *testing.T) {
 func TestRetrieveCredential_PlatformStore_NotFound(t *testing.T) {
 	barrier := newTestBarrier(t)
 	store := newTestPlatformStore(t, barrier)
-	svc, err := New(&Config{Strategy: "software"}, store, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -778,11 +778,11 @@ func TestIsPlatformStrategy(t *testing.T) {
 		{"barrier", false},
 		{"tpm2", true},
 		{"pkcs11", true},
-		{"aws_kms", true},
-		{"gcp_kms", true},
-		{"azure_kv", true},
+		{"awskms", true},
+		{"gcpkms", true},
+		{"azurekv", true},
 		{"vault", true},
-		{"software", true},
+		{"passphrase", true},
 	}
 
 	for _, tt := range tests {
@@ -938,7 +938,7 @@ func TestDeleteCredential_Barrier_BackendError(t *testing.T) {
 // TestStoreCredential_PlatformStore_BackendError exercises the storePlatform
 // error branch when platformStore.Put returns a non-ErrSecretNotFound error.
 func TestStoreCredential_PlatformStore_BackendError(t *testing.T) {
-	svc, err := New(&Config{Strategy: "software"}, &mockErrorPlatformStore{}, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, &mockErrorPlatformStore{}, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -956,7 +956,7 @@ func TestStoreCredential_PlatformStore_BackendError(t *testing.T) {
 // retrievePlatform error branch when platformStore.Get returns a
 // non-ErrSecretNotFound error.
 func TestRetrieveCredential_PlatformStore_BackendError(t *testing.T) {
-	svc, err := New(&Config{Strategy: "software"}, &mockErrorPlatformStore{}, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, &mockErrorPlatformStore{}, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -973,7 +973,7 @@ func TestRetrieveCredential_PlatformStore_BackendError(t *testing.T) {
 // TestDeleteCredential_PlatformStore_BackendError exercises the deletePlatform
 // error branch when platformStore.Delete returns a non-ErrSecretNotFound error.
 func TestDeleteCredential_PlatformStore_BackendError(t *testing.T) {
-	svc, err := New(&Config{Strategy: "software"}, &mockErrorPlatformStore{}, nil, testLogger())
+	svc, err := New(&Config{Strategy: "passphrase"}, &mockErrorPlatformStore{}, nil, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

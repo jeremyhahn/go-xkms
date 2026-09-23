@@ -15,7 +15,7 @@ set -eu
 
 CERT_DIR="${CERT_DIR:-/etc/xkms/certs}"
 CONFIG_FILE="/etc/xkms/xkmsd.yaml"
-DATA_DIR="${XKMS_DATA_DIR:-/data}"
+DATA_DIR="${TEST_DATA_DIR:-/data}"
 DAYS_VALID=365
 HOSTNAME_SAN="bootstrap.test"
 CONTAINER_NAME="xkms-server"
@@ -214,9 +214,19 @@ echo "Noise public key: ${NOISE_PUBLIC_HEX}"
 # ---------------------------------------------------------------------------
 # Step 7: Write xkmsd configuration file
 #
-# The Noise static_key_hex takes the 32-byte private key only (64 hex chars).
-# The server's DecodeStaticKey derives the public key via Curve25519 scalar
-# base multiplication at startup.
+# There is no config field for the listener's Noise/P256 static key
+# (go-xkms#35 removed bootstrap.noise.static_key_hex / static_key_file /
+# p256_static_key_hex / p256_static_key_file outright): the server generates
+# and seals its own key on first boot. Because barrier.enabled is true below
+# (needed for the TenantBarrierInit/Unseal coverage this suite also carries),
+# that key is barrier-sealed, not a plaintext file, so this script cannot
+# pre-determine or read it back to compute NOISE_PUBLIC_HEX. The
+# NOISE_PRIVATE_HEX/NOISE_PUBLIC_HEX pair computed above is therefore NOT the
+# key this server will actually serve; xkms-server's Noise listener starts
+# with its own barrier-sealed key regardless of what is written to
+# noise.pub.hex. Tracked as a follow-up: either expose a way to read back an
+# already-sealed bootstrap key, or restructure this suite's Noise-pinned-key
+# coverage to discover the key after boot instead of predetermining it.
 # ---------------------------------------------------------------------------
 
 echo "Writing server configuration to ${CONFIG_FILE}..."
@@ -286,7 +296,6 @@ barrier:
 bootstrap:
   noise:
     enabled: true
-    static_key_hex: ${NOISE_PRIVATE_HEX}
   spki:
     enabled: true
     pin_sha256: ${SPKI_PIN}

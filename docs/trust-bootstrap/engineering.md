@@ -247,37 +247,31 @@ in this order:
    (`isBarrierKeyNotFound`: `storage.ErrNotFound` from an xkms-backed barrier,
    `seal.ErrSecretNotFound` from a node-adopted one — the same `*seal.Barrier`
    type surfaces either sentinel depending on the storage backend underneath
-   it), fall back to the **deprecated** `static_key_hex` / `static_key_file` /
-   `p256_static_key_hex` / `p256_static_key_file` fields, read exactly once;
-   present, that key is sealed into the barrier and a `deprecated` warning is
-   logged. Present nowhere, a fresh key is generated and sealed. Every path
-   after the first leaves a sealed key in place, so the next boot always takes
-   the first branch — the config fields are read at most once per key, ever.
-2. **No barrier** (`barrier.enabled: false`): the deprecated config fields, if
-   set, are still honored exactly as before. Otherwise a key persisted in
-   plaintext hex at `<storage.path>/bootstrap-noise-x25519.key` (and
+   it), a fresh key is generated and sealed. Every path after the first
+   leaves a sealed key in place, so the next boot always takes the first
+   branch.
+2. **No barrier** (`barrier.enabled: false`): a key persisted in plaintext hex
+   at `<storage.path>/bootstrap-noise-x25519.key` (and
    `bootstrap-noise-p256.key`) is loaded, or generated and written there
    (0600, atomic temp-file-then-rename) with **one** warning that it is
    unprotected without a barrier. A missing `storage.path` (no data directory
-   configured at all) has nowhere durable to persist to and falls back to the
-   pre-#35 ephemeral-with-warning behavior rather than writing to an
-   unpredictable location such as the process's working directory.
+   configured at all) has nowhere durable to persist to and falls back to an
+   ephemeral-with-warning key rather than writing to an unpredictable
+   location such as the process's working directory.
 
 Either way, a key is never silently regenerated once one exists: an ephemeral
 key that changes on every restart invalidates every client provisioned with
 the old public key, which was the defect #35 closes.
 
-The four `static_key_*` / `p256_static_key_*` fields are `Deprecated` in
-`config.NoiseBootstrapConfig`'s doc comments. They still parse — the one-time
-migration above depends on it — but nothing reads them again once the sealed
-(or, without a barrier, the persisted-file) form exists. Remove them from your
-configuration once you have confirmed the key survives a restart (`xkmsctl
-bootstrap noise show-p256-key`, or compare the Noise public key a client has
-pinned against what the listener now serves).
+There is no config-supplied key: `bootstrap.noise.static_key_hex` /
+`static_key_file` / `p256_static_key_hex` / `p256_static_key_file` were
+removed outright (go-xkms#35), not deprecated in place. Custody is exclusively
+barrier-sealed or persisted-file, per the boot order above; a config file
+still carrying one of those keys parses (config loaders ignore unknown keys)
+but the value is never read.
 
 The struct is still named `NoiseBootstrapConfig` and still lives under the
-`bootstrap.noise` YAML key. That is historical — it predates the second suite —
-and is kept so existing configs keep parsing.
+`bootstrap.noise` YAML key. That is historical — it predates the second suite.
 
 **Sequencing (Ruling 1, go-xkms#35):** the bootstrap listener is a network
 service and so must not bind before the barrier is unsealed. This already

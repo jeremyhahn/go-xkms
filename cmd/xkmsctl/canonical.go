@@ -14,9 +14,8 @@
 // canonical.go wires the locked canonical CLI surface for xkmsctl per
 // docs/08-bootstrap-auth-architecture.md §6. The canonical init / auth
 // / ceremony / credential / bootstrap sub-trees mirror qrdb's surface
-// 1:1; the existing legacy "init claim-cert / claim-share / sign-csr"
-// commands are also attached to the new ceremony group so legacy
-// tests continue to exercise the same handlers.
+// 1:1; status / claim-cert / claim-share / sign-csr are registered
+// exactly once, under the "ceremony" group defined here.
 package main
 
 import (
@@ -32,7 +31,6 @@ import (
 // docs/08-bootstrap-auth-architecture.md §2.
 var validBarrierStrategies = map[string]struct{}{
 	"passphrase": {},
-	"software":   {}, // deprecated alias for "passphrase"
 	"shamir":     {},
 	"pkcs11":     {},
 	"tpm2":       {},
@@ -52,21 +50,6 @@ type canonicalInitFlags struct {
 	threshold       int
 	hostname        string
 	sans            string
-}
-
-// CanonicalRedirectError is emitted when an operator runs a legacy
-// renamed command path. It names the deprecated path and the canonical
-// replacement so operators can migrate runbooks without guesswork.
-type CanonicalRedirectError struct {
-	Old string
-	New string
-}
-
-// Error returns a human-readable description.
-func (e *CanonicalRedirectError) Error() string {
-	return "subcommand '" + e.Old +
-		"' has been replaced by '" + e.New +
-		"' (per docs/08-bootstrap-auth-architecture.md §6). Run: " + e.New
 }
 
 // PendingCredentialBackendError is emitted by "credential" subcommand
@@ -110,7 +93,7 @@ func wireCanonicalInitFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&canonicalSurfaceFlags.userPin, "user-pin", "",
 		"User PIN (required, FIPS 140-3 / PCI-DSS v4 user credential)")
 	cmd.Flags().StringVar(&canonicalSurfaceFlags.barrierStrategy, "barrier-strategy", "passphrase",
-		"Barrier sealing strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault (software is a deprecated alias for passphrase)")
+		"Barrier sealing strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
 	cmd.Flags().IntVar(&canonicalSurfaceFlags.shares, "shares", 0,
 		"Total Shamir shares (required when --barrier-strategy=shamir)")
 	cmd.Flags().IntVar(&canonicalSurfaceFlags.threshold, "threshold", 0,
@@ -174,9 +157,9 @@ func runCanonicalInit(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Treat empty PINs as "no canonical init invocation" — fall back to
-	// the legacy "init claim-cert / claim-share / sign-csr" subcommand
-	// dispatch which is preserved for backwards compatibility.
+	// Treat empty PINs as "no canonical init invocation" — show help
+	// instead (claim-cert / claim-share / sign-csr / status live under
+	// "ceremony", not here).
 	if f.soPin == "" && f.userPin == "" {
 		return cmd.Help()
 	}
@@ -248,32 +231,15 @@ func newCanonicalAuthFactorCmd() *cobra.Command {
 	return cmd
 }
 
-// newCanonicalCeremonyCmd builds the canonical ceremony command
-// group. It preserves the existing init claim-cert / claim-share /
-// sign-csr handlers under the renamed "ceremony" parent.
+// newCanonicalCeremonyCmd builds the canonical ceremony command group,
+// attaching the status / claim-cert / claim-share / sign-csr handlers
+// defined in init.go directly: this is their only parent.
 func newCanonicalCeremonyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ceremony",
 		Short: "Ceremony state-machine ops (status, claim-cert, claim-share, sign-csr)",
 	}
-
-	statusAlias := *initStatusCmd
-	statusAlias.Use = "status"
-	statusAlias.Short = "Show the current ceremony state"
-	cmd.AddCommand(&statusAlias)
-
-	claimCertAlias := *claimCertCmd
-	claimCertAlias.Use = "claim-cert"
-	cmd.AddCommand(&claimCertAlias)
-
-	claimShareAlias := *claimShareCmd
-	claimShareAlias.Use = "claim-share"
-	cmd.AddCommand(&claimShareAlias)
-
-	signCSRAlias := *initSignCSRCmd
-	signCSRAlias.Use = "sign-csr"
-	cmd.AddCommand(&signCSRAlias)
-
+	cmd.AddCommand(initStatusCmd, claimCertCmd, claimShareCmd, initSignCSRCmd)
 	return cmd
 }
 

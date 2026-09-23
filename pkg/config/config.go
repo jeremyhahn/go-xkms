@@ -16,8 +16,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -147,7 +145,7 @@ type BarrierConfig struct {
 	// strategy (and the auto-unseal fallback). Supports credential:// references
 	// and ${ENV} expansion, resolved at boot. Hardware strategies need no
 	// passphrase (PCR-policy / empty-creds auto-unseal). Prefer the
-	// XKMS_SEAL_PASSPHRASE env var or a credential:// reference over a literal.
+	// XKMS_BARRIER_PASSPHRASE env var or a credential:// reference over a literal.
 	Passphrase string `yaml:"passphrase,omitempty"`
 
 	// ShamirThreshold and ShamirTotal configure the Shamir M-of-N quorum for the
@@ -254,8 +252,8 @@ type CredentialsConfig struct {
 // interfaces, dual-stack. It is deliberately not "0.0.0.0": that literal is
 // IPv4-only and, because Server.Host also seeds the local certificate SANs and
 // the Raft Noise bind host, it would leak into places a wildcard must never
-// appear. Operators pin a host through server.host, XKMS_SERVER_HOST (or the
-// legacy XKMS_HOST) or the xkmsd --host flag, in that ascending precedence.
+// appear. Operators pin a host through server.host, XKMS_SERVER_HOST, or the
+// xkmsd --host flag, in that ascending precedence.
 const DefaultServerHost = ""
 
 // ServerConfig contains server-level settings
@@ -1124,37 +1122,6 @@ type NoiseBootstrapConfig struct {
 	// Enabled controls whether Noise bootstrap is active
 	Enabled bool `yaml:"enabled"`
 
-	// StaticKeyFile is the path to the hex-encoded Noise static private key file.
-	//
-	// Deprecated: the bootstrap listener now persists its Noise static key
-	// barrier-sealed (go-xkms#35) and only reads this field once, to migrate
-	// an existing key into the barrier on the first boot after upgrade. It
-	// keeps parsing so that one-time migration works, but a key it names is
-	// never read again once the sealed form exists; remove it from your
-	// configuration after confirming the sealed key survives a restart.
-	StaticKeyFile string `yaml:"static_key_file"`
-
-	// StaticKeyHex is an inline hex-encoded Noise static private key.
-	//
-	// Deprecated: see StaticKeyFile -- same one-time migration, same removal
-	// guidance, inline instead of a file path.
-	StaticKeyHex string `yaml:"static_key_hex"`
-
-	// P256StaticKeyFile is the path to the hex-encoded P-256 static private
-	// key file for the FIPS-approved suite.
-	//
-	// Deprecated: see StaticKeyFile -- the P-256 bootstrap key is migrated
-	// into barrier-sealed storage the same way and on the same one-time
-	// schedule (go-xkms#35, go-xkms#436).
-	P256StaticKeyFile string `yaml:"p256_static_key_file"`
-
-	// P256StaticKeyHex is an inline hex-encoded P-256 static private key for
-	// the FIPS-approved suite.
-	//
-	// Deprecated: see P256StaticKeyFile -- same one-time migration, inline
-	// instead of a file path.
-	P256StaticKeyHex string `yaml:"p256_static_key_hex"`
-
 	// MaxConnections is the maximum concurrent bootstrap connections (default: 100)
 	MaxConnections int `yaml:"max_connections"`
 
@@ -1190,356 +1157,6 @@ type DANEBootstrapConfig struct {
 	DNSServer string `yaml:"dns_server"`
 }
 
-// applyEnvOverrides applies the legacy environment variable names that predate
-// the viper binding in load.go. Every entry here is env-layer debt: the
-// canonical XKMS_<SECTION>_<KEY> name already resolves through viper for every
-// key, and each entry moves to a BindEnv alias in newConfigViper as its
-// configuration cluster is remediated (go-xkms#140). Both forms sit in the
-// same precedence layer, below flags and above the file.
-// legacyEnv reads a legacy environment name for the configuration key it
-// predates. Precedence inside the environment layer is the canonical name,
-// XKMS_<SECTION>_<KEY>, over the legacy one: when both are present, even
-// with the canonical one empty, the legacy read yields nothing and viper's
-// resolution of the canonical name stands
-// (configs/README.md, docs/xkmsd-configuration/engineering.md invariant 4).
-// A legacy name that already is the canonical spelling has no second form to
-// cede to and is read as is.
-func legacyEnv(legacyName, key string) string {
-	canonical := canonicalEnvName(key)
-	if canonical != legacyName {
-		// Presence, not value: a canonical variable set to the empty string
-		// is a deliberate value (viper honours it through AllowEmptyEnv) and
-		// the legacy name must not fill it back in.
-		if _, present := os.LookupEnv(canonical); present {
-			return ""
-		}
-	}
-	return os.Getenv(legacyName)
-}
-
-func applyEnvOverrides(cfg *Config) {
-	// Server settings. XKMS_HOST is the pre-viper name of server.host; like
-	// every legacy name it applies only when non-empty (an empty legacy
-	// variable is an absence, not a bind-all request) and cedes to a present
-	// XKMS_SERVER_HOST, empty included.
-	if host := legacyEnv("XKMS_HOST", "server.host"); host != "" {
-		cfg.Server.Host = host
-	}
-	if restPort := legacyEnv("XKMS_REST_PORT", "server.rest_port"); restPort != "" {
-		if port, err := strconv.Atoi(restPort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Server.RESTPort = port
-		}
-	}
-
-	if grpcPort := legacyEnv("XKMS_GRPC_PORT", "server.grpc_port"); grpcPort != "" {
-		if port, err := strconv.Atoi(grpcPort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Server.GRPCPort = port
-		}
-	}
-
-	if quicPort := legacyEnv("XKMS_QUIC_PORT", "server.quic_port"); quicPort != "" {
-		if port, err := strconv.Atoi(quicPort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Server.QUICPort = port
-		}
-	}
-
-	if mcpPort := legacyEnv("XKMS_MCP_PORT", "server.mcp_port"); mcpPort != "" {
-		if port, err := strconv.Atoi(mcpPort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Server.MCPPort = port
-		}
-	}
-
-	// Storage settings
-	if v := legacyEnv("XKMS_STORAGE_BACKEND", "storage.backend"); v != "" {
-		cfg.Storage.Backend = v
-	}
-	if v := legacyEnv("XKMS_STORAGE_PATH", "storage.path"); v != "" {
-		cfg.Storage.Path = v
-	}
-
-	// Clustering settings
-	if v := legacyEnv("XKMS_CLUSTER_ENABLED", "cluster.enabled"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.Cluster.Enabled = b
-		}
-	}
-	if v := legacyEnv("XKMS_CLUSTER_NODE_ID", "cluster.node_id"); v != "" {
-		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
-			cfg.Cluster.NodeID = id
-		}
-	}
-	if v := legacyEnv("XKMS_CLUSTER_SHARD_ID", "cluster.shard_id"); v != "" {
-		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
-			cfg.Cluster.ShardID = id
-		}
-	}
-	if v := legacyEnv("XKMS_CLUSTER_RAFT_ADDRESS", "cluster.raft_address"); v != "" {
-		cfg.Cluster.RaftAddress = v
-	}
-	if v := legacyEnv("XKMS_CLUSTER_LISTEN_ADDRESS", "cluster.listen_address"); v != "" {
-		cfg.Cluster.ListenAddress = v
-	}
-	if v := legacyEnv("XKMS_CLUSTER_PEERS", "cluster.peers"); v != "" {
-		cfg.Cluster.Peers = v
-	}
-	if v := legacyEnv("XKMS_CLUSTER_JOIN", "cluster.join"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.Cluster.Join = b
-		}
-	}
-	if v := legacyEnv("XKMS_CLUSTER_RAFT_CA_CERT", "cluster.raft_tls.ca_cert_file"); v != "" {
-		cfg.Cluster.RaftTLS.CACertFile = v
-	}
-	if v := legacyEnv("XKMS_CLUSTER_RAFT_CERT", "cluster.raft_tls.cert_file"); v != "" {
-		cfg.Cluster.RaftTLS.CertFile = v
-	}
-	if v := legacyEnv("XKMS_CLUSTER_RAFT_KEY", "cluster.raft_tls.key_file"); v != "" {
-		cfg.Cluster.RaftTLS.KeyFile = v
-	}
-
-	// Unix socket settings
-	if socketPath := legacyEnv("XKMS_SOCKET_PATH", "unix.socket_path"); socketPath != "" {
-		cfg.Unix.SocketPath = socketPath
-	}
-	if socketMode := legacyEnv("XKMS_SOCKET_MODE", "unix.socket_mode"); socketMode != "" {
-		cfg.Unix.SocketMode = socketMode
-	}
-	if protocol := legacyEnv("XKMS_UNIX_PROTOCOL", "unix.protocol"); protocol != "" {
-		cfg.Unix.Protocol = protocol
-	}
-
-	// Logging
-	if level := legacyEnv("XKMS_LOG_LEVEL", "logging.level"); level != "" {
-		cfg.Logging.Level = level
-	}
-
-	if format := legacyEnv("XKMS_LOG_FORMAT", "logging.format"); format != "" {
-		cfg.Logging.Format = format
-	}
-
-	// Storage
-	if dataDir := legacyEnv("XKMS_DATA_DIR", "storage.path"); dataDir != "" {
-		cfg.Storage.Path = dataDir
-		// Also update backend paths relative to data dir
-		if cfg.Backends.PKCS8 != nil && cfg.Backends.PKCS8.Path != "" {
-			if !filepath.IsAbs(cfg.Backends.PKCS8.Path) {
-				cfg.Backends.PKCS8.Path = filepath.Join(dataDir, "pkcs8")
-			}
-		}
-	}
-
-	// TPM2 settings
-	if tpmPath := legacyEnv("TPM_DEVICE_PATH", "backends.tpm2.device_path"); tpmPath != "" && cfg.Backends.TPM2 != nil {
-		cfg.Backends.TPM2.DevicePath = tpmPath
-	}
-
-	// PKCS#11 settings
-	if pkcs11Lib := legacyEnv("PKCS11_LIBRARY", "backends.pkcs11.library"); pkcs11Lib != "" && cfg.Backends.PKCS11 != nil {
-		cfg.Backends.PKCS11.Library = pkcs11Lib
-	}
-
-	// AWS KMS settings
-	if cfg.Backends.AWSKMS != nil {
-		if region := legacyEnv("AWS_REGION", "backends.awskms.region"); region != "" {
-			cfg.Backends.AWSKMS.Region = region
-		}
-		if accessKey := legacyEnv("AWS_ACCESS_KEY_ID", "backends.awskms.access_key"); accessKey != "" {
-			cfg.Backends.AWSKMS.AccessKey = accessKey
-		}
-		if secretKey := legacyEnv("AWS_SECRET_ACCESS_KEY", "backends.awskms.secret_key"); secretKey != "" {
-			cfg.Backends.AWSKMS.SecretKey = secretKey
-		}
-		if endpoint := legacyEnv("AWS_ENDPOINT", "backends.awskms.endpoint"); endpoint != "" {
-			cfg.Backends.AWSKMS.Endpoint = endpoint
-		}
-	}
-
-	// GCP KMS settings
-	if cfg.Backends.GCPKMS != nil {
-		if projectID := legacyEnv("GCP_PROJECT_ID", "backends.gcpkms.project_id"); projectID != "" {
-			cfg.Backends.GCPKMS.ProjectID = projectID
-		}
-		if credsFile := legacyEnv("GOOGLE_APPLICATION_CREDENTIALS", "backends.gcpkms.credentials_file"); credsFile != "" {
-			cfg.Backends.GCPKMS.Credentials = credsFile
-		}
-	}
-
-	// Azure Key Vault settings
-	if cfg.Backends.AzureKV != nil {
-		if vaultURL := legacyEnv("AZURE_KEYVAULT_URL", "backends.azurekv.vault_url"); vaultURL != "" {
-			cfg.Backends.AzureKV.VaultURL = vaultURL
-		}
-		if tenantID := legacyEnv("AZURE_TENANT_ID", "backends.azurekv.tenant_id"); tenantID != "" {
-			cfg.Backends.AzureKV.TenantID = tenantID
-		}
-		if clientID := legacyEnv("AZURE_CLIENT_ID", "backends.azurekv.client_id"); clientID != "" {
-			cfg.Backends.AzureKV.ClientID = clientID
-		}
-		if clientSecret := legacyEnv("AZURE_CLIENT_SECRET", "backends.azurekv.client_secret"); clientSecret != "" {
-			cfg.Backends.AzureKV.ClientSecret = clientSecret
-		}
-	}
-
-	// Vault settings
-	if cfg.Backends.Vault != nil {
-		if addr := legacyEnv("VAULT_ADDR", "backends.vault.address"); addr != "" {
-			cfg.Backends.Vault.Address = addr
-		}
-		if token := legacyEnv("VAULT_TOKEN", "backends.vault.token"); token != "" {
-			cfg.Backends.Vault.Token = token
-		}
-		if namespace := legacyEnv("VAULT_NAMESPACE", "backends.vault.namespace"); namespace != "" {
-			cfg.Backends.Vault.Namespace = namespace
-		}
-	}
-
-	// Phone backend settings
-	if cfg.Backends.Phone != nil {
-		if transport := legacyEnv("XKMS_PHONE_TRANSPORT", "backends.phone.transport"); transport != "" {
-			cfg.Backends.Phone.Transport = transport
-		}
-		if deviceAddr := legacyEnv("XKMS_PHONE_DEVICE_ADDRESS", "backends.phone.device_address"); deviceAddr != "" {
-			cfg.Backends.Phone.DeviceAddress = deviceAddr
-		}
-		if noiseKey := legacyEnv("XKMS_PHONE_NOISE_STATIC_KEY", "backends.phone.noise_static_key"); noiseKey != "" {
-			cfg.Backends.Phone.NoiseStaticKey = noiseKey
-		}
-		if phoneKey := legacyEnv("XKMS_PHONE_STATIC_KEY", "backends.phone.phone_static_key"); phoneKey != "" {
-			cfg.Backends.Phone.PhoneStaticKey = phoneKey
-		}
-		if configPath := legacyEnv("XKMS_PHONE_CONFIG_PATH", "backends.phone.config_path"); configPath != "" {
-			cfg.Backends.Phone.ConfigPath = configPath
-		}
-		if timeout := legacyEnv("XKMS_PHONE_REQUEST_TIMEOUT", "backends.phone.request_timeout"); timeout != "" {
-			if d, err := time.ParseDuration(timeout); err == nil && d > 0 {
-				cfg.Backends.Phone.RequestTimeout = d
-			}
-		}
-	}
-
-	// Bootstrap settings - Noise
-	if noiseEnabled := legacyEnv("XKMS_NOISE_ENABLED", "bootstrap.noise.enabled"); noiseEnabled != "" {
-		cfg.Bootstrap.Noise.Enabled = strings.EqualFold(noiseEnabled, "true")
-	}
-	if noiseKey := legacyEnv("XKMS_NOISE_STATIC_KEY", "bootstrap.noise.static_key_hex"); noiseKey != "" {
-		cfg.Bootstrap.Noise.StaticKeyHex = noiseKey
-	}
-	if noiseKeyFile := legacyEnv("XKMS_NOISE_STATIC_KEY_FILE", "bootstrap.noise.static_key_file"); noiseKeyFile != "" {
-		cfg.Bootstrap.Noise.StaticKeyFile = noiseKeyFile
-	}
-	if noisePort := legacyEnv("XKMS_NOISE_PORT", "server.noise_port"); noisePort != "" {
-		if port, err := strconv.Atoi(noisePort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Server.NoisePort = port
-		}
-	}
-
-	// Bootstrap settings - SPKI
-	if spkiPin := legacyEnv("XKMS_SPKI_PIN", "bootstrap.spki.pin_sha256"); spkiPin != "" {
-		cfg.Bootstrap.SPKI.PinSHA256 = spkiPin
-		cfg.Bootstrap.SPKI.Enabled = true
-	}
-
-	// Bootstrap settings - DANE
-	if daneEnabled := legacyEnv("XKMS_DANE_ENABLED", "bootstrap.dane.enabled"); daneEnabled != "" {
-		cfg.Bootstrap.DANE.Enabled = strings.EqualFold(daneEnabled, "true")
-	}
-	if daneHostname := legacyEnv("XKMS_DANE_HOSTNAME", "bootstrap.dane.hostname"); daneHostname != "" {
-		cfg.Bootstrap.DANE.Hostname = daneHostname
-	}
-	if danePort := legacyEnv("XKMS_DANE_PORT", "bootstrap.dane.port"); danePort != "" {
-		if port, err := strconv.Atoi(danePort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Bootstrap.DANE.Port = port
-		}
-	}
-	if daneDNS := legacyEnv("XKMS_DANE_DNS_SERVER", "bootstrap.dane.dns_server"); daneDNS != "" {
-		cfg.Bootstrap.DANE.DNSServer = daneDNS
-	}
-
-	// Rate limiting settings
-	if enabled := legacyEnv("XKMS_RATELIMIT_ENABLED", "ratelimit.enabled"); enabled != "" {
-		cfg.RateLimit.Enabled = strings.EqualFold(enabled, "true")
-	}
-
-	if rpm := legacyEnv("XKMS_RATELIMIT_REQUESTS_PER_MIN", "ratelimit.requests_per_min"); rpm != "" {
-		if val, err := strconv.Atoi(rpm); err == nil && val > 0 {
-			cfg.RateLimit.RequestsPerMin = val
-		}
-	}
-
-	if burst := legacyEnv("XKMS_RATELIMIT_BURST", "ratelimit.burst"); burst != "" {
-		if val, err := strconv.Atoi(burst); err == nil && val > 0 {
-			cfg.RateLimit.Burst = val
-		}
-	}
-
-	// RNG settings
-	if mode := legacyEnv("XKMS_RNG_MODE", "rng.mode"); mode != "" {
-		cfg.RNG.Mode = mode
-	}
-	if fallback := legacyEnv("XKMS_RNG_FALLBACK", "rng.fallback_mode"); fallback != "" {
-		cfg.RNG.FallbackMode = fallback
-	}
-	// TPM2 RNG settings
-	if tpmDevice := legacyEnv("XKMS_RNG_TPM2_DEVICE", "rng.tpm2.device"); tpmDevice != "" {
-		if cfg.RNG.TPM2 == nil {
-			cfg.RNG.TPM2 = &RNGTPM2Config{}
-		}
-		cfg.RNG.TPM2.Device = tpmDevice
-	}
-	if simHost := legacyEnv("XKMS_RNG_TPM2_SIMULATOR_HOST", "rng.tpm2.simulator_host"); simHost != "" {
-		if cfg.RNG.TPM2 == nil {
-			cfg.RNG.TPM2 = &RNGTPM2Config{}
-		}
-		cfg.RNG.TPM2.SimulatorHost = simHost
-		cfg.RNG.TPM2.UseSimulator = true
-	}
-	if simPort := legacyEnv("XKMS_RNG_TPM2_SIMULATOR_PORT", "rng.tpm2.simulator_port"); simPort != "" {
-		if val, err := strconv.Atoi(simPort); err == nil && val > 0 {
-			if cfg.RNG.TPM2 == nil {
-				cfg.RNG.TPM2 = &RNGTPM2Config{}
-			}
-			cfg.RNG.TPM2.SimulatorPort = val
-			cfg.RNG.TPM2.UseSimulator = true
-		}
-	}
-	// PKCS#11 RNG settings
-	if pkcs11Module := legacyEnv("XKMS_RNG_PKCS11_MODULE", "rng.pkcs11.module"); pkcs11Module != "" {
-		if cfg.RNG.PKCS11 == nil {
-			cfg.RNG.PKCS11 = &RNGPKCS11Config{}
-		}
-		cfg.RNG.PKCS11.Module = pkcs11Module
-	}
-	if slotID := legacyEnv("XKMS_RNG_PKCS11_SLOT", "rng.pkcs11.slot_id"); slotID != "" {
-		if val, err := strconv.ParseUint(slotID, 10, 32); err == nil {
-			if cfg.RNG.PKCS11 == nil {
-				cfg.RNG.PKCS11 = &RNGPKCS11Config{}
-			}
-			cfg.RNG.PKCS11.SlotID = uint(val)
-		}
-	}
-	if pin := legacyEnv("XKMS_RNG_PKCS11_PIN", "rng.pkcs11.pin"); pin != "" {
-		if cfg.RNG.PKCS11 == nil {
-			cfg.RNG.PKCS11 = &RNGPKCS11Config{}
-		}
-		cfg.RNG.PKCS11.PIN = pin
-		cfg.RNG.PKCS11.PINRequired = true
-	}
-
-	// Credentials seal strategy
-	if strategy := legacyEnv("XKMS_CREDENTIALS_SEAL_STRATEGY", "credentials.seal_strategy"); strategy != "" {
-		cfg.Credentials.SealStrategy = strategy
-	}
-
-	// Barrier / seal overrides. XKMS_SEAL_PASSPHRASE is the primary unattended
-	// auto-unseal secret source; XKMS_SEAL_STRATEGY selects the strategy.
-	if strategy := legacyEnv("XKMS_SEAL_STRATEGY", "barrier.strategy"); strategy != "" {
-		cfg.Barrier.Strategy = strategy
-	}
-	if pass := legacyEnv("XKMS_SEAL_PASSPHRASE", "barrier.passphrase"); pass != "" {
-		cfg.Barrier.Passphrase = pass
-	}
-}
-
 // ComplianceGaps reports security settings that fall short of the
 // secure-by-default posture required for FedRAMP (SC-8, SC-28, IA-2),
 // PCI-DSS v4 (3.5, 4.2, 8.x), and HIPAA (§164.312(a)(2)(iv), (e)(1))
@@ -1561,7 +1178,7 @@ func (c *Config) ComplianceGaps() []string {
 		// data plane; the backend key stores would be written in the clear.
 		gaps = append(gaps, "barrier cannot auto-unseal (barrier.strategy=\""+c.Barrier.SealStrategy()+
 			"\" with no passphrase and no hardware backend): the embedded data plane — including backend key stores — "+
-			"would be stored in plaintext. Provide XKMS_SEAL_PASSPHRASE (or barrier.passphrase), or configure a TPM/HSM seal strategy")
+			"would be stored in plaintext. Provide XKMS_BARRIER_PASSPHRASE (or barrier.passphrase), or configure a TPM/HSM seal strategy")
 	}
 	if !c.TLS.Enabled {
 		gaps = append(gaps, "TLS disabled (tls.enabled=false): traffic is sent in cleartext")

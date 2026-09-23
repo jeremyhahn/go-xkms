@@ -145,7 +145,7 @@ health:
 #
 # Environment variables:
 #   XKMS_RNG_MODE          - Override mode
-#   XKMS_RNG_FALLBACK      - Override fallback mode
+#   XKMS_RNG_FALLBACK_MODE - Override fallback mode
 #   XKMS_RNG_TPM2_DEVICE   - TPM device path
 #   XKMS_RNG_PKCS11_MODULE - PKCS#11 module path
 #   XKMS_RNG_PKCS11_PIN    - PKCS#11 PIN (prefer env var over config)

@@ -28,7 +28,6 @@ go-xkms is the **server** that other projects bootstrap against. It serves CA bu
 bootstrap:
   noise:
     enabled: true
-    static_key_file: /etc/xkms/noise-static.key
     max_connections: 100
     read_timeout: 30s
     write_timeout: 30s

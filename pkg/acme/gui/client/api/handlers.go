@@ -25,23 +25,21 @@ import (
 // handlers holds all HTTP handler methods and shared dependencies.
 // The workflow field handles Register and Revoke operations through the SDK
 // transport layer, while the service field handles operations that require
-// local infrastructure (certificate requests, renewals, device operations,
-// and configuration).
+// local infrastructure (certificate requests, renewals, and device
+// operations).
 type handlers struct {
 	wf      workflow.Workflow
 	service *svc.Service
-	cfg     *svc.Config
 	logger  *slog.Logger
 }
 
 // newHandlers creates a new handlers instance. The workflow parameter may be
 // nil when no SDK client is configured; in that case all operations fall back
 // to the service layer.
-func newHandlers(wf workflow.Workflow, service *svc.Service, cfg *svc.Config, logger *slog.Logger) *handlers {
+func newHandlers(wf workflow.Workflow, service *svc.Service, logger *slog.Logger) *handlers {
 	return &handlers{
 		wf:      wf,
 		service: service,
-		cfg:     cfg,
 		logger:  logger,
 	}
 }

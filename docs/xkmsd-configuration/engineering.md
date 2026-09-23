@@ -18,9 +18,7 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
 | `envPrefix` | `XKMS`. The product name, not the binary name. |
 | `newConfigViper()` | Registers `Defaults()` as known keys, then `SetEnvPrefix` + `SetEnvKeyReplacer` (`.` and `-` → `_`) + `AllowEmptyEnv` + `AutomaticEnv`, then `registerEnvKeys` binds every leaf key of the tree by name. |
 | `registerEnvKeys(v)` / `walkYAMLKeys` | Walk `Config` by yaml tag, pointer sections through their element type, and `BindEnv` each leaf key. No value is registered, so a section stays nil until something sets a key in it. |
-| `legacyEnv(legacyName, key)` | Reads a legacy name only when non-empty and only when the key's canonical name is absent (`os.LookupEnv`). Legacy names are never bound in viper: `AllowEmptyEnv` would turn `XKMS_HOST=` into a bind-all request. |
-| `canonicalEnvName(key)` | `server.host` → `XKMS_SERVER_HOST`. |
-| `applyEnvOverrides(cfg)` | The legacy ladder (`XKMS_HOST`, `XKMS_REST_PORT`, …), every read through `legacyEnv`. Runs after unmarshal; same layer as viper's environment. Shrinks as clusters are remediated. |
+| `canonicalEnvName(key)` | `server.host` → `XKMS_SERVER_HOST`. The only environment name any key resolves under; there is no alias or legacy-name ladder. |
 | `stringToSecretValueHookFunc` | mapstructure decode hook, composed onto viper's default hook in `Load`. Decodes a scalar string into a `types.SecretValue` field's `Raw` (unresolved), giving mapstructure the same behaviour `SecretValue.UnmarshalYAML` provides for a direct `yaml.Unmarshal`. |
 | `secretValueType` | `reflect.TypeOf(types.SecretValue{})`. Used by both the decode hook and `walkYAMLKeys` to give `SecretValue` leaf-value treatment instead of struct-section treatment. |
 
@@ -66,16 +64,14 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
    it from environment resolution.
 4. **A present environment variable is a value, empty included.**
    `XKMS_SERVER_HOST=""` clears a pinned host to bind every interface and wins
-   over the file and over `XKMS_HOST` (`AllowEmptyEnv`; the legacy ladder
-   tests presence with `os.LookupEnv`).
-5. **The canonical environment name wins over its alias**, and over every
-   legacy name the ladder still owns: `applyEnvOverrides` reads a legacy name
-   through `legacyEnv`, which yields nothing while the key's canonical
-   `XKMS_<SECTION>_<KEY>` is set, so viper's resolution of the canonical name
-   stands. A legacy name that already is the canonical spelling is read as is.
+   over the file (`AllowEmptyEnv`).
+5. **`XKMS_<SECTION>_<KEY>` is the only environment name any key resolves
+   under.** There is no legacy or pre-viper alias ladder (removed go-xkms#140
+   / go-xkms#35): a variable spelled any other way is not read, and an
+   operator's unit file carrying an old name silently stops taking effect
+   rather than winning or losing a precedence contest.
 6. **A value that cannot decode into its field's type fails `Load`**; it is not
-   silently dropped. (The legacy ladder still drops an unparsable port for the
-   names it owns; that behaviour leaves with the ladder.)
+   silently dropped.
 7. **Every SAN on the auto-issued server certificate is configuration.** The
    bootstrap and the CA-issued certificate share one builder,
    `Server.serverCertSANs`: `tls.server_cn`, `tls.extra_sans`, `server.host`,
@@ -86,17 +82,15 @@ Unexported but load-bearing, all in `pkg/config/load.go`:
    CA-issued certificate is shared by every node through replicated storage,
    so its SAN set is deterministic cluster-wide, and a certificate whose set
    no longer matches is retired and reissued rather than served stale.
-8. **A field marked `Deprecated` in a struct doc comment still resolves
-   through every layer above** (file, environment, flags where applicable) —
-   deprecating a field changes what the server DOES with the value once
-   loaded, never whether `Load` accepts it. `config.NoiseBootstrapConfig`'s
-   four `static_key_*` / `p256_static_key_*` fields are the current instance
-   (go-xkms#35): still walked by `registerEnvKeys`, still decoded by `Load`,
-   but read by `pkg/server` at most once, to migrate an existing key into
-   barrier-sealed storage. See
+8. **A field this package removes is gone outright, not deprecated in
+   place.** There is no reader that still parses a retired key so an old
+   config file "still works" — an old key is simply unknown, and this
+   package's config loaders ignore unknown YAML/JSON keys (go-xkms#35 removed
+   `config.NoiseBootstrapConfig`'s four `static_key_*` / `p256_static_key_*`
+   fields this way: the bootstrap static keys are barrier-sealed, persisted-
+   file, or generated — see
    [`../trust-bootstrap/engineering.md`](../trust-bootstrap/engineering.md)
-   §Configuration for the migration order; this file owns layering and
-   resolution, not that custody decision.
+   §Configuration for that custody decision, which this file does not own).
 
 ## Decoding notes
 
@@ -130,7 +124,7 @@ with `errs.Wrapped{Msg: "failed to listen on <addr>"}`.
 
 | Test | Proves |
 |---|---|
-| `pkg/config` `TestLoad_ServerHost_*` | each layer settable; env over file; env without file key; alias; canonical over alias |
+| `pkg/config` `TestLoad_ServerHost_*` | each layer settable; env over file; env without file key |
 | `pkg/config` `TestLoad_CanonicalEnvResolvesEveryKey` | the binding is generic (`XKMS_SERVER_GRPC_PORT`) |
 | `pkg/config` `TestLoad_EnvValueOfWrongTypeIsRejected`, `TestLoad_MalformedFileIsRejected` | error handling |
 | `cmd/xkmsd` `TestServerHost_Precedence` | flags > env > file > defaults end to end |

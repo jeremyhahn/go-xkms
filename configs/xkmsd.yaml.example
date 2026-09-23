@@ -184,18 +184,21 @@ backends:
   #   namespace: ""
   #   mount_path: "secret"
 
-# Environment variable overrides:
+# Environment variable overrides (XKMS_<SECTION>_<KEY>, the dotted config key
+# upper-cased with "." and "-" replaced by "_"; every key in this file is
+# overridable this way, whether or not it appears here -- these are examples,
+# not an exhaustive list):
 # - XKMS_CONFIG: Override config file path
-# - XKMS_HOST: Override server host
-# - XKMS_REST_PORT: Override REST port
-# - XKMS_GRPC_PORT: Override gRPC port
-# - XKMS_QUIC_PORT: Override QUIC port
-# - XKMS_MCP_PORT: Override MCP port
-# - XKMS_SOCKET_PATH: Override Unix socket path
-# - XKMS_SOCKET_MODE: Override Unix socket permissions
+# - XKMS_SERVER_HOST: Override server host
+# - XKMS_SERVER_REST_PORT: Override REST port
+# - XKMS_SERVER_GRPC_PORT: Override gRPC port
+# - XKMS_SERVER_QUIC_PORT: Override QUIC port
+# - XKMS_SERVER_MCP_PORT: Override MCP port
+# - XKMS_UNIX_SOCKET_PATH: Override Unix socket path
+# - XKMS_UNIX_SOCKET_MODE: Override Unix socket permissions
 # - XKMS_UNIX_PROTOCOL: Override Unix socket protocol (grpc or http)
-# - XKMS_LOG_LEVEL: Override log level
-# - XKMS_LOG_FORMAT: Override log format
-# - XKMS_DATA_DIR: Override storage path
+# - XKMS_LOGGING_LEVEL: Override log level
+# - XKMS_LOGGING_FORMAT: Override log format
+# - XKMS_STORAGE_PATH: Override storage path
 # - XKMS_RNG_MODE: Override RNG mode
-# - XKMS_RNG_FALLBACK: Override RNG fallback mode
+# - XKMS_RNG_FALLBACK_MODE: Override RNG fallback mode

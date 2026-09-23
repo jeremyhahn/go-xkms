@@ -15,8 +15,6 @@ package qrdb
 
 import (
 	"time"
-
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Protocol identifies the transport protocol used to connect to QRDB.
@@ -103,10 +101,6 @@ type Config struct {
 
 	// Shutdown holds graceful shutdown configuration.
 	Shutdown *ShutdownConfig `json:"shutdown,omitempty" yaml:"shutdown,omitempty"`
-
-	// Barrier holds barrier/seal configuration for embedded mode.
-	// Ignored in remote mode (barrier managed by the QRDB server).
-	Barrier *BarrierConfig `json:"barrier,omitempty" yaml:"barrier,omitempty"`
 }
 
 // RaftConfig holds Raft consensus configuration.
@@ -152,45 +146,6 @@ type ShutdownConfig struct {
 
 	// TransferLeader enables leader transfer during shutdown.
 	TransferLeader bool `json:"transfer_leader" yaml:"transfer_leader"`
-}
-
-// BarrierConfig controls the encryption barrier for embedded QRDB mode.
-type BarrierConfig struct {
-	// Enabled must be false. This struct carries no credential or
-	// auto-unseal source, so an embedded ACME barrier built from it can
-	// never leave the sealed state; enabling it here only defers the
-	// failure from Validate to the first data-plane call. Encryption at
-	// rest for the ACME data plane is configured through the parent
-	// xkmsd barrier instead. Validate rejects Enabled: true with
-	// ErrBarrierCredentialUnsupported. The field is kept, rather than
-	// removed, so existing configuration files continue to parse.
-	Enabled bool `json:"enabled" yaml:"enabled"`
-
-	// Strategy identifies the sealing strategy.
-	Strategy xkmssdk.QRDBStrategyID `json:"strategy" yaml:"strategy"`
-
-	// Shamir holds M-of-N secret sharing configuration.
-	// Required when Strategy is seal.StrategyShamir.
-	Shamir *ShamirConfig `json:"shamir,omitempty" yaml:"shamir,omitempty"`
-}
-
-// ErrBarrierCredentialUnsupported is returned by Config.Validate when
-// Barrier.Enabled is true. The embedded ACME barrier configured by this
-// package has no credential or auto-unseal source, so a server built from
-// it can never leave the sealed state (it fails on the first data-plane
-// call with "data-plane barrier is sealed" instead of failing fast here).
-// Leave Barrier.Enabled false and configure encryption at rest through the
-// parent xkmsd barrier instead.
-var ErrBarrierCredentialUnsupported = NewError(ErrorCodeInvalidConfig,
-	"barrier: embedded ACME barrier has no credential or auto-unseal source; leave barrier.enabled false and configure encryption at rest through the parent xkmsd barrier")
-
-// ShamirConfig controls M-of-N secret sharing parameters.
-type ShamirConfig struct {
-	// Threshold is the minimum number of shares needed to unseal (M).
-	Threshold int `json:"threshold" yaml:"threshold"`
-
-	// Total is the total number of shares generated (N).
-	Total int `json:"total" yaml:"total"`
 }
 
 // DefaultConfig returns a Config with sensible defaults for embedded
@@ -246,12 +201,6 @@ func (c *Config) Validate() error {
 		if c.ClientTLS.KeyFile != "" && c.ClientTLS.CertFile == "" {
 			return NewError(ErrorCodeInvalidConfig, "cert_file is required when key_file is specified")
 		}
-	}
-
-	// The embedded ACME barrier has no credential or auto-unseal source,
-	// so it must stay disabled. See ErrBarrierCredentialUnsupported.
-	if c.Barrier != nil && c.Barrier.Enabled {
-		return ErrBarrierCredentialUnsupported
 	}
 
 	// Raft mode requires node and cluster IDs.

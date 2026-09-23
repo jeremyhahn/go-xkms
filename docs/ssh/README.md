@@ -79,7 +79,7 @@ xkey ssh local keys                                     # agent + ~/.ssh identit
 xkey ssh connect --local --ssh-config-alias prod-bastion # plain passthrough `ssh`
 ```
 
-`xkmsctl ssh` honors the global `--protocol` / `--server` / `--tls-ca` flags.
+`xkmsctl ssh` honors the global `--transport` / `--server` / `--tls-ca` flags.
 Every subcommand except `authorized-keys emit` (a pure formatting helper) is
 addressed by `--scope` / `--owner`. `keys import` reads an encrypted PEM's
 passphrase without echo from the terminal, or from stdin when the CLI is not

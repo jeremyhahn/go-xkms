@@ -40,9 +40,9 @@ import (
 // "trusted-acme-client serve". Every route runs behind the request guard built
 // from opts, which by default serves same-origin callers only. A caller that
 // mounts the router in-process passes WithInProcessTransport.
-func NewRouter(wf workflow.Workflow, service *svc.Service, cfg *svc.Config, logger *slog.Logger, opts ...Option) *mux.Router {
+func NewRouter(wf workflow.Workflow, service *svc.Service, logger *slog.Logger, opts ...Option) *mux.Router {
 	r := mux.NewRouter()
-	h := newHandlers(wf, service, cfg, logger)
+	h := newHandlers(wf, service, logger)
 
 	r.Use(guard.New(logger, denyOrigin, opts...).Middleware)
 
@@ -70,15 +70,6 @@ func NewRouter(wf workflow.Workflow, service *svc.Service, cfg *svc.Config, logg
 	// Device (TPM)
 	api.HandleFunc("/device/enroll", h.deviceEnroll).Methods(http.MethodPost, http.MethodOptions)
 	api.HandleFunc("/device/attest", h.deviceAttest).Methods(http.MethodPost, http.MethodOptions)
-
-	// Configuration
-	api.HandleFunc("/config", h.getConfig).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/config", h.updateConfig).Methods(http.MethodPut, http.MethodOptions)
-
-	// Renewal service
-	api.HandleFunc("/renewal/status", h.renewalStatus).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/renewal/config", h.getRenewalConfig).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/renewal/config", h.updateRenewalConfig).Methods(http.MethodPut, http.MethodOptions)
 
 	return r
 }

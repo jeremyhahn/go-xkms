@@ -223,7 +223,7 @@ func (c *Config) CreateClient() (client.Client, error) {
 
 	// Map protocol string to SDK Protocol type. An explicit scheme in --server
 	// (e.g. grpcs://, https://, quic://, unix://) selects the protocol and takes
-	// precedence over the (possibly defaulted) --protocol flag; bare host:port or
+	// precedence over the (possibly defaulted) --transport flag; bare host:port or
 	// socket-path servers use the configured protocol. Without this, the default
 	// transport ("unix") would route every scheme'd URL through the Unix socket
 	// transport, producing "unix://grpcs://…" dial targets.

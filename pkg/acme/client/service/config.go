@@ -33,18 +33,6 @@ type Config struct {
 	Challenge    ChallengeConfig             `yaml:"challenge" json:"challenge" mapstructure:"challenge"`
 	Accounts     map[string]*AccountConfig   `yaml:"accounts" json:"accounts" mapstructure:"accounts"`
 	Certificates map[string]*CertificateSpec `yaml:"certificates" json:"certificates" mapstructure:"certificates"`
-
-	// Deprecated: Client exists for backward compatibility with the single-account
-	// ServiceImpl. It will be removed when ServiceImpl is replaced in Phase 4.
-	Client ClientConfig `yaml:"-" json:"-"`
-
-	// Deprecated: Renewal exists for backward compatibility with the single-account
-	// ServiceImpl. It will be removed when ServiceImpl is replaced in Phase 4.
-	Renewal RenewalConfig `yaml:"-" json:"-"`
-
-	// Deprecated: SDK exists for backward compatibility with the single-account
-	// SDKServiceImpl. It will be removed when SDKServiceImpl is replaced in Phase 4.
-	SDK *SDKConfig `yaml:"-" json:"-"`
 }
 
 // AccountConfig holds per-account ACME settings including directory URL,
@@ -184,48 +172,6 @@ type DNS01Config struct {
 	TTL         int               `yaml:"ttl" json:"ttl" mapstructure:"ttl"`
 }
 
-// ClientConfig holds ACME client connection settings.
-//
-// Deprecated: used by the single-account ServiceImpl. Will be removed in
-// Phase 4.
-type ClientConfig struct {
-	DirectoryURL        string        `yaml:"directoryURL" json:"directoryURL"`
-	AccountEmail        string        `yaml:"accountEmail" json:"accountEmail"`
-	Timeout             time.Duration `yaml:"timeout" json:"timeout"`
-	RequestServerBundle bool          `yaml:"requestServerBundle" json:"requestServerBundle"`
-	TrustedRoots        []string      `yaml:"trustedRoots" json:"trustedRoots"`
-	RetryAttempts       int           `yaml:"retryAttempts" json:"retryAttempts"`
-	RetryDelay          time.Duration `yaml:"retryDelay" json:"retryDelay"`
-	MaxRetryDelay       time.Duration `yaml:"maxRetryDelay" json:"maxRetryDelay"`
-}
-
-// RenewalConfig holds automatic certificate renewal settings.
-//
-// Deprecated: used by the single-account ServiceImpl. Will be removed in
-// Phase 4.
-type RenewalConfig struct {
-	Enabled          bool          `yaml:"enabled" json:"enabled"`
-	CheckInterval    time.Duration `yaml:"checkInterval" json:"checkInterval"`
-	RenewalThreshold float64       `yaml:"renewalThreshold" json:"renewalThreshold"`
-	MaxRetries       int           `yaml:"maxRetries" json:"maxRetries"`
-	RetryInterval    time.Duration `yaml:"retryInterval" json:"retryInterval"`
-	NotifyOnSuccess  bool          `yaml:"notifyOnSuccess" json:"notifyOnSuccess"`
-	NotifyOnFailure  bool          `yaml:"notifyOnFailure" json:"notifyOnFailure"`
-}
-
-// SDKConfig holds the configuration for the Trusted CA SDK transport.
-//
-// Deprecated: used by the single-account SDKServiceImpl. Will be removed in
-// Phase 4.
-type SDKConfig struct {
-	Transport   string `yaml:"transport" json:"transport"`
-	Address     string `yaml:"address" json:"address"`
-	TLSCert     string `yaml:"tlsCert" json:"tlsCert"`
-	TLSKey      string `yaml:"tlsKey" json:"tlsKey"`
-	TLSCA       string `yaml:"tlsCA" json:"tlsCA"`
-	TLSInsecure bool   `yaml:"tlsInsecure" json:"tlsInsecure"`
-}
-
 // RegisterRequest is the input for account registration.
 type RegisterRequest struct {
 	Email string
@@ -356,23 +302,6 @@ func DefaultConfig() *Config {
 		},
 		Accounts:     make(map[string]*AccountConfig),
 		Certificates: make(map[string]*CertificateSpec),
-		// Deprecated legacy defaults
-		Client: ClientConfig{
-			DirectoryURL:  "https://localhost:8443/acme/directory",
-			Timeout:       60 * time.Second,
-			RetryAttempts: 3,
-			RetryDelay:    1 * time.Second,
-			MaxRetryDelay: 30 * time.Second,
-		},
-		Renewal: RenewalConfig{
-			Enabled:          true,
-			CheckInterval:    24 * time.Hour,
-			RenewalThreshold: 0.33,
-			MaxRetries:       5,
-			RetryInterval:    1 * time.Hour,
-			NotifyOnSuccess:  true,
-			NotifyOnFailure:  true,
-		},
 	}
 }
 

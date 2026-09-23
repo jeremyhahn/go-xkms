@@ -175,7 +175,10 @@ Supported roles: so, admin, operator, user, auditor, custodian`,
 
 func init() {
 	rootCmd.AddCommand(initCmd)
-	initCmd.AddCommand(initStatusCmd, claimCertCmd, claimShareCmd, initSignCSRCmd)
+	// status / claim-cert / claim-share / sign-csr are registered under the
+	// "ceremony" command group (configureCanonicalSurface in canonical.go),
+	// not here: there is exactly one path to each, not a duplicate under
+	// both "init" and "ceremony".
 
 	claimCertCmd.Flags().StringVar(&claimCertUsername, "username", "", "Username (required)")
 	claimCertCmd.Flags().StringVar(&claimCertKeyFile, "key", "", "PEM-encoded private key matching the submitted CSR (required)")

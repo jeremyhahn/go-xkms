@@ -199,9 +199,9 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 	// Build prefix args with server URL and TLS options
 	prefixArgs := []string{}
 
-	// For embedded protocol, use --protocol embedded instead of server URL
+	// For embedded protocol, use --transport embedded instead of server URL
 	if protocol == ProtocolEmbedded {
-		prefixArgs = append(prefixArgs, "--protocol", "embedded")
+		prefixArgs = append(prefixArgs, "--transport", "embedded")
 	} else {
 		serverURL := r.GetServerURL(protocol)
 		if serverURL != "" {
@@ -227,9 +227,9 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 func (r *TestRunner) BuildCommandArgs(cmd CommandDefinition, overrides map[string]string) []string {
 	args := make([]string, 0)
 
-	// Add --protocol embedded first if required (for FROST and other embedded-only commands)
+	// Add --transport embedded first if required (for FROST and other embedded-only commands)
 	if cmd.RequiresLocal {
-		args = append(args, "--protocol", "embedded")
+		args = append(args, "--transport", "embedded")
 	}
 
 	// Add key directory if required (before command for local mode)

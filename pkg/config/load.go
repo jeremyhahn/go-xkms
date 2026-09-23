@@ -87,11 +87,6 @@ func Load(path string) (*Config, error) {
 		return nil, &errs.Wrapped{Msg: "failed to parse config file", Err: err}
 	}
 
-	// Legacy environment names (XKMS_HOST, XKMS_REST_PORT, ...). Each reads
-	// through legacyEnv, so it applies only when non-empty and only when the
-	// key's canonical name is absent.
-	applyEnvOverrides(cfg)
-
 	if err := cfg.Validate(); err != nil {
 		return nil, &errs.Wrapped{Msg: "invalid configuration", Err: err}
 	}
@@ -102,7 +97,7 @@ func Load(path string) (*Config, error) {
 // newConfigViper constructs a viper bound to the configuration sources below
 // the file: the defaults layer, registered as known keys so an environment
 // variable resolves every field even when the file omits it, and the
-// XKMS_-prefixed environment with its legacy aliases.
+// XKMS_-prefixed environment.
 func newConfigViper() (*viper.Viper, error) {
 	v := viper.New()
 	v.SetConfigType("yaml")
@@ -130,12 +125,6 @@ func newConfigViper() (*viper.Viper, error) {
 	// of the configuration tree by name instead: BindEnv registers the key
 	// without a value, so a section nobody sets stays nil, while a variable
 	// set under a section the file omits now resolves.
-	//
-	// Legacy names (XKMS_HOST and the rest) are deliberately NOT bound here:
-	// AllowEmptyEnv would make an empty legacy variable a value too, and an
-	// existing unit file carrying XKMS_HOST= would then clear a pinned host.
-	// They stay in applyEnvOverrides, where legacyEnv applies them only when
-	// non-empty and only when the canonical name is absent.
 	if err := registerEnvKeys(v); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to bind configuration keys to the environment", Err: err}
 	}

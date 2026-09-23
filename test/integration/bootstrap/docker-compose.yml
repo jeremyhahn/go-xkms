@@ -37,12 +37,11 @@ services:
       # otherwise the data plane boots sealed and tenant operations fail with
       # "barrier is sealed". This also engages per-tenant isolation, which the
       # TenantBarrierInit/Unseal tests exercise.
-      - XKMS_SEAL_PASSPHRASE=bootstrap-integration-test-passphrase
+      - XKMS_BARRIER_PASSPHRASE=bootstrap-integration-test-passphrase
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
-      - XKMS_LOG_LEVEL=debug
-      - XKMS_DATA_DIR=/data
-      - XKMS_NOISE_ENABLED=true
-      - XKMS_NOISE_PORT=8445
+      - XKMS_LOGGING_LEVEL=debug
+      - XKMS_BOOTSTRAP_NOISE_ENABLED=true
+      - XKMS_SERVER_NOISE_PORT=8445
       - CERT_DIR=/etc/xkms/certs
       # Host the embedded go-qrdb node so the custodian-group / tenant endpoints
       # (which pass through to the node) are available for the bootstrap flow.

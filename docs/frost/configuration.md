@@ -464,15 +464,15 @@ The FROST backend respects these environment variables when applicable:
 |----------|-------------|---------|
 | `TPM_DEVICE` | TPM device path | TPM2 backend |
 | `TPM_OWNER_PASSWORD` | TPM owner password | TPM2 backend |
-| `PKCS11_LIBRARY` | PKCS#11 library path | PKCS#11 backend |
+| `XKMS_BACKENDS_PKCS11_LIBRARY` | PKCS#11 library path | PKCS#11 backend |
 | `PKCS11_PIN` | Token PIN | PKCS#11 backend |
-| `AWS_REGION` | AWS region | AWS KMS backend |
+| `XKMS_BACKENDS_AWSKMS_REGION` | AWS region | AWS KMS backend |
 | `AWS_KMS_KEY_ID` | KMS key ID/alias | AWS KMS backend |
-| `GOOGLE_APPLICATION_CREDENTIALS` | GCP credentials | GCP KMS backend |
-| `AZURE_TENANT_ID` | Azure tenant | Azure KV backend |
-| `AZURE_CLIENT_ID` | Azure client | Azure KV backend |
-| `VAULT_ADDR` | Vault address | Vault backend |
-| `VAULT_TOKEN` | Vault token | Vault backend |
+| `XKMS_BACKENDS_GCPKMS_CREDENTIALS_FILE` | GCP credentials | GCP KMS backend |
+| `XKMS_BACKENDS_AZUREKV_TENANT_ID` | Azure tenant | Azure KV backend |
+| `XKMS_BACKENDS_AZUREKV_CLIENT_ID` | Azure client | Azure KV backend |
+| `XKMS_BACKENDS_VAULT_ADDRESS` | Vault address | Vault backend |
+| `XKMS_BACKENDS_VAULT_TOKEN` | Vault token | Vault backend |
 
 ## Validation Rules
 

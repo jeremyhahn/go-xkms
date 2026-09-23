@@ -93,7 +93,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	router := clientapi.NewRouter(nil, svc, cfg, logger)
+	router := clientapi.NewRouter(nil, svc, logger)
 
 	// The API base URL the frontend dials is configuration; derived from the
 	// listen address only when the operator left it unset.

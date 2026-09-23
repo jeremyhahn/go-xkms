@@ -48,8 +48,9 @@ Known library paths:
 | nCipher / nShield | `/opt/nfast/toolkits/pkcs11/libcknfast.so` |
 | Nitrokey HSM / SmartCard-HSM | `/usr/lib/opensc-pkcs11.so` |
 
-`PKCS11_LIBRARY` overrides `backends.pkcs11.library` at load time. There is no
-environment override for the PIN — see [configuration.md](configuration.md).
+`XKMS_BACKENDS_PKCS11_LIBRARY` overrides `backends.pkcs11.library` at load
+time. There is no environment override for the PIN — see
+[configuration.md](configuration.md).
 
 Prefer `token:` (label) over a slot number: slot numbers are not stable across
 reboots or re-enumeration, and on a multi-token host the wrong slot means the

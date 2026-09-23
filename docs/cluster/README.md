@@ -46,9 +46,9 @@ Cluster settings are configured via the `cluster:` block in `xkmsd.yaml` and ove
 | AdvertiseHost | `advertise_host` | (config only) | string | Host or IP that clients use to reach **this node's xkms APIs**. Published into the cluster registry with the ports of the enabled protocols so a client can be redirected to the leader. Distinct from `server.host`, which is a bind address and is often a wildcard no client can dial. Defaults to the host portion of `raft_address`; set explicitly when the API and Raft planes are reached over different addresses (NAT, split networking). If no concrete host is available the node advertises nothing and clients fall back to the leader hint alone. |
 | Peers | `peers` | `XKMS_CLUSTER_PEERS` | string | Comma-separated list of initial cluster members in `nodeID=address` format (e.g., `1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001`). Must include this node's own NodeID and address when bootstrapping. |
 | Join | `join` | `XKMS_CLUSTER_JOIN` | bool | If `true`, the node joins an existing cluster; if `false`, it bootstraps a new cluster. The first node to boot should have `join: false` and a complete Peers list; subsequent nodes should have `join: true`. |
-| RaftTLS.CACertFile | `raft_tls.ca_cert_file` | `XKMS_CLUSTER_RAFT_CA_CERT` | string | Path to the PEM CA certificate used to verify Raft peer certificates. Enables mutual TLS on the inter-node Raft transport when all three `raft_tls.*` paths are set. |
-| RaftTLS.CertFile | `raft_tls.cert_file` | `XKMS_CLUSTER_RAFT_CERT` | string | Path to this node's PEM Raft certificate. |
-| RaftTLS.KeyFile | `raft_tls.key_file` | `XKMS_CLUSTER_RAFT_KEY` | string | Path to this node's PEM Raft private key. |
+| RaftTLS.CACertFile | `raft_tls.ca_cert_file` | `XKMS_CLUSTER_RAFT_TLS_CA_CERT_FILE` | string | Path to the PEM CA certificate used to verify Raft peer certificates. Enables mutual TLS on the inter-node Raft transport when all three `raft_tls.*` paths are set. |
+| RaftTLS.CertFile | `raft_tls.cert_file` | `XKMS_CLUSTER_RAFT_TLS_CERT_FILE` | string | Path to this node's PEM Raft certificate. |
+| RaftTLS.KeyFile | `raft_tls.key_file` | `XKMS_CLUSTER_RAFT_TLS_KEY_FILE` | string | Path to this node's PEM Raft private key. |
 | RaftEnrollment.TrustDomain | `raft_enrollment.trust_domain` | (config only) | string | SPIFFE trust domain stamped into auto-provisioned node certificates. Defaults to `xkms.cluster`. |
 | RaftEnrollment.KeyBackend | `raft_enrollment.key_backend` | (config only) | string | Crypto backend holding the node's Raft signing key: `tpm2`/`pkcs11` (hardware-resident) or empty (software, default). |
 | RaftEnrollment.ACME.Enabled | `raft_enrollment.acme.enabled` | (config only) | bool | Switches node-certificate issuance to TPM-attested ACME enroll-01 with the runtime TrustedCA as the single cluster trust anchor. |
@@ -146,8 +146,8 @@ Raft uses a separate network channel for consensus messages, distinct from xkms'
 ### Raft mTLS
 
 The inter-node Raft transport supports mutual TLS. Set all three `raft_tls.*`
-paths (or the `XKMS_CLUSTER_RAFT_CA_CERT` / `_CERT` / `_KEY` environment
-variables) to encrypt and mutually authenticate Raft peer traffic:
+paths (or the `XKMS_CLUSTER_RAFT_TLS_CA_CERT_FILE` / `_CERT_FILE` / `_KEY_FILE`
+environment variables) to encrypt and mutually authenticate Raft peer traffic:
 
 ```yaml
 cluster:

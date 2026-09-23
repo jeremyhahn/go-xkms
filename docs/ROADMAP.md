@@ -96,8 +96,8 @@ and defaults below come from `pkg/pkcs11/module/config.go:32-66`.
 
 There is no `XKMS_PKCS11_MODE`, `XKMS_PKCS11_BACKEND`, `XKMS_REST_ENDPOINT`, or
 `XKMS_GRPC_ENDPOINT` variable; the transport is selected by the `XKMS_PKCS11_TARGET`
-scheme. `XKMS_SOCKET_PATH` exists but belongs to the daemon configuration loader
-(`pkg/config/config.go:1131`), not to the PKCS#11 module.
+scheme. `XKMS_UNIX_SOCKET_PATH` exists but belongs to the daemon configuration
+loader (`pkg/config/config.go`), not to the PKCS#11 module.
 
 ## Default Ports
 

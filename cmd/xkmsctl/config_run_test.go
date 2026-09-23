@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // config_run_test.go closes remaining branches in config.go's client
-// construction helpers: the default (no --server, no --protocol) Unix
+// construction helpers: the default (no --server, no --transport) Unix
 // socket path, NewFromURL parse failures, the embedded-protocol error
 // propagation inside CreateClient, and the PKCS#11 TLS config error
 // branches in createClientFromProtocol / createClientWithTLS.

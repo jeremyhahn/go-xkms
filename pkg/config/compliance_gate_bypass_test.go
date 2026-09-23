@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/go-viper/mapstructure/v2"
 )
 
 // complianceGateBypassSource is this file's own name, excluded from the
@@ -35,8 +37,9 @@ const complianceGateBypassSource = "compliance_gate_bypass_test.go"
 var bypassPhrase = regexp.MustCompile(`(?i)development[- ]mode|opts? into development|--insecure|XKMS_INSECURE|in secure mode`)
 
 // bypassEnvVars are the names an operator would plausibly try, having read
-// a comment that promised a development-mode opt-in. None of them is read by
-// applyEnvOverrides, and the gate must not react to any of them.
+// a comment that promised a development-mode opt-in. None of them is a
+// canonical XKMS_<SECTION>_<KEY> name the environment layer binds, and the
+// gate must not react to any of them.
 var bypassEnvVars = []string{
 	"XKMS_INSECURE",
 	"XKMS_DEV_MODE",
@@ -95,8 +98,17 @@ func TestComplianceGate_NoDevelopmentBypass(t *testing.T) {
 				t.Setenv(name, value)
 			}
 		}
+		v, err := newConfigViper()
+		if err != nil {
+			t.Fatalf("newConfigViper: %v", err)
+		}
 		cfg := &Config{}
-		applyEnvOverrides(cfg)
+		if err := v.Unmarshal(cfg, func(dc *mapstructure.DecoderConfig) {
+			dc.TagName = "yaml"
+			dc.DecodeHook = mapstructure.ComposeDecodeHookFunc(dc.DecodeHook, stringToSecretValueHookFunc)
+		}); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
 		if got := cfg.ComplianceGaps(); !reflect.DeepEqual(got, baseline) {
 			t.Fatalf("an environment variable relaxed the compliance gate\nbaseline: %v\nwith env: %v", baseline, got)
 		}

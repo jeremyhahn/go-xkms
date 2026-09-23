@@ -195,119 +195,33 @@ func TestLoadNoiseStaticKey_GeneratesEphemeral(t *testing.T) {
 		return
 	}
 
-	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				// No StaticKeyHex and no StaticKeyFile: generates ephemeral key.
-			},
-		},
-	}
-	s := newMinimalServer(t, cfg)
+	s := newMinimalServer(t, &config.Config{})
 
 	key, err := s.loadNoiseStaticKey()
 	require.NoError(t, err)
 	assert.NotNil(t, key)
 }
 
-func TestLoadNoiseStaticKey_FromHex(t *testing.T) {
-	// A build that cannot run Noise has no Noise key to load; assert that
-	// contract instead of the one below, which presumes the suite exists.
-	if !noiseRunnable() {
-		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
-		return
-	}
-
-	// Generate a valid hex key first via the ephemeral path.
-	cfgEph := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{},
-		},
-	}
-	sEph := newMinimalServer(t, cfgEph)
-	ephKey, err := sEph.loadNoiseStaticKey()
-	require.NoError(t, err)
-
-	// Encode the private key bytes as hex string for use as StaticKeyHex.
-	hexKey := encodeKeyHex(ephKey.Private)
-
-	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyHex: hexKey, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	}
-	s := newMinimalServer(t, cfg)
-
-	key, err := s.loadNoiseStaticKey()
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-func TestLoadNoiseStaticKey_FromFile(t *testing.T) {
-	// A build that cannot run Noise has no Noise key to load; assert that
-	// contract instead of the one below, which presumes the suite exists.
-	if !noiseRunnable() {
-		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
-		return
-	}
-
-	// Generate a valid hex key first via the ephemeral path.
-	cfgEph := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{},
-		},
-	}
-	sEph := newMinimalServer(t, cfgEph)
-	ephKey, err := sEph.loadNoiseStaticKey()
-	require.NoError(t, err)
-
-	// Write the hex key to a temp file.
-	hexKey := encodeKeyHex(ephKey.Private)
+func TestLoadNoiseStaticKey_FromPersistedFile_ReadError(t *testing.T) {
+	// "blocker" is a regular file, not a directory, so reading a path
+	// underneath it fails with something other than "not found" -- the
+	// no-barrier loader must surface that as a typed file-read error rather
+	// than silently generating an ephemeral key.
 	tmpDir := t.TempDir()
-	keyFile := filepath.Join(tmpDir, "noise.key")
-	require.NoError(t, os.WriteFile(keyFile, []byte(hexKey), 0600))
+	blocker := filepath.Join(tmpDir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("not a directory"), 0600))
 
-	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: keyFile, //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	}
-	s := newMinimalServer(t, cfg)
-
-	key, err := s.loadNoiseStaticKey()
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-func TestLoadNoiseStaticKey_FromFile_NotFound(t *testing.T) {
-	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{
-			Noise: config.NoiseBootstrapConfig{
-				StaticKeyFile: "/nonexistent/path/noise.key", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-			},
-		},
-	}
+	cfg := &config.Config{Storage: config.StorageConfig{Path: filepath.Join(blocker, "data")}}
 	s := newMinimalServer(t, cfg)
 
 	_, err := s.loadNoiseStaticKey()
+	if !noiseRunnable() {
+		requireNoiseRefused(t, s)
+		return
+	}
 	require.Error(t, err)
 	var errFileRead *ErrFileRead
 	assert.True(t, errors.As(err, &errFileRead))
-}
-
-// encodeKeyHex encodes a raw key byte slice as a lowercase hex string, matching
-// the encoding noiseproto.DecodeStaticKey expects.
-func encodeKeyHex(raw []byte) string {
-	const hx = "0123456789abcdef"
-	buf := make([]byte, len(raw)*2)
-	for i, b := range raw {
-		buf[i*2] = hx[b>>4]
-		buf[i*2+1] = hx[b&0xf]
-	}
-	return string(buf)
 }
 
 // ============================================================================

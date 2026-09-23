@@ -30,7 +30,7 @@ never leaves the hardware boundary.
 ### Example
 
 ```bash
-xkmsctl --protocol grpc \
+xkmsctl --transport grpc \
   --server grpcs://xkms.example.com:9443 \
   --pkcs11-module /usr/lib/libxkey11.so \
   --pkcs11-pin 123456 \
@@ -49,7 +49,7 @@ not available.
 | `--tls-ca` | Path to CA certificate for server verification |
 
 ```bash
-xkmsctl --protocol grpc \
+xkmsctl --transport grpc \
   --server grpcs://xkms.example.com:9443 \
   --tls-cert /path/to/client.pem \
   --tls-key /path/to/client-key.pem \
@@ -239,7 +239,7 @@ xkmsctl key export  --id alice-client     > /tmp/alice-key.pem
 ### 5. Connect with the Client Certificate
 
 ```bash
-xkmsctl --protocol grpc \
+xkmsctl --transport grpc \
   --server grpcs://xkms.example.com:9443 \
   --tls-cert /tmp/alice.pem \
   --tls-key /tmp/alice-key.pem \

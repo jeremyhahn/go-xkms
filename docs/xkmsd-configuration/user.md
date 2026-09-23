@@ -31,9 +31,8 @@ This works for every key in the file, whether or not your file mentions it;
 a hyphen in a key becomes an underscore (`trust.server-url` →
 `XKMS_TRUST_SERVER_URL`). An optional section such as `acme` or
 `backends.awskms` comes into being when either the file or the environment
-sets a key in it. Older names such as `XKMS_HOST`, `XKMS_REST_PORT` and `XKMS_LOG_LEVEL` still
-work (see `configs/README.md`); where both the old and the new name are set,
-the new name wins.
+sets a key in it. `XKMS_<SECTION>_<KEY>` is the only name any key resolves
+under — there is no legacy or pre-viper alias (see `configs/README.md`).
 
 ## Choosing the bind host
 

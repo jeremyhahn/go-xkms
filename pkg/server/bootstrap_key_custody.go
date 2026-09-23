@@ -22,7 +22,6 @@ import (
 
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 
-	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
@@ -30,12 +29,6 @@ import (
 )
 
 // Custody for the bootstrap listener's two static keys (go-xkms#35).
-//
-// Before this file, both keys came from bootstrap.noise.static_key_hex /
-// static_key_file / p256_static_key_hex / p256_static_key_file — plaintext in
-// the YAML or in a plaintext file — or, absent those, a fresh key generated on
-// every start (a warned-about but real defect: every restart silently
-// invalidated every client's pinned public key).
 //
 // Ruling 2 on go-xkms#35 settles custody: the key is persisted, and the
 // barrier is the at-rest protection when one is configured. The barrier is
@@ -87,14 +80,6 @@ const (
 	p256StaticKeyFileName = "bootstrap-noise-p256.key"
 )
 
-// deprecatedNoiseConfigKeysWarning is logged once, the first time a legacy
-// config-supplied key is migrated into the barrier, so an operator knows to
-// remove the plaintext config keys without needing to consult a changelog.
-const deprecatedNoiseConfigKeysWarning = "bootstrap.noise.static_key_hex / static_key_file / " +
-	"p256_static_key_hex / p256_static_key_file are deprecated: the bootstrap static keys are " +
-	"now persisted barrier-sealed. This key has been migrated into the barrier and the config " +
-	"value will not be read again; remove it from your configuration."
-
 // loadNoiseStaticKey resolves the Noise_NK static key: barrier-sealed
 // storage when a barrier is configured, a persisted plaintext file otherwise.
 // See the package-level custody note above. The returned key holds its
@@ -123,31 +108,27 @@ func (s *Server) loadP256StaticKey() (*bootstrap.P256StaticKey, error) {
 // ---------------------------------------------------------------------------
 
 // loadOrSealNoiseStaticKey implements the barrier-present boot order: load
-// the sealed key if one exists; otherwise read the deprecated legacy config
-// once, seal it, and warn; otherwise generate a fresh key and seal it. Every
-// path after the first leaves a sealed key in the barrier so the next start
-// takes the first branch.
+// the sealed key if one exists; otherwise generate a fresh key and seal it.
+// Every path after the first leaves a sealed key in the barrier so the next
+// start takes the first branch.
 func (s *Server) loadOrSealNoiseStaticKey() (*noiseproto.StaticKey, error) {
 	key, err := s.loadSealedNoiseStaticKey()
 	switch {
 	case err == nil:
 		return key, nil
 	case isBarrierKeyNotFound(err):
-		// Not sealed yet -- fall through to legacy config or generation.
+		// Not sealed yet -- fall through to generation.
 	default:
 		return nil, &ErrBarrierKeyLoad{Key: noiseStaticKeyBarrierKey, Err: err}
 	}
 
-	key, migrated, err := legacyOrGenerateNoiseStaticKey(s.config)
+	key, err = noiseproto.GenerateStaticKey()
 	if err != nil {
 		return nil, err
 	}
 	if err := s.sealNoiseStaticKey(key); err != nil {
 		key.Destroy()
 		return nil, err
-	}
-	if migrated {
-		s.logger.Warn(deprecatedNoiseConfigKeysWarning, "key", "noise")
 	}
 	return key, nil
 }
@@ -159,21 +140,18 @@ func (s *Server) loadOrSealP256StaticKey() (*bootstrap.P256StaticKey, error) {
 	case err == nil:
 		return key, nil
 	case isBarrierKeyNotFound(err):
-		// Not sealed yet -- fall through to legacy config or generation.
+		// Not sealed yet -- fall through to generation.
 	default:
 		return nil, &ErrBarrierKeyLoad{Key: p256StaticKeyBarrierKey, Err: err}
 	}
 
-	key, migrated, err := legacyOrGenerateP256StaticKey(s.config)
+	key, err = bootstrap.GenerateP256StaticKey()
 	if err != nil {
 		return nil, err
 	}
 	if err := s.sealP256StaticKey(key); err != nil {
 		key.Destroy()
 		return nil, err
-	}
-	if migrated {
-		s.logger.Warn(deprecatedNoiseConfigKeysWarning, "key", "p256")
 	}
 	return key, nil
 }
@@ -256,81 +234,17 @@ func (s *Server) sealP256StaticKey(key *bootstrap.P256StaticKey) error {
 	return nil
 }
 
-// legacyOrGenerateNoiseStaticKey reads the Noise static key from the
-// deprecated config fields (inline hex, then file) when present, otherwise
-// generates a new one. migrated reports whether the key came from legacy
-// config, so the caller knows to warn exactly once (on the boot that
-// performs the migration, not on every subsequent load).
-func legacyOrGenerateNoiseStaticKey(cfg *config.Config) (key *noiseproto.StaticKey, migrated bool, err error) {
-	noiseCfg := cfg.Bootstrap.Noise
-
-	if noiseCfg.StaticKeyHex != "" { //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		hexKey := []byte(noiseCfg.StaticKeyHex) //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		defer noiseproto.WipeBytes(hexKey)
-		key, err = noiseproto.DecodeStaticKey(hexKey)
-		return key, err == nil, err
-	}
-
-	if noiseCfg.StaticKeyFile != "" { //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		// #nosec G304 - Key file path from trusted config
-		data, rerr := os.ReadFile(noiseCfg.StaticKeyFile) //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		if rerr != nil {
-			return nil, false, &ErrFileRead{Path: "noise key file", Err: rerr}
-		}
-		defer noiseproto.WipeBytes(data)
-		key, err = noiseproto.DecodeStaticKey(bytes.TrimSpace(data))
-		return key, err == nil, err
-	}
-
-	key, err = noiseproto.GenerateStaticKey()
-	return key, false, err
-}
-
-// legacyOrGenerateP256StaticKey is legacyOrGenerateNoiseStaticKey's P-256
-// counterpart.
-func legacyOrGenerateP256StaticKey(cfg *config.Config) (key *bootstrap.P256StaticKey, migrated bool, err error) {
-	noiseCfg := cfg.Bootstrap.Noise
-
-	if noiseCfg.P256StaticKeyHex != "" { //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		hexKey := []byte(noiseCfg.P256StaticKeyHex) //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		defer secure.Wipe(hexKey)
-		key, err = decodeP256StaticKey(hexKey)
-		return key, err == nil, err
-	}
-
-	if noiseCfg.P256StaticKeyFile != "" { //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		// #nosec G304 - Key file path from trusted config
-		data, rerr := os.ReadFile(noiseCfg.P256StaticKeyFile) //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		if rerr != nil {
-			return nil, false, &ErrFileRead{Path: "p256 key file", Err: rerr}
-		}
-		defer secure.Wipe(data)
-		key, err = decodeP256StaticKey(bytes.TrimSpace(data))
-		return key, err == nil, err
-	}
-
-	key, err = bootstrap.GenerateP256StaticKey()
-	return key, false, err
-}
-
 // ---------------------------------------------------------------------------
 // No-barrier custody: persisted plaintext file
 // ---------------------------------------------------------------------------
 
-// loadOrPersistNoiseStaticKeyFile implements the no-barrier boot order:
-// explicit legacy config always wins, unchanged from the pre-#35 behavior;
-// absent that, a key persisted at a fixed path inside the data directory is
-// loaded, or generated and persisted there with a one-time warning. With no
-// data directory configured either, there is nowhere durable to persist to,
-// so the server falls back to the pre-#35 ephemeral-with-warning behavior
-// rather than writing to an unpredictable location.
+// loadOrPersistNoiseStaticKeyFile implements the no-barrier boot order: a key
+// persisted at a fixed path inside the data directory is loaded, or generated
+// and persisted there with a one-time warning. With no data directory
+// configured, there is nowhere durable to persist to, so the server falls
+// back to an ephemeral-with-warning key rather than writing to an
+// unpredictable location.
 func (s *Server) loadOrPersistNoiseStaticKeyFile() (*noiseproto.StaticKey, error) {
-	noiseCfg := s.config.Bootstrap.Noise
-	if noiseCfg.StaticKeyHex != "" || noiseCfg.StaticKeyFile != "" { //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		key, _, err := legacyOrGenerateNoiseStaticKey(s.config)
-		return key, err
-	}
-
 	dataDir := s.config.Storage.Path
 	if dataDir == "" {
 		s.logger.Warn("No Noise static key configured and no barrier or data directory available; " +
@@ -374,12 +288,6 @@ func (s *Server) loadOrPersistNoiseStaticKeyFile() (*noiseproto.StaticKey, error
 // loadOrPersistP256StaticKeyFile is loadOrPersistNoiseStaticKeyFile's P-256
 // counterpart.
 func (s *Server) loadOrPersistP256StaticKeyFile() (*bootstrap.P256StaticKey, error) {
-	noiseCfg := s.config.Bootstrap.Noise
-	if noiseCfg.P256StaticKeyHex != "" || noiseCfg.P256StaticKeyFile != "" { //nolint:staticcheck // go-xkms#35: one-time migration reads the deprecated field
-		key, _, err := legacyOrGenerateP256StaticKey(s.config)
-		return key, err
-	}
-
 	dataDir := s.config.Storage.Path
 	if dataDir == "" {
 		s.logger.Warn("No P-256 bootstrap static key configured and no barrier or data directory " +

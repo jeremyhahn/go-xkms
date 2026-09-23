@@ -86,34 +86,34 @@ Precedence is flags > environment > file > defaults
 ([docs/xkmsd-configuration/](../docs/xkmsd-configuration/)). Every key in the
 file resolves from `XKMS_<SECTION>_<KEY>` — the key's path joined by
 underscores and uppercased, e.g. `server.host` → `XKMS_SERVER_HOST`,
-`server.rest_port` → `XKMS_SERVER_REST_PORT`. The names below predate that
-rule and keep working; where both forms are set the canonical form wins. A
-variable that is present but empty is a value: `XKMS_SERVER_HOST=` binds
-every interface even when the file pins a host.
+`server.rest_port` → `XKMS_SERVER_REST_PORT`. This is the only name any key
+resolves under; there is no alias or legacy-name ladder. A variable that is
+present but empty is a value: `XKMS_SERVER_HOST=` binds every interface even
+when the file pins a host.
 
 ### Server Configuration
 - `XKMS_CONFIG` - Configuration file path
-- `XKMS_HOST` - Server host address (legacy alias of `XKMS_SERVER_HOST`)
-- `XKMS_REST_PORT` - REST API port
-- `XKMS_GRPC_PORT` - gRPC server port
-- `XKMS_QUIC_PORT` - QUIC server port
-- `XKMS_MCP_PORT` - MCP server port
+- `XKMS_SERVER_HOST` - Server host address
+- `XKMS_SERVER_REST_PORT` - REST API port
+- `XKMS_SERVER_GRPC_PORT` - gRPC server port
+- `XKMS_SERVER_QUIC_PORT` - QUIC server port
+- `XKMS_SERVER_MCP_PORT` - MCP server port
 
 ### Unix Socket Configuration
-- `XKMS_SOCKET_PATH` - Unix socket file path
-- `XKMS_SOCKET_MODE` - Unix socket permissions (e.g., "0660")
+- `XKMS_UNIX_SOCKET_PATH` - Unix socket file path
+- `XKMS_UNIX_SOCKET_MODE` - Unix socket permissions (e.g., "0660")
 - `XKMS_UNIX_PROTOCOL` - Unix socket protocol ("grpc" or "http")
 
 ### Logging Configuration
-- `XKMS_LOG_LEVEL` - Log level (debug, info, warn, error, fatal)
-- `XKMS_LOG_FORMAT` - Log format (json, text, console)
+- `XKMS_LOGGING_LEVEL` - Log level (debug, info, warn, error, fatal)
+- `XKMS_LOGGING_FORMAT` - Log format (json, text, console)
 
 ### Storage Configuration
-- `XKMS_DATA_DIR` - Data storage directory
+- `XKMS_STORAGE_PATH` - Data storage directory
 
 ### RNG Configuration
 - `XKMS_RNG_MODE` - RNG mode (auto, software, tpm2, pkcs11)
-- `XKMS_RNG_FALLBACK` - RNG fallback mode
+- `XKMS_RNG_FALLBACK_MODE` - RNG fallback mode
 
 ## Signal Handling
 

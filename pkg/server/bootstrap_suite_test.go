@@ -25,12 +25,9 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/awnumar/memguard"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/stretchr/testify/require"
 
@@ -88,20 +85,6 @@ func newSuiteTestServer(t *testing.T, noiseCfg config.NoiseBootstrapConfig) *Ser
 			Bootstrap: config.BootstrapConfig{Noise: noiseCfg},
 		},
 	}
-}
-
-// encodeP256Hex returns the hex form of key, as an operator would place it in
-// bootstrap.noise.p256_static_key_hex.
-func encodeP256Hex(t *testing.T, key *bootstrap.P256StaticKey) string {
-	t.Helper()
-
-	buf := memguard.NewBuffer(bootstrap.P256HexKeySize)
-	defer buf.Destroy()
-
-	if err := bootstrap.EncodeP256StaticKey(buf, key); err != nil {
-		t.Fatalf("EncodeP256StaticKey: %v", err)
-	}
-	return string(buf.Bytes())
 }
 
 // TestLoadBootstrapKeys_AlwaysOffersApprovedSuite is the core of go-xkms#269:
@@ -253,105 +236,6 @@ func TestLoadBootstrapKeys_NoSuiteAvailable(t *testing.T) {
 	}
 	if !errors.Is(err, bootstrap.ErrSuiteUnavailable) {
 		t.Fatal("errors.Is must reach bootstrap.ErrSuiteUnavailable through Unwrap")
-	}
-}
-
-// TestLoadBootstrapKeys_BrokenConfiguredKeyIsHardFailure guards the silent
-// downgrade this design specifically refuses. A P-256 key that is configured
-// but will not load must fail the whole listener, NOT leave it quietly serving
-// only the other suite: an operator would see a healthy port while every client
-// provisioned for the approved suite failed to connect.
-func TestLoadBootstrapKeys_BrokenConfiguredKeyIsHardFailure(t *testing.T) {
-	s := newSuiteTestServer(t, config.NoiseBootstrapConfig{
-		P256StaticKeyHex: "not-a-key", //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-	})
-
-	keys, err := s.loadBootstrapKeys()
-	if keys != nil {
-		keys.destroy()
-		t.Fatal("a broken configured P-256 key must not yield a usable key set")
-	}
-
-	var badLen *ErrP256KeyLength
-	if !errors.As(err, &badLen) {
-		t.Fatalf("error is %T (%v), want *ErrP256KeyLength", err, err)
-	}
-	if badLen.Want != bootstrap.P256HexKeySize {
-		t.Fatalf("Want = %d, expected P256HexKeySize (%d)", badLen.Want, bootstrap.P256HexKeySize)
-	}
-}
-
-// TestLoadP256StaticKey_UsesConfiguredKey proves the configured key is the one
-// the listener actually serves. Without this, a loader that silently generated
-// a fresh ephemeral key on every start would pass every other test here while
-// breaking every client provisioned with the real responder key.
-func TestLoadP256StaticKey_UsesConfiguredKey(t *testing.T) {
-	original, err := bootstrap.GenerateP256StaticKey()
-	if err != nil {
-		t.Fatalf("GenerateP256StaticKey: %v", err)
-	}
-	defer original.Destroy()
-
-	want := append([]byte(nil), original.PublicBytes()...)
-
-	t.Run("from hex", func(t *testing.T) {
-		s := newSuiteTestServer(t, config.NoiseBootstrapConfig{
-			P256StaticKeyHex: encodeP256Hex(t, original), //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-		})
-
-		loaded, err := s.loadP256StaticKey()
-		if err != nil {
-			t.Fatalf("loadP256StaticKey: %v", err)
-		}
-		defer loaded.Destroy()
-
-		if got := loaded.PublicBytes(); string(got) != string(want) {
-			t.Fatal("loaded key does not match the configured key")
-		}
-	})
-
-	t.Run("from file", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "p256.key")
-		// A trailing newline is what an operator's editor writes; the loader
-		// must trim it rather than reject the file on length.
-		if err := os.WriteFile(path, []byte(encodeP256Hex(t, original)+"\n"), 0o600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
-
-		s := newSuiteTestServer(t, config.NoiseBootstrapConfig{P256StaticKeyFile: path}) //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-
-		loaded, err := s.loadP256StaticKey()
-		if err != nil {
-			t.Fatalf("loadP256StaticKey: %v", err)
-		}
-		defer loaded.Destroy()
-
-		if got := loaded.PublicBytes(); string(got) != string(want) {
-			t.Fatal("loaded key does not match the configured key")
-		}
-	})
-}
-
-// TestLoadP256StaticKey_MissingFile covers the other operator error: a key file
-// path that does not resolve must be reported as a file read failure naming the
-// P-256 key, not swallowed into an ephemeral key.
-func TestLoadP256StaticKey_MissingFile(t *testing.T) {
-	s := newSuiteTestServer(t, config.NoiseBootstrapConfig{
-		P256StaticKeyFile: filepath.Join(t.TempDir(), "absent.key"), //nolint:staticcheck // go-xkms#35: exercises the deprecated migration path
-	})
-
-	key, err := s.loadP256StaticKey()
-	if key != nil {
-		key.Destroy()
-		t.Fatal("a missing key file must not yield a key")
-	}
-
-	var readErr *ErrFileRead
-	if !errors.As(err, &readErr) {
-		t.Fatalf("error is %T (%v), want *ErrFileRead", err, err)
-	}
-	if readErr.Path != "p256 key file" {
-		t.Fatalf("Path = %q, want %q", readErr.Path, "p256 key file")
 	}
 }
 

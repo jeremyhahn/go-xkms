@@ -49,7 +49,6 @@ type App struct {
 	config    *GUIConfig
 	service   *svc.Service
 	sdkClient trustedca.Client
-	svcCfg    *svc.Config
 	logger    *slog.Logger
 	running   atomic.Bool
 }
@@ -57,12 +56,11 @@ type App struct {
 // NewApp creates a new ACME client GUI application. The sdkClient parameter
 // may be nil when no SDK transport is configured; the GUI will fall back to
 // the service layer for all operations.
-func NewApp(guiCfg *GUIConfig, service *svc.Service, sdkClient trustedca.Client, svcCfg *svc.Config, logger *slog.Logger) *App {
+func NewApp(guiCfg *GUIConfig, service *svc.Service, sdkClient trustedca.Client, logger *slog.Logger) *App {
 	return &App{
 		config:    guiCfg,
 		service:   service,
 		sdkClient: sdkClient,
-		svcCfg:    svcCfg,
 		logger:    logger,
 	}
 }
@@ -114,7 +112,7 @@ func (a *App) apiHandler() http.Handler {
 		wf = a.sdkClient.Workflow()
 	}
 
-	return clientapi.NewRouter(wf, a.service, a.svcCfg, a.logger,
+	return clientapi.NewRouter(wf, a.service, a.logger,
 		clientapi.WithInProcessTransport(),
 	)
 }

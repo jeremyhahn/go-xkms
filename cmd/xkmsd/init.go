@@ -76,14 +76,6 @@ var (
 	// not verify.
 	ErrCSRSignatureInvalid = errors.New("init: CSR signature verification failed")
 
-	// ErrThresholdRequiresOfficers is returned when --threshold >= 2 but no
-	// --so flags are provided.
-	ErrThresholdRequiresOfficers = errors.New("init: --threshold >= 2 requires at least one --so officer")
-
-	// ErrThresholdExceedsOfficers is returned when --threshold exceeds the
-	// number of --so officers.
-	ErrThresholdExceedsOfficers = errors.New("init: --threshold cannot exceed the number of --so officers")
-
 	// ErrConfigLoadFailed is returned when configuration loading fails.
 	ErrConfigLoadFailed = errors.New("init: failed to load configuration")
 
@@ -662,15 +654,6 @@ func validateInitFlags(flags *initFlags) error {
 		}
 	} else if flags.shares != 0 || flags.threshold != 0 {
 		return ErrSharesRequiresShamir
-	}
-
-	// Backwards-compat: the legacy --so officer / --threshold pair
-	// remains valid for the M-of-N officer enrollment flow regardless
-	// of barrier-strategy.
-	if flags.threshold >= 2 && len(flags.officers) > 0 {
-		if flags.threshold > len(flags.officers) {
-			return ErrThresholdExceedsOfficers
-		}
 	}
 
 	return nil

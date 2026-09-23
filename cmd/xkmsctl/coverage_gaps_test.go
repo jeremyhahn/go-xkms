@@ -723,21 +723,11 @@ func TestIsValidRole(t *testing.T) {
 }
 
 // =============================================================================
-// canonical.go — CanonicalRedirectError / PendingCredentialBackendError (0%)
+// canonical.go — PendingCredentialBackendError (0%)
 // =============================================================================
 
-// TestCanonicalErrorMessages exercises the two 0% canonical error types.
+// TestCanonicalErrorMessages exercises the 0% canonical error type.
 func TestCanonicalErrorMessages(t *testing.T) {
-	t.Run("CanonicalRedirectError", func(t *testing.T) {
-		e := &CanonicalRedirectError{Old: "init cert", New: "ceremony claim-cert"}
-		msg := e.Error()
-		if !strings.Contains(msg, "init cert") {
-			t.Errorf("error %q does not contain old command", msg)
-		}
-		if !strings.Contains(msg, "ceremony claim-cert") {
-			t.Errorf("error %q does not contain new command", msg)
-		}
-	})
 	t.Run("PendingCredentialBackendError", func(t *testing.T) {
 		e := &PendingCredentialBackendError{Op: "credential list"}
 		msg := e.Error()

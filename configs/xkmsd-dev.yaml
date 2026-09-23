@@ -40,7 +40,7 @@ auth:
 # Encryption at rest. Unlike configs/xkmsd.yaml this names a literal passphrase,
 # because the point of this file is to start a throwaway local daemon with no
 # out-of-band setup. It is a development secret and must not be used anywhere
-# else; a real deployment supplies XKMS_SEAL_PASSPHRASE or a credential://
+# else; a real deployment supplies XKMS_BARRIER_PASSPHRASE or a credential://
 # reference instead, and `xkmsd init` provisions one.
 barrier:
   enabled: true

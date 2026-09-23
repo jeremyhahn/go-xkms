@@ -532,25 +532,6 @@ func TestServiceNew(t *testing.T) {
 		require.NoError(t, svc.Close())
 	})
 
-	t.Run("embedded protocol with barrier enabled is rejected at validation time", func(t *testing.T) {
-		cfg := &Config{
-			Mode:     ModeStandalone,
-			Protocol: ProtocolEmbedded,
-			DataDir:  "/tmp/qrdb",
-			Barrier: &BarrierConfig{
-				Enabled: true,
-			},
-		}
-		svc, err := New(WithConfig(cfg))
-		require.Error(t, err)
-		assert.Nil(t, svc)
-		// The refusal comes from Config.Validate, before New ever
-		// reaches the embedded.NewServer call that would otherwise fail
-		// later with "data-plane barrier is sealed".
-		assert.ErrorIs(t, err, ErrBarrierCredentialUnsupported)
-		assert.True(t, IsInvalidConfig(err))
-	})
-
 	t.Run("remote protocol returns connection error when no server", func(t *testing.T) {
 		cfg := &Config{
 			Mode:     ModeStandalone,
