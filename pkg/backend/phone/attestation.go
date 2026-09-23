@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time interface check.
@@ -88,7 +88,7 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 		return nil, ErrInvalidConfig
 	}
 
-	params := &phoneproto.LocalAttestKeyParams{
+	params := &pairing.LocalAttestKeyParams{
 		KeyID: attrs.CN,
 		Nonce: nonce,
 	}
@@ -96,12 +96,12 @@ func (b *Backend) AttestKey(ctx context.Context, attrs *types.KeyAttributes, non
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalAttestKey, params)
+	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalAttestKey, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := phoneproto.DecodeResult[phoneproto.LocalAttestKeyResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalAttestKeyResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

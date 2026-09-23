@@ -18,7 +18,7 @@ import (
 	"crypto"
 	"io"
 
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // phoneSigner implements crypto.Signer by proxying sign operations to the phone.
@@ -55,7 +55,7 @@ func (s *phoneSigner) Public() crypto.PublicKey {
 // phone's secure hardware controls the signing process. The digest is the
 // pre-hashed data to sign.
 func (s *phoneSigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
-	params := phoneproto.LocalSignParams{
+	params := pairing.LocalSignParams{
 		KeyID:     s.keyID,
 		Data:      digest,
 		Algorithm: s.algorithm,
@@ -64,12 +64,12 @@ func (s *phoneSigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]b
 	ctx, cancel := context.WithTimeout(context.Background(), s.backend.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := s.backend.sendLocalRequest(ctx, phoneproto.MethodLocalSign, params)
+	resp, err := s.backend.sendLocalRequest(ctx, pairing.MethodLocalSign, params)
 	if err != nil {
 		return nil, ErrSigningFailed
 	}
 
-	result, err := phoneproto.DecodeResult[phoneproto.LocalSignResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalSignResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -183,7 +184,7 @@ func runSharePolicySet(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrSharePolicyLoadFailed, Cause: err}
 	}
 
-	policy := &phone.SharingPolicy{
+	policy := &pairing.SharingPolicy{
 		KeyID:          keyID,
 		Backend:        backend,
 		AllowShare:     allow,
@@ -235,12 +236,12 @@ func runSharePolicyRemove(cmd *cobra.Command, args []string) error {
 
 // loadSharingPolicyStore creates a FileSharingPolicyStore from the
 // standard sharing-policies.json path under ~/.xkey/.
-func loadSharingPolicyStore() (*phone.FileSharingPolicyStore, error) {
+func loadSharingPolicyStore() (*pairing.FileSharingPolicyStore, error) {
 	policyPath, err := getSharePolicyPath()
 	if err != nil {
 		return nil, err
 	}
-	return phone.NewFileSharingPolicyStore(policyPath)
+	return pairing.NewFileSharingPolicyStore(policyPath)
 }
 
 // getSharePolicyPath returns the path to the sharing policies JSON file.

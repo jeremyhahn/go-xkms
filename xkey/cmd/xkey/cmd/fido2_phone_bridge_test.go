@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -32,7 +33,7 @@ import (
 // errNotImplemented is returned by mock methods that are not implemented.
 var errNotImplemented = errors.New("not implemented")
 
-// mockCloserTransport implements phone.Transport for testing.
+// mockCloserTransport implements pairing.Transport for testing.
 type mockCloserTransport struct {
 	closed bool
 }
@@ -698,8 +699,8 @@ func (m *mockSDKClient) Close() error {
 
 // Compile-time interface assertions.
 var (
-	_ phone.Transport  = (*mockCloserTransport)(nil)
-	_ transport.Client = (*mockSDKClient)(nil)
+	_ pairing.Transport = (*mockCloserTransport)(nil)
+	_ transport.Client  = (*mockSDKClient)(nil)
 )
 
 // newTestLogger creates a no-op logger for testing.
@@ -711,7 +712,7 @@ func newTestLogger() *slog.Logger {
 // It uses default configuration with TrustNewDevices enabled to allow
 // backend creation without a pre-configured expected remote static key,
 // simulating an initial pairing scenario.
-func newTestPhoneBackend(t *testing.T, tr phone.Transport) *phone.PhoneKeyBackend {
+func newTestPhoneBackend(t *testing.T, tr pairing.Transport) *phone.PhoneKeyBackend {
 	t.Helper()
 	cfg := phone.DefaultPhoneKeyBackendConfig()
 	cfg.TrustNewDevices = true

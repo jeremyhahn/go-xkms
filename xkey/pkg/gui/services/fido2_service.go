@@ -28,7 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
 
@@ -135,7 +135,7 @@ type FIDO2Service struct {
 	auditLogger   audit.Logger
 	clientFunc    func() xkms.Client
 	keyBackend    *keybackend.CompositeBackend
-	bridge        *phone.Bridge
+	bridge        *pairing.Bridge
 	bridgeMu      sync.Mutex
 	bridgeRunning atomic.Bool
 	bridgeStart   time.Time
@@ -149,7 +149,7 @@ type FIDO2Service struct {
 	// held while the bridge is idle. All three are guarded by bridgeMu.
 	tpmEnrollment bool
 	tpmDevice     string
-	tpmEnroller   phone.TPMEnrollerCloser
+	tpmEnroller   pairing.TPMEnrollerCloser
 }
 
 // NewFIDO2Service creates a new FIDO2Service.
@@ -391,13 +391,13 @@ func (s *FIDO2Service) StartPhoneBridge() error {
 	// feature as unavailable while the rest of the bridge works normally.
 	s.tpmEnroller = s.openTPMEnroller()
 
-	bridgeCfg := &phone.BridgeConfig{
-		RequestTimeout: phone.DefaultBridgeRequestTimeout,
+	bridgeCfg := &pairing.BridgeConfig{
+		RequestTimeout: pairing.DefaultBridgeRequestTimeout,
 		Logger:         slog.Default(),
 		AuditLogger:    s.auditLogger,
 		TPM:            s.tpmEnroller,
 	}
-	bridge, err := phone.NewBridge(client, bridgeCfg)
+	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {
 		s.closeTPMEnroller()
 		return err
@@ -444,11 +444,11 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 // so neither is an error that should stop the bridge: OpenTPMEnroller has
 // already reported at INFO that the host has no TPM, or at WARN that it has
 // one xkey cannot reach. Callers must hold bridgeMu.
-func (s *FIDO2Service) openTPMEnroller() phone.TPMEnrollerCloser {
+func (s *FIDO2Service) openTPMEnroller() pairing.TPMEnrollerCloser {
 	if !s.tpmEnrollment {
 		return nil
 	}
-	enroller, err := phone.OpenTPMEnroller(&phone.TPMEnrollerConfig{
+	enroller, err := pairing.OpenTPMEnroller(&pairing.TPMEnrollerConfig{
 		Device: s.tpmDevice,
 		Logger: slog.Default(),
 	})
@@ -491,8 +491,8 @@ func (s *FIDO2Service) HandleBridgeRequest(method string, params json.RawMessage
 		return nil, ErrFIDO2BridgeStopped
 	}
 	s.bridgeReqs.Add(1)
-	resp := s.bridge.HandleRequest(s.ctx, &phone.Request{
-		JSONRPC: phone.JSONRPCVersion,
+	resp := s.bridge.HandleRequest(s.ctx, &pairing.Request{
+		JSONRPC: pairing.JSONRPCVersion,
 		ID:      uint64(s.bridgeReqs.Load()),
 		Method:  method,
 		Params:  params,

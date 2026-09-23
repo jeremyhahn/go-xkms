@@ -19,11 +19,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
-// Transport is a type alias for pairing.Transport, maintaining backward
-// compatibility for consumers that reference phone.Transport.
-type Transport = pairing.Transport
-
-// BLECapableTransport extends Transport with BLE-specific operations.
+// BLECapableTransport extends pairing.Transport with BLE-specific operations.
 // Transports that support BLE scanning, bonded address handling, and
 // BlueZ D-Bus management implement this interface. The PhoneKeyBackend
 // uses type assertions to detect BLE-capable transports and execute

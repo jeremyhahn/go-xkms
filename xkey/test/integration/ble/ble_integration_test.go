@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -239,7 +240,7 @@ func startPeripheral(ctx context.Context, t *testing.T, handler phone.Peripheral
 
 // connectCentral scans from the central controller, connects to the advertised
 // xKey service and completes the Noise XX handshake.
-func connectCentral(ctx context.Context, t *testing.T) (*phone.BLETransport, *phone.NoiseSession) {
+func connectCentral(ctx context.Context, t *testing.T) (*phone.BLETransport, *pairing.NoiseSession) {
 	t.Helper()
 
 	cfg := phone.DefaultBLETransportConfig()
@@ -269,11 +270,11 @@ func connectCentral(ctx context.Context, t *testing.T) (*phone.BLETransport, *ph
 		t.Fatalf("connect to %s failed: %v", results[0].Address, err)
 	}
 
-	staticKey, err := phone.GenerateStaticKey()
+	staticKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("generate static key: %v", err)
 	}
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: staticKey,
 		IsInitiator:    true,
 	})
@@ -281,7 +282,7 @@ func connectCentral(ctx context.Context, t *testing.T) (*phone.BLETransport, *ph
 		t.Fatalf("new noise session: %v", err)
 	}
 
-	if err := phone.PerformHandshake(ctx, &phone.HandshakeConfig{
+	if err := pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
 		Transport: central,
 		Session:   session,
 		Logger:    testLogger(t),

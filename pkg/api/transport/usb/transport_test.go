@@ -16,7 +16,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,9 +33,9 @@ type fakePhone struct {
 	// concurrency, and hides whether the code under test is actually correct.
 	connected   atomic.Bool
 	fingerprint []byte // nil replies "unknown device" to the identity exchange
-	handler     func(*phone.Request) *phone.Response
+	handler     func(*pairing.Request) *pairing.Response
 
-	session   *phone.NoiseSession
+	session   *pairing.NoiseSession
 	handshook bool
 	outbox    [][]byte
 	sendErr   error
@@ -104,7 +103,7 @@ func (f *fakePhone) respond(message []byte) ([]byte, error) {
 		if len(message) != pairing.IdentityMsgSize || message[0] != pairing.IdentityMsgVersion {
 			return nil, errors.New("fake phone: expected identity message")
 		}
-		session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{IsInitiator: false})
+		session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +136,7 @@ func (f *fakePhone) respond(message []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req, err := phone.DecodeRequest(plaintext)
+	req, err := pairing.DecodeRequest(plaintext)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +162,7 @@ func testPrologue(publicKey, fingerprint []byte) []byte {
 func newPairedTransport(t *testing.T, fake *fakePhone) *Transport {
 	t.Helper()
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := New()
@@ -256,7 +255,7 @@ func TestConnectBindsDeviceFingerprintIntoPrologue(t *testing.T) {
 		fingerprint[i] = byte(i)
 	}
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := New()
@@ -277,7 +276,7 @@ func TestConnectRejectsFingerprintMismatch(t *testing.T) {
 	expected := make([]byte, 32)
 	expected[0] = 0xff
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := New()
@@ -295,7 +294,7 @@ func TestConnectRejectsFingerprintMismatch(t *testing.T) {
 }
 
 func TestConnectFailsWhenBusUnavailable(t *testing.T) {
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := New()
@@ -397,12 +396,12 @@ func TestRequestMarshalError(t *testing.T) {
 // TestRequestSendsJSONRPCEnvelope pins the wire shape the phone expects: a
 // JSON-RPC 2.0 envelope carrying the method name, not the bare request body.
 func TestRequestSendsJSONRPCEnvelope(t *testing.T) {
-	var seen *phone.Request
+	var seen *pairing.Request
 	fake := &fakePhone{
-		handler: func(req *phone.Request) *phone.Response {
+		handler: func(req *pairing.Request) *pairing.Response {
 			seen = req
 			result, _ := json.Marshal(map[string]string{"status": "ok"})
-			return &phone.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
+			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		},
 	}
 	tr := newPairedTransport(t, fake)
@@ -421,9 +420,9 @@ func TestRequestSendsJSONRPCEnvelope(t *testing.T) {
 
 func TestRequestNilResponseTarget(t *testing.T) {
 	fake := &fakePhone{
-		handler: func(req *phone.Request) *phone.Response {
+		handler: func(req *pairing.Request) *pairing.Response {
 			result, _ := json.Marshal(map[string]bool{"pong": true})
-			return &phone.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
+			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		},
 	}
 	tr := newPairedTransport(t, fake)
@@ -434,11 +433,11 @@ func TestRequestNilResponseTarget(t *testing.T) {
 
 func TestRequestPropagatesRPCError(t *testing.T) {
 	fake := &fakePhone{
-		handler: func(req *phone.Request) *phone.Response {
-			return &phone.Response{
+		handler: func(req *pairing.Request) *pairing.Response {
+			return &pairing.Response{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Error:   &phone.RPCError{Code: -32601, Message: "Method not supported"},
+				Error:   &pairing.RPCError{Code: -32601, Message: "Method not supported"},
 			}
 		},
 	}
@@ -462,8 +461,8 @@ func TestRequestSendReceiveError(t *testing.T) {
 
 func TestRequestUnmarshalError(t *testing.T) {
 	fake := &fakePhone{
-		handler: func(req *phone.Request) *phone.Response {
-			return &phone.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`"a string"`)}
+		handler: func(req *pairing.Request) *pairing.Response {
+			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`"a string"`)}
 		},
 	}
 	tr := newPairedTransport(t, fake)
@@ -565,7 +564,7 @@ func TestPolicyOperationsNotSupported(t *testing.T) {
 // TestConnectFailsWithoutUSBDevice covers the real driver path: with pairing
 // keys configured but no accessory attached, the bus open fails.
 func TestConnectFailsWithoutUSBDevice(t *testing.T) {
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := New()
@@ -579,7 +578,7 @@ func TestConnectFailsWithoutUSBDevice(t *testing.T) {
 }
 
 func TestConnectWithCustomTimeout(t *testing.T) {
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := New(func(cfg *transport.Config) error {
@@ -595,7 +594,7 @@ func TestConnectWithCustomTimeout(t *testing.T) {
 }
 
 func TestConnectWithZeroTimeout(t *testing.T) {
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	tr, err := NewWithConfig(&transport.Config{Timeout: 0})

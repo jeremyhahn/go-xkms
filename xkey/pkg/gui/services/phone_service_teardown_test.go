@@ -29,14 +29,14 @@ import (
 
 // newGeneration builds the transport, session and protected key a completed
 // Connect would hand to publishConnection.
-func newGeneration(t *testing.T) (*phone.BLETransport, *phone.NoiseSession, *phone.StaticKey) {
+func newGeneration(t *testing.T) (*phone.BLETransport, *pairing.NoiseSession, *pairing.StaticKey) {
 	t.Helper()
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: key,
 		IsInitiator:    true,
 	})
@@ -48,7 +48,7 @@ func newGeneration(t *testing.T) (*phone.BLETransport, *phone.NoiseSession, *pho
 
 // publishGeneration drives Connect's own publication step and returns the
 // protected key backing the connection it installed.
-func publishGeneration(t *testing.T, svc *PhoneService, device string) *phone.StaticKey {
+func publishGeneration(t *testing.T, svc *PhoneService, device string) *pairing.StaticKey {
 	t.Helper()
 
 	transport, session, key := newGeneration(t)
@@ -67,7 +67,7 @@ func publishGeneration(t *testing.T, svc *PhoneService, device string) *phone.St
 // this test holds open is the very thing that drain is waiting for — so the
 // racing Connect would park behind the teardown instead of landing in its
 // window. The publication step itself is the same code either way.
-func publishFromInsideTheDrain(t *testing.T, svc *PhoneService, device string) *phone.StaticKey {
+func publishFromInsideTheDrain(t *testing.T, svc *PhoneService, device string) *pairing.StaticKey {
 	t.Helper()
 
 	transport, session, key := newGeneration(t)
@@ -596,7 +596,7 @@ func TestAStatusCallbackMayReEnterTheService(t *testing.T) {
 		_ = svc.Disconnect(deviceName)
 	})
 
-	key := make(chan *phone.StaticKey, 1)
+	key := make(chan *pairing.StaticKey, 1)
 	go func() { key <- publishGeneration(t, svc, "Pixel 9") }()
 
 	select {

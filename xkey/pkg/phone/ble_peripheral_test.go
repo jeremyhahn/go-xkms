@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // echoHandler returns the request wrapped in a JSON-RPC result so the test can
@@ -51,34 +53,34 @@ func newTestPeripheral(t *testing.T, handler PeripheralRequestHandler, writer Fr
 	}
 
 	p.notifier = writer
-	p.fragmenter = NewFragmenter(p.mtu - bleNotifyOverhead)
-	p.reassembler = NewReassembler()
+	p.fragmenter = pairing.NewFragmenter(p.mtu - bleNotifyOverhead)
+	p.reassembler = pairing.NewReassembler()
 	p.sender = newFragmentSender(p.notifier, p.fragmenter, p.log)
 	return p
 }
 
 // establishSession runs a complete Noise XX handshake in memory and returns
 // the initiator session paired with the peripheral's responder session.
-func establishSession(t *testing.T, p *BLEPeripheral) *NoiseSession {
+func establishSession(t *testing.T, p *BLEPeripheral) *pairing.NoiseSession {
 	t.Helper()
 
-	initiatorKey, err := GenerateStaticKey()
+	initiatorKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("initiator key: %v", err)
 	}
-	responderKey, err := GenerateStaticKey()
+	responderKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("responder key: %v", err)
 	}
 
-	initiator, err := NewNoiseSession(&NoiseSessionConfig{
+	initiator, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: initiatorKey,
 		IsInitiator:    true,
 	})
 	if err != nil {
 		t.Fatalf("initiator session: %v", err)
 	}
-	responder, err := NewNoiseSession(&NoiseSessionConfig{
+	responder, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: responderKey,
 		IsInitiator:    false,
 	})
@@ -244,11 +246,11 @@ func TestBLEPeripheral_HandshakePropagatesSendFailure(t *testing.T) {
 	writer.failAt = 0
 	p := newTestPeripheral(t, &echoHandler{}, writer)
 
-	responderKey, err := GenerateStaticKey()
+	responderKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("responder key: %v", err)
 	}
-	p.session, err = NewNoiseSession(&NoiseSessionConfig{
+	p.session, err = pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: responderKey,
 		IsInitiator:    false,
 	})
@@ -256,11 +258,11 @@ func TestBLEPeripheral_HandshakePropagatesSendFailure(t *testing.T) {
 		t.Fatalf("responder session: %v", err)
 	}
 
-	initiatorKey, err := GenerateStaticKey()
+	initiatorKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("initiator key: %v", err)
 	}
-	initiator, err := NewNoiseSession(&NoiseSessionConfig{
+	initiator, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: initiatorKey,
 		IsInitiator:    true,
 	})
@@ -318,7 +320,7 @@ func TestNewBLEPeripheral_MTUSelection(t *testing.T) {
 		{name: "unset MTU", cfg: &BLEPeripheralConfig{}, want: DefaultMTU},
 		{name: "below minimum", cfg: &BLEPeripheralConfig{MTU: 8}, want: DefaultMTU},
 		{name: "explicit MTU", cfg: &BLEPeripheralConfig{MTU: 512}, want: 512},
-		{name: "minimum MTU", cfg: &BLEPeripheralConfig{MTU: MinMTU}, want: MinMTU},
+		{name: "minimum MTU", cfg: &BLEPeripheralConfig{MTU: pairing.MinMTU}, want: pairing.MinMTU},
 	}
 
 	for _, tt := range tests {

@@ -19,7 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // --- ExportPublicKey ---
@@ -28,11 +28,11 @@ func TestBackend_ExportPublicKey_Success(t *testing.T) {
 	expectedPubKey := generateTestECDSAPublicKeyDER(t)
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			if req.Method != phoneproto.MethodLocalGetPublicKey {
-				t.Errorf("expected method %s, got %s", phoneproto.MethodLocalGetPublicKey, req.Method)
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			if req.Method != pairing.MethodLocalGetPublicKey {
+				t.Errorf("expected method %s, got %s", pairing.MethodLocalGetPublicKey, req.Method)
 			}
-			return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+			return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 				PublicKey: expectedPubKey,
 				Format:    "der",
 				Algorithm: "ES256",
@@ -56,8 +56,8 @@ func TestBackend_ExportPublicKey_PEMFormat(t *testing.T) {
 	pemData := []byte("-----BEGIN PUBLIC KEY-----\nMFkw...\n-----END PUBLIC KEY-----\n")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 				PublicKey: pemData,
 				Format:    "pem",
 				Algorithm: "ES256",
@@ -89,8 +89,8 @@ func TestBackend_ExportPublicKey_Closed(t *testing.T) {
 
 func TestBackend_ExportPublicKey_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 

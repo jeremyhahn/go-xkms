@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -45,7 +46,7 @@ type TCPTransportConfig struct {
 // NewTCPTransport creates a new TCP transport for testing.
 func NewTCPTransport(cfg *TCPTransportConfig) *TCPTransport {
 	mtu := cfg.MTU
-	if mtu < phone.MinMTU {
+	if mtu < pairing.MinMTU {
 		mtu = phone.DefaultMTU
 	}
 	timeout := cfg.Timeout

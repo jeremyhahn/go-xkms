@@ -149,7 +149,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	tpmEnrollment, _ := cmd.Flags().GetBool("tpm-enrollment")
 
 	// Parse attestation mode
-	attestMode := phone.ParseAttestationMode(attestModeStr)
+	attestMode := pairing.ParseAttestationMode(attestModeStr)
 
 	// The barrier is opened, if one is initialized, before the devices file:
 	// this command reads the local Noise static private key to advertise as
@@ -223,7 +223,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	defer localPrivateKey.Destroy()
 
 	// Reconstruct the Noise static key from stored private key
-	localStaticKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
+	localStaticKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}
@@ -249,10 +249,10 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 
 	// Initialize TPM2 if mode is not software-only
 	var tpmModule xkms.TrustedPlatformModule
-	if attestMode != phone.AttestationModeSoftware {
+	if attestMode != pairing.AttestationModeSoftware {
 		tpmModule, err = initTPMForAttestation(tpmDevice, logger)
 		if err != nil {
-			if attestMode == phone.AttestationModeTPM2 {
+			if attestMode == pairing.AttestationModeTPM2 {
 				return &SentinelCauseError{Sentinel: ErrTPM2InitFailed, Cause: err}
 			}
 			logger.Warn("TPM2 not available, using software attestation",
@@ -463,7 +463,7 @@ func resolveListenEnroller(
 	devicePath string,
 	pcrBank string,
 	logger *slog.Logger,
-) (phone.TPMEnroller, io.Closer, error) {
+) (pairing.TPMEnroller, io.Closer, error) {
 	if !enabled {
 		return nil, nil, nil
 	}
@@ -474,7 +474,7 @@ func resolveListenEnroller(
 
 	// The reason is logged by OpenTPMEnroller, at INFO when this host simply
 	// has no TPM and at WARN when it has one that cannot be opened.
-	enroller, err := phone.OpenTPMEnroller(&phone.TPMEnrollerConfig{
+	enroller, err := pairing.OpenTPMEnroller(&pairing.TPMEnrollerConfig{
 		Device:          devicePath,
 		PlatformPCRBank: pcrBank,
 		Logger:          logger,
@@ -483,7 +483,7 @@ func resolveListenEnroller(
 		// A host with no TPM reports nothing to the phone beyond "unsupported".
 		// A TPM we could not open is a fault someone can fix, so the cause is
 		// carried to the bridge and reported distinctly.
-		if errors.Is(err, phone.ErrTPMNotConfigured) {
+		if errors.Is(err, pairing.ErrTPMNotConfigured) {
 			return nil, nil, nil
 		}
 		return nil, nil, err
@@ -498,9 +498,9 @@ func resolveListenEnroller(
 // bridge answers the TCG/IDevID enrollment methods from.
 func connectListenBridge(
 	logger *slog.Logger,
-	enroller phone.TPMEnroller,
+	enroller pairing.TPMEnroller,
 	enrollerErr error,
-) (transport.Client, *phone.Bridge, error) {
+) (transport.Client, *pairing.Bridge, error) {
 	cfg := loadXKMSdBridgeConfig()
 	if !cfg.Enabled {
 		return nil, nil, nil
@@ -511,7 +511,7 @@ func connectListenBridge(
 		return nil, nil, err
 	}
 
-	bridge, err := phone.NewBridge(client, &phone.BridgeConfig{
+	bridge, err := pairing.NewBridge(client, &pairing.BridgeConfig{
 		AllowedBackends: cfg.AllowedBackends,
 		DeniedBackends:  cfg.DeniedBackends,
 		RequestTimeout:  cfg.RequestTimeout,
@@ -530,8 +530,8 @@ func connectListenBridge(
 // listenRequestHandler handles incoming requests from the phone.
 type listenRequestHandler struct {
 	logger   *slog.Logger
-	attestor phone.LaptopAttestor
-	bridge   *phone.Bridge
+	attestor pairing.LaptopAttestor
+	bridge   *pairing.Bridge
 }
 
 // newListenRequestHandler creates a new listen request handler with
@@ -540,10 +540,10 @@ type listenRequestHandler struct {
 func newListenRequestHandler(
 	logger *slog.Logger,
 	tpmModule xkms.TrustedPlatformModule,
-	mode phone.AttestationMode,
-	bridge *phone.Bridge,
+	mode pairing.AttestationMode,
+	bridge *pairing.Bridge,
 ) (*listenRequestHandler, error) {
-	attestor, err := phone.NewLaptopAttestor(&phone.LaptopAttestorConfig{
+	attestor, err := pairing.NewLaptopAttestor(&pairing.LaptopAttestorConfig{
 		Mode:   mode,
 		TPM:    tpmModule,
 		Logger: logger,
@@ -564,10 +564,10 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 	h.logger.Debug("received request from phone", slog.Int("size", len(request)))
 
 	// Decode the request
-	req, err := phone.DecodeRequest(request)
+	req, err := pairing.DecodeRequest(request)
 	if err != nil {
 		h.logger.Error("failed to decode request", slog.String("error", err.Error()))
-		return phone.EncodeErrorResponse(0, phone.ErrorCodeParseError, "Failed to parse request", nil)
+		return pairing.EncodeErrorResponse(0, pairing.ErrorCodeParseError, "Failed to parse request", nil)
 	}
 
 	h.logger.Info("processing request",
@@ -588,34 +588,34 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 	}
 
 	h.logger.Warn("unsupported method", slog.String("method", req.Method))
-	return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeMethodNotFound, "Method not supported", nil)
+	return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeMethodNotFound, "Method not supported", nil)
 }
 
 // handleViaBridge dispatches a request to the xkmsd bridge and encodes the
 // bridge's JSON-RPC response.
-func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *phone.Request) ([]byte, error) {
+func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *pairing.Request) ([]byte, error) {
 	resp := h.bridge.HandleRequest(ctx, req)
 	if resp == nil {
 		h.logger.Error("bridge returned no response", slog.String("method", req.Method))
-		return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeInternalError, "Bridge returned no response", nil)
+		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInternalError, "Bridge returned no response", nil)
 	}
 	return json.Marshal(resp)
 }
 
 // methodHandler is a function type for handling specific methods.
-type methodHandler func(ctx context.Context, req *phone.Request) ([]byte, error)
+type methodHandler func(ctx context.Context, req *pairing.Request) ([]byte, error)
 
 // methodHandlers returns the map of method names to handlers.
 func (h *listenRequestHandler) methodHandlers() map[string]methodHandler {
 	return map[string]methodHandler{
-		phone.MethodPing:               h.handlePing,
-		phone.MethodRemoteAttestDevice: h.handleRemoteAttestDevice,
+		pairing.MethodPing:               h.handlePing,
+		pairing.MethodRemoteAttestDevice: h.handleRemoteAttestDevice,
 	}
 }
 
 // handlePing handles the ping method.
-func (h *listenRequestHandler) handlePing(_ context.Context, req *phone.Request) ([]byte, error) {
-	return phone.EncodeResponse(req.ID, &phone.PingResult{
+func (h *listenRequestHandler) handlePing(_ context.Context, req *pairing.Request) ([]byte, error) {
+	return pairing.EncodeResponse(req.ID, &pairing.PingResult{
 		Pong: true,
 	})
 }
@@ -624,16 +624,16 @@ func (h *listenRequestHandler) handlePing(_ context.Context, req *phone.Request)
 // This is called when the phone requests the laptop to attest itself.
 // The phone generates a nonce and sends it here; we generate our attestation
 // (using TPM2 if available) and return it to the phone for verification.
-func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *phone.Request) ([]byte, error) {
+func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *pairing.Request) ([]byte, error) {
 	// Decode the parameters
 	paramsJSON, err := json.Marshal(req.Params)
 	if err != nil {
-		return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeInvalidParams, "Invalid parameters", nil)
+		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Invalid parameters", nil)
 	}
 
-	var params phone.RemoteAttestDeviceParams
+	var params pairing.RemoteAttestDeviceParams
 	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
+		return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Failed to decode parameters", nil)
 	}
 
 	h.logger.Info("laptop attestation requested by phone",
@@ -650,11 +650,11 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 		// Map errors to appropriate RPC error codes
 		switch {
 		case errors.Is(err, phone.ErrInvalidAttestationNonce):
-			return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
+			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeInvalidParams, "Nonce must be 32 bytes", nil)
 		case errors.Is(err, phone.ErrTPM2Required):
-			return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
+			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeAttestUnsupported, "TPM2 required but not available", nil)
 		default:
-			return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeAttestFailed, err.Error(), nil)
+			return pairing.EncodeErrorResponse(req.ID, pairing.ErrorCodeAttestFailed, err.Error(), nil)
 		}
 	}
 
@@ -665,5 +665,5 @@ func (h *listenRequestHandler) handleRemoteAttestDevice(_ context.Context, req *
 		slog.Bool("boot_verified", result.BootStateVerified),
 	)
 
-	return phone.EncodeResponse(req.ID, result)
+	return pairing.EncodeResponse(req.ID, result)
 }

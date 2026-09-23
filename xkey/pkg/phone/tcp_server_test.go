@@ -22,6 +22,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // mockRequestHandler is a test helper that echoes back the request as a response
@@ -56,15 +58,15 @@ func (m *mockRequestHandler) receivedRequests() [][]byte {
 // clientHandshake performs a Noise XX handshake as initiator over a raw TCP
 // connection using the 2-byte length-prefixed framing. Returns the established
 // NoiseSession.
-func clientHandshake(t *testing.T, conn net.Conn) *NoiseSession {
+func clientHandshake(t *testing.T, conn net.Conn) *pairing.NoiseSession {
 	t.Helper()
 
-	clientKey, err := GenerateStaticKey()
+	clientKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("generate client key: %v", err)
 	}
 
-	clientSession, err := NewNoiseSession(&NoiseSessionConfig{
+	clientSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: clientKey,
 		IsInitiator:    true,
 	})
@@ -377,7 +379,7 @@ func TestTCPPairingServer_StopDrainsConnections(t *testing.T) {
 }
 
 func TestTCPPairingServer_LocalStaticPublicKey(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -733,7 +735,7 @@ func TestTCPPairingServer_MaxConnections(t *testing.T) {
 
 	// Open 2 connections and complete handshakes (they hold semaphore slots).
 	conns := make([]net.Conn, 2)
-	sessions := make([]*NoiseSession, 2)
+	sessions := make([]*pairing.NoiseSession, 2)
 	for i := 0; i < 2; i++ {
 		c, err := net.DialTimeout("tcp", srv.Addr(), 2*time.Second)
 		if err != nil {
@@ -878,7 +880,7 @@ func TestTCPReceive_ConnectionClosed(t *testing.T) {
 // caller, so Stop must leave it usable. Destroying a borrowed key would free
 // pages another session is still reading.
 func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -901,11 +903,11 @@ func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
 
 	// Still intact: Destroy zeroes the key pair, so a live private half is
 	// what distinguishes "left alone" from "freed".
-	if len(key.Private) != NoiseKeySize {
+	if len(key.Private) != pairing.NoiseKeySize {
 		t.Fatalf("supplied key was destroyed by Stop: private half is %d bytes, want %d",
-			len(key.Private), NoiseKeySize)
+			len(key.Private), pairing.NoiseKeySize)
 	}
-	if _, err := NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true}); err != nil {
+	if _, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true}); err != nil {
 		t.Fatalf("supplied key unusable after Stop: %v", err)
 	}
 }
@@ -935,9 +937,9 @@ func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
 	if generated == nil {
 		t.Fatal("server claimed ownership of a nil key")
 	}
-	if len(generated.Private) != NoiseKeySize {
+	if len(generated.Private) != pairing.NoiseKeySize {
 		t.Fatalf("generated key private half is %d bytes, want %d",
-			len(generated.Private), NoiseKeySize)
+			len(generated.Private), pairing.NoiseKeySize)
 	}
 
 	if err := srv.Start(); err != nil {

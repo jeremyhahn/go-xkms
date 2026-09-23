@@ -19,11 +19,13 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time interface checks.
 var (
-	_ Transport           = (*BLETransport)(nil)
+	_ pairing.Transport   = (*BLETransport)(nil)
 	_ BLECapableTransport = (*BLETransport)(nil)
 )
 

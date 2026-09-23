@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +38,7 @@ import (
 // tcpE2EClient wraps a TCP connection and Noise session for E2E testing.
 type tcpE2EClient struct {
 	conn    net.Conn
-	session *phone.NoiseSession
+	session *pairing.NoiseSession
 }
 
 // newTCPE2EClient connects to the TCP phone server, performs a Noise XX
@@ -49,10 +49,10 @@ func newTCPE2EClient(t *testing.T, serverAddr string) *tcpE2EClient {
 	conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
 	require.NoError(t, err, "dial TCP server")
 
-	clientKey, err := phone.GenerateStaticKey()
+	clientKey, err := pairing.GenerateStaticKey()
 	require.NoError(t, err, "generate client static key")
 
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: clientKey,
 		IsInitiator:    true,
 	})
@@ -80,7 +80,7 @@ func newTCPE2EClient(t *testing.T, serverAddr string) *tcpE2EClient {
 
 // sendRequest encrypts a JSON-RPC request, sends it over TCP, reads the
 // encrypted response, and decrypts it.
-func (c *tcpE2EClient) sendRequest(t *testing.T, req *phone.Request) *phone.Response {
+func (c *tcpE2EClient) sendRequest(t *testing.T, req *pairing.Request) *pairing.Response {
 	t.Helper()
 
 	reqBytes, err := json.Marshal(req)
@@ -97,7 +97,7 @@ func (c *tcpE2EClient) sendRequest(t *testing.T, req *phone.Request) *phone.Resp
 	plaintext, err := c.session.Decrypt(ciphertext)
 	require.NoError(t, err, "decrypt response")
 
-	var resp phone.Response
+	var resp pairing.Response
 	require.NoError(t, json.Unmarshal(plaintext, &resp), "unmarshal response")
 	return &resp
 }
@@ -164,10 +164,10 @@ func TestTCPE2E_Ping(t *testing.T) {
 	client := newTCPE2EClient(t, srv.Addr())
 	defer client.close()
 
-	resp := client.sendRequest(t, phone.NewRequest(phone.MethodPing, nil))
+	resp := client.sendRequest(t, pairing.NewRequest(pairing.MethodPing, nil))
 	require.Nil(t, resp.Error, "ping should not return error")
 
-	result, err := phone.DecodeResult[phone.PingResult](resp)
+	result, err := pairing.DecodeResult[pairing.PingResult](resp)
 	require.NoError(t, err)
 	assert.True(t, result.Pong)
 }
@@ -178,16 +178,16 @@ func TestTCPE2E_GetInfo(t *testing.T) {
 	client := newTCPE2EClient(t, srv.Addr())
 	defer client.close()
 
-	resp := client.sendRequest(t, phone.NewRequest(phone.MethodGetInfo, nil))
+	resp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGetInfo, nil))
 	require.Nil(t, resp.Error)
 
-	result, err := phone.DecodeResult[phone.GetInfoResult](resp)
+	result, err := pairing.DecodeResult[pairing.GetInfoResult](resp)
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.0-mock-tcp", result.Version)
 	assert.Equal(t, "Mock Phone (TCP)", result.DeviceName)
-	assert.Contains(t, result.SupportedAlgorithms, phone.COSEAlgES256)
-	assert.Contains(t, result.SupportedAlgorithms, phone.COSEAlgES384)
-	assert.Contains(t, result.SupportedAlgorithms, phone.COSEAlgES512)
+	assert.Contains(t, result.SupportedAlgorithms, pairing.COSEAlgES256)
+	assert.Contains(t, result.SupportedAlgorithms, pairing.COSEAlgES384)
+	assert.Contains(t, result.SupportedAlgorithms, pairing.COSEAlgES512)
 }
 
 func TestTCPE2E_GenerateKey(t *testing.T) {
@@ -199,13 +199,13 @@ func TestTCPE2E_GenerateKey(t *testing.T) {
 	credID := make([]byte, 32)
 	rand.Read(credID)
 
-	resp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+	resp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 		CredentialID: credID,
-		Algorithm:    phone.COSEAlgES256,
+		Algorithm:    pairing.COSEAlgES256,
 	}))
 	require.Nil(t, resp.Error, "generate key should not return error")
 
-	result, err := phone.DecodeResult[phone.GenerateKeyResult](resp)
+	result, err := pairing.DecodeResult[pairing.GenerateKeyResult](resp)
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.PublicKeyCOSE)
 	assert.Equal(t, 1, srv.KeyCount())
@@ -221,22 +221,22 @@ func TestTCPE2E_Sign(t *testing.T) {
 	rand.Read(credID)
 
 	// Generate key first.
-	genResp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+	genResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 		CredentialID: credID,
-		Algorithm:    phone.COSEAlgES256,
+		Algorithm:    pairing.COSEAlgES256,
 	}))
 	require.Nil(t, genResp.Error)
 
 	// Sign data.
 	dataHash := make([]byte, 32) // SHA-256 sized hash
 	rand.Read(dataHash)
-	signResp := client.sendRequest(t, phone.NewRequest(phone.MethodSign, &phone.SignParams{
+	signResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodSign, &pairing.SignParams{
 		CredentialID: credID,
 		DataHash:     dataHash,
 	}))
 	require.Nil(t, signResp.Error)
 
-	result, err := phone.DecodeResult[phone.SignResult](signResp)
+	result, err := pairing.DecodeResult[pairing.SignResult](signResp)
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.Signature)
 	// ES256 produces a 64-byte fixed-size signature (32 bytes r + 32 bytes s).
@@ -253,20 +253,20 @@ func TestTCPE2E_DeleteKey(t *testing.T) {
 	rand.Read(credID)
 
 	// Generate key.
-	genResp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+	genResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 		CredentialID: credID,
-		Algorithm:    phone.COSEAlgES256,
+		Algorithm:    pairing.COSEAlgES256,
 	}))
 	require.Nil(t, genResp.Error)
 	assert.Equal(t, 1, srv.KeyCount())
 
 	// Delete key.
-	delResp := client.sendRequest(t, phone.NewRequest(phone.MethodDeleteKey, &phone.DeleteKeyParams{
+	delResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodDeleteKey, &pairing.DeleteKeyParams{
 		CredentialID: credID,
 	}))
 	require.Nil(t, delResp.Error)
 
-	result, err := phone.DecodeResult[phone.DeleteKeyResult](delResp)
+	result, err := pairing.DecodeResult[pairing.DeleteKeyResult](delResp)
 	require.NoError(t, err)
 	assert.True(t, result.Deleted)
 	assert.Equal(t, 0, srv.KeyCount())
@@ -282,23 +282,23 @@ func TestTCPE2E_LoadKey(t *testing.T) {
 	rand.Read(credID)
 
 	// Generate key.
-	genResp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+	genResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 		CredentialID: credID,
-		Algorithm:    phone.COSEAlgES256,
+		Algorithm:    pairing.COSEAlgES256,
 	}))
 	require.Nil(t, genResp.Error)
 
-	genResult, err := phone.DecodeResult[phone.GenerateKeyResult](genResp)
+	genResult, err := pairing.DecodeResult[pairing.GenerateKeyResult](genResp)
 	require.NoError(t, err)
 
 	// Load key and compare.
-	loadResp := client.sendRequest(t, phone.NewRequest(phone.MethodLoadKey, &phone.LoadKeyParams{
+	loadResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodLoadKey, &pairing.LoadKeyParams{
 		CredentialID: credID,
-		Algorithm:    phone.COSEAlgES256,
+		Algorithm:    pairing.COSEAlgES256,
 	}))
 	require.Nil(t, loadResp.Error)
 
-	loadResult, err := phone.DecodeResult[phone.LoadKeyResult](loadResp)
+	loadResult, err := pairing.DecodeResult[pairing.LoadKeyResult](loadResp)
 	require.NoError(t, err)
 	assert.Equal(t, genResult.PublicKeyCOSE, loadResult.PublicKeyCOSE)
 }
@@ -314,12 +314,12 @@ func TestTCPE2E_SignKeyNotFound(t *testing.T) {
 
 	dummyHash := make([]byte, 32)
 	rand.Read(dummyHash)
-	resp := client.sendRequest(t, phone.NewRequest(phone.MethodSign, &phone.SignParams{
+	resp := client.sendRequest(t, pairing.NewRequest(pairing.MethodSign, &pairing.SignParams{
 		CredentialID: nonExistentCredID,
 		DataHash:     dummyHash,
 	}))
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, phone.ErrorCodeKeyNotFound, resp.Error.Code)
+	assert.Equal(t, pairing.ErrorCodeKeyNotFound, resp.Error.Code)
 }
 
 func TestTCPE2E_MethodNotFound(t *testing.T) {
@@ -328,9 +328,9 @@ func TestTCPE2E_MethodNotFound(t *testing.T) {
 	client := newTCPE2EClient(t, srv.Addr())
 	defer client.close()
 
-	resp := client.sendRequest(t, phone.NewRequest("nonexistent.method", nil))
+	resp := client.sendRequest(t, pairing.NewRequest("nonexistent.method", nil))
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, phone.ErrorCodeMethodNotFound, resp.Error.Code)
+	assert.Equal(t, pairing.ErrorCodeMethodNotFound, resp.Error.Code)
 }
 
 func TestTCPE2E_MultipleOperations(t *testing.T) {
@@ -344,21 +344,21 @@ func TestTCPE2E_MultipleOperations(t *testing.T) {
 		credID := make([]byte, 32)
 		rand.Read(credID)
 
-		genResp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+		genResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 			CredentialID: credID,
-			Algorithm:    phone.COSEAlgES256,
+			Algorithm:    pairing.COSEAlgES256,
 		}))
 		require.Nil(t, genResp.Error, "iteration %d: generate key", i)
 
 		signHash := make([]byte, 32)
 		rand.Read(signHash)
-		signResp := client.sendRequest(t, phone.NewRequest(phone.MethodSign, &phone.SignParams{
+		signResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodSign, &pairing.SignParams{
 			CredentialID: credID,
 			DataHash:     signHash,
 		}))
 		require.Nil(t, signResp.Error, "iteration %d: sign", i)
 
-		delResp := client.sendRequest(t, phone.NewRequest(phone.MethodDeleteKey, &phone.DeleteKeyParams{
+		delResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodDeleteKey, &pairing.DeleteKeyParams{
 			CredentialID: credID,
 		}))
 		require.Nil(t, delResp.Error, "iteration %d: delete key", i)
@@ -383,7 +383,7 @@ func TestTCPE2E_ConcurrentClients(t *testing.T) {
 			defer client.close()
 
 			// Each client does a ping.
-			resp := client.sendRequest(t, phone.NewRequest(phone.MethodPing, nil))
+			resp := client.sendRequest(t, pairing.NewRequest(pairing.MethodPing, nil))
 			if resp.Error != nil {
 				errs <- resp.Error
 				return
@@ -392,9 +392,9 @@ func TestTCPE2E_ConcurrentClients(t *testing.T) {
 			// Each client generates a key.
 			credID := make([]byte, 32)
 			rand.Read(credID)
-			genResp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+			genResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 				CredentialID: credID,
-				Algorithm:    phone.COSEAlgES256,
+				Algorithm:    pairing.COSEAlgES256,
 			}))
 			if genResp.Error != nil {
 				errs <- genResp.Error
@@ -417,7 +417,7 @@ func TestTCPE2E_ClientDisconnectReconnect(t *testing.T) {
 
 	// First connection.
 	client1 := newTCPE2EClient(t, srv.Addr())
-	resp := client1.sendRequest(t, phone.NewRequest(phone.MethodPing, nil))
+	resp := client1.sendRequest(t, pairing.NewRequest(pairing.MethodPing, nil))
 	require.Nil(t, resp.Error)
 	client1.close()
 
@@ -428,10 +428,10 @@ func TestTCPE2E_ClientDisconnectReconnect(t *testing.T) {
 	client2 := newTCPE2EClient(t, srv.Addr())
 	defer client2.close()
 
-	resp = client2.sendRequest(t, phone.NewRequest(phone.MethodPing, nil))
+	resp = client2.sendRequest(t, pairing.NewRequest(pairing.MethodPing, nil))
 	require.Nil(t, resp.Error)
 
-	result, err := phone.DecodeResult[phone.PingResult](resp)
+	result, err := pairing.DecodeResult[pairing.PingResult](resp)
 	require.NoError(t, err)
 	assert.True(t, result.Pong)
 }
@@ -442,9 +442,9 @@ func TestTCPE2E_AllAlgorithms(t *testing.T) {
 		alg     int
 		sigSize int
 	}{
-		{"ES256", phone.COSEAlgES256, 64},
-		{"ES384", phone.COSEAlgES384, 96},
-		{"ES512", phone.COSEAlgES512, 132},
+		{"ES256", pairing.COSEAlgES256, 64},
+		{"ES384", pairing.COSEAlgES384, 96},
+		{"ES512", pairing.COSEAlgES512, 132},
 	}
 
 	for _, tt := range algorithms {
@@ -458,26 +458,26 @@ func TestTCPE2E_AllAlgorithms(t *testing.T) {
 			rand.Read(credID)
 
 			// Generate key.
-			genResp := client.sendRequest(t, phone.NewRequest(phone.MethodGenerateKey, &phone.GenerateKeyParams{
+			genResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodGenerateKey, &pairing.GenerateKeyParams{
 				CredentialID: credID,
 				Algorithm:    tt.alg,
 			}))
 			require.Nil(t, genResp.Error)
 
-			genResult, err := phone.DecodeResult[phone.GenerateKeyResult](genResp)
+			genResult, err := pairing.DecodeResult[pairing.GenerateKeyResult](genResp)
 			require.NoError(t, err)
 			assert.NotEmpty(t, genResult.PublicKeyCOSE)
 
 			// Sign data.
 			sigHash := make([]byte, 32)
 			rand.Read(sigHash)
-			signResp := client.sendRequest(t, phone.NewRequest(phone.MethodSign, &phone.SignParams{
+			signResp := client.sendRequest(t, pairing.NewRequest(pairing.MethodSign, &pairing.SignParams{
 				CredentialID: credID,
 				DataHash:     sigHash,
 			}))
 			require.Nil(t, signResp.Error)
 
-			signResult, err := phone.DecodeResult[phone.SignResult](signResp)
+			signResult, err := pairing.DecodeResult[pairing.SignResult](signResp)
 			require.NoError(t, err)
 			assert.Len(t, signResult.Signature, tt.sigSize)
 		})

@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -186,7 +187,7 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 
 	// Get remote credentials from phone
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Fetching phone credentials...")
-	req := phone.NewRequest(phone.MethodLocalOATHList, &phone.LocalOATHListParams{})
+	req := pairing.NewRequest(pairing.MethodLocalOATHList, &pairing.LocalOATHListParams{})
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: err}
@@ -195,7 +196,7 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrOATHSyncFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := phone.DecodeResult[phone.LocalOATHListResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalOATHListResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrOATHSyncFailed, Detail: fmt.Sprintf(": failed to decode list result: %v", err)}
 	}
@@ -206,7 +207,7 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 		localMap[strings.ToLower(cred.Name)] = cred
 	}
 
-	remoteMap := make(map[string]phone.OATHCredentialInfo, len(result.Credentials))
+	remoteMap := make(map[string]pairing.OATHCredentialInfo, len(result.Credentials))
 	for _, cred := range result.Credentials {
 		remoteMap[strings.ToLower(cred.Name)] = cred
 	}
@@ -216,7 +217,7 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	for _, cred := range localCreds {
 		if _, exists := remoteMap[strings.ToLower(cred.Name)]; !exists {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Pushing: %s\n", cred.Name)
-			pushReq := phone.NewRequest(phone.MethodLocalOATHAdd, &phone.LocalOATHAddParams{
+			pushReq := pairing.NewRequest(pairing.MethodLocalOATHAdd, &pairing.LocalOATHAddParams{
 				Credential: credentialToPhoneInfo(cred),
 			})
 			pushResp, pushErr := phoneBackend.SendRequest(ctx, pushReq)
@@ -317,7 +318,7 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 
 	// Push credential to phone
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending credential...")
-	req := phone.NewRequest(phone.MethodLocalOATHAdd, &phone.LocalOATHAddParams{
+	req := pairing.NewRequest(pairing.MethodLocalOATHAdd, &pairing.LocalOATHAddParams{
 		Credential: credentialToPhoneInfo(cred),
 	})
 
@@ -329,7 +330,7 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrOATHPushFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	pushResult, err := phone.DecodeResult[phone.LocalOATHAddResult](resp)
+	pushResult, err := pairing.DecodeResult[pairing.LocalOATHAddResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrOATHPushFailed, Detail: fmt.Sprintf(": failed to decode push result: %v", err)}
 	}
@@ -399,7 +400,7 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 
 	// Fetch credentials from phone
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Fetching credentials...")
-	req := phone.NewRequest(phone.MethodLocalOATHList, &phone.LocalOATHListParams{})
+	req := pairing.NewRequest(pairing.MethodLocalOATHList, &pairing.LocalOATHListParams{})
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPullFailed, Cause: err}
@@ -408,7 +409,7 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrOATHPullFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := phone.DecodeResult[phone.LocalOATHListResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalOATHListResult](resp)
 	if err != nil {
 		return &DetailError{Err: ErrOATHPullFailed, Detail: fmt.Sprintf(": failed to decode list result: %v", err)}
 	}
@@ -456,8 +457,8 @@ func connectToPhone(device *PairedDevice, timeout time.Duration, logger *slog.Lo
 
 // credentialToPhoneInfo converts a local OATH credential to the phone
 // protocol representation.
-func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
-	return phone.OATHCredentialInfo{
+func credentialToPhoneInfo(cred *oath.Credential) pairing.OATHCredentialInfo {
+	return pairing.OATHCredentialInfo{
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
@@ -473,7 +474,7 @@ func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
 // deviceInfoToCredential converts a phone OATH credential to a local
 // OATH credential, adopting the secret into protected memory. The error is
 // oath.ErrProtectedMemory (wrapped) when that allocation fails.
-func deviceInfoToCredential(info phone.OATHCredentialInfo) (*oath.Credential, error) {
+func deviceInfoToCredential(info pairing.OATHCredentialInfo) (*oath.Credential, error) {
 	algorithm := info.Algorithm
 	if algorithm == "" {
 		algorithm = oath.DefaultAlgorithm

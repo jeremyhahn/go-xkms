@@ -84,8 +84,8 @@ func unsealDeviceLocalKey(device *PairedDevice, logger *slog.Logger) (*secure.Bu
 // step can be dropped: forgetting to check resp.Error, say, reads a nil result
 // as success.
 type deviceSession struct {
-	transport phone.Transport
-	session   *phone.NoiseSession
+	transport pairing.Transport
+	session   *pairing.NoiseSession
 	logger    *slog.Logger
 }
 
@@ -107,7 +107,7 @@ func openDeviceSession(
 	// decode failure on any other field returns in between, and the raw
 	// scalar would be left sitting in protected memory nothing releases.
 	defer localPrivateKey.Destroy()
-	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
+	localKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: local key: %v", ErrSessionKeyDecode, err)
 	}
@@ -147,7 +147,7 @@ func openDeviceSession(
 		return nil, nil, &WrappedError{Msg: "connection failed", Err: err}
 	}
 
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
 		ExpectedRemoteStatic: remotePublicKey,
 		IsInitiator:          true,
@@ -172,7 +172,7 @@ func openDeviceSession(
 	// this opener connected with an empty prologue and no fingerprint
 	// comparison — while the code it replaced, and the backend path, bound
 	// both.
-	if err := phone.PerformHandshake(ctx, &phone.HandshakeConfig{
+	if err := pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
 		Transport:                 transport,
 		Session:                   session,
 		Logger:                    logger,
@@ -214,9 +214,9 @@ func openDeviceSession(
 // travels in the message because the codes are meaningful -- -32036 says this
 // platform can never serve the method, which is not something to retry.
 func (s *deviceSession) Call(ctx context.Context, method string, params any) ([]byte, error) {
-	req := phone.NewRequest(method, params)
+	req := pairing.NewRequest(method, params)
 
-	plaintext, err := phone.EncodeRequest(req)
+	plaintext, err := pairing.EncodeRequest(req)
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to encode " + method, Err: err}
 	}
@@ -236,7 +236,7 @@ func (s *deviceSession) Call(ctx context.Context, method string, params any) ([]
 		return nil, &WrappedError{Msg: "failed to decrypt the " + method + " response", Err: err}
 	}
 
-	resp, err := phone.DecodeResponse(responsePlaintext)
+	resp, err := pairing.DecodeResponse(responsePlaintext)
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to decode the " + method + " response", Err: err}
 	}
@@ -265,8 +265,8 @@ const defaultSessionTimeout = 120 * time.Second
 // THIS machine's trust store.
 func enforceReattestation(
 	ctx context.Context,
-	transport phone.Transport,
-	session *phone.NoiseSession,
+	transport pairing.Transport,
+	session *pairing.NoiseSession,
 	device *PairedDevice,
 	logger *slog.Logger,
 ) error {
@@ -295,7 +295,7 @@ func enforceReattestation(
 // calls it per connection, so a root installed with `xkey trust` between
 // connections takes effect instead of a stale pool refusing a device the
 // machine now trusts.
-func newLiveAttestor(device *PairedDevice, logger *slog.Logger) phone.LiveAttestFunc {
+func newLiveAttestor(device *PairedDevice, logger *slog.Logger) pairing.LiveAttestFunc {
 	return attestation.NewLiveAttestor(
 		attestation.DeviceBindingFor(*device), loadPairingAttestationTrust, logger)
 }
@@ -345,7 +345,7 @@ func newPairedDeviceBackendConfig(
 		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
 	}
 
-	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
+	localKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
 	}

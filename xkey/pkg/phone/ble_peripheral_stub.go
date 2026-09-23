@@ -18,6 +18,8 @@ package phone
 import (
 	"context"
 	"log/slog"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // BLE Peripheral errors - defined in ble_peripheral.go for BLE builds.
@@ -33,7 +35,7 @@ var (
 type BLEPeripheralConfig struct {
 	// LocalStaticKey is the persistent local Noise static key, held in
 	// protected memory. If nil, a new key will be generated.
-	LocalStaticKey *StaticKey
+	LocalStaticKey *pairing.StaticKey
 
 	// OwnsStaticKey transfers ownership of LocalStaticKey to the peripheral.
 	// Present here for API parity: a consumer writing against the documented

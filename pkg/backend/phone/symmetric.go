@@ -18,7 +18,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // Compile-time interface satisfaction check for SymmetricBackend.
@@ -94,7 +94,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, err
 	}
 
-	params := &phoneproto.LocalGenerateKeyParams{
+	params := &pairing.LocalGenerateKeyParams{
 		KeyID:     attrs.CN,
 		Algorithm: phoneAlgo,
 	}
@@ -102,12 +102,12 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGenerateKey, params)
+	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGenerateKey, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := phoneproto.DecodeResult[phoneproto.LocalGenerateKeyResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalGenerateKeyResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -135,14 +135,14 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	ctx, cancel := context.WithTimeout(ctx, b.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGetKeyInfo, &phoneproto.LocalGetKeyInfoParams{
+	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	keyInfo, err := phoneproto.DecodeResult[phoneproto.LocalGetKeyInfoResult](resp)
+	keyInfo, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -171,14 +171,14 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	defer cancel()
 
 	// Verify the key exists on the phone.
-	resp, err := b.sendLocalRequest(ctx, phoneproto.MethodLocalGetKeyInfo, &phoneproto.LocalGetKeyInfoParams{
+	resp, err := b.sendLocalRequest(ctx, pairing.MethodLocalGetKeyInfo, &pairing.LocalGetKeyInfoParams{
 		KeyID: attrs.CN,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	keyInfo, err := phoneproto.DecodeResult[phoneproto.LocalGetKeyInfoResult](resp)
+	keyInfo, err := pairing.DecodeResult[pairing.LocalGetKeyInfoResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -209,7 +209,7 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 		}
 	}
 
-	params := &phoneproto.LocalSymmetricEncryptParams{
+	params := &pairing.LocalSymmetricEncryptParams{
 		KeyID:     e.keyID,
 		Plaintext: plaintext,
 	}
@@ -221,12 +221,12 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 	ctx, cancel := context.WithTimeout(context.Background(), e.backend.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := e.backend.sendLocalRequest(ctx, phoneproto.MethodLocalSymmetricEncrypt, params)
+	resp, err := e.backend.sendLocalRequest(ctx, pairing.MethodLocalSymmetricEncrypt, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := phoneproto.DecodeResult[phoneproto.LocalSymmetricEncryptResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalSymmetricEncryptResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}
@@ -252,7 +252,7 @@ func (e *phoneSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 		}
 	}
 
-	params := &phoneproto.LocalSymmetricDecryptParams{
+	params := &pairing.LocalSymmetricDecryptParams{
 		KeyID:      e.keyID,
 		Ciphertext: data.Ciphertext,
 	}
@@ -264,12 +264,12 @@ func (e *phoneSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 	ctx, cancel := context.WithTimeout(context.Background(), e.backend.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := e.backend.sendLocalRequest(ctx, phoneproto.MethodLocalSymmetricDecrypt, params)
+	resp, err := e.backend.sendLocalRequest(ctx, pairing.MethodLocalSymmetricDecrypt, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := phoneproto.DecodeResult[phoneproto.LocalSymmetricDecryptResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalSymmetricDecryptResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

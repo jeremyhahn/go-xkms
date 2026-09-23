@@ -22,7 +22,7 @@ import (
 	"errors"
 	"testing"
 
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 func TestPhoneDecrypter_Public(t *testing.T) {
@@ -58,11 +58,11 @@ func TestPhoneDecrypter_Decrypt_Success(t *testing.T) {
 	expectedPlaintext := []byte("decrypted-data-here")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			if req.Method != phoneproto.MethodLocalDecrypt {
-				t.Errorf("expected method %s, got %s", phoneproto.MethodLocalDecrypt, req.Method)
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			if req.Method != pairing.MethodLocalDecrypt {
+				t.Errorf("expected method %s, got %s", pairing.MethodLocalDecrypt, req.Method)
 			}
-			return mockSuccessResponse(phoneproto.LocalDecryptResult{
+			return mockSuccessResponse(pairing.LocalDecryptResult{
 				Plaintext: expectedPlaintext,
 			}), nil
 		},
@@ -88,8 +88,8 @@ func TestPhoneDecrypter_Decrypt_RPCError(t *testing.T) {
 	}
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeDecryptFailed, "decryption failed"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeDecryptFailed, "decryption failed"), nil
 		},
 	}
 
@@ -110,7 +110,7 @@ func TestPhoneDecrypter_Decrypt_TransportError(t *testing.T) {
 
 	transportErr := errors.New("transport failure")
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			return nil, transportErr
 		},
 	}

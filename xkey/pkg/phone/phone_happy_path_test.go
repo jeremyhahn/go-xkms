@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,12 +33,12 @@ import (
 // of PhoneKeyBackend methods with real Noise cryptography.
 type mockPhoneResponder struct {
 	transport *mockPipeTransport
-	session   *NoiseSession
+	session   *pairing.NoiseSession
 	t         *testing.T
 	handlers  map[string]func(params json.RawMessage) (interface{}, error)
 }
 
-func newMockPhoneResponder(t *testing.T, transport *mockPipeTransport, session *NoiseSession) *mockPhoneResponder {
+func newMockPhoneResponder(t *testing.T, transport *mockPipeTransport, session *pairing.NoiseSession) *mockPhoneResponder {
 	t.Helper()
 
 	r := &mockPhoneResponder{
@@ -47,14 +48,14 @@ func newMockPhoneResponder(t *testing.T, transport *mockPipeTransport, session *
 		handlers:  make(map[string]func(params json.RawMessage) (interface{}, error)),
 	}
 
-	r.handlers[MethodGenerateKey] = r.handleGenerateKey
-	r.handlers[MethodSign] = r.handleSign
-	r.handlers[MethodLoadKey] = r.handleLoadKey
-	r.handlers[MethodDeleteKey] = r.handleDeleteKey
-	r.handlers[MethodGetInfo] = r.handleGetInfo
-	r.handlers[MethodPing] = r.handlePing
-	r.handlers[MethodLocalListFido2Credentials] = r.handleListFido2Credentials
-	r.handlers[MethodLocalSignFido2Assertion] = r.handleSignFido2Assertion
+	r.handlers[pairing.MethodGenerateKey] = r.handleGenerateKey
+	r.handlers[pairing.MethodSign] = r.handleSign
+	r.handlers[pairing.MethodLoadKey] = r.handleLoadKey
+	r.handlers[pairing.MethodDeleteKey] = r.handleDeleteKey
+	r.handlers[pairing.MethodGetInfo] = r.handleGetInfo
+	r.handlers[pairing.MethodPing] = r.handlePing
+	r.handlers[pairing.MethodLocalListFido2Credentials] = r.handleListFido2Credentials
+	r.handlers[pairing.MethodLocalSignFido2Assertion] = r.handleSignFido2Assertion
 
 	return r
 }
@@ -78,7 +79,7 @@ func (r *mockPhoneResponder) handleOne() {
 	require.NoError(r.t, err, "responder: failed to decrypt request")
 
 	// Decode the JSON-RPC request.
-	var req Request
+	var req pairing.Request
 	err = json.Unmarshal(plaintext, &req)
 	require.NoError(r.t, err, "responder: failed to unmarshal request")
 
@@ -95,12 +96,12 @@ func (r *mockPhoneResponder) handleOne() {
 	result, handlerErr := handler(rawParams)
 
 	// Build the JSON-RPC response.
-	var resp Response
-	resp.JSONRPC = JSONRPCVersion
+	var resp pairing.Response
+	resp.JSONRPC = pairing.JSONRPCVersion
 	resp.ID = req.ID
 
 	if handlerErr != nil {
-		resp.Error = &RPCError{Code: -32000, Message: handlerErr.Error()}
+		resp.Error = &pairing.RPCError{Code: -32000, Message: handlerErr.Error()}
 	} else {
 		resp.Result, err = json.Marshal(result)
 		require.NoError(r.t, err, "responder: failed to marshal result")
@@ -122,38 +123,38 @@ func (r *mockPhoneResponder) handleOne() {
 // ---------------------------------------------------------------------------
 
 func (r *mockPhoneResponder) handleGenerateKey(_ json.RawMessage) (interface{}, error) {
-	return &GenerateKeyResult{PublicKeyCOSE: []byte{0x01, 0x02, 0x03}}, nil
+	return &pairing.GenerateKeyResult{PublicKeyCOSE: []byte{0x01, 0x02, 0x03}}, nil
 }
 
 func (r *mockPhoneResponder) handleSign(_ json.RawMessage) (interface{}, error) {
-	return &SignResult{Signature: []byte{0x30, 0x44}}, nil
+	return &pairing.SignResult{Signature: []byte{0x30, 0x44}}, nil
 }
 
 func (r *mockPhoneResponder) handleLoadKey(_ json.RawMessage) (interface{}, error) {
-	return &LoadKeyResult{Exists: true, PublicKeyCOSE: []byte{0x01, 0x02}}, nil
+	return &pairing.LoadKeyResult{Exists: true, PublicKeyCOSE: []byte{0x01, 0x02}}, nil
 }
 
 func (r *mockPhoneResponder) handleDeleteKey(_ json.RawMessage) (interface{}, error) {
-	return &DeleteKeyResult{Deleted: true}, nil
+	return &pairing.DeleteKeyResult{Deleted: true}, nil
 }
 
 func (r *mockPhoneResponder) handleGetInfo(_ json.RawMessage) (interface{}, error) {
-	return &GetInfoResult{
+	return &pairing.GetInfoResult{
 		Version:             "1.0",
 		DeviceName:          "Test Phone",
-		SupportedAlgorithms: []int{COSEAlgES256, COSEAlgES384, COSEAlgES512},
+		SupportedAlgorithms: []int{pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512},
 		MaxCredentials:      100,
 		CurrentCredentials:  5,
 	}, nil
 }
 
 func (r *mockPhoneResponder) handlePing(_ json.RawMessage) (interface{}, error) {
-	return &PingResult{Pong: true}, nil
+	return &pairing.PingResult{Pong: true}, nil
 }
 
 func (r *mockPhoneResponder) handleListFido2Credentials(_ json.RawMessage) (interface{}, error) {
-	return &LocalListFido2CredentialsResult{
-		Credentials: []Fido2CredentialInfo{
+	return &pairing.LocalListFido2CredentialsResult{
+		Credentials: []pairing.Fido2CredentialInfo{
 			{
 				CredentialID: []byte("cred-1"),
 				RpID:         "example.com",
@@ -164,7 +165,7 @@ func (r *mockPhoneResponder) handleListFido2Credentials(_ json.RawMessage) (inte
 }
 
 func (r *mockPhoneResponder) handleSignFido2Assertion(_ json.RawMessage) (interface{}, error) {
-	return &LocalSignFido2AssertionResult{
+	return &pairing.LocalSignFido2AssertionResult{
 		AuthenticatorData: []byte{0xaa, 0xbb},
 		Signature:         []byte{0x30, 0x45},
 		SignCount:         42,
@@ -197,7 +198,7 @@ func setupNoiseSessionPair(t *testing.T) (*PhoneKeyBackend, *mockPhoneResponder)
 	// Run the responder side of the Noise XX handshake in a goroutine.
 	// runResponderWithIdentity (from handshake_test.go) handles identity exchange
 	// followed by the Noise XX handshake (msg1 -> msg2 -> msg3).
-	responderDone := make(chan *NoiseSession, 1)
+	responderDone := make(chan *pairing.NoiseSession, 1)
 	go func() {
 		responderDone <- runResponderWithIdentity(t, responderTransport)
 	}()
@@ -253,7 +254,7 @@ func TestPhoneKeyBackend_GetDeviceInfo_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Test Phone", info.DeviceName)
 	assert.Equal(t, "1.0", info.Version)
-	assert.Equal(t, []int{COSEAlgES256, COSEAlgES384, COSEAlgES512}, info.SupportedAlgorithms)
+	assert.Equal(t, []int{pairing.COSEAlgES256, pairing.COSEAlgES384, pairing.COSEAlgES512}, info.SupportedAlgorithms)
 	assert.Equal(t, 100, info.MaxCredentials)
 	assert.Equal(t, 5, info.CurrentCredentials)
 }
@@ -266,11 +267,11 @@ func TestPhoneKeyBackend_GenerateCredentialKey_HappyPath(t *testing.T) {
 
 	go responder.handleOne()
 
-	handle, pubKey, err := backend.GenerateCredentialKey(COSEAlgES256, []byte("test-cred-id"))
+	handle, pubKey, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("test-cred-id"))
 	require.NoError(t, err)
 	require.NotNil(t, handle)
 	assert.Equal(t, []byte("test-cred-id"), handle.CredentialID())
-	assert.Equal(t, COSEAlgES256, handle.Algorithm())
+	assert.Equal(t, pairing.COSEAlgES256, handle.Algorithm())
 	assert.Equal(t, []byte{0x01, 0x02, 0x03}, pubKey)
 }
 
@@ -282,12 +283,12 @@ func TestPhoneKeyBackend_Sign_HappyPath(t *testing.T) {
 
 	// Generate a key first to obtain a handle.
 	go responder.handleOne()
-	handle, _, err := backend.GenerateCredentialKey(COSEAlgES256, []byte("sign-cred"))
+	handle, _, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("sign-cred"))
 	require.NoError(t, err)
 
 	// Sign with the handle.
 	go responder.handleOne()
-	sig, err := backend.Sign(handle, COSEAlgES256, []byte("test-data-hash"))
+	sig, err := backend.Sign(handle, pairing.COSEAlgES256, []byte("test-data-hash"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte{0x30, 0x44}, sig)
 }
@@ -300,11 +301,11 @@ func TestPhoneKeyBackend_LoadKey_HappyPath(t *testing.T) {
 
 	go responder.handleOne()
 
-	handle, err := backend.LoadKey([]byte("existing-cred"), COSEAlgES256)
+	handle, err := backend.LoadKey([]byte("existing-cred"), pairing.COSEAlgES256)
 	require.NoError(t, err)
 	require.NotNil(t, handle)
 	assert.Equal(t, []byte("existing-cred"), handle.CredentialID())
-	assert.Equal(t, COSEAlgES256, handle.Algorithm())
+	assert.Equal(t, pairing.COSEAlgES256, handle.Algorithm())
 }
 
 func TestPhoneKeyBackend_LoadKey_CacheHit(t *testing.T) {
@@ -315,12 +316,12 @@ func TestPhoneKeyBackend_LoadKey_CacheHit(t *testing.T) {
 
 	// First LoadKey goes over the wire.
 	go responder.handleOne()
-	handle1, err := backend.LoadKey([]byte("cached-cred"), COSEAlgES256)
+	handle1, err := backend.LoadKey([]byte("cached-cred"), pairing.COSEAlgES256)
 	require.NoError(t, err)
 
 	// Second LoadKey with the same credential ID should hit the local cache
 	// and NOT require a responder goroutine.
-	handle2, err := backend.LoadKey([]byte("cached-cred"), COSEAlgES256)
+	handle2, err := backend.LoadKey([]byte("cached-cred"), pairing.COSEAlgES256)
 	require.NoError(t, err)
 
 	assert.Equal(t, handle1.CredentialID(), handle2.CredentialID())
@@ -335,7 +336,7 @@ func TestPhoneKeyBackend_DeleteKey_HappyPath(t *testing.T) {
 
 	// Generate a key to obtain a handle.
 	go responder.handleOne()
-	handle, _, err := backend.GenerateCredentialKey(COSEAlgES256, []byte("delete-cred"))
+	handle, _, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("delete-cred"))
 	require.NoError(t, err)
 
 	// Delete the key.
@@ -374,7 +375,7 @@ func TestPhoneKeyBackend_SignFido2Assertion_HappyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, err := backend.SignFido2Assertion(ctx, &LocalSignFido2AssertionParams{
+	result, err := backend.SignFido2Assertion(ctx, &pairing.LocalSignFido2AssertionParams{
 		CredentialID:   []byte("cred-1"),
 		RpID:           "example.com",
 		ClientDataHash: []byte("client-data-hash-32bytes-long!!!"),
@@ -412,14 +413,14 @@ func TestPhoneKeyBackend_MultipleOperations_HappyPath(t *testing.T) {
 
 	// Operation 3: GenerateCredentialKey
 	go responder.handleOne()
-	handle, pubKey, err := backend.GenerateCredentialKey(COSEAlgES256, []byte("multi-op-cred"))
+	handle, pubKey, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("multi-op-cred"))
 	require.NoError(t, err)
 	assert.NotNil(t, handle)
 	assert.NotEmpty(t, pubKey)
 
 	// Operation 4: Sign with the generated key
 	go responder.handleOne()
-	sig, err := backend.Sign(handle, COSEAlgES256, []byte("data-to-sign"))
+	sig, err := backend.Sign(handle, pairing.COSEAlgES256, []byte("data-to-sign"))
 	require.NoError(t, err)
 	assert.NotEmpty(t, sig)
 
@@ -440,7 +441,7 @@ func TestPhoneKeyBackend_Ping_PhoneReturnsError(t *testing.T) {
 	defer backend.Close()
 
 	// Override the ping handler to return an error.
-	responder.handlers[MethodPing] = func(_ json.RawMessage) (interface{}, error) {
+	responder.handlers[pairing.MethodPing] = func(_ json.RawMessage) (interface{}, error) {
 		return nil, errors.New("phone internal error")
 	}
 
@@ -459,7 +460,7 @@ func TestPhoneKeyBackend_GetDeviceInfo_PhoneReturnsError(t *testing.T) {
 	backend, responder := setupNoiseSessionPair(t)
 	defer backend.Close()
 
-	responder.handlers[MethodGetInfo] = func(_ json.RawMessage) (interface{}, error) {
+	responder.handlers[pairing.MethodGetInfo] = func(_ json.RawMessage) (interface{}, error) {
 		return nil, errors.New("device info unavailable")
 	}
 
@@ -479,13 +480,13 @@ func TestPhoneKeyBackend_GenerateCredentialKey_PhoneReturnsError(t *testing.T) {
 	backend, responder := setupNoiseSessionPair(t)
 	defer backend.Close()
 
-	responder.handlers[MethodGenerateKey] = func(_ json.RawMessage) (interface{}, error) {
+	responder.handlers[pairing.MethodGenerateKey] = func(_ json.RawMessage) (interface{}, error) {
 		return nil, errors.New("key generation failed on phone")
 	}
 
 	go responder.handleOne()
 
-	handle, pubKey, err := backend.GenerateCredentialKey(COSEAlgES256, []byte("fail-cred"))
+	handle, pubKey, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("fail-cred"))
 	assert.Error(t, err)
 	assert.Nil(t, handle)
 	assert.Nil(t, pubKey)
@@ -499,17 +500,17 @@ func TestPhoneKeyBackend_Sign_PhoneReturnsError(t *testing.T) {
 
 	// Generate a key first.
 	go responder.handleOne()
-	handle, _, err := backend.GenerateCredentialKey(COSEAlgES256, []byte("sign-err-cred"))
+	handle, _, err := backend.GenerateCredentialKey(pairing.COSEAlgES256, []byte("sign-err-cred"))
 	require.NoError(t, err)
 
 	// Override sign handler to return an error.
-	responder.handlers[MethodSign] = func(_ json.RawMessage) (interface{}, error) {
+	responder.handlers[pairing.MethodSign] = func(_ json.RawMessage) (interface{}, error) {
 		return nil, errors.New("biometric timeout")
 	}
 
 	go responder.handleOne()
 
-	sig, err := backend.Sign(handle, COSEAlgES256, []byte("data"))
+	sig, err := backend.Sign(handle, pairing.COSEAlgES256, []byte("data"))
 	assert.Error(t, err)
 	assert.Nil(t, sig)
 }
@@ -521,13 +522,13 @@ func TestPhoneKeyBackend_LoadKey_KeyNotFound(t *testing.T) {
 	defer backend.Close()
 
 	// Override loadKey handler to return exists=false.
-	responder.handlers[MethodLoadKey] = func(_ json.RawMessage) (interface{}, error) {
-		return &LoadKeyResult{Exists: false}, nil
+	responder.handlers[pairing.MethodLoadKey] = func(_ json.RawMessage) (interface{}, error) {
+		return &pairing.LoadKeyResult{Exists: false}, nil
 	}
 
 	go responder.handleOne()
 
-	handle, err := backend.LoadKey([]byte("nonexistent-cred"), COSEAlgES256)
+	handle, err := backend.LoadKey([]byte("nonexistent-cred"), pairing.COSEAlgES256)
 	assert.ErrorIs(t, err, ErrKeyNotFound)
 	assert.Nil(t, handle)
 }
@@ -539,8 +540,8 @@ func TestPhoneKeyBackend_Ping_PongFalse(t *testing.T) {
 	defer backend.Close()
 
 	// Override ping handler to return pong=false.
-	responder.handlers[MethodPing] = func(_ json.RawMessage) (interface{}, error) {
-		return &PingResult{Pong: false}, nil
+	responder.handlers[pairing.MethodPing] = func(_ json.RawMessage) (interface{}, error) {
+		return &pairing.PingResult{Pong: false}, nil
 	}
 
 	go responder.handleOne()
@@ -558,7 +559,7 @@ func TestPhoneKeyBackend_ExportPrivateKey_NotSupported(t *testing.T) {
 	backend, _ := setupNoiseSessionPair(t)
 	defer backend.Close()
 
-	handle := &phoneKeyHandle{credentialID: []byte("test"), algorithm: COSEAlgES256}
+	handle := &phoneKeyHandle{credentialID: []byte("test"), algorithm: pairing.COSEAlgES256}
 	data, err := backend.ExportPrivateKey(handle)
 	assert.ErrorIs(t, err, ErrExportNotSupported)
 	assert.Nil(t, data)
@@ -570,7 +571,7 @@ func TestPhoneKeyBackend_ImportPrivateKey_NotSupported(t *testing.T) {
 	backend, _ := setupNoiseSessionPair(t)
 	defer backend.Close()
 
-	handle, err := backend.ImportPrivateKey([]byte("test"), COSEAlgES256, []byte("pkcs8-key"))
+	handle, err := backend.ImportPrivateKey([]byte("test"), pairing.COSEAlgES256, []byte("pkcs8-key"))
 	assert.ErrorIs(t, err, ErrImportNotSupported)
 	assert.Nil(t, handle)
 }

@@ -19,6 +19,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // USB stub, mirroring the BLE transport's ble_transport_stub.go pattern:
@@ -40,7 +42,7 @@ const (
 )
 
 // Compile-time interface check.
-var _ Transport = (*USBTransport)(nil)
+var _ pairing.Transport = (*USBTransport)(nil)
 
 // USBTransportConfig configures the USB transport for phone communication.
 type USBTransportConfig struct {

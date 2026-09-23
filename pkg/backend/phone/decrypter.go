@@ -18,7 +18,7 @@ import (
 	"crypto"
 	"io"
 
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // phoneDecrypter implements crypto.Decrypter by proxying decrypt operations
@@ -50,7 +50,7 @@ func (d *phoneDecrypter) Public() crypto.PublicKey {
 // to the phone. The rand parameter is unused as the phone handles all
 // cryptographic randomness internally.
 func (d *phoneDecrypter) Decrypt(_ io.Reader, ciphertext []byte, _ crypto.DecrypterOpts) ([]byte, error) {
-	params := &phoneproto.LocalDecryptParams{
+	params := &pairing.LocalDecryptParams{
 		KeyID:      d.keyID,
 		Ciphertext: ciphertext,
 		Algorithm:  d.algorithm,
@@ -59,12 +59,12 @@ func (d *phoneDecrypter) Decrypt(_ io.Reader, ciphertext []byte, _ crypto.Decryp
 	ctx, cancel := context.WithTimeout(context.Background(), d.backend.config.RequestTimeout)
 	defer cancel()
 
-	resp, err := d.backend.sendLocalRequest(ctx, phoneproto.MethodLocalDecrypt, params)
+	resp, err := d.backend.sendLocalRequest(ctx, pairing.MethodLocalDecrypt, params)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := phoneproto.DecodeResult[phoneproto.LocalDecryptResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalDecryptResult](resp)
 	if err != nil {
 		return nil, ErrInvalidResponse
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -51,7 +52,7 @@ var (
 // the command testable without a radio.
 type deviceBackupTransport interface {
 	Connect(ctx context.Context) error
-	SendRequest(ctx context.Context, req *phone.Request) (*phone.Response, error)
+	SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error)
 	Close() error
 }
 
@@ -206,7 +207,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintln(out, "Sending backup data...")
 
-	req := phone.NewRequest(phone.MethodLocalCreateBackup, &phone.LocalCreateBackupParams{
+	req := pairing.NewRequest(pairing.MethodLocalCreateBackup, &pairing.LocalCreateBackupParams{
 		BackupData: payload,
 		Label:      fmt.Sprintf("xkey-backup-%s", time.Now().UTC().Format("20060102-150405")),
 	})
@@ -219,7 +220,7 @@ func runBackupToDevice(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrBackupToDeviceFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := phone.DecodeResult[phone.LocalCreateBackupResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalCreateBackupResult](resp)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode backup result", Err: err}
 	}
@@ -280,7 +281,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(out, "Requesting backup data (check phone for biometric prompt)...")
 	_, _ = fmt.Fprintln(out)
 
-	req := phone.NewRequest(phone.MethodLocalRestoreBackup, &phone.LocalRestoreBackupParams{})
+	req := pairing.NewRequest(pairing.MethodLocalRestoreBackup, &pairing.LocalRestoreBackupParams{})
 
 	resp, err := transport.SendRequest(ctx, req)
 	if err != nil {
@@ -290,7 +291,7 @@ func runBackupFromDevice(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrBackupFromDeviceFailed, Detail: fmt.Sprintf(": [%d] %s", resp.Error.Code, resp.Error.Message)}
 	}
 
-	result, err := phone.DecodeResult[phone.LocalRestoreBackupResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalRestoreBackupResult](resp)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode restore result", Err: err}
 	}

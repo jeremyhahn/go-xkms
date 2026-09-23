@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 func generatePeerPublicKeyDER(t *testing.T) []byte {
@@ -43,11 +43,11 @@ func TestBackend_DeriveKeyECDH_Success_NoKDF(t *testing.T) {
 	sharedSecret := []byte("shared-secret-32-bytes-long-key!")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			if req.Method != phoneproto.MethodLocalECDH {
-				t.Errorf("expected method %s, got %s", phoneproto.MethodLocalECDH, req.Method)
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			if req.Method != pairing.MethodLocalECDH {
+				t.Errorf("expected method %s, got %s", pairing.MethodLocalECDH, req.Method)
 			}
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -70,8 +70,8 @@ func TestBackend_DeriveKeyECDH_Success_WithHKDF(t *testing.T) {
 	sharedSecret := []byte("raw-shared-secret-from-ecdh-here")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -107,8 +107,8 @@ func TestBackend_DeriveKeyECDH_Success_WithHKDF_SHA384(t *testing.T) {
 	sharedSecret := []byte("raw-ecdh-shared-secret-material!")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -137,8 +137,8 @@ func TestBackend_DeriveKeyECDH_Success_WithHKDF_SHA512(t *testing.T) {
 	sharedSecret := []byte("raw-ecdh-shared-secret-material!")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -167,8 +167,8 @@ func TestBackend_DeriveKeyECDH_Success_WithHKDF_SHA3(t *testing.T) {
 	sharedSecret := []byte("raw-ecdh-shared-secret-material!")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -250,8 +250,8 @@ func TestBackend_DeriveKeyECDH_EmptyPeerKey(t *testing.T) {
 
 func TestBackend_DeriveKeyECDH_EmptySharedSecret(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: nil,
 			}), nil
 		},
@@ -269,8 +269,8 @@ func TestBackend_DeriveKeyECDH_EmptySharedSecret(t *testing.T) {
 
 func TestBackend_DeriveKeyECDH_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeECDHFailed, "ecdh failed"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeECDHFailed, "ecdh failed"), nil
 		},
 	}
 
@@ -289,8 +289,8 @@ func TestBackend_DeriveKeyECDH_InvalidKDFParams(t *testing.T) {
 	sharedSecret := []byte("raw-shared-secret-from-ecdh-here")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -317,8 +317,8 @@ func TestBackend_DeriveKeyECDH_UnsupportedKDFAlgorithm(t *testing.T) {
 	sharedSecret := []byte("raw-shared-secret-from-ecdh-here")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},
@@ -347,8 +347,8 @@ func TestBackend_DeriveKeyECDH_UnsupportedHashAlgorithm(t *testing.T) {
 	sharedSecret := []byte("raw-shared-secret-from-ecdh-here")
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalECDHResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalECDHResult{
 				SharedSecret: sharedSecret,
 			}), nil
 		},

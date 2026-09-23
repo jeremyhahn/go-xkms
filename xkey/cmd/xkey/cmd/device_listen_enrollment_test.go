@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // stubAttestationTPM stands in for an already-open attestation TPM. Only its
@@ -104,7 +104,7 @@ func TestConnectListenBridge_DisabledXKMSdServesNoBridge(t *testing.T) {
 // end-to-end shape of the "no TPM" outcome as the phone sees it: an explicit
 // attestation-unsupported error rather than a failure.
 func TestListenHandler_WithoutAnEnrollmentTPM_ReportsUnavailable(t *testing.T) {
-	bridge, err := phone.NewBridge(&listBackendsClient{}, &phone.BridgeConfig{
+	bridge, err := pairing.NewBridge(&listBackendsClient{}, &pairing.BridgeConfig{
 		Logger: newTestLogger(),
 		TPM:    nil,
 	})
@@ -112,10 +112,10 @@ func TestListenHandler_WithoutAnEnrollmentTPM_ReportsUnavailable(t *testing.T) {
 
 	handler := newListenHandler(t, bridge)
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, phone.MethodRemoteGetTCGCSRIDevID, map[string]any{"backend": "tpm2"}))
+		mustEncodeRequest(t, pairing.MethodRemoteGetTCGCSRIDevID, map[string]any{"backend": "tpm2"}))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, phone.ErrorCodeAttestUnsupported, resp.Error.Code)
+	assert.Equal(t, pairing.ErrorCodeAttestUnsupported, resp.Error.Code)
 }

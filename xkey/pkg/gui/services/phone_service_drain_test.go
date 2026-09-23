@@ -17,21 +17,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // newLeasedConnection wires a PhoneService with a live active connection and
 // takes one lease against it, returning the key it published and the release
 // that retires the lease.
-func newLeasedConnection(t *testing.T) (*PhoneService, *phone.StaticKey, func()) {
+func newLeasedConnection(t *testing.T) (*PhoneService, *pairing.StaticKey, func()) {
 	t.Helper()
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
 
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: key,
 		IsInitiator:    true,
 	})
@@ -77,7 +78,7 @@ func teardown(t *testing.T, svc *PhoneService, within time.Duration) bool {
 // destroyed reports whether a StaticKey has had its protected pages released.
 // Destroy zeroes the embedded key pair, so an empty private half is the
 // observable difference without reading freed memory.
-func destroyed(key *phone.StaticKey) bool { return len(key.Private) == 0 }
+func destroyed(key *pairing.StaticKey) bool { return len(key.Private) == 0 }
 
 // TestCloseActiveConnection_BoundsTheDrain covers the hang this branch
 // introduced into the GUI's teardown path. An attestation holds its lease
@@ -146,11 +147,11 @@ func TestCloseActiveConnection_DoesNotDestroyANewGeneration(t *testing.T) {
 
 	svc, oldKey, release := newLeasedConnection(t)
 
-	newKey, err := phone.GenerateStaticKey()
+	newKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
-	newSession, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	newSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: newKey,
 		IsInitiator:    true,
 	})

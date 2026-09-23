@@ -20,10 +20,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // WithNoiseConfig used to write t.noise with no synchronization while Connect
@@ -39,7 +38,7 @@ func TestWithNoiseConfigDoesNotRaceConnect(t *testing.T) {
 	tr, g := newGatedTransport(t)
 	close(g.gate) // no blocking; the point here is the concurrent reconfigure.
 
-	rotated, err := phone.GenerateStaticKey()
+	rotated, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(rotated.Destroy)
 
@@ -95,7 +94,7 @@ func TestWithNoiseConfigDoesNotRaceConnect(t *testing.T) {
 // protected StaticKey, so the assertion here is that the loaded key still
 // derives the same public key after the caller has scribbled over its slice.
 func TestWithNoiseConfigCopiesTheCallersConfig(t *testing.T) {
-	source, err := phone.GenerateStaticKey()
+	source, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(source.Destroy)
 
@@ -142,7 +141,7 @@ func TestWithNoiseConfigCopiesTheCallersConfig(t *testing.T) {
 // copy taken with bytes.Clone would be abandoned unzeroized on every rotation
 // and would outlive any wipe the caller performs on its own copy.
 func TestWithNoiseConfigHoldsThePrivateKeyInProtectedMemory(t *testing.T) {
-	source, err := phone.GenerateStaticKey()
+	source, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(source.Destroy)
 
@@ -160,10 +159,10 @@ func TestWithNoiseConfigHoldsThePrivateKeyInProtectedMemory(t *testing.T) {
 // displaces. Dropping the reference would strand a locked, unswappable page for
 // the life of the process on every rotation.
 func TestWithNoiseConfigDestroysTheDisplacedKey(t *testing.T) {
-	first, err := phone.GenerateStaticKey()
+	first, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(first.Destroy)
-	second, err := phone.GenerateStaticKey()
+	second, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(second.Destroy)
 

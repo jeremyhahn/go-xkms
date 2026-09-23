@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // shrinkOpsTimeout makes the lease drain bounded by something a test can
@@ -43,7 +45,7 @@ func shrinkOpsTimeout(t *testing.T, d time.Duration) {
 func TestClose_BoundsTheLeaseDrain(t *testing.T) {
 	shrinkOpsTimeout(t, 100*time.Millisecond)
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -95,7 +97,7 @@ func TestClose_BoundsTheLeaseDrain(t *testing.T) {
 func TestClose_ReportsIncompleteShutdownForABorrowedKey(t *testing.T) {
 	shrinkOpsTimeout(t, 100*time.Millisecond)
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -143,7 +145,7 @@ func TestClose_ReportsIncompleteShutdownForABorrowedKey(t *testing.T) {
 func TestClose_ReportsSuccessWhenEveryLeaseDrains(t *testing.T) {
 	shrinkOpsTimeout(t, testWait)
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestConstructorFailureWithOwnedNilKey(t *testing.T) {
 // took ownership of the same protected pages. Whichever backend closed first
 // would free pages the other's session was still reading.
 func TestReusedConfigDoesNotShareASuppliedOwnedKey(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -290,7 +292,7 @@ func TestReusedConfigDoesNotShareASuppliedOwnedKey(t *testing.T) {
 func TestSecondCloseDoesNotReportSuccessAfterIncompleteShutdown(t *testing.T) {
 	shrinkOpsTimeout(t, 100*time.Millisecond)
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -334,7 +336,7 @@ func TestSecondCloseDoesNotReportSuccessAfterIncompleteShutdown(t *testing.T) {
 func TestConcurrentCloseObservesTheSameOutcome(t *testing.T) {
 	shrinkOpsTimeout(t, 300*time.Millisecond)
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -380,23 +382,23 @@ func TestConcurrentCloseObservesTheSameOutcome(t *testing.T) {
 // the responder session, ready to encrypt. SendRequest fails at the cipher
 // before it ever touches the transport without one, which is the reason the
 // sibling test reached for the internal lease instead.
-func handshakedResponder(t *testing.T) *NoiseSession {
+func handshakedResponder(t *testing.T) *pairing.NoiseSession {
 	t.Helper()
 
-	initKey, err := GenerateStaticKey()
+	initKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("initiator key: %v", err)
 	}
-	respKey, err := GenerateStaticKey()
+	respKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("responder key: %v", err)
 	}
 
-	initiator, err := NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: initKey, IsInitiator: true})
+	initiator, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: initKey, IsInitiator: true})
 	if err != nil {
 		t.Fatalf("initiator session: %v", err)
 	}
-	responder, err := NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: respKey, IsInitiator: false})
+	responder, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: respKey, IsInitiator: false})
 	if err != nil {
 		t.Fatalf("responder session: %v", err)
 	}
@@ -457,7 +459,7 @@ func (l *leaseObservingTransport) SendAndReceive(ctx context.Context, msg []byte
 // This one drives the real method and observes the backend's own counter from
 // inside the bus call, so the lease under test is the one production takes.
 func TestSendRequestHoldsALeaseForItsRoundTrip(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -484,7 +486,7 @@ func TestSendRequestHoldsALeaseForItsRoundTrip(t *testing.T) {
 	backend.mu.Unlock()
 
 	go func() {
-		_, _ = backend.SendRequest(context.Background(), NewRequest("probe", nil))
+		_, _ = backend.SendRequest(context.Background(), pairing.NewRequest("probe", nil))
 	}()
 
 	select {

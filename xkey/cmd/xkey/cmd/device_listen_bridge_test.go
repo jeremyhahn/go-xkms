@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // listBackendsClient answers ListBackends so the bridge has something real to
@@ -39,25 +39,25 @@ func (c *listBackendsClient) ListBackends(_ context.Context, _ ...transport.List
 
 // newListenHandler builds a listen handler with a software attestor and the
 // given bridge.
-func newListenHandler(t *testing.T, bridge *phone.Bridge) *listenRequestHandler {
+func newListenHandler(t *testing.T, bridge *pairing.Bridge) *listenRequestHandler {
 	t.Helper()
-	handler, err := newListenRequestHandler(newTestLogger(), nil, phone.AttestationModeSoftware, bridge)
+	handler, err := newListenRequestHandler(newTestLogger(), nil, pairing.AttestationModeSoftware, bridge)
 	require.NoError(t, err)
 	return handler
 }
 
 // newTestBridge builds a bridge over the given client.
-func newTestBridge(t *testing.T, client transport.Client) *phone.Bridge {
+func newTestBridge(t *testing.T, client transport.Client) *pairing.Bridge {
 	t.Helper()
-	bridge, err := phone.NewBridge(client, &phone.BridgeConfig{Logger: newTestLogger()})
+	bridge, err := pairing.NewBridge(client, &pairing.BridgeConfig{Logger: newTestLogger()})
 	require.NoError(t, err)
 	return bridge
 }
 
 // decodeListenResponse decodes the raw JSON-RPC bytes a handler returns.
-func decodeListenResponse(t *testing.T, raw []byte) *phone.Response {
+func decodeListenResponse(t *testing.T, raw []byte) *pairing.Response {
 	t.Helper()
-	resp, err := phone.DecodeResponse(raw)
+	resp, err := pairing.DecodeResponse(raw)
 	require.NoError(t, err)
 	return resp
 }
@@ -65,13 +65,13 @@ func decodeListenResponse(t *testing.T, raw []byte) *phone.Response {
 func TestListenHandler_PingIsServedLocally(t *testing.T) {
 	handler := newListenHandler(t, nil)
 
-	raw, err := handler.HandleRequest(context.Background(), mustEncodeRequest(t, phone.MethodPing, nil))
+	raw, err := handler.HandleRequest(context.Background(), mustEncodeRequest(t, pairing.MethodPing, nil))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.Nil(t, resp.Error)
 
-	result, err := phone.DecodeResult[phone.PingResult](resp)
+	result, err := pairing.DecodeResult[pairing.PingResult](resp)
 	require.NoError(t, err)
 	assert.True(t, result.Pong)
 }
@@ -83,12 +83,12 @@ func TestListenHandler_WithoutBridgeRejectsRemoteMethods(t *testing.T) {
 	handler := newListenHandler(t, nil)
 
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, phone.MethodRemoteListBackends, nil))
+		mustEncodeRequest(t, pairing.MethodRemoteListBackends, nil))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.NotNil(t, resp.Error)
-	assert.Equal(t, phone.ErrorCodeMethodNotFound, resp.Error.Code)
+	assert.Equal(t, pairing.ErrorCodeMethodNotFound, resp.Error.Code)
 }
 
 // TestListenHandler_BridgeServesRemoteMethods is the regression guard for the
@@ -101,13 +101,13 @@ func TestListenHandler_BridgeServesRemoteMethods(t *testing.T) {
 	handler := newListenHandler(t, newTestBridge(t, client))
 
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, phone.MethodRemoteListBackends, nil))
+		mustEncodeRequest(t, pairing.MethodRemoteListBackends, nil))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.Nil(t, resp.Error, "the bridge must answer remote.listBackends")
 
-	result, err := phone.DecodeResult[phone.RemoteListBackendsResult](resp)
+	result, err := pairing.DecodeResult[pairing.RemoteListBackendsResult](resp)
 	require.NoError(t, err)
 	require.Len(t, result.Backends, 1)
 	assert.Equal(t, "software", result.Backends[0].Name)
@@ -121,13 +121,13 @@ func TestListenHandler_LocalAttestationWinsOverBridge(t *testing.T) {
 
 	nonce := make([]byte, 32)
 	raw, err := handler.HandleRequest(context.Background(),
-		mustEncodeRequest(t, phone.MethodRemoteAttestDevice, &phone.RemoteAttestDeviceParams{Nonce: nonce}))
+		mustEncodeRequest(t, pairing.MethodRemoteAttestDevice, &pairing.RemoteAttestDeviceParams{Nonce: nonce}))
 	require.NoError(t, err)
 
 	resp := decodeListenResponse(t, raw)
 	require.Nil(t, resp.Error)
 
-	result, err := phone.DecodeResult[phone.RemoteAttestDeviceResult](resp)
+	result, err := pairing.DecodeResult[pairing.RemoteAttestDeviceResult](resp)
 	require.NoError(t, err)
 	assert.Equal(t, "software", result.SecurityLevel,
 		"the software attestor configured on the handler must produce the result")
@@ -136,7 +136,7 @@ func TestListenHandler_LocalAttestationWinsOverBridge(t *testing.T) {
 // mustEncodeRequest encodes a JSON-RPC request for the handler under test.
 func mustEncodeRequest(t *testing.T, method string, params interface{}) []byte {
 	t.Helper()
-	raw, err := phone.EncodeRequest(phone.NewRequest(method, params))
+	raw, err := pairing.EncodeRequest(pairing.NewRequest(method, params))
 	require.NoError(t, err)
 	return raw
 }

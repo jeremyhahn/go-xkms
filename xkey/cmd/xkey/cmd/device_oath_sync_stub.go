@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -146,8 +146,8 @@ func runOATHPullStub(cmd *cobra.Command, args []string) error {
 
 // credentialToPhoneInfo converts a local OATH credential to the phone
 // protocol representation.
-func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
-	return phone.OATHCredentialInfo{
+func credentialToPhoneInfo(cred *oath.Credential) pairing.OATHCredentialInfo {
+	return pairing.OATHCredentialInfo{
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
@@ -163,7 +163,7 @@ func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
 // deviceInfoToCredential converts a phone OATH credential to a local
 // OATH credential, adopting the secret into protected memory. The error is
 // oath.ErrProtectedMemory (wrapped) when that allocation fails.
-func deviceInfoToCredential(info phone.OATHCredentialInfo) (*oath.Credential, error) {
+func deviceInfoToCredential(info pairing.OATHCredentialInfo) (*oath.Credential, error) {
 	algorithm := info.Algorithm
 	if algorithm == "" {
 		algorithm = oath.DefaultAlgorithm

@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +72,7 @@ func TestBuildEnrollmentPolicy_FailsClosedWithNoAllowList(t *testing.T) {
 	assert.True(t, policy.RequireVerifiedBoot ||
 		!policy.RequireVerifiedBoot, "flag default is applied by cobra")
 
-	_, err := policy.Evaluate(&phone.LocalGetDeviceEnrollmentRequestResult{
+	_, err := policy.Evaluate(&pairing.LocalGetDeviceEnrollmentRequestResult{
 		AttestationChain: loadEnrollFixtureChain(t),
 	}, []byte(enrollFixtureNonce), time.Now())
 
@@ -117,8 +117,8 @@ func TestEnrollmentPolicy_RefusesTheRealEmulatorUnderProductionDefaults(t *testi
 	require.NoError(t, err, "the embedded Google roots must load")
 	policy.TrustedRoots = roots
 
-	_, err = policy.Evaluate(&phone.LocalGetDeviceEnrollmentRequestResult{
-		Format:           phone.AttestationFormatAndroidKey,
+	_, err = policy.Evaluate(&pairing.LocalGetDeviceEnrollmentRequestResult{
+		Format:           pairing.AttestationFormatAndroidKey,
 		AttestationChain: loadEnrollFixtureChain(t),
 		SecurityLevel:    "software",
 	}, []byte(enrollFixtureNonce), time.Now())
@@ -130,9 +130,9 @@ func TestSignEnrollmentCSR_RejectsAnUnknownCASource(t *testing.T) {
 	_, _, err := signEnrollmentCSR(
 		t.Context(),
 		&enrollPhoneOptions{CASource: "nonsense"},
-		&phone.LocalGetDeviceEnrollmentRequestResult{CSR: []byte{0x30, 0x00}},
+		&pairing.LocalGetDeviceEnrollmentRequestResult{CSR: []byte{0x30, 0x00}},
 		[]byte("nonce"),
-		&phone.EnrollmentDecision{NotAfter: time.Now().Add(time.Hour)},
+		&pairing.EnrollmentDecision{NotAfter: time.Now().Add(time.Hour)},
 	)
 
 	assert.ErrorIs(t, err, ErrEnrollPhoneNoCA)
@@ -215,8 +215,8 @@ func TestEncodeChain_OmitsAnEmptyChain(t *testing.T) {
 // the method simply stops being routed.
 func TestEnrollmentMethodNames_MatchTheAndroidSpelling(t *testing.T) {
 	assert.Equal(t, "local.getDeviceEnrollmentRequest",
-		phone.MethodLocalGetDeviceEnrollmentRequest)
+		pairing.MethodLocalGetDeviceEnrollmentRequest)
 	assert.Equal(t, "local.storeDeviceCredential",
-		phone.MethodLocalStoreDeviceCredential)
-	assert.Equal(t, "android-key-attestation", phone.AttestationFormatAndroidKey)
+		pairing.MethodLocalStoreDeviceCredential)
+	assert.Equal(t, "android-key-attestation", pairing.AttestationFormatAndroidKey)
 }

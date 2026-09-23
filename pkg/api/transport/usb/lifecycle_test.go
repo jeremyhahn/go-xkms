@@ -20,10 +20,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // testWait bounds every wait in this file. A regression must fail this test,
@@ -80,7 +79,7 @@ func (g *gatedPhone) Connect(ctx context.Context) error {
 func newGatedTransport(t *testing.T) (*Transport, *gatedPhone) {
 	t.Helper()
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(key.Destroy)
 
@@ -227,7 +226,7 @@ func (f *failingSendPhone) SendAndReceive(ctx context.Context, message []byte) (
 // and overwrote localKey — leaking the previous key's locked pages on every
 // transient failure.
 func TestConnectRejectsResidualStateAfterFailedRequest(t *testing.T) {
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	t.Cleanup(key.Destroy)
 
@@ -288,7 +287,7 @@ func (p *terminalPhone) Connect(context.Context) error {
 // that meant every reconnect after a Close handshaked over a dead bus,
 // permanently. The advice the error gives could not be followed.
 func TestCloseDiscardsTheBusTransport(t *testing.T) {
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

@@ -898,7 +898,7 @@ func TestPhoneService_Coverage_Scan_Timeout1_BLEUnavailable(t *testing.T) {
 func TestPhoneService_Coverage_Pair_NonEmptyAddress_BLEUnavailable(t *testing.T) {
 	svc := NewPhoneService()
 	svc.SetBarrierService(newUnsealedTestBarrierService(t))
-	// On stub platform, phone.GenerateStaticKey succeeds but
+	// On stub platform, pairing.GenerateStaticKey succeeds but
 	// phone.NewBLETransport returns ErrBLEUnavailable.
 	result, err := svc.Pair("AA:BB:CC:DD:EE:FF")
 	assert.Nil(t, result)

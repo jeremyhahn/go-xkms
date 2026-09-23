@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/qrgen"
 )
@@ -73,7 +74,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	showQR, _ := cmd.Flags().GetBool("qr")
 
 	// Generate or load local Noise static key.
-	localKey, err := phone.GenerateStaticKey()
+	localKey, err := pairing.GenerateStaticKey()
 	if err != nil {
 		logger.Error("failed to generate noise static key", slog.String("error", err.Error()))
 		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}

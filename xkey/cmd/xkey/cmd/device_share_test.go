@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -241,10 +242,10 @@ func TestSharePolicySet_AndList(t *testing.T) {
 
 	// Set policy via direct store (bypassing command flag parsing)
 	policyPath := filepath.Join(xkeyDir, sharingPoliciesFileName)
-	store, err := phone.NewFileSharingPolicyStore(policyPath)
+	store, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 
-	policy := &phone.SharingPolicy{
+	policy := &pairing.SharingPolicy{
 		KeyID:          "test-key",
 		Backend:        "software",
 		AllowShare:     true,
@@ -298,10 +299,10 @@ func TestSharePolicySet_AndRemove(t *testing.T) {
 
 	// Set a policy via the store
 	policyPath := filepath.Join(xkeyDir, sharingPoliciesFileName)
-	store, err := phone.NewFileSharingPolicyStore(policyPath)
+	store, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 
-	err = store.SetPolicy(&phone.SharingPolicy{
+	err = store.SetPolicy(&pairing.SharingPolicy{
 		KeyID:      "removal-key",
 		Backend:    "tpm2",
 		AllowShare: true,
@@ -324,7 +325,7 @@ func TestSharePolicySet_AndRemove(t *testing.T) {
 	assert.Contains(t, output, "Sharing policy removed for tpm2/removal-key")
 
 	// Verify removal persisted
-	store2, err := phone.NewFileSharingPolicyStore(policyPath)
+	store2, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 	_, err = store2.GetPolicy("tpm2", "removal-key")
 	assert.ErrorIs(t, err, phone.ErrSharePolicyNotFound)
@@ -337,10 +338,10 @@ func TestSharePolicyStore_Persistence(t *testing.T) {
 	policyPath := filepath.Join(tempDir, "policies.json")
 
 	// Create store and add policies
-	store1, err := phone.NewFileSharingPolicyStore(policyPath)
+	store1, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 
-	err = store1.SetPolicy(&phone.SharingPolicy{
+	err = store1.SetPolicy(&pairing.SharingPolicy{
 		KeyID:          "key-a",
 		Backend:        "software",
 		AllowShare:     true,
@@ -350,7 +351,7 @@ func TestSharePolicyStore_Persistence(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = store1.SetPolicy(&phone.SharingPolicy{
+	err = store1.SetPolicy(&pairing.SharingPolicy{
 		KeyID:      "key-b",
 		Backend:    "tpm2",
 		AllowShare: false,
@@ -358,7 +359,7 @@ func TestSharePolicyStore_Persistence(t *testing.T) {
 	require.NoError(t, err)
 
 	// Load from new store instance to verify persistence
-	store2, err := phone.NewFileSharingPolicyStore(policyPath)
+	store2, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 
 	policies, err := store2.ListPolicies()
@@ -381,7 +382,7 @@ func TestSharePolicyStore_IsShareAllowed(t *testing.T) {
 	tempDir := t.TempDir()
 	policyPath := filepath.Join(tempDir, "policies.json")
 
-	store, err := phone.NewFileSharingPolicyStore(policyPath)
+	store, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 
 	// No policy => denied
@@ -390,7 +391,7 @@ func TestSharePolicyStore_IsShareAllowed(t *testing.T) {
 	assert.False(t, allowed)
 
 	// Policy with AllowShare=false => denied
-	err = store.SetPolicy(&phone.SharingPolicy{
+	err = store.SetPolicy(&pairing.SharingPolicy{
 		KeyID:      "denied-key",
 		Backend:    "software",
 		AllowShare: false,
@@ -401,7 +402,7 @@ func TestSharePolicyStore_IsShareAllowed(t *testing.T) {
 	assert.False(t, allowed)
 
 	// Policy with AllowShare=true, no device filter => allowed for any device
-	err = store.SetPolicy(&phone.SharingPolicy{
+	err = store.SetPolicy(&pairing.SharingPolicy{
 		KeyID:      "open-key",
 		Backend:    "software",
 		AllowShare: true,
@@ -412,7 +413,7 @@ func TestSharePolicyStore_IsShareAllowed(t *testing.T) {
 	assert.True(t, allowed)
 
 	// Policy with device filter => only specific devices allowed
-	err = store.SetPolicy(&phone.SharingPolicy{
+	err = store.SetPolicy(&pairing.SharingPolicy{
 		KeyID:          "restricted-key",
 		Backend:        "software",
 		AllowShare:     true,
@@ -516,11 +517,11 @@ func TestSharePolicyList_MultiplePolicies(t *testing.T) {
 	require.NoError(t, err)
 
 	policyPath := filepath.Join(xkeyDir, sharingPoliciesFileName)
-	store, err := phone.NewFileSharingPolicyStore(policyPath)
+	store, err := pairing.NewFileSharingPolicyStore(policyPath)
 	require.NoError(t, err)
 
 	// Add multiple policies
-	for _, p := range []*phone.SharingPolicy{
+	for _, p := range []*pairing.SharingPolicy{
 		{KeyID: "key-1", Backend: "software", AllowShare: true, SharePublic: true},
 		{KeyID: "key-2", Backend: "tpm2", AllowShare: true, ShareSymmetric: true},
 		{KeyID: "key-3", Backend: "software", AllowShare: false},

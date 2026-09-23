@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -56,7 +57,7 @@ var (
 
 // Compile-time interface checks.
 var (
-	_ Transport           = (*BLETransport)(nil)
+	_ pairing.Transport   = (*BLETransport)(nil)
 	_ BLECapableTransport = (*BLETransport)(nil)
 )
 
@@ -107,8 +108,8 @@ type BLETransport struct {
 	responseChar bluetooth.DeviceCharacteristic
 	statusChar   bluetooth.DeviceCharacteristic
 
-	fragmenter   *Fragmenter
-	reassembler  *Reassembler
+	fragmenter   *pairing.Fragmenter
+	reassembler  *pairing.Reassembler
 	responseChan chan []byte
 	statusChan   chan []byte
 
@@ -131,7 +132,7 @@ func NewBLETransport(cfg *BLETransportConfig) (*BLETransport, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	if cfg.MTU < MinMTU {
+	if cfg.MTU < pairing.MinMTU {
 		cfg.MTU = DefaultMTU
 	}
 
@@ -144,8 +145,8 @@ func NewBLETransport(cfg *BLETransportConfig) (*BLETransport, error) {
 		cfg:          cfg,
 		log:          cfg.Logger.With("component", "ble_transport"),
 		adapter:      adapter,
-		fragmenter:   NewFragmenter(cfg.MTU),
-		reassembler:  NewReassembler(),
+		fragmenter:   pairing.NewFragmenter(cfg.MTU),
+		reassembler:  pairing.NewReassembler(),
 		responseChan: make(chan []byte, 16),
 		statusChan:   make(chan []byte, 16),
 	}, nil
@@ -605,7 +606,7 @@ func (t *BLETransport) handleResponseNotification(data []byte) {
 		"raw_hex", fmt.Sprintf("%x", data[:min(len(data), 32)]),
 	)
 
-	frag, err := DecodeFragment(data)
+	frag, err := pairing.DecodeFragment(data)
 	if err != nil {
 		t.log.Warn("invalid response fragment",
 			"error", err,
@@ -947,7 +948,7 @@ func (t *BLETransport) StatusChannel() <-chan []byte {
 
 // SetMTU updates the MTU for fragmentation.
 func (t *BLETransport) SetMTU(mtu int) {
-	if mtu >= MinMTU {
+	if mtu >= pairing.MinMTU {
 		t.fragmenter.SetMTU(mtu)
 	}
 }

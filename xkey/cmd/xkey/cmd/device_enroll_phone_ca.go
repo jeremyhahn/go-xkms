@@ -27,7 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -92,9 +92,9 @@ func androidAttestationRoots() (*x509.CertPool, error) {
 func signEnrollmentCSR(
 	ctx context.Context,
 	opts *enrollPhoneOptions,
-	result *phone.LocalGetDeviceEnrollmentRequestResult,
+	result *pairing.LocalGetDeviceEnrollmentRequestResult,
 	nonce []byte,
-	decision *phone.EnrollmentDecision,
+	decision *pairing.EnrollmentDecision,
 ) ([]byte, [][]byte, error) {
 	source := strings.ToLower(strings.TrimSpace(opts.CASource))
 	if source == "" {
@@ -125,7 +125,7 @@ func signEnrollmentCSR(
 		if err != nil {
 			return nil, nil, err
 		}
-		req.AttestationFormat = phone.AttestationFormatAndroidKey
+		req.AttestationFormat = pairing.AttestationFormatAndroidKey
 		req.AttestationChain = chain
 		req.AttestationNonce = nonce
 		fmt.Println("Submitting to the xkms enterprise CA with attestation evidence...")

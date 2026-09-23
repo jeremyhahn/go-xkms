@@ -27,10 +27,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // Phone enrollment errors.
@@ -156,8 +155,8 @@ func runDeviceEnrollPhone(cmd *cobra.Command, args []string) error {
 // the policy has an empty allow-list, and Evaluate refuses. That is deliberate.
 // An operator who has not said which application may enroll has not decided,
 // and guessing on their behalf is how a CA ends up certifying anything.
-func buildEnrollmentPolicy(opts *enrollPhoneOptions) *phone.EnrollmentPolicy {
-	policy := phone.NewEnrollmentPolicy()
+func buildEnrollmentPolicy(opts *enrollPhoneOptions) *pairing.EnrollmentPolicy {
+	policy := pairing.NewEnrollmentPolicy()
 	policy.Validity = opts.Validity
 	policy.AllowUnpinnedSignatures = opts.AllowUnpinned
 	policy.RequireVerifiedBoot = opts.RequireVerifiedBoot
@@ -166,7 +165,7 @@ func buildEnrollmentPolicy(opts *enrollPhoneOptions) *phone.EnrollmentPolicy {
 	}
 
 	for _, pkg := range opts.AllowPackages {
-		policy.AllowedApplications = append(policy.AllowedApplications, phone.AllowedApplication{
+		policy.AllowedApplications = append(policy.AllowedApplications, pairing.AllowedApplication{
 			PackageName:    pkg,
 			SigningDigests: opts.AllowSigners,
 		})
@@ -221,8 +220,8 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 	defer closeSession()
 
 	fmt.Println("Requesting a device enrollment package...")
-	raw, err := session.Call(callCtx, phone.MethodLocalGetDeviceEnrollmentRequest,
-		&phone.LocalGetDeviceEnrollmentRequestParams{
+	raw, err := session.Call(callCtx, pairing.MethodLocalGetDeviceEnrollmentRequest,
+		&pairing.LocalGetDeviceEnrollmentRequestParams{
 			Nonce:   base64.StdEncoding.EncodeToString(nonce),
 			Subject: opts.Subject,
 		})
@@ -230,7 +229,7 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 		return err
 	}
 
-	var result phone.LocalGetDeviceEnrollmentRequestResult
+	var result pairing.LocalGetDeviceEnrollmentRequestResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return &WrappedError{Msg: "failed to decode the enrollment package", Err: err}
 	}
@@ -259,8 +258,8 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 	}
 
 	fmt.Println("Delivering the credential to the phone...")
-	storeRaw, err := session.Call(callCtx, phone.MethodLocalStoreDeviceCredential,
-		&phone.LocalStoreDeviceCredentialParams{
+	storeRaw, err := session.Call(callCtx, pairing.MethodLocalStoreDeviceCredential,
+		&pairing.LocalStoreDeviceCredentialParams{
 			Certificate: base64.StdEncoding.EncodeToString(certDER),
 			Chain:       encodeChain(chainDER),
 		})
@@ -268,7 +267,7 @@ func enrollPhone(ctx context.Context, opts *enrollPhoneOptions, logger *slog.Log
 		return &SentinelCauseError{Sentinel: ErrEnrollPhoneRejectedCredential, Cause: err}
 	}
 
-	var stored phone.LocalStoreDeviceCredentialResult
+	var stored pairing.LocalStoreDeviceCredentialResult
 	if err := json.Unmarshal(storeRaw, &stored); err != nil {
 		return &WrappedError{Msg: "failed to decode the store response", Err: err}
 	}

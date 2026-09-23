@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -45,7 +46,7 @@ func writeDevicesConfigForTest(t *testing.T, fingerprint string) {
 	// sudo, which would send the lookup outside the temp directory.
 	t.Setenv("SUDO_USER", "")
 
-	key, err := phone.GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	defer key.Destroy()
 

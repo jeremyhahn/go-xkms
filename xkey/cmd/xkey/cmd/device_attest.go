@@ -36,6 +36,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -201,7 +202,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Send attestation request
-	req := phone.NewRequest(phone.MethodLocalAttestKey, &phone.LocalAttestKeyParams{
+	req := pairing.NewRequest(pairing.MethodLocalAttestKey, &pairing.LocalAttestKeyParams{
 		KeyID: keyID,
 		Nonce: nonce,
 	})
@@ -216,7 +217,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 	}
 
 	// Decode the result
-	result, err := phone.DecodeResult[phone.LocalAttestKeyResult](resp)
+	result, err := pairing.DecodeResult[pairing.LocalAttestKeyResult](resp)
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode attestation result", Err: err}
 	}

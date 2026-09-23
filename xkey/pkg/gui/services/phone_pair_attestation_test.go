@@ -31,7 +31,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -152,12 +151,12 @@ func (h *pairingHarness) pair(device *attesttest.Phone, exchanges int, address s
 	done := make(chan error, 1)
 	device.Serve(ctx, h.t, responder, false, exchanges, done)
 
-	localKey, err := phone.GenerateStaticKey()
+	localKey, err := pairing.GenerateStaticKey()
 	require.NoError(h.t, err)
 	defer localKey.Destroy()
 	h.lastLocalPrivate = append([]byte(nil), localKey.Private...)
 
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: localKey,
 		IsInitiator:    true,
 	})
@@ -235,7 +234,7 @@ func TestPairRefusesAMalformedAttestationByDefault(t *testing.T) {
 	h.trust(ca)
 
 	device := attesttest.NewPhone(t, healthyDAK(t, ca))
-	device.Mutate = func(r *phone.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
+	device.Mutate = func(r *pairing.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
 
 	_, err := h.pair(device, 2, testPairAddress)
 
@@ -286,7 +285,7 @@ func TestPairRecordsAVerifiedAttestation(t *testing.T) {
 	rec := h.savedDevice(testPairAddress)
 	require.Equal(t, hex.EncodeToString(dak.Fingerprint()), rec.DeviceFingerprint,
 		"the stored fingerprint must equal the phone's own SPKI hash — the identity the reconnect check binds to")
-	require.Equal(t, phone.AttestProtocolV2, rec.AttestationProtocolVersion,
+	require.Equal(t, pairing.AttestProtocolV2, rec.AttestationProtocolVersion,
 		"a GUI pairing must establish the same challenge-response binding the CLI does")
 	require.Equal(t, "strongbox", rec.SecurityLevel)
 	require.True(t, rec.BootStateVerified)
@@ -534,15 +533,15 @@ func TestPairPreservesTheUsersAttestationPolicyBlock(t *testing.T) {
 // anti-downgrade term of the record projection: a later result at a lower
 // version must not walk a record back to the weaker model.
 func TestRecordVerifiedAttestationNeverLowersTheProtocolVersion(t *testing.T) {
-	rec := &phoneConfigDevice{AttestationProtocolVersion: phone.AttestProtocolV2, DeviceFingerprint: "old"}
+	rec := &phoneConfigDevice{AttestationProtocolVersion: pairing.AttestProtocolV2, DeviceFingerprint: "old"}
 
 	xkeyAttestation.ApplyVerifiedAttestation(rec, &xkeyAttestation.Result{
-		ProtocolVersion:   phone.AttestProtocolV1,
+		ProtocolVersion:   pairing.AttestProtocolV1,
 		DeviceFingerprint: "new",
 		SecurityLevel:     "tee",
 	})
 
-	require.Equal(t, phone.AttestProtocolV2, rec.AttestationProtocolVersion,
+	require.Equal(t, pairing.AttestProtocolV2, rec.AttestationProtocolVersion,
 		"the version is the anti-downgrade term; a term an attacker could lower is not one")
 	require.Equal(t, "new", rec.DeviceFingerprint, "every other verified field is applied")
 	require.Equal(t, "tee", rec.SecurityLevel)
@@ -556,14 +555,14 @@ func TestRecordVerifiedAttestationRaisesALegacyRecord(t *testing.T) {
 
 	xkeyAttestation.ApplyVerifiedAttestation(rec, &xkeyAttestation.Result{
 		AttestationTime:   when,
-		ProtocolVersion:   phone.AttestProtocolV2,
+		ProtocolVersion:   pairing.AttestProtocolV2,
 		DeviceFingerprint: "fp",
 		SecurityLevel:     "strongbox",
 		BootStateVerified: true,
 		BootHashHex:       "deadbeef",
 	})
 
-	require.Equal(t, phone.AttestProtocolV2, rec.AttestationProtocolVersion)
+	require.Equal(t, pairing.AttestProtocolV2, rec.AttestationProtocolVersion)
 	require.Equal(t, when, rec.LastDeviceAttestationTime)
 	require.Equal(t, "fp", rec.DeviceFingerprint)
 	require.Equal(t, "strongbox", rec.SecurityLevel)

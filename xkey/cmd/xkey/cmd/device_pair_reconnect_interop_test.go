@@ -111,13 +111,13 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 		LocalStaticPublicKey: pairSession.LocalStaticPublicKey(),
 	}), "the pairing handshake must complete")
 
-	verified, err := attestation.AttestOverSession(ctx, pairInit, pairSession, trust, phone.AttestPurposePair, logger)
+	verified, err := attestation.AttestOverSession(ctx, pairInit, pairSession, trust, pairing.AttestPurposePair, logger)
 	require.NoError(t, err, "a contract-faithful device must pair")
 	require.NotNil(t, verified)
 	require.NoError(t, <-pairDone, "phone responder failed during pairing")
 
 	storedFingerprint := verified.Result.DeviceFingerprint
-	require.Equal(t, phone.AttestProtocolV2, verified.Result.ProtocolVersion)
+	require.Equal(t, pairing.AttestProtocolV2, verified.Result.ProtocolVersion)
 
 	// WIRE AGREEMENT on the identity: the value the desktop persisted must be
 	// the one the phone will echo, derived independently from its own key.
@@ -164,13 +164,13 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	// The point of the whole model: the SAME key proves itself again, on a new
 	// session, without rotating the device identity. Under the old
 	// embedded-challenge model this leg was impossible on Android.
-	reattested, err := attestation.AttestOverSession(ctx, reconnectInit, reconnectSession, trust, phone.AttestPurposeReattest, logger)
+	reattested, err := attestation.AttestOverSession(ctx, reconnectInit, reconnectSession, trust, pairing.AttestPurposeReattest, logger)
 	require.NoError(t, err, "the persistent attested key must re-attest on a new session")
 	require.NoError(t, <-reconnectDone, "phone responder failed during reconnect")
 
 	assert.Equal(t, storedFingerprint, reattested.Result.DeviceFingerprint,
 		"re-attestation of the persistent key must not change the device identity")
-	assert.Equal(t, phone.AttestProtocolV2, reattested.Result.ProtocolVersion)
+	assert.Equal(t, pairing.AttestProtocolV2, reattested.Result.ProtocolVersion)
 
 	// WHAT THE CHANNEL BINDING ACTUALLY PROVIDES — stated honestly, because the
 	// first version of this assertion did not.
@@ -230,7 +230,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 			"identities and prologue share it, and the nonce is what makes each "+
 			"exchange unrepeatable")
 
-	secondAttest, err := attestation.AttestOverSession(ctx, secondInit, secondSession, trust, phone.AttestPurposeReattest, logger)
+	secondAttest, err := attestation.AttestOverSession(ctx, secondInit, secondSession, trust, pairing.AttestPurposeReattest, logger)
 	require.NoError(t, err, "the third handshake with the persisted keys must also re-attest")
 	require.NoError(t, <-secondDone, "phone responder failed during the second reconnect")
 	assert.Equal(t, storedFingerprint, secondAttest.Result.DeviceFingerprint)
@@ -240,7 +240,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	recordDeviceAttestation(record, verified.Result)
 	recordDeviceAttestation(record, reattested.Result)
 	assert.Equal(t, storedFingerprint, record.DeviceFingerprint)
-	assert.Equal(t, phone.AttestProtocolV2, record.AttestationProtocolVersion,
+	assert.Equal(t, pairing.AttestProtocolV2, record.AttestationProtocolVersion,
 		"the record must remember it was bound under challenge-response")
 	assert.NoError(t, attestation.DeviceBindingFor(*record).ValidateAttestedKeyMatch(reattested.Result.DeviceFingerprint),
 		"an honest re-attestation must not read as a changed device")
@@ -286,10 +286,10 @@ func TestReconnectRefusesADeviceThatCannotProveLiveness(t *testing.T) {
 		ExpectedDeviceFingerprint: genuine.Fingerprint(),
 	}), "the fingerprint echo and the prologue still agree; that is the point")
 
-	verified, err := attestation.AttestOverSession(ctx, init, session, trust, phone.AttestPurposeReattest, logger)
+	verified, err := attestation.AttestOverSession(ctx, init, session, trust, pairing.AttestPurposeReattest, logger)
 
 	require.Error(t, err, "a device that cannot sign the challenge must be refused")
-	require.ErrorIs(t, err, phone.ErrAttestSignatureInvalid)
+	require.ErrorIs(t, err, pairing.ErrAttestSignatureInvalid)
 	assert.Nil(t, verified)
 	require.NoError(t, <-done, "the relay responder itself must not have errored")
 }
@@ -322,7 +322,7 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 		Name:                       "bound",
 		Address:                    "00:11:22:33:44:55",
 		DeviceFingerprint:          hex.EncodeToString(genuine.Fingerprint()),
-		AttestationProtocolVersion: phone.AttestProtocolV2,
+		AttestationProtocolVersion: pairing.AttestProtocolV2,
 	}
 
 	// A record from before #129: no attested key was ever registered, so there
@@ -346,8 +346,8 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 		// PR5: the #129/#130 grace period for a record below version 2 is
 		// removed) -- the operator must re-pair.
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
-		err := runReattestAgainst(t, logger, ca, legacy, device, func(r *phone.LocalAttestDeviceResult) {
-			r.ProtocolVersion = phone.AttestProtocolV1
+		err := runReattestAgainst(t, logger, ca, legacy, device, func(r *pairing.LocalAttestDeviceResult) {
+			r.ProtocolVersion = pairing.AttestProtocolV1
 			r.Signature = nil
 		})
 		require.Error(t, err)
@@ -356,17 +356,17 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 
 	t.Run("a missing signature refuses the session", func(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
-		err := runReattestAgainst(t, logger, ca, bound, device, func(r *phone.LocalAttestDeviceResult) {
+		err := runReattestAgainst(t, logger, ca, bound, device, func(r *pairing.LocalAttestDeviceResult) {
 			r.Signature = nil
 		})
 		require.Error(t, err)
-		require.ErrorIs(t, err, phone.ErrAttestSignatureMissing)
+		require.ErrorIs(t, err, pairing.ErrAttestSignatureMissing)
 	})
 
 	t.Run("a downgraded answer refuses the session", func(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, genuine, genuine.Fingerprint())
-		err := runReattestAgainst(t, logger, ca, bound, device, func(r *phone.LocalAttestDeviceResult) {
-			r.ProtocolVersion = phone.AttestProtocolV1
+		err := runReattestAgainst(t, logger, ca, bound, device, func(r *pairing.LocalAttestDeviceResult) {
+			r.ProtocolVersion = pairing.AttestProtocolV1
 		})
 		require.Error(t, err,
 			"a peer must not opt out of a check by declaring itself unable to satisfy it")
@@ -382,7 +382,7 @@ func TestReconnectEnforcesLivenessBeforeTheSessionIsUsable(t *testing.T) {
 			genuine.Fingerprint())
 		err := runReattestAgainst(t, logger, ca, bound, relay, nil)
 		require.Error(t, err)
-		require.ErrorIs(t, err, phone.ErrAttestSignatureInvalid)
+		require.ErrorIs(t, err, pairing.ErrAttestSignatureInvalid)
 	})
 
 	t.Run("a rotated attested key refuses the session", func(t *testing.T) {
@@ -408,7 +408,7 @@ func runReattestAgainst(
 	ca *attesttest.CA,
 	record *PairedDevice,
 	device *attesttest.Phone,
-	mutate func(*phone.LocalAttestDeviceResult),
+	mutate func(*pairing.LocalAttestDeviceResult),
 ) error {
 	t.Helper()
 
@@ -496,7 +496,7 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 		LocalNoisePrivateKey:       base64.StdEncoding.EncodeToString(raw),
 		NoisePublicKey:             base64.StdEncoding.EncodeToString(remote.Public),
 		DeviceFingerprint:          hex.EncodeToString(dak.Fingerprint()),
-		AttestationProtocolVersion: phone.AttestProtocolV2,
+		AttestationProtocolVersion: pairing.AttestProtocolV2,
 	}
 
 	t.Run("a v2 record demands the liveness proof and supplies a verifier", func(t *testing.T) {

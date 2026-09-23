@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // testWait bounds every wait in this file. An unbounded receive turns a
@@ -30,7 +32,7 @@ const testWait = 5 * time.Second
 // destroyed reports whether a static key's protected pages have been released.
 // Destroy clears the embedded key pair, so an empty private half is the
 // observable difference between a live key and a freed one.
-func destroyed(key *StaticKey) bool {
+func destroyed(key *pairing.StaticKey) bool {
 	return key == nil || len(key.Private) == 0
 }
 
@@ -40,7 +42,7 @@ func destroyed(key *StaticKey) bool {
 // must release the key: there is no backend to Close afterwards, and locked
 // pages that nothing can free accumulate with every failed attempt.
 func TestNewPhoneKeyBackend_OwnedKeyDestroyedOnTrustFailure(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -65,7 +67,7 @@ func TestNewPhoneKeyBackend_OwnedKeyDestroyedOnTrustFailure(t *testing.T) {
 // OwnsStaticKey the caller still holds the key, and destroying it would free
 // pages the caller's next attempt is about to read.
 func TestNewPhoneKeyBackend_BorrowedKeySurvivesFailure(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestNewPhoneKeyBackend_BorrowedKeySurvivesFailure(t *testing.T) {
 // backend accepted ownership at construction, so Close is where the key is
 // released.
 func TestPhoneKeyBackend_CloseDestroysOwnedKey(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -128,13 +130,13 @@ func TestPhoneKeyBackend_CloseDestroysOwnedKey(t *testing.T) {
 func TestWipeBytes(t *testing.T) {
 	secret := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 
-	key, err := LoadStaticKey(append(make([]byte, 0, NoiseKeySize), bytes.Repeat([]byte{7}, NoiseKeySize)...))
+	key, err := pairing.LoadStaticKey(append(make([]byte, 0, pairing.NoiseKeySize), bytes.Repeat([]byte{7}, pairing.NoiseKeySize)...))
 	if err != nil {
 		t.Fatalf("LoadStaticKey: %v", err)
 	}
 	defer key.Destroy()
 
-	WipeBytes(secret)
+	pairing.WipeBytes(secret)
 	if !bytes.Equal(secret, make([]byte, len(secret))) {
 		t.Fatalf("WipeBytes left data behind: %v", secret)
 	}
@@ -143,8 +145,8 @@ func TestWipeBytes(t *testing.T) {
 // TestWipeBytes_Empty covers the degenerate inputs a caller reaches on an
 // error path, where the decode produced nothing to wipe.
 func TestWipeBytes_Empty(t *testing.T) {
-	WipeBytes(nil)
-	WipeBytes([]byte{})
+	pairing.WipeBytes(nil)
+	pairing.WipeBytes([]byte{})
 }
 
 // TestClose_WaitsForInFlightRequest covers the lease. SendRequest encrypts,
@@ -152,7 +154,7 @@ func TestWipeBytes_Empty(t *testing.T) {
 // middle used to clear the session and free the static key's protected pages
 // while that request was still reading them.
 func TestClose_WaitsForInFlightRequest(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -209,7 +211,7 @@ func TestClose_WaitsForInFlightRequest(t *testing.T) {
 // TestAcquireSession_RefusedAfterClose stops a leaseholder appearing after
 // teardown has already drained and freed the key.
 func TestAcquireSession_RefusedAfterClose(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -279,7 +281,7 @@ func (b *blockingReceiveTransport) SendAndReceive(ctx context.Context, _ []byte)
 // backend burned the whole routerShutdownTimeout, concluded the loop was still
 // running, and kept the owned key resident forever.
 func TestClose_UnblocksRouterBeforeJoining(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -331,8 +333,8 @@ func TestClose_UnblocksRouterBeforeJoining(t *testing.T) {
 // without doing anything; this test never sends it a request.
 type nopRequestHandler struct{}
 
-func (nopRequestHandler) HandleRequest(_ context.Context, req *Request) *Response {
-	return &Response{JSONRPC: "2.0", ID: req.ID}
+func (nopRequestHandler) HandleRequest(_ context.Context, req *pairing.Request) *pairing.Response {
+	return &pairing.Response{JSONRPC: "2.0", ID: req.ID}
 }
 
 // TestNewPhoneKeyBackend_NilKeyIsGeneratedAndOwned covers the config's
@@ -381,7 +383,7 @@ func TestNewPhoneKeyBackend_NilKeyIsGeneratedAndOwned(t *testing.T) {
 // transferred with the config, so rejecting the arguments still has to release
 // the key — there is no backend to Close afterwards.
 func TestNewPhoneKeyBackend_NilTransportReleasesOwnedKey(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -404,7 +406,7 @@ func TestNewPhoneKeyBackend_NilTransportReleasesOwnedKey(t *testing.T) {
 // still decrypted through it; calling after Close started a loop over a nil
 // transport.
 func TestEnableBidirectional_IdempotentAndRefusedAfterClose(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -518,7 +520,7 @@ func TestReusedConfigDoesNotShareAnOwnedKey(t *testing.T) {
 // clears transport and session under the same lock — so a post-Close Connect
 // fell through to performHandshake and dereferenced a nil session.
 func TestConnectAfterCloseIsRefused(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -561,7 +563,7 @@ func TestConnectAfterCloseIsRefused(t *testing.T) {
 // bookkeeping being right rather than about a crash: after the inner guard
 // releases, the config must no longer name a key for anyone else to free.
 func TestConstructorFailureDestroysTransferredKeyOnce(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

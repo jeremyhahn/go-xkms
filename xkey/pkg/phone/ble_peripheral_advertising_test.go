@@ -19,6 +19,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // probeAdvertiser records what the peripheral's lifecycle looked like from
@@ -243,7 +245,7 @@ func TestStopReportsIncompleteWhenAdvertisingCannotBeStopped(t *testing.T) {
 
 	p := newTestPeripheral(t, &echoHandler{}, newCaptureWriter())
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -274,7 +276,7 @@ func TestStopRetainsTheKeyWhenAConnectionDidNotFinish(t *testing.T) {
 
 	p := newTestPeripheral(t, &echoHandler{}, newCaptureWriter())
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}
@@ -309,7 +311,7 @@ func TestStopReleasesTheKeyWhenAdvertisingStops(t *testing.T) {
 
 	p := newTestPeripheral(t, &echoHandler{}, newCaptureWriter())
 
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

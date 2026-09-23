@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -45,7 +46,7 @@ var (
 type BLEPeripheralConfig struct {
 	// LocalStaticKey is the persistent local Noise static key, held in
 	// protected memory. If nil, a new key will be generated.
-	LocalStaticKey *StaticKey
+	LocalStaticKey *pairing.StaticKey
 
 	// OwnsStaticKey transfers ownership of LocalStaticKey to the peripheral,
 	// so Stop releases it — and RETAINS it when a connection handler cannot
@@ -110,13 +111,13 @@ type BLEPeripheral struct {
 	sender *fragmentSender
 
 	// Session state
-	session   *NoiseSession
+	session   *pairing.NoiseSession
 	connected atomic.Bool
 	mtu       int
 
 	// Fragmentation
-	fragmenter  *Fragmenter
-	reassembler *Reassembler
+	fragmenter  *pairing.Fragmenter
+	reassembler *pairing.Reassembler
 
 	// Channels for communication
 	incomingData chan []byte
@@ -173,7 +174,7 @@ type BLEPeripheral struct {
 	// session was still reading. This makes the assumption real.
 	acceptMu sync.Mutex
 
-	generatedStaticKey *StaticKey
+	generatedStaticKey *pairing.StaticKey
 
 	// starting is held for the whole of Start, so a second caller is refused
 	// before it can reconfigure a peripheral the first is still bringing up.
@@ -189,7 +190,7 @@ type BLEPeripheral struct {
 	// It is reused for every connection rather than regenerated, and Stop
 	// releases it on the same terms as a generated one: destroyed on a
 	// confirmed join, retained otherwise.
-	adoptedStaticKey *StaticKey
+	adoptedStaticKey *pairing.StaticKey
 
 	// localStaticPublic is a plain copy of the current connection's static
 	// public half, taken when the session is built. The public key is not
@@ -234,7 +235,7 @@ func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 	// A transferred key is adopted as the peripheral's own, and consumed from
 	// the config so a reused config cannot hand the next peripheral a second
 	// owner for the same protected pages.
-	var owned *StaticKey
+	var owned *pairing.StaticKey
 	if cfg.OwnsStaticKey && cfg.LocalStaticKey != nil {
 		owned = cfg.LocalStaticKey
 		cfg.LocalStaticKey = nil
@@ -250,7 +251,7 @@ func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 	}
 
 	mtu := cfg.MTU
-	if mtu < MinMTU {
+	if mtu < pairing.MinMTU {
 		mtu = DefaultMTU
 	}
 
@@ -552,8 +553,8 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 
 	// Initialize fragmentation helpers. Outbound fragments are sized to fit
 	// inside a single ATT notification PDU; see bleNotifyOverhead.
-	p.fragmenter = NewFragmenter(p.mtu - bleNotifyOverhead)
-	p.reassembler = NewReassembler()
+	p.fragmenter = pairing.NewFragmenter(p.mtu - bleNotifyOverhead)
+	p.reassembler = pairing.NewReassembler()
 	p.sender = newFragmentSender(p.notifier, p.fragmenter, p.log)
 
 	// Create Noise session as responder.
@@ -576,7 +577,7 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 	p.lifeMu.Unlock()
 
 	if localStatic == nil {
-		key, err := GenerateStaticKey()
+		key, err := pairing.GenerateStaticKey()
 		if err != nil {
 			return &WrappedError{Msg: "failed to generate static key", Err: err}
 		}
@@ -589,7 +590,7 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 		localStatic = key
 	}
 
-	session, err := NewNoiseSession(&NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey:       localStatic,
 		ExpectedRemoteStatic: p.cfg.ExpectedRemoteStatic,
 		IsInitiator:          false, // We are the responder
@@ -689,7 +690,7 @@ func (p *BLEPeripheral) receiveMessageTimeout(ctx context.Context, timeout time.
 			return nil, ErrPeripheralNotRunning
 		case data := <-p.incomingData:
 			// Decode fragment
-			fragment, err := DecodeFragment(data)
+			fragment, err := pairing.DecodeFragment(data)
 			if err != nil {
 				p.log.Warn("failed to decode fragment", slog.String("error", err.Error()))
 				continue
@@ -794,7 +795,7 @@ func (p *BLEPeripheral) processRequest(ctx context.Context, encryptedData []byte
 // apart: the test helper kept doing it after the snapshot was introduced, and
 // LocalStaticPublicKey started returning nothing on a peripheral with a live
 // session. There is now one way to publish, so the pair cannot diverge again.
-func (p *BLEPeripheral) publishSession(session *NoiseSession) {
+func (p *BLEPeripheral) publishSession(session *pairing.NoiseSession) {
 	p.lifeMu.Lock()
 	defer p.lifeMu.Unlock()
 

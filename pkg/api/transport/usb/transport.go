@@ -39,6 +39,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -113,7 +114,7 @@ type Transport struct {
 	noise *noiseMaterial
 
 	phoneUSB  phoneTransport
-	session   *phone.NoiseSession
+	session   *pairing.NoiseSession
 	connected bool
 	log       *slog.Logger
 
@@ -121,7 +122,7 @@ type Transport struct {
 	// its pages in place, so Connect keeps it here and Close releases it;
 	// dropping it on the floor would leave a locked, unswappable page
 	// resident for every connection the process ever makes.
-	localKey *phone.StaticKey
+	localKey *pairing.StaticKey
 
 	// mu serializes requests. A Noise cipherstate advances a monotonic nonce
 	// per message, so concurrent senders would put frames on the wire out of
@@ -191,7 +192,7 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 
 // noiseMaterial is the transport's own copy of the pairing key material.
 //
-// The private key is held as a *phone.StaticKey -- memguard-backed protected
+// The private key is held as a *pairing.StaticKey -- memguard-backed protected
 // memory -- and NOT as a []byte. The transport has to keep its own copy so a
 // caller cannot mutate the key under an in-flight handshake, but a copy taken
 // with bytes.Clone would be a second plaintext scalar on the ordinary Go heap:
@@ -204,7 +205,7 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 type noiseMaterial struct {
 	// localKey is protected and owned by the transport. Replacing or clearing
 	// the configuration destroys it.
-	localKey *phone.StaticKey
+	localKey *pairing.StaticKey
 
 	// loadErr records a private key that could not be loaded. WithNoiseConfig
 	// returns the transport so it can be chained onto a constructor and has no
@@ -244,7 +245,7 @@ func newNoiseMaterial(cfg *NoiseConfig) *noiseMaterial {
 		return m
 	}
 
-	key, err := phone.LoadStaticKey(cfg.LocalStaticPrivateKey)
+	key, err := pairing.LoadStaticKey(cfg.LocalStaticPrivateKey)
 	if err != nil {
 		m.loadErr = err
 		return m
@@ -314,7 +315,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// the session must not destroy a key the configuration still owns. The
 	// source scalar goes from protected memory straight back into protected
 	// memory, never touching the Go heap in between.
-	localKey, err := phone.LoadStaticKey(noise.localKey.Private)
+	localKey, err := pairing.LoadStaticKey(noise.localKey.Private)
 	if err != nil {
 		return &errs.Detail{Err: ErrNoiseNotConfigured, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -354,7 +355,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
 		ExpectedRemoteStatic: noise.expectedRemoteStatic,
 		IsInitiator:          true,
@@ -367,7 +368,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	// The identity exchange runs on every connection: the phone's stream
 	// responder always expects it, and it binds the phone's attestation
 	// fingerprint into the prologue.
-	if err := phone.PerformHandshake(ctx, &phone.HandshakeConfig{
+	if err := pairing.PerformHandshake(ctx, &pairing.HandshakeConfig{
 		Transport:                 t.phoneUSB,
 		Session:                   session,
 		Logger:                    t.log,
@@ -511,7 +512,7 @@ func (t *Transport) Conn() interface{} {
 // channel. The method parameter becomes the JSON-RPC method name and req its
 // params; the JSON-RPC result is unmarshalled into resp.
 func (t *Transport) Request(ctx context.Context, method string, req, resp interface{}) error {
-	plaintext, err := phone.EncodeRequest(phone.NewRequest(method, req))
+	plaintext, err := pairing.EncodeRequest(pairing.NewRequest(method, req))
 	if err != nil {
 		return &errs.Detail{Err: transport.ErrInvalidRequest, Detail: fmt.Sprintf("failed to marshal request: %v", err)}
 	}
@@ -549,7 +550,7 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 		return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to decrypt response: %v", err)}
 	}
 
-	rpcResp, err := phone.DecodeResponse(responsePlaintext)
+	rpcResp, err := pairing.DecodeResponse(responsePlaintext)
 	if err != nil {
 		return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to decode response: %v", err)}
 	}

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/gousb"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // USB transport constants.
@@ -48,7 +49,7 @@ const (
 )
 
 // Compile-time interface check.
-var _ Transport = (*USBTransport)(nil)
+var _ pairing.Transport = (*USBTransport)(nil)
 
 // usbInEndpoint is the read side of a USB bulk endpoint. It is the subset of
 // *gousb.InEndpoint used by this transport, declared as an interface so the

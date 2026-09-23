@@ -33,6 +33,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backup"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -42,13 +43,13 @@ import (
 // fakeDeviceTransport records the requests a command sends and replies with
 // canned results, standing in for the BLE Noise channel to a phone.
 type fakeDeviceTransport struct {
-	requests []*phone.Request
+	requests []*pairing.Request
 
 	// createResult is returned for local.createBackup.
-	createResult *phone.LocalCreateBackupResult
+	createResult *pairing.LocalCreateBackupResult
 
 	// restoreResult is returned for local.restoreBackup.
-	restoreResult *phone.LocalRestoreBackupResult
+	restoreResult *pairing.LocalRestoreBackupResult
 
 	// connectErr, when set, fails the Connect call.
 	connectErr error
@@ -68,7 +69,7 @@ func (f *fakeDeviceTransport) Connect(_ context.Context) error {
 	return nil
 }
 
-func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *phone.Request) (*phone.Response, error) {
+func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *pairing.Request) (*pairing.Response, error) {
 	f.requests = append(f.requests, req)
 
 	if f.sendErr != nil {
@@ -77,12 +78,12 @@ func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *phone.Request)
 
 	var payload any
 	switch req.Method {
-	case phone.MethodLocalCreateBackup:
+	case pairing.MethodLocalCreateBackup:
 		payload = f.createResult
-	case phone.MethodLocalRestoreBackup:
+	case pairing.MethodLocalRestoreBackup:
 		payload = f.restoreResult
 	default:
-		return &phone.Response{Error: &phone.RPCError{Code: -32601, Message: "method not found"}}, nil
+		return &pairing.Response{Error: &pairing.RPCError{Code: -32601, Message: "method not found"}}, nil
 	}
 
 	raw, err := json.Marshal(payload)
@@ -90,7 +91,7 @@ func (f *fakeDeviceTransport) SendRequest(_ context.Context, req *phone.Request)
 		return nil, err
 	}
 
-	return &phone.Response{ID: req.ID, Result: raw}, nil
+	return &pairing.Response{ID: req.ID, Result: raw}, nil
 }
 
 func (f *fakeDeviceTransport) Close() error {
@@ -100,14 +101,14 @@ func (f *fakeDeviceTransport) Close() error {
 
 // createParams returns the parameters of the recorded local.createBackup
 // request.
-func (f *fakeDeviceTransport) createParams(t *testing.T) *phone.LocalCreateBackupParams {
+func (f *fakeDeviceTransport) createParams(t *testing.T) *pairing.LocalCreateBackupParams {
 	t.Helper()
 
 	for _, req := range f.requests {
-		if req.Method != phone.MethodLocalCreateBackup {
+		if req.Method != pairing.MethodLocalCreateBackup {
 			continue
 		}
-		params, ok := req.Params.(*phone.LocalCreateBackupParams)
+		params, ok := req.Params.(*pairing.LocalCreateBackupParams)
 		require.True(t, ok, "unexpected params type %T", req.Params)
 		return params
 	}
@@ -132,9 +133,9 @@ func useFakeTransport(t *testing.T, transport *fakeDeviceTransport) {
 func pairTestDevice(t *testing.T, name string) {
 	t.Helper()
 
-	localKey, err := phone.GenerateStaticKey()
+	localKey, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
-	remoteKey, err := phone.GenerateStaticKey()
+	remoteKey, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{
@@ -173,7 +174,7 @@ func TestBackupToDevice_SendsSealedPayload(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		createResult: &phone.LocalCreateBackupResult{Success: true, BackupID: "backup-1"},
+		createResult: &pairing.LocalCreateBackupResult{Success: true, BackupID: "backup-1"},
 	}
 	useFakeTransport(t, transport)
 
@@ -226,7 +227,7 @@ func TestBackupToDevice_GeneratedKeyOpensPayload(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		createResult: &phone.LocalCreateBackupResult{Success: true, BackupID: "backup-2"},
+		createResult: &pairing.LocalCreateBackupResult{Success: true, BackupID: "backup-2"},
 	}
 	useFakeTransport(t, transport)
 
@@ -258,7 +259,7 @@ func TestBackupToDevice_NoDataRefusedBeforeSending(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		createResult: &phone.LocalCreateBackupResult{Success: true, BackupID: "backup-empty"},
+		createResult: &pairing.LocalCreateBackupResult{Success: true, BackupID: "backup-empty"},
 	}
 	useFakeTransport(t, transport)
 
@@ -302,7 +303,7 @@ func TestBackupToDevice_PhoneRejectsBackup(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		createResult: &phone.LocalCreateBackupResult{Success: false, Message: "storage full"},
+		createResult: &pairing.LocalCreateBackupResult{Success: false, Message: "storage full"},
 	}
 	useFakeTransport(t, transport)
 
@@ -364,7 +365,7 @@ func TestBackupFromDevice_RestoresIntoStores(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		restoreResult: &phone.LocalRestoreBackupResult{
+		restoreResult: &pairing.LocalRestoreBackupResult{
 			BackupData: payload,
 			BackupID:   "backup-1",
 			CreatedAt:  time.Now().UTC().Format(time.RFC3339),
@@ -413,7 +414,7 @@ func TestBackupFromDevice_EmptyPayloadRefused(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		restoreResult: &phone.LocalRestoreBackupResult{BackupID: "backup-empty"},
+		restoreResult: &pairing.LocalRestoreBackupResult{BackupID: "backup-empty"},
 	}
 	useFakeTransport(t, transport)
 
@@ -429,7 +430,7 @@ func TestBackupFromDevice_NotAnEnvelope(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		restoreResult: &phone.LocalRestoreBackupResult{
+		restoreResult: &pairing.LocalRestoreBackupResult{
 			BackupData: []byte("not an xkey backup"),
 			BackupID:   "backup-junk",
 		},
@@ -452,7 +453,7 @@ func TestBackupFromDevice_WrongPasswordWritesNothing(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	transport := &fakeDeviceTransport{
-		restoreResult: &phone.LocalRestoreBackupResult{BackupData: payload, BackupID: "backup-1"},
+		restoreResult: &pairing.LocalRestoreBackupResult{BackupData: payload, BackupID: "backup-1"},
 	}
 	useFakeTransport(t, transport)
 
@@ -530,7 +531,7 @@ func TestBackupToDevice_InvalidPhoneNoiseKey(t *testing.T) {
 	home := isolatedBackupHome(t)
 	seedBackupStores(t, home)
 
-	localKey, err := phone.GenerateStaticKey()
+	localKey, err := pairing.GenerateStaticKey()
 	require.NoError(t, err)
 	require.NoError(t, saveDevicesConfig(&DevicesConfig{
 		Devices: []PairedDevice{{
@@ -580,7 +581,7 @@ func TestBackupFromDevice_SkippedEntriesReported(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	useFakeTransport(t, &fakeDeviceTransport{
-		restoreResult: &phone.LocalRestoreBackupResult{BackupData: payload, BackupID: "backup-1"},
+		restoreResult: &pairing.LocalRestoreBackupResult{BackupData: payload, BackupID: "backup-1"},
 	})
 
 	output, err := runDeviceCmd(t, backupFromDeviceCmd, runBackupFromDevice, map[string]string{
@@ -608,7 +609,7 @@ func TestBackupFromDevice_RestoreWithHexKey(t *testing.T) {
 	pairTestDevice(t, "Test Phone")
 
 	useFakeTransport(t, &fakeDeviceTransport{
-		restoreResult: &phone.LocalRestoreBackupResult{BackupData: payload, BackupID: "backup-1"},
+		restoreResult: &pairing.LocalRestoreBackupResult{BackupData: payload, BackupID: "backup-1"},
 	})
 
 	output, err := runDeviceCmd(t, backupFromDeviceCmd, runBackupFromDevice, map[string]string{

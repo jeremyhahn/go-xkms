@@ -18,6 +18,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // TestRetainedPagesSurviveLosingEveryGoReference settles, by execution, a
@@ -43,7 +45,7 @@ import (
 // become the use-after-free they were written to avoid — and this fails
 // instead.
 func TestRetainedPagesSurviveLosingEveryGoReference(t *testing.T) {
-	key, err := GenerateStaticKey()
+	key, err := pairing.GenerateStaticKey()
 	if err != nil {
 		t.Fatalf("GenerateStaticKey: %v", err)
 	}

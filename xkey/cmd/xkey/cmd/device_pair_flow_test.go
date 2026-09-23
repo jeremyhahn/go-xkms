@@ -241,7 +241,7 @@ func TestRunDevicePair_SavesAVerifiedAttestationUnderDefaultPolicy(t *testing.T)
 	record := flow.saved.Devices[0]
 	assert.Equal(t, hex.EncodeToString(flow.device.DAK.Fingerprint()), record.DeviceFingerprint,
 		"the stored fingerprint must be the one the phone derived from its own key")
-	assert.Equal(t, phone.AttestProtocolV2, record.AttestationProtocolVersion)
+	assert.Equal(t, pairing.AttestProtocolV2, record.AttestationProtocolVersion)
 	assert.NotEmpty(t, record.SecurityLevel)
 	assert.False(t, record.LastDeviceAttestationTime.IsZero())
 	require.NoError(t, <-flow.done)

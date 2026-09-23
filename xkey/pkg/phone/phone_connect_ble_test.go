@@ -192,7 +192,7 @@ func runRetryResponder(t *testing.T, transport *mockPipeTransport, failFirst int
 
 		transport.sendCh <- []byte{pairing.IdentityAckUnknown}
 
-		session, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: false})
+		session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
 		if err != nil {
 			t.Errorf("responder: new session: %v", err)
 			return

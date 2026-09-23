@@ -192,7 +192,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	// scalar would be left sitting in protected memory nothing releases.
 	defer localPrivateKey.Destroy()
 
-	localKey, err := phone.LoadStaticKey(localPrivateKey.Bytes())
+	localKey, err := pairing.LoadStaticKey(localPrivateKey.Bytes())
 	if err != nil {
 		return &WrappedError{Msg: "failed to load local noise key", Err: err}
 	}
@@ -230,7 +230,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	defer func() { _ = transport.Disconnect() }()
 
 	// Create Noise session with existing keys
-	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
 		ExpectedRemoteStatic: remotePublicKey,
 		IsInitiator:          true,
@@ -263,7 +263,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	// "unknown". A device that HAS a fingerprint cannot return to that state,
 	// and performIdentityExchange refuses if it claims to.
 	fmt.Println("Establishing secure channel...")
-	handshakeCfg := &phone.HandshakeConfig{
+	handshakeCfg := &pairing.HandshakeConfig{
 		Transport:                 transport,
 		Session:                   session,
 		Logger:                    logger,
@@ -272,7 +272,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		LocalStaticPublicKey:      session.LocalStaticPublicKey(),
 		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
-	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
+	if err := pairing.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		return &WrappedError{Msg: "handshake failed", Err: err}
 	}
 
@@ -300,7 +300,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	fmt.Println("Verifying attestation chain...")
 
 	verified, err := attestation.AttestOverSession(
-		connectCtx, transport, session, trust, phone.AttestPurposeReattest, logger)
+		connectCtx, transport, session, trust, pairing.AttestPurposeReattest, logger)
 	if err != nil {
 		return err
 	}

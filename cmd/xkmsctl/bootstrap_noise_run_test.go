@@ -25,7 +25,7 @@ import (
 	"testing"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // The Run wrapper is thin, but "thin" is not "untestable": with no assertion
@@ -109,7 +109,7 @@ func TestNoiseGenerateKeyCmd_Run(t *testing.T) {
 
 	// The key has to be the real one: derive its public half and require the
 	// command to have printed exactly that.
-	key, err := phone.LoadStaticKey(priv)
+	key, err := pairing.LoadStaticKey(priv)
 	if err != nil {
 		t.Fatalf("the written key does not load: %v", err)
 	}

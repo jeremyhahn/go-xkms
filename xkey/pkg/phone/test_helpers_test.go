@@ -120,7 +120,7 @@ func testPhoneKeyBackendConfig() *PhoneKeyBackendConfig {
 // 1. Read identity message: [0x01, public_key_32_bytes]
 // 2. Send identity ack: [0x00] for new device
 // 3. Proceed with Noise XX handshake
-func runResponderWithIdentity(t *testing.T, transport *mockPipeTransport) *NoiseSession {
+func runResponderWithIdentity(t *testing.T, transport *mockPipeTransport) *pairing.NoiseSession {
 	t.Helper()
 
 	// Step 1: Read identity message from initiator
@@ -132,7 +132,7 @@ func runResponderWithIdentity(t *testing.T, transport *mockPipeTransport) *Noise
 	transport.sendCh <- []byte{pairing.IdentityAckUnknown}
 
 	// Step 3: Proceed with Noise XX handshake
-	responderSession, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: false})
+	responderSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{IsInitiator: false})
 	require.NoError(t, err)
 
 	err = responderSession.InitHandshake()

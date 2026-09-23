@@ -29,16 +29,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // mockSender is a test double that intercepts SendRequest calls and
 // returns configurable responses.
 type mockSender struct {
-	sendFunc func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error)
+	sendFunc func(ctx context.Context, req *pairing.Request) (*pairing.Response, error)
 }
 
-func (m *mockSender) SendRequest(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+func (m *mockSender) SendRequest(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 	return m.sendFunc(ctx, req)
 }
 
@@ -53,20 +53,20 @@ func validConfig() *Config {
 	}
 }
 
-func mockSuccessResponse(result interface{}) *phoneproto.Response {
+func mockSuccessResponse(result interface{}) *pairing.Response {
 	data, _ := json.Marshal(result)
-	return &phoneproto.Response{
-		JSONRPC: phoneproto.JSONRPCVersion,
+	return &pairing.Response{
+		JSONRPC: pairing.JSONRPCVersion,
 		ID:      1,
 		Result:  json.RawMessage(data),
 	}
 }
 
-func mockErrorResponse(code int, message string) *phoneproto.Response {
-	return &phoneproto.Response{
-		JSONRPC: phoneproto.JSONRPCVersion,
+func mockErrorResponse(code int, message string) *pairing.Response {
+	return &pairing.Response{
+		JSONRPC: pairing.JSONRPCVersion,
 		ID:      1,
-		Error: &phoneproto.RPCError{
+		Error: &pairing.RPCError{
 			Code:    code,
 			Message: message,
 		},
@@ -75,9 +75,9 @@ func mockErrorResponse(code int, message string) *phoneproto.Response {
 
 // mockInvalidResultResponse returns a response with invalid JSON in the Result
 // field, which causes DecodeResult to fail.
-func mockInvalidResultResponse() *phoneproto.Response {
-	return &phoneproto.Response{
-		JSONRPC: phoneproto.JSONRPCVersion,
+func mockInvalidResultResponse() *pairing.Response {
+	return &pairing.Response{
+		JSONRPC: pairing.JSONRPCVersion,
 		ID:      1,
 		Result:  json.RawMessage([]byte("{{invalid json")),
 	}
@@ -133,7 +133,7 @@ func ecdsaP256Attrs(cn string) *types.KeyAttributes {
 
 func TestNewBackend_Valid(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			return mockSuccessResponse(nil), nil
 		},
 	}
@@ -233,8 +233,8 @@ func TestBackend_GenerateKey_Success(t *testing.T) {
 	pubKeyDER := generateTestECDSAPublicKeyDER(t)
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalGenerateKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalGenerateKeyResult{
 				KeyID:        "test-key",
 				PublicKeyDER: pubKeyDER,
 				Algorithm:    "ES256",
@@ -266,8 +266,8 @@ func TestBackend_GenerateKey_RSA_WithAttributes(t *testing.T) {
 	pubKeyDER := generateTestRSAPublicKeyDER(t)
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalGenerateKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalGenerateKeyResult{
 				KeyID:        "rsa-key",
 				PublicKeyDER: pubKeyDER,
 				Algorithm:    "RS256",
@@ -295,7 +295,7 @@ func TestBackend_GenerateKey_RSA_WithAttributes(t *testing.T) {
 
 func TestBackend_GenerateKey_InvalidDecodeResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			return mockInvalidResultResponse(), nil
 		},
 	}
@@ -333,8 +333,8 @@ func TestBackend_GenerateKey_NilAttrs(t *testing.T) {
 
 func TestBackend_GenerateKey_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeKeyExists, "key exists"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeKeyExists, "key exists"), nil
 		},
 	}
 
@@ -350,7 +350,7 @@ func TestBackend_GenerateKey_RPCError(t *testing.T) {
 func TestBackend_GenerateKey_TransportError(t *testing.T) {
 	transportErr := errors.New("transport failure")
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			return nil, transportErr
 		},
 	}
@@ -397,8 +397,8 @@ func TestBackend_GenerateKey_ECDSANilCurve(t *testing.T) {
 
 func TestBackend_GenerateKey_InvalidPublicKeyDER(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalGenerateKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalGenerateKeyResult{
 				KeyID:        "test-key",
 				PublicKeyDER: []byte("not-a-valid-der-key"),
 				Algorithm:    "ES256",
@@ -417,8 +417,8 @@ func TestBackend_GenerateKey_InvalidPublicKeyDER(t *testing.T) {
 
 func TestBackend_GenerateKey_EmptyPublicKeyDER(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalGenerateKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalGenerateKeyResult{
 				KeyID:        "test-key",
 				PublicKeyDER: nil,
 				Algorithm:    "ES256",
@@ -442,19 +442,19 @@ func TestBackend_GetKey_Success(t *testing.T) {
 
 	callCount := 0
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			callCount++
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 						KeyType:   "signing",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+			case pairing.MethodLocalGetPublicKey:
+				return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 					PublicKey: pubKeyDER,
 					Format:    "der",
 					Algorithm: "ES256",
@@ -483,8 +483,8 @@ func TestBackend_GetKey_Success(t *testing.T) {
 
 func TestBackend_GetKey_NotFound(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 
@@ -520,8 +520,8 @@ func TestBackend_GetKey_Closed(t *testing.T) {
 
 func TestBackend_GetKey_InvalidKeyInfoDecode(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			if req.Method == phoneproto.MethodLocalGetKeyInfo {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			if req.Method == pairing.MethodLocalGetKeyInfo {
 				return mockInvalidResultResponse(), nil
 			}
 			return nil, errors.New("unexpected")
@@ -538,17 +538,17 @@ func TestBackend_GetKey_InvalidKeyInfoDecode(t *testing.T) {
 
 func TestBackend_GetKey_GetPublicKeyRPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockErrorResponse(phoneproto.ErrorCodeInternalError, "internal"), nil
+			case pairing.MethodLocalGetPublicKey:
+				return mockErrorResponse(pairing.ErrorCodeInternalError, "internal"), nil
 			default:
 				return nil, errors.New("unexpected")
 			}
@@ -565,16 +565,16 @@ func TestBackend_GetKey_GetPublicKeyRPCError(t *testing.T) {
 
 func TestBackend_GetKey_InvalidPublicKeyDecode(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
+			case pairing.MethodLocalGetPublicKey:
 				return mockInvalidResultResponse(), nil
 			default:
 				return nil, errors.New("unexpected")
@@ -592,17 +592,17 @@ func TestBackend_GetKey_InvalidPublicKeyDecode(t *testing.T) {
 
 func TestBackend_GetKey_InvalidPublicKeyParse(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+			case pairing.MethodLocalGetPublicKey:
+				return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 					PublicKey: []byte("invalid-der-bytes"),
 					Format:    "der",
 					Algorithm: "ES256",
@@ -625,8 +625,8 @@ func TestBackend_GetKey_InvalidPublicKeyParse(t *testing.T) {
 
 func TestBackend_DeleteKey_Success(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalDeleteKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalDeleteKeyResult{
 				Deleted: true,
 			}), nil
 		},
@@ -664,8 +664,8 @@ func TestBackend_DeleteKey_NilAttrs(t *testing.T) {
 
 func TestBackend_DeleteKey_NotDeleted(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalDeleteKeyResult{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalDeleteKeyResult{
 				Deleted: false,
 			}), nil
 		},
@@ -681,8 +681,8 @@ func TestBackend_DeleteKey_NotDeleted(t *testing.T) {
 
 func TestBackend_DeleteKey_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 
@@ -696,7 +696,7 @@ func TestBackend_DeleteKey_RPCError(t *testing.T) {
 
 func TestBackend_DeleteKey_InvalidDecodeResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			return mockInvalidResultResponse(), nil
 		},
 	}
@@ -713,9 +713,9 @@ func TestBackend_DeleteKey_InvalidDecodeResult(t *testing.T) {
 
 func TestBackend_ListKeys_Success(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalListKeysResult{
-				Keys: []phoneproto.KeyInfo{
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalListKeysResult{
+				Keys: []pairing.KeyInfo{
 					{KeyID: "key-1", Algorithm: "ES256", KeyType: "signing"},
 					{KeyID: "key-2", Algorithm: "RS256", KeyType: "encryption"},
 					{KeyID: "key-3", Algorithm: "EdDSA", KeyType: "tls"},
@@ -753,9 +753,9 @@ func TestBackend_ListKeys_Success(t *testing.T) {
 
 func TestBackend_ListKeys_Empty(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockSuccessResponse(phoneproto.LocalListKeysResult{
-				Keys: []phoneproto.KeyInfo{},
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockSuccessResponse(pairing.LocalListKeysResult{
+				Keys: []pairing.KeyInfo{},
 			}), nil
 		},
 	}
@@ -784,8 +784,8 @@ func TestBackend_ListKeys_Closed(t *testing.T) {
 
 func TestBackend_ListKeys_RPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeInternalError, "internal"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeInternalError, "internal"), nil
 		},
 	}
 
@@ -799,7 +799,7 @@ func TestBackend_ListKeys_RPCError(t *testing.T) {
 
 func TestBackend_ListKeys_InvalidDecodeResult(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			return mockInvalidResultResponse(), nil
 		},
 	}
@@ -818,17 +818,17 @@ func TestBackend_Signer_Success(t *testing.T) {
 	pubKeyDER := generateTestECDSAPublicKeyDER(t)
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+			case pairing.MethodLocalGetPublicKey:
+				return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 					PublicKey: pubKeyDER,
 					Format:    "der",
 					Algorithm: "ES256",
@@ -876,8 +876,8 @@ func TestBackend_Signer_NilAttrs(t *testing.T) {
 
 func TestBackend_Signer_GetKeyError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 
@@ -895,17 +895,17 @@ func TestBackend_Decrypter_Success(t *testing.T) {
 	pubKeyDER := generateTestECDSAPublicKeyDER(t)
 
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+			case pairing.MethodLocalGetPublicKey:
+				return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 					PublicKey: pubKeyDER,
 					Format:    "der",
 					Algorithm: "ES256",
@@ -953,8 +953,8 @@ func TestBackend_Decrypter_NilAttrs(t *testing.T) {
 
 func TestBackend_Decrypter_GetKeyInfoError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			return mockErrorResponse(phoneproto.ErrorCodeKeyNotFound, "not found"), nil
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
 		},
 	}
 
@@ -968,8 +968,8 @@ func TestBackend_Decrypter_GetKeyInfoError(t *testing.T) {
 
 func TestBackend_Decrypter_InvalidKeyInfoDecode(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
-			if req.Method == phoneproto.MethodLocalGetKeyInfo {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
+			if req.Method == pairing.MethodLocalGetKeyInfo {
 				return mockInvalidResultResponse(), nil
 			}
 			return nil, errors.New("unexpected")
@@ -986,17 +986,17 @@ func TestBackend_Decrypter_InvalidKeyInfoDecode(t *testing.T) {
 
 func TestBackend_Decrypter_GetPublicKeyRPCError(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockErrorResponse(phoneproto.ErrorCodeKeyNotFound, "not found"), nil
+			case pairing.MethodLocalGetPublicKey:
+				return mockErrorResponse(pairing.ErrorCodeKeyNotFound, "not found"), nil
 			default:
 				return nil, errors.New("unexpected")
 			}
@@ -1013,16 +1013,16 @@ func TestBackend_Decrypter_GetPublicKeyRPCError(t *testing.T) {
 
 func TestBackend_Decrypter_InvalidPublicKeyDecode(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
+			case pairing.MethodLocalGetPublicKey:
 				return mockInvalidResultResponse(), nil
 			default:
 				return nil, errors.New("unexpected")
@@ -1040,17 +1040,17 @@ func TestBackend_Decrypter_InvalidPublicKeyDecode(t *testing.T) {
 
 func TestBackend_Decrypter_InvalidPublicKeyParse(t *testing.T) {
 	sender := &mockSender{
-		sendFunc: func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+		sendFunc: func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 			switch req.Method {
-			case phoneproto.MethodLocalGetKeyInfo:
-				return mockSuccessResponse(phoneproto.LocalGetKeyInfoResult{
-					KeyInfo: phoneproto.KeyInfo{
+			case pairing.MethodLocalGetKeyInfo:
+				return mockSuccessResponse(pairing.LocalGetKeyInfoResult{
+					KeyInfo: pairing.KeyInfo{
 						KeyID:     "test-key",
 						Algorithm: "ES256",
 					},
 				}), nil
-			case phoneproto.MethodLocalGetPublicKey:
-				return mockSuccessResponse(phoneproto.LocalGetPublicKeyResult{
+			case pairing.MethodLocalGetPublicKey:
+				return mockSuccessResponse(pairing.LocalGetPublicKeyResult{
 					PublicKey: []byte("invalid-der"),
 					Format:    "der",
 					Algorithm: "ES256",
@@ -1319,8 +1319,8 @@ func TestMapRPCError_NilError(t *testing.T) {
 }
 
 func TestMapRPCError_KnownCode(t *testing.T) {
-	rpcErr := &phoneproto.RPCError{
-		Code:    phoneproto.ErrorCodeKeyNotFound,
+	rpcErr := &pairing.RPCError{
+		Code:    pairing.ErrorCodeKeyNotFound,
 		Message: "key not found",
 	}
 
@@ -1331,7 +1331,7 @@ func TestMapRPCError_KnownCode(t *testing.T) {
 }
 
 func TestMapRPCError_UnknownCode(t *testing.T) {
-	rpcErr := &phoneproto.RPCError{
+	rpcErr := &pairing.RPCError{
 		Code:    -99999,
 		Message: "unknown error",
 	}
@@ -1348,28 +1348,28 @@ func TestMapRPCError_AllMappedCodes(t *testing.T) {
 		code     int
 		expected error
 	}{
-		{"KeyNotFound", phoneproto.ErrorCodeKeyNotFound, ErrKeyNotFound},
-		{"UserCancelled", phoneproto.ErrorCodeUserCancelled, ErrUserCancelled},
-		{"BiometricFailed", phoneproto.ErrorCodeBiometricFailed, ErrBiometricFailed},
-		{"UnsupportedAlg", phoneproto.ErrorCodeUnsupportedAlg, ErrUnsupportedAlgorithm},
-		{"OperationTimeout", phoneproto.ErrorCodeOperationTimeout, ErrOperationTimeout},
-		{"KeyExists", phoneproto.ErrorCodeKeyExists, ErrKeyExists},
-		{"ParseError", phoneproto.ErrorCodeParseError, ErrProtocolError},
-		{"InvalidRequest", phoneproto.ErrorCodeInvalidRequest, ErrProtocolError},
-		{"InvalidParams", phoneproto.ErrorCodeInvalidParams, ErrProtocolError},
-		{"MethodNotFound", phoneproto.ErrorCodeMethodNotFound, ErrProtocolError},
-		{"InternalError", phoneproto.ErrorCodeInternalError, ErrInvalidResponse},
-		{"BackendDenied", phoneproto.ErrorCodeBackendDenied, ErrProtocolError},
-		{"AttestFailed", phoneproto.ErrorCodeAttestFailed, ErrAttestationFailed},
-		{"AttestUnsupported", phoneproto.ErrorCodeAttestUnsupported, ErrProtocolError},
-		{"OperationDenied", phoneproto.ErrorCodeOperationDenied, ErrProtocolError},
-		{"InvalidPublicKey", phoneproto.ErrorCodeInvalidPublicKey, ErrInvalidPublicKey},
-		{"DecryptFailed", phoneproto.ErrorCodeDecryptFailed, ErrProtocolError},
+		{"KeyNotFound", pairing.ErrorCodeKeyNotFound, ErrKeyNotFound},
+		{"UserCancelled", pairing.ErrorCodeUserCancelled, ErrUserCancelled},
+		{"BiometricFailed", pairing.ErrorCodeBiometricFailed, ErrBiometricFailed},
+		{"UnsupportedAlg", pairing.ErrorCodeUnsupportedAlg, ErrUnsupportedAlgorithm},
+		{"OperationTimeout", pairing.ErrorCodeOperationTimeout, ErrOperationTimeout},
+		{"KeyExists", pairing.ErrorCodeKeyExists, ErrKeyExists},
+		{"ParseError", pairing.ErrorCodeParseError, ErrProtocolError},
+		{"InvalidRequest", pairing.ErrorCodeInvalidRequest, ErrProtocolError},
+		{"InvalidParams", pairing.ErrorCodeInvalidParams, ErrProtocolError},
+		{"MethodNotFound", pairing.ErrorCodeMethodNotFound, ErrProtocolError},
+		{"InternalError", pairing.ErrorCodeInternalError, ErrInvalidResponse},
+		{"BackendDenied", pairing.ErrorCodeBackendDenied, ErrProtocolError},
+		{"AttestFailed", pairing.ErrorCodeAttestFailed, ErrAttestationFailed},
+		{"AttestUnsupported", pairing.ErrorCodeAttestUnsupported, ErrProtocolError},
+		{"OperationDenied", pairing.ErrorCodeOperationDenied, ErrProtocolError},
+		{"InvalidPublicKey", pairing.ErrorCodeInvalidPublicKey, ErrInvalidPublicKey},
+		{"DecryptFailed", pairing.ErrorCodeDecryptFailed, ErrProtocolError},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			rpcErr := &phoneproto.RPCError{Code: tc.code, Message: tc.name}
+			rpcErr := &pairing.RPCError{Code: tc.code, Message: tc.name}
 			err := mapRPCError(rpcErr)
 			if err != tc.expected {
 				t.Errorf("expected %v, got %v", tc.expected, err)
@@ -1381,7 +1381,7 @@ func TestMapRPCError_AllMappedCodes(t *testing.T) {
 // --- mapKeyInfoToAttributes ---
 
 func TestMapKeyInfoToAttributes(t *testing.T) {
-	info := &phoneproto.KeyInfo{
+	info := &pairing.KeyInfo{
 		KeyID:     "my-key",
 		Algorithm: "ES256",
 		KeyType:   "signing",
@@ -1403,7 +1403,7 @@ func TestMapKeyInfoToAttributes(t *testing.T) {
 }
 
 func TestMapKeyInfoToAttributes_RSA(t *testing.T) {
-	info := &phoneproto.KeyInfo{
+	info := &pairing.KeyInfo{
 		KeyID:       "rsa-key",
 		Algorithm:   "RS256",
 		KeyType:     "encryption",
@@ -1426,7 +1426,7 @@ func TestMapKeyInfoToAttributes_RSA(t *testing.T) {
 }
 
 func TestMapKeyInfoToAttributes_UnknownAlgorithm(t *testing.T) {
-	info := &phoneproto.KeyInfo{
+	info := &pairing.KeyInfo{
 		KeyID:     "unknown-key",
 		Algorithm: "UNKNOWN-ALG",
 		KeyType:   "unknown-type",
@@ -1519,16 +1519,16 @@ func TestSenderFunc_ImplementsSender(t *testing.T) {
 	var _ Sender = SenderFunc(nil) // Compile-time check
 
 	called := false
-	fn := SenderFunc(func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+	fn := SenderFunc(func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 		called = true
-		return &phoneproto.Response{
+		return &pairing.Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result:  json.RawMessage(`{"status":"ok"}`),
 		}, nil
 	})
 
-	req := phoneproto.NewRequest("test.method", nil)
+	req := pairing.NewRequest("test.method", nil)
 	resp, err := fn.SendRequest(context.Background(), req)
 	require.NoError(t, err)
 	assert.True(t, called)
@@ -1537,11 +1537,11 @@ func TestSenderFunc_ImplementsSender(t *testing.T) {
 
 func TestSenderFunc_ReturnsError(t *testing.T) {
 	expectedErr := errors.New("sender error")
-	fn := SenderFunc(func(ctx context.Context, req *phoneproto.Request) (*phoneproto.Response, error) {
+	fn := SenderFunc(func(ctx context.Context, req *pairing.Request) (*pairing.Response, error) {
 		return nil, expectedErr
 	})
 
-	req := phoneproto.NewRequest("test.method", nil)
+	req := pairing.NewRequest("test.method", nil)
 	resp, err := fn.SendRequest(context.Background(), req)
 	assert.ErrorIs(t, err, expectedErr)
 	assert.Nil(t, resp)

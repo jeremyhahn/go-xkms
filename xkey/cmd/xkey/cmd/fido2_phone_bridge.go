@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	unixtransport "github.com/jeremyhahn/go-xkms/sdk/go/transport/unix"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/viper"
 )
@@ -130,7 +131,7 @@ func (c *XKMSdBridgeConfig) applyDefaults() {
 type phoneBackendWithBridge struct {
 	*phone.PhoneKeyBackend
 	xkmsdClient transport.Client
-	bridge      *phone.Bridge
+	bridge      *pairing.Bridge
 	// enrollerCloser owns the TPM handle opened for device enrollment, when
 	// this bridge opened one of its own rather than borrowing a shared TPM.
 	enrollerCloser io.Closer
@@ -192,7 +193,7 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 		cfg.TPMEnrollment, nil, cfg.TPMDevice, cfg.TPMPCRBank, logger)
 
 	// Create the Bridge for routing remote.* requests.
-	bridgeCfg := &phone.BridgeConfig{
+	bridgeCfg := &pairing.BridgeConfig{
 		AllowedBackends: cfg.AllowedBackends,
 		DeniedBackends:  cfg.DeniedBackends,
 		RequestTimeout:  cfg.RequestTimeout,
@@ -201,7 +202,7 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 		Logger:          logger,
 	}
 
-	bridge, err := phone.NewBridge(client, bridgeCfg)
+	bridge, err := pairing.NewBridge(client, bridgeCfg)
 	if err != nil {
 		if enrollerCloser != nil {
 			_ = enrollerCloser.Close()

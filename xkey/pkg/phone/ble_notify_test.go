@@ -19,6 +19,8 @@ import (
 	"io"
 	"sync"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
 // errNotifyWrite is the transport failure injected by captureWriter.
@@ -57,7 +59,7 @@ func newCaptureWriter() *captureWriter {
 // signalComplete closes the complete channel the first time a message has been
 // fully captured. The caller must hold w.mu.
 func (w *captureWriter) signalComplete(fragment []byte) {
-	if len(fragment) < FragmentHeaderSize || fragment[0]&FlagLastFragment == 0 {
+	if len(fragment) < pairing.FragmentHeaderSize || fragment[0]&pairing.FlagLastFragment == 0 {
 		return
 	}
 	select {
@@ -136,9 +138,9 @@ func (w *captureWriter) reassemble(t *testing.T) []byte {
 
 	fragments := w.snapshot()
 
-	r := NewReassembler()
+	r := pairing.NewReassembler()
 	for i, raw := range fragments {
-		frag, err := DecodeFragment(raw)
+		frag, err := pairing.DecodeFragment(raw)
 		if err != nil {
 			t.Fatalf("fragment %d failed to decode: %v", i, err)
 		}
@@ -172,7 +174,7 @@ func payload(size int) []byte {
 
 func TestFragmentSender_SendSingleFragment(t *testing.T) {
 	writer := newCaptureWriter()
-	sender := newFragmentSender(writer, NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
 
 	message := payload(32)
 	if err := sender.send(context.Background(), message); err != nil {
@@ -197,13 +199,13 @@ func TestFragmentSender_SendMultiFragment(t *testing.T) {
 	}{
 		{name: "two fragments at default MTU", mtu: DefaultMTU - bleNotifyOverhead, size: 400, wantFragment: 2},
 		{name: "many fragments at default MTU", mtu: DefaultMTU - bleNotifyOverhead, size: 4096, wantFragment: 18},
-		{name: "minimum MTU", mtu: MinMTU, size: 100, wantFragment: 7},
+		{name: "minimum MTU", mtu: pairing.MinMTU, size: 100, wantFragment: 7},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			writer := newCaptureWriter()
-			sender := newFragmentSender(writer, NewFragmenter(tt.mtu), nil)
+			sender := newFragmentSender(writer, pairing.NewFragmenter(tt.mtu), nil)
 
 			message := payload(tt.size)
 			if err := sender.send(context.Background(), message); err != nil {
@@ -229,7 +231,7 @@ func TestFragmentSender_SendMultiFragment(t *testing.T) {
 
 func TestFragmentSender_SendEmptyPayload(t *testing.T) {
 	writer := newCaptureWriter()
-	sender := newFragmentSender(writer, NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
 
 	if err := sender.send(context.Background(), nil); err != nil {
 		t.Fatalf("send failed: %v", err)
@@ -240,7 +242,7 @@ func TestFragmentSender_SendEmptyPayload(t *testing.T) {
 	if writer.count() != 1 {
 		t.Fatalf("expected 1 fragment for empty payload, got %d", writer.count())
 	}
-	if len(writer.fragment(0)) != FragmentHeaderSize {
+	if len(writer.fragment(0)) != pairing.FragmentHeaderSize {
 		t.Fatalf("expected header-only fragment, got %d bytes", len(writer.fragment(0)))
 	}
 	if got := writer.reassemble(t); len(got) != 0 {
@@ -252,7 +254,7 @@ func TestFragmentSender_ShortWriteAborts(t *testing.T) {
 	writer := newCaptureWriter()
 	writer.shortAt = 1
 	writer.shortBy = 3
-	sender := newFragmentSender(writer, NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
 
 	err := sender.send(context.Background(), payload(4096))
 	if err == nil {
@@ -284,7 +286,7 @@ func TestFragmentSender_ShortWriteAborts(t *testing.T) {
 func TestFragmentSender_WriteErrorMidStreamAborts(t *testing.T) {
 	writer := newCaptureWriter()
 	writer.failAt = 2
-	sender := newFragmentSender(writer, NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
 
 	err := sender.send(context.Background(), payload(4096))
 	if err == nil {
@@ -316,7 +318,7 @@ func TestFragmentSender_WriteErrorMidStreamAborts(t *testing.T) {
 func TestFragmentSender_FirstWriteErrorAborts(t *testing.T) {
 	writer := newCaptureWriter()
 	writer.failAt = 0
-	sender := newFragmentSender(writer, NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
 
 	err := sender.send(context.Background(), payload(64))
 	if !errors.Is(err, errNotifyWrite) {
@@ -332,9 +334,9 @@ func TestFragmentSender_OversizedPayload(t *testing.T) {
 	// At the minimum MTU each fragment carries 16 payload bytes, so a message
 	// larger than 65535*16 bytes cannot be addressed by the 16-bit sequence
 	// number and must be rejected outright.
-	sender := newFragmentSender(writer, NewFragmenter(MinMTU), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(pairing.MinMTU), nil)
 
-	err := sender.send(context.Background(), payload(65536*(MinMTU-FragmentHeaderSize)))
+	err := sender.send(context.Background(), payload(65536*(pairing.MinMTU-pairing.FragmentHeaderSize)))
 	if err == nil {
 		t.Fatal("expected an oversized payload to be rejected")
 	}
@@ -352,7 +354,7 @@ func TestFragmentSender_UnavailableWriter(t *testing.T) {
 		sender *fragmentSender
 	}{
 		{name: "nil sender", sender: nil},
-		{name: "nil writer", sender: newFragmentSender(nil, NewFragmenter(DefaultMTU), nil)},
+		{name: "nil writer", sender: newFragmentSender(nil, pairing.NewFragmenter(DefaultMTU), nil)},
 		{name: "nil fragmenter", sender: newFragmentSender(newCaptureWriter(), nil, nil)},
 	}
 
@@ -368,7 +370,7 @@ func TestFragmentSender_UnavailableWriter(t *testing.T) {
 
 func TestFragmentSender_ContextCancelled(t *testing.T) {
 	writer := newCaptureWriter()
-	sender := newFragmentSender(writer, NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
+	sender := newFragmentSender(writer, pairing.NewFragmenter(DefaultMTU-bleNotifyOverhead), nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -390,7 +392,7 @@ func TestFragmentSender_ContextCancelled(t *testing.T) {
 }
 
 func TestFragmentSender_NilLoggerDefaults(t *testing.T) {
-	sender := newFragmentSender(newCaptureWriter(), NewFragmenter(DefaultMTU), nil)
+	sender := newFragmentSender(newCaptureWriter(), pairing.NewFragmenter(DefaultMTU), nil)
 	if sender.log == nil {
 		t.Fatal("expected a default logger")
 	}

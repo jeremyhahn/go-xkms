@@ -76,7 +76,7 @@ type TCPPairingConfig struct {
 
 	// LocalStaticKey is the persistent Noise static key, held in protected
 	// memory. If nil, a new key is generated on start.
-	LocalStaticKey *StaticKey
+	LocalStaticKey *pairing.StaticKey
 
 	// OwnsStaticKey transfers ownership of LocalStaticKey to the server, so
 	// that Stop releases it — and, just as importantly, RETAINS it when a
@@ -145,7 +145,7 @@ type TCPPairingServer struct {
 	stopOnce sync.Once
 	stopErr  error
 
-	localStaticKey *StaticKey
+	localStaticKey *pairing.StaticKey
 
 	// ownsStaticKey records whether the server generated localStaticKey
 	// itself. A key supplied by the caller stays the caller's to destroy;
@@ -185,7 +185,7 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	owns := false
 	switch {
 	case localKey == nil:
-		generated, err := GenerateStaticKey()
+		generated, err := pairing.GenerateStaticKey()
 		if err != nil {
 			return nil, ErrTCPServerStartFailed
 		}
@@ -476,7 +476,7 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 	_ = conn.SetDeadline(time.Now().Add(s.cfg.HandshakeTimeout))
 
 	// Create a Noise session as responder for this connection.
-	session, err := NewNoiseSession(&NoiseSessionConfig{
+	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
 		LocalStaticKey: s.localStaticKey,
 		IsInitiator:    false,
 	})
@@ -560,7 +560,7 @@ func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 
 // requestLoop reads encrypted JSON-RPC requests, decrypts them, delegates
 // to the RequestHandler, encrypts the response, and sends it back.
-func (s *TCPPairingServer) requestLoop(conn net.Conn, session *NoiseSession, remoteAddr string) {
+func (s *TCPPairingServer) requestLoop(conn net.Conn, session *pairing.NoiseSession, remoteAddr string) {
 	for {
 		// Check if the server is shutting down.
 		if s.closed.Load() {
