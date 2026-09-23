@@ -400,7 +400,7 @@ type MakeCredentialOptions struct {
 
 ```go
 type MakeCredentialResponse struct {
-    Fmt      string // Attestation format ("packed", "none")
+    Fmt      string // Attestation format ("packed", "tpm", "none")
     AuthData []byte // Authenticator data
     AttStmt  map[string]interface{}
 }

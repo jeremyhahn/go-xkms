@@ -612,27 +612,32 @@ func (a *Authenticator) buildAttestationStatement(
 		attStmt["x5c"] = x5c
 
 	case AttestationFormatTPM:
+		// WebAuthn L2 §8.3 requires ver, alg, x5c, sig, certInfo and pubArea
+		// all to be present. A statement missing any of them is not one a
+		// relying party can verify, so it is refused here rather than sent
+		// as a partial "tpm" statement that only looks compliant.
+		if attStmtData.Ver == "" || len(attStmtData.CertInfo) == 0 ||
+			len(attStmtData.PubArea) == 0 || len(attStmtData.Signature) == 0 ||
+			len(attStmtData.CertificateChain) == 0 {
+			if a.logger != nil {
+				a.logger.Warn("TPM attestation produced an incomplete statement, falling back to none",
+					slog.String("requested_format", requestedFormat),
+				)
+			}
+			return AttestationFormatNone, make(map[string]interface{})
+		}
+
+		attStmt["ver"] = attStmtData.Ver
 		attStmt["alg"] = attStmtData.Algorithm
 		attStmt["sig"] = attStmtData.Signature
+		attStmt["certInfo"] = attStmtData.CertInfo
+		attStmt["pubArea"] = attStmtData.PubArea
 
-		// TPM-specific fields: certInfo and pubArea are required
-		if len(attStmtData.TPMData) > 0 {
-			// TPMData is expected to contain both certInfo and pubArea
-			// The backend should encode this appropriately
-			// For now, we split based on convention (first half certInfo, second half pubArea)
-			// In practice, the backend should return structured data
-			attStmt["certInfo"] = attStmtData.TPMData
-			// pubArea should be set by the backend; if not available, the RP will reject
+		x5c := make([][]byte, len(attStmtData.CertificateChain))
+		for i, cert := range attStmtData.CertificateChain {
+			x5c[i] = cert.Raw
 		}
-
-		// Add certificate chain if available (x5c) - optional for TPM
-		if len(attStmtData.CertificateChain) > 0 {
-			x5c := make([][]byte, len(attStmtData.CertificateChain))
-			for i, cert := range attStmtData.CertificateChain {
-				x5c[i] = cert.Raw
-			}
-			attStmt["x5c"] = x5c
-		}
+		attStmt["x5c"] = x5c
 
 	default:
 		if a.logger != nil {
