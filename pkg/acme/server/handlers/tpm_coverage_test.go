@@ -21,6 +21,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -1259,7 +1260,16 @@ func TestExtendPCR_TPMCoverage(t *testing.T) {
 		digest := make([]byte, 20)
 		digest[0] = 0xAB
 
-		result, _ := extendPCR(current, digest, TCGAlgSHA1)
+		result, err := extendPCR(current, digest, TCGAlgSHA1)
+		if fips140.Enforced() {
+			// See TestExtendPCR's "extends with SHA-1" subtest
+			// (compliance_attestation_test.go) for why a SHA-1 PCR bank is
+			// refused under GODEBUG=fips140=only rather than computed.
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrUnsupportedHashAlgorithm)
+			return
+		}
+		require.NoError(t, err)
 		assert.Len(t, result, 20)
 
 		// Verify the extension was computed correctly

@@ -20,13 +20,16 @@ package ca
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"encoding/pem"
 	"math/big"
 	"net/http"
@@ -920,6 +923,50 @@ func TestVerifyPeerCertificate_RevokedIntermediate_B15(t *testing.T) {
 //            cold path revoked (line 237)
 // =============================================================================
 
+// sha1OCSPRequestHexFixture is a DER-encoded RFC 6960 OCSPRequest with
+// CertID.hashAlgorithm SHA-1, generated once (outside this process, and
+// outside GODEBUG=fips140=only, since crypto/sha1 panics building one under
+// it) over a throwaway self-signed certificate -- generated fresh so the
+// fixture carries no relationship to any CA under test. Only the request's
+// hash algorithm matters to TestOCSPCreateResponse_RefusesSHA1UnderFIPSOnly;
+// the serial number (22222) is expected not to match any certificate a test
+// CA has issued, which resolves to ocsp.Good, not an error (see
+// checkCertificateStatus's ErrCRLNotFound branch).
+const sha1OCSPRequestHexFixture = "30433041303f303d303b300906052b0e03021a0500" +
+	"0414d0c4360ec5a04b7a8eef1147a43eb4a159f8522104" +
+	"1404b7d1e0527b02a1bd2fbbd99aa3a86fec9ad68a020256ce"
+
+// TestOCSPCreateResponse_RefusesSHA1UnderFIPSOnly is the regression test for
+// go-xkms#23: a SHA-1-hashed OCSP request -- RFC 6960's original, still
+// widely deployed default -- used to reach golang.org/x/crypto/ocsp's
+// CreateResponse unchecked, which panics inside crypto/sha1 under
+// GODEBUG=fips140=only rather than returning an error. That let a remote,
+// spec-compliant OCSP client crash this responder's process. parseRequest
+// now refuses the request itself with ErrOCSPInvalidRequest before any SHA-1
+// computation is attempted.
+//
+// crypto/sha1's refusal is fixed for the life of the process (GODEBUG is
+// read once at startup), so this asserts whichever behavior matches the mode
+// this test binary is actually running under, rather than asserting one
+// fixed outcome: the FIPS-only refusal when GODEBUG=fips140=only, and the
+// normal SHA-1 accept otherwise -- exactly the "no skip guard" contract
+// go-xkms#23 established for deliberately non-approved algorithm coverage.
+func TestOCSPCreateResponse_RefusesSHA1UnderFIPSOnly(t *testing.T) {
+	ca := setupTestCA(t)
+	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
+
+	ocspReqDER, err := hex.DecodeString(sha1OCSPRequestHexFixture)
+	require.NoError(t, err)
+
+	_, handleErr := responder.HandleRequest(context.Background(), ocspReqDER)
+	if fips140.Enforced() {
+		require.Error(t, handleErr, "a SHA-1 OCSP request must be refused under GODEBUG=fips140=only")
+		assert.ErrorIs(t, handleErr, ErrOCSPInvalidRequest)
+		return
+	}
+	require.NoError(t, handleErr, "a SHA-1 OCSP request is ordinary RFC 6960 traffic outside FIPS 140-only mode")
+}
+
 // TestOCSPCreateResponse_IssuerCertNil_B15 covers ocsp.go:174.23,176.3 by
 // clearing intermediateCert on an intermediate-configured CA so the
 // HasIntermediate branch returns nil.
@@ -955,7 +1002,11 @@ func TestOCSPCreateResponse_IssuerCertNil_B15(t *testing.T) {
 	issuerCert := ca.rootCert
 	require.NotNil(t, issuerCert)
 
-	ocspReqDER, err := gocsp.CreateRequest(leafCert, issuerCert, nil)
+	// SHA-256 is requested explicitly: gocsp.CreateRequest defaults to SHA-1
+	// when opts is nil, and this test exists to hit the nil-issuerCert
+	// branch inside createResponse, not parseRequest's FIPS 140-only SHA-1
+	// refusal (see TestOCSPCreateResponse_RefusesSHA1UnderFIPSOnly).
+	ocspReqDER, err := gocsp.CreateRequest(leafCert, issuerCert, &gocsp.RequestOptions{Hash: crypto.SHA256})
 	require.NoError(t, err)
 
 	_, handleErr := responder.HandleRequest(context.Background(), ocspReqDER)
@@ -989,7 +1040,7 @@ func TestOCSPCreateResponse_SignerError_B15(t *testing.T) {
 	issuerCert := ca.rootCert
 	require.NotNil(t, issuerCert)
 
-	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, nil)
+	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, &gocsp.RequestOptions{Hash: crypto.SHA256})
 	require.NoError(t, err)
 
 	// Corrupt the issuing identity so Signer() returns ErrInvalidConfig.
@@ -1026,7 +1077,7 @@ func TestOCSPCheckCertificateStatus_ColdPathRevoked_B15(t *testing.T) {
 	// Build a valid OCSP request for the revoked cert's serial.
 	issuerCert := ca.rootCert
 	require.NotNil(t, issuerCert)
-	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, nil)
+	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, &gocsp.RequestOptions{Hash: crypto.SHA256})
 	require.NoError(t, err)
 
 	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())

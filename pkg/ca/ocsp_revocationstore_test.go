@@ -15,6 +15,7 @@ package ca
 
 import (
 	"context"
+	"crypto"
 	"math/big"
 	"testing"
 
@@ -53,7 +54,7 @@ func TestOCSPCheckCertificateStatus_ColdPath_RevocationStore(t *testing.T) {
 
 	issuerCert := ca.rootCert
 	require.NotNil(t, issuerCert)
-	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, nil)
+	ocspReqDER, err := gocsp.CreateRequest(cert, issuerCert, &gocsp.RequestOptions{Hash: crypto.SHA256})
 	require.NoError(t, err)
 
 	responder := NewOCSPResponder(ca, DefaultOCSPResponderConfig())

@@ -24,9 +24,11 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash"
 	"math/big"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -835,7 +837,26 @@ func validateEventLogAgainstPCRs(eventLog, prodCaData []byte) error {
 
 // extendPCR computes the new PCR value by extending with the given digest.
 // new_pcr = Hash(old_pcr || digest)
-func extendPCR(currentValue, digest []byte, algID uint16) ([]byte, error) {
+//
+// algID names whichever PCR bank the event log itself was written against,
+// which this function has to replicate exactly to verify that log -- a TPM
+// logging its SHA-1 bank is a real, still-common TCG event log shape this
+// function cannot refuse to read, only refuse to trust (see the FIPS 140-only
+// branch below). Under GODEBUG=fips140=only, crypto/sha1 does not return an
+// error for that -- Write does, but every caller here treats hash.Write as
+// the io.Writer contract says to, which is that it never fails; Sum then
+// panics -- so construction is recovered into ErrUnsupportedHashAlgorithm,
+// the same error an actually-unrecognized algID already returns, rather than
+// crashing the process (go-xkms#23).
+func extendPCR(currentValue, digest []byte, algID uint16) (result []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = nil
+			err = &errs.Detail{Err: ErrUnsupportedHashAlgorithm,
+				Detail: fmt.Sprintf("PCR bank algorithm unavailable in this process: %v", r)}
+		}
+	}()
+
 	var h hash.Hash
 	switch algID {
 	case TCGAlgSHA1:

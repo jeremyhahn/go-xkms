@@ -14,6 +14,7 @@
 package mlkem512
 
 import (
+	"crypto/fips140"
 	"os"
 	"os/exec"
 	"strings"
@@ -58,8 +59,21 @@ func TestNewAndCreate_RefuseUnderFIPS(t *testing.T) {
 // TestNewAndCreate_SucceedOutsideFIPS pins the other half of the contract in
 // the same process this suite already runs in: outside FIPS mode, neither
 // constructor is affected by the seam added for go-xkms #21.
+//
+// This runs in whatever mode the ambient `go test` invocation set rather than
+// re-exec'ing (TestNewAndCreate_RefuseUnderFIPS already covers both fips140=on
+// and fips140=only exhaustively via subprocess), so a suite run entirely under
+// GODEBUG=fips140=only -- go-xkms#23's fips-aware CI lane -- asserts the
+// refusal here too instead of failing on a nil check the ambient mode makes
+// impossible to satisfy.
 func TestNewAndCreate_SucceedOutsideFIPS(t *testing.T) {
 	k, err := New()
+	if fips140.Enabled() {
+		if err != ErrFIPSMode {
+			t.Fatalf("New() error = %v, want ErrFIPSMode", err)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("New() error = %v, want nil", err)
 	}

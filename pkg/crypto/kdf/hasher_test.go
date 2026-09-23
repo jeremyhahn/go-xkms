@@ -15,6 +15,7 @@ package kdf
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"os"
 	"os/exec"
 	"strings"
@@ -59,9 +60,20 @@ func TestNewPasswordHasher_InvalidVersion(t *testing.T) {
 	}
 }
 
+// TestNewFIPSAwareHasher_Standard runs in whatever mode the ambient `go test`
+// invocation set rather than re-exec'ing (TestNewFIPSAwareHasher_FIPS already
+// covers the FIPS case exhaustively via subprocess), so a suite run entirely
+// under GODEBUG=fips140=only -- go-xkms#23's fips-aware CI lane -- asserts
+// the FIPS selection here too instead of failing on the "standard" outcome
+// the ambient mode makes impossible to satisfy.
 func TestNewFIPSAwareHasher_Standard(t *testing.T) {
 	h := NewFIPSAwareHasher()
 	require.NotNil(t, h)
+	if fips140.Enabled() {
+		assert.Equal(t, HashV2, h.Version())
+		assert.True(t, h.IsFIPS())
+		return
+	}
 	assert.Equal(t, HashV1, h.Version())
 	assert.False(t, h.IsFIPS())
 }

@@ -15,6 +15,7 @@ package client
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -64,11 +65,16 @@ func TestCheckOCSP_Success(t *testing.T) {
 	// Create OCSP responder server
 	ocspServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Create a valid OCSP response
+		// IssuerHash is pinned to SHA-256: ocsp.Response's zero value
+		// defaults to SHA-1, and crypto/sha1 panics rather than erroring
+		// under GODEBUG=fips140=only, which would crash this mock
+		// responder instead of letting it serve an ordinary response.
 		response := ocsp.Response{
 			Status:       ocsp.Good,
 			SerialNumber: big.NewInt(12345),
 			ThisUpdate:   time.Now().Add(-1 * time.Hour),
 			NextUpdate:   time.Now().Add(1 * time.Hour),
+			IssuerHash:   crypto.SHA256,
 		}
 
 		ocspRespBytes, err := ocsp.CreateResponse(issuerCert, issuerCert, response, issuerKey)
@@ -129,6 +135,7 @@ func TestCheckOCSP_Revoked(t *testing.T) {
 
 	// Create OCSP responder server that returns revoked
 	ocspServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// See TestCheckOCSP_Success for why IssuerHash is pinned to SHA-256.
 		response := ocsp.Response{
 			Status:           ocsp.Revoked,
 			SerialNumber:     big.NewInt(12345),
@@ -136,6 +143,7 @@ func TestCheckOCSP_Revoked(t *testing.T) {
 			NextUpdate:       time.Now().Add(1 * time.Hour),
 			RevokedAt:        time.Now().Add(-30 * time.Minute),
 			RevocationReason: ocsp.KeyCompromise,
+			IssuerHash:       crypto.SHA256,
 		}
 
 		ocspRespBytes, err := ocsp.CreateResponse(issuerCert, issuerCert, response, issuerKey)
@@ -199,11 +207,13 @@ func TestCheckOCSP_Unknown(t *testing.T) {
 
 	// Create OCSP responder server that returns unknown
 	ocspServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// See TestCheckOCSP_Success for why IssuerHash is pinned to SHA-256.
 		response := ocsp.Response{
 			Status:       ocsp.Unknown,
 			SerialNumber: big.NewInt(12345),
 			ThisUpdate:   time.Now().Add(-1 * time.Hour),
 			NextUpdate:   time.Now().Add(1 * time.Hour),
+			IssuerHash:   crypto.SHA256,
 		}
 
 		ocspRespBytes, err := ocsp.CreateResponse(issuerCert, issuerCert, response, issuerKey)
