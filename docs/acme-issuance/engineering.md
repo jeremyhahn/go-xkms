@@ -34,6 +34,18 @@
   complete addresses and is not re-ported).
 - `sdk/go/acme` — the SDK surface, including `sdk/go/acme/trustedca.go` and
   `sdk/go/acme/transport/quic`.
+- `pkg/acme/client/service` — the multi-account service layer:
+  `AccountManager`, `CertificateManager` and `DeviceManager`, each keyed by a
+  named spec in `service.Config` (`Accounts`, `Certificates`, `Devices`) and
+  each resolving its account through `AccountManager.Client`.
+  `DeviceManager.Enroll`/`.Attest` open the `DeviceSpec.TPM` device (a real
+  TPM, or go-xkms's own simulator-backed defaults when left unset — see
+  [cli.md](cli.md#trusted-acme-client-device)) and drive
+  `pkg/acme/client.Client.EnrollDevice`/`.DeviceAttest` over the enroll-01 /
+  device-attest-01 challenges. `pkg/acme/gui/client/api` exposes the same
+  three managers as `/api/v1/accounts`, `/api/v1/certificates` and
+  `/api/v1/device/{enroll,attest}` for the desktop GUI and
+  `trusted-acme-client serve`.
 - `cmd/acme-client` — the `trusted-acme-client` binary
   (`account`, `cert`, `device`, `service`, `serve`, `version` groups).
 
