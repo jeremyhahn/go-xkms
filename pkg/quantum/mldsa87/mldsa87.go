@@ -26,6 +26,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 const (
@@ -108,9 +110,7 @@ func Create(seed []byte) (*MLDSA87, error) {
 // This should always be called when done using the instance.
 func (m *MLDSA87) Clean() {
 	if m.hasSeed {
-		for i := range m.seed {
-			m.seed[i] = 0
-		}
+		enclave.Wipe(m.seed[:])
 		m.hasSeed = false
 	}
 	m.privateKey = nil

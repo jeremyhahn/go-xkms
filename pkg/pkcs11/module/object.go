@@ -35,6 +35,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // ObjectClass represents a PKCS#11 object class (CK_OBJECT_CLASS).
@@ -1627,9 +1629,7 @@ func (o *Object) GetAttribute(attrType AttributeType) []byte {
 // discarded, so key material does not linger in memory after destruction.
 func (o *Object) Zeroize() {
 	for attrType, value := range o.Attributes {
-		for i := range value {
-			value[i] = 0
-		}
+		enclave.Wipe(value)
 		delete(o.Attributes, attrType)
 	}
 }

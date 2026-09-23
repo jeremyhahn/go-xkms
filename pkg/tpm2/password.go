@@ -22,6 +22,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 const (
@@ -154,11 +156,7 @@ func (p *PlatformPassword) unsealWithLock() []byte {
 	}
 
 	// Store in cache (we already hold the lock)
-	if p.cachedData != nil {
-		for i := range p.cachedData {
-			p.cachedData[i] = 0
-		}
-	}
+	enclave.Wipe(p.cachedData)
 	p.cachedData = make([]byte, len(data))
 	copy(p.cachedData, data)
 	p.cacheTime = time.Now()
@@ -209,12 +207,8 @@ func (p *PlatformPassword) Clear() {
 	defer p.mu.Unlock()
 
 	// Zero out the cached data before releasing
-	if p.cachedData != nil {
-		for i := range p.cachedData {
-			p.cachedData[i] = 0
-		}
-		p.cachedData = nil
-	}
+	enclave.Wipe(p.cachedData)
+	p.cachedData = nil
 	p.cacheTime = time.Time{}
 }
 

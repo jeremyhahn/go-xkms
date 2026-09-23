@@ -23,6 +23,8 @@ import (
 	gofrost "github.com/jeremyhahn/go-frost/pkg/frost"
 	"github.com/jeremyhahn/go-frost/pkg/frost/keygen"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // FrostConfig contains configuration for FROST key generation.
@@ -99,11 +101,7 @@ type SecretKeyShare struct {
 
 // Zeroize securely erases the secret key share from memory.
 func (s *SecretKeyShare) Zeroize() {
-	if s.Value != nil {
-		for i := range s.Value {
-			s.Value[i] = 0
-		}
-	}
+	enclave.Wipe(s.Value)
 }
 
 // PublicKeyPackage contains the public components of a FROST key.

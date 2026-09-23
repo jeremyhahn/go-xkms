@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-enclave"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -1340,9 +1341,7 @@ func (a *Authenticator) stopUsingPinUvAuthTokenLocked() {
 	}
 	// Wipe the token bytes rather than only dropping the reference, so expired
 	// key material does not linger in memory until the next collection.
-	for i := range a.pinState.protocol.pinUvAuthToken {
-		a.pinState.protocol.pinUvAuthToken[i] = 0
-	}
+	enclave.Wipe(a.pinState.protocol.pinUvAuthToken)
 	a.pinState.protocol.pinUvAuthToken = nil
 	a.pinState.protocol.tokenPermissions = 0
 	a.pinState.protocol.tokenRPID = ""

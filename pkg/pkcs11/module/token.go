@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -517,9 +518,7 @@ func (t *Token) ClearUserPin() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	for i := range t.UserPinHash {
-		t.UserPinHash[i] = 0
-	}
+	enclave.Wipe(t.UserPinHash)
 	t.UserPinHash = nil
 	t.Info.Flags &^= CKF_USER_PIN_INITIALIZED
 }

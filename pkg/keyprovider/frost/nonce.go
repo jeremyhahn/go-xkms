@@ -24,6 +24,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // NonceTracker provides O(1) nonce reuse prevention using storage-based tracking.
@@ -153,16 +155,8 @@ type SigningNonces struct {
 
 // Zeroize securely erases the nonce material from memory.
 func (n *SigningNonces) Zeroize() {
-	if n.HidingNonce != nil {
-		for i := range n.HidingNonce {
-			n.HidingNonce[i] = 0
-		}
-	}
-	if n.BindingNonce != nil {
-		for i := range n.BindingNonce {
-			n.BindingNonce[i] = 0
-		}
-	}
+	enclave.Wipe(n.HidingNonce)
+	enclave.Wipe(n.BindingNonce)
 }
 
 // SigningCommitments holds the public commitments for a participant.
