@@ -52,6 +52,13 @@ var (
 	ErrAssertionChallengeMissing = errors.New("assertion options missing challenge")
 	ErrAssertionRPIDMissing      = errors.New("assertion options missing rpId")
 
+	// Server-issued creation options (BeginRegistration output) validation
+	// errors, surfaced by ParseWebAuthnRegistrationOptions when parsing the
+	// relying party's PublicKeyCredentialCreationOptions JSON.
+	ErrRegistrationOptionsRequired  = errors.New("registration options JSON required")
+	ErrRegistrationChallengeMissing = errors.New("registration options missing challenge")
+	ErrRegistrationRPIDMissing      = errors.New("registration options missing rp.id")
+
 	// Authenticator data parsing errors, surfaced by
 	// ParseAuthDataExtensions when the authenticator data supplied by a
 	// device (or relayed by a client) does not conform to the structure
