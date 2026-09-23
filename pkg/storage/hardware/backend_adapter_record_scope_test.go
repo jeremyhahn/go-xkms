@@ -135,7 +135,7 @@ func TestReservedChainIDsAreRefusedByEveryStore(t *testing.T) {
 	external := NewBackendCertStorageAdapter(storage.NewMemory())
 
 	for name, store := range map[string]HardwareCertStorage{"tpm2": tpmStore, "external": external} {
-		for _, id := range []string{"foo-chain", "foo-chain-0"} {
+		for _, id := range []string{"foo-chain", "foo-chain-0", "test-chain"} {
 			require.ErrorIs(t, store.SaveCert(id, leaf), ErrIDReservedForChain, "%s SaveCert(%q)", name, id)
 			require.ErrorIs(t, store.SaveCertChain(id, []*x509.Certificate{leaf}), ErrIDReservedForChain, "%s SaveCertChain(%q)", name, id)
 		}

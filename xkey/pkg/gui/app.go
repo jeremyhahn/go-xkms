@@ -1857,10 +1857,16 @@ func NewApp(cfg *GUIConfig) *App {
 		_ = autofillSvc.SetPolicy(cfg.AutoFillPolicy)
 	}
 
-	// Apply the enterprise extension policy the GUI may honour before the SO
-	// has logged in; see startupEnterprisePolicy.
+	// Create audit service now (rather than inline in the App struct
+	// literal below) so the enterprise policy applied next can reach it.
+	auditSvc := services.NewAuditService(auditStore)
+
+	// Apply the enterprise policy sections the GUI may honour before the SO
+	// has logged in; see startupEnterprisePolicy. The verified sections
+	// replace these once the SO authenticates (applyVerifiedEnterprisePolicy).
 	if pol := startupEnterprisePolicy(cfgDir, log); pol != nil {
 		applyExtensionPolicy(autofillSvc, pol)
+		applyCapabilityPolicy(appSvc, pinSvc, trustSvc, auditSvc, sealSvc, apiExplorerSvc, pol)
 	}
 
 	// Create pairing service for extension identity binding.
@@ -1884,7 +1890,7 @@ func NewApp(cfg *GUIConfig) *App {
 		staticPWService:          staticPWSvc,
 		pivService:               pivSvc,
 		tpmService:               tpmSvc,
-		auditService:             services.NewAuditService(auditStore),
+		auditService:             auditSvc,
 		auditStore:               auditStore,
 		adminService:             services.NewAdminService(),
 		connectionService:        connSvc,
@@ -2053,6 +2059,10 @@ func NewApp(cfg *GUIConfig) *App {
 	barrierSvc.SetAuditLogger(auditStore)
 	sealProtSvc.SetAuditLogger(auditStore)
 	appSvc.SetAuditLogger(auditStore)
+	trustSvc.SetAuditLogger(auditStore)
+	if apiExplorerSvc != nil {
+		apiExplorerSvc.SetAuditLogger(auditStore)
+	}
 
 	// SSH services are wired in initializeDataDir() (via
 	// initializeSSHServices) once the data directory and barrier decision

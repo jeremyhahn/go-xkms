@@ -27,6 +27,8 @@ import (
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // tpm2SymmetricKey implements types.SymmetricKey for TPM-backed AES keys.
@@ -194,9 +196,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	}
 
 	// Zero out the key material from memory
-	for i := range keyMaterial {
-		keyMaterial[i] = 0
-	}
+	enclave.Wipe(keyMaterial)
 
 	return symmetricKey, nil
 }
@@ -315,12 +315,8 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to load key material", Err: err}
 	}
-	defer func() {
-		// Zero out key material after use
-		for i := range keyMaterial {
-			keyMaterial[i] = 0
-		}
-	}()
+	// Zero out key material after use
+	defer enclave.Wipe(keyMaterial)
 
 	// Create AES cipher
 	block, err := aes.NewCipher(keyMaterial)
@@ -443,12 +439,8 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to load key material", Err: err}
 	}
-	defer func() {
-		// Zero out key material after use
-		for i := range keyMaterial {
-			keyMaterial[i] = 0
-		}
-	}()
+	// Zero out key material after use
+	defer enclave.Wipe(keyMaterial)
 
 	// Create AES cipher
 	block, err := aes.NewCipher(keyMaterial)

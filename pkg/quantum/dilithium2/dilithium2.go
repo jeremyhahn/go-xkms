@@ -26,6 +26,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 const (
@@ -108,9 +110,7 @@ func Create(seed []byte) (*Dilithium2, error) {
 // This should always be called when done using the instance.
 func (d *Dilithium2) Clean() {
 	if d.hasSeed {
-		for i := range d.seed {
-			d.seed[i] = 0
-		}
+		enclave.Wipe(d.seed[:])
 		d.hasSeed = false
 	}
 	d.privateKey = nil

@@ -164,46 +164,36 @@ func TestNodeSealFlip_DisabledForFileStorage(t *testing.T) {
 	require.NotNil(t, server.Barrier(), "xkms's own barrier backs file-storage deployments")
 }
 
-// TestNodeSealFlip_EncryptsDataPlaneAtRest is the load-bearing security
-// assertion: a value written to the data plane with the flip engaged must be
-// encrypted on disk (the node's encfs wraps the PebbleDB data plane). The
-// control — the same value with seal disabled — is present in the clear,
-// proving the assertion methodology detects plaintext.
+// nodeSealSentinel is written to the data plane and then searched for on disk.
+var nodeSealSentinel = []byte("SENTINEL_PLAINTEXT_do_not_find_me_on_disk_9f3a2b")
+
+func writeNodeSealSentinel(t *testing.T, cfg *config.Config, sentinel []byte) string {
+	t.Helper()
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	server, err := New(cfg)
+	require.NoError(t, err)
+	store, err := server.CreateStorage("sentinel")
+	require.NoError(t, err)
+	require.NoError(t, store.Put(context.Background(), "k", sentinel))
+	// Shutdown flushes the node's PebbleDB (and its encfs-wrapped files) so
+	// the on-disk scan sees the persisted state.
+	require.NoError(t, server.Shutdown())
+	return cfg.Storage.Path
+}
+
+// TestNodeSealFlip_EncryptsDataPlaneAtRest is the control for the at-rest
+// encryption assertion: with the barrier disabled, the sentinel is present in
+// the clear, which proves the on-disk scan detects plaintext. The engaged case,
+// where the sentinel must be encrypted, needs the TPM simulator and lives in
+// node_seal_simulator_test.go.
 func TestNodeSealFlip_EncryptsDataPlaneAtRest(t *testing.T) {
-	sentinel := []byte("SENTINEL_PLAINTEXT_do_not_find_me_on_disk_9f3a2b")
-
-	writeSentinel := func(t *testing.T, cfg *config.Config) string {
-		t.Helper()
-		xkms.Reset()
-		t.Cleanup(xkms.Reset)
-		server, err := New(cfg)
-		require.NoError(t, err)
-		store, err := server.CreateStorage("sentinel")
-		require.NoError(t, err)
-		require.NoError(t, store.Put(context.Background(), "k", sentinel))
-		// Shutdown flushes the node's PebbleDB (and its encfs-wrapped files) so
-		// the on-disk scan sees the persisted state.
-		require.NoError(t, server.Shutdown())
-		return cfg.Storage.Path
-	}
-
-	t.Run("encrypted when flip engaged", func(t *testing.T) {
-		// A software strategy (passphrase/shamir) never auto-unseals from
-		// configuration, so only a hardware strategy engages the flip
-		// unattended in this test. tpm2 with the in-process simulator
-		// exercises the real autodetect + seal path with no external device.
-		cfg := qrdbBarrierConfig(t)
-		cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "tpm2"}
-		cfg.Backends.TPM2 = &config.TPM2Config{UseSimulator: true}
-		dir := writeSentinel(t, cfg)
-		assert.False(t, dirContainsBytes(t, dir, sentinel),
-			"with the node-barrier flip the sentinel MUST be encrypted on disk")
-	})
+	sentinel := nodeSealSentinel
 
 	t.Run("plaintext control when barrier disabled", func(t *testing.T) {
 		cfg := qrdbBarrierConfig(t)
 		cfg.Barrier = config.BarrierConfig{Enabled: false}
-		dir := writeSentinel(t, cfg)
+		dir := writeNodeSealSentinel(t, cfg, sentinel)
 		assert.True(t, dirContainsBytes(t, dir, sentinel),
 			"control: with the barrier disabled the data plane is plaintext on disk")
 	})

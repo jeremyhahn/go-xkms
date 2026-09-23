@@ -21,6 +21,7 @@ tell.
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
+| [seal](seal/) | The Barrier, barrier PCR-policy auto-unseal (shared by the CLI and GUI), the named PCR policy store, and the legacy sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
@@ -41,7 +42,7 @@ progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
 Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
-`password/`, `phone/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
+`password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
 
@@ -52,7 +53,7 @@ Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, 
 | [agent/](agent/) | Agent enrollment and management |
 | [architecture/](architecture/) | System architecture, internal design, and data stores |
 | [ble/](ble/) | Bluetooth Low Energy transport and Android pairing |
-| [configuration/](configuration/) | Application configuration, auto-unseal, and enterprise setup |
+| [configuration/](configuration/) | Application configuration and enterprise setup (see [seal/](seal/) for auto-unseal) |
 | [device/](device/) | Device pairing, QR pairing, and TCP relay |
 | [fido2/](fido2/) | FIDO2/WebAuthn daemon and CTAP2 authenticator library |
 | [gui/](gui/) | Desktop GUI application, design system, and setup wizard |
@@ -64,7 +65,7 @@ Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, 
 | [piv/](piv/) | PIV smart card certificate management |
 | [pkcs11/](pkcs11/) | PKCS#11 IPC transport for Unix socket crypto operations |
 | [roadmap/](roadmap/) | Feature roadmaps for media, PIV, and web |
-| [seal/](seal/) | TPM sealing, auto-unseal, platform policy, and setup wizard seal integration |
+| [seal/](seal/) | The Barrier, TPM PCR-policy auto-unseal, named PCR policies, and the legacy sealed-blob store |
 | [ssh/](ssh/) | SSH agent with standalone and server modes |
 | [testing/](testing/) | Testing guides and end-to-end test documentation |
 | [usage/](usage/) | CLI usage guides, tutorials, and command reference |
@@ -215,7 +216,7 @@ xkey fido2 --cdp --cdp-port 9222
 
 ### [Configuration](configuration/)
 - [Overview](configuration/README.md) -- All configuration options
-- [Auto-Unseal](configuration/auto-unseal.md) -- Automated unlock via PlatformStore and barrier
+- [Auto-Unseal](configuration/auto-unseal.md) -- Moved to [seal/](seal/)
 - [Enterprise Setup](configuration/enterprise-setup.md) -- Enterprise deployment and policy configuration
 
 ### [GUI](gui/)
@@ -283,9 +284,11 @@ xkey fido2 --cdp --cdp-port 9222
 - [Backend Architecture](phone/backend/architecture.md) -- Phone backend internals
 
 ### [Seal](seal/)
-- [Overview](seal/README.md) -- TPM sealing and auto-unseal
-- [Setup Wizard](seal/setup-wizard.md) -- Seal integration in setup wizard
-- [Platform Policy](seal/platform-policy.md) -- PCR-based platform policy
+- [Architecture](seal/architecture.md) -- The Barrier, PCR-policy auto-unseal, and the legacy sealed-blob store
+- [Engineering](seal/engineering.md) -- Exported surface, invariants, errors, tests
+- [CLI](seal/cli.md) -- Every `xkey barrier`/`xkey policy` verb and flag
+- [API](seal/api.md) -- Network-transport surface (none)
+- [User Guide](seal/user.md) -- Task-oriented usage, including agent auto-unseal setup
 
 ### [Usage](usage/)
 - [Overview](usage/README.md) -- CLI usage guides and tutorials

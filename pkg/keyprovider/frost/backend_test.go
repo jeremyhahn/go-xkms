@@ -9,7 +9,6 @@ package frost
 
 import (
 	"context"
-	"crypto"
 	"errors"
 	"testing"
 
@@ -342,14 +341,17 @@ func TestFrostBackend_Signer(t *testing.T) {
 	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	// Get signer
+	// A crypto.Signer performs one synchronous Sign call and cannot
+	// coordinate this key's threshold=2 FROST round, so Signer refuses
+	// construction with a typed error (see
+	// TestFrostBackend_Signer_RefusesThresholdGreaterThanOne in
+	// signer_test.go for the full assertions on that error).
 	signer, err := backend.Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	require.NotNil(t, signer)
+	require.Error(t, err)
+	assert.Nil(t, signer)
 
-	// Verify it implements crypto.Signer
-	_, ok := signer.(crypto.Signer)
-	assert.True(t, ok)
+	var thresholdErr *ThresholdSigningNotSupportedError
+	require.ErrorAs(t, err, &thresholdErr)
 }
 
 func TestFrostBackend_Signer_NotFound(t *testing.T) {
@@ -668,11 +670,18 @@ func TestFrostBackend_Signer_WithZeroParticipantID(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get signer with zero participant ID - should fall back to default (1)
+	// and find the key package for that participant. Signer then refuses
+	// construction because the key's threshold is 2, not because the
+	// package couldn't be located: a lookup failure from the wrong
+	// participant ID would surface as a different error type.
 	signerAttrs := &types.KeyAttributes{
 		CN:        "zero-pid-signer-test",
 		StoreType: types.StoreFrost,
 	}
 	signer, err := backend.Signer(context.Background(), signerAttrs)
-	require.NoError(t, err)
-	require.NotNil(t, signer)
+	require.Error(t, err)
+	assert.Nil(t, signer)
+
+	var thresholdErr *ThresholdSigningNotSupportedError
+	require.ErrorAs(t, err, &thresholdErr)
 }

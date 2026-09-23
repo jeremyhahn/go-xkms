@@ -33,6 +33,11 @@ func createTestSignerBackend(t *testing.T) *FrostBackend {
 	return backend
 }
 
+// createTestSigner builds a FrostSigner directly from real DKG key
+// material so the accessor tests below exercise genuine threshold=2/total=3
+// key data. It bypasses FrostBackend.Signer, which refuses to construct a
+// signer for a threshold greater than 1 (see
+// TestFrostBackend_Signer_RefusesThresholdGreaterThanOne).
 func createTestSigner(t *testing.T) (*FrostSigner, *FrostBackend) {
 	backend := createTestSignerBackend(t)
 
@@ -50,10 +55,10 @@ func createTestSigner(t *testing.T) (*FrostSigner, *FrostBackend) {
 	_, err := backend.GenerateKey(context.Background(), attrs)
 	require.NoError(t, err)
 
-	signer, err := backend.Signer(context.Background(), attrs)
+	pkg, _, err := backend.KeyStore().LoadKeyPackage(context.Background(), "test-signer-key", 1)
 	require.NoError(t, err)
 
-	return signer.(*FrostSigner), backend
+	return &FrostSigner{backend: backend, keyID: "test-signer-key", keyPackage: pkg}, backend
 }
 
 func TestFrostSigner_Public(t *testing.T) {
@@ -136,21 +141,48 @@ func TestFrostSigner_VerificationShare(t *testing.T) {
 	assert.Nil(t, share100)
 }
 
-func TestFrostSigner_Sign_ThresholdGreaterThanOne(t *testing.T) {
-	signer, _ := createTestSigner(t)
+func TestFrostBackend_Signer_RefusesThresholdGreaterThanOne(t *testing.T) {
+	backend := createTestSignerBackend(t)
 
-	// For threshold > 1, Sign() should return an error
-	// because orchestrated multi-participant signing is not implemented
-	digest := []byte("test message to sign")
-	sig, err := signer.Sign(nil, digest, nil)
+	attrs := &types.KeyAttributes{
+		CN:        "test-threshold-key",
+		KeyType:   types.KeyTypeSigning,
+		StoreType: types.StoreFrost,
+		FrostAttributes: &types.FrostAttributes{
+			Threshold:     2,
+			Total:         3,
+			ParticipantID: 1,
+			Algorithm:     types.FrostAlgorithmEd25519,
+		},
+	}
+	_, err := backend.GenerateKey(context.Background(), attrs)
+	require.NoError(t, err)
 
+	// A crypto.Signer performs one synchronous Sign call and cannot
+	// coordinate a multi-party FROST round, so construction must be
+	// refused with a typed error rather than deferring failure to Sign.
+	signer, err := backend.Signer(context.Background(), attrs)
 	require.Error(t, err)
-	assert.Nil(t, sig)
-	assert.Contains(t, err.Error(), "orchestrated multi-participant signing not implemented")
+	assert.Nil(t, signer)
+
+	var thresholdErr *ThresholdSigningNotSupportedError
+	require.ErrorAs(t, err, &thresholdErr)
+	assert.Equal(t, "test-threshold-key", thresholdErr.KeyID)
+	assert.Equal(t, uint32(2), thresholdErr.Threshold)
+	assert.ErrorIs(t, err, ErrThresholdSigningNotSupported)
+	assert.Contains(t, err.Error(), "GenerateNonces")
 }
 
-// Note: threshold=1 is not allowed by the FROST config validation (minimum is 2)
-// The Sign function's single-participant path is therefore unused in standard config
+// Note: threshold=1 key material cannot be constructed through any
+// generator in this codebase. go-frost's own trusted-dealer
+// implementation hard-refuses minSigners < 2
+// (frost.ErrInvalidThreshold, "must be at least 2"), matching
+// types.FrostAttributes.Validate and frost.FrostConfig.Validate here.
+// FrostSigner.Sign's single-participant round is therefore
+// unreachable through any real key today; FrostBackend.Signer exists
+// to serve it if that library constraint is ever relaxed, and refuses
+// construction for every other threshold instead of deferring failure
+// to Sign (see TestFrostBackend_Signer_RefusesThresholdGreaterThanOne).
 
 func TestFrostSigner_AllAlgorithms(t *testing.T) {
 	algorithms := []types.FrostAlgorithm{
@@ -189,10 +221,14 @@ func TestFrostSigner_AllAlgorithms(t *testing.T) {
 			_, err = backend.GenerateKey(context.Background(), attrs)
 			require.NoError(t, err)
 
-			signer, err := backend.Signer(context.Background(), attrs)
+			// backend.Signer refuses this threshold=2 key (see
+			// TestFrostBackend_Signer_RefusesThresholdGreaterThanOne), so
+			// the accessor methods are exercised directly against the
+			// loaded key package instead.
+			pkg, _, err := backend.KeyStore().LoadKeyPackage(context.Background(), "test-key", 1)
 			require.NoError(t, err)
 
-			frostSigner := signer.(*FrostSigner)
+			frostSigner := &FrostSigner{backend: backend, keyID: "test-key", keyPackage: pkg}
 			assert.Equal(t, algo, frostSigner.Algorithm())
 
 			// Verify public key size matches expected

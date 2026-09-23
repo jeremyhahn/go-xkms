@@ -20,17 +20,16 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/hkdf"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"golang.org/x/crypto/hkdf"
 )
 
 // gcmNonceSize and gcmTagSize name the 96-bit GCM nonce and 128-bit
@@ -99,7 +98,7 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to derive sealing key", Err: err}
 	}
-	defer mem.Zero(sealingKey)
+	defer enclave.Wipe(sealingKey)
 
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(sealingKey)
@@ -202,7 +201,7 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to derive sealing key", Err: err}
 	}
-	defer mem.Zero(sealingKey)
+	defer enclave.Wipe(sealingKey)
 
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(sealingKey)
@@ -270,13 +269,14 @@ func deriveSealingKey(privateKey crypto.PrivateKey, keyID string) ([]byte, error
 
 	// Create HKDF with SHA-256
 	salt := []byte(keyID) // Use key ID as salt for domain separation
-	info := []byte(sealingKeyInfo)
 
-	hkdfReader := hkdf.New(sha256.New, keyMaterial, salt, info)
-
-	// Derive 32 bytes for AES-256
-	derivedKey := make([]byte, 32)
-	if _, err := io.ReadFull(hkdfReader, derivedKey); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals into a
+	// panic, which would crash this process instead of returning the error
+	// this function promises.
+	derivedKey, err := hkdf.Key(sha256.New, keyMaterial, salt, sealingKeyInfo, 32)
+	if err != nil {
 		return nil, &errs.Wrapped{Msg: "HKDF key derivation failed", Err: err}
 	}
 

@@ -25,6 +25,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // TokenStore defines the interface for persistent token storage.
@@ -219,12 +221,8 @@ func (s *FileTokenStore) Close() error {
 	s.tokens = nil
 
 	// Clear encryption key
-	if s.key != nil {
-		for i := range s.key {
-			s.key[i] = 0
-		}
-		s.key = nil
-	}
+	enclave.Wipe(s.key)
+	s.key = nil
 
 	return nil
 }

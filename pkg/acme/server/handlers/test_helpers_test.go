@@ -144,9 +144,6 @@ func (m *MockCA) ServerTLSConfig(_ context.Context, _ *types.KeyAttributes, _ bo
 func (m *MockCA) ClientTLSConfig(_ context.Context, _ *types.KeyAttributes, _ string) (*tls.Config, error) {
 	return &tls.Config{}, nil
 }
-func (m *MockCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
-	return &tls.Config{}, nil
-}
 func (m *MockCA) TLSBundle(_ context.Context, _ *types.KeyAttributes) ([]byte, error) {
 	return []byte("mock-tls-bundle"), nil
 }

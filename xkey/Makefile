@@ -984,6 +984,34 @@ playwright-test-shell:
 	@cd test/e2e && docker compose run --rm --entrypoint bash e2e
 
 # ==============================================================================
+# Skill Generation Targets
+# ==============================================================================
+
+SKILL_REFERENCE := skills/xkey-agent/reference/cli.md
+SKILLGEN_TAGS   := ble codec_json
+
+.PHONY: skill-reference
+## skill-reference: Regenerate the agent skill's complete CLI reference from the cobra command tree
+skill-reference:
+	@mkdir -p $(dir $(SKILL_REFERENCE))
+	@GOWORK=off $(GO) run -tags '$(SKILLGEN_TAGS)' ./tools/skillgen > $(SKILL_REFERENCE)
+	@echo "$(GREEN)✓ $(SKILL_REFERENCE) regenerated$(RESET)"
+
+.PHONY: check-skill-reference
+## check-skill-reference: Fail when the CLI reference is stale or SKILL.md cites a nonexistent command/flag
+check-skill-reference:
+	@tmp=$$(mktemp); \
+	GOWORK=off $(GO) run -tags '$(SKILLGEN_TAGS)' ./tools/skillgen > "$$tmp" || { rm -f "$$tmp"; exit 1; }; \
+	if ! diff -u $(SKILL_REFERENCE) "$$tmp" >/dev/null; then \
+		rm -f "$$tmp"; \
+		echo "$(RED)✗ $(SKILL_REFERENCE) is stale: run 'make skill-reference'$(RESET)"; \
+		exit 1; \
+	fi; \
+	rm -f "$$tmp"; \
+	GOWORK=off $(GO) run -tags '$(SKILLGEN_TAGS)' ./tools/skillgen -check skills/xkey-agent/SKILL.md || { echo "$(RED)✗ SKILL.md cites a command or flag xkey does not have$(RESET)"; exit 1; }; \
+	echo "$(GREEN)✓ skill reference is current and SKILL.md matches the command tree$(RESET)"
+
+# ==============================================================================
 # Help Target
 # ==============================================================================
 

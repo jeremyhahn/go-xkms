@@ -879,9 +879,13 @@ func TestAutoFillService_EnterpriseForceAudit(t *testing.T) {
 func TestAutoFillService_SetEnabledBlockedByEnterprise(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 
-	// Enterprise disables the extension.
+	// Enterprise disables the extension. UserCanConfigure is set so this
+	// test exercises the Enabled gate specifically, not the separate
+	// UserCanConfigureExtension gate covered by
+	// TestAutoFillService_SetEnabled_PolicyGate (#668).
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{
-		Enabled: false,
+		Enabled:          false,
+		UserCanConfigure: true,
 	})
 
 	// Attempting to enable the extension should return ErrAutoFillPolicyEnforced.
@@ -897,10 +901,12 @@ func TestAutoFillService_SetEnabledBlockedByEnterprise(t *testing.T) {
 func TestAutoFillService_SetRequireAuthBlockedByEnterprise(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
-	// Enterprise requires authentication.
+	// Enterprise requires authentication. UserCanConfigure is set so this
+	// test exercises the RequireAuthentication gate specifically (#668).
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{
 		Enabled:               true,
 		RequireAuthentication: true,
+		UserCanConfigure:      true,
 	})
 
 	// Attempting to disable authentication should return ErrAutoFillPolicyEnforced.
@@ -1110,4 +1116,42 @@ func TestAutoFillService_HandleAutofillIgnoreDomain_Empty(t *testing.T) {
 
 	_, err := svc.HandleAutofillIgnoreDomain("")
 	assert.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// UserCanConfigureExtension policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *EnterpriseExtensionPolicy
+		wantErr bool
+	}{
+		{"no enterprise policy (personal mode) allows", nil, false},
+		{"UserCanConfigure false denies", &EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: false}, true},
+		{"UserCanConfigure true allows", &EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+			require.NoError(t, err)
+			svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
+			svc.SetEnterprisePolicy(tt.policy)
+
+			countBefore := auditStore.Count()
+			err = svc.SetEnabled(true)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_configure_extension", denied.Field)
+				assert.Greater(t, auditStore.Count(), countBefore, "denial must be audited")
+			} else {
+				require.NoError(t, err)
+				assert.True(t, svc.IsEnabled())
+			}
+		})
+	}
 }

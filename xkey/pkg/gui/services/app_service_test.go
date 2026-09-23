@@ -20,6 +20,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 func defaultTestConfig() *GUIConfigData {
@@ -465,4 +467,119 @@ func TestAppService_ConfigChangedFields_Identity(t *testing.T) {
 	// No change should not include identity.
 	fields = configChangedFields(base, defaultTestConfig())
 	assert.NotContains(t, fields, "identity")
+}
+
+// ---------------------------------------------------------------------------
+// PolicySection capability-flag gating (#668).
+// ---------------------------------------------------------------------------
+
+func TestAppService_SetTheme_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanConfigureTheme false denies", &config.PolicySection{UserCanConfigureTheme: false}, true},
+		{"UserCanConfigureTheme true allows", &config.PolicySection{UserCanConfigureTheme: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewAppService(defaultTestConfig())
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err := svc.SetTheme("dark")
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_configure_theme", denied.Field)
+				assert.True(t, logger.hasPolicyDenial(), "denial must be audited")
+				assert.Equal(t, "system", svc.GetTheme(), "the theme must not change when denied")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, "dark", svc.GetTheme())
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
+}
+
+func TestAppService_SetDeveloperTools_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		enable  bool
+		wantErr bool
+		field   string
+	}{
+		{"no policy allows enabling", nil, true, false, ""},
+		{"UserCanToggleDevTools false denies", &config.PolicySection{UserCanToggleDevTools: false, DeveloperToolsEnabled: true}, true, true, "user_can_toggle_dev_tools"},
+		{"DeveloperToolsEnabled false denies enabling", &config.PolicySection{UserCanToggleDevTools: true, DeveloperToolsEnabled: false}, true, true, "developer_tools_enabled"},
+		{"DeveloperToolsEnabled false allows disabling", &config.PolicySection{UserCanToggleDevTools: true, DeveloperToolsEnabled: false}, false, false, ""},
+		{"both true allows enabling", &config.PolicySection{UserCanToggleDevTools: true, DeveloperToolsEnabled: true}, true, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewAppService(defaultTestConfig())
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err := svc.SetDeveloperTools(tt.enable)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, tt.field, denied.Field)
+				assert.True(t, logger.hasPolicyDenial())
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.enable, svc.GetDeveloperTools())
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
+}
+
+func TestAppService_ToggleBarrierAutoUnseal_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		enable  bool
+		wantErr bool
+		field   string
+	}{
+		{"no policy allows enabling", nil, true, false, ""},
+		{"UserCanConfigureAutoUnseal false denies", &config.PolicySection{UserCanConfigureAutoUnseal: false, AllowAutoUnseal: true}, true, true, "user_can_configure_auto_unseal"},
+		{"AllowAutoUnseal false denies enabling", &config.PolicySection{UserCanConfigureAutoUnseal: true, AllowAutoUnseal: false}, true, true, "allow_auto_unseal"},
+		{"AllowAutoUnseal false allows disabling", &config.PolicySection{UserCanConfigureAutoUnseal: true, AllowAutoUnseal: false}, false, false, ""},
+		{"both true allows enabling", &config.PolicySection{UserCanConfigureAutoUnseal: true, AllowAutoUnseal: true}, true, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewAppService(defaultTestConfig())
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err := svc.ToggleBarrierAutoUnseal(tt.enable)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, tt.field, denied.Field)
+				assert.True(t, logger.hasPolicyDenial())
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.enable, svc.GetConfig().BarrierAutoUnsealEnabled)
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
 }

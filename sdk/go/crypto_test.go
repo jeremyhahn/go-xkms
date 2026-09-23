@@ -904,3 +904,33 @@ func (n *noopClient) ListUserCredentials(context.Context, string) (*transport.Li
 func (n *noopClient) QueryAudit(context.Context, *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }
+
+// ----------------------------------------------------------------------------
+// SecureMemZero
+//
+// pkg/crypto/mem was retired (go-xkms#623): SecureMemZero is now a
+// re-export of enclave.Wipe rather than the deleted mem.Zero. These tests
+// exercise the re-export from the SDK's own package, since a consumer only
+// ever calls it as xkms.SecureMemZero.
+// ----------------------------------------------------------------------------
+
+func TestSecureMemZero_Success(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0xFF, 0xAB}
+	SecureMemZero(data)
+	for i, b := range data {
+		if b != 0 {
+			t.Fatalf("byte at index %d not cleared: %#x", i, b)
+		}
+	}
+}
+
+func TestSecureMemZero_NilSlice(t *testing.T) {
+	// SecureMemZero must not panic on a nil slice -- callers defer it
+	// unconditionally, including on error paths where the source was
+	// never allocated.
+	var data []byte
+	SecureMemZero(data)
+	if data != nil {
+		t.Fatalf("expected nil slice to remain nil, got %v", data)
+	}
+}

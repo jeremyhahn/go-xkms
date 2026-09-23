@@ -413,16 +413,16 @@ func TestTPM2Backend_VerifyUserPIN_WrongPIN_LockoutInfoFails(t *testing.T) {
 
 func TestTPM2Backend_VerifyUserPIN_FIDO2HashNotRecachedIfPresent(t *testing.T) {
 	b, _ := newProvisionedTPM2Backend(t, "user-pin")
-	guard1 := b.fido2Guard.Load()
-	if guard1 == nil {
-		t.Fatal("FIDO2 guard should be set after SetUserPIN")
+	enc1 := b.fido2Enclave.Load()
+	if enc1 == nil {
+		t.Fatal("FIDO2 enclave should be set after SetUserPIN")
 	}
 	if err := b.VerifyUserPIN("user-pin"); err != nil {
 		t.Fatalf("VerifyUserPIN: %v", err)
 	}
-	guard2 := b.fido2Guard.Load()
-	if guard1 != guard2 {
-		t.Fatal("FIDO2 guard should not be replaced when already cached")
+	enc2 := b.fido2Enclave.Load()
+	if enc1 != enc2 {
+		t.Fatal("FIDO2 enclave should not be replaced when already cached")
 	}
 }
 
@@ -745,18 +745,18 @@ func TestTPM2Backend_VerifyFIDO2Hash_AfterPINChange(t *testing.T) {
 	}
 }
 
-func TestTPM2Backend_Close_FreesGuardedBuffer(t *testing.T) {
+func TestTPM2Backend_Close_DestroysMemoryEnclave(t *testing.T) {
 	b, _ := newProvisionedTPM2Backend(t, "user-pin")
-	guard := b.fido2Guard.Load()
-	if guard == nil {
-		t.Fatal("expected fido2Guard to be set")
+	enc := b.fido2Enclave.Load()
+	if enc == nil {
+		t.Fatal("expected fido2Enclave to be set")
 	}
-	if guard.IsFreed() {
-		t.Fatal("fido2Guard should not be freed yet")
+	if !enc.IsAlive() {
+		t.Fatal("fido2Enclave should not be destroyed yet")
 	}
 	b.Close()
-	if !guard.IsFreed() {
-		t.Fatal("fido2Guard should be freed after Close")
+	if enc.IsAlive() {
+		t.Fatal("fido2Enclave should be destroyed after Close")
 	}
 	hash := qrdbsdk.ComputeFIDO2PINHash("user-pin")
 	if b.VerifyFIDO2Hash(hash) {
@@ -771,7 +771,7 @@ func TestTPM2Backend_Close_Idempotent(t *testing.T) {
 	b.Close()
 }
 
-func TestTPM2Backend_Close_NilGuardedBuffer(t *testing.T) {
+func TestTPM2Backend_Close_NilMemoryEnclave(t *testing.T) {
 	b := NewTPM2Backend(newMockPlatformAuth("", false))
 	b.Close()
 }

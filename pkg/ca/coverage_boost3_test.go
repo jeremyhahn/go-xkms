@@ -874,21 +874,6 @@ func TestCABundleFiltered_WithObjectStore(t *testing.T) {
 }
 
 // =============================================================================
-// QuantumSafeTLSConfig — success path (already tested in boost2 but targeting
-// the QuantumSafeTLSConfig function body line by line)
-// =============================================================================
-
-func TestQuantumSafeTLSConfig_ClearsCurvePreferences(t *testing.T) {
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "qsafe-curve-b3")
-	attrs := softwareKeyAttrs("qsafe-curve-b3")
-
-	cfg, err := ca.QuantumSafeTLSConfig(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.Nil(t, cfg.CurvePreferences, "QuantumSafeTLSConfig must clear CurvePreferences")
-}
-
-// =============================================================================
 // MutualTLSConfig — server and client modes
 // =============================================================================
 

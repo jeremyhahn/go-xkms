@@ -106,8 +106,14 @@ var (
 	// ErrCBORDecodingFailed indicates CBOR decoding of the request failed.
 	ErrCBORDecodingFailed = errors.New("authenticator: CBOR decoding failed")
 
-	// ErrNotImplemented indicates the command is not yet implemented.
-	ErrNotImplemented = errors.New("authenticator: command not implemented")
+	// ErrCommandNotSupported indicates the command is a CTAP 2.1 command
+	// this authenticator does not implement or has not enabled (e.g.
+	// authenticatorBioEnrollment, or authenticatorClientPIN /
+	// authenticatorLargeBlobs when disabled by configuration). Each of
+	// these is optional per CTAP 2.1 and, per the spec, is correctly
+	// declined with CTAP1_ERR_INVALID_COMMAND when the corresponding
+	// capability is absent from authenticatorGetInfo.
+	ErrCommandNotSupported = errors.New("authenticator: command not supported")
 
 	// ErrLimitExceeded indicates a storage or operation limit has been exceeded.
 	ErrLimitExceeded = errors.New("authenticator: limit exceeded")
@@ -684,6 +690,13 @@ func (a *Authenticator) SetRequireUserPresence(required bool) {
 	a.config.RequireUserPresence = required
 }
 
+// SetAlwaysUV enables or disables mandatory user verification for every
+// operation (MakeCredential, GetAssertion, and the getInfo "alwaysUv" option
+// advertised to the platform), even when the request did not ask for it.
+func (a *Authenticator) SetAlwaysUV(enabled bool) {
+	a.config.AlwaysUV = enabled
+}
+
 // SetUserPresenceHandler replaces the user presence handler on the
 // authenticator and returns the handler it replaced, so a caller that installs
 // a handler for the lifetime of a service can put the previous one back rather
@@ -997,7 +1010,7 @@ func errorToStatus(err error) byte {
 		return StatusOtherError
 	case errors.Is(err, ErrStorageError):
 		return StatusOtherError
-	case errors.Is(err, ErrNotImplemented):
+	case errors.Is(err, ErrCommandNotSupported):
 		return StatusInvalidCommand
 	case errors.Is(err, ErrCredMgmtNotEnabled):
 		return StatusInvalidCommand
@@ -1060,9 +1073,6 @@ func errorToStatus(err error) byte {
 	}
 }
 
-// Placeholder handlers for unimplemented commands.
-// These will be implemented in separate files.
-
 func (a *Authenticator) handleSelection() ([]byte, error) {
 	// CTAP2.1 authenticatorSelection: indicates the authenticator is present
 	// and ready. For a virtual authenticator, always auto-approve — the user
@@ -1078,8 +1088,12 @@ func (a *Authenticator) handleSelection() ([]byte, error) {
 }
 
 func (a *Authenticator) handleBioEnrollment(data []byte) ([]byte, error) {
-	// Biometric enrollment is not supported in software authenticator
-	return nil, ErrNotImplemented
+	// authenticatorBioEnrollment (CTAP 2.1 §6.7) is optional and gated by the
+	// "bioEnroll" option in authenticatorGetInfo, which this authenticator
+	// never advertises since it has no fingerprint sensor to enroll against.
+	// A conforming platform never sends it; a compliant response to one that
+	// does anyway is CTAP1_ERR_INVALID_COMMAND.
+	return nil, ErrCommandNotSupported
 }
 
 // handleLargeBlobs is implemented in cmd_largeblobs.go.

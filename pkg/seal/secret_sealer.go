@@ -17,12 +17,10 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -36,6 +34,10 @@ const secretSealerInfo = "go-xkms/seal/secret-sealer/v1"
 // ErrSecretSealerEmptySecret is returned when a secret sealer is constructed
 // with no key material.
 var ErrSecretSealerEmptySecret = errors.New("seal: secret sealer requires non-empty secret")
+
+// ErrSecretSealerNilSealedData is returned when Unseal is called with a nil
+// sealed data envelope.
+var ErrSecretSealerNilSealedData = errors.New("seal: sealed data is nil")
 
 // SecretSealer is a types.Sealer that encrypts arbitrary values with
 // AES-256-GCM under a key derived (HKDF-SHA256) from a caller-supplied secret.
@@ -59,9 +61,13 @@ func NewSecretSealer(secret []byte) (*SecretSealer, error) {
 	if len(secret) == 0 {
 		return nil, ErrSecretSealerEmptySecret
 	}
-	dataKey := make([]byte, 32)
-	kdf := hkdf.New(sha256.New, secret, nil, []byte(secretSealerInfo))
-	if _, err := io.ReadFull(kdf, dataKey); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals (a secret
+	// under 112 bits) into a panic, which would crash this process instead
+	// of returning the error this constructor promises.
+	dataKey, err := hkdf.Key(sha256.New, secret, nil, secretSealerInfo, 32)
+	if err != nil {
 		return nil, err
 	}
 	return &SecretSealer{dataKey: dataKey}, nil
@@ -96,7 +102,7 @@ func (s *SecretSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions
 // Unseal decrypts sealed data produced by Seal.
 func (s *SecretSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
-		return nil, errors.New("seal: sealed data is nil")
+		return nil, ErrSecretSealerNilSealedData
 	}
 	if !s.CanSeal() {
 		return nil, ErrSecretSealerEmptySecret

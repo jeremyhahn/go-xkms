@@ -103,7 +103,7 @@ reuses the right amount of the surface:
 
 | Layer | Repository | Package | Provides |
 |-------|-----------|---------|----------|
-| Interfaces + KDFs | **go-quicraft** | `pkg/seal` | `SealingStrategy`, `Barrier`, `SymmetricEncrypter`, `GuardedBuffer`, passphrase (`SoftwareStrategy`), `NoneStrategy` |
+| Interfaces + KDFs | **go-quicraft** | `pkg/seal` | `SealingStrategy`, `Barrier`, `SymmetricEncrypter`, go-enclave `MemoryEnclave`, passphrase (`SoftwareStrategy`), `NoneStrategy` |
 | Rich barrier + registry | **go-qrdb** | `pkg/seal` | `ExtendedBarrier` (Shamir, multi-tenant, recovery keys, root tokens, rekey), `StrategyRegistry`, server option `WithStrategyRegistry` |
 | Hardware + cloud strategies | **go-xkms** | `pkg/seal` | `SealingStrategy` implementations for TPM2, PKCS#11, AWS KMS, GCP KMS, Azure KV, Vault; `PlatformSealer`; tenant barrier registry |
 
@@ -160,7 +160,7 @@ flowchart TB
         I[SealingStrategy interface]
         SW["SoftwareStrategy (ID: passphrase)"]
         NO[NoneStrategy]
-        GB[GuardedBuffer]
+        ME[go-enclave MemoryEnclave]
     end
     subgraph QD[go-qrdb]
         EB[ExtendedBarrier]
@@ -737,44 +737,52 @@ dek, err := barrier.GetMasterKey()
 if err != nil {
     // err == ErrSealed, ErrEncryptorNotAvailable, or ErrHardwareEncryptorRequired
 }
-defer mem.Zero(dek) // caller must zero when done
+defer enclave.Wipe(dek) // caller must zero when done
 // dek is a copy; modifying it does not affect the barrier.
 ```
 
-## GuardedBuffer (pkg/crypto/mem)
+## MemoryEnclave (go-enclave)
 
-`GuardedBuffer` provides OS-level memory protection for sensitive key material.
-
-**Linux implementation:**
+go-xkms holds no locked-memory implementation of its own — the
+`pkg/crypto/mem` package (`GuardedBuffer`) was retired in favor of
+[go-enclave](https://github.com/jeremyhahn/go-enclave)'s `MemoryEnclave`,
+admitted through an `Allocator`. `MemoryEnclave` provides the same OS-level
+memory protection for sensitive key material:
 
 | Protection | Mechanism |
 |-----------|-----------|
-| Overflow/underflow detection | Leading + trailing guard pages (`mprotect(PROT_NONE)`) |
+| Overflow/underflow detection | Leading + trailing guard pages (`mprotect(PROT_NONE)`) plus a canary checked on release |
 | Swap prevention | `mlock` locks data pages into RAM |
-| Cleanup | `Free()` zeros data, then `munlock` + `munmap` |
-| Concurrent safety | `atomic.Bool` for freed state (lock-free) |
-
-**Memory layout:**
-```
-[guard page PROT_NONE | data pages PROT_READ|PROT_WRITE | guard page PROT_NONE]
-```
-
-On non-Linux platforms, the implementation degrades to a heap allocation with guaranteed zeroing on `Free`.
+| Cleanup | `Destroy()` zeros data, then `munlock` + `munmap`; verifies the canary and panics on detected corruption |
+| Concurrent safety | `sync.RWMutex` — `WithBytes`/`EqualTo`/`OpenString` borrow under the read lock, `Destroy`/`Freeze` wait out in-flight borrows |
+| Process-wide teardown | `enclave.WipeAll()`, called once by the owning binary at orderly exit — never by a library |
 
 ```go
-buf, err := mem.NewGuardedBuffer(32)
+// Material about to be generated is produced directly into locked pages —
+// no unprotected copy ever exists on the heap.
+enc, err := enclave.NewMemoryEnclaveSized(32)
 if err != nil { ... }
-defer buf.Free() // zeros + munlock + munmap
+defer enc.Destroy()
 
-buf.Write(secretKey)       // copy data in
-data := buf.Bytes()        // read interior slice
-buf.Zero()                 // overwrite with zeros without freeing
+if err := enc.WithBytes(func(b []byte) error {
+    _, err := io.ReadFull(rand.Reader, b) // straight into locked memory
+    return err
+}); err != nil { ... }
+if err := enc.Freeze(); err != nil { ... } // fault-on-write from here on
 
-clone, _ := buf.Clone()    // independent copy with same protections
-defer clone.Free()
+// Material that already exists and can be given up moves in and is wiped
+// from the caller's slice on return.
+enc2, err := enclave.NewMemoryEnclave(secretKey)
+if err != nil { ... }
+defer enc2.Destroy()
+
+equal := enc2.EqualTo(otherHash) // constant-time compare under the read lock
 ```
 
-After `Free()`, any call to `Bytes()`, `Write()`, `Zero()`, or `Clone()` panics.
+`Destroy` is idempotent, safe on a nil `*MemoryEnclave`, and safe to `defer`
+unconditionally. See go-enclave's package documentation for the full set of
+constructors (`NewMemoryEnclaveCopy`, `NewMemoryEnclaveFromString`) and their
+tradeoffs.
 
 ## See Also
 

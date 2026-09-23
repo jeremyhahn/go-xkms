@@ -901,6 +901,10 @@ func TestOrderFinalizeHandler_EKCertWithMinimalCSRFields(t *testing.T) {
 	assert.Equal(t, common.StatusValid, orderResp.Status)
 }
 
+// TestOrderFinalizeHandler_DeviceAttest01Path is the full-handler success
+// case for go-xkms#684: a device-attest-01 CSR whose RFC 4043
+// permanentIdentifier otherName matches the order's authorized identifier,
+// and which carries no other SAN the order did not authorize, is issued.
 func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 	service, _, cleanup := setupTestServiceWithMockCA(t)
 	defer cleanup()
@@ -923,7 +927,8 @@ func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 	err = orderDAO.Save(ctx, order)
 	require.NoError(t, err)
 
-	// Create standard CSR with matching identifier
+	// Create a CSR carrying the RFC 4043 permanentIdentifier otherName the
+	// order authorizes, and no other SAN.
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
@@ -931,14 +936,11 @@ func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 		Subject: pkix.Name{
 			CommonName: "device-serial-123456",
 		},
-		DNSNames: []string{"device.local"},
 	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-serial-123456")
 
 	payload := OrderFinalizeRequest{
-		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
 	}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
@@ -955,6 +957,115 @@ func TestOrderFinalizeHandler_DeviceAttest01Path(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&orderResp)
 	require.NoError(t, err)
 	assert.Equal(t, common.StatusValid, orderResp.Status)
+}
+
+// TestOrderFinalizeHandler_DeviceAttest01Path_RejectsUnauthorizedSAN is the
+// go-xkms#684 regression at the full HTTP handler level: before the fix, a
+// device-attest-01 CSR whose CommonName matched the order's permanent
+// identifier was issued a certificate regardless of what DNS names its SANs
+// carried, because the identifier was read from the CommonName and the SANs
+// were never checked. This CSR's "device.local" DNS SAN is not one of the
+// order's authorized identifiers and must be refused.
+func TestOrderFinalizeHandler_DeviceAttest01Path_RejectsUnauthorizedSAN(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+	order.Identifiers = []entities.ACMEIdentifier{
+		{Type: common.AuthzTypePermanentIdentifier, Value: "device-serial-123456"},
+	}
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	err = orderDAO.Save(ctx, order)
+	require.NoError(t, err)
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "device-serial-123456",
+		},
+		DNSNames: []string{"device.local"},
+	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-serial-123456")
+
+	payload := OrderFinalizeRequest{
+		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
+	}
+
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeRejectedIdentifier, http.StatusUnauthorized)
+
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusReady, updated.Status,
+		"a CSR rejected before validation must leave the order retryable, not stranded")
+}
+
+// TestOrderFinalizeHandler_DeviceAttest01Path_RejectsCommonNameFallback is
+// the CommonName-only regression: a CSR carrying no permanentIdentifier
+// otherName at all - only a CommonName equal to the order's authorized
+// value - must be refused rather than silently accepted via a CommonName
+// fallback.
+func TestOrderFinalizeHandler_DeviceAttest01Path_RejectsCommonNameFallback(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+	order.Identifiers = []entities.ACMEIdentifier{
+		{Type: common.AuthzTypePermanentIdentifier, Value: "device-serial-123456"},
+	}
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	err = orderDAO.Save(ctx, order)
+	require.NoError(t, err)
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "device-serial-123456",
+		},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+
+	payload := OrderFinalizeRequest{
+		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+	}
+
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeBadCSR, http.StatusBadRequest)
+
+	updated, err := orderDAO.Get(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusReady, updated.Status)
 }
 
 // Test EK certificate with IP addresses in CSR

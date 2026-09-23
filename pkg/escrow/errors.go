@@ -55,10 +55,6 @@ var (
 	// already exists in the escrow service.
 	ErrAlreadyEscrowed = errors.New("escrow: key already escrowed")
 
-	// ErrNotImplemented is returned by stub implementations that do not yet
-	// have a backing protocol library (e.g., KMIP).
-	ErrNotImplemented = errors.New("escrow: not implemented")
-
 	// ErrRegistryEmpty is returned when operations are attempted on a registry
 	// with no registered agents.
 	ErrRegistryEmpty = errors.New("escrow: no agents registered")

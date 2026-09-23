@@ -357,6 +357,88 @@ func TestKeyManager_UnlockWithSOPIN(t *testing.T) {
 	})
 }
 
+// TestKeyManager_UnlockWithSOPIN_DeferredPINSync covers UnlockWithSOPIN's
+// PINSyncPending step (go-xkms#686): InitializeUserPIN and ResetUserPIN
+// errors used to be discarded with `_ =`, so a sync failure looked
+// identical to success and PINSyncPending was cleared regardless, silently
+// leaving a pending user PIN never wired to CMK.
+func TestKeyManager_UnlockWithSOPIN_DeferredPINSync(t *testing.T) {
+	t.Run("a pending user PIN is wired to CMK and the pending flag clears", func(t *testing.T) {
+		state, config := createTestKeyManagerState()
+		km := NewKeyManager(state, config)
+		require.NoError(t, km.InitializeSOPIN(testSOPIN))
+
+		// A FIDO2 PIN was set before the SO PIN was configured: PINSyncPending
+		// records the deferred sync, and WrappedCMKUser is still empty.
+		state.PINSet = true
+		state.PINHash = createUserPINHash(testUserPINString)
+		state.PINSyncPending = true
+		require.Empty(t, state.WrappedCMKUser)
+
+		km.Lock()
+		err := km.UnlockWithSOPIN(testSOPIN)
+
+		require.NoError(t, err)
+		require.True(t, km.IsSOUnlocked())
+		require.False(t, state.PINSyncPending, "a successful sync clears the pending flag")
+		require.NotEmpty(t, state.WrappedCMKUser, "InitializeUserPIN must have wrapped CMK for the user")
+	})
+
+	t.Run("a pending resync re-wraps CMK under the current user PIN", func(t *testing.T) {
+		state, config := createTestKeyManagerState()
+		km := NewKeyManager(state, config)
+		require.NoError(t, km.InitializeSOPIN(testSOPIN))
+
+		state.PINSet = true
+		state.PINHash = createUserPINHash(testUserPINString)
+		require.NoError(t, km.InitializeUserPIN(state.PINHash))
+		wrappedBefore := append([]byte(nil), state.WrappedCMKUser...)
+
+		// Simulate a pending resync discovered on the next SO unlock.
+		state.PINSyncPending = true
+
+		km.Lock()
+		err := km.UnlockWithSOPIN(testSOPIN)
+
+		require.NoError(t, err)
+		require.False(t, state.PINSyncPending)
+		require.NotEqual(t, wrappedBefore, state.WrappedCMKUser,
+			"ResetUserPIN must re-wrap CMK rather than leave the stale wrapping in place")
+	})
+
+	t.Run("a sync failure is propagated and leaves the pending flag set", func(t *testing.T) {
+		state, config := createTestKeyManagerState()
+		km := NewKeyManager(state, config)
+
+		// SO PIN configured with only AK wrapped, mirroring "unlock without
+		// wrapped CMK SO succeeds but has no CMK" above: UnlockWithSOPIN's own
+		// unwrap succeeds but leaves km.cmk nil, so the deferred sync has
+		// nothing to wrap.
+		state.SOPINManager = NewSOPINManager()
+		smk, err := state.SOPINManager.Initialize(testSOPIN)
+		require.NoError(t, err)
+		ak := make([]byte, AESGCMKeySize)
+		_, err = rand.Read(ak)
+		require.NoError(t, err)
+		akWrapper, err := NewAESGCMKeyWrapper(smk)
+		require.NoError(t, err)
+		state.WrappedAK, err = wrapForTest(akWrapper, ak)
+		require.NoError(t, err)
+
+		state.PINSet = true
+		state.PINHash = createUserPINHash(testUserPINString)
+		state.PINSyncPending = true
+
+		err = km.UnlockWithSOPIN(testSOPIN)
+
+		require.ErrorIs(t, err, ErrKeyManagerNoCMK)
+		require.False(t, km.IsSOUnlocked(),
+			"a propagated sync failure must not leave the manager half-unlocked")
+		require.True(t, state.PINSyncPending,
+			"a failed sync must not silently claim the pending PIN was wired to CMK")
+	})
+}
+
 func TestKeyManager_Lock(t *testing.T) {
 	t.Run("Lock clears cached keys", func(t *testing.T) {
 		state, config := createTestKeyManagerState()

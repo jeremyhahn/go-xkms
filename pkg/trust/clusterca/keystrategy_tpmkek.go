@@ -15,17 +15,15 @@ package clusterca
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -55,6 +53,14 @@ var (
 	// ErrNoTPMCredentials is returned when the tpm-kek strategy is used without a
 	// TPM sealer / credential activator.
 	ErrNoTPMCredentials = errors.New("clusterca: tpm-kek strategy requires a TPM sealer and credential activator")
+
+	// ErrSeedLengthMismatch is returned when a TPM-activated cluster seed does
+	// not have the expected length.
+	ErrSeedLengthMismatch = errors.New("clusterca: activated cluster seed has unexpected length")
+
+	// ErrNodeSecretRequestIncomplete is returned when a node secret request is
+	// missing the EK certificate or IAK public area needed to wrap the seed.
+	ErrNodeSecretRequestIncomplete = errors.New("clusterca: node secret request missing EK certificate or IAK public area")
 )
 
 // tpmKEKStrategy wraps the replicated cluster CA key under a KEK derived from a
@@ -83,9 +89,15 @@ func (s *tpmKEKStrategy) kekProtection() (KeyProtection, error) {
 	if len(s.seed) == 0 {
 		return KeyProtection{}, ErrSeedUnavailable
 	}
-	kek := make([]byte, 32)
-	r := hkdf.New(sha256.New, s.seed, []byte("go-xkms/cluster-ca"), []byte("kek/v1"))
-	if _, err := io.ReadFull(r, kek); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals into a
+	// panic, which would crash this process instead of returning the error
+	// this method promises. clusterSeedLen (32 bytes) keeps a real seed well
+	// above FIPS's 112-bit HKDF floor; this only changes what a short or
+	// zero-value test seed does.
+	kek, err := hkdf.Key(sha256.New, s.seed, []byte("go-xkms/cluster-ca"), "kek/v1", 32)
+	if err != nil {
 		return KeyProtection{}, err
 	}
 	// The keystore passphrase has always been the hex STRING, not the raw
@@ -259,7 +271,7 @@ func (s *tpmKEKStrategy) ConsumeEnrollmentSecret(ctx context.Context, material *
 		return err
 	}
 	if len(seed) != clusterSeedLen {
-		return errors.New("clusterca: activated cluster seed has unexpected length")
+		return ErrSeedLengthMismatch
 	}
 	if err := s.storeSealedSeed(ctx, s.deps, seed); err != nil {
 		return err
@@ -292,7 +304,7 @@ func (p *tpmKEKSecretProvider) ProvisionFor(ctx context.Context, req *NodeSecret
 		return nil, ErrSeedUnavailable
 	}
 	if req == nil || req.EKCertificate == nil || len(req.IAKPublic) == 0 {
-		return nil, errors.New("clusterca: node secret request missing EK certificate or IAK public area")
+		return nil, ErrNodeSecretRequestIncomplete
 	}
 	credBlob, encSecret, _, err := deps.Credentials.MakeCredentialWithExternalEK(
 		req.EKCertificate, req.IAKPublic, p.strategy.seed)

@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 func TestWipeStandard_String(t *testing.T) {
@@ -139,9 +141,12 @@ func TestFillBufferWithPattern(t *testing.T) {
 	})
 }
 
-func TestClearBytes(t *testing.T) {
+// wipePass wipes its scratch buffer via enclave.Wipe (go-xkms#623: the local
+// clearBytes loop was retired in favor of go-enclave). This exercises that
+// dependency the way wipePass uses it.
+func TestWipePass_ScratchBufferWiped(t *testing.T) {
 	buf := []byte{0x01, 0x02, 0x03, 0x04, 0x05}
-	clearBytes(buf)
+	enclave.Wipe(buf)
 
 	for i, b := range buf {
 		assert.Equal(t, byte(0x00), b, "byte %d should be cleared", i)

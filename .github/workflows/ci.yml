@@ -708,6 +708,12 @@ jobs:
       - name: Run golangci-lint
         run: make lint
 
+      # The xkey agent skill's CLI reference is generated from the cobra
+      # tree. This fails when the committed reference is stale, or when
+      # SKILL.md cites a command or flag xkey does not have.
+      - name: Check xkey agent skill reference
+        run: make -C xkey check-skill-reference
+
       # go-qrdb's pkg/secure/analyzer enforces the raw-memguard-import,
       # ssh.ParsePrivateKey and sensitive-field rules, but only where its own
       # make target runs -- and nothing in go-qrdb reaches into this
@@ -1328,11 +1334,34 @@ jobs:
   # this consolidation -- AES-GCM nonces are generated inside the module
   # boundary, the AEAD auto-selectors return AES-256-GCM in FIPS mode instead
   # of ChaCha20-Poly1305, and the algorithm allowlists are filtered at both
-  # validation entry points. The JOB half is withheld because the suite does
-  # not pass under GODEBUG=fips140=only yet: measured on this tree,
-  # 364+ tests fail across 13+ packages, and the first root cause is not even
-  # ours -- go-qrdb v0.5.9-alpha's pkg/role.deterministicUUID derives system
-  # role IDs with uuid.NewSHA1, and crypto/sha1 PANICS under fips140=only.
+  # validation entry points. #613/#633 and go-xkms#23's second pass closed the
+  # go-qrdb SHA-1 blocker (fixed upstream, pkg/role now on SHA-256) and fixed
+  # every FIPS-only PANIC this repository's own code caused -- several
+  # golang.org/x/crypto and crypto/hmac call sites turned the stdlib's FIPS
+  # refusal into a process crash instead of an error; see docs/fips/README.md
+  # "Panics the stdlib raises instead of returning an error" -- plus the
+  # X25519/ChaCha20-Poly1305/ML-KEM-512 deliberately-non-approved coverage in
+  # pkg/crypto/x25519, pkg/crypto/chacha20poly1305 and pkg/quantum/mlkem512.
+  #
+  # The JOB half is still withheld. Two kinds of failure remain, measured on
+  # this tree under GODEBUG=fips140=only:
+  #   1. Packages whose test suites don't yet assert the FIPS-only refusal
+  #      for a deliberately non-approved algorithm the way the packages above
+  #      now do: pkg/pkcs11/module (the largest single bucket -- PKCS#11
+  #      authenticated wrap requires arbitrary-IV GCM, which fips140=only
+  #      cannot construct), pkg/encoding/jwe, pkg/keyprovider/symmetric,
+  #      pkg/ssh/console, pkg/api/transport/usb, pkg/backend/software,
+  #      pkg/api/mcp, pkg/ssh/session and several smaller packages.
+  #   2. github.com/google/go-tpm v0.9.8 panics -- not errors -- inside its
+  #      own TPM2 session machinery under fips140=only, on ordinary,
+  #      spec-compliant use: session HMAC authorization (crypto/hmac, a
+  #      short or empty auth value is legal TPM2 protocol, not attacker
+  #      input) and session parameter encryption (crypto/cipher CFB, which
+  #      the TPM2 spec mandates for that purpose). This is not caused by
+  #      go-xkms code and is out of scope for this repository to fix; it
+  #      blocks pkg/tpm2, pkg/backend/tpm2, pkg/luks, pkg/trust/clusterca and
+  #      pkg/xkms's TPM2 registration path, and needs routing upstream the
+  #      same way go-qrdb's SHA-1 blocker was.
   #
   # Landing a required check that is red on arrival is the exact ordering
   # mistake task #98 exists to prevent: a gate is only safe once the code it

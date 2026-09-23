@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-enclave"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -399,20 +400,12 @@ func (p *PINProtocolV2) ResetSharedSecret() {
 	defer p.mu.Unlock()
 
 	// Clear sensitive hmacKey data
-	if p.hmacKey != nil {
-		for i := range p.hmacKey {
-			p.hmacKey[i] = 0
-		}
-		p.hmacKey = nil
-	}
+	enclave.Wipe(p.hmacKey)
+	p.hmacKey = nil
 
 	// Clear sensitive aesKey data
-	if p.aesKey != nil {
-		for i := range p.aesKey {
-			p.aesKey[i] = 0
-		}
-		p.aesKey = nil
-	}
+	enclave.Wipe(p.aesKey)
+	p.aesKey = nil
 }
 
 // Reset clears the ephemeral key pair and derived keys.
@@ -422,20 +415,12 @@ func (p *PINProtocolV2) Reset() {
 	defer p.mu.Unlock()
 
 	// Clear sensitive hmacKey data
-	if p.hmacKey != nil {
-		for i := range p.hmacKey {
-			p.hmacKey[i] = 0
-		}
-		p.hmacKey = nil
-	}
+	enclave.Wipe(p.hmacKey)
+	p.hmacKey = nil
 
 	// Clear sensitive aesKey data
-	if p.aesKey != nil {
-		for i := range p.aesKey {
-			p.aesKey[i] = 0
-		}
-		p.aesKey = nil
-	}
+	enclave.Wipe(p.aesKey)
+	p.aesKey = nil
 
 	p.privateKey = nil
 	p.publicKey = nil

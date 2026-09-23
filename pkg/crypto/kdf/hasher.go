@@ -19,7 +19,7 @@ import (
 	cryptorand "crypto/rand"
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // HashVersion identifies the password hashing version.
@@ -112,7 +112,7 @@ func (h *PasswordHasher) Hash(password []byte) (key, salt []byte, version HashVe
 
 	key, err = h.DeriveKey(password, salt, h.version)
 	if err != nil {
-		mem.Zero(salt)
+		enclave.Wipe(salt)
 		return nil, nil, 0, err
 	}
 

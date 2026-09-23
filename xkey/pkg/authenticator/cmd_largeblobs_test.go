@@ -113,7 +113,7 @@ func TestLargeBlobs_Disabled_ReturnsNotImplemented(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	_, err := auth.ProcessCBOR(CmdLargeBlobs, nil)
-	require.ErrorIs(t, err, ErrNotImplemented)
+	require.ErrorIs(t, err, ErrCommandNotSupported)
 }
 
 // TestLargeBlobs_GetInitialArray proves that before any Set has completed,

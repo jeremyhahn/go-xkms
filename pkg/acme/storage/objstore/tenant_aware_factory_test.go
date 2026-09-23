@@ -619,7 +619,9 @@ func TestTenantScopedFactory_ImplementsFactory(t *testing.T) {
 	scoped, err := factory.ForTenant("test-tenant")
 	require.NoError(t, err)
 
-	var _ storage.Factory = scoped
+	// ForTenant's signature already returns storage.Factory (verified at
+	// compile time), so scoped's static type needs no further assertion here.
+	var _ = scoped
 }
 
 // TestTenantScopedFactory_Prefix_IndirectVerification verifies that the prefix function creates

@@ -46,8 +46,12 @@ type LoginResult struct {
 
 // VerifiedPolicyHandler receives the enterprise policy section once the SO
 // PIN has authenticated it. The GUI installs one so the consumers that ran on
-// config.DefaultPolicy since startup switch to the verified section.
-type VerifiedPolicyHandler func(policy *config.PolicySection)
+// config.DefaultPolicy since startup switch to the verified section. A
+// non-nil error means the handler refused to apply the section (for example,
+// its own Require* startup preconditions are not met by the host) and the
+// defaults stayed in effect; LoginSO surfaces it in LoginResult.Error
+// without failing the login.
+type VerifiedPolicyHandler func(policy *config.PolicySection) error
 
 // AuthService manages authentication state for the GUI application.
 // In personal mode, no auth gate is shown (barrier unseal is sufficient).
@@ -200,7 +204,21 @@ func (s *AuthService) LoginSO(soPIN string) *LoginResult {
 			s.tamperDetected.Store(false)
 			s.log.Info("policy integrity verified")
 			if h := s.verifiedPolicyHandler.Load(); h != nil {
-				(*h)(&cfg.Policy)
+				if applyErr := (*h)(&cfg.Policy); applyErr != nil {
+					// The policy verified cryptographically but refused to
+					// apply (its own Require* preconditions are unmet); the
+					// SO still logs in -- someone locked out here could
+					// never fix the deployment that failed its own bar.
+					s.log.Warn("verified policy not applied", "error", applyErr)
+					s.mode.Store(AuthModeSOAdmin)
+					return &LoginResult{
+						Success:        true,
+						Mode:           string(AuthModeSOAdmin),
+						PolicyVerified: true,
+						TamperDetected: false,
+						Error:          applyErr.Error(),
+					}
+				}
 			}
 		}
 	}

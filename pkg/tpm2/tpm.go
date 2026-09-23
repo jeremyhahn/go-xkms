@@ -19,7 +19,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -532,7 +531,7 @@ func (tpm *TPM2) Open() error {
 			t = transport.FromReadWriter(f)
 		}
 	default:
-		return errors.New("invalid TPM transport configuration")
+		return ErrInvalidTPMTransport
 	}
 
 	tpm.transport = t
@@ -1899,10 +1898,10 @@ func (tpm *TPM2) SignValidate(
 	// Sign the digest
 	var hashSig []byte
 	if keyAttrs.TPMAttributes == nil || keyAttrs.TPMAttributes.Public.Type == 0 {
-		return nil, errors.New("TPMAttributes.Public is required for SignValidate")
+		return nil, ErrSignValidatePublicRequired
 	}
 	if keyAttrs.TPMAttributes.HashAlg == 0 {
-		return nil, errors.New("TPMAttributes.HashAlg is required for SignValidate")
+		return nil, ErrSignValidateHashAlgRequired
 	}
 	public := keyAttrs.TPMAttributes.Public
 	if public.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
@@ -2198,7 +2197,7 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 	ekPub := attrs.TPMAttributes.Public
 
 	if ekPub.Type != tpm2.TPMAlgRSA {
-		return nil, errors.New("ECC EK certificates unsupported at this time")
+		return nil, ErrECCEKCertUnsupported
 	}
 
 	rsaDetail, err := ekPub.Parameters.RSADetail()
@@ -2260,7 +2259,7 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 
 	certificate, ok := result["certificate"].(string)
 	if !ok {
-		return nil, errors.New("failed to parse certificate from EK certificate service")
+		return nil, ErrEKCertServiceParseFailed
 	}
 
 	cert, err := x509.ParseCertificate([]byte(certificate))

@@ -71,8 +71,10 @@ func TestEncryptWithXChaChaInvalidNonceSize(t *testing.T) {
 	key, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher, err := NewX(key)
-	require.NoError(t, err)
+	cipher, ok := requireCipherX(t, key)
+	if !ok {
+		return
+	}
 
 	opts := &types.EncryptOptions{
 		Nonce: make([]byte, 12), // Wrong size for XChaCha (needs 24)
@@ -89,10 +91,14 @@ func TestDecryptWrongKeyFails(t *testing.T) {
 	key2, err := GenerateKey()
 	require.NoError(t, err)
 
-	cipher1, err := New(key1)
-	require.NoError(t, err)
-	cipher2, err := New(key2)
-	require.NoError(t, err)
+	cipher1, ok := requireCipher(t, key1)
+	if !ok {
+		return
+	}
+	cipher2, ok := requireCipher(t, key2)
+	if !ok {
+		return
+	}
 
 	plaintext := []byte("cross-key decryption must fail")
 	encrypted, err := cipher1.Encrypt(plaintext, nil)

@@ -81,7 +81,6 @@ var trustedCAMethods = map[string]struct{}{
 	"PEM":                                    {},
 	"PrivateKey":                             {},
 	"PubKey":                                 {},
-	"QuantumSafeTLSConfig":                   {},
 	"Revoke":                                 {},
 	"RevokeCert":                             {},
 	"RootCertificate":                        {},

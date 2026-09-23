@@ -36,6 +36,8 @@ import (
 	"github.com/google/go-tpm/tpm2"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // =============================================================================
@@ -958,9 +960,7 @@ func (s *sealData) Bytes() []byte {
 
 // Clear overwrites the data memory with zeros.
 func (s *sealData) Clear() {
-	for i := range s.data {
-		s.data[i] = 0
-	}
+	enclave.Wipe(s.data)
 }
 
 // PasswordCacheConfig holds configuration for platform password caching.

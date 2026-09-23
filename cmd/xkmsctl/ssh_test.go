@@ -72,6 +72,9 @@ func TestXkmsctlSSHClient_NonEmbeddedNoServer(t *testing.T) {
 	if !strings.Contains(err.Error(), "--server is required") {
 		t.Errorf("error %q does not mention --server", err.Error())
 	}
+	if !errors.Is(err, ErrSSHServerRequired) {
+		t.Errorf("err = %v, want errors.Is match against ErrSSHServerRequired", err)
+	}
 }
 
 // newSSHCmd builds a standalone cobra.Command carrying the same flags the

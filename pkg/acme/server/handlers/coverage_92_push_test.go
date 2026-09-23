@@ -255,12 +255,10 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 			CommonName: "test-device-id",
 		},
 	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "test-device-id")
 
 	payload := OrderFinalizeRequest{
-		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
 	}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
@@ -524,12 +522,10 @@ func TestCov92_OrderFinalizeHandler_PermanentIDNotBase64(t *testing.T) {
 			CommonName: "device-hostname-123",
 		},
 	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-hostname-123")
 
 	payload := OrderFinalizeRequest{
-		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
+		CSR: base64.RawURLEncoding.EncodeToString(csr.Raw),
 	}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)

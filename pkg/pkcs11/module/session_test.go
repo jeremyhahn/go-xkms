@@ -2862,3 +2862,63 @@ func TestApplyPINStatusFlags(t *testing.T) {
 		t.Error("expected CKF_SO_PIN_COUNT_LOW after one SO failure")
 	}
 }
+
+// TestZeroizeOperation verifies that zeroizeOperation overwrites every byte
+// of a terminal operation's cached Result before dropping the reference, so
+// recovered plaintext or other sensitive output does not linger in memory
+// for the garbage collector to release on its own schedule.
+func TestZeroizeOperation(t *testing.T) {
+	op := &OperationState{
+		Result:      []byte{0xAA, 0xBB, 0xCC, 0xDD},
+		ResultReady: true,
+	}
+	// Capture the backing array before zeroizeOperation drops op.Result, so
+	// the wipe itself -- not just the nil-out -- can be observed.
+	result := op.Result
+
+	zeroizeOperation(op)
+
+	for i, b := range result {
+		if b != 0 {
+			t.Errorf("result[%d] = %#x, want 0", i, b)
+		}
+	}
+	if op.Result != nil {
+		t.Errorf("Result = %v, want nil", op.Result)
+	}
+	if op.ResultReady {
+		t.Error("ResultReady = true, want false")
+	}
+}
+
+// TestZeroizeOperation_NilAndEmpty exercises the edge cases zeroizeOperation
+// must survive without panicking: a nil OperationState (the caller has no
+// operation of the type being torn down), and a nil or empty Result (the
+// operation never cached any output).
+func TestZeroizeOperation_NilAndEmpty(t *testing.T) {
+	t.Run("nil operation state", func(t *testing.T) {
+		zeroizeOperation(nil)
+	})
+
+	t.Run("nil result", func(t *testing.T) {
+		op := &OperationState{ResultReady: false}
+		zeroizeOperation(op)
+		if op.Result != nil {
+			t.Errorf("Result = %v, want nil", op.Result)
+		}
+		if op.ResultReady {
+			t.Error("ResultReady = true, want false")
+		}
+	})
+
+	t.Run("empty result", func(t *testing.T) {
+		op := &OperationState{Result: []byte{}, ResultReady: true}
+		zeroizeOperation(op)
+		if op.Result != nil {
+			t.Errorf("Result = %v, want nil", op.Result)
+		}
+		if op.ResultReady {
+			t.Error("ResultReady = true, want false")
+		}
+	})
+}

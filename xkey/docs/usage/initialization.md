@@ -235,7 +235,7 @@ This zeros the encryption key in memory. On the next start, unseal again to resu
 
 - [Barrier Commands](cli/barrier.md) -- Full barrier CLI reference
 - [PIN Commands](cli/pin.md) -- Full PIN CLI reference
-- [Barrier Architecture](../seal/README.md) -- Encryption design and threat model
+- [Barrier Architecture](../seal/architecture.md) -- Encryption design and threat model
 - [Configuration Reference](../configuration/README.md) -- Complete configuration options
 - [Authentication Configuration](../configuration/auth.md) -- mTLS, JWT, OIDC, and RBAC
 - [Getting Started (Backend Selection)](getting-started.md) -- Backend comparison and Go API examples

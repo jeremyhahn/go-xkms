@@ -57,8 +57,11 @@ var (
 	// ErrSessionExpired indicates the signing session has expired.
 	ErrSessionExpired = errors.New("frost: session expired")
 
-	// ErrNotImplemented indicates a feature is not supported.
-	ErrNotImplemented = errors.New("frost: not implemented")
+	// ErrThresholdSigningNotSupported indicates a crypto.Signer was
+	// requested for a key whose threshold requires more than one
+	// participant. A crypto.Signer performs one synchronous Sign call and
+	// cannot coordinate a multi-party FROST signing round.
+	ErrThresholdSigningNotSupported = errors.New("frost: threshold signing requires the round-based API")
 
 	// ErrInvalidConfig indicates the configuration is invalid.
 	ErrInvalidConfig = errors.New("frost: invalid configuration")
@@ -178,4 +181,24 @@ func (e *AlgorithmError) Error() string {
 // Unwrap returns the underlying error for errors.Is() support.
 func (e *AlgorithmError) Unwrap() error {
 	return ErrUnsupportedAlgorithm
+}
+
+// ThresholdSigningNotSupportedError reports that Signer was requested for
+// a key whose threshold is greater than one. Callers must coordinate the
+// FROST protocol themselves using GenerateNonces, SignRound, and Aggregate.
+type ThresholdSigningNotSupportedError struct {
+	KeyID     string
+	Threshold uint32
+}
+
+// Error implements the error interface.
+func (e *ThresholdSigningNotSupportedError) Error() string {
+	return fmt.Sprintf(
+		"frost: key %s has threshold %d; a crypto.Signer cannot perform orchestrated multi-participant signing, use GenerateNonces, SignRound, and Aggregate for distributed signing",
+		e.KeyID, e.Threshold)
+}
+
+// Unwrap returns the underlying error for errors.Is() support.
+func (e *ThresholdSigningNotSupportedError) Unwrap() error {
+	return ErrThresholdSigningNotSupported
 }

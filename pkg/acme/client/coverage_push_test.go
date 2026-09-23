@@ -671,12 +671,17 @@ func TestCoveragePush_GetOCSP_MockServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Create OCSP response
 		now := time.Now()
+		// IssuerHash is pinned to SHA-256: ocsp.Response's zero value
+		// defaults to SHA-1, and crypto/sha1 panics rather than erroring
+		// under GODEBUG=fips140=only, which would crash this mock
+		// responder instead of letting it serve an ordinary response.
 		template := ocsp.Response{
 			Status:       ocsp.Good,
 			SerialNumber: big.NewInt(2),
 			ThisUpdate:   now,
 			NextUpdate:   now.Add(24 * time.Hour),
 			ProducedAt:   now,
+			IssuerHash:   crypto.SHA256,
 		}
 
 		response, err := ocsp.CreateResponse(caCert, caCert, template, caKey)

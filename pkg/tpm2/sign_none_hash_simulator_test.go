@@ -24,10 +24,10 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
-	"math/big"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecpoint"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -114,11 +114,9 @@ func eccPublicKeyFromTPM(
 	unique, err := outPub.Unique.ECC()
 	require.NoError(t, err)
 
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(unique.X.Buffer),
-		Y:     new(big.Int).SetBytes(unique.Y.Buffer),
-	}
+	key, err := ecpoint.PublicKey(curve, unique.X.Buffer, unique.Y.Buffer)
+	require.NoError(t, err, "the point the TPM reported must lie on the curve")
+	return key
 }
 
 // TestSign_NoneHash_ECDSA_P256_ProducesVerifiableSignature is the primary

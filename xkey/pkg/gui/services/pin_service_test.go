@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // mockPINBackend implements qrdbsdk.PINBackend for testing.
@@ -811,4 +812,42 @@ func TestPINService_VerifySOPIN_TPM2MapsToNotSupported(t *testing.T) {
 
 	err := svc.VerifySOPIN("123456")
 	assert.True(t, errors.Is(err, ErrSOPINNotSupported))
+}
+
+// ---------------------------------------------------------------------------
+// UserCanChangeOwnPIN policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestPINService_ChangeUserPIN_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanChangeOwnPIN false denies", &config.PolicySection{UserCanChangeOwnPIN: false}, true},
+		{"UserCanChangeOwnPIN true allows", &config.PolicySection{UserCanChangeOwnPIN: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+			svc := newTestPINService(backend)
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err := svc.ChangeUserPIN("old-user-pin-123456", "new-user-pin-123456")
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_change_own_pin", denied.Field)
+				assert.True(t, logger.hasPolicyDenial(), "denial must be audited")
+			} else {
+				require.NoError(t, err)
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
 }

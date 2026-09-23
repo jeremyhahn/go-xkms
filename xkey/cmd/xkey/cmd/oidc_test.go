@@ -16,6 +16,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -316,6 +317,9 @@ func TestHandleOIDCCallback_NoCode(t *testing.T) {
 	case err := <-errChan:
 		if !strings.Contains(err.Error(), "no authorization code") {
 			t.Errorf("error = %v, should contain 'no authorization code'", err)
+		}
+		if !errors.Is(err, ErrOIDCNoAuthCode) {
+			t.Errorf("error = %v, want errors.Is match against ErrOIDCNoAuthCode", err)
 		}
 	default:
 		t.Error("no error received on channel")

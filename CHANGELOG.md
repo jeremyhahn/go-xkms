@@ -7,6 +7,297 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0-alpha] - 2026-09-23
+
+### Security
+
+- **xkey's agent server rejects revoked and removed agents at connect time,
+  and removing an agent now revokes its certificate.** An audit found the
+  master-side agent server (`xkey/pkg/agent/server.go`) accepted any client
+  certificate that chained to the configured CA, with no check against the
+  enrollment store or the CA's revocation state — a removed agent's
+  certificate kept working indefinitely, because `RemoveAgent`
+  (`xkey/pkg/gui/services/agent_service.go`) only deleted the store record and
+  never called `CAService.RevokeCertificate`. Both are fixed. `Server`'s mTLS
+  `tls.Config.VerifyPeerCertificate` now runs
+  `EnrollmentService.VerifyAgentCertificate` on every connection: the leaf's
+  public-key fingerprint must match an enrolled, still-present agent in the
+  store, and its serial number must not be revoked (checked directly through
+  the CA's existing `IsRevoked` RPC — no new CRL parser). Either check failing,
+  or the revocation check itself failing, rejects the connection; enrollment
+  now records each issued certificate's serial number
+  (`AgentInfo.CertificateSerial`) so it can be revoked later.
+  `EnrollmentService.RemoveAgent` revokes the certificate through the CA
+  first and only then deletes the record; a revocation failure returns the
+  error and leaves the record in place. The GUI's `AgentService.RemoveAgent`
+  now calls it instead of deleting directly, and the CLI gained `xkey agent
+  code`, `xkey agent pending`, `xkey agent approve <id>`, `xkey agent reject
+  <id>`, and `xkey agent remove <id>` over the same shared service layer,
+  closing a GUI/CLI parity gap. One-time codes and pending enrollment
+  requests, previously held only in the enrollment service's memory, are now
+  persisted through `EnrollmentStore` (`FileStore`'s `agents/`, `codes/`,
+  `pending/` subdirectories; `DAOStore`'s matching DAO namespaces), so a code
+  or request from one process is honored by another sharing the same store
+  - the CLI and a running `agent start` daemon in particular. Codes are
+  stored by their SHA-256 hash, never in plaintext; `EnrollmentStore.ConsumeCode`
+  is single-use and atomic even across processes (`FileStore` relies on
+  `os.Remove`'s atomicity; `DAOStore`'s is Get-then-Delete, a documented gap
+  since go-qrdb's `GenericDAO` has no compare-and-delete primitive yet).
+  Pending requests are deleted on approval or rejection, so `ErrEnrollmentRejected`
+  - unreachable once rejection deletes the record - is removed. Files:
+  `xkey/pkg/agent/{enrollment,entity,errors,server,store,dao_store}.go`,
+  `xkey/cmd/xkey/cmd/{agent_ca,agent_verbs}.go`,
+  `xkey/pkg/gui/services/agent_service.go`.
+- **The device attestation key verifier now refuses an Android Key Attestation whose TEE-enforced key was not generated in secure hardware, or is not authorized to sign** (#132, follow-up to #129/#124). Everything `VerifyDeviceAttestation` checked before this — the chain, the security level, the verified boot state, the genesis challenge, the live challenge signature — was equally consistent with a device attestation key generated elsewhere and imported into the TEE; only the TEE's own `Origin` claim rules that out. `xkey/pkg/attestation.RequireAttestedKeyOrigin` now refuses unless the TEE-enforced authorization list claims `Origin == GENERATED` and its `Purpose` set includes `SIGN`, reading exclusively from `TeeEnforced` — a `SoftwareEnforced` claim is the calling application's word, not the secure hardware's. An authorization list that makes neither claim (an absent extension, or evidence from a device with no TEE) fails closed. Two typed errors name the two ways it can fail: `ErrAttestationKeyOriginNotGenerated`, `ErrAttestationKeyPurposeNotSign`. `pkg/attestation/android` gained the ASN.1 extraction this check depends on — `Origin` (tag 702) and `Purpose` (tag 1) were declared on `KeyDescription.TeeEnforced`/`SoftwareEnforced` but never parsed out of a real certificate; `parseAuthorizationList` now reads both, defaulting an unclaimed `Origin` to `OriginUnknown` rather than the zero value it shares with `OriginGenerated`, so an attestation that never asserts an origin cannot be misread as asserting `GENERATED`. `BuildAttestationExtensionWithOptions` is the additive sibling to `BuildAttestationExtension` that lets a fixture assert `Origin`/`Purpose` in `teeEnforced`, re-exported through the SDK as `BuildAndroidAttestationExtensionWithOptions`; `xkey/pkg/attestation/attesttest`'s shared device-key fixtures (`AttestedLeafDER`, `NewDAK`) now default to a TEE-enforced `GENERATED`+`SIGN` claim so every existing pairing/re-attestation test keeps exercising the stricter verifier, with `*WithClaims` siblings for tests that vary the claim. Files: `pkg/attestation/android/extension.go`, `sdk/go/attestation.go`, `xkey/pkg/attestation/device.go`, `xkey/pkg/attestation/errors.go`, `xkey/pkg/attestation/attesttest/fixtures.go`; docs in `xkey/docs/phone-hsm/engineering.md`. Verified by new tests covering the accept path, an imported origin, a purpose set without `SIGN`, an authorization list with neither claim, and — the mutation guard named in the issue — a claim present only in `SoftwareEnforced`, confirmed to turn red if the check is changed to read that list instead of `TeeEnforced`; `pkg/attestation/android` is additionally verified against a real (non-synthetic) Android attestation chain, which is the first evidence that the new ASN.1 parsing decodes genuine device output and not only fixtures this suite built itself. **Caveat carried forward from the issue and not yet closed:** the coordination note in #132 asks that this be confirmed against a real handset attestation before merging — the fixture proving the parser reads genuine device output is an emulator chain with no TEE, so it can confirm the parser but not that a real StrongBox/TEE attestation reports `Origin`/`Purpose` the way this check expects; that confirmation, and a filing against xkey-android if any device disagrees, is still open.
+- **`pkg/crypto/mem`'s hand-rolled `GuardedBuffer` is retired; every caller
+  moves to go-enclave's `MemoryEnclave` — BREAKING.** `GuardedBuffer`'s Linux
+  mlock call discarded its own error (`_ = sysCallMlock(dataRegion)`) and
+  proceeded unlocked with no signal when the kernel refused — key material
+  then sat on swappable pages silently. go-enclave's constructors return
+  `ErrLockedMemoryUnavailable` for the same failure instead of failing open,
+  and it was already a direct dependency of this module
+  (`pkg/storage/sealed`), so this removes a parallel implementation rather
+  than adding one. `pkg/crypto/mem` is deleted outright (no deprecation
+  period, no shim — this project carries no backward compatibility).
+  `mem.Zero`/`mem.GuardedBuffer` callers move to `enclave.Wipe` /
+  `enclave.MemoryEnclave`: `pkg/crypto/kdf/hasher.go`,
+  `pkg/keyprovider/pkcs8/sealer.go`, `pkg/server/credentials/service.go`,
+  and `pkg/pintpm2/backend.go`, whose FIDO2 PIN hash cache
+  (`fido2Guard atomic.Pointer[mem.GuardedBuffer]`) is now
+  `fido2Enclave atomic.Pointer[enclave.MemoryEnclave]`, with hash comparison
+  via `MemoryEnclave.EqualTo` (constant-time, fail-closed on a nil or
+  destroyed enclave) replacing a direct `subtle.ConstantTimeCompare` over
+  `Bytes()`. The SDK re-export `sdk/go/crypto.go` keeps `SecureMemZero` as a
+  drop-in `enclave.Wipe` alias (an existing go-quicbaas caller depends on the
+  exact signature) and drops the `GuardedBuffer`-only re-exports
+  (`SecureMemGuardedBuffer`, `SecureMemNewGuardedBuffer`,
+  `SecureMemZeroAndFree`, and their error types), since go-enclave is
+  already a public dependency SDK consumers can import directly. The three
+  remaining hand-rolled zero-loops flagged alongside this
+  (`pkg/pkcs11/module`'s `zeroize`, and xkey's `luks.clearBytes` /
+  `authenticator.clearBytes`) are also retired in favor of `enclave.Wipe`;
+  `authenticator.clearBytes` was package-shared beyond the one call site
+  named in the issue, so every call site in `xkey/pkg/authenticator`
+  (`attestation.go`, `key_wrapper.go`, `key_manager.go`, `token.go`,
+  `ext_hmac_secret.go`) moves with it. `cmd/xkmsd` now also calls
+  `enclave.WipeAll()` in its orderly-shutdown defer, alongside the existing
+  `secure.Purge()` (go-qrdb#'s memguard-backed `Secret`/`Buffer` remain a
+  second, still-necessary protected-memory subsystem pending qrdb's own
+  migration to go-enclave); libraries in this repository call neither.
+  Deferred to follow-on issues, both blocked on upstream releases that have
+  not shipped: moving `cmd/xkmsctl`'s and `pkg/server/bootstrap_suite.go`'s
+  direct `*memguard.LockedBuffer` use onto go-truststrap's `MemoryEnclave`
+  API once that wave lands (go-truststrap#60), and dropping
+  `github.com/awnumar/memguard` from `go.mod` once go-qrdb's own `pkg/secure`
+  delegates to go-enclave. go-xkms#623.
+
+### Changed
+
+- **`xkey/pkg/authenticator.ErrNotImplemented` renamed to
+  `ErrCommandNotSupported` — BREAKING.** The sentinel is returned for three
+  CTAP 2.1 commands this software authenticator declines:
+  `authenticatorBioEnrollment` (no fingerprint sensor to enroll against),
+  and `authenticatorClientPIN` / `authenticatorLargeBlobs` when disabled by
+  `Config.EnablePIN` / `Config.EnableLargeBlobs`. All three are optional per
+  CTAP 2.1, `authenticatorGetInfo` never advertises the corresponding
+  capability (`bioEnroll`, `clientPin`/`pinUvAuthProtocols`, `largeBlobs`)
+  when declined, and `Config.SetDefaults` forces `EnablePIN` whenever
+  credential management is enabled — the only feature here that mints
+  pinUvAuthTokens for UV without a PIN — so declining
+  `authenticatorClientPIN` with `EnablePIN=false` never blocks a required
+  capability. `CTAP1_ERR_INVALID_COMMAND` (`StatusInvalidCommand`) is the
+  spec-correct response in all three cases; the rename only replaces the
+  inaccurate "not implemented" name with one that says so. Files:
+  `xkey/pkg/authenticator/authenticator.go`,
+  `xkey/pkg/authenticator/cmd_clientpin.go`,
+  `xkey/pkg/authenticator/cmd_largeblobs.go`,
+  `xkey/pkg/authenticator/authenticator_test.go`,
+  `xkey/pkg/authenticator/cmd_largeblobs_test.go`,
+  `xkey/docs/fido2/authenticator-api.md`. Fixes go-xkms#663.
+- **`frost.FrostBackend.Signer` refuses a threshold greater than 1 at
+  construction instead of failing on the first `Sign` call — BREAKING.** A
+  `crypto.Signer` performs one synchronous `Sign` call and cannot coordinate
+  a multi-party FROST round, but `Signer` previously returned a working
+  `*FrostSigner` for any threshold and only discovered the problem inside
+  `Sign`, where it returned an untyped `"orchestrated multi-participant
+  signing not implemented"` message. `Signer` now loads the key package
+  first and returns the new typed `*frost.ThresholdSigningNotSupportedError`
+  (wrapping the new `frost.ErrThresholdSigningNotSupported` sentinel) when
+  the key's threshold requires coordinating more than one participant,
+  naming the key ID and threshold and pointing callers at `GenerateNonces`,
+  `SignRound`, and `Aggregate` for distributed signing. Since every FROST key
+  in this codebase — and in the underlying `go-frost` trusted-dealer
+  implementation itself — requires a threshold of at least 2,
+  `FrostBackend.Signer` now always returns this error for real keys;
+  `FrostSigner.Sign`'s single-participant round is kept for a threshold-1 key
+  built directly (not reachable through any generator here today) rather
+  than removed as dead code. Files: `pkg/keyprovider/frost/backend.go`,
+  `pkg/keyprovider/frost/signer.go`, `pkg/keyprovider/frost/errors.go`,
+  `pkg/keyprovider/frost/signer_test.go`,
+  `pkg/keyprovider/frost/backend_test.go`,
+  `test/integration/frost/backend_integration_test.go`,
+  `docs/frost/api.md`, `docs/frost/architecture.md`. Fixes go-xkms#663.
+
+### Removed
+
+- **`BackupFormatProtobuf` deleted — BREAKING.** `pkg/backup`'s `CreateBackup`
+  had a `BackupFormatProtobuf` case that unconditionally returned "protobuf
+  format not yet implemented": API surface that could be selected but never
+  worked. JSON and Encrypted are the only backup formats go-xkms ships, so
+  the `BackupFormatProtobuf` constant is deleted along with its dead
+  serialization branch. Selecting an unrecognized `BackupFormat` (including
+  the string `"protobuf"`) now falls through to the existing typed
+  `ErrInvalidBackupFormat`, exactly as any other unknown format already did.
+  Files: `pkg/backup/backup.go`, `pkg/backup/file.go`,
+  `pkg/backup/backup_test.go`. go-xkms#661.
+- **Deleted two unreferenced `ErrNotImplemented` sentinels — BREAKING.**
+  `frost.ErrNotImplemented` (`pkg/keyprovider/frost/errors.go`) and
+  `escrow.ErrNotImplemented` (`pkg/escrow/errors.go`) had zero production
+  call sites; the frost sentinel is superseded by the new
+  `frost.ErrThresholdSigningNotSupported` (see the FROST signer entry
+  above). Test doubles that referenced `frost.ErrNotImplemented` now use a
+  package-local `errMockUnimplemented` in
+  `pkg/keyprovider/frost/config_test.go`. Fixes go-xkms#663.
+
+### Fixed
+
+- **`GetTLSCertificate` returns one canonical response shape on every
+  transport — BREAKING.** REST and QUIC previously failed to decode any
+  certificate with a chain: the wire-level `pkg/api/rest.GetTLSCertificateResponse.ChainPEM`
+  was `[]string` while `pkg/api/transport.GetTLSCertificateResponse.ChainPEM`,
+  which the REST and QUIC client transports decode into, was a `string` under
+  the same `chain_pem` JSON tag. MCP's server returned a locally-defined
+  `GetTLSCertificateResult{CertPEM, ChainPEMs, PrivateKeyType}` whose field
+  names never matched the MCP client transport's decode target
+  (`transport.GetTLSCertificateResponse{CertificatePEM, ChainPEM}`), so every
+  MCP call decoded to a zero-value response. Both REST- and MCP-local result
+  types are deleted; every server handler (REST, gRPC, unix, QUIC, MCP,
+  embedded) and every client transport now use the one canonical
+  `pkg/api/transport.GetTLSCertificateResponse`, re-exported unchanged by the
+  SDK. `ChainPEM` is now `[]string` everywhere — one PEM-encoded certificate
+  per chain entry, leaf excluded — matching the shape the gRPC proto
+  (`GetTLSCertificateResponse.cert_chain_pem`) already used. The gRPC and
+  unix client transports (`pkg/api/transport/grpc/transport.go`,
+  `pkg/api/transport/unix/transport.go`) had an additional latent bug fixed
+  by this change: both silently discarded every chain entry past the first.
+  `xkmsctl tls get` decodes each chain entry individually via
+  `client.DecodeCertificatePEM` instead of concatenating a single string.
+  The private key stays deleted from this response (go-xkms#627) and does
+  not come back. Files: `pkg/api/transport/types.go`,
+  `pkg/api/rest/types.go`, `pkg/api/rest/handlers.go`,
+  `pkg/api/mcp/types.go`, `pkg/api/mcp/handlers.go`,
+  `pkg/xkms/servicer_cert.go`, `pkg/api/transport/grpc/transport.go`,
+  `pkg/api/transport/unix/transport.go`, `cmd/xkmsctl/tls.go`.
+- **Fixed six Makefile per-package targets that pointed at nonexistent
+  packages.** `test-backup`/`coverage-backup`/`bench-backup` targeted
+  `./pkg/adapters/backup/...`, which does not exist, instead of
+  `./pkg/backup/...`. The same audit, run by matching every `test-*`,
+  `coverage-*`, and `bench-*` per-package target's path against `go list`
+  in each module, found five more: `test-auth`/`coverage-auth` and
+  `test-audit`/`coverage-audit` targeted the removed `./pkg/adapters/auth/...`
+  and `./pkg/adapters/audit/...` and now target `./pkg/auth/...` and
+  `./pkg/audit/...`; `coverage-memory-storage` and a `bench-storage` line
+  targeted `./pkg/storage/memory/...`, a subdirectory that no longer exists
+  now that `NewMemoryBackend` is a two-line wrapper directly in `pkg/storage`,
+  and now target `./pkg/storage`. `test-authz`/`coverage-authz`,
+  `test-rbac`/`coverage-rbac`, and `test-user`/`coverage-user` targeted
+  `./pkg/adapters/authz/...`, `./pkg/adapters/rbac/...`, and `./pkg/user/...`;
+  none exist — authz is merged into `pkg/auth/authorize.go` (covered by
+  `test-auth`), and RBAC and the user/identity model are owned by go-qrdb
+  and have no local package to test, so these six targets are deleted rather
+  than repointed. Files: `Makefile`. Fixes go-xkms#663.
+- **Nightly `Integration Tests` now actually runs, instead of failing
+  `integration-test-software` with `[setup failed]` on every scheduled
+  run.** `.devcontainer/docker-compose.yml`'s `devcontainer` service
+  bind-mounts `..:/workspace:cached`, which a Gitea Actions job resolves
+  against the RUNNER HOST's filesystem (the daemon), not the job
+  container's own checkout, so `/workspace` came up empty or unrelated and
+  every `run_in_devcontainer` / `run_with_server` target died before
+  compiling a package. A new CI-only overlay,
+  `.devcontainer/docker-compose.ci.yml`, replaces that one bind mount with a
+  named volume (Compose merges `volumes:` by container target path, so
+  every other mount is untouched); the Makefile's
+  `ci_sync_devcontainer_workspace` (wired into `run_in_devcontainer` and
+  `run_with_server`) then populates it once per run with `docker compose
+  cp`, which streams the tree over the Docker API connection rather than
+  depending on a shared filesystem, so it lands correctly regardless of
+  which host the daemon runs on. The overlay is layered on only when
+  `COMPOSE_RUN_ID != local` (i.e. `GITHUB_RUN_ID` is set); local development
+  keeps the plain bind mount unchanged. Files: `Makefile`,
+  `.devcontainer/docker-compose.ci.yml`.
+- **The TPM2 node-barrier key directory can no longer resolve relative to
+  the process's working directory.** `resolveNodeSeal` and `initTPM2Backend`
+  both derived the TPM2-sealed key directory as `Storage.Path + "/tpm2-keys"`
+  with no guard on an empty `Storage.Path`; a caller that constructs
+  `*config.Config` programmatically (embedded/library use of `pkg/server`,
+  which never runs `config.Config.Validate`) got the cwd-relative path
+  `tpm2-keys`, writing TPM key material wherever the process happened to be
+  started from. Both call sites now share one
+  `Server.resolveTPM2KeyDir` helper that fails closed with a typed
+  `*ErrConfigRequired{Field: "storage.path", Backend: "tpm2"}` (wrapped in
+  `*NodeSealError` from `resolveNodeSeal`, in `*ErrBackendCreate` from
+  `initTPM2Backend`) when `Storage.Path` is unset, instead of ever writing
+  key material under the working directory. Files: `pkg/server/node_seal.go`,
+  `pkg/server/backend_tpm2.go`. Fixes go-xkms#609.
+- **Certificate-chain integration fixtures no longer collide with the
+  reserved chain-record id shape.** `pkg/storage/hardware` refuses any
+  certificate id ending in `-chain` (or shaped like a chain member's
+  `id-chain-<n>` CKA_ID) via `ErrIDReservedForChain`, because that shape
+  names another record's chain. Several PKCS#11 and TPM2 integration
+  fixtures named their certificate `test-chain`, `overwrite-chain`,
+  `delete-chain`, `nitrokey-test-chain` or `empty-chain` — ids that
+  themselves match the reserved shape — so every save/get/delete against
+  them failed deterministically with `ErrIDReservedForChain` instead of
+  exercising chain storage, masking `CertificateChainOperations` and its
+  `SaveAndRetrieveChain`, `OverwriteChain` and `DeleteChain` subtests on
+  every run (go-xkms#615). Fixtures are renamed to non-reserved ids
+  (`chain-primary-cert`, `chain-overwrite-cert`, `chain-delete-cert`,
+  `nitrokey-test-cert`, `empty-chain-cert`); no production code changed,
+  the reservation itself is correct. `TestIsReservedChainID` and
+  `TestReservedChainIDsAreRefusedByEveryStore` in `pkg/storage/hardware`
+  gain a `test-chain` case pinning this exact regression. Files:
+  `test/integration/pkcs11/pkcs11_cert_integration_test.go`,
+  `test/integration/pkcs11/pkcs11_integration_test.go`,
+  `test/integration/pkcs11/pkcs11_nitrokey_hsm_integration_test.go`,
+  `test/integration/tpm2/tpm2_cert_integration_test.go`,
+  `pkg/storage/hardware/chain_member_test.go`,
+  `pkg/storage/hardware/backend_adapter_record_scope_test.go`.
+- **xkey: the TPM2 barrier re-unseal path is now verified against a real TPM
+  after the inactivity auto-lock (#510, runtime half).** Item 1's setup-time
+  guard (#510) landed separately and left this half explicitly open: the
+  reported failure was an unlock, after the 15-minute auto-lock, that failed
+  with `qrdb/seal: requested strategy not registered` and was then
+  misreported to the operator as an invalid PIN. `BarrierService.Unseal`
+  already reopens the barrier this process is still holding rather than
+  rebuilding one from scratch and re-resolving the strategy against a
+  possibly-empty or mismatched ID — the exact rebuild that produced the
+  reported sentinel — but nothing exercised that path with the `tpm2`
+  strategy specifically: the existing regression coverage
+  (`barrier_reunseal_test.go`) only drove it with `passphrase`, and every
+  `AppLockService`-level Lock/Unlock test substituted a fully mocked barrier
+  double. Two new tests close that gap: `app_lock_tpm2_reunseal_test.go`
+  drives a real `BarrierService` through `AppLockService.Lock`/`Unlock` with
+  a TPM2 sealer (plus a credential-checking control proving the reopen still
+  rejects a wrong credential), and `barrier_tpm2_integration_test.go`
+  (`integration && tpm_simulator`) repeats the same lock/unlock cycle against
+  the in-process TPM 2.0 reference simulator instead of a mock, so a
+  regression in how `TPM2Strategy` is captured or reused across the
+  lock/unlock boundary fails here even if it passed against a canned
+  `Sealer`. No source change was needed: this closes out the runtime half of
+  #510 by proving the fix already in place. Files:
+  `xkey/pkg/gui/services/app_lock_tpm2_reunseal_test.go`,
+  `xkey/pkg/gui/services/barrier_tpm2_integration_test.go`. Verified with
+  `go test -tags 'ble codec_json' ./xkey/pkg/gui/services/... -run
+  TestAppLock_TPM2Reunseal` and `go test -tags 'integration tpm_simulator ble
+  codec_json' ./xkey/pkg/gui/services/... -run
+  TestIntegration_BarrierService_TPM2ReunsealAfterAutoLock`.
+- **TrustedCA Serve tests no longer race for a port.** Two tests picked the
+  ACME and admin ports with two separate `getAvailablePort` calls. The first
+  listener closed before the second call, so the OS could return the same
+  port for both, and the admin server failed with "address already in use".
+  They now use `getTwoDifferentPorts`, which holds both listeners open until
+  both ports are read.
+
 ## [0.19.0-alpha] - 2026-09-23
 
 ### Security

@@ -1319,14 +1319,14 @@ test-rand:
 ## test-backup: Run backup adapter unit tests
 test-backup:
 	@echo "$(CYAN)→ Testing backup adapter...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/backup/...
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/backup/...
 
 .PHONY: coverage-backup
 ## coverage-backup: Generate coverage report for backup adapter
 coverage-backup:
 	@echo "$(CYAN)→ Generating coverage report for backup adapter...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/backup.out -covermode=atomic ./pkg/adapters/backup/...
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/backup.out -covermode=atomic ./pkg/backup/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/backup.out -o $(COVERAGE_DIR)/backup.html
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/backup.html$(RESET)"
 
@@ -1334,7 +1334,7 @@ coverage-backup:
 ## bench-backup: Run backup adapter benchmarks
 bench-backup:
 	@echo "$(CYAN)→ Running backup adapter benchmarks...$(RESET)"
-	@$(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/adapters/backup/...
+	@$(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/backup/...
 
 .PHONY: test-rand-tpm2
 ## test-rand-tpm2: Run crypto/rand package unit tests with TPM2 simulator support
@@ -1428,93 +1428,48 @@ coverage-sdk-go:
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/sdk-go.out | grep total
 
 # ==============================================================================
-# Auth, Authz, Audit, RBAC, User, and CLI Unit Tests
+# Auth, Audit, and CLI Unit Tests
+#
+# Authz is not a separate package: pkg/auth/authorize.go delegates every
+# resource:action decision to the hosted qrdb node's RBAC service, so
+# test-auth already covers it. RBAC and the user/identity model are owned
+# by go-qrdb (consumed only via go-qrdb/sdk/go) and have no local package
+# here to test — see docs/00-ownership-and-sdk-boundary.md in the handbook.
 # ==============================================================================
 
 .PHONY: test-auth
-## test-auth: Run auth adapter unit tests
+## test-auth: Run auth package unit tests
 test-auth:
-	@echo "$(CYAN)→ Testing auth adapters...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/auth/...
-	@echo "$(GREEN)✓ Auth adapter tests complete$(RESET)"
+	@echo "$(CYAN)→ Testing auth package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/auth/...
+	@echo "$(GREEN)✓ Auth package tests complete$(RESET)"
 
 .PHONY: coverage-auth
-## coverage-auth: Generate coverage report for auth adapters
+## coverage-auth: Generate coverage report for the auth package
 coverage-auth:
-	@echo "$(CYAN)→ Generating coverage report for auth adapters...$(RESET)"
+	@echo "$(CYAN)→ Generating coverage report for auth package...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/auth.out -covermode=atomic ./pkg/adapters/auth/...
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/auth.out -covermode=atomic ./pkg/auth/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/auth.out -o $(COVERAGE_DIR)/auth.html
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/auth.html$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/auth.out | grep total
 
-.PHONY: test-authz
-## test-authz: Run authz adapter unit tests
-test-authz:
-	@echo "$(CYAN)→ Testing authz adapters...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/authz/...
-	@echo "$(GREEN)✓ Authz adapter tests complete$(RESET)"
-
-.PHONY: coverage-authz
-## coverage-authz: Generate coverage report for authz adapters
-coverage-authz:
-	@echo "$(CYAN)→ Generating coverage report for authz adapters...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/authz.out -covermode=atomic ./pkg/adapters/authz/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/authz.out -o $(COVERAGE_DIR)/authz.html
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/authz.html$(RESET)"
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/authz.out | grep total
-
 .PHONY: test-audit
-## test-audit: Run audit adapter unit tests
+## test-audit: Run audit package unit tests
 test-audit:
-	@echo "$(CYAN)→ Testing audit adapters...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/audit/...
-	@echo "$(GREEN)✓ Audit adapter tests complete$(RESET)"
+	@echo "$(CYAN)→ Testing audit package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/audit/...
+	@echo "$(GREEN)✓ Audit package tests complete$(RESET)"
 
 .PHONY: coverage-audit
-## coverage-audit: Generate coverage report for audit adapters
+## coverage-audit: Generate coverage report for the audit package
 coverage-audit:
-	@echo "$(CYAN)→ Generating coverage report for audit adapters...$(RESET)"
+	@echo "$(CYAN)→ Generating coverage report for audit package...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/audit.out -covermode=atomic ./pkg/adapters/audit/...
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/audit.out -covermode=atomic ./pkg/audit/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/audit.out -o $(COVERAGE_DIR)/audit.html
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/audit.html$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/audit.out | grep total
-
-.PHONY: test-user
-## test-user: Run user package unit tests
-test-user:
-	@echo "$(CYAN)→ Testing user package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/user/...
-	@echo "$(GREEN)✓ User package tests complete$(RESET)"
-
-.PHONY: coverage-user
-## coverage-user: Generate coverage report for user package
-coverage-user:
-	@echo "$(CYAN)→ Generating coverage report for user package...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/user.out -covermode=atomic ./pkg/user/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/user.out -o $(COVERAGE_DIR)/user.html
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/user.html$(RESET)"
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/user.out | grep total
-
-.PHONY: test-rbac
-## test-rbac: Run RBAC adapter unit tests
-test-rbac:
-	@echo "$(CYAN)→ Testing RBAC adapters...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/rbac/...
-	@echo "$(GREEN)✓ RBAC adapter tests complete$(RESET)"
-
-.PHONY: coverage-rbac
-## coverage-rbac: Generate coverage report for RBAC adapters
-coverage-rbac:
-	@echo "$(CYAN)→ Generating coverage report for RBAC adapters...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/rbac.out -covermode=atomic ./pkg/adapters/rbac/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/rbac.out -o $(COVERAGE_DIR)/rbac.html
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/rbac.html$(RESET)"
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/rbac.out | grep total
 
 .PHONY: test-xkmsctl
 ## test-xkmsctl: Run xkmsctl CLI unit tests
@@ -1733,7 +1688,7 @@ coverage-memory-storage:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Generating memory storage coverage report...$(RESET)"
 	@$(GO) test -v -tags=integration -coverprofile=$(COVERAGE_DIR)/memory-storage.out -covermode=atomic \
-		./pkg/storage/memory/... ./test/integration/storage/... -run 'TestMemoryStorage'
+		./pkg/storage ./test/integration/storage/... -run 'TestMemoryStorage'
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/memory-storage.out -o $(COVERAGE_DIR)/memory-storage.html
 	@echo "$(GREEN)✓ Memory storage coverage report generated$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/memory-storage.out | grep total
@@ -3503,18 +3458,34 @@ LINT_MODULES := . sdk/go xkey web/desktop
 
 # Build tags per module. A linter only analyses packages the tags select, so a
 # module linted without its tags reports a confident total having skipped the
-# code behind them -- xkey shows 69 findings untagged and 82 tagged.
+# code behind them -- xkey shows 69 findings untagged and 82 tagged, and the
+# root module shows 0 findings untagged against 107 under TEST_TAGS (#682):
+# every *_simulator_test.go finding, including the deprecated ecdsa.PublicKey
+# X/Y and elliptic.Curve.IsOnCurve accesses CI never saw, lives behind
+# tpm_simulator and was invisible to a lint run that never passed that tag.
 #
 # It matters in the other direction too: `unused` needs the tagged code
-# COMPILED to see the call sites, so linting xkey untagged reports helpers as
-# unused that are used perfectly well behind a tag.
+# COMPILED to see the call sites, so linting a module untagged reports
+# helpers as unused that are used perfectly well behind a tag.
 #
-# The list is therefore the widest set that compiles together, checked rather
-# than assumed: the transport/hardware tags plus every production backend --
-# tpm2 and the awskms/azurekv/gcpkms/vault implementations, which would
-# otherwise sit outside both vet and lint entirely. All ten build, vet and
-# lint together, so no tag matrix is needed here; if two ever become mutually
-# exclusive this has to become one.
+# Each module is linted under exactly the tags its OWN tests build with --
+# `make lint`/`make vet` are a coverage promise for `make test`, not a
+# separate declaration that can drift from it:
+#   - root and sdk/go build their tests under TEST_TAGS (test-sdk-go runs
+#     `go test $(TEST_FLAGS) ./...`, and TEST_FLAGS carries TEST_TAGS), so
+#     both lint under LINT_TAGS_root, TEST_TAGS comma-joined for
+#     golangci-lint/go vet's -tags flag.
+#   - xkey's LINT_TAGS_xkey is the widest set that compiles together, checked
+#     rather than assumed: the transport/hardware tags plus every production
+#     backend -- tpm2 and the awskms/azurekv/gcpkms/vault implementations,
+#     which would otherwise sit outside both vet and lint entirely. All ten
+#     build, vet and lint together, so no tag matrix is needed here; if two
+#     ever become mutually exclusive this has to become one.
+#   - web/desktop has no test target (it needs cgo + WebKit headers `make
+#     vet`/`make lint` do not carry), so it stays untagged.
+empty :=
+space := $(empty) $(empty)
+LINT_TAGS_root := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
 LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gcpkms,vault
 
 .PHONY: vet
@@ -3522,8 +3493,11 @@ LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gc
 vet:
 	@echo "$(CYAN)$(BOLD)→ Running go vet...$(RESET)"
 	@for m in $(LINT_MODULES); do \
-		tags="$(LINT_TAGS_xkey)"; \
-		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		case "$$m" in \
+			xkey) tags="$(LINT_TAGS_xkey)" ;; \
+			web/desktop) tags="" ;; \
+			*) tags="$(LINT_TAGS_root)" ;; \
+		esac; \
 		echo "$(CYAN)  → go vet ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		( cd "$$m" && $(GOVET) $${tags:+-tags "$$tags"} ./... ) || exit 1; \
 	done
@@ -3547,8 +3521,11 @@ lint:
 		exit 1; \
 	fi; \
 	for m in $(LINT_MODULES); do \
-		tags="$(LINT_TAGS_xkey)"; \
-		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		case "$$m" in \
+			xkey) tags="$(LINT_TAGS_xkey)" ;; \
+			web/desktop) tags="" ;; \
+			*) tags="$(LINT_TAGS_root)" ;; \
+		esac; \
 		echo "$(CYAN)  → golangci-lint ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run $${tags:+--build-tags "$$tags"} ); then \
 			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
@@ -3591,10 +3568,10 @@ lint:
 # and the pre-existing rule-3 residue reported for triage rather than
 # guessed at in the change that only wires the gate. An entry that stops
 # matching anything fails the sweep as stale rather than aging out silently.
-empty :=
-space := $(empty) $(empty)
-SECURE_ANALYZER_ROOT_TAGS := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
-export SECURE_ANALYZER_RUNGS := . - . $(SECURE_ANALYZER_ROOT_TAGS) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
+# LINT_TAGS_root (declared with LINT_MODULES above) is the same TEST_TAGS,
+# comma-joined; reused here rather than recomputed so the two sweeps cannot
+# drift apart on what "the root module's tags" means.
+export SECURE_ANALYZER_RUNGS := . - . $(LINT_TAGS_root) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
 export SECURE_ANALYZER_ALLOWLIST := $(CURDIR)/scripts/secure-analyzer-allowlist.txt
 
 .PHONY: secure-analyzer
@@ -4337,7 +4314,7 @@ bench-storage:
 	@echo "$(CYAN)$(BOLD)→ Running storage benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
 	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/storage/file/... | tee -a $(BENCH_OUTPUT)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/storage/memory/... | tee -a $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/storage | tee -a $(BENCH_OUTPUT)
 	@echo "$(GREEN)✓ Storage benchmarks complete$(RESET)"
 
 .PHONY: bench-backend

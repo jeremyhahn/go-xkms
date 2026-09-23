@@ -34,6 +34,8 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // Session state constants (CK_STATE).
@@ -600,9 +602,7 @@ func zeroizeOperation(op *OperationState) {
 	if op == nil {
 		return
 	}
-	for i := range op.Result {
-		op.Result[i] = 0
-	}
+	enclave.Wipe(op.Result)
 	op.Result = nil
 	op.ResultReady = false
 }

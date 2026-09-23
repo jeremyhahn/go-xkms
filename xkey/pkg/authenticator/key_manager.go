@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/jeremyhahn/go-enclave"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -389,7 +390,7 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 	// therefore the SO PIN, is correct. Without it there is nothing to verify
 	// against, so any PIN would appear to succeed: refuse instead.
 	if len(km.state.WrappedAK) == 0 {
-		clearBytes(smk)
+		enclave.Wipe(smk)
 		return ErrKeyManagerNoAK
 	}
 
@@ -438,12 +439,26 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 	km.unlockSource = unlockSourceSOPIN
 
 	// Handle deferred PIN sync: if a FIDO2 PIN was set before SO PIN was
-	// configured, sync the KeyManager now that SO is unlocked.
+	// configured, sync the KeyManager now that SO is unlocked. This calls the
+	// Locked variants directly rather than the exported InitializeUserPIN /
+	// ResetUserPIN: km.mu is already held above, and re-locking it here would
+	// deadlock on the non-reentrant sync.RWMutex. A sync failure clears key
+	// material and is propagated rather than discarded, matching every other
+	// failure branch in this function: a caller that receives an error must
+	// find an unlocked-nothing KeyManager, not one that is internally
+	// unlockSourceSOPIN behind a reported failure. PINSyncPending is left set
+	// so the next SO unlock retries the sync instead of the pending user PIN
+	// silently never being wired to CMK.
 	if km.state.PINSyncPending && km.state.PINSet && len(km.state.PINHash) > 0 {
+		var syncErr error
 		if len(km.state.WrappedCMKUser) == 0 {
-			_ = km.InitializeUserPIN(km.state.PINHash)
+			syncErr = km.initializeUserPINLocked(km.state.PINHash)
 		} else {
-			_ = km.ResetUserPIN(km.state.PINHash)
+			syncErr = km.resetUserPINLocked(km.state.PINHash)
+		}
+		if syncErr != nil {
+			km.clearKeyMaterial()
+			return syncErr
 		}
 		km.state.PINSyncPending = false
 	}
@@ -577,13 +592,13 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 	// before any borrow is taken.
 	akBuf, err := newRandomKeyBuffer(AESGCMKeySize)
 	if err != nil {
-		clearBytes(smk)
+		enclave.Wipe(smk)
 		return err
 	}
 	cmkBuf, err := newRandomKeyBuffer(AESGCMKeySize)
 	if err != nil {
 		akBuf.Destroy()
-		clearBytes(smk)
+		enclave.Wipe(smk)
 		return err
 	}
 
@@ -594,7 +609,7 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 		if !adopted {
 			akBuf.Destroy()
 			cmkBuf.Destroy()
-			clearBytes(smk)
+			enclave.Wipe(smk)
 		}
 	}()
 
@@ -630,7 +645,7 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 	}
 	attestBuf, err := secure.NewBufferFromBytes(attestKeyPKCS8)
 	if err != nil {
-		clearBytes(attestKeyPKCS8)
+		enclave.Wipe(attestKeyPKCS8)
 		return &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
 	}
 	defer attestBuf.Destroy()
@@ -679,6 +694,16 @@ func (km *KeyManager) InitializeUserPIN(pinHash []byte) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
+	return km.initializeUserPINLocked(pinHash)
+}
+
+// initializeUserPINLocked is the InitializeUserPIN implementation for a
+// caller that already holds km.mu. UnlockWithSOPIN's deferred PIN-sync step
+// is that caller: it cannot call the exported InitializeUserPIN, which would
+// re-lock km.mu's non-reentrant sync.RWMutex and deadlock.
+//
+// The caller must hold km.mu for writing.
+func (km *KeyManager) initializeUserPINLocked(pinHash []byte) error {
 	if km.unlockSource != unlockSourceSOPIN {
 		return ErrKeyManagerLocked
 	}
@@ -1054,7 +1079,7 @@ func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 	newWrapper, err := NewAESGCMKeyWrapper(newSMK)
 	if err != nil {
 		akBuf.Destroy()
-		clearBytes(newSMK)
+		enclave.Wipe(newSMK)
 		return err
 	}
 
@@ -1064,7 +1089,7 @@ func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 	newWrappedAK, err := newWrapper.WrapFrom(akBuf)
 	if err != nil {
 		akBuf.Destroy()
-		clearBytes(newSMK)
+		enclave.Wipe(newSMK)
 		return err
 	}
 
@@ -1091,6 +1116,16 @@ func (km *KeyManager) ResetUserPIN(newPINHash []byte) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
+	return km.resetUserPINLocked(newPINHash)
+}
+
+// resetUserPINLocked is the ResetUserPIN implementation for a caller that
+// already holds km.mu. UnlockWithSOPIN's deferred PIN-sync step is that
+// caller: it cannot call the exported ResetUserPIN, which would re-lock
+// km.mu's non-reentrant sync.RWMutex and deadlock.
+//
+// The caller must hold km.mu for writing.
+func (km *KeyManager) resetUserPINLocked(newPINHash []byte) error {
 	if km.unlockSource != unlockSourceSOPIN {
 		return ErrKeyManagerLocked
 	}

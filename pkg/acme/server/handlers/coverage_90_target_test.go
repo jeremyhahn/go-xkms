@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
@@ -565,52 +566,6 @@ func TestResolveTenantComplianceConfig_WithGlobalConfigCoverage(t *testing.T) {
 }
 
 // =============================================================================
-// MockTenantAwareFactory for testing
-// =============================================================================
-
-type mockTenantDAOCoverage struct {
-	tenants map[string]*entities.Tenant
-	err     error
-}
-
-func (m *mockTenantDAOCoverage) Get(ctx context.Context, id string) (*entities.Tenant, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	if tenant, ok := m.tenants[id]; ok {
-		return tenant, nil
-	}
-	return nil, ErrTenantNotFound
-}
-
-func (m *mockTenantDAOCoverage) Save(ctx context.Context, tenant *entities.Tenant) error {
-	return m.err
-}
-
-func (m *mockTenantDAOCoverage) Delete(ctx context.Context, id string) error {
-	return m.err
-}
-
-func (m *mockTenantDAOCoverage) List(ctx context.Context, cursor string) ([]*entities.Tenant, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	result := make([]*entities.Tenant, 0, len(m.tenants))
-	for _, t := range m.tenants {
-		result = append(result, t)
-	}
-	return result, nil
-}
-
-func (m *mockTenantDAOCoverage) Exists(ctx context.Context, id string) (bool, error) {
-	if m.err != nil {
-		return false, m.err
-	}
-	_, ok := m.tenants[id]
-	return ok, nil
-}
-
-// =============================================================================
 // Additional Service Method Tests
 // =============================================================================
 
@@ -791,6 +746,14 @@ func TestExtendPCR_SHA1Coverage(t *testing.T) {
 
 	result, err := extendPCR(current, digest, TCGAlgSHA1)
 
+	if fips140.Enforced() {
+		// See TestExtendPCR's "extends with SHA-1" subtest
+		// (compliance_attestation_test.go) for why a SHA-1 PCR bank is
+		// refused under GODEBUG=fips140=only rather than computed.
+		assert.ErrorIs(t, err, ErrUnsupportedHashAlgorithm)
+		assert.Nil(t, result)
+		return
+	}
 	assert.NoError(t, err)
 	// Result should be 20 bytes (SHA1 digest size)
 	assert.Len(t, result, 20)

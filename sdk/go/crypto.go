@@ -20,9 +20,9 @@ import (
 	"encoding/pem"
 	"io"
 
+	"github.com/jeremyhahn/go-enclave"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aesgcm"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/rand"
 	"github.com/jeremyhahn/go-xkms/pkg/signing"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -365,46 +365,21 @@ var (
 )
 
 // ---------------------------------------------------------------------------
-// Secure memory utilities re-exported from pkg/crypto/mem.
-// These allow SDK consumers to securely wipe and guard sensitive memory
-// without importing the internal mem package directly.
+// Secure memory utilities.
+//
+// go-xkms holds no locked-memory implementation of its own: raw key bytes
+// live in go-enclave MemoryEnclaves, admitted via its Allocator. SDK
+// consumers that need MemoryEnclave, Allocator or WipeAll import
+// "github.com/jeremyhahn/go-enclave" directly — it is already a public
+// dependency of this module, not an internal package this SDK needs to
+// hide. SecureMemZero remains re-exported because it is a plain wipe
+// helper existing consumers call without a MemoryEnclave in hand.
 // ---------------------------------------------------------------------------
 
-// SecureMemGuardedBuffer is a type alias for mem.GuardedBuffer. It holds
-// sensitive key material in OS-protected memory with guard pages (Linux)
-// or guaranteed zeroing on free (other platforms).
-type SecureMemGuardedBuffer = mem.GuardedBuffer
-
-// Secure memory functions re-exported from pkg/crypto/mem.
-var (
-	// SecureMemZero overwrites the byte slice with zeros.
-	// This is used to clear sensitive data like keys and passwords from memory.
-	SecureMemZero = mem.Zero
-
-	// SecureMemNewGuardedBuffer allocates a new guarded buffer of the given size.
-	// On Linux, the buffer is backed by an anonymous mmap region with
-	// guard pages and mlock protection. On other platforms, a plain heap
-	// allocation is used.
-	SecureMemNewGuardedBuffer = mem.NewGuardedBuffer
-
-	// SecureMemZeroAndFree zeros and frees a GuardedBuffer. Safe to call with nil.
-	SecureMemZeroAndFree = mem.ZeroAndFree
-)
-
-// Secure memory error types re-exported from pkg/crypto/mem.
-type (
-	// SecureMemErrInvalidSize is returned when a guarded buffer is requested
-	// with a non-positive size.
-	SecureMemErrInvalidSize = mem.ErrInvalidSize
-
-	// SecureMemErrMmapFailed is returned when the mmap system call fails
-	// during guarded buffer allocation.
-	SecureMemErrMmapFailed = mem.ErrMmapFailed
-
-	// SecureMemErrMprotectFailed is returned when mprotect fails while
-	// setting up guard pages for a guarded buffer.
-	SecureMemErrMprotectFailed = mem.ErrMprotectFailed
-)
+// SecureMemZero overwrites the byte slice with zeros. This is used to clear
+// sensitive data like keys and passwords from memory. It is a re-export of
+// enclave.Wipe.
+var SecureMemZero = enclave.Wipe
 
 // ---------------------------------------------------------------------------
 // Random number generation re-exported from pkg/crypto/rand.

@@ -15,7 +15,7 @@ package cmd
 
 import (
 	"bytes"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,10 +23,13 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 )
 
 // awsTestCmd builds a detached cobra command carrying every flag the AWS
@@ -220,6 +223,7 @@ func TestHandleAWSCallback_RejectsMissingCode(t *testing.T) {
 	select {
 	case err := <-errChan:
 		assert.Contains(t, err.Error(), "no authorization code received")
+		assert.ErrorIs(t, err, ErrAWSNoAuthCode)
 	default:
 		t.Fatal("no error delivered")
 	}
@@ -242,6 +246,45 @@ func TestRunAWSLogin_RequiresRegion(t *testing.T) {
 	assert.ErrorIs(t, err, ErrAWSMissingRegion)
 }
 
+// TestRunAWSLogin_StateMismatch proves that a callback delivering a code
+// under a state the login never generated is rejected with the typed
+// ErrAWSStateMismatch sentinel, reachable via errors.Is, rather than an
+// inline error.
+func TestRunAWSLogin_StateMismatch(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, listener.Close())
+
+	callback := oidc.Callback{Host: "127.0.0.1", Port: port}
+
+	done := make(chan error, 1)
+	var buf bytes.Buffer
+	go func() {
+		done <- runAWSLogin(&buf, "us-east-1", "default", false, true /* noBrowser */, "none", "", "", 0, "", false, "", "", callback)
+	}()
+
+	// Poll until the callback server is accepting connections, then deliver
+	// a code under a state runAWSLogin never generated.
+	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/oauth/callback?code=test-code&state=mismatched-state"
+	require.Eventually(t, func() bool {
+		resp, getErr := http.Get(url)
+		if getErr != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "callback server never accepted a connection")
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrAWSStateMismatch)
+	case <-time.After(5 * time.Second):
+		t.Fatal("runAWSLogin did not return after the mismatched callback")
+	}
+}
+
 // --- handleAWSOutput dispatch ---
 
 func TestHandleAWSOutput_RejectsUnknownMode(t *testing.T) {
@@ -254,4 +297,5 @@ func TestHandleAWSOutput_ExecRequiresCommand(t *testing.T) {
 	err := handleAWSOutput("exec", nil, "default", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--exec is required when using --output exec")
+	assert.ErrorIs(t, err, ErrAWSExecRequired)
 }

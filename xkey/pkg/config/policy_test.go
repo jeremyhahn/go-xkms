@@ -16,6 +16,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,14 +56,10 @@ func TestDefaultPolicyZeroFields(t *testing.T) {
 
 	// These fields must NOT be set by DefaultPolicy.
 	assert.False(t, p.RequireTPM)
-	assert.Nil(t, p.PlatformPCRs)
 	assert.Empty(t, p.PlatformPCRBank)
-	assert.False(t, p.RequirePasswordProtection)
-	assert.Empty(t, p.PasswordProtectionMode)
 	assert.Nil(t, p.AllowedBackends)
 	assert.Empty(t, p.DefaultBackend)
 	assert.False(t, p.FIDO2AlwaysUV)
-	assert.False(t, p.FIDO2RequireResidentKey)
 	assert.Empty(t, p.AttestationMode)
 	assert.False(t, p.AllowAutoUnseal)
 	assert.Empty(t, p.APIExplorerSandboxPolicy)
@@ -200,14 +197,10 @@ func TestPolicyCanonicalJSON_FieldOrder(t *testing.T) {
 		"require_encrypted_storage",
 		"storage_type",
 		"require_tpm",
-		"platform_pcrs",
 		"platform_pcr_bank",
-		"require_password_protection",
-		"password_protection_mode",
 		"allowed_backends",
 		"default_backend",
 		"fido2_always_uv",
-		"fido2_require_resident_key",
 		"fido2_require_user_presence",
 		"fido2_user_intent_check",
 		"attestation_mode",
@@ -250,14 +243,10 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 		RequireEncryptedStorage:        true,
 		StorageType:                    "barrier",
 		RequireTPM:                     true,
-		PlatformPCRs:                   []int{0, 1, 7},
 		PlatformPCRBank:                "sha256",
-		RequirePasswordProtection:      true,
-		PasswordProtectionMode:         "argon2id",
 		AllowedBackends:                []string{"software", "tpm2"},
 		DefaultBackend:                 "tpm2",
 		FIDO2AlwaysUV:                  true,
-		FIDO2RequireResidentKey:        true,
 		FIDO2RequireUserPresence:       true,
 		FIDO2UserIntentCheck:           true,
 		AttestationMode:                "packed",
@@ -300,14 +289,10 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 	assert.Equal(t, p.RequireEncryptedStorage, restored.RequireEncryptedStorage)
 	assert.Equal(t, p.StorageType, restored.StorageType)
 	assert.Equal(t, p.RequireTPM, restored.RequireTPM)
-	assert.Equal(t, p.PlatformPCRs, restored.PlatformPCRs)
 	assert.Equal(t, p.PlatformPCRBank, restored.PlatformPCRBank)
-	assert.Equal(t, p.RequirePasswordProtection, restored.RequirePasswordProtection)
-	assert.Equal(t, p.PasswordProtectionMode, restored.PasswordProtectionMode)
 	assert.Equal(t, p.AllowedBackends, restored.AllowedBackends)
 	assert.Equal(t, p.DefaultBackend, restored.DefaultBackend)
 	assert.Equal(t, p.FIDO2AlwaysUV, restored.FIDO2AlwaysUV)
-	assert.Equal(t, p.FIDO2RequireResidentKey, restored.FIDO2RequireResidentKey)
 	assert.Equal(t, p.FIDO2RequireUserPresence, restored.FIDO2RequireUserPresence)
 	assert.Equal(t, p.FIDO2UserIntentCheck, restored.FIDO2UserIntentCheck)
 	assert.Equal(t, p.AttestationMode, restored.AttestationMode)
@@ -338,7 +323,7 @@ func TestPolicyCanonicalJSON_WithAllFields(t *testing.T) {
 	assert.Contains(t, jsonStr, `"min_pin_length":8`)
 	assert.Contains(t, jsonStr, `"organization_name":"Test Organization"`)
 	assert.Contains(t, jsonStr, `"policy_version":42`)
-	assert.Contains(t, jsonStr, `"platform_pcrs":[0,1,7]`)
+	assert.Contains(t, jsonStr, `"platform_pcr_bank":"sha256"`)
 	assert.Contains(t, jsonStr, `"allowed_backends":["software","tpm2"]`)
 	assert.Contains(t, jsonStr, `"api_explorer_enabled":true`)
 	assert.Contains(t, jsonStr, `"api_explorer_sandbox_policy":"strict"`)
@@ -571,4 +556,91 @@ func TestPolicyCanonicalJSON_ExtensionFields(t *testing.T) {
 		assert.False(t, restored.UserCanConfigureExtension,
 			"locked extension config must survive JSON round-trip")
 	})
+}
+
+// policySectionFieldReaders records, for every PolicySection field, one
+// non-test call site that reads it -- the enforcement point for a
+// capability/precondition field, or the ordinary consumer for a value
+// field. This is the registry #668 asked for: a field a PR adds to
+// PolicySection without adding a line here fails
+// TestPolicySection_EveryFieldHasAKnownReader below, the same way a field
+// nobody read failed the audit that produced this file's current shape.
+//
+// The map cannot verify these locations by reflection -- that would need
+// cross-package call-graph analysis, and pkg/config does not import
+// pkg/gui/services or xkey/cmd. It verifies completeness of the registry
+// against the struct, which is the part a forgotten field slips through.
+var policySectionFieldReaders = map[string]string{
+	"MinPINLength":                    "pkg/gui/services/setup_wizard_service.go SetupChoices wiring; PIN strategy minimum length",
+	"PINMaxAttempts":                  "pkg/gui/services/setup_wizard_service.go SetupChoices wiring; PIN lockout threshold",
+	"RequireSOPIN":                    "pkg/gui/enterprise_policy.go checkStartupPreconditions (#668)",
+	"RequireUserPIN":                  "pkg/gui/enterprise_policy.go checkStartupPreconditions (#668)",
+	"RequireEncryptedStorage":         "pkg/gui/enterprise_policy.go checkStartupPreconditions (#668)",
+	"StorageType":                     "cmd/xkey/cmd fido2.go/piv.go backend selection; pkg/gui/app.go barrier storage type",
+	"RequireTPM":                      "pkg/gui/enterprise_policy.go checkStartupPreconditions (#668)",
+	"PlatformPCRBank":                 "pkg/pairing/tpm_enroller.go TPM enrollment PCR bank; cmd/xkey/cmd/tpm_status.go",
+	"AllowedBackends":                 "pkg/pairing/bridge.go backend access control allow-list",
+	"DefaultBackend":                  "pkg/gui/services/admin_service.go default seal backend reporting",
+	"FIDO2AlwaysUV":                   "pkg/gui/enterprise_policy.go applyFIDO2Policy -> Authenticator.SetAlwaysUV (#668)",
+	"FIDO2RequireUserPresence":        "pkg/gui/enterprise_policy.go applyFIDO2Policy -> Authenticator.SetRequireUserPresence",
+	"FIDO2UserIntentCheck":            "pkg/gui/enterprise_policy.go applyFIDO2Policy -> Authenticator.SetEnableUserIntentCheck",
+	"AttestationMode":                 "cmd/xkey/cmd/device_listen.go pairing.AttestationMode",
+	"AllowAutoUnseal":                 "pkg/gui/services/app_service.go ToggleBarrierAutoUnseal (#668)",
+	"UserCanConfigureAutoUnseal":      "pkg/gui/services/app_service.go ToggleBarrierAutoUnseal (#668)",
+	"UserCanConfigureTheme":           "pkg/gui/services/app_service.go SetTheme (#668)",
+	"UserCanManageTrustStore":         "pkg/gui/services/trust_service.go requireManageTrustStore (#668)",
+	"UserCanViewAuditLog":             "pkg/gui/services/audit_service.go requireViewAuditLog (#668)",
+	"UserCanManageSealedData":         "pkg/gui/services/seal_service.go requireManageSealedData (#668)",
+	"UserCanChangeOwnPIN":             "pkg/gui/services/pin_service.go ChangeUserPIN (#668)",
+	"APIExplorerEnabled":              "pkg/gui/services/api_explorer_service.go requireExplorerEnabled (#668)",
+	"APIExplorerSandboxPolicy":        "pkg/gui/app.go GUIConfigData plumbing; user-configurable sandbox policy value",
+	"DeveloperToolsEnabled":           "pkg/gui/services/app_service.go SetDeveloperTools (#668)",
+	"UserCanToggleDevTools":           "pkg/gui/services/app_service.go SetDeveloperTools (#668)",
+	"ExtensionEnabled":                "cmd/xkey/cmd/extension_serve.go; pkg/gui/enterprise_policy.go applyExtensionPolicy",
+	"ExtensionRequireAuthentication":  "cmd/xkey/cmd/extension_serve.go; pkg/gui/enterprise_policy.go applyExtensionPolicy",
+	"ExtensionRequirePairing":         "cmd/xkey/cmd/extension_serve.go",
+	"ExtensionForceAudit":             "cmd/xkey/cmd/extension_serve.go; pkg/gui/enterprise_policy.go applyExtensionPolicy",
+	"ExtensionAllowedDomains":         "cmd/xkey/cmd/extension_serve.go; pkg/gui/enterprise_policy.go applyExtensionPolicy",
+	"ExtensionBlockedDomains":         "cmd/xkey/cmd/extension_serve.go; pkg/gui/enterprise_policy.go applyExtensionPolicy",
+	"ExtensionMaxFillsPerMinute":      "cmd/xkey/cmd/extension_serve.go; pkg/gui/enterprise_policy.go applyExtensionPolicy",
+	"UserCanConfigureExtension":       "pkg/gui/services/autofill_service.go SetEnabled/SetRequireAuthentication/SetPolicy (#668)",
+	"PairingAllowUnattestableDevices": "pkg/attestation/policy.go",
+	"LockPairingAttestationPolicy":    "pkg/attestation/policy.go",
+	"OrganizationName":                "pkg/gui/services/setup_wizard_service.go SO provisioning event payload",
+	"PolicyVersion":                   "pkg/gui/services/setup_wizard_service.go SO provisioning event payload",
+}
+
+// TestPolicySection_EveryFieldHasAKnownReader is the completeness guard
+// #668 asked for: it fails if PolicySection gains a field that nobody
+// added to policySectionFieldReaders above, which is the state every field
+// this issue fixed was found in (parsed and signed into the sealed policy,
+// read by nothing). A new field must be enforced or deliberately read
+// before it can be merged silently.
+func TestPolicySection_EveryFieldHasAKnownReader(t *testing.T) {
+	typ := reflect.TypeOf(PolicySection{})
+	var missing []string
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Name
+		if _, ok := policySectionFieldReaders[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	assert.Empty(t, missing,
+		"PolicySection field(s) with no registered reader in policySectionFieldReaders: %v -- "+
+			"every field must be enforced or deleted before merge (#668)", missing)
+
+	// Symmetric check: the registry must not describe a field that no
+	// longer exists, since that would silently stop verifying anything for
+	// it once the struct changed underneath it.
+	fieldNames := make(map[string]bool, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		fieldNames[typ.Field(i).Name] = true
+	}
+	var stale []string
+	for name := range policySectionFieldReaders {
+		if !fieldNames[name] {
+			stale = append(stale, name)
+		}
+	}
+	assert.Empty(t, stale, "policySectionFieldReaders entries for field(s) no longer on PolicySection: %v", stale)
 }

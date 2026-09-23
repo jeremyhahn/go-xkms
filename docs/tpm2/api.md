@@ -1,6 +1,6 @@
 # TPM 2.0 — API
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -84,7 +84,13 @@ because they are the trust chain:
    exchange, wrapped in RFC 8555 so standard tooling can drive it.
 
 In all three the server never trusts an assertion: it encrypts a secret to the
-endorsement key and requires the TPM to produce it.
+endorsement key and requires the TPM to produce it. For (2) and (3), that
+possession proof is not, by itself, provenance: before the CA generates the
+`TPM2_MakeCredential` payload or issues an IAK/IDevID, it separately verifies
+the EK certificate's chain against a configured TPM-manufacturer trust
+anchor and its tcg-kp-EKCertificate extended key usage
+(`verifyEKCertificateChain`, `pkg/ca/tcg_ek_trust.go`) — see
+[`../certificate-authority/engineering.md`](../certificate-authority/engineering.md).
 
 ## Verification is client-side too
 

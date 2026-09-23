@@ -75,6 +75,10 @@ func (m *mockStorageBackend) Close() error {
 	return nil
 }
 
+// errMockUnimplemented is returned by mockSecretBackend methods that this
+// test double never exercises.
+var errMockUnimplemented = errors.New("mock: not implemented")
+
 // mockSecretBackend implements types.KeyProvider for testing
 type mockSecretBackend struct {
 	data map[string][]byte
@@ -116,15 +120,15 @@ func (m *mockSecretBackend) ListKeys(ctx context.Context) ([]*types.KeyAttribute
 }
 
 func (m *mockSecretBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
-	return nil, ErrNotImplemented
+	return nil, errMockUnimplemented
 }
 
 func (m *mockSecretBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	return nil, ErrNotImplemented
+	return nil, errMockUnimplemented
 }
 
 func (m *mockSecretBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	return ErrNotImplemented
+	return errMockUnimplemented
 }
 
 func (m *mockSecretBackend) Close() error {

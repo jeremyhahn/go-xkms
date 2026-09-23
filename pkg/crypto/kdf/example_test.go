@@ -172,7 +172,10 @@ func Example_validateParams() {
 // Example demonstrates deriving multiple keys from the same IKM
 func Example_multipleKeys() {
 	adapter := kdf.NewHKDFAdapter()
-	ikm := []byte("shared secret")
+	// 32 bytes: a real ECDH shared secret is never this short, and
+	// crypto/hkdf refuses any HKDF input keying material under 112 bits
+	// (14 bytes) under GODEBUG=fips140=only.
+	ikm := []byte("shared-secret-from-key-exchange")
 	salt := []byte("common-salt-val1") // 16 bytes
 
 	// Derive encryption key

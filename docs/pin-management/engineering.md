@@ -1,6 +1,6 @@
 # PIN Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface
 
@@ -80,6 +80,12 @@ The interface, `PINStrategyID`, `PINLockoutStatus` and `ErrPINNotSet` are
   stronger than the user PIN.
 - **`VerifyFIDO2Hash` grants PIN-equivalent authority.** Treat the hash as
   PIN-strength material.
+- **The cached FIDO2 hash lives in protected memory.** `TPM2Backend` caches
+  it in a go-enclave `MemoryEnclave` (mlock'd, guard-paged, wiped on
+  release), never a plain `[]byte`, per the stack-wide protected-memory
+  mandate. `VerifyFIDO2Hash` compares via `MemoryEnclave.EqualTo`
+  (constant-time, and fail-closed: a nil or destroyed enclave reports no
+  match). `Close` destroys the enclave; safe to call more than once.
 - **Concurrency.** `UserPINSet()` is backed by an atomic; the backend is safe for
   concurrent verification. Device access is serialised where the device demands
   it.

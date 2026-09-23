@@ -142,8 +142,12 @@ type largeBlobsRequest struct {
 // (0x0C), reading and writing the authenticator-wide serialized large blob
 // array in fixed-size fragments (CTAP 2.1 §6.10).
 func (a *Authenticator) handleLargeBlobs(data []byte) ([]byte, error) {
+	// authenticatorLargeBlobs is entirely optional (CTAP 2.1 §6.10) and
+	// gated by the "largeBlobs" option in authenticatorGetInfo, which is
+	// omitted whenever EnableLargeBlobs is false; declining here matches
+	// what getInfo already advertised.
 	if !a.config.EnableLargeBlobs {
-		return nil, ErrNotImplemented
+		return nil, ErrCommandNotSupported
 	}
 
 	req, err := decodeLargeBlobsRequest(data)
