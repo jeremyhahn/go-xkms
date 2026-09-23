@@ -208,3 +208,43 @@ func TestNodeSealFlip_EncryptsDataPlaneAtRest(t *testing.T) {
 			"control: with the barrier disabled the data plane is plaintext on disk")
 	})
 }
+
+// TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed is the regression test
+// for go-xkms#609: a qrdb + barrier + tpm2 deployment with an unconfigured
+// storage path (e.g. an embedded caller that never ran config.Config.Validate,
+// which is what go-trusted-platform's embedded server does today) must fail
+// closed with a typed error instead of resolving the TPM2 seal key directory
+// relative to the process's working directory. The failure must occur before
+// any TPM probe, so this test needs no TPM simulator.
+func TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed(t *testing.T) {
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	_, statErr := os.Stat(filepath.Join(wd, "tpm2-keys"))
+	require.True(t, os.IsNotExist(statErr), "precondition: no stray tpm2-keys dir in the working directory")
+
+	s := newMinimalServer(t, &config.Config{
+		Storage: config.StorageConfig{
+			Backend: "qrdb",
+			Path:    "", // never configured -- must not become cwd-relative
+			QRDB:    config.QRDBConfig{Transport: "embedded"},
+		},
+		Barrier: config.BarrierConfig{
+			Enabled:  true,
+			Strategy: "tpm2",
+		},
+	})
+
+	sealErr := s.resolveNodeSeal()
+	require.Error(t, sealErr)
+	assert.False(t, s.nodeSealEnabled)
+
+	var nodeErr *NodeSealError
+	require.True(t, errors.As(sealErr, &nodeErr), "error must unwrap to *NodeSealError, got %v", sealErr)
+
+	var cfgErr *ErrConfigRequired
+	require.True(t, errors.As(sealErr, &cfgErr), "error must unwrap to *ErrConfigRequired, got %v", sealErr)
+	assert.Equal(t, "storage.path", cfgErr.Field)
+
+	_, statErr = os.Stat(filepath.Join(wd, "tpm2-keys"))
+	assert.True(t, os.IsNotExist(statErr), "resolving the node seal must never create tpm2-keys under the working directory")
+}

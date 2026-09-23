@@ -14,7 +14,16 @@
 package agent
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -185,4 +194,208 @@ func TestServer_BuildTLSConfig_InvalidCerts(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid cert files")
 	}
+}
+
+// TestServer_BuildTLSConfig_MTLSInstallsRevocationCheck proves the fix for
+// the first security bug: an mTLS server (ClientCAs configured) must wire
+// VerifyPeerCertificate so every connection is checked against the
+// enrollment store and the CA's revocation state, not just chain validity.
+func TestServer_BuildTLSConfig_MTLSInstallsRevocationCheck(t *testing.T) {
+	certFile, keyFile, caFile := writeTestServerTLSFiles(t)
+
+	cfg := DefaultConfig()
+	cfg.TLSCertFile = certFile
+	cfg.TLSKeyFile = keyFile
+	cfg.TLSCAFile = caFile
+
+	enrollment, _ := testEnrollmentService(t)
+	server, err := NewServer(cfg, enrollment, testLogger())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	tlsConfig, err := server.buildTLSConfig()
+	if err != nil {
+		t.Fatalf("buildTLSConfig: %v", err)
+	}
+	if tlsConfig.VerifyPeerCertificate == nil {
+		t.Fatal("mTLS config does not install a peer certificate verifier")
+	}
+}
+
+// TestServer_VerifyPeerCertificate_EnrolledAgentAccepted proves an agent
+// whose certificate is enrolled and not revoked connects successfully.
+func TestServer_VerifyPeerCertificate_EnrolledAgentAccepted(t *testing.T) {
+	server, _ := testServerWithStore(t)
+
+	csrPEM := testCSR(t)
+	code, err := server.enrollment.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	certPEM, _, err := server.enrollment.EnrollWithCode(code.Code, csrPEM)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+
+	leaf := parseTestCertPEM(t, certPEM)
+	if err := server.verifyPeerCertificate(nil, [][]*x509.Certificate{{leaf}}); err != nil {
+		t.Errorf("expected an enrolled agent's certificate to be accepted, got %v", err)
+	}
+}
+
+// TestServer_VerifyPeerCertificate_RevokedCertificateRejected proves the
+// fix for the first security bug: a certificate the CA reports as revoked
+// is refused even though it still chains to the trusted CA.
+func TestServer_VerifyPeerCertificate_RevokedCertificateRejected(t *testing.T) {
+	server, _ := testServerWithStore(t)
+	ca := server.enrollment.ca.(*mockCAService)
+
+	csrPEM := testCSR(t)
+	code, err := server.enrollment.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	certPEM, _, err := server.enrollment.EnrollWithCode(code.Code, csrPEM)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	ca.isRevokedFunc = func(string) (bool, error) { return true, nil }
+
+	leaf := parseTestCertPEM(t, certPEM)
+	err = server.verifyPeerCertificate(nil, [][]*x509.Certificate{{leaf}})
+	if !errors.Is(err, ErrCertificateRevoked) {
+		t.Errorf("expected ErrCertificateRevoked, got %v", err)
+	}
+}
+
+// TestServer_VerifyPeerCertificate_UnenrolledCertificateRejected proves the
+// fix for the second security bug's connection-time half: a certificate
+// with no matching record in the enrollment store - whether it was never
+// enrolled or was removed - is refused regardless of revocation status.
+func TestServer_VerifyPeerCertificate_UnenrolledCertificateRejected(t *testing.T) {
+	server, _ := testServerWithStore(t)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "never-enrolled"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+
+	err = server.verifyPeerCertificate(nil, [][]*x509.Certificate{{leaf}})
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound, got %v", err)
+	}
+}
+
+// TestServer_VerifyPeerCertificate_EmptyChain proves the handshake is
+// refused, rather than panicking, when no verified chain is available.
+func TestServer_VerifyPeerCertificate_EmptyChain(t *testing.T) {
+	server, _ := testServerWithStore(t)
+
+	if err := server.verifyPeerCertificate(nil, nil); !errors.Is(err, ErrCertificateInvalid) {
+		t.Errorf("expected ErrCertificateInvalid, got %v", err)
+	}
+	if err := server.verifyPeerCertificate(nil, [][]*x509.Certificate{{}}); !errors.Is(err, ErrCertificateInvalid) {
+		t.Errorf("expected ErrCertificateInvalid, got %v", err)
+	}
+}
+
+// testServerWithStore is like testServer but exposes the MemoryStore
+// backing the server's enrollment service.
+func testServerWithStore(t *testing.T) (*Server, *MemoryStore) {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.ListenAddress = "localhost:0"
+	enrollment, store := testEnrollmentServiceWithStore(t)
+
+	server, err := NewServer(cfg, enrollment, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	return server, store
+}
+
+// writeTestServerTLSFiles writes a self-signed server certificate/key pair
+// and a CA certificate to temporary files, returning their paths.
+func writeTestServerTLSFiles(t *testing.T) (certFile, keyFile, caFile string) {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test agent server CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA certificate: %v", err)
+	}
+
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate server key: %v", err)
+	}
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "test agent server"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		DNSNames:     []string{"localhost"},
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create server certificate: %v", err)
+	}
+
+	dir := t.TempDir()
+	certFile = writeTestPEMFile(t, dir, "server-cert.pem", "CERTIFICATE", serverDER)
+	keyFile = writeTestKeyFile(t, dir, "server-key.pem", serverKey)
+	caFile = writeTestPEMFile(t, dir, "ca-cert.pem", "CERTIFICATE", caDER)
+	return certFile, keyFile, caFile
+}
+
+// writeTestPEMFile PEM-encodes der under the given block type and writes it
+// to name inside dir, returning the file's path.
+func writeTestPEMFile(t *testing.T, dir, name, blockType string, der []byte) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	data := pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: der})
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return path
+}
+
+// writeTestKeyFile PKCS#8-encodes an EC private key and writes it as PEM
+// to name inside dir, returning the file's path.
+func writeTestKeyFile(t *testing.T, dir, name string, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	return writeTestPEMFile(t, dir, name, "PRIVATE KEY", der)
 }

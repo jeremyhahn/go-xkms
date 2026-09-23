@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/seal`
 
@@ -121,6 +121,18 @@ Per-strategy credentials:
 | `none` | none — encryption disabled |
 
 Seal policy (PCR selection, rebinding rules) is `pkg/seal/policy`.
+
+**TPM2 key directory.** Both the general TPM2 backend
+(`pkg/server/backend_tpm2.go`) and the node-barrier flip's `tpm2` strategy
+(`pkg/server/node_seal.go`'s `resolveNodeSeal`) persist sealed key blobs under
+`<Storage.Path>/tpm2-keys`, resolved once by the shared
+`Server.resolveTPM2KeyDir` helper. That directory is never resolved relative
+to the process's working directory: a caller that constructs `*config.Config`
+programmatically — an embedded/library use of `pkg/server` that never runs
+`config.Config.Validate` — gets a typed `*ErrConfigRequired{Field:
+"storage.path", Backend: "tpm2"}` (wrapped in `*NodeSealError` from
+`resolveNodeSeal`, in `*ErrBackendCreate` from `initTPM2Backend`) instead of a
+cwd-relative `tpm2-keys` directory (go-xkms#609).
 
 ## Persistence
 

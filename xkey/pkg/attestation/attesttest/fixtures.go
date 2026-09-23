@@ -103,11 +103,29 @@ func AttestedBootState() *xkms.AndroidRootOfTrust {
 // generates its attestation key under.
 func GenesisChallenge() []byte { return []byte(pairing.AttestGenesisChallenge) }
 
+// DeviceKeyClaims is the TEE-enforced Origin and Purpose a contract-faithful
+// device's attestation carries: the key was GENERATED inside secure hardware
+// and is authorized to SIGN (go-xkms#132).
+//
+// AttestedLeafDER and NewDAK default to this, because it is what every
+// SUCCEED fixture needs and what a real device answers. A test proving the
+// #132 refusal calls AttestedLeafDERWithClaims / NewDAKWithClaims to vary
+// Origin or Purpose alone, the same pattern AttestedBootState's rot parameter
+// already uses for boot state.
+func DeviceKeyClaims() *xkms.AndroidAttestationExtensionOptions {
+	return &xkms.AndroidAttestationExtensionOptions{
+		HasOrigin: true,
+		Origin:    xkms.AndroidOriginGenerated,
+		Purpose:   []int{xkms.AndroidPurposeSign},
+	}
+}
+
 // AttestedLeafDER issues a leaf for key carrying an Android key-attestation
-// extension whose attestationChallenge is challenge and whose teeEnforced list
-// carries rot. When issuer is nil the leaf is self-signed, which is the case
-// go-xkms#95 names: a peer that generates its own chain a moment before
-// sending it.
+// extension whose attestationChallenge is challenge, whose teeEnforced
+// RootOfTrust is rot, and whose teeEnforced Origin/Purpose are
+// DeviceKeyClaims() -- GENERATED and SIGN. When issuer is nil the leaf is
+// self-signed, which is the case go-xkms#95 names: a peer that generates its
+// own chain a moment before sending it.
 //
 // The key is a PARAMETER rather than generated here because under #129 the
 // attested key is the device's persistent identity and the same key must both
@@ -118,6 +136,9 @@ func GenesisChallenge() []byte { return []byte(pairing.AttestGenesisChallenge) }
 // extension with no RootOfTrust passes the SDK's VerifyBootState (its contract
 // is "verify what is claimed") while claiming nothing at all, and a consumer
 // must refuse it.
+//
+// A test that needs to vary Origin or Purpose instead calls
+// AttestedLeafDERWithClaims.
 func AttestedLeafDER(
 	t *testing.T,
 	issuer *CA,
@@ -128,8 +149,27 @@ func AttestedLeafDER(
 ) []byte {
 	t.Helper()
 
-	ext, err := xkms.BuildAndroidAttestationExtension(
-		4, level, 100, level, challenge, []byte("unique-id"), rot,
+	claims := DeviceKeyClaims()
+	claims.RootOfTrust = rot
+	return AttestedLeafDERWithClaims(t, issuer, key, challenge, level, claims)
+}
+
+// AttestedLeafDERWithClaims is AttestedLeafDER with full control over the
+// teeEnforced claims, for tests that vary Origin or Purpose to prove the
+// go-xkms#132 refusal. A nil claims produces a teeEnforced list that makes no
+// claim about origin, purpose, or boot state at all.
+func AttestedLeafDERWithClaims(
+	t *testing.T,
+	issuer *CA,
+	key *ecdsa.PrivateKey,
+	challenge []byte,
+	level xkms.AndroidSecurityLevel,
+	claims *xkms.AndroidAttestationExtensionOptions,
+) []byte {
+	t.Helper()
+
+	ext, err := xkms.BuildAndroidAttestationExtensionWithOptions(
+		4, level, 100, level, challenge, []byte("unique-id"), claims,
 	)
 	require.NoError(t, err)
 
@@ -171,6 +211,8 @@ type DAK struct {
 // NewDAK generates a device key and attests it once under issuer, exactly as a
 // handset does at first run. genesis is the attestation challenge baked in at
 // key generation; every test that expects to SUCCEED passes GenesisChallenge().
+// The teeEnforced Origin/Purpose claims are DeviceKeyClaims() -- GENERATED and
+// SIGN; a test that needs to vary them calls NewDAKWithClaims.
 func NewDAK(
 	t *testing.T,
 	issuer *CA,
@@ -180,10 +222,26 @@ func NewDAK(
 ) *DAK {
 	t.Helper()
 
+	claims := DeviceKeyClaims()
+	claims.RootOfTrust = rot
+	return NewDAKWithClaims(t, issuer, genesis, level, claims)
+}
+
+// NewDAKWithClaims is NewDAK with full control over the teeEnforced claims,
+// for tests that vary Origin or Purpose to prove the go-xkms#132 refusal.
+func NewDAKWithClaims(
+	t *testing.T,
+	issuer *CA,
+	genesis []byte,
+	level xkms.AndroidSecurityLevel,
+	claims *xkms.AndroidAttestationExtensionOptions,
+) *DAK {
+	t.Helper()
+
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	leafDER := AttestedLeafDER(t, issuer, key, genesis, level, rot)
+	leafDER := AttestedLeafDERWithClaims(t, issuer, key, genesis, level, claims)
 	leaf, err := x509.ParseCertificate(leafDER)
 	require.NoError(t, err)
 

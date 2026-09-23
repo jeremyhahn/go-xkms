@@ -256,7 +256,32 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		}
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		tlsConfig.ClientCAs = caCertPool
+		tlsConfig.VerifyPeerCertificate = s.verifyPeerCertificate
 	}
 
 	return tlsConfig, nil
+}
+
+// verifyPeerCertificate runs after Go's TLS stack has already verified the
+// connecting agent's certificate chains to a trusted CA (tls.Config.ClientCAs).
+// It adds the two checks chain validation alone cannot make: that the
+// certificate has not been revoked, and that it belongs to an agent still
+// present in the enrollment store (a removed agent has no record there,
+// regardless of what its certificate says). Both checks are delegated to
+// EnrollmentService.VerifyAgentCertificate, which fails closed.
+func (s *Server) verifyPeerCertificate(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
+	if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
+		return ErrCertificateInvalid
+	}
+
+	leaf := verifiedChains[0][0]
+	if err := s.enrollment.VerifyAgentCertificate(leaf); err != nil {
+		s.logger.Warn("rejected agent connection",
+			"subject", leaf.Subject.String(),
+			"serial", leaf.SerialNumber.Text(16),
+			"error", err)
+		return err
+	}
+
+	return nil
 }

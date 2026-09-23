@@ -285,6 +285,30 @@ defect and the shape of the fix is what the current design is for.
    stricter of the two is the safe direction, since anything that pairs also
    passes re-attestation.
 
+   **`requireAttestedKeyOrigin` requires the TEE's own claim that the key was
+   generated in place, not merely held there (#132).** Everything above this
+   point — the chain, the security level, the boot state, and (below) the live
+   challenge signature — is equally consistent with a device attestation key
+   generated elsewhere and **imported** into the TEE: the chain still
+   certifies it, the security level still reads `strongbox`, and the
+   signature still verifies. Only the TEE-enforced `Origin` claim inside the
+   attestation extension rules that out.
+
+   `RequireAttestedKeyOrigin` (`xkey/pkg/attestation/device.go`) refuses
+   unless the leaf's `TeeEnforced` authorization list claims `Origin ==
+   GENERATED` **and** its `Purpose` set includes `SIGN` — the one operation
+   this protocol performs with the key. It reads `TeeEnforced` exclusively,
+   never `SoftwareEnforced`: a software-enforced claim is the calling
+   application's word, the same reason `requireAttestedBootState` above does
+   not trust a software-enforced boot claim either. `pkg/attestation/android`
+   parses both fields out of the extension's ASN.1 (`Origin` tag 702,
+   `Purpose` tag 1) and defaults an **unclaimed** origin to `OriginUnknown`
+   rather than the bare zero value — zero is also `OriginGenerated`'s value,
+   so an attestation that never asserts an origin at all must not read as
+   asserting `GENERATED`. An authorization list making neither claim — an
+   absent extension, or evidence from a device with no TEE at all — therefore
+   fails closed exactly as a wrong value would.
+
    A device that fails any of those is **unattestable**, which is a policy
    question with the policy answer above — not a silent admission.
 

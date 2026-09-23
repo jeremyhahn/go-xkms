@@ -44,6 +44,11 @@ var (
 	// rejected or failed.
 	ErrAgentCARevokeFailed = errors.New("agent: certificate authority failed to revoke the certificate")
 
+	// ErrAgentCARevocationCheckFailed indicates the certificate authority
+	// could not answer whether a certificate is revoked. Callers must
+	// treat this as a rejection, never as "not revoked".
+	ErrAgentCARevocationCheckFailed = errors.New("agent: certificate authority failed to report revocation status")
+
 	// ErrAgentCAEmptyResponse indicates the certificate authority answered
 	// successfully but returned no certificate material.
 	ErrAgentCAEmptyResponse = errors.New("agent: certificate authority returned no certificate")
@@ -192,6 +197,22 @@ func (c *xkmsdCA) RevokeCertificate(serialNumber string) error {
 		return &DetailError{Err: ErrAgentCARevokeFailed, Detail: ": " + detail}
 	}
 	return nil
+}
+
+// IsRevoked reports whether the certificate identified by its serial
+// number has been revoked, consulting the xkmsd certificate authority's
+// revocation state directly rather than fetching and parsing a CRL.
+func (c *xkmsdCA) IsRevoked(serialNumber string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
+	resp, err := c.client.IsRevoked(ctx, &transport.IsRevokedRequest{
+		SerialNumber: serialNumber,
+	})
+	if err != nil {
+		return false, &SentinelCauseError{Sentinel: ErrAgentCARevocationCheckFailed, Cause: err}
+	}
+	return resp.Revoked, nil
 }
 
 // agentCertProfile returns the CA profile requested for agent

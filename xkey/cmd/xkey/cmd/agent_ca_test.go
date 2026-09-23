@@ -119,11 +119,22 @@ type fakeXKMSd struct {
 	// revokeResponse is returned by POST /api/v1/ca/revoke.
 	revokeResponse transport.RevokeCertificateResponse
 
+	// isRevokedResponse is returned by GET /api/v1/ca/revoked/{serial}.
+	isRevokedResponse transport.IsRevokedResponse
+
+	// isRevokedStatus, when >= 400, makes the revocation check fail with
+	// an error document.
+	isRevokedStatus int
+
 	// lastSignRequest records the most recent sign-csr request body.
 	lastSignRequest transport.SignCSRRequest
 
 	// lastRevokeRequest records the most recent revoke request body.
 	lastRevokeRequest transport.RevokeCertificateRequest
+
+	// lastIsRevokedSerial records the most recent is-revoked request's
+	// serial number.
+	lastIsRevokedSerial string
 }
 
 // newFakeXKMSd starts a fake xkmsd endpoint serving the CA verbs.
@@ -169,6 +180,17 @@ func newFakeXKMSd(t *testing.T, ca *caTestFixture) *fakeXKMSd {
 			t.Errorf("decode revoke request: %v", err)
 		}
 		writeTestJSON(t, w, http.StatusOK, fake.revokeResponse)
+	})
+	mux.HandleFunc("GET /api/v1/ca/revoked/{serial}", func(w http.ResponseWriter, r *http.Request) {
+		fake.lastIsRevokedSerial = r.PathValue("serial")
+		if fake.isRevokedStatus >= 400 {
+			writeTestJSON(t, w, fake.isRevokedStatus, map[string]string{
+				"error":   "is_revoked_failed",
+				"message": "unable to determine revocation status",
+			})
+			return
+		}
+		writeTestJSON(t, w, http.StatusOK, fake.isRevokedResponse)
 	})
 
 	fake.server = httptest.NewServer(mux)
@@ -371,6 +393,47 @@ func TestXKMSdCA_RevokeCertificate_AuthorityRefuses(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown serial number") {
 		t.Errorf("error does not carry the CA message: %v", err)
+	}
+}
+
+func TestXKMSdCA_IsRevoked_NotRevoked(t *testing.T) {
+	fake := newFakeXKMSd(t, newCATestFixture(t))
+	ca := connectTestCA(t, fake)
+
+	fake.isRevokedResponse = transport.IsRevokedResponse{Revoked: false}
+	revoked, err := ca.IsRevoked("0A0B0C")
+	if err != nil {
+		t.Fatalf("IsRevoked: %v", err)
+	}
+	if revoked {
+		t.Error("IsRevoked = true, want false")
+	}
+	if fake.lastIsRevokedSerial != "0A0B0C" {
+		t.Errorf("serial sent = %q, want 0A0B0C", fake.lastIsRevokedSerial)
+	}
+}
+
+func TestXKMSdCA_IsRevoked_Revoked(t *testing.T) {
+	fake := newFakeXKMSd(t, newCATestFixture(t))
+	ca := connectTestCA(t, fake)
+
+	fake.isRevokedResponse = transport.IsRevokedResponse{Revoked: true, Reason: agentRevocationReason}
+	revoked, err := ca.IsRevoked("DEADBEEF")
+	if err != nil {
+		t.Fatalf("IsRevoked: %v", err)
+	}
+	if !revoked {
+		t.Error("IsRevoked = false, want true")
+	}
+}
+
+func TestXKMSdCA_IsRevoked_AuthorityFailure(t *testing.T) {
+	fake := newFakeXKMSd(t, newCATestFixture(t))
+	ca := connectTestCA(t, fake)
+
+	fake.isRevokedStatus = http.StatusInternalServerError
+	if _, err := ca.IsRevoked("0A0B0C"); !errors.Is(err, ErrAgentCARevocationCheckFailed) {
+		t.Fatalf("IsRevoked = %v, want ErrAgentCARevocationCheckFailed", err)
 	}
 }
 

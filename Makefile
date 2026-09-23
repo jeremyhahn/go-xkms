@@ -2290,7 +2290,22 @@ comma := ,
 # COMPOSE_PROJECT is only the name to report to the user; $(call compose,...)
 # is what actually sets it on the command line.
 COMPOSE_PROJECT := $(COMPOSE_NS)-devcontainer
+
+# .devcontainer/docker-compose.ci.yml is layered on top in CI only
+# (COMPOSE_RUN_ID != local, i.e. GITHUB_RUN_ID is set -- see COMPOSE_RUN_ID
+# above). It replaces the base file's `..:/workspace:cached` bind mount with
+# a named volume: the compose CLI resolves that relative bind source itself,
+# but the container is actually created by the RUNNER HOST's daemon, not
+# this job container's, so `..` names the wrong filesystem there and
+# /workspace comes up empty (go-xkms #576). Local development always gets
+# the plain base file, unmodified. Compose merges `volumes:` by container
+# target path across -f files, so the overlay need only list the one mount
+# that changes.
+ifneq ($(COMPOSE_RUN_ID),local)
+DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.yml -f .devcontainer/docker-compose.ci.yml
+else
 DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.yml
+endif
 
 # Devcontainer identity is a POSITIVE marker, never an ambient side effect.
 #
@@ -2305,6 +2320,19 @@ DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.y
 # skipped, and the suite then waited on a socket probe inside a devcontainer
 # that was never started (go-xkms #19, red on 39 of 40 runs).
 
+# Populates a CI devcontainer's /workspace (the named volume from
+# .devcontainer/docker-compose.ci.yml, not the dev bind mount) from this
+# job's own checkout. `docker compose cp` streams the tree over the Docker
+# API connection rather than depending on a shared filesystem, so it lands
+# correctly no matter which host the daemon runs on (go-xkms #576). A no-op
+# off CI (COMPOSE_RUN_ID = local, where the base file's bind mount already
+# works) and a no-op once go.mod is already there, so the many
+# run_in_devcontainer / run_with_server calls in one `make integration-test`
+# cost a single `test -f` each after the first. Defined as one line (no
+# embedded newlines) so it can be spliced into another recipe's
+# backslash-continued shell chain with $(ci_sync_devcontainer_workspace).
+ci_sync_devcontainer_workspace = if [ "$(COMPOSE_RUN_ID)" != "local" ] && ! $(DOCKER_COMPOSE) exec -T devcontainer test -f /workspace/go.mod >/dev/null 2>&1; then echo "$(CYAN)$(BOLD)→ Populating devcontainer /workspace from this job's checkout (CI)...$(RESET)"; $(DOCKER_COMPOSE) cp ./. devcontainer:/workspace; fi
+
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
 	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
@@ -2312,6 +2340,7 @@ define run_in_devcontainer
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
+		$(ci_sync_devcontainer_workspace); \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(1)"; \
 	fi
@@ -2360,6 +2389,7 @@ define run_with_server
 	@if [ -z "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
+		$(ci_sync_devcontainer_workspace) && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
 		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)" || \

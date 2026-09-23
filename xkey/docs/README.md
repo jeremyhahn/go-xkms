@@ -15,6 +15,7 @@ tell.
 
 | Feature | What it covers | Legacy path superseded |
 |---------|----------------|------------------------|
+| [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
@@ -39,7 +40,7 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `agent/`, `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
+Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
 `password/`, `phone/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
@@ -259,8 +260,11 @@ xkey fido2 --cdp --cdp-port 9222
 - [TCP Relay](device/tcp-relay.md) -- TCP relay for remote devices
 
 ### [Agent](agent/)
-- [Overview](agent/README.md) -- Agent enrollment and management
-- [Enrollment](agent/enrollment.md) -- Enrollment flows and security
+- [Architecture](agent/architecture.md) -- connection-time revocation and enrollment checks
+- [Engineering](agent/engineering.md) -- exported surface, invariants, errors
+- [CLI](agent/cli.md) -- `xkey agent` verbs
+- [API](agent/api.md) -- service-layer surface reused by GUI and CLI
+- [User Guide](agent/user.md) -- enrollment and removal walkthroughs
 
 ### [BLE](ble/)
 - [Overview](ble/README.md) -- Bluetooth Low Energy transport

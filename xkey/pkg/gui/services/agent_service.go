@@ -229,6 +229,14 @@ func (s *AgentService) GetServerStatus() *AgentServerStatus {
 // configured default validity period. Emits an "agent:code_generated" event
 // on success.
 func (s *AgentService) GenerateEnrollmentCode() (*EnrollmentCodeInfo, error) {
+	return s.GenerateEnrollmentCodeWithValidity(0)
+}
+
+// GenerateEnrollmentCodeWithValidity generates a one-time enrollment code
+// valid for the given duration. A zero duration uses the enrollment
+// service's configured default. Emits an "agent:code_generated" event on
+// success.
+func (s *AgentService) GenerateEnrollmentCodeWithValidity(validity time.Duration) (*EnrollmentCodeInfo, error) {
 	s.mu.RLock()
 	enrollment := s.enrollment
 	s.mu.RUnlock()
@@ -237,7 +245,7 @@ func (s *AgentService) GenerateEnrollmentCode() (*EnrollmentCodeInfo, error) {
 		return nil, ErrAgentServiceNotReady
 	}
 
-	otc, err := enrollment.GenerateOneTimeCode(0)
+	otc, err := enrollment.GenerateOneTimeCode(validity)
 	if err != nil {
 		s.log.Error("failed to generate enrollment code", "error", err)
 		return nil, ErrAgentEnrollmentFailed
@@ -289,8 +297,26 @@ func (s *AgentService) ListPendingEnrollments() ([]PendingEnrollmentInfo, error)
 // ApproveEnrollment approves a pending enrollment request identified by
 // the given request ID. Emits an "agent:enrollment_approved" event on success.
 func (s *AgentService) ApproveEnrollment(requestID string) error {
+	_, err := s.ApproveEnrollmentWithCertificate(requestID)
+	return err
+}
+
+// EnrollmentApprovalResult carries the certificate material issued when a
+// pending enrollment request is approved, so a caller that needs to deliver
+// it to the enrolling agent (the CLI, printing it for the operator to
+// forward out of band) can do so.
+type EnrollmentApprovalResult struct {
+	RequestID        string `json:"request_id"`
+	CertificatePEM   []byte `json:"certificate_pem"`
+	CACertificatePEM []byte `json:"ca_certificate_pem"`
+}
+
+// ApproveEnrollmentWithCertificate approves a pending enrollment request
+// and returns the issued certificate alongside the CA certificate. Emits an
+// "agent:enrollment_approved" event on success.
+func (s *AgentService) ApproveEnrollmentWithCertificate(requestID string) (*EnrollmentApprovalResult, error) {
 	if requestID == "" {
-		return ErrAgentEmptyRequestID
+		return nil, ErrAgentEmptyRequestID
 	}
 
 	s.mu.RLock()
@@ -298,13 +324,13 @@ func (s *AgentService) ApproveEnrollment(requestID string) error {
 	s.mu.RUnlock()
 
 	if enrollment == nil {
-		return ErrAgentServiceNotReady
+		return nil, ErrAgentServiceNotReady
 	}
 
-	_, _, err := enrollment.ApproveEnrollment(requestID)
+	certPEM, caPEM, err := enrollment.ApproveEnrollment(requestID)
 	if err != nil {
 		s.log.Error("failed to approve enrollment", "request_id", requestID, "error", err)
-		return ErrAgentEnrollmentFailed
+		return nil, ErrAgentEnrollmentFailed
 	}
 
 	s.log.Info("enrollment approved", "request_id", requestID)
@@ -312,7 +338,11 @@ func (s *AgentService) ApproveEnrollment(requestID string) error {
 		RequestID: requestID,
 	})
 
-	return nil
+	return &EnrollmentApprovalResult{
+		RequestID:        requestID,
+		CertificatePEM:   certPEM,
+		CACertificatePEM: caPEM,
+	}, nil
 }
 
 // RejectEnrollment rejects a pending enrollment request with the given reason.
@@ -397,8 +427,12 @@ func (s *AgentService) ListAgents() ([]AgentDeviceInfo, error) {
 	return infos, nil
 }
 
-// RemoveAgent removes an enrolled agent from the store by its ID.
-// Emits an "agent:removed" event on success.
+// RemoveAgent revokes the agent's certificate through the certificate
+// authority and, only once that succeeds, removes its enrollment record.
+// If revocation fails, the record is left in place and the error is
+// returned so removal can be retried; the agent never ends up "removed"
+// while its certificate is still valid. Emits an "agent:removed" event on
+// success.
 func (s *AgentService) RemoveAgent(agentID string) error {
 	if agentID == "" {
 		return ErrAgentEmptyID
@@ -406,15 +440,22 @@ func (s *AgentService) RemoveAgent(agentID string) error {
 
 	s.mu.RLock()
 	store := s.store
+	enrollment := s.enrollment
 	s.mu.RUnlock()
 
 	if store == nil {
 		return ErrAgentNilStore
 	}
+	if enrollment == nil {
+		return ErrAgentServiceNotReady
+	}
 
-	if err := store.DeleteAgent(agentID); err != nil {
+	if err := enrollment.RemoveAgent(agentID); err != nil {
 		s.log.Error("failed to remove agent", "agent_id", agentID, "error", err)
-		return ErrAgentNotFound
+		if errors.Is(err, agent.ErrAgentNotFound) {
+			return ErrAgentNotFound
+		}
+		return ErrAgentEnrollmentFailed
 	}
 
 	s.log.Info("agent removed", "agent_id", agentID)

@@ -80,6 +80,20 @@ func (s *p9FailingEnrollmentStore) DeleteAgent(id string) error {
 	return nil
 }
 
+func (s *p9FailingEnrollmentStore) SaveCode(hash string, expiresAt time.Time) error { return nil }
+func (s *p9FailingEnrollmentStore) ConsumeCode(hash string) error {
+	return agent.ErrEnrollmentCodeInvalid
+}
+func (s *p9FailingEnrollmentStore) CleanExpiredCodes() (int, error)              { return 0, nil }
+func (s *p9FailingEnrollmentStore) SavePending(p *agent.PendingEnrollment) error { return nil }
+func (s *p9FailingEnrollmentStore) GetPending(id string) (*agent.PendingEnrollment, error) {
+	return nil, agent.ErrRequestNotFound
+}
+func (s *p9FailingEnrollmentStore) ListPending() ([]*agent.PendingEnrollment, error) {
+	return nil, nil
+}
+func (s *p9FailingEnrollmentStore) DeletePending(id string) error { return nil }
+
 // ---------------------------------------------------------------------------
 // Mock: agent.CAService (minimal, for creating EnrollmentService)
 // ---------------------------------------------------------------------------
@@ -91,6 +105,9 @@ func (m *p9MockCAService) GetCACertificate() ([]byte, error) {
 	return nil, errors.New("not implemented")
 }
 func (m *p9MockCAService) RevokeCertificate(string) error { return errors.New("not implemented") }
+func (m *p9MockCAService) IsRevoked(string) (bool, error) {
+	return false, errors.New("not implemented")
+}
 
 // ---------------------------------------------------------------------------
 // Mock: staticpw.Store with configurable List error
