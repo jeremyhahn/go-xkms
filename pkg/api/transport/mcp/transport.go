@@ -1923,38 +1923,83 @@ func (t *Transport) RevokeEscrow(ctx context.Context, _ string) error {
 // Policy Operations
 
 // PolicyCreate creates a new PCR policy.
-func (t *Transport) PolicyCreate(ctx context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.PolicyCreateResponse
+	if err := t.rpcCall(ctx, "policy.create", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // PolicyGet retrieves a policy by name.
-func (t *Transport) PolicyGet(ctx context.Context, _ *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.PolicyGetResponse
+	if err := t.rpcCall(ctx, "policy.get", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // PolicyList lists all policies.
 func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
-	return nil, ErrNotSupported
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.PolicyListResponse
+	if err := t.rpcCall(ctx, "policy.list", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // PolicyDelete deletes a policy.
-func (t *Transport) PolicyDelete(ctx context.Context, _ *transport.PolicyDeleteRequest) error {
-	return ErrNotSupported
+func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.rpcCall(ctx, "policy.delete", req, nil)
 }
 
 // PolicyRefresh refreshes a policy with current PCR values.
-func (t *Transport) PolicyRefresh(ctx context.Context, _ *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.PolicyGetResponse
+	if err := t.rpcCall(ctx, "policy.refresh", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // PolicyVerify verifies a policy against current PCR values.
-func (t *Transport) PolicyVerify(ctx context.Context, _ *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.PolicyVerifyResponse
+	if err := t.rpcCall(ctx, "policy.verify", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // PolicyExport exports a policy.
-func (t *Transport) PolicyExport(ctx context.Context, _ *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	return nil, ErrNotSupported
+func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	var result transport.PolicyExportResponse
+	if err := t.rpcCall(ctx, "policy.export", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // CustodianGroupService methods.

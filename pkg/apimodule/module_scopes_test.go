@@ -29,9 +29,10 @@ import (
 // scope gate. Every assertion below is inside a loop over
 // modulePermissions(), and an empty loop reports success — so the gate first
 // insists the derived set is at least as large as it was when the gate was
-// written. Measured 2026-09-22: 73. Raise it when the API surface grows; a
-// drop below it is a red run, which is the point.
-const minModulePermissions = 73
+// written. Measured 2026-09-23 (go-xkms#691 added the policy:* family): 81.
+// Raise it when the API surface grows; a drop below it is a red run, which
+// is the point.
+const minModulePermissions = 81
 
 // upstreamDeclared records which of this module's permissions already had a
 // scope BEFORE registerRoleGrants ran — that is, the ones go-qrdb declares

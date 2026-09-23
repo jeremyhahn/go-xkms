@@ -697,6 +697,58 @@ service KeystoreService {
     option (qrdb.v1.permission) = "passwords:generate";
   }
 
+  // PasswordStoreSetAccessMode selects the access-control strategy for the
+  // password store addressed by the request context. Gated the same as its
+  // PasswordAdd/PasswordUpdate siblings: passwords:write.
+  rpc PasswordStoreSetAccessMode(PasswordStoreSetAccessModeRequest) returns (PasswordStoreSetAccessModeResponse) {
+    option (qrdb.v1.permission) = "passwords:write";
+  }
+
+  // ==================== PCR Policy Operations ====================
+  // TPM 2.0 PCR-bank sealed-secret authorization policies (pkg/seal/policy).
+  // go-xkms#691 minted the policy:* resource family: go-qrdb's canonical
+  // registry does not declare it upstream (pkg/auth.ResourcePolicy), so
+  // pkg/apimodule's module_scopes.go declares its tenancy scope the way it
+  // does for keys:read/write, ssh:use, and bootstrap:read.
+
+  // PolicyCreate creates a new PCR policy, capturing the current PCR values
+  // for the specified bank and indices.
+  rpc PolicyCreate(PolicyCreateRequest) returns (PolicyCreateResponse) {
+    option (qrdb.v1.permission) = "policy:create";
+  }
+
+  // PolicyGet retrieves a PCR policy by name.
+  rpc PolicyGet(PolicyGetRequest) returns (PolicyGetResponse) {
+    option (qrdb.v1.permission) = "policy:get";
+  }
+
+  // PolicyList returns all registered PCR policies.
+  rpc PolicyList(PolicyListRequest) returns (PolicyListResponse) {
+    option (qrdb.v1.permission) = "policy:list";
+  }
+
+  // PolicyDelete deletes a PCR policy by name.
+  rpc PolicyDelete(PolicyDeleteRequest) returns (PolicyDeleteResponse) {
+    option (qrdb.v1.permission) = "policy:delete";
+  }
+
+  // PolicyRefresh re-captures a PCR policy from the platform's current PCR
+  // values.
+  rpc PolicyRefresh(PolicyRefreshRequest) returns (PolicyGetResponse) {
+    option (qrdb.v1.permission) = "policy:refresh";
+  }
+
+  // PolicyVerify verifies a PCR policy against the platform's current PCR
+  // values.
+  rpc PolicyVerify(PolicyVerifyRequest) returns (PolicyVerifyResponse) {
+    option (qrdb.v1.permission) = "policy:verify";
+  }
+
+  // PolicyExport serializes a named policy to a JSON document.
+  rpc PolicyExport(PolicyExportRequest) returns (PolicyExportResponse) {
+    option (qrdb.v1.permission) = "policy:export";
+  }
+
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
@@ -3319,6 +3371,96 @@ message PasswordGenerateRequest {
 message PasswordGenerateResponse {
   string password = 1;
   int32 length = 2;
+}
+
+// PasswordStoreSetAccessModeRequest requests changing the password store's
+// access-control strategy.
+message PasswordStoreSetAccessModeRequest {
+  string mode = 1;
+}
+
+// PasswordStoreSetAccessModeResponse confirms the access mode was set.
+message PasswordStoreSetAccessModeResponse {
+  string mode = 1;
+  string message = 2;
+}
+
+// ==================== PCR Policy Operations ====================
+
+// PolicyCreateRequest requests creating a new PCR policy.
+message PolicyCreateRequest {
+  string name = 1;
+  string bank = 2;
+  repeated int32 pcrs = 3;
+}
+
+// PolicyCreateResponse contains the result of creating a PCR policy.
+message PolicyCreateResponse {
+  string name = 1;
+  string bank = 2;
+  repeated int32 pcrs = 3;
+  map<int32, string> values = 4;
+  string created_at = 5;
+}
+
+// PolicyGetRequest requests a PCR policy by name.
+message PolicyGetRequest {
+  string name = 1;
+}
+
+// PolicyGetResponse contains a PCR policy definition.
+message PolicyGetResponse {
+  string name = 1;
+  string bank = 2;
+  repeated int32 pcrs = 3;
+  map<int32, string> values = 4;
+  string created_at = 5;
+  string updated_at = 6;
+}
+
+// PolicyListRequest requests all registered PCR policies.
+message PolicyListRequest {}
+
+// PolicyListResponse contains all registered PCR policies.
+message PolicyListResponse {
+  repeated PolicyGetResponse policies = 1;
+  int32 total = 2;
+}
+
+// PolicyDeleteRequest requests deleting a PCR policy by name.
+message PolicyDeleteRequest {
+  string name = 1;
+}
+
+// PolicyDeleteResponse confirms a PCR policy was deleted.
+message PolicyDeleteResponse {}
+
+// PolicyRefreshRequest requests re-capturing a PCR policy's PCR values.
+message PolicyRefreshRequest {
+  string name = 1;
+}
+
+// PolicyVerifyRequest requests verifying a PCR policy against current PCR
+// values.
+message PolicyVerifyRequest {
+  string name = 1;
+}
+
+// PolicyVerifyResponse contains the result of verifying a PCR policy.
+message PolicyVerifyResponse {
+  string name = 1;
+  bool valid = 2;
+  string message = 3;
+}
+
+// PolicyExportRequest requests exporting a PCR policy.
+message PolicyExportRequest {
+  string name = 1;
+}
+
+// PolicyExportResponse contains the exported policy document.
+message PolicyExportResponse {
+  string data = 1;
 }
 
 // ==================== FIDO2/WebAuthn Registration ====================

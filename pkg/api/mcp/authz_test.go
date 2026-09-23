@@ -675,6 +675,16 @@ var goldenMethodPermissions = map[string]string{
 	"sealStore.reseal": "keys:write",
 	"sealStore.status": "keys:read",
 
+	// PCR policy management (go-xkms#691) — pkg/api/grpc's PolicyCreate/
+	// Get/... RPCs' (qrdb.v1.permission) options.
+	"policy.create":  "policy:create",
+	"policy.get":     "policy:get",
+	"policy.list":    "policy:list",
+	"policy.delete":  "policy:delete",
+	"policy.refresh": "policy:refresh",
+	"policy.verify":  "policy:verify",
+	"policy.export":  "policy:export",
+
 	// SSH key, known-host, and authorized-key stores —
 	// pkg/api/quic/handlers_ssh.go.
 	"ssh.authorizedKeys.add":    "ssh:write",
@@ -739,6 +749,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
+		auth.ResourcePolicy: {},
 	}
 
 	for method, perm := range methodPermissions {

@@ -300,14 +300,27 @@ func Routes() []RouteSpec {
 	permIf("GET", "/platform/status", auth.ResourceKeys, auth.ActionRead, hasPlatform, func(s *Server) http.HandlerFunc { return s.platformHandlers.StatusHandler })
 
 	// --- Policies ---
+	// The {name} placeholder must match the "name" key policy_handlers.go's
+	// chi.URLParam(r, "name") calls look up; go-xkms#691 found these routes
+	// registered as {id}, which left every named-policy REST route (get,
+	// delete, refresh, verify, export) answering 400 "Policy name is
+	// required" for every real request, since chi.URLParam(r, "name")
+	// never resolved.
+	//
+	// go-xkms#691 also moved these off the session helper (authenticated,
+	// no RBAC permission) onto policy:*: the unified gRPC server denies any
+	// RPC with no (qrdb.v1.permission) option by default, so a transport
+	// this module also serves over gRPC cannot rely on a permission-free
+	// tier -- see pkg/api/grpc/proto/xkmsv1/xkms.proto's PCR Policy
+	// Operations RPCs and pkg/auth.ResourcePolicy.
 	hasPolicies := func(s *Server) bool { return s.policyHandlers != nil }
-	session("POST", "/policies/", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.CreatePolicyHandler })
-	session("GET", "/policies/", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.ListPoliciesHandler })
-	session("GET", "/policies/{id}", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.GetPolicyHandler })
-	session("DELETE", "/policies/{id}", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.DeletePolicyHandler })
-	session("POST", "/policies/{id}/refresh", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.RefreshPolicyHandler })
-	session("POST", "/policies/{id}/verify", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.VerifyPolicyHandler })
-	session("GET", "/policies/{id}/export", hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.ExportPolicyHandler })
+	permIf("POST", "/policies/", auth.ResourcePolicy, auth.ActionCreate, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.CreatePolicyHandler })
+	permIf("GET", "/policies/", auth.ResourcePolicy, auth.ActionList, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.ListPoliciesHandler })
+	permIf("GET", "/policies/{name}", auth.ResourcePolicy, auth.ActionGet, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.GetPolicyHandler })
+	permIf("DELETE", "/policies/{name}", auth.ResourcePolicy, auth.ActionDelete, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.DeletePolicyHandler })
+	permIf("POST", "/policies/{name}/refresh", auth.ResourcePolicy, auth.ActionRefresh, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.RefreshPolicyHandler })
+	permIf("POST", "/policies/{name}/verify", auth.ResourcePolicy, auth.ActionVerify, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.VerifyPolicyHandler })
+	permIf("GET", "/policies/{name}/export", auth.ResourcePolicy, auth.ActionExport, hasPolicies, func(s *Server) http.HandlerFunc { return s.policyHandlers.ExportPolicyHandler })
 
 	// --- Init ceremony. status and the claim-* halves are reachable
 	// without an account while the ceremony has not reached the

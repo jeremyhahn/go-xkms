@@ -14,13 +14,22 @@
 package auth
 
 // Resource and action identifiers for the xkms API authorization surface.
-// These mirror the canonical go-qrdb permission vocabulary
+// Most of these mirror the canonical go-qrdb permission vocabulary
 // (pkg/permission/constants.go, broker_scope.go, acme_admin_scope.go) so a
-// route decorator's resource:action pair maps directly onto a qrdb role grant.
-// xkms registers no parallel vocabulary; the genuinely xkms-domain permissions
-// (backends:*, keys:import/export, certs:read, piv:*, ssh:*, passwords:*, the
-// ACME administration family, and the CA hierarchy family) are all part of
+// route decorator's resource:action pair maps directly onto a qrdb role
+// grant: the genuinely xkms-domain permissions (backends:*,
+// keys:import/export, certs:read, piv:*, ssh:*, passwords:*, the ACME
+// administration family, and the CA hierarchy family) are all part of
 // qrdb's canonical registry and are granted by qrdb's built-in roles.
+//
+// A small number of resources have no qrdb counterpart at all — qrdb's
+// registry simply does not know the name — so xkms both mints and scopes
+// them itself: bootstrap (the trust-bootstrap listener's own public keys,
+// go-xkms#632) and policy (PCR-bank sealed-secret authorization,
+// go-xkms#691). pkg/apimodule/module_scopes.go registers each one's
+// tenancy scope explicitly for the same reason it does for the four
+// keys/ssh exceptions documented there: go-qrdb#504 refuses to admit an
+// unscoped permission at all, rather than default it to ScopeSelf.
 //
 // This file is the ONLY authorization vocabulary in the xkms process. A
 // transport must never declare its own resource or action string: two tables
@@ -38,6 +47,14 @@ const (
 	ResourceAdmin    = "admin"
 	ResourceSeal     = "seal"
 	ResourceBarrier  = "barrier"
+
+	// ResourcePolicy is TPM 2.0 PCR-bank sealed-secret authorization policy
+	// management (pkg/seal/policy): capturing, reading, refreshing,
+	// verifying, and exporting the PCR-value snapshots sealed secrets bind
+	// to. go-qrdb's canonical registry has no permission family for it
+	// (go-xkms#691), so xkms owns the name and declares its own tenancy
+	// scope (pkg/apimodule/module_scopes.go).
+	ResourcePolicy = "policy"
 
 	// Hardware and vault resources. Each is its own qrdb resource family so a
 	// deployment can mint a role that reaches, for example, the PIV slots
@@ -101,6 +118,10 @@ const (
 	ActionGet     = "get"
 	ActionImport  = "import"
 	ActionExport  = "export"
+
+	// ActionRefresh re-captures a resource's current state, as PolicyRefresh
+	// re-reads current PCR values into an existing PCR policy.
+	ActionRefresh = "refresh"
 
 	// Key-transport and key-agreement actions. Wrapping and unwrapping move
 	// key material under a wrapping key; deriving produces new key material
