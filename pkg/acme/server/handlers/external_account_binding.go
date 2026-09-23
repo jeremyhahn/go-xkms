@@ -200,6 +200,30 @@ func isSymmetricAlgorithm(alg string) bool {
 	}
 }
 
+// computeHMAC computes the HMAC of message under key using h.
+//
+// key is the EAB HMAC key the CA operator provisioned out of band (RFC 8555
+// §7.3.4); nothing about its length is validated elsewhere on the write
+// path. Under GODEBUG=fips140=only, crypto/hmac.New panics rather than
+// returning an error for a key under 112 bits -- unlike crypto/sha1 or
+// crypto/hkdf, hmac.New has no error return to give it in the first place --
+// so an operator-provisioned key that is merely short (not attacker
+// controlled: verifyMAC's caller runs this after JWS signature verification
+// has already authenticated the request) would otherwise crash this server
+// process on every EAB attempt against it. The panic is recovered into a
+// typed error instead (go-xkms#23).
+func computeHMAC(h func() hash.Hash, key, message []byte) (mac []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			mac = nil
+			err = caerrors.VerificationFailureError("EAB HMAC key unusable in this process: %v", r)
+		}
+	}()
+	m := hmac.New(h, key)
+	m.Write(message)
+	return m.Sum(nil), nil
+}
+
 // verifyMAC verifies a MAC signature using the specified algorithm.
 func verifyMAC(alg string, key []byte, message []byte, signatureB64 string) error {
 	var h func() hash.Hash
@@ -214,9 +238,10 @@ func verifyMAC(alg string, key []byte, message []byte, signatureB64 string) erro
 		return caerrors.MalformedError("unsupported algorithm: %s", alg)
 	}
 
-	mac := hmac.New(h, key)
-	mac.Write(message)
-	expectedMAC := mac.Sum(nil)
+	expectedMAC, err := computeHMAC(h, key, message)
+	if err != nil {
+		return err
+	}
 
 	signature, err := base64.RawURLEncoding.DecodeString(signatureB64)
 	if err != nil {

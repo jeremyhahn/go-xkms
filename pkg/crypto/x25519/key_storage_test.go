@@ -27,8 +27,10 @@ func TestNewPrivateKeyStorage(t *testing.T) {
 	ka := New()
 
 	t.Run("successful creation", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		storage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
 		require.NoError(t, err)
@@ -57,8 +59,10 @@ func TestNewPrivateKeyStorage(t *testing.T) {
 
 func TestPrivateKeyStorage_Public(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
 	require.NoError(t, err)
@@ -78,8 +82,10 @@ func TestPrivateKeyStorage_Public(t *testing.T) {
 
 func TestPrivateKeyStorage_PrivateKey(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
 	require.NoError(t, err)
@@ -94,8 +100,10 @@ func TestPrivateKeyStorage_PrivateKey(t *testing.T) {
 
 func TestPrivateKeyStorage_Bytes(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
 	require.NoError(t, err)
@@ -112,8 +120,10 @@ func TestNewPublicKeyStorage(t *testing.T) {
 	ka := New()
 
 	t.Run("successful creation", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		storage, err := NewPublicKeyStorage(keyPair.PublicKey)
 		require.NoError(t, err)
@@ -142,8 +152,10 @@ func TestNewPublicKeyStorage(t *testing.T) {
 
 func TestPublicKeyStorage_PublicKey(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPublicKeyStorage(keyPair.PublicKey)
 	require.NoError(t, err)
@@ -158,8 +170,10 @@ func TestPublicKeyStorage_PublicKey(t *testing.T) {
 
 func TestPublicKeyStorage_Bytes(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPublicKeyStorage(keyPair.PublicKey)
 	require.NoError(t, err)
@@ -174,8 +188,10 @@ func TestPublicKeyStorage_Bytes(t *testing.T) {
 
 func TestPrivateKeyStorage_CryptoInterface(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
 	require.NoError(t, err)
@@ -193,8 +209,10 @@ func TestPrivateKeyStorage_CryptoInterface(t *testing.T) {
 
 func TestPublicKeyStorage_CryptoInterface(t *testing.T) {
 	ka := New()
-	keyPair, err := ka.GenerateKey()
-	require.NoError(t, err)
+	keyPair, ok := requireGeneratedKeyPair(t, ka)
+	if !ok {
+		return
+	}
 
 	storage, err := NewPublicKeyStorage(keyPair.PublicKey)
 	require.NoError(t, err)
@@ -210,8 +228,10 @@ func TestStorageRoundTrip(t *testing.T) {
 
 	t.Run("private key round trip", func(t *testing.T) {
 		// Generate key
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Wrap in storage
 		storage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
@@ -231,8 +251,10 @@ func TestStorageRoundTrip(t *testing.T) {
 
 	t.Run("public key round trip", func(t *testing.T) {
 		// Generate key
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Wrap in storage
 		storage, err := NewPublicKeyStorage(keyPair.PublicKey)
@@ -252,12 +274,16 @@ func TestStorageWithKeyAgreement(t *testing.T) {
 
 	t.Run("key agreement works with storage wrappers", func(t *testing.T) {
 		// Generate Alice's key pair
-		aliceKeyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		aliceKeyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Generate Bob's key pair
-		bobKeyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		bobKeyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Wrap in storage
 		aliceStorage, err := NewPrivateKeyStorage(aliceKeyPair.PrivateKey)
@@ -288,8 +314,10 @@ func TestStorageEdgeCases(t *testing.T) {
 	ka := New()
 
 	t.Run("multiple wrappings of same key", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		// Create multiple storage wrappers for the same key
 		storage1, err := NewPrivateKeyStorage(keyPair.PrivateKey)
@@ -304,8 +332,10 @@ func TestStorageEdgeCases(t *testing.T) {
 	})
 
 	t.Run("public key from wrapped private key", func(t *testing.T) {
-		keyPair, err := ka.GenerateKey()
-		require.NoError(t, err)
+		keyPair, ok := requireGeneratedKeyPair(t, ka)
+		if !ok {
+			return
+		}
 
 		privateStorage, err := NewPrivateKeyStorage(keyPair.PrivateKey)
 		require.NoError(t, err)

@@ -15,6 +15,7 @@ package mlkem512
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/rand"
 	"io"
 	"testing"
@@ -22,6 +23,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// requireMLKEM constructs an *MLKEM512 via New for a test that needs one to
+// exercise other behavior. ML-KEM-512 is refused outright under FIPS mode
+// (New's fips140.Enabled() check: cloudflare/circl is outside the Go
+// Cryptographic Module, so the stdlib cannot refuse it on its own -- see
+// ErrFIPSMode and TestNewAndCreate_RefuseUnderFIPS in fips_test.go), so this
+// asserts that refusal and reports ok=false instead of letting the caller
+// dereference a nil *MLKEM512.
+func requireMLKEM(t *testing.T) (kem *MLKEM512, ok bool) {
+	t.Helper()
+	kem, err := New()
+	if fips140.Enabled() {
+		require.ErrorIs(t, err, ErrFIPSMode)
+		require.Nil(t, kem)
+		return nil, false
+	}
+	require.NoError(t, err)
+	return kem, true
+}
+
+// requireMLKEMFromSeed is requireMLKEM for Create, refused for the same
+// reason under the same predicate.
+func requireMLKEMFromSeed(t *testing.T, seed []byte) (kem *MLKEM512, ok bool) {
+	t.Helper()
+	kem, err := Create(seed)
+	if fips140.Enabled() {
+		require.ErrorIs(t, err, ErrFIPSMode)
+		require.Nil(t, kem)
+		return nil, false
+	}
+	require.NoError(t, err)
+	return kem, true
+}
 
 // TestSizesMatchFIPS203 pins the parameter set's published lengths.
 //
@@ -36,8 +70,10 @@ func TestSizesMatchFIPS203(t *testing.T) {
 	assert.Equal(t, 32, SharedSecretSize, "ML-KEM shared secret is 32 bytes")
 	assert.Equal(t, 64, SeedSize, "FIPS 203 key generation takes d || z, 32 bytes each")
 
-	kem, err := New()
-	require.NoError(t, err)
+	kem, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer kem.Clean()
 
 	publicKey, err := kem.GenerateKeyPair()
@@ -49,8 +85,10 @@ func TestSizesMatchFIPS203(t *testing.T) {
 // TestEncapsulateDecapsulateRoundTrip is the KEM's defining property: the
 // secret the sender derives is the secret the recipient recovers.
 func TestEncapsulateDecapsulateRoundTrip(t *testing.T) {
-	recipient, err := New()
-	require.NoError(t, err)
+	recipient, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer recipient.Clean()
 
 	recipientPublic, err := recipient.GenerateKeyPair()
@@ -79,8 +117,10 @@ func TestEncapsulateDecapsulateRoundTrip(t *testing.T) {
 // rebuilds the key through Create on every later use. If that rebuild produced a
 // different key, every persisted ML-KEM-512 key would decapsulate to garbage.
 func TestSeedReconstructsTheSameKey(t *testing.T) {
-	original, err := New()
-	require.NoError(t, err)
+	original, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer original.Clean()
 
 	originalPublic, err := original.GenerateKeyPair()
@@ -118,8 +158,10 @@ func TestDeterministicFromSeed(t *testing.T) {
 	_, err := io.ReadFull(rand.Reader, seed)
 	require.NoError(t, err)
 
-	first, err := Create(seed)
-	require.NoError(t, err)
+	first, ok := requireMLKEMFromSeed(t, seed)
+	if !ok {
+		return
+	}
 	defer first.Clean()
 
 	second, err := Create(seed)
@@ -139,8 +181,10 @@ func TestDeterministicFromSeed(t *testing.T) {
 // the recipient's key -- which would let every round-trip test above pass while
 // giving every party the same secret.
 func TestDistinctKeysDeriveDistinctSecrets(t *testing.T) {
-	first, err := New()
-	require.NoError(t, err)
+	first, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer first.Clean()
 
 	second, err := New()
@@ -176,8 +220,10 @@ func TestDistinctKeysDeriveDistinctSecrets(t *testing.T) {
 // distinguish a malformed ciphertext from a valid one by observing an error.
 // The secret must be wrong, deterministic, and not an error -- all three.
 func TestDecapsulateWrongCiphertextIsImplicitRejection(t *testing.T) {
-	recipient, err := New()
-	require.NoError(t, err)
+	recipient, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer recipient.Clean()
 
 	recipientPublic, err := recipient.GenerateKeyPair()
@@ -217,8 +263,10 @@ func TestDecapsulateWrongCiphertextIsImplicitRejection(t *testing.T) {
 
 // TestBadInput covers the error paths.
 func TestBadInput(t *testing.T) {
-	kem, err := New()
-	require.NoError(t, err)
+	kem, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer kem.Clean()
 
 	t.Run("a seed of the wrong length is refused", func(t *testing.T) {
@@ -274,8 +322,10 @@ func TestCleanDestroysTheSeed(t *testing.T) {
 	_, err := io.ReadFull(rand.Reader, seed)
 	require.NoError(t, err)
 
-	kem, err := Create(seed)
-	require.NoError(t, err)
+	kem, ok := requireMLKEMFromSeed(t, seed)
+	if !ok {
+		return
+	}
 
 	held := kem.ExportSecretKey()
 	require.Equal(t, seed, held,
@@ -295,8 +345,10 @@ func TestCleanDestroysTheSeed(t *testing.T) {
 
 // TestDetails covers the metadata accessors.
 func TestDetails(t *testing.T) {
-	kem, err := New()
-	require.NoError(t, err)
+	kem, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 	defer kem.Clean()
 
 	details := kem.Details()
@@ -318,8 +370,10 @@ func TestDetails(t *testing.T) {
 // error-path release depends on: Clean may run twice, on a zero value, and on a
 // nil receiver without panicking.
 func TestCleanIsIdempotentAndNilSafe(t *testing.T) {
-	k, err := New()
-	require.NoError(t, err)
+	k, ok := requireMLKEM(t)
+	if !ok {
+		return
+	}
 
 	k.Clean()
 	k.Clean()

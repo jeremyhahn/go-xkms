@@ -15,17 +15,15 @@ package clusterca
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -83,9 +81,15 @@ func (s *tpmKEKStrategy) kekProtection() (KeyProtection, error) {
 	if len(s.seed) == 0 {
 		return KeyProtection{}, ErrSeedUnavailable
 	}
-	kek := make([]byte, 32)
-	r := hkdf.New(sha256.New, s.seed, []byte("go-xkms/cluster-ca"), []byte("kek/v1"))
-	if _, err := io.ReadFull(r, kek); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals into a
+	// panic, which would crash this process instead of returning the error
+	// this method promises. clusterSeedLen (32 bytes) keeps a real seed well
+	// above FIPS's 112-bit HKDF floor; this only changes what a short or
+	// zero-value test seed does.
+	kek, err := hkdf.Key(sha256.New, s.seed, []byte("go-xkms/cluster-ca"), "kek/v1", 32)
+	if err != nil {
 		return KeyProtection{}, err
 	}
 	// The keystore passphrase has always been the hex STRING, not the raw

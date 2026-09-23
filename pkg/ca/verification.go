@@ -56,6 +56,7 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 )
@@ -496,6 +497,37 @@ func VerifyCertificateAgainstPublicKey(cert *x509.Certificate, pubKey crypto.Pub
 	}
 }
 
+// tbsCertificateDigest hashes cert.RawTBSCertificate with hashAlgo -- the
+// step every signature verifier below needs before it can check a signature
+// against a public key.
+//
+// A legacy CA anchor signed with SHA-1 is exactly what
+// VerifyChainAlgorithms's self-signed-root exemption exists to accept (see
+// IsSelfSigned, which verifies the anchor's signature against its own public
+// key through this same path), so this function has to be able to hash with
+// a non-approved algorithm on request rather than refuse the request
+// outright. Under GODEBUG=fips140=only, crypto/sha1 (and crypto/md5) do not
+// return an error for that -- Write does, but every caller in this package
+// treats hash.Write as the io.Writer contract says to, which is that it
+// never fails; Sum then panics -- so the panic is recovered here and turned
+// into the same ErrInvalidSignature the verifiers already return for a
+// signature that fails to verify, rather than a crash (go-xkms#23).
+func tbsCertificateDigest(cert *x509.Certificate, hashAlgo crypto.Hash) (digest []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			digest = nil
+			err = &VerificationError{
+				Cert:    cert,
+				Reason:  fmt.Sprintf("hash algorithm unavailable in this process: %v", r),
+				Wrapped: ErrInvalidSignature,
+			}
+		}
+	}()
+	hash := hashAlgo.New()
+	hash.Write(cert.RawTBSCertificate)
+	return hash.Sum(nil), nil
+}
+
 // verifyRSASignature verifies an RSA signature on a certificate.
 func verifyRSASignature(
 	cert *x509.Certificate,
@@ -510,10 +542,10 @@ func verifyRSASignature(
 		}
 	}
 
-	// Compute the hash of the TBSCertificate
-	hash := hashAlgo.New()
-	hash.Write(cert.RawTBSCertificate)
-	digest := hash.Sum(nil)
+	digest, digestErr := tbsCertificateDigest(cert, hashAlgo)
+	if digestErr != nil {
+		return digestErr
+	}
 
 	var err error
 
@@ -554,10 +586,10 @@ func verifyECDSASignature(
 		}
 	}
 
-	// Compute the hash of the TBSCertificate
-	hash := hashAlgo.New()
-	hash.Write(cert.RawTBSCertificate)
-	digest := hash.Sum(nil)
+	digest, err := tbsCertificateDigest(cert, hashAlgo)
+	if err != nil {
+		return err
+	}
 
 	// ECDSA signatures in X.509 certificates are DER-encoded
 	var sig struct {

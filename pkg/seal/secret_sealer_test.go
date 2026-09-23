@@ -47,9 +47,11 @@ func TestSecretSealer_EmptySecretRejected(t *testing.T) {
 }
 
 func TestSecretSealer_WrongSecretFailsToUnseal(t *testing.T) {
-	a, err := NewSecretSealer([]byte("secret-a"))
+	// 24+ bytes: crypto/hkdf refuses any HKDF input keying material under
+	// 112 bits (14 bytes) under GODEBUG=fips140=only.
+	a, err := NewSecretSealer([]byte("node-protection-secret-a"))
 	require.NoError(t, err)
-	b, err := NewSecretSealer([]byte("secret-b"))
+	b, err := NewSecretSealer([]byte("node-protection-secret-b"))
 	require.NoError(t, err)
 
 	sealed, err := a.Seal(context.Background(), []byte("data"), nil)
@@ -61,13 +63,14 @@ func TestSecretSealer_WrongSecretFailsToUnseal(t *testing.T) {
 
 func TestSecretSealer_DeterministicKeyDerivation(t *testing.T) {
 	// The same secret always derives the same data key, so a restart can
-	// unseal what a prior boot sealed.
-	a, err := NewSecretSealer([]byte("stable-secret"))
+	// unseal what a prior boot sealed. 16+ bytes: see
+	// TestSecretSealer_WrongSecretFailsToUnseal for the HKDF floor.
+	a, err := NewSecretSealer([]byte("a-stable-node-secret"))
 	require.NoError(t, err)
 	sealed, err := a.Seal(context.Background(), []byte("persisted"), nil)
 	require.NoError(t, err)
 
-	b, err := NewSecretSealer([]byte("stable-secret"))
+	b, err := NewSecretSealer([]byte("a-stable-node-secret"))
 	require.NoError(t, err)
 	got, err := b.Unseal(context.Background(), sealed, nil)
 	require.NoError(t, err)

@@ -22,6 +22,26 @@ import (
 	"github.com/youmark/pkcs8"
 )
 
+// pkcs8EncryptOpts pins the PBKDF2 salt size youmark/pkcs8 uses to encrypt a
+// PKCS#8 key, instead of leaving MarshalPrivateKey to fall back to its own
+// package-level pkcs8.DefaultOpts.
+//
+// DefaultOpts.KDFOpts.SaltSize is 8 bytes (64 bits). Go's crypto/pbkdf2
+// refuses any salt under 128 bits under GODEBUG=fips140=only, and it refuses
+// by panicking (golang.org/x/crypto/pbkdf2.Key converts the stdlib's error
+// return into a panic) -- a wrong-salt-size call otherwise crashes the
+// process instead of returning an error. The cipher and iteration count are
+// carried over unchanged from DefaultOpts; only the salt grows to the FIPS
+// floor.
+var pkcs8EncryptOpts = &pkcs8.Opts{
+	Cipher: pkcs8.AES256CBC,
+	KDFOpts: pkcs8.PBKDF2Opts{
+		SaltSize:       16,
+		IterationCount: 10000,
+		HMACHash:       crypto.SHA256,
+	},
+}
+
 // EncodePKCS8 encodes a private key to ASN.1 DER PKCS#8 format.
 // If a password is provided, the key will be encrypted.
 // If password is nil or empty, the key will be encoded without encryption.
@@ -37,7 +57,7 @@ func EncodePKCS8(privateKey crypto.PrivateKey, password []byte) ([]byte, error) 
 	}
 
 	// Use youmark/pkcs8 package which handles encryption
-	der, err := pkcs8.MarshalPrivateKey(privateKey, password, nil)
+	der, err := pkcs8.MarshalPrivateKey(privateKey, password, pkcs8EncryptOpts)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to marshal PKCS#8", Err: err}
 	}

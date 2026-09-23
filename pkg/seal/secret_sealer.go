@@ -17,12 +17,10 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -59,9 +57,13 @@ func NewSecretSealer(secret []byte) (*SecretSealer, error) {
 	if len(secret) == 0 {
 		return nil, ErrSecretSealerEmptySecret
 	}
-	dataKey := make([]byte, 32)
-	kdf := hkdf.New(sha256.New, secret, nil, []byte(secretSealerInfo))
-	if _, err := io.ReadFull(kdf, dataKey); err != nil {
+	// crypto/hkdf.Key (the stdlib RFC 5869 implementation, Go 1.24+) is used
+	// instead of golang.org/x/crypto/hkdf.New: the x/crypto Reader
+	// constructor converts the stdlib's own FIPS 140-only refusals (a secret
+	// under 112 bits) into a panic, which would crash this process instead
+	// of returning the error this constructor promises.
+	dataKey, err := hkdf.Key(sha256.New, secret, nil, secretSealerInfo, 32)
+	if err != nil {
 		return nil, err
 	}
 	return &SecretSealer{dataKey: dataKey}, nil

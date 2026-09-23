@@ -34,7 +34,7 @@ import (
 // off-by-one in the tag or nonce accounting would show up.
 func TestSecretSealer_PlaintextLenIsExact(t *testing.T) {
 	ctx := context.Background()
-	s, err := NewSecretSealer([]byte("a-test-secret"))
+	s, err := NewSecretSealer([]byte("a-test-secret-16-bytes"))
 	require.NoError(t, err)
 
 	for _, n := range []int{0, 1, 15, 16, 17, 31, 32, 33, 1024} {
@@ -57,7 +57,7 @@ func TestSecretSealer_PlaintextLenIsExact(t *testing.T) {
 // PlaintextLen must be sufficient, so the result aliases it.
 func TestSecretSealer_UnsealIntoLandsInTheCallersBuffer(t *testing.T) {
 	ctx := context.Background()
-	s, err := NewSecretSealer([]byte("a-test-secret"))
+	s, err := NewSecretSealer([]byte("a-test-secret-16-bytes"))
 	require.NoError(t, err)
 
 	plaintext := []byte("super-secret-material")
@@ -84,7 +84,7 @@ func TestSecretSealer_UnsealIntoLandsInTheCallersBuffer(t *testing.T) {
 // check look redundant when it is not.
 func TestSecretSealer_UnsealIntoReallocatesWhenTheBufferIsShort(t *testing.T) {
 	ctx := context.Background()
-	s, err := NewSecretSealer([]byte("a-test-secret"))
+	s, err := NewSecretSealer([]byte("a-test-secret-16-bytes"))
 	require.NoError(t, err)
 
 	plaintext := []byte("super-secret-material")
@@ -105,7 +105,7 @@ func TestSecretSealer_UnsealIntoReallocatesWhenTheBufferIsShort(t *testing.T) {
 // A truncated envelope must be reported rather than producing a negative length
 // that a caller would carry into an allocation.
 func TestSecretSealer_PlaintextLenRejectsATruncatedEnvelope(t *testing.T) {
-	s, err := NewSecretSealer([]byte("a-test-secret"))
+	s, err := NewSecretSealer([]byte("a-test-secret-16-bytes"))
 	require.NoError(t, err)
 
 	_, err = s.PlaintextLen(&types.SealedData{
@@ -126,7 +126,7 @@ func TestSecretSealer_PlaintextLenRejectsATruncatedEnvelope(t *testing.T) {
 // mock was written to.
 func TestSecretSealer_UnsealIntoFailsClosedOnTamperingAndBadInput(t *testing.T) {
 	ctx := context.Background()
-	s, err := NewSecretSealer([]byte("a-test-secret"))
+	s, err := NewSecretSealer([]byte("a-test-secret-16-bytes"))
 	require.NoError(t, err)
 
 	plaintext := []byte("super-secret-material")

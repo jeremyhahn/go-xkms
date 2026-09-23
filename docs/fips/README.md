@@ -361,6 +361,52 @@ refused: arbitrary-IV GCM is what the mode forbids, on `Open` exactly as on
 the ciphertext was never rewritten, and a process that can construct
 arbitrary-IV GCM (the default, and `fips140=on`) still opens it.
 
+## Panics the stdlib raises instead of returning an error (#23)
+
+Most FIPS 140-only refusals in the Go standard library return an `error` a
+caller can handle. A few APIs predate that convention, or have no error
+return to give the refusal in the first place, and **panic** instead:
+
+| API | Panics when |
+|-----|-------------|
+| `golang.org/x/crypto/hkdf.New`/`.Extract` (wraps `crypto/hkdf.Extract`) | HKDF input keying material is under 112 bits, or the hash is not SHA-2/SHA-3 |
+| `crypto/sha1.Sum`, `(*digest).Sum` | Always, under `fips140=only` |
+| `golang.org/x/crypto/pbkdf2.Key` (wraps `crypto/pbkdf2.Key`) | PBKDF2 salt is under 128 bits |
+| `crypto/hmac.New` | HMAC key is under 112 bits, or the hash is not SHA-2/SHA-3 (no error return exists to use instead) |
+| `crypto/cipher.NewCFBEncrypter`/`NewCFBDecrypter` | Always, under `fips140=only` |
+
+A production call site reaching one of these with attacker- or
+operator-supplied input crashes the whole process on one bad request, not
+just that request -- measured against `pkg/ca`'s OCSP responder (an
+ordinary, RFC 6960-default SHA-1 request) and `pkg/acme/server/handlers`'s
+EAB verifier (a merely-short operator-provisioned HMAC key), both reachable
+without authentication. Two dispositions apply, and no third one does — this
+repository does not maintain a pre-flight length/algorithm check as a
+substitute for either:
+
+- **The stdlib has a modern, error-returning equivalent.** `crypto/hkdf.Key`
+  (Go 1.24+) replaces `golang.org/x/crypto/hkdf.New`; every production HKDF
+  call site in this repository (`pkg/crypto/kdf`, `pkg/crypto/ecdh`,
+  `pkg/crypto/x25519`, `pkg/seal`, `pkg/trust/clusterca`,
+  `pkg/keyprovider/pkcs8`) uses it. `github.com/youmark/pkcs8`'s default
+  8-byte PBKDF2 salt is replaced with an explicit 16-byte
+  `pkcs8.PBKDF2Opts` in `pkg/encoding` and `pkg/keyprovider/pkcs8` instead --
+  the salt size is a caller-supplied option, not a construction with no
+  error-returning alternative.
+- **No such equivalent exists** (`crypto/sha1.Sum`, `crypto/hmac.New`,
+  `crypto/cipher` CFB). The call is wrapped in a function-local
+  `recover`/typed-error boundary at the point that calls it --
+  `pkg/ca.tbsCertificateDigest` (X.509 signature verification, SHA-1 or
+  MD5), `pkg/acme/server/handlers.extendPCR` (TPM event-log PCR replay,
+  SHA-1 bank) and `.computeHMAC` (EAB MAC verification) -- converting the
+  panic into the same typed error the function already returns for an
+  ordinary verification failure, per Effective Go's guidance that `recover`
+  belongs at a boundary that turns a panic into an error return. This is not
+  a blanket recover: each one sits immediately around the single call that
+  can panic, in a function whose contract is already "verify and return
+  ok/error," so a genuinely unexpected panic elsewhere in the same package
+  still crashes the process as it should.
+
 ## See Also
 
 - [Weak hash policy](../crypto/weak-hashes.md) -- signature-side digest policy

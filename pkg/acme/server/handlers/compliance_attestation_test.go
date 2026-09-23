@@ -21,6 +21,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -639,6 +640,16 @@ func TestExtendPCR(t *testing.T) {
 		digest[0] = 0xAB
 
 		result, err := extendPCR(current, digest, TCGAlgSHA1)
+		if fips140.Enforced() {
+			// A SHA-1 PCR bank cannot be verified under GODEBUG=fips140=only
+			// (see extendPCR's FIPS 140-only comment, go-xkms#23): the
+			// construction that used to panic now returns
+			// ErrUnsupportedHashAlgorithm cleanly instead.
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrUnsupportedHashAlgorithm)
+			assert.Nil(t, result)
+			return
+		}
 		require.NoError(t, err)
 		assert.Len(t, result, 20)
 		// Result should not be all zeros

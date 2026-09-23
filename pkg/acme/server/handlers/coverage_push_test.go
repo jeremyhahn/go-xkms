@@ -1351,7 +1351,11 @@ func TestCoveragePush_VerifyMAC_UnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestCoveragePush_VerifyMAC_InvalidSignatureBase64(t *testing.T) {
-	err := verifyMAC("HS256", []byte("key"), []byte("message"), "invalid base64!")
+	// 32 bytes: a real EAB key is never this short, and crypto/hmac refuses
+	// any key under 112 bits (14 bytes) under GODEBUG=fips140=only, which
+	// would otherwise report the wrong cause for this bad-base64 signature.
+	key := []byte("32-byte-eab-hmac-key-for-tests!!")
+	err := verifyMAC("HS256", key, []byte("message"), "invalid base64!")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode signature")
 }

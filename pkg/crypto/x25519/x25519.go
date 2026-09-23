@@ -15,14 +15,12 @@ package x25519
 
 import (
 	"crypto/ecdh"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
-	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
-
-	"golang.org/x/crypto/hkdf"
 )
 
 // KeyPair represents an X25519 key pair.
@@ -135,12 +133,13 @@ func (ka *x25519KeyAgreement) DeriveKey(sharedSecret, salt, info []byte, keyLeng
 		return nil, &errs.Message{Msg: fmt.Sprintf("key length too large: %d (max 8160 bytes for HKDF-SHA256)", keyLength)}
 	}
 
-	// Use HKDF-SHA256 to derive the key
-	// This is the standard approach used by age and other modern protocols
-	reader := hkdf.New(sha256.New, sharedSecret, salt, info)
-
-	derivedKey := make([]byte, keyLength)
-	if _, err := io.ReadFull(reader, derivedKey); err != nil {
+	// Use HKDF-SHA256 to derive the key. crypto/hkdf.Key (the stdlib RFC 5869
+	// implementation, Go 1.24+) is used instead of the legacy
+	// golang.org/x/crypto/hkdf.New Reader: that constructor converts the
+	// stdlib's own FIPS 140-only refusals into a panic, which would crash
+	// this process instead of returning the error this method promises.
+	derivedKey, err := hkdf.Key(sha256.New, sharedSecret, salt, string(info), keyLength)
+	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to derive key", Err: err}
 	}
 
