@@ -136,7 +136,6 @@ Ordered "under active development first, then most often read":
 | Web console | [`web/`](web/) | 5 files |
 | Clustering | [`cluster/`](cluster/) | includes CA key custody |
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
-| Key migration | — | `pkg/migration`, `xkmsctl migrate`; no legacy doc exists |
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
 | Storage engines | [`storage/`](storage/) | File, PebbleDB, memory, and object storage backends |

@@ -1039,7 +1039,6 @@ func (t *Transport) GetTLSCertificate(ctx context.Context, backend, keyID string
 
 	return &transport.GetTLSCertificateResponse{
 		KeyID:          keyID,
-		PrivateKeyPEM:  resp.PrivateKeyPem,
 		CertificatePEM: resp.CertPem,
 		ChainPEM:       chainPEM,
 	}, nil

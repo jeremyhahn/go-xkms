@@ -2142,24 +2142,6 @@ func TestGetKeyNonExistent(t *testing.T) {
 	}
 }
 
-// TestEncodePrivateKeyToPEMWithECDSAP384 tests encoding P384 ECDSA key
-func TestEncodePrivateKeyToPEMWithECDSAP384(t *testing.T) {
-	// Generate P384 ECDSA key
-	privKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate ECDSA key: %v", err)
-	}
-
-	pem, err := encodePrivateKeyToPEM(privKey)
-	if err != nil {
-		t.Fatalf("encodePrivateKeyToPEM failed: %v", err)
-	}
-
-	if pem == "" {
-		t.Error("Expected non-empty PEM")
-	}
-}
-
 // TestListKeyFilteredByType tests ListKeys with key filtering
 func TestListKeyFilteredByType(t *testing.T) {
 	service := setupFinalGapsTest(t)

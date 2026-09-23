@@ -131,7 +131,7 @@ xkmsctl cert exists web-tls && echo present
 
 | Verb | Args | Purpose |
 |---|---|---|
-| `tls get <key-id>` | key id | Fetch the TLS certificate for a key, ready for a server |
+| `tls get <key-id>` | key id | Fetch the certificate and chain for a key. The private key is never returned: it stays in the backend that holds it |
 
 ```
 xkmsctl tls get web-tls -o json

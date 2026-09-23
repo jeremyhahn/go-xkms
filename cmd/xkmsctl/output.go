@@ -414,8 +414,9 @@ func (p *Printer) PrintCertChain(chain []*x509.Certificate) error {
 	}
 }
 
-// PrintTLSCertificate prints a TLS certificate (key + cert + chain)
-func (p *Printer) PrintTLSCertificate(key interface{}, cert *x509.Certificate, chain []*x509.Certificate) error {
+// PrintTLSCertificate prints a TLS certificate and its chain. The private
+// key is never included: it stays in the backend that holds it.
+func (p *Printer) PrintTLSCertificate(cert *x509.Certificate, chain []*x509.Certificate) error {
 	switch p.format {
 	case OutputFormatJSON:
 		certInfo := map[string]interface{}{
@@ -427,7 +428,6 @@ func (p *Printer) PrintTLSCertificate(key interface{}, cert *x509.Certificate, c
 			"dns_names":     cert.DNSNames,
 		}
 		result := map[string]interface{}{
-			"key_type":    fmt.Sprintf("%T", key),
 			"certificate": certInfo,
 		}
 		if len(chain) > 0 {
@@ -444,7 +444,6 @@ func (p *Printer) PrintTLSCertificate(key interface{}, cert *x509.Certificate, c
 		return p.printJSON(result)
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintln(p.writer, "TLS Certificate:")
-		_, _ = fmt.Fprintf(p.writer, "  Key Type: %T\n", key)
 		_, _ = fmt.Fprintf(p.writer, "  Subject: %s\n", cert.Subject.String())
 		_, _ = fmt.Fprintf(p.writer, "  Issuer: %s\n", cert.Issuer.String())
 		_, _ = fmt.Fprintf(p.writer, "  Valid From: %s\n", cert.NotBefore.String())

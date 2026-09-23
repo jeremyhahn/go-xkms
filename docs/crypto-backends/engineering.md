@@ -170,10 +170,9 @@ can be stricter than the backend's ceiling.
   duplication, each provider's BYOK ceremony) bind to a key object the
   backend itself manages, not an arbitrary public key handed to it by a
   caller, and refuse rather than emulate a wrap that never touches the
-  boundary the backend exists to preserve. `xkms.CopyKey` and
-  `pkg/migration`'s `defaultMigrator.MigrateKey` are the two callers: both
-  resolve the destination's import parameters first, then call the source's
-  `ExportKeyTo` with them, so a copy or migration across two distinct backend
+  boundary the backend exists to preserve. `xkms.CopyKey` is the only caller:
+  it resolves the destination's import parameters first, then calls the
+  source's `ExportKeyTo` with them, so a copy across two distinct backend
   registrations — not merely two tenant-scoped views of the same one — only
   succeeds when the material was genuinely wrapped for the destination
   (#154, #567).

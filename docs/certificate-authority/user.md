@@ -97,8 +97,10 @@ xkmsctl cert get-chain web-tls > web-chain.pem
 xkmsctl tls get web-tls -o json
 ```
 
-`tls get` is what a server process asks for at startup: the certificate plus
-whatever the key backend needs to use the private key.
+`tls get` returns the certificate and its chain only. The private key never
+leaves the backend that holds it — a server process signs and decrypts
+through that backend (or its own local key store), it never receives the key
+material over this call.
 
 ## Enrolling a device with a TPM
 

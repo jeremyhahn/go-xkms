@@ -50,6 +50,11 @@ type mockCertClient struct {
 	certExistsErr error
 	saveChainErr  error
 	getChainErr   error
+
+	// TLS certificate bundle (certificate + chain; the private key is never
+	// part of this response, by design — go-xkms#627).
+	tlsChains     map[string]string // keyID -> chain PEM
+	getTLSCertErr error
 }
 
 func newMockCertClient() *mockCertClient {
@@ -57,6 +62,7 @@ func newMockCertClient() *mockCertClient {
 		connected:         false,
 		certificates:      make(map[string]string),
 		certificateChains: make(map[string][]string),
+		tlsChains:         make(map[string]string),
 	}
 }
 
@@ -218,11 +224,18 @@ func (m *mockCertClient) GetCertificateChain(ctx context.Context, backend, keyID
 }
 
 func (m *mockCertClient) GetTLSCertificate(ctx context.Context, backend, keyID string) (*client.GetTLSCertificateResponse, error) {
+	if m.getTLSCertErr != nil {
+		return nil, m.getTLSCertErr
+	}
 	pem, ok := m.certificates[keyID]
 	if !ok {
 		return nil, errors.New("certificate not found")
 	}
-	return &client.GetTLSCertificateResponse{KeyID: keyID, CertificatePEM: pem}, nil
+	return &client.GetTLSCertificateResponse{
+		KeyID:          keyID,
+		CertificatePEM: pem,
+		ChainPEM:       m.tlsChains[keyID],
+	}, nil
 }
 
 func (m *mockCertClient) Seal(ctx context.Context, req *client.SealRequest) (*client.SealResponse, error) {

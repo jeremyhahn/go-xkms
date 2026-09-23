@@ -51,7 +51,7 @@ This document tracks the development progress of go-xkms.
 
 ### Key Management
 - [x] **Key Rotation** - Generate a replacement key of the same type, retiring the old one (`pkg/xkms/servicer_key.go`, `xkmsctl key rotate`)
-- [x] **Key Migration** - Cross-backend key migration (`pkg/migration/`)
+- [x] **Cross-backend key copy** - Copy an exportable key to another backend (`xkms.CopyKey`, `xkmsctl key copy`); non-exportable keys never leave their backend
 - [ ] **Key Versioning** - Version lifecycle (list/enable/disable individual and all versions). The RPCs are declared in `pkg/api/grpc/proto/xkmsv1/xkms.proto` and the Go SDK lists them, but no server implements them; rotation is the only version operation that currently ships.
 
 ### Security Infrastructure

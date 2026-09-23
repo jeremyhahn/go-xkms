@@ -723,10 +723,11 @@ type GetCertificateChainResponse struct {
 	ChainPEM []string `json:"chain_pem"`
 }
 
-// GetTLSCertificateResponse contains a TLS certificate bundle.
+// GetTLSCertificateResponse contains a TLS certificate and its chain. The
+// private key is never included: it stays in the backend that holds it
+// (go-xkms#627).
 type GetTLSCertificateResponse struct {
 	KeyID          string `json:"key_id"`
-	PrivateKeyPEM  string `json:"private_key_pem,omitempty"`
 	CertificatePEM string `json:"certificate_pem"`
 	ChainPEM       string `json:"chain_pem,omitempty"`
 }

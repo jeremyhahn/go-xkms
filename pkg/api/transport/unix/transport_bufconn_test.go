@@ -224,9 +224,8 @@ func (s *mockKeystoreServer) GetCertChain(_ context.Context, _ *pb.GetCertChainR
 
 func (s *mockKeystoreServer) GetTLSCertificate(_ context.Context, _ *pb.GetTLSCertificateRequest) (*pb.GetTLSCertificateResponse, error) {
 	return &pb.GetTLSCertificateResponse{
-		CertPem:       "-----BEGIN CERTIFICATE-----\ntls\n-----END CERTIFICATE-----",
-		PrivateKeyPem: "-----BEGIN PRIVATE KEY-----\ntls\n-----END PRIVATE KEY-----",
-		CertChainPem:  []string{"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----"},
+		CertPem:      "-----BEGIN CERTIFICATE-----\ntls\n-----END CERTIFICATE-----",
+		CertChainPem: []string{"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----"},
 	}, nil
 }
 
@@ -963,7 +962,7 @@ func TestGetTLSCertificate_Connected(t *testing.T) {
 	resp, err := tr.GetTLSCertificate(context.Background(), "software", "key-1")
 	require.NoError(t, err)
 	assert.Contains(t, resp.CertificatePEM, "CERTIFICATE")
-	assert.Contains(t, resp.PrivateKeyPEM, "PRIVATE KEY")
+	assert.Contains(t, resp.ChainPEM, "CERTIFICATE")
 }
 
 func TestSeal_Connected(t *testing.T) {

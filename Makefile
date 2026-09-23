@@ -1402,22 +1402,6 @@ test-importexport:
 	@echo "$(CYAN)→ Testing PKCS#11 backend import/export...$(RESET)"
 	@$(GO) test -tags=pkcs11 $(TEST_FLAGS) ./pkg/backend/pkcs11/... -run "Test.*Import|Test.*Export|TestCapabilities"
 
-.PHONY: test-migration
-## test-migration: Run key migration unit tests
-test-migration:
-	@echo "$(CYAN)→ Testing key migration package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/migration/...
-
-.PHONY: coverage-migration
-## coverage-migration: Generate coverage report for key migration package
-coverage-migration:
-	@echo "$(CYAN)→ Generating coverage report for key migration...$(RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/migration.out -covermode=atomic ./pkg/migration/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/migration.out -o $(COVERAGE_DIR)/migration.html
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/migration.html$(RESET)"
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/migration.out | grep total
-
 
 .PHONY: test-sdk-go
 ## test-sdk-go: Run Go SDK unit tests (separate module at sdk/go)

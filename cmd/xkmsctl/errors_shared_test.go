@@ -18,11 +18,5 @@ import "errors"
 // Sentinel errors shared across xkmsctl test files as underlying causes
 // injected into fakes and mocks.
 var (
-	errTestBackendCreation       = errors.New("backend creation failed")
-	errTestSourceBackendCreation = errors.New("source backend creation failed")
-	errTestDestBackendCreation   = errors.New("dest backend creation failed")
-	errTestExport                = errors.New("export failed")
-	errTestGetKeyOp              = errors.New("get key operation failed")
-	errTestListKeys              = errors.New("list keys failed")
-	errTestError                 = errors.New("test error")
+	errTestError = errors.New("test error")
 )

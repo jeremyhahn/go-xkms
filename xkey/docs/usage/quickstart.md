@@ -143,7 +143,7 @@ xkmsctl --tls-cert /etc/xkms/tls/admin.pem \
         admin status
 ```
 
-> **Deep dive**: [Authentication Configuration](../configuration/auth.md) | [TLS CLI Reference](cli/tls.md)
+> **Deep dive**: [Authentication Configuration](../configuration/auth.md) | [TLS CLI Reference](../../../docs/certificate-authority/cli.md)
 
 ---
 

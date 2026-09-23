@@ -15,8 +15,11 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -24,87 +27,80 @@ import (
 var tlsCmd = &cobra.Command{
 	Use:   "tls",
 	Short: "TLS certificate operations",
-	Long:  `Retrieve combined TLS certificates (key + certificate)`,
+	Long:  `Retrieve TLS certificates and their chains`,
 }
 
-// tlsGetCmd retrieves a TLS certificate (key + cert)
+// tlsGetCmd retrieves a TLS certificate and its chain
 var tlsGetCmd = &cobra.Command{
 	Use:   "get <key-id>",
 	Short: "Get a TLS certificate",
-	Long:  `Retrieve a complete TLS certificate combining the private key and X.509 certificate`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Retrieve the X.509 certificate and chain for a TLS key.
+
+The private key never leaves the backend that holds it: this command
+returns the certificate and chain only.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		keyID := args[0]
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		// Get flags
-		keyType, _ := cmd.Flags().GetString("key-type")
-		keyAlgorithm, _ := cmd.Flags().GetString("key-algorithm")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		curve, _ := cmd.Flags().GetString("curve")
-
-		getTLSCertLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve)
+		getTLSCert(cfg, printer, keyID)
 	},
 }
 
-// getTLSCertLocal retrieves a TLS certificate using local backend access.
-// This function is extracted for testability.
-func getTLSCertLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string) {
+// getTLSCert retrieves a TLS certificate and its chain through the SDK
+// client. The private key is intentionally never requested: it stays in
+// the backend that holds it.
+func getTLSCert(cfg *Config, printer *Printer, keyID string) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkms service")
 	printVerbose("Getting TLS certificate for key: %s", keyID)
 
-	// Create backend
-	be, err := cfg.CreateBackend()
-	if err != nil {
-		handleError(&WrappedError{Sentinel: ErrCreateBackendFailed, Err: err})
-		return
-	}
-	defer func() { _ = be.Close() }()
-
-	// Create certificate storage
-	certStorage, err := cfg.CreateCertStorage()
-	if err != nil {
-		handleError(&WrappedError{Sentinel: ErrCreateCertStorageFailed, Err: err})
-		return
-	}
-
-	// Build key attributes
-	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
-	if err != nil {
-		handleError(&WrappedError{Sentinel: ErrInvalidKeyParameters, Err: err})
-		return
-	}
-
-	// Get the private key
-	key, err := be.GetKey(context.Background(), attrs)
-	if err != nil {
-		handleError(&WrappedError{Sentinel: ErrGetKeyFailed, Err: err})
-		return
-	}
-
-	// Get the certificate
-	cert, err := certStorage.GetCert(context.Background(), keyID)
+	resp, err := cl.GetTLSCertificate(ctx, cfg.Backend, keyID)
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrGetCertificateFailed, Err: err})
 		return
 	}
 
-	// Get the certificate chain (optional)
-	chain, err := certStorage.GetCertChain(context.Background(), keyID)
-	if err != nil {
-		// Chain is optional, just use the leaf certificate
-		printVerbose("Certificate chain not found (this is OK): %v", err)
-		chain = nil
+	block, _ := pem.Decode([]byte(resp.CertificatePEM))
+	if block == nil {
+		handleError(ErrDecodeCertificatePEMFailed)
+		return
 	}
 
-	printVerbose("Key algorithm: %s", attrs.KeyAlgorithm)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrParseCertificateFailed, Err: err})
+		return
+	}
+
+	var chain []*x509.Certificate
+	if resp.ChainPEM != "" {
+		chain, err = client.DecodeCertificateChainPEM([]byte(resp.ChainPEM))
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrParseCertificateFailed, Err: err})
+			return
+		}
+	}
+
 	printVerbose("Certificate Subject: %s", cert.Subject.String())
 	if len(chain) > 0 {
 		printVerbose("Certificate chain length: %d", len(chain))
 	}
 
-	// Print the TLS certificate info
-	if err := printer.PrintTLSCertificate(key, cert, chain); err != nil {
+	if err := printer.PrintTLSCertificate(cert, chain); err != nil {
 		handleError(err)
 	}
 }
@@ -112,10 +108,4 @@ func getTLSCertLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 func init() {
 	// Add TLS subcommands
 	tlsCmd.AddCommand(tlsGetCmd)
-
-	// Flags for get command
-	tlsGetCmd.Flags().String("key-type", "tls", "Key type")
-	tlsGetCmd.Flags().String("key-algorithm", "rsa", "Key algorithm")
-	tlsGetCmd.Flags().Int("key-size", 2048, "Key size in bits (for RSA)")
-	tlsGetCmd.Flags().String("curve", "P-256", "Elliptic curve (for ECDSA: P-256, P-384, P-521)")
 }

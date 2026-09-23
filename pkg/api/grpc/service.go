@@ -1164,7 +1164,9 @@ func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertifica
 	}
 	certPem := encodeCertToPEM(leafCert)
 
-	// Convert certificate chain to PEM (excluding leaf)
+	// Convert certificate chain to PEM (excluding leaf). The private key
+	// (tlsCert.PrivateKey) is deliberately never encoded or returned here:
+	// it stays in the backend that holds it (go-xkms#627).
 	chainPem := make([]string, 0, len(tlsCert.Certificate)-1)
 	for i := 1; i < len(tlsCert.Certificate); i++ {
 		cert, err := x509.ParseCertificate(tlsCert.Certificate[i])
@@ -1174,16 +1176,9 @@ func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertifica
 		chainPem = append(chainPem, encodeCertToPEM(cert))
 	}
 
-	// Convert private key to PEM
-	privKeyPem, err := encodePrivateKeyToPEM(tlsCert.PrivateKey)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to encode private key: %v", err)
-	}
-
 	return &pb.GetTLSCertificateResponse{
-		CertPem:       certPem,
-		CertChainPem:  chainPem,
-		PrivateKeyPem: privKeyPem,
+		CertPem:      certPem,
+		CertChainPem: chainPem,
 	}, nil
 }
 
@@ -2295,38 +2290,6 @@ func encodeCertToPEM(cert *x509.Certificate) string {
 		Bytes: cert.Raw,
 	}
 	return string(pem.EncodeToMemory(pemBlock))
-}
-
-func encodePrivateKeyToPEM(privKey crypto.PrivateKey) (string, error) {
-	var pemType string
-	var keyBytes []byte
-	var err error
-
-	switch k := privKey.(type) {
-	case *rsa.PrivateKey:
-		pemType = "RSA PRIVATE KEY"
-		keyBytes = x509.MarshalPKCS1PrivateKey(k)
-	case *ecdsa.PrivateKey:
-		pemType = "EC PRIVATE KEY"
-		keyBytes, err = x509.MarshalECPrivateKey(k)
-		if err != nil {
-			return "", &errs.Message{Msg: fmt.Sprintf("failed to marshal ECDSA key: %v", err)}
-		}
-	case ed25519.PrivateKey:
-		pemType = "PRIVATE KEY"
-		keyBytes, err = x509.MarshalPKCS8PrivateKey(k)
-		if err != nil {
-			return "", &errs.Message{Msg: fmt.Sprintf("failed to marshal Ed25519 key: %v", err)}
-		}
-	default:
-		return "", &errs.Message{Msg: fmt.Sprintf("unsupported private key type: %T", privKey)}
-	}
-
-	pemBlock := &pem.Block{
-		Type:  pemType,
-		Bytes: keyBytes,
-	}
-	return string(pem.EncodeToMemory(pemBlock)), nil
 }
 
 // lookupBackend retrieves a backend by name, delegating to s.xkmsService when

@@ -252,60 +252,6 @@ func TestEncodeCertToPEM(t *testing.T) {
 	}
 }
 
-func TestEncodePrivateKeyToPEM(t *testing.T) {
-	t.Run("RSA key", func(t *testing.T) {
-		privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("Failed to generate RSA key: %v", err)
-		}
-
-		pem, err := encodePrivateKeyToPEM(privKey)
-		if err != nil {
-			t.Errorf("encodePrivateKeyToPEM failed: %v", err)
-		}
-		if !strings.Contains(pem, "BEGIN RSA PRIVATE KEY") {
-			t.Error("PEM does not contain RSA private key header")
-		}
-	})
-
-	t.Run("ECDSA key", func(t *testing.T) {
-		privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("Failed to generate ECDSA key: %v", err)
-		}
-
-		pem, err := encodePrivateKeyToPEM(privKey)
-		if err != nil {
-			t.Errorf("encodePrivateKeyToPEM failed: %v", err)
-		}
-		if !strings.Contains(pem, "BEGIN EC PRIVATE KEY") {
-			t.Error("PEM does not contain EC private key header")
-		}
-	})
-
-	t.Run("Ed25519 key", func(t *testing.T) {
-		_, privKey, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatalf("Failed to generate Ed25519 key: %v", err)
-		}
-
-		pem, err := encodePrivateKeyToPEM(privKey)
-		if err != nil {
-			t.Errorf("encodePrivateKeyToPEM failed: %v", err)
-		}
-		if !strings.Contains(pem, "BEGIN PRIVATE KEY") {
-			t.Error("PEM does not contain private key header")
-		}
-	})
-
-	t.Run("Unsupported key type", func(t *testing.T) {
-		_, err := encodePrivateKeyToPEM("invalid-key")
-		if err == nil {
-			t.Error("Expected error for unsupported key type")
-		}
-	})
-}
-
 func TestAlgorithmString(t *testing.T) {
 	tests := []struct {
 		name     string

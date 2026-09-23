@@ -335,12 +335,6 @@ var (
 	// against nothing, or against a second principal keyed by that string.
 	ErrLoginKeyNotEmail = errors.New("the login key must be an email address: the server resolves the account by its canonical email login key")
 
-	// ErrCreateBackendFailed is the sentinel error "failed to create backend".
-	ErrCreateBackendFailed = errors.New("failed to create backend")
-
-	// ErrCreateCertStorageFailed is the sentinel error "failed to create cert storage".
-	ErrCreateCertStorageFailed = errors.New("failed to create cert storage")
-
 	// ErrCreateCertificateFailed is the sentinel error "failed to create certificate".
 	ErrCreateCertificateFailed = errors.New("failed to create certificate")
 
@@ -353,9 +347,6 @@ var (
 	// ErrCreateCustodianGroupFailed is the sentinel error "failed to create custodian group".
 	ErrCreateCustodianGroupFailed = errors.New("failed to create custodian group")
 
-	// ErrCreateDestinationBackendFailed is the sentinel error "failed to create destination backend".
-	ErrCreateDestinationBackendFailed = errors.New("failed to create destination backend")
-
 	// ErrCreateExportDirectoryFailed is the sentinel error "failed to create export directory".
 	ErrCreateExportDirectoryFailed = errors.New("failed to create export directory")
 
@@ -364,12 +355,6 @@ var (
 
 	// ErrCreateFROSTBackendFailed is the sentinel error "failed to create FROST backend".
 	ErrCreateFROSTBackendFailed = errors.New("failed to create FROST backend")
-
-	// ErrCreateMigrationPlanFailed is the sentinel error "failed to create migration plan".
-	ErrCreateMigrationPlanFailed = errors.New("failed to create migration plan")
-
-	// ErrCreateMigratorFailed is the sentinel error "failed to create migrator".
-	ErrCreateMigratorFailed = errors.New("failed to create migrator")
 
 	// ErrCreateOutputDirectoryFailed is the sentinel error "failed to create output directory".
 	ErrCreateOutputDirectoryFailed = errors.New("failed to create output directory")
@@ -388,15 +373,6 @@ var (
 
 	// ErrCreateSecretStorageFailed is the sentinel error "failed to create secret storage".
 	ErrCreateSecretStorageFailed = errors.New("failed to create secret storage")
-
-	// ErrCreateSoftwareBackendFailed is the sentinel error "failed to create software backend".
-	ErrCreateSoftwareBackendFailed = errors.New("failed to create software backend")
-
-	// ErrCreateSourceBackendFailed is the sentinel error "failed to create source backend".
-	ErrCreateSourceBackendFailed = errors.New("failed to create source backend")
-
-	// ErrCreateStorageBackendFailed is the sentinel error "failed to create storage backend".
-	ErrCreateStorageBackendFailed = errors.New("failed to create storage backend")
 
 	// ErrCreateTenantFailed is the sentinel error "failed to create tenant".
 	ErrCreateTenantFailed = errors.New("failed to create tenant")
@@ -532,9 +508,6 @@ var (
 
 	// ErrFinishRegistrationFailed is the sentinel error "failed to finish registration".
 	ErrFinishRegistrationFailed = errors.New("failed to finish registration")
-
-	// ErrFromToFlagsRequired is the sentinel error "both --from and --to flags are required".
-	ErrFromToFlagsRequired = errors.New("both --from and --to flags are required")
 
 	// ErrFrostAttributesRequired is the sentinel error returned by the
 	// file-backed FROST secret store's Signer/Decrypter when attrs carries no
@@ -689,9 +662,6 @@ var (
 	// ErrInvalidKeyAlgorithm is the sentinel error "invalid key algorithm".
 	ErrInvalidKeyAlgorithm = errors.New("invalid key algorithm")
 
-	// ErrInvalidKeyParameters is the sentinel error "invalid key parameters".
-	ErrInvalidKeyParameters = errors.New("invalid key parameters")
-
 	// ErrInvalidKeyType is the sentinel error "invalid key type".
 	ErrInvalidKeyType = errors.New("invalid key type")
 
@@ -715,9 +685,6 @@ var (
 
 	// ErrIssueEKCertificateFailed is the sentinel error "failed to issue EK certificate".
 	ErrIssueEKCertificateFailed = errors.New("failed to issue EK certificate")
-
-	// ErrKeyIDFromToFlagsRequired is the sentinel error "--key-id, --from, and --to flags are required".
-	ErrKeyIDFromToFlagsRequired = errors.New("--key-id, --from, and --to flags are required")
 
 	// ErrKeyInputRequired is the sentinel error "either --key-file or --key-hex is required".
 	ErrKeyInputRequired = errors.New("either --key-file or --key-hex is required")
@@ -785,9 +752,6 @@ var (
 
 	// ErrMessageInputRequired is the sentinel error "one of --message, --message-file, or --message-hex is required".
 	ErrMessageInputRequired = errors.New("one of --message, --message-file, or --message-hex is required")
-
-	// ErrMigrationFailed is the sentinel error "migration failed".
-	ErrMigrationFailed = errors.New("migration failed")
 
 	// ErrModuleIDRequired is the sentinel error "--module-id is required".
 	ErrModuleIDRequired = errors.New("--module-id is required")
@@ -1010,9 +974,6 @@ var (
 
 	// ErrUserPINRequired is the sentinel error "--user-pin is required".
 	ErrUserPINRequired = errors.New("--user-pin is required")
-
-	// ErrValidationFailed is the sentinel error "validation failed".
-	ErrValidationFailed = errors.New("validation failed")
 
 	// ErrVerifySOPINFailed is the sentinel error "failed to verify SO PIN".
 	ErrVerifySOPINFailed = errors.New("failed to verify SO PIN")
@@ -1635,16 +1596,6 @@ type ParticipantPackageNotFoundError struct {
 func (e *ParticipantPackageNotFoundError) Error() string {
 	return fmt.Sprintf("package for participant %d not found", e.ID)
 }
-
-// MigrationResultError carries a per-key failure message reported in a
-// migration result.
-type MigrationResultError struct {
-	// Message is the failure message reported by the migrator.
-	Message string
-}
-
-// Error returns the reported failure message.
-func (e *MigrationResultError) Error() string { return e.Message }
 
 // UserHandleTypeError is returned when a WebAuthn user handle has an
 // unexpected dynamic type.

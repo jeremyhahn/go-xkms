@@ -1735,17 +1735,18 @@ message GetCertChainResponse {
   repeated string cert_chain_pem = 1;
 }
 
-// GetTLSCertificateRequest requests a TLS certificate with private key
+// GetTLSCertificateRequest requests a TLS certificate and its chain
 message GetTLSCertificateRequest {
   string key_id = 1;
   string backend = 2;
 }
 
-// GetTLSCertificateResponse contains the TLS certificate and private key
+// GetTLSCertificateResponse contains the TLS certificate and its chain.
+// The private key never travels on this response: it stays in the backend
+// that holds it (go-xkms#627).
 message GetTLSCertificateResponse {
   string cert_pem = 1;
   repeated string cert_chain_pem = 2;
-  string private_key_pem = 3;
 }
 
 // GetImportParametersRequest requests parameters needed to import a key

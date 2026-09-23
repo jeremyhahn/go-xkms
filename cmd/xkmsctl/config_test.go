@@ -14,13 +14,8 @@
 package main
 
 import (
-	"context"
-	"crypto"
-	"errors"
-	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -98,20 +93,6 @@ func TestConfig_IsRemote(t *testing.T) {
 				t.Errorf("IsRemote() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestConfig_CreateCertStorage(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := NewConfig()
-	cfg.KeyDir = tmpDir
-
-	certStorage, err := cfg.CreateCertStorage()
-	if err != nil {
-		t.Fatalf("CreateCertStorage() returned error: %v", err)
-	}
-	if certStorage == nil {
-		t.Fatal("CreateCertStorage() returned nil")
 	}
 }
 
@@ -465,22 +446,6 @@ func TestConfig_Fields(t *testing.T) {
 	}
 }
 
-func TestConfig_CreateCertStorage_WithTempDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	keyDir := filepath.Join(tmpDir, "certs")
-
-	cfg := NewConfig()
-	cfg.KeyDir = keyDir
-
-	certStorage, err := cfg.CreateCertStorage()
-	if err != nil {
-		t.Fatalf("CreateCertStorage() returned error: %v", err)
-	}
-	if certStorage == nil {
-		t.Fatal("CreateCertStorage() returned nil")
-	}
-}
-
 // ============================================================================
 // Protocol-based client creation tests
 // ============================================================================
@@ -593,132 +558,6 @@ func TestConfig_CreateClientFromProtocol_WithCustomServer(t *testing.T) {
 	}
 	if cl == nil {
 		t.Fatal("CreateClient() returned nil")
-	}
-}
-
-// ============================================================================
-// CreateBackend tests
-// ============================================================================
-
-// configTestBackend implements types.KeyProvider for config tests
-type configTestBackend struct{}
-
-func (m *configTestBackend) Type() types.BackendType {
-	return types.BackendTypeSoftware
-}
-func (m *configTestBackend) Capabilities() types.Capabilities {
-	return types.Capabilities{}
-}
-func (m *configTestBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return nil, nil
-}
-func (m *configTestBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	return nil, nil
-}
-func (m *configTestBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	return nil
-}
-func (m *configTestBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
-	return nil, nil
-}
-func (m *configTestBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
-	return nil, nil
-}
-func (m *configTestBackend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	return nil, nil
-}
-func (m *configTestBackend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) error {
-	return nil
-}
-func (m *configTestBackend) Close() error {
-	return nil
-}
-
-func TestConfig_CreateBackend_WithFactory(t *testing.T) {
-	mockBe := &configTestBackend{}
-
-	cfg := NewConfig()
-	cfg.BackendFactory = func(c *Config) (types.KeyProvider, error) {
-		return mockBe, nil
-	}
-
-	backend, err := cfg.CreateBackend()
-	if err != nil {
-		t.Fatalf("CreateBackend() returned error: %v", err)
-	}
-	if backend != mockBe {
-		t.Error("CreateBackend() should return the injected mock backend")
-	}
-}
-
-func TestConfig_CreateBackend_FactoryError(t *testing.T) {
-	expectedErr := errors.New("backend factory failed")
-
-	cfg := NewConfig()
-	cfg.BackendFactory = func(c *Config) (types.KeyProvider, error) {
-		return nil, expectedErr
-	}
-
-	_, err := cfg.CreateBackend()
-	if err == nil {
-		t.Fatal("CreateBackend() should return error from factory")
-	}
-	if err != expectedErr {
-		t.Errorf("CreateBackend() error = %v, want %v", err, expectedErr)
-	}
-}
-
-func TestConfig_CreateBackend_DefaultPath_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := NewConfig()
-	cfg.KeyDir = tmpDir
-	cfg.BackendFactory = nil // Use default path
-
-	backend, err := cfg.CreateBackend()
-	if err != nil {
-		t.Fatalf("CreateBackend() returned error: %v", err)
-	}
-	if backend == nil {
-		t.Fatal("CreateBackend() returned nil backend")
-	}
-	defer func() { _ = backend.Close() }()
-}
-
-func TestConfig_CreateBackend_InvalidPath(t *testing.T) {
-	cfg := NewConfig()
-	cfg.KeyDir = "/dev/null/invalid/path"
-	cfg.BackendFactory = nil // Use default path
-
-	_, err := cfg.CreateBackend()
-	if err == nil {
-		t.Fatal("CreateBackend() should return error for invalid path")
-	}
-}
-
-func TestConfig_CreateBackend_FactoryReceivesConfig(t *testing.T) {
-	var receivedCfg *Config
-
-	cfg := NewConfig()
-	cfg.Backend = "test-backend"
-	cfg.KeyDir = "/custom/path"
-	cfg.BackendFactory = func(c *Config) (types.KeyProvider, error) {
-		receivedCfg = c
-		return &configTestBackend{}, nil
-	}
-
-	_, err := cfg.CreateBackend()
-	if err != nil {
-		t.Fatalf("CreateBackend() returned error: %v", err)
-	}
-	if receivedCfg != cfg {
-		t.Error("BackendFactory should receive the same config")
-	}
-	if receivedCfg.Backend != "test-backend" {
-		t.Errorf("BackendFactory received Backend = %v, want test-backend", receivedCfg.Backend)
-	}
-	if receivedCfg.KeyDir != "/custom/path" {
-		t.Errorf("BackendFactory received KeyDir = %v, want /custom/path", receivedCfg.KeyDir)
 	}
 }
 

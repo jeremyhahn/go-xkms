@@ -22,12 +22,6 @@ import (
 // This allows dependency injection for testing.
 type ClientFactory func(cfg *Config) (client.Client, error)
 
-// BackendFactory is a function that creates a types.KeyProvider. This allows
-// dependency injection for testing backend operations.
-//
-// Deprecated: Use ClientFactory with Protocol="embedded" instead.
-type BackendFactory func(cfg *Config) (client.KeyProvider, error)
-
 // DefaultTransport is the canonical default transport for xkmsctl. The
 // value is "unix" so the CLI talks to the local xkmsd via the Unix
 // domain socket out of the box, mirroring qrdbctl / quicbaas /
@@ -115,13 +109,6 @@ type Config struct {
 	// ClientFactory allows injecting a custom client factory for testing.
 	// If nil, the default client creation logic is used.
 	ClientFactory ClientFactory
-
-	// BackendFactory allows injecting a custom backend factory for testing.
-	// If nil, the default backend creation logic is used.
-	//
-	// Deprecated: Use ClientFactory with Protocol="embedded" instead for
-	// SDK-based access.
-	BackendFactory BackendFactory
 }
 
 // NewConfig creates a new Config with default values. The transport
@@ -143,46 +130,6 @@ func NewConfig() *Config {
 // without network communication.
 func (c *Config) IsLocal() bool {
 	return c.Protocol == "embedded"
-}
-
-// CreateBackend creates a backend for embedded mode operations. If
-// BackendFactory is set, it uses that factory instead.
-//
-// Deprecated: Use CreateClient() with Protocol="embedded" instead for
-// SDK-based access.
-func (c *Config) CreateBackend() (client.KeyProvider, error) {
-	// Use injected backend factory if available (for testing)
-	if c.BackendFactory != nil {
-		return c.BackendFactory(c)
-	}
-
-	// Create file-based storage backend via the SDK.
-	storageBackend, err := client.NewFileStorageBackend(c.KeyDir)
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrCreateStorageBackendFailed, Err: err}
-	}
-
-	// Create software backend (unified asymmetric + symmetric with import/export support)
-	softwareBackend, err := client.NewSoftwareBackend(&client.SoftwareBackendConfig{
-		KeyStorage: storageBackend,
-	})
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrCreateSoftwareBackendFailed, Err: err}
-	}
-
-	return softwareBackend, nil
-}
-
-// CreateCertStorage creates certificate storage based on the configuration
-func (c *Config) CreateCertStorage() (*client.StorageCertAdapter, error) {
-	// Create file-based storage backend via the SDK.
-	storageBackend, err := client.NewFileStorageBackend(c.KeyDir)
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrCreateStorageBackendFailed, Err: err}
-	}
-
-	// Wrap in a CertAdapter for certificate-specific operations
-	return client.NewStorageCertAdapter(storageBackend), nil
 }
 
 // IsRemote returns true if the configuration specifies an explicit server URL.

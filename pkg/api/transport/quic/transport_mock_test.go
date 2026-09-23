@@ -96,7 +96,7 @@ func mockHandler() http.Handler {
 				respond(transport.GetCertificateChainResponse{ChainPEM: []string{"cert-pem"}})
 			}
 		case strings.HasPrefix(path, "/api/v1/tls/"):
-			respond(transport.GetTLSCertificateResponse{CertificatePEM: "cert", PrivateKeyPEM: "key", ChainPEM: "chain"})
+			respond(transport.GetTLSCertificateResponse{CertificatePEM: "cert", ChainPEM: "chain"})
 		case strings.HasPrefix(path, "/api/v1/certs") && strings.HasSuffix(path, "/exists"):
 			w.WriteHeader(http.StatusOK)
 		case strings.HasPrefix(path, "/api/v1/certs") && r.Method == http.MethodGet && !strings.HasSuffix(path, "/certs"):

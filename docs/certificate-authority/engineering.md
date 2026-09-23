@@ -232,8 +232,7 @@ REST routes for the CA group are gated by the `hasCA` predicate in
 - Attestation blobs are keyed by AK key attributes and blob type.
 
 Compatibility: certificate encodings are standards-defined and stable. The
-store layout is internal, and a change to it needs a migration
-(`pkg/migration`).
+store layout is internal, and a change to it needs a data migration.
 
 ### CRL persistence (#275)
 

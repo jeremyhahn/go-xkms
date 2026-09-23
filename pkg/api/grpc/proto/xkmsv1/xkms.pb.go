@@ -5613,7 +5613,7 @@ func (x *GetCertChainResponse) GetCertChainPem() []string {
 	return nil
 }
 
-// GetTLSCertificateRequest requests a TLS certificate with private key
+// GetTLSCertificateRequest requests a TLS certificate and its chain
 type GetTLSCertificateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
@@ -5666,12 +5666,13 @@ func (x *GetTLSCertificateRequest) GetBackend() string {
 	return ""
 }
 
-// GetTLSCertificateResponse contains the TLS certificate and private key
+// GetTLSCertificateResponse contains the TLS certificate and its chain.
+// The private key never travels on this response: it stays in the backend
+// that holds it (go-xkms#627).
 type GetTLSCertificateResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CertPem       string                 `protobuf:"bytes,1,opt,name=cert_pem,json=certPem,proto3" json:"cert_pem,omitempty"`
 	CertChainPem  []string               `protobuf:"bytes,2,rep,name=cert_chain_pem,json=certChainPem,proto3" json:"cert_chain_pem,omitempty"`
-	PrivateKeyPem string                 `protobuf:"bytes,3,opt,name=private_key_pem,json=privateKeyPem,proto3" json:"private_key_pem,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5718,13 +5719,6 @@ func (x *GetTLSCertificateResponse) GetCertChainPem() []string {
 		return x.CertChainPem
 	}
 	return nil
-}
-
-func (x *GetTLSCertificateResponse) GetPrivateKeyPem() string {
-	if x != nil {
-		return x.PrivateKeyPem
-	}
-	return ""
 }
 
 // GetImportParametersRequest requests parameters needed to import a key
@@ -20323,11 +20317,10 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x0ecert_chain_pem\x18\x01 \x03(\tR\fcertChainPem\"K\n" +
 	"\x18GetTLSCertificateRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
-	"\abackend\x18\x02 \x01(\tR\abackend\"\x84\x01\n" +
+	"\abackend\x18\x02 \x01(\tR\abackend\"\\\n" +
 	"\x19GetTLSCertificateResponse\x12\x19\n" +
 	"\bcert_pem\x18\x01 \x01(\tR\acertPem\x12$\n" +
-	"\x0ecert_chain_pem\x18\x02 \x03(\tR\fcertChainPem\x12&\n" +
-	"\x0fprivate_key_pem\x18\x03 \x01(\tR\rprivateKeyPem\"\xfa\x01\n" +
+	"\x0ecert_chain_pem\x18\x02 \x03(\tR\fcertChainPem\"\xfa\x01\n" +
 	"\x1aGetImportParametersRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12-\n" +

@@ -23,9 +23,8 @@ Key CLI topics:
 - [User Management](cli/user.md) - User account operations and permissions
 - [Administrator Management](cli/admin.md) - Administrative operations and controls
 - [FIDO2 Security Keys](cli/fido2.md) - Hardware security key operations
-- [Key Migration](cli/migrate.md) - Migrate keys between backends
 - [Threshold Signatures (FROST)](cli/frost.md) - Distributed threshold cryptography
-- [TLS Operations](cli/tls.md) - TLS certificate and key operations
+- [TLS Operations](../../../docs/certificate-authority/cli.md) - TLS certificate and chain retrieval (canonical: `docs/certificate-authority/`)
 
 ## Key Management
 

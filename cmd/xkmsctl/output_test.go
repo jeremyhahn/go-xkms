@@ -1099,7 +1099,7 @@ func TestPrintTLSCertificate_WithChain(t *testing.T) {
 			buf := &bytes.Buffer{}
 			printer := NewPrinter(format, buf)
 
-			err := printer.PrintTLSCertificate(leafKey, leafCert, chain)
+			err := printer.PrintTLSCertificate(leafCert, chain)
 			if err != nil {
 				t.Errorf("PrintTLSCertificate() error = %v", err)
 			}
@@ -1268,15 +1268,11 @@ func TestPrinterUnknownFormat_ReturnsError(t *testing.T) {
 	})
 
 	t.Run("PrintTLSCertificate", func(t *testing.T) {
-		privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("failed to generate key: %v", err)
-		}
 		cert := makeCert(t)
 		buf := &bytes.Buffer{}
 		printer := NewPrinter("unknown", buf)
 
-		err = printer.PrintTLSCertificate(privKey, cert, nil)
+		err := printer.PrintTLSCertificate(cert, nil)
 		if err == nil {
 			t.Error("PrintTLSCertificate: expected error for unknown format")
 		}

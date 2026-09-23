@@ -142,8 +142,8 @@ poisons all of them.
 
 **The declared EC curve is not compared against the key's own.** `ListKeys`
 reconstructs attributes from the storage identifier, which carries no curve,
-and reports P-256 for every ECDSA key; copy, migrate and PKCS#11 `C_UnwrapKey`
-all reach the validator through attributes built that way, so comparing curves
+and reports P-256 for every ECDSA key; copy and PKCS#11 `C_UnwrapKey` both
+reach the validator through attributes built that way, so comparing curves
 refuses working paths rather than catching wrong ones. A P-384 key can
 therefore be imported while declaring P-256. It is inert today — the curve is
 not part of the identifier and `Signer` recovers it from the DER — and go-xkms#156

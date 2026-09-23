@@ -222,7 +222,7 @@ The SDK provides 100% coverage of the XKMSService API:
 - `ListCertificates()` - List certificates
 - `SaveCertificateChain()` - Save certificate chain
 - `GetCertificateChain()` - Get certificate chain
-- `GetTLSCertificate()` - Get TLS certificate bundle
+- `GetTLSCertificate()` - Get a certificate and its chain by key ID (the private key stays in its backend)
 
 ### Import/Export
 - `ImportKey()` - Import a key

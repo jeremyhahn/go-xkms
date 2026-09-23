@@ -17,9 +17,6 @@ package grpc
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -872,31 +869,6 @@ func TestParseCertFromPEM_InvalidDER(t *testing.T) {
 
 func TestParseCertFromPEM_NoPEMBlock(t *testing.T) {
 	_, err := parseCertFromPEM("just a regular string with no PEM")
-	require.Error(t, err)
-}
-
-// ===================== encodePrivateKeyToPEM edge cases =====================
-
-func TestEncodePrivateKeyToPEM_RSAKey(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	pemStr, err := encodePrivateKeyToPEM(key)
-	require.NoError(t, err)
-	assert.Contains(t, pemStr, "RSA PRIVATE KEY")
-}
-
-func TestEncodePrivateKeyToPEM_ECDSAKey(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	pemStr, err := encodePrivateKeyToPEM(key)
-	require.NoError(t, err)
-	assert.Contains(t, pemStr, "EC PRIVATE KEY")
-}
-
-func TestEncodePrivateKeyToPEM_UnsupportedTypeError(t *testing.T) {
-	_, err := encodePrivateKeyToPEM("not-a-key")
 	require.Error(t, err)
 }
 
@@ -2328,7 +2300,6 @@ func TestGetTLSCertificate_SuccessPath(t *testing.T) {
 	})
 	if err == nil {
 		assert.NotEmpty(t, resp.CertPem)
-		assert.NotEmpty(t, resp.PrivateKeyPem)
 	}
 	// If error, the code still exercised GetTLSCertificate up to the error point
 }
@@ -3276,17 +3247,6 @@ func TestExportKeyMaterial_NonSymmetricKey(t *testing.T) {
 		Backend: "software",
 	})
 	require.Error(t, err)
-}
-
-// ===================== encodePrivateKeyToPEM Ed25519 =====================
-
-func TestEncodePrivateKeyToPEM_Ed25519(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	pemStr, err := encodePrivateKeyToPEM(priv)
-	require.NoError(t, err)
-	assert.Contains(t, pemStr, "PRIVATE KEY")
 }
 
 // ===================== WrapKey failure path =====================

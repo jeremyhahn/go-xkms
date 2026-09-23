@@ -229,7 +229,7 @@ Nonces are short-lived and single-use; their store is deliberately separate so
 expiry is cheap.
 
 Migration: the ACME object model is RFC-defined on the wire and internal in
-storage. Changing the storage layout requires a `pkg/migration` step.
+storage. Changing the storage layout requires a data migration step.
 
 ## Test strategy
 

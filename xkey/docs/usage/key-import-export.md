@@ -499,6 +499,5 @@ if err != nil {
 ## Related Documentation
 
 - [Backend Registry](../architecture/backend-registry.md)
-- [Key Migration Guide](key-migration.md)
 - [AWS KMS Backend](../backends/awskms.md)
 - [GCP KMS Backend](../backends/gcpkms.md)
