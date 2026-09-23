@@ -391,7 +391,8 @@ PKCS11_TEST_TIMEOUT ?= 10m
 XKMS_PKCS11_BACKENDS ?= software
 
 # Test configuration - include codec build tags for go-codec support
-TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator
+# Include frost tag for threshold signature scheme unit tests (issue #703)
+TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
 TEST_FLAGS := -v -race -timeout 30m -tags="$(TEST_TAGS)"
 # FIPS variant. The `fips` tag has to join the SAME -tags list rather than
 # arrive as a second flag: go test keeps only the last -tags it is given, so
@@ -949,12 +950,26 @@ test-scripts:
 
 .PHONY: test-go
 ## test-go: Run the Go unit tests with coverage
+# Package exclusions from this lane (issue #703 -- every other exclusion
+# regex used to carry was unjustified and has been removed; pkg/pkcs11/...,
+# pkg/crypto/rand, pkg/storage/hardware, pkg/keyprovider/quantum, pkg/quantum,
+# cmd/xkmsd and cmd/pkcs11-module all build and run under $(TEST_TAGS) with no
+# extra setup, so they run here now):
+#   pkg/tpm2$$             - the simulator suite links -lcrypto (go-tpm-tools);
+#                            this job's environment doesn't install
+#                            libssl-dev, only the dedicated tpm2-simulator job
+#                            does. Measured by `make coverage-tpm2-simulator`
+#                            and merged into the report by `coverage-packages`.
+#   /mocks, /testutil       - generated/hand-written test doubles, not
+#   pkcs11test, /proto        production code; excluded from the per-package
+#                              threshold report in scripts/check-coverage.sh
+#   yubikey, smartcardhsm   - tests that need physical hardware to exercise
 test-go: check-insecure-tls
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
 	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2$$|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand|/testutil|/frost$$|/proto|cmd/xkmsd|cmd/pkcs11-module|cmd/cgo|pkcs11test|yubikey|smartcardhsm)") \
+		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -990,7 +1005,7 @@ coverage-full:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
+		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/tpm2$$|/mocks|/testutil|/proto|pkcs11test|yubikey|smartcardhsm)") \
 		2>&1 | tee $(COVERAGE_DIR)/unit.log; \
 		unit_exit=$$?; \
 		if [ ! -f "$(COVERAGE_DIR)/unit.out" ] || [ ! -s "$(COVERAGE_DIR)/unit.out" ]; then \
@@ -1047,6 +1062,25 @@ coverage-report:
 	else \
 		echo "$(RED)✗ Coverage file not found. Run 'make test' first.$(RESET)"; \
 	fi
+
+
+.PHONY: coverage-threshold-check
+## coverage-threshold-check: Check per-package coverage against 90% threshold (issue #703)
+## Blocking: for local use, and the future CI gate once #704/#705/#706 close.
+coverage-threshold-check: coverage-packages
+	@bash scripts/check-coverage.sh 90 "$(COVERAGE_DIR)/all-packages.out"
+
+.PHONY: coverage-threshold-report
+## coverage-threshold-report: Report per-package coverage (non-blocking, for CI)
+coverage-threshold-report:
+	@if [ ! -f "$(COVERAGE_FILE)" ]; then \
+		echo "$(YELLOW)⚠ Coverage file not found. Skipping per-package report.$(RESET)"; \
+		exit 0; \
+	fi
+	@echo "$(CYAN)→ Per-package coverage report (90% threshold)...$(RESET)"
+	@echo ""
+	@$(MAKE) --no-print-directory coverage-packages || true
+	@bash scripts/check-coverage.sh 90 "$(COVERAGE_DIR)/all-packages.out" || true
 
 # ==============================================================================
 # Package-Specific Unit Tests
@@ -1383,6 +1417,54 @@ coverage-tpm2-simulator:
 bench-tpm2-simulator:
 	@echo "$(CYAN)→ Running tpm2 simulator benchmarks...$(RESET)"
 	@$(GO) test -timeout $(TPM2_SIMULATOR_TIMEOUT) -tags="$(TPM2_SIMULATOR_TAGS)" -bench=. -benchmem -run=^$$ ./pkg/tpm2/...
+
+# Packages that only exist, or only compile their production code paths,
+# behind the `pkcs11` build tag (issue #703): pkg/backend/pkcs11,
+# pkg/factor/pkcs11 and pkg/pivcert/pkcs11 have no buildable files at all
+# without it, and pkg/crypto/rand / pkg/storage/hardware each carry a
+# pkcs11.go alongside a `!pkcs11` stub, so the tagged build is the only way
+# to exercise the real implementation rather than the stub. None of this
+# needs a physical HSM: the suite runs against SoftHSM2 (miekg/pkcs11 dlopens
+# the module at runtime), which the `test` CI job already installs as an
+# unconditional cgo dependency of the module graph.
+PKCS11_TAGGED_TAGS := $(TEST_TAGS) pkcs11
+PKCS11_TAGGED_PKGS := ./pkg/backend/pkcs11/... ./pkg/factor/pkcs11/... ./pkg/pivcert/pkcs11/... ./pkg/crypto/rand/... ./pkg/storage/hardware/...
+
+.PHONY: test-pkcs11-tagged
+## test-pkcs11-tagged: Run the pkcs11-tag-gated unit suites against SoftHSM2
+test-pkcs11-tagged:
+	@echo "$(CYAN)→ Testing pkcs11-tagged packages...$(RESET)"
+	@CGO_ENABLED=1 $(GO) test -timeout 20m -tags="$(PKCS11_TAGGED_TAGS)" $(PKCS11_TAGGED_PKGS)
+	@echo "$(GREEN)✓ pkcs11-tagged tests passed$(RESET)"
+
+.PHONY: coverage-pkcs11-tagged
+## coverage-pkcs11-tagged: Generate a coverage report for the pkcs11-tag-gated packages
+coverage-pkcs11-tagged:
+	@echo "$(CYAN)→ Generating pkcs11-tagged coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@CGO_ENABLED=1 $(GO) test -timeout 20m -tags="$(PKCS11_TAGGED_TAGS)" \
+		-coverprofile=$(COVERAGE_DIR)/pkcs11-tagged.raw -covermode=atomic $(PKCS11_TAGGED_PKGS)
+	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/pkcs11-tagged.raw > $(COVERAGE_DIR)/pkcs11-tagged.out
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11-tagged.out -o $(COVERAGE_DIR)/pkcs11-tagged.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/pkcs11-tagged.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/pkcs11-tagged.html$(RESET)"
+
+.PHONY: coverage-packages
+## coverage-packages: Merge every per-package coverage lane (main unit lane,
+## tpm2 simulator, pkcs11-tagged) into one profile (issue #703). Requires
+## $(COVERAGE_FILE) to already exist -- run `make coverage` (or `test-go`)
+## first; this target only runs the lanes `test-go` cannot reach itself.
+coverage-packages: coverage-tpm2-simulator coverage-pkcs11-tagged
+	@if [ ! -f "$(COVERAGE_FILE)" ]; then \
+		echo "$(RED)✗ $(COVERAGE_FILE) not found -- run 'make coverage' first$(RESET)"; \
+		exit 1; \
+	fi
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "mode: atomic" > $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_FILE) >> $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_DIR)/tpm2-simulator.out >> $(COVERAGE_DIR)/all-packages.out
+	@tail -n +2 $(COVERAGE_DIR)/pkcs11-tagged.out >> $(COVERAGE_DIR)/all-packages.out
+	@echo "$(GREEN)✓ Merged coverage profile: $(COVERAGE_DIR)/all-packages.out$(RESET)"
 
 .PHONY: test-importexport
 ## test-importexport: Run import/export unit tests for all backends
@@ -2178,16 +2260,11 @@ integration-test-quantum:
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
 
 .PHONY: test-frost
-## test-frost: Run FROST unit tests
+## test-frost: Run FROST unit tests (always enabled, frost tag in TEST_TAGS)
 test-frost:
-ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST unit tests...$(RESET)"
-	@$(GOTEST) -v -tags="frost" ./pkg/keyprovider/frost/...
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/keyprovider/frost/...
 	@echo "$(GREEN)✓ FROST unit tests complete$(RESET)"
-else
-	@echo "$(YELLOW)⚠ Skipping FROST unit tests (WITH_FROST=0)$(RESET)"
-	@echo "$(YELLOW)  To enable, run: make test-frost WITH_FROST=1$(RESET)"
-endif
 
 .PHONY: integration-test-frost
 ## integration-test-frost: Run FROST threshold signature integration tests
