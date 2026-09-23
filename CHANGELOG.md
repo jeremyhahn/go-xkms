@@ -7,6 +7,211 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0-alpha] - 2026-09-22
+
+### Added
+
+- **Admin read capability for the trust-bootstrap listener's public keys, plus `xkmsctl bootstrap show-keys`.**
+  Since the bootstrap listener began generating or unsealing its own Noise_NK
+  and P-256 static keys (#35) and the deprecated config fields that used to
+  supply them were removed (#631), nothing reported the listener's public
+  key. `BootstrapListenerKeys` closes that gap: a `bootstrap:read`-gated,
+  admin-only read on every transport (REST `GET /api/v1/bootstrap/keys`,
+  gRPC/Unix `BootstrapListenerKeys`, QUIC the same JSON route, MCP
+  `bootstrap.showKeys`, and the embedded SDK) reports the hex-encoded public
+  key for each suite the listener currently offers, in exactly the form
+  `NoiseConfig.ServerStaticKey`/`ServerP256StaticKey` (and `--noise-key`/
+  `--p256-key`) already accept — there is no separate SPKI pin, since no
+  consumer in the stack hashes this key before pinning it; the raw public
+  key is the pin. Only public material ever crosses the boundary — the
+  private scalars stay in `pkg/server/bootstrap_key_custody.go`'s protected
+  memory — and a listener that has not finished starting, or is not
+  configured, answers the typed `xkms.ErrBootstrapListenerNotEnabled`
+  (503 / `Unavailable`) rather than a response with empty fields.
+  `xkmsctl bootstrap show-keys` (`--output json` for machine-readable
+  output) is the CLI surface; `test/integration/bootstrap` now discovers the
+  running server's key through it, pins it into a real `NoiseConfig`, and
+  completes a handshake, instead of relying on a pre-shared config value.
+
+### Removed
+
+- **BREAKING: `pkg/ca` no longer falls back to a single shared keystore for
+  every key, or to the object store for revocation/CRL persistence — both
+  compat paths are deleted outright.** Every CA constructor (`New`,
+  `NewParentCA`, `NewIntermediateCA`, `NewCA`, `NewFromMultiIdentityConfig`,
+  `NewHierarchicalCA`) now requires `Params.BackendForStore` /
+  `MultiIdentityParams.BackendForStore`; a nil factory returns the new
+  `ErrBackendForStoreRequired` instead of silently routing every key to
+  `Params.KeyStore` regardless of its declared `StoreType`. `resolveKeyBackend`
+  and `buildKeystoreMap` no longer have a legacy path: a `StoreType` missing
+  from the constructed `keystoreMap` returns `ErrKeyStoreRequired` rather than
+  falling back. A caller with one uniform backend for every key now states
+  that explicitly with a trivial factory (`func(cn string, st types.StoreType)
+  (xkms.Backend, error) { return backend, nil }`) instead of relying on an
+  implicit default.
+
+  `Params.RevocationStore` / `MultiIdentityParams.RevocationStore` are now
+  required; the new `ErrRevocationStoreRequired` replaces the silent fallback
+  to the object store or to in-memory-only revocation tracking.
+  `putRevocationBlob`, `getRevocationBlob`, `listRevocationBlobs`,
+  `putCRLBlob`, and `getCRLBlob` (`pkg/ca/ca_extensions.go`,
+  `pkg/ca/crl_persistence.go`) now talk to `revocationStore` unconditionally;
+  the object-store branches, the `(persisted bool, err error)` return shape
+  that reported an unpersisted write, and the directory-key skip guard that
+  branch needed are gone.
+
+  The redundant `Identity.KeystoreType` field (duplicated `Keys[0].StoreType`
+  in every caller) is deleted; `Identity.GetStoreType()` now derives from
+  `Keys[0].StoreType`, defaulting to `types.StoreSoftware` when unset.
+
+  Fixed a latent bug found while making `RevocationStore` mandatory:
+  `NewParentCA` and `NewIntermediateCA` (`pkg/ca/constructors.go`) built their
+  inner `New(&Params{...})` call without forwarding `params.RevocationStore`,
+  so any caller of those two constructors got in-memory-only revocation
+  tracking regardless of what it passed in `Params.RevocationStore`.
+
+  Production callers now wire `BackendForStore` explicitly:
+  `cmd/xkmsd/init_ceremony.go` (single software backend), `pkg/server/server.go`
+  (`s.backends[string(storeType)]`, extending the per-key routing the design
+  already called for but no in-repo caller had wired), and
+  `pkg/trust/clusterca/acme.go` (`p.opts.Backends(string(st))`).
+- **BREAKING: `pkg/ssh/known_hosts` no longer trusts or creates fingerprint-only
+  (v1) host-key pins — every pin now carries, and is matched against, the full
+  SSH wire-format public key.** `Store.Add` rejects a `*Pin` with no
+  `PublicKey` with the new `*PublicKeyRequiredError`, so a fingerprint-only
+  pin can no longer be created. `Verify` no longer compares
+  `keys.Fingerprint(received)` against `Pin.Fingerprint`; it compares
+  `received.Marshal()` against `Pin.PublicKey` byte-for-byte (the fingerprint
+  fields are still populated and still appear in `*MismatchError` for safe
+  logging, but they are no longer what decides trust). `decodeEnvelope`
+  (`pkg/ssh/known_hosts/store.go`) now returns the new `*LegacyPinError` for
+  any stored envelope that predates envelope v2 (no `pub` field) instead of
+  silently reconstructing a `Pin` with an empty `PublicKey` — `Get` and
+  `Verify` (single-host lookups) fail closed with it, telling the caller the
+  host must be re-pinned (`Store.Remove` then `Store.Add` with a current
+  `PinFromPublicKey`). `Store.List` skips a legacy pin rather than aborting
+  the whole scan, so one host needing re-pinning does not hide every other
+  pin in scope from discovery/export tooling. Every transport that creates a
+  pin now requires the full key too: `sdk/go/client/ssh.AddKnownHostRequest`
+  and `Pin` both gained a required `PublicKey` field (embedded transport
+  returns the new `*MissingPublicKeyError` / `*InvalidPublicKeyError` when
+  it's missing or unparsable); `xkmsctl ssh known-hosts add` dropped its
+  `--fingerprint`/`--algorithm` flags for `--key`/`--file`, which supply an
+  `authorized_keys`-format line; and the gRPC `SSHAddKnownHostRequest` /
+  `SSHPin` messages gained a `public_key` field so the gRPC transport can
+  carry it end to end (regenerated via `make proto`). `xkey ssh host-keys add`
+  dropped the same `--fingerprint`/`--algorithm` flags for `--key`/`--file`,
+  mirroring xkmsctl; xkey's own TOFU accept path (`pkg/ssh/console`, already
+  present in the root module) already pinned the full key it had in hand and
+  needed no change, and a repo-wide grep found no other xkey producer of a
+  known-hosts pin (GUI services, pairing, and `pkg/sshstore` never construct
+  one — they only route an already-full-key `*Pin` through the store).
+- **BREAKING: `pkg/backend/phone`'s attestation platform no longer defaults
+  to `"android"` — it must be set explicitly.** `Config.Validate()`
+  (`pkg/backend/phone/config.go`) previously defaulted an empty
+  `AttestationConfig.Platform` to `DefaultPlatform` ("android") "for
+  backward compatibility"; it now returns the new typed
+  `ErrMissingAttestationPlatform` instead. The `DefaultPlatform` constant is
+  deleted. A caller that configures `Config.Attestation` (attestation
+  verification is opt-in — a nil `Attestation` still skips verification
+  entirely, unchanged) must now name `Platform` explicitly ("android" or,
+  in future, "ios").
+- **`xkey/pkg/phone`'s `pkg/pairing` re-export shim is gone — BREAKING for
+  any external importer of the `phone.X` aliases.** `pairing_reexports.go`
+  (roughly 415 type, var, const and function aliases forwarding
+  `pkg/pairing`'s wire protocol under the `phone` package name) and the
+  `type Transport = pairing.Transport` alias in `transport.go` are deleted
+  outright (owner rule 2026-09-22: no backward compatibility). Every
+  in-tree caller that referenced a forwarded symbol as `phone.X` now
+  imports `xkey/pkg/pairing` and references `pairing.X` directly; symbols
+  the `phone` package genuinely owns (`PhoneKeyBackend`, `BLETransport`,
+  `USBTransport`, `TCPPairingServer`, `ScanResult`,
+  `BLECapableTransport`, `PeripheralRequestHandler`, and its own sentinel
+  errors) are unaffected and stay `phone.X`. `handshake_fingerprint_binding_test.go`,
+  which existed solely to pin the deleted re-export surface for #82, is
+  deleted with it — the regression it guarded against (a re-export that
+  silently stops forwarding) cannot recur once there is no re-export layer.
+  Rewritten: ~63 files across `xkey/cmd/xkey/cmd`, `xkey/pkg/gui/services`,
+  `xkey/test/integration/{ble,phone}`, and the root module's
+  `pkg/backend/phone`, `pkg/api/transport/usb`, `pkg/server`,
+  `cmd/xkmsctl`; plus ~25 files inside `xkey/pkg/phone` itself that used
+  the aliases unqualified. A consumer outside this repository that still
+  imports `phone.NoiseSession`, `phone.Request`, `phone.HandshakeConfig`,
+  `phone.MethodPing`, or any of the other forwarded protocol types must
+  switch to `xkey/pkg/pairing` directly; there is no compatibility path.
+- **BREAKING: the tenant "legacy path" that served CRUD and barrier
+  operations directly off `*seal.BarrierRegistry` when no `TenantService` was
+  composed is deleted — `TenantService` is now required everywhere a tenant
+  operation is served.** `pkg/xkms/servicer_tenant.go`
+  (`XKMSService.CreateTenant`, `GetTenant`, `ListTenants`, `DeleteTenant`,
+  `TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`) no longer
+  falls back to `s.barrierRegistry` when `s.tenantService` is nil; every one
+  now returns the typed `ErrTenantServiceNotConfigured`. `XKMSService`'s
+  `barrierRegistry` field and `SetBarrierRegistry` method, and the
+  `ErrBarrierRegistryNotConfigured` sentinel, are deleted along with the
+  three helper functions (`validateTenantStrategy`, `tenantInitCredentials`,
+  `tenantUnsealCredentials`) the deleted branches alone used.
+
+  `pkg/api/rest.NewTenantHandlers` now returns `(*TenantHandlers, error)`
+  instead of `*TenantHandlers`: it requires both `registry` and `svc`, and
+  requires `svc.TenantService()` to already be composed, rejecting a
+  barrier-registry-only configuration with the existing
+  `ErrTenantNotConfigured` at construction time rather than serving some
+  routes and 500ing others at request time. Every handler
+  (`CreateTenantHandler`, `ListTenantsHandler`, `GetTenantHandler`,
+  `DeleteTenantHandler`, `TenantBarrierStatusHandler`,
+  `TenantBarrierInitHandler`, `TenantBarrierUnsealHandler`) lost its
+  registry-direct branch; `TenantBarrierInitHandler` / `UnsealHandler` now
+  build their response via `xkmsService.TenantBarrierStatus` instead of
+  reading `h.registry.TenantStatus` directly, matching
+  `TenantBarrierStatusHandler`'s existing path. `pkg/api/rest/errors.go`'s
+  `mapErrorToStatusCode` gained mappings for go-qrdb's own
+  `qrdbsdk.ErrTenantMissing` (404) and `qrdbsdk.ErrTenantExists` (409): the
+  servicer-routed path was previously under-exercised (every existing test
+  wired only the registry, not a `TenantService`, so the internal fallback
+  silently absorbed the gap), and now that the fallback is gone these
+  sentinels are the ones a composed `TenantService` actually returns.
+
+  `pkg/server/server.go` no longer calls the deleted `svc.SetBarrierRegistry`
+  when wiring `XKMSService`.
+- **BREAKING (xkey): `Authenticator.verifyPINHashLocked` no longer re-checks
+  a locally persisted PIN hash after a configured `PINVerifier` rejects a
+  hash.** `xkey/pkg/authenticator/authenticator.go`'s `verifyPINHashLocked`
+  previously fell through to `hmac.Equal(hash, a.state.PINHash)` whenever
+  `PINVerifier.VerifyFIDO2Hash` returned false, "for backward compatibility
+  during lazy-init or sync race scenarios" (e.g. the PIN backend not yet
+  re-initialized after a restart). That fallback let a second, potentially
+  stale source of truth override a configured verifier's explicit negative
+  result and is deleted: when a `PINVerifier` is set, its result is now
+  final. The local `hmac.Equal` comparison against `a.state.PINHash` remains
+  the verification mechanism for standalone mode (no `PINVerifier`
+  configured at all — tests and offline authenticators), which is a
+  different, still-supported case from a configured verifier's rejection.
+
+  `TestAuthenticator_VerifyPINHash_FallbackAfterRestart` (a named regression
+  test for the restart/lazy-init scenario the fallback existed to cover) is
+  replaced by `TestAuthenticator_VerifyPINHash_VerifierRejectionIsFinal`,
+  which asserts the opposite: the verifier's rejection now stands even
+  though the persisted hash would itself have matched.
+  `TestVerifyPINHashLocked_VerifierFailsFallsBackToState` is similarly
+  replaced by `TestVerifyPINHashLocked_VerifierRejectionIsNotOverridden`. A
+  new `TestAuthenticator_VerifyPINHash_NoVerifierUsesLocalState` covers the
+  still-supported no-verifier-configured path explicitly.
+
+  **Note for follow-up:** the deleted fallback existed to paper over a real
+  scenario — a `PINVerifier` (e.g. `pkg/gui/services.PINService`) returning
+  `false` because its own backend was not yet initialized after a restart,
+  not because the PIN was wrong. `PINService.VerifyFIDO2Hash` still returns
+  `false` when its internal `pinSvc` has not been loaded
+  (`xkey/pkg/gui/services/pin_service.go`), so that race is structurally
+  still possible; deleting the caller-side workaround did not touch it. If
+  restart timing still allows a `PINVerifier` to answer before its own
+  backend is ready, PIN verification can now fail transiently right after
+  restart instead of silently succeeding via the deleted fallback. This
+  needs verifying against current initialization ordering, or the
+  `PINService` side needs to report "not ready" distinctly from "PIN
+  incorrect" so callers can retry instead of treating it as a wrong PIN.
+
 ## [0.17.0-alpha] - 2026-09-22
 
 ### Security
@@ -122,6 +327,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`xkey/skills/xkey-agent/SKILL.md`: an Agent Skill for driving an existing xKey instance from the CLI (#1).** It teaches an AI agent the read-only and status verbs it may run (`barrier status --json`, `cert show|export`, `piv list|show|status`, `fido2 status`, `agent status`, `oath list|generate`, `version`) and marks every human-only step as off-limits: barrier unseal, `unlock`, `touch`, `fido2 init-token`, certificate requests, auth ceremonies, PIV generate/delete and OATH add/scan/remove. An agent never supplies a PIN, passphrase or secret by stdin, environment or flag. Every command and flag in the skill was checked against the built CLI's `--help` output. Per-agent headless instances are a separate design, #624.
 
 ### Removed
+
+- **xkmsd config, bootstrap, env, and CLI backward-compat shapes are gone — BREAKING.**
+  The pre-viper environment-variable ladder (`applyEnvOverrides`/`legacyEnv` in
+  `pkg/config/config.go` and `pkg/config/load.go`) is deleted outright: only
+  the viper-derived `XKMS_<SECTION>_<KEY>` name resolves any config key now
+  (`pkg/config/load.go`'s `canonicalEnvName`), and a variable spelled any
+  other way is silently not read. The 67 removed names and their
+  replacements:
+
+  | Removed | Replacement |
+  |---|---|
+  | `XKMS_HOST` | `XKMS_SERVER_HOST` |
+  | `XKMS_REST_PORT` | `XKMS_SERVER_REST_PORT` |
+  | `XKMS_GRPC_PORT` | `XKMS_SERVER_GRPC_PORT` |
+  | `XKMS_QUIC_PORT` | `XKMS_SERVER_QUIC_PORT` |
+  | `XKMS_MCP_PORT` | `XKMS_SERVER_MCP_PORT` |
+  | `XKMS_STORAGE_BACKEND` | `XKMS_STORAGE_BACKEND` (unchanged spelling, now the only one) |
+  | `XKMS_STORAGE_PATH` | `XKMS_STORAGE_PATH` (unchanged spelling, now the only one) |
+  | `XKMS_CLUSTER_ENABLED` | `XKMS_CLUSTER_ENABLED` (unchanged) |
+  | `XKMS_CLUSTER_NODE_ID` | `XKMS_CLUSTER_NODE_ID` (unchanged) |
+  | `XKMS_CLUSTER_SHARD_ID` | `XKMS_CLUSTER_SHARD_ID` (unchanged) |
+  | `XKMS_CLUSTER_RAFT_ADDRESS` | `XKMS_CLUSTER_RAFT_ADDRESS` (unchanged) |
+  | `XKMS_CLUSTER_LISTEN_ADDRESS` | `XKMS_CLUSTER_LISTEN_ADDRESS` (unchanged) |
+  | `XKMS_CLUSTER_PEERS` | `XKMS_CLUSTER_PEERS` (unchanged) |
+  | `XKMS_CLUSTER_JOIN` | `XKMS_CLUSTER_JOIN` (unchanged) |
+  | `XKMS_CLUSTER_RAFT_CA_CERT` | `XKMS_CLUSTER_RAFT_TLS_CA_CERT_FILE` |
+  | `XKMS_CLUSTER_RAFT_CERT` | `XKMS_CLUSTER_RAFT_TLS_CERT_FILE` |
+  | `XKMS_CLUSTER_RAFT_KEY` | `XKMS_CLUSTER_RAFT_TLS_KEY_FILE` |
+  | `XKMS_SOCKET_PATH` | `XKMS_UNIX_SOCKET_PATH` |
+  | `XKMS_SOCKET_MODE` | `XKMS_UNIX_SOCKET_MODE` |
+  | `XKMS_UNIX_PROTOCOL` | `XKMS_UNIX_PROTOCOL` (unchanged) |
+  | `XKMS_LOG_LEVEL` | `XKMS_LOGGING_LEVEL` |
+  | `XKMS_LOG_FORMAT` | `XKMS_LOGGING_FORMAT` |
+  | `XKMS_DATA_DIR` | `XKMS_STORAGE_PATH` (the PKCS8-relative-path side effect this name carried is gone with it) |
+  | `TPM_DEVICE_PATH` | `XKMS_BACKENDS_TPM2_DEVICE_PATH` |
+  | `PKCS11_LIBRARY` | `XKMS_BACKENDS_PKCS11_LIBRARY` |
+  | `AWS_REGION` | `XKMS_BACKENDS_AWSKMS_REGION` |
+  | `AWS_ACCESS_KEY_ID` | `XKMS_BACKENDS_AWSKMS_ACCESS_KEY` |
+  | `AWS_SECRET_ACCESS_KEY` | `XKMS_BACKENDS_AWSKMS_SECRET_KEY` |
+  | `AWS_ENDPOINT` | `XKMS_BACKENDS_AWSKMS_ENDPOINT` |
+  | `GCP_PROJECT_ID` | `XKMS_BACKENDS_GCPKMS_PROJECT_ID` |
+  | `GOOGLE_APPLICATION_CREDENTIALS` | `XKMS_BACKENDS_GCPKMS_CREDENTIALS_FILE` |
+  | `AZURE_KEYVAULT_URL` | `XKMS_BACKENDS_AZUREKV_VAULT_URL` |
+  | `AZURE_TENANT_ID` | `XKMS_BACKENDS_AZUREKV_TENANT_ID` |
+  | `AZURE_CLIENT_ID` | `XKMS_BACKENDS_AZUREKV_CLIENT_ID` |
+  | `AZURE_CLIENT_SECRET` | `XKMS_BACKENDS_AZUREKV_CLIENT_SECRET` |
+  | `VAULT_ADDR` | `XKMS_BACKENDS_VAULT_ADDRESS` |
+  | `VAULT_TOKEN` | `XKMS_BACKENDS_VAULT_TOKEN` |
+  | `VAULT_NAMESPACE` | `XKMS_BACKENDS_VAULT_NAMESPACE` |
+  | `XKMS_PHONE_TRANSPORT` | `XKMS_BACKENDS_PHONE_TRANSPORT` |
+  | `XKMS_PHONE_DEVICE_ADDRESS` | `XKMS_BACKENDS_PHONE_DEVICE_ADDRESS` |
+  | `XKMS_PHONE_NOISE_STATIC_KEY` | `XKMS_BACKENDS_PHONE_NOISE_STATIC_KEY` |
+  | `XKMS_PHONE_STATIC_KEY` | `XKMS_BACKENDS_PHONE_PHONE_STATIC_KEY` |
+  | `XKMS_PHONE_CONFIG_PATH` | `XKMS_BACKENDS_PHONE_CONFIG_PATH` |
+  | `XKMS_PHONE_REQUEST_TIMEOUT` | `XKMS_BACKENDS_PHONE_REQUEST_TIMEOUT` |
+  | `XKMS_NOISE_ENABLED` | `XKMS_BOOTSTRAP_NOISE_ENABLED` |
+  | `XKMS_NOISE_STATIC_KEY` | removed outright, no replacement (see below) |
+  | `XKMS_NOISE_STATIC_KEY_FILE` | removed outright, no replacement (see below) |
+  | `XKMS_NOISE_PORT` | `XKMS_SERVER_NOISE_PORT` |
+  | `XKMS_SPKI_PIN` | `XKMS_BOOTSTRAP_SPKI_PIN_SHA256` (no longer also flips `bootstrap.spki.enabled`; set it explicitly) |
+  | `XKMS_DANE_ENABLED` | `XKMS_BOOTSTRAP_DANE_ENABLED` |
+  | `XKMS_DANE_HOSTNAME` | `XKMS_BOOTSTRAP_DANE_HOSTNAME` |
+  | `XKMS_DANE_PORT` | `XKMS_BOOTSTRAP_DANE_PORT` |
+  | `XKMS_DANE_DNS_SERVER` | `XKMS_BOOTSTRAP_DANE_DNS_SERVER` |
+  | `XKMS_RATELIMIT_ENABLED` | `XKMS_RATELIMIT_ENABLED` (unchanged) |
+  | `XKMS_RATELIMIT_REQUESTS_PER_MIN` | `XKMS_RATELIMIT_REQUESTS_PER_MIN` (unchanged) |
+  | `XKMS_RATELIMIT_BURST` | `XKMS_RATELIMIT_BURST` (unchanged) |
+  | `XKMS_RNG_MODE` | `XKMS_RNG_MODE` (unchanged) |
+  | `XKMS_RNG_FALLBACK` | `XKMS_RNG_FALLBACK_MODE` |
+  | `XKMS_RNG_TPM2_DEVICE` | `XKMS_RNG_TPM2_DEVICE` (unchanged; no longer also sets `use_simulator`) |
+  | `XKMS_RNG_TPM2_SIMULATOR_HOST` | `XKMS_RNG_TPM2_SIMULATOR_HOST` (unchanged; no longer also sets `use_simulator`) |
+  | `XKMS_RNG_TPM2_SIMULATOR_PORT` | `XKMS_RNG_TPM2_SIMULATOR_PORT` (unchanged; no longer also sets `use_simulator`) |
+  | `XKMS_RNG_PKCS11_MODULE` | `XKMS_RNG_PKCS11_MODULE` (unchanged) |
+  | `XKMS_RNG_PKCS11_SLOT` | `XKMS_RNG_PKCS11_SLOT_ID` |
+  | `XKMS_RNG_PKCS11_PIN` | `XKMS_RNG_PKCS11_PIN` (unchanged; no longer also sets `pin_required`) |
+  | `XKMS_CREDENTIALS_SEAL_STRATEGY` | `XKMS_CREDENTIALS_SEAL_STRATEGY` (unchanged) |
+  | `XKMS_SEAL_STRATEGY` | `XKMS_BARRIER_STRATEGY` |
+  | `XKMS_SEAL_PASSPHRASE` | `XKMS_BARRIER_PASSPHRASE` |
+
+  Config-key removals bundled into the same cleanup:
+  - `bootstrap.noise.static_key_hex` / `static_key_file` /
+    `p256_static_key_hex` / `p256_static_key_file` (`config.NoiseBootstrapConfig`,
+    go-xkms#35) are gone outright, along with the one-time
+    config-to-barrier migration that used to read them
+    (`legacyOrGenerateNoiseStaticKey`/`legacyOrGenerateP256StaticKey` in
+    `pkg/server/bootstrap_key_custody.go`). The bootstrap listener's static
+    keys are now exclusively barrier-sealed (when a barrier is configured)
+    or persisted to a fixed file under `storage.path` (when it is not);
+    there is no config-supplied key path at all.
+  - `pkg/server/credentials/service.go`'s underscored strategy aliases
+    `aws_kms`/`gcp_kms`/`azure_kv` and the `software` alias for `passphrase`
+    are gone from `validStrategies`; only `awskms`/`gcpkms`/`azurekv`/
+    `passphrase` (and `manual`/`barrier`/`tpm2`/`pkcs11`/`vault`) remain.
+  - `pkg/acme/qrdb.BarrierConfig`/`ShamirConfig`/`ErrBarrierCredentialUnsupported`
+    and `Config.Barrier` are gone: this struct always rejected
+    `Enabled: true` (it had no credential or auto-unseal source), so the
+    field and its dead `embedded.BarrierConfig` wiring in `service.go`
+    carried no reachable behavior. Encryption at rest for the embedded ACME
+    data plane is configured through the parent xkmsd barrier only.
+  - `pkg/acme/client/service.Config`'s deprecated `Client`/`Renewal`/`SDK`
+    fields and their `ClientConfig`/`RenewalConfig`/`SDKConfig` types are
+    gone; the multi-account `Accounts`/`Certificates` maps are the only
+    configuration surface. `pkg/acme/gui/client/api/config_handlers.go` and
+    `renewal_handlers.go` now read/write a well-known `"default"` entry in
+    `Accounts`/`Certificates` instead: `GET/PUT /api/v1/config` drops the
+    `timeout` field (no equivalent on `AccountConfig`), and
+    `GET/PUT /api/v1/renewal/config` drops `checkInterval`/
+    `renewalThreshold`/`maxRetries`/`retryInterval`/`notifyOnSuccess`/
+    `notifyOnFailure` (no equivalent on `CertRenewalConfig`, which only
+    carries `Auto`/`DaysBefore`) — none of those fields drove real renewal
+    behavior even before removal: `renewal_orchestrator.go`'s ticker already
+    used a hardcoded interval, ignoring `Config.Renewal.CheckInterval`.
+
+  CLI surface:
+  - `xkmsctl`'s `--protocol`/`-P` deprecated alias for `--transport` is
+    gone; `--transport` is the only flag.
+  - `xkmsctl barrier`/`ceremony`'s `software` alias for the `passphrase`
+    barrier strategy is gone from `validBarrierStrategies`.
+  - `xkmsctl`'s `CanonicalRedirectError` type (never constructed) is
+    deleted, and `status`/`claim-cert`/`claim-share`/`sign-csr` are now
+    registered exactly once, under `ceremony` — `init` no longer carries a
+    second, duplicate copy of the same four subcommands.
+  - `xkmsd init`'s "legacy `--so`/`--threshold` pair" backward-compat
+    validation branch (and its now-dead `ErrThresholdRequiresOfficers`/
+    `ErrThresholdExceedsOfficers` sentinels) is removed; `--so` itself stays
+    (it has an independent, still-live use building officer configs for
+    enrollment).
+
+  Config loaders stay lenient (unknown YAML/JSON keys are ignored), so a
+  file that still names a removed key parses without error — it is simply
+  never read. A shipped config or script naming an old environment variable
+  or flag silently stops taking effect; there is no warning and no fallback.
+  Every shipped config (`configs/xkmsd*.yaml`), example
+  (`examples/config.example.yaml`), integration-test compose/Dockerfile/
+  script under `test/integration/{bootstrap,cluster,pkcs11/module,api,sdk}/`,
+  and doc under `docs/xkmsd-configuration/`, `docs/configuration/bootstrap.md`,
+  `docs/trust-bootstrap/`, `docs/auth/bootstrap.md`, `docs/init/credentials.md`,
+  `docs/acme/qrdb/configuration.md`, `docs/key-management/`, `docs/ssh/README.md`,
+  and `docs/acme/protocols/README.md` was updated to the new names or to
+  drop the removed ones. `configs/README.md` and `docs/xkmsd-configuration/
+  engineering.md` document the single-name-only environment resolution rule
+  directly.
 
 - **Six xkey `Migrate*` helpers with no non-test caller are gone, along with the CLI/GUI config migrator — BREAKING.** `xkey/pkg/agent/migration.go` (`MigrateFileStoreToDAO`), `xkey/pkg/serverregistry/migration.go` (`MigrateToDAO`, `ErrMigration`), `xkey/pkg/audit/migration.go` (`MigrateFromBackend`, `ErrMigration` — distinct from the live `audit.Store.MigrateBackend` method in `store.go`, which is unaffected and stays), `xkey/pkg/oidc/migration.go` (`MigrateFromBackend`, `ErrMigration`), `xkey/pkg/tokenstore/migration.go` (`MigrateFromBackend`, `ErrMigration`), and `xkey/pkg/authenticator/migration.go` (`MigrateRPPolicies`) are deleted with their tests: none had a caller outside their own test file. `xkey/pkg/config/migrate.go` (`Migrate`, 361 lines, plus `ErrConfigMigrationFailed`) and `migrate_test.go` are deleted the same way; the "Migration from Legacy Config" section is dropped from `xkey/docs/configuration/app-configuration.md`.
 - **Three dead TCG OID aliases in `pkg/ca/tcg_oids.go` are gone — BREAKING.** `OIDTCGSpecification`, `OIDTCGEKCertificate`, `OIDTCGAIKCertificate` duplicated `OIDTCGAttributeTPMSpecification`, `OIDTCGKpEKCertificate`, `OIDTCGKpAIKCertificate` respectively. `pkg/ca/tcg.go`'s three call sites now use the canonical names directly.
