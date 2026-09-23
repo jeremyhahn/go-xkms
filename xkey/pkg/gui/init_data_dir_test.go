@@ -97,6 +97,7 @@ func newMinimalApp(t *testing.T) *App {
 	})
 
 	return &App{
+		pinService:         pinSvc,
 		log:                log,
 		configDirPath:      cfgDir,
 		config:             DefaultGUIConfig(),

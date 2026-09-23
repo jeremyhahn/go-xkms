@@ -15,7 +15,10 @@ package authenticator
 
 import (
 	"crypto/sha256"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -316,6 +319,130 @@ func TestAuthenticator_VerifyPINHash_VerifierRejectionIsFinal(t *testing.T) {
 	require.False(t, result,
 		"verifyPINHashLocked must honor the PINVerifier's rejection even though "+
 			"a.state.PINHash matches — there is no local-hash fallback")
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent verifier publish vs. verify (go-xkms#640)
+// ---------------------------------------------------------------------------
+
+// raceTestPINVerifier is a concurrency-safe PINVerifier double that models a
+// PINService published to the authenticator (SetPINVerifier) before it is
+// populated: ready is false and every query fails closed until publish is
+// called, at which point it becomes the authoritative, correct answer.
+type raceTestPINVerifier struct {
+	ready atomic.Bool
+	hash  atomic.Pointer[[]byte]
+}
+
+func (v *raceTestPINVerifier) IsPINSet() bool {
+	return v.ready.Load()
+}
+
+func (v *raceTestPINVerifier) VerifyFIDO2Hash(hash []byte) bool {
+	if !v.ready.Load() {
+		return false
+	}
+	want := v.hash.Load()
+	if want == nil || len(*want) != len(hash) {
+		return false
+	}
+	for i := range hash {
+		if hash[i] != (*want)[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *raceTestPINVerifier) publish(hash []byte) {
+	stored := append([]byte(nil), hash...)
+	v.hash.Store(&stored)
+	v.ready.Store(true)
+}
+
+// TestAuthenticator_PINVerifier_ConcurrentPublishNeverReturnsWrongResult
+// drives IsPINSet/verifyPINHashLocked concurrently with the verifier being
+// populated, under -race (go-xkms#640). The verifier is published to the
+// authenticator via SetPINVerifier before it is populated — the exact
+// start-up ordering this issue is about. Readers hammer both the correct
+// and an incorrect hash throughout the transition; the wrong hash must
+// never verify (a false positive would be a security bug, not just a
+// start-up glitch), and once verification of the correct hash succeeds it
+// must never regress.
+func TestAuthenticator_PINVerifier_ConcurrentPublishNeverReturnsWrongResult(t *testing.T) {
+	auth := createTestAuthenticator(t)
+	defer func() { _ = auth.Close() }()
+
+	pinHash := sha256.Sum256([]byte("race-pin-test"))
+	hash := pinHash[:PINHashSize]
+
+	wrongPINHash := sha256.Sum256([]byte("not-the-pin"))
+	wrongHash := wrongPINHash[:PINHashSize]
+
+	verifier := &raceTestPINVerifier{}
+	auth.SetPINVerifier(verifier)
+
+	var falsePositive atomic.Bool
+	var regressed atomic.Bool
+	done := make(chan struct{})
+	var readers sync.WaitGroup
+
+	readers.Add(4)
+	for i := 0; i < 4; i++ {
+		go func() {
+			defer readers.Done()
+			// verifiedBefore is per reader: only within one goroutine are
+			// successive reads ordered, so a regression is a success
+			// followed by a failure in the same reader.
+			verifiedBefore := false
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				auth.mu.RLock()
+				wrongVerified := auth.verifyPINHashLocked(wrongHash)
+				verified := auth.verifyPINHashLocked(hash)
+				auth.mu.RUnlock()
+				if wrongVerified {
+					falsePositive.Store(true)
+				}
+				if verified {
+					verifiedBefore = true
+				} else if verifiedBefore {
+					regressed.Store(true)
+				}
+			}
+		}()
+	}
+
+	// Populate the verifier once, simulating initPINService() completing
+	// after SetPINVerifier already published the not-yet-ready verifier.
+	time.Sleep(time.Millisecond)
+	verifier.publish(hash)
+
+	// Wait for the readers to observe the now-populated verifier before
+	// tearing them down, and confirm verification succeeds reliably.
+	deadline := time.Now().Add(50 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		auth.mu.RLock()
+		verified := auth.verifyPINHashLocked(hash)
+		auth.mu.RUnlock()
+		if verified {
+			break
+		}
+	}
+	auth.mu.RLock()
+	finalVerified := auth.verifyPINHashLocked(hash)
+	auth.mu.RUnlock()
+	require.True(t, finalVerified, "verification must succeed once the verifier is populated")
+
+	close(done)
+	readers.Wait()
+
+	require.False(t, falsePositive.Load(), "an incorrect hash must never verify")
+	require.False(t, regressed.Load(), "verification must never regress once it has succeeded")
 }
 
 // TestAuthenticator_VerifyPINHash_NoVerifierUsesLocalState proves the local

@@ -121,7 +121,7 @@ Failure at this step is a hard error that sets `result.Success = false`.
 
 ### Step 7: Data Directory Initialization
 
-Creates `~/.xkey/data/`, initializes the PINManager, and starts the FIDO2 device via `postDataDirStartup()`. This step must run AFTER barrier init (Step 6) so the static password store can use the barrier as its encrypted backend.
+Creates `~/.xkey/data/` and initializes the PINManager via `initializeDataDir()`, then starts the FIDO2 device and other post-init services via `postDataDirStartup()`. `initializeDataDir()` initializes the PIN service immediately before the shared FIDO2 authenticator, so the authenticator is never published a PIN verifier that is not yet backed by a real PIN service (go-xkms#640). This step must run AFTER barrier init (Step 6) so the static password store can use the barrier as its encrypted backend.
 
 PINs set at Step 2 may have failed because the PINManager did not exist yet. This step retries both SO PIN and User PIN setup. The retry logic includes fallback through `ChangeSOPIN` and `VerifySOPIN` to handle cases where the TPM was provisioned with or without hierarchy auth.
 

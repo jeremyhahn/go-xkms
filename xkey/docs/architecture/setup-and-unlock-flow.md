@@ -56,9 +56,10 @@ flowchart TD
     end
 
     subgraph S7["Step 7: Initialize Data Directory"]
-        S7A["Create ~/.xkey/data/"] --> S7B[postDataDirStartup]
-        S7B --> S7C[initPINService — TPM2Backend or SoftwareBackend]
-        S7C --> S7D{PIN deferred from Step 2?}
+        S7A["Create ~/.xkey/data/"] --> S7B[initPINService — TPM2Backend or SoftwareBackend]
+        S7B --> S7C[initializeAuthenticator — PINVerifier wired, already populated]
+        S7C --> S7G[postDataDirStartup]
+        S7G --> S7D{PIN deferred from Step 2?}
         S7D -->|Yes| S7E[Retry SetSOPIN + SetUserPIN]
         S7D -->|No| S7F[Skip]
     end
@@ -121,15 +122,21 @@ flowchart TD
     PROMPT[Unlock prompt] --> PIN1[User enters PIN]
     PIN1 --> UNSEAL[BarrierService.Unseal — PIN as password]
     UNSEAL --> HOOK[Post-unseal hook]
-    HOOK --> POST[postDataDirStartup]
-    POST --> INIT[Initialize PIN, FIDO2, IPC services]
-    INIT --> DONE1([App Unlocked])
+    HOOK --> IDD[initializeDataDir: initPINService, then initializeAuthenticator]
+    IDD --> POST[postDataDirStartup: FIDO2 device, IPC, etc.]
+    POST --> DONE1([App Unlocked])
 
     PROMPT2[Unlock prompt] --> PIN2[User enters PIN]
     PIN2 --> VERIFY[PINService.VerifyUserPIN]
     VERIFY -->|Success| DONE2([App Unlocked])
     VERIFY -->|Fail| ERR([ErrAuthFailed])
 ```
+
+`initPINService` always runs inside `initializeDataDir`, immediately before
+`initializeAuthenticator` — the authenticator publishes the `PINService` as
+its `PINVerifier` the moment it is constructed, so the PIN backend must
+already be populated by then, or a correct PIN presented to the FIDO2
+authenticator during that window would be rejected (go-xkms#640).
 
 The right-hand branch — barrier already unsealed, so verify through
 `PINService` — is reached only by an installation that has no barrier at all.

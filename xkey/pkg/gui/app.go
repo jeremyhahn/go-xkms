@@ -1038,8 +1038,16 @@ func (a *App) initializeDataDir() error {
 	// the resolved data directory are both known.
 	a.initializeSSHServices(dir, barrierBackend)
 
-	// NOTE: PIN service is initialized in postDataDirStartup(), which always
-	// follows initializeDataDir() in all call paths. No need to call it here.
+	// Initialize the PIN service before the authenticator below: the
+	// authenticator publishes a.pinService as its PINVerifier the moment it
+	// is constructed, so anything reachable through it (virtual FIDO2 HID,
+	// browser extension autofill) must find a fully populated PIN backend
+	// on its very first call. initPINService only needs a.dataDir (set
+	// above), a.tpmAccessor and a.storageEngineKind(), none of which depend
+	// on the authenticator, so this ordering carries no cost (go-xkms#640).
+	// It does not depend on the barrier either — see the pre-unseal call in
+	// startupReturningUser for the same reasoning.
+	a.initPINService()
 
 	// Initialize local key store via embedded SDK.
 	// This provides in-process key management without a remote server connection.
@@ -1048,7 +1056,8 @@ func (a *App) initializeDataDir() error {
 	// Initialize shared FIDO2 authenticator for autofill CTAP2 authentication.
 	// This authenticator is shared between the USB HID virtual device and the
 	// browser extension autofill service, so both use the same credentials,
-	// PIN, and key backend.
+	// PIN, and key backend. Its PINVerifier (a.pinService) is already fully
+	// wired by this point.
 	a.initializeAuthenticator()
 
 	// Initialize pairing verifier for extension identity binding.
@@ -3015,8 +3024,10 @@ func (a *App) postDataDirStartup() {
 	// Platform policy is initialized in startup() (before LUKS mount)
 	// since the policy file lives outside the LUKS volume.
 
-	// Initialize PIN service for cross-subsystem PIN management.
-	a.initPINService()
+	// PIN service is initialized in initializeDataDir(), strictly before
+	// the authenticator that publishes it as a PINVerifier (go-xkms#640).
+	// Every caller of postDataDirStartup runs initializeDataDir first, so
+	// there is nothing left to do here.
 
 	// Start password expiry checker (1-hour interval).
 	if a.staticpwStore != nil {

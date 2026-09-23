@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -549,6 +550,87 @@ func TestPINService_VerifyFIDO2Hash_InvalidHash(t *testing.T) {
 
 	result := svc.VerifyFIDO2Hash(wrongHash)
 	assert.False(t, result, "VerifyFIDO2Hash should return false for a non-matching hash")
+}
+
+// ---------------------------------------------------------------------------
+// Concurrent SetPINService vs. verification (go-xkms#640)
+// ---------------------------------------------------------------------------
+
+// TestPINService_ConcurrentSetPINServiceNeverReturnsWrongResult drives
+// IsPINSet/VerifyFIDO2Hash concurrently with SetPINService under -race. It
+// models the window go-xkms#640 closes: the authenticator can publish a
+// PINService as its PINVerifier before initPINService populates it. Readers
+// hammer both the correct and an incorrect hash throughout the transition;
+// the wrong hash must never verify (a false positive would be a security
+// bug, not just a start-up glitch), and once verification of the correct
+// hash succeeds it must never regress — the underlying handoff is a single
+// nil-to-populated atomic.Pointer store, so once observed populated it
+// stays populated for the rest of the test.
+func TestPINService_ConcurrentSetPINServiceNeverReturnsWrongResult(t *testing.T) {
+	svc := NewPINService()
+
+	rawPIN := "concurrent-pin"
+	fullHash := sha256.Sum256([]byte(rawPIN))
+	hash := fullHash[:qrdbsdk.FIDO2PINHashSize]
+
+	wrongFullHash := sha256.Sum256([]byte("not-the-pin"))
+	wrongHash := wrongFullHash[:qrdbsdk.FIDO2PINHashSize]
+
+	backend := &mockPINBackendWithFIDO2{
+		mockPINBackend: mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true},
+		fido2Hash:      hash,
+	}
+
+	var falsePositive atomic.Bool
+	var regressed atomic.Bool
+	done := make(chan struct{})
+	var readers sync.WaitGroup
+
+	readers.Add(4)
+	for i := 0; i < 4; i++ {
+		go func() {
+			defer readers.Done()
+			// verifiedBefore is per reader: only within one goroutine are
+			// successive reads ordered, so a regression is a success
+			// followed by a failure in the same reader.
+			verifiedBefore := false
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				if svc.VerifyFIDO2Hash(wrongHash) {
+					falsePositive.Store(true)
+				}
+				if svc.VerifyFIDO2Hash(hash) {
+					verifiedBefore = true
+				} else if verifiedBefore {
+					regressed.Store(true)
+				}
+			}
+		}()
+	}
+
+	// Populate the backend once, simulating initPINService() completing
+	// after the authenticator has already published this PINService as its
+	// PINVerifier.
+	time.Sleep(time.Millisecond)
+	pinSvc := qrdbsdk.NewPINService(backend, slog.Default())
+	svc.SetPINService(pinSvc)
+
+	// Wait for the readers to observe the now-configured backend before
+	// tearing them down, and confirm verification succeeds reliably.
+	deadline := time.Now().Add(50 * time.Millisecond)
+	for time.Now().Before(deadline) && !svc.VerifyFIDO2Hash(hash) {
+	}
+	require.True(t, svc.VerifyFIDO2Hash(hash), "verification must succeed once SetPINService has run")
+
+	close(done)
+	readers.Wait()
+
+	require.False(t, falsePositive.Load(), "an incorrect hash must never verify")
+	require.False(t, regressed.Load(), "verification must never regress once it has succeeded")
 }
 
 // ---------------------------------------------------------------------------
