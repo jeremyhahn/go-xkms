@@ -15,10 +15,19 @@ package embedded
 
 import (
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	pkgembed "github.com/jeremyhahn/go-xkms/pkg/api/transport/embedded"
 )
 
+// XKMSServicer re-exports pkg/api/transport/embedded's XKMSServicer, NOT
+// pkgtransport.XKMSServicer directly: the embedded transport requires
+// EscrowServicer in addition to pkgtransport.XKMSServicer (go-xkms#692 —
+// external key escrow is embedded-only), and this package's New/NewWithService
+// pass their service argument straight through to pkgembed.New/NewWithService,
+// so the two must stay the same type or every embedded-service caller through
+// this SDK wrapper fails to compile.
+type XKMSServicer = pkgembed.XKMSServicer
+
 // Servicer interfaces re-exported from pkg/transport.
-type XKMSServicer = pkgtransport.XKMSServicer
 type HealthServicer = pkgtransport.HealthServicer
 type BackendServicer = pkgtransport.BackendServicer
 type KeyServicer = pkgtransport.KeyServicer
