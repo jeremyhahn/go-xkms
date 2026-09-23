@@ -268,10 +268,6 @@ type Server struct {
 	// since the same open backs both the seal strategy and the tpm2 backend.
 	nodeSealClose func() error
 
-	// nodeSealPassphrase is the resolved boot-time unseal passphrase (empty for
-	// hardware/TPM mode).
-	nodeSealPassphrase []byte
-
 	// clusterCAKeyStrategy is the cluster CA key custody strategy (barrier / hsm
 	// / tpm-kek) built during cluster ACME provisioning. It is stateful (the
 	// barrier strategy retains its bootstrap key-storage handle for promotion),
@@ -570,10 +566,51 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 
 	// Initialize the shared qrdb storage backend (when configured). This must
 	// happen before initializeBackends, because per-subdir storage views are
-	// key-prefixed views over this single shared backend.
+	// key-prefixed views over this single shared backend. For a
+	// NodeFlipWired barrier strategy this is also where Server.New blocks:
+	// initEmbeddedQRDBNode builds the node's own seal subsystem and, when it
+	// cannot auto-unseal unattended ("passphrase"/"shamir"), serves the
+	// sealed-window listener and waits for an operator to complete
+	// `xkmsctl barrier unseal`/`unseal-shares` — go-qrdb's own
+	// cmd/qrdbd pattern (initSealSubsystem -> awaitUnseal), driven here
+	// entirely through go-qrdb/sdk/go. By the time this call returns, the
+	// barrier (s.barrier, for the flip case) is unsealed and adopted.
 	if err := s.initializeQRDBStorage(); err != nil {
 		cancel()
 		return nil, &ErrServiceInit{Service: "qrdb storage", Err: err}
+	}
+
+	// Initialize platform store. Requires s.barrier, which for the node-flip
+	// case (see above) is already unsealed and adopted; for every other case
+	// it is nil here exactly as before, and initializePlatformStore skips.
+	if err := s.initializePlatformStore(); err != nil {
+		cancel()
+		s.closeQRDBStorage()
+		return nil, &ErrServiceInit{Service: "platform store", Err: err}
+	}
+
+	// Initialize credential service. Moved here (before initializeBackends)
+	// so the PKCS#11/RNG-PKCS#11/AWS/Azure/Vault backend credentials below
+	// can resolve through it via credential:// references, the same way
+	// go-qrdb's own daemon resolves credentials only after its seal
+	// subsystem is unsealed.
+	if err := s.initializeCredentialService(); err != nil {
+		cancel()
+		s.closeQRDBStorage()
+		return nil, &ErrServiceInit{Service: "credential service", Err: err}
+	}
+
+	// Resolve every secret-bearing config field's credential:// (and future
+	// scheme) reference in one pass, now that the credential service exists
+	// to back it -- including the five backend-credential fields
+	// initializeBackends is about to read (PKCS#11 PIN, RNG PKCS#11 PIN, AWS
+	// KMS secret key, Azure Key Vault client secret, Vault token), which
+	// could not resolve here before this reorder. See resolveConfigSecrets
+	// for what this does and does not cover.
+	if err := s.resolveConfigSecrets(); err != nil {
+		cancel()
+		s.closeQRDBStorage()
+		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
 	}
 
 	// Initialize backends
@@ -666,33 +703,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "pkcs11 state store", Err: err}
-	}
-
-	// Initialize platform store
-	if err := s.initializePlatformStore(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "platform store", Err: err}
-	}
-
-	// Initialize credential service
-	if err := s.initializeCredentialService(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "credential service", Err: err}
-	}
-
-	// Resolve every secret-bearing config field's credential:// (and future
-	// scheme) reference in one pass, now that the credential service exists
-	// to back it. This is the single resolution point every later consumer
-	// relies on -- initializeCA's CA identity/keystore passwords, the
-	// cluster CA key passphrase, and the phone backend's Noise static key no
-	// longer resolve their own field. See resolveConfigSecrets for what this
-	// does and does not cover.
-	if err := s.resolveConfigSecrets(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
 	}
 
 	// Initialize policy manager

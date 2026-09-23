@@ -61,7 +61,7 @@ type Config struct {
 	// from, and re-encodes to, a plain reference string in YAML/JSON; the
 	// resolved plaintext is sealed into this field's own memguard enclave
 	// rather than kept as a plain Go string. See types.SecretValue.
-	HierarchyAuth types.SecretValue `yaml:"hierarchy_auth,omitempty" json:"hierarchy_auth,omitempty"`
+	HierarchyAuth *types.SecretValue `yaml:"hierarchy_auth,omitempty" json:"hierarchy_auth,omitempty"`
 
 	// Hash specifies the hash algorithm to use (default: "SHA-256")
 	Hash string `yaml:"hash" json:"hash"`

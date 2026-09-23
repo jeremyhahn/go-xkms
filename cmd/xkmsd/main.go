@@ -27,7 +27,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/web"
 )
@@ -78,7 +77,6 @@ func run() int {
 	daemonShort := flag.Bool("d", false, "Run as daemon (short)")
 	pidFile := flag.String("pid-file", "", "Path to PID file")
 	showVersion := flag.Bool("version", false, "Show version information")
-	sealPassphrase := flag.String("seal-passphrase", "", "Barrier auto-unseal passphrase (prefer XKMS_BARRIER_PASSPHRASE env or a credential:// reference; passing a secret on the command line is discouraged)")
 	srvFlags := registerServerFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -130,13 +128,6 @@ func run() int {
 		slog.Any("backends", cfg.GetEnabledBackends()),
 		slog.String("default_backend", string(cfg.Default)),
 		slog.String("host", cfg.Server.Host))
-
-	// The --seal-passphrase flag takes precedence over XKMS_BARRIER_PASSPHRASE and
-	// the config file (CLI > env > config), giving an operator an explicit
-	// override for the barrier auto-unseal secret.
-	if *sealPassphrase != "" {
-		cfg.Barrier.Passphrase = types.NewLiteralSecretValue([]byte(*sealPassphrase))
-	}
 
 	// Secure-by-default gate: refuse to serve a non-compliant configuration
 	// (no encryption-at-rest / TLS / authentication / CA). There is no

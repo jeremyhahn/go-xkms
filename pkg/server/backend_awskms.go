@@ -35,7 +35,7 @@ func (s *Server) initAWSKMSBackend() error {
 	// awskms.Config.SecretAccessKey takes a plain string, the shape the AWS
 	// SDK's static credentials provider requires; the plaintext leaves
 	// SecretKey's enclave only for this assignment.
-	secretAccessKey, err := types.SecretValueBytes(&s.config.Backends.AWSKMS.SecretKey)
+	secretAccessKey, err := types.SecretValueBytes(s.config.Backends.AWSKMS.SecretKey)
 	if err != nil {
 		return &ErrBackendCreate{Backend: "AWS KMS", Err: err}
 	}

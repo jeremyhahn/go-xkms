@@ -40,7 +40,7 @@ func (s *Server) initVaultBackend() error {
 	// vault.Config.Token takes a plain string, the shape the Vault client's
 	// SetToken requires; the plaintext leaves Token's enclave only for this
 	// assignment.
-	token, err := types.SecretValueBytes(&s.config.Backends.Vault.Token)
+	token, err := types.SecretValueBytes(s.config.Backends.Vault.Token)
 	if err != nil {
 		return &ErrBackendCreate{Backend: "Vault", Err: err}
 	}

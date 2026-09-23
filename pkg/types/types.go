@@ -3424,14 +3424,15 @@ type KeyConfig struct {
 	Parent             *KeyConfig             `yaml:"parent,omitempty" json:"parent,omitempty" mapstructure:"parent"`
 	// Password is the passphrase that protects this key at rest. It decodes
 	// from, and re-encodes to, a plain reference string in YAML/JSON (a
-	// literal password or a "credential://..." URI); the resolved plaintext
-	// is sealed into this field's own memguard enclave rather than kept as a
-	// plain Go string. See SecretValue and NewPasswordFromSecretValue.
-	Password       SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
-	Secret         string      `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
-	PlatformPolicy bool        `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
-	Debug          bool        `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
-	Default        bool        `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
+	// "credential://..." URI); the resolved plaintext is sealed into this
+	// field's own memguard enclave rather than kept as a plain Go string. A
+	// nil pointer means unconfigured (an unprotected key); see SecretValue
+	// and NewPasswordFromSecretValue.
+	Password       *SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Secret         string       `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
+	PlatformPolicy bool         `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
+	Debug          bool         `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
+	Default        bool         `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
 }
 
 // KeySerializer provides key serialization capabilities
@@ -3484,7 +3485,7 @@ func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	// encrypted-at-rest keys. When config.Password carries no material,
 	// attrs.Password stays nil and the pkcs8 backend enforces its
 	// AllowPlaintextKeys policy.
-	pw, err := NewPasswordFromSecretValue(&config.Password)
+	pw, err := NewPasswordFromSecretValue(config.Password)
 	if err != nil {
 		return nil, err
 	}

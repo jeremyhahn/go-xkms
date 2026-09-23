@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func TestBarrierConfig_SealStrategy(t *testing.T) {
@@ -40,7 +39,34 @@ func TestBarrierConfig_IsHardwareSealStrategy(t *testing.T) {
 	}
 }
 
-func TestComplianceGaps_QRDBBarrierAutoUnseal(t *testing.T) {
+// TestBarrierConfig_NodeFlipWired proves the exact strategy split the
+// node-barrier flip (pkg/server's resolveNodeSeal) and ComplianceGaps both
+// key off: "none"/"passphrase"/"shamir"/"tpm2" are wired to the qrdb node's
+// own barrier; "pkcs11" and every cloud-KMS strategy are not (they need
+// credentials only resolvable after the credential service exists, which
+// itself needs the barrier they would be sealing — go-xkms#653 item 3,
+// not yet approved).
+func TestBarrierConfig_NodeFlipWired(t *testing.T) {
+	wired := []string{"", "none", "passphrase", "shamir", "tpm2"}
+	for _, s := range wired {
+		assert.True(t, BarrierConfig{Strategy: s}.NodeFlipWired(), s)
+	}
+	notWired := []string{"pkcs11", "awskms", "gcpkms", "azurekv", "vault"}
+	for _, s := range notWired {
+		assert.False(t, BarrierConfig{Strategy: s}.NodeFlipWired(), s)
+	}
+}
+
+// TestComplianceGaps_QRDBBarrierNodeFlipWired proves the gap tracks
+// BarrierConfig.NodeFlipWired, not whether the strategy can auto-unseal
+// unattended: "passphrase" and "shamir" are wired to the qrdb node's own
+// barrier exactly like "none" and "tpm2" are (go-xkms#653 approved item 2)
+// — the node's data plane is genuinely encrypted for all four, "passphrase"
+// and "shamir" just gate access behind the sealed-window unseal ceremony
+// rather than auto-unsealing. Only a strategy not yet wired to the flip
+// (pkcs11, the cloud-KMS strategies) leaves the node's own data plane
+// unencrypted, which is the actual gap.
+func TestComplianceGaps_QRDBBarrierNodeFlipWired(t *testing.T) {
 	// Base secure config (TLS/auth/CA present) so only the barrier gap varies.
 	base := func() *Config {
 		return &Config{
@@ -52,30 +78,35 @@ func TestComplianceGaps_QRDBBarrierAutoUnseal(t *testing.T) {
 		}
 	}
 
-	hasAutoUnsealGap := func(cfg *Config) bool {
+	hasNodeFlipGap := func(cfg *Config) bool {
 		for _, g := range cfg.ComplianceGaps() {
-			if strings.Contains(g, "cannot auto-unseal") {
+			if strings.Contains(g, "not wired to the qrdb node's own barrier") {
 				return true
 			}
 		}
 		return false
 	}
 
-	// qrdb + passphrase strategy + no passphrase → gap (would be plaintext).
-	assert.True(t, hasAutoUnsealGap(base()), "qrdb barrier with no auto-unseal creds is a gap")
+	// Every NodeFlipWired strategy closes the gap: the node's own barrier
+	// genuinely encrypts the data plane for each, auto-unsealing unattended
+	// ("none", "tpm2") or via the operator-driven sealed-window ceremony
+	// ("passphrase", "shamir").
+	for _, strategy := range []string{"none", "passphrase", "shamir", "tpm2"} {
+		cfg := base()
+		cfg.Barrier.Strategy = strategy
+		assert.False(t, hasNodeFlipGap(cfg), "strategy %q is wired to the node flip", strategy)
+	}
 
-	// A boot passphrase closes it.
-	withPass := base()
-	withPass.Barrier.Passphrase = types.SecretValue{Raw: "boot-secret"}
-	assert.False(t, hasAutoUnsealGap(withPass), "a boot passphrase auto-unseals")
-
-	// A hardware strategy closes it (TPM auto-unseals at boot).
-	withTPM := base()
-	withTPM.Barrier.Strategy = "tpm2"
-	assert.False(t, hasAutoUnsealGap(withTPM), "a hardware strategy auto-unseals")
+	// A strategy not yet wired to the node flip leaves it open: the node's
+	// own data plane stays genuinely unencrypted.
+	for _, strategy := range []string{"pkcs11", "awskms", "gcpkms", "azurekv", "vault"} {
+		cfg := base()
+		cfg.Barrier.Strategy = strategy
+		assert.True(t, hasNodeFlipGap(cfg), "strategy %q is not yet wired to the node flip", strategy)
+	}
 
 	// File storage never hits this gap (no embedded node / different barrier).
 	fileCfg := base()
 	fileCfg.Storage.Backend = "file"
-	assert.False(t, hasAutoUnsealGap(fileCfg), "file storage uses xkms's own barrier")
+	assert.False(t, hasNodeFlipGap(fileCfg), "file storage uses xkms's own barrier")
 }

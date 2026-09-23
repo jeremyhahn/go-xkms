@@ -1071,7 +1071,7 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	defer b.p11ctx.CloseSession(session)
 
 	// Login if required
-	if types.SecretValueSet(&b.config.PIN) {
+	if b.config.PIN != nil {
 		userPIN, err := b.userPIN()
 		if err != nil {
 			return nil, err

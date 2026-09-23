@@ -65,7 +65,7 @@ func TestCA_CredentialPassword_EncryptedAtRest(t *testing.T) {
 		CN:           "Test Root CA",
 		KeyAlgorithm: types.AlgorithmECDSA,
 		KeyType:      types.KeyTypeStringCA,
-		Password:     types.SecretValue{Raw: "credential://" + credName},
+		Password:     &types.SecretValue{Raw: "credential://" + credName},
 	}
 
 	attrs, err := types.KeyAttributesFromConfigResolved(context.Background(), cfg, reg)

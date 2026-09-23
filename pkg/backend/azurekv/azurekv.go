@@ -199,7 +199,7 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 // prerequisite for azidentity.NewClientSecretCredential over
 // azidentity.NewDefaultAzureCredential.
 func (b *Backend) hasServicePrincipal() bool {
-	return b.config.ClientID != "" && b.config.TenantID != "" && types.SecretValueSet(&b.config.ClientSecret)
+	return b.config.ClientID != "" && b.config.TenantID != "" && b.config.ClientSecret != nil
 }
 
 // newClientSecretCredential builds an azidentity.ClientSecretCredential from
@@ -208,7 +208,7 @@ func (b *Backend) hasServicePrincipal() bool {
 // boundary (go-xkms#610): the plaintext leaves ClientSecret's SecretValue
 // enclave only for the duration of this constructor call.
 func (b *Backend) newClientSecretCredential(credOptions *azidentity.ClientSecretCredentialOptions) (*azidentity.ClientSecretCredential, error) {
-	clientSecret, err := types.SecretValueBytes(&b.config.ClientSecret)
+	clientSecret, err := types.SecretValueBytes(b.config.ClientSecret)
 	if err != nil {
 		return nil, err
 	}

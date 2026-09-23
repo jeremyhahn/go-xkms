@@ -19,7 +19,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	"github.com/stretchr/testify/require"
@@ -27,16 +26,20 @@ import (
 
 // TestNodeBarrier_TenantCreateGetList is a regression test (bootstrap suite): a
 // just-created default (prefix) isolation tenant should be readable immediately
-// via GetTenant on a node-barrier (passphrase-sealed qrdb) deployment.
+// via GetTenant on a node-barrier (qrdb) deployment. Strategy "none" is used
+// because it is the only software strategy that engages the node-seal flip
+// unattended (passphrase/shamir never auto-unseal from configuration, so they
+// never engage it); the regression under test is the adopted-barrier ->
+// TenantService plumbing, not encryption, so the unencrypted strategy still
+// exercises it.
 func TestNodeBarrier_TenantCreateGetList(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{
-		Enabled:    true,
-		Strategy:   "passphrase",
-		Passphrase: types.NewLiteralSecretValue([]byte("test-node-seal-boot-secret")),
+		Enabled:  true,
+		Strategy: "none",
 	}
 
 	server, err := New(cfg)

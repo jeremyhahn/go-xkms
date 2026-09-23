@@ -16,36 +16,85 @@ isolation and per-tenant enable-encryption support.
 There is exactly **one barrier** at runtime. How it is provisioned depends on
 the deployment:
 
-**Node-barrier mode (embedded qrdb + auto-unseal, the secure default).** When
-`storage.backend: qrdb`, `barrier.enabled: true`, and an auto-unseal credential
-is available (a TPM/HSM seal strategy, or a boot passphrase), xkms uses the
-**qrdb node's own barrier**. The node encrypts its entire PebbleDB data plane
-with `encfs` (file-level AES-256-GCM) and auto-unseals at construction, so
-**every value at rest — including the crypto backends' key stores — is
-encrypted**, and xkms adopts the node's barrier, registry, and tenant service
-as its own (`pkg/server/node_seal.go` + `qrdb_node.go`; mirrors go-quicbaas, so
-both products drive the identical shared mechanism). The daemon refuses to start
-a `qrdb` + barrier deployment that cannot auto-unseal (a passphrase strategy
-with no boot secret); there is no override, so a plaintext data plane is never
-the default, silent or otherwise.
+**Node-barrier mode (embedded qrdb, the secure default).** When
+`storage.backend: qrdb`, `barrier.enabled: true`, and the strategy is one
+`config.BarrierConfig.NodeFlipWired` reports true for — `none`, `passphrase`,
+`shamir`, or `tpm2` — xkms uses the **qrdb node's own barrier**. The node
+encrypts its entire PebbleDB data plane with `encfs` (file-level AES-256-GCM),
+and xkms adopts the node's barrier, registry, and tenant service as its own
+(`pkg/server/node_seal.go` + `qrdb_node.go`; mirrors go-quicbaas, so both
+products drive the identical shared mechanism). `none` and a provisioned
+`tpm2` auto-unseal unattended at construction; `passphrase` and `shamir`
+leave the node sealed and block `Server.New` behind the qrdb node's own
+sealed-window listener — go-qrdb's `sdk/go/node` package implements the
+identical two-phase boot `cmd/qrdbd` uses (`initSealSubsystem` ->
+`awaitUnseal`), driven here entirely through `go-qrdb/sdk/go`, never a
+parallel implementation — until an operator completes `xkmsctl barrier
+unseal` (or `unseal-shares`) or the equivalent API call, or the configured
+`barrier.sealed_window_timeout` elapses. Either way, **every value at rest —
+including the crypto backends' key stores — is encrypted** once `Server.New`
+returns: "passphrase"/"shamir" gate *access* to encrypted data behind an
+operator ceremony, they do not leave it in plaintext. `tpm2` is built by
+`resolveNodeSeal` directly from `Backends.TPM2` config (device path,
+simulator settings) — never from an already-initialized backend — so the
+flip has no dependency on backend initialization, which now runs strictly
+after the node is unsealed (see the "Backend credential resolution" section
+below). `pkcs11` and the cloud-KMS strategies are not yet wired to the flip
+(`NodeFlipWired` reports false) — see the PKCS#11 caveat below — and fall
+back to own-barrier mode. The daemon refuses to start a `qrdb` + barrier
+deployment on a strategy that isn't wired to the flip; there is no override,
+so a plaintext data plane is never the default, silent or otherwise.
 
-**Own-barrier mode (fallback).** For non-`qrdb` storage (file/pebble), or when
-no auto-unseal credential is present, xkms builds its own `StorageBarrier` over
-the store (`initializeBarrier`), injecting the hardware seal strategies via
-`pkg/server/seal_strategies.go::buildHardwareSealStrategies`; the `passphrase`
-strategy is the always-available baseline. This barrier is operator-unsealed via
-the barrier API.
+**Own-barrier mode (fallback).** For non-`qrdb` storage (file/pebble), or a
+barrier strategy `NodeFlipWired` excludes (`pkcs11`, the cloud-KMS
+strategies), xkms builds its own `StorageBarrier` over the store
+(`initializeBarrier`), injecting the hardware seal strategies via
+`pkg/server/seal_strategies.go::buildHardwareSealStrategies` — built from
+already-initialized backends, which is exactly why these strategies cannot
+be wired to the node flip: initializeBackends now runs after unseal (see
+below), so building a barrier strategy from a backend here comes after
+initializeBarrier, still its long-standing position late in `Server.New`.
+The `passphrase` strategy is the always-available baseline. This barrier
+starts **sealed** and is operator-unsealed via `xkmsctl barrier unseal` (or
+`unseal-shares`) or the equivalent API call, on every restart — there is no
+boot-time secret to supply.
 
-**Auto-unseal provisioning (config / CLI / env — the same surface every stack
-product uses):**
+**Backend credential resolution (go-xkms#653 approved item 2).**
+`Server.New` builds the seal subsystem and completes unseal
+(`initializeQRDBStorage`), then the credential service and
+`resolveConfigSecrets` (the one-pass `credential://` walk over the whole
+loaded configuration), and only then `initializeBackends`. A `credential://`
+reference for any of the five backend-credential fields —
+`backends.pkcs11.pin`, `rng.pkcs11.pin`, `backends.awskms.secret_key`,
+`backends.azurekv.client_secret`, `backends.vault.token` — now resolves
+through the same pass a CA password or the phone backend's Noise static key
+already used; see `docs/xkmsd-configuration/engineering.md` and
+`pkg/server/secret_wiring_test.go`'s
+`TestBackendCredentials_ResolveViaCredentialReference`.
+
+**Provisioning (config / CLI / env — the same surface every stack product
+uses):**
 - `barrier.strategy`: `none | passphrase | shamir | tpm2 | pkcs11 | awskms |
   gcpkms | azurekv | vault` (canonical vocabulary).
-- Boot passphrase (passphrase strategy): `--seal-passphrase` flag >
-  `XKMS_BARRIER_PASSPHRASE` env > `barrier.passphrase` config (supports
-  `credential://`). Precedence CLI > env > config.
+- Software strategies (`passphrase`/`shamir`) never auto-unseal: there is no
+  config, flag, or environment field for the secret (go-xkms#653 removed
+  `barrier.passphrase`, `--seal-passphrase`, and `XKMS_BARRIER_PASSPHRASE`
+  entirely). The operator supplies the passphrase or Shamir quorum at
+  Initialize/Unseal time, every restart, via `xkmsctl barrier unseal` (or
+  `unseal-shares`) or the equivalent API call, against the sealed-window
+  listener when `NodeFlipWired` (`storage.backend: qrdb`) or the always-on
+  barrier API otherwise — an old config or environment that still sets the
+  removed fields fails `Load` with a typed `*config.RemovedFieldError`.
 - Hardware strategies (`tpm2`/…) auto-unseal from the device (PCR policy / empty
   credentials) — no boot secret needed. The TPM seal open is shared with the
-  general TPM2 backend (a single device open).
+  general TPM2 backend (a single device open). **The PKCS#11 seal strategy is
+  not wired to the node flip and its PIN is not deferred to unseal time the
+  way the passphrase strategy's secret is** (go-xkms#653 item 3, not
+  approved): `buildHardwareSealStrategies` needs the already-initialized
+  PKCS#11 backend from `s.keyProviders`, which now builds after unseal and
+  credential resolution — the identical cycle a deferred PIN would need to
+  break, requiring a `pkg/seal`/`types.Sealer` interface change this repo
+  has not been authorized to make.
 
 ## Three-Layer Architecture
 

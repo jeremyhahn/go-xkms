@@ -13,28 +13,35 @@
 
 /**
  * Barrier status and the audit viewer against real server data — no mocked
- * response bodies anywhere in this file. config.yaml auto-unseals via a
- * passphrase strategy at boot, so BarrierView should read "unsealed" with no
- * ceremony needed here; the Shamir/rekey ceremonies themselves are explicitly
- * out of scope for the web console (CLAUDE.md: "multi-operator ceremonies are
- * best driven from the CLI"), and BarrierView says so directly.
+ * response bodies anywhere in this file.
+ *
+ * go-xkms#653 removed the config-sourced boot-time barrier secret entirely
+ * (matching go-qrdb's own SealConfig, which carries none either): a software
+ * strategy (passphrase/shamir) never auto-unseals from configuration any
+ * more. config.yaml's passphrase strategy therefore now starts SEALED, and
+ * BarrierView should read "sealed" with its unseal control (the "Passphrase"
+ * field) visible, rather than the previous auto-unsealed assertion. The
+ * Shamir/rekey ceremonies themselves are explicitly out of scope for the web
+ * console (CLAUDE.md: "multi-operator ceremonies are best driven from the
+ * CLI"), and BarrierView says so directly.
  */
 
 import { test, expect } from '@playwright/test';
 import { installVirtualAuthenticator } from './support/virtualAuthenticator.ts';
 import { registerOperator, uniqueOperator } from './support/operator.ts';
 
-test('barrier status reflects the real auto-unsealed passphrase strategy', async ({ page }) => {
+test('barrier status reflects the real sealed passphrase strategy', async ({ page }) => {
   await installVirtualAuthenticator(page);
   await registerOperator(page, uniqueOperator('barrier'));
 
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Barrier & Seal' }).click();
 
   await expect(page.getByRole('heading', { level: 1, name: 'Barrier & Seal' })).toBeVisible();
-  await expect(page.getByText('unsealed', { exact: true })).toBeVisible();
+  await expect(page.getByText('sealed', { exact: true })).toBeVisible();
   await expect(page.getByText('strategy: passphrase')).toBeVisible();
-  // Sealed-only controls must not appear against an unsealed barrier.
-  await expect(page.getByLabel('Passphrase')).toHaveCount(0);
+  // Sealed-only controls must appear against a sealed barrier: there is no
+  // config-sourced secret any more, so an operator unseals through this form.
+  await expect(page.getByLabel('Passphrase')).toBeVisible();
 });
 
 test('the audit viewer lists a real event after a privileged operation', async ({ page }) => {

@@ -39,13 +39,16 @@ auth:
   enabled: true
   type: "composite"
 
-# Encryption-at-rest. The passphrase is a development convenience so the
-# barrier auto-unseals at boot; a real deployment provisions this through
-# `xkmsctl init` (Shamir quorum or a hardware seal strategy) instead.
+# Encryption-at-rest. There is no config-sourced boot-time secret any more
+# (matching go-qrdb's own SealConfig): a software strategy never auto-unseals
+# from configuration. Because this file's storage backend is "qrdb" (below),
+# xkmsd's ComplianceGaps gate currently requires a hardware seal strategy
+# (barrier.strategy: "tpm2"/"pkcs11") for this file to start unattended; a
+# software strategy here needs `xkmsctl barrier init` / `xkmsctl barrier
+# unseal` run against the daemon before it will serve. See go-xkms#653.
 barrier:
   enabled: true
   strategy: "passphrase"
-  passphrase: "dev-only-passphrase"
 
 ratelimit:
   enabled: false

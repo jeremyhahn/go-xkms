@@ -37,10 +37,13 @@ auth:
   enabled: true
   type: "composite"
 
-# Encryption at rest. The passphrase is deliberately absent from this file --
-# supply it out of band via XKMS_BARRIER_PASSPHRASE, a credential:// reference, or
-# --seal-passphrase (in that order of preference; a secret on the command line
-# is visible in the process list). `xkmsd init` provisions one for you.
+# Encryption at rest. There is no config-sourced boot-time secret: a software
+# strategy (passphrase/shamir) never auto-unseals from configuration, matching
+# go-qrdb's own SealConfig. `xkmsd init` provisions the barrier; after every
+# restart an operator supplies the passphrase or Shamir quorum via
+# `xkmsctl barrier unseal` (or `unseal-shares`) or the equivalent API call.
+# For unattended auto-unseal, configure a hardware seal strategy instead
+# (barrier.strategy: "tpm2" or "pkcs11").
 barrier:
   enabled: true
   strategy: "passphrase"

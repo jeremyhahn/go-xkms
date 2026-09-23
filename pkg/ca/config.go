@@ -135,7 +135,7 @@ type CAKeystoreSoftwareConfig struct {
 	// YAML/JSON; the resolved plaintext is sealed into this field's own
 	// memguard enclave rather than kept as a plain Go string. See
 	// types.SecretValue and types.NewPasswordFromSecretValue.
-	Password types.SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Password *types.SecretValue `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
 }
 
 // CAKeystoreTPM2Config carries per-identity configuration for the tpm2 backend.
@@ -158,9 +158,9 @@ type CAKeystorePKCS11Config struct {
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
 	// this field's own memguard enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
-	Pin    types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
-	Slot   int               `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
-	Module string            `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
+	Pin    *types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
+	Slot   int                `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
+	Module string             `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
 }
 
 // CAKeystoresConfig holds per-backend keystore configuration for one CA
@@ -597,7 +597,7 @@ func (id *Identity) ToKeyAttributes() (*types.KeyAttributes, error) {
 	// Apply identity-level software keystore password as fallback when the
 	// per-key password was not set (Password is nil after KeyAttributesFromConfig).
 	if attrs.Password == nil && id.Keystores != nil && id.Keystores.Software != nil {
-		pw, err := types.NewPasswordFromSecretValue(&id.Keystores.Software.Password)
+		pw, err := types.NewPasswordFromSecretValue(id.Keystores.Software.Password)
 		if err != nil {
 			return nil, err
 		}
