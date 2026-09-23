@@ -3515,6 +3515,13 @@ vet:
 	done
 	@echo "$(GREEN)✓ Vet checks passed$(RESET)"
 
+.PHONY: vet-integration
+## vet-integration: Compile-only gate for every test/integration suite, one go vet per distinct //go:build tag combination (go-xkms#650)
+vet-integration:
+	@echo "$(CYAN)$(BOLD)→ Running go vet across test/integration (per build-tag combination)...$(RESET)"
+	@scripts/vet-integration.sh
+	@echo "$(GREEN)✓ Integration compile gate passed$(RESET)"
+
 .PHONY: lint
 ## lint: Run golangci-lint across every module (LINT_MODULES)
 lint:

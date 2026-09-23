@@ -11,8 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build integration
-// +build integration
+//go:build integration && pkcs11
+// +build integration,pkcs11
 
 package integration
 

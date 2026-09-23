@@ -652,6 +652,19 @@ jobs:
       - name: Run go vet
         run: make vet
 
+      # `make vet` only reaches files that compile untagged (or, for xkey,
+      # under LINT_TAGS_xkey) -- every file behind an `integration` (or
+      # other suite) build tag is invisible to it, which is how #636/#638
+      # broke sdk/go and acme-tpm unnoticed and how the tpm2 idevid/tpmops
+      # suites drifted roughly 200 references behind pkg/tpm2/store's
+      # current API before anyone tripped over it (go-xkms#650). This is
+      # compile-only, one `go vet` per distinct //go:build tag combination
+      # under test/integration -- see scripts/vet-integration.sh for why a
+      # single tag union is wrong (some suites are mutually exclusive). The
+      # suites themselves still run only in the devcontainer.
+      - name: Run go vet across test/integration (build-tag compile gate)
+        run: make vet-integration
+
       # The version gate has its own tests, and they run HERE rather than only
       # on a developer's machine — a guard nothing executes is a guard that can
       # rot into agreement with whatever the code does. They exist because the

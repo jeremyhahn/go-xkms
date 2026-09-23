@@ -13,16 +13,18 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
-	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/stretchr/testify/require"
 	"log/slog"
 	"math/big"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-tpm/tpm2"
+	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/stretchr/testify/require"
 )
 
 // Alias for code clarity
@@ -43,7 +45,7 @@ func newMockKeyBackend() *mockKeyBackend {
 		savedData: make(map[string][]byte),
 	}
 }
-func (m *mockKeyBackend) Get(keyAttrs *store.KeyAttributes, ext store.FSExtension) ([]byte, error) {
+func (m *mockKeyBackend) Get(keyAttrs *types.KeyAttributes, ext store.FSExtension) ([]byte, error) {
 	key := keyAttrs.CN + string(ext)
 	data, ok := m.getData[key]
 	if !ok {
@@ -51,14 +53,14 @@ func (m *mockKeyBackend) Get(keyAttrs *store.KeyAttributes, ext store.FSExtensio
 	}
 	return data, nil
 }
-func (m *mockKeyBackend) Save(keyAttrs *store.KeyAttributes, data []byte, ext store.FSExtension, overwrite bool) error {
+func (m *mockKeyBackend) Save(keyAttrs *types.KeyAttributes, data []byte, ext store.FSExtension, overwrite bool) error {
 	key := keyAttrs.CN + string(ext)
 	m.savedData[key] = data
 	// Also store in getData so it can be retrieved later
 	m.getData[key] = data
 	return nil
 }
-func (m *mockKeyBackend) Delete(keyAttrs *store.KeyAttributes) error {
+func (m *mockKeyBackend) Delete(keyAttrs *types.KeyAttributes) error {
 	return nil
 }
 
@@ -455,14 +457,14 @@ func TestTPMOps_CreateECDSAWithInvalidParent(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	backend := newMockKeyBackend()
 	// Test with nil parent - should fail with ErrInvalidParentAttributes
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-no-parent",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
 		Parent:             nil, // No parent - should fail
-		StoreType:          store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -476,21 +478,21 @@ func TestTPMOps_CreateECDSAWithMissingParentHandle(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	backend := newMockKeyBackend()
 	// Test with non-existent parent handle
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-bad-parent",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "non-existent-srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:    0x81FFFFFF, // Invalid handle
 				Hierarchy: tpm2.TPMRHOwner,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -504,22 +506,22 @@ func TestTPMOps_NVReadFromNonExistentIndex(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create key attributes for a non-existent NV index
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:        "non-existent-nv",
-		StoreType: store.STORE_TPM2,
-		Parent: &store.KeyAttributes{
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		Parent: &types.KeyAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		TPMAttributes: &store.TPMAttributes{
+		TPMAttributes: &types.TPMAttributes{
 			Handle:    0x01C0FFFF, // Non-existent NV index
 			Hierarchy: tpm2.TPMRHOwner,
 		},
@@ -533,13 +535,13 @@ func TestTPMOps_NVReadFromNonExistentIndex(t *testing.T) {
 func TestTPMOps_NVReadWithNilTPMAttributes(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	// Create key attributes without TPM attributes - should fail
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:            "no-tpm-attrs",
-		StoreType:     store.STORE_TPM2,
+		StoreType:     types.StoreTPM2,
 		TPMAttributes: nil, // No TPM attributes
-		Parent: &store.KeyAttributes{
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+		Parent: &types.KeyAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Hierarchy: tpm2.TPMRHOwner,
 			},
 		},
@@ -729,27 +731,27 @@ func TestTPMOps_RSADecrypt(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create RSA key attributes for encryption key (unrestricted)
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-encryption-key",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_ENCRYPTION,
+		KeyType:            types.KeyTypeEncryption,
 		SignatureAlgorithm: x509.SHA256WithRSA,
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -855,27 +857,27 @@ func TestTPMOps_SealUnseal(t *testing.T) {
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
 	// Get hierarchy auth from EK
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create key attributes for sealing
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "test-seal-key",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_CA,
-		Parent: &store.KeyAttributes{
+		KeyType:      types.KeyTypeCA,
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001, // SRK handle
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
 		PlatformPolicy: false,
-		StoreType:      store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -975,28 +977,28 @@ func TestTPMOps_CreateSecretKey(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create parent key attributes (SRK)
-	parentAttrs := &store.KeyAttributes{
+	parentAttrs := &types.KeyAttributes{
 		CN:        "srk",
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Handle:        0x81000001,
 			Hierarchy:     tpm2.TPMRHOwner,
 			HierarchyAuth: hierarchyAuth,
 		},
 	}
 	// Create secret key attributes
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "test-secret-key",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_HMAC,
+		KeyType:      types.KeyTypeHMAC,
 		Parent:       parentAttrs,
-		StoreType:    store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:    types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1031,27 +1033,27 @@ func TestTPMOps_CreateRSAKey(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create RSA key attributes
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-rsa-key",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.SHA256WithRSA,
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1071,27 +1073,27 @@ func TestTPMOps_CreateECDSAKey(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create ECDSA key attributes
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-key",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1110,7 +1112,7 @@ func TestTPMOps_CreateECDSAKeyWithVariousCurves(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
@@ -1125,22 +1127,22 @@ func TestTPMOps_CreateECDSAKeyWithVariousCurves(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := newMockKeyBackend()
-			keyAttrs := &store.KeyAttributes{
+			keyAttrs := &types.KeyAttributes{
 				CN:                 fmt.Sprintf("test-ecdsa-%s", tc.name),
 				KeyAlgorithm:       x509.ECDSA,
-				KeyType:            store.KEY_TYPE_TLS,
+				KeyType:            types.KeyTypeTLS,
 				SignatureAlgorithm: tc.sigAlg,
-				Parent: &store.KeyAttributes{
+				Parent: &types.KeyAttributes{
 					CN:        "srk",
-					StoreType: store.STORE_TPM2,
-					TPMAttributes: &store.TPMAttributes{
+					StoreType: types.StoreTPM2,
+					TPMAttributes: &types.TPMAttributes{
 						Handle:        0x81000001,
 						Hierarchy:     tpm2.TPMRHOwner,
 						HierarchyAuth: hierarchyAuth,
 					},
 				},
-				StoreType: store.STORE_TPM2,
-				TPMAttributes: &store.TPMAttributes{
+				StoreType: types.StoreTPM2,
+				TPMAttributes: &types.TPMAttributes{
 					Hierarchy: tpm2.TPMRHOwner,
 				},
 			}
@@ -1278,27 +1280,27 @@ func TestTPMOps_LoadKeyPair(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// First create and seal a key
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "test-load-key",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_CA,
-		Parent: &store.KeyAttributes{
+		KeyType:      types.KeyTypeCA,
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
 		PlatformPolicy: false,
-		StoreType:      store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1330,27 +1332,27 @@ func TestTPMOps_LoadKeyPairMissingBackendData(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Try to load a key that doesn't exist in backend
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "non-existent-key",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_CA,
-		Parent: &store.KeyAttributes{
+		KeyType:      types.KeyTypeCA,
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
 		PlatformPolicy: false,
-		StoreType:      store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1436,11 +1438,11 @@ func TestTPMOps_CreateIDevIDWithMissingParent(t *testing.T) {
 	qualifyingData := make([]byte, 32)
 	rand.Read(qualifyingData)
 	// Create AK attributes without parent
-	akAttrs := &store.KeyAttributes{
+	akAttrs := &types.KeyAttributes{
 		CN:           "test-ak",
 		KeyAlgorithm: x509.RSA,
 		Parent:       nil, // Missing parent
-		TPMAttributes: &store.TPMAttributes{
+		TPMAttributes: &types.TPMAttributes{
 			Handle: 0x81000003,
 		},
 	}
@@ -1471,7 +1473,7 @@ func TestTPMOps_CreateIAKWithInvalidEKAttrs(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	// Create invalid EK attributes with nil TPMAttributes
 	// This should cause a panic since CreateIAK doesn't validate nil TPMAttributes
-	invalidEKAttrs := &store.KeyAttributes{
+	invalidEKAttrs := &types.KeyAttributes{
 		CN:            "invalid-ek",
 		KeyAlgorithm:  x509.RSA,
 		TPMAttributes: nil, // Missing TPM attributes - will cause panic
@@ -1510,27 +1512,27 @@ func TestTPMOps_RSADecryptWithInvalidCiphertext(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create RSA key for decryption
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-decrypt-error-key",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_ENCRYPTION,
+		KeyType:            types.KeyTypeEncryption,
 		SignatureAlgorithm: x509.SHA256WithRSA,
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1569,26 +1571,26 @@ func TestTPMOps_UnsealWithNonExistentKey(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "non-existent-seal-key",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_CA,
-		Parent: &store.KeyAttributes{
+		KeyType:      types.KeyTypeCA,
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
 		PlatformPolicy: false,
-		StoreType:      store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1605,27 +1607,27 @@ func TestTPMOps_FlushHandle(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create a transient RSA key
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-flush-key",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.SHA256WithRSA,
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1661,30 +1663,30 @@ func TestTPMOps_CreateECDSAP256(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create ECDSA P-256 key with explicit curve
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-p256-explicit",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
-		ECCAttributes: &store.ECCAttributes{
+		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P256(),
 		},
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1708,30 +1710,30 @@ func TestTPMOps_CreateECDSAP384(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create ECDSA P-384 key with explicit curve
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-p384-explicit",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA384,
-		ECCAttributes: &store.ECCAttributes{
+		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P384(),
 		},
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1755,30 +1757,30 @@ func TestTPMOps_CreateECDSAP521(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create ECDSA P-521 key with explicit curve
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-p521-explicit",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA512,
-		ECCAttributes: &store.ECCAttributes{
+		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P521(),
 		},
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1802,28 +1804,28 @@ func TestTPMOps_CreateECDSAWithPlatformPolicy(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create ECDSA key with platform policy
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-ecdsa-policy",
 		KeyAlgorithm:       x509.ECDSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
 		PlatformPolicy:     true, // Enable platform policy
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1845,28 +1847,28 @@ func TestTPMOps_CreateRSAWithPlatformPolicy(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create RSA key with platform policy
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-rsa-policy",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.SHA256WithRSA,
 		PlatformPolicy:     true, // Enable platform policy
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1888,27 +1890,27 @@ func TestTPMOps_CreateRSAPSSKey(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create RSA-PSS key
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-rsa-pss",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.SHA256WithRSAPSS, // RSA-PSS
-		Parent: &store.KeyAttributes{
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
-		StoreType: store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType: types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1930,14 +1932,14 @@ func TestTPMOps_CreateRSAWithNilParent(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	backend := newMockKeyBackend()
 	// Create RSA key with nil parent - should fail
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:                 "test-rsa-nil-parent",
 		KeyAlgorithm:       x509.RSA,
-		KeyType:            store.KEY_TYPE_TLS,
+		KeyType:            types.KeyTypeTLS,
 		SignatureAlgorithm: x509.SHA256WithRSA,
 		Parent:             nil, // No parent - should fail
-		StoreType:          store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}
@@ -1952,27 +1954,27 @@ func TestTPMOps_DeleteKeyPersistent(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create a sealed key first (non-persistent)
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "test-delete-key",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_CA,
-		Parent: &store.KeyAttributes{
+		KeyType:      types.KeyTypeCA,
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
 		PlatformPolicy: false,
-		StoreType:      store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy:  tpm2.TPMRHOwner,
 			HandleType: tpm2.TPMHTTransient, // Transient handle
 		},
@@ -2282,27 +2284,27 @@ func TestTPMOps_SealWithPlatformPolicy(t *testing.T) {
 	backend := newMockKeyBackend()
 	ekAttrs, err := sharedTPM.EKAttributes()
 	require.NoError(t, err, "EKAttributes should succeed")
-	var hierarchyAuth store.Password
+	var hierarchyAuth types.Password
 	if ekAttrs.TPMAttributes != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth
 	}
 	// Create key attributes with platform policy
-	keyAttrs := &store.KeyAttributes{
+	keyAttrs := &types.KeyAttributes{
 		CN:           "test-seal-policy",
 		KeyAlgorithm: x509.RSA,
-		KeyType:      store.KEY_TYPE_CA,
-		Parent: &store.KeyAttributes{
+		KeyType:      types.KeyTypeCA,
+		Parent: &types.KeyAttributes{
 			CN:        "srk",
-			StoreType: store.STORE_TPM2,
-			TPMAttributes: &store.TPMAttributes{
+			StoreType: types.StoreTPM2,
+			TPMAttributes: &types.TPMAttributes{
 				Handle:        0x81000001,
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
 		},
 		PlatformPolicy: true, // Enable platform policy
-		StoreType:      store.STORE_TPM2,
-		TPMAttributes: &store.TPMAttributes{
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
 		},
 	}

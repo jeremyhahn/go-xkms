@@ -15,12 +15,36 @@ The go-xkms library includes comprehensive integration tests for all backends. T
 
 - **Unit Tests** (`make test`): Run fast, in-memory tests with no system modifications
 - **Integration Tests** (`make integration-test`): Run Docker-based tests with real services
+- **Compile Gate** (`make vet-integration`): Type-checks every suite under `test/integration/` — no host access, no Docker
 
 Integration tests use Docker Compose to provide:
 - Isolated test environments
 - Consistent dependencies (SoftHSM, SWTPM, Floci, etc.)
 - No host system modifications
 - Repeatable test execution
+
+## Compile Gate (`make vet-integration`)
+
+`go vet ./...` from the repository root never reaches a file behind an
+`integration` (or other suite) build tag, because that tag is never set —
+which is how a package API change can break an integration suite with
+nothing noticing until someone runs it in the devcontainer. `make
+vet-integration` closes that gap without running anything: it discovers
+every distinct `//go:build` tag combination declared under
+`test/integration/` and runs one `go vet -tags "..."` per combination,
+scoped to `./test/integration/...`.
+
+A single tag union is deliberately not used — some suites are mutually
+exclusive within the same package (for example `integration && grpc` next
+to `integration && !grpc`), and unioning every tag would compile both
+halves of a pair together and fail on a conflict no real build
+configuration ever produces. `scripts/vet-integration.sh` has the full
+discovery algorithm and is called by both `make vet-integration` and CI's
+Lint job.
+
+This gate is compile-only: it never runs a test body, dials hardware, or
+touches the host. The suites themselves still run only in the devcontainer
+via `make integration-test-*`.
 
 ## Test Structure
 
