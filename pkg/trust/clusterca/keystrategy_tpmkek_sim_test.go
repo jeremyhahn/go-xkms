@@ -38,6 +38,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // ekCertificateForSimulator issues a certificate over the simulator's real
@@ -152,15 +153,17 @@ func simulatorTPMConfig() *pkgtpm2.Config {
 		EK: &pkgtpm2.EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
-			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
+
+			KeyAlgorithm: x509.RSA.String(),
+			RSAConfig:    &tpmstore.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &pkgtpm2.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: tpmstore.DEFAULT_PASSWORD,
-			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig:     &tpmstore.RSAConfig{KeySize: 2048},
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD)),
+
+			KeyAlgorithm: x509.RSA.String(),
+			RSAConfig:    &tpmstore.RSAConfig{KeySize: 2048},
 		},
 		IAK: &pkgtpm2.IAKConfig{
 			CN:                 "clusterca-tpmkek-sim",

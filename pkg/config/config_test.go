@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestLoad_Success tests successful loading of a valid config file
@@ -1926,7 +1927,7 @@ func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
 	baseline := func() *Config {
 		c := &Config{}
 		c.Barrier.Enabled = true
-		c.Barrier.Passphrase = "test-boot-secret"
+		c.Barrier.Passphrase = types.SecretValue{Raw: "test-boot-secret"}
 		c.TLS.Enabled = true
 		c.Auth.Enabled = true
 		c.Auth.Type = "mtls"

@@ -682,6 +682,19 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "credential service", Err: err}
 	}
 
+	// Resolve every secret-bearing config field's credential:// (and future
+	// scheme) reference in one pass, now that the credential service exists
+	// to back it. This is the single resolution point every later consumer
+	// relies on -- initializeCA's CA identity/keystore passwords, the
+	// cluster CA key passphrase, and the phone backend's Noise static key no
+	// longer resolve their own field. See resolveConfigSecrets for what this
+	// does and does not cover.
+	if err := s.resolveConfigSecrets(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
+	}
+
 	// Initialize policy manager
 	if err := s.initializePolicyManager(); err != nil {
 		cancel()
@@ -2164,35 +2177,14 @@ func (s *Server) initializeCA() error {
 		return &ErrServiceInit{Service: "CA revocation store", Err: err}
 	}
 
-	// Resolve credential:// password references in the CA config before the CA's
-	// internal ToKeyAttributes path reads them. The registry falls back to literal
-	// pass-through for non-URI values, so existing plaintext passwords are unchanged.
-	// Modifications are made directly on the in-memory config; the loaded YAML is
-	// never re-serialised, so resolved plaintext does not persist to disk. Each
-	// field is a types.SecretValue: the resolved value is moved into the field by
-	// custody transfer (id.Keys[j].Password = *sv), so the plaintext is never
-	// materialized as a Go string outside its enclave here.
-	reg := s.buildSecretRegistry()
-	for i := range s.config.CA.Identity {
-		id := &s.config.CA.Identity[i]
-		for j := range id.Keys {
-			if id.Keys[j].Password.Raw == "" {
-				continue
-			}
-			sv, resolveErr := reg.Resolve(s.ctx, id.Keys[j].Password.Raw)
-			if resolveErr != nil {
-				return &ErrCAInit{Operation: "resolve key password credential", Err: resolveErr}
-			}
-			id.Keys[j].Password = *sv
-		}
-		if id.Keystores != nil && id.Keystores.Software != nil && id.Keystores.Software.Password.Raw != "" {
-			sv, resolveErr := reg.Resolve(s.ctx, id.Keystores.Software.Password.Raw)
-			if resolveErr != nil {
-				return &ErrCAInit{Operation: "resolve software keystore password credential", Err: resolveErr}
-			}
-			id.Keystores.Software.Password = *sv
-		}
-	}
+	// CA identity and software-keystore key passwords (id.Keys[j].Password,
+	// id.Keystores.Software.Password) already carry their resolved plaintext
+	// here: resolveConfigSecrets walked the whole loaded configuration,
+	// s.config included, right after the credential service came up, well
+	// before initializeCA runs. The CA's own ToKeyAttributes path reads them
+	// through types.SecretValueBytes / types.NewPasswordFromSecretValue,
+	// which prefers that resolved enclave over Raw -- see
+	// Server.resolveConfigSecrets.
 
 	// Create the CA instance
 	trustedCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{

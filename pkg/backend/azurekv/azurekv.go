@@ -194,6 +194,32 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 	return b, nil
 }
 
+// hasServicePrincipal reports whether the backend is configured with a full
+// Azure service principal (tenant, client ID, and client secret), the
+// prerequisite for azidentity.NewClientSecretCredential over
+// azidentity.NewDefaultAzureCredential.
+func (b *Backend) hasServicePrincipal() bool {
+	return b.config.ClientID != "" && b.config.TenantID != "" && types.SecretValueSet(&b.config.ClientSecret)
+}
+
+// newClientSecretCredential builds an azidentity.ClientSecretCredential from
+// the configured service principal. azidentity.NewClientSecretCredential
+// takes the client secret as a plain string — the documented third-party-SDK
+// boundary (go-xkms#610): the plaintext leaves ClientSecret's SecretValue
+// enclave only for the duration of this constructor call.
+func (b *Backend) newClientSecretCredential(credOptions *azidentity.ClientSecretCredentialOptions) (*azidentity.ClientSecretCredential, error) {
+	clientSecret, err := types.SecretValueBytes(&b.config.ClientSecret)
+	if err != nil {
+		return nil, err
+	}
+	return azidentity.NewClientSecretCredential(
+		b.config.TenantID,
+		b.config.ClientID,
+		string(clientSecret),
+		credOptions,
+	)
+}
+
 // initClient initializes the Azure Key Vault client if not already initialized.
 // Uses double-checked locking pattern to minimize contention.
 func (b *Backend) initClient(ctx context.Context) error {
@@ -216,18 +242,13 @@ func (b *Backend) initClient(ctx context.Context) error {
 
 	var client *azkeys.Client
 
-	if b.config.ClientID != "" && b.config.ClientSecret != "" && b.config.TenantID != "" {
+	if b.hasServicePrincipal() {
 		// Use ClientSecretCredential for service principal authentication
 		// with additional allowed tenants
 		credOptions := &azidentity.ClientSecretCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, err := azidentity.NewClientSecretCredential(
-			b.config.TenantID,
-			b.config.ClientID,
-			b.config.ClientSecret,
-			credOptions,
-		)
+		cred, err := b.newClientSecretCredential(credOptions)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}

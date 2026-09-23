@@ -3687,7 +3687,7 @@ func mergeTPMConfig(defaults, file xkmssdk.TPMConfig) xkmssdk.TPMConfig {
 			if file.EK.KeyAlgorithm != "" {
 				cfg.EK.KeyAlgorithm = file.EK.KeyAlgorithm
 			}
-			if file.EK.HierarchyAuth != "" {
+			if file.EK.HierarchyAuth.Raw != "" {
 				cfg.EK.HierarchyAuth = file.EK.HierarchyAuth
 			}
 			if file.EK.RSAConfig != nil {

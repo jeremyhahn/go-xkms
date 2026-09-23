@@ -2120,6 +2120,61 @@ func TestNew_WithCAConfig_Succeeds(t *testing.T) {
 	assert.NotNil(t, server)
 }
 
+// TestNew_WithCAConfig_LiteralKeyPasswordSucceeds proves that a CA identity
+// key password given as a plain literal (no "scheme://" reference) survives
+// New()'s full boot sequence -- resolveConfigSecrets leaves it exactly as
+// decoded, and initializeCA's ToKeyAttributes path reads it back through
+// types.NewPasswordFromSecretValue's literal fallback -- end to end, not
+// through a hand-built *Server.
+func TestNew_WithCAConfig_LiteralKeyPasswordSucceeds(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.CA = &ca.MultiIdentityCAConfig{
+		SelectedCA:          0,
+		DefaultValidityDays: 365,
+		Identity: []ca.Identity{
+			{
+				IsRoot: true,
+				Valid:  1,
+				Subject: ca.Subject{
+					CommonName:   "Test Root CA",
+					Organization: "Test Org",
+					Country:      "US",
+				},
+				Keys: []*types.KeyConfig{
+					{
+						KeyAlgorithm: types.AlgorithmECDSA,
+						ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
+						Password:     types.SecretValue{Raw: "dev-only-ca-key-password"},
+					},
+				},
+			},
+		},
+	}
+	cfg.TLS.Enabled = false
+
+	server, err := New(cfg)
+	if err != nil {
+		var caInit *ErrCAInit
+		if errors.As(err, &caInit) {
+			t.Logf("CA init failed (acceptable in unit test without full storage): %v", err)
+			return
+		}
+		require.NoError(t, err)
+	}
+	defer func() { _ = server.Shutdown() }()
+	require.NotNil(t, server)
+
+	// The literal survives untouched: resolveConfigSecrets does not treat a
+	// bare value as a reference, and SecretValueBytes reads it back exactly
+	// as configured.
+	got, err := types.SecretValueBytes(&cfg.CA.Identity[0].Keys[0].Password)
+	require.NoError(t, err)
+	assert.Equal(t, "dev-only-ca-key-password", string(got))
+}
+
 // ============================================================================
 // Tests — initializeWebAuthnService error path (bad RPID)
 // ============================================================================

@@ -90,9 +90,10 @@ func TestNewBackend(t *testing.T) {
 				VaultURL:     "https://test-vault.vault.azure.net/",
 				TenantID:     "tenant-id",
 				ClientID:     "client-id",
-				ClientSecret: "client-secret",
-				KeyStorage:   storage.New(),
-				CertStorage:  storage.New(),
+				ClientSecret: types.NewLiteralSecretValue([]byte("client-secret")),
+
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},

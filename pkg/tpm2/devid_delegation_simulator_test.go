@@ -377,7 +377,8 @@ func TestCreateIDevID_PlatformPolicyProvisionsThePlatformDelegation(t *testing.T
 func TestCreateIDevID_PlatformPolicyKeepsTheAuthValuePath(t *testing.T) {
 	h := newDelegationHarness(t, func(c *Config) {
 		c.IDevID.PlatformPolicy = true
-		c.IDevID.Password = "idevid-user-secret"
+		c.IDevID.Password = types.NewLiteralSecretValue([]byte("idevid-user-secret"))
+
 	})
 	public, _, _ := h.readPolicyNV(t, DevIDKeySigning)
 	require.True(t, public.Attributes.Written, "the delegation is provisioned regardless of the password")
@@ -526,7 +527,7 @@ func TestIAKAttributes_ColdCacheKeepsPlatformPolicy(t *testing.T) {
 // the authorizing.
 func TestIDevIDAttributes_ColdCacheKeepsPassword(t *testing.T) {
 	const authValue = "idevid-auth-value"
-	h := newDelegationHarness(t, func(c *Config) { c.IDevID.Password = authValue })
+	h := newDelegationHarness(t, func(c *Config) { c.IDevID.Password = types.NewLiteralSecretValue([]byte(authValue)) })
 	require.Equal(t, []byte(authValue), h.IDevID.Password.Bytes(), "provisioning recorded the authValue")
 
 	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
@@ -561,7 +562,7 @@ func assertTPMAuthRefused(t *testing.T, err error) {
 // CreateKeySession authorizes the rebuilt key with it.
 func TestIAKAttributes_ColdCacheKeepsPassword(t *testing.T) {
 	const authValue = "iak-auth-value"
-	h := newDelegationHarness(t, func(c *Config) { c.IAK.Password = authValue })
+	h := newDelegationHarness(t, func(c *Config) { c.IAK.Password = types.NewLiteralSecretValue([]byte(authValue)) })
 	require.Equal(t, []byte(authValue), h.IAK.Password.Bytes(), "provisioning recorded the authValue")
 
 	h.TPM.iakAttrs = nil // the cold cache a restarted process sees

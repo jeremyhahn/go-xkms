@@ -42,8 +42,8 @@ func newSoftHSMCABackend(t *testing.T) xkms.Backend {
 		CN:          "ca-multi-keystore-pkcs11",
 		Library:     token.Library,
 		TokenLabel:  token.Label,
-		PIN:         token.UserPIN,
-		SOPIN:       token.SOPIN,
+		PIN:         types.NewLiteralSecretValue([]byte(token.UserPIN)),
+		SOPIN:       types.NewLiteralSecretValue([]byte(token.SOPIN)),
 		KeyStorage:  storage.NewMemory(),
 		CertStorage: storage.NewMemory(),
 	})

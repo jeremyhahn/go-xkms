@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func TestNodeBarrier_TenantCreateGetList(t *testing.T) {
 	cfg.Barrier = config.BarrierConfig{
 		Enabled:    true,
 		Strategy:   "passphrase",
-		Passphrase: "test-node-seal-boot-secret",
+		Passphrase: types.NewLiteralSecretValue([]byte("test-node-seal-boot-secret")),
 	}
 
 	server, err := New(cfg)

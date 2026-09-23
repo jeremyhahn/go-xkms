@@ -1852,7 +1852,7 @@ func staleSessionBackend(t *testing.T, owner *Backend) *Backend {
 	slot, err := owner.resolveSlot()
 	require.NoError(t, err)
 
-	pool, err := NewSessionPool(owner.p11ctx, slot, owner.config.PIN, 1)
+	pool, err := NewSessionPool(owner.p11ctx, slot, secretValueString(owner.config.PIN), 1)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 

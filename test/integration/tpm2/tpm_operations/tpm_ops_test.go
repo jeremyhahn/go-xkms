@@ -87,15 +87,13 @@ func TestMain(m *testing.M) {
 		UseSimulator: true,
 		Hash:         "SHA-256",
 		EK: &tpm2pkg.EKConfig{
-			Handle:        0x81010001,
-			HierarchyAuth: "",
-			RSAConfig:     &store.RSAConfig{KeySize: 2048},
-			CertHandle:    0x01C00002,
+			Handle:     0x81010001,
+			RSAConfig:  &store.RSAConfig{KeySize: 2048},
+			CertHandle: 0x01C00002,
 		},
 		SSRK: &tpm2pkg.SRKConfig{
-			Handle:        0x81000001,
-			HierarchyAuth: "",
-			RSAConfig:     &store.RSAConfig{KeySize: 2048},
+			Handle:    0x81000001,
+			RSAConfig: &store.RSAConfig{KeySize: 2048},
 		},
 		IAK: &tpm2pkg.IAKConfig{
 			CN:                 "test-iak",

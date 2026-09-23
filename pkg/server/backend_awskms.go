@@ -17,6 +17,7 @@ package server
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // initAWSKMSBackend initializes the AWS KMS backend if enabled in configuration
@@ -31,10 +32,18 @@ func (s *Server) initAWSKMSBackend() error {
 		return &ErrStorageCreate{Resource: "AWS KMS storage", Err: err}
 	}
 
+	// awskms.Config.SecretAccessKey takes a plain string, the shape the AWS
+	// SDK's static credentials provider requires; the plaintext leaves
+	// SecretKey's enclave only for this assignment.
+	secretAccessKey, err := types.SecretValueBytes(&s.config.Backends.AWSKMS.SecretKey)
+	if err != nil {
+		return &ErrBackendCreate{Backend: "AWS KMS", Err: err}
+	}
+
 	awsBackend, err := awskms.NewBackend(&awskms.Config{
 		Region:          s.config.Backends.AWSKMS.Region,
 		AccessKeyID:     s.config.Backends.AWSKMS.AccessKey,
-		SecretAccessKey: s.config.Backends.AWSKMS.SecretKey,
+		SecretAccessKey: string(secretAccessKey),
 		Endpoint:        s.config.Backends.AWSKMS.Endpoint,
 		KeyStorage:      storage,
 	})

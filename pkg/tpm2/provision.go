@@ -317,12 +317,18 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		// Use the config's HierarchyAuth as the current auth if set,
 		// otherwise assume empty auth for fresh TPMs.
 		var currentAuth types.Password
-		if tpm.config.EK != nil && tpm.config.EK.HierarchyAuth != "" {
-			auth, err := store.NewPassword([]byte(tpm.config.EK.HierarchyAuth))
+		if tpm.config.EK != nil {
+			hierarchyAuthBytes, err := types.SecretValueBytes(&tpm.config.EK.HierarchyAuth)
 			if err != nil {
 				return err
 			}
-			currentAuth = auth
+			if len(hierarchyAuthBytes) > 0 {
+				auth, err := store.NewPassword(hierarchyAuthBytes)
+				if err != nil {
+					return err
+				}
+				currentAuth = auth
+			}
 		}
 
 		if err := tpm.SetHierarchyAuth(currentAuth, soPIN, nil); err != nil {

@@ -77,10 +77,12 @@ func newSoftHSMProvider(t *testing.T, lib string) types.KeyProvider {
 
 	const pin, soPIN = "1234", "1234"
 	provider, err := xkms.NewPKCS11Backend(&xkms.PKCS11BackendConfig{
-		Library:     lib,
-		TokenLabel:  "ssh-backend-test",
-		PIN:         pin,
-		SOPIN:       soPIN,
+		Library:    lib,
+		TokenLabel: "ssh-backend-test",
+		PIN:        types.NewLiteralSecretValue([]byte(pin)),
+
+		SOPIN: types.NewLiteralSecretValue([]byte(soPIN)),
+
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,
 	})

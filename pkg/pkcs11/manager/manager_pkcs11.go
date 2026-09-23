@@ -27,6 +27,7 @@ import (
 
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
 
@@ -476,8 +477,8 @@ func (m *memoryManager) Connect(moduleID string, slotID uint, userPin, soPin str
 	config := &pkcs11backend.Config{
 		Library:     mod.info.LibraryPath,
 		Slot:        &slotIDPtr,
-		PIN:         userPin,
-		SOPIN:       soPin,
+		PIN:         types.NewLiteralSecretValue([]byte(userPin)),
+		SOPIN:       types.NewLiteralSecretValue([]byte(soPin)),
 		TokenLabel:  slotInfo.Label,
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,

@@ -50,44 +50,35 @@ func (s *Server) clusterCAKeyProtection() (clustercapkg.KeyProtection, error) {
 	}, nil
 }
 
-// resolveClusterCAKeyPassphrase resolves sv (a types.SecretValue carrying
+// resolveClusterCAKeyPassphrase converts sv (a types.SecretValue carrying
 // either a plaintext passphrase or a credential:// reference) into a
 // *secure.Secret, the type clustercapkg.KeyProtection.Passphrase requires.
 // An empty/unset Raw — no passphrase configured — returns (nil, nil), which
 // KeyProtection treats identically to the pre-enclave empty-string default.
 //
-// The registry falls back to literal pass-through for non-URI values (the
-// same behaviour Server.initializeCA relies on for CA identity passwords),
-// so a plain operator-supplied passphrase resolves without a credential
-// round trip.
+// types.SecretValueBytes is the single read path: when this call runs after
+// Server.resolveConfigSecrets has already walked the loaded configuration
+// (the post-node path, from initializeCA), sv's enclave is already populated
+// and WithBytes wins outright. A plain operator-supplied passphrase resolves
+// the same way whether or not that walk has run yet, since it is never
+// reference-shaped. The one case genuinely unresolved here is a
+// credential:// reference on the PRE-node cluster-ACME bootstrap path (this
+// function's other caller, provisionRaftClusterACME, runs before the
+// credential service — and so resolveConfigSecrets — exist): that now fails
+// closed with *types.SecretReferenceUnresolvedError instead of the previous
+// direct buildSecretRegistry().Resolve call's registry fallback, which would
+// have silently used the unclaimed reference text itself as the passphrase.
 func (s *Server) resolveClusterCAKeyPassphrase(sv *types.SecretValue) (*secure.Secret, error) {
-	if sv.Raw == "" {
-		return nil, nil
-	}
-	reg := s.buildSecretRegistry()
-	resolved, err := reg.Resolve(s.ctx, sv.Raw)
+	plaintext, err := types.SecretValueBytes(sv)
 	if err != nil {
 		return nil, err
 	}
-	var secret *secure.Secret
-	if err := resolved.WithBytes(func(b []byte) error {
-		if len(b) == 0 {
-			return nil
-		}
-		// A fresh copy: sec takes ownership and secure.NewSecret wipes it,
-		// so the resolved SecretValue's own enclave-backed buffer (b, live
-		// only for this callback) is left untouched.
-		plaintext := append([]byte(nil), b...)
-		sec, serr := secure.NewSecret(plaintext)
-		if serr != nil {
-			return serr
-		}
-		secret = sec
-		return nil
-	}); err != nil {
-		return nil, err
+	if len(plaintext) == 0 {
+		return nil, nil
 	}
-	return secret, nil
+	// secure.NewSecret wipes the slice it seals; plaintext is SecretValueBytes'
+	// own private copy, not sv's enclave, so nothing else is left exposed.
+	return secure.NewSecret(plaintext)
 }
 
 // clusterStrategyDeps assembles the dependencies a cluster CA key strategy

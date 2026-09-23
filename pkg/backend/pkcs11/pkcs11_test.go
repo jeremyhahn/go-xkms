@@ -68,7 +68,7 @@ func TestBackend_Config(t *testing.T) {
 		CN:         "test-hsm",
 		Library:    "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel: "my-token",
-		PIN:        "1234",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
 	}
 
 	b := &Backend{
@@ -512,10 +512,10 @@ func TestBackend_Initialize(t *testing.T) {
 
 			// Verify PINs are set on the config when validation passes
 			if tt.errType == nil && err == nil {
-				if b.config.SOPIN != tt.soPIN {
+				if secretValueString(b.config.SOPIN) != tt.soPIN {
 					t.Errorf("Backend.Initialize() did not set SOPIN correctly")
 				}
-				if b.config.PIN != tt.userPIN {
+				if secretValueString(b.config.PIN) != tt.userPIN {
 					t.Errorf("Backend.Initialize() did not set PIN correctly")
 				}
 			}
@@ -534,8 +534,7 @@ func TestBackend_Login(t *testing.T) {
 	t.Run("login without PIN", func(t *testing.T) {
 		config := &Config{
 			Library:     tempLib,
-			TokenLabel:  "test",
-			PIN:         "", // Empty PIN
+			TokenLabel:  "test", // Empty PIN
 			KeyStorage:  storage.New(),
 			CertStorage: storage.New(),
 		}
@@ -553,9 +552,10 @@ func TestBackend_Login(t *testing.T) {
 
 	t.Run("login with PIN set", func(t *testing.T) {
 		config := &Config{
-			Library:     tempLib,
-			TokenLabel:  "test",
-			PIN:         "1234",
+			Library:    tempLib,
+			TokenLabel: "test",
+			PIN:        types.NewLiteralSecretValue([]byte("1234")),
+
 			KeyStorage:  storage.New(),
 			CertStorage: storage.New(),
 		}

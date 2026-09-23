@@ -19,6 +19,7 @@ package tpm2
 import (
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,8 +103,10 @@ func TestPlatformKeyStore_VerifyAuth_WithoutPlatformPolicy(t *testing.T) {
 	const userPIN = "operator-pin-4821"
 
 	h := newSimHarness(t, func(c *Config) {
-		c.SSRK.HierarchyAuth = ""
-		c.EK.HierarchyAuth = ""
+		c.SSRK.HierarchyAuth = types.SecretValue{}
+
+		c.EK.HierarchyAuth = types.SecretValue{}
+
 		c.PlatformSRK.PlatformPolicy = false
 	})
 	pks := newPlatformKeyStore(t, h)

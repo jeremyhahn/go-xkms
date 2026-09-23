@@ -62,7 +62,7 @@ func newAzureKVKeyProvider(config map[string]interface{}) (types.KeyProvider, er
 		azConfig.ClientID = clientID
 	}
 	if clientSecret, ok := config["client_secret"].(string); ok {
-		azConfig.ClientSecret = clientSecret
+		azConfig.ClientSecret = types.NewLiteralSecretValue([]byte(clientSecret))
 	}
 	if v, present := config["allow_local_vault_url"]; present {
 		allowLocal, ok := v.(bool)

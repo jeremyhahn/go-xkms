@@ -543,8 +543,9 @@ func TestIDevIDAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm:       x509.RSA.String(),
 				SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 				Handle:             0x81020000,
-				Password:           "secret",
-				RSAConfig:          &store.RSAConfig{KeySize: 2048},
+				Password:           types.NewLiteralSecretValue([]byte("secret")),
+
+				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
@@ -694,8 +695,9 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm:  x509.RSA.String(),
 				Handle:        0x81010001,
 				CertHandle:    0x01C00002,
-				HierarchyAuth: "password",
-				RSAConfig:     &store.RSAConfig{KeySize: 2048},
+				HierarchyAuth: types.NewLiteralSecretValue([]byte("password")),
+
+				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
 			policyDigest: nil,
 			idevidConfig: nil,
@@ -714,8 +716,9 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm:  x509.RSA.String(),
 				Handle:        0x81010001,
 				CertHandle:    0x01C00002,
-				HierarchyAuth: "password",
-				RSAConfig:     &store.RSAConfig{KeySize: 2048},
+				HierarchyAuth: types.NewLiteralSecretValue([]byte("password")),
+
+				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
 			policyDigest: nil,
 			idevidConfig: &IDevIDConfig{
@@ -827,8 +830,9 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 			config: SRKConfig{
 				KeyAlgorithm:  x509.RSA.String(),
 				Handle:        0x81000001,
-				HierarchyAuth: "password",
-				RSAConfig:     &store.RSAConfig{KeySize: 2048},
+				HierarchyAuth: types.NewLiteralSecretValue([]byte("password")),
+
+				RSAConfig: &store.RSAConfig{KeySize: 2048},
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
@@ -1118,10 +1122,11 @@ func TestConfigStructTags_Extended(t *testing.T) {
 		PlatformPCRBank:              "sha256",
 		IdentityProvisioningStrategy: "IAK_IDEVID_SINGLE_PASS",
 		UseEntropy:                   true,
-		LockoutAuth:                  "test-lockout",
-		PlatformAddress:              "localhost:2322",
-		GoldenPCRs:                   []uint{0, 7, 9, 10},
-		FileIntegrity:                []string{"/etc", "/usr/bin"},
+		LockoutAuth:                  types.NewLiteralSecretValue([]byte("test-lockout")),
+
+		PlatformAddress: "localhost:2322",
+		GoldenPCRs:      []uint{0, 7, 9, 10},
+		FileIntegrity:   []string{"/etc", "/usr/bin"},
 	}
 
 	assert.Equal(t, "localhost:2321", config.CommandAddress)
@@ -1132,7 +1137,7 @@ func TestConfigStructTags_Extended(t *testing.T) {
 	assert.Equal(t, uint(16), config.PlatformPCR)
 	assert.Equal(t, "sha256", config.PlatformPCRBank)
 	assert.True(t, config.UseEntropy)
-	assert.Equal(t, "test-lockout", config.LockoutAuth)
+	assert.Equal(t, []byte("test-lockout"), secretBytes(t, &config.LockoutAuth))
 	assert.Equal(t, "localhost:2322", config.PlatformAddress)
 	assert.Equal(t, []uint{0, 7, 9, 10}, config.GoldenPCRs)
 	assert.Equal(t, []string{"/etc", "/usr/bin"}, config.FileIntegrity)
@@ -1140,13 +1145,15 @@ func TestConfigStructTags_Extended(t *testing.T) {
 
 func TestEKConfigStructure_Extended(t *testing.T) {
 	config := EKConfig{
-		CertHandle:     0x01C00002,
-		CN:             "test-ek",
-		Debug:          true,
-		Handle:         0x81010001,
-		HierarchyAuth:  "test-auth",
-		KeyAlgorithm:   "RSA",
-		Password:       "test-password",
+		CertHandle:    0x01C00002,
+		CN:            "test-ek",
+		Debug:         true,
+		Handle:        0x81010001,
+		HierarchyAuth: types.NewLiteralSecretValue([]byte("test-auth")),
+
+		KeyAlgorithm: "RSA",
+		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+
 		PlatformPolicy: true,
 	}
 
@@ -1154,9 +1161,9 @@ func TestEKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "test-ek", config.CN)
 	assert.True(t, config.Debug)
 	assert.Equal(t, uint32(0x81010001), config.Handle)
-	assert.Equal(t, "test-auth", config.HierarchyAuth)
+	assert.Equal(t, []byte("test-auth"), secretBytes(t, &config.HierarchyAuth))
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
-	assert.Equal(t, "test-password", config.Password)
+	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
 	assert.True(t, config.PlatformPolicy)
 }
 
@@ -1165,31 +1172,33 @@ func TestSRKConfigStructure_Extended(t *testing.T) {
 		CN:            "test-srk",
 		Debug:         true,
 		Handle:        0x81000001,
-		HierarchyAuth: "test-auth",
-		KeyAlgorithm:  "RSA",
-		Password:      "test-password",
+		HierarchyAuth: types.NewLiteralSecretValue([]byte("test-auth")),
+
+		KeyAlgorithm: "RSA",
+		Password:     types.NewLiteralSecretValue([]byte("test-password")),
 	}
 
 	assert.Equal(t, "test-srk", config.CN)
 	assert.True(t, config.Debug)
 	assert.Equal(t, uint32(0x81000001), config.Handle)
-	assert.Equal(t, "test-auth", config.HierarchyAuth)
+	assert.Equal(t, []byte("test-auth"), secretBytes(t, &config.HierarchyAuth))
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
-	assert.Equal(t, "test-password", config.Password)
+	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
 }
 
 func TestIDevIDConfigStructure_Extended(t *testing.T) {
 	config := IDevIDConfig{
-		CertHandle:         0x01C90000,
-		CN:                 "test-idevid",
-		Debug:              true,
-		Handle:             0x81020000,
-		Hash:               "SHA-256",
-		KeyAlgorithm:       "RSA",
-		Manufacturer:       "Test Manufacturer",
-		Model:              "Test Model",
-		Pad:                true,
-		Password:           "test-password",
+		CertHandle:   0x01C90000,
+		CN:           "test-idevid",
+		Debug:        true,
+		Handle:       0x81020000,
+		Hash:         "SHA-256",
+		KeyAlgorithm: "RSA",
+		Manufacturer: "Test Manufacturer",
+		Model:        "Test Model",
+		Pad:          true,
+		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+
 		PlatformPolicy:     true,
 		Serial:             "12345",
 		SignatureAlgorithm: "SHA256WithRSAPSS",
@@ -1205,7 +1214,7 @@ func TestIDevIDConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "Test Manufacturer", config.Manufacturer)
 	assert.Equal(t, "Test Model", config.Model)
 	assert.True(t, config.Pad)
-	assert.Equal(t, "test-password", config.Password)
+	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "12345", config.Serial)
 	assert.Equal(t, "SHA256WithRSAPSS", config.SignatureAlgorithm)
@@ -1214,13 +1223,14 @@ func TestIDevIDConfigStructure_Extended(t *testing.T) {
 
 func TestIAKConfigStructure_Extended(t *testing.T) {
 	config := IAKConfig{
-		CertHandle:         0x01C90001,
-		CN:                 "test-iak",
-		Debug:              true,
-		Handle:             0x81010002,
-		Hash:               "SHA-256",
-		KeyAlgorithm:       "RSA",
-		Password:           "test-password",
+		CertHandle:   0x01C90001,
+		CN:           "test-iak",
+		Debug:        true,
+		Handle:       0x81010002,
+		Hash:         "SHA-256",
+		KeyAlgorithm: "RSA",
+		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+
 		PlatformPolicy:     true,
 		SignatureAlgorithm: "SHA256WithRSAPSS",
 	}
@@ -1231,7 +1241,7 @@ func TestIAKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, uint32(0x81010002), config.Handle)
 	assert.Equal(t, "SHA-256", config.Hash)
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
-	assert.Equal(t, "test-password", config.Password)
+	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "SHA256WithRSAPSS", config.SignatureAlgorithm)
 }
@@ -1252,15 +1262,16 @@ func TestPlatformSRKConfigStructure_Extended(t *testing.T) {
 
 func TestLDevIDConfigStructure_Extended(t *testing.T) {
 	config := LDevIDConfig{
-		CertHandle:         0x01C90010,
-		CN:                 "test-ldevid",
-		Debug:              true,
-		Handle:             0x81020010,
-		Hash:               "SHA-256",
-		KeyAlgorithm:       "RSA",
-		Model:              "Test Model",
-		Pad:                true,
-		Password:           "test-password",
+		CertHandle:   0x01C90010,
+		CN:           "test-ldevid",
+		Debug:        true,
+		Handle:       0x81020010,
+		Hash:         "SHA-256",
+		KeyAlgorithm: "RSA",
+		Model:        "Test Model",
+		Pad:          true,
+		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+
 		PlatformPolicy:     true,
 		Serial:             "67890",
 		SignatureAlgorithm: "SHA256WithRSA",
@@ -1274,7 +1285,7 @@ func TestLDevIDConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
 	assert.Equal(t, "Test Model", config.Model)
 	assert.True(t, config.Pad)
-	assert.Equal(t, "test-password", config.Password)
+	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "67890", config.Serial)
 	assert.Equal(t, "SHA256WithRSA", config.SignatureAlgorithm)
@@ -1282,13 +1293,14 @@ func TestLDevIDConfigStructure_Extended(t *testing.T) {
 
 func TestLAKConfigStructure_Extended(t *testing.T) {
 	config := LAKConfig{
-		CertHandle:         0x01C90011,
-		CN:                 "test-lak",
-		Debug:              true,
-		Handle:             0x81020011,
-		Hash:               "SHA-256",
-		KeyAlgorithm:       "ECDSA",
-		Password:           "test-password",
+		CertHandle:   0x01C90011,
+		CN:           "test-lak",
+		Debug:        true,
+		Handle:       0x81020011,
+		Hash:         "SHA-256",
+		KeyAlgorithm: "ECDSA",
+		Password:     types.NewLiteralSecretValue([]byte("test-password")),
+
 		PlatformPolicy:     true,
 		SignatureAlgorithm: "ECDSAWithSHA256",
 	}
@@ -1299,7 +1311,7 @@ func TestLAKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, uint32(0x81020011), config.Handle)
 	assert.Equal(t, "SHA-256", config.Hash)
 	assert.Equal(t, "ECDSA", config.KeyAlgorithm)
-	assert.Equal(t, "test-password", config.Password)
+	assert.Equal(t, []byte("test-password"), secretBytes(t, &config.Password))
 	assert.True(t, config.PlatformPolicy)
 	assert.Equal(t, "ECDSAWithSHA256", config.SignatureAlgorithm)
 }
@@ -1949,4 +1961,13 @@ func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
 		assert.Equal(t, policyDigest.Buffer, attrs.TPMAttributes.Template.AuthPolicy.Buffer,
 			"the platform policy digest must still be baked into the EK template")
 	})
+}
+
+// secretBytes borrows sv's plaintext through types.SecretValueBytes, the same
+// path production code uses, and fails the test if it cannot be read.
+func secretBytes(t *testing.T, sv *types.SecretValue) []byte {
+	t.Helper()
+	b, err := types.SecretValueBytes(sv)
+	require.NoError(t, err)
+	return b
 }

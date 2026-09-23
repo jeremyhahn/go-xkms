@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Example demonstrating PKCS#11 hardware-backed certificate storage.
@@ -53,7 +54,7 @@ func main() {
 	backend, err := pkcs11.NewBackend(&pkcs11.Config{
 		Library:    "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel: "test-token",
-		PIN:        "1234",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
 	})
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#11 backend: %v", err)

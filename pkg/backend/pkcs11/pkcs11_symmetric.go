@@ -341,7 +341,11 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 
 	// Login as user
 	// Note: We don't logout because C_Logout affects ALL sessions, not just this one
-	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, e.backend.config.PIN); err != nil {
+	userPIN, err := e.backend.userPIN()
+	if err != nil {
+		return nil, err
+	}
+	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
@@ -521,7 +525,11 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 
 	// Login as user
 	// Note: We don't logout because C_Logout affects ALL sessions, not just this one
-	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, e.backend.config.PIN); err != nil {
+	userPIN, err := e.backend.userPIN()
+	if err != nil {
+		return nil, err
+	}
+	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
@@ -609,7 +617,11 @@ func (e *pkcs11SymmetricEncrypter) withKeySession(fn func(session pkcs11.Session
 	}
 	defer e.backend.p11ctx.CloseSession(session)
 
-	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, e.backend.config.PIN); err != nil {
+	userPIN, err := e.backend.userPIN()
+	if err != nil {
+		return err
+	}
+	if err := e.backend.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}

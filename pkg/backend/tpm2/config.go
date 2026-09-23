@@ -51,6 +51,18 @@ type Config struct {
 	// EKHandle is the persistent handle for the Endorsement Key (default: 0x81010001)
 	EKHandle uint32 `yaml:"ek_handle" json:"ek_handle"`
 
+	// HierarchyAuth is the TPM Owner hierarchy authorization value, required
+	// to authorize TPM2_CreatePrimary under TPM_RH_OWNER when this backend
+	// provisions the Storage Root Key (see provisionSimulatorEKSRK and
+	// buildSRKAttrsFromConfig in pkg/tpm2). Previously this backend's config
+	// had no way to express it at all, so a non-default Owner hierarchy auth
+	// could never be supplied through this path. Empty (the zero value)
+	// preserves the prior behavior of an empty Owner hierarchy auth. Decodes
+	// from, and re-encodes to, a plain reference string in YAML/JSON; the
+	// resolved plaintext is sealed into this field's own memguard enclave
+	// rather than kept as a plain Go string. See types.SecretValue.
+	HierarchyAuth types.SecretValue `yaml:"hierarchy_auth,omitempty" json:"hierarchy_auth,omitempty"`
+
 	// Hash specifies the hash algorithm to use (default: "SHA-256")
 	Hash string `yaml:"hash" json:"hash"`
 
@@ -146,8 +158,12 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 			},
 		},
 		SSRK: &pkgtpm2.SRKConfig{
-			Handle:       c.SRKHandle,
-			KeyAlgorithm: "RSA",
+			Handle: c.SRKHandle,
+			// HierarchyAuth carries the SecretValue's already-sealed enclave
+			// forward rather than re-copying the plaintext into a new Go
+			// string; c.HierarchyAuth's own enclave is untouched by the copy.
+			HierarchyAuth: c.HierarchyAuth,
+			KeyAlgorithm:  "RSA",
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},

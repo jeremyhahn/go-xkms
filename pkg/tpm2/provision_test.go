@@ -428,8 +428,9 @@ func TestProvisionEKCertWithCertStoreCoverage(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0, // Use cert store
 			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			RSAConfig:     &store.RSAConfig{KeySize: 2048},
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			RSAConfig: &store.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &SRKConfig{
 			Handle:       0x81000001,
@@ -495,8 +496,9 @@ func TestProvisionEKCertNilCertStoreCoverage(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0, // Use cert store
 			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			RSAConfig:     &store.RSAConfig{KeySize: 2048},
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			RSAConfig: &store.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &SRKConfig{
 			Handle:       0x81000001,
@@ -567,8 +569,9 @@ func TestWriteEKCertCoverage(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0, // Use cert store
 			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			RSAConfig:     &store.RSAConfig{KeySize: 2048},
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			RSAConfig: &store.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &SRKConfig{
 			Handle:       0x81000001,
@@ -705,8 +708,9 @@ func TestCreatePlatformPolicyEmptyGoldenPCRsCoverage(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			RSAConfig:     &store.RSAConfig{KeySize: 2048},
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			RSAConfig: &store.RSAConfig{KeySize: 2048},
 		},
 		SSRK: &SRKConfig{
 			Handle:       0x81000001,
@@ -810,7 +814,7 @@ func TestFactoryReset_Success(t *testing.T) {
 	// Install's doc comment) matches reality instead of the static
 	// DEFAULT_PASSWORD template value createSim seeds EKConfig with for
 	// unrelated tests that never change the hierarchy auth.
-	tpmImpl.config.EK.HierarchyAuth = ""
+	tpmImpl.config.EK.HierarchyAuth = types.SecretValue{}
 
 	// createSim's shared IAK config (used by ~20 other tests) hardcodes
 	// Handle 0x81010002, which is the TCG-reserved ECC EK persistent

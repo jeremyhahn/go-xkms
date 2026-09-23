@@ -27,6 +27,7 @@ import (
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -52,9 +53,10 @@ func requirePKCS11PIV(t *testing.T) func() {
 	p11Backend, err := pkcs11backend.NewBackend(&pkcs11backend.Config{
 		Library:       library,
 		LibraryConfig: softhsmConf,
-		PIN:           "1234",
-		Slot:          &slot,
-		KeyStorage:    storage.New(),
+		PIN:           types.NewLiteralSecretValue([]byte("1234")),
+
+		Slot:       &slot,
+		KeyStorage: storage.New(),
 	})
 	require.NoError(t, err, "failed to create PKCS11 backend")
 

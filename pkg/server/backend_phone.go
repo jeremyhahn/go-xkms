@@ -18,6 +18,7 @@ import (
 	"log/slog"
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	// Register the Android platform verifier for phone attestation.
 	_ "github.com/jeremyhahn/go-xkms/pkg/backend/phone/android"
@@ -76,10 +77,30 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 		return ErrPhoneConfigNil
 	}
 
+	// NoiseStaticKey already carries its resolved plaintext here on a normal
+	// boot: Server.resolveConfigSecrets walks the whole loaded configuration,
+	// s.config (and so phoneCfg, part of that same tree) included, once the
+	// credential service comes up in Server.New -- well before any phone
+	// connects. A credential:// reference that resolver could not claim (no
+	// credential service was ever wired, e.g. an embedder constructing
+	// *Server directly without going through New) falls through to
+	// SecretValueBytes below, which fails closed with
+	// *types.SecretReferenceUnresolvedError rather than using the unclaimed
+	// reference text as the Noise key.
+	//
+	// phonebackend.Config.NoiseStaticKey takes a plain hex string; the
+	// plaintext leaves phoneCfg.NoiseStaticKey's enclave only for this
+	// assignment, the accepted boundary for a downstream API that is not
+	// itself enclave-aware.
+	noiseStaticKey, err := types.SecretValueBytes(&phoneCfg.NoiseStaticKey)
+	if err != nil {
+		return errors.Join(ErrPhoneBackendCreate, err)
+	}
+
 	backendConfig := &phonebackend.Config{
 		Transport:      phoneCfg.Transport,
 		DeviceAddress:  phoneCfg.DeviceAddress,
-		NoiseStaticKey: phoneCfg.NoiseStaticKey,
+		NoiseStaticKey: string(noiseStaticKey),
 		PhoneStaticKey: phoneCfg.PhoneStaticKey,
 		RequestTimeout: phoneCfg.RequestTimeout,
 		Logger:         s.logger,

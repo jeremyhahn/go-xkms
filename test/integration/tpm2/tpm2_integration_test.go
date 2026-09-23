@@ -210,7 +210,8 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		EK: &tpm2lib.EKConfig{
 			CertHandle:    0, // Use cert store instead of NVRAM (simulator has 1024 byte limit)
 			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
@@ -226,8 +227,9 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 		},
 		SSRK: &tpm2lib.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			KeyAlgorithm:  x509.RSA.String(),
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},

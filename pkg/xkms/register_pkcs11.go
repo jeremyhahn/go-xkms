@@ -91,10 +91,10 @@ func newPKCS11KeyProvider(config map[string]interface{}) (types.KeyProvider, err
 		p11Config.LibraryConfig = libConfig
 	}
 	if pin, ok := config["pin"].(string); ok {
-		p11Config.PIN = pin
+		p11Config.PIN = types.NewLiteralSecretValue([]byte(pin))
 	}
 	if sopin, ok := config["so_pin"].(string); ok {
-		p11Config.SOPIN = sopin
+		p11Config.SOPIN = types.NewLiteralSecretValue([]byte(sopin))
 	}
 	if label, ok := config["label"].(string); ok {
 		p11Config.TokenLabel = label

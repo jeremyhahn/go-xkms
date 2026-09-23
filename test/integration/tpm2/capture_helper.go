@@ -131,8 +131,9 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 		EK: &tpm2ks.EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			KeyAlgorithm:  x509.RSA.String(),
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
@@ -148,8 +149,9 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 		},
 		SSRK: &tpm2ks.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			KeyAlgorithm:  x509.RSA.String(),
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(store.DEFAULT_PASSWORD)),
+
+			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},

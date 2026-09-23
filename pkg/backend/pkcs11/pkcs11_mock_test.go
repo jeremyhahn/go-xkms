@@ -168,9 +168,10 @@ func TestBackend_Close_PoolCleanup(t *testing.T) {
 	}
 
 	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-pool-cleanup",
-		PIN:         "1234",
+		Library:    tempLib,
+		TokenLabel: "test-pool-cleanup",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}
@@ -202,10 +203,12 @@ func TestBackend_Initialize_AlreadyInitializedMock(t *testing.T) {
 	}
 
 	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-init-already",
-		PIN:         "1234",
-		SOPIN:       "5678",
+		Library:    tempLib,
+		TokenLabel: "test-init-already",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+
+		SOPIN: types.NewLiteralSecretValue([]byte("5678")),
+
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}
@@ -234,9 +237,10 @@ func TestBackend_loginUser_NewContext(t *testing.T) {
 	}
 
 	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-login-new",
-		PIN:         "5678",
+		Library:    tempLib,
+		TokenLabel: "test-login-new",
+		PIN:        types.NewLiteralSecretValue([]byte("5678")),
+
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}
@@ -605,10 +609,10 @@ func TestBackend_Initialize_ValidationPaths(t *testing.T) {
 		}
 
 		// Verify PINs were set
-		if b.config.SOPIN != "1234" {
+		if secretValueString(b.config.SOPIN) != "1234" {
 			t.Error("Initialize() should set SOPIN")
 		}
-		if b.config.PIN != "5678" {
+		if secretValueString(b.config.PIN) != "5678" {
 			t.Error("Initialize() should set PIN")
 		}
 	})

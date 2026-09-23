@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -140,11 +141,12 @@ func TestIDevIDAttributesFromConfig_AlwaysCarriesANonNilPassword(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			attrs, err := IDevIDAttributesFromConfig(IDevIDConfig{
-				CN:                 "device-id-001",
-				Handle:             0x81020000,
-				Hash:               "SHA-256",
-				KeyAlgorithm:       x509.RSA.String(),
-				Password:           tc.password,
+				CN:           "device-id-001",
+				Handle:       0x81020000,
+				Hash:         "SHA-256",
+				KeyAlgorithm: x509.RSA.String(),
+				Password:     types.NewLiteralSecretValue([]byte(tc.password)),
+
 				PlatformPolicy:     true,
 				SignatureAlgorithm: x509.SHA256WithRSA.String(),
 			})

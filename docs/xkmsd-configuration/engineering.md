@@ -1,6 +1,6 @@
 # xkmsd Configuration — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `xkmsd-configuration` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/config`
 
@@ -102,18 +102,87 @@ viper reads the YAML into a map before mapstructure decodes it with
 - an unquoted scalar such as `socket_mode: 0660` is a YAML integer, so a
   string field receives `"432"`. The shipped configurations quote such values;
   operators must too;
-- a `types.SecretValue` field (`ca.identity[*].keys[*].password`,
+- a `types.SecretValue` field does not decode through `SecretValue.UnmarshalYAML`
+  — mapstructure has no notion of `yaml.Unmarshaler` — so `Load` composes
+  `stringToSecretValueHookFunc` onto the decoder to give it the same
+  behaviour: the file's plain string (a literal password or a
+  `credential://...` reference) lands unresolved in the field's `Raw`. Every
+  secret-bearing config field is one: `barrier.passphrase`,
+  `rng.pkcs11.pin`, `backends.pkcs11.pin`, `backends.awskms.secret_key`,
+  `backends.azurekv.client_secret`, `backends.vault.token`,
+  `backends.phone.noise_static_key`, `ca.identity[*].keys[*].password`,
   `ca.identity[*].keystores.software.password`,
-  `cluster.raft_enrollment.ca_key_passphrase`) does not decode through
-  `SecretValue.UnmarshalYAML` — mapstructure has no notion of `yaml.Unmarshaler`
-  — so `Load` composes `stringToSecretValueHookFunc` onto the decoder to give
-  it the same behaviour: the file's plain string (a literal password or a
-  `credential://...` reference) lands unresolved in the field's `Raw`.
+  `ca.identity[*].keystores.pkcs11.pin`,
+  `cluster.raft_enrollment.ca_key_passphrase`, every `tpm2.*` hierarchy
+  auth/password field (`pkg/tpm2.Config`'s `lockout-auth`, each of
+  `ek`/`ssrk`/`idevid`/`iak`/`ldevid`/`lak`'s `hierarchy-auth`/`password`),
+  and the `pkg/backend/azurekv` and `pkg/backend/pkcs11` package-local
+  `Config.client_secret`/`pin`/`so-pin`. `backends.pkcs11.token` (a token
+  label, not a credential) and `bootstrap.raft.*.spki_pin` (a public SHA-256
+  hash) stay plain strings — see `pkg/secure/analyzer`'s field-name allowlist
+  for why those two are never flagged despite the naming.
+
   Resolution into the field's memguard enclave happens later, wherever the
-  field's owner has a `secret.ResolverRegistry` available (`pkg/server`'s
-  `initializeCA` for the first two fields, `resolveClusterCAKeyPassphrase`
-  for the cluster CA field) — `Load` itself never resolves a secret
-  reference.
+  field's owner has a `secret.ResolverRegistry` available — `Load` itself
+  never resolves a secret reference. Two groups, by when in the daemon's
+  life that owner exists:
+
+  - **Resolved today, in one pass, at server start**: `Server.resolveConfigSecrets`
+    (`pkg/server/secret_wiring.go`) runs go-qrdb's canonical
+    `secret.ConfigProcessor` once over the entire loaded `*config.Config`,
+    right after `initializeCredentialService` — the earliest point
+    `Server.buildSecretRegistry` actually has a `credential://` resolver
+    registered — and before every consumer that reads a resolved field:
+    `initializeCA` for `ca.identity[*].keys[*].password`,
+    `ca.identity[*].keystores.software.password` and
+    `ca.identity[*].keystores.pkcs11.pin`; `resolveClusterCAKeyPassphrase`
+    (called from `initializeCA`'s post-node path) for
+    `cluster.raft_enrollment.ca_key_passphrase`; and `RegisterPhoneBackend`
+    for `backends.phone.noise_static_key` (always called well after boot, so
+    always after this pass has already run). Every one of those call sites
+    now reads its field through `types.SecretValueBytes` /
+    `types.NewPasswordFromSecretValue` alone — none of them resolves a
+    reference itself any more. The walker's protected-`SecretValue` target
+    is strict — it must reference a secret a registered resolver actually
+    claims, or it is reported — so an unconfigured field (empty `Raw`) or an
+    operator-supplied literal is reported internally too
+    (`secret.UnresolvableTargetError`); `resolveConfigSecrets` treats that as
+    the expected non-fatal case (`types.SecretValueBytes` already handles an
+    empty or literal `SecretValue` correctly without ever going through this
+    processor) and only fails `Server.New`, with the typed
+    `*server.ErrConfigSecretResolution`, when the registry DID claim a
+    reference and genuinely failed to fetch it.
+  - **Still cannot be resolved through the credential store, structurally**:
+    `barrier.passphrase`, `rng.pkcs11.pin`, `backends.pkcs11.pin`,
+    `backends.awskms.secret_key`, `backends.azurekv.client_secret`,
+    `backends.vault.token`, and every `tpm2.*` hierarchy auth/password field.
+    `resolveNodeSeal` (which needs `barrier.passphrase`) and
+    `initializeBackends` (which needs the rest) both run *before*
+    `initializeCredentialService` in `Server.New` — and credential service
+    construction itself needs `s.barrier`, which for a hardware seal strategy
+    needs `initializeBackends` to have already run — so `resolveConfigSecrets`
+    cannot run early enough to help them either: it needs the same credential
+    service they are consumed ahead of. Resolving a `credential://` reference
+    for any of these fields through the internal credential store would mean
+    asking the barrier to unseal itself, or a backend to authenticate, using a
+    secret held in the store that same barrier/backend protects.
+    `types.SecretValueBytes` (the shared borrow helper every one of them
+    uses to reach the plaintext) refuses a value shaped like an unresolved
+    reference — `Strategy` still the zero value and `Raw` matching
+    `scheme://name` — with `*types.SecretReferenceUnresolvedError`, failing
+    `Server.New` outright rather than silently using the reference text as
+    the secret. A literal value (or one an env var/flag supplies) works
+    exactly as before; a `credential://...` value for one of these fields
+    fails loudly at start-up today, and is expected to keep doing so until a
+    boot-time resolver that does not depend on the barrier (an env-only or
+    external-KMS resolver, deliberately distinct from the
+    credential-store-backed one) is scoped and reviewed as its own change.
+    The `pkg/tpm2.Config` hierarchy-auth/password fields are additionally
+    never reached by `resolveConfigSecrets` at all: there is no config-file
+    path from `pkg/config.Config` to `pkg/tpm2.Config` today (it is populated
+    directly in Go — the `xkey tpm` CLI's `--hierarchy-auth` flag, tests).
+    `SecretValueBytes`'s same reference-shape guard still protects it if a
+    caller passes a `scheme://`-shaped literal by mistake.
 
 ## Errors
 
@@ -132,5 +201,9 @@ with `errs.Wrapped{Msg: "failed to listen on <addr>"}`.
 | `pkg/server` `TestBuildRESTConfig_CarriesConfiguredHost` | `server.host` reaches `rest.Config.Host` |
 | `pkg/api/grpc` `TestServer_StartBindsConfiguredHost` | the gRPC listener binds the configured host |
 | `pkg/api/grpc` `TestServer_StartRejectsUnbindableHost` | typed error, no wildcard fallback |
+| `pkg/server` `TestResolveConfigSecrets_LiteralAndEmptyFieldsAreNoOps` | an operator-supplied literal and an unconfigured field both survive the whole-config walk unchanged |
+| `pkg/server` `TestResolveConfigSecrets_ResolvesReferenceAcrossConfig` | a `credential://` reference anywhere in the config resolves in the same pass, alongside untouched literal/empty fields elsewhere |
+| `pkg/server` `TestResolveConfigSecrets_UnresolvableReferenceFailsClosed`, `TestResolveConfigSecrets_UnresolvableCredentialReference` | a reference the registry claims but cannot fetch fails with the typed `*ErrConfigSecretResolution` |
+| `pkg/server` `TestResolveClusterCAKeyPassphrase_*`, `TestRegisterPhoneBackend_ResolvableCredentialReference` | the CA/cluster/phone call sites read an already-resolved field through `types.SecretValueBytes` alone, no per-field `Resolve` of their own |
 
 Run: `make test-config`, `make test-server`, `go test ./cmd/xkmsd/ ./pkg/api/grpc/`.

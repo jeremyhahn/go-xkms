@@ -156,7 +156,7 @@ func createAzureKVBackend() (types.SymmetricKeyProvider, error) {
 		VaultURL:     vaultURL,
 		TenantID:     tenantID,
 		ClientID:     clientID,
-		ClientSecret: clientSecret,
+		ClientSecret: types.NewLiteralSecretValue([]byte(clientSecret)),
 		KeyStorage:   storage,
 		CertStorage:  storage,
 	}

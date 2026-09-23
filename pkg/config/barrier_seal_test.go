@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func TestBarrierConfig_SealStrategy(t *testing.T) {
@@ -65,7 +66,7 @@ func TestComplianceGaps_QRDBBarrierAutoUnseal(t *testing.T) {
 
 	// A boot passphrase closes it.
 	withPass := base()
-	withPass.Barrier.Passphrase = "boot-secret"
+	withPass.Barrier.Passphrase = types.SecretValue{Raw: "boot-secret"}
 	assert.False(t, hasAutoUnsealGap(withPass), "a boot passphrase auto-unseals")
 
 	// A hardware strategy closes it (TPM auto-unseals at boot).

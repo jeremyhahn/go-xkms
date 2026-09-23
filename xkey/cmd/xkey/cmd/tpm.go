@@ -127,7 +127,7 @@ func openTPM() (xkms.TrustedPlatformModule, error) {
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
 			KeyAlgorithm:  "RSA",
-			HierarchyAuth: tpmCfg.hierarchyAuth,
+			HierarchyAuth: xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth)),
 		},
 		SSRK: &xkms.SRKConfig{
 			Handle:       0x81000001,
@@ -213,7 +213,7 @@ func openTPMForProvisioningWithDeviceAndPCROverrides(device string, useSimulator
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
 			KeyAlgorithm:  "RSA",
-			HierarchyAuth: tpmCfg.hierarchyAuth,
+			HierarchyAuth: xkms.NewLiteralSecretValue([]byte(tpmCfg.hierarchyAuth)),
 		},
 		SSRK: &xkms.SRKConfig{
 			Handle:       0x81000001,

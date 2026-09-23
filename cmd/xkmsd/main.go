@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/web"
 )
@@ -134,7 +135,7 @@ func run() int {
 	// the config file (CLI > env > config), giving an operator an explicit
 	// override for the barrier auto-unseal secret.
 	if *sealPassphrase != "" {
-		cfg.Barrier.Passphrase = *sealPassphrase
+		cfg.Barrier.Passphrase = types.NewLiteralSecretValue([]byte(*sealPassphrase))
 	}
 
 	// Secure-by-default gate: refuse to serve a non-compliant configuration

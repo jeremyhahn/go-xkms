@@ -205,8 +205,12 @@ func (b *Backend) DeriveKeyECDH(
 	defer b.p11ctx.CloseSession(session)
 
 	// Login if required
-	if b.config.PIN != "" {
-		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
+	if types.SecretValueSet(&b.config.PIN) {
+		userPIN, err := b.userPIN()
+		if err != nil {
+			return nil, err
+		}
+		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 			}

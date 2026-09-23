@@ -23,6 +23,7 @@ import (
 
 	phonebackend "github.com/jeremyhahn/go-xkms/pkg/backend/phone"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
@@ -51,7 +52,8 @@ func newTestPhoneConfig() *config.PhoneConfig {
 		Enabled:        true,
 		Transport:      "tcp",
 		DeviceAddress:  "127.0.0.1:9876",
-		NoiseStaticKey: "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233",
+		NoiseStaticKey: types.NewLiteralSecretValue([]byte("aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233")),
+
 		PhoneStaticKey: "11223344556677881122334455667788112233445566778811223344556677aa",
 		RequestTimeout: 5 * time.Second,
 	}
@@ -62,6 +64,7 @@ func newTestPhoneConfig() *config.PhoneConfig {
 func newTestServerForPhone(t *testing.T, phoneCfg *config.PhoneConfig) *Server {
 	t.Helper()
 	return &Server{
+		ctx: context.Background(),
 		config: &config.Config{
 			Backends: config.BackendsConfig{
 				Phone: phoneCfg,
@@ -71,6 +74,17 @@ func newTestServerForPhone(t *testing.T, phoneCfg *config.PhoneConfig) *Server {
 		keyProviders: make(map[string]types.KeyProvider),
 		logger:       slog.Default(),
 	}
+}
+
+// newTestServerForPhoneWithCredentials is newTestServerForPhone plus a
+// credential service backed by svc, wiring buildSecretRegistry's
+// credential:// resolver the same way a fully booted server would once
+// initializeCredentialService has run.
+func newTestServerForPhoneWithCredentials(t *testing.T, phoneCfg *config.PhoneConfig, svc *credentialspkg.Service) *Server {
+	t.Helper()
+	srv := newTestServerForPhone(t, phoneCfg)
+	srv.credentialService = svc
+	return srv
 }
 
 func TestRegisterPhoneBackend_Success(t *testing.T) {
@@ -342,4 +356,116 @@ func TestRegisterPhoneBackend_InvalidConfig(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPhoneBackendCreate),
 		"error should wrap ErrPhoneBackendCreate, got: %v", err)
+}
+
+// newManualCredentialService builds a credentialspkg.Service using the
+// "manual" seal strategy, which needs no barrier or platform store -- the
+// same construction secret_wiring_test.go uses to exercise
+// buildSecretRegistry with a real credential-backed resolver.
+func newManualCredentialService(t *testing.T) *credentialspkg.Service {
+	t.Helper()
+	svc, err := credentialspkg.New(
+		&credentialspkg.Config{Strategy: credentialspkg.StrategyManual},
+		nil, nil, nil,
+	)
+	require.NoError(t, err)
+	return svc
+}
+
+// TestRegisterPhoneBackend_ResolvableCredentialReference proves the fix for
+// go-xkms#610's registry-wiring gap: a "credential://" NoiseStaticKey
+// reference is resolved through Server.resolveConfigSecrets -- the same
+// whole-config walk Server.New now runs once, right after the credential
+// service comes up, for every secret-bearing config field -- and the
+// resolved plaintext, not the reference text, reaches the phone backend.
+func TestRegisterPhoneBackend_ResolvableCredentialReference(t *testing.T) {
+	svc := newManualCredentialService(t)
+	const credName = "phone-noise-key"
+	const noiseKeyHex = "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233"
+	require.NoError(t, svc.StoreCredential(context.Background(), credName, []byte(noiseKeyHex)))
+
+	phoneCfg := newTestPhoneConfig()
+	phoneCfg.NoiseStaticKey = types.SecretValue{Raw: "credential://" + credName}
+
+	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
+	// Simulates the resolveConfigSecrets call Server.New makes right after
+	// initializeCredentialService, before any phone can connect.
+	require.NoError(t, srv.resolveConfigSecrets())
+
+	sender := &mockPhoneSender{}
+	require.NoError(t, srv.RegisterPhoneBackend(sender))
+
+	srv.mu.RLock()
+	kp, ok := srv.keyProviders["phone"]
+	srv.mu.RUnlock()
+	require.True(t, ok)
+	require.NoError(t, kp.Close())
+
+	// The field now carries the resolved SecretValue (custody transfer),
+	// with Raw still naming the reference and real material behind it.
+	assert.Equal(t, "credential://"+credName, phoneCfg.NoiseStaticKey.Raw)
+	got, err := types.SecretValueBytes(&phoneCfg.NoiseStaticKey)
+	require.NoError(t, err)
+	assert.Equal(t, noiseKeyHex, string(got))
+}
+
+// TestResolveConfigSecrets_UnresolvableCredentialReference proves an
+// unresolvable reference (the named credential does not exist) fails the
+// boot-time resolution pass loudly -- with the typed *ErrConfigSecretResolution
+// -- rather than silently registering a backend keyed by the reference text
+// once a phone eventually connects.
+func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
+	svc := newManualCredentialService(t)
+
+	phoneCfg := newTestPhoneConfig()
+	phoneCfg.NoiseStaticKey = types.SecretValue{Raw: "credential://does-not-exist"}
+
+	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
+	// The "manual" strategy's RetrieveCredential blocks waiting for an
+	// operator to submit the named credential rather than failing fast on a
+	// miss (see credentials.Service.retrieveManual) -- exactly right for its
+	// real interactive use, but this test wants "no such credential exists
+	// and nobody ever will submit one", so it bounds s.ctx instead of
+	// hanging for test.timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	srv.ctx = ctx
+
+	err := srv.resolveConfigSecrets()
+	require.Error(t, err)
+	var resErr *ErrConfigSecretResolution
+	require.True(t, errors.As(err, &resErr),
+		"error must unwrap to *ErrConfigSecretResolution, got %v", err)
+
+	// A boot that failed to resolve a configured reference must never reach
+	// phone registration with the reference text standing in for the key.
+	sender := &mockPhoneSender{}
+	regErr := srv.RegisterPhoneBackend(sender)
+	require.Error(t, regErr, "an unresolved reference must not register a working phone backend")
+}
+
+// TestRegisterPhoneBackend_UnresolvedReferenceWithoutCredentialService
+// proves that a "credential://" reference with no credential service wired
+// (buildSecretRegistry has no resolver to register) fails through
+// SecretValueBytes's *types.SecretReferenceUnresolvedError rather than
+// silently using the reference text as the Noise key — the exact go-xkms#610
+// regression this fix closes.
+func TestRegisterPhoneBackend_UnresolvedReferenceWithoutCredentialService(t *testing.T) {
+	phoneCfg := newTestPhoneConfig()
+	phoneCfg.NoiseStaticKey = types.SecretValue{Raw: "credential://phone-noise-key"}
+
+	// No credential service: srv.credentialService stays nil, so
+	// buildSecretRegistry's registry has no CredentialResolver and the
+	// registry's own literal fallback would otherwise silently treat the
+	// reference text as the Noise key.
+	srv := newTestServerForPhone(t, phoneCfg)
+
+	sender := &mockPhoneSender{}
+	err := srv.RegisterPhoneBackend(sender)
+	require.Error(t, err)
+
+	var refErr *types.SecretReferenceUnresolvedError
+	require.True(t, errors.As(err, &refErr),
+		"error must unwrap to *types.SecretReferenceUnresolvedError, got %v", err)
+	assert.Equal(t, "credential", refErr.Scheme)
 }

@@ -112,10 +112,12 @@ func setupSoftHSM(t *testing.T) (*pkcs11.Config, func()) {
 		Library:       getTestLibrary(),
 		LibraryConfig: configPath,
 		TokenLabel:    testTokenName,
-		PIN:           testUserPIN,
-		SOPIN:         testSOPIN,
-		KeyStorage:    keyStorage,
-		CertStorage:   certStorage,
+		PIN:           types.NewLiteralSecretValue([]byte(testUserPIN)),
+
+		SOPIN: types.NewLiteralSecretValue([]byte(testSOPIN)),
+
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
 	}
 
 	// Cleanup function

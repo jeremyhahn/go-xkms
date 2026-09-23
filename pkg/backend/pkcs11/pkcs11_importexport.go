@@ -298,7 +298,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 
 	// Login as user (only logout if we performed the login)
 	var didLogin bool
-	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
+	userPIN, err := b.userPIN()
+	if err != nil {
+		return err
+	}
+	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
@@ -795,7 +799,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 
 	// Login as user (only logout if we performed the login)
 	var didLogin bool
-	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
+	userPIN, err := b.userPIN()
+	if err != nil {
+		return nil, err
+	}
+	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 		}
@@ -1063,8 +1071,12 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	defer b.p11ctx.CloseSession(session)
 
 	// Login if required
-	if b.config.PIN != "" {
-		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
+	if types.SecretValueSet(&b.config.PIN) {
+		userPIN, err := b.userPIN()
+		if err != nil {
+			return nil, err
+		}
+		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, userPIN); err != nil {
 			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				return nil, &errs.Wrapped{Msg: "failed to login", Err: err}
 			}

@@ -175,17 +175,12 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 	var secretsClient *azsecrets.Client
 	var err error
 
-	if b.config.ClientID != "" && b.config.ClientSecret != "" && b.config.TenantID != "" {
+	if b.hasServicePrincipal() {
 		// Use ClientSecretCredential for service principal authentication
 		credOptions := &azidentity.ClientSecretCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, err := azidentity.NewClientSecretCredential(
-			b.config.TenantID,
-			b.config.ClientID,
-			b.config.ClientSecret,
-			credOptions,
-		)
+		cred, err := b.newClientSecretCredential(credOptions)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}
@@ -239,17 +234,12 @@ func (b *Backend) retrieveSymmetricKeySecret(ctx context.Context, name string) (
 	var secretsClient *azsecrets.Client
 	var err error
 
-	if b.config.ClientID != "" && b.config.ClientSecret != "" && b.config.TenantID != "" {
+	if b.hasServicePrincipal() {
 		// Use ClientSecretCredential for service principal authentication
 		credOptions := &azidentity.ClientSecretCredentialOptions{
 			AdditionallyAllowedTenants: []string{"*"},
 		}
-		cred, err := azidentity.NewClientSecretCredential(
-			b.config.TenantID,
-			b.config.ClientID,
-			b.config.ClientSecret,
-			credOptions,
-		)
+		cred, err := b.newClientSecretCredential(credOptions)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to create client secret credential", Err: err}
 		}

@@ -15,9 +15,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,4 +80,130 @@ func TestBuildSecretRegistry_WithCredentialService(t *testing.T) {
 	}))
 	assert.Equal(t, credValue, got)
 	sv.Clear()
+}
+
+// newSecretWiringTestConfig builds a *config.Config touching several
+// independent SecretValue fields scattered across the loaded configuration
+// tree (barrier, RNG PKCS#11, the PKCS#11 backend, and Vault), the same shape
+// resolveConfigSecrets walks once from Server.New.
+func newSecretWiringTestConfig() *config.Config {
+	return &config.Config{
+		Barrier: config.BarrierConfig{
+			Passphrase: types.SecretValue{Raw: "dev-only-passphrase"},
+		},
+		RNG: config.RNGConfig{
+			PKCS11: &config.RNGPKCS11Config{
+				// Empty Raw: not configured.
+			},
+		},
+		Backends: config.BackendsConfig{
+			PKCS11: &config.PKCS11Config{
+				Pin: types.SecretValue{Raw: "1234"},
+			},
+			Vault: &config.VaultConfig{},
+		},
+	}
+}
+
+// TestResolveConfigSecrets_LiteralAndEmptyFieldsAreNoOps proves that
+// resolveConfigSecrets leaves an operator-supplied literal value (no
+// recognized scheme) and an unconfigured (empty Raw) SecretValue field alone:
+// neither is a reference this server's registry could claim, so the walker
+// reports both as qrdbsecret.UnresolvableTargetError internally, and
+// resolveConfigSecrets tolerates that and returns nil. types.SecretValueBytes
+// on each field afterwards proves nothing was disturbed.
+func TestResolveConfigSecrets_LiteralAndEmptyFieldsAreNoOps(t *testing.T) {
+	t.Parallel()
+
+	cfg := newSecretWiringTestConfig()
+	s := &Server{ctx: context.Background(), config: cfg}
+
+	require.NoError(t, s.resolveConfigSecrets())
+
+	got, err := types.SecretValueBytes(&cfg.Barrier.Passphrase)
+	require.NoError(t, err)
+	assert.Equal(t, "dev-only-passphrase", string(got))
+
+	got, err = types.SecretValueBytes(&cfg.Backends.PKCS11.Pin)
+	require.NoError(t, err)
+	assert.Equal(t, "1234", string(got))
+
+	got, err = types.SecretValueBytes(&cfg.RNG.PKCS11.PIN)
+	require.NoError(t, err)
+	assert.Nil(t, got, "an unconfigured field must resolve to nil, not an error")
+
+	got, err = types.SecretValueBytes(&cfg.Backends.Vault.Token)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// TestResolveConfigSecrets_ResolvesReferenceAcrossConfig proves that a
+// credential:// reference anywhere in the loaded configuration resolves
+// through the one resolveConfigSecrets pass, alongside literal and
+// unconfigured fields elsewhere in the same config, which are left
+// untouched.
+func TestResolveConfigSecrets_ResolvesReferenceAcrossConfig(t *testing.T) {
+	t.Parallel()
+
+	svc, err := credentialspkg.New(
+		&credentialspkg.Config{Strategy: credentialspkg.StrategyManual},
+		nil, nil, nil,
+	)
+	require.NoError(t, err)
+
+	const credName = "vault-token"
+	const credValue = "s.abcdef123456"
+	require.NoError(t, svc.StoreCredential(context.Background(), credName, []byte(credValue)))
+
+	cfg := newSecretWiringTestConfig()
+	cfg.Backends.Vault.Token = types.SecretValue{Raw: "credential://" + credName}
+
+	s := &Server{ctx: context.Background(), config: cfg, credentialService: svc}
+	require.NoError(t, s.resolveConfigSecrets())
+
+	got, err := types.SecretValueBytes(&cfg.Backends.Vault.Token)
+	require.NoError(t, err)
+	assert.Equal(t, credValue, string(got))
+
+	// The literal and unconfigured fields elsewhere in the same config are
+	// unaffected by the reference resolved next to them.
+	got, err = types.SecretValueBytes(&cfg.Barrier.Passphrase)
+	require.NoError(t, err)
+	assert.Equal(t, "dev-only-passphrase", string(got))
+
+	got, err = types.SecretValueBytes(&cfg.RNG.PKCS11.PIN)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// TestResolveConfigSecrets_UnresolvableReferenceFailsClosed proves that a
+// credential:// reference this server's registry claims but cannot satisfy
+// fails resolveConfigSecrets with the typed *ErrConfigSecretResolution,
+// distinct from the tolerated empty/literal cases above.
+func TestResolveConfigSecrets_UnresolvableReferenceFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	svc, err := credentialspkg.New(
+		&credentialspkg.Config{Strategy: credentialspkg.StrategyManual},
+		nil, nil, nil,
+	)
+	require.NoError(t, err)
+
+	cfg := newSecretWiringTestConfig()
+	cfg.Backends.Vault.Token = types.SecretValue{Raw: "credential://does-not-exist"}
+
+	// The "manual" strategy blocks RetrieveCredential until the operator
+	// submits the named credential or the context is cancelled; bound it so
+	// this test proves the failure instead of hanging on one that never
+	// arrives.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	s := &Server{ctx: ctx, config: cfg, credentialService: svc}
+	resolveErr := s.resolveConfigSecrets()
+	require.Error(t, resolveErr)
+
+	var typedErr *ErrConfigSecretResolution
+	require.True(t, errors.As(resolveErr, &typedErr),
+		"error must unwrap to *ErrConfigSecretResolution, got %v", resolveErr)
 }

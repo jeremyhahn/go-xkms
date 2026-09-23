@@ -45,13 +45,17 @@ type Config struct {
 	// For SoftHSM, this is typically the softhsm2.conf file path.
 	LibraryConfig string `yaml:"config" json:"config" mapstructure:"config"`
 
-	// PIN is the user PIN for the PKCS#11 token.
-	// This is used for normal cryptographic operations.
-	PIN string `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
+	// PIN is the user PIN for the PKCS#11 token. This is used for normal
+	// cryptographic operations. Decodes from, and re-encodes to, a plain
+	// reference string in YAML/JSON; the resolved plaintext is sealed into
+	// this field's own memguard enclave rather than kept as a plain Go
+	// string. See types.SecretValue and types.SecretValueBytes.
+	PIN types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
 
-	// SOPIN is the Security Officer PIN for the PKCS#11 token.
-	// This is used for administrative operations like token initialization.
-	SOPIN string `yaml:"so-pin,omitempty" json:"so_pin,omitempty" mapstructure:"so-pin"`
+	// SOPIN is the Security Officer PIN for the PKCS#11 token. This is used
+	// for administrative operations like token initialization. Same
+	// SecretValue custody rules as PIN.
+	SOPIN types.SecretValue `yaml:"so-pin,omitempty" json:"so_pin,omitempty" mapstructure:"so-pin"`
 
 	// PlatformPolicy indicates whether platform-specific policies should be applied.
 	// This may affect key generation, storage, and usage policies.
@@ -114,12 +118,20 @@ func (c *Config) Validate() error {
 	}
 
 	// If PIN is set, validate length
-	if c.PIN != "" && len(c.PIN) < 4 {
+	pin, err := types.SecretValueBytes(&c.PIN)
+	if err != nil {
+		return &errs.Wrapped{Msg: "resolve PIN", Err: err}
+	}
+	if len(pin) > 0 && len(pin) < 4 {
 		return ErrInvalidPINLength
 	}
 
 	// If SOPIN is set, validate length
-	if c.SOPIN != "" && len(c.SOPIN) < 4 {
+	sopin, err := types.SecretValueBytes(&c.SOPIN)
+	if err != nil {
+		return &errs.Wrapped{Msg: "resolve SO PIN", Err: err}
+	}
+	if len(sopin) > 0 && len(sopin) < 4 {
 		return ErrInvalidSOPINLength
 	}
 
@@ -147,11 +159,11 @@ func (c *Config) IsYubiKeyPIV() bool {
 // String returns a string representation of the config with sensitive data masked.
 func (c *Config) String() string {
 	pinMask := "****"
-	if c.PIN == "" {
+	if !types.SecretValueSet(&c.PIN) {
 		pinMask = "<not set>"
 	}
 	sopinMask := "****"
-	if c.SOPIN == "" {
+	if !types.SecretValueSet(&c.SOPIN) {
 		sopinMask = "<not set>"
 	}
 

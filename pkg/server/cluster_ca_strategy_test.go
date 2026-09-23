@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -56,8 +57,10 @@ func TestResolveClusterCAKeyPassphrase_Literal(t *testing.T) {
 }
 
 // TestResolveClusterCAKeyPassphrase_CredentialReference verifies that a
-// credential:// reference is dereferenced through the server's credential
-// service into a *secure.Secret carrying the stored plaintext, not the URI.
+// credential:// reference, already resolved by Server.resolveConfigSecrets
+// (the post-node initializeCA path — see resolveClusterCAKeyPassphrase's
+// doc), reaches resolveClusterCAKeyPassphrase as a *secure.Secret carrying
+// the stored plaintext, not the URI.
 func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 	t.Parallel()
 
@@ -73,10 +76,20 @@ func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 	const credValue = "hunter2"
 	require.NoError(t, svc.StoreCredential(context.Background(), credName, []byte(credValue)))
 
-	s := &Server{ctx: context.Background(), credentialService: svc}
-	sv := &types.SecretValue{Raw: "credential://" + credName}
+	s := &Server{
+		ctx:               context.Background(),
+		credentialService: svc,
+		config: &config.Config{
+			Cluster: config.ClusterConfig{
+				RaftEnrollment: config.RaftEnrollmentConfig{
+					CAKeyPassphrase: types.SecretValue{Raw: "credential://" + credName},
+				},
+			},
+		},
+	}
+	require.NoError(t, s.resolveConfigSecrets())
 
-	sec, err := s.resolveClusterCAKeyPassphrase(sv)
+	sec, err := s.resolveClusterCAKeyPassphrase(&s.config.Cluster.RaftEnrollment.CAKeyPassphrase)
 	require.NoError(t, err)
 	require.NotNil(t, sec)
 
@@ -87,15 +100,15 @@ func TestResolveClusterCAKeyPassphrase_CredentialReference(t *testing.T) {
 }
 
 // TestResolveClusterCAKeyPassphrase_CredentialReferenceMissing verifies that
-// a credential:// reference the credential service cannot satisfy surfaces
-// as an error rather than silently falling back to an empty passphrase.
+// a credential:// reference the credential service cannot satisfy surfaces as
+// an error from resolveConfigSecrets — the boot-time pass now performs this
+// resolution — rather than silently falling back to an empty passphrase.
 //
-// The "manual" strategy's RetrieveCredential blocks until SubmitCredential
-// is called or ctx is cancelled — it has no "not found" answer of its own —
-// so a never-submitted name is proven "cannot be satisfied" the same way any
-// caller would see it: the resolve call is bounded by a short-lived context,
-// and its cancellation is what resolveClusterCAKeyPassphrase must surface as
-// an error, never as a silent empty passphrase.
+// The "manual" strategy's RetrieveCredential blocks until SubmitCredential is
+// called or ctx is cancelled — it has no "not found" answer of its own — so a
+// never-submitted name is proven "cannot be satisfied" the same way any
+// caller would see it: resolveConfigSecrets is bounded by a short-lived
+// context, and its cancellation is what surfaces as the typed error.
 func TestResolveClusterCAKeyPassphrase_CredentialReferenceMissing(t *testing.T) {
 	t.Parallel()
 
@@ -110,10 +123,26 @@ func TestResolveClusterCAKeyPassphrase_CredentialReferenceMissing(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	s := &Server{ctx: ctx, credentialService: svc}
-	sv := &types.SecretValue{Raw: "credential://does-not-exist"}
+	s := &Server{
+		ctx:               ctx,
+		credentialService: svc,
+		config: &config.Config{
+			Cluster: config.ClusterConfig{
+				RaftEnrollment: config.RaftEnrollmentConfig{
+					CAKeyPassphrase: types.SecretValue{Raw: "credential://does-not-exist"},
+				},
+			},
+		},
+	}
 
-	sec, err := s.resolveClusterCAKeyPassphrase(sv)
+	resolveErr := s.resolveConfigSecrets()
+	require.Error(t, resolveErr)
+	var typedErr *ErrConfigSecretResolution
+	require.ErrorAs(t, resolveErr, &typedErr)
+
+	// The field is left unresolved: resolveClusterCAKeyPassphrase must refuse
+	// it rather than treat the reference text as the passphrase.
+	sec, err := s.resolveClusterCAKeyPassphrase(&s.config.Cluster.RaftEnrollment.CAKeyPassphrase)
 	require.Error(t, err)
 	assert.Nil(t, sec)
 }

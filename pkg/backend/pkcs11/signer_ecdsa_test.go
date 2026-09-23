@@ -205,7 +205,7 @@ func TestECDSASigner_Sign_ClosedPool(t *testing.T) {
 
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, 2)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 2)
 	require.NoError(t, err)
 	pool.Close()
 
@@ -341,7 +341,7 @@ func TestExportECDSAPublicKey_ClosedPool(t *testing.T) {
 
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, 1)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 1)
 	require.NoError(t, err)
 	pool.Close()
 
@@ -389,7 +389,7 @@ func TestGenerateECDSAKeyPair_ClosedPool(t *testing.T) {
 
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, 1)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 1)
 	require.NoError(t, err)
 	pool.Close()
 
@@ -447,7 +447,7 @@ func TestFindECDSASigner_ClosedPool(t *testing.T) {
 
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, 1)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 1)
 	require.NoError(t, err)
 	pool.Close()
 

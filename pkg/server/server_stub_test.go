@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,7 +100,7 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 		Enabled: true,
 		Library: "/usr/lib/softhsm/libsofthsm2.so",
 		Token:   "test",
-		Pin:     "1234",
+		Pin:     types.NewLiteralSecretValue([]byte("1234")),
 	}
 
 	server, err := New(cfg)
@@ -119,7 +120,7 @@ func TestServer_InitVaultBackend_Stub(t *testing.T) {
 	cfg.Backends.Vault = &config.VaultConfig{
 		Enabled: true,
 		Address: "http://localhost:8200",
-		Token:   "test-token",
+		Token:   types.NewLiteralSecretValue([]byte("test-token")),
 	}
 
 	server, err := New(cfg)

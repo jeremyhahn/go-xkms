@@ -516,9 +516,10 @@ func TestGetTracker_DefaultTracker(t *testing.T) {
 	}
 
 	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-token",
-		PIN:         "1234",
+		Library:    tempLib,
+		TokenLabel: "test-token",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}

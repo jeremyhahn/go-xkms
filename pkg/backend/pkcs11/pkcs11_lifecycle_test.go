@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -167,8 +168,8 @@ func TestBackend_Initialize_UninitializedToken(t *testing.T) {
 		"Initialize must provision an uninitialized SoftHSM token")
 
 	require.NotNil(t, b.Pool(), "Initialize must leave a usable session pool behind")
-	assert.Equal(t, softhsmtest.SOPIN, b.config.SOPIN, "Initialize records the SO PIN it was given")
-	assert.Equal(t, softhsmtest.UserPIN, b.config.PIN, "Initialize records the user PIN it was given")
+	assert.Equal(t, softhsmtest.SOPIN, secretValueString(b.config.SOPIN), "Initialize records the SO PIN it was given")
+	assert.Equal(t, softhsmtest.UserPIN, secretValueString(b.config.PIN), "Initialize records the user PIN it was given")
 
 	random, err := b.GenerateRandom(16)
 	require.NoError(t, err, "the pool created by Initialize must be logged in and usable")
@@ -239,8 +240,8 @@ func TestBackend_Login_WrongPIN(t *testing.T) {
 	token := softhsmtest.Provision(t, "login-wrong-pin")
 
 	config := testConfig(token.Library, token.Label)
-	config.PIN = "0000" // valid length, wrong value
-	require.NotEqual(t, token.UserPIN, config.PIN)
+	config.PIN = types.NewLiteralSecretValue([]byte("0000")) // valid length, wrong value
+	require.NotEqual(t, token.UserPIN, secretValueString(config.PIN))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err)
@@ -253,7 +254,7 @@ func TestBackend_Login_WrongPIN(t *testing.T) {
 
 	// The token must not have been damaged: the correct PIN still works.
 	// SoftHSM only locks the user PIN after three consecutive failures.
-	b.config.PIN = token.UserPIN
+	b.config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
 	require.NoError(t, b.Login(), "the correct PIN must still be accepted after one failure")
 	require.NotNil(t, b.Pool())
 }
@@ -279,7 +280,7 @@ func TestBackend_Login_UnknownTokenLabel(t *testing.T) {
 	token := softhsmtest.Provision(t, "login-label-present")
 
 	config := testConfig(token.Library, "no-such-token")
-	config.PIN = token.UserPIN
+	config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err)
@@ -300,7 +301,7 @@ func TestBackend_Login_BadLibrary(t *testing.T) {
 	require.NoError(t, os.WriteFile(fake, []byte("this is not an ELF shared object"), 0o600))
 
 	config := testConfig(fake, "irrelevant")
-	config.PIN = "1234"
+	config.PIN = types.NewLiteralSecretValue([]byte("1234"))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err, "NewBackend only checks that the path exists")
@@ -410,7 +411,7 @@ func TestBackend_SetSessionPool_BorrowsContext(t *testing.T) {
 	slot, err := owner.resolveSlot()
 	require.NoError(t, err)
 
-	borrowedPool, err := NewSessionPool(owner.p11ctx, slot, owner.config.PIN, 2)
+	borrowedPool, err := NewSessionPool(owner.p11ctx, slot, secretValueString(owner.config.PIN), 2)
 	require.NoError(t, err)
 
 	borrower := &Backend{config: owner.config}
@@ -522,7 +523,7 @@ func TestBackend_Close_ReleasesOwnedContext(t *testing.T) {
 	token := softhsmtest.Provision(t, "close-owned-ctx")
 
 	config := testConfig(token.Library, token.Label)
-	config.PIN = token.UserPIN
+	config.PIN = types.NewLiteralSecretValue([]byte(token.UserPIN))
 
 	b, err := NewBackend(config)
 	require.NoError(t, err)

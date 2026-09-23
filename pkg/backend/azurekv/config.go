@@ -42,8 +42,12 @@ type Config struct {
 	ClientID string `yaml:"client_id,omitempty" json:"client_id,omitempty" mapstructure:"client_id"`
 
 	// ClientSecret is the Azure service principal client secret.
-	// Optional - if not provided, will use DefaultAzureCredential.
-	ClientSecret string `yaml:"client_secret,omitempty" json:"client_secret,omitempty" mapstructure:"client_secret"`
+	// Optional - if not provided, will use DefaultAzureCredential. Decodes
+	// from, and re-encodes to, a plain reference string in YAML/JSON; the
+	// resolved plaintext is sealed into this field's own memguard enclave
+	// rather than kept as a plain Go string. See types.SecretValue and
+	// types.SecretValueBytes.
+	ClientSecret types.SecretValue `yaml:"client_secret,omitempty" json:"client_secret,omitempty" mapstructure:"client_secret"`
 
 	// Debug enables debug logging for Azure SDK operations.
 	Debug bool `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
@@ -98,7 +102,7 @@ func (c *Config) Validate() error {
 
 	// If service principal credentials are provided, all three must be present
 	hasClientID := c.ClientID != ""
-	hasClientSecret := c.ClientSecret != ""
+	hasClientSecret := types.SecretValueSet(&c.ClientSecret)
 	hasTenantID := c.TenantID != ""
 
 	if hasClientID || hasClientSecret || hasTenantID {
@@ -140,7 +144,7 @@ func (c *Config) String() string {
 	}
 
 	clientSecretMask := "<not set>"
-	if c.ClientSecret != "" {
+	if types.SecretValueSet(&c.ClientSecret) {
 		clientSecretMask = "****"
 	}
 

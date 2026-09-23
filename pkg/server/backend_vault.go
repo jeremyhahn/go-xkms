@@ -17,6 +17,7 @@ package server
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/vault"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // initVaultBackend initializes the HashiCorp Vault backend if enabled in configuration
@@ -36,9 +37,17 @@ func (s *Server) initVaultBackend() error {
 		transitPath = "transit"
 	}
 
+	// vault.Config.Token takes a plain string, the shape the Vault client's
+	// SetToken requires; the plaintext leaves Token's enclave only for this
+	// assignment.
+	token, err := types.SecretValueBytes(&s.config.Backends.Vault.Token)
+	if err != nil {
+		return &ErrBackendCreate{Backend: "Vault", Err: err}
+	}
+
 	vaultBackend, err := vault.NewBackend(&vault.Config{
 		Address:     s.config.Backends.Vault.Address,
-		Token:       s.config.Backends.Vault.Token,
+		Token:       string(token),
 		TransitPath: transitPath,
 		Namespace:   s.config.Backends.Vault.Namespace,
 		KeyStorage:  storage,

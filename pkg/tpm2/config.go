@@ -90,7 +90,7 @@ var (
 			CertHandle:    0x01C00002,
 			Debug:         true,
 			Handle:        0x81010001,
-			HierarchyAuth: types.DEFAULT_PASSWORD,
+			HierarchyAuth: types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
 			KeyAlgorithm:  x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -121,7 +121,7 @@ var (
 			Serial:       "001",
 			// Manufacturer, Version: empty by default
 			// When empty, SMBIOS/DMI discovery will be used as fallback
-			// Password:           types.DEFAULT_PASSWORD,
+			// Password:           types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
 			Pad:                true,
 			PlatformPolicy:     true,
 			RSAConfig:          &store.RSAConfig{KeySize: 2048},
@@ -137,7 +137,7 @@ var (
 		SSRK: &SRKConfig{
 			Debug:  true,
 			Handle: 0x81000001,
-			// HierarchyAuth: types.DEFAULT_PASSWORD,
+			// HierarchyAuth: types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -181,20 +181,25 @@ type Config struct {
 	//   PCR 9: Kernel command line
 	//   PCR 10: Linux IMA (file integrity measurements)
 	// To customize, specify an explicit list, e.g., [0, 7, 9, 10, 14]
-	GoldenPCRs                   []uint                  `yaml:"golden-pcrs" json:"golden_pcrs" mapstructure:"golden-pcrs"`
-	Hash                         string                  `yaml:"hash" json:"hash" mapstructure:"hash"`
-	IAK                          *IAKConfig              `yaml:"iak" json:"iak" mapstructure:"iak"`
-	IdentityProvisioningStrategy string                  `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`
-	IDevID                       *IDevIDConfig           `yaml:"idevid" json:"idevid" mapstructure:"idevid"`
-	PlatformSRK                  *PlatformSRKConfig      `yaml:"platform-srk" json:"platform_srk" mapstructure:"platform-srk"`
-	LockoutAuth                  string                  `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
-	PlatformAddress              string                  `yaml:"platform-address,omitempty" json:"platform_address" mapstructure:"platform-address"`
-	PlatformPCR                  uint                    `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
-	PlatformPCRBank              string                  `yaml:"platform-pcr-bank" json:"platform_pcr_bank" mapstructure:"platform-pcr-bank"`
-	SSRK                         *SRKConfig              `yaml:"ssrk" json:"ssrk" mapstructure:"ssrk"`
-	Tracker                      types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
-	UseEntropy                   bool                    `yaml:"entropy" json:"entropy" mapstructure:"entropyr"`
-	UseSimulator                 bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
+	GoldenPCRs                   []uint             `yaml:"golden-pcrs" json:"golden_pcrs" mapstructure:"golden-pcrs"`
+	Hash                         string             `yaml:"hash" json:"hash" mapstructure:"hash"`
+	IAK                          *IAKConfig         `yaml:"iak" json:"iak" mapstructure:"iak"`
+	IdentityProvisioningStrategy string             `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`
+	IDevID                       *IDevIDConfig      `yaml:"idevid" json:"idevid" mapstructure:"idevid"`
+	PlatformSRK                  *PlatformSRKConfig `yaml:"platform-srk" json:"platform_srk" mapstructure:"platform-srk"`
+	// LockoutAuth is the TPM Lockout hierarchy authorization value. Decodes
+	// from, and re-encodes to, a plain reference string in YAML/JSON; the
+	// resolved plaintext is sealed into this field's own memguard enclave
+	// rather than kept as a plain Go string. See types.SecretValue and
+	// types.SecretValueBytes.
+	LockoutAuth     types.SecretValue       `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
+	PlatformAddress string                  `yaml:"platform-address,omitempty" json:"platform_address" mapstructure:"platform-address"`
+	PlatformPCR     uint                    `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
+	PlatformPCRBank string                  `yaml:"platform-pcr-bank" json:"platform_pcr_bank" mapstructure:"platform-pcr-bank"`
+	SSRK            *SRKConfig              `yaml:"ssrk" json:"ssrk" mapstructure:"ssrk"`
+	Tracker         types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
+	UseEntropy      bool                    `yaml:"entropy" json:"entropy" mapstructure:"entropyr"`
+	UseSimulator    bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
 }
 
 type PlatformSRKConfig struct {
@@ -205,16 +210,20 @@ type PlatformSRKConfig struct {
 }
 
 type EKConfig struct {
-	CertHandle     uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
-	CN             string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug          bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig      *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle         uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	HierarchyAuth  string           `yaml:"hierarchy-auth,omitempty" json:"hierarchy_auth" mapstructure:"hierarchy-auth"`
-	KeyAlgorithm   string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Password       string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	PlatformPolicy bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
-	RSAConfig      *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	CertHandle uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN         string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug      bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig  *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle     uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	// HierarchyAuth and Password decode from, and re-encode to, a plain
+	// reference string in YAML/JSON; the resolved plaintext is sealed into
+	// each field's own memguard enclave rather than kept as a plain Go
+	// string. See types.SecretValue and types.SecretValueBytes.
+	HierarchyAuth  types.SecretValue `yaml:"hierarchy-auth,omitempty" json:"hierarchy_auth" mapstructure:"hierarchy-auth"`
+	KeyAlgorithm   string            `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password       types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy bool              `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig      *store.RSAConfig  `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
 }
 
 // SRKConfig configures the Shared Storage Root Key (SSRK), the TCG-standard
@@ -238,14 +247,18 @@ type EKConfig struct {
 // A configuration file that still asks for one is rejected rather than quietly
 // dropped -- see UnmarshalYAML and UnmarshalJSON.
 type SRKConfig struct {
-	CN            string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug         bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig     *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle        uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	HierarchyAuth string           `yaml:"hierarchy-auth,omitempty" json:"hierarchy-auth" mapstructure:"hierarchy-auth"`
-	KeyAlgorithm  string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Password      string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	RSAConfig     *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	CN        string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug     bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle    uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	// HierarchyAuth and Password decode from, and re-encode to, a plain
+	// reference string in YAML/JSON; the resolved plaintext is sealed into
+	// each field's own memguard enclave rather than kept as a plain Go
+	// string. See types.SecretValue and types.SecretValueBytes.
+	HierarchyAuth types.SecretValue `yaml:"hierarchy-auth,omitempty" json:"hierarchy-auth" mapstructure:"hierarchy-auth"`
+	KeyAlgorithm  string            `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password      types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	RSAConfig     *store.RSAConfig  `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
 }
 
 // UnmarshalYAML decodes an ssrk configuration section and rejects one that
@@ -308,67 +321,67 @@ func (c *SRKConfig) UnmarshalJSON(data []byte) error {
 }
 
 type IDevIDConfig struct {
-	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
-	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
-	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Manufacturer       string           `yaml:"manufacturer,omitempty" json:"manufacturer" mapstructure:"manufacturer"`
-	Model              string           `yaml:"model,omitempty" json:"model" mapstructure:"model"`
-	Pad                bool             `yaml:"pad" json:"pad" mapstructure:"pad"`
-	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
-	RSAConfig          *store.RSAConfig `yaml:"rsa" json:"rsa" mapstructure:"rsa"`
-	Serial             string           `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
-	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
-	Version            string           `yaml:"version,omitempty" json:"version" mapstructure:"version"`
+	CertHandle         uint32            `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string            `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool              `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig  `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32            `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string            `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string            `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Manufacturer       string            `yaml:"manufacturer,omitempty" json:"manufacturer" mapstructure:"manufacturer"`
+	Model              string            `yaml:"model,omitempty" json:"model" mapstructure:"model"`
+	Pad                bool              `yaml:"pad" json:"pad" mapstructure:"pad"`
+	Password           types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool              `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig  `yaml:"rsa" json:"rsa" mapstructure:"rsa"`
+	Serial             string            `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
+	SignatureAlgorithm string            `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+	Version            string            `yaml:"version,omitempty" json:"version" mapstructure:"version"`
 }
 
 type IAKConfig struct {
-	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
-	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
-	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
-	RSAConfig          *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
-	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+	CertHandle         uint32            `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string            `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool              `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig  `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32            `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string            `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string            `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password           types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool              `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig  `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	SignatureAlgorithm string            `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
 }
 
 type LDevIDConfig struct {
-	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
-	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
-	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Model              string           `yaml:"model" json:"model" mapstructure:"model"`
-	Pad                bool             `yaml:"pad" json:"pad" mapstructure:"pad"`
-	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
-	RSAConfig          *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
-	Serial             string           `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
-	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+	CertHandle         uint32            `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string            `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool              `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig  `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32            `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string            `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string            `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Model              string            `yaml:"model" json:"model" mapstructure:"model"`
+	Pad                bool              `yaml:"pad" json:"pad" mapstructure:"pad"`
+	Password           types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool              `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig  `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	Serial             string            `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
+	SignatureAlgorithm string            `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
 }
 
 type LAKConfig struct {
-	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
-	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
-	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
-	RSAConfig          *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
-	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+	CertHandle         uint32            `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string            `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool              `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig  `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32            `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string            `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string            `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password           types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool              `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig  `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	SignatureAlgorithm string            `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
 }
 
 func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, idevidConfig *IDevIDConfig) (*types.KeyAttributes, error) {
@@ -410,19 +423,13 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 
 	// Only set Password/HierarchyAuth when non-empty to avoid selecting the
 	// wrong PlatformPolicySession branch on restart (see SRKAttributesFromConfig).
-	var ekPassword types.Password
-	if config.Password != "" {
-		ekPassword, err = types.NewPassword([]byte(config.Password))
-		if err != nil {
-			return nil, err
-		}
+	ekPassword, err := types.NewPasswordFromSecretValue(&config.Password)
+	if err != nil {
+		return nil, err
 	}
-	var ekHierarchyAuth types.Password
-	if config.HierarchyAuth != "" {
-		ekHierarchyAuth, err = types.NewPassword([]byte(config.HierarchyAuth))
-		if err != nil {
-			return nil, err
-		}
+	ekHierarchyAuth, err := types.NewPasswordFromSecretValue(&config.HierarchyAuth)
+	if err != nil {
+		return nil, err
 	}
 
 	attrs := &types.KeyAttributes{
@@ -507,22 +514,16 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 	// After a restart the user PIN is not available; a non-nil empty Password
 	// would cause CreateSession to choose the password branch with empty auth,
 	// mismatching the SRK's actual UserAuth and producing TPM_RC_BAD_AUTH.
-	var srkPassword types.Password
-	if config.Password != "" {
-		srkPassword, err = types.NewPassword([]byte(config.Password))
-		if err != nil {
-			return nil, err
-		}
+	srkPassword, err := types.NewPasswordFromSecretValue(&config.Password)
+	if err != nil {
+		return nil, err
 	}
 
 	// Same guard for HierarchyAuth: leave nil when the config value is empty
 	// so that downstream TPM2_CreatePrimary uses empty auth (TPM default).
-	var hierarchyAuth types.Password
-	if config.HierarchyAuth != "" {
-		hierarchyAuth, err = types.NewPassword([]byte(config.HierarchyAuth))
-		if err != nil {
-			return nil, err
-		}
+	hierarchyAuth, err := types.NewPasswordFromSecretValue(&config.HierarchyAuth)
+	if err != nil {
+		return nil, err
 	}
 
 	attrs := &types.KeyAttributes{
@@ -596,7 +597,15 @@ func IAKAttributesFromConfig(
 		return nil, ErrInvalidHashFunction
 	}
 
-	password, err := types.NewPassword([]byte(config.Password))
+	// NewPassword is called unconditionally (not NewPasswordFromSecretValue)
+	// so an empty config.Password still yields a non-nil ClearPassword, matching
+	// this function's pre-SecretValue behavior; callers branch on attrs.Password
+	// being nil vs non-nil-but-empty (see key.go, attestation.go).
+	passwordBytes, err := types.SecretValueBytes(&config.Password)
+	if err != nil {
+		return nil, err
+	}
+	password, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -713,7 +722,15 @@ func IDevIDAttributesFromConfig(config IDevIDConfig) (*types.KeyAttributes, erro
 		return nil, ErrInvalidHashFunction
 	}
 
-	password, err := types.NewPassword([]byte(config.Password))
+	// NewPassword is called unconditionally (not NewPasswordFromSecretValue)
+	// so an empty config.Password still yields a non-nil ClearPassword, matching
+	// this function's pre-SecretValue behavior; callers branch on attrs.Password
+	// being nil vs non-nil-but-empty (see key.go, attestation.go).
+	passwordBytes, err := types.SecretValueBytes(&config.Password)
+	if err != nil {
+		return nil, err
+	}
+	password, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -791,7 +808,15 @@ func LDevIDAttributesFromConfig(config LDevIDConfig) (*types.KeyAttributes, erro
 		return nil, ErrInvalidHashFunction
 	}
 
-	password, err := types.NewPassword([]byte(config.Password))
+	// NewPassword is called unconditionally (not NewPasswordFromSecretValue)
+	// so an empty config.Password still yields a non-nil ClearPassword, matching
+	// this function's pre-SecretValue behavior; callers branch on attrs.Password
+	// being nil vs non-nil-but-empty (see key.go, attestation.go).
+	passwordBytes, err := types.SecretValueBytes(&config.Password)
+	if err != nil {
+		return nil, err
+	}
+	password, err := types.NewPassword(passwordBytes)
 	if err != nil {
 		return nil, err
 	}

@@ -85,9 +85,10 @@ func TestPKCS11Integration(t *testing.T) {
 
 	// Create PKCS11 backend
 	backendCfg := &pkcs11.Config{
-		Library:     libPath,
-		TokenLabel:  "test-token",
-		PIN:         "1234",
+		Library:    libPath,
+		TokenLabel: "test-token",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
+
 		KeyStorage:  keyStorage,
 		CertStorage: certStorage,
 	}

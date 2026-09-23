@@ -151,6 +151,30 @@ func (b *Backend) Config() *Config {
 	return b.config
 }
 
+// userPIN borrows the configured user PIN as a plain string, the shape
+// miekg/pkcs11's Login and this package's session-pool helpers require. This
+// is the documented third-party-SDK boundary (go-xkms#610): the plaintext
+// leaves the PIN's SecretValue enclave only for the duration of this
+// accessor's return value. Returns "" when no PIN is configured.
+func (b *Backend) userPIN() (string, error) {
+	pin, err := types.SecretValueBytes(&b.config.PIN)
+	if err != nil {
+		return "", err
+	}
+	return string(pin), nil
+}
+
+// soPIN borrows the configured Security Officer PIN as a plain string, for
+// the same miekg/pkcs11 boundary userPIN documents. Returns "" when no SO
+// PIN is configured.
+func (b *Backend) soPIN() (string, error) {
+	pin, err := types.SecretValueBytes(&b.config.SOPIN)
+	if err != nil {
+		return "", err
+	}
+	return string(pin), nil
+}
+
 // SlotModel returns the slot model for this backend, or nil if the token
 // does not use predefined slots (e.g., generic SoftHSM tokens).
 func (b *Backend) SlotModel() pivcert.SlotModel {
@@ -406,8 +430,16 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 		return b.deleteKeyInSession(session, id, attrs.CN)
 	}
 
-	if b.config.IsYubiKeyPIV() && b.config.SOPIN != "" {
-		if err := b.pool.WithSOSession(b.config.SOPIN, b.config.PIN, fn); err != nil {
+	if b.config.IsYubiKeyPIV() && types.SecretValueSet(&b.config.SOPIN) {
+		soPIN, err := b.soPIN()
+		if err != nil {
+			return err
+		}
+		userPIN, err := b.userPIN()
+		if err != nil {
+			return err
+		}
+		if err := b.pool.WithSOSession(soPIN, userPIN, fn); err != nil {
 			return err
 		}
 		// A CKU_SO session cannot see private objects on every token, so the
@@ -655,8 +687,8 @@ func (b *Backend) Initialize(soPIN, userPIN string) error {
 		return ErrInvalidPINLength
 	}
 
-	b.config.SOPIN = soPIN
-	b.config.PIN = userPIN
+	b.config.SOPIN = types.NewLiteralSecretValue([]byte(soPIN))
+	b.config.PIN = types.NewLiteralSecretValue([]byte(userPIN))
 
 	// If pool already exists, we're already initialized
 	if b.pool != nil {
@@ -685,11 +717,15 @@ func (b *Backend) Login() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.config.PIN == "" {
+	if !types.SecretValueSet(&b.config.PIN) {
 		return ErrInvalidUserPIN
 	}
 
-	return b.loginUser(b.config.PIN)
+	pin, err := b.userPIN()
+	if err != nil {
+		return err
+	}
+	return b.loginUser(pin)
 }
 
 // loginUser initializes the raw PKCS#11 context and creates the session pool.
@@ -1085,7 +1121,15 @@ func (b *Backend) GenerateRSAWithSize(attrs *types.KeyAttributes, keySize int) (
 		return nil, err
 	}
 
-	signer, err := generateRSAKeyPair(b.pool, id, id, keySize, b.config.IsYubiKeyPIV(), b.config.SOPIN, b.config.PIN)
+	soPIN, err := b.soPIN()
+	if err != nil {
+		return nil, err
+	}
+	userPIN, err := b.userPIN()
+	if err != nil {
+		return nil, err
+	}
+	signer, err := generateRSAKeyPair(b.pool, id, id, keySize, b.config.IsYubiKeyPIV(), soPIN, userPIN)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to generate RSA key", Err: err}
 	}
@@ -1132,7 +1176,15 @@ func (b *Backend) GenerateECDSAWithCurve(attrs *types.KeyAttributes, curve ellip
 		return nil, err
 	}
 
-	signer, err := generateECDSAKeyPair(b.pool, id, id, curve, b.config.IsYubiKeyPIV(), b.config.SOPIN, b.config.PIN)
+	soPIN, err := b.soPIN()
+	if err != nil {
+		return nil, err
+	}
+	userPIN, err := b.userPIN()
+	if err != nil {
+		return nil, err
+	}
+	signer, err := generateECDSAKeyPair(b.pool, id, id, curve, b.config.IsYubiKeyPIV(), soPIN, userPIN)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to generate ECDSA key", Err: err}
 	}

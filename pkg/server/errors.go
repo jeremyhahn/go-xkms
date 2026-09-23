@@ -586,3 +586,25 @@ func (e *ErrBarrierKeySeal) Error() string {
 func (e *ErrBarrierKeySeal) Unwrap() error {
 	return e.Err
 }
+
+// ErrConfigSecretResolution reports that resolveConfigSecrets found at least
+// one secret-bearing config field whose reference this server's secret
+// registry claimed but could not resolve -- a genuine credential-store
+// failure. It does NOT cover an unconfigured or literal field: the walker
+// reports those too, as qrdbsecret.UnresolvableTargetError, but
+// resolveConfigSecrets treats them as expected and excludes them here. Err is
+// the joined set of underlying go-qrdb secret errors (typically one or more
+// *qrdbsecret.ResolutionFailedError).
+type ErrConfigSecretResolution struct {
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrConfigSecretResolution) Error() string {
+	return fmt.Sprintf("failed to resolve config secret reference(s): %s", e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrConfigSecretResolution) Unwrap() error {
+	return e.Err
+}

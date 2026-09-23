@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // NodeSealError is returned when the node barrier is configured to encrypt the
@@ -25,11 +26,21 @@ import (
 type NodeSealError struct {
 	// Reason describes the failure.
 	Reason string
+	// Err is the underlying error, when one exists (e.g. a
+	// *types.SecretReferenceUnresolvedError from resolving Barrier.Passphrase).
+	// Nil for a NodeSealError raised without an underlying cause.
+	Err error
 }
 
 // Error implements the error interface.
 func (e *NodeSealError) Error() string {
 	return "server: node barrier seal: " + e.Reason
+}
+
+// Unwrap exposes Err so errors.Is/errors.As can reach it (e.g. to detect a
+// *types.SecretReferenceUnresolvedError underneath).
+func (e *NodeSealError) Unwrap() error {
+	return e.Err
 }
 
 // allowNodeLocalPlaintextKeys reports whether a node-local key provider (e.g.
@@ -116,7 +127,10 @@ func (s *Server) resolveNodeSeal() error {
 
 	switch strategy {
 	case "passphrase":
-		passphrase := []byte(s.config.Barrier.Passphrase)
+		passphrase, err := types.SecretValueBytes(&s.config.Barrier.Passphrase)
+		if err != nil {
+			return &NodeSealError{Reason: "resolving boot passphrase: " + err.Error(), Err: err}
+		}
 		if len(passphrase) == 0 {
 			// No boot passphrase: keep xkms's own barrier so interactive
 			// (operator API) unseal still works. Data-plane encryption of the

@@ -42,7 +42,7 @@ func newTestPool(t *testing.T, b *Backend, size int) *SessionPool {
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
 
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, size)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), size)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
@@ -67,7 +67,7 @@ func TestNewSessionPool_DefaultSize(t *testing.T) {
 		slot, err := b.resolveSlot()
 		require.NoError(t, err)
 
-		pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, size)
+		pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), size)
 		require.NoError(t, err)
 
 		require.Equal(t, DefaultSessionPoolSize, cap(pool.pool), "size %d must fall back to the default", size)
@@ -97,7 +97,7 @@ func TestNewSessionPool_ExplicitSize(t *testing.T) {
 func TestNewSessionPool_InvalidSlot(t *testing.T) {
 	b := newProvisionedBackend(t, "pool-bad-slot")
 
-	pool, err := NewSessionPool(b.p11ctx, 0xdead, b.config.PIN, 2)
+	pool, err := NewSessionPool(b.p11ctx, 0xdead, secretValueString(b.config.PIN), 2)
 	require.Nil(t, pool)
 	require.ErrorIs(t, err, ErrSessionPoolOpen)
 
@@ -536,7 +536,7 @@ func TestSessionPool_WithSOSession_SwitchesAndRestoresLogin(t *testing.T) {
 	pool := newTestPool(t, b, 2)
 
 	var sawSOState bool
-	require.NoError(t, pool.WithSOSession(b.config.SOPIN, b.config.PIN, func(session pkcs11.SessionHandle) error {
+	require.NoError(t, pool.WithSOSession(secretValueString(b.config.SOPIN), secretValueString(b.config.PIN), func(session pkcs11.SessionHandle) error {
 		info, err := b.p11ctx.GetSessionInfo(session)
 		if err != nil {
 			return err
@@ -565,7 +565,7 @@ func TestSessionPool_WithSOSession_PropagatesCallbackError(t *testing.T) {
 	pool := newTestPool(t, b, 2)
 
 	sentinel := errors.New("so callback failure")
-	err := pool.WithSOSession(b.config.SOPIN, b.config.PIN, func(pkcs11.SessionHandle) error {
+	err := pool.WithSOSession(secretValueString(b.config.SOPIN), secretValueString(b.config.PIN), func(pkcs11.SessionHandle) error {
 		return sentinel
 	})
 	require.ErrorIs(t, err, sentinel)
@@ -589,7 +589,7 @@ func TestSessionPool_WithSOSession_WrongSOPIN(t *testing.T) {
 	pool := newTestPool(t, b, 2)
 
 	var ran bool
-	err := pool.WithSOSession("00000000", b.config.PIN, func(pkcs11.SessionHandle) error {
+	err := pool.WithSOSession("00000000", secretValueString(b.config.PIN), func(pkcs11.SessionHandle) error {
 		ran = true
 		return nil
 	})
@@ -618,7 +618,7 @@ func TestSessionPool_WithSOSession_EmptyUserPIN(t *testing.T) {
 	b := newProvisionedBackend(t, "pool-so-empty-user-pin")
 	pool := newTestPool(t, b, 1)
 
-	require.NoError(t, pool.WithSOSession(b.config.SOPIN, "", func(pkcs11.SessionHandle) error {
+	require.NoError(t, pool.WithSOSession(secretValueString(b.config.SOPIN), "", func(pkcs11.SessionHandle) error {
 		return nil
 	}))
 
@@ -635,7 +635,7 @@ func TestSessionPool_WithSOSession_EmptyUserPIN(t *testing.T) {
 	// Re-establish the user login so the backend cleanup and any later
 	// operations on this token behave normally.
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
-		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
+		return b.p11ctx.Login(session, pkcs11.CKU_USER, secretValueString(b.config.PIN))
 	}))
 }
 
@@ -648,7 +648,7 @@ func TestSessionPool_WithSOSession_CloseDuringCallback(t *testing.T) {
 	pool := newTestPool(t, b, 2)
 
 	var checkedOut pkcs11.SessionHandle
-	err := pool.WithSOSession(b.config.SOPIN, b.config.PIN, func(session pkcs11.SessionHandle) error {
+	err := pool.WithSOSession(secretValueString(b.config.SOPIN), secretValueString(b.config.PIN), func(session pkcs11.SessionHandle) error {
 		checkedOut = session
 		pool.Close()
 		return nil
@@ -675,7 +675,7 @@ func TestSessionPool_WithSOSession_UserLoginRestoreFails(t *testing.T) {
 	pool := newTestPool(t, b, 1)
 
 	var ran bool
-	err := pool.WithSOSession(b.config.SOPIN, "0000", func(pkcs11.SessionHandle) error {
+	err := pool.WithSOSession(secretValueString(b.config.SOPIN), "0000", func(pkcs11.SessionHandle) error {
 		ran = true
 		return nil
 	})
@@ -690,7 +690,7 @@ func TestSessionPool_WithSOSession_UserLoginRestoreFails(t *testing.T) {
 	// Put the token back in the user state so the backend cleanup and any
 	// later operations on this token behave normally.
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
-		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
+		return b.p11ctx.Login(session, pkcs11.CKU_USER, secretValueString(b.config.PIN))
 	}))
 }
 
@@ -705,7 +705,7 @@ func TestSessionPool_WithSOSession_UserLoginRestoreFails_DiscardsSession(t *test
 	pool := newTestPool(t, b, 1)
 
 	var poisoned pkcs11.SessionHandle
-	err := pool.WithSOSession(b.config.SOPIN, "0000", func(session pkcs11.SessionHandle) error {
+	err := pool.WithSOSession(secretValueString(b.config.SOPIN), "0000", func(session pkcs11.SessionHandle) error {
 		poisoned = session
 		return nil
 	})
@@ -729,7 +729,7 @@ func TestSessionPool_WithSOSession_UserLoginRestoreFails_DiscardsSession(t *test
 	// Put the token back in the user state so the backend cleanup and any
 	// later operations on this token behave normally.
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
-		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
+		return b.p11ctx.Login(session, pkcs11.CKU_USER, secretValueString(b.config.PIN))
 	}))
 }
 
@@ -766,7 +766,7 @@ func TestSessionPool_WithSOSession_SOLoginAndRestoreBothFail_DiscardsSession(t *
 	// Put the token back in the user state so the backend cleanup and any
 	// later operations on this token behave normally.
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
-		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
+		return b.p11ctx.Login(session, pkcs11.CKU_USER, secretValueString(b.config.PIN))
 	}))
 }
 

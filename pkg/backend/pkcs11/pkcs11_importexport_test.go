@@ -891,7 +891,7 @@ func TestImportExport_AuthenticateAndReleaseTheToken(t *testing.T) {
 
 	// A successful C_Login here proves neither operation left the application
 	// authenticated; a leaked session would answer CKR_USER_ALREADY_LOGGED_IN.
-	require.NoError(t, b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN),
+	require.NoError(t, b.p11ctx.Login(session, pkcs11.CKU_USER, secretValueString(b.config.PIN)),
 		"import and export must log out again when they are done")
 
 	assert.Equal(t, material, decryptInHSM(t, b, exported.WrappedKey))

@@ -154,9 +154,13 @@ type CAKeystoreTPM2Config struct {
 
 // CAKeystorePKCS11Config carries per-identity configuration for PKCS#11 backends.
 type CAKeystorePKCS11Config struct {
-	Pin    string `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
-	Slot   int    `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
-	Module string `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
+	// Pin is the PKCS#11 token PIN. Decodes from, and re-encodes to, a plain
+	// reference string in YAML/JSON; the resolved plaintext is sealed into
+	// this field's own memguard enclave rather than kept as a plain Go
+	// string. See types.SecretValue and types.SecretValueBytes.
+	Pin    types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
+	Slot   int               `yaml:"slot,omitempty" json:"slot,omitempty" mapstructure:"slot"`
+	Module string            `yaml:"module,omitempty" json:"module,omitempty" mapstructure:"module"`
 }
 
 // CAKeystoresConfig holds per-backend keystore configuration for one CA

@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Example demonstrating hybrid certificate storage with automatic failover.
@@ -66,7 +67,7 @@ func main() {
 	backend, err := pkcs11.NewBackend(&pkcs11.Config{
 		Library:    "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel: "hybrid-demo",
-		PIN:        "1234",
+		PIN:        types.NewLiteralSecretValue([]byte("1234")),
 	})
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#11 backend: %v", err)

@@ -146,7 +146,12 @@ type BarrierConfig struct {
 	// and ${ENV} expansion, resolved at boot. Hardware strategies need no
 	// passphrase (PCR-policy / empty-creds auto-unseal). Prefer the
 	// XKMS_BARRIER_PASSPHRASE env var or a credential:// reference over a literal.
-	Passphrase string `yaml:"passphrase,omitempty"`
+	//
+	// Passphrase decodes from, and re-encodes to, a plain reference string in
+	// YAML/JSON; the resolved plaintext is sealed into this field's own
+	// memguard enclave rather than kept as a plain Go string. See
+	// types.SecretValue and types.SecretValueBytes.
+	Passphrase types.SecretValue `yaml:"passphrase,omitempty"`
 
 	// ShamirThreshold and ShamirTotal configure the Shamir M-of-N quorum for the
 	// shamir strategy. Shamir never auto-unseals (operator quorum required).
@@ -966,9 +971,13 @@ type RNGPKCS11Config struct {
 	// PINRequired indicates if the slot requires PIN authentication
 	PINRequired bool `yaml:"pin_required"`
 
-	// PIN is the authentication PIN (if PINRequired is true)
+	// PIN is the authentication PIN (if PINRequired is true). Decodes from,
+	// and re-encodes to, a plain reference string in YAML/JSON; the resolved
+	// plaintext is sealed into this field's own memguard enclave rather than
+	// kept as a plain Go string. See types.SecretValue and
+	// types.SecretValueBytes.
 	// Note: Consider using environment variable XKMS_RNG_PKCS11_PIN instead
-	PIN string `yaml:"pin,omitempty"`
+	PIN types.SecretValue `yaml:"pin,omitempty"`
 }
 
 // DefaultConfig specifies the default backend for key operations
@@ -1025,8 +1034,14 @@ type TPM2Config struct {
 type PKCS11Config struct {
 	Enabled bool   `yaml:"enabled"`
 	Library string `yaml:"library"`
-	Token   string `yaml:"token"`
-	Pin     string `yaml:"pin"`
+	// Token is the PKCS#11 token label used to select the slot; it names a
+	// slot rather than authorizing use of it, so it is not secret-bearing.
+	Token string `yaml:"token"`
+	// Pin is the PKCS#11 user PIN. Decodes from, and re-encodes to, a plain
+	// reference string in YAML/JSON; the resolved plaintext is sealed into
+	// this field's own memguard enclave rather than kept as a plain Go
+	// string. See types.SecretValue and types.SecretValueBytes.
+	Pin types.SecretValue `yaml:"pin"`
 }
 
 // AWSKMSConfig contains AWS KMS backend settings
@@ -1034,8 +1049,12 @@ type AWSKMSConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Region    string `yaml:"region"`
 	AccessKey string `yaml:"access_key"`
-	SecretKey string `yaml:"secret_key"`
-	Endpoint  string `yaml:"endpoint"`
+	// SecretKey is the AWS secret access key. Decodes from, and re-encodes
+	// to, a plain reference string in YAML/JSON; the resolved plaintext is
+	// sealed into this field's own memguard enclave rather than kept as a
+	// plain Go string. See types.SecretValue and types.SecretValueBytes.
+	SecretKey types.SecretValue `yaml:"secret_key"`
+	Endpoint  string            `yaml:"endpoint"`
 }
 
 // GCPKMSConfig contains GCP KMS backend settings
@@ -1049,11 +1068,16 @@ type GCPKMSConfig struct {
 
 // AzureKVConfig contains Azure Key Vault backend settings
 type AzureKVConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	VaultURL     string `yaml:"vault_url"`
-	TenantID     string `yaml:"tenant_id"`
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
+	Enabled  bool   `yaml:"enabled"`
+	VaultURL string `yaml:"vault_url"`
+	TenantID string `yaml:"tenant_id"`
+	ClientID string `yaml:"client_id"`
+	// ClientSecret is the Azure service principal client secret. Decodes
+	// from, and re-encodes to, a plain reference string in YAML/JSON; the
+	// resolved plaintext is sealed into this field's own memguard enclave
+	// rather than kept as a plain Go string. See types.SecretValue and
+	// types.SecretValueBytes.
+	ClientSecret types.SecretValue `yaml:"client_secret"`
 
 	// AllowLocalVaultURL permits VaultURL to name localhost or 127.0.0.1
 	// instead of an Azure vault domain, for local development against an
@@ -1064,11 +1088,15 @@ type AzureKVConfig struct {
 
 // VaultConfig contains HashiCorp Vault backend settings
 type VaultConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Address   string `yaml:"address"`
-	Token     string `yaml:"token"`
-	Namespace string `yaml:"namespace"`
-	MountPath string `yaml:"mount_path"`
+	Enabled bool   `yaml:"enabled"`
+	Address string `yaml:"address"`
+	// Token is the Vault authentication token. Decodes from, and re-encodes
+	// to, a plain reference string in YAML/JSON; the resolved plaintext is
+	// sealed into this field's own memguard enclave rather than kept as a
+	// plain Go string. See types.SecretValue and types.SecretValueBytes.
+	Token     types.SecretValue `yaml:"token"`
+	Namespace string            `yaml:"namespace"`
+	MountPath string            `yaml:"mount_path"`
 }
 
 // PhoneConfig contains phone backend settings for proxying key operations
@@ -1084,8 +1112,12 @@ type PhoneConfig struct {
 	// DeviceAddress is the BLE MAC address or TCP address (host:port) of the phone
 	DeviceAddress string `yaml:"device_address"`
 
-	// NoiseStaticKey is the hex-encoded Noise static private key for this host
-	NoiseStaticKey string `yaml:"noise_static_key"`
+	// NoiseStaticKey is the hex-encoded Noise static private key for this
+	// host. Decodes from, and re-encodes to, a plain reference string in
+	// YAML/JSON; the resolved plaintext is sealed into this field's own
+	// memguard enclave rather than kept as a plain Go string. See
+	// types.SecretValue and types.SecretValueBytes.
+	NoiseStaticKey types.SecretValue `yaml:"noise_static_key"`
 
 	// PhoneStaticKey is the hex-encoded Noise static public key of the paired phone
 	PhoneStaticKey string `yaml:"phone_static_key"`
@@ -1264,7 +1296,7 @@ func (c *Config) barrierLeavesKeysPlaintext() bool {
 	}
 	switch c.Barrier.SealStrategy() {
 	case "passphrase":
-		return c.Barrier.Passphrase == ""
+		return !types.SecretValueSet(&c.Barrier.Passphrase)
 	case "none":
 		return true
 	default: // shamir and anything else never auto-unseals at boot

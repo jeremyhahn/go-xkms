@@ -1209,7 +1209,8 @@ func createIDevIDCSRUnitMockTPMConfig() *Config {
 		EK: &EKConfig{
 			Handle:        0x81010001,
 			KeyAlgorithm:  x509.RSA.String(),
-			HierarchyAuth: "",
+			HierarchyAuth: types.SecretValue{},
+
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},

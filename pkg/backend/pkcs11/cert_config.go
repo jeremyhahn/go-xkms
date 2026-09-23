@@ -129,11 +129,19 @@ func (b *Backend) createHardwareStorage() (hardware.HardwareCertStorage, error) 
 	}
 
 	if b.config.IsYubiKeyPIV() {
+		soPIN, err := b.soPIN()
+		if err != nil {
+			return nil, err
+		}
+		userPIN, err := b.userPIN()
+		if err != nil {
+			return nil, err
+		}
 		return hardware.NewPKCS11CertStorageWithSO(
 			b.pool,
 			b.config.TokenLabel,
-			b.config.SOPIN,
-			b.config.PIN,
+			soPIN,
+			userPIN,
 			true,
 		)
 	}

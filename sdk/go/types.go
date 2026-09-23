@@ -533,3 +533,13 @@ const (
 // IsRSAPSS reports whether the signature algorithm is an RSA-PSS variant. The
 // equivalent pkg/tpm2/store helper is re-exported as TPMStoreIsRSAPSS in tpm.go.
 var IsRSAPSS = types.IsRSAPSS
+
+// SecretValue is a config-sourced secret sealed in its own protected memory,
+// carrying the reference it was resolved from. It is the field type of every
+// secret-bearing configuration value (go-xkms#610).
+type SecretValue = types.SecretValue
+
+// NewLiteralSecretValue seals value into a SecretValue, for secrets that
+// arrive as literals (a CLI flag, an interactive prompt) rather than from a
+// configuration reference.
+var NewLiteralSecretValue = types.NewLiteralSecretValue

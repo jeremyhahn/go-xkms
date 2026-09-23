@@ -453,7 +453,7 @@ func TestRSASigner_Sign_ClosedPool(t *testing.T) {
 
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, 2)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 2)
 	require.NoError(t, err)
 
 	closedSigner := &pkcs11RSASigner{
@@ -762,7 +762,7 @@ func TestFindRSASigner_ClosedPool(t *testing.T) {
 
 	slot, err := b.resolveSlot()
 	require.NoError(t, err)
-	pool, err := NewSessionPool(b.p11ctx, slot, b.config.PIN, 1)
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 1)
 	require.NoError(t, err)
 	pool.Close()
 
@@ -940,7 +940,7 @@ func TestGenerateRSAKeyPair_YubiKeyPIVUsesSOAuthentication(t *testing.T) {
 	pool := newTestPool(t, b, 2)
 
 	id := []byte{0x9a}
-	signer, err := generateRSAKeyPair(pool, id, id, rsaTestKeySize, true, b.config.SOPIN, b.config.PIN)
+	signer, err := generateRSAKeyPair(pool, id, id, rsaTestKeySize, true, secretValueString(b.config.SOPIN), secretValueString(b.config.PIN))
 	require.Nil(t, signer)
 	require.Error(t, err, "a Security Officer cannot create private key objects on this token")
 

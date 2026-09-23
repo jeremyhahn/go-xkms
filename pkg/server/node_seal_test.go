@@ -16,6 +16,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -76,7 +78,7 @@ func TestNodeSealFlip_PassphraseAutoUnseal(t *testing.T) {
 	cfg.Barrier = config.BarrierConfig{
 		Enabled:    true,
 		Strategy:   "passphrase",
-		Passphrase: "test-node-seal-boot-secret",
+		Passphrase: types.NewLiteralSecretValue([]byte("test-node-seal-boot-secret")),
 	}
 
 	server, err := New(cfg)
@@ -125,7 +127,7 @@ func TestNodeSealFlip_DisabledForFileStorage(t *testing.T) {
 	cfg.Barrier = config.BarrierConfig{
 		Enabled:    true,
 		Strategy:   "passphrase",
-		Passphrase: "irrelevant-for-file-storage",
+		Passphrase: types.NewLiteralSecretValue([]byte("irrelevant-for-file-storage")),
 	}
 
 	server, err := New(cfg)
@@ -162,7 +164,7 @@ func TestNodeSealFlip_EncryptsDataPlaneAtRest(t *testing.T) {
 	t.Run("encrypted when flip engaged", func(t *testing.T) {
 		cfg := qrdbBarrierConfig(t)
 		cfg.Barrier = config.BarrierConfig{
-			Enabled: true, Strategy: "passphrase", Passphrase: "at-rest-boot-secret",
+			Enabled: true, Strategy: "passphrase", Passphrase: types.NewLiteralSecretValue([]byte("at-rest-boot-secret")),
 		}
 		dir := writeSentinel(t, cfg)
 		assert.False(t, dirContainsBytes(t, dir, sentinel),
@@ -176,4 +178,34 @@ func TestNodeSealFlip_EncryptsDataPlaneAtRest(t *testing.T) {
 		assert.True(t, dirContainsBytes(t, dir, sentinel),
 			"control: with the barrier disabled the data plane is plaintext on disk")
 	})
+}
+
+// TestNodeSealFlip_UnresolvedCredentialReferenceFailsStartup proves
+// go-xkms#610's core fix at the boot passphrase specifically: a
+// "credential://" Barrier.Passphrase is refused with
+// *types.SecretReferenceUnresolvedError at server start rather than being
+// used verbatim as the boot passphrase. resolveNodeSeal runs before
+// initializeCredentialService (credential:// resolution has no store to
+// resolve against yet -- the store itself lives behind the barrier this
+// passphrase unseals), so this reference can never be a working one; the
+// daemon must refuse to start on it instead of silently auto-unsealing with
+// the literal reference text.
+func TestNodeSealFlip_UnresolvedCredentialReferenceFailsStartup(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := qrdbBarrierConfig(t)
+	cfg.Barrier = config.BarrierConfig{
+		Enabled:    true,
+		Strategy:   "passphrase",
+		Passphrase: types.SecretValue{Raw: "credential://boot-secret"},
+	}
+
+	_, err := New(cfg)
+	require.Error(t, err)
+
+	var refErr *types.SecretReferenceUnresolvedError
+	require.True(t, errors.As(err, &refErr),
+		"error must unwrap to *types.SecretReferenceUnresolvedError, got %v", err)
+	assert.Equal(t, "credential", refErr.Scheme)
 }
