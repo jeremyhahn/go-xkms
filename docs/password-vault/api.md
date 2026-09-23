@@ -5,23 +5,31 @@
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
-Routes are `RouteAuthSession` under `/api/v1/passwords`, registered on the
-`hasPasswords` predicate.
+Routes are registered under `/api/v1/passwords` on the `hasPasswords`
+predicate. Every route with a gRPC or MCP counterpart is `RouteAuthPermission`
+and demands the same `passwords:*` pair those transports enforce (the
+**Permission** column), so REST, QUIC, gRPC/Unix and MCP ask for one grant per
+operation. Admin and Owner hold every one of them by default.
+
+`POST /api/v1/passwords/access-mode` is the one route still served to any
+authenticated session (`RouteAuthSession`): it has no counterpart on any other
+transport, so there is no canonical permission for it to adopt yet (see the
+asymmetry below).
 
 ## Capability matrix
 
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`PasswordService.`) |
-|---|---|---|---|---|---|
-| Add entry | `POST /api/v1/passwords/` | `PasswordAdd` | same as REST | `password.add` | `PasswordAdd` |
-| List entries | `GET /api/v1/passwords/` | `PasswordList` | same as REST | `password.list` | `PasswordList` |
-| Get entry | `GET /api/v1/passwords/{id}` | `PasswordGet` | same as REST | `password.get` | `PasswordGet` |
-| Update entry | `PUT /api/v1/passwords/{id}` | `PasswordUpdate` | same as REST | `password.update` | `PasswordUpdate` |
-| Delete entry | `DELETE /api/v1/passwords/{id}` | `PasswordDelete` | same as REST | `password.delete` | `PasswordDelete` |
-| Unlock store | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` |
-| Lock store | `POST /api/v1/passwords/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` |
-| Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` |
-| Set access mode | `POST /api/v1/passwords/access-mode` | — | same as REST | — | `PasswordStoreSetAccessMode` |
-| Generate password | `POST /api/v1/passwords/generate` | `PasswordGenerate` | same as REST | `password.generate` | `PasswordGenerate` |
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`PasswordService.`) | Permission |
+|---|---|---|---|---|---|---|
+| Add entry | `POST /api/v1/passwords/` | `PasswordAdd` | same as REST | `password.add` | `PasswordAdd` | `passwords:write` |
+| List entries | `GET /api/v1/passwords/` | `PasswordList` | same as REST | `password.list` | `PasswordList` | `passwords:read` |
+| Get entry | `GET /api/v1/passwords/{id}` | `PasswordGet` | same as REST | `password.get` | `PasswordGet` | `passwords:read` |
+| Update entry | `PUT /api/v1/passwords/{id}` | `PasswordUpdate` | same as REST | `password.update` | `PasswordUpdate` | `passwords:write` |
+| Delete entry | `DELETE /api/v1/passwords/{id}` | `PasswordDelete` | same as REST | `password.delete` | `PasswordDelete` | `passwords:delete` |
+| Unlock store | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` | `passwords:unlock` |
+| Lock store | `POST /api/v1/passwords/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` | `passwords:lock` |
+| Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` | `passwords:read` |
+| Set access mode | `POST /api/v1/passwords/access-mode` | — | same as REST | — | `PasswordStoreSetAccessMode` | session |
+| Generate password | `POST /api/v1/passwords/generate` | `PasswordGenerate` | same as REST | `password.generate` | `PasswordGenerate` | `passwords:generate` |
 
 **This is one of only three features with complete MCP coverage** (the others
 are the barrier and SSH). Nine `password.*` methods.
@@ -80,6 +88,7 @@ it passes; an expired entry is a signal to rotate.
 | Condition | REST | gRPC / Unix | MCP |
 |---|---|---|---|
 | success | 200 | `OK` | `result` |
+| caller lacks the route's `passwords:*` permission | 403 | `PermissionDenied` | error object |
 | store locked, plaintext requested | 423 | `FailedPrecondition` | error object |
 | PIN required (`pin_per_operation`) | 401 | `Unauthenticated` | error object |
 | PIN invalid | 401 | `Unauthenticated` | error object |
@@ -88,7 +97,9 @@ it passes; an expired entry is a signal to rotate.
 | vault not configured | route absent (404) | `Unimplemented` | error object |
 
 Out-of-scope entries return **404, not 403**, so entry existence is not
-enumerable across scopes and tenants.
+enumerable across scopes and tenants. The `403` above is the permission gate,
+which decides from the caller's grant alone before any entry is looked up, so
+it reveals nothing about which entries exist.
 
 ## Pagination
 
