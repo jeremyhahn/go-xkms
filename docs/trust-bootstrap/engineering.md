@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22 (go-xkms#632: `BootstrapListenerKeys`)
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -141,6 +141,53 @@ Use `errors.Is(err, ErrFetch)` for "any fetch-level failure" and
 `FetchError.Mode` tells you which anchor was being attempted, which is the field
 that makes an `ModeAuto` failure diagnosable.
 
+## Admin read of the listener's own public keys — `pkg/xkms` (go-xkms#632)
+
+```go
+// pkg/api/transport
+type BootstrapListenerKeysResponse struct {
+	NoisePublicKey string `json:"noise_public_key,omitempty"`
+	P256PublicKey  string `json:"p256_public_key,omitempty"`
+}
+
+type BootstrapServicer interface {
+	BootstrapListenerKeys(ctx context.Context) (*BootstrapListenerKeysResponse, error)
+}
+```
+
+Both fields are hex-encoded in exactly the form `NoiseConfig` above accepts:
+`NoisePublicKey` is `NoiseConfig.ServerStaticKey` / `--noise-key`, and
+`P256PublicKey` is `NoiseConfig.ServerP256StaticKey` / `--p256-key` —
+`decodeSuiteKey` (hex-decode, then a suite-specific length check) is the
+only validation either one ever needs. There is no SPKI pin field: the raw
+public key already IS what pins the listener for this transport, exactly as
+it does for a manually-distributed key from `xkmsctl bootstrap noise
+show-key`/`show-p256-key`. An earlier revision additionally reported a
+SHA-256 hash of each key; it was removed before release as invented
+surface — see [`architecture.md`](architecture.md) §Reporting the listener's
+own identity.
+
+```go
+// pkg/xkms
+func (s *XKMSService) SetBootstrapListenerKeys(keys *transport.BootstrapListenerKeysResponse)
+func (s *XKMSService) ClearBootstrapListenerKeys()
+func (s *XKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error)
+
+var ErrBootstrapListenerNotEnabled = errors.New("keystore: bootstrap listener not enabled")
+```
+
+`SetBootstrapListenerKeys`/`ClearBootstrapListenerKeys` are called only from
+`pkg/server` (`startNoiseBootstrap`'s publish step, and `Server.shutdown`'s
+claim step) — never from a transport handler, which only ever calls the
+read method. `BootstrapListenerKeys` returns a defensive copy; mutating the
+returned pointer cannot reach the servicer's stored state. Every transport
+exposes it as `BootstrapListenerKeys(ctx)` (REST `GET /api/v1/bootstrap/keys`,
+gRPC/Unix `BootstrapListenerKeys`, QUIC the same JSON route, MCP
+`bootstrap.showKeys`, embedded a direct call). The permission is
+`bootstrap:read`, declared `ScopeSelf` in `pkg/apimodule/module_scopes.go`
+and granted only to Admin/Owner — see
+[`architecture.md`](architecture.md) §Reporting the listener's own identity.
+
 ## Invariants
 
 - **`Fetch` is stateless.** Each call constructs a fresh bootstrapper, runs,
@@ -215,6 +262,16 @@ that makes an `ModeAuto` failure diagnosable.
 **Fail closed:** an unverifiable anchor, an unresolvable TLSA, a Noise key
 mismatch, an SPKI pin mismatch, or a changed TOFU pin all return an error. None
 of them degrade to an unverified fetch.
+
+- **`BootstrapListenerKeys` never returns a response with every field empty.**
+  Not-yet-published is `ErrBootstrapListenerNotEnabled`, distinct from "no
+  suite offered" (which is a per-suite empty pair inside an otherwise
+  populated response). A caller must be able to tell "ask again later" from
+  "this build only serves the other suite."
+- **Only public bytes ever cross the `SetBootstrapListenerKeys` boundary.**
+  The publish step in `pkg/server` builds the response from
+  `NoiseStaticKey.Public` / `P256StaticKey.PublicBytes()` only; it never holds
+  a reference to the private scalar past that call.
 
 ## Configuration
 
@@ -390,6 +447,25 @@ file in the data directory otherwise. See Configuration above.
   `pinstore_qrdb_test.go`, `pinstore_errors_gaps_test.go`.
 - **CLI** — `cmd/xkmsctl/bootstrap_{auto,dane,noise,spki,run}_test.go`.
 - **Integration** — `test/integration/bootstrap`.
+- **Admin read of the listener's public keys (go-xkms#632)** —
+  `pkg/xkms/servicer_bootstrap_test.go` covers publish/read/clear and the
+  not-enabled default. `pkg/server/bootstrap_key_report_test.go` drives a
+  real `startNoiseBootstrap`/`Shutdown` cycle, checks the published hex
+  matches the listener's live key, then pins that exact hex into a real
+  `bootstrap.Fetch(ModeNoise)` call against the running listener — proving
+  the reported value round-trips through the client's own
+  `NoiseConfig`/`decodeSuiteKey` validation and completes a handshake, not
+  merely that it looks like hex — and confirms `Shutdown` withdraws the
+  report. `test/integration/bootstrap`'s
+  `TestBootstrapShowKeys_PinsAWorkingNoiseHandshake` /
+  `_PinsAWorkingP256Handshake` repeat that round trip against the real
+  docker-compose server. Every transport has a success test, a
+  listener-not-enabled test, and an unauthenticated/unauthorized-refusal test:
+  `pkg/api/grpc/service_bootstrap_test.go` (also gRPC/Unix, which share the
+  generated client), `pkg/api/rest/handlers_bootstrap_test.go` plus
+  `server_bootstrap_authz_test.go` for the route-level RBAC gate,
+  `pkg/api/mcp/handlers_bootstrap_test.go`, and each
+  `pkg/api/transport/*/transport_test.go` for the client-side contract.
 - **Fault injection** — the pin-store tests cover a changed pin, which is the
   case that must fail rather than re-pin.
 

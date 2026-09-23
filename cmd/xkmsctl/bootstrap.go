@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // bootstrapCmd represents the bootstrap parent command group
@@ -91,6 +92,80 @@ CA or one installed in the OS trust store.`,
 
 		return runAutoBootstrap(params)
 	},
+}
+
+// bootstrapShowKeysCmd reports the running server's bootstrap listener
+// public keys (go-xkms#632). Unlike bootstrapAutoCmd, which fetches a CA
+// bundle over the bootstrap channel itself before any trust is established,
+// this is an ordinary admin-authenticated API call: it connects with the
+// same transport/credentials every other xkmsctl verb uses and asks the
+// already-trusted server what its bootstrap listener's own public keys are,
+// for an operator to hand to a first-contact client.
+var bootstrapShowKeysCmd = &cobra.Command{
+	Use:   "show-keys",
+	Short: "Show the running server's bootstrap listener public keys",
+	Long: `Report the trust-bootstrap listener's Noise_NK and P-256 static public
+keys, as reported by the running server over its normal admin API (requires
+the bootstrap:read permission).
+
+Only public material is ever returned: the private keys never leave the
+server. A suite the server's build or configuration does not offer is
+omitted. The raw public key IS what a first-contact client pins the
+listener by — there is no separate SPKI pin for this transport. Distribute
+the value verbatim to a client, which passes it straight to
+"bootstrap auto --noise-key" (Noise_NK) or "--p256-key" (P-256).
+
+Examples:
+  xkmsctl bootstrap show-keys
+  xkmsctl bootstrap show-keys --output json`,
+	RunE: runBootstrapShowKeysCmd,
+}
+
+// runBootstrapShowKeysCmd executes 'bootstrap show-keys'.
+func runBootstrapShowKeysCmd(cmd *cobra.Command, _ []string) error {
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	resp, err := cl.BootstrapListenerKeys(context.Background())
+	if err != nil {
+		return &WrappedError{Sentinel: ErrGetBootstrapListenerKeysFailed, Err: err}
+	}
+	return printBootstrapListenerKeys(printer, resp)
+}
+
+// printBootstrapListenerKeys renders a BootstrapListenerKeysResponse. Each
+// key is exactly the hex string a first-contact client pastes into the
+// matching NoiseConfig field / xkmsctl flag — see the field-to-flag mapping
+// called out in the labels below.
+func printBootstrapListenerKeys(printer *Printer, resp *transport.BootstrapListenerKeysResponse) error {
+	switch printer.format {
+	case OutputFormatJSON:
+		result := map[string]interface{}{}
+		if resp.NoisePublicKey != "" {
+			result["noise_public_key"] = resp.NoisePublicKey
+		}
+		if resp.P256PublicKey != "" {
+			result["p256_public_key"] = resp.P256PublicKey
+		}
+		return printer.PrintJSON(result)
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Bootstrap Listener Keys:\n")
+		if resp.NoisePublicKey != "" {
+			_, _ = fmt.Fprintf(printer.writer, "  Noise_NK Public Key (--noise-key): %s\n", resp.NoisePublicKey)
+		}
+		if resp.P256PublicKey != "" {
+			_, _ = fmt.Fprintf(printer.writer, "  P-256 Public Key (--p256-key):     %s\n", resp.P256PublicKey)
+		}
+		return nil
+	default:
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
+	}
 }
 
 // autoBootstrapParams holds all parameters for the auto-bootstrap operation.
@@ -216,6 +291,7 @@ func bootstrapLogger() *slog.Logger {
 func init() {
 	// Register subcommands under bootstrap
 	bootstrapCmd.AddCommand(bootstrapAutoCmd)
+	bootstrapCmd.AddCommand(bootstrapShowKeysCmd)
 	bootstrapCmd.AddCommand(noiseCmd)
 	bootstrapCmd.AddCommand(daneCmd)
 	bootstrapCmd.AddCommand(spkiCmd)

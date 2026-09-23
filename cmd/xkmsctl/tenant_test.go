@@ -107,6 +107,10 @@ func (m *mockTenantClient) BarrierStatus(ctx context.Context) (*transport.Barrie
 	return m.barrierStatusResp, m.barrierStatusErr
 }
 
+func (m *mockTenantClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, nil
+}
+
 // --- New isolation / strategy flag plumbing ---
 
 func TestTenantCreate_ForwardsIsolationAndAutoUnseal(t *testing.T) {

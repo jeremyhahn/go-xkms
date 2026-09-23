@@ -590,6 +590,9 @@ var (
 	// ErrGetBarrierStatusFailed is the sentinel error "failed to get barrier status".
 	ErrGetBarrierStatusFailed = errors.New("failed to get barrier status")
 
+	// ErrGetBootstrapListenerKeysFailed is the sentinel error "failed to get bootstrap listener keys".
+	ErrGetBootstrapListenerKeysFailed = errors.New("failed to get bootstrap listener keys")
+
 	// ErrGetCABundleFailed is the sentinel error "failed to get CA bundle".
 	ErrGetCABundleFailed = errors.New("failed to get CA bundle")
 

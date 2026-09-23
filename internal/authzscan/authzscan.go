@@ -138,6 +138,7 @@ func Constants() map[string]string {
 		"ResourceACMEOrders":    auth.ResourceACMEOrders,
 		"ResourceACMEEAB":       auth.ResourceACMEEAB,
 		"ResourceCA":            auth.ResourceCA,
+		"ResourceBootstrap":     auth.ResourceBootstrap,
 
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,

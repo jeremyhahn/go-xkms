@@ -190,6 +190,9 @@ func (m *mockClient) BarrierSeal(context.Context) error { panic("not implemented
 func (m *mockClient) BarrierStatus(context.Context) (*transport.BarrierStatusResponse, error) {
 	panic("not implemented")
 }
+func (m *mockClient) BootstrapListenerKeys(context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	panic("not implemented")
+}
 func (m *mockClient) BarrierInitializeShamir(context.Context, *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	panic("not implemented")
 }

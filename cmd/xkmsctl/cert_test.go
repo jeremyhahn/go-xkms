@@ -2887,6 +2887,10 @@ func (m *mockCertClient) BarrierStatus(ctx context.Context) (*transport.BarrierS
 	return nil, client.ErrNotSupported
 }
 
+func (m *mockCertClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, client.ErrNotSupported
+}
+
 func (m *mockCertClient) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, client.ErrNotSupported
 }

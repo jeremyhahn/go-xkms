@@ -3136,6 +3136,11 @@ func (s *Server) startNoiseBootstrap() {
 		return
 	}
 
+	// Build the admin-facing public-key report (go-xkms#632) before taking
+	// s.mu: it reads only public bytes off keys, so it needs neither the
+	// lock nor ownership of the keys.
+	publicKeys := keys.publicKeysResponse()
+
 	// Publish only AFTER Start succeeds, and re-check the shutdown context
 	// under the same lock.
 	//
@@ -3157,6 +3162,9 @@ func (s *Server) startNoiseBootstrap() {
 		s.noiseBootstrapKey = keys.noise
 		s.p256BootstrapKey = keys.p256
 		published = true
+		if s.xkmsService != nil {
+			s.xkmsService.SetBootstrapListenerKeys(publicKeys)
+		}
 	}
 	s.mu.Unlock()
 
@@ -3434,6 +3442,9 @@ func (s *Server) shutdown() error {
 	s.noiseBootstrapServer = nil
 	s.noiseBootstrapKey = nil
 	s.p256BootstrapKey = nil
+	if s.xkmsService != nil {
+		s.xkmsService.ClearBootstrapListenerKeys()
+	}
 	raftAdv := s.raftClusterAdvertiser
 	metricsSrv := s.metricsServer
 	s.mu.Unlock()

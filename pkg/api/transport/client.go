@@ -210,6 +210,15 @@ type BarrierService interface {
 	BarrierEnableEncryption(ctx context.Context, req *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
 }
 
+// BootstrapService reports the running trust-bootstrap listener's public
+// static keys (go-xkms#632).
+type BootstrapService interface {
+	// BootstrapListenerKeys returns the listener's public keys. Returns a
+	// typed "not enabled" error when no bootstrap listener has published
+	// its keys yet.
+	BootstrapListenerKeys(ctx context.Context) (*BootstrapListenerKeysResponse, error)
+}
+
 // PIVService handles Personal Identity Verification operations.
 type PIVService interface {
 	// ListPIVSlots returns the status of all PIV slots in the specified backend.
@@ -602,4 +611,5 @@ type Client interface {
 	CredentialManagementService
 	AuditService
 	EscrowService
+	BootstrapService
 }

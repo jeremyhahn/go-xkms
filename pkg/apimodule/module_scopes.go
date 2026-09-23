@@ -90,5 +90,13 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// reached less far than the specific permissions behind it would deny
 		// calls qrdb's own declarations admit.
 		qrdbsdk.Permission(auth.ResourceSSH + ":" + auth.ActionUse),
+
+		// bootstrap:read reports the trust-bootstrap listener's own public
+		// keys (go-xkms#632). The listener is process-wide, not per-tenant,
+		// so it holds the same reach as seal:status: a tenant-local Admin
+		// sees it for its own tenant, and the system-tenant rule lifts that
+		// to every tenant for a system member. qrdb does not declare this
+		// name; xkms owns it.
+		qrdbsdk.Permission(auth.ResourceBootstrap + ":" + auth.ActionRead),
 	}
 }

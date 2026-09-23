@@ -467,6 +467,13 @@ func (m *mockService) BarrierStatus(_ context.Context) (*transport.BarrierStatus
 	return &transport.BarrierStatusResponse{}, nil
 }
 
+func (m *mockService) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.BootstrapListenerKeysResponse{}, nil
+}
+
 func (m *mockService) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
@@ -1350,6 +1357,7 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"BarrierUnseal", func() error { return tr.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{}) }},
 		{"BarrierSeal", func() error { return tr.BarrierSeal(ctx) }},
 		{"BarrierStatus", func() error { _, e := tr.BarrierStatus(ctx); return e }},
+		{"BootstrapListenerKeys", func() error { _, e := tr.BootstrapListenerKeys(ctx); return e }},
 		{"BarrierInitializeShamir", func() error {
 			_, e := tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{})
 			return e
@@ -1504,6 +1512,7 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"BarrierUnseal", func() error { return tr.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{}) }},
 		{"BarrierSeal", func() error { return tr.BarrierSeal(ctx) }},
 		{"BarrierStatus", func() error { _, e := tr.BarrierStatus(ctx); return e }},
+		{"BootstrapListenerKeys", func() error { _, e := tr.BootstrapListenerKeys(ctx); return e }},
 		{"BarrierInitializeShamir", func() error {
 			_, e := tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{})
 			return e

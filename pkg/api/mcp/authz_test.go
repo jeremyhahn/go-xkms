@@ -639,6 +639,9 @@ var goldenMethodPermissions = map[string]string{
 	"barrier.unsealShare":          "barrier:unseal-share",
 	"barrier.unsealShares":         "seal:unseal",
 
+	// Trust bootstrap listener (go-xkms#632).
+	"bootstrap.showKeys": "bootstrap:read",
+
 	// Init ceremony — pkg/api/quic/handlers_init_credentials.go.
 	"init.claimCertBegin":     "ceremony:claim_cert",
 	"init.claimCertComplete":  "ceremony:claim_cert",
@@ -735,7 +738,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourcePIV: {}, auth.ResourceSSH: {}, auth.ResourceSeal: {},
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
-		auth.ResourceAudit: {},
+		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
 	}
 
 	for method, perm := range methodPermissions {

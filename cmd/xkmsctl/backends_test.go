@@ -788,6 +788,10 @@ func (m *mockBackendsClient) BarrierStatus(ctx context.Context) (*transport.Barr
 	return nil, nil
 }
 
+func (m *mockBackendsClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBackendsClient) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, nil
 }

@@ -313,6 +313,9 @@ func (m *mockPIVClient) BarrierSeal(_ context.Context) error {
 func (m *mockPIVClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
 	return nil, errMockNotImplemented
 }
+func (m *mockPIVClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, errMockNotImplemented
+}
 func (m *mockPIVClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, errMockNotImplemented
 }

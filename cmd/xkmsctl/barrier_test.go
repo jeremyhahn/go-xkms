@@ -114,6 +114,10 @@ func (m *mockBarrierClient) BarrierStatus(_ context.Context) (*transport.Barrier
 	return m.statusResp, m.statusErr
 }
 
+func (m *mockBarrierClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockBarrierClient) BarrierSeal(_ context.Context) error { return m.sealErr }
 
 func (m *mockBarrierClient) BarrierRekey(_ context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {

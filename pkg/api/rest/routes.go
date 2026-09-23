@@ -187,6 +187,12 @@ func Routes() []RouteSpec {
 	perm("POST", "/barrier/recovery/root-token", auth.ResourceSeal, auth.ActionRotateRootKey, func(s *Server) http.HandlerFunc { return s.handlers.BarrierGenerateRootTokenHandler })
 	perm("POST", "/barrier/enable-encryption", auth.ResourceSeal, auth.ActionEnableEncryption, func(s *Server) http.HandlerFunc { return s.handlers.BarrierEnableEncryptionHandler })
 
+	// --- Trust bootstrap listener (go-xkms#632): the listener's own public
+	// keys, admin-read-only. Distinct from /v1/ca/bootstrap above, which is
+	// the public CA-bundle fetch endpoint. ---
+	hasBootstrapHandlers := func(s *Server) bool { return s.bootstrapHandlers != nil }
+	permIf("GET", "/bootstrap/keys", auth.ResourceBootstrap, auth.ActionRead, hasBootstrapHandlers, func(s *Server) http.HandlerFunc { return s.bootstrapHandlers.ShowKeysHandler })
+
 	// --- PIN management ---
 	session("POST", "/pin/so/set", nil, func(s *Server) http.HandlerFunc { return s.handlers.SetSOPINHandler })
 	session("POST", "/pin/user/set", nil, func(s *Server) http.HandlerFunc { return s.handlers.SetUserPINHandler })

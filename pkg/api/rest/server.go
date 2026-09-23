@@ -73,6 +73,7 @@ type Server struct {
 	credentialHandlers  *CredentialHandlers
 	authFactorHandlers  *AuthFactorHandlers
 	auditHandlers       *AuditHandlers
+	bootstrapHandlers   *BootstrapHandlers
 	caHandlers          *CAHandlers
 	sshHandlers         *SSHHandlers
 	sshClient           sdkssh.Client
@@ -577,6 +578,14 @@ func NewServer(cfg *Config) (*Server, error) {
 	if cfg.XKMSService != nil {
 		server.auditHandlers = NewAuditHandlers(cfg.XKMSService, log)
 		log.Info("Audit handlers enabled")
+	}
+
+	// Set up bootstrap-listener-key handlers. The listener publishes its own
+	// public keys into cfg.XKMSService once started (pkg/server); the
+	// handler here only ever reads them.
+	if cfg.XKMSService != nil {
+		server.bootstrapHandlers = NewBootstrapHandlers(cfg.XKMSService, log)
+		log.Info("Bootstrap listener key handlers enabled")
 	}
 
 	// Set up CA handlers if CA is configured

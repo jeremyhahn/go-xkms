@@ -141,11 +141,12 @@ services:
       update-ca-certificates >/dev/null 2>&1 &&
       echo 'Waiting for CoreDNS to initialize...' &&
       sleep 5 &&
-      export BOOTSTRAP_NOISE_STATIC_KEY=$$(cat /etc/xkms/certs/noise.pub.hex) &&
       export BOOTSTRAP_SPKI_PIN=$$(cat /etc/xkms/certs/spki.pin) &&
-      echo \"Noise public key: $${BOOTSTRAP_NOISE_STATIC_KEY}\" &&
       echo \"SPKI pin: $${BOOTSTRAP_SPKI_PIN}\" &&
       echo 'Running bootstrap integration tests...' &&
+      echo 'The Noise_NK public key is discovered from the running server over' &&
+      echo 'the admin API (go-xkms#632), not pre-shared -- see' &&
+      echo 'discoveredBootstrapKeys in test/integration/bootstrap/testutil.go.' &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/bootstrap/... -timeout 10m
       "
 

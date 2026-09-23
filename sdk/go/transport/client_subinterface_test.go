@@ -151,6 +151,9 @@ func (s *stubClient) BarrierSeal(context.Context) error { panic("stub") }
 func (s *stubClient) BarrierStatus(context.Context) (*BarrierStatusResponse, error) {
 	panic("stub")
 }
+func (s *stubClient) BootstrapListenerKeys(context.Context) (*BootstrapListenerKeysResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) BarrierInitializeShamir(context.Context, *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error) {
 	panic("stub")
 }

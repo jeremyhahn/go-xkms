@@ -1283,6 +1283,10 @@ func (m *mockService) BarrierStatus(ctx context.Context) (*BarrierStatusResponse
 	return nil, nil
 }
 
+func (m *mockService) BootstrapListenerKeys(ctx context.Context) (*BootstrapListenerKeysResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) BarrierInitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error) {
 	return nil, nil
 }

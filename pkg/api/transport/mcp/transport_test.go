@@ -200,6 +200,22 @@ func TestConnect_NotConnected_MethodsReturnError(t *testing.T) {
 
 	_, err = tr.ListBackends(ctx)
 	assert.ErrorIs(t, err, ErrNotConnected)
+
+	_, err = tr.BootstrapListenerKeys(ctx)
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestBootstrapListenerKeys_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	resp, err := tr.BootstrapListenerKeys(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "aa", resp.NoisePublicKey)
 }
 
 func TestClose_NotConnected(t *testing.T) {
@@ -371,6 +387,7 @@ var mockToolMethods = []string{
 	"barrier.unseal",
 	"barrier.unsealShare",
 	"barrier.unsealShares",
+	"bootstrap.showKeys",
 	"credentials.strategy",
 	"credentials.submit",
 	"init.claimCertBegin",

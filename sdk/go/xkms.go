@@ -445,6 +445,9 @@ type (
 	BarrierEnableEncryptionRequest     = transport.BarrierEnableEncryptionRequest
 	BarrierEnableEncryptionResponse    = transport.BarrierEnableEncryptionResponse
 
+	// Trust Bootstrap Listener
+	BootstrapListenerKeysResponse = transport.BootstrapListenerKeysResponse
+
 	// PIN Operations
 	SetSOPINRequest       = transport.SetSOPINRequest
 	SetUserPINRequest     = transport.SetUserPINRequest

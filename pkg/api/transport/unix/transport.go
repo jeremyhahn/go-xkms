@@ -1178,6 +1178,24 @@ func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatus
 	}, nil
 }
 
+// BootstrapListenerKeys returns the running trust-bootstrap listener's
+// public static keys.
+func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.BootstrapListenerKeys(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "bootstrap listener keys failed", Err: err}
+	}
+
+	return &transport.BootstrapListenerKeysResponse{
+		NoisePublicKey: resp.NoisePublicKey,
+		P256PublicKey:  resp.P256PublicKey,
+	}, nil
+}
+
 // BarrierInitializeShamir initializes the barrier using Shamir secret sharing.
 func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	if !t.connected {

@@ -102,6 +102,7 @@ const (
 	KeystoreService_BarrierHasRecoveryKeys_FullMethodName      = "/xkms.v1.KeystoreService/BarrierHasRecoveryKeys"
 	KeystoreService_BarrierGenerateRootToken_FullMethodName    = "/xkms.v1.KeystoreService/BarrierGenerateRootToken"
 	KeystoreService_BarrierEnableEncryption_FullMethodName     = "/xkms.v1.KeystoreService/BarrierEnableEncryption"
+	KeystoreService_BootstrapListenerKeys_FullMethodName       = "/xkms.v1.KeystoreService/BootstrapListenerKeys"
 	KeystoreService_SetSOPIN_FullMethodName                    = "/xkms.v1.KeystoreService/SetSOPIN"
 	KeystoreService_SetUserPIN_FullMethodName                  = "/xkms.v1.KeystoreService/SetUserPIN"
 	KeystoreService_ChangeSOPIN_FullMethodName                 = "/xkms.v1.KeystoreService/ChangeSOPIN"
@@ -388,6 +389,10 @@ type KeystoreServiceClient interface {
 	// keyed strategy in place. The migration runs asynchronously; the response
 	// acknowledges the start and clients poll BarrierStatus for completion.
 	BarrierEnableEncryption(ctx context.Context, in *BarrierEnableEncryptionRequest, opts ...grpc.CallOption) (*BarrierEnableEncryptionResponse, error)
+	// BootstrapListenerKeys reports the running trust-bootstrap listener's
+	// public static keys, for an administrator to distribute to first-contact
+	// clients. Only public material is ever returned.
+	BootstrapListenerKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BootstrapListenerKeysResponse, error)
 	// SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
 	// current_so_pin must match the existing PIN.
 	SetSOPIN(ctx context.Context, in *SetSOPINRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -1350,6 +1355,16 @@ func (c *keystoreServiceClient) BarrierEnableEncryption(ctx context.Context, in 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BarrierEnableEncryptionResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_BarrierEnableEncryption_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) BootstrapListenerKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BootstrapListenerKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BootstrapListenerKeysResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_BootstrapListenerKeys_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2414,6 +2429,10 @@ type KeystoreServiceServer interface {
 	// keyed strategy in place. The migration runs asynchronously; the response
 	// acknowledges the start and clients poll BarrierStatus for completion.
 	BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
+	// BootstrapListenerKeys reports the running trust-bootstrap listener's
+	// public static keys, for an administrator to distribute to first-contact
+	// clients. Only public material is ever returned.
+	BootstrapListenerKeys(context.Context, *emptypb.Empty) (*BootstrapListenerKeysResponse, error)
 	// SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
 	// current_so_pin must match the existing PIN.
 	SetSOPIN(context.Context, *SetSOPINRequest) (*emptypb.Empty, error)
@@ -2828,6 +2847,9 @@ func (UnimplementedKeystoreServiceServer) BarrierGenerateRootToken(context.Conte
 }
 func (UnimplementedKeystoreServiceServer) BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierEnableEncryption not implemented")
+}
+func (UnimplementedKeystoreServiceServer) BootstrapListenerKeys(context.Context, *emptypb.Empty) (*BootstrapListenerKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BootstrapListenerKeys not implemented")
 }
 func (UnimplementedKeystoreServiceServer) SetSOPIN(context.Context, *SetSOPINRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetSOPIN not implemented")
@@ -4526,6 +4548,24 @@ func _KeystoreService_BarrierEnableEncryption_Handler(srv interface{}, ctx conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).BarrierEnableEncryption(ctx, req.(*BarrierEnableEncryptionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_BootstrapListenerKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).BootstrapListenerKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_BootstrapListenerKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).BootstrapListenerKeys(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -6400,6 +6440,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BarrierEnableEncryption",
 			Handler:    _KeystoreService_BarrierEnableEncryption_Handler,
+		},
+		{
+			MethodName: "BootstrapListenerKeys",
+			Handler:    _KeystoreService_BootstrapListenerKeys_Handler,
 		},
 		{
 			MethodName: "SetSOPIN",

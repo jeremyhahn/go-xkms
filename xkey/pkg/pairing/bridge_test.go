@@ -1750,6 +1750,10 @@ func (m *mockTransportClient) BarrierStatus(_ context.Context) (*transport.Barri
 	return nil, errNotImplemented
 }
 
+func (m *mockTransportClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (m *mockTransportClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, errNotImplemented
 }

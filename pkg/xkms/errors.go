@@ -336,6 +336,12 @@ var (
 	// email login key. xkms resolves logins and WebAuthn enrollment through it,
 	// so a user without one is provisioned and unreachable.
 	ErrEmailRequired = errors.New("users: email is required; it is the canonical login key")
+
+	// ErrBootstrapListenerNotEnabled is returned by BootstrapListenerKeys
+	// when no trust-bootstrap listener has published its public keys: either
+	// none is configured for this server, or startup has not yet reached
+	// publication (pkg/server's startNoiseBootstrap goroutine).
+	ErrBootstrapListenerNotEnabled = errors.New("keystore: bootstrap listener not enabled")
 )
 
 // Auto-initialization errors

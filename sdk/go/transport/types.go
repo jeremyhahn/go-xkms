@@ -102,6 +102,9 @@ type BarrierRootTokenResponse = pkgtransport.BarrierRootTokenResponse
 type BarrierEnableEncryptionRequest = pkgtransport.BarrierEnableEncryptionRequest
 type BarrierEnableEncryptionResponse = pkgtransport.BarrierEnableEncryptionResponse
 
+// Trust bootstrap listener types (re-exported from pkg/api/transport).
+type BootstrapListenerKeysResponse = pkgtransport.BootstrapListenerKeysResponse
+
 // Certificate types.
 type GetCertificateResponse = pkgtransport.GetCertificateResponse
 type SaveCertificateRequest = pkgtransport.SaveCertificateRequest

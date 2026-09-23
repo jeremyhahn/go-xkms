@@ -148,6 +148,15 @@ func TestBarrierStatus_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
+func TestBootstrapListenerKeys_NotConnected(t *testing.T) {
+	cfg := transport.DefaultConfig()
+	cfg.Address = "/tmp/test.sock"
+	tr, err := NewWithConfig(cfg)
+	require.NoError(t, err)
+	_, err = tr.BootstrapListenerKeys(context.Background())
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
 // --- Connect to non-existent socket ---
 
 func TestConnect_FailedDial(t *testing.T) {

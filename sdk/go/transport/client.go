@@ -41,6 +41,7 @@ type ShareService = pkgtransport.ShareService
 type TenantService = pkgtransport.TenantService
 type AuditService = pkgtransport.AuditService
 type EscrowService = pkgtransport.EscrowService
+type BootstrapService = pkgtransport.BootstrapService
 
 // Client composes all service sub-interfaces into a unified client.
 type Client = pkgtransport.Client

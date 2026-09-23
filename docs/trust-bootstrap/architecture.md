@@ -1,6 +1,6 @@
 # Trust Bootstrap — Architecture
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## The problem
 
@@ -72,6 +72,7 @@ Rejected alternatives:
 | DANE, Noise_NK, SPKI-pinned TLS protocols | **go-truststrap** | go-truststrap |
 | The bundle being served | `GET /v1/ca/bootstrap` — [`../certificate-authority/`](../certificate-authority/architecture.md) | go-xkms |
 | Client-side platform CA import | `xkey trust import-platform` — [`../../xkey/docs/platform-trust/`](../../xkey/docs/platform-trust/architecture.md) | go-xkms (xkey surface) |
+| Admin read of the listener's own public keys (go-xkms#632) | `pkg/xkms/servicer_bootstrap.go`, every transport's `BootstrapListenerKeys` | go-xkms |
 
 This is capability row **"Trust bootstrap dispatch" (tier 1)**.
 
@@ -199,6 +200,53 @@ deliberately defends against, so there is no silent fallback and an
 un-upgraded peer is refused. Adding a shim here to accept the old wire would
 reintroduce exactly the downgrade upstream closed. Owner-ruled: clean
 integration, both bootstrap ends move together.
+
+## Reporting the listener's own identity is a separate, reversed-trust capability (go-xkms#632)
+
+Everything above this section is the client learning to trust the server.
+`BootstrapListenerKeys` is the other direction entirely: an already-trusted,
+already-authenticated administrator asking the server what its own bootstrap
+identity currently is, so the raw public key can be handed to a *future*
+first-contact client. It exists because #35 and #436 moved the listener's
+static key out of config and into barrier-sealed (or file-persisted) custody
+the server generates for itself — after that, nothing told an operator what
+key the listener was actually serving, without reading server-local files by
+hand.
+
+**The response carries the raw public key, never a hash of it.**
+`NoiseConfig.ServerStaticKey` / `ServerP256StaticKey` — the fields
+`xkmsctl bootstrap auto --noise-key`/`--p256-key` set, and the only two
+values `pkg/trust/bootstrap`'s `decodeSuiteKey` ever validates — already ARE
+the pin for this transport: the client's suite-negotiating handshake
+authenticates the server by that exact key. See [`engineering.md`](engineering.md) for the exact field-to-client-field
+mapping.
+
+**Why a service-layer method, not a REST-only feature.** `pkg/xkms.XKMSService`
+already owns every other admin-facing read this way (`BarrierStatus`,
+`SealStoreStatus`, ...): a request-scoped call that goes through one servicer
+method, then is adapted onto each transport's own wire shape. Putting the
+logic in a REST handler alone would have meant reimplementing it five more
+times for gRPC, QUIC, Unix, embedded and MCP, with five chances to diverge on
+what counts as "not enabled" or which fields are public.
+
+**Why the servicer holds a *published snapshot*, not a live pointer into the
+listener.** The keys are generated (or unsealed) asynchronously, in
+`startNoiseBootstrap`'s own goroutine, only after the listener's `Start`
+succeeds — see Suite availability above. `XKMSService.SetBootstrapListenerKeys`
+is called once, from that goroutine, with an already-built
+`transport.BootstrapListenerKeysResponse` (public hex, nothing else);
+`ClearBootstrapListenerKeys` withdraws it in the same critical section
+`Server.shutdown` uses to claim and destroy the live keys. The servicer never
+reaches back into `pkg/server` for the private material — there is no path
+from this capability to the protected pages `bootstrap_key_custody.go` holds.
+
+**Why `bootstrap:read` is its own resource, ScopeSelf.** The listener is
+process-wide, not tenant data, so it does not belong under `seal:*` (barrier
+lifecycle) or `ceremony:*`/`credentials:*` (the unseal/enrollment ceremony —
+see "What this feature deliberately does not do" below). It is scoped
+`ScopeSelf` for the same reason `seal:status` is: a tenant-local Admin sees it
+for its own tenant, and the system-tenant rule lifts that to every tenant for
+a system member. See `pkg/apimodule/module_scopes.go`.
 
 ## What this feature deliberately does not do
 

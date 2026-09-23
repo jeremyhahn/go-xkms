@@ -475,6 +475,10 @@ func (m *MockXKMSService) BarrierStatus(ctx context.Context) (*transport.Barrier
 	return nil, &mockUnsupportedError{capability: "barrier"}
 }
 
+func (m *MockXKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, &mockUnsupportedError{capability: "bootstrap"}
+}
+
 func (m *MockXKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, &mockUnsupportedError{capability: "barrier"}
 }

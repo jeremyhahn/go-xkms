@@ -1,14 +1,14 @@
 # Trust Bootstrap — CLI
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 Binary: `xkmsctl`, group `bootstrap`. Sources: `cmd/xkmsctl/bootstrap.go`,
 `bootstrap_dane.go`, `bootstrap_noise.go`, `bootstrap_p256.go`,
 `bootstrap_spki.go`,
 `bootstrap_trust.go`.
 
-Subgroups: `bootstrap auto`, `bootstrap dane`, `bootstrap noise`,
-`bootstrap spki`. Global flags: see
+Subgroups: `bootstrap auto`, `bootstrap show-keys`, `bootstrap dane`,
+`bootstrap noise`, `bootstrap spki`. Global flags: see
 [`../key-management/cli.md`](../key-management/cli.md).
 
 The client-side companion `xkey trust bootstrap|fetch|import-platform` is
@@ -49,6 +49,43 @@ meaning the canonical unauthenticated route `/v1/ca/bootstrap`. Both routes
 exist; only the second answers before the client has credentials. If `bootstrap
 auto` returns 401, pass `--bundle-path /v1/ca/bootstrap` explicitly. Reconciling
 the two defaults is an open owner decision.
+
+## `xkmsctl bootstrap show-keys`
+
+Reports the **running server's** trust-bootstrap listener public keys, over
+the ordinary authenticated admin API (not the bootstrap channel itself) —
+requires the `bootstrap:read` permission. Uses the same connection flags as
+every other `xkmsctl` command (`--server`, `--token`, `--transport`, etc.;
+see [`../key-management/cli.md`](../key-management/cli.md)), and the global
+`-o`/`--output` flag for `json` vs. the default table.
+
+```
+xkmsctl bootstrap show-keys
+xkmsctl bootstrap show-keys --output json
+```
+
+Sample table output:
+
+```
+Bootstrap Listener Keys:
+  Noise_NK Public Key (--noise-key): 3b1a...c2
+  P-256 Public Key (--p256-key):     04a1...9e
+```
+
+Each value is exactly the hex string to paste into the flag named beside it
+on `bootstrap auto` (or the matching `NoiseConfig` field for SDK callers) —
+there is no separate pin to distribute; the raw public key IS what a
+first-contact client pins the listener by. A suite line is omitted when that
+suite is not offered — a FIPS server never prints the `Noise_NK` line. If
+the listener has not finished starting (or none is configured), the command
+fails with the server's `503`/`Unavailable` rather than printing empty keys.
+
+This is distinct from `bootstrap noise show-key` / `show-p256-key`, which
+derive a public key **locally** from a private key file you already hold.
+`show-keys` asks the server directly, which is what you want once the
+server is up and you did not generate its key yourself (see Configuration
+in [`engineering.md`](engineering.md) — the listener generates or unseals
+its own key; there is no config field for it).
 
 ## `xkmsctl bootstrap dane`
 

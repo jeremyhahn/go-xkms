@@ -48,6 +48,7 @@ type XKMSServicer interface {
 	CredentialManagementServicer
 	AuditServicer
 	EscrowServicer
+	BootstrapServicer
 }
 
 // HealthServicer handles health checks.
@@ -138,6 +139,15 @@ type BarrierServicer interface {
 	BarrierHasRecoveryKeys(ctx context.Context) (*BarrierHasRecoveryKeysResponse, error)
 	BarrierGenerateRootToken(ctx context.Context, req *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error)
 	BarrierEnableEncryption(ctx context.Context, req *BarrierEnableEncryptionRequest) (*BarrierEnableEncryptionResponse, error)
+}
+
+// BootstrapServicer reports the running trust-bootstrap listener's public
+// static keys (go-xkms#632).
+type BootstrapServicer interface {
+	// BootstrapListenerKeys returns the listener's public keys. Returns a
+	// typed "not enabled" error when no bootstrap listener has published
+	// its keys yet.
+	BootstrapListenerKeys(ctx context.Context) (*BootstrapListenerKeysResponse, error)
 }
 
 // PIVServicer handles Personal Identity Verification operations.

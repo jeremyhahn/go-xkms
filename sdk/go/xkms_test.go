@@ -1054,6 +1054,10 @@ func (m *mockXKMSService) BarrierStatus(ctx context.Context) (*transport.Barrier
 	return &transport.BarrierStatusResponse{}, nil
 }
 
+func (m *mockXKMSService) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return &transport.BootstrapListenerKeysResponse{}, nil
+}
+
 func (m *mockXKMSService) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, nil
 }

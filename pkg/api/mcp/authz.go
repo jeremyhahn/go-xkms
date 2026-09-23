@@ -183,6 +183,9 @@ var methodPermissions = map[string]permission{
 	"barrier.generateRootToken":    {auth.ResourceSeal, auth.ActionRotateRootKey},
 	"barrier.enableEncryption":     {auth.ResourceSeal, auth.ActionEnableEncryption},
 
+	// Trust bootstrap listener (go-xkms#632).
+	"bootstrap.showKeys": {auth.ResourceBootstrap, auth.ActionRead},
+
 	// Shamir shares. Reads are ceremony status; writes (submit, delete)
 	// move quorum material and carry the barrier's unseal-share action.
 	"xkms.submitShare":              {auth.ResourceBarrier, auth.ActionUnsealShare},

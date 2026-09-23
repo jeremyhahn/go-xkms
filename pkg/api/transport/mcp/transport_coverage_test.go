@@ -94,6 +94,9 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 		case "sealStore.status":
 			d, _ := json.Marshal(map[string]interface{}{"available": true, "sealer_id": "tpm2", "secret_count": 1, "secret_names": []string{"db-password"}})
 			return jsonrpcResponse{Result: d}
+		case "bootstrap.showKeys":
+			d, _ := json.Marshal(map[string]string{"noise_public_key": "aa"})
+			return jsonrpcResponse{Result: d}
 		default:
 			// Return empty valid result for all other methods
 			return jsonrpcResponse{Result: json.RawMessage(`{}`)}

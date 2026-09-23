@@ -55,6 +55,7 @@ var goldenRPCPermissions = map[string]string{
 	"BarrierUnsealShare":          "barrier:unseal-share",
 	"BarrierUnsealShares":         "seal:unseal",
 	"BindUserCert":                "users:update",
+	"BootstrapListenerKeys":       "bootstrap:read",
 	"CanSeal":                     "keys:get",
 	"CertExists":                  "certs:read",
 	"ChangeSOPIN":                 "pin:write",

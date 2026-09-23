@@ -1,6 +1,6 @@
 # Trust Bootstrap — User Guide
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-22 (go-xkms#632: `bootstrap show-keys`)
 
 ## What this is for
 
@@ -141,6 +141,20 @@ keeps working across restarts. Configure `barrier.enabled: true` in
 production so this key gets the same at-rest protection as everything else
 the barrier covers.
 
+**Ask the running server what its key is** — since the server generates its
+own key, the `noise generate-key` verbs above are not how you learn what it
+actually serves. Once the server is up, an administrator reads it directly:
+
+```
+xkmsctl bootstrap show-keys
+```
+
+This is the authenticated admin API (`bootstrap:read`), not the bootstrap
+channel itself — it's the fast path to the public key value you hand a
+first-contact client (there is no separate pin; the raw key IS what pins the
+listener), without SSHing to the server to inspect its sealed storage or key
+file by hand. See [`cli.md`](cli.md) §`xkmsctl bootstrap show-keys`.
+
 If the server can run **no** suite at all it refuses at startup with
 `bootstrap is enabled but this build can run no handshake suite`, naming why
 each was rejected — rather than binding the port and failing every handshake.
@@ -188,6 +202,8 @@ you get a pin-mismatch error and should investigate before clearing the pin
 | `server static key invalid for suite` | the key is not hex or the wrong length for its suite (64 chars Noise, 130 chars P-256) | check which key went into which flag |
 | TOFU pin changed | either a legitimate rotation or an attack | investigate before clearing the pin |
 | 401 from `bootstrap auto` | it used the authenticated bundle route | `--bundle-path /v1/ca/bootstrap` |
+| `bootstrap show-keys` returns 503 / "bootstrap listener not enabled" | the listener has not finished starting yet, or is not configured | wait for startup to complete, or check `bootstrap.noise.enabled` |
+| `bootstrap show-keys` returns 401/403 | not authenticated, or lacking `bootstrap:read` | authenticate as an Admin/Owner identity |
 
 A pin mismatch or a TOFU pin change is the one failure in this list you should
 never work around by clearing state. That failure is the feature doing its job.

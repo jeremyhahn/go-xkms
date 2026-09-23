@@ -14,8 +14,11 @@
 package server
 
 import (
+	"encoding/hex"
+
 	"github.com/awnumar/memguard"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -85,6 +88,29 @@ func (k *bootstrapKeys) destroy() {
 	}
 	k.noise.Destroy()
 	k.p256.Destroy()
+}
+
+// publicKeysResponse builds the admin-facing report of this listener's
+// public keys (go-xkms#632): the hex-encoded public half of whichever
+// suites are offered, in exactly the encoding
+// pkg/trust/bootstrap.decodeSuiteKey accepts for
+// NoiseConfig.ServerStaticKey / ServerP256StaticKey — a first-contact
+// client pins the listener by this raw public key directly; nothing in the
+// stack hashes it into a separate pin. Only the public bytes are ever read
+// from k; the private scalars stay exactly where loadBootstrapKeys left
+// them.
+func (k *bootstrapKeys) publicKeysResponse() *transport.BootstrapListenerKeysResponse {
+	resp := &transport.BootstrapListenerKeysResponse{}
+
+	if k.noise != nil {
+		resp.NoisePublicKey = hex.EncodeToString(k.noise.Public)
+	}
+
+	if k.p256 != nil {
+		resp.P256PublicKey = hex.EncodeToString(k.p256.PublicBytes())
+	}
+
+	return resp
 }
 
 // loadBootstrapKeys resolves which handshake suites this binary can offer and

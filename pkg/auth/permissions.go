@@ -66,6 +66,14 @@ const (
 	// ceremony and barrier unseal (strategy discovery plus factor submission).
 	ResourceCredentials = "credentials"
 
+	// ResourceBootstrap is the trust-bootstrap listener's own public
+	// identity: the Noise_NK and P-256 static public keys
+	// (pkg/server/bootstrap_key_custody.go), reported read-only so an
+	// administrator can distribute them to first-contact clients. It is
+	// distinct from ResourceCeremony/ResourceCredentials, which gate the
+	// unseal/enrollment ceremony rather than this always-on listener.
+	ResourceBootstrap = "bootstrap"
+
 	// ACME administration resources. RFC 8555 registration objects are
 	// neither certificates (certs:*) nor platform users (users:*); qrdb
 	// models each object family as its own resource so a deployment can mint

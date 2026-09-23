@@ -375,6 +375,10 @@ func (b *baseSDKClient) BarrierStatus(ctx context.Context) (*transport.BarrierSt
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, errNotImplemented
 }

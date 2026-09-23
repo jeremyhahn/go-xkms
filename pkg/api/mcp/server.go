@@ -352,6 +352,9 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"barrier.generateRootToken":    (*Server).handleBarrierGenerateRootToken,
 	"barrier.enableEncryption":     (*Server).handleBarrierEnableEncryption,
 
+	// Trust bootstrap listener (go-xkms#632).
+	"bootstrap.showKeys": (*Server).handleBootstrapShowKeys,
+
 	// Shamir share operations. Share state lives in the embedded go-qrdb
 	// node, reached through the XKMS service.
 	"xkms.submitShare":              (*Server).handleSubmitShare,

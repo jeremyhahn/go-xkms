@@ -188,6 +188,15 @@ type XKMSService struct {
 	// When empty, no SPIFFE SAN is synthesized (legacy behavior). Set via
 	// SetSPIFFETrustDomain at server startup from operator config.
 	spiffeTrustDomain string
+
+	// bootstrapListenerKeys holds the trust-bootstrap listener's public keys
+	// and SPKI pins, published by pkg/server once the listener's Start
+	// succeeds (see SetBootstrapListenerKeys). Unlike the other optional
+	// subsystems above, publication happens from a goroutine independent of
+	// whatever wires the rest of XKMSService, so this field carries its own
+	// mutex rather than relying on the single-assignment-before-use pattern
+	// the Set* methods otherwise share.
+	bootstrapListenerKeys bootstrapListenerKeyState
 }
 
 // ServiceConfig configures the xkms service

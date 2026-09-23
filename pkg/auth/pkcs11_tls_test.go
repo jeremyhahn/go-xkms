@@ -273,6 +273,9 @@ func (m *authMockClient) BarrierSeal(context.Context) error {
 func (m *authMockClient) BarrierStatus(context.Context) (*transport.BarrierStatusResponse, error) {
 	return &transport.BarrierStatusResponse{}, nil
 }
+func (m *authMockClient) BootstrapListenerKeys(context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return &transport.BootstrapListenerKeysResponse{}, nil
+}
 func (m *authMockClient) BarrierInitializeShamir(context.Context, *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, nil
 }

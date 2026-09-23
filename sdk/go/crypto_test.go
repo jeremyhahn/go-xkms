@@ -594,6 +594,9 @@ func (n *noopClient) BarrierSeal(context.Context) error { return nil }
 func (n *noopClient) BarrierStatus(context.Context) (*transport.BarrierStatusResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) BootstrapListenerKeys(context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) BarrierInitializeShamir(context.Context, *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, nil
 }

@@ -16,12 +16,17 @@
 package bootstrap
 
 import (
+	"context"
 	"crypto/x509"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-truststrap/pkg/dane"
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 const (
@@ -29,7 +34,6 @@ const (
 	EnvNoiseAddr = "BOOTSTRAP_NOISE_ADDR"
 	EnvDNSServer = "BOOTSTRAP_DNS_SERVER"
 	EnvHostname  = "BOOTSTRAP_HOSTNAME"
-	EnvNoiseKey  = "BOOTSTRAP_NOISE_STATIC_KEY"
 	EnvSPKIPin   = "BOOTSTRAP_SPKI_PIN"
 	EnvTLSCA     = "BOOTSTRAP_TLS_CA"
 
@@ -37,6 +41,61 @@ const (
 	// This matches the path hardcoded in go-truststrap for DANE/SPKI bootstrapping.
 	xkmsBundlePath = "/v1/ca/bootstrap"
 )
+
+// Bootstrap listener key discovery (go-xkms#632).
+//
+// The Noise listener generates or unseals its own static key (go-xkms#35);
+// there is no config field and no file for this suite to pre-determine it
+// from, so — unlike every other BOOTSTRAP_* value — the Noise public key is
+// never supplied by the harness as an environment variable. It is discovered
+// from the running server itself, over the ordinary admin API, once per test
+// binary run and shared by every subtest that needs it.
+var (
+	bootstrapKeysOnce sync.Once
+	bootstrapKeysVal  *transport.BootstrapListenerKeysResponse
+	bootstrapKeysErr  error
+)
+
+// discoveredBootstrapKeys returns the running server's trust-bootstrap
+// listener public keys, discovering them on first use and caching the
+// result for the rest of the test binary. A harness misconfiguration (the
+// listener never comes up, or is unreachable) fails loudly — every caller's
+// own *testing.T — rather than proceeding with an empty key.
+func discoveredBootstrapKeys(t *testing.T) *transport.BootstrapListenerKeysResponse {
+	t.Helper()
+	bootstrapKeysOnce.Do(func() {
+		bootstrapKeysVal, bootstrapKeysErr = fetchBootstrapKeys(t)
+	})
+	if bootstrapKeysErr != nil {
+		t.Fatalf("discover bootstrap listener keys: %v", bootstrapKeysErr)
+	}
+	return bootstrapKeysVal
+}
+
+// fetchBootstrapKeys calls BootstrapListenerKeys over the SDK's REST
+// transport, retrying briefly: the listener publishes its keys
+// asynchronously in pkg/server's startNoiseBootstrap goroutine, which can
+// still be running in the moment after the compose harness's health check
+// (a plain GET /health) first goes green.
+func fetchBootstrapKeys(t *testing.T) (*transport.BootstrapListenerKeysResponse, error) {
+	t.Helper()
+	tr := newSDKTransport(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for {
+		resp, err := tr.BootstrapListenerKeys(ctx)
+		if err == nil {
+			return resp, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
 
 // requiredEnv reads a harness-supplied environment variable.
 //
@@ -98,9 +157,14 @@ func brokenDANEConfig(t *testing.T) *truststrap.DANEConfig {
 
 func validNoiseConfig(t *testing.T) *truststrap.NoiseConfig {
 	t.Helper()
+	keys := discoveredBootstrapKeys(t)
+	if keys.NoisePublicKey == "" {
+		t.Fatal("server reported no Noise_NK public key; the harness's non-FIPS " +
+			"build must offer it (see bootstrap.noise.enabled in generate-test-certs.sh)")
+	}
 	return &truststrap.NoiseConfig{
 		ServerAddr:      requiredEnv(t, EnvNoiseAddr),
-		ServerStaticKey: requiredEnv(t, EnvNoiseKey),
+		ServerStaticKey: keys.NoisePublicKey,
 	}
 }
 

@@ -263,6 +263,9 @@ func (m *mockCAClient) BarrierSeal(_ context.Context) error {
 func (m *mockCAClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) BootstrapListenerKeys(_ context.Context) (*transport.BootstrapListenerKeysResponse, error) {
+	return nil, nil
+}
 func (m *mockCAClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return nil, nil
 }

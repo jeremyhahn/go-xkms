@@ -437,6 +437,15 @@ service KeystoreService {
     option (qrdb.v1.permission) = "seal:enable_encryption";
   }
 
+  // ==================== Trust Bootstrap ====================
+
+  // BootstrapListenerKeys reports the running trust-bootstrap listener's
+  // public static keys, for an administrator to distribute to first-contact
+  // clients. Only public material is ever returned.
+  rpc BootstrapListenerKeys(google.protobuf.Empty) returns (BootstrapListenerKeysResponse) {
+    option (qrdb.v1.permission) = "bootstrap:read";
+  }
+
   // ==================== PIN Operations ====================
 
   // SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
@@ -2398,6 +2407,22 @@ message BarrierStatusResponse {
   bool hardware_backed = 3;
   // initialized_at records when the barrier was first initialized (RFC 3339).
   string initialized_at = 4;
+}
+
+// BootstrapListenerKeysResponse reports the running trust-bootstrap
+// listener's public static keys (go-xkms#632). Only public material is
+// ever returned. Both fields are hex-encoded in exactly the form
+// pkg/trust/bootstrap.NoiseConfig accepts: noise_public_key is the value
+// for NoiseConfig.ServerStaticKey / `--noise-key`, and p256_public_key is
+// the value for NoiseConfig.ServerP256StaticKey / `--p256-key`. A field is
+// empty when that suite is not offered by this build/configuration; at
+// least one field is populated whenever this response is returned at all.
+message BootstrapListenerKeysResponse {
+  // noise_public_key is the hex-encoded Noise_NK (X25519) static public key.
+  string noise_public_key = 1;
+  // p256_public_key is the hex-encoded uncompressed P-256 static public key
+  // of the FIPS-approved TSBOOT1_P256_AESGCM_SHA256 suite.
+  string p256_public_key = 2;
 }
 
 // BarrierInitializeShamirRequest requests initialization with Shamir secret sharing.

@@ -1713,6 +1713,40 @@ type BarrierEnableEncryptionResponse struct {
 	Scope  string `json:"scope"`
 }
 
+// Trust Bootstrap Listener
+
+// BootstrapListenerKeysResponse reports the running trust-bootstrap
+// listener's public static keys (go-xkms#632), for an administrator to
+// distribute to first-contact clients. Only public material is ever
+// returned; the private scalars never leave
+// pkg/server/bootstrap_key_custody.go's protected memory.
+//
+// Both fields are hex-encoded in exactly the form
+// pkg/trust/bootstrap.NoiseConfig accepts — a first-contact client pastes
+// NoisePublicKey into NoiseConfig.ServerStaticKey (or `--noise-key`) and
+// P256PublicKey into NoiseConfig.ServerP256StaticKey (or `--p256-key`); both
+// are validated there the same way (decodeSuiteKey: hex-decode, then a
+// suite-specific length check). There is no SPKI pin here: nothing in the
+// stack pins the Noise/P-256 responder key by hashing it — the raw public
+// key IS the pin for this transport, exactly as go-truststrap's
+// suite-negotiating client already consumes it.
+//
+// A field is empty when that suite is not offered — a FIPS build never
+// publishes NoisePublicKey (Noise_NK is not FIPS-approved), and a build with
+// no P-256 key configured leaves P256PublicKey empty. At least one field is
+// populated whenever the response is returned at all: an unenabled listener
+// is reported as ErrBootstrapListenerNotEnabled, never as a response with
+// both fields empty.
+type BootstrapListenerKeysResponse struct {
+	// NoisePublicKey is the hex-encoded Noise_NK (X25519) static public key
+	// — the value for NoiseConfig.ServerStaticKey / `--noise-key`.
+	NoisePublicKey string `json:"noise_public_key,omitempty"`
+	// P256PublicKey is the hex-encoded uncompressed P-256 static public key
+	// of the FIPS-approved TSBOOT1_P256_AESGCM_SHA256 suite — the value for
+	// NoiseConfig.ServerP256StaticKey / `--p256-key`.
+	P256PublicKey string `json:"p256_public_key,omitempty"`
+}
+
 // PIN Operations
 
 // SetSOPINRequest contains parameters for setting the Security Officer PIN.
