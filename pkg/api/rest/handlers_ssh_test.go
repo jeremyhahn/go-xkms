@@ -99,6 +99,13 @@ type mockKnownHostsClient struct {
 	listResp []*sdkssh.Pin
 	listErr  error
 	rmErr    error
+
+	verifyErr      error
+	verifyCalled   bool
+	verifyScope    string
+	verifyOwner    string
+	verifyHost     string
+	verifyReceived gossh.PublicKey
 }
 
 func (m *mockKnownHostsClient) Add(_ context.Context, _ sdkssh.AddKnownHostRequest) error {
@@ -110,8 +117,11 @@ func (m *mockKnownHostsClient) List(_ context.Context, _ sdkssh.ListKnownHostsRe
 func (m *mockKnownHostsClient) Remove(_ context.Context, _ sdkssh.RemoveKnownHostRequest) error {
 	return m.rmErr
 }
-func (m *mockKnownHostsClient) Verify(_ context.Context, _, _, _ string, _ gossh.PublicKey) error {
-	return nil
+func (m *mockKnownHostsClient) Verify(_ context.Context, scope, owner, host string, received gossh.PublicKey) error {
+	m.verifyCalled = true
+	m.verifyScope, m.verifyOwner, m.verifyHost = scope, owner, host
+	m.verifyReceived = received
+	return m.verifyErr
 }
 func (m *mockKnownHostsClient) Callback(_ context.Context, _, _ string) gossh.HostKeyCallback {
 	return nil
@@ -505,7 +515,12 @@ func TestSSHKnownHosts(t *testing.T) {
 	})
 }
 
+// TestSSHVerifyKnownHost proves the handler parses the presented host key
+// (authorized_keys format) and delegates entirely to KnownHosts().Verify —
+// no parallel fingerprint comparison lives in the handler anymore.
 func TestSSHVerifyKnownHost(t *testing.T) {
+	_, line := sshTestSigner(t)
+
 	t.Run("bad body", func(t *testing.T) {
 		srv := newSSHTestServer(t, newMockSSHClient())
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json", strings.NewReader("{bad"))
@@ -514,52 +529,76 @@ func TestSSHVerifyKnownHost(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 
-	t.Run("list error", func(t *testing.T) {
-		mc := newMockSSHClient()
-		mc.kh.listErr = errors.New("boom")
-		srv := newSSHTestServer(t, mc)
+	t.Run("missing public key", func(t *testing.T) {
+		srv := newSSHTestServer(t, newMockSSHClient())
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE"}`))
+			strings.NewReader(`{"scope":"user","owner":"a"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 
-	t.Run("pin not found", func(t *testing.T) {
-		mc := newMockSSHClient()
-		mc.kh.listResp = []*sdkssh.Pin{{Host: "other", Fingerprint: "SHA256:ofzkNjhU/4iM/0uOeHXWAMJoI5BBKoz3mzfQsRFIsPo"}}
-		srv := newSSHTestServer(t, mc)
+	// A malformed key gets a typed error, mapped to 400.
+	t.Run("malformed public key", func(t *testing.T) {
+		srv := newSSHTestServer(t, newMockSSHClient())
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE"}`))
+			strings.NewReader(`{"scope":"user","owner":"a","public_key":"not-a-valid-key"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 
-	t.Run("fingerprint mismatch", func(t *testing.T) {
+	// A matching key passes: the handler forwards the parsed key straight
+	// to KnownHosts().Verify.
+	t.Run("matching key passes", func(t *testing.T) {
 		mc := newMockSSHClient()
-		mc.kh.listResp = []*sdkssh.Pin{{Host: "h", Fingerprint: "SHA256:zqI91Lh+iwDRn7nMqu+T6XNTxzU+IHDzuvBa6zmV3/Q"}}
 		srv := newSSHTestServer(t, mc)
-		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:MYxa1R6bNv9ZJK4yPdWQMSRUE6Pg8qo+A8xCkC6eesw"}`))
+		body, err := json.Marshal(map[string]string{"scope": "user", "owner": "a", "public_key": line})
+		require.NoError(t, err)
+		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json", strings.NewReader(string(body)))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+		require.True(t, mc.kh.verifyCalled)
+		assert.Equal(t, "user", mc.kh.verifyScope)
+		assert.Equal(t, "a", mc.kh.verifyOwner)
+		assert.Equal(t, "h", mc.kh.verifyHost)
+		require.NotNil(t, mc.kh.verifyReceived)
+	})
+
+	// A different key presented for the host fails: KnownHosts().Verify
+	// reports the mismatch and the handler surfaces it as 409 with the
+	// expected/received fingerprints, not a caller-suppliable claim.
+	t.Run("mismatched key fails", func(t *testing.T) {
+		mc := newMockSSHClient()
+		mc.kh.verifyErr = &pkgknownhosts.MismatchError{
+			Host: "h", Expected: "SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			Received: "SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		}
+		srv := newSSHTestServer(t, mc)
+		body, err := json.Marshal(map[string]string{"scope": "user", "owner": "a", "public_key": line})
+		require.NoError(t, err)
+		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json", strings.NewReader(string(body)))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		require.Equal(t, http.StatusConflict, resp.StatusCode)
 		var env sshErrorEnvelope
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&env))
-		assert.Equal(t, "SHA256:zqI91Lh+iwDRn7nMqu+T6XNTxzU+IHDzuvBa6zmV3/Q", env.Expected)
-		assert.Equal(t, "SHA256:MYxa1R6bNv9ZJK4yPdWQMSRUE6Pg8qo+A8xCkC6eesw", env.Received)
+		assert.Equal(t, mc.kh.verifyErr.(*pkgknownhosts.MismatchError).Expected, env.Expected)
+		assert.Equal(t, mc.kh.verifyErr.(*pkgknownhosts.MismatchError).Received, env.Received)
 	})
 
-	t.Run("match", func(t *testing.T) {
+	// An unknown host is reported as unknown (404), not a mismatch.
+	t.Run("unknown host reported not found", func(t *testing.T) {
 		mc := newMockSSHClient()
-		mc.kh.listResp = []*sdkssh.Pin{{Host: "h", Fingerprint: "SHA256:SUWnD6f5wT/hkxozcqxXmBQNQuunTQ3YBaSiFu06gUI"}}
+		mc.kh.verifyErr = &pkgknownhosts.NotFoundError{Scope: "user", Owner: "a", Host: "h"}
 		srv := newSSHTestServer(t, mc)
-		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:SUWnD6f5wT/hkxozcqxXmBQNQuunTQ3YBaSiFu06gUI"}`))
+		body, err := json.Marshal(map[string]string{"scope": "user", "owner": "a", "public_key": line})
+		require.NoError(t, err)
+		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json", strings.NewReader(string(body)))
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 }
 

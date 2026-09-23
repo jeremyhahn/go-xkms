@@ -45,14 +45,14 @@ type SSHImportParams struct {
 }
 
 // SSHKnownHostsVerifyParams carries inputs for ssh.knownHosts.verify.
-// Fingerprint is the SHA-256 fingerprint of the received host key in
-// "SHA256:<base64>" form.
+// PublicKey is the presented host key as an authorized_keys-format line;
+// the server parses it and compares it against the stored pin's full
+// public key — the caller's claimed fingerprint is never trusted.
 type SSHKnownHostsVerifyParams struct {
-	Scope       string `json:"scope"`
-	Owner       string `json:"owner"`
-	Host        string `json:"host"`
-	Fingerprint string `json:"fingerprint"`
-	Algorithm   string `json:"algorithm,omitempty"`
+	Scope     string `json:"scope"`
+	Owner     string `json:"owner"`
+	Host      string `json:"host"`
+	PublicKey string `json:"public_key"`
 }
 
 // SSHAuthorizedKeysGetParams carries inputs for ssh.authorizedKeys.get.

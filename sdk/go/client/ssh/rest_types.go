@@ -41,11 +41,11 @@ type restSignResponse struct {
 }
 
 // restVerifyRequest carries the payload for POST /known-hosts/{host}/verify.
+// PublicKey is the presented host key as an authorized_keys-format line.
 type restVerifyRequest struct {
-	Scope       string `json:"scope"`
-	Owner       string `json:"owner"`
-	Fingerprint string `json:"fingerprint"`
-	Algorithm   string `json:"algorithm,omitempty"`
+	Scope     string `json:"scope"`
+	Owner     string `json:"owner"`
+	PublicKey string `json:"public_key"`
 }
 
 // restAuthVerifyRequest carries the payload for POST /authorized-keys/verify.

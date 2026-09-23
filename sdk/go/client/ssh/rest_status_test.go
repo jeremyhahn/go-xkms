@@ -69,6 +69,8 @@ func TestHTTPStatusForError_MappingTable(t *testing.T) {
 		{"authorized.NilInputError", &pkgauthorized.NilInputError{Field: "Line"}, http.StatusBadRequest},
 		{"authorized.InvalidNameError", &pkgauthorized.InvalidNameError{Value: "!", Reason: "syntax"}, http.StatusBadRequest},
 		{"authorized.MalformedLineError", &pkgauthorized.MalformedLineError{Line: "junk"}, http.StatusBadRequest},
+		{"sdk.MissingPublicKeyError", &sdkssh.MissingPublicKeyError{Host: "h"}, http.StatusBadRequest},
+		{"sdk.InvalidPublicKeyError", &sdkssh.InvalidPublicKeyError{Host: "h", Err: errors.New("bad key")}, http.StatusBadRequest},
 
 		// 500 — anything else.
 		{"unknown_error", errors.New("something else entirely"), http.StatusInternalServerError},

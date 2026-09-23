@@ -298,10 +298,13 @@ func (h *SSHHandlers) handleRemoveKnownHost(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleVerifyKnownHost rehydrates an ssh.PublicKey from the
-// fingerprint / algorithm supplied by the client and delegates to the
-// SDK. On mismatch the server emits 409 with the expected/received
-// fingerprints so the client can reconstruct MismatchError.
+// handleVerifyKnownHost parses the caller-supplied host public key
+// (authorized_keys format) and delegates to the SDK client's
+// KnownHosts().Verify, which performs a full public-key comparison
+// against the stored pin via the canonical known_hosts.Verify — never a
+// caller-claimed fingerprint. On mismatch the server emits 409 with the
+// expected/received fingerprints so the client can reconstruct
+// MismatchError.
 func (h *SSHHandlers) handleVerifyKnownHost(w http.ResponseWriter, r *http.Request) {
 	var req restVerifyRequestDTO
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -309,37 +312,17 @@ func (h *SSHHandlers) handleVerifyKnownHost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	host := chi.URLParam(r, "host")
-	// The pin store is keyed by fingerprint, not raw PublicKey — so we
-	// emulate Verify by directly comparing the supplied fingerprint
-	// against the stored pin via a List+lookup. This avoids requiring
-	// the client to round-trip the full PublicKey bytes over JSON for
-	// the common verify-by-fingerprint path.
-	pins, err := h.client.KnownHosts().List(r.Context(), sdkssh.ListKnownHostsRequest{
-		Scope: req.Scope,
-		Owner: req.Owner,
-	})
-	if err != nil {
+	if req.PublicKey == "" {
+		writeSSHError(w, &SSHBadBodyError{Err: errors.New("public_key is required")})
+		return
+	}
+	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(req.PublicKey))
+	if perr != nil {
+		writeSSHError(w, &sdkssh.InvalidPublicKeyError{Host: host, Err: perr})
+		return
+	}
+	if err := h.client.KnownHosts().Verify(r.Context(), req.Scope, req.Owner, host, pub); err != nil {
 		writeSSHError(w, err)
-		return
-	}
-	var pin *sdkssh.Pin
-	for _, p := range pins {
-		if p.Host == host {
-			pin = p
-			break
-		}
-	}
-	if pin == nil {
-		writeSSHError(w, &pkgknownhosts.NotFoundError{
-			Scope: req.Scope, Owner: req.Owner, Host: host,
-		})
-		return
-	}
-	if pin.Fingerprint != req.Fingerprint {
-		// Shape: MismatchError goes over the wire as 409 + body
-		// fields. Emit directly rather than funneling through the
-		// generic writeSSHError so the JSON carries Expected/Received.
-		writeMismatch(w, host, pin.Fingerprint, req.Fingerprint)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -507,12 +490,12 @@ type restSignResponseDTO struct {
 	Rest   []byte `json:"rest,omitempty"`
 }
 
-// restVerifyRequestDTO matches the client's restVerifyRequest.
+// restVerifyRequestDTO matches the client's restVerifyRequest. PublicKey
+// is the presented host key as an authorized_keys-format line.
 type restVerifyRequestDTO struct {
-	Scope       string `json:"scope"`
-	Owner       string `json:"owner"`
-	Fingerprint string `json:"fingerprint"`
-	Algorithm   string `json:"algorithm,omitempty"`
+	Scope     string `json:"scope"`
+	Owner     string `json:"owner"`
+	PublicKey string `json:"public_key"`
 }
 
 // restAuthVerifyRequestDTO matches the client's restAuthVerifyRequest.
@@ -587,21 +570,6 @@ func writeSSHError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(env)
-}
-
-// writeMismatch is a helper used by verify handlers when the comparison
-// produced a mismatch rather than a package-level MismatchError.
-func writeMismatch(w http.ResponseWriter, host, expected, received string) {
-	env := sshErrorEnvelope{
-		Error:    "ssh/known_hosts: host key mismatch",
-		Resource: "known_hosts",
-		Host:     host,
-		Expected: expected,
-		Received: received,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusConflict)
 	_ = json.NewEncoder(w).Encode(env)
 }
 

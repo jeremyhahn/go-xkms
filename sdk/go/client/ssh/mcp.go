@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -276,12 +277,12 @@ type mcpAuthorizedRemoveParams struct {
 }
 
 // mcpKnownHostVerifyParams is the JSON body for ssh.knownHosts.verify.
+// PublicKey is the presented host key as an authorized_keys-format line.
 type mcpKnownHostVerifyParams struct {
-	Scope       string `json:"scope"`
-	Owner       string `json:"owner"`
-	Host        string `json:"host"`
-	Fingerprint string `json:"fingerprint"`
-	Algorithm   string `json:"algorithm,omitempty"`
+	Scope     string `json:"scope"`
+	Owner     string `json:"owner"`
+	Host      string `json:"host"`
+	PublicKey string `json:"public_key"`
 }
 
 // mcpAuthVerifyParams is the JSON body for ssh.authorizedKeys.verify.
@@ -455,19 +456,20 @@ func (k *mcpKnownHostsClient) Remove(ctx context.Context, req RemoveKnownHostReq
 	return k.c.call(ctx, "ssh.knownHosts.remove", req, nil)
 }
 
-// Verify computes the SHA-256 fingerprint of received and calls
-// ssh.knownHosts.verify with it. A mismatch on the server side is
-// surfaced as a *ProtocolError.
+// Verify sends the presented host public key, in authorized_keys
+// format, to ssh.knownHosts.verify. The server parses it and compares
+// it against the stored pin's full public key via the canonical
+// known_hosts.Verify — the fingerprint is never trusted from the wire.
+// A mismatch on the server side is surfaced as a *ProtocolError.
 func (k *mcpKnownHostsClient) Verify(ctx context.Context, scope, owner, host string, received gossh.PublicKey) error {
 	if received == nil {
 		return &NilInputError{Field: "received"}
 	}
 	params := mcpKnownHostVerifyParams{
-		Scope:       scope,
-		Owner:       owner,
-		Host:        host,
-		Fingerprint: gossh.FingerprintSHA256(received),
-		Algorithm:   received.Type(),
+		Scope:     scope,
+		Owner:     owner,
+		Host:      host,
+		PublicKey: strings.TrimRight(string(gossh.MarshalAuthorizedKey(received)), "\n"),
 	}
 	return k.c.call(ctx, "ssh.knownHosts.verify", params, nil)
 }

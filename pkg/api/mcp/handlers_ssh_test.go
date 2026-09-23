@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -256,13 +257,16 @@ func randomHostKey(t *testing.T) (line, fingerprint string) {
 }
 
 // TestSSHKnownHosts_AddListVerifyRemove exercises the host-key pin surface,
-// including the MITM-indicating fingerprint mismatch.
+// including the MITM-indicating host-key mismatch. The verify request now
+// carries the presented public key rather than a caller-claimed
+// fingerprint, so a "spoofed fingerprint" attack is structurally
+// impossible: only the actual key bytes are compared, via known_hosts.Verify.
 func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	server := newSSHServer(t)
 	ctx := context.Background()
 
 	line, fingerprint := randomHostKey(t)
-	_, otherFingerprint := randomHostKey(t)
+	otherLine, otherFingerprint := randomHostKey(t)
 
 	added, err := server.handleSSHKnownHostsAdd(ctx, sshRequest(t, "ssh.knownHosts.add",
 		sdkssh.AddKnownHostRequest{
@@ -277,23 +281,28 @@ func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, listed.(SSHPinListResult).Items, 1)
 
+	// A matching key passes.
 	ok, err := server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: fingerprint}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: line}))
 	require.NoError(t, err)
 	assert.Equal(t, SSHSuccessResult{Success: true}, ok)
 
+	// A different key presented for the same host must fail: the compare is
+	// on the actual key bytes known_hosts.Verify receives, not a claim the
+	// caller ships alongside them.
 	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: otherFingerprint}))
-	var mismatch *SSHMismatchError
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: otherLine}))
+	var mismatch *pkgknownhosts.MismatchError
 	require.ErrorAs(t, err, &mismatch, "a changed host key must be reported as a mismatch, not a generic failure")
 	assert.Equal(t, fingerprint, mismatch.Expected)
 	assert.Equal(t, otherFingerprint, mismatch.Received)
 
+	// An unknown host is reported as unknown.
 	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "other.example.com", Fingerprint: fingerprint}))
-	var notFound *SSHNotFoundError
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "other.example.com", PublicKey: line}))
+	var notFound *pkgknownhosts.NotFoundError
 	require.ErrorAs(t, err, &notFound)
-	assert.Equal(t, "known_host", notFound.Resource)
+	assert.Equal(t, "other.example.com", notFound.Host)
 
 	removed, err := server.handleSSHKnownHostsRemove(ctx, sshRequest(t, "ssh.knownHosts.remove",
 		sdkssh.RemoveKnownHostRequest{Scope: "user", Owner: "alice", Host: "git.example.com"}))
@@ -311,14 +320,27 @@ func TestSSHKnownHosts_VerifyRequiredFields(t *testing.T) {
 	server := newSSHServer(t)
 
 	_, err := server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"}))
+		SSHKnownHostsVerifyParams{PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA=="}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "host is required")
 
 	_, err = server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
 		SSHKnownHostsVerifyParams{Host: "git.example.com"}))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "fingerprint is required")
+	assert.Contains(t, err.Error(), "public_key is required")
+}
+
+// TestSSHKnownHosts_VerifyMalformedKey proves an unparsable authorized_keys
+// line is rejected with a typed error before the store is touched.
+func TestSSHKnownHosts_VerifyMalformedKey(t *testing.T) {
+	server := newSSHServer(t)
+
+	_, err := server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: "not-a-valid-key"}))
+
+	var invalid *sdkssh.InvalidPublicKeyError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, "git.example.com", invalid.Host)
 }
 
 // TestSSHAuthorizedKeys_Lifecycle exercises the authorized_keys surface end to
@@ -486,9 +508,6 @@ func TestSSHErrors_Messages(t *testing.T) {
 	wrapped := &SSHInvalidParamsError{Err: ErrSSHNotConfigured}
 	assert.Contains(t, wrapped.Error(), "mcp/ssh: invalid params: ")
 	assert.ErrorIs(t, wrapped, ErrSSHNotConfigured, "Unwrap must expose the cause")
-
-	mismatch := &SSHMismatchError{Host: "h", Expected: "a", Received: "b"}
-	assert.Equal(t, "mcp/ssh: host key mismatch for h: expected a, got b", mismatch.Error())
 
 	assert.Equal(t, "mcp/ssh: known_host not found: h", (&SSHNotFoundError{Resource: "known_host", Host: "h"}).Error())
 	assert.Equal(t, "mcp/ssh: authorized_key not found", (&SSHNotFoundError{Resource: "authorized_key"}).Error())

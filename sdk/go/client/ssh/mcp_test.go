@@ -760,11 +760,12 @@ func TestMCPKnownHosts_ListError(t *testing.T) {
 	}
 }
 
-// TestMCPKnownHosts_VerifyComputesFingerprint pins the client-side fingerprint
-// derivation. If the SDK sent the wrong digest the server would compare
-// against the wrong value and could wrongly trust a host.
-func TestMCPKnownHosts_VerifyComputesFingerprint(t *testing.T) {
-	_, sshPub := testPublicKeyLine(t)
+// TestMCPKnownHosts_VerifySendsPresentedKey pins the client-side wire
+// encoding of the presented host key. The server must receive the actual
+// key bytes (authorized_keys format), never a caller-computed fingerprint
+// it would have to trust blindly.
+func TestMCPKnownHosts_VerifySendsPresentedKey(t *testing.T) {
+	line, sshPub := testPublicKeyLine(t)
 	srv := newFakeMCPServer(t)
 	srv.ok("ssh.knownHosts.verify", map[string]interface{}{})
 	client := newMCPFixture(t, srv)
@@ -773,11 +774,11 @@ func TestMCPKnownHosts_VerifyComputesFingerprint(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 	p := paramsOf(t, srv, "ssh.knownHosts.verify")
-	if p["fingerprint"] != gossh.FingerprintSHA256(sshPub) {
-		t.Errorf("fingerprint = %v, want %v", p["fingerprint"], gossh.FingerprintSHA256(sshPub))
+	if p["public_key"] != strings.TrimRight(line, "\n") {
+		t.Errorf("public_key = %v, want %v", p["public_key"], strings.TrimRight(line, "\n"))
 	}
-	if p["algorithm"] != sshPub.Type() {
-		t.Errorf("algorithm = %v, want %v", p["algorithm"], sshPub.Type())
+	if _, spoofable := p["fingerprint"]; spoofable {
+		t.Error("wire params must not carry a client-claimed fingerprint")
 	}
 	if p["host"] != "git.example.com" {
 		t.Errorf("host = %v", p["host"])

@@ -439,18 +439,20 @@ func (k *restKnownHostsClient) Remove(ctx context.Context, req RemoveKnownHostRe
 	return err
 }
 
-// Verify calls POST /known-hosts/{host}/verify with the received
-// fingerprint computed from the supplied public key.
+// Verify calls POST /known-hosts/{host}/verify with the presented host
+// public key in authorized_keys format. The server parses it and
+// compares it against the stored pin's full public key via the
+// canonical known_hosts.Verify — the fingerprint is never trusted from
+// the wire.
 func (k *restKnownHostsClient) Verify(ctx context.Context, scope, owner, host string, received gossh.PublicKey) error {
 	if received == nil {
 		return &NilInputError{Field: "received"}
 	}
 	path := fmt.Sprintf("/known-hosts/%s/verify", url.PathEscape(host))
 	req := restVerifyRequest{
-		Scope:       scope,
-		Owner:       owner,
-		Fingerprint: gossh.FingerprintSHA256(received),
-		Algorithm:   received.Type(),
+		Scope:     scope,
+		Owner:     owner,
+		PublicKey: strings.TrimRight(string(gossh.MarshalAuthorizedKey(received)), "\n"),
 	}
 	_, err := k.c.do(ctx, http.MethodPost, path, req)
 	return err

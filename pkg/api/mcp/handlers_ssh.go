@@ -227,9 +227,11 @@ func (s *Server) handleSSHKnownHostsRemove(ctx context.Context, req *JSONRPCRequ
 	return SSHSuccessResult{Success: true}, nil
 }
 
-// handleSSHKnownHostsVerify handles ssh.knownHosts.verify. It compares
-// the caller-supplied fingerprint against the stored pin for the given
-// host. A fingerprint mismatch returns an SSHMismatchError so the
+// handleSSHKnownHostsVerify handles ssh.knownHosts.verify. It parses the
+// caller-supplied host public key (authorized_keys format) and delegates
+// to known_hosts.Verify via the SSH client, which performs a full
+// public-key comparison against the stored pin — never a caller-claimed
+// fingerprint. A key mismatch returns a *known_hosts.MismatchError so the
 // caller can detect MITM-indicating key changes.
 func (s *Server) handleSSHKnownHostsVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
@@ -242,29 +244,17 @@ func (s *Server) handleSSHKnownHostsVerify(ctx context.Context, req *JSONRPCRequ
 	if params.Host == "" {
 		return nil, &SSHInvalidParamsError{Err: errors.New("host is required")}
 	}
-	if params.Fingerprint == "" {
-		return nil, &SSHInvalidParamsError{Err: errors.New("fingerprint is required")}
+	if params.PublicKey == "" {
+		return nil, &SSHInvalidParamsError{Err: errors.New("public_key is required")}
 	}
-	pins, err := s.sshClient.KnownHosts().List(ctx, sdkssh.ListKnownHostsRequest{
-		Scope: params.Scope,
-		Owner: params.Owner,
-	})
-	if err != nil {
+	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(params.PublicKey))
+	if perr != nil {
+		return nil, &sdkssh.InvalidPublicKeyError{Host: params.Host, Err: perr}
+	}
+	if err := s.sshClient.KnownHosts().Verify(ctx, params.Scope, params.Owner, params.Host, pub); err != nil {
 		return nil, err
 	}
-	for _, p := range pins {
-		if p.Host == params.Host {
-			if p.Fingerprint == params.Fingerprint {
-				return SSHSuccessResult{Success: true}, nil
-			}
-			return nil, &SSHMismatchError{
-				Host:     params.Host,
-				Expected: p.Fingerprint,
-				Received: params.Fingerprint,
-			}
-		}
-	}
-	return nil, &SSHNotFoundError{Resource: "known_host", Host: params.Host}
+	return SSHSuccessResult{Success: true}, nil
 }
 
 // ------------------------------------------------------------------
@@ -398,21 +388,6 @@ func (e *SSHInvalidParamsError) Error() string {
 
 // Unwrap returns the underlying error.
 func (e *SSHInvalidParamsError) Unwrap() error { return e.Err }
-
-// SSHMismatchError is returned by handleSSHKnownHostsVerify when the
-// stored fingerprint does not match the received one. Clients can
-// inspect Expected and Received to surface a MITM-warning message.
-type SSHMismatchError struct {
-	Host     string
-	Expected string
-	Received string
-}
-
-// Error implements the error interface.
-func (e *SSHMismatchError) Error() string {
-	return "mcp/ssh: host key mismatch for " + e.Host +
-		": expected " + e.Expected + ", got " + e.Received
-}
 
 // SSHNotFoundError is returned by verify handlers when the requested
 // resource is not present in the store.

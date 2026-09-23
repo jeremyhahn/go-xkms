@@ -35,6 +35,8 @@ import "net/http"
 //	*pkg/ssh/authorized.NilInputError         -> 400
 //	*pkg/ssh/known_hosts.InvalidHostError     -> 400
 //	*pkg/ssh/known_hosts.InvalidFingerprint.. -> 400
+//	*MissingPublicKeyError                    -> 400
+//	*InvalidPublicKeyError                    -> 400
 //	*pkg/ssh/authorized.InvalidNameError      -> 400
 //	*pkg/ssh/authorized.MalformedLineError    -> 400
 //	*pkg/ssh/keys.InvalidKeySizeError         -> 400

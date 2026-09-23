@@ -135,6 +135,14 @@ func isBadRequest(err error) bool {
 	if errors.As(err, &hostsFP) {
 		return true
 	}
+	var missingPub *MissingPublicKeyError
+	if errors.As(err, &missingPub) {
+		return true
+	}
+	var invalidPub *InvalidPublicKeyError
+	if errors.As(err, &invalidPub) {
+		return true
+	}
 
 	var authNil *pkgauthorized.NilInputError
 	if errors.As(err, &authNil) {

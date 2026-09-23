@@ -297,7 +297,7 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	defer cleanup()
 
 	line, fingerprint := randomHostKey(t)
-	_, otherFingerprint := randomHostKey(t)
+	otherLine, otherFingerprint := randomHostKey(t)
 
 	// Add a pin. PublicKey is required — the store no longer accepts a
 	// fingerprint-only pin.
@@ -320,9 +320,19 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Verify a different fingerprint → 409 with expected + received.
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + otherFingerprint + `","algorithm":"ssh-ed25519"}`
-	resp, err = http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/bastion/verify", "application/json", bytes.NewBufferString(verifyBody))
+	// Verify a different presented key → 409 with expected + received
+	// fingerprints. The wire carries the actual key, not a caller-claimed
+	// fingerprint, so this proves the server compares full key bytes.
+	verifyReq := struct {
+		Scope     string `json:"scope"`
+		Owner     string `json:"owner"`
+		PublicKey string `json:"public_key"`
+	}{Scope: "user", Owner: "alice", PublicKey: otherLine}
+	verifyBody, err := json.Marshal(verifyReq)
+	if err != nil {
+		t.Fatalf("marshal verify: %v", err)
+	}
+	resp, err = http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/bastion/verify", "application/json", bytes.NewReader(verifyBody))
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
