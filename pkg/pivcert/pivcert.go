@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // PIVStorageType identifies the certificate storage backend type.
@@ -488,16 +489,18 @@ type PKCS11StorageConfig struct {
 	SlotID int
 
 	// PIN is the user PIN for the token.
-	// Required for storing and retrieving certificates.
-	PIN string
+	// Required for storing and retrieving certificates. A nil PIN means no
+	// PIN was configured.
+	PIN *secure.Secret
 
 	// ReadOnly opens the session in read-only mode when true.
 	ReadOnly bool
 
 	// SOPIN is the Security Officer PIN for the token.
 	// Required for YubiKey PIV tokens where certificate deletion
-	// and key generation need CKU_SO login.
-	SOPIN string
+	// and key generation need CKU_SO login. A nil SOPIN means no SO PIN was
+	// configured.
+	SOPIN *secure.Secret
 
 	// RequireSO indicates this token requires SO login for destructive operations.
 	// When true, certificate saves skip pre-delete (relies on overwrite behavior)

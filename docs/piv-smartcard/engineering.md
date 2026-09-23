@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## Exported surface — `pkg/pivcert`
 
@@ -380,7 +380,10 @@ falls back to file storage when the configured hardware is unavailable.
 - **`TPM2StorageConfig`** — the NV base index. `GetNVIndex` derives per-slot
   indices from it. Choose a base that does not collide with other NV users on
   the same TPM.
-- **`PKCS11StorageConfig`** — module path, slot, PIN handling.
+- **`PKCS11StorageConfig`** — module path, slot, PIN handling. `PIN` and
+  `SOPIN` are `*secure.Secret`; a nil value means no PIN was configured, and
+  each is opened only around the PKCS#11 login call that needs the
+  plaintext.
 
 `xkmsctl` supplies the client side through the global `--pkcs11-module`,
 `--pkcs11-slot`, `--pkcs11-pin` and `--backend` flags.

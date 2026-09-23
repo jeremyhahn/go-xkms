@@ -330,12 +330,12 @@ func TestPKCS11Config_AllFields(t *testing.T) {
 	}{
 		{"basic module", PKCS11Config{Module: "/usr/lib/libsofthsm2.so"}},
 		{"with slot", PKCS11Config{Module: "/lib/pkcs11.so", SlotID: 1}},
-		{"with pin", PKCS11Config{Module: "/lib/pkcs11.so", PINRequired: true, PIN: "1234"}},
+		{"with pin", PKCS11Config{Module: "/lib/pkcs11.so", PINRequired: true, PIN: mustSecret(t, "1234")}},
 		{"all fields", PKCS11Config{
 			Module:      "/opt/crypto/pkcs11.so",
 			SlotID:      5,
 			PINRequired: true,
-			PIN:         "secret",
+			PIN:         mustSecret(t, "secret"),
 		}},
 	}
 

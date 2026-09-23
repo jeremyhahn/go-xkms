@@ -74,13 +74,24 @@ func newPKCS11Resolver(config *PKCS11Config) (Resolver, error) {
 	}
 
 	// Login if PIN is required
-	if config.PINRequired && config.PIN != "" {
-		err = ctx.Login(session, pkcs11.CKU_USER, config.PIN)
-		if err != nil {
+	if config.PINRequired && config.PIN != nil {
+		buf, openErr := config.PIN.Open()
+		if openErr != nil {
 			ctx.CloseSession(session)
 			ctx.Finalize()
 			ctx.Destroy()
-			return nil, &errs.Wrapped{Msg: "failed to authenticate with PKCS#11", Err: err}
+			return nil, &errs.Wrapped{Msg: "failed to open PKCS#11 PIN", Err: openErr}
+		}
+		// miekg/pkcs11's Login takes a Go string, so this converts the
+		// opened buffer into an unwipeable copy for the duration of the
+		// call -- an unavoidable copy at that library boundary.
+		loginErr := ctx.Login(session, pkcs11.CKU_USER, string(buf.Bytes()))
+		buf.Destroy()
+		if loginErr != nil {
+			ctx.CloseSession(session)
+			ctx.Finalize()
+			ctx.Destroy()
+			return nil, &errs.Wrapped{Msg: "failed to authenticate with PKCS#11", Err: loginErr}
 		}
 	}
 

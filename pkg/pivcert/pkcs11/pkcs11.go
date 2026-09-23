@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	p11 "github.com/miekg/pkcs11"
 )
 
@@ -239,7 +240,27 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 
 	var hw hardware.HardwareCertStorage
 	if config.RequireSO {
-		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, config.SOPIN, config.PIN, true)
+		// hardware.NewPKCS11CertStorageWithSO retains soPIN/userPIN as plain
+		// Go strings for the life of the storage (each WithSOSession call
+		// re-logs in with them) -- an existing plain-string boundary in
+		// pkg/storage/hardware outside this conversion's scope. Opening the
+		// secrets here for the single handoff is the unavoidable copy at
+		// that boundary.
+		soPIN, pinErr := pinPlaintext(config.SOPIN)
+		if pinErr != nil {
+			pool.Close()
+			teardown()
+			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
+				&errs.Wrapped{Msg: "pkcs11: open SO PIN", Err: pinErr})
+		}
+		userPIN, pinErr := pinPlaintext(config.PIN)
+		if pinErr != nil {
+			pool.Close()
+			teardown()
+			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
+				&errs.Wrapped{Msg: "pkcs11: open PIN", Err: pinErr})
+		}
+		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, soPIN, userPIN, true)
 	} else {
 		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, "", "", false)
 	}
@@ -250,6 +271,23 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 	}
 
 	return &PKCS11CertStorage{hw: hw, pool: pool, libPath: config.LibraryPath}, nil
+}
+
+// pinPlaintext opens sec and returns a copy of its plaintext as a Go string
+// for hardware.NewPKCS11CertStorageWithSO, which -- like the PKCS#11 library
+// underneath it -- only accepts a string. A nil sec (no PIN configured)
+// returns "". The caller must not retain the returned string beyond the
+// handoff to that call.
+func pinPlaintext(sec *secure.Secret) (string, error) {
+	if sec == nil {
+		return "", nil
+	}
+	buf, err := sec.Open()
+	if err != nil {
+		return "", err
+	}
+	defer buf.Destroy()
+	return string(buf.Bytes()), nil
 }
 
 // NewFromPool creates a PKCS#11 PIV certificate storage that reuses an existing
@@ -528,7 +566,7 @@ type standalonePool struct {
 	ch     chan p11.SessionHandle
 }
 
-func newSessionPool(ctx *p11.Ctx, slotID uint, pin string, size int) (*standalonePool, error) {
+func newSessionPool(ctx *p11.Ctx, slotID uint, pin *secure.Secret, size int) (*standalonePool, error) {
 	pool := &standalonePool{
 		ctx:    ctx,
 		slotID: slotID,
@@ -542,13 +580,22 @@ func newSessionPool(ctx *p11.Ctx, slotID uint, pin string, size int) (*standalon
 		}
 		pool.ch <- sess
 	}
-	if pin != "" {
-		sess := <-pool.ch
-		err := ctx.Login(sess, p11.CKU_USER, pin)
-		pool.ch <- sess
-		if err != nil && !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
+	if pin != nil {
+		buf, err := pin.Open()
+		if err != nil {
 			pool.Close()
 			return nil, err
+		}
+		sess := <-pool.ch
+		// miekg/pkcs11's Login takes a Go string, so this converts the
+		// opened buffer into an unwipeable copy for the duration of the
+		// call -- an unavoidable copy at that library boundary.
+		loginErr := ctx.Login(sess, p11.CKU_USER, string(buf.Bytes()))
+		buf.Destroy()
+		pool.ch <- sess
+		if loginErr != nil && !isPKCS11Error(loginErr, p11.CKR_USER_ALREADY_LOGGED_IN) {
+			pool.Close()
+			return nil, loginErr
 		}
 	}
 	return pool, nil

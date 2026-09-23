@@ -16,7 +16,20 @@ package rand
 import (
 	"bytes"
 	"testing"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// mustSecret seals s into a *secure.Secret for PKCS11Config.PIN test
+// fixtures. Test-only: production callers resolve the PIN from config.
+func mustSecret(t *testing.T, s string) *secure.Secret {
+	t.Helper()
+	sec, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		t.Fatalf("secure.NewSecret: %v", err)
+	}
+	return sec
+}
 
 func TestNewResolver_SoftwareMode(t *testing.T) {
 	resolver, err := NewResolver(ModeSoftware)
@@ -237,7 +250,7 @@ func TestConfig_PKCS11ConfigFields(t *testing.T) {
 		Module:      "/usr/lib/libsofthsm2.so",
 		SlotID:      0,
 		PINRequired: true,
-		PIN:         "1234",
+		PIN:         mustSecret(t, "1234"),
 	}
 
 	if cfg.Module == "" {

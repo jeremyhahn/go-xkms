@@ -32,7 +32,20 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	pkcs11module "github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// mustSecret seals s into a *secure.Secret for PKCS11TLSConfig.PIN test
+// fixtures. Test-only: production callers resolve the PIN from config or a
+// CLI flag.
+func mustSecret(t *testing.T, s string) *secure.Secret {
+	t.Helper()
+	sec, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		t.Fatalf("secure.NewSecret: %v", err)
+	}
+	return sec
+}
 
 // ---------------------------------------------------------------------------
 // Config validation tests
@@ -50,7 +63,7 @@ func TestNewPKCS11TLSConfig_NilConfig(t *testing.T) {
 
 func TestNewPKCS11TLSConfig_EmptyModulePath(t *testing.T) {
 	cfg := &PKCS11TLSConfig{
-		PIN: "1234",
+		PIN: mustSecret(t, "1234"),
 	}
 	_, _, err := NewPKCS11TLSConfig(cfg)
 	if err == nil {
@@ -71,6 +84,27 @@ func TestNewPKCS11TLSConfig_EmptyPIN(t *testing.T) {
 	}
 	if !errors.Is(err, ErrPKCS11PINRequired) {
 		t.Errorf("expected ErrPKCS11PINRequired, got: %v", err)
+	}
+}
+
+// TestNewPKCS11TLSConfig_DestroyedPIN proves a PIN secret that has already
+// been destroyed surfaces the typed Open() error rather than silently
+// authenticating with no PIN or panicking.
+func TestNewPKCS11TLSConfig_DestroyedPIN(t *testing.T) {
+	pin := mustSecret(t, "1234")
+	pin.Destroy()
+
+	cfg := &PKCS11TLSConfig{
+		ModulePath: "/usr/lib/libxkey11.so",
+		PIN:        pin,
+	}
+	_, _, err := NewPKCS11TLSConfig(cfg)
+	if err == nil {
+		t.Fatal("expected error for destroyed PIN secret")
+	}
+	var nilSecretErr *secure.NilSecretError
+	if !errors.As(err, &nilSecretErr) {
+		t.Errorf("expected *secure.NilSecretError, got: %T: %v", err, err)
 	}
 }
 
@@ -825,7 +859,7 @@ func TestNewPKCS11TLSConfig_FullFlow_Success(t *testing.T) {
 
 	cfg := &PKCS11TLSConfig{
 		Module: mod,
-		PIN:    "1234",
+		PIN:    mustSecret(t, "1234"),
 	}
 
 	tlsCfg, cleanup, err := NewPKCS11TLSConfig(cfg)
@@ -875,7 +909,7 @@ func TestNewPKCS11TLSConfig_FullFlow_WithCACerts(t *testing.T) {
 	caCertPool := x509.NewCertPool()
 	cfg := &PKCS11TLSConfig{
 		Module:  mod,
-		PIN:     "1234",
+		PIN:     mustSecret(t, "1234"),
 		CACerts: caCertPool,
 	}
 
@@ -906,7 +940,7 @@ func TestNewPKCS11TLSConfig_FullFlow_WithCertLabel(t *testing.T) {
 
 	cfg := &PKCS11TLSConfig{
 		Module:    mod,
-		PIN:       "1234",
+		PIN:       mustSecret(t, "1234"),
 		CertLabel: "test-tls-cert",
 	}
 
@@ -928,7 +962,7 @@ func TestNewPKCS11TLSConfig_FullFlow_NoCert(t *testing.T) {
 	// Token is empty — no certificate imported.
 	cfg := &PKCS11TLSConfig{
 		Module: mod,
-		PIN:    "1234",
+		PIN:    mustSecret(t, "1234"),
 	}
 
 	_, _, err := NewPKCS11TLSConfig(cfg)
@@ -957,7 +991,7 @@ func TestNewPKCS11TLSConfig_FullFlow_CertButNoKey(t *testing.T) {
 
 	cfg := &PKCS11TLSConfig{
 		Module: mod,
-		PIN:    "1234",
+		PIN:    mustSecret(t, "1234"),
 	}
 
 	_, _, err := NewPKCS11TLSConfig(cfg)
@@ -985,7 +1019,7 @@ func TestNewPKCS11TLSConfig_FullFlow_SignerWorks(t *testing.T) {
 
 	cfg := &PKCS11TLSConfig{
 		Module: mod,
-		PIN:    "1234",
+		PIN:    mustSecret(t, "1234"),
 	}
 
 	tlsCfg, cleanup, err := NewPKCS11TLSConfig(cfg)
@@ -1026,7 +1060,7 @@ func TestNewPKCS11TLSConfig_FullFlow_CleanupIdempotent(t *testing.T) {
 
 	cfg := &PKCS11TLSConfig{
 		Module: mod,
-		PIN:    "1234",
+		PIN:    mustSecret(t, "1234"),
 	}
 
 	_, cleanup, err := NewPKCS11TLSConfig(cfg)
@@ -1041,7 +1075,7 @@ func TestNewPKCS11TLSConfig_FullFlow_CleanupIdempotent(t *testing.T) {
 
 func TestNewPKCS11TLSConfig_ModulePathRequired_WithoutModule(t *testing.T) {
 	cfg := &PKCS11TLSConfig{
-		PIN: "1234",
+		PIN: mustSecret(t, "1234"),
 		// Module is nil and ModulePath is empty
 	}
 	_, _, err := NewPKCS11TLSConfig(cfg)
@@ -1070,7 +1104,7 @@ func TestNewPKCS11TLSConfig_ModulePathSkipped_WithModule(t *testing.T) {
 	// ModulePath is empty but Module is set — should succeed.
 	cfg := &PKCS11TLSConfig{
 		Module: mod,
-		PIN:    "1234",
+		PIN:    mustSecret(t, "1234"),
 	}
 
 	tlsCfg, cleanup, err := NewPKCS11TLSConfig(cfg)
@@ -1090,7 +1124,7 @@ func TestNewPKCS11TLSConfig_InitializeError_NoModule(t *testing.T) {
 
 	cfg := &PKCS11TLSConfig{
 		ModulePath: "memory",
-		PIN:        "1234",
+		PIN:        mustSecret(t, "1234"),
 	}
 
 	_, _, err := NewPKCS11TLSConfig(cfg)
@@ -1550,7 +1584,7 @@ func TestMatchesAttributeValue_DifferentLengths(t *testing.T) {
 func TestPKCS11TLSConfig_DefaultSlotID(t *testing.T) {
 	cfg := &PKCS11TLSConfig{
 		ModulePath: "/usr/lib/libpkcs11.so",
-		PIN:        "1234",
+		PIN:        mustSecret(t, "1234"),
 	}
 	if cfg.SlotID != 0 {
 		t.Errorf("default SlotID should be 0, got %d", cfg.SlotID)
@@ -1560,7 +1594,7 @@ func TestPKCS11TLSConfig_DefaultSlotID(t *testing.T) {
 func TestPKCS11TLSConfig_CertLabelEmpty(t *testing.T) {
 	cfg := &PKCS11TLSConfig{
 		ModulePath: "/usr/lib/libpkcs11.so",
-		PIN:        "1234",
+		PIN:        mustSecret(t, "1234"),
 	}
 	if cfg.CertLabel != "" {
 		t.Errorf("default CertLabel should be empty, got %q", cfg.CertLabel)

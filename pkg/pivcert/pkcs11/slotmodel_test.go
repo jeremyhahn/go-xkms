@@ -47,7 +47,7 @@ func newSlotModelTestPool(t *testing.T) *standalonePool {
 	slotID, err := resolveSlot(ctx, tok.config())
 	require.NoError(t, err, "resolve provisioned token slot")
 
-	pool, err := newSessionPool(ctx, slotID, tok.UserPIN, 2)
+	pool, err := newSessionPool(ctx, slotID, mustPINSecret(tok.UserPIN), 2)
 	require.NoError(t, err, "create session pool")
 
 	t.Cleanup(func() {

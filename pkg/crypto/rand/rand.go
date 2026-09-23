@@ -132,6 +132,7 @@ import (
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Mode specifies which RNG source to use.
@@ -215,8 +216,9 @@ type PKCS11Config struct {
 	// PINRequired indicates if the slot requires PIN authentication
 	PINRequired bool
 
-	// PIN is the authentication PIN (if PINRequired is true)
-	PIN string
+	// PIN is the authentication PIN (if PINRequired is true). A nil PIN
+	// means no PIN was configured; PINRequired with a nil PIN fails login.
+	PIN *secure.Secret
 }
 
 // Source represents a random number generator.

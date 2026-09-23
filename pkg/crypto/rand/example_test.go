@@ -17,6 +17,8 @@ import (
 	"crypto"
 	"fmt"
 	"log"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ExampleNewResolver_auto demonstrates using auto mode RNG selection.
@@ -235,13 +237,17 @@ func ExampleConfig_tpm2() {
 // ExampleConfig_pkcs11 demonstrates configuring PKCS#11 RNG.
 // For use with hardware security modules and smart cards.
 func ExampleConfig_pkcs11() {
+	pin, err := secure.NewSecret([]byte("1234"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	cfg := &Config{
 		Mode: ModePKCS11,
 		PKCS11Config: &PKCS11Config{
 			Module:      "/usr/lib/libsofthsm2.so",
 			SlotID:      0,
 			PINRequired: true,
-			PIN:         "1234",
+			PIN:         pin,
 		},
 	}
 

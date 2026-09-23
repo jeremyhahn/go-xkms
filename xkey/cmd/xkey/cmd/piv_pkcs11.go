@@ -20,7 +20,29 @@ import (
 	"strings"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// pivPINSecret seals s into a *secure.Secret for PIVPKCS11StorageConfig's
+// PIN/SOPIN fields. An empty s returns nil: no PIN was configured.
+//
+// createPKCS11PIVStorage has no error return to propagate a sealing
+// failure through, so a failure is logged and treated as "no PIN
+// configured" rather than propagated, mirroring xkey's fido2PINSecret. In
+// practice this path is unreachable: the underlying memguard allocator
+// panics the whole process on allocation failure before NewSecret could
+// return an error here.
+func pivPINSecret(s string) *secure.Secret {
+	if s == "" {
+		return nil
+	}
+	secret, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		slog.Default().Error("piv: failed to seal PKCS#11 PIN into protected memory", "error", err)
+		return nil
+	}
+	return secret
+}
 
 // createPKCS11PIVStorage creates a PKCS#11-backed PIV certificate storage.
 // It opens a new PKCS#11 session using the library path, token label, and PIN
@@ -36,8 +58,8 @@ func createPKCS11PIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertif
 		LibraryPath: cfg.PKCS11Library,
 		TokenLabel:  cfg.PKCS11Token,
 		SlotID:      -1, // Use TokenLabel for resolution
-		PIN:         cfg.PKCS11PIN,
-		SOPIN:       cfg.PKCS11SOPIN,
+		PIN:         pivPINSecret(cfg.PKCS11PIN),
+		SOPIN:       pivPINSecret(cfg.PKCS11SOPIN),
 		RequireSO:   isYubiKey,
 	})
 }

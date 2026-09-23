@@ -30,9 +30,21 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	p11 "github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/require"
 )
+
+// mustPINSecret seals s into a *secure.Secret for PKCS11StorageConfig.PIN
+// test fixtures that have no *testing.T in scope (e.g. pivToken.config, a
+// value method). Test-only: production callers resolve the PIN from config.
+func mustPINSecret(s string) *secure.Secret {
+	sec, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		panic(err)
+	}
+	return sec
+}
 
 // pivTokenLabel names the token the PIV tests provision for themselves.
 const pivTokenLabel = "e2e-piv-test"
@@ -76,7 +88,7 @@ func (tok pivToken) config() *pivcert.PKCS11StorageConfig {
 	return &pivcert.PKCS11StorageConfig{
 		LibraryPath: tok.Library,
 		TokenLabel:  tok.Label,
-		PIN:         tok.UserPIN,
+		PIN:         mustPINSecret(tok.UserPIN),
 		SlotID:      -1, // resolve by label
 	}
 }

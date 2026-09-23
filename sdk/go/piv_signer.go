@@ -18,6 +18,8 @@ import (
 	"crypto"
 	"errors"
 	"io"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ErrPIVCryptoSignerPublicKeyRequired is returned when a PIVCryptoSigner is
@@ -59,8 +61,8 @@ type PIVCryptoSigner struct {
 
 	// PIN optionally authenticates a PIN-gated backend. Ignored by
 	// backends that authenticate the session out of band (software, or a
-	// PKCS#11 token already logged in).
-	PIN string
+	// PKCS#11 token already logged in). A nil PIN means none was supplied.
+	PIN *secure.Secret
 }
 
 // NewPIVCryptoSigner constructs a PIVCryptoSigner for the given backend and
@@ -97,7 +99,18 @@ func (s *PIVCryptoSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 		Payload:       digest,
 		Hashed:        true,
 		HashAlgorithm: pivHashAlgorithmName(opts),
-		PIN:           s.PIN,
+	}
+	if s.PIN != nil {
+		buf, err := s.PIN.Open()
+		if err != nil {
+			return nil, err
+		}
+		// PIVSignRequest crosses the wire to the backend over the SDK's
+		// transport (REST/gRPC/QUIC/MCP), so it carries the PIN as a plain
+		// string -- the unavoidable copy at that transport-serialization
+		// boundary.
+		req.PIN = string(buf.Bytes())
+		buf.Destroy()
 	}
 	resp, err := SignPIV(context.Background(), req)
 	if err != nil {

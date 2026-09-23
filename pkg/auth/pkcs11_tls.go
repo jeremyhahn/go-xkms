@@ -27,6 +27,7 @@ import (
 	"io"
 
 	pkcs11module "github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // PKCS#11 TLS adapter typed errors.
@@ -53,8 +54,9 @@ type PKCS11TLSConfig struct {
 	// SlotID is the PKCS#11 slot to use (default: 0).
 	SlotID int
 
-	// PIN is the token PIN for authentication.
-	PIN string
+	// PIN is the token PIN for authentication. A nil PIN is rejected by
+	// NewPKCS11TLSConfig.
+	PIN *secure.Secret
 
 	// CertLabel is an optional filter for finding the certificate by label.
 	// When empty, the first certificate found is used.
@@ -199,9 +201,20 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 	if cfg.Module == nil && cfg.ModulePath == "" {
 		return nil, nil, ErrPKCS11ModulePathRequired
 	}
-	if cfg.PIN == "" {
+	if cfg.PIN == nil {
 		return nil, nil, ErrPKCS11PINRequired
 	}
+
+	// Opened once for the module config's UserPIN/SOPIN (moduleOwned only)
+	// and the session Login below -- pkcs11module.Config and miekg/pkcs11's
+	// Login both take a plain Go string, so this is the unavoidable copy at
+	// that boundary. Destroyed before NewPKCS11TLSConfig returns.
+	pinBuf, err := cfg.PIN.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer pinBuf.Destroy()
+	pin := string(pinBuf.Bytes())
 
 	mod := cfg.Module
 	moduleOwned := mod == nil
@@ -210,8 +223,8 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 		// Create and initialize the PKCS#11 module.
 		moduleCfg := pkcs11module.DefaultConfig()
 		moduleCfg.AutoInitToken = true
-		moduleCfg.UserPIN = cfg.PIN
-		moduleCfg.SOPIN = cfg.PIN
+		moduleCfg.UserPIN = pin
+		moduleCfg.SOPIN = pin
 		moduleCfg.TokenLabel = "pkcs11-tls"
 
 		var err error
@@ -263,7 +276,7 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 
 	// Login as normal user. CKR_USER_ALREADY_LOGGED_IN is acceptable when
 	// the caller provides a pre-authenticated module.
-	rv = mod.Login(session, pkcs11module.CKU_USER, []byte(cfg.PIN))
+	rv = mod.Login(session, pkcs11module.CKU_USER, []byte(pin))
 	if rv != pkcs11module.CKR_OK && rv != pkcs11module.CKR_USER_ALREADY_LOGGED_IN {
 		cleanup()
 		return nil, nil, &PKCS11TLSError{

@@ -15,9 +15,12 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // transportFlagUsage is the canonical help text for the --transport flag,
@@ -31,6 +34,12 @@ var (
 	// exitFunc is the function called to exit the program.
 	// This can be overridden in tests to capture exit calls.
 	exitFunc = os.Exit
+
+	// pkcs11PINFlag holds the raw --pkcs11-pin flag value. pflag has no
+	// *secure.Secret var type, so the flag binds to this plain string and
+	// rootCmd's PersistentPreRunE seals it into globalConfig.PKCS11PIN
+	// before any command runs.
+	pkcs11PINFlag string
 )
 
 // rootCmd represents the base command
@@ -60,6 +69,31 @@ Supported backends:
   - vault:    HashiCorp Vault`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		globalConfig.PKCS11PIN = pkcs11PINSecret(pkcs11PINFlag)
+		return nil
+	},
+}
+
+// pkcs11PINSecret seals s into a *secure.Secret for Config.PKCS11PIN. An
+// empty s returns nil: no --pkcs11-pin was provided.
+//
+// rootCmd.PersistentPreRunE has no way to surface a sealing failure other
+// than aborting every command, so a failure is logged and treated as "no
+// PIN provided" rather than propagated, mirroring xkey's fido2PINSecret. In
+// practice this path is unreachable: the underlying memguard allocator
+// panics the whole process on allocation failure before NewSecret could
+// return an error here.
+func pkcs11PINSecret(s string) *secure.Secret {
+	if s == "" {
+		return nil
+	}
+	secret, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		slog.Default().Error("xkmsctl: failed to seal --pkcs11-pin into protected memory", "error", err)
+		return nil
+	}
+	return secret
 }
 
 // Execute runs the root command
@@ -121,7 +155,7 @@ func init() {
 		"PKCS#11 shared object for mTLS client authentication (e.g., libxkey11.so)")
 	rootCmd.PersistentFlags().IntVar(&globalConfig.PKCS11Slot, "pkcs11-slot", 0,
 		"PKCS#11 slot ID for client certificate (default: 0)")
-	rootCmd.PersistentFlags().StringVar(&globalConfig.PKCS11PIN, "pkcs11-pin", "",
+	rootCmd.PersistentFlags().StringVar(&pkcs11PINFlag, "pkcs11-pin", "",
 		"PKCS#11 token PIN (prompted if omitted when --pkcs11-module is set)")
 
 	// Add subcommands

@@ -171,6 +171,66 @@ func TestRootCmd_SilenceErrors(t *testing.T) {
 	}
 }
 
+// TestRootCmd_PKCS11PINFlagSealsSecret proves --pkcs11-pin is sealed into
+// globalConfig.PKCS11PIN as a *secure.Secret by rootCmd's PersistentPreRunE
+// before any subcommand runs.
+func TestRootCmd_PKCS11PINFlagSealsSecret(t *testing.T) {
+	originalPIN := globalConfig.PKCS11PIN
+	originalFlag := pkcs11PINFlag
+	defer func() {
+		globalConfig.PKCS11PIN = originalPIN
+		pkcs11PINFlag = originalFlag
+	}()
+
+	rootCmd.SetArgs([]string{"--pkcs11-pin", "s3cr3t", "version"})
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Execute() returned error: %v", err)
+	}
+
+	if globalConfig.PKCS11PIN == nil {
+		t.Fatal("expected --pkcs11-pin to seal a non-nil secret")
+	}
+	sealed, err := globalConfig.PKCS11PIN.Open()
+	if err != nil {
+		t.Fatalf("Open() failed: %v", err)
+	}
+	defer sealed.Destroy()
+	if string(sealed.Bytes()) != "s3cr3t" {
+		t.Errorf("sealed PIN = %q, want %q", string(sealed.Bytes()), "s3cr3t")
+	}
+}
+
+// TestRootCmd_PKCS11PINFlagAbsentLeavesNil proves that omitting --pkcs11-pin
+// leaves globalConfig.PKCS11PIN nil rather than sealing an empty secret.
+func TestRootCmd_PKCS11PINFlagAbsentLeavesNil(t *testing.T) {
+	originalPIN := globalConfig.PKCS11PIN
+	originalFlag := pkcs11PINFlag
+	defer func() {
+		globalConfig.PKCS11PIN = originalPIN
+		pkcs11PINFlag = originalFlag
+	}()
+
+	pkcs11PINFlag = ""
+	globalConfig.PKCS11PIN = nil
+
+	rootCmd.SetArgs([]string{"version"})
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("Execute() returned error: %v", err)
+	}
+
+	if globalConfig.PKCS11PIN != nil {
+		t.Error("expected globalConfig.PKCS11PIN to remain nil when --pkcs11-pin is not set")
+	}
+}
+
 func TestGlobalConfig_Initialized(t *testing.T) {
 	if globalConfig == nil {
 		t.Fatal("globalConfig should be initialized")

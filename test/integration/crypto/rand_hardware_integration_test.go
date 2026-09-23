@@ -26,9 +26,19 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/rand"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mustSecret seals s into a *secure.Secret for PKCS11Config.PIN test
+// fixtures. Test-only: production callers resolve the PIN from config.
+func mustSecret(t *testing.T, s string) *secure.Secret {
+	t.Helper()
+	sec, err := secure.NewSecret([]byte(s))
+	require.NoError(t, err)
+	return sec
+}
 
 // TestRandTPM2HardwareIntegration tests TPM2 hardware RNG with SWTPM simulator
 func TestRandTPM2HardwareIntegration(t *testing.T) {
@@ -270,7 +280,7 @@ func TestRandPKCS11HardwareIntegration(t *testing.T) {
 			Module:      pkcs11Lib,
 			SlotID:      0,
 			PINRequired: true,
-			PIN:         pin,
+			PIN:         mustSecret(t, pin),
 		},
 	}
 
@@ -413,7 +423,7 @@ func TestRandHardwareComparison(t *testing.T) {
 				Module:      pkcs11Lib,
 				SlotID:      0,
 				PINRequired: true,
-				PIN:         "1234",
+				PIN:         mustSecret(t, "1234"),
 			},
 		})
 		if err == nil {

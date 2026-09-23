@@ -15,6 +15,7 @@ package main
 
 import (
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ClientFactory is a function that creates a client.Client.
@@ -104,8 +105,9 @@ type Config struct {
 	// PKCS11Slot is the PKCS#11 slot ID (default: 0)
 	PKCS11Slot int
 
-	// PKCS11PIN is the PKCS#11 token PIN
-	PKCS11PIN string
+	// PKCS11PIN is the PKCS#11 token PIN. A nil PIN means --pkcs11-pin was
+	// not supplied.
+	PKCS11PIN *secure.Secret
 
 	// AuthMethod specifies the authentication method for admin create (fido2 or mtls)
 	AuthMethod string

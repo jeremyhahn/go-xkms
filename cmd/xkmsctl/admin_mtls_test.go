@@ -632,8 +632,8 @@ func TestConfig_PKCS11Fields(t *testing.T) {
 	if cfg.PKCS11Slot != 0 {
 		t.Errorf("PKCS11Slot should default to 0, got: %d", cfg.PKCS11Slot)
 	}
-	if cfg.PKCS11PIN != "" {
-		t.Errorf("PKCS11PIN should default to empty, got: %s", cfg.PKCS11PIN)
+	if cfg.PKCS11PIN != nil {
+		t.Errorf("PKCS11PIN should default to nil, got: %v", cfg.PKCS11PIN)
 	}
 	if cfg.AuthMethod != "" {
 		t.Errorf("AuthMethod should default to empty, got: %s", cfg.AuthMethod)

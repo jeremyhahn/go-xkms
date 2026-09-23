@@ -24,6 +24,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // testPivSlotCN mirrors pkg/xkms.PivSlotCN's "piv-<slot>" convention: tests
@@ -123,6 +125,51 @@ func TestPIVCryptoSigner_SignPropagatesFailure(t *testing.T) {
 	digest := sha512.Sum384([]byte("payload"))
 	_, err = pivSigner.Sign(rand.Reader, digest[:], crypto.SHA384)
 	require.Error(t, err)
+}
+
+// TestPIVCryptoSigner_SignWithPIN proves a signer carrying a PIN opens it and
+// still signs successfully: the software backend authenticates out of band
+// and ignores the PIN, but the opening/closing of the secret must not break
+// the signing path.
+func TestPIVCryptoSigner_SignWithPIN(t *testing.T) {
+	pub := setupPIVSigner(t, PIVSlot("9a"))
+
+	signer, err := NewPIVCryptoSigner("software", PIVSlot("9a"), pub)
+	require.NoError(t, err)
+
+	pin, err := secure.NewSecret([]byte("123456"))
+	require.NoError(t, err)
+	signer.PIN = pin
+
+	digest := sha256.Sum256([]byte("tls client auth digest with pin"))
+	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err)
+	require.NotEmpty(t, sig)
+
+	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok)
+	assert.True(t, ecdsa.VerifyASN1(ecdsaPub, digest[:], sig), "signature must verify against the slot's public key")
+}
+
+// TestPIVCryptoSigner_SignPINOpenFailure proves Sign surfaces the typed
+// error from opening a destroyed PIN secret rather than silently signing
+// without it or panicking.
+func TestPIVCryptoSigner_SignPINOpenFailure(t *testing.T) {
+	pub := setupPIVSigner(t, PIVSlot("9a"))
+
+	signer, err := NewPIVCryptoSigner("software", PIVSlot("9a"), pub)
+	require.NoError(t, err)
+
+	pin, err := secure.NewSecret([]byte("123456"))
+	require.NoError(t, err)
+	pin.Destroy()
+	signer.PIN = pin
+
+	digest := sha256.Sum256([]byte("tls client auth digest with destroyed pin"))
+	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.Error(t, err)
+	var nilSecretErr *secure.NilSecretError
+	assert.ErrorAs(t, err, &nilSecretErr)
 }
 
 // TestPivHashAlgorithmName pins the crypto.Hash to SignPIV hash-name mapping,
