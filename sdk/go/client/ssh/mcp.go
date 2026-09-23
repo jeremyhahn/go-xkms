@@ -29,7 +29,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -162,7 +161,7 @@ func (c *mcpClient) call(ctx context.Context, method string, params, out interfa
 	if !c.scanner.Scan() {
 		readErr := c.scanner.Err()
 		if readErr == nil {
-			readErr = errors.New("connection closed by server")
+			readErr = &ConnectionClosedError{}
 		}
 		return &ProtocolError{Message: "receive " + method, Err: readErr}
 	}

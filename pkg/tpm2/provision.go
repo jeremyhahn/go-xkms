@@ -3,7 +3,6 @@ package tpm2
 import (
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -662,7 +661,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 
 	if tpm.config.EK.CertHandle == 0 {
 		if tpm.certStore == nil {
-			return errors.New("certificate store not initialized")
+			return ErrCertStoreNotInitialized
 		}
 		// Import certificate using PEM-encoded bytes
 		certPEM := pem.EncodeToMemory(&pem.Block{

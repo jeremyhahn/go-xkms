@@ -117,4 +117,5 @@ func TestSecretSealer_Unseal_NilSealedData(t *testing.T) {
 
 	_, err = sealer.Unseal(context.Background(), nil, nil)
 	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSecretSealerNilSealedData)
 }

@@ -56,6 +56,7 @@ var (
 	ErrServeStrategyUnsupported     = errors.New("extension serve: barrier strategy not supported in headless mode")
 	ErrServeTPMOpenFailed           = errors.New("extension serve: failed to open TPM for barrier strategy")
 	ErrServeAuthenticatorInitFailed = errors.New("extension serve: authenticator initialization failed")
+	ErrServeRootKeyMissingStrategy  = errors.New("extension serve: root key missing strategy field")
 
 	// ErrServePolicyRefused indicates the config directory is sealed, an SO
 	// PIN was supplied, and the policy section did not verify under it. The
@@ -823,7 +824,7 @@ func readBarrierStrategy(dataDir string) (xkms.StrategyID, error) {
 		return "", &WrappedError{Msg: "parse root key", Err: err}
 	}
 	if envelope.Strategy == "" {
-		return "", errors.New("root key missing strategy field")
+		return "", ErrServeRootKeyMissingStrategy
 	}
 	return envelope.Strategy, nil
 }

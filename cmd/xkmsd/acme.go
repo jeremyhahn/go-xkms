@@ -77,6 +77,10 @@ var (
 	// loaded from disk.
 	ErrACMEClientCALoad = errors.New("acme: failed to load client CA bundle")
 
+	// ErrACMENoClientCAPEM is returned when a client CA bundle file
+	// contains no parseable PEM certificates.
+	ErrACMENoClientCAPEM = errors.New("acme: no PEM certificates parsed")
+
 	// ErrACMEListen is returned when the ACME listener cannot be bound.
 	ErrACMEListen = errors.New("acme: failed to bind listener")
 
@@ -504,7 +508,7 @@ func buildACMETLSConfig(cfg *config.ACMEConfig) (*tls.Config, error) {
 				return nil, &acmeInitError{Stage: "read client CA " + path, Sentinel: ErrACMEClientCALoad, Err: err}
 			}
 			if !pool.AppendCertsFromPEM(data) {
-				return nil, &acmeInitError{Stage: "parse client CA " + path, Sentinel: ErrACMEClientCALoad, Err: errors.New("no PEM certificates parsed")}
+				return nil, &acmeInitError{Stage: "parse client CA " + path, Sentinel: ErrACMEClientCALoad, Err: ErrACMENoClientCAPEM}
 			}
 		}
 		tlsCfg.ClientCAs = pool
@@ -554,9 +558,15 @@ func (e *acmeInitError) Error() string {
 	return "acme: " + e.Stage + ": " + e.Err.Error()
 }
 
-func (e *acmeInitError) Unwrap() error {
-	if e.Sentinel != nil {
-		return e.Sentinel
+// Unwrap returns both the classifying sentinel and the underlying cause, so
+// errors.Is matches either: callers typically match Sentinel, but the cause
+// (e.g. a typed error stored in Err) must also be reachable.
+func (e *acmeInitError) Unwrap() []error {
+	if e.Sentinel != nil && e.Err != nil {
+		return []error{e.Sentinel, e.Err}
 	}
-	return e.Err
+	if e.Sentinel != nil {
+		return []error{e.Sentinel}
+	}
+	return []error{e.Err}
 }

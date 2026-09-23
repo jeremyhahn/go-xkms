@@ -134,6 +134,10 @@ var (
 	// ErrTPMClearFailed indicates the TPM clear operation failed.
 	ErrTPMClearFailed = errors.New("tpm_service: TPM clear failed")
 
+	// ErrTPMNilClearRequest indicates ClearTPM or ForceClearTPM was called
+	// with a nil request.
+	ErrTPMNilClearRequest = errors.New("tpm_service: nil clear request")
+
 	// ErrTPMForceClearFailed indicates the TPM force clear via PPI failed.
 	ErrTPMForceClearFailed = errors.New("tpm_service: TPM force clear via PPI failed")
 

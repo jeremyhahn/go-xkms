@@ -5345,7 +5345,7 @@ type TPMClearResult struct {
 // the hierarchy authorization is unknown or locked out.
 func (s *TPMService) ClearTPM(req *TPMClearRequest) (*TPMClearResult, error) {
 	if req == nil {
-		return nil, errors.New("tpm_service: nil clear request")
+		return nil, ErrTPMNilClearRequest
 	}
 
 	if req.Force {
@@ -5393,7 +5393,7 @@ func (s *TPMService) ClearTPM(req *TPMClearRequest) (*TPMClearResult, error) {
 // knowing the hierarchy authorization passwords. Requires privilege elevation.
 func (s *TPMService) ForceClearTPM(req *TPMClearRequest) (*TPMClearResult, error) {
 	if req == nil {
-		return nil, errors.New("tpm_service: nil clear request")
+		return nil, ErrTPMNilClearRequest
 	}
 
 	s.log.Info("scheduling TPM force clear via UEFI PPI")

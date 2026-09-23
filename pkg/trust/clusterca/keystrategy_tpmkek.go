@@ -53,6 +53,14 @@ var (
 	// ErrNoTPMCredentials is returned when the tpm-kek strategy is used without a
 	// TPM sealer / credential activator.
 	ErrNoTPMCredentials = errors.New("clusterca: tpm-kek strategy requires a TPM sealer and credential activator")
+
+	// ErrSeedLengthMismatch is returned when a TPM-activated cluster seed does
+	// not have the expected length.
+	ErrSeedLengthMismatch = errors.New("clusterca: activated cluster seed has unexpected length")
+
+	// ErrNodeSecretRequestIncomplete is returned when a node secret request is
+	// missing the EK certificate or IAK public area needed to wrap the seed.
+	ErrNodeSecretRequestIncomplete = errors.New("clusterca: node secret request missing EK certificate or IAK public area")
 )
 
 // tpmKEKStrategy wraps the replicated cluster CA key under a KEK derived from a
@@ -263,7 +271,7 @@ func (s *tpmKEKStrategy) ConsumeEnrollmentSecret(ctx context.Context, material *
 		return err
 	}
 	if len(seed) != clusterSeedLen {
-		return errors.New("clusterca: activated cluster seed has unexpected length")
+		return ErrSeedLengthMismatch
 	}
 	if err := s.storeSealedSeed(ctx, s.deps, seed); err != nil {
 		return err
@@ -296,7 +304,7 @@ func (p *tpmKEKSecretProvider) ProvisionFor(ctx context.Context, req *NodeSecret
 		return nil, ErrSeedUnavailable
 	}
 	if req == nil || req.EKCertificate == nil || len(req.IAKPublic) == 0 {
-		return nil, errors.New("clusterca: node secret request missing EK certificate or IAK public area")
+		return nil, ErrNodeSecretRequestIncomplete
 	}
 	credBlob, encSecret, _, err := deps.Credentials.MakeCredentialWithExternalEK(
 		req.EKCertificate, req.IAKPublic, p.strategy.seed)

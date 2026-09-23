@@ -71,6 +71,13 @@ var (
 	// never returned for "no enrolled slot matches this certificate" — that
 	// is a false found value, not an error.
 	ErrPIVAttestLevelLookupFailed = errors.New("piv: attest level lookup failed")
+
+	// ErrPIVConfigRequired is returned when InitializePIV is called with a nil config.
+	ErrPIVConfigRequired = errors.New("piv: config cannot be nil")
+
+	// ErrPIVInvalidCACertificate is returned when the CA returns a certificate
+	// PEM that does not decode.
+	ErrPIVInvalidCACertificate = errors.New("piv: CA returned invalid certificate PEM")
 )
 
 // PIV output format constants.
@@ -263,7 +270,7 @@ func InitializePIV(config *PIVManagerConfig) error {
 
 	pivInitOnce.Do(func() {
 		if config == nil {
-			initErr = errors.New("piv config cannot be nil")
+			initErr = ErrPIVConfigRequired
 			return
 		}
 
@@ -984,7 +991,7 @@ func pivGenerateCASigned(
 	// Parse and store the CA-signed certificate.
 	block, _ := pem.Decode(certPEM)
 	if block == nil {
-		return nil, errors.New("piv: CA returned invalid certificate PEM")
+		return nil, ErrPIVInvalidCACertificate
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

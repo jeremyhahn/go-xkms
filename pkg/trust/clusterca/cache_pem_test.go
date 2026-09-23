@@ -97,6 +97,31 @@ func TestParseChainPEM_RejectsUnusableInput(t *testing.T) {
 	}
 }
 
+// TestParseChainPEM_EmptyChainIsTheTypedSentinel verifies that input with no
+// CERTIFICATE blocks at all (not merely a decode failure) fails with the
+// typed ErrEmptyPEMChain sentinel, reachable with errors.Is (#700).
+func TestParseChainPEM_EmptyChainIsTheTypedSentinel(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input []byte
+	}{
+		{name: "nil input", input: nil},
+		{name: "not PEM at all", input: []byte("this is not a certificate")},
+		{
+			name: "PEM blocks but none are certificates",
+			input: pem.EncodeToMemory(&pem.Block{
+				Type:  "EC PRIVATE KEY",
+				Bytes: []byte("key material, not a certificate"),
+			}),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parseChainPEM(tt.input)
+			require.ErrorIs(t, err, ErrEmptyPEMChain)
+		})
+	}
+}
+
 // TestParseChainPEM_SkipsNonCertificateBlocks verifies non-CERTIFICATE PEM
 // blocks interleaved with the chain are ignored rather than aborting the parse.
 // Operator-assembled bundles routinely carry comments or key blocks.

@@ -16,7 +16,6 @@
 package pkcs11
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -45,31 +44,31 @@ func DefaultCertStorageConfig() *CertStorageConfig {
 // Validate checks configuration consistency and returns an error if invalid.
 func (c *CertStorageConfig) Validate() error {
 	if c == nil {
-		return errors.New("certificate storage config cannot be nil")
+		return &errs.Message{Msg: "certificate storage config cannot be nil"}
 	}
 
 	switch c.Mode {
 	case hardware.CertStorageModeExternal:
 		if c.ExternalStorage == nil {
-			return errors.New("external storage required for external mode")
+			return &errs.Message{Msg: "external storage required for external mode"}
 		}
 	case hardware.CertStorageModeHybrid:
 		if c.ExternalStorage == nil {
-			return errors.New("external storage required for hybrid mode")
+			return &errs.Message{Msg: "external storage required for hybrid mode"}
 		}
 		if !c.EnableHardwareStorage {
-			return errors.New("hardware storage must be enabled for hybrid mode")
+			return &errs.Message{Msg: "hardware storage must be enabled for hybrid mode"}
 		}
 	case hardware.CertStorageModeHardware:
 		if !c.EnableHardwareStorage {
-			return errors.New("hardware storage must be enabled for hardware mode")
+			return &errs.Message{Msg: "hardware storage must be enabled for hardware mode"}
 		}
 	default:
 		return &errs.Message{Msg: fmt.Sprintf("unknown certificate storage mode: %s", c.Mode)}
 	}
 
 	if c.MaxCertificates < 0 {
-		return errors.New("max certificates cannot be negative")
+		return &errs.Message{Msg: "max certificates cannot be negative"}
 	}
 
 	return nil
