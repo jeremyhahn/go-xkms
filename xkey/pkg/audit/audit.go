@@ -110,14 +110,15 @@ const (
 	OpExtensionDisconnected OperationType = "extension_disconnected"
 
 	// Pairing verification operations.
-	OpPairingStarted      OperationType = "pairing_started"
-	OpPairingCompleted    OperationType = "pairing_completed"
-	OpPairingFailed       OperationType = "pairing_failed"
-	OpPairingUnpaired     OperationType = "pairing_unpaired"
-	OpPairingIdentityOK   OperationType = "pairing_identity_ok"
-	OpPairingIdentityFail OperationType = "pairing_identity_fail"
-	OpPairingRateLimited  OperationType = "pairing_rate_limited"
-	OpPairingManifest     OperationType = "pairing_manifest"
+	OpPairingStarted       OperationType = "pairing_started"
+	OpPairingCompleted     OperationType = "pairing_completed"
+	OpPairingFailed        OperationType = "pairing_failed"
+	OpPairingUnpaired      OperationType = "pairing_unpaired"
+	OpPairingIdentityOK    OperationType = "pairing_identity_ok"
+	OpPairingIdentityFail  OperationType = "pairing_identity_fail"
+	OpPairingRateLimited   OperationType = "pairing_rate_limited"
+	OpPairingManifest      OperationType = "pairing_manifest"
+	OpPairingStateMigrated OperationType = "pairing_state_migrated"
 
 	// OATH operations.
 	OpOATHCredentialCreated  OperationType = "oath_credential_created"

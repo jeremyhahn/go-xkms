@@ -205,8 +205,15 @@ func (ca *CA) CertificatePEM(ctx context.Context, cn string) ([]byte, error) {
 }
 
 // ImportCertificate persists a certificate to the CA's stores. Both the
-// keystore (best-effort) and the certStore receive a copy so subsequent
-// lookups via either storage surface succeed.
+// keystore and the certStore receive a copy so subsequent lookups via either
+// storage surface succeed. The certStore write is authoritative and always
+// attempted; the keystore write is attempted first because some backends
+// (e.g. hardware-bound keystores) are read-only for certs and would
+// otherwise short-circuit the authoritative write. Either write's failure
+// is now returned (joined when both fail) rather than discarded: a
+// keystore save failure used to be silently swallowed, leaving the
+// keystore's copy of a newly imported certificate missing with no signal
+// to the caller.
 //
 // Thread-safe: Yes
 func (ca *CA) ImportCertificate(ctx context.Context, cert *x509.Certificate) error {
@@ -218,19 +225,19 @@ func (ca *CA) ImportCertificate(ctx context.Context, cert *x509.Certificate) err
 		return &errs.Detail{Err: ErrInvalidCertificate, Detail: "certificate has empty common name"}
 	}
 
-	// Best-effort keystore save: some backends are read-only for certs and
-	// will surface errors that we can't reliably handle here. In all cases
-	// the authoritative write is to certStore.
+	var keyStoreErr error
 	if ca.keyStore != nil {
-		_ = ca.keyStore.SaveCert(ctx, cn, cert)
+		if err := ca.keyStore.SaveCert(ctx, cn, cert); err != nil {
+			keyStoreErr = &errs.Wrapped{Msg: "ca: keystore save cert failed", Err: err}
+		}
 	}
 	if ca.certStore == nil {
-		return ErrCertStoreRequired
+		return errors.Join(keyStoreErr, ErrCertStoreRequired)
 	}
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
+		return errors.Join(keyStoreErr, &errs.Wrapped{Msg: "ca: certstore store certificate failed", Err: err})
 	}
-	return nil
+	return keyStoreErr
 }
 
 // ImportCertificatePEM parses a PEM-encoded certificate and stores it under
@@ -250,16 +257,19 @@ func (ca *CA) ImportCertificatePEM(ctx context.Context, cn string, pemBytes []by
 		return &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	var keyStoreErr error
 	if ca.keyStore != nil {
-		_ = ca.keyStore.SaveCert(ctx, cn, cert)
+		if err := ca.keyStore.SaveCert(ctx, cn, cert); err != nil {
+			keyStoreErr = &errs.Wrapped{Msg: "ca: keystore save cert failed", Err: err}
+		}
 	}
 	if ca.certStore == nil {
-		return ErrCertStoreRequired
+		return errors.Join(keyStoreErr, ErrCertStoreRequired)
 	}
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
+		return errors.Join(keyStoreErr, &errs.Wrapped{Msg: "ca: certstore store certificate failed", Err: err})
 	}
-	return nil
+	return keyStoreErr
 }
 
 // PEM is an alias for CertificatePEM that takes KeyAttributes instead of a
@@ -612,19 +622,42 @@ func (ca *CA) RevokeCert(ctx context.Context, cert *x509.Certificate, opts Revok
 	}
 
 	if opts.DeleteKeys {
-		// Build KeyAttributes for the certificate's CN. Deletion is
-		// best-effort — hardware-bound keys may not be deletable and the
-		// primary purpose of revocation is to invalidate the certificate.
+		// The certificate is already revoked at this point: recordRevocation
+		// above succeeded, and that record — not these deletions — is what
+		// makes the certificate invalid. Deletion cleans up the now-revoked
+		// key and certificate copies; every target is still attempted even
+		// if an earlier one fails.
 		attrs := &types.KeyAttributes{
 			CN:           cert.Subject.CommonName,
 			KeyAlgorithm: cert.PublicKeyAlgorithm,
 		}
 		if ca.keyStore != nil {
+			// keyStore.DeleteKey/DeleteCert remain best-effort and their
+			// errors are intentionally NOT joined into the return here: attrs
+			// carries only what the certificate itself names (CN and
+			// algorithm), never the StoreType/KeyType the original key was
+			// provisioned with, and types.KeyAttributes.Validate rejects a
+			// missing StoreType outright. That is a pre-existing gap in how
+			// this attrs value is reconstructed (filed separately — see
+			// go-xkms#687 report), not a condition a caller can act on: on
+			// today's code DeleteKey fails validation for every call, and
+			// DeleteCert 404s for every certificate that was issued (rather
+			// than imported) and so was never saved into the keystore's
+			// cert-side storage. Joining either into the return would make
+			// every DeleteKeys revoke report failure regardless of whether
+			// the revocation — the operation that actually invalidates the
+			// certificate — succeeded.
 			_ = ca.keyStore.DeleteKey(ctx, attrs)
 			_ = ca.keyStore.DeleteCert(ctx, cert.Subject.CommonName)
 		}
 		if ca.certStore != nil {
-			_ = ca.certStore.DeleteCertificate(cert.Subject.CommonName)
+			// certStore is the authoritative certificate store and normally
+			// succeeds here (the certificate was stored there at issuance or
+			// import time), so its failure is a real, actionable signal and
+			// is returned rather than discarded.
+			if err := ca.certStore.DeleteCertificate(cert.Subject.CommonName); err != nil {
+				return &errs.Wrapped{Msg: "ca: certstore delete certificate failed", Err: err}
+			}
 		}
 	}
 	return nil

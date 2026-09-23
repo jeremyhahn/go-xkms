@@ -15,6 +15,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -95,6 +96,50 @@ func TestNVIndexAllocator_NextIndex_Exhausted(t *testing.T) {
 	_, err = alloc.NextIndex()
 	if err != ErrNVIndexRangeExhausted {
 		t.Errorf("expected ErrNVIndexRangeExhausted, got %v", err)
+	}
+}
+
+// TestNVIndexAllocator_NextIndex_PersistFailureWithholdsIndex is the
+// failure-injection test for issue #687: `_ = a.persistCounter()` used to
+// discard the persistence error and still hand out the allocated index. A
+// data directory that does not exist makes persistCounter fail (the load
+// at construction tolerates the same absence, so the allocator itself
+// still constructs). It proves NextIndex now returns the persist error
+// instead of the index, and that the in-memory counter has still moved
+// past the withheld index — so a later, successful allocation can never
+// reissue it once the failure is retried away.
+func TestNVIndexAllocator_NextIndex_PersistFailureWithholdsIndex(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	alloc, err := NewNVIndexAllocator(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	before := alloc.counter.Load()
+	_, err = alloc.NextIndex()
+	if err == nil {
+		t.Fatal("expected a persist-failure error, got nil")
+	}
+	if !errors.Is(err, ErrNVIndexPersistFailed) {
+		t.Errorf("expected ErrNVIndexPersistFailed, got %v", err)
+	}
+
+	after := alloc.counter.Load()
+	if after != before+1 {
+		t.Errorf("expected the counter to advance from %#x to %#x despite the withheld index, got %#x", before, before+1, after)
+	}
+
+	// Once persistence can succeed, the withheld index (before) is never
+	// reissued: the next allocation returns before+1.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	idx, err := alloc.NextIndex()
+	if err != nil {
+		t.Fatalf("unexpected error once the directory exists: %v", err)
+	}
+	if idx != before+1 {
+		t.Errorf("expected %#x (the withheld index must not be reissued), got %#x", before+1, idx)
 	}
 }
 

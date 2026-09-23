@@ -14,12 +14,14 @@
 package server
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,6 +87,44 @@ func TestBuildUnifiedTLSConfig_BootstrapGeneratedAndPersisted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cert1.Certificate[0], cert2.Certificate[0],
 		"persisted bootstrap certificate must be reused across restarts")
+}
+
+// TestEnsureBootstrapCert_PersistFailureLogsAndDegradesToEphemeral is the
+// failure-injection test for issue #687: a bootstrap-certificate persistence
+// failure used to be discarded with `_ =`. It proves the discarded
+// os.WriteFile errors are now surfaced through a logged warning, while
+// ensureBootstrapCert still degrades to serving the freshly generated
+// ephemeral certificate rather than failing TLS setup outright (the
+// documented, deliberate degrade-not-fail behavior this fix must preserve).
+func TestEnsureBootstrapCert_PersistFailureLogsAndDegradesToEphemeral(t *testing.T) {
+	storageDir := t.TempDir()
+	certDir := filepath.Join(storageDir, unifiedBootstrapCertDir)
+	require.NoError(t, os.MkdirAll(certDir, 0o700))
+	// Pre-create cert.pem and key.pem as directories so os.WriteFile fails
+	// writing both (EISDIR on Linux), exercising the errors.Join of both
+	// discarded write errors.
+	require.NoError(t, os.Mkdir(filepath.Join(certDir, "cert.pem"), 0o700))
+	require.NoError(t, os.Mkdir(filepath.Join(certDir, "key.pem"), 0o700))
+
+	var logBuf bytes.Buffer
+	s := &Server{
+		config: &config.Config{
+			Server:  config.ServerConfig{Host: "127.0.0.1"},
+			TLS:     config.TLSConfig{ServerCN: "unit.example"},
+			Storage: config.StorageConfig{Path: storageDir},
+		},
+		logger: slog.New(slog.NewTextHandler(&logBuf, nil)),
+	}
+
+	cert, err := s.ensureBootstrapCert()
+	require.NoError(t, err, "a persistence failure must still yield an ephemeral certificate, not fail bootstrap TLS setup")
+	require.NotNil(t, cert)
+
+	logged := logBuf.String()
+	assert.Contains(t, logged, "failed to persist bootstrap TLS certificate",
+		"the discarded certificate write error must be logged, not silently dropped")
+	assert.Contains(t, logged, "failed to persist bootstrap TLS key",
+		"the discarded key write error must be logged, not silently dropped")
 }
 
 // TestBuildUnifiedTLSConfig_ExtraSANs proves configured extra SANs (DNS
