@@ -538,8 +538,7 @@ func TestNewOrderHandler_ErrorPaths(t *testing.T) {
 
 	t.Run("Invalid JSON payload", func(t *testing.T) {
 		// Create a request with invalid payload
-		nonce, _ := common.GenerateNonce(nonceSize)
-		service.nonceStore.Add(nonce)
+		nonce, _ := service.GetNonceService().Generate()
 
 		signerOpts := &jose.SignerOptions{
 			NonceSource: &staticNonceSource{nonce: nonce},

@@ -393,9 +393,8 @@ func generateTestKey(t *testing.T) *TestKey {
 // createJWSRequest creates a signed JWS request for testing
 func createJWSRequest(t *testing.T, service *RestService, key *TestKey, url string, payload interface{}, useKID bool, accountID uint64) *http.Request {
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Marshal payload
 	var payloadBytes []byte

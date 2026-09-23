@@ -16,8 +16,10 @@ package config
 import (
 	"errors"
 	"path/filepath"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -48,6 +50,16 @@ var (
 	// ErrACMEAuditUnsupportedFormat is returned when acme.audit.format names a
 	// serialization the audit trail cannot be written or queried in.
 	ErrACMEAuditUnsupportedFormat = errors.New("acme: audit.format must be \"json\" (the only queryable audit trail format)")
+
+	// ErrACMENonceNegativeLifetime is returned when acme.nonce.lifetime is
+	// configured with a negative duration. Zero selects the built-in default;
+	// a negative value has no meaning.
+	ErrACMENonceNegativeLifetime = errors.New("acme: nonce.lifetime must not be negative")
+
+	// ErrACMENonceNegativeMaxUsed is returned when acme.nonce.max_used is
+	// configured with a negative value. Zero selects the built-in default;
+	// a negative value has no meaning.
+	ErrACMENonceNegativeMaxUsed = errors.New("acme: nonce.max_used must not be negative")
 )
 
 // ACMEConfig configures the optional ACME (RFC 8555) server that xkmsd may
@@ -126,6 +138,10 @@ type ACMEConfig struct {
 	// challenges (enroll-01/endorse-01/device-attest-01). See
 	// ACMEEnrollmentConfig.
 	Enrollment ACMEEnrollmentConfig `yaml:"enrollment"`
+
+	// Nonce configures the replay-nonce service (pkg/acme/nonce), RFC 8555
+	// Section 6.5's Replay-Nonce / badNonce mechanism. See ACMENonceConfig.
+	Nonce ACMENonceConfig `yaml:"nonce"`
 }
 
 // ACMEEnrollmentConfig configures behavior specific to TPM-attestation
@@ -139,6 +155,61 @@ type ACMEEnrollmentConfig struct {
 	// actual challenge validation must reach the device at its real IP.
 	// Off by default: a loopback identifier is otherwise refused.
 	AllowLoopbackIdentifier bool `yaml:"allow_loopback_identifier"`
+}
+
+// DefaultACMENonceLifetime is the epoch lifetime ACMENonceConfig.ResolveLifetime
+// applies when acme.nonce.lifetime is unset. It matches the TTL the previous
+// in-memory nonce store used.
+const DefaultACMENonceLifetime = 10 * time.Minute
+
+// DefaultACMENonceMaxUsed is the per-epoch redeemed-nonce cap
+// ACMENonceConfig.ResolveMaxUsed applies when acme.nonce.max_used is unset.
+const DefaultACMENonceMaxUsed = nonce.DefaultMaxUsed
+
+// ACMENonceConfig configures the ACME replay-nonce service (pkg/acme/nonce),
+// RFC 8555 Section 6.5's Replay-Nonce / badNonce mechanism.
+type ACMENonceConfig struct {
+	// Lifetime bounds how long a nonce-signing epoch lives before the service
+	// rotates to a fresh counter window, retiring every nonce still
+	// outstanding from the previous epoch. pkg/acme/nonce tracks validity by
+	// a monotonic counter, not a per-nonce timestamp, so this is how a
+	// wall-clock lifetime is enforced. Zero selects DefaultACMENonceLifetime.
+	Lifetime time.Duration `yaml:"lifetime"`
+
+	// MaxUsed bounds the number of redeemed nonces tracked within a single
+	// signing epoch (see Lifetime) before the oldest is retired — the
+	// defense against an unbounded-memory nonce flood. Zero selects
+	// DefaultACMENonceMaxUsed.
+	MaxUsed int `yaml:"max_used"`
+}
+
+// ResolveLifetime returns the configured epoch lifetime, defaulting to
+// DefaultACMENonceLifetime when unset.
+func (n ACMENonceConfig) ResolveLifetime() time.Duration {
+	if n.Lifetime <= 0 {
+		return DefaultACMENonceLifetime
+	}
+	return n.Lifetime
+}
+
+// ResolveMaxUsed returns the configured per-epoch redeemed-nonce cap,
+// defaulting to DefaultACMENonceMaxUsed when unset.
+func (n ACMENonceConfig) ResolveMaxUsed() int {
+	if n.MaxUsed <= 0 {
+		return DefaultACMENonceMaxUsed
+	}
+	return n.MaxUsed
+}
+
+// Validate checks the nonce section. Negative values have no meaning.
+func (n ACMENonceConfig) Validate() error {
+	if n.Lifetime < 0 {
+		return ErrACMENonceNegativeLifetime
+	}
+	if n.MaxUsed < 0 {
+		return ErrACMENonceNegativeMaxUsed
+	}
+	return nil
 }
 
 // Audit trail defaults. Zero-valued rotation knobs in the configuration select
@@ -362,6 +433,9 @@ func (c *ACMEConfig) Validate() error {
 		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
 	}
 	if err := c.Audit.Validate(); err != nil {
+		return err
+	}
+	if err := c.Nonce.Validate(); err != nil {
 		return err
 	}
 	return nil

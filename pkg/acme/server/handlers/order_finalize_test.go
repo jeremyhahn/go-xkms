@@ -1322,11 +1322,6 @@ func TestOrderFinalizeHandler_InvalidRequestPayload(t *testing.T) {
 	// Create invalid payload (not JSON)
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
 
-	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
-	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
-
 	// Create a JWS with invalid JSON payload
 
 	// We'll use the test helper but encode invalid JSON-like string

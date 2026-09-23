@@ -72,9 +72,8 @@ func TestParseKID_AccountNotFoundPath(t *testing.T) {
 
 	nonExistentID := uint64(9999999999)
 
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	payload := map[string]interface{}{"test": "data"}
 	payloadBytes, err := json.Marshal(payload)
@@ -116,9 +115,8 @@ func TestParseKID_KIDAndJWKBothPresent(t *testing.T) {
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
 
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	payload := map[string]interface{}{"test": "data"}
 	payloadBytes, err := json.Marshal(payload)
@@ -914,9 +912,8 @@ func TestRevokeCertHandler_InvalidReasonCov(t *testing.T) {
 
 // Helper function to create JWS request with specific method
 func createJWSRequestWithMethod(t *testing.T, service *RestService, key *TestKey, method string, url string, payload interface{}, useKID bool, accountID uint64) *http.Request {
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	var payloadBytes []byte
 	if payload != nil {

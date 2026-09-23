@@ -169,8 +169,7 @@ func TestKeyChangeHandlerSuccessful(t *testing.T) {
 
 	// Create outer JWS with old key KID
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},

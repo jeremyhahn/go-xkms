@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface
 
@@ -13,7 +13,10 @@
   `ca_bundle.go`, `endorse_eab.go`, `audit.go`, `compliance_attestation.go`,
   `service.go`.
 - `pkg/acme/entities` — the protocol objects themselves.
-- `pkg/acme/nonce` — nonce issue and consume.
+- `pkg/acme/nonce` — encrypted-counter nonce issue and redemption
+  (`Service`), plus prefix-routed multi-node dispatch (`MultiService`).
+  `RestService` wires it as described under Configuration and Persistence
+  below.
 - `pkg/acme/issuance` — the bridge to `pkg/ca`.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy and CAA.
@@ -182,6 +185,22 @@ cluster:
 `RaftACMEConfigError` (`Field`, `Reason`) renders as
 `cluster: raft_enrollment.acme.<field>: <reason>`.
 
+`acme.nonce` (`ACMENonceConfig`, `pkg/config/acme.go`) configures the
+Replay-Nonce service, `pkg/acme/nonce`:
+
+```yaml
+acme:
+  nonce:
+    lifetime: 10m   # ACMENonceConfig.ResolveLifetime; 0 selects DefaultACMENonceLifetime
+    max_used: 65536 # ACMENonceConfig.ResolveMaxUsed; 0 selects nonce.DefaultMaxUsed
+```
+
+Both are optional with the documented defaults, and both are also
+`handlers.Params` fields (`NonceLifetime`, `NonceMaxUsed`) for an embedder
+that does not go through `pkg/config`. See Persistence below for how they
+bound the service's memory, and #733 for the multi-node gap
+(`handlers.Params.NonceKey`) neither field closes.
+
 `acme.enrollment.allow_loopback_identifier` (`ACMEEnrollmentConfig`,
 `pkg/config/acme.go`) gates a development-only substitution in
 `ChallengeHandler` (`pkg/acme/server/handlers/challenge.go`): when an
@@ -221,12 +240,30 @@ which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 
 ## Persistence
 
-Accounts, orders, authorizations, challenges, nonces and issued certificates
-persist through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
+Accounts, orders, authorizations, challenges and issued certificates persist
+through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
 Certificate blobs land in the certificate store like any other certificate.
 
-Nonces are short-lived and single-use; their store is deliberately separate so
-expiry is cheap.
+Nonces do not persist anywhere, by design. `pkg/acme/nonce.Service` validates
+a nonce by decrypting it (AES-GCM, RFC 8555 Section 6.5), not by looking it up,
+so there is no durable table to write or expire out of — the whole point of
+the encrypted-counter scheme is that "was this ever issued, and is it still
+in the valid window" is answered from the ciphertext itself plus a small,
+`NonceMaxUsed`-bounded in-memory redeemed-set. `RestService` rotates to a
+fresh counter window every `NonceLifetime` (`nonceEpochPrefix`,
+`pkg/acme/server/handlers/service.go`), retiring every nonce still
+outstanding from the previous window; that is the wall-clock lifetime
+substitute for a scheme with no per-nonce timestamp to expire.
+
+Multi-node caveat: nonces from different xkmsd processes only validate on
+each other when every node is configured with the same
+`handlers.Params.NonceKey` (there is no `pkg/config` field for it yet — see
+#733). Absent a shared key, each process mints from its own random key, which
+is correct for a single-node deployment but means a load-balanced deployment
+without sticky routing sees `badNonce` on any request that lands on a
+different node than the one that issued the nonce. RFC 8555 clients already
+handle `badNonce` by retrying with a fresh nonce, so this degrades
+availability, not correctness.
 
 Migration: the ACME object model is RFC-defined on the wire and internal in
 storage. Changing the storage layout requires a data migration step.
