@@ -200,7 +200,7 @@ type mockCAAValidatorCovPush struct {
 	err error
 }
 
-func (m *mockCAAValidatorCovPush) Validate(_ context.Context, _ string, _ bool) error {
+func (m *mockCAAValidatorCovPush) Validate(_ context.Context, _ string, _ bool, _ string, _ string) error {
 	return m.err
 }
 

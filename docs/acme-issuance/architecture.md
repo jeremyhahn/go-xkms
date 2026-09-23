@@ -117,11 +117,15 @@ through ACME against an existing node's directory.
   EK certificate does not chain to a trusted manufacturer root, activation
   cannot succeed.
 - **Rate limits and CAA are enforcement, not advice.** `pkg/acme/server/caa.go`
-  checks CAA (RFC 8659) before issuing, wired through `Params.CAAValidator`
-  and constructed from the required `acme.caa_identities` config — an ACME
+  checks CAA (RFC 8659, plus RFC 8657's `accounturi`/`validationmethods`
+  parameters) before issuing, wired through `Params.CAAValidator` and
+  constructed from the required `acme.caa_identities` config — an ACME
   server cannot start enabled without naming the issuer identity a CAA
   record must list, and a DNS failure that leaves the CAA RRset undetermined
-  denies issuance rather than proceeding regardless.
+  denies issuance rather than proceeding regardless. Order finalize supplies
+  the requesting account's URI and the challenge type that actually
+  validated each identifier, so a record's `accounturi`/`validationmethods`
+  parameters are enforced against reality, not merely parsed.
   `pkg/acme/server/rate_limiter.go` and the tenant rate limiter bound
   per-account and per-tenant issuance.
 - **The circuit breaker and degradation paths fail closed** — under pressure the

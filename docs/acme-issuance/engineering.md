@@ -83,19 +83,36 @@ once, to the externally visible base.
 - **`enroll-01` succeeds only if the TPM can activate the credential.** The
   server never accepts a secret it did not itself protect with
   `TPM2_MakeCredential` against the verified EK.
-- **CAA (RFC 8659) is checked before issuance**, not after. Order finalize
-  (`order_finalize.go`) calls `Params.CAAValidator.Validate` for every DNS
-  identifier on the order before the CA signs; a rejection moves the order to
-  `invalid` with the `caa` problem type. The validator itself
+- **CAA (RFC 8659, plus RFC 8657 `accounturi`/`validationmethods`) is checked
+  before issuance**, not after. Order finalize (`order_finalize.go`) resolves,
+  for every DNS identifier on the order, the account's URI and the RFC 8657
+  method-label (`http-01`, `dns-01`, `tls-alpn-01`, `device-attest-01`, ...)
+  of the challenge that actually validated that identifier's authorization —
+  read from the order's own `ACMEAuthorization`/`ACMEChallenge` records, not
+  trusted from the request — and passes both to
+  `Params.CAAValidator.Validate` alongside the domain; a rejection moves the
+  order to `invalid` with the `caa` problem type. The validator itself
   (`pkg/acme/server/caa.go`) climbs the label tree to the closest non-empty
   CAA RRset, checks `issuewild` for wildcard identifiers and falls back to
   `issue` when no `issuewild` record exists, rejects an unrecognized
   property tag carrying the critical flag regardless of any authorizing
   record, and compares the `issue`/`issuewild` value's issuer-domain-name to
-  `acme.caa_identities` as a full domain name — never a prefix. A DNS
-  failure that prevents determining the RRset (SERVFAIL, timeout, any
-  non-NXDOMAIN error) fails closed per RFC 8659 Section 5.1: it denies
-  issuance rather than "proceeding with caution".
+  `acme.caa_identities` as a full domain name — never a prefix. Once the
+  issuer domain matches, an RFC 8657 `accounturi` parameter on that record
+  further restricts authorization to the ACME account whose URI matches
+  exactly (byte-for-byte), and a `validationmethods` parameter restricts it
+  to its listed method-labels; either parameter, present and not matched,
+  refuses that record without affecting any other record in the RRset. Both
+  parameters are parsed per the strict RFC 8659 Section 4.2 `tag=value`
+  grammar (unescaped whitespace or a `;` inside a value is not possible
+  syntactically); a value that fails that grammar, or a `validationmethods`
+  list containing something other than well-formed method-labels, makes that
+  specific record non-authorizing per RFC 8657, rather than silently
+  ignoring the restriction it was meant to express. A parameter tag this
+  validator does not implement is ignored, consistent with the extensible
+  parameter model. A DNS failure that prevents determining the RRset
+  (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
+  Section 5.1: it denies issuance rather than "proceeding with caution".
 - **Rate limits are per account and per tenant.** Exceeding either refuses the
   order; it does not queue it.
 - **Under pressure the circuit breaker refuses new orders.** Degradation never
