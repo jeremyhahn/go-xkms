@@ -699,18 +699,10 @@ func TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier(t *testi
 	assert.Nil(t, s.platformStore)
 }
 
-// TestInitializePlatformStore_BuildsWithoutBarrier proves a non-skip
-// strategy (tpm2, with its Platform SRK already enrolled -- see
-// tpm2EnrolledServer in platform_store_test.go) builds a working platform
-// store even when s.barrier is nil, since the platform store is sealed by
-// its own strategy, never by the barrier.
-func TestInitializePlatformStore_BuildsWithoutBarrier(t *testing.T) {
-	s := tpm2EnrolledServer(t, false, 0)
-	s.barrier = nil
-	err := s.initializePlatformStore()
-	require.NoError(t, err)
-	assert.NotNil(t, s.platformStore)
-}
+// TestInitializePlatformStore_BuildsWithoutBarrier (a non-skip strategy
+// building a working platform store with s.barrier nil) lives in
+// platform_store_simulator_test.go: it needs the tpm2 Platform SRK
+// enrollment harness, which needs the tpm_simulator build tag.
 
 // ============================================================================
 // Tests — initializePolicyManager (always logs + returns nil)
