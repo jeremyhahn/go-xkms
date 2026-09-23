@@ -27,6 +27,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 )
@@ -111,6 +112,22 @@ func (c *pinDirectoryClient) FinishRegistration(context.Context, *client.FinishR
 	return &client.FinishRegistrationResponse{Success: true, CredentialID: "cred-pin"}, nil
 }
 
+// testPINSecret seals a test PIN string into protected memory, mirroring
+// what resolvePINInput hands the ceremony. An empty pin returns nil, the
+// zero value for "no PIN configured".
+func testPINSecret(t *testing.T, pin string) *secure.Secret {
+	t.Helper()
+
+	if pin == "" {
+		return nil
+	}
+	secret, err := secure.NewSecret([]byte(pin))
+	if err != nil {
+		t.Fatalf("seal test PIN: %v", err)
+	}
+	return secret
+}
+
 // registerPINCeremony runs webAuthnRegistration with the given handler and PIN.
 func registerPINCeremony(t *testing.T, handler *fido2.FIDO2Handler, pin string) (*fido2.WebAuthnAttestation, error) {
 	t.Helper()
@@ -121,7 +138,7 @@ func registerPINCeremony(t *testing.T, handler *fido2.FIDO2Handler, pin string) 
 		handler,
 		NewPrinter("text", io.Discard),
 		"admin", "admin@example.com", "Admin", string(RoleAdmin), "",
-		false, 5*time.Second, pin,
+		false, 5*time.Second, testPINSecret(t, pin),
 	)
 }
 
@@ -213,7 +230,7 @@ func TestLoginAssertion_CarriesPINToTheAuthenticator(t *testing.T) {
 	handler := newVirtualPINHandler(t, testPIN)
 	credentialID := registerCredentialForLogin(t, handler, testPIN)
 
-	assertion, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPIN)
+	assertion, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPINSecret(t, testPIN))
 	if err != nil {
 		t.Fatalf("login against a PIN-protected authenticator must succeed with the PIN: %v", err)
 	}
@@ -228,7 +245,7 @@ func TestLoginAssertion_MissingPINIsNamed(t *testing.T) {
 	handler := newVirtualPINHandler(t, testPIN)
 	credentialID := registerCredentialForLogin(t, handler, testPIN)
 
-	_, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, "")
+	_, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPINSecret(t, ""))
 	if err == nil {
 		t.Fatal("a PIN-protected authenticator must refuse the assertion without a PIN")
 	}
@@ -247,7 +264,7 @@ func TestLoginAssertion_WrongPINReportsRemainingAttempts(t *testing.T) {
 	handler := newVirtualPINHandler(t, testPIN)
 	credentialID := registerCredentialForLogin(t, handler, testPIN)
 
-	_, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testWrongPIN)
+	_, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPINSecret(t, testWrongPIN))
 	if err == nil {
 		t.Fatal("a wrong PIN must fail the assertion")
 	}
@@ -268,7 +285,7 @@ func TestLoginAssertion_NoPINAuthenticatorNeedsNone(t *testing.T) {
 	handler := newVirtualPINHandler(t, "")
 	credentialID := registerCredentialForLogin(t, handler, "")
 
-	assertion, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), false, 5*time.Second, "")
+	assertion, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), false, 5*time.Second, testPINSecret(t, ""))
 	if err != nil {
 		t.Fatalf("an authenticator with no PIN configured needs none: %v", err)
 	}

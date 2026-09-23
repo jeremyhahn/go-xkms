@@ -20,7 +20,24 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// testSecret seals a test PIN string into protected memory. An empty s
+// returns nil, mirroring what an authenticator with no PIN configured
+// receives.
+func testSecret(t *testing.T, s string) *secure.Secret {
+	t.Helper()
+
+	if s == "" {
+		return nil
+	}
+	secret, err := secure.NewSecret([]byte(s))
+	if err != nil {
+		t.Fatalf("seal test PIN: %v", err)
+	}
+	return secret
+}
 
 type fakeDevices struct {
 	devices []pkgfido2.Device
@@ -193,11 +210,19 @@ func TestLocalCeremony_ForwardsThePIN(t *testing.T) {
 	c := newLocalCeremony(&fakeDevices{devices: []pkgfido2.Device{yubi("1")}}, ceremony, 0)
 
 	req := localRequest()
-	req.PIN = "123456"
+	req.PIN = testSecret(t, "123456")
 	assertStubParseFailure(t, mustErr(c.Enroll(context.Background(), req)))
 
-	if ceremony.opts.PIN != "123456" {
-		t.Errorf("PIN = %q, want it forwarded to the authenticator ceremony", ceremony.opts.PIN)
+	if ceremony.opts.PIN == nil {
+		t.Fatal("want a PIN forwarded to the authenticator ceremony")
+	}
+	buf, err := ceremony.opts.PIN.Open()
+	if err != nil {
+		t.Fatalf("open forwarded PIN: %v", err)
+	}
+	defer buf.Destroy()
+	if string(buf.Bytes()) != "123456" {
+		t.Errorf("PIN = %q, want it forwarded to the authenticator ceremony", buf.Bytes())
 	}
 }
 
@@ -209,8 +234,8 @@ func TestLocalCeremony_OmitsAnAbsentPIN(t *testing.T) {
 
 	assertStubParseFailure(t, mustErr(c.Enroll(context.Background(), localRequest())))
 
-	if ceremony.opts.PIN != "" {
-		t.Errorf("PIN = %q, want empty when none was supplied", ceremony.opts.PIN)
+	if ceremony.opts.PIN != nil {
+		t.Errorf("PIN = %v, want nil when none was supplied", ceremony.opts.PIN)
 	}
 }
 

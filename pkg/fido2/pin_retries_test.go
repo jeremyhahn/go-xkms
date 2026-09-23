@@ -97,7 +97,7 @@ func TestAuthorizeWithPINSurfacesRemainingAttempts(t *testing.T) {
 	sim.pinRetries = 3
 	sim.pinRetriesSet = true
 
-	_, _, err := auth.AuthorizeWithPIN("999999", []byte("client-data-hash"))
+	_, _, err := auth.AuthorizeWithPIN(testSecret(t, "999999"), []byte("client-data-hash"))
 	if err == nil {
 		t.Fatal("a wrong PIN must not authorize the request")
 	}
@@ -124,7 +124,7 @@ func TestAuthorizeWithPINAnnotationErrors(t *testing.T) {
 		auth, sim := newPINRetriesAuthenticator(t, "123456")
 		sim.failPINRetries = true
 
-		_, _, err := auth.AuthorizeWithPIN("999999", []byte("client-data-hash"))
+		_, _, err := auth.AuthorizeWithPIN(testSecret(t, "999999"), []byte("client-data-hash"))
 		if !errors.Is(err, ErrInvalidPIN) {
 			t.Fatalf("want ErrInvalidPIN, got %v", err)
 		}
@@ -145,7 +145,7 @@ func TestAuthorizeWithPINAnnotationErrors(t *testing.T) {
 		// which carries no attempt count to report.
 		auth, _ := newPINRetriesAuthenticator(t, "")
 
-		_, _, err := auth.AuthorizeWithPIN("123456", []byte("client-data-hash"))
+		_, _, err := auth.AuthorizeWithPIN(testSecret(t, "123456"), []byte("client-data-hash"))
 		if !errors.Is(err, ErrPINNotSet) {
 			t.Fatalf("want ErrPINNotSet, got %v", err)
 		}
@@ -161,7 +161,7 @@ func TestAuthorizeWithPINAnnotationErrors(t *testing.T) {
 		sim.pinRetries = 1
 		sim.pinRetriesSet = true
 
-		_, _, err := auth.AuthorizeWithPIN("999999", []byte("client-data-hash"))
+		_, _, err := auth.AuthorizeWithPIN(testSecret(t, "999999"), []byte("client-data-hash"))
 		if !errors.Is(err, ErrPINBlocked) {
 			t.Fatalf("want ErrPINBlocked once the last attempt is spent, got %v", err)
 		}

@@ -23,8 +23,30 @@ import (
 	"github.com/stretchr/testify/require"
 
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
+
+// pinString reads back a *secure.Secret ceremony.pin recorded for a fixture
+// assertion. A nil secret (no PIN supplied) reads as "".
+func pinString(t *testing.T, secret *secure.Secret) string {
+	t.Helper()
+
+	if secret == nil {
+		return ""
+	}
+	return openSecretString(t, secret)
+}
+
+// mustSealPIN seals a test PIN string the way sealCeremonyPIN does, failing
+// the test on a sealing error. An empty pin returns nil.
+func mustSealPIN(t *testing.T, pin string) *secure.Secret {
+	t.Helper()
+
+	secret, err := sealCeremonyPIN(pin)
+	require.NoError(t, err)
+	return secret
+}
 
 // These tests cover go-xkms#299: "xkey auth register" and "xkey auth login"
 // could not supply a CTAP2 PIN, so neither completed against a PIN-protected
@@ -84,7 +106,7 @@ func TestRunAuthRegister_CarriesPINToTheAuthenticator(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
 
 		require.NoError(t, runAuthRegister(cmd, nil))
-		assert.Equal(t, "123456", ceremony.pin, "the PIN must reach the authenticator")
+		assert.Equal(t, "123456", pinString(t, ceremony.pin), "the PIN must reach the authenticator")
 	})
 
 	t.Run("from the environment", func(t *testing.T) {
@@ -99,7 +121,7 @@ func TestRunAuthRegister_CarriesPINToTheAuthenticator(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
 
 		require.NoError(t, runAuthRegister(cmd, nil))
-		assert.Equal(t, "654321", ceremony.pin)
+		assert.Equal(t, "654321", pinString(t, ceremony.pin))
 	})
 
 	t.Run("no PIN supplied stays no PIN", func(t *testing.T) {
@@ -116,7 +138,7 @@ func TestRunAuthRegister_CarriesPINToTheAuthenticator(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
 
 		require.NoError(t, runAuthRegister(cmd, nil))
-		assert.Empty(t, ceremony.pin)
+		assert.Nil(t, ceremony.pin)
 	})
 }
 
@@ -164,7 +186,7 @@ func TestRunAuthLogin_CarriesPINToTheAuthenticator(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set(pinFlagStdin, "true"))
 
 		require.NoError(t, runAuthLogin(cmd, nil))
-		assert.Equal(t, "123456", ceremony.pin, "the PIN must reach the authenticator")
+		assert.Equal(t, "123456", pinString(t, ceremony.pin), "the PIN must reach the authenticator")
 	})
 
 	t.Run("no PIN supplied stays no PIN", func(t *testing.T) {
@@ -180,7 +202,7 @@ func TestRunAuthLogin_CarriesPINToTheAuthenticator(t *testing.T) {
 		require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
 
 		require.NoError(t, runAuthLogin(cmd, nil))
-		assert.Empty(t, ceremony.pin)
+		assert.Nil(t, ceremony.pin)
 	})
 }
 
@@ -218,7 +240,7 @@ func TestRunAuthLogin_RejectsEmptyStdinPINBeforeTheNetwork(t *testing.T) {
 // wrong path, because it reads as a device fault rather than missing input.
 func TestCeremonyFailure_NamesTheMissingPIN(t *testing.T) {
 	for _, sentinel := range []error{ErrWebAuthnRegistrationFailed, ErrWebAuthnAssertionFailed} {
-		err := ceremonyFailure(sentinel, "", fido2.ErrPINRequired)
+		err := ceremonyFailure(sentinel, nil, fido2.ErrPINRequired)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWebAuthnPINRequired)
@@ -236,7 +258,7 @@ func TestCeremonyFailureClassification(t *testing.T) {
 		// PIN_REQUIRED with a PIN in hand means the authenticator rejected an
 		// authorization that WAS attempted. Telling the operator to supply the
 		// PIN they just supplied sends them in a circle.
-		err := ceremonyFailure(ErrWebAuthnAssertionFailed, "123456", fido2.ErrPINRequired)
+		err := ceremonyFailure(ErrWebAuthnAssertionFailed, mustSealPIN(t, "123456"), fido2.ErrPINRequired)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWebAuthnAssertionFailed)
@@ -245,7 +267,7 @@ func TestCeremonyFailureClassification(t *testing.T) {
 
 	t.Run("an unrelated failure keeps its own sentinel", func(t *testing.T) {
 		cause := errors.New("hid: device disconnected")
-		err := ceremonyFailure(ErrWebAuthnRegistrationFailed, "", cause)
+		err := ceremonyFailure(ErrWebAuthnRegistrationFailed, nil, cause)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrWebAuthnRegistrationFailed)
@@ -257,7 +279,7 @@ func TestCeremonyFailureClassification(t *testing.T) {
 		// A lockout must never read as anything else, so the attempt counter
 		// the authenticator reported has to survive to the operator.
 		cause := &fido2.PINAttemptsError{Err: fido2.ErrInvalidPIN, Retries: 2}
-		err := ceremonyFailure(ErrWebAuthnAssertionFailed, "999999", cause)
+		err := ceremonyFailure(ErrWebAuthnAssertionFailed, mustSealPIN(t, "999999"), cause)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, fido2.ErrInvalidPIN)

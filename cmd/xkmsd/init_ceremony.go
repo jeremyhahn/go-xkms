@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Ceremony-execution error types. These wrap typed failure modes for the
@@ -102,8 +103,8 @@ type ceremonyEnv struct {
 	passkeyDevice string
 
 	// passkeyPIN is the CTAP2 PIN of the authenticator being enrolled
-	// (--passkey-pin-stdin / XKMS_PASSKEY_PIN). Empty when the key has none.
-	passkeyPIN string
+	// (--passkey-pin-stdin / XKMS_PASSKEY_PIN). Nil when the key has none.
+	passkeyPIN *secure.Secret
 
 	// relyingPartyID / relyingPartyName scope an enrolled passkey to the
 	// domain the console is served from.

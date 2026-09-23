@@ -1240,6 +1240,10 @@ var (
 	// needs none.
 	ErrPINInputFlagsMissing = errors.New("pin: the command does not declare the PIN input flags")
 
+	// ErrPINInputSealFailed indicates a resolved PIN could not be sealed into
+	// protected memory.
+	ErrPINInputSealFailed = errors.New("pin: failed to seal the PIN into protected memory")
+
 	// ErrWebAuthnPINRequired indicates the authenticator refused a WebAuthn
 	// ceremony because it has a PIN set and none was supplied.
 	//

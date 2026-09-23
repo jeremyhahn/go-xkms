@@ -315,7 +315,9 @@ func newPINProtectedHandler(t *testing.T, pin string) *FIDO2Handler {
 
 // pinRegistrationOptions is a minimal registration ceremony for a
 // PIN-protected authenticator.
-func pinRegistrationOptions(pin string) WebAuthnRegistrationOptions {
+func pinRegistrationOptions(t *testing.T, pin string) WebAuthnRegistrationOptions {
+	t.Helper()
+
 	return WebAuthnRegistrationOptions{
 		Challenge:       []byte("registration-challenge"),
 		Origin:          "https://xkms.example.com",
@@ -328,14 +330,14 @@ func pinRegistrationOptions(pin string) WebAuthnRegistrationOptions {
 		// this must NOT reach the wire as the "uv" option once a PIN is
 		// supplied — the simulator rejects that combination outright.
 		RequireUserVerification: true,
-		PIN:                     pin,
+		PIN:                     testSecret(t, pin),
 	}
 }
 
 func TestRegisterWebAuthnWithPIN(t *testing.T) {
 	handler := newPINProtectedHandler(t, "123456")
 
-	attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("123456"))
+	attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions(t, "123456"))
 	if err != nil {
 		t.Fatalf("RegisterWebAuthn with PIN: %v", err)
 	}
@@ -360,7 +362,7 @@ func TestRegisterWebAuthnPINErrors(t *testing.T) {
 		// is off here so the refusal is unambiguously about the missing
 		// pinUvAuthParam rather than about asking a PIN-only key for built-in
 		// user verification.
-		opts := pinRegistrationOptions("")
+		opts := pinRegistrationOptions(t, "")
 		opts.RequireUserVerification = false
 
 		attestation, err := handler.RegisterWebAuthn(opts)
@@ -375,7 +377,7 @@ func TestRegisterWebAuthnPINErrors(t *testing.T) {
 	t.Run("wrong PIN is not reported as a refusal", func(t *testing.T) {
 		handler := newPINProtectedHandler(t, "123456")
 
-		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("999999"))
+		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions(t, "999999"))
 		if attestation != nil {
 			t.Fatal("a wrong PIN must not yield a credential")
 		}
@@ -390,7 +392,7 @@ func TestRegisterWebAuthnPINErrors(t *testing.T) {
 		// GetPINToken against a key with no PIN set is an error rather than a
 		// silent success, so the operator learns the PIN was pointless instead
 		// of enrolling a credential that verification will not match.
-		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("123456"))
+		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions(t, "123456"))
 		if attestation != nil {
 			t.Fatal("expected no credential")
 		}

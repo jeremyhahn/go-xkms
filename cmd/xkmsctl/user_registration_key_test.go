@@ -149,7 +149,7 @@ func TestWebAuthnRegistration_BeginsCeremonyByEmailNotUsername(t *testing.T) {
 				newDeviceLessHandler(t),
 				NewPrinter("text", io.Discard),
 				username, email, "Admin", string(RoleAdmin), "",
-				false, time.Second, "",
+				false, time.Second, nil,
 			)
 
 			// The ceremony can only fail at the local authenticator: reaching it
@@ -206,7 +206,7 @@ func TestWebAuthnRegistration_BeginRegistrationFailureIsWrapped(t *testing.T) {
 		newDeviceLessHandler(t),
 		NewPrinter("text", io.Discard),
 		"admin", email, "Admin", string(RoleAdmin), "",
-		false, time.Second, "",
+		false, time.Second, nil,
 	)
 
 	if !errors.Is(err, ErrBeginRegistrationFailed) {

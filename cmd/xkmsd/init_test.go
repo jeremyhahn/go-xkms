@@ -28,6 +28,7 @@ import (
 	"testing/iotest"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // generateTestCSR creates a PEM-encoded ECDSA P-256 CSR for testing.
@@ -549,6 +550,23 @@ func TestValidateInitFlags_ThresholdZeroIsValid(t *testing.T) {
 	}
 }
 
+// openTestPasskeyPIN opens a sealed PIN and returns its plaintext for
+// comparison, destroying the buffer once read. A nil secret is reported as
+// "no PIN configured".
+func openTestPasskeyPIN(t *testing.T, secret *secure.Secret) string {
+	t.Helper()
+
+	if secret == nil {
+		return ""
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		t.Fatalf("open resolved passkey PIN: %v", err)
+	}
+	defer buf.Destroy()
+	return string(buf.Bytes())
+}
+
 func TestResolvePasskeyPIN(t *testing.T) {
 	t.Run("stdin is the preferred source", func(t *testing.T) {
 		t.Setenv("XKMS_PASSKEY_PIN", "from-env")
@@ -561,8 +579,8 @@ func TestResolvePasskeyPIN(t *testing.T) {
 		// The trailing newline a shell adds is not part of the PIN, and an
 		// authenticator that receives it reports a wrong PIN — burning a
 		// retry against a counter that blocks the key after three.
-		if pin != "123456" {
-			t.Errorf("pin = %q, want 123456 with the line ending stripped", pin)
+		if got := openTestPasskeyPIN(t, pin); got != "123456" {
+			t.Errorf("pin = %q, want 123456 with the line ending stripped", got)
 		}
 	})
 
@@ -573,8 +591,8 @@ func TestResolvePasskeyPIN(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolvePasskeyPIN: %v", err)
 		}
-		if pin != "654321" {
-			t.Errorf("pin = %q, want the environment value", pin)
+		if got := openTestPasskeyPIN(t, pin); got != "654321" {
+			t.Errorf("pin = %q, want the environment value", got)
 		}
 	})
 
@@ -587,8 +605,8 @@ func TestResolvePasskeyPIN(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolvePasskeyPIN: %v", err)
 		}
-		if pin != "" {
-			t.Errorf("pin = %q, want empty", pin)
+		if pin != nil {
+			t.Errorf("pin = %v, want nil", pin)
 		}
 	})
 

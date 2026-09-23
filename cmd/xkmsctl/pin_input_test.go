@@ -19,8 +19,25 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/spf13/cobra"
 )
+
+// openTestPIN opens a sealed PIN and returns its plaintext for comparison,
+// destroying the buffer once read. A nil secret reads as "no PIN supplied".
+func openTestPIN(t *testing.T, secret *secure.Secret) string {
+	t.Helper()
+
+	if secret == nil {
+		return ""
+	}
+	buf, err := secret.Open()
+	if err != nil {
+		t.Fatalf("open resolved PIN: %v", err)
+	}
+	defer buf.Destroy()
+	return string(buf.Bytes())
+}
 
 // These tests cover the input half of go-xkms#309: the xkmsctl WebAuthn verbs
 // take the same three PIN sources, in the same precedence order, as the xkey
@@ -63,8 +80,8 @@ func TestAddPINFlagsDeclaresBothSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolvePINInput: %v", err)
 	}
-	if pin != "" {
-		t.Errorf("a command with no PIN supplied resolves to none, got %q", pin)
+	if pin != nil {
+		t.Errorf("a command with no PIN supplied resolves to none, got %q", openTestPIN(t, pin))
 	}
 }
 
@@ -85,8 +102,8 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolvePINInput: %v", err)
 		}
-		if pin != "from-stdin" {
-			t.Errorf("got %q, want %q (the trailing newline must be trimmed)", pin, "from-stdin")
+		if got := openTestPIN(t, pin); got != "from-stdin" {
+			t.Errorf("got %q, want %q (the trailing newline must be trimmed)", got, "from-stdin")
 		}
 	})
 
@@ -102,8 +119,8 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolvePINInput: %v", err)
 		}
-		if pin != "from-env" {
-			t.Errorf("got %q, want %q", pin, "from-env")
+		if got := openTestPIN(t, pin); got != "from-env" {
+			t.Errorf("got %q, want %q", got, "from-env")
 		}
 	})
 
@@ -119,8 +136,8 @@ func TestResolvePINInputPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolvePINInput: %v", err)
 		}
-		if pin != "from-flag" {
-			t.Errorf("got %q, want %q", pin, "from-flag")
+		if got := openTestPIN(t, pin); got != "from-flag" {
+			t.Errorf("got %q, want %q", got, "from-flag")
 		}
 	})
 }
@@ -180,7 +197,7 @@ func TestResolvePINInputRejectsUndeclaredFlags(t *testing.T) {
 // input, and it names neither the PIN nor the flag that supplies it.
 func TestCeremonyFailureNamesTheMissingPIN(t *testing.T) {
 	for _, sentinel := range []error{ErrRegisterCredentialFailed, ErrAuthenticationFailed} {
-		err := ceremonyFailure(sentinel, "", fido2.ErrPINRequired)
+		err := ceremonyFailure(sentinel, nil, fido2.ErrPINRequired)
 		if err == nil {
 			t.Fatal("want an error")
 		}
@@ -209,7 +226,7 @@ func TestCeremonyFailureClassification(t *testing.T) {
 		// PIN_REQUIRED with a PIN in hand means the authenticator rejected an
 		// authorization that WAS attempted. Telling the operator to supply the
 		// PIN they just supplied sends them in a circle.
-		err := ceremonyFailure(ErrAuthenticationFailed, "123456", fido2.ErrPINRequired)
+		err := ceremonyFailure(ErrAuthenticationFailed, testPINSecret(t, "123456"), fido2.ErrPINRequired)
 		if !errors.Is(err, ErrAuthenticationFailed) {
 			t.Fatalf("want the original sentinel, got %v", err)
 		}
@@ -220,7 +237,7 @@ func TestCeremonyFailureClassification(t *testing.T) {
 
 	t.Run("an unrelated failure keeps its own sentinel", func(t *testing.T) {
 		cause := errors.New("hid: device disconnected")
-		err := ceremonyFailure(ErrRegisterCredentialFailed, "", cause)
+		err := ceremonyFailure(ErrRegisterCredentialFailed, nil, cause)
 		if !errors.Is(err, ErrRegisterCredentialFailed) {
 			t.Fatalf("want the original sentinel, got %v", err)
 		}
@@ -236,7 +253,7 @@ func TestCeremonyFailureClassification(t *testing.T) {
 		// A lockout must never read as anything else, so the attempt counter
 		// the authenticator reported has to survive to the operator.
 		cause := &fido2.PINAttemptsError{Err: fido2.ErrInvalidPIN, Retries: 2}
-		err := ceremonyFailure(ErrAuthenticationFailed, "999999", cause)
+		err := ceremonyFailure(ErrAuthenticationFailed, testPINSecret(t, "999999"), cause)
 		if !errors.Is(err, fido2.ErrInvalidPIN) {
 			t.Fatalf("want ErrInvalidPIN reachable, got %v", err)
 		}

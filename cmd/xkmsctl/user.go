@@ -30,6 +30,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/spf13/cobra"
 )
 
@@ -47,7 +48,7 @@ import (
 // after the non-string parameters rather than beside origin so a transposition
 // of the two strings cannot compile: a positional slot adjacent to origin
 // would let a mixed-up caller send the PIN to the relying party as an origin.
-// Empty is correct for an authenticator with no PIN configured; against one
+// Nil is correct for an authenticator with no PIN configured; against one
 // that has a PIN set the ceremony fails with ErrWebAuthnPINRequired.
 func webAuthnRegistration(
 	ctx context.Context,
@@ -57,7 +58,7 @@ func webAuthnRegistration(
 	username, email, displayName, role, origin string,
 	requireUV bool,
 	timeout time.Duration,
-	pin string,
+	pin *secure.Secret,
 ) (*fido2.WebAuthnAttestation, error) {
 	// Create the xkms user in the embedded qrdb node behind the server.
 	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
@@ -348,7 +349,7 @@ func loginAssertion(
 	assertionOpts protocol.CredentialAssertion,
 	requireUV bool,
 	timeout time.Duration,
-	pin string,
+	pin *secure.Secret,
 ) (*fido2.WebAuthnAssertion, error) {
 	rpID := assertionOpts.Response.RelyingPartyID
 

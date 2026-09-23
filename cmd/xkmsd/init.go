@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Init subcommand error types.
@@ -612,24 +613,35 @@ func resolveInitEnvFallbacks(f *initFlags) {
 	}
 }
 
-// resolvePasskeyPIN returns the CTAP2 PIN of the authenticator being enrolled.
+// resolvePasskeyPIN returns the CTAP2 PIN of the authenticator being
+// enrolled, sealed into protected memory.
 //
 // --passkey-pin-stdin wins over XKMS_PASSKEY_PIN so an operator can override an
 // inherited environment without unsetting it. There is no flag form on purpose:
 // a PIN in argv is world-readable through /proc for the life of the process.
 //
-// An empty result is not an error. A key with no PIN configured enrolls without
+// A nil result is not an error. A key with no PIN configured enrolls without
 // one, and a key that does have one refuses with a CTAP error that names the
 // cause far more precisely than a guess here could.
-func resolvePasskeyPIN(flags *initFlags, stdin io.Reader) (string, error) {
+func resolvePasskeyPIN(flags *initFlags, stdin io.Reader) (*secure.Secret, error) {
+	var raw string
 	if flags.passkeyPINStdin {
 		data, err := io.ReadAll(stdin)
 		if err != nil {
-			return "", &WrappedError{Sentinel: ErrPasskeyPINReadFailed, Err: err}
+			return nil, &WrappedError{Sentinel: ErrPasskeyPINReadFailed, Err: err}
 		}
-		return strings.TrimRight(string(data), "\r\n"), nil
+		raw = strings.TrimRight(string(data), "\r\n")
+	} else {
+		raw = os.Getenv("XKMS_PASSKEY_PIN")
 	}
-	return os.Getenv("XKMS_PASSKEY_PIN"), nil
+	if raw == "" {
+		return nil, nil
+	}
+	secret, err := secure.NewSecret([]byte(raw))
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrPasskeyPINReadFailed, Err: err}
+	}
+	return secret, nil
 }
 
 // validateInitFlags checks that all required flags are present and

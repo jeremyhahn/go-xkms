@@ -21,6 +21,7 @@ import (
 	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/factor/fido2"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	xkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // This file is the reusable administrator-enrollment orchestration for the
@@ -64,7 +65,7 @@ type AdminEnrollmentConfig struct {
 	// PasskeyPIN is the CTAP2 PIN of the authenticator being enrolled. Read it
 	// from stdin or the environment, never a command-line flag, where it would
 	// be visible in /proc to every process on the host.
-	PasskeyPIN string
+	PasskeyPIN *secure.Secret
 
 	// FIDO2Handler drives an attached authenticator. Nil when this build or
 	// host has no FIDO2 support, which makes a planned fido2 factor fail at

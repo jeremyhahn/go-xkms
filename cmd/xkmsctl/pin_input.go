@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/spf13/cobra"
 )
 
@@ -68,39 +69,55 @@ func addPINFlags(cmd *cobra.Command) {
 
 // resolvePINInput returns the PIN from the highest-precedence source the
 // command was given: standard input (--pin-stdin), then XKMS_FIDO2_PIN, then
-// --pin. Reading from stdin is preferred because a PIN passed as a flag is
-// visible to every process on the host via /proc.
+// --pin, sealed into protected memory. Reading from stdin is preferred
+// because a PIN passed as a flag is visible to every process on the host via
+// /proc.
 //
-// An empty return value means no source supplied a PIN. That is a legitimate
+// A nil return value means no source supplied a PIN. That is a legitimate
 // state — an authenticator with no PIN configured needs none — so the
 // ceremony rejects a missing PIN itself (see ceremonyFailure) rather than
 // having this resolver decide for it.
-func resolvePINInput(cmd *cobra.Command) (string, error) {
+func resolvePINInput(cmd *cobra.Command) (*secure.Secret, error) {
 	fromStdin, err := cmd.Flags().GetBool(pinFlagStdin)
 	if err != nil {
-		return "", &WrappedError{Sentinel: ErrPINInputFlagsMissing, Err: err}
+		return nil, &WrappedError{Sentinel: ErrPINInputFlagsMissing, Err: err}
 	}
 	if fromStdin {
 		data, readErr := io.ReadAll(secretStdin)
 		if readErr != nil {
-			return "", &WrappedError{Sentinel: ErrPINInputStdinRead, Err: readErr}
+			return nil, &WrappedError{Sentinel: ErrPINInputStdinRead, Err: readErr}
 		}
 		pin := strings.TrimRight(string(data), "\r\n")
 		if pin == "" {
-			return "", ErrPINInputStdinEmpty
+			return nil, ErrPINInputStdinEmpty
 		}
-		return pin, nil
+		return sealPIN(pin)
 	}
 
 	if pin := os.Getenv(pinEnvVar); pin != "" {
-		return pin, nil
+		return sealPIN(pin)
 	}
 
 	pin, err := cmd.Flags().GetString(pinFlagValue)
 	if err != nil {
-		return "", &WrappedError{Sentinel: ErrPINInputFlagsMissing, Err: err}
+		return nil, &WrappedError{Sentinel: ErrPINInputFlagsMissing, Err: err}
 	}
-	return pin, nil
+	if pin == "" {
+		return nil, nil
+	}
+	return sealPIN(pin)
+}
+
+// sealPIN seals a resolved PIN value into protected memory for
+// resolvePINInput. It exists as a single chokepoint so the plaintext PIN
+// string, however it was resolved, is copied into a *secure.Secret and
+// never held in a struct afterward.
+func sealPIN(pin string) (*secure.Secret, error) {
+	secret, err := secure.NewSecret([]byte(pin))
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrPINInputSealFailed, Err: err}
+	}
+	return secret, nil
 }
 
 // ceremonyFailure classifies an authenticator failure before it reaches the
@@ -114,8 +131,8 @@ func resolvePINInput(cmd *cobra.Command) (string, error) {
 // is reported verbatim rather than sending the operator to re-enter a PIN they
 // already gave. A wrong PIN keeps its fido2.PINAttemptsError annotation for the
 // same reason: a lockout must never read as anything else.
-func ceremonyFailure(sentinel error, pin string, cause error) error {
-	if pin == "" && errors.Is(cause, fido2.ErrPINRequired) {
+func ceremonyFailure(sentinel error, pin *secure.Secret, cause error) error {
+	if pin == nil && errors.Is(cause, fido2.ErrPINRequired) {
 		return &WrappedError{Sentinel: ErrWebAuthnPINRequired, Err: cause}
 	}
 	return &WrappedError{Sentinel: sentinel, Err: cause}

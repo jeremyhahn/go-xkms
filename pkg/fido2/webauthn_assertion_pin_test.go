@@ -30,7 +30,9 @@ import (
 
 // pinAssertionOptions is a minimal login ceremony for a PIN-protected
 // authenticator.
-func pinAssertionOptions(pin string) WebAuthnAuthenticationOptions {
+func pinAssertionOptions(t *testing.T, pin string) WebAuthnAuthenticationOptions {
+	t.Helper()
+
 	return WebAuthnAuthenticationOptions{
 		Challenge: []byte("authentication-challenge"),
 		Origin:    "https://xkms.example.com",
@@ -39,7 +41,7 @@ func pinAssertionOptions(pin string) WebAuthnAuthenticationOptions {
 		// this must NOT reach the wire as the "uv" option once a PIN is
 		// supplied — the simulator rejects that combination outright.
 		RequireUserVerification: true,
-		PIN:                     pin,
+		PIN:                     testSecret(t, pin),
 	}
 }
 
@@ -50,7 +52,7 @@ func pinAssertionOptions(pin string) WebAuthnAuthenticationOptions {
 func TestAuthenticateWebAuthnWithPIN(t *testing.T) {
 	handler := newPINProtectedHandler(t, "123456")
 
-	assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions("123456"))
+	assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions(t, "123456"))
 	if err != nil {
 		t.Fatalf("AuthenticateWebAuthn with PIN: %v", err)
 	}
@@ -75,7 +77,7 @@ func TestAuthenticateWebAuthnPINErrors(t *testing.T) {
 		// option is off here so the refusal is unambiguously about the missing
 		// pinUvAuthParam rather than about asking a PIN-only key for built-in
 		// user verification.
-		opts := pinAssertionOptions("")
+		opts := pinAssertionOptions(t, "")
 		opts.RequireUserVerification = false
 
 		assertion, err := handler.AuthenticateWebAuthn(opts)
@@ -90,7 +92,7 @@ func TestAuthenticateWebAuthnPINErrors(t *testing.T) {
 	t.Run("wrong PIN is not reported as a refusal", func(t *testing.T) {
 		handler := newPINProtectedHandler(t, "123456")
 
-		assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions("999999"))
+		assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions(t, "999999"))
 		if assertion != nil {
 			t.Fatal("a wrong PIN must not yield an assertion")
 		}
@@ -105,7 +107,7 @@ func TestAuthenticateWebAuthnPINErrors(t *testing.T) {
 		// GetPINToken against a key with no PIN set is an error rather than a
 		// silent success, so the operator learns the PIN was pointless instead
 		// of believing user verification happened.
-		assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions("123456"))
+		assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions(t, "123456"))
 		if assertion != nil {
 			t.Fatal("expected no assertion")
 		}
@@ -120,7 +122,7 @@ func TestAuthenticateWebAuthnPINErrors(t *testing.T) {
 		// did before PIN support existed.
 		handler := newPINProtectedHandler(t, "")
 
-		assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions(""))
+		assertion, err := handler.AuthenticateWebAuthn(pinAssertionOptions(t, ""))
 		if err != nil {
 			t.Fatalf("AuthenticateWebAuthn without PIN: %v", err)
 		}
@@ -142,7 +144,7 @@ func TestAssert_CarriesPINToAPINProtectedAuthenticator(t *testing.T) {
 	assertionJSON, err := handler.Assert(context.Background(), WebAuthnAssertionRequest{
 		OptionsJSON: optionsJSON,
 		Origin:      "https://xkms.example.com",
-		PIN:         "123456",
+		PIN:         testSecret(t, "123456"),
 	})
 	if err != nil {
 		t.Fatalf("Assert with PIN: %v", err)
@@ -183,7 +185,7 @@ func TestAssertPINErrors(t *testing.T) {
 		assertionJSON, err := handler.Assert(context.Background(), WebAuthnAssertionRequest{
 			OptionsJSON: optionsJSON,
 			Origin:      "https://xkms.example.com",
-			PIN:         "999999",
+			PIN:         testSecret(t, "999999"),
 		})
 		if assertionJSON != nil {
 			t.Fatal("a wrong PIN must not yield an assertion")
@@ -196,7 +198,7 @@ func TestAssertPINErrors(t *testing.T) {
 	t.Run("empty options are rejected before the device is touched", func(t *testing.T) {
 		handler := newPINProtectedHandler(t, "123456")
 
-		if _, err := handler.Assert(context.Background(), WebAuthnAssertionRequest{PIN: "123456"}); !errors.Is(err, ErrAssertionOptionsRequired) {
+		if _, err := handler.Assert(context.Background(), WebAuthnAssertionRequest{PIN: testSecret(t, "123456")}); !errors.Is(err, ErrAssertionOptionsRequired) {
 			t.Fatalf("want ErrAssertionOptionsRequired, got %v", err)
 		}
 	})
@@ -209,7 +211,7 @@ func TestAssertPINErrors(t *testing.T) {
 
 		if _, err := handler.Assert(ctx, WebAuthnAssertionRequest{
 			OptionsJSON: optionsJSON,
-			PIN:         "123456",
+			PIN:         testSecret(t, "123456"),
 		}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("want context.Canceled, got %v", err)
 		}

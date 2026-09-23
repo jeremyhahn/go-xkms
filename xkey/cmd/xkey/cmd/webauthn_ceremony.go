@@ -23,6 +23,7 @@ import (
 	"time"
 
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // This file is the client ("browser") half of the WebAuthn ceremonies the
@@ -77,7 +78,25 @@ var (
 	// longer exists.
 	ErrWebAuthnPINRequired = errors.New("webauthn: this authenticator requires a PIN; supply it with --" +
 		pinFlagStdin + " (preferred) or the " + pinEnvVar + " environment variable")
+
+	// ErrWebAuthnPINSealFailed indicates a resolved PIN could not be sealed
+	// into protected memory before it was carried into a CeremonyRequest.
+	ErrWebAuthnPINSealFailed = errors.New("webauthn: failed to seal the PIN into protected memory")
 )
+
+// sealCeremonyPIN seals a resolved PIN string into protected memory for a
+// CeremonyRequest. An empty pin returns nil, the zero value for "no PIN
+// configured" — the ceremony itself decides whether that is acceptable.
+func sealCeremonyPIN(pin string) (*secure.Secret, error) {
+	if pin == "" {
+		return nil, nil
+	}
+	secret, err := secure.NewSecret([]byte(pin))
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnPINSealFailed, Cause: err}
+	}
+	return secret, nil
+}
 
 // CeremonyRequest carries one ceremony's inputs: the relying party's
 // server-issued options plus the two things a browser would supply from
@@ -96,10 +115,10 @@ type CeremonyRequest struct {
 	// selects the WebAuthn same-origin default "https://<rpId>".
 	Origin string
 
-	// PIN is the authenticator's CTAP2 PIN, resolved by resolvePINInput.
-	// Empty is correct for an authenticator with no PIN configured; against
-	// one that has a PIN set the ceremony fails with ErrWebAuthnPINRequired.
-	PIN string
+	// PIN is the authenticator's CTAP2 PIN, resolved by resolvePINInput. Nil
+	// is correct for an authenticator with no PIN configured; against one
+	// that has a PIN set the ceremony fails with ErrWebAuthnPINRequired.
+	PIN *secure.Secret
 }
 
 // WebAuthnCeremony is the local authenticator half of a WebAuthn ceremony.
@@ -209,8 +228,8 @@ func (c *fido2Ceremony) Assert(ctx context.Context, req CeremonyRequest) ([]byte
 // means the authenticator rejected an authorization that was attempted — and
 // is reported verbatim rather than sending the operator to re-enter a PIN they
 // already gave.
-func ceremonyFailure(sentinel error, pin string, cause error) error {
-	if pin == "" && errors.Is(cause, fido2.ErrPINRequired) {
+func ceremonyFailure(sentinel error, pin *secure.Secret, cause error) error {
+	if pin == nil && errors.Is(cause, fido2.ErrPINRequired) {
 		return &SentinelCauseError{Sentinel: ErrWebAuthnPINRequired, Cause: cause}
 	}
 	return &SentinelCauseError{Sentinel: sentinel, Cause: cause}

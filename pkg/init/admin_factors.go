@@ -19,6 +19,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/factor/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // This file connects the ceremony's factor plan to the hardware that performs
@@ -53,7 +54,7 @@ type AdminEnrollmentContext struct {
 	// and at init there is no browser to prompt. Read it from stdin or the
 	// environment; never from a command-line flag, where it would be visible
 	// in /proc to every process on the host.
-	PasskeyPIN string
+	PasskeyPIN *secure.Secret
 
 	// LocalCeremony drives an attached FIDO2 authenticator. Nil when this
 	// build has no FIDO2 support, which makes a planned fido2 factor fail at

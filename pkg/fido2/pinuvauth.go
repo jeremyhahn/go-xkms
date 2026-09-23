@@ -27,6 +27,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // PIN/UV auth protocol versions, as defined by CTAP 2.1 6.5.6 (protocol
@@ -615,16 +616,23 @@ func (a *Authenticator) EstablishPINUVAuthSession() (*PINUVAuthSession, error) {
 // CTAP 2.1 authenticator stops the token after 30 seconds of disuse, 10 minutes
 // of life, or the first credential operation that collects user presence
 // (Section 6.5.2.1), so obtain a token per operation rather than caching one.
-func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin string) ([]byte, error) {
+func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin *secure.Secret) ([]byte, error) {
 	if session == nil {
 		return nil, ErrPINTokenFailed
 	}
-	if pin == "" {
+	if pin == nil {
 		return nil, &errs.Detail{Err: ErrPINTokenFailed, Detail: "PIN is empty"}
 	}
 
-	// CTAP 2.1 6.5.5.7: pinHashEnc is encrypt(LEFT(SHA-256(pin), 16)).
-	pinHash := sha256.Sum256([]byte(pin))
+	// The PIN is opened only for the instant the CTAP 2.1 6.5.5.7 pinHashEnc
+	// computation needs its bytes: pinHashEnc is
+	// encrypt(LEFT(SHA-256(pin), 16)).
+	pinBuf, openErr := pin.Open()
+	if openErr != nil {
+		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: openErr}
+	}
+	pinHash := sha256.Sum256(pinBuf.Bytes())
+	pinBuf.Destroy()
 	pinHashEnc, err := session.Encrypt(pinHash[:16])
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrPINTokenFailed, Cause: err}
@@ -670,7 +678,7 @@ func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin string) ([]by
 // A wrong PIN surfaces as ErrInvalidPIN and an exhausted retry counter as
 // ErrPINBlocked, both reachable with errors.Is, so a caller can tell "the
 // operator mistyped" from "the authenticator refused".
-func (a *Authenticator) AuthorizeWithPIN(pin string, message []byte) (param []byte, protocol uint64, err error) {
+func (a *Authenticator) AuthorizeWithPIN(pin *secure.Secret, message []byte) (param []byte, protocol uint64, err error) {
 	session, err := a.EstablishPINUVAuthSession()
 	if err != nil {
 		return nil, 0, err

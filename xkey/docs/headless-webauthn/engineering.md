@@ -1,6 +1,6 @@
 # Headless WebAuthn — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-22
 
 ## Exported surface
 
@@ -64,9 +64,19 @@ Invariants:
   Examples use `--pin-stdin`.
 
 The PIN reaches the authenticator through `CeremonyRequest{OptionsJSON, Origin,
-PIN}` (`webauthn_ceremony.go`), which carries it by name: `Origin` and `PIN` are
-both strings, and a positional signature holding the two adjacent would let a
-transposition send the PIN to the relying party as an origin.
+PIN}` (`webauthn_ceremony.go`), which carries it by name: a positional
+signature holding `Origin` and `PIN` adjacent would let a transposition send
+the PIN to the relying party as an origin.
+
+**`CeremonyRequest.PIN`, `fido2.WebAuthnRegistrationOptions.PIN`,
+`fido2.WebAuthnAssertionRequest.PIN` and `fido2.WebAuthnAuthenticationOptions.PIN`
+are all `*secure.Secret`** (`go-xkms/sdk/go/secure`), not plain strings: the
+resolved PIN is sealed into protected memory by `sealCeremonyPIN` immediately
+after `resolvePINInput` returns it, and is never held as plaintext in a
+struct. `Authenticator.AuthorizeWithPIN` and the `GetPINToken` step beneath it
+open the secret only for the instant the CTAP 2.1 6.5.5.7 pinHashEnc
+computation needs its bytes, then destroy the buffer. A nil `*secure.Secret`
+is the zero value for "no PIN configured", replacing the empty string.
 
 Registration sets `fido2.WebAuthnRegistrationOptions.PIN`; assertion sets
 `fido2.WebAuthnAssertionRequest.PIN`. Both authorize through the one

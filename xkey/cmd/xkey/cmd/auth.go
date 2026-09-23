@@ -564,6 +564,10 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ceremonyPIN, err := sealCeremonyPIN(pin)
+	if err != nil {
+		return err
+	}
 
 	tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
 
@@ -659,7 +663,7 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	attestation, err := ceremony.Register(ctx, CeremonyRequest{
 		OptionsJSON: []byte(begin.OptionsJSON),
 		Origin:      webauthnOrigin(serverURL),
-		PIN:         pin,
+		PIN:         ceremonyPIN,
 	})
 	if err != nil {
 		return err
@@ -720,6 +724,10 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	pin, err := resolvePINInput(cmd)
+	if err != nil {
+		return err
+	}
+	ceremonyPIN, err := sealCeremonyPIN(pin)
 	if err != nil {
 		return err
 	}
@@ -787,7 +795,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	assertion, err := ceremony.Assert(ctx, CeremonyRequest{
 		OptionsJSON: []byte(begin.OptionsJSON),
 		Origin:      webauthnOrigin(serverEntry.URL),
-		PIN:         pin,
+		PIN:         ceremonyPIN,
 	})
 	if err != nil {
 		return err

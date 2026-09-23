@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
@@ -1154,7 +1155,7 @@ type fakeCeremony struct {
 	origin string
 	// pin records what the command passed to the authenticator, which is the
 	// only way to prove the PIN survived the flag plumbing.
-	pin    string
+	pin    *secure.Secret
 	closed bool
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // This file adds the LOCAL half of FIDO2 enrollment: driving an attached
@@ -137,9 +138,9 @@ type LocalEnrollRequest struct {
 	DeviceHint string
 
 	// PIN is the authenticator's CTAP2 PIN. Required when the key has one
-	// set, because there is no browser at init to prompt for it. Empty is
+	// set, because there is no browser at init to prompt for it. Nil is
 	// correct for a key with no PIN configured.
-	PIN string
+	PIN *secure.Secret
 }
 
 // LocalEnrollResult carries the credential produced by the authenticator, in

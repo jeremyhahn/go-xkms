@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/go-webauthn/webauthn/protocol"
 )
@@ -46,9 +47,10 @@ type WebAuthnAuthenticationOptions struct {
 	// assertion-side counterpart of WebAuthnRegistrationOptions.PIN and is
 	// consumed through the same Authenticator.AuthorizeWithPIN path.
 	//
-	// Empty leaves the request unauthorized, which is correct for a key with
-	// no PIN configured.
-	PIN string
+	// The PIN is opened only inside AuthorizeWithPIN, at the point the CTAP2
+	// pinUvAuth computation needs its bytes. Nil leaves the request
+	// unauthorized, which is correct for a key with no PIN configured.
+	PIN *secure.Secret
 }
 
 // WebAuthnAssertion is the result of a WebAuthn authentication ceremony. The
@@ -241,7 +243,7 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 		},
 	}
 
-	if opts.PIN != "" {
+	if opts.PIN != nil {
 		param, pinProtocol, perr := auth.AuthorizeWithPIN(opts.PIN, clientDataHash[:])
 		if perr != nil {
 			return nil, perr
@@ -393,10 +395,10 @@ type WebAuthnAssertionRequest struct {
 	// selects the WebAuthn-standard same-origin default "https://<rpId>".
 	Origin string
 
-	// PIN is the authenticator's CTAP2 PIN. Empty leaves the GetAssertion
+	// PIN is the authenticator's CTAP2 PIN. Nil leaves the GetAssertion
 	// request unauthorized, which is correct for a key with no PIN set; see
 	// WebAuthnAuthenticationOptions.PIN.
-	PIN string
+	PIN *secure.Secret
 }
 
 // Assert drives a connected CTAP2 authenticator through a WebAuthn assertion

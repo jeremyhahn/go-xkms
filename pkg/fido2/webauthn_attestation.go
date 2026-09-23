@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -46,9 +47,10 @@ type WebAuthnRegistrationOptions struct {
 	// request carries a pinUvAuthParam, so this is what makes registration
 	// possible against a PIN-protected key with no browser to prompt for it.
 	//
-	// Empty leaves the request unauthorized, which is correct for a key with
-	// no PIN configured.
-	PIN string
+	// The PIN is opened only inside AuthorizeWithPIN, at the point the CTAP2
+	// pinUvAuth computation needs its bytes. Nil leaves the request
+	// unauthorized, which is correct for a key with no PIN configured.
+	PIN *secure.Secret
 }
 
 // WebAuthnAttestation is the result of a WebAuthn registration ceremony. The
@@ -326,7 +328,7 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		},
 	}
 
-	if opts.PIN != "" {
+	if opts.PIN != nil {
 		param, protocol, perr := auth.AuthorizeWithPIN(opts.PIN, clientDataHash[:])
 		if perr != nil {
 			return nil, perr

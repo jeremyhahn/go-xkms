@@ -24,7 +24,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// testSecret seals a test PIN string into protected memory. An empty s
+// returns nil, mirroring what an authenticator with no PIN configured
+// receives.
+func testSecret(t *testing.T, s string) *secure.Secret {
+	t.Helper()
+
+	if s == "" {
+		return nil
+	}
+	secret, err := secure.NewSecret([]byte(s))
+	require.NoError(t, err)
+	return secret
+}
 
 // newTestKeyPair generates a P-256 key pair and its COSE_Key rendering.
 func newTestKeyPair(t *testing.T) (*ecdh.PrivateKey, *COSEKeyEC2) {
@@ -508,7 +524,7 @@ func TestAuthenticator_GetPINToken(t *testing.T) {
 	session, err := auth.EstablishPINUVAuthSession()
 	require.NoError(t, err)
 
-	token, err := auth.GetPINToken(session, "123456")
+	token, err := auth.GetPINToken(session, testSecret(t, "123456"))
 	require.NoError(t, err)
 
 	// The platform must recover the exact token the authenticator minted; a
@@ -524,7 +540,7 @@ func TestAuthenticator_GetPINToken_Errors(t *testing.T) {
 		session, err := auth.EstablishPINUVAuthSession()
 		require.NoError(t, err)
 
-		token, err := auth.GetPINToken(session, "999999")
+		token, err := auth.GetPINToken(session, testSecret(t, "999999"))
 		assert.Nil(t, token)
 		assert.ErrorIs(t, err, ErrPINTokenFailed)
 		assert.ErrorIs(t, err, ErrInvalidPIN, "an operator who mistyped must not read 'denied'")
@@ -536,7 +552,7 @@ func TestAuthenticator_GetPINToken_Errors(t *testing.T) {
 		session, err := auth.EstablishPINUVAuthSession()
 		require.NoError(t, err)
 
-		token, err := auth.GetPINToken(session, "123456")
+		token, err := auth.GetPINToken(session, testSecret(t, "123456"))
 		assert.Nil(t, token)
 		assert.ErrorIs(t, err, ErrPINNotSet)
 	})
@@ -544,21 +560,21 @@ func TestAuthenticator_GetPINToken_Errors(t *testing.T) {
 	t.Run("nil session", func(t *testing.T) {
 		auth, _ := newPINAuthenticator(t, "123456")
 
-		token, err := auth.GetPINToken(nil, "123456")
+		token, err := auth.GetPINToken(nil, testSecret(t, "123456"))
 		assert.Nil(t, token)
 		assert.ErrorIs(t, err, ErrPINTokenFailed)
 	})
 
-	t.Run("empty PIN never reaches the wire", func(t *testing.T) {
+	t.Run("nil PIN never reaches the wire", func(t *testing.T) {
 		auth, sim := newPINAuthenticator(t, "123456")
 
 		session, err := auth.EstablishPINUVAuthSession()
 		require.NoError(t, err)
 
-		token, err := auth.GetPINToken(session, "")
+		token, err := auth.GetPINToken(session, nil)
 		assert.Nil(t, token)
 		assert.ErrorIs(t, err, ErrPINTokenFailed)
-		assert.Nil(t, sim.pinToken, "no token may be minted for an empty PIN")
+		assert.Nil(t, sim.pinToken, "no token may be minted for a nil PIN")
 	})
 }
 
@@ -566,7 +582,7 @@ func TestAuthenticator_AuthorizeWithPIN(t *testing.T) {
 	auth, sim := newPINAuthenticator(t, "123456")
 	clientDataHash := sha256.Sum256([]byte("clientDataJSON"))
 
-	param, protocol, err := auth.AuthorizeWithPIN("123456", clientDataHash[:])
+	param, protocol, err := auth.AuthorizeWithPIN(testSecret(t, "123456"), clientDataHash[:])
 	require.NoError(t, err)
 
 	assert.Equal(t, PINUVAuthProtocolV2, protocol, "protocol two is preferred when advertised")
@@ -580,7 +596,7 @@ func TestAuthenticator_AuthorizeWithPIN_WrongPIN(t *testing.T) {
 	auth, _ := newPINAuthenticator(t, "123456")
 	clientDataHash := sha256.Sum256([]byte("clientDataJSON"))
 
-	param, protocol, err := auth.AuthorizeWithPIN("000000", clientDataHash[:])
+	param, protocol, err := auth.AuthorizeWithPIN(testSecret(t, "000000"), clientDataHash[:])
 	assert.Nil(t, param)
 	assert.Zero(t, protocol)
 	assert.ErrorIs(t, err, ErrInvalidPIN)
