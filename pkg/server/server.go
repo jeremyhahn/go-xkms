@@ -580,12 +580,21 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "qrdb storage", Err: err}
 	}
 
+	// abortAfterStorage undoes initializeQRDBStorage when a later start-up
+	// step fails. A close error is logged, since the step's own error is the
+	// one returned.
+	abortAfterStorage := func(step string) {
+		cancel()
+		if closeErr := s.closeQRDBStorage(); closeErr != nil {
+			s.logger.Error("failed to close qrdb storage after start-up failure", "step", step, "error", closeErr)
+		}
+	}
+
 	// Initialize platform store. Requires s.barrier, which for the node-flip
 	// case (see above) is already unsealed and adopted; for every other case
 	// it is nil here exactly as before, and initializePlatformStore skips.
 	if err := s.initializePlatformStore(); err != nil {
-		cancel()
-		s.closeQRDBStorage()
+		abortAfterStorage("platform store")
 		return nil, &ErrServiceInit{Service: "platform store", Err: err}
 	}
 
@@ -595,8 +604,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// go-qrdb's own daemon resolves credentials only after its seal
 	// subsystem is unsealed.
 	if err := s.initializeCredentialService(); err != nil {
-		cancel()
-		s.closeQRDBStorage()
+		abortAfterStorage("credential service")
 		return nil, &ErrServiceInit{Service: "credential service", Err: err}
 	}
 
@@ -608,17 +616,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// could not resolve here before this reorder. See resolveConfigSecrets
 	// for what this does and does not cover.
 	if err := s.resolveConfigSecrets(); err != nil {
-		cancel()
-		s.closeQRDBStorage()
+		abortAfterStorage("config secret resolution")
 		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
 	}
 
 	// Initialize backends
 	if err := s.initializeBackends(); err != nil {
-		cancel()
-		if closeErr := s.closeQRDBStorage(); closeErr != nil {
-			s.logger.Error("failed to close qrdb storage during backend init failure", "error", closeErr)
-		}
+		abortAfterStorage("backends")
 		return nil, &ErrServiceInit{Service: "backends", Err: err}
 	}
 
