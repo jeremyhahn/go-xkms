@@ -1,36 +1,42 @@
 # PIN Management — API
 
-> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pin-management` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
 PIN routes are registered under `/api/v1/pin` with `RouteAuthSession` — an
 authenticated identity, no specific RBAC permission. They are **not**
-permission-gated, because holding the PIN is the authorization: a caller who
-can present the current PIN is who the device says they are.
+permission-gated on REST, because holding the PIN is the authorization: a
+caller who can present the current PIN is who the device says they are. MCP
+gates the same eight methods with a `pin:read` / `pin:write` RBAC permission
+(mirroring gRPC's `s.authorize(ctx, auth.ResourcePIN, ...)` calls) when RBAC
+is enabled; with RBAC disabled, MCP's authorization gate is a no-op, matching
+REST.
 
 ## Capability matrix
 
 | Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded (`PINService.`) | Auth |
 |---|---|---|---|---|---|---|
-| Set SO PIN | `POST /api/v1/pin/so/set` | `SetSOPIN` | same as REST | **MISSING — docs/13** | `SetSOPIN` | session |
-| Change SO PIN | `POST /api/v1/pin/so/change` | `ChangeSOPIN` | same as REST | **MISSING — docs/13** | `ChangeSOPIN` | session |
-| Verify SO PIN | `POST /api/v1/pin/so/verify` | `VerifySOPIN` | same as REST | **MISSING — docs/13** | `VerifySOPIN` | session |
-| Set user PIN | `POST /api/v1/pin/user/set` | `SetUserPIN` | same as REST | **MISSING — docs/13** | `SetUserPIN` | session |
-| Change user PIN | `POST /api/v1/pin/user/change` | `ChangeUserPIN` | same as REST | **MISSING — docs/13** | `ChangeUserPIN` | session |
-| Verify user PIN | `POST /api/v1/pin/user/verify` | `VerifyUserPIN` | same as REST | **MISSING — docs/13** | `VerifyUserPIN` | session |
-| Lockout status | `GET /api/v1/pin/lockout` | `GetLockoutStatus` | same as REST | **MISSING — docs/13** | `GetLockoutStatus` | session |
-| Reset lockout | `POST /api/v1/pin/lockout/reset` | `ResetLockout` | same as REST | **MISSING — docs/13** | `ResetLockout` | session |
+| Set SO PIN | `POST /api/v1/pin/so/set` | `SetSOPIN` | same as REST | `xkms.setSOPIN` | `SetSOPIN` | session (REST) / `pin:write` (MCP) |
+| Change SO PIN | `POST /api/v1/pin/so/change` | `ChangeSOPIN` | same as REST | `xkms.changeSOPIN` | `ChangeSOPIN` | session (REST) / `pin:write` (MCP) |
+| Verify SO PIN | `POST /api/v1/pin/so/verify` | `VerifySOPIN` | same as REST | `xkms.verifySOPIN` | `VerifySOPIN` | session (REST) / `pin:read` (MCP) |
+| Set user PIN | `POST /api/v1/pin/user/set` | `SetUserPIN` | same as REST | `xkms.setUserPIN` | `SetUserPIN` | session (REST) / `pin:write` (MCP) |
+| Change user PIN | `POST /api/v1/pin/user/change` | `ChangeUserPIN` | same as REST | `xkms.changeUserPIN` | `ChangeUserPIN` | session (REST) / `pin:write` (MCP) |
+| Verify user PIN | `POST /api/v1/pin/user/verify` | `VerifyUserPIN` | same as REST | `xkms.verifyUserPIN` | `VerifyUserPIN` | session (REST) / `pin:read` (MCP) |
+| Lockout status | `GET /api/v1/pin/lockout` | `GetLockoutStatus` | same as REST | `xkms.getLockoutStatus` | `GetLockoutStatus` | session (REST) / `pin:read` (MCP) |
+| Reset lockout | `POST /api/v1/pin/lockout/reset` | `ResetLockout` | same as REST | `xkms.resetLockout` | `ResetLockout` | session (REST) / `pin:write` (MCP) |
 
-**MCP carries none of the PIN surface.** Recorded as eight gaps rather than
-omitted. Unlike the WebAuthn case, this one is easy to argue for: an MCP tool
-server driven by a model is not somewhere PIN material should flow. But it is a
-capability with a wire surface on four transports and none on the fifth, so it
-is tracked debt with an owner rather than an unstated decision.
+**MCP now carries the full PIN surface** (go-xkms#773). Every method
+delegates to `XKMSService`'s own `SetSOPIN` / `SetUserPIN` / `ChangeSOPIN` /
+`ChangeUserPIN` / `VerifySOPIN` / `VerifyUserPIN` / `GetLockoutStatus` /
+`ResetLockout` — the same servicer methods REST calls through `PINManager`
+and gRPC calls through its composed `qrdbsdk.PINBackend` — so behaviour,
+including the backend-dependent table below, is identical across all four
+transports.
 
 Handlers: `pkg/api/rest/handlers_barrier_pin.go`,
-`pkg/api/grpc/service_barrier_pin.go`.
+`pkg/api/grpc/service_barrier_pin.go`, `pkg/api/mcp/handlers_pin.go`.
 
 ## Backend-dependent behaviour
 

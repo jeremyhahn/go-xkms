@@ -292,6 +292,7 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	// JSON-RPC error codes.
 	"xkms.attestKey":         (*Server).handleAttestKey,
 	"xkms.deriveKeyECDH":     (*Server).handleDeriveKeyECDH,
+	"xkms.deriveKey":         (*Server).handleDeriveKey,
 	"xkms.exportKeyMaterial": (*Server).handleExportKeyMaterial,
 	"xkms.wrapKeyByID":       (*Server).handleWrapKeyByID,
 	"xkms.unwrapKeyByID":     (*Server).handleUnwrapKeyByID,
@@ -354,6 +355,41 @@ var rpcMethodHandlers = map[string]rpcHandler{
 
 	// Trust bootstrap listener (go-xkms#632).
 	"bootstrap.showKeys": (*Server).handleBootstrapShowKeys,
+
+	// PIN management (SO PIN / user PIN / lockout). Delegate entirely to the
+	// xkms service layer's composed qrdbsdk.PINBackend (go-xkms#773).
+	"xkms.setSOPIN":         (*Server).handleSetSOPIN,
+	"xkms.setUserPIN":       (*Server).handleSetUserPIN,
+	"xkms.changeSOPIN":      (*Server).handleChangeSOPIN,
+	"xkms.changeUserPIN":    (*Server).handleChangeUserPIN,
+	"xkms.verifySOPIN":      (*Server).handleVerifySOPIN,
+	"xkms.verifyUserPIN":    (*Server).handleVerifyUserPIN,
+	"xkms.getLockoutStatus": (*Server).handleGetLockoutStatus,
+	"xkms.resetLockout":     (*Server).handleResetLockout,
+
+	// Custodian groups (Shamir share custody roster). Custodian state lives
+	// in the embedded go-qrdb node, reached through the XKMS service
+	// (go-xkms#773).
+	"xkms.createCustodianGroup":  (*Server).handleCreateCustodianGroup,
+	"xkms.getCustodianGroup":     (*Server).handleGetCustodianGroup,
+	"xkms.listCustodianGroups":   (*Server).handleListCustodianGroups,
+	"xkms.deleteCustodianGroup":  (*Server).handleDeleteCustodianGroup,
+	"xkms.addCustodianMember":    (*Server).handleAddCustodianMember,
+	"xkms.removeCustodianMember": (*Server).handleRemoveCustodianMember,
+	"xkms.distributeShares":      (*Server).handleDistributeShares,
+
+	// Tenant administration (multi-tenant lifecycle plus per-tenant
+	// barrier). Delegates to the xkms service layer's composed go-qrdb
+	// TenantService (go-xkms#773).
+	"xkms.createTenant":             (*Server).handleCreateTenant,
+	"xkms.getTenant":                (*Server).handleGetTenant,
+	"xkms.listTenants":              (*Server).handleListTenants,
+	"xkms.deleteTenant":             (*Server).handleDeleteTenant,
+	"xkms.tenantBarrierInit":        (*Server).handleTenantBarrierInit,
+	"xkms.tenantBarrierUnseal":      (*Server).handleTenantBarrierUnseal,
+	"xkms.tenantBarrierStatus":      (*Server).handleTenantBarrierStatus,
+	"xkms.updateTenantEntitlements": (*Server).handleUpdateTenantEntitlements,
+	"xkms.updateTenantQuotas":       (*Server).handleUpdateTenantQuotas,
 
 	// Shamir share operations. Share state lives in the embedded go-qrdb
 	// node, reached through the XKMS service.

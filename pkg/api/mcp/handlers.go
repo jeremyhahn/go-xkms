@@ -1412,6 +1412,37 @@ func (s *Server) handleDeriveKeyECDH(ctx context.Context, req *JSONRPCRequest) (
 	return resp, nil
 }
 
+// handleDeriveKey handles the xkms.deriveKey method: general (non-ECDH) key
+// derivation -- HKDF, SP 800-108 counter/feedback, PBKDF2 -- over
+// caller-supplied input key material or a backend-held key. Distinct from
+// xkms.deriveKeyECDH (handleDeriveKeyECDH), which performs an ECDH key
+// agreement before deriving. Delegates entirely to the xkms service layer,
+// which owns the KDF adapter dispatch and parameter assembly
+// (pkg/xkms/servicer_crypto.go).
+func (s *Server) handleDeriveKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params transport.DeriveKeyRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	}
+
+	if params.Algorithm == "" {
+		return nil, &errs.Message{Msg: "algorithm is required"}
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	params.TenantID = tenantID
+
+	resp, err := s.xkmsService.DeriveKey(ctx, &params)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
+
 // handleExportKeyMaterial handles exporting raw symmetric key bytes for
 // extractable keys.
 //

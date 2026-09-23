@@ -1,6 +1,6 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -12,20 +12,28 @@ Tenant routes are `RouteAuthSession` under `/api/v1/tenants`, registered on the
 
 | Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`TenantService.`) |
 |---|---|---|---|---|---|
-| Create tenant | `POST /api/v1/tenants/` | `CreateTenant` | same as REST | **MISSING — docs/13** | `CreateTenant` |
-| List tenants | `GET /api/v1/tenants/` | `ListTenants` | same as REST | **MISSING — docs/13** | `ListTenants` |
-| Get tenant | `GET /api/v1/tenants/{tenantID}` | `GetTenant` | same as REST | **MISSING — docs/13** | `GetTenant` |
-| Delete tenant | `DELETE /api/v1/tenants/{tenantID}` | `DeleteTenant` | same as REST | **MISSING — docs/13** | `DeleteTenant` |
-| Tenant barrier status | `GET /api/v1/tenants/{tenantID}/barrier/status` | `TenantBarrierStatus` | same as REST | **MISSING — docs/13** | `TenantBarrierStatus` |
-| Tenant barrier init | `POST /api/v1/tenants/{tenantID}/barrier/init` | `TenantBarrierInit` | same as REST | **MISSING — docs/13** | `TenantBarrierInit` |
-| Tenant barrier unseal | `POST /api/v1/tenants/{tenantID}/barrier/unseal` | `TenantBarrierUnseal` | same as REST | **MISSING — docs/13** | `TenantBarrierUnseal` |
-| Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | **MISSING — docs/13** | `UpdateTenantEntitlements` |
-| Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | **MISSING — docs/13** | `UpdateTenantQuotas` |
+| Create tenant | `POST /api/v1/tenants/` | `CreateTenant` | same as REST | `xkms.createTenant` | `CreateTenant` |
+| List tenants | `GET /api/v1/tenants/` | `ListTenants` | same as REST | `xkms.listTenants` | `ListTenants` |
+| Get tenant | `GET /api/v1/tenants/{tenantID}` | `GetTenant` | same as REST | `xkms.getTenant` | `GetTenant` |
+| Delete tenant | `DELETE /api/v1/tenants/{tenantID}` | `DeleteTenant` | same as REST | `xkms.deleteTenant` | `DeleteTenant` |
+| Tenant barrier status | `GET /api/v1/tenants/{tenantID}/barrier/status` | `TenantBarrierStatus` | same as REST | `xkms.tenantBarrierStatus` | `TenantBarrierStatus` |
+| Tenant barrier init | `POST /api/v1/tenants/{tenantID}/barrier/init` | `TenantBarrierInit` | same as REST | `xkms.tenantBarrierInit` | `TenantBarrierInit` |
+| Tenant barrier unseal | `POST /api/v1/tenants/{tenantID}/barrier/unseal` | `TenantBarrierUnseal` | same as REST | `xkms.tenantBarrierUnseal` | `TenantBarrierUnseal` |
+| Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | `xkms.updateTenantEntitlements` | `UpdateTenantEntitlements` |
+| Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | `xkms.updateTenantQuotas` | `UpdateTenantQuotas` |
 
-**MCP carries none of the tenant surface.** Nine gaps, recorded rather than
-omitted. Tenant administration is an operator activity and an MCP tool server is
-not an operator console, so the absence is arguable — but it is nine tier-level
-capabilities present on four transports and absent on one, which is tracked debt.
+**MCP now carries the full tenant administration surface** (go-xkms#773).
+Tenant metadata CRUD carries the `tenants:*` RBAC permission and the
+per-tenant barrier lifecycle carries `tenant_barrier:*` (mirroring gRPC's
+`s.authorize` calls) when RBAC is enabled. `GetTenant`, `DeleteTenant`, and
+the three `TenantBarrier*` methods additionally reproduce REST's
+cross-tenant anti-enumeration behaviour in the handler itself (see "Status
+and error mapping" below): a tenant-scoped caller naming another tenant gets
+the identical refusal a nonexistent tenant ID would. `CreateTenant`,
+`ListTenants` (filtered to the caller's own tenant when tenant-scoped, exactly
+as REST's `ListTenantsHandler` filters), `UpdateTenantEntitlements`, and
+`UpdateTenantQuotas` apply no cross-tenant restriction of their own, matching
+REST.
 
 ## Tenancy is enforced by middleware, not by these routes
 
@@ -124,18 +132,25 @@ Tenant barrier status is the same `BarrierStatus` shape as the system barrier.
 
 ## Status and error mapping
 
-| Condition | REST | gRPC / Unix |
-|---|---|---|
-| success | 200 | `OK` |
-| tenant barrier sealed (from `status`) | 200 | `OK` |
-| isolation mode not entitled | 403 | `PermissionDenied` |
-| quota exceeded | 429 | `ResourceExhausted` |
-| operation needs an unsealed tenant barrier | 409 | `FailedPrecondition` |
-| tenant not found — **including cross-tenant access** | 404 | `NotFound` |
-| tenancy not configured | route absent (404) | `Unimplemented` |
+| Condition | REST | gRPC / Unix | MCP |
+|---|---|---|---|
+| success | 200 | `OK` | `result` |
+| tenant barrier sealed (from `status`) | 200 | `OK` | `result` |
+| isolation mode not entitled | 403 | `PermissionDenied` | JSON-RPC internal error |
+| quota exceeded | 429 | `ResourceExhausted` | JSON-RPC internal error |
+| operation needs an unsealed tenant barrier | 409 | `FailedPrecondition` | JSON-RPC internal error |
+| tenant not found — **including cross-tenant access** | 404 | `NotFound` | JSON-RPC internal error carrying `seal.ErrTenantNotFound` |
+| tenancy not configured | route absent (404) | `Unimplemented` | JSON-RPC internal error |
 
-Cross-tenant access is deliberately **404, not 403**. A permission-denied answer
-would confirm that the tenant exists, making tenant IDs enumerable.
+Cross-tenant access is deliberately **not distinguishable from not-found** on
+any transport. A permission-denied answer would confirm that the tenant
+exists, making tenant IDs enumerable. JSON-RPC has no dedicated not-found
+code (see [`../key-management/api.md`](../key-management/api.md)), so MCP's
+`GetTenant`/`DeleteTenant`/`TenantBarrierStatus`/`TenantBarrierInit`/
+`TenantBarrierUnseal` handlers return the internal-error code carrying the
+identical `seal.ErrTenantNotFound` message a genuine miss produces — the same
+"same answer either way" property REST's 404 and gRPC's `NotFound` give,
+translated onto JSON-RPC's coarser vocabulary.
 
 ## Pagination
 
