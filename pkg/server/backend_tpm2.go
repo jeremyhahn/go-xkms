@@ -58,23 +58,37 @@ func (s *Server) initTPM2Backend() error {
 		return &ErrBackendCreate{Backend: "TPM2", Err: err}
 	}
 
-	// When the seal autodetect already opened this TPM (node-barrier flip),
-	// reuse that single open: build the general backend over the SAME TPM
-	// connection via NewBackendWithTPM. A second independent open would hang a
-	// swtpm emulator; sharing the connection also keeps one PlatformKeyStore /
-	// policy state. The shared TPM is closed once, at node shutdown
-	// (nodeSealClose), not by this backend (externalTPM).
-	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
+	// When an earlier step already opened this TPM -- the seal autodetect for
+	// the node-barrier flip (s.nodeSealTPM), or the platform store's tpm2
+	// credential strategy (s.platformStoreTPM, initializePlatformStore, which
+	// runs before this) -- reuse that single open: build the general backend
+	// over the SAME TPM connection via NewBackendWithTPM. A second independent
+	// open hangs the simulator (and a real swtpm); sharing the connection also
+	// keeps one PlatformKeyStore / policy state. Whichever field opened it owns
+	// closing it (nodeSealClose at node shutdown, or platformStoreTPMClose at
+	// server shutdown) -- not this backend (externalTPM).
+	shared, ok := s.nodeSealTPM.(*tpm2backend.Backend)
+	sharedFrom := "the seal autodetect's single TPM open"
+	if !ok {
+		shared, ok = s.platformStoreTPM.(*tpm2backend.Backend)
+		sharedFrom = "the platform store's tpm2 credential strategy TPM open"
+	}
+	if ok {
+		keyBackend, err := tpm2backend.NewFileKeyBackend(s.logger, keyDir)
+		if err != nil {
+			return &ErrBackendCreate{Backend: "TPM2", Err: err}
+		}
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
-			TPM:    shared.TPM(),
-			KeyDir: keyDir,
-			Logger: s.logger,
+			TPM:        shared.TPM(),
+			KeyBackend: keyBackend,
+			KeyDir:     keyDir,
+			Logger:     s.logger,
 		})
 		if err != nil {
 			return &ErrBackendCreate{Backend: "TPM2", Err: err}
 		}
 		s.keyProviders["tpm2"] = tpmBackend
-		s.logger.Info("TPM2 backend reuses the seal autodetect's single TPM open", "backend", "tpm2", "device", devicePath)
+		s.logger.Info("TPM2 backend reuses "+sharedFrom, "backend", "tpm2", "device", devicePath)
 		return nil
 	}
 

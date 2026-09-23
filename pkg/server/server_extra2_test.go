@@ -681,15 +681,35 @@ func TestInitializeBarrierRegistry_NilBarrier(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializePlatformStore (with / without barrier)
+// Tests — initializePlatformStore no longer depends on s.barrier (go-xkms#718)
 // ============================================================================
 
-func TestInitializePlatformStore_NilBarrier(t *testing.T) {
+// TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier is the
+// regression test for go-xkms#718: initializePlatformStore used to gate on
+// s.barrier being non-nil (and never assigned s.platformStore even then).
+// The platform store now seals independently of s.barrier -- it is
+// s.config.Credentials.SealStrategy that decides whether it is built at
+// all. A default/manual strategy still skips it (nothing to store), with or
+// without a barrier.
+func TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	s.barrier = nil
 	err := s.initializePlatformStore()
 	require.NoError(t, err)
 	assert.Nil(t, s.platformStore)
+}
+
+// TestInitializePlatformStore_BuildsWithoutBarrier proves a non-skip
+// strategy (tpm2, with its Platform SRK already enrolled -- see
+// tpm2EnrolledServer in platform_store_test.go) builds a working platform
+// store even when s.barrier is nil, since the platform store is sealed by
+// its own strategy, never by the barrier.
+func TestInitializePlatformStore_BuildsWithoutBarrier(t *testing.T) {
+	s := tpm2EnrolledServer(t, false, 0)
+	s.barrier = nil
+	err := s.initializePlatformStore()
+	require.NoError(t, err)
+	assert.NotNil(t, s.platformStore)
 }
 
 // ============================================================================

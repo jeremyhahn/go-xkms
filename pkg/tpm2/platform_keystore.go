@@ -592,6 +592,16 @@ func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 	pks.authReady.Store(ready)
 }
 
+// PlatformSRKAttributesFromConfig builds the Platform SRK's key attributes
+// from Config -- the exported entry point for callers outside this package
+// (test harnesses that enroll a Platform SRK against the in-process
+// simulator; production callers use CreateSRK plus this in the same
+// enrollment sequence PlatformKeyStore.EnrollPlatformSRK drives) that need
+// the same construction NewPlatformKeyStore uses, without duplicating it.
+func PlatformSRKAttributesFromConfig(config *Config) (*types.KeyAttributes, error) {
+	return buildSRKAttrsFromConfig(config)
+}
+
 // buildSRKAttrsFromConfig creates SRK key attributes from the TPM Config.
 // It uses the PlatformSRKConfig.SRKHandle if set, otherwise falls back to the
 // default tpSRKIndex (0x81000002).

@@ -1,6 +1,6 @@
 # Platform Secrets — Architecture
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -57,9 +57,42 @@ Rejected alternatives:
 | Per-tenant platform store | `pkg/seal/platform_store_tenant.go` | go-xkms |
 | Platform sealer | `pkg/seal/platform_sealer.go` | go-xkms |
 | Storage backends, including `sealed.Backend` | `pkg/storage` | go-xkms |
-| The barrier doing the sealing | go-qrdb | **go-qrdb** |
+| The barrier doing the sealing (per-tenant stores; the `barrier` credential strategy bypasses the platform store entirely) | go-qrdb | **go-qrdb** |
+| The daemon's own (system) platform store: composition root, per-strategy sealer resolution, tpm2 platform-policy binding | `pkg/server/platform_store.go` | go-xkms |
 | Wire surface | `pkg/api/rest/seal_store_handlers.go`, `transport.SealStoreService` | go-xkms |
 | CLI | `cmd/xkmsctl/platform.go` | go-xkms |
+
+xkmsd's own platform store is sealed by whichever strategy
+`credentials.seal_strategy` names (`tpm2`, `pkcs11`, `awskms`, `gcpkms`,
+`azurekv`, `vault`, `passphrase`) — a `seal.PlatformSealer` built around a
+single-strategy `types.Sealer`, independent of and parallel to the barrier.
+`credentials.seal_strategy: barrier` is the one value that does NOT go
+through the platform store at all: `credentials.Service` stores that
+credential directly in the barrier instead (see
+[`../init/credentials.md`](../init/credentials.md), not itself NORMATIVE, but
+descriptive of that split). `manual` stores nothing. See
+[`platform_store.go`'s `initializePlatformStore`](../../pkg/server/platform_store.go)
+for the per-strategy sealer resolution:
+
+- **`tpm2`** seals under the Platform SRK only — go-xkms never seals under
+  the TCG Shared SRK (owner ruling; PR #681 removes every Shared-SRK
+  fallback in `pkg/tpm2`/`pkg/backend/tpm2`). It reuses a single TPM open
+  with the node-seal flip and the general tpm2 backend rather than opening
+  the simulator/device a second time, and fails closed with a typed error
+  naming `PlatformKeyStore.EnrollPlatformSRK` when the Platform SRK is not
+  yet enrolled — enrollment is a deliberate, separate operator/ceremony
+  step this call never performs implicitly.
+- **`awskms`/`gcpkms`/`azurekv`** authenticate with each cloud SDK's ambient
+  credential chain (IAM role, Application Default Credentials,
+  `DefaultAzureCredential`) and resolve their symmetric wrapping key through
+  the same `seal_strategies.go` machinery (`sealKeyAttributesFor`,
+  `ensureSealKey`) the barrier's own cloud-KMS strategy uses — the same
+  self-provisioned key, not a second one.
+- **`pkcs11`/`vault`** fail closed today (go-xkms#677): the PIN/token is
+  only resolvable through the credential service this call itself builds
+  storage for.
+- **`passphrase`** fails closed pending an owner ruling on where the
+  operator passphrase comes from — see Trust boundaries.
 
 ## Data flow
 
@@ -87,8 +120,29 @@ reseal: PlatformStore.Reseal(name)
   an explicit operation.
 - **`Reseal` re-binds to whatever state the machine is in now.** Running it on a
   machine you have not verified rebinds the secret to that machine's state.
+- **`Reseal` refreshes a seal that still opens; it does not restore one that no
+  longer does.** `Reseal`'s own implementation reads the current plaintext
+  first (`Get`), then deletes and re-writes. If the platform state has already
+  drifted far enough that `Get` fails — the exact TPM-PCR-mismatch case this
+  feature exists to detect — `Reseal` fails identically: there is no plaintext
+  left to re-seal, for any strategy, because the secret's only copy was sealed
+  under the state that no longer holds. Call `Reseal` proactively, while the
+  old state (and therefore `Get`) is still valid — e.g. ahead of a planned
+  firmware/PCR change — not as a post-hoc recovery from one that already
+  broke access. Verified empirically against the tpm2 strategy
+  (`pkg/server/platform_store_test.go`,
+  `TestInitializePlatformStore_TPM2PlatformPolicy_PCRExtendBreaksGet`).
 - **`Put` overwrites with a fresh seal.** There is no versioning and no
   previous-value recovery.
+- **The `passphrase` strategy has no working seal today; it fails closed.**
+  `CredentialsConfig` has no field for an operator passphrase, and a
+  literal/inline secret in a protected `*types.SecretValue` field is refused
+  by the qrdb secret-value contract, so this strategy cannot derive a real
+  seal key without either new config surface or a design the owner has not
+  yet chosen. An earlier version generated a random secret and persisted it
+  **unsealed** next to the data as a stand-in; that is not sealing, and it
+  was removed — `credentials.seal_strategy: passphrase` now fails
+  `Server.New` with a typed error rather than silently protecting nothing.
 - **Secret names are not secret.** `List` returns them.
 - **`SealedPlatformStore` is concurrency-safe** — all operations take a
   read-write mutex — but concurrency safety is not access control; that is the
