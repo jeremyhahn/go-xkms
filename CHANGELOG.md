@@ -7,6 +7,325 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0-alpha] - 2026-09-23
+
+### Security
+
+- **BREAKING: `BackupKey.PrivateKey`, `StoredCredential.PrivateKey` (in both
+  `xkey/pkg/authenticator` and `xkey/pkg/cdp`), `OATHCredentialInfo.Secret`
+  and `PasswordInfo.Password` are no longer plaintext exported fields — the
+  key/secret/password material now lives in mlocked, guard-paged protected
+  memory (`*secure.Buffer`) and is reached only through `SetXxx`/`XxxBytes`
+  or `SetXxx`/`XxxString` accessors, closing the last of the go-xkms#549
+  secure-analyzer findings for `pkg/backup`, `xkey/pkg/authenticator`,
+  `xkey/pkg/cdp` and `xkey/pkg/backup`.** Every type keeps its historical
+  JSON shape — `BackupKey`, `StoredCredential` (both packages),
+  `OATHCredentialInfo` and `PasswordInfo` all gained a custom
+  `MarshalJSON`/`UnmarshalJSON` pair (matching the `xkey/pkg/oath.Credential`
+  pattern) that serializes the protected value under the same historical
+  JSON key it always used, so archives and credential stores written by a
+  prior build keep decoding byte-for-byte — proven by a golden-fixture test
+  per type. `cdp.StoredCredential`'s `MarshalJSON` uses a value receiver
+  (not pointer) because that type's public API passes it by value
+  throughout the package; a pointer-receiver `Marshaler` would be silently
+  skipped by `encoding/json` for a non-addressable value and drop the
+  protected field with no error. Every caller across `pkg/backup`,
+  `xkey/pkg/authenticator`, `xkey/pkg/cdp`, `xkey/pkg/backup`,
+  `xkey/pkg/sync` and `xkey/cmd/xkey/cmd` was converted to the new setters
+  and accessors, including `MemoryStorage.copyCredential` (now
+  error-returning, since cloning a protected buffer can fail) and the
+  CDP-capture/sync path in `xkey/cmd/xkey/cmd/fido2.go`. The five
+  corresponding `scripts/secure-analyzer-allowlist.txt` `pre-existing`
+  entries are removed.
+- **BREAKING: the CTAP2 authenticator PIN carried through the FIDO2 WebAuthn
+  ceremonies, the local enrollment driver, and the init ceremony's passkey
+  enrollment is now sealed in protected memory (`*secure.Secret`) instead of
+  held as a plaintext `string`.** `pkg/fido2.WebAuthnAuthenticationOptions.PIN`,
+  `WebAuthnAssertionRequest.PIN`, `WebAuthnRegistrationOptions.PIN`,
+  `pkg/factor/fido2.LocalEnrollRequest.PIN`, `xkey/cmd/xkey/cmd.CeremonyRequest.PIN`,
+  `pkg/init.AdminEnrollmentConfig.PasskeyPIN` and
+  `pkg/init.AdminEnrollmentContext.PasskeyPIN` all change from `string` to
+  `*secure.Secret` (`go-xkms/sdk/go/secure`); a nil secret replaces the empty
+  string as "no PIN configured". `fido2.Authenticator.AuthorizeWithPIN` and
+  `GetPINToken` now take the PIN as `*secure.Secret` and open it only for the
+  instant the CTAP 2.1 6.5.5.7 pinHashEnc computation needs its bytes, then
+  destroy the buffer — the plaintext PIN is never held in a struct. Every
+  caller is updated: `cmd/xkmsctl` (`resolvePINInput` now seals the resolved
+  PIN, `webAuthnRegistration`/`loginAssertion`/`ceremonyFailure` take
+  `*secure.Secret`), `xkey/cmd/xkey/cmd` (`sealCeremonyPIN` seals the PIN
+  `resolvePINInput` resolves before it reaches `CeremonyRequest`;
+  `ceremonyFailure` takes `*secure.Secret`), `pkg/init`/`pkg/factor/fido2`
+  (the passkey enrollment plumbing), and `cmd/xkmsd` (`resolvePasskeyPIN`
+  now seals the resolved passkey PIN). The `pre-existing` deferred-review
+  allowlist lines for these fields are removed from
+  `scripts/secure-analyzer-allowlist.txt`.
+- **BREAKING: the MCP `ssh.knownHosts.verify` and REST `POST
+  /xkms/v1/ssh/known-hosts/{host}/verify` endpoints now take the presented
+  host public key instead of a caller-claimed fingerprint, and delegate to
+  the canonical `pkg/ssh/known_hosts.Verify` full-key comparison.** Both
+  handlers previously did their own `KnownHosts().List` + string compare of
+  a client-supplied `fingerprint`/`algorithm` pair against the stored pin's
+  `Fingerprint` field — a caller only had to ship a string that matched, not
+  the key it claimed to be presenting, so the check trusted the caller's
+  claim about the key rather than examining it. `handleSSHKnownHostsVerify`
+  (`pkg/api/mcp/handlers_ssh.go`) and `handleVerifyKnownHost`
+  (`pkg/api/rest/handlers_ssh.go`) now parse the wire `public_key`
+  (`authorized_keys` format) and call the SDK client's
+  `KnownHosts().Verify(ctx, scope, owner, host, pub)`, which for the
+  embedded client (used by both transports) delegates straight to
+  `known_hosts.Verify` — the same full `received.Marshal()` vs.
+  `Pin.PublicKey` byte comparison the gRPC transport already relies on. The
+  parallel List+compare is deleted from both handlers. Wire shapes changed
+  to match: `SSHKnownHostsVerifyParams` (MCP) and the REST verify DTO
+  dropped `fingerprint`/`algorithm` for a required `public_key` field; the
+  SDK REST and MCP clients (`sdk/go/client/ssh/rest.go`,
+  `sdk/go/client/ssh/mcp.go`) now send the presented key's
+  `authorized_keys` line instead of computing and shipping a fingerprint.
+  A malformed `public_key` is rejected with the existing
+  `sdkssh.InvalidPublicKeyError` (now also mapped to HTTP 400 in
+  `HTTPStatusForError`, alongside `MissingPublicKeyError`, closing a gap
+  where both fell through to 500). `xkmsctl`/`xkey` callers are unaffected:
+  they already called `KnownHosts().Verify` with the actual
+  `gossh.PublicKey` they held, so only the internal wire encoding changed.
+- **BREAKING: PKCS#11/PIV token PINs are now `*secure.Secret` instead of
+  plain Go strings across the RNG, PIV certificate storage, PKCS#11 mTLS,
+  and SDK PIV-signing surfaces.** `rand.PKCS11Config.PIN`
+  (`pkg/crypto/rand/rand.go`), `pivcert.PKCS11StorageConfig.PIN` and
+  `.SOPIN` (`pkg/pivcert/pivcert.go`), `auth.PKCS11TLSConfig.PIN`
+  (`pkg/auth/pkcs11_tls.go`), `xkms.PIVCryptoSigner.PIN`
+  (`sdk/go/piv_signer.go`), and `xkmsctl`'s `Config.PKCS11PIN`
+  (`cmd/xkmsctl/config.go`) all change from `string` to `*secure.Secret`, so
+  a configured PIN no longer sits in memory as an unwipeable Go string for
+  the life of the process. A nil PIN replaces the previous empty-string
+  sentinel; every `x.PIN != ""`/`== ""` check became a nil check. Each PIN is
+  opened only immediately around the boundary call that requires a plain
+  string — miekg/pkcs11's `Login`, the in-house `pkcs11module.Config`, and
+  `PIVSignRequest`'s wire transport — and the opened buffer is destroyed
+  right after. `xkmsctl`'s `--pkcs11-pin` flag and xkey's PIV PKCS#11
+  wiring now seal their raw flag/config strings into a `*secure.Secret`
+  before handing them to these APIs. Updated every call site in the root
+  module, `sdk/go`, and `xkey` (`pkg/crypto/rand/pkcs11.go`,
+  `pkg/pivcert/pkcs11/pkcs11.go`, `cmd/xkmsctl/root.go`, `admin.go`,
+  `xkey/cmd/xkey/cmd/piv_pkcs11.go`, and the corresponding test fixtures).
+  Removed the four now-satisfied `pre-existing` rule-3 allowlist lines from
+  `scripts/secure-analyzer-allowlist.txt` for these fields.
+- **BREAKING: every remaining secret-bearing config field typed as a plain
+  `string` is now `types.SecretValue`, closing the last open part of the
+  2026-08-17 audit (#3 part 3).** `pkg/config.Config`'s `barrier.passphrase`,
+  `rng.pkcs11.pin`, `backends.pkcs11.pin` (the token PIN; `backends.pkcs11.token`
+  — a slot label, not a credential — stays a string), `backends.awskms.secret_key`,
+  `backends.azurekv.client_secret`, `backends.vault.token`, and
+  `backends.phone.noise_static_key`; every hierarchy-auth/password field of
+  `pkg/tpm2.Config` (`lockout-auth`, and each of `ek`/`ssrk`/`idevid`/`iak`/
+  `ldevid`/`lak`'s `hierarchy-auth`/`password`); `pkg/backend/azurekv.Config.ClientSecret`
+  and `pkg/backend/pkcs11.Config.PIN`/`SOPIN`; and `pkg/ca.CAKeystorePKCS11Config.Pin`
+  now follow the `types.SecretValue` custody pattern #41 established for
+  `KeyConfig.Password` and `CAKeystoreSoftwareConfig.Password`: the resolved
+  plaintext is sealed into the field's own memguard enclave rather than kept
+  as an unwipeable Go string, and every call site borrows it with
+  `types.SecretValueBytes` (WithBytes-first, falling back to `Raw` for a
+  value that was never resolved — the same priority `NewPasswordFromSecretValue`
+  already used) or, where a third-party SDK requires a plain string or
+  `[]byte` (miekg/pkcs11's `Login`, the Azure/AWS/Vault client constructors),
+  at that one documented boundary. `SPKIConfig.Pin` (`bootstrap.raft.*.spki_pin`)
+  is unchanged: it is a public SHA-256 hash, not a secret. `pkg/backend/tpm2.Config`
+  gains a new `HierarchyAuth` field (additive) so the TPM2 backend can
+  express an Owner-hierarchy auth for the Storage Root Key it provisions —
+  previously that config had no way to express one at all. The YAML/JSON
+  wire shape is unchanged for every field: each still decodes from, and
+  re-encodes to, the same plain reference string. Go callers that construct
+  these structs directly (embedders, tests, the SDK) must update to
+  `types.SecretValue{Raw: "..."}` (an unresolved literal, matching a
+  straight YAML/JSON decode) or `types.NewLiteralSecretValue([]byte("..."))`
+  (a resolved literal, e.g. a CLI-flag value) in place of a bare string.
+  `types.SecretValueBytes` now refuses, with the new typed
+  `*types.SecretReferenceUnresolvedError`, any value shaped like a secret
+  reference (`scheme://name`) that nothing has actually resolved — closing a
+  real gap the first pass of this change left open: a `credential://...`
+  value for one of these fields previously fell through to being used
+  verbatim as the secret (the reference text itself), which is worse than
+  the plain string it replaced. `backends.phone.noise_static_key` (resolved
+  when a phone connects, well after boot) now resolves a `credential://`
+  reference for real, through the same `Server.buildSecretRegistry` the CA
+  identity passwords and the cluster CA passphrase already used — no second
+  resolver. `barrier.passphrase`, `rng.pkcs11.pin`, `backends.pkcs11.pin`,
+  `backends.awskms.secret_key`, `backends.azurekv.client_secret`,
+  `backends.vault.token`, and the `tpm2.*` hierarchy-auth/password fields are
+  consumed earlier in `Server.New` than the credential service exists to
+  resolve anything (`resolveNodeSeal`/`initializeBackends` run before
+  `initializeCredentialService`, which itself needs the barrier those fields
+  help unseal), so a `credential://` reference for any of them fails
+  `Server.New` outright with `*types.SecretReferenceUnresolvedError` instead
+  of silently misusing the reference text; a literal value, or one an env
+  var/flag supplies, is unaffected. See
+  `docs/xkmsd-configuration/engineering.md`'s Decoding notes for the full
+  per-field breakdown and the follow-up this leaves open (a boot-time
+  resolver that does not depend on the barrier, scoped separately).
+- **`Server.resolveConfigSecrets` (`pkg/server/secret_wiring.go`) replaces
+  every ad-hoc `buildSecretRegistry().Resolve` call with go-qrdb's canonical
+  `secret.ConfigProcessor`, run once over the whole loaded configuration
+  right after `initializeCredentialService` — the earliest point in
+  `Server.New` a `credential://` reference can actually be claimed — and
+  before `initializeCA`, so every consumer it precedes
+  (`ca.identity[*].keys[*].password`, `ca.identity[*].keystores.software.password`,
+  `cluster.raft_enrollment.ca_key_passphrase`,
+  `backends.phone.noise_static_key`) now reads an already-resolved field
+  through `types.SecretValueBytes` alone; the per-field resolve loop this
+  replaced in `Server.initializeCA`, `resolveClusterCAKeyPassphrase`, and
+  `RegisterPhoneBackend` is deleted. A literal value and an unconfigured
+  field are both left exactly as decoded — the processor's own
+  `secret.UnresolvableTargetError` for either is the expected, tolerated
+  outcome, not a failure — and `Server.New` fails only with the new typed
+  `*server.ErrConfigSecretResolution` when the registry claimed a reference
+  and genuinely could not fetch it (credential store error, missing
+  credential). `resolveClusterCAKeyPassphrase`'s pre-node cluster-ACME
+  bootstrap caller (`provisionRaftClusterACME`, which still runs before the
+  credential service exists) picks up a real fix as a side effect: it used
+  to call `buildSecretRegistry().Resolve` directly, so a `credential://`
+  reference on that path silently fell through the registry's literal
+  fallback and used the unclaimed reference text itself as the cluster CA
+  key passphrase; it now goes through `types.SecretValueBytes` like every
+  other caller and fails closed with `*types.SecretReferenceUnresolvedError`
+  instead. The fields consumed earlier than `initializeCredentialService`
+  (`barrier.passphrase`, `rng.pkcs11.pin`, `backends.pkcs11.pin`,
+  `backends.awskms.secret_key`, `backends.azurekv.client_secret`,
+  `backends.vault.token`, and the `tpm2.*` hierarchy-auth/password fields
+  where a config path to them exists at all) are unaffected — the same
+  structural chicken-and-egg gap `docs/xkmsd-configuration/engineering.md`
+  already documented remains open, scoped separately.
+
+### Added
+
+- **Added a compile-only CI gate (`make vet-integration`) that type-checks
+  every suite under `test/integration/` before it can rot silently.**
+  `go vet ./...` from the root never reaches a file behind an `integration`
+  (or other suite) build tag, because that tag is never set — the reason
+  #636/#638 broke `sdk/go` and `acme-tpm` unnoticed, and the `tpm2/idevid`
+  and `tpm2/tpm_operations` suites drifted roughly 200 references behind
+  `pkg/tpm2/store`'s current API before an agent tripped over it.
+  `scripts/vet-integration.sh` discovers every distinct `//go:build` tag
+  combination declared under `test/integration/` and runs one
+  `go vet -tags "..."` per combination, deliberately never as one tag
+  union: several suites are mutually exclusive within the same package
+  (`integration && grpc` beside `integration && !grpc`, `pkcs11` beside
+  `!pkcs11`), and unioning every tag would compile both halves of a pair
+  together and fail on a conflict no real build configuration produces.
+  Wired into CI's Lint job alongside `make vet`. Ported
+  `test/integration/tpm2/idevid` and `test/integration/tpm2/tpm_operations`
+  to the current `pkg/tpm2`/`pkg/tpm2/store` API (`store.NewPassword` now
+  returns `(types.Password, error)`; `store.KeyAttributes`,
+  `store.TPMAttributes` and the `store.KEY_TYPE_*`/`store.STORE_*`
+  constants moved to `pkg/types`) so the new gate starts clean. Resolves
+  go-xkms#650.
+
+### Removed
+
+- **`xkmsctl tls get` no longer returns the private key — BREAKING.** The
+  command now goes through the canonical `ClientFactory` → SDK `Client` seam
+  (`cl.GetTLSCertificate(ctx, backend, keyID)`) instead of constructing a
+  local backend directly, and prints the certificate and its chain only;
+  `getTLSCertLocal`'s direct `be.GetKey` path is deleted, along with the
+  now-unused `--key-type`/`--key-algorithm`/`--key-size`/`--curve` flags it
+  needed to look up the key locally (`cmd/xkmsctl/tls.go`,
+  `cmd/xkmsctl/output.go`'s `Printer.PrintTLSCertificate`, which drops its
+  `key interface{}` parameter). The wire-level cause:
+  `pkg/api/transport.GetTLSCertificateResponse`'s `PrivateKeyPEM` field is
+  deleted outright — it was never populated on the embedded/REST/Unix/QUIC/
+  MCP paths, and the one path that did populate it, the raw gRPC
+  `Service.GetTLSCertificate` (`pkg/api/grpc/service.go`), is changed to
+  stop encoding and returning the private key at all. The corresponding
+  proto field (`GetTLSCertificateResponse.private_key_pem`, field 3) is
+  removed from `pkg/api/grpc/proto/xkmsv1/xkms.proto` and regenerated with
+  `make proto`; it was unreleased, so the field number is not reserved.
+  Every transport mapping that copied the field
+  (`pkg/api/transport/grpc/transport.go`,
+  `pkg/api/transport/unix/transport.go`) is updated to match. The private
+  key for a TLS key stays in the backend that holds it: a server process
+  signs and decrypts through that backend, it never receives key material
+  over this call. `docs/certificate-authority/cli.md` and `user.md` are
+  updated to describe the new, key-free response.
+- **The deprecated `BackendFactory` seam is deleted from `cmd/xkmsctl`.**
+  With `migrate` and `tls get` both moved off it, `Config.BackendFactory`,
+  `BackendFactory` (the type), `Config.CreateBackend()` and
+  `Config.CreateCertStorage()` (dead once `tls get` stopped building a local
+  cert store) are removed from `cmd/xkmsctl/config.go`, along with their
+  dedicated tests in `config_test.go` and the now-dead sentinel errors in
+  `errors.go` (`ErrCreateBackendFailed`, `ErrCreateCertStorageFailed`,
+  `ErrCreateDestinationBackendFailed`, `ErrCreateMigrationPlanFailed`,
+  `ErrCreateMigratorFailed`, `ErrCreateSoftwareBackendFailed`,
+  `ErrCreateSourceBackendFailed`, `ErrCreateStorageBackendFailed`,
+  `ErrFromToFlagsRequired`, `ErrKeyIDFromToFlagsRequired`,
+  `ErrInvalidKeyParameters`, `ErrMigrationFailed`, `ErrValidationFailed`,
+  `MigrationResultError`). `ClientFactory` is now the only client-injection
+  seam in xkmsctl; every command reaches xkmsd through the SDK `Client`.
+- **`xkmsctl migrate` is removed — BREAKING.** `cmd/xkmsctl/migrate.go`,
+  `pkg/migration/` and its SDK re-export `sdk/go/migration/` are deleted in
+  full, along with their Makefile targets (`test-migration`,
+  `coverage-migration`) and every doc mention (`docs/README.md`'s
+  migration-record row, `docs/ROADMAP.md`, `docs/crypto-backends/
+  engineering.md`, `docs/certificate-authority/engineering.md`,
+  `docs/acme-issuance/engineering.md`). `pkg/migration`'s plan/filter/
+  batch-execute/verify engine drove two `types.KeyProvider` backends
+  directly (`migration.NewMigrator(source, dest)`), an in-process
+  capability the SDK `Client` never exposed and that `xkmsctl migrate` only
+  ever reached by constructing local backends outside the canonical
+  `ClientFactory` seam — the same deprecated pattern `tls get` used. There
+  is no client-based replacement: an **exportable** key moves between
+  backends one at a time through `xkmsctl key copy` (server-side `CopyKey`,
+  already wired through `ClientFactory`); a **non-exportable** key (PKCS#11,
+  TPM2, and other hardware-bound backends that refuse `ExportKeyTo`) could
+  never move between backend registrations and still cannot.
+
+### Fixed
+
+- **A backup of any key with TPM attributes no longer fails to serialize.** `types.TPMAttributes.SessionCloser` is a process-local `func() error` with no JSON tag, and `encoding/json` refuses a func-typed field whether or not it is nil. So `CreateBackup` returned "failed to serialize backup" for every TPM-backed key, despite its clear-and-restore workaround, and an existing test asserted that failure. The field is now `json:"-"`, the workaround and its test helper are deleted, and the test asserts that a TPM-backed key backs up with its in-memory closer untouched. Found by staticcheck SA1026 once `BackupKey` gained a custom marshaller (#587).
+- **Fixed (xkey): the FIDO2 authenticator can no longer be published a
+  `PINVerifier` before the PIN service behind it is populated.**
+  `xkey/pkg/gui/app.go`'s `initializeDataDir` published `a.pinService` to the
+  shared authenticator via `auth.SetPINVerifier` in `initializeAuthenticator`
+  before `postDataDirStartup` called `initPINService` to wire the real
+  `qrdbsdk.PINService` backend into it. Compat cleanup #638 deleted
+  `verifyPINHashLocked`'s local-hash fallback, which had been silently
+  masking this window; without it, a correct PIN presented to the virtual
+  FIDO2 HID device or browser-extension autofill during that window was
+  rejected outright (`PINService.VerifyFIDO2Hash`/`IsPINSet` return `false`
+  while their internal `pinSvc` is unset), rather than the request racing a
+  local hash comparison that happened to still succeed.
+
+  `initPINService` is now called inside `initializeDataDir`, immediately
+  before `initializeAuthenticator`, instead of afterwards in
+  `postDataDirStartup`: the PIN service only needs `a.dataDir` (already set),
+  `a.tpmAccessor` and `a.storageEngineKind()`, none of which depend on the
+  authenticator or the barrier, so this reordering has no cost. The
+  authenticator is therefore never handed a `PINVerifier` that is not yet
+  fully populated — the race is closed by construction order, not by a
+  typed not-ready error. `postDataDirStartup`'s now-redundant
+  `initPINService` call is removed; every caller already runs
+  `initializeDataDir` immediately beforehand.
+
+  `TestPINService_ConcurrentSetPINServiceNeverReturnsWrongResult`
+  (`xkey/pkg/gui/services/pin_service_test.go`) and
+  `TestAuthenticator_PINVerifier_ConcurrentPublishNeverReturnsWrongResult`
+  (`xkey/pkg/authenticator/pin_verifier_test.go`) drive `IsPINSet` /
+  `VerifyFIDO2Hash` concurrently with the backend being populated under
+  `-race`: an incorrect hash must never verify, and once the correct hash
+  verifies it must never regress. Resolves go-xkms#640.
+- **Fixed three `test/integration/pkcs11` suites that could not actually
+  compile under the plain `integration` tag they declared.**
+  `integration_test.go`, `pkcs11_integration_test.go` and
+  `pkcs11_cert_integration_test.go` unconditionally imported
+  `pkg/backend/pkcs11`, whose files are all gated behind `//go:build
+  pkcs11` (a cgo package), but their own build constraint was
+  `//go:build integration` alone. This was invisible everywhere the suite
+  had ever actually been built, because `make integration-test`'s
+  `INTEGRATION_TEST_FLAGS` always bundles `pkcs11` alongside `integration`
+  — it surfaced only once `make vet-integration` (go-xkms#650) vetted
+  `integration` on its own, matching each file's own declared constraint.
+  Their `//go:build` (and legacy `// +build`) lines now read `integration
+  && pkcs11`, matching the sibling
+  `pkcs11_nitrokey_hsm_integration_test.go`, which already declared it
+  correctly.
+
 ## [0.18.0-alpha] - 2026-09-22
 
 ### Added
