@@ -53,7 +53,7 @@ type mockCertClient struct {
 
 	// TLS certificate bundle (certificate + chain; the private key is never
 	// part of this response, by design — go-xkms#627).
-	tlsChains     map[string]string // keyID -> chain PEM
+	tlsChains     map[string][]string // keyID -> chain PEM entries
 	getTLSCertErr error
 }
 
@@ -62,7 +62,7 @@ func newMockCertClient() *mockCertClient {
 		connected:         false,
 		certificates:      make(map[string]string),
 		certificateChains: make(map[string][]string),
-		tlsChains:         make(map[string]string),
+		tlsChains:         make(map[string][]string),
 	}
 }
 

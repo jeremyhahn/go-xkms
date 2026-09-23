@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
-	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
@@ -231,11 +230,11 @@ func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID 
 	// Attempt to get the chain; chain is optional for TLS bundles
 	chain, chainErr := b.GetCertChain(ctx, keyID)
 	if chainErr == nil && len(chain) > 0 {
-		var chainBuilder strings.Builder
+		chainPEM := make([]string, 0, len(chain))
 		for _, cert := range chain {
-			chainBuilder.WriteString(certToPEM(cert))
+			chainPEM = append(chainPEM, certToPEM(cert))
 		}
-		resp.ChainPEM = chainBuilder.String()
+		resp.ChainPEM = chainPEM
 	}
 
 	return resp, nil

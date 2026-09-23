@@ -962,7 +962,8 @@ func TestGetTLSCertificate_Connected(t *testing.T) {
 	resp, err := tr.GetTLSCertificate(context.Background(), "software", "key-1")
 	require.NoError(t, err)
 	assert.Contains(t, resp.CertificatePEM, "CERTIFICATE")
-	assert.Contains(t, resp.ChainPEM, "CERTIFICATE")
+	require.Len(t, resp.ChainPEM, 1)
+	assert.Contains(t, resp.ChainPEM[0], "CERTIFICATE")
 }
 
 func TestSeal_Connected(t *testing.T) {

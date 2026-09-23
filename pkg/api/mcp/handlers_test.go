@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"math/big"
@@ -3244,9 +3245,9 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 		result, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.NoError(t, err)
 
-		tlsResult, ok := result.(GetTLSCertificateResult)
+		tlsResult, ok := result.(transport.GetTLSCertificateResponse)
 		require.True(t, ok)
-		assert.Contains(t, tlsResult.CertPEM, "BEGIN CERTIFICATE")
+		assert.Contains(t, tlsResult.CertificatePEM, "BEGIN CERTIFICATE")
 	})
 
 	t.Run("gets TLS certificate without specifying backend", func(t *testing.T) {
@@ -3265,9 +3266,9 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 		result, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.NoError(t, err)
 
-		tlsResult, ok := result.(GetTLSCertificateResult)
+		tlsResult, ok := result.(transport.GetTLSCertificateResponse)
 		require.True(t, ok)
-		assert.Contains(t, tlsResult.CertPEM, "BEGIN CERTIFICATE")
+		assert.Contains(t, tlsResult.CertificatePEM, "BEGIN CERTIFICATE")
 	})
 }
 
@@ -3960,9 +3961,14 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 		result, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.NoError(t, err)
 
-		tlsResult, ok := result.(GetTLSCertificateResult)
+		tlsResult, ok := result.(transport.GetTLSCertificateResponse)
 		require.True(t, ok)
-		assert.Contains(t, tlsResult.CertPEM, "BEGIN CERTIFICATE")
+		assert.Contains(t, tlsResult.CertificatePEM, "BEGIN CERTIFICATE")
+		// The chain travels as a list of PEM strings, one per entry
+		// (go-xkms#656). The backend excludes the leaf from the chain it
+		// stored, so only the CA entry saved above comes back.
+		require.Len(t, tlsResult.ChainPEM, 1)
+		assert.Contains(t, tlsResult.ChainPEM[0], "BEGIN CERTIFICATE")
 	})
 }
 

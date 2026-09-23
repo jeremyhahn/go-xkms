@@ -195,7 +195,7 @@ func TestGetTLSCert_Success_WithChain(t *testing.T) {
 
 	mockClient := newMockCertClient()
 	mockClient.certificates["chain-tls-test"] = string(certPEM)
-	mockClient.tlsChains["chain-tls-test"] = string(chainPEM)
+	mockClient.tlsChains["chain-tls-test"] = []string{string(chainPEM)}
 
 	cfg := NewConfig()
 	cfg.OutputFormat = "text"
@@ -453,7 +453,7 @@ func TestGetTLSCert_Error_InvalidChainPEM(t *testing.T) {
 
 	mockClient := newMockCertClient()
 	mockClient.certificates["invalid-chain-tls"] = string(certPEM)
-	mockClient.tlsChains["invalid-chain-tls"] = "not-valid-pem-data"
+	mockClient.tlsChains["invalid-chain-tls"] = []string{"not-valid-pem-data"}
 
 	cfg := NewConfig()
 	cfg.OutputFormat = "text"

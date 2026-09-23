@@ -1324,7 +1324,7 @@ func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http
 	}
 
 	// Build response (without private key for security)
-	resp := GetTLSCertificateResponse{
+	resp := transport.GetTLSCertificateResponse{
 		KeyID:          keyID,
 		CertificatePEM: string(certPEM),
 	}

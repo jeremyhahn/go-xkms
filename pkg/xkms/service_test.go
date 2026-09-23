@@ -39,10 +39,15 @@ import (
 
 // mockKeyStore is a mock implementation of Backend for testing
 type mockKeyStore struct {
-	name        string
-	keys        map[string]crypto.PrivateKey
-	keyAttrs    map[string]*types.KeyAttributes
-	certs       map[string]*x509.Certificate
+	name     string
+	keys     map[string]crypto.PrivateKey
+	keyAttrs map[string]*types.KeyAttributes
+	certs    map[string]*x509.Certificate
+	// certChain holds a per-key chain for tests that need GetCertChain to
+	// succeed; when nil (the zero value), SaveCertChain/GetCertChain keep
+	// returning "not implemented", matching every test that predates chain
+	// support here.
+	certChain   map[string][]*x509.Certificate
 	backend     types.KeyProvider
 	closeError  error
 	listKeysErr error
@@ -173,6 +178,9 @@ func (m *mockKeyStore) SaveCertChain(_ context.Context, keyID string, chain []*x
 }
 
 func (m *mockKeyStore) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
+	if chain, ok := m.certChain[keyID]; ok {
+		return chain, nil
+	}
 	return nil, errors.New("not implemented")
 }
 

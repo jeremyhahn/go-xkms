@@ -96,7 +96,7 @@ func mockHandler() http.Handler {
 				respond(transport.GetCertificateChainResponse{ChainPEM: []string{"cert-pem"}})
 			}
 		case strings.HasPrefix(path, "/api/v1/tls/"):
-			respond(transport.GetTLSCertificateResponse{CertificatePEM: "cert", ChainPEM: "chain"})
+			respond(transport.GetTLSCertificateResponse{CertificatePEM: "cert", ChainPEM: []string{"chain"}})
 		case strings.HasPrefix(path, "/api/v1/certs") && strings.HasSuffix(path, "/exists"):
 			w.WriteHeader(http.StatusOK)
 		case strings.HasPrefix(path, "/api/v1/certs") && r.Method == http.MethodGet && !strings.HasSuffix(path, "/certs"):
@@ -669,6 +669,11 @@ func TestGetTLSCertificate_MockConnected(t *testing.T) {
 	resp, err := tr.GetTLSCertificate(context.Background(), "software", "key-1")
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.CertificatePEM)
+	// The server response includes a chain; the QUIC transport must decode
+	// it as a list of PEM strings, not the legacy single-string shape
+	// (go-xkms#656).
+	require.Len(t, resp.ChainPEM, 1)
+	assert.Equal(t, "chain", resp.ChainPEM[0])
 }
 
 func TestSaveCertificateChain_MockConnected(t *testing.T) {

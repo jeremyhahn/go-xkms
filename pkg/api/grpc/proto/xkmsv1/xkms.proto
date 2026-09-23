@@ -155,7 +155,8 @@ service KeystoreService {
     option (qrdb.v1.permission) = "certs:read";
   }
 
-  // GetTLSCertificate returns a TLS certificate with private key
+  // GetTLSCertificate returns a TLS certificate and its chain. The private
+  // key never travels on this response (go-xkms#627).
   rpc GetTLSCertificate(GetTLSCertificateRequest) returns (GetTLSCertificateResponse) {
     option (qrdb.v1.permission) = "certs:read";
   }

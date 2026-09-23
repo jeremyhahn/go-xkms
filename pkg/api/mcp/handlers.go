@@ -958,7 +958,9 @@ func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCReques
 		certPEM = string(pem.EncodeToMemory(pemBlock))
 	}
 
-	// Convert chain to PEM
+	// Convert chain to PEM. The private key (tlsCert.PrivateKey) is
+	// deliberately never encoded or returned here: it stays in the backend
+	// that holds it (go-xkms#627).
 	chainPEMs := make([]string, 0, len(tlsCert.Certificate)-1)
 	for i := 1; i < len(tlsCert.Certificate); i++ {
 		pemBlock := &pem.Block{
@@ -968,16 +970,10 @@ func (s *Server) handleGetTLSCertificate(ctx context.Context, req *JSONRPCReques
 		chainPEMs = append(chainPEMs, string(pem.EncodeToMemory(pemBlock)))
 	}
 
-	// Determine private key type
-	var keyType string
-	if tlsCert.PrivateKey != nil {
-		keyType = fmt.Sprintf("%T", tlsCert.PrivateKey)
-	}
-
-	return GetTLSCertificateResult{
-		CertPEM:        certPEM,
-		ChainPEMs:      chainPEMs,
-		PrivateKeyType: keyType,
+	return transport.GetTLSCertificateResponse{
+		KeyID:          params.KeyID,
+		CertificatePEM: certPEM,
+		ChainPEM:       chainPEMs,
 	}, nil
 }
 

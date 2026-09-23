@@ -265,7 +265,8 @@ type KeystoreServiceClient interface {
 	SaveCertChain(ctx context.Context, in *SaveCertChainRequest, opts ...grpc.CallOption) (*SaveCertChainResponse, error)
 	// GetCertChain retrieves a certificate chain
 	GetCertChain(ctx context.Context, in *GetCertChainRequest, opts ...grpc.CallOption) (*GetCertChainResponse, error)
-	// GetTLSCertificate returns a TLS certificate with private key
+	// GetTLSCertificate returns a TLS certificate and its chain. The private
+	// key never travels on this response (go-xkms#627).
 	GetTLSCertificate(ctx context.Context, in *GetTLSCertificateRequest, opts ...grpc.CallOption) (*GetTLSCertificateResponse, error)
 	// GetImportParameters retrieves parameters needed to import a key
 	GetImportParameters(ctx context.Context, in *GetImportParametersRequest, opts ...grpc.CallOption) (*GetImportParametersResponse, error)
@@ -2305,7 +2306,8 @@ type KeystoreServiceServer interface {
 	SaveCertChain(context.Context, *SaveCertChainRequest) (*SaveCertChainResponse, error)
 	// GetCertChain retrieves a certificate chain
 	GetCertChain(context.Context, *GetCertChainRequest) (*GetCertChainResponse, error)
-	// GetTLSCertificate returns a TLS certificate with private key
+	// GetTLSCertificate returns a TLS certificate and its chain. The private
+	// key never travels on this response (go-xkms#627).
 	GetTLSCertificate(context.Context, *GetTLSCertificateRequest) (*GetTLSCertificateResponse, error)
 	// GetImportParameters retrieves parameters needed to import a key
 	GetImportParameters(context.Context, *GetImportParametersRequest) (*GetImportParametersResponse, error)

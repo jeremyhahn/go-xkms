@@ -86,13 +86,14 @@ func getTLSCert(cfg *Config, printer *Printer, keyID string) {
 		return
 	}
 
-	var chain []*x509.Certificate
-	if resp.ChainPEM != "" {
-		chain, err = client.DecodeCertificateChainPEM([]byte(resp.ChainPEM))
+	chain := make([]*x509.Certificate, 0, len(resp.ChainPEM))
+	for _, chainPEM := range resp.ChainPEM {
+		chainCert, err := client.DecodeCertificatePEM([]byte(chainPEM))
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrParseCertificateFailed, Err: err})
 			return
 		}
+		chain = append(chain, chainCert)
 	}
 
 	printVerbose("Certificate Subject: %s", cert.Subject.String())

@@ -108,8 +108,8 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 
 		// --- TLS ---
 		case strings.HasPrefix(path, "/api/v1/tls/"):
-			json.NewEncoder(w).Encode(map[string]string{
-				"certificate_pem": "cert-pem", "chain_pem": "chain1",
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"certificate_pem": "cert-pem", "chain_pem": []string{"chain1"},
 			})
 
 		// --- Seal ---
@@ -658,6 +658,11 @@ func TestGetTLSCertificate_Connected(t *testing.T) {
 	resp, err := tr.GetTLSCertificate(context.Background(), "software", "k1")
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.CertificatePEM)
+	// The server returns a chain as a list of PEM strings; the REST
+	// transport must decode it as such, not the legacy single-string shape
+	// (go-xkms#656).
+	require.Len(t, resp.ChainPEM, 1)
+	assert.Equal(t, "chain1", resp.ChainPEM[0])
 }
 
 // --- Seal Service ---

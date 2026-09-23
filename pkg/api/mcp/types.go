@@ -389,13 +389,6 @@ type GetTLSCertificateParams struct {
 	Backend string `json:"backend"`
 }
 
-// GetTLSCertificateResult represents the result of getting a TLS certificate
-type GetTLSCertificateResult struct {
-	CertPEM        string   `json:"cert_pem"`
-	ChainPEMs      []string `json:"chain_pems,omitempty"`
-	PrivateKeyType string   `json:"private_key_type"`
-}
-
 // GetImportParametersParams represents parameters for getting import parameters
 type GetImportParametersParams struct {
 	KeyID     string `json:"key_id"`

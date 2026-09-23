@@ -288,15 +288,6 @@ type GetCertChainResponse struct {
 	CertChainPEM []string `json:"cert_chain_pem"`
 }
 
-// GetTLSCertificateResponse represents the response for getting a TLS certificate.
-// Note: For security reasons, the private key is not included in this response.
-// Use the GetKey endpoint to retrieve key information if needed.
-type GetTLSCertificateResponse struct {
-	KeyID          string   `json:"key_id"`
-	CertificatePEM string   `json:"certificate_pem"`
-	ChainPEM       []string `json:"chain_pem,omitempty"`
-}
-
 // The BYOK ceremony's request and response bodies are defined in the leaf
 // package wire, so the REST and QUIC client transports can build them by name
 // without importing this server package; they are the same types here.

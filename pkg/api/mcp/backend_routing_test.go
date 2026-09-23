@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -158,9 +159,9 @@ func TestGetTLSCertificate_LooksTheKeyUpInTheNamedBackend(t *testing.T) {
 	result, err := server.handleGetTLSCertificate(context.Background(),
 		rpc(t, "xkms.getTLSCertificate", GetTLSCertificateParams{KeyID: "routed-tls", Backend: "second"}))
 	require.NoError(t, err, "the named backend holds the key and the certificate")
-	tlsResult, ok := result.(GetTLSCertificateResult)
+	tlsResult, ok := result.(transport.GetTLSCertificateResponse)
 	require.True(t, ok)
-	assert.Contains(t, tlsResult.CertPEM, "BEGIN CERTIFICATE")
+	assert.Contains(t, tlsResult.CertificatePEM, "BEGIN CERTIFICATE")
 	// "second" is not a store-type keyword. The store type the backend
 	// recorded for the key must reach the retrieval, not StoreUnknown from
 	// parsing the name: a composite backend dispatches the private key on it.

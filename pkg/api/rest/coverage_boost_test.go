@@ -685,7 +685,7 @@ func TestGetTLSCertificateHandler_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp GetTLSCertificateResponse
+	var resp transport.GetTLSCertificateResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "tls-key", resp.KeyID)
 	assert.Contains(t, resp.CertificatePEM, "BEGIN CERTIFICATE")
@@ -714,9 +714,10 @@ func TestGetTLSCertificateHandler_WithChain(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp GetTLSCertificateResponse
+	var resp transport.GetTLSCertificateResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.NotEmpty(t, resp.ChainPEM)
+	require.Len(t, resp.ChainPEM, 1)
+	assert.Contains(t, resp.ChainPEM[0], "BEGIN CERTIFICATE")
 }
 
 func TestGetTLSCertificateHandler_GetTLSCertError(t *testing.T) {

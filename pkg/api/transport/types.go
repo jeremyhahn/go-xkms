@@ -723,13 +723,16 @@ type GetCertificateChainResponse struct {
 	ChainPEM []string `json:"chain_pem"`
 }
 
-// GetTLSCertificateResponse contains a TLS certificate and its chain. The
-// private key is never included: it stays in the backend that holds it
-// (go-xkms#627).
+// GetTLSCertificateResponse contains a TLS certificate and its chain. It is
+// the one canonical response shape returned by every transport (REST, gRPC,
+// unix, QUIC, MCP, embedded) for GetTLSCertificate; no transport defines its
+// own variant. ChainPEM holds one PEM-encoded certificate per chain entry,
+// leaf excluded. The private key is never included: it stays in the backend
+// that holds it (go-xkms#627).
 type GetTLSCertificateResponse struct {
-	KeyID          string `json:"key_id"`
-	CertificatePEM string `json:"certificate_pem"`
-	ChainPEM       string `json:"chain_pem,omitempty"`
+	KeyID          string   `json:"key_id"`
+	CertificatePEM string   `json:"certificate_pem"`
+	ChainPEM       []string `json:"chain_pem,omitempty"`
 }
 
 // UserInfo contains information about an xkms user. xkms presents its own

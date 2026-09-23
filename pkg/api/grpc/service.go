@@ -1123,7 +1123,8 @@ func (s *Service) GetCertChain(ctx context.Context, req *pb.GetCertChainRequest)
 	}, nil
 }
 
-// GetTLSCertificate returns a TLS certificate with private key
+// GetTLSCertificate returns a TLS certificate and its chain. The private key
+// never travels on this response (go-xkms#627).
 func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertificateRequest) (*pb.GetTLSCertificateResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")

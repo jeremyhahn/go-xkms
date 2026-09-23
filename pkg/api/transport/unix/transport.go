@@ -1032,15 +1032,10 @@ func (t *Transport) GetTLSCertificate(ctx context.Context, backend, keyID string
 		return nil, err
 	}
 
-	chainPEM := ""
-	if len(resp.CertChainPem) > 0 {
-		chainPEM = resp.CertChainPem[0]
-	}
-
 	return &transport.GetTLSCertificateResponse{
 		KeyID:          keyID,
 		CertificatePEM: resp.CertPem,
-		ChainPEM:       chainPEM,
+		ChainPEM:       resp.CertChainPem,
 	}, nil
 }
 

@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## How the six transports are shaped
 
@@ -185,6 +185,27 @@ transport arrived with no key material at all until go-xkms#159.
 
 `tenant_id` is deliberately **not** an MCP import field: the MCP handlers take
 the tenant from the authenticated caller and reject a wire-supplied one.
+
+### `GetTLSCertificate`'s response is one canonical type on every transport
+
+`GetTLSCertificate`'s response is `pkg/api/transport.GetTLSCertificateResponse`
+(`key_id`, `certificate_pem`, `chain_pem`) — the same struct every server
+handler builds and every client transport decodes, with no per-transport
+variant. `chain_pem` is a JSON array, one PEM-encoded certificate per chain
+entry, leaf excluded (matching `GetTLSCertificateResponse.cert_chain_pem` in
+`pkg/api/grpc/proto/xkmsv1/xkms.proto`). The private key never travels on
+this response, on any transport (go-xkms#627), and does not come back.
+
+Before go-xkms#656, REST and MCP each carried their own response type for
+this one call, and both disagreed with `transport.GetTLSCertificateResponse`:
+REST's `chain_pem` was a JSON array while the transport type's was a single
+string under the same tag, so the REST and QUIC client transports (QUIC
+reuses the REST handler set) failed to decode any certificate that had a
+chain; MCP's result used different field names entirely
+(`cert_pem`/`chain_pems` against `certificate_pem`/`chain_pem`), so every MCP
+call decoded to a zero-value response. Both local types are deleted; REST and
+MCP now build `transport.GetTLSCertificateResponse` directly, the one type
+this call has ever needed.
 
 ### Key versioning — declared, unserved
 

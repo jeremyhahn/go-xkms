@@ -97,6 +97,11 @@ func newCatchAllMCPServer(t *testing.T) (string, func()) {
 		case "bootstrap.showKeys":
 			d, _ := json.Marshal(map[string]string{"noise_public_key": "aa"})
 			return jsonrpcResponse{Result: d}
+		case "xkms.getTLSCertificate":
+			d, _ := json.Marshal(map[string]interface{}{
+				"key_id": "k1", "certificate_pem": "cert-pem", "chain_pem": []string{"chain1"},
+			})
+			return jsonrpcResponse{Result: d}
 		default:
 			// Return empty valid result for all other methods
 			return jsonrpcResponse{Result: json.RawMessage(`{}`)}
@@ -483,7 +488,11 @@ func TestGetTLSCertificate_Connected(t *testing.T) {
 
 	resp, err := tr.GetTLSCertificate(context.Background(), "software", "k1")
 	require.NoError(t, err)
-	assert.NotNil(t, resp)
+	assert.Equal(t, "cert-pem", resp.CertificatePEM)
+	// The chain travels as a list of PEM strings, one per entry
+	// (go-xkms#656).
+	require.Len(t, resp.ChainPEM, 1)
+	assert.Equal(t, "chain1", resp.ChainPEM[0])
 }
 
 // --- Seal Service ---

@@ -575,31 +575,3 @@ func TestListKeysParams_MarshalJSON_EmptyBackend(t *testing.T) {
 		t.Errorf("expected backend field to be omitted when empty, got: %s", jsonStr)
 	}
 }
-
-func TestGetTLSCertificateResult_MarshalJSON(t *testing.T) {
-	result := GetTLSCertificateResult{
-		CertPEM:        "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----",
-		ChainPEMs:      []string{"chain1", "chain2"},
-		PrivateKeyType: "RSA",
-	}
-
-	data, err := json.Marshal(result)
-	if err != nil {
-		t.Fatalf("failed to marshal: %v", err)
-	}
-
-	var decoded GetTLSCertificateResult
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if decoded.CertPEM != result.CertPEM {
-		t.Errorf("CertPEM mismatch")
-	}
-	if decoded.PrivateKeyType != result.PrivateKeyType {
-		t.Errorf("PrivateKeyType mismatch: got %v, want %v", decoded.PrivateKeyType, result.PrivateKeyType)
-	}
-	if len(decoded.ChainPEMs) != len(result.ChainPEMs) {
-		t.Errorf("ChainPEMs length mismatch")
-	}
-}

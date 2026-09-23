@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"testing"
@@ -239,6 +240,32 @@ func TestGetTLSCertificate_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "tls-cert", resp.KeyID)
 	assert.Contains(t, resp.CertificatePEM, "BEGIN CERTIFICATE")
+}
+
+// TestGetTLSCertificate_WithChain proves the servicer's GetTLSCertificate
+// (which backs the embedded transport) encodes a multi-entry chain as one
+// PEM string per entry, the canonical shape shared by every transport
+// (go-xkms#656).
+func TestGetTLSCertificate_WithChain(t *testing.T) {
+	software, _ := setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	leaf := createTestCert(t, "tls-chain-cert", key)
+	intermediate := createTestCert(t, "tls-chain-intermediate", key)
+	require.NoError(t, software.SaveCert(context.Background(), "tls-chain-cert", leaf))
+	software.certChain = map[string][]*x509.Certificate{
+		"tls-chain-cert": {intermediate},
+	}
+
+	resp, err := svc.GetTLSCertificate(context.Background(), "software", "tls-chain-cert")
+	require.NoError(t, err)
+	assert.Equal(t, "tls-chain-cert", resp.KeyID)
+	assert.Contains(t, resp.CertificatePEM, "BEGIN CERTIFICATE")
+	require.Len(t, resp.ChainPEM, 1)
+	assert.Contains(t, resp.ChainPEM[0], "BEGIN CERTIFICATE")
 }
 
 func TestGetTLSCertificate_NotFound(t *testing.T) {
