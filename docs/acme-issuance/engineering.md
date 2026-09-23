@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface
 
@@ -85,14 +85,36 @@ once, to the externally visible base.
   `serve.api_base_url` follows the same rule. Deriving from an address with no
   port is an `AdvertisedURLError` (#140).
 - **A CSR's complete identity set must correspond exactly to the order's
-  authorized identifiers.** The CSR's Common Name (if present) and every DNS and
-  IP Subject Alternative Name must cover the authorized set completely: a name
-  the order authorized but the CSR omits is rejected, as is a name the CSR
-  carries that the order did not authorize. Email and URI SANs in the CSR are
-  rejected outright (the CA has no order-identifier type to authorize them
-  against). This rule applies to both the standard finalize path and the
-  endorse-01 flow. Prior to this, only the Common Name was compared, which
-  allowed unauthorized SANs through.
+  authorized identifiers.** For a `dns`/`ip` order, the CSR's Common Name (if
+  present) and every DNS and IP Subject Alternative Name must cover the
+  authorized set completely: a name the order authorized but the CSR omits is
+  rejected, as is a name the CSR carries that the order did not authorize.
+  Email and URI SANs in the CSR are rejected outright (the CA has no
+  order-identifier type to authorize them against). Prior to this, only the
+  Common Name was compared, which allowed unauthorized SANs through.
+- **A `permanent-identifier` order (`enroll-01`'s non-TCG-CSR path,
+  `device-attest-01`) never reads the identifier from the Common Name.** The
+  CSR's RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`)
+  inside its `subjectAltName` is the only source: `ca.ParseOtherNames`
+  (`pkg/ca/san.go`) decodes the extension by hand, since `crypto/x509` drops
+  otherNames when it parses a CSR. A CSR missing the otherName, carrying more
+  than one, or carrying any other otherName is `badCSR` — the shape of the
+  request is wrong regardless of the order. A CSR whose otherName decodes but
+  names a value the order did not authorize, or whose DNS/IP SANs are not
+  exactly the order's authorized `dns`/`ip` identifiers (if any accompany the
+  permanent identifier), is `rejectedIdentifier` — well-formed but asserting
+  an identity the order does not grant (`matchesPermanentIdentifierOrder`,
+  `pkg/acme/server/handlers/order_finalize.go`). Before this, the permanent
+  identifier fell back to the Common Name whenever the otherName was absent or
+  malformed, and the branch returned as soon as it found the first
+  `permanent-identifier` order entry without ever checking the CSR's DNS/IP
+  SANs or the order's remaining identifiers (go-xkms#684) — a CSR whose Common
+  Name matched could carry an arbitrary, unauthorized DNS or IP SAN straight
+  into the issued certificate.
+  The `endorse-01` flow is unaffected: its permanent identifier is the EK
+  public key being certified rather than a name the CSR carries, so
+  `matchesEndorse01Identifier` never compares it against the CSR at all,
+  only the CSR's DNS/IP SANs and the blanket email/URI rejection.
 - **An endorse-01 EK certificate records the TPM's manufacturer code, or it is
   not issued.** A TPM endorsed through endorse-01 has no manufacturer EK
   certificate, so the EK certificate issued here is the only place a later
@@ -141,7 +163,9 @@ The mapping an implementer needs:
 | challenge validation failed | `incorrectResponse` / `connection` / `dns` | 403 |
 | rate limit exceeded | `rateLimited` | 429 |
 | order not ready to finalize | `orderNotReady` | 403 |
-| CSR does not match the order | `badCSR` | 400 |
+| CSR does not match the order (`dns`/`ip` orders) | `badCSR` | 400 |
+| permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
+| permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
 
 **Fail closed:** unvalidated authorization, failed CAA, failed attestation,
 exceeded rate limit, open circuit breaker. Every one of them refuses to issue.

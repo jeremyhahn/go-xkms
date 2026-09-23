@@ -781,6 +781,52 @@ func TestMatchesIdentifier_DNSMismatch(t *testing.T) {
 	assert.False(t, matches)
 }
 
+// createPermanentIdentifierCSR builds and parses a certificate request whose
+// subjectAltName carries an RFC 4043 permanentIdentifier otherName for
+// permanentID, together with the template's own DNS and IP names.
+// crypto/x509 drops the template's own names once a subjectAltName
+// extension is supplied via ExtraExtensions, so all of them are re-encoded
+// here alongside the otherName - the same way createEndorse01CSRWithManufacturer
+// does for endorse-01's directoryName.
+func createPermanentIdentifierCSR(
+	t *testing.T,
+	template *x509.CertificateRequest,
+	key crypto.Signer,
+	permanentID string,
+) *x509.CertificateRequest {
+	t.Helper()
+
+	value, err := ca.MarshalPermanentIdentifier(permanentID, ca.OIDTCGOnEKPermIdSha256)
+	require.NoError(t, err)
+
+	san, err := ca.BuildSubjectAltName(
+		template.Subject, template.DNSNames, nil, template.IPAddresses, nil,
+		[]ca.OtherName{{TypeID: ca.OIDPermanentIdentifier, Value: value}}, nil)
+	require.NoError(t, err)
+
+	withSAN := *template
+	withSAN.ExtraExtensions = append(append([]pkix.Extension(nil), template.ExtraExtensions...), san)
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &withSAN, key)
+	require.NoError(t, err)
+
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+	return csr
+}
+
+// requireACMEErrorType asserts err is an ACME problem of the given type.
+func requireACMEErrorType(t *testing.T, err error, errType string) {
+	t.Helper()
+	require.Error(t, err)
+	acmeErr, ok := err.(*entities.Error)
+	require.True(t, ok, "error is not *entities.Error: %v", err)
+	assert.Contains(t, acmeErr.Type, errType)
+}
+
+// TestMatchesIdentifier_PermanentIdentifier is the baseline case: a CSR
+// carrying only the authorized permanentIdentifier otherName, and no other
+// SAN, matches.
 func TestMatchesIdentifier_PermanentIdentifier(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -790,16 +836,262 @@ func TestMatchesIdentifier_PermanentIdentifier(t *testing.T) {
 			CommonName: "test-permanent-id",
 		},
 	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "test-permanent-id")
 
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	require.NoError(t, err)
+	assert.True(t, matches)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierNeverUsesCommonName is the
+// regression case for go-xkms#684: a CSR whose CommonName equals the
+// authorized permanent identifier, but which carries no permanentIdentifier
+// otherName at all, must be rejected as badCSR - the identifier must never
+// be read from the Subject Common Name.
+func TestMatchesIdentifier_PermanentIdentifierNeverUsesCommonName(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "test-permanent-id",
+		},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
 	order := &entities.ACMEOrder{
 		Identifiers: []entities.ACMEIdentifier{
 			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches)
+	requireACMEErrorType(t, err, common.ErrTypeBadCSR)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierRejectsUnauthorizedDNSSAN is the
+// go-xkms#684 headline case: a CSR whose CommonName and permanentIdentifier
+// otherName both match the order, but which also carries a DNS SAN the
+// order never authorized, must be rejected rather than silently issued.
+func TestMatchesIdentifier_PermanentIdentifierRejectsUnauthorizedDNSSAN(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "test-permanent-id",
+		},
+		DNSNames: []string{"evil.example.com"},
+	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "test-permanent-id")
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches)
+	requireACMEErrorType(t, err, common.ErrTypeRejectedIdentifier)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierRejectsUnauthorizedIPSAN mirrors
+// the DNS case for an IP SAN.
+func TestMatchesIdentifier_PermanentIdentifierRejectsUnauthorizedIPSAN(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "test-permanent-id",
+		},
+		IPAddresses: []net.IP{net.ParseIP("203.0.113.42")},
+	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "test-permanent-id")
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches)
+	requireACMEErrorType(t, err, common.ErrTypeRejectedIdentifier)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierMissingOtherName verifies that a
+// CSR with no subjectAltName extension at all is rejected as badCSR rather
+// than falling back to the CommonName.
+func TestMatchesIdentifier_PermanentIdentifierMissingOtherName(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "test-permanent-id"},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches)
+	requireACMEErrorType(t, err, common.ErrTypeBadCSR)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierWrongOtherNameValue verifies that
+// a CSR carrying a permanentIdentifier otherName whose value does not equal
+// the order's authorized permanent identifier is rejected.
+func TestMatchesIdentifier_PermanentIdentifierWrongOtherNameValue(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "test-permanent-id"},
+	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "wrong-permanent-id")
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches)
+	requireACMEErrorType(t, err, common.ErrTypeRejectedIdentifier)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierWrongOtherNameType verifies that
+// a CSR whose subjectAltName carries an otherName of some other type (here,
+// the RFC 4108 hardwareModuleName) instead of a permanentIdentifier is
+// rejected as badCSR.
+func TestMatchesIdentifier_PermanentIdentifierWrongOtherNameType(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	hwName, err := ca.MarshalHardwareModuleName(ca.OIDTCGHwTypeTPM2, []byte("serial"))
+	require.NoError(t, err)
+	san, err := ca.BuildSubjectAltName(
+		pkix.Name{CommonName: "test-permanent-id"}, nil, nil, nil, nil,
+		[]ca.OtherName{{TypeID: ca.OIDHardwareModuleName, Value: hwName}}, nil)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject:         pkix.Name{CommonName: "test-permanent-id"},
+		ExtraExtensions: []pkix.Extension{san},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-permanent-id"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches)
+	requireACMEErrorType(t, err, common.ErrTypeBadCSR)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierMalformedSAN verifies that a
+// subjectAltName extension that is not a valid GeneralNames SEQUENCE is
+// rejected as badCSR instead of silently falling back to the CommonName -
+// the pre-fix behavior this pins against regressing.
+func TestMatchesIdentifier_PermanentIdentifierMalformedSAN(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	sanValue, err := asn1.Marshal([]string{"not-a-general-names-sequence"})
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "test-cn"},
+		ExtraExtensions: []pkix.Extension{
+			{Id: asn1.ObjectIdentifier{2, 5, 29, 17}, Value: sanValue},
+		},
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
+	require.NoError(t, err)
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	require.NoError(t, err)
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "test-cn"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches, "a malformed SAN must never fall back to the CommonName")
+	requireACMEErrorType(t, err, common.ErrTypeBadCSR)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierMultiIdentifierOrderRejectsMismatch
+// is the multi-identifier regression case: an order authorizing both a
+// permanent-identifier and a dns identifier must have BOTH satisfied. Before
+// the fix, matchesIdentifier returned on the first permanent-identifier
+// order entry it found and never checked the rest.
+func TestMatchesIdentifier_PermanentIdentifierMultiIdentifierOrderRejectsMismatch(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "device-1"},
+		DNSNames: []string{"wrong.example.com"},
+	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-1")
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "device-1"},
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	matches, err := matchesIdentifier(csr, order)
+	assert.False(t, matches, "the CSR's DNS SAN does not match the order's second identifier")
+	requireACMEErrorType(t, err, common.ErrTypeRejectedIdentifier)
+}
+
+// TestMatchesIdentifier_PermanentIdentifierMultiIdentifierOrderMatches is the
+// positive counterpart: every identifier the order authorizes, permanent and
+// dns alike, is satisfied.
+func TestMatchesIdentifier_PermanentIdentifierMultiIdentifierOrderMatches(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "device-1"},
+		DNSNames: []string{"example.com"},
+	}
+	csr := createPermanentIdentifierCSR(t, template, csrKey, "device-1")
+
+	order := &entities.ACMEOrder{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypePermanentIdentifier, Value: "device-1"},
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
 		},
 	}
 
@@ -837,81 +1129,6 @@ func TestMatchesIdentifier_UnsupportedType(t *testing.T) {
 	acmeErr, ok := err.(*entities.Error)
 	require.True(t, ok)
 	assert.Contains(t, acmeErr.Type, common.ErrTypeUnsupportedIdentifier)
-}
-
-func TestParseCertificateRequestPermanentIdentifier(t *testing.T) {
-	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	// Create CSR with common name (fallback)
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: "test-identifier",
-		},
-	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
-
-	csr, err := x509.ParseCertificateRequest(csrDER)
-	require.NoError(t, err)
-
-	permanentID, err := parseCertificateRequestPermanentIdentifier(csr)
-	require.NoError(t, err)
-	assert.Equal(t, "test-identifier", permanentID)
-}
-
-func TestParseCertificateRequestPermanentIdentifier_NoCommonName(t *testing.T) {
-	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	// Create CSR without common name
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{},
-	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
-
-	csr, err := x509.ParseCertificateRequest(csrDER)
-	require.NoError(t, err)
-
-	_, err = parseCertificateRequestPermanentIdentifier(csr)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no permanent identifier found")
-}
-
-func TestParseCertificateRequestPermanentIdentifier_WithSANExtension(t *testing.T) {
-	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	// Create CSR with SAN extension
-	sanOID := asn1.ObjectIdentifier{2, 5, 29, 17}
-	sanValue, err := asn1.Marshal([]string{"test-san"})
-	require.NoError(t, err)
-
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: "test-cn",
-		},
-		ExtraExtensions: []pkix.Extension{
-			{
-				Id:    sanOID,
-				Value: sanValue,
-			},
-		},
-	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
-
-	csr, err := x509.ParseCertificateRequest(csrDER)
-	require.NoError(t, err)
-
-	// Should still fall back to common name since we don't parse SAN properly
-	permanentID, err := parseCertificateRequestPermanentIdentifier(csr)
-	require.NoError(t, err)
-	assert.Equal(t, "test-cn", permanentID)
 }
 
 func TestMatchesIdentifier_MultipleIdentifiers(t *testing.T) {
@@ -1229,11 +1446,13 @@ func TestMatchesEndorse01Identifier_EmailSANRejected(t *testing.T) {
 	assert.False(t, matches)
 }
 
+// TestMatchesIdentifier_PermanentIdentifierError verifies that a CSR with
+// neither a CommonName nor a subjectAltName extension - so there is nothing
+// to even attempt to parse - is rejected as badCSR.
 func TestMatchesIdentifier_PermanentIdentifierError(t *testing.T) {
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	// CSR without common name to trigger error in parseCertificateRequestPermanentIdentifier
 	template := &x509.CertificateRequest{
 		Subject: pkix.Name{},
 	}
@@ -1251,12 +1470,8 @@ func TestMatchesIdentifier_PermanentIdentifierError(t *testing.T) {
 	}
 
 	matches, err := matchesIdentifier(csr, order)
-	require.Error(t, err)
 	assert.False(t, matches)
-
-	acmeErr, ok := err.(*entities.Error)
-	require.True(t, ok)
-	assert.Contains(t, acmeErr.Type, common.ErrTypeMalformedError)
+	requireACMEErrorType(t, err, common.ErrTypeBadCSR)
 }
 
 func TestSendFinalizeResponse_Success(t *testing.T) {

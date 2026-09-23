@@ -41,53 +41,30 @@ import (
 // (2021-10-08), §8.1 "DevID Certificate Fields Summary" and §8.2 "TCG OIDs".
 
 // parsedOtherNames decodes the otherName entries of a certificate's
-// subjectAltName, keyed by type-id. It walks the extension by hand: crypto/x509
-// discards otherNames when it parses a certificate, so the only way to see them
-// is to read the extension.
+// subjectAltName, keyed by type-id, via the production ParseOtherNames -
+// crypto/x509 discards otherNames when it parses a certificate, so the only
+// way to see them is to read the extension, and this package has exactly one
+// function that does that.
 func parsedOtherNames(t *testing.T, cert *x509.Certificate) map[string][]byte {
 	t.Helper()
 
-	var raw []byte
 	for _, ext := range cert.Extensions {
-		if ext.Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 17}) {
-			if ext.Critical {
-				t.Error("TCG DevID §8.1: the subjectAltName SHOULD NOT be critical")
-			}
-			raw = ext.Value
+		if ext.Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 17}) && ext.Critical {
+			t.Error("TCG DevID §8.1: the subjectAltName SHOULD NOT be critical")
 		}
 	}
-	if raw == nil {
+
+	others, err := ParseOtherNames(cert.Extensions)
+	if err != nil {
+		t.Fatalf("decode subjectAltName otherNames: %v", err)
+	}
+	if others == nil {
 		t.Fatal("certificate has no subjectAltName extension")
 	}
 
-	var names asn1.RawValue
-	if _, err := asn1.Unmarshal(raw, &names); err != nil {
-		t.Fatalf("decode GeneralNames: %v", err)
-	}
-
-	found := make(map[string][]byte)
-	rest := names.Bytes
-	for len(rest) > 0 {
-		var name asn1.RawValue
-		remaining, err := asn1.Unmarshal(rest, &name)
-		if err != nil {
-			t.Fatalf("decode GeneralName: %v", err)
-		}
-		rest = remaining
-		if name.Class != asn1.ClassContextSpecific || name.Tag != 0 {
-			continue
-		}
-
-		var typeID asn1.ObjectIdentifier
-		valueBytes, err := asn1.Unmarshal(name.Bytes, &typeID)
-		if err != nil {
-			t.Fatalf("decode otherName type-id: %v", err)
-		}
-		var wrapped asn1.RawValue
-		if _, err := asn1.Unmarshal(valueBytes, &wrapped); err != nil {
-			t.Fatalf("decode otherName value: %v", err)
-		}
-		found[typeID.String()] = wrapped.Bytes
+	found := make(map[string][]byte, len(others))
+	for _, other := range others {
+		found[other.TypeID.String()] = other.Value
 	}
 	return found
 }
