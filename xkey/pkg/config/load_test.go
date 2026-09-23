@@ -366,7 +366,7 @@ log:
 	t.Setenv("XKEY_GUI_SERVER_ADDRESS", "gui.example.com:8443")
 	t.Setenv("XKEY_BACKEND_TPM2_DEVICE", "/dev/env-backend-tpm")
 	t.Setenv("XKEY_POLICY_MIN_PIN_LENGTH", "8")
-	t.Setenv("XKEY_POLICY_PLATFORM_PCRS", "0,7")
+	t.Setenv("XKEY_GUI_AUTO_UNSEAL_PCRS", "0,7")
 
 	cfg, err := LoadFromPath(cfgPath)
 	require.NoError(t, err)
@@ -382,7 +382,7 @@ log:
 	assert.Equal(t, "gui.example.com:8443", cfg.GUI.Server.Address, "a leaf two sections deep is settable")
 	assert.Equal(t, "/dev/env-backend-tpm", cfg.Backend.TPM2.Device, "a nested sub-section leaf is settable")
 	assert.Equal(t, 8, cfg.Policy.MinPINLength, "a policy leaf is settable")
-	assert.Equal(t, []int{0, 7}, cfg.Policy.PlatformPCRs, "a list of ints splits on commas")
+	assert.Equal(t, []int{0, 7}, cfg.GUI.AutoUnseal.PCRs, "a list of ints splits on commas")
 
 	assert.Equal(t, "/dev/tpmrm0", DefaultConfig().TPM.Device, "the probe value must differ from the default")
 }

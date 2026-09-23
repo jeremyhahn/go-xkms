@@ -28,14 +28,10 @@ type PolicySection struct {
 	RequireEncryptedStorage    bool     `yaml:"require_encrypted_storage" json:"require_encrypted_storage" mapstructure:"require_encrypted_storage"`
 	StorageType                string   `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
 	RequireTPM                 bool     `yaml:"require_tpm" json:"require_tpm" mapstructure:"require_tpm"`
-	PlatformPCRs               []int    `yaml:"platform_pcrs" json:"platform_pcrs" mapstructure:"platform_pcrs"`
 	PlatformPCRBank            string   `yaml:"platform_pcr_bank" json:"platform_pcr_bank" mapstructure:"platform_pcr_bank"`
-	RequirePasswordProtection  bool     `yaml:"require_password_protection" json:"require_password_protection" mapstructure:"require_password_protection"`
-	PasswordProtectionMode     string   `yaml:"password_protection_mode" json:"password_protection_mode" mapstructure:"password_protection_mode"`
 	AllowedBackends            []string `yaml:"allowed_backends" json:"allowed_backends" mapstructure:"allowed_backends"`
 	DefaultBackend             string   `yaml:"default_backend" json:"default_backend" mapstructure:"default_backend"`
 	FIDO2AlwaysUV              bool     `yaml:"fido2_always_uv" json:"fido2_always_uv" mapstructure:"fido2_always_uv"`
-	FIDO2RequireResidentKey    bool     `yaml:"fido2_require_resident_key" json:"fido2_require_resident_key" mapstructure:"fido2_require_resident_key"`
 	FIDO2RequireUserPresence   bool     `yaml:"fido2_require_user_presence" json:"fido2_require_user_presence" mapstructure:"fido2_require_user_presence"`
 	FIDO2UserIntentCheck       bool     `yaml:"fido2_user_intent_check" json:"fido2_user_intent_check" mapstructure:"fido2_user_intent_check"`
 	AttestationMode            string   `yaml:"attestation_mode" json:"attestation_mode" mapstructure:"attestation_mode"`

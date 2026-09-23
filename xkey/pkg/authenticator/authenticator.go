@@ -690,6 +690,13 @@ func (a *Authenticator) SetRequireUserPresence(required bool) {
 	a.config.RequireUserPresence = required
 }
 
+// SetAlwaysUV enables or disables mandatory user verification for every
+// operation (MakeCredential, GetAssertion, and the getInfo "alwaysUv" option
+// advertised to the platform), even when the request did not ask for it.
+func (a *Authenticator) SetAlwaysUV(enabled bool) {
+	a.config.AlwaysUV = enabled
+}
+
 // SetUserPresenceHandler replaces the user presence handler on the
 // authenticator and returns the handler it replaced, so a caller that installs
 // a handler for the lifetime of a service can put the previous one back rather

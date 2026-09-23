@@ -24,6 +24,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -289,4 +290,61 @@ func TestInt64ToStr(t *testing.T) {
 		result := int64ToStr(tc.input)
 		assert.Equal(t, tc.expected, result)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// UserCanViewAuditLog policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestAuditService_GetEntries_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanViewAuditLog false denies", &config.PolicySection{UserCanViewAuditLog: false}, true},
+		{"UserCanViewAuditLog true allows", &config.PolicySection{UserCanViewAuditLog: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+			require.NoError(t, storeErr)
+			store.Log(audit.Entry{Operation: audit.OpKeyCreated, Success: true})
+
+			svc := NewAuditService(store)
+			svc.SetPolicy(tt.policy)
+
+			countBefore := store.Count()
+			entries, err := svc.GetEntries(nil)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_view_audit_log", denied.Field)
+				assert.Nil(t, entries)
+				assert.Greater(t, store.Count(), countBefore, "denial must be audited")
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, entries, 1)
+			}
+		})
+	}
+}
+
+func TestAuditService_ExportEntries_PolicyGate(t *testing.T) {
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	require.NoError(t, storeErr)
+	store.Log(audit.Entry{Operation: audit.OpKeyCreated, Success: true})
+
+	svc := NewAuditService(store)
+	svc.SetPolicy(&config.PolicySection{UserCanViewAuditLog: false})
+
+	data, err := svc.ExportEntries("json", nil)
+	require.Error(t, err, "ExportEntries must inherit GetEntries' gate")
+	var denied *PolicyDeniedError
+	require.ErrorAs(t, err, &denied)
+	assert.Equal(t, "user_can_view_audit_log", denied.Field)
+	assert.Nil(t, data)
 }

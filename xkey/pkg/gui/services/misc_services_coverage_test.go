@@ -506,7 +506,9 @@ func TestMiscServices_Coverage_AutoFillService_SetEnabled(t *testing.T) {
 
 func TestMiscServices_Coverage_AutoFillService_SetEnabled_EnterpriseBlocks(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
-	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: false})
+	// UserCanConfigure is set so this exercises the Enabled gate, not the
+	// separate UserCanConfigureExtension gate (#668).
+	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: false, UserCanConfigure: true})
 
 	err := svc.SetEnabled(true)
 	assert.ErrorIs(t, err, ErrAutoFillPolicyEnforced)
@@ -515,7 +517,7 @@ func TestMiscServices_Coverage_AutoFillService_SetEnabled_EnterpriseBlocks(t *te
 
 func TestMiscServices_Coverage_AutoFillService_SetEnabled_EnterpriseAllows(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
-	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true})
+	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: true})
 
 	err := svc.SetEnabled(true)
 	require.NoError(t, err)
@@ -610,6 +612,7 @@ func TestMiscServices_Coverage_AutoFillService_SetRequireAuthentication_Enterpri
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{
 		Enabled:               true,
 		RequireAuthentication: true,
+		UserCanConfigure:      true,
 	})
 
 	err := svc.SetRequireAuthentication(false)
