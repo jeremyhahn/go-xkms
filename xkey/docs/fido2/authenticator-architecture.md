@@ -179,7 +179,10 @@ authenticator's own cached hash; that is what `--unified-pin` enables (see
 [`daemon-configuration.md`](daemon-configuration.md)). When a PIN change
 occurs while the KeyManager is locked, `PINSyncPending` is set on the
 authenticator state; `KeyManager.UnlockWithSOPIN()` resolves the pending
-flag and re-derives its wrapping key from the updated PIN hash.
+flag and re-derives its wrapping key from the updated PIN hash. A sync
+failure (go-xkms#686) propagates as the SO unlock's own error, clears the
+just-adopted key material, and leaves `PINSyncPending` set so the next SO
+unlock retries rather than the pending PIN silently never reaching CMK.
 `authenticatorClientPIN`'s own `setPIN`/`changePIN` (`cmd_clientpin.go`)
 persist through the same state, independent of whether a host PIN service
 is wired up at all.
