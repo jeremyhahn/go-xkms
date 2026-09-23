@@ -195,18 +195,6 @@ func TestFileBackupAdapter_CreateBackup(t *testing.T) {
 		assert.ErrorIs(t, err, ErrInvalidEncryptionKey)
 	})
 
-	// Test creating a backup with unsupported format
-	t.Run("UnsupportedFormat", func(t *testing.T) {
-		data := createTestBackupData(t, 1)
-		opts := &BackupOptions{
-			Format: BackupFormatProtobuf,
-		}
-
-		_, err := adapter.CreateBackup(ctx, data, opts)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
 	// Test creating a backup with nil options (should use defaults)
 	t.Run("NilOptions", func(t *testing.T) {
 		data := createTestBackupData(t, 1)

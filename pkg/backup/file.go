@@ -199,10 +199,6 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to serialize backup", Err: err}
 		}
-	case BackupFormatProtobuf:
-		// Protobuf serialization is a planned feature for future releases.
-		// JSON and Encrypted formats provide full functionality for production use.
-		return nil, errors.New("protobuf format not yet implemented")
 	default:
 		return nil, &errs.Detail{Err: ErrInvalidBackupFormat, Detail: string(opts.Format)}
 	}
