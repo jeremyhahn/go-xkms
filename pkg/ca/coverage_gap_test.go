@@ -709,16 +709,6 @@ func TestTLSConfigWithXSigner_NilXSignerNoAttrError(t *testing.T) {
 }
 
 // =============================================================================
-// tls.go — QuantumSafeTLSConfig (0%)
-// =============================================================================
-
-func TestQuantumSafeTLSConfig_NotInitialized(t *testing.T) {
-	ca := &CA{}
-	_, err := ca.QuantumSafeTLSConfig(context.Background(), &types.KeyAttributes{CN: "x"})
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// =============================================================================
 // tls.go — TLSConfigWithOptions (34%)
 // =============================================================================
 

@@ -221,9 +221,6 @@ func (m *mockCA) ServerTLSConfig(_ context.Context, _ *types.KeyAttributes, _ bo
 func (m *mockCA) ClientTLSConfig(_ context.Context, _ *types.KeyAttributes, _ string) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
-	return nil, nil
-}
 
 // --- Trust pool builders ---
 

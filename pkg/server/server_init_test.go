@@ -100,9 +100,6 @@ func (m *mockTrustedCA) IsRevoked(_ *big.Int) (bool, error)                { ret
 func (m *mockTrustedCA) TLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) QuantumSafeTLSConfig(_ context.Context, _ *types.KeyAttributes) (*tls.Config, error) {
-	return nil, nil
-}
 func (m *mockTrustedCA) CABundleCertPool() (*x509.CertPool, error) { return nil, nil }
 func (m *mockTrustedCA) TrustedRootCertPool(_ *x509.Certificate) (*x509.CertPool, error) {
 	return nil, nil
