@@ -708,6 +708,12 @@ jobs:
       - name: Run golangci-lint
         run: make lint
 
+      # The xkey agent skill's CLI reference is generated from the cobra
+      # tree. This fails when the committed reference is stale, or when
+      # SKILL.md cites a command or flag xkey does not have.
+      - name: Check xkey agent skill reference
+        run: make -C xkey check-skill-reference
+
       # go-qrdb's pkg/secure/analyzer enforces the raw-memguard-import,
       # ssh.ParsePrivateKey and sensitive-field rules, but only where its own
       # make target runs -- and nothing in go-qrdb reaches into this

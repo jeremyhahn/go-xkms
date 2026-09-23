@@ -152,4 +152,5 @@ On the next application launch, the wizard will appear again. Previous configura
 ## See Also
 
 - [Setup and Unlock Flow](../architecture/setup-and-unlock-flow.md) -- Backend execution flow with Mermaid diagrams
-- [Setup Wizard Seal Integration](../seal/setup-wizard.md) -- Seal-related integration points
+- [Setup Wizard — Architecture](../setup-wizard/architecture.md) -- Full step-by-step orchestration, including seal-related steps
+- [Seal & Auto-Unseal — Architecture](../seal/architecture.md) -- The Barrier, barrier PCR-policy auto-unseal, and the legacy sealed-blob store the wizard configures

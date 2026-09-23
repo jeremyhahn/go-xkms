@@ -16,10 +16,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // barrierUnsealCmd unseals the barrier by prompting for the password.
@@ -41,12 +44,20 @@ Examples:
   xkey barrier unseal --data-dir /secure/xkey
 
   # Unseal from piped password (for automation)
-  echo "mypassword" | xkey barrier unseal`,
+  echo "mypassword" | xkey barrier unseal
+
+  # Unseal a tpm2-strategy barrier via its designated PCR auto-unseal
+  # policy (see 'xkey policy set-auto-unseal'); no password is read,
+  # so this is safe for unattended startup scripts
+  xkey barrier unseal --auto`,
 	RunE: runBarrierUnseal,
 }
 
 func init() {
 	barrierCmd.AddCommand(barrierUnsealCmd)
+
+	barrierUnsealCmd.Flags().Bool("auto", false,
+		"Unseal via TPM PCR-policy auto-unseal only (see 'xkey policy set-auto-unseal'); never prompts for a password")
 }
 
 func runBarrierUnseal(cmd *cobra.Command, args []string) error {
@@ -64,6 +75,10 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 			Operation: "check_initialized",
 			Message:   "barrier not initialized, run 'xkey barrier init' first",
 		}
+	}
+
+	if auto, _ := cmd.Flags().GetBool("auto"); auto {
+		return runBarrierUnsealAuto(cmd, dataDir)
 	}
 
 	// Read password.
@@ -106,6 +121,55 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 	strategy := strategyDisplayName(barrier.ActiveStrategy())
 	_, _ = fmt.Fprintf(out, "Barrier unsealed successfully.\n")
 	_, _ = fmt.Fprintf(out, "  Strategy: %s\n", strategy)
+
+	return nil
+}
+
+// runBarrierUnsealAuto unseals a tpm2-strategy barrier via its designated
+// PCR auto-unseal policy (see 'xkey policy set-auto-unseal') and nothing
+// else: it never prompts for or reads a password, so it is safe to wire
+// into unattended startup scripts. It runs the auto-unseal exactly once and
+// reports the outcome; it does not fall back to a password.
+func runBarrierUnsealAuto(cmd *cobra.Command, dataDir string) error {
+	out := cmd.OutOrStdout()
+	logger := slog.Default()
+
+	strategy, err := readBarrierStrategy(dataDir)
+	if err != nil {
+		return &BarrierError{Operation: "read_strategy", Err: err}
+	}
+	if strategy != xkms.StrategyTPM2 {
+		return &BarrierError{
+			Operation: "auto_unseal",
+			Message:   fmt.Sprintf("auto-unseal requires the tpm2 strategy; barrier is sealed with %q", strategyDisplayName(strategy)),
+		}
+	}
+
+	home, err := xhome.Resolve()
+	if err != nil {
+		return &BarrierError{Operation: "resolve_home", Err: err}
+	}
+
+	barrierSvc := services.NewBarrierService(home.Root, logger)
+	barrierSvc.SetDataDir(dataDir)
+
+	// The returned TPM closer is intentionally left unclosed: this command
+	// is a single short-lived process that exits right after reporting the
+	// outcome below, and the OS reclaims the device handle at exit (see
+	// unsealTPM2BarrierService in barrier_store.go for the same rationale).
+	unsealed, _, err := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, barrierTPMDevice, barrierTPMSimulator)
+	if err != nil {
+		return &BarrierError{Operation: "auto_unseal", Err: err}
+	}
+	if !unsealed {
+		return &BarrierError{
+			Operation: "auto_unseal",
+			Message:   "no auto-unseal policy configured; run 'xkey policy set-auto-unseal <name>' first",
+		}
+	}
+
+	_, _ = fmt.Fprintln(out, "Barrier auto-unsealed successfully via PCR policy.")
+	_, _ = fmt.Fprintf(out, "  Strategy: %s\n", strategyDisplayName(xkms.StrategyTPM2))
 
 	return nil
 }

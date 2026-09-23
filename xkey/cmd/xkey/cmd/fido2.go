@@ -1441,9 +1441,11 @@ func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.St
 
 // createBarrierStorage creates barrier-encrypted storage that reads the same
 // FIDO2 credentials as the GUI. It resolves the xkey home directory and
-// unseals the barrier with the provided password through openBarrierBackend
-// (barrier_store.go), the same low-level unseal the oath/backup/device-sync
-// commands use.
+// unseals the barrier through openBarrierBackend (barrier_store.go), the
+// same low-level unseal the oath/backup/device-sync commands use: a
+// tpm2-strategy barrier tries PCR-policy auto-unseal first (see `xkey
+// policy set-auto-unseal`), then a direct TPM unseal using cfg.TPMDevice;
+// every other strategy uses the password resolved below.
 func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialStorage, error) {
 	// Resolve xkey home and data directory.
 	home, err := xhome.Resolve()
@@ -1465,7 +1467,7 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 		password = strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
 	}
 
-	barrierBackend, err := openBarrierBackend(password, dataDir)
+	barrierBackend, err := openBarrierBackend(password, dataDir, cfg.TPMDevice, false)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrFIDO2BarrierUnsealFailed, Cause: err}
 	}

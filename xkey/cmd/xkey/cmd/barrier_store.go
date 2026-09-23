@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 
@@ -53,6 +54,10 @@ var (
 	// practice; it exists so a future BarrierService regression fails
 	// closed instead of silently returning a nil backend.
 	ErrBarrierBackendUnavailable = errors.New("barrier: backend unavailable after unseal")
+
+	// ErrBarrierStoreTPMUnavailable indicates a tpm2-strategy barrier could
+	// not be unsealed because no TPM device is available on this host.
+	ErrBarrierStoreTPMUnavailable = errors.New("barrier: TPM device required for tpm2-strategy barrier")
 )
 
 // addBarrierPasswordFlags registers --barrier-password and
@@ -66,18 +71,20 @@ func addBarrierPasswordFlags(cmd *cobra.Command) {
 	cmd.Flags().String("barrier-password-file", "", "Read barrier password from file (first line)")
 }
 
-// openBarrierBackend unseals the xkey barrier for a one-shot CLI command and
-// returns it as a storage.Backend. It shares the exact unseal mechanics the
-// GUI and `xkey extension serve` already use: the strategy recorded in the
-// barrier's own root key (readBarrierStrategy) selects the unseal method,
-// and BarrierService.Unseal performs it.
+// openBarrierBackend unseals the xkey barrier for a one-shot or long-running
+// headless CLI command and returns it as a storage.Backend. It shares the
+// exact unseal mechanics the GUI and `xkey extension serve` already use: the
+// strategy recorded in the barrier's own root key (readBarrierStrategy)
+// selects the unseal method, and BarrierService.Unseal performs it.
 //
 // password must already be resolved by the caller: resolveBarrierPassword
 // for oath/backup/device-sync, or the fido2.barrier_password /
 // fido2.barrier_password_file viper config for fido2 (createBarrierStorage
 // in fido2.go), which predates and does not use resolveBarrierPassword's
-// environment-variable and interactive-prompt fallbacks.
-func openBarrierBackend(password, dataDir string) (xkms.StorageBackend, error) {
+// environment-variable and interactive-prompt fallbacks. password is unused
+// for the tpm2 strategy, which unseals via tpmDevice/tpmSimulator instead
+// (PCR-policy auto-unseal first, then a direct TPM unseal).
+func openBarrierBackend(password, dataDir, tpmDevice string, tpmSimulator bool) (xkms.StorageBackend, error) {
 	home, err := xhome.Resolve()
 	if err != nil {
 		return nil, err
@@ -91,7 +98,11 @@ func openBarrierBackend(password, dataDir string) (xkms.StorageBackend, error) {
 	barrierSvc := services.NewBarrierService(home.Root, slog.Default())
 	barrierSvc.SetDataDir(dataDir)
 
-	if err := barrierSvc.Unseal(password, string(strategy)); err != nil {
+	if strategy == xkms.StrategyTPM2 {
+		if err := unsealTPM2BarrierService(barrierSvc, dataDir, tpmDevice, tpmSimulator); err != nil {
+			return nil, err
+		}
+	} else if err := barrierSvc.Unseal(password, string(strategy)); err != nil {
 		return nil, err
 	}
 
@@ -100,6 +111,35 @@ func openBarrierBackend(password, dataDir string) (xkms.StorageBackend, error) {
 		return nil, ErrBarrierBackendUnavailable
 	}
 	return backend, nil
+}
+
+// unsealTPM2BarrierService unseals a tpm2-strategy barrier for a one-shot or
+// long-running headless CLI command (oath, backup, the OIDC token store,
+// fido2): PCR-policy auto-unseal first (see `xkey policy
+// set-auto-unseal`), then a direct TPM unseal. Both need the TPM transport
+// to stay live for as long as the returned barrier-backed store is used, so
+// unlike `xkey extension serve` (which threads the returned closer through
+// to an explicit shutdown defer, since it is a daemon expected to run for a
+// long time and receive a graceful stop signal), this deliberately never
+// closes it: every caller here is a single process that exits when its
+// command finishes, and the OS reclaims the device handle at exit.
+func unsealTPM2BarrierService(barrierSvc *services.BarrierService, dataDir, tpmDevice string, tpmSimulator bool) error {
+	logger := slog.Default()
+
+	unsealed, _, autoErr := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, tpmDevice, tpmSimulator)
+	if autoErr != nil {
+		logger.Warn("barrier PCR-policy auto-unseal failed, falling back to direct TPM unseal", "error", autoErr)
+	} else if unsealed {
+		logger.Info("barrier auto-unsealed via PCR policy")
+		return nil
+	}
+
+	tpm, _ := probeTPMModule(logger, dataDir, tpmDevice, tpmSimulator)
+	if tpm == nil {
+		return ErrBarrierStoreTPMUnavailable
+	}
+	barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return tpm })
+	return barrierSvc.Unseal("", string(xkms.StrategyTPM2))
 }
 
 // resolveSecretStoreBackend is the CLI's single "is the barrier initialised?
@@ -131,7 +171,7 @@ func resolveSecretStoreBackend(cmd *cobra.Command, dataDir, storeName string, lo
 		return nil, false, &SentinelCauseError{Sentinel: ErrBarrierStoreOpenFailed, Cause: err}
 	}
 
-	backend, err := openBarrierBackend(password, dataDir)
+	backend, err := openBarrierBackend(password, dataDir, "", false)
 	if err != nil {
 		return nil, false, &SentinelCauseError{Sentinel: ErrBarrierStoreOpenFailed, Cause: err}
 	}

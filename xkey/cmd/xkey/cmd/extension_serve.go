@@ -221,19 +221,36 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				}
 
 			case xkms.StrategyTPM2:
-				// TPM2 strategy: open the TPM and register it, then unseal
-				// without a password (the hardware protects the root key).
+				// TPM2 strategy: try PCR-policy auto-unseal first (see
+				// `xkey policy set-auto-unseal`) -- it needs no password
+				// because the TPM's own PCR policy session authorizes the
+				// unseal. Fall back to a direct TPM unseal (also
+				// passwordless) when no auto-unseal policy is configured
+				// or auto-unseal fails for any other reason.
 				tpmDevice, _ := cmd.Flags().GetString("tpm-device")
 				tpmSimulator, _ := cmd.Flags().GetBool("tpm-simulator")
-				sealer, closer := probeTPMSealer(logger, dataDir, tpmDevice, tpmSimulator)
-				if sealer == nil {
-					return &DetailError{Err: ErrServeTPMOpenFailed, Detail: ": TPM device required for tpm2 barrier strategy"}
-				}
-				tpmCloser = closer
-				barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
 
-				if err := barrierSvc.Unseal("", string(strategy)); err != nil {
-					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
+				unsealed, autoCloser, autoErr := tryBarrierPolicyAutoUnseal(context.Background(), logger, barrierSvc, dataDir, tpmDevice, tpmSimulator)
+				switch {
+				case autoErr != nil:
+					logger.Warn("barrier PCR-policy auto-unseal failed, falling back to direct TPM unseal", "error", autoErr)
+				case unsealed:
+					logger.Info("barrier auto-unsealed via PCR policy")
+				}
+
+				if unsealed {
+					tpmCloser = autoCloser
+				} else {
+					sealer, closer := probeTPMSealer(logger, dataDir, tpmDevice, tpmSimulator)
+					if sealer == nil {
+						return &DetailError{Err: ErrServeTPMOpenFailed, Detail: ": TPM device required for tpm2 barrier strategy"}
+					}
+					tpmCloser = closer
+					barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
+
+					if err := barrierSvc.Unseal("", string(strategy)); err != nil {
+						return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
+					}
 				}
 
 			default:
@@ -829,22 +846,35 @@ func resolveTPMDevice(device string) string {
 	return defaultBarrierTPMDevice
 }
 
-// probeTPMSealer attempts to open a TPM for barrier unsealing, either the
-// hardware device at the resolved path or the in-process simulator when
-// useSimulator is true. Returns (sealer, closer) if the TPM is available,
-// or (nil, nil) if not. The caller must close the returned io.Closer when
-// the TPM is no longer needed.
+// probeTPMModule attempts to open the TPM -- the hardware device at the
+// resolved path, or the in-process simulator when useSimulator is true --
+// for barrier unsealing. Returns (tpm, closer) if the TPM is available, or
+// (nil, nil) if not. The caller must close the returned io.Closer when the
+// TPM is no longer needed.
 //
 // It delegates to openTPMModule, the same TPM-opening primitive
 // newPINTPMProvider uses for PIN backend resolution, so the barrier and
-// PIN code paths never drift into different TPM configurations.
-func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.Sealer, io.Closer) {
+// PIN code paths never drift into different TPM configurations. It is the
+// one place that tolerates "no TPM" as a non-error, nil result rather than
+// propagating openTPMModule's error: probeTPMSealer (the barrier strategy
+// view) and tryBarrierPolicyAutoUnseal (the PCR-policy auto-unseal view,
+// barrier_auto_unseal.go) both need the full xkms.TrustedPlatformModule,
+// not just the narrower Sealer method set, so they share this rather than
+// each probing the TPM independently.
+func probeTPMModule(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.TrustedPlatformModule, io.Closer) {
 	tpm, closer, err := openTPMModule(logger, dataDir, device, useSimulator)
 	if err != nil {
 		logger.Debug("TPM unavailable, barrier TPM2 strategy unavailable", "error", err)
 		return nil, nil
 	}
 	return tpm, closer
+}
+
+// probeTPMSealer narrows probeTPMModule's result to the Sealer interface
+// the barrier strategy needs; see probeTPMModule for the shared
+// TPM-opening behaviour.
+func probeTPMSealer(logger *slog.Logger, dataDir, device string, useSimulator bool) (xkms.Sealer, io.Closer) {
+	return probeTPMModule(logger, dataDir, device, useSimulator)
 }
 
 // Compile-time interface satisfaction checks.

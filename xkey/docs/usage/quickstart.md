@@ -47,7 +47,7 @@ Barrier Status
   Hardware Backed: false
 ```
 
-> **Deep dive**: [Barrier Architecture](../seal/README.md) | [Barrier CLI Reference](cli/barrier.md)
+> **Deep dive**: [Barrier Architecture](../seal/architecture.md) | [Barrier CLI Reference](cli/barrier.md)
 
 ## Step 3: Set Up PINs
 
@@ -283,7 +283,7 @@ xkmsctl barrier seal
 |-------|----------|
 | Backend selection and Go API | [Getting Started](getting-started.md) |
 | Full initialization procedures | [Initialization Guide](initialization.md) |
-| Barrier encryption architecture | [Seal/Unseal Architecture](../seal/README.md) |
+| Barrier encryption architecture | [Seal/Unseal Architecture](../seal/architecture.md) |
 | Bootstrap for new nodes | [Bootstrap Configuration](../configuration/bootstrap.md) |
 | CLI command reference | [CLI Overview](cli/README.md) |
 | PIV slot management | [PIV Documentation](../piv/README.md) |
