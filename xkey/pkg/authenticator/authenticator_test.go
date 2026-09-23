@@ -198,7 +198,7 @@ func TestAuthenticator_ProcessCBOR_Selection(t *testing.T) {
 	require.Equal(t, byte(StatusOK), response[0])
 }
 
-func TestAuthenticator_ProcessCBOR_NotImplementedCommands(t *testing.T) {
+func TestAuthenticator_ProcessCBOR_UnsupportedCommands(t *testing.T) {
 	auth := createTestAuthenticator(t)
 	defer func() { _ = auth.Close() }()
 
@@ -215,7 +215,7 @@ func TestAuthenticator_ProcessCBOR_NotImplementedCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			response, err := auth.ProcessCBOR(tt.cmd, nil)
 			require.Error(t, err)
-			require.ErrorIs(t, err, ErrNotImplemented)
+			require.ErrorIs(t, err, ErrCommandNotSupported)
 			require.Equal(t, byte(StatusInvalidCommand), response[0])
 		})
 	}
@@ -348,7 +348,7 @@ func TestErrorToStatus(t *testing.T) {
 		{"UnsupportedExtension", ErrUnsupportedExtension, StatusUnsupportedExtension},
 		{"StorageClosed", ErrStorageClosed, StatusOtherError},
 		{"StorageError", ErrStorageError, StatusOtherError},
-		{"NotImplemented", ErrNotImplemented, StatusInvalidCommand},
+		{"CommandNotSupported", ErrCommandNotSupported, StatusInvalidCommand},
 		{"CredMgmtNotEnabled", ErrCredMgmtNotEnabled, StatusInvalidCommand},
 		{"LimitExceeded", ErrLimitExceeded, StatusLimitExceeded},
 		{"UnsupportedCryptoAlgorithm", ErrUnsupportedCryptoAlgorithm, StatusUnsupportedAlgorithm},

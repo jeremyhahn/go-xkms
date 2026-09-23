@@ -105,13 +105,15 @@ func TestFrostBackend_KeyLifecycle(t *testing.T) {
 	assert.NotEmpty(t, handle.GroupPublicKey)
 	t.Logf("Group public key size: %d bytes", len(handle.GroupPublicKey))
 
-	// Get signer
+	// A crypto.Signer cannot coordinate this key's threshold=2 FROST
+	// round; Signer refuses construction with a typed error instead of
+	// returning a signer that fails at call time.
 	signer, err := backend.Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	require.NotNil(t, signer)
+	require.Error(t, err)
+	require.Nil(t, signer)
 
-	// Verify it implements crypto.Signer
-	var _ crypto.Signer = signer
+	var thresholdErr *frost.ThresholdSigningNotSupportedError
+	require.ErrorAs(t, err, &thresholdErr)
 
 	// List keys
 	keys, err := backend.ListKeys(context.Background())

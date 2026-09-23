@@ -226,8 +226,14 @@ type authenticatorPINState struct {
 // handleClientPIN implements the CTAP2 authenticatorClientPIN command (0x06).
 // It dispatches to the appropriate subcommand handler based on the request.
 func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
+	// authenticatorClientPIN is required only if the authenticator supports
+	// PIN or a UV mechanism that mints pinUvAuthTokens (CTAP 2.1 §6.5).
+	// Config.SetDefaults forces EnablePIN whenever credential management is
+	// enabled, which is the only feature here that needs a minted token, so
+	// EnablePIN=false means neither applies and getInfo advertises neither
+	// clientPin nor pinUvAuthProtocols; declining is spec-correct.
 	if !a.config.EnablePIN {
-		return nil, ErrNotImplemented
+		return nil, ErrCommandNotSupported
 	}
 
 	req, err := decodeClientPINRequest(data)

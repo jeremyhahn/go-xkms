@@ -24,12 +24,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// FrostSigner implements crypto.Signer for FROST threshold signatures.
-// This provides orchestrated signing that internally coordinates the
-// FROST protocol rounds.
-//
-// Note: For distributed scenarios where participants communicate externally,
-// use the GenerateNonces, SignRound, and Aggregate methods directly.
+// FrostSigner implements crypto.Signer for a single-participant
+// (threshold 1) FROST key. FrostBackend.Signer refuses to construct a
+// FrostSigner for any key whose threshold requires coordinating more than
+// one participant; use the GenerateNonces, SignRound, and Aggregate
+// methods directly for distributed signing.
 type FrostSigner struct {
 	backend    *FrostBackend
 	keyID      string
@@ -43,20 +42,14 @@ func (s *FrostSigner) Public() crypto.PublicKey {
 
 // Sign signs digest with the FROST key.
 //
-// For orchestrated mode, this method performs a single-participant signing
-// operation. In a real distributed scenario, you would:
-//  1. Use GenerateNonces to create nonces
-//  2. Exchange commitments with other participants
-//  3. Use SignRound to create signature shares
-//  4. Use Aggregate to combine shares
+// FrostSigner always wraps a single-participant (threshold 1) key, so
+// Sign runs the FROST round internally: generate a nonce, produce this
+// participant's signature share, and aggregate that lone share into the
+// final signature.
 //
 // The rand parameter is used for generating signing nonces.
 // The opts parameter is currently unused but may support hash functions in the future.
 func (s *FrostSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	// For orchestrated mode, we need to coordinate with other participants
-	// This is a simplified single-participant signing for demo purposes
-	// In production, use the explicit round API for distributed signing
-
 	// Generate nonces
 	noncePackage, err := s.backend.GenerateNonces(s.keyID)
 	if err != nil {
@@ -68,31 +61,21 @@ func (s *FrostSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		ParticipantID: noncePackage.ParticipantID,
 		Commitments:   noncePackage.Commitments,
 	}
+	commitments := []*Commitment{commitment}
 
-	// For single-participant mode (threshold=1), we can sign alone
-	// Otherwise, this would need coordination with other participants
-	if s.keyPackage.MinSigners == 1 {
-		// Single participant can sign alone
-		commitments := []*Commitment{commitment}
-
-		// Generate signature share
-		share, err := s.backend.SignRound(s.keyID, digest, noncePackage, commitments)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to generate signature share", Err: err}
-		}
-
-		// Aggregate (with single share)
-		signature, err := s.backend.Aggregate(s.keyID, digest, commitments, []*SignatureShare{share})
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to aggregate signature", Err: err}
-		}
-
-		return signature, nil
+	// Generate signature share
+	share, err := s.backend.SignRound(s.keyID, digest, noncePackage, commitments)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to generate signature share", Err: err}
 	}
 
-	// For threshold > 1, orchestrated signing is not yet implemented
-	// Applications should use the explicit round API for distributed scenarios
-	return nil, &errs.Message{Msg: "orchestrated multi-participant signing not implemented; use GenerateNonces, SignRound, and Aggregate for distributed signing"}
+	// Aggregate (with single share)
+	signature, err := s.backend.Aggregate(s.keyID, digest, commitments, []*SignatureShare{share})
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to aggregate signature", Err: err}
+	}
+
+	return signature, nil
 }
 
 // Algorithm returns the public key algorithm type.

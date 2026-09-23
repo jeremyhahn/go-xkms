@@ -973,7 +973,7 @@ var (
     ErrAuthenticatorClosed = errors.New("authenticator: authenticator closed")
     ErrCBOREncodingFailed  = errors.New("authenticator: CBOR encoding failed")
     ErrCBORDecodingFailed  = errors.New("authenticator: CBOR decoding failed")
-    ErrNotImplemented      = errors.New("authenticator: command not implemented")
+    ErrCommandNotSupported = errors.New("authenticator: command not supported")
     ErrLimitExceeded       = errors.New("authenticator: limit exceeded")
 )
 ```
