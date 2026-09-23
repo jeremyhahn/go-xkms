@@ -129,12 +129,8 @@ caller.)
 5. **Clear memory** after key operations
 
 ```go
-// Example: Zeroing sensitive memory
-func clearBytes(b []byte) {
-    for i := range b {
-        b[i] = 0
-    }
-}
+// Example: Zeroing sensitive memory via go-enclave.
+enclave.Wipe(b)
 ```
 
 ## PIN Protocol Security
@@ -822,13 +818,13 @@ func (a *Authenticator) Close() error {
 
     // Clear PIN state
     if a.state != nil {
-        clearBytes(a.state.PINHash)
+        enclave.Wipe(a.state.PINHash)
     }
 
     // Clear PIN protocol state
     if a.pinState.protocol != nil {
-        clearBytes(a.pinState.protocol.pinUvAuthToken)
-        clearBytes(a.pinState.protocol.sharedSecret)
+        enclave.Wipe(a.pinState.protocol.pinUvAuthToken)
+        enclave.Wipe(a.pinState.protocol.sharedSecret)
     }
 
     return a.storage.Close()

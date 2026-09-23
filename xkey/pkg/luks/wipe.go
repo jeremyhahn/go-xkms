@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // WipeStandard defines a named wipe methodology.
@@ -124,7 +126,7 @@ func wipePass(f *os.File, size int64, pattern WipePattern) error {
 	const bufferSize = 1024 * 1024 // 1MB buffer
 
 	buffer := make([]byte, bufferSize)
-	defer clearBytes(buffer)
+	defer enclave.Wipe(buffer)
 
 	// Seek to beginning
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -174,11 +176,4 @@ func fillBufferWithPattern(buf []byte, pattern WipePattern) error {
 		return &MessageError{Msg: fmt.Sprintf("unknown pattern: %d", pattern)}
 	}
 	return nil
-}
-
-// clearBytes securely clears a byte slice.
-func clearBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

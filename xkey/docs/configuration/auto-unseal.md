@@ -249,7 +249,7 @@ Priority (highest to lowest):
 - **Software strategy** should only be used when no hardware backend is available. The password is the sole protection for the root key.
 - **Cloud KMS** requires network connectivity at boot time. Plan for graceful degradation if the cloud endpoint is unreachable.
 - **Shamir secret sharing** is available for barrier initialization, splitting the root key into M-of-N shares for quorum-based unsealing.
-- **Root key zeroing** -- After deriving the DEK, the root key is immediately zeroed from memory using `mem.Zero()`.
+- **Root key zeroing** -- After deriving the DEK, the root key is immediately zeroed from memory using go-enclave's `enclave.Wipe()`.
 - **DEK zeroing** -- When the barrier is sealed, the DEK is zeroed and all subsequent operations return `ErrSealed`.
 
 ## Related Packages

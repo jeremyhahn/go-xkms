@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/stretchr/testify/require"
 )
 
@@ -909,12 +910,14 @@ func TestDecodeCOSEKeyAgreementKey(t *testing.T) {
 	}
 }
 
-// TestClearBytes tests secure memory clearing.
-func TestClearBytes(t *testing.T) {
+// TestEnclaveWipe tests secure memory clearing. The package-local clearBytes
+// helper was retired in favor of go-enclave.Wipe (go-xkms#623); this
+// exercises the dependency the way this package's call sites use it.
+func TestEnclaveWipe(t *testing.T) {
 	t.Parallel()
 
 	data := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-	clearBytes(data)
+	enclave.Wipe(data)
 
 	for i, b := range data {
 		if b != 0 {

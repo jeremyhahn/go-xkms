@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/kyber768"
 )
 
@@ -990,14 +991,20 @@ func TestDecapsulateKeyReadOnlySession(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// zeroize
+// enclave.Wipe
+//
+// pkg/crypto/mem was retired (go-xkms#623); the package-local zeroize helper
+// that wrapped a hand-rolled zeroing loop is gone, and every former call site
+// now defers directly to go-enclave's Wipe. These tests exercise that
+// dependency the way this package's call sites use it, not go-enclave's own
+// (already-covered) unit tests.
 // ----------------------------------------------------------------------------
 
-func TestZeroize(t *testing.T) {
+func TestEnclaveWipe(t *testing.T) {
 
 	t.Run("zeroes all bytes in slice", func(t *testing.T) {
 		data := []byte{0x01, 0x02, 0x03, 0xFF, 0xAB}
-		zeroize(data)
+		enclave.Wipe(data)
 		for i, b := range data {
 			assert.Equal(t, byte(0), b, "byte at index %d should be zero", i)
 		}
@@ -1005,13 +1012,13 @@ func TestZeroize(t *testing.T) {
 
 	t.Run("handles empty slice", func(t *testing.T) {
 		data := []byte{}
-		zeroize(data) // should not panic
+		enclave.Wipe(data) // should not panic
 		assert.Empty(t, data)
 	})
 
 	t.Run("handles nil slice", func(t *testing.T) {
 		var data []byte
-		zeroize(data) // should not panic
+		enclave.Wipe(data) // should not panic
 		assert.Nil(t, data)
 	})
 
@@ -1020,7 +1027,7 @@ func TestZeroize(t *testing.T) {
 		for i := range data {
 			data[i] = byte(i)
 		}
-		zeroize(data)
+		enclave.Wipe(data)
 		assert.Len(t, data, 256)
 		for i, b := range data {
 			assert.Equal(t, byte(0), b, "byte at index %d should be zero", i)

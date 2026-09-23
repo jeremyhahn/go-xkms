@@ -25,7 +25,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -406,7 +406,7 @@ func (s *Service) deleteManual(name string) error {
 	if !exists {
 		return ErrCredentialNotFound
 	}
-	mem.Zero(cred)
+	enclave.Wipe(cred)
 	delete(s.manualCreds, name)
 
 	s.logger.Debug("credential deleted from memory", "name", name)

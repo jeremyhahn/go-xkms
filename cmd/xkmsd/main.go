@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -56,10 +57,21 @@ func run() int {
 	// mlocked memory before exit, and arrange for a graceful Purge on
 	// any orderly shutdown path. Mirrors the qrdbd pattern exactly.
 	// See pkg/secure/interrupt.go in go-qrdb.
+	//
+	// secure.Purge (go-qrdb's memguard-backed Secret/Buffer) and
+	// enclave.WipeAll (go-xkms's own go-enclave-backed MemoryEnclaves --
+	// pintpm2's cached FIDO2 hash, sealed backend DEKs) are two distinct
+	// protected-memory subsystems with no shared lifecycle hook, so the
+	// binary that owns process exit calls both. Libraries in this repo
+	// call neither: WipeAll is a process-wide teardown that belongs only
+	// to the binary (go-xkms#623).
 	secure.CatchInterrupt()
 	defer func() {
 		if err := secure.Purge(); err != nil {
 			fmt.Fprintf(os.Stderr, "xkmsd: secure.Purge: %v\n", err)
+		}
+		if count, err := enclave.WipeAll(); err != nil {
+			fmt.Fprintf(os.Stderr, "xkmsd: enclave.WipeAll: %d still held, %v\n", count, err)
 		}
 	}()
 

@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"errors"
 
+	"github.com/jeremyhahn/go-enclave"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -224,8 +225,8 @@ func (w *AESGCMKeyWrapper) UnwrapInto(wrapped, dst []byte) error {
 	// a relocated output is a heap copy of the plaintext the caller cannot
 	// see, so wipe it before reporting the broken invariant.
 	if plainLen > 0 && &out[0] != &dst[0] {
-		clearBytes(out)
-		clearBytes(dst)
+		enclave.Wipe(out)
+		enclave.Wipe(dst)
 		return ErrUnwrapNotInPlace
 	}
 

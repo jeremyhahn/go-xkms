@@ -24,11 +24,10 @@ package pintpm2
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"sync/atomic"
 
+	"github.com/jeremyhahn/go-enclave"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
 )
 
 // Compile-time interface conformance against the canonical qrdb contract.
@@ -51,12 +50,12 @@ const minPINLength = 6
 // qrdbsdk.ErrPINNotSet.
 //
 // FIDO2 PIN hash verification is supported by caching SHA-256(PIN)[:16]
-// in a GuardedBuffer (mlock'd, guard-paged memory) when the user PIN is
-// set, verified, or changed.
+// in a go-enclave MemoryEnclave (mlock'd, guard-paged memory) when the
+// user PIN is set, verified, or changed.
 type TPM2Backend struct {
 	platformStore PlatformAuthProvider
 	userPINSet    atomic.Bool
-	fido2Guard    atomic.Pointer[mem.GuardedBuffer]
+	fido2Enclave  atomic.Pointer[enclave.MemoryEnclave]
 }
 
 // NewTPM2Backend creates a new TPM2Backend that delegates PIN verification
@@ -89,7 +88,7 @@ func (b *TPM2Backend) SetSOPIN(_, _ string) error { return qrdbsdk.ErrPINNotSet 
 // backend does not use SO PINs; the first parameter exists to satisfy
 // the PINBackend interface.
 //
-// On success the FIDO2 hash is cached in a GuardedBuffer.
+// On success the FIDO2 hash is cached in a MemoryEnclave.
 func (b *TPM2Backend) SetUserPIN(_ string, newUserPIN string) error {
 	if err := validatePINLength(newUserPIN); err != nil {
 		return err
@@ -129,8 +128,8 @@ func (b *TPM2Backend) ChangeUserPIN(currentUserPIN, newUserPIN string) error {
 		ready := b.platformStore.IsAuthReady()
 		b.userPINSet.Store(ready)
 		if !ready {
-			if guard := b.fido2Guard.Swap(nil); guard != nil {
-				guard.Free()
+			if enc := b.fido2Enclave.Swap(nil); enc != nil {
+				enc.Destroy()
 			}
 		}
 		if isAuthError(err) {
@@ -166,8 +165,8 @@ func (b *TPM2Backend) VerifyUserPIN(p string) error {
 	// now known so UserPINSet reports the confirmed state rather than a
 	// guess derived from SRK presence.
 	b.userPINSet.Store(true)
-	guard := b.fido2Guard.Load()
-	if guard == nil || guard.IsFreed() {
+	enc := b.fido2Enclave.Load()
+	if enc == nil || !enc.IsAlive() {
 		b.cacheFIDO2Hash([]byte(p))
 	}
 	return nil
@@ -207,23 +206,20 @@ func (b *TPM2Backend) ResetLockout(lockoutAuth string) error {
 }
 
 // VerifyFIDO2Hash compares the supplied CTAP2 PIN hash against the cached
-// GuardedBuffer using constant-time comparison.
+// MemoryEnclave using constant-time comparison. A nil or destroyed enclave
+// reports false, matching the fail-closed behavior of enclave.EqualTo.
 func (b *TPM2Backend) VerifyFIDO2Hash(hash []byte) bool {
 	if len(hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
-	guard := b.fido2Guard.Load()
-	if guard == nil || guard.IsFreed() {
-		return false
-	}
-	return subtle.ConstantTimeCompare(guard.Bytes(), hash) == 1
+	return b.fido2Enclave.Load().EqualTo(hash)
 }
 
-// Close frees the GuardedBuffer holding the FIDO2 hash. Safe to call
+// Close destroys the MemoryEnclave holding the FIDO2 hash. Safe to call
 // multiple times.
 func (b *TPM2Backend) Close() {
-	if guard := b.fido2Guard.Load(); guard != nil {
-		guard.Free()
+	if enc := b.fido2Enclave.Load(); enc != nil {
+		enc.Destroy()
 	}
 }
 
@@ -249,17 +245,19 @@ func (b *TPM2Backend) buildAuthFailureError() error {
 }
 
 // cacheFIDO2Hash computes SHA-256(pinBytes)[:16] and stores it in a
-// GuardedBuffer; the prior buffer is freed.
+// MemoryEnclave; the prior enclave is destroyed. NewMemoryEnclave takes
+// ownership of the slice handed to it and wipes it before returning, so
+// the remainder of digest (bytes 16:32, never handed to the enclave) is
+// wiped separately to leave nothing of the digest on the heap.
 func (b *TPM2Backend) cacheFIDO2Hash(pinBytes []byte) {
 	digest := sha256.Sum256(pinBytes)
-	guard, err := mem.NewGuardedBuffer(qrdbsdk.FIDO2PINHashSize)
+	enc, err := enclave.NewMemoryEnclave(digest[:qrdbsdk.FIDO2PINHashSize])
+	enclave.Wipe(digest[:])
 	if err != nil {
 		return
 	}
-	guard.Write(digest[:qrdbsdk.FIDO2PINHashSize])
-	mem.Zero(digest[:])
-	if old := b.fido2Guard.Swap(guard); old != nil {
-		old.Free()
+	if old := b.fido2Enclave.Swap(enc); old != nil {
+		old.Destroy()
 	}
 }
 

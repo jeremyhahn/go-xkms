@@ -27,6 +27,7 @@ import (
 	"math/big"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-enclave"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -339,7 +340,7 @@ func (a *Authenticator) ProcessHMACSecretExtension(
 	if err != nil {
 		return nil, err
 	}
-	defer clearBytes(sharedSecret)
+	defer enclave.Wipe(sharedSecret)
 
 	// Verify saltAuth: HMAC-SHA-256(sharedSecret, saltEnc) with protocol-aware truncation
 	if err := verifySaltAuth(sharedSecret, input.PinUvAuthProtocol, input.SaltEnc, input.SaltAuth); err != nil {
@@ -809,17 +810,10 @@ func (h *HMACSecretPlatformHelper) SharedSecret() []byte {
 
 // Reset clears all sensitive data.
 func (h *HMACSecretPlatformHelper) Reset() {
-	clearBytes(h.sharedSecret)
+	enclave.Wipe(h.sharedSecret)
 	h.sharedSecret = nil
 	h.privateKey = nil
 	h.publicKey = nil
-}
-
-// clearBytes securely clears a byte slice by overwriting with zeros.
-func clearBytes(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }
 
 // BuildHMACSecretInput creates a complete hmac-secret extension input for GetAssertion.

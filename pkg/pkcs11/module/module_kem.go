@@ -30,13 +30,7 @@
 //   - OASIS PKCS#11 v3.2: https://docs.oasis-open.org/pkcs11/pkcs11-spec/v3.2/pkcs11-spec-v3.2.html
 package module
 
-// zeroize overwrites a byte slice with zeros to prevent sensitive key material
-// from lingering in memory after use.
-func zeroize(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
+import "github.com/jeremyhahn/go-enclave"
 
 // mlkemEncapsulateVendorMechanism maps a resolved ML-KEM security level to
 // the legacy per-level vendor mechanism that implements C_EncapsulateKey for
@@ -295,7 +289,7 @@ func (m *Module) EncapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 	if err != nil {
 		return ObjectHandle(InvalidHandle), nil, err
 	}
-	defer zeroize(sharedSecret)
+	defer enclave.Wipe(sharedSecret)
 
 	// Build the secret key object template from the caller's template,
 	// injecting the shared secret as CKA_VALUE and ensuring required
@@ -483,7 +477,7 @@ func (m *Module) DecapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 	}
 
 	// Retrieve private key material from CKA_VALUE and copy to a local buffer
-	// so the deferred zeroize does not corrupt the object store.
+	// so the deferred enclave.Wipe does not corrupt the object store.
 	privKeyRef := privKeyObj.GetAttribute(CKA_VALUE)
 	if len(privKeyRef) == 0 {
 		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(
@@ -491,7 +485,7 @@ func (m *Module) DecapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 	}
 	privKeyValue := make([]byte, len(privKeyRef))
 	copy(privKeyValue, privKeyRef)
-	defer zeroize(privKeyValue)
+	defer enclave.Wipe(privKeyValue)
 
 	// Resolve the PKCS#11 v3.2 standard CKM_ML_KEM mechanism to a concrete
 	// per-level vendor mechanism using the private key's CKA_PARAMETER_SET
@@ -510,7 +504,7 @@ func (m *Module) DecapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 	if err != nil {
 		return ObjectHandle(InvalidHandle), err
 	}
-	defer zeroize(sharedSecret)
+	defer enclave.Wipe(sharedSecret)
 
 	// Build the secret key object template from the caller's template,
 	// injecting the shared secret as CKA_VALUE.

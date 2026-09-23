@@ -53,7 +53,7 @@ Minimum PIN length is 6 characters, enforced by both the `Service` and backends.
 | User PIN | Hashed and stored in `storage.Backend` | PlatformSRK password auth via `PlatformAuthProvider` |
 | Lockout | None -- hash cost is the security mechanism | TPM Dictionary Attack Protection (hardware counters) |
 | Persistence | PINRecord JSON blobs in `storage.Backend` | TPM hardware state |
-| FIDO2 hash | Cached in `mem.GuardedBuffer` | Cached in `mem.GuardedBuffer` |
+| FIDO2 hash | Cached in `enclave.MemoryEnclave` | Cached in `enclave.MemoryEnclave` |
 
 ## PINBackend Interface
 
@@ -202,7 +202,7 @@ Boot lifecycle:
 
 ## FIDO2 Integration
 
-Both backends cache the CTAP2-mandated PIN hash (`SHA-256(PIN)[:16]`) in a `mem.GuardedBuffer` (mlock'd, guard-paged memory). The hash is computed and cached when:
+Both backends cache the CTAP2-mandated PIN hash (`SHA-256(PIN)[:16]`) in a go-enclave `MemoryEnclave` (mlock'd, guard-paged memory). The hash is computed and cached when:
 
 - A user PIN is set (`SetUserPIN`).
 - A user PIN is changed (`ChangeUserPIN`).
@@ -216,7 +216,7 @@ svc.SetFIDO2HashSetter(func(hash []byte) {
 })
 ```
 
-Both backends implement `FIDO2HashVerifier` for verifying incoming FIDO2 PIN hashes via constant-time comparison against the cached `GuardedBuffer`.
+Both backends implement `FIDO2HashVerifier` for verifying incoming FIDO2 PIN hashes via `MemoryEnclave.EqualTo`, which compares in constant time under the enclave's read lock.
 
 ## Barrier Integration
 
@@ -322,10 +322,10 @@ if status := svc.GetLockoutStatus(); status != nil && status.IsLocked {
 - **Argon2id** (RFC 9106) with 64 MiB memory, 3 iterations, 4 threads -- resistant to GPU/ASIC brute force.
 - **PBKDF2** (NIST SP 800-132) with 600,000 iterations for FIPS 140 compliance.
 - **Constant-time comparison** via `crypto/subtle.ConstantTimeCompare` -- prevents timing side-channels.
-- **mlock'd guard-paged memory** for FIDO2 hash via `mem.GuardedBuffer` -- prevents swap and detects buffer overruns.
-- **Lock-free concurrency** -- all mutable state managed through `atomic.Pointer`, `atomic.Bool`, and `atomic.Pointer[mem.GuardedBuffer]`.
+- **mlock'd guard-paged memory** for FIDO2 hash via go-enclave's `MemoryEnclave` -- prevents swap and detects buffer overruns.
+- **Lock-free concurrency** -- all mutable state managed through `atomic.Pointer`, `atomic.Bool`, and `atomic.Pointer[enclave.MemoryEnclave]`.
 - **Independent random salts** -- each PIN (SO and user) uses its own random 16-byte salt from `crypto/rand`.
-- **Zeroed intermediate values** -- raw PIN bytes and intermediate hashes are zeroed via `mem.Zero` after use.
+- **Zeroed intermediate values** -- raw PIN bytes and intermediate hashes are zeroed via `enclave.Wipe` after use.
 
 ## See Also
 

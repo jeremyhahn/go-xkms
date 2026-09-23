@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"github.com/jeremyhahn/go-enclave"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -389,7 +390,7 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 	// therefore the SO PIN, is correct. Without it there is nothing to verify
 	// against, so any PIN would appear to succeed: refuse instead.
 	if len(km.state.WrappedAK) == 0 {
-		clearBytes(smk)
+		enclave.Wipe(smk)
 		return ErrKeyManagerNoAK
 	}
 
@@ -577,13 +578,13 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 	// before any borrow is taken.
 	akBuf, err := newRandomKeyBuffer(AESGCMKeySize)
 	if err != nil {
-		clearBytes(smk)
+		enclave.Wipe(smk)
 		return err
 	}
 	cmkBuf, err := newRandomKeyBuffer(AESGCMKeySize)
 	if err != nil {
 		akBuf.Destroy()
-		clearBytes(smk)
+		enclave.Wipe(smk)
 		return err
 	}
 
@@ -594,7 +595,7 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 		if !adopted {
 			akBuf.Destroy()
 			cmkBuf.Destroy()
-			clearBytes(smk)
+			enclave.Wipe(smk)
 		}
 	}()
 
@@ -630,7 +631,7 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 	}
 	attestBuf, err := secure.NewBufferFromBytes(attestKeyPKCS8)
 	if err != nil {
-		clearBytes(attestKeyPKCS8)
+		enclave.Wipe(attestKeyPKCS8)
 		return &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
 	}
 	defer attestBuf.Destroy()
@@ -1054,7 +1055,7 @@ func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 	newWrapper, err := NewAESGCMKeyWrapper(newSMK)
 	if err != nil {
 		akBuf.Destroy()
-		clearBytes(newSMK)
+		enclave.Wipe(newSMK)
 		return err
 	}
 
@@ -1064,7 +1065,7 @@ func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 	newWrappedAK, err := newWrapper.WrapFrom(akBuf)
 	if err != nil {
 		akBuf.Destroy()
-		clearBytes(newSMK)
+		enclave.Wipe(newSMK)
 		return err
 	}
 
