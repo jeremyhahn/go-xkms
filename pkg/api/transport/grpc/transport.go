@@ -438,10 +438,11 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 	}
 
 	return &transport.EncryptResponse{
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-		IV:         resp.Iv,
+		Ciphertext:   resp.Ciphertext,
+		Nonce:        resp.Nonce,
+		Tag:          resp.Tag,
+		IV:           resp.Iv,
+		GCMNonceMode: resp.GcmNonceMode,
 	}, nil
 }
 
@@ -458,6 +459,7 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 		Nonce:          req.Nonce,
 		Tag:            req.Tag,
 		AdditionalData: req.AdditionalData,
+		GcmNonceMode:   req.GCMNonceMode,
 		Mode:           req.Mode,
 		Iv:             req.IV,
 		Padding:        req.Padding,

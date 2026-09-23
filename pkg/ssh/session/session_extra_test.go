@@ -147,9 +147,9 @@ func TestRun_NonZeroExitCode(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -201,9 +201,9 @@ func TestRun_ContextCancellation(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -409,9 +409,9 @@ func TestShell_AfterClose_ReturnsClosedError(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	if err := sess.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -525,9 +525,9 @@ func TestShell_HappyPath(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -634,9 +634,9 @@ func TestShell_ContextCancellation(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 

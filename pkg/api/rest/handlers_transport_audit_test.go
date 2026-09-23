@@ -15,6 +15,7 @@ package rest
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -118,6 +119,16 @@ func TestDecryptHandler_RoundTripsWithEncryptHandler(t *testing.T) {
 		"/api/v1/keys/rt-key/encrypt?backend=test-backend", strings.NewReader(string(encBody)))
 	encW := httptest.NewRecorder()
 	encRouter.ServeHTTP(encW, encReq)
+
+	if fips140.Enforced() {
+		// EncryptHandler's asymmetric fallback deliberately mirrors
+		// PKCS#11's CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5 encryption
+		// (see pkg/xkms/servicer_crypto.go's Encrypt) -- which
+		// rsa.EncryptPKCS1v15 refuses outright under
+		// GODEBUG=fips140=only, so this round trip cannot start.
+		require.Equal(t, http.StatusInternalServerError, encW.Code, encW.Body.String())
+		return
+	}
 
 	require.Equal(t, http.StatusOK, encW.Code, encW.Body.String())
 	var encResp EncryptResponse

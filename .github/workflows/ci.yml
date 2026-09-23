@@ -1337,15 +1337,26 @@ jobs:
   # X25519/ChaCha20-Poly1305/ML-KEM-512 deliberately-non-approved coverage in
   # pkg/crypto/x25519, pkg/crypto/chacha20poly1305 and pkg/quantum/mlkem512.
   #
-  # The JOB half is still withheld. Two kinds of failure remain, measured on
-  # this tree under GODEBUG=fips140=only:
-  #   1. Packages whose test suites don't yet assert the FIPS-only refusal
-  #      for a deliberately non-approved algorithm the way the packages above
-  #      now do: pkg/pkcs11/module (the largest single bucket -- PKCS#11
-  #      authenticated wrap requires arbitrary-IV GCM, which fips140=only
-  #      cannot construct), pkg/encoding/jwe, pkg/keyprovider/symmetric,
-  #      pkg/ssh/console, pkg/api/transport/usb, pkg/backend/software,
-  #      pkg/api/mcp, pkg/ssh/session and several smaller packages.
+  # The JOB half is still withheld. #23's second and third passes fixed every
+  # test in pkg/encoding/jwe, pkg/keyprovider/symmetric, pkg/ssh/console,
+  # pkg/ssh/session, pkg/api/transport/usb, pkg/backend/software, pkg/api/mcp,
+  # pkg/xkms (2,643 tests) and the smaller packages the previous version of
+  # this comment listed, plus a cross-cutting production bug the work
+  # surfaced along the way: the GCMNonceMode field that says which AEAD
+  # construction produced a ciphertext (see docs/fips/README.md "Random-nonce
+  # GCM for the default Encrypt path") was not threaded through the gRPC,
+  # REST or MCP wire transports, so a default (no-explicit-nonce) symmetric
+  # Encrypt under fips140=only produced a ciphertext its own matching Decrypt
+  # call could not open over any of those three transports. That is fixed at
+  # the wire-protocol level, not worked around in tests. Two kinds of failure
+  # still remain, measured on this tree under GODEBUG=fips140=only:
+  #   1. pkg/pkcs11/module: broader than the authenticated-wrap verbs alone.
+  #      PKCS#11 v3.0's CKM_AES_GCM mechanism takes its IV from the caller via
+  #      CK_GCM_PARAMS with no random-nonce mode to opt into, so nearly the
+  #      whole CKM_AES_GCM mechanism surface is arbitrary-IV GCM -- not only
+  #      the wrap verbs -- and most of pkg/testing/pkcs11test's conformance
+  #      coverage exercises it (295 failures at last measurement). See
+  #      docs/fips/README.md "Integration Points" for the corrected scope.
   #   2. github.com/google/go-tpm v0.9.8 panics -- not errors -- inside its
   #      own TPM2 session machinery under fips140=only, on ordinary,
   #      spec-compliant use: session HMAC authorization (crypto/hmac, a
@@ -1355,7 +1366,21 @@ jobs:
   #      go-xkms code and is out of scope for this repository to fix; it
   #      blocks pkg/tpm2, pkg/backend/tpm2, pkg/luks, pkg/trust/clusterca and
   #      pkg/xkms's TPM2 registration path, and needs routing upstream the
-  #      same way go-qrdb's SHA-1 blocker was.
+  #      same way go-qrdb's SHA-1 blocker was. Measured this pass: one such
+  #      panic aborts the whole test *binary*, not just the offending test,
+  #      so `go test -tags tpm_simulator ./pkg/xkms/...` under fips140=only
+  #      silently never runs the majority of the package's 2,643 tests unless
+  #      that one test is skipped first -- worse than "N tests fail", and the
+  #      reason pkg/xkms's own FIPS coverage above had to be verified with
+  #      that test skipped. See docs/fips/README.md "Known blockers outside
+  #      this repository's control" for the full finding, including a related
+  #      but non-fatal gorilla/websocket SHA-1 panic (recovered by net/http
+  #      per-connection, so it fails WebSocket upgrades under fips140=only
+  #      rather than crashing the process) and two open architecture
+  #      questions for the owner: pkg/ssh/session's intentionally un-pinned
+  #      curve25519-sha256 KEX offer, and pkg/api/transport/usb's Noise
+  #      handshake being hard-wired to Curve25519 with no FIPS-approved
+  #      substitute DH function in the pattern.
   #
   # Landing a required check that is red on arrival is the exact ordering
   # mistake task #98 exists to prevent: a gate is only safe once the code it

@@ -250,6 +250,20 @@ The FIPS strategy is consumed by several subsystems:
 | ML-KEM-512 | `pkg/quantum/mlkem512.New`/`.Create` refuse with `ErrFIPSMode` under `crypto/fips140.Enabled()`, since CIRCL is outside the module boundary the stdlib polices (see [Crypto the standard library cannot see](#crypto-the-standard-library-cannot-see)) |
 | PKCS#11 authenticated wrapping | Refuses `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` with `CKR_MECHANISM_INVALID` when the runtime withholds arbitrary-IV GCM (see [AEAD construction](#aead-construction)) |
 
+`pkg/pkcs11/module`'s exposure to `fips140=only` is broader than the
+authenticated-wrap verbs above: `CKM_AES_GCM` itself, as PKCS#11 v3.0 §6.15.1
+defines it, supplies the IV to the token through `CK_GCM_PARAMS` -- the
+mechanism has no random-nonce mode for a caller to opt into the way
+`pkg/crypto/aead.NewGCMForFreshEncrypt` does. That makes almost the entire
+`CKM_AES_GCM` mechanism surface arbitrary-IV GCM, not only the
+already-gated authenticated-wrap verbs, so most of the conformance coverage
+in `pkg/testing/pkcs11test` (`encryption.go`, `decryption.go`, `dual.go`,
+`keymgmt.go`, `verification.go`, `signing.go`, `message.go`) exercises a
+refused construction under `fips140=only`. This is tracked as a known gap
+(295 test failures at last measurement), not fixed under #23: closing it is
+a mechanism-table-wide change to the module's `CKM_AES_GCM` handling, not a
+test-by-test fix, and belongs to its own change.
+
 ## Error Handling
 
 ```go
@@ -361,6 +375,32 @@ refused: arbitrary-IV GCM is what the mode forbids, on `Open` exactly as on
 the ciphertext was never rewritten, and a process that can construct
 arbitrary-IV GCM (the default, and `fips140=on`) still opens it.
 
+`GCMNonceMode` has to survive every hop between the backend that produced it
+and the backend that has to reconstruct the matching AEAD, not only the
+on-disk envelope above. `pkg/xkms.Encrypt`/`Decrypt` is one such hop for the
+service layer's symmetric path, and each wire transport is another: gRPC
+(`EncryptResponse.gcm_nonce_mode` / `DecryptRequest.gcm_nonce_mode` in
+`xkms.proto`), REST (`pkg/api/rest/types.go`), and the MCP JSON-RPC surface
+(`pkg/api/mcp/types.go`) all carry the field end to end, and their SDK client
+implementations (`pkg/api/transport/{grpc,rest,unix,quic}`) thread it through
+their own request/response construction. Before this was wired, every default
+(no-explicit-nonce) symmetric `Encrypt` under `fips140=only` produced a
+random-nonce ciphertext whose mode never reached the matching `Decrypt` call
+over any of those transports, so the round trip failed even though both
+endpoints individually behaved correctly (go-xkms#23). The `embedded` and
+in-process `mcp` transports need no such change: they forward the same
+`transport.EncryptResponse`/`DecryptRequest` values directly, so the field
+already survives the hop.
+
+`pkg/xkms`'s own AES-GCM key-wrap blob (`wrapAESGCM`/`unwrapAESGCM` in
+`servicer_wrapkey.go`) carries the identical information a different way: a
+one-byte mode marker (`aesGCMWrapModeExplicit` / `aesGCMWrapModeRandom`)
+prepended to `nonce || ciphertext || tag`, mirroring the on-disk TLV
+envelope's marker byte above. This is a breaking wire-format change with no
+migration path for existing wrapped blobs, consistent with this repository's
+pre-release, no-backward-compatibility posture; there is no prior release to
+carry forward.
+
 ## Panics the stdlib raises instead of returning an error (#23)
 
 Most FIPS 140-only refusals in the Go standard library return an `error` a
@@ -406,6 +446,58 @@ substitute for either:
   can panic, in a function whose contract is already "verify and return
   ok/error," so a genuinely unexpected panic elsewhere in the same package
   still crashes the process as it should.
+
+## Known blockers outside this repository's control (#23)
+
+The dispositions above (error-returning replacement, or a local
+`recover`/typed-error boundary) require a call site this repository owns.
+Three dependencies panic on FIPS-refused input from *inside* their own code,
+with no call site of ours to wrap:
+
+- **`github.com/google/go-tpm` v0.9.8** panics rather than returning an error
+  when its own session-encryption internals hit a refused primitive:
+  `deriveAndEncrypt`/`(*hmacSession).Encrypt` call `crypto/cipher.NewCFBEncrypter`
+  for TPM command/response parameter encryption on every simulator-backed
+  operation, and TPM2 credential-activation HMAC sessions can select a key
+  under the 112-bit FIPS floor for `crypto/hmac.New`. Both panic unconditionally
+  under `fips140=only`, with no error return to recover at a boundary this
+  repository controls -- the panic originates inside go-tpm's own call stack,
+  not at a point where go-xkms invokes go-tpm and can wrap the result. This
+  reaches every package that exercises the TPM 2.0 simulator under the
+  `tpm_simulator` build tag: `pkg/xkms` (`TestNewTPM2KeyProvider_ExtractsAllConfigKeys`,
+  which provisions a simulator EK/SRK), `pkg/tpm2` (`CreateSRK`, `Random`/PCR
+  quoting, credential activation), and `pkg/backend/tpm2` (`WrapKey`/`CreateDuplicate`).
+  Because Go's `testing` package cannot recover a panic that happens in a
+  goroutine it did not spawn defensively for that purpose, one such test
+  crashes the whole package's test binary, not just that test: run
+  `GODEBUG=fips140=only go test -tags tpm_simulator ./pkg/xkms/...` and the
+  process aborts partway through, silently skipping every test alphabetically
+  after the first TPM-simulator test rather than reporting them as failed.
+  Measured for `pkg/xkms` alone: `go test -tags tpm_simulator -list '.*'`
+  enumerates 1,841 top-level tests, and the FIPS-only run executes 700 `RUN`
+  lines (including subtests) before the panic aborts the process -- the
+  majority of the package's tests never get a chance to run in that
+  configuration. This is an upstream go-tpm defect (no FIPS-aware code path
+  exists in v0.9.8), tracked as a blocker, not fixed here; a fix requires
+  either an upstream go-tpm release or vendoring a patched session-encryption
+  path, both out of scope for #23.
+- **`github.com/gorilla/websocket`** computes the WebSocket accept key with
+  SHA-1 (`computeAcceptKey`), which panics under `fips140=only`. Unlike
+  go-tpm, this one *is* recovered -- by `net/http`'s per-connection panic
+  boundary, not by this repository -- so it does not crash the process, but
+  every WebSocket upgrade through `pkg/ssh/console` fails under
+  `fips140=only` as a result.
+
+Two more findings from this work are architecture questions for the owner,
+not something a test fix can resolve, because the "correct" answer changes
+the wire protocol or reopens an already-settled design decision:
+
+- `pkg/ssh/session` intentionally advertises `curve25519-sha256` among its
+  SSH KEX algorithms with no FIPS-approved alternative pinned; restricting it
+  under FIPS would contradict that existing decision rather than extend it.
+- `pkg/api/transport/usb`'s Noise Protocol handshake is hard-wired to
+  Curve25519 (`Noise_XX_25519_...`), and the Noise specification defines no
+  FIPS-approved substitute DH function for that pattern.
 
 ## See Also
 

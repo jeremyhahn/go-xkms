@@ -819,10 +819,11 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 	}
 
 	return &pb.EncryptResponse{
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-		Iv:         resp.IV,
+		Ciphertext:   resp.Ciphertext,
+		Nonce:        resp.Nonce,
+		Tag:          resp.Tag,
+		Iv:           resp.IV,
+		GcmNonceMode: resp.GCMNonceMode,
 	}, nil
 }
 
@@ -853,6 +854,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		Nonce:          req.Nonce,
 		Tag:            req.Tag,
 		AdditionalData: req.AdditionalData,
+		GCMNonceMode:   req.GcmNonceMode,
 		Mode:           req.Mode,
 		IV:             req.Iv,
 		Padding:        req.Padding,

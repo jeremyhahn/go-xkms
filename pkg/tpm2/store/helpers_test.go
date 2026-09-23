@@ -353,6 +353,15 @@ func TestAvailableHashes_RefusesWeakHashesByDefault(t *testing.T) {
 
 	types.SetAllowWeakHashes(true)
 	defer types.SetAllowWeakHashes(false)
+	if types.FIPSMode() {
+		// SetAllowWeakHashes(true) is a deliberate no-op under FIPSMode():
+		// the Go Cryptographic Module's own boundary is the ceiling this
+		// repository's policy switch must never be able to re-open (see
+		// pkg/types/hashpolicy.go), so the escape hatch this test targets
+		// has nothing to reach in that mode.
+		assert.NotContains(t, AvailableHashes(), "SHA-1")
+		return
+	}
 	assert.Equal(t, crypto.SHA1, AvailableHashes()["SHA-1"],
 		"the documented escape hatch must actually re-admit SHA-1")
 }

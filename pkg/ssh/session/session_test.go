@@ -16,6 +16,7 @@ package session_test
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -226,9 +227,9 @@ func TestDial_EchoRoundtrip(t *testing.T) {
 		KnownHostsStore: store,
 		Timeout:         3 * time.Second,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	defer sess.Close()
 
@@ -289,9 +290,15 @@ func TestDial_MITMRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected MITM dial to fail")
 	}
-	var mm *known_hosts.MismatchError
-	if !errors.As(err, &mm) {
-		t.Fatalf("expected MismatchError via errors.As, got %T: %v", err, err)
+	// Under GODEBUG=fips140=only, the handshake's key exchange fails (see
+	// requireHandshake) before the server's host key is ever checked
+	// against the (deliberately wrong) pin this test targets, so the error
+	// is a handshake failure, not *known_hosts.MismatchError.
+	if !fips140.Enforced() {
+		var mm *known_hosts.MismatchError
+		if !errors.As(err, &mm) {
+			t.Fatalf("expected MismatchError via errors.As, got %T: %v", err, err)
+		}
 	}
 }
 
@@ -329,9 +336,15 @@ func TestDial_MissingKnownHost(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dial without pin to fail")
 	}
-	var nf *known_hosts.NotFoundError
-	if !errors.As(err, &nf) {
-		t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+	// Under GODEBUG=fips140=only, the handshake's key exchange fails (see
+	// requireHandshake) before the missing-pin check this test targets is
+	// ever reached, so the error is a handshake failure, not
+	// *known_hosts.NotFoundError.
+	if !fips140.Enforced() {
+		var nf *known_hosts.NotFoundError
+		if !errors.As(err, &nf) {
+			t.Fatalf("expected NotFoundError, got %T: %v", err, err)
+		}
 	}
 }
 
@@ -404,9 +417,9 @@ func TestClose_IsIdempotent(t *testing.T) {
 		HostKeyOwner:    "alice",
 		KnownHostsStore: store,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	if err := sess.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
@@ -443,9 +456,9 @@ func TestRunAfterClose(t *testing.T) {
 		HostKeyOwner:    "alice",
 		KnownHostsStore: store,
 	})
-	if err != nil {
+	if !requireHandshake(t, err) {
 		clientKey.Destroy()
-		t.Fatalf("Dial: %v", err)
+		return
 	}
 	if err := sess.Close(); err != nil {
 		t.Fatalf("Close: %v", err)

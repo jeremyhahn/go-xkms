@@ -287,6 +287,16 @@ type EncryptResponse struct {
 	// AEAD modes, which populate Nonce instead. Required (unchanged) on the
 	// matching DecryptRequest.
 	IV []byte `json:"iv,omitempty"`
+	// GCMNonceMode mirrors types.EncryptedData.GCMNonceMode: "" (the zero
+	// value) for a caller- or RNG-supplied nonce Seal took as a parameter,
+	// or "random" when GODEBUG=fips140=only forced this encryption through
+	// cipher.NewGCMWithRandomNonce (see docs/fips/README.md "AEAD
+	// construction"). A caller must echo this value back unchanged on the
+	// matching DecryptRequest -- Decrypt needs it to rebuild the same AEAD
+	// construction Encrypt used, and cannot infer it from the ciphertext
+	// bytes alone. Empty for CBC and for algorithms with only one
+	// construction (ChaCha20-Poly1305/XChaCha20-Poly1305).
+	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
 }
 
 // DecryptRequest contains parameters for decryption.
@@ -297,6 +307,11 @@ type DecryptRequest struct {
 	Nonce          []byte `json:"nonce,omitempty"`
 	Tag            []byte `json:"tag,omitempty"`
 	AdditionalData []byte `json:"additional_data,omitempty"`
+	// GCMNonceMode is the value the matching EncryptResponse.GCMNonceMode
+	// reported; see its doc comment. Required, unchanged, to decrypt an
+	// AES-GCM ciphertext produced under GODEBUG=fips140=only -- omitting it
+	// reconstructs the wrong AEAD construction and Decrypt fails closed.
+	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
 	// Mode selects the symmetric cipher mode of operation. See
 	// EncryptRequest.Mode; must match the Mode used to produce Ciphertext.
 	// Ignored for asymmetric (RSA) decryption, which uses Padding/Hash/Label
