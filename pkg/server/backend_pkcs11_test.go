@@ -50,9 +50,13 @@ func newTestServerForPKCS11(t *testing.T, pkcs11Cfg *config.PKCS11Config) *Serve
 // go-xkms#610 fix at the PKCS#11 backend specifically: a "credential://"
 // Pin is refused with *types.SecretReferenceUnresolvedError during backend
 // construction (pkcs11.Config.Validate, reached before the library is even
-// loaded) instead of being used verbatim as the PIN. initPKCS11Backend runs
-// during initializeBackends, before initializeCredentialService, so this
-// reference can never resolve through the server's credential store either.
+// loaded) instead of being used verbatim as the PIN, when nothing has
+// resolved it first — exactly what this test's hand-built *Server does
+// (initPKCS11Backend called directly, bypassing Server.New's ordering).
+// Through the real Server.New path, go-xkms#653's approved item 2 moved
+// resolveConfigSecrets before initializeBackends, so a "credential://" Pin
+// DOES resolve there first; see TestBackendCredentials_ResolveViaCredentialReference
+// (secret_wiring_test.go) for that path.
 func TestInitPKCS11Backend_UnresolvedCredentialReferenceFails(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
@@ -62,7 +66,7 @@ func TestInitPKCS11Backend_UnresolvedCredentialReferenceFails(t *testing.T) {
 		Enabled: true,
 		Library: tempLib,
 		Token:   "test-token",
-		Pin:     types.SecretValue{Raw: "credential://pkcs11-pin"},
+		Pin:     &types.SecretValue{Raw: "credential://pkcs11-pin"},
 	})
 
 	err := srv.initPKCS11Backend()

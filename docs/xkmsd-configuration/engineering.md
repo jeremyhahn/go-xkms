@@ -105,9 +105,8 @@ viper reads the YAML into a map before mapstructure decodes it with
 - a `types.SecretValue` field does not decode through `SecretValue.UnmarshalYAML`
   — mapstructure has no notion of `yaml.Unmarshaler` — so `Load` composes
   `stringToSecretValueHookFunc` onto the decoder to give it the same
-  behaviour: the file's plain string (a literal password or a
-  `credential://...` reference) lands unresolved in the field's `Raw`. Every
-  secret-bearing config field is one: `barrier.passphrase`,
+  behaviour: the file's plain `credential://...` reference lands unresolved
+  in the field's `Raw`. Every secret-bearing config field is one:
   `rng.pkcs11.pin`, `backends.pkcs11.pin`, `backends.awskms.secret_key`,
   `backends.azurekv.client_secret`, `backends.vault.token`,
   `backends.phone.noise_static_key`, `ca.identity[*].keys[*].password`,
@@ -121,6 +120,33 @@ viper reads the YAML into a map before mapstructure decodes it with
   label, not a credential) and `bootstrap.raft.*.spki_pin` (a public SHA-256
   hash) stay plain strings — see `pkg/secure/analyzer`'s field-name allowlist
   for why those two are never flagged despite the naming.
+
+  **The go-qrdb protected-target contract (go-xkms#654).** Every field in
+  the list above is `*types.SecretValue` (a pointer), never the bare value
+  type, and that is load-bearing, not stylistic: go-qrdb's
+  `pkg/secret.ConfigProcessor` (the walker `resolveConfigSecrets` runs, see
+  below) treats a `SecretValue` reached by *value* as **always required** —
+  an empty one fails the walk outright — and the *only* way to spell an
+  optional secret is a `nil *SecretValue`, which the walker's own
+  `reflect.Pointer` case skips before it can ever become a failure. A
+  non-nil protected target, in turn, **must reference a secret held
+  elsewhere**: an empty value, a bare literal (`pin: "1234"`), an inline
+  `literal://...` secret, and an unclaimed scheme are all refused with
+  `*secret.UnresolvableTargetError`, whatever code path produced them —
+  including a value built directly in Go (e.g. via
+  `types.NewLiteralSecretValue`) and only later placed somewhere the walker
+  reaches. There is no config-file, environment, or CLI-flag way to give one
+  of these fields a literal secret any more; every one must be a
+  `credential://<name>` reference resolved through the qrdb credential
+  store. `types.SecretValueBytes` mirrors this: it is a thin borrow over an
+  *already-resolved* enclave, and refuses (with
+  `*types.SecretReferenceUnresolvedError`) a configured field whose enclave
+  is still empty — including a bare literal — rather than falling back to
+  `Raw`, which was go-xkms#654's original divergence from the contract
+  above. The former `types.SecretValueSet` helper is deleted for the same
+  reason it is dispensable: in the pointer-based field model, "is this
+  configured" is answered by the field itself (`field != nil`), not a
+  resolution-dependent wrapper.
 
   Resolution into the field's memguard enclave happens later, wherever the
   field's owner has a `secret.ResolverRegistry` available — `Load` itself
@@ -152,37 +178,53 @@ viper reads the YAML into a map before mapstructure decodes it with
     processor) and only fails `Server.New`, with the typed
     `*server.ErrConfigSecretResolution`, when the registry DID claim a
     reference and genuinely failed to fetch it.
-  - **Still cannot be resolved through the credential store, structurally**:
-    `barrier.passphrase`, `rng.pkcs11.pin`, `backends.pkcs11.pin`,
-    `backends.awskms.secret_key`, `backends.azurekv.client_secret`,
-    `backends.vault.token`, and every `tpm2.*` hierarchy auth/password field.
-    `resolveNodeSeal` (which needs `barrier.passphrase`) and
-    `initializeBackends` (which needs the rest) both run *before*
-    `initializeCredentialService` in `Server.New` — and credential service
-    construction itself needs `s.barrier`, which for a hardware seal strategy
-    needs `initializeBackends` to have already run — so `resolveConfigSecrets`
-    cannot run early enough to help them either: it needs the same credential
-    service they are consumed ahead of. Resolving a `credential://` reference
-    for any of these fields through the internal credential store would mean
-    asking the barrier to unseal itself, or a backend to authenticate, using a
-    secret held in the store that same barrier/backend protects.
-    `types.SecretValueBytes` (the shared borrow helper every one of them
-    uses to reach the plaintext) refuses a value shaped like an unresolved
-    reference — `Strategy` still the zero value and `Raw` matching
-    `scheme://name` — with `*types.SecretReferenceUnresolvedError`, failing
-    `Server.New` outright rather than silently using the reference text as
-    the secret. A literal value (or one an env var/flag supplies) works
-    exactly as before; a `credential://...` value for one of these fields
-    fails loudly at start-up today, and is expected to keep doing so until a
-    boot-time resolver that does not depend on the barrier (an env-only or
-    external-KMS resolver, deliberately distinct from the
-    credential-store-backed one) is scoped and reviewed as its own change.
-    The `pkg/tpm2.Config` hierarchy-auth/password fields are additionally
-    never reached by `resolveConfigSecrets` at all: there is no config-file
-    path from `pkg/config.Config` to `pkg/tpm2.Config` today (it is populated
-    directly in Go — the `xkey tpm` CLI's `--hierarchy-auth` flag, tests).
-    `SecretValueBytes`'s same reference-shape guard still protects it if a
-    caller passes a `scheme://`-shaped literal by mistake.
+  - **Resolved today too, in the same one pass, now that backends init
+    after unseal (go-xkms#653 approved item 2)**: `rng.pkcs11.pin`,
+    `backends.pkcs11.pin`, `backends.awskms.secret_key`,
+    `backends.azurekv.client_secret`, and `backends.vault.token`.
+    `Server.New` now runs `initializeQRDBStorage` (which, for a
+    `BarrierConfig.NodeFlipWired` strategy, blocks until the qrdb node's own
+    barrier is unsealed — see the seal/barrier section below) and
+    `resolveConfigSecrets` *before* `initializeBackends`, so a
+    `credential://` reference for any of these five fields resolves exactly
+    like a CA password or the phone backend's Noise static key already did.
+    `TestBackendCredentials_ResolveViaCredentialReference`
+    (`pkg/server/secret_wiring_test.go`) proves all five end to end. This
+    reorder is possible without the cycle earlier revisions of this
+    document described (`buildHardwareSealStrategies` builds the barrier's
+    hardware seal strategies from already-initialized backends) because
+    that path is only reached for a strategy `NodeFlipWired` reports false
+    for (pkcs11, the cloud-KMS strategies) — the strategy this reorder
+    exists to serve, tpm2, is built by `resolveNodeSeal` directly from
+    `Backends.TPM2` config, never from an initialized backend, and injected
+    into the qrdb node's own seal subsystem before any backend exists.
+
+  - **Still genuinely unresolvable**: a `pkcs11` (or cloud-KMS) barrier
+    strategy, and every `pkg/tpm2.Config` hierarchy-auth/password field.
+    A PKCS#11 barrier strategy would need the same already-initialized
+    PKCS#11 backend `buildHardwareSealStrategies` reads from
+    `s.keyProviders`, which `initializeBackends` now builds *after*
+    `resolveConfigSecrets` — the identical cycle as before, just narrowed
+    to the one strategy (and the cloud-KMS strategies)
+    `BarrierConfig.NodeFlipWired` excludes for exactly this reason. Making
+    it deferred (matching the software strategy's own per-call credential
+    shape) is a `pkg/seal`/`types.Sealer` interface change, not a reorder,
+    and is not approved (go-xkms#653 item 3). The `pkg/tpm2.Config` fields
+    are unrelated to this cycle: there is no config-file path from
+    `pkg/config.Config` to `pkg/tpm2.Config` at all today (it is populated
+    directly in Go — the `xkey tpm` CLI's `--hierarchy-auth` flag, tests),
+    so `resolveConfigSecrets` never reaches them regardless of ordering.
+    `types.SecretValueBytes`'s reference-shape guard still protects both:
+    a `scheme://`-shaped value nothing resolved fails with
+    `*types.SecretReferenceUnresolvedError` rather than being used verbatim.
+
+    There is no equivalent caveat for the barrier's own boot secret: #653
+    also removed `barrier.passphrase` (and the `--seal-passphrase` flag /
+    `XKMS_BARRIER_PASSPHRASE` env var) entirely. The barrier never
+    auto-unseals from configuration at all any more — see
+    `docs/seal/README.md` and `docs/xkmsd-configuration/cli.md` for the
+    replacement (a registered hardware seal strategy, or operator-driven
+    `xkmsctl barrier unseal`).
 
 ## Errors
 

@@ -118,9 +118,10 @@ backends:
     pin: "123456"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
-# no insecure override). The passphrase auto-unseals the barrier at container
-# start so the suites need no unseal ceremony.
+# no insecure override). There is no config-sourced boot-time secret any more
+# (matching go-qrdb's own SealConfig): storage.backend is "file" below, so
+# xkmsd's ComplianceGaps gate does not require auto-unseal here, but the
+# barrier itself stays sealed until an unseal ceremony runs against it.
 barrier:
   enabled: true
   strategy: "passphrase"
-  passphrase: "integration-test-passphrase"

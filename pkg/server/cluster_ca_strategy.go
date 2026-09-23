@@ -31,7 +31,7 @@ import (
 func (s *Server) clusterCAKeyProtection() (clustercapkg.KeyProtection, error) {
 	enr := s.config.Cluster.RaftEnrollment
 
-	passphrase, err := s.resolveClusterCAKeyPassphrase(&enr.CAKeyPassphrase)
+	passphrase, err := s.resolveClusterCAKeyPassphrase(enr.CAKeyPassphrase)
 	if err != nil {
 		return clustercapkg.KeyProtection{}, &ErrServiceInit{
 			Service: "cluster CA key passphrase credential", Err: err,

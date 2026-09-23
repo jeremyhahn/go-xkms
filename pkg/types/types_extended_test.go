@@ -808,7 +808,7 @@ func TestKeyAttributesFromConfig_PasswordWired(t *testing.T) {
 		Hash:         HashSHA256,
 		StoreType:    StoreSoftware,
 		ECCConfig:    &ECCConfig{Curve: CurveP256},
-		Password:     SecretValue{Raw: "at-rest-passphrase"},
+		Password:     &SecretValue{Raw: "at-rest-passphrase"},
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)

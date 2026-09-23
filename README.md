@@ -298,8 +298,7 @@ auth:
 
 barrier:
   enabled: true
-  strategy: "passphrase"
-  passphrase: "dev-only-passphrase"   # development only; see below
+  strategy: "passphrase"   # never auto-unseals from configuration; see below
 
 # Embedded certificate authority. On first start xkmsd creates this root,
 # issues its own TLS server certificate from it, and persists both under
@@ -339,9 +338,14 @@ logging:
   format: "text"
 ```
 
-The literal `barrier.passphrase` above exists so a throwaway local daemon needs
-no out-of-band setup. **A real deployment supplies `XKMS_BARRIER_PASSPHRASE` or a
-`credential://` reference instead** — or lets `xkmsd init` provision one.
+There is no config-sourced boot-time barrier secret: a software strategy
+(passphrase/shamir) never auto-unseals from configuration, matching
+go-qrdb's own `SealConfig`, which carries no such field either. `xkmsd init`
+provisions the barrier; after every restart an operator supplies the
+passphrase or Shamir quorum via `xkmsctl barrier unseal` (or
+`unseal-shares`) or the equivalent API call. For unattended auto-unseal,
+configure a hardware seal strategy instead (`barrier.strategy: "tpm2"` or
+`"pkcs11"`).
 
 ### 2. Provision the Deployment
 

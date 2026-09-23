@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // NodeSealError is returned when the node barrier is configured to encrypt the
@@ -25,9 +24,8 @@ import (
 type NodeSealError struct {
 	// Reason describes the failure.
 	Reason string
-	// Err is the underlying error, when one exists (e.g. a
-	// *types.SecretReferenceUnresolvedError from resolving Barrier.Passphrase).
-	// Nil for a NodeSealError raised without an underlying cause.
+	// Err is the underlying error, when one exists. Nil for a NodeSealError
+	// raised without an underlying cause.
 	Err error
 }
 
@@ -36,8 +34,7 @@ func (e *NodeSealError) Error() string {
 	return "server: node barrier seal: " + e.Reason
 }
 
-// Unwrap exposes Err so errors.Is/errors.As can reach it (e.g. to detect a
-// *types.SecretReferenceUnresolvedError underneath).
+// Unwrap exposes Err so errors.Is/errors.As can reach it.
 func (e *NodeSealError) Unwrap() error {
 	return e.Err
 }
@@ -71,17 +68,41 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 }
 
 // resolveNodeSeal decides whether xkms uses the qrdb node's OWN barrier to
-// encrypt the data-plane KV (the flip), and resolves the auto-unseal material.
-// It runs BEFORE the qrdb node is constructed so its result can be injected as
-// node options and so a single TPM open is shared with the tpm2 backend.
+// encrypt the data-plane KV (the flip), and — for the one strategy that
+// needs it, tpm2 — resolves and pre-builds the hardware SealingStrategy. It
+// runs BEFORE the qrdb node is constructed so its result can be injected as
+// a node option and so a single TPM open is shared with the tpm2 backend.
 //
-// The flip engages ONLY for embedded qrdb-node deployments
-// (Storage.Backend=="qrdb") with the barrier enabled AND auto-unseal
-// credentials available (a usable TPM for a hardware strategy, or a boot
-// passphrase for the passphrase strategy, or the explicit "none" strategy).
-// In every other case it is a no-op — xkms keeps its own barrier, and interactive
-// (operator-driven) unseal continues to work through the existing barrier API —
-// so all non-qrdb and no-boot-credential deployments behave exactly as before.
+// The flip engages for every embedded qrdb-node deployment
+// (Storage.Backend=="qrdb") with the barrier enabled AND a strategy
+// BarrierConfig.NodeFlipWired reports true for: "none", "passphrase",
+// "shamir" and "tpm2". go-qrdb's own node-embedded seal subsystem
+// (sdk/go/node's buildNodeSealSubsystem, driven by DaemonConfig.Seal alone)
+// natively builds "none" and the deferred "passphrase"/"shamir" strategies
+// — xkms supplies no Go strategy object for those, only the strategy name
+// and, for shamir, the M-of-N quorum, via buildXKMSQRDBConfig. Only tpm2
+// needs a pre-built SealingStrategy injected via qrdbnode.WithSealStrategy,
+// built here directly from Backends.TPM2 — never from s.keyProviders/any
+// already-initialized backend, so the flip has no dependency on backend
+// initialization (which now runs strictly after the node is unsealed; see
+// Server.New).
+//
+// Whichever strategy engages the flip, unattended auto-unseal happens only
+// for "none" and a provisioned tpm2; "passphrase"/"shamir" leave the node
+// sealed at construction, and initEmbeddedQRDBNode's serveSealedWindow
+// blocks Server.New — the same place go-qrdb's own qrdbd daemon blocks in
+// cmd/qrdbd's awaitUnseal — until an operator completes
+// `xkmsctl barrier unseal` (or `unseal-shares`) or the equivalent API call
+// against the sealed-window listener, or the configured timeout/shutdown
+// ends the wait.
+//
+// A strategy NodeFlipWired reports false for (pkcs11, awskms, gcpkms,
+// azurekv, vault) keeps xkms's own (non-node) barrier instead: those
+// backends' credentials are consumed by initializeBackends after this
+// function returns and the credential service does not exist yet at this
+// point (see Server.New's phase ordering) — the same structural cycle
+// documented on NodeFlipWired. Non-qrdb-storage deployments are unaffected
+// either way: the flip only ever applies to Storage.Backend=="qrdb".
 func (s *Server) resolveNodeSeal() error {
 	if !strings.EqualFold(s.config.Storage.Backend, "qrdb") || !s.config.Barrier.Enabled {
 		return nil
@@ -89,15 +110,14 @@ func (s *Server) resolveNodeSeal() error {
 
 	strategy := s.config.Barrier.SealStrategy()
 
-	if s.config.Barrier.IsHardwareSealStrategy() {
-		// Only tpm2 is wired through the autodetect probe today; pkcs11/cloud
-		// node-barrier sealing is a follow-up. Until then, an unresolved
-		// hardware strategy keeps xkms's own barrier.
-		if strategy != "tpm2" {
-			s.logger.Warn("node barrier: hardware seal strategy not yet wired for the node barrier; using xkms barrier",
-				"strategy", strategy)
-			return nil
-		}
+	if !s.config.Barrier.NodeFlipWired() {
+		s.logger.Warn("node barrier: strategy not yet wired for the node barrier; using xkms barrier "+
+			"(the qrdb node's own data plane will NOT be encrypted)",
+			"strategy", strategy)
+		return nil
+	}
+
+	if strategy == "tpm2" {
 		tpmCfg := s.config.Backends.TPM2
 		keyDir, err := s.resolveTPM2KeyDir()
 		if err != nil {
@@ -128,30 +148,19 @@ func (s *Server) resolveNodeSeal() error {
 		return nil
 	}
 
+	// "none", "passphrase", "shamir": go-qrdb's own node seal subsystem
+	// builds the strategy from DaemonConfig.Seal.Strategy (and, for shamir,
+	// Seal.ShamirThreshold/ShamirTotal — see buildXKMSQRDBConfig); xkms
+	// injects nothing here. Auto-unseal is unattended only for "none";
+	// "passphrase"/"shamir" leave the node sealed until the operator-driven
+	// ceremony below completes.
+	s.nodeSealEnabled = true
 	switch strategy {
-	case "passphrase":
-		passphrase, err := types.SecretValueBytes(&s.config.Barrier.Passphrase)
-		if err != nil {
-			return &NodeSealError{Reason: "resolving boot passphrase: " + err.Error(), Err: err}
-		}
-		if len(passphrase) == 0 {
-			// No boot passphrase: keep xkms's own barrier so interactive
-			// (operator API) unseal still works. Data-plane encryption of the
-			// node KV requires an auto-unseal secret (TPM or boot passphrase).
-			s.logger.Info("node barrier: passphrase strategy with no boot passphrase; using xkms barrier (interactive unseal)")
-			return nil
-		}
-		s.nodeSealPassphrase = passphrase
-		s.nodeSealEnabled = true
-		s.logger.Info("node barrier: passphrase-sealed data plane (boot passphrase auto-unseal)")
 	case "none":
-		// Explicit unencrypted-but-present barrier — no credentials needed.
-		s.nodeSealEnabled = true
 		s.logger.Warn("node barrier: strategy 'none' — data plane is NOT encrypted (development/insecure)")
-	case "shamir":
-		// Shamir never auto-unseals (operator quorum required); keep xkms's
-		// barrier and its quorum-unseal API.
-		s.logger.Info("node barrier: shamir strategy requires operator quorum; using xkms barrier")
+	default:
+		s.logger.Info("node barrier: strategy requires operator-driven unseal via the sealed-window listener",
+			"strategy", strategy)
 	}
 	return nil
 }

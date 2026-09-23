@@ -191,9 +191,9 @@ func applyDevIDConfig(
 	cn string,
 	sigAlgo x509.SignatureAlgorithm,
 	platformPolicy bool,
-	password types.SecretValue) error {
+	password *types.SecretValue) error {
 
-	passwordBytes, err := types.SecretValueBytes(&password)
+	passwordBytes, err := types.SecretValueBytes(password)
 	if err != nil {
 		return err
 	}

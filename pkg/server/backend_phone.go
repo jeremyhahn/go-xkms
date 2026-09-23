@@ -92,7 +92,7 @@ func (s *Server) RegisterPhoneBackend(sender phonebackend.Sender) error {
 	// plaintext leaves phoneCfg.NoiseStaticKey's enclave only for this
 	// assignment, the accepted boundary for a downstream API that is not
 	// itself enclave-aware.
-	noiseStaticKey, err := types.SecretValueBytes(&phoneCfg.NoiseStaticKey)
+	noiseStaticKey, err := types.SecretValueBytes(phoneCfg.NoiseStaticKey)
 	if err != nil {
 		return errors.Join(ErrPhoneBackendCreate, err)
 	}

@@ -22,17 +22,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSecretValueBytes_Literal proves a plain operator-supplied value —
-// unresolved, straight off a YAML/JSON decode (Raw set, Strategy the zero
-// value) — is returned as-is, matching the pre-SecretValue plain-string
-// behaviour for a literal config value.
-func TestSecretValueBytes_Literal(t *testing.T) {
+// TestSecretValueBytes_UnresolvedLiteralErrors proves go-xkms#654's core
+// fix: a plain operator-supplied value — unresolved, straight off a
+// YAML/JSON decode (Raw set, Strategy the zero value), never run through a
+// secret.ConfigProcessor / ResolverRegistry pass — is refused rather than
+// trusted as the plaintext. Falling back to Raw here is exactly the
+// divergence from go-qrdb's protected-target contract (a protected target
+// must reference a secret held elsewhere; an inline value is refused, never
+// honoured) that #654 introduced.
+func TestSecretValueBytes_UnresolvedLiteralErrors(t *testing.T) {
 	t.Parallel()
 
 	sv := SecretValue{Raw: "hunter2"}
 	got, err := SecretValueBytes(&sv)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("hunter2"), got)
+	require.Error(t, err)
+	assert.Nil(t, got)
+
+	var refErr *SecretReferenceUnresolvedError
+	require.True(t, errors.As(err, &refErr), "error must be *SecretReferenceUnresolvedError, got %T", err)
+	assert.Equal(t, "", refErr.Scheme, "a bare literal carries no scheme")
+	assert.NotContains(t, err.Error(), "hunter2",
+		"the error must never quote a literal's own plaintext")
 }
 
 // TestSecretValueBytes_EmptyFieldMeansNotConfigured proves the zero value —
@@ -156,40 +166,18 @@ func TestSecretValueBytes_LiteralViaRegistryFallback(t *testing.T) {
 	assert.Equal(t, []byte("a-plain-literal-value"), got)
 }
 
-// TestSecretValueSet_UnresolvedReferenceReportsConfigured proves
-// SecretValueSet answers "did the operator configure something" (true for
-// an unresolved reference — it does name a secret, just not yet resolved
-// material) rather than "is it ready to use", which is SecretValueBytes's
-// question. A gate that used a bare `sv.Raw != ""` check would already get
-// this right; SecretValueSet documents and preserves that on purpose.
-func TestSecretValueSet_UnresolvedReferenceReportsConfigured(t *testing.T) {
+// TestSecretValue_PointerFieldIsThePresenceSignal proves the replacement for
+// the deleted SecretValueSet: go-xkms#653/#654 made every secret-bearing
+// config field a *SecretValue, so "did the operator configure this field" is
+// answered by the field itself (`field != nil`) rather than a wrapper
+// function — including for a field that names a reference nothing has
+// resolved yet, exactly the case SecretValueSet used to special-case.
+func TestSecretValue_PointerFieldIsThePresenceSignal(t *testing.T) {
 	t.Parallel()
 
-	sv := SecretValue{Raw: "credential://client-secret"}
-	assert.True(t, SecretValueSet(&sv))
-}
+	var unconfigured *SecretValue
+	assert.Nil(t, unconfigured, "unconfigured is nil: the field was never set")
 
-// TestSecretValueSet_EmptyFieldReportsNotConfigured proves the zero value
-// reports false.
-func TestSecretValueSet_EmptyFieldReportsNotConfigured(t *testing.T) {
-	t.Parallel()
-
-	var sv SecretValue
-	assert.False(t, SecretValueSet(&sv))
-}
-
-// TestSecretValueSet_ReferenceStrategyResolvedEmptyReportsConfigured proves
-// SecretValueSet's "configured" answer matches SecretValueBytes's error
-// case: a reference-strategy resolution that came back empty is still
-// "configured" (Raw names the reference), even though extracting it via
-// SecretValueBytes fails.
-func TestSecretValueSet_ReferenceStrategyResolvedEmptyReportsConfigured(t *testing.T) {
-	t.Parallel()
-
-	reg := fakeCredentialRegistry(map[string]string{"empty-secret": ""})
-	resolved, err := reg.Resolve(context.Background(), "credential://empty-secret")
-	require.NoError(t, err)
-	sv := *resolved
-
-	assert.True(t, SecretValueSet(&sv))
+	configured := &SecretValue{Raw: "credential://client-secret"}
+	assert.NotNil(t, configured, "configured is non-nil even before resolution")
 }

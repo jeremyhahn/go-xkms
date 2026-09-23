@@ -14,8 +14,14 @@ or `--host`, both forms are accepted.
 | `--host` | string | *(unset)* | bind host for every network listener. Sets `server.host`; wins over `XKMS_SERVER_HOST` and the file. Applied only when given, so `--host ""` explicitly selects every interface |
 | `--daemon`, `-d` | bool | `false` | run as daemon |
 | `--pid-file` | path | `""` | write the PID file |
-| `--seal-passphrase` | string | `""` | barrier auto-unseal passphrase; wins over `XKMS_BARRIER_PASSPHRASE` and the file |
 | `--version` | bool | `false` | print version and exit |
+
+`--seal-passphrase` was removed (go-xkms#653): there is no config-, flag-, or
+env-sourced boot-time barrier secret any more, matching go-qrdb's own
+`SealConfig`. Unseal a software-strategy barrier with `xkmsctl barrier
+unseal` (or `unseal-shares`) after every restart, or configure a hardware
+seal strategy (`barrier.strategy: "tpm2"`/`"pkcs11"`) for unattended
+auto-unseal.
 
 ## Examples
 

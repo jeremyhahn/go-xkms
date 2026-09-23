@@ -20,12 +20,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -66,54 +68,79 @@ func qrdbBarrierConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-// TestNodeSealFlip_PassphraseAutoUnseal verifies that an embedded-qrdb
-// deployment with the barrier enabled and a boot passphrase engages the flip:
-// the node's own barrier is adopted and auto-unseals unattended, so the data
-// plane (and every backend key store over it) is encrypted at rest.
-func TestNodeSealFlip_PassphraseAutoUnseal(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := qrdbBarrierConfig(t)
-	cfg.Barrier = config.BarrierConfig{
-		Enabled:    true,
-		Strategy:   "passphrase",
-		Passphrase: types.NewLiteralSecretValue([]byte("test-node-seal-boot-secret")),
-	}
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.True(t, server.nodeSealEnabled, "the node-seal flip should engage for qrdb + barrier + passphrase")
-	require.NotNil(t, server.Barrier(), "the adopted node barrier must be non-nil")
-	assert.False(t, server.Barrier().IsSealed(),
-		"the node barrier must auto-unseal with the boot passphrase (unattended)")
-}
-
-// TestNodeSealFlip_NoCredsKeepsOwnBarrier verifies the gate: with the barrier
-// enabled but NO boot credentials, the flip does NOT engage — xkms keeps its
-// own barrier (which stays sealed until an operator unseals via the API), so
-// interactive-unseal deployments behave exactly as before.
-func TestNodeSealFlip_NoCredsKeepsOwnBarrier(t *testing.T) {
+// TestNodeSealFlip_NoneStrategyAutoUnseal verifies that an embedded-qrdb
+// deployment with the barrier enabled and the explicit "none" strategy
+// engages the flip unattended: the node's own barrier is adopted with no
+// operator input, matching go-qrdb's own "none" auto-init-or-unseal path.
+// "none" is deliberately unencrypted, so this proves adoption/auto-unseal
+// plumbing, not encryption-at-rest — see
+// TestNodeSealFlip_EncryptsDataPlaneAtRest for that.
+func TestNodeSealFlip_NoneStrategyAutoUnseal(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{
 		Enabled:  true,
-		Strategy: "passphrase",
-		// No passphrase: no auto-unseal creds → flip must not engage.
+		Strategy: "none",
 	}
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.False(t, server.nodeSealEnabled, "the flip must not engage without boot credentials")
-	require.NotNil(t, server.Barrier(), "xkms's own barrier is still constructed")
-	assert.True(t, server.Barrier().IsSealed(),
-		"xkms's own barrier is sealed until an operator unseals it (interactive)")
+	assert.True(t, server.nodeSealEnabled, "the node-seal flip should engage for qrdb + barrier + strategy none")
+	require.NotNil(t, server.Barrier(), "the adopted node barrier must be non-nil")
+	assert.False(t, server.Barrier().IsSealed(), "strategy none auto-unseals unattended")
+}
+
+// TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator verifies the
+// qrdb-aligned two-phase boot (go-xkms#653 approved item 2): "passphrase"
+// IS wired to the qrdb node's own barrier (BarrierConfig.NodeFlipWired), so
+// the flip engages, but there is no config-sourced secret to auto-unseal
+// with — go-qrdb's own node seal subsystem leaves the node sealed and
+// Server.New blocks inside initializeQRDBStorage on the sealed-window
+// listener (mirroring cmd/qrdbd's initSealSubsystem -> awaitUnseal) until an
+// operator drives `xkmsctl barrier unseal` or the equivalent API call, or
+// the configured timeout elapses. A short SealedWindowTimeout bounds this
+// test to that timeout path rather than actually driving a client through
+// the listener (TestServeSealedWindow_SealedNodeProceedsAfterUnseal already
+// proves the unseal-completes-boot half directly against the SDK).
+func TestNodeSealFlip_PassphraseEngagesFlipAndBlocksForOperator(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := qrdbBarrierConfig(t)
+	cfg.Barrier = config.BarrierConfig{
+		Enabled:             true,
+		Strategy:            "passphrase",
+		SealedWindowTimeout: "500ms",
+	}
+
+	done := make(chan struct {
+		server *Server
+		err    error
+	}, 1)
+	go func() {
+		server, err := New(cfg)
+		done <- struct {
+			server *Server
+			err    error
+		}{server, err}
+	}()
+
+	select {
+	case result := <-done:
+		if result.server != nil {
+			defer func() { _ = result.server.Shutdown() }()
+		}
+		require.Error(t, result.err, "New must not complete boot without an operator unseal")
+		var canceled *qrdbsdk.SealedWindowCanceledError
+		assert.True(t, errors.As(result.err, &canceled),
+			"error must unwrap to *qrdbsdk.SealedWindowCanceledError (timeout), got %v", result.err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("New must return once the sealed-window timeout elapses, not hang")
+	}
 }
 
 // TestNodeSealFlip_DisabledForFileStorage verifies the flip never engages for
@@ -125,9 +152,8 @@ func TestNodeSealFlip_DisabledForFileStorage(t *testing.T) {
 
 	cfg := createMinimalConfig(t) // file storage
 	cfg.Barrier = config.BarrierConfig{
-		Enabled:    true,
-		Strategy:   "passphrase",
-		Passphrase: types.NewLiteralSecretValue([]byte("irrelevant-for-file-storage")),
+		Enabled:  true,
+		Strategy: "passphrase",
 	}
 
 	server, err := New(cfg)
@@ -138,76 +164,39 @@ func TestNodeSealFlip_DisabledForFileStorage(t *testing.T) {
 	require.NotNil(t, server.Barrier(), "xkms's own barrier backs file-storage deployments")
 }
 
-// TestNodeSealFlip_EncryptsDataPlaneAtRest is the load-bearing security
-// assertion: a value written to the data plane with the flip engaged must be
-// encrypted on disk (the node's encfs wraps the PebbleDB data plane). The
-// control — the same value with seal disabled — is present in the clear,
-// proving the assertion methodology detects plaintext.
+// nodeSealSentinel is written to the data plane and then searched for on disk.
+var nodeSealSentinel = []byte("SENTINEL_PLAINTEXT_do_not_find_me_on_disk_9f3a2b")
+
+func writeNodeSealSentinel(t *testing.T, cfg *config.Config, sentinel []byte) string {
+	t.Helper()
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	server, err := New(cfg)
+	require.NoError(t, err)
+	store, err := server.CreateStorage("sentinel")
+	require.NoError(t, err)
+	require.NoError(t, store.Put(context.Background(), "k", sentinel))
+	// Shutdown flushes the node's PebbleDB (and its encfs-wrapped files) so
+	// the on-disk scan sees the persisted state.
+	require.NoError(t, server.Shutdown())
+	return cfg.Storage.Path
+}
+
+// TestNodeSealFlip_EncryptsDataPlaneAtRest is the control for the at-rest
+// encryption assertion: with the barrier disabled, the sentinel is present in
+// the clear, which proves the on-disk scan detects plaintext. The engaged case,
+// where the sentinel must be encrypted, needs the TPM simulator and lives in
+// node_seal_simulator_test.go.
 func TestNodeSealFlip_EncryptsDataPlaneAtRest(t *testing.T) {
-	sentinel := []byte("SENTINEL_PLAINTEXT_do_not_find_me_on_disk_9f3a2b")
-
-	writeSentinel := func(t *testing.T, cfg *config.Config) string {
-		t.Helper()
-		xkms.Reset()
-		t.Cleanup(xkms.Reset)
-		server, err := New(cfg)
-		require.NoError(t, err)
-		store, err := server.CreateStorage("sentinel")
-		require.NoError(t, err)
-		require.NoError(t, store.Put(context.Background(), "k", sentinel))
-		// Shutdown flushes the node's PebbleDB (and its encfs-wrapped files) so
-		// the on-disk scan sees the persisted state.
-		require.NoError(t, server.Shutdown())
-		return cfg.Storage.Path
-	}
-
-	t.Run("encrypted when flip engaged", func(t *testing.T) {
-		cfg := qrdbBarrierConfig(t)
-		cfg.Barrier = config.BarrierConfig{
-			Enabled: true, Strategy: "passphrase", Passphrase: types.NewLiteralSecretValue([]byte("at-rest-boot-secret")),
-		}
-		dir := writeSentinel(t, cfg)
-		assert.False(t, dirContainsBytes(t, dir, sentinel),
-			"with the node-barrier flip the sentinel MUST be encrypted on disk")
-	})
+	sentinel := nodeSealSentinel
 
 	t.Run("plaintext control when barrier disabled", func(t *testing.T) {
 		cfg := qrdbBarrierConfig(t)
 		cfg.Barrier = config.BarrierConfig{Enabled: false}
-		dir := writeSentinel(t, cfg)
+		dir := writeNodeSealSentinel(t, cfg, sentinel)
 		assert.True(t, dirContainsBytes(t, dir, sentinel),
 			"control: with the barrier disabled the data plane is plaintext on disk")
 	})
-}
-
-// TestNodeSealFlip_UnresolvedCredentialReferenceFailsStartup proves
-// go-xkms#610's core fix at the boot passphrase specifically: a
-// "credential://" Barrier.Passphrase is refused with
-// *types.SecretReferenceUnresolvedError at server start rather than being
-// used verbatim as the boot passphrase. resolveNodeSeal runs before
-// initializeCredentialService (credential:// resolution has no store to
-// resolve against yet -- the store itself lives behind the barrier this
-// passphrase unseals), so this reference can never be a working one; the
-// daemon must refuse to start on it instead of silently auto-unsealing with
-// the literal reference text.
-func TestNodeSealFlip_UnresolvedCredentialReferenceFailsStartup(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := qrdbBarrierConfig(t)
-	cfg.Barrier = config.BarrierConfig{
-		Enabled:    true,
-		Strategy:   "passphrase",
-		Passphrase: types.SecretValue{Raw: "credential://boot-secret"},
-	}
-
-	_, err := New(cfg)
-	require.Error(t, err)
-
-	var refErr *types.SecretReferenceUnresolvedError
-	require.True(t, errors.As(err, &refErr),
-		"error must unwrap to *types.SecretReferenceUnresolvedError, got %v", err)
-	assert.Equal(t, "credential", refErr.Scheme)
 }
 
 // TestResolveNodeSeal_TPM2EmptyStoragePathFailsClosed is the regression test
