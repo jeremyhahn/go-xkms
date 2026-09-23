@@ -7,6 +7,300 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0-alpha] - 2026-09-22
+
+### Security
+
+- **FIPS 140 algorithm enforcement, and FIPS 140 mode detection itself, are now the Go standard library's job; go-xkms keeps no approved-algorithm allowlist and no second copy of the mode signal (#21). BREAKING for anything reading `pkg/crypto/fips.ApprovedAlgorithm` / `AlgorithmPermitted` / `Compiled` / `Enabled` / `EnvGOFIPS140`, `sdk/go.FIPSMode` / `FIPSEnabled`, or relying on `GOFIPS140` set as a plain runtime environment variable to activate FIPS behaviour.** `pkg/crypto/fips`'s `approvedAlgorithms` table, `ApprovedAlgorithm`, and `AlgorithmPermitted` (including the `builtFunc` indirection #219 added for it) are deleted along with every call site: `pkg/validation.isValidAlgorithm` and `pkg/xkms/keyid.validateAlgorithm` are now grammar checks only — is `algo` a spelling the package recognizes — never a FIPS policy decision.
+
+  Enforcement now happens where the algorithm actually runs. Under `GODEBUG=fips140=only`, or a binary built with an enabling `GOFIPS140`, the standard library crypto package that implements an algorithm refuses it on its own — `crypto/ecdh` already refused X25519 this way before this change, and `crypto/mldsa`, added in this change, refuses ML-DSA the same way under a build selecting the FIPS 140-3 Go Cryptographic Module v1.0.0 (which predates ML-DSA support). A key ID naming `chacha20-poly1305`, `x448`, or a `frost-*` ciphersuite — algorithms the grammar accepts but no backend in this repository currently wires up, or (for ChaCha20) whose own FIPS posture is already handled where it is selected, in `pkg/crypto/aead.SelectOptimal` — now validates in FIPS mode where it previously did not; the downstream crypto call for a wired algorithm still refuses exactly as before.
+
+  **`pkg/crypto/fips.Compiled` and `Enabled` are also deleted, along with `EnvGOFIPS140`, `sdk/go`'s re-exports `FIPSMode`/`FIPSEnabled` (the file is removed), and `pkg/pkcs11/module`'s `fipsEnvForTest` constant. Every caller now calls `crypto/fips140.Enabled()` directly.** `Compiled` was `crypto/fips140.Enabled()` under another name; `Enabled` read `os.Getenv("GOFIPS140")` as a runtime policy switch, but `GOFIPS140` is exclusively a `go build`/`go test -c` selector the toolchain records into the binary at link time — the Go runtime never reads it as a process environment variable, unlike `GODEBUG`. Setting `GOFIPS140` in a running process's environment (`export GOFIPS140=latest; ./xkmsd`) therefore never did anything real; it was this repository's own invented signal. Deployments must switch to `GODEBUG=fips140=on` (module active) or `GODEBUG=fips140=only` (module active and strict) at runtime, or build with `GOFIPS140=<value>` to activate the module by default. `pkg/crypto/fips` keeps only `Built`/`BuildSetting` (build provenance, for the PKCS#11 module's FIPS artifact labels) and the `DefaultKDF`/`DefaultLUKSKDF` selectors, both now driven by `crypto/fips140.Enabled()` directly. `pkg/pkcs11/module.fipsModeEnabled` becomes an overridable function variable defaulting to `crypto/fips140.Enabled`, so its ~30 existing behaviour tests drive both sides of the FIPS gate without a live `GODEBUG=fips140` subprocess per case; `xkey/pkg/oath` and `xkey/cmd/e2eprobe` call `crypto/fips140.Enabled` directly instead of going through the now-deleted SDK re-export. `test/integration/pkcs11/module/fips`'s harness now drives the built `.so` through `GODEBUG=fips140=on`, not `GOFIPS140=on`, for the same reason.
+
+  **`pkg/quantum/dilithium2`, `pkg/quantum/mldsa65` and `pkg/quantum/mldsa87` (ML-DSA-44/65/87) move from `github.com/cloudflare/circl` to the Go standard library's `crypto/mldsa`, added in Go 1.26.** `pkg/ca` (X.509 certificate signing/verification) and `pkg/keyprovider/quantum` (the `QuantumBackend`, `MLDSAPrivateKey`/`MLDSAPublicKey`) move with them. This is not a data migration: FIPS 204's seed-to-keypair derivation is a standardized deterministic algorithm, and CIRCL and `crypto/mldsa` were verified to produce byte-identical public keys from the same 32-byte seed and cross-verify each other's signatures, so every existing stored ML-DSA seed reconstructs the identical key pair under the new implementation. `pkg/quantum/mlkem512` (ML-KEM-512, which `crypto/mlkem` does not implement) stays on CIRCL and is this repository's one remaining production CIRCL-backed algorithm; its `New` and `Create` constructors are now the shared seam that refuses with the new `ErrFIPSMode` under `crypto/fips140.Enabled()`, since CIRCL sits outside the Go Cryptographic Module boundary the standard library polices and cannot refuse itself.
+
+  `pkg/quantum/kyber768` and `pkg/quantum/mlkem1024` already used `crypto/mlkem`; ML-DSA is the only algorithm family this change moves. `docs/fips/README.md`, `docs/backends/quantum.md`, `docs/architecture/post-quantum-cryptography.md` and `docs/pkcs11/module/v32-compliance.md` are updated to match.
+- **`xkey oidc login`'s CLI token store now moves behind the go-qrdb barrier
+  the same way the OATH, FIDO2, and Noise-key stores already do, and holds
+  the access/refresh/ID tokens in mlocked protected memory while resident in
+  the process (go-xkms#4). BREAKING: existing logins do not survive the
+  upgrade — the CLI never reads the old plaintext `~/.xkey/tokens.json`
+  format, and there is no migration; run `xkey oidc login` again.** The CLI's
+  own hand-rolled plaintext JSON writer/reader (`storeToken`/`loadToken`/
+  `saveTokenStore` over `os.WriteFile`) is deleted outright and replaced by
+  `openOIDCTokenStore` (`xkey/cmd/xkey/cmd/oidc_token_store.go`), which
+  reuses the CLI's one barrier-or-warn decision
+  (`resolveSecretStoreBackend`, `barrier_store.go`): a barrier-encrypted
+  `xkms.StorageBackend` when a barrier is initialized, or the historical
+  unencrypted file with the one standard "unencrypted at rest" warning
+  otherwise — never a second encryption scheme. An explicit `--token-store
+  <path>` still bypasses barrier auto-detection and writes exactly that
+  file, matching `xkey oath`'s `--store` override.
+
+  `OIDCStoredToken.AccessToken`/`RefreshToken`/`IDToken` are no longer plain
+  Go string fields: they live in `*secure.Buffer` (`sdk/go/secure`), reached
+  through accessor/setter methods (`AccessToken()`, `SetAccessToken`, …),
+  mirroring how `xkey/pkg/oath`'s `Credential` holds its shared secret.
+  `Destroy()` wipes them; every command and the auto-refresh loop now calls
+  it once the token is no longer needed.
+
+  The `--background`/`--auto-refresh` worker (`runAutoRefresh`) opens its
+  token store once, before the refresh loop starts, and reuses that same
+  open store — and, for a barrier-backed store, the same unsealed barrier —
+  on every tick, rather than reopening (and re-unsealing) it each interval.
+  The detached background process forwards `--barrier-password-file` to
+  itself when set, since it has no terminal to prompt on; a bare
+  `--barrier-password` value is never forwarded on argv, to keep it out of
+  `ps` output, and `XKEY_BARRIER_PASSWORD` reaches the child through normal
+  environment inheritance instead.
+- **Four more root-module secrets that used to sit as plain `[]byte`/`string`
+  now live in protected memory (`*secure.Buffer` / `*secure.Secret` /
+  `types.SecretValue`), closing another slice of #587's inventory (refs
+  #41).** `luks.TPMSealResult.Passphrase` (`pkg/luks/tpm.go`) is now a
+  `*secure.Buffer`; `SealPassphrase` seals the random passphrase into it
+  immediately after the TPM2_Create call consumes the plaintext, and the
+  narrow `Seal()` wrapper — whose signature callers still depend on — borrows
+  and copies out only at that one required `[]byte` boundary, then destroys
+  the buffer.
+
+  `pkcs11/module.ExportKeyMaterialResponse.KeyMaterial` and
+  `ImportKeyMaterialRequest.KeyMaterial` (`pkg/pkcs11/module/crypto.go`) are
+  now `*secure.Buffer`. The export path seals the backend's response the
+  moment it crosses into the module's own response type; the import path
+  seals `C_CreateObject`'s CKA_VALUE before handing it to the BYOK wrap
+  ceremony. `Module.secretKeyValue` — which fills a revealable secret key's
+  CKA_VALUE for `C_GetAttributeValue` — borrows and copies out at the one
+  place that protection necessarily ends: PKCS#11's C ABI has no enclaved
+  `CK_ATTRIBUTE.Value`, so only that last copy is unbounded Go-heap memory.
+
+  `clusterca.KeyProtection.Passphrase` (`pkg/trust/clusterca/keyprotect.go`)
+  is now a `*secure.Secret`, and its config source,
+  `RaftEnrollmentConfig.CAKeyPassphrase` (`pkg/config/config.go`), is now a
+  `types.SecretValue` rather than a plain string — the same protected-config
+  pattern #41 established for CA identity passwords. `Server.
+  resolveClusterCAKeyPassphrase` (`pkg/server/cluster_ca_strategy.go`)
+  resolves any `credential://` reference through the server's secret
+  registry and reseals the plaintext into the `*secure.Secret`
+  `KeyProtection.Passphrase` needs; the tpm-kek strategy's seed-derived KEK
+  (`kekProtection` in `pkg/trust/clusterca/keystrategy_tpmkek.go`) is sealed
+  the same way, preserving the existing hex-string passphrase exactly so
+  already-sealed keystores keep decrypting.
+
+  `acme/client.CertificateResource` (`pkg/acme/client/types.go`) had no
+  constructor or consumer anywhere in the tree outside its own coverage
+  tests, so it — and its four methods (`GetCertificate`, `GetPrivateKey`,
+  `GetTLSCertificate`, `SaveToFiles`) and the error values only they used —
+  were deleted rather than converted; `encodePrivateKeyPEM` and
+  `ErrUnsupportedKeyType`, which serve a different, still-live test path,
+  were left in place.
+- **Ten xkey leaf secrets move into protected memory, and one unimported
+  duplicate PIV package is deleted** (#587, #41, #133). String-like secrets
+  become `*secure.Secret`, byte secrets `*secure.Buffer`, always borrowed at
+  the point of use rather than materialized as an unwipeable Go string: `usb.ImageConfig.Passphrase`
+  (`formatLUKS` opens and borrows it for the whole LUKS format/unlock/lock
+  sequence); `pwimport.ParsedEntry.Password` (the CSV, KDBX and XML parsers
+  seal the parsed password immediately, and `ToStaticPassword` opens it only
+  at the storage boundary); `authenticator.pinReadResult.pin`, whose
+  `readPIN` now returns a `*secure.Buffer` the caller destroys, trimming
+  surrounding whitespace on the raw bytes instead of a heap string; `gui/services.SudoElevator.password`,
+  whose `Run` assembles the sudo stdin payload into a wipeable slice instead
+  of an unwiped `bytes.Buffer`; `cmd/xkey/cmd.sharedKeyMaterial.KeyMaterial`,
+  borrowed only for the duration of the phone share request; `cmd/xkey/cmd.FIDO2Config.PIN`,
+  sealed once from viper and opened only to seed the authenticator's initial
+  PIN; and `cmd/xkey/cmd.passwordListEntry.Password`, written to the CLI
+  writer directly from the borrowed bytes rather than through a `%s` verb.
+  `authenticator.UserVerificationResult.PIN` is deleted outright along with
+  its only writers (`AutoGrantHandler`'s `simulatedPIN` and
+  `NewAutoGrantHandlerWithPIN`): nothing in the tree ever read it. The
+  unimported `xkey/pkg/pivcert` package, a stale duplicate of the canonical
+  `pkg/pivcert`, is deleted. `scripts/secure-analyzer-allowlist.txt` drops
+  the ten now-enforced entries; `make secure-analyzer` is green with no
+  stale entries.
+
+### Added
+
+- **`xkey/skills/xkey-agent/SKILL.md`: an Agent Skill for driving an existing xKey instance from the CLI (#1).** It teaches an AI agent the read-only and status verbs it may run (`barrier status --json`, `cert show|export`, `piv list|show|status`, `fido2 status`, `agent status`, `oath list|generate`, `version`) and marks every human-only step as off-limits: barrier unseal, `unlock`, `touch`, `fido2 init-token`, certificate requests, auth ceremonies, PIV generate/delete and OATH add/scan/remove. An agent never supplies a PIN, passphrase or secret by stdin, environment or flag. Every command and flag in the skill was checked against the built CLI's `--help` output. Per-agent headless instances are a separate design, #624.
+
+### Removed
+
+- **Six xkey `Migrate*` helpers with no non-test caller are gone, along with the CLI/GUI config migrator — BREAKING.** `xkey/pkg/agent/migration.go` (`MigrateFileStoreToDAO`), `xkey/pkg/serverregistry/migration.go` (`MigrateToDAO`, `ErrMigration`), `xkey/pkg/audit/migration.go` (`MigrateFromBackend`, `ErrMigration` — distinct from the live `audit.Store.MigrateBackend` method in `store.go`, which is unaffected and stays), `xkey/pkg/oidc/migration.go` (`MigrateFromBackend`, `ErrMigration`), `xkey/pkg/tokenstore/migration.go` (`MigrateFromBackend`, `ErrMigration`), and `xkey/pkg/authenticator/migration.go` (`MigrateRPPolicies`) are deleted with their tests: none had a caller outside their own test file. `xkey/pkg/config/migrate.go` (`Migrate`, 361 lines, plus `ErrConfigMigrationFailed`) and `migrate_test.go` are deleted the same way; the "Migration from Legacy Config" section is dropped from `xkey/docs/configuration/app-configuration.md`.
+- **Three dead TCG OID aliases in `pkg/ca/tcg_oids.go` are gone — BREAKING.** `OIDTCGSpecification`, `OIDTCGEKCertificate`, `OIDTCGAIKCertificate` duplicated `OIDTCGAttributeTPMSpecification`, `OIDTCGKpEKCertificate`, `OIDTCGKpAIKCertificate` respectively. `pkg/ca/tcg.go`'s three call sites now use the canonical names directly.
+- **`kyber768.ErrInvalidSecretKey` is gone — BREAKING.** It was an unused alias for `ErrInvalidSeed` with zero callers, including in tests.
+- **`pkcs11.Backend.SetP11Ctx` is gone — BREAKING.** Test-only raw-context injection; `SetSessionPool` is the supported integration point.
+- **`wrapping.GetHashForAlgorithm` is gone — BREAKING.** Test-only helper with no production caller.
+- **The process-global `http01.Setup`/`http01.Shutdown` pair is gone — BREAKING.** Both were already `Deprecated` with zero production callers (every real caller uses `NewResponder`, which binds eagerly and returns a typed error). The package-level `activeResponder`/`serverMu`/`fatalHandler` state backing them is deleted along with the tests that only existed to exercise it; `docs/acme/challenges.md` and `docs/acme/sdk/README.md` drop the references.
+- **`mcp.Config.Addr` is gone — BREAKING.** Set by `pkg/server` `buildMCPConfig` but never read by the MCP server (it carries no listener). `pkg/server/server.go` stops computing the now-unused address for it.
+- **`transport/mcp.SendError` (and its `sdk/go/transport/mcp` re-export) is gone — BREAKING.** Retained only for a client library that no longer has a distinct write-phase failure to report; `ReceiveError` covers every failure mode of the Streamable HTTP client.
+- **An orphaned `Deprecated: Use PINBackend()` doc comment for a PIN manager that no longer exists is removed from `pkg/tpm2/platform_keystore.go`.** `PINBackend` is the only accessor; the stale comment pointed at a method that was already gone.
+- **A stale comment in `pkg/ca/cross_signing.go` claiming readers fall back to a legacy `xsigned/` key prefix is corrected.** The reader only ever looked under `cross-signed/`; no such fallback exists in the code.
+- **`hardware.NewPKCS11CertStorage` is gone — BREAKING.** The "backward-compatible constructor" was a thin, always-non-SO wrapper around `NewPKCS11CertStorageWithSO`. Its four production callers (`pkg/pivcert/pkcs11/pkcs11.go` x3, `pkg/backend/pkcs11/cert_config.go`) and three integration-test callers now call `NewPKCS11CertStorageWithSO(pool, tokenLabel, "", "", false)` directly.
+- **`fido2.GenerateLUKSKey` is gone — BREAKING.** Unused alias for `GenerateDerivedKey`.
+- **Dead `phone.requestChallenge`/`phone.submitAttestation` protocol leftovers are gone from `xkey/pkg/pairing/protocol_local.go` — BREAKING.** `MethodPhoneRequestChallenge`, `MethodPhoneSubmitAttestation`, `phoneMethodNames`, `IsPhoneMethod`, and the `PhoneRequestChallengeResult`/`PhoneSubmitAttestationParams`/`PhoneSubmitAttestationResult` types implemented an attestation direction the protocol no longer uses (`remote.attestDevice` is the real flow) and had no caller outside their own tests.
+- **`xkey/pkg/gui/services/fido2_device_service.go`'s `SetWindowHideFunc` no-op is gone — BREAKING.** It shadowed the real, live `AppService.SetWindowHideFunc` under the same Wails-exposed name; the Wails bindings (`frontend/wailsjs/go/services/FIDO2DeviceService.{d.ts,js}`) are hand-edited to match since nothing regenerates them here.
+- **`nativemsg.PairingVerifier.GetState()` and `.Unpair()` are gone — BREAKING.** `GetState` (arbitrary single-extension state) had no caller; `Unpair` was a one-line alias for `UnpairAll` with its sole caller (`xkey/cmd/xkey/cmd/extension.go`) switched to call `UnpairAll` directly.
+- **`PairingService.GetPairingStatus()` (and its private `getPairingStatusLocked` helper) is gone — BREAKING.** Single-extension status accessor with no frontend or Go caller; `GetPairedExtensions()`/`GetExtensionFullStatus()` are the live multi-extension APIs. The Wails binding is hand-edited to match.
+- **Two frontend-only compatibility aliases are gone from xkey's Svelte frontend.** `phoneState` (`frontend/src/lib/stores/pairing.ts`, aliased to `pairingState`) and `notifyWailsRequired` (`frontend/src/lib/api/backend.ts`, aliased to `notifyBackendUnavailable`) had no remaining callers.
+- **The seven `*/legacy_format_test.go` known-answer-vector test files are renamed to `kat_test.go`** (`pkg/backend/mocks`, `pkg/backup`, `pkg/crypto/aesgcm`, `pkg/crypto/ecies`, `pkg/keyprovider/quantum`, `pkg/keyprovider/symmetric`, `pkg/seal`). Their on-disk layouts are unchanged — they are known-answer tests, not backward-compatibility shims — so comments and test names describing them as "legacy"/"compatibility" checks are reworded to say "known-answer" instead.
+- **Stale "backward compatibility" framing is reworded on two live SDK re-exports.** `sdk/go/types.go`'s `ClearPassword` alias and `sdk/go/errors.go`'s `XKMSError.Is` sentinel-matching switch are unchanged in behavior — both are live, intentional design — only their comments no longer imply they exist for legacy support.
+
+Not removed despite matching the survey: `pkg/pivcert/pkcs11.NewFromSession` has a genuine production caller (`xkey/pkg/gui/pivcert_pkcs11.go`, the no-`soPin` branch of `newPKCS11PIVCertStorageFromConnection`) and stays. `cmd/xkmsctl/config.go`'s `BackendFactory`/`Config.BackendFactory`/`CreateBackend` are the live dependency-injection seam behind two production commands (`migrate.go`, `tls.go`, 7 call sites) and roughly 40 test call sites across `config_test.go`, `migrate_test.go`, `tls_test.go`, `tls_run_test.go` — rewriting those commands onto `ClientFactory` is an architecture change outside this PR's no-behaviour-change scope and needs an explicit ruling.
+- **Every remaining backward-compatibility shim in the root storage formats is gone — BREAKING (on-disk data).** Per the owner's 2026-09-22 ruling ("we dont need to preserve any backward compatibility at the expense of bloating and complicating our codebase"), the dual readers, version-gated inference and silent fallbacks below are deleted outright; old data now fails with a typed error instead of being interpreted. The stack is pre-release alpha, so no migration tool is provided.
+  - **`pkg/keyprovider/symmetric.Marshal`/`Unmarshal`** now write and accept only wire version 2 (version byte + explicit GCM nonce mode marker byte). The version-1 layout (no marker byte) is refused by `Unmarshal` with a typed error naming the removed format; there is no dual reader. `GCMNonceMode` itself is unaffected.
+  - **`pkg/keyprovider/symmetric`'s key metadata** is a single schema version. `loadKeyMetadata` now returns `(*keyMetadata, error)`: a missing record, an unparseable record, or a record stamped with any other schema version is `ErrKeyMetadataNotFound` or a parse/version error, not a silently-defaulted `Exportable=false, Sensitive=true` record. `deleteKeyMetadata` no longer swallows a missing record — it also reports `ErrKeyMetadataNotFound`. `ListKeys` and `DeleteKey` now fail on a key with no valid metadata record instead of listing/deleting it with guessed attributes.
+  - **`pkg/keyprovider/pkcs8`'s key metadata** is a single schema version. `resolveKeyOrigin` is a plain read of the record's `key_origin` field with no version-gated inference: a record with no origin recorded (including a record whose schema version does not match, which is now discarded exactly like a corrupt record) resolves `types.KeyOriginUnknown`, not `types.KeyOriginGenerated`. `pkg/xkms`'s PIV attestation path (`refuseUnattestableKey`) already treats `KeyOriginUnknown` as safe-to-attest for backends that never record provenance (PKCS#11, TPM2, cloud KMS), so this only changes behavior for pkcs8-backed keys whose metadata record predates the origin field or fails to parse.
+  - **`BackendFor`/`getBackendForKID` (go-xkms#312) no longer fall back to treating `StoreType` as a registry name.** `ParseKeyIDToAttributes` now sets `KeyAttributes.Backend` from a Key ID string's backend segment (previously only `StoreType`), matching what `ListKeys`'s `stampBackendName` has already done for listed keys. Attributes that carry only `StoreType`, with no `Backend`, now resolve to `DefaultBackend` instead of to whichever registered backend happens to report that `StoreType`.
+  - **`pkg/storage/hardware.TPM2CertStorage`** requires every NV certificate record to carry its magic header (`XKC1`) and, for a chain, the explicit chain-marker PEM header on every block. The headerless record shape and the NV-handle addressing form that existed only to reach it (`"0x01800000"` as a certificate ID) are gone, as is the member-count inference that classified an unmarked multi-block record as a chain. A record missing the magic header now fails a direct lookup with `ErrCertRecordMissingHeader` and is skipped by `ListCerts` (indistinguishable from another subsystem's use of the same NV index range) instead of being listed under its NV handle.
+  - **`pkg/pkcs11/module.ModuleStorage.LoadFailedAttempts`** drops its `recordUser, recordSO uint32` parameters and no longer seeds the dedicated lockout-counter key from the token record's embedded snapshot. A dedicated key that is absent now reads as zero attempts, not as the record's stale snapshot value.
+  - **`pkg/xkms.Unseal`** no longer falls back to the default auto-generated sealing key when a supplied `KeyID` fails to parse (the legacy `storeType:keyType:CN:algo` `ID()` shape). A non-empty `KeyID` that fails `ParseKeyIDToAttributes` now always returns `ErrKeyIDParse`, matching `Seal`'s existing behavior; the auto-resolve-to-default-sealing-key path still applies only when no `KeyID` is supplied at all.
+- **Wire and CLI backward-compatibility shims for keys, WebAuthn, the
+  barrier and PKCS#11 state are gone — BREAKING.** Five independent compat
+  paths, all reachable from wire input, are deleted outright rather than
+  deprecated (owner rule 2026-09-22: no backward compatibility, BREAKING is
+  fine).
+  - `PKCS11StateCASRequest.ExpectAbsent` (proto field 6,
+    `pkg/api/grpc/proto/xkmsv1/xkms.proto`) — the field that let a CAS call
+    double as `PutIfAbsent` is removed; the field number is `reserved`. The
+    dedicated `PKCS11StatePutIfAbsent` RPC is the only create-if-absent path.
+    Every server handler, transport (`rest`/`unix`/`grpc`/`quic`), the
+    `pkg/pkcs11/module` remote-state client and the cluster CAS integration
+    test are updated; none of them still set the field, so this is a
+    documentation-only proto/wire change with no client migration required.
+  - The WebAuthn ceremony requests' dual `email`/legacy-`username` JSON keys
+    (`pkg/api/transport/types.go` `BeginRegistrationRequest`,
+    `BeginAuthenticationRequest`, `FinishAuthenticationRequest`) collapse to
+    a single `email` tag; `loginKeyFromWire`,
+    `ErrRegistrationLoginKeyConflict` and `ErrAuthenticationLoginKeyConflict`
+    are deleted. `xkey auth register`/`auth login`'s `--username` deprecated
+    alias for `--email` is deleted along with its cobra deprecation plumbing.
+  - `pkg/api/rest/handlers_barrier_pin.go` `BarrierInitializeRequest` /
+    `BarrierUnsealRequest` lose the plaintext `secret` JSON field and its
+    fallback in `barrierCredentialsFromRequest`; only the enclaved
+    `password_b64` field carries the passphrase now.
+  - `KeyType` is no longer read as an algorithm name when `Algorithm` is
+    empty: `Algorithm` is now a required field on every `GenerateKeyRequest`
+    path (`pkg/api/rest/handlers.go`, `pkg/api/grpc/service.go`, and
+    `pkg/xkms/servicer_key.go`'s `buildKeyAttributes`, which backs the MCP
+    and embedded transports). `KeyType` is purely a purpose
+    (signing/encryption/tls/...) again. Every in-tree caller that previously
+    sent only `KeyType` — `cmd/xkmsctl/key.go`'s symmetric-key path,
+    `xkey/pkg/gui/services/key_service.go`, `pkg/pkcs11/module/crypto.go`'s
+    two mechanism-translated generate calls, `pkg/api/mcp` handlers and its
+    ~80 table-driven test literals, the `sdk/go` doc/example snippets, and
+    the gRPC/REST/xkms test suites across `pkg/api/grpc`, `pkg/api/rest`,
+    `pkg/xkms`, `pkg/api/transport/*` and `test/integration/*` — now sends
+    `Algorithm` explicitly.
+  - The FIDO2 `hmac-secret` legacy insecure derivation is gone:
+    `pkg/fido2/types.go` `DerivationModeLegacyInsecure`, the
+    `deriveSecretLegacy`/`legacyHMACSecret` implementation in
+    `pkg/fido2/hmac_secret.go`, the `sdk/go/fido2` re-export, and
+    `xkmsctl fido2 authenticate --legacy-hmac-derivation` are deleted.
+    `DerivationModeCTAP2` (CTAP 2.1 §12.5) is the only derivation; a volume
+    still keyed with the removed derivation must be re-enrolled.
+
+  The xkey GUI's `GenerateKeyParams.KeyType` field and its purpose/algorithm
+  fallbacks are deleted as well: `GenerateKeyDialog.svelte` now sends the
+  selected algorithm as `algorithm` and leaves `purpose` unset, so the server
+  applies its SIGNING default exactly as before.
+
+  Docs: `docs/webauthn/{api,engineering}.md`, `docs/fido2/README.md`,
+  `docs/fido2-ctap2/{user,cli,api,engineering}.md`,
+  `xkey/docs/headless-webauthn/{cli,engineering,user}.md`.
+- **Every xkey on-disk and config migration path is gone — BREAKING, no compatibility with pre-migration data.** xkey never carried more than one on-disk shape for the same state; each shape now has exactly one reader, and a record in the old shape is a typed error telling the operator what to do, not a silent upgrade. Affected areas and required operator action:
+
+  - **GUI config.** `~/.xkey/gui.json` is no longer copied from its legacy
+    location on load, and `GUIConfig.PINStrategy` (#307) plus
+    `ResolvePINBackend`'s legacy-strategy parameter are gone — the PIN
+    backend is derived from the live TPM/store state on every start, not a
+    persisted strategy field. `xkey/pkg/gui/migration.go`, which deleted
+    stale pin-state files on every start, is deleted along with its `app.go`
+    call site. Operator action: none for a config already in the current
+    shape; a `gui.json` at the old path is simply not read.
+  - **Data-dir moves.** `app.go`'s `MigrateFrom`/`migrateBarrierData` sealed
+    barrier data relocation, `SealService.MigrateFrom`,
+    `BarrierService`'s cross-directory fallback probe, `TPMService`'s
+    one-time `pcr_policies.json` import (`SetPolicyStore` is now mandatory —
+    calling it without a store returns `ErrTPMPolicyStoreNotSet`), and
+    `sshstore.MigrateLegacyStores` are all deleted. `phone.yaml` is no
+    longer renamed to `devices.yaml` on read (`cmd/xkey/cmd/device.go`,
+    `phone_service.go`). Operator action: data left at a superseded path is
+    not picked up automatically — move `pcr_policies.json`, barrier/seal
+    blobs, SSH store files, and `phone.yaml` (rename to `devices.yaml`) into
+    their current locations by hand before upgrading.
+  - **Config defaults.** `PolicySection.RequirePlatformPolicy` (#313) is
+    deleted from the config struct and from `PolicyCanonicalJSON` — the
+    HMAC over an enterprise policy document changes as a result; a policy
+    signed under the old canonical form must be re-signed.
+    `config.AutoPopulateBackends` (the derive-on-read backend-list backfill)
+    is gone; `DefaultConfig()` now seeds the one built-in software backend
+    directly, so a config written before this change and missing a backend
+    list stays empty instead of being backfilled at read time. Browser
+    profile-mode backfill (`browser_service.go`, `Settings.svelte`) and the
+    CLI's per-mode `server_url` fallback (`cmd/xkey/cmd/trust.go`, now
+    requires `trust.bootstrap.server_url` directly) are removed the same
+    way. `SealService.SealData`/`UnsealData` no longer default an empty
+    `PolicyType` to `"none"` or infer a missing `BackendID`; both fields are
+    now required on every seal/unseal call and blob record
+    (`ErrSealInvalidPolicyType`, `ErrSealBlobPolicyTypeMissing`,
+    `ErrSealBlobBackendIDMissing`). Operator action: set
+    `trust.bootstrap.server_url` explicitly if it relied on per-mode
+    derivation; re-sign any enterprise policy document; a stored seal blob
+    missing `policy_type`/`backend_id` must be re-sealed.
+  - **Pairing records.** The Noise-key sealed/plaintext migration
+    (`migrateLegacyNoiseKeyAndSave`, `migrateLocalNoiseKey`, and the reseal
+    branches in `device_listen.go`, `device_attest_device.go`, and
+    `phone_service.go`'s `Connect`) is deleted. Both storage forms — sealed
+    (barrier present) and plaintext (no barrier) — are still read, but a
+    stored key whose form doesn't match the current barrier state is now
+    `pairing.ErrNoiseKeyFormMismatch` instead of being transparently
+    resealed. Device attestation records with no `AttestationProtocolVersion`
+    or `AttestationProtocolVersion == 1` (#129/#130, predating the
+    challenge-response attestation model) are now
+    `ErrDeviceAttestationVersionUnsupported` rather than being treated as a
+    legacy enrolment. Operator action: re-pair any device that hits either
+    error.
+  - **Services.** `StaticPasswordService.AddPassword`/`UpdatePassword`'s old
+    positional-argument (V1) signatures are deleted; the struct-parameter
+    (V2) versions are renamed to the base names
+    (`AddPasswordParams`/`UpdatePasswordParams`) and are now the only
+    entry points — `Passwords.svelte` and the generated Wails bindings are
+    updated to call them under the new names.
+    `TPMStatusLevelDefault`/`Provisioned`/`Verified` (unused status-level
+    constants) and their `TPM.svelte` cases are removed.
+    `tokenstore.BackendTokenStore` is deleted; every caller now constructs
+    a `tokenstore.DAOStore` via `xkms.NewKVStoreAdapter` +
+    `tokenstore.NewDAOStore`, the same DAO path already used elsewhere.
+    Operator action: none — these are internal API renames/removals with
+    no on-disk format change.
+  - **staticpw.** `pkg/staticpw/migration.go`
+    (`MigrateEntry`/`MigrateStore`/`MigrateToScopedLayout`/
+    `MigrateFromBackend`) and `EncryptedStore.MigrateToEncrypted` are
+    deleted, along with the plaintext pass-through in
+    `EncryptedStore.GetDecrypted`: a stored password with no `ENC:` prefix
+    is now `ErrPasswordNotEncrypted` rather than being returned as
+    plaintext. The `MigrateStaticPasswordEntry`/`MigrateStaticPasswordStore`
+    re-exports are removed from `sdk/go/staticpw.go` and
+    `xkey/pkg/staticpw/lib.go`, and the `app.go` call into
+    `staticpw.MigrateStore` is removed. Operator action: an entry rejected
+    with `ErrPasswordNotEncrypted` must be deleted and re-added through
+    `EncryptedStore` so it is written back out encrypted; there is no
+    automatic upgrade path.
+  - **LUKS default paths unified to xhome.** `xkey/pkg/luks`'s deprecated
+    `DefaultLUKSFile`/`DefaultDataDir` constants and
+    `GetDefaultLUKSPath`/`GetDefaultDataDir` helpers (home-relative
+    `~/.xkey.luks` and `~/.xkey`, computed independently of `xhome`) are
+    deleted. `luks.NewVolume` and every CLI/GUI caller that previously fell
+    back to them (`unseal`, `lock`, `seal`, `wipe`, `migrate`,
+    `import-data`, and `StorageService`) now resolve paths through
+    `xhome.Resolve()` exclusively, matching every other xkey path
+    resolution. Operator action: a LUKS container created under the old
+    `~/.xkey.luks` file path (rather than `<xhome>/xkey.luks`) is not found
+    automatically — pass `--path`/`--mount-point` explicitly to locate it,
+    or move it into the resolved xhome directory.
+
+### Fixed
+
+- **A TPM endorsed through endorse-01 can now enroll an IDevID: its EK certificate records the TPM manufacturer code where enroll-01 reads it.** Every enroll-01 of an endorsed TPM (one with no manufacturer EK certificate — swtpm, many platform TPMs) was refused with a bare `500 serverInternal: Failed to sign TCG-CSR-IDEVID`, because `SignTCGCSRIDevID` could not find the tcg-at-tpmManufacturer code TCG DevID v1 r12 §8.1 puts at the head of the hardwareModuleName (`ErrTCGEKManufacturerUnknown`). Two defects combined. The endorse-01 finalize handler never passed a manufacturer to `IssueEKCertificate`; and when one was passed, `IssueEKCertificate` wrote it as a standalone extension under the attribute's own OID, which `TCGTPMManufacturer` does not read. Now the endorse-01 client reads the code from the TPM (`TPMModule.TPMManufacturer`, from `TPM_PT_MANUFACTURER`) and asserts it in the finalize CSR as a subjectAltName directoryName; the handler validates its form (`id:` + eight uppercase hex digits, `ValidateTCGTPMManufacturer`), holds it to any `deviceInfo.tpmManufacturer` the account's EAB names, and refuses with `badCSR` / `unauthorized` otherwise; and `IssueEKCertificate` records it in a subjectAltName directoryName per the TCG EK Credential Profile. The finalize handler now logs the CA's error when TCG-CSR-IDEVID signing fails. `BuildSubjectAltName` gained a `directoryNames` parameter and `CertificateSpec` a `DirectoryNames` field; `TCGTPMManufacturerFromCSR` and `TCGTPMManufacturerSubjectAltName` are new. **Breaking:** `CreateTPMManufacturerExtension`, `CreateTPMModelExtension` and `CreateTPMVersionExtension` are removed from `pkg/ca` and `sdk/go` — they produced the unreadable encoding and had no callers; `acmeclient.TPMModule` gained `TPMManufacturer() (string, error)`. Found on hardware: a worker node's platformd crash-looped at enrollment against a control plane that had endorsed its TPM.
+
 ## [0.16.0-alpha] - 2026-09-22
 
 ### Security
