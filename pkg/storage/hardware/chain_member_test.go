@@ -56,6 +56,10 @@ func TestIsChainMemberID(t *testing.T) {
 	}
 }
 
+// TestIsReservedChainID pins the ids a caller must never be able to name a
+// certificate with. "test-chain" is issue #615: a fixture that names its
+// certificate id-chain looks exactly like the chain record of "id", so every
+// chain operation on it collides with the reservation deterministically.
 func TestIsReservedChainID(t *testing.T) {
 	for candidate, want := range map[string]bool{
 		"foo-chain":     true,
@@ -65,6 +69,8 @@ func TestIsReservedChainID(t *testing.T) {
 		"foo":           false,
 		"-chain":        true,
 		"a-chain-chain": true,
+		"test-chain":    true,
+		"test-cert":     false,
 	} {
 		assert.Equal(t, want, isReservedChainID(candidate), candidate)
 	}

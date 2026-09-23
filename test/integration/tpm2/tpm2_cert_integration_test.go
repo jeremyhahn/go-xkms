@@ -188,14 +188,14 @@ func TestTPM2CertStorage(t *testing.T) {
 			chain := []*x509.Certificate{cert1, cert2}
 
 			// Save certificate chain
-			err := storage.SaveCertChain("test-chain", chain)
+			err := storage.SaveCertChain("chain-primary-cert", chain)
 			if err != nil {
 				t.Fatalf("Failed to save certificate chain: %v", err)
 			}
 			t.Log("✓ Certificate chain saved to TPM NV RAM")
 
 			// Retrieve certificate chain
-			retrievedChain, err := storage.GetCertChain("test-chain")
+			retrievedChain, err := storage.GetCertChain("chain-primary-cert")
 			if err != nil {
 				t.Fatalf("Failed to retrieve certificate chain: %v", err)
 			}
@@ -216,7 +216,7 @@ func TestTPM2CertStorage(t *testing.T) {
 			t.Log("✓ All certificates in chain match")
 
 			// Clean up
-			if err := storage.DeleteCert("test-chain"); err != nil {
+			if err := storage.DeleteCert("chain-primary-cert"); err != nil {
 				t.Logf("Warning: Failed to clean up test chain: %v", err)
 			}
 		})
@@ -479,7 +479,7 @@ func TestTPM2CertStorage(t *testing.T) {
 		})
 
 		t.Run("EmptyCertChain", func(t *testing.T) {
-			err := storage.SaveCertChain("empty-chain", []*x509.Certificate{})
+			err := storage.SaveCertChain("empty-chain-cert", []*x509.Certificate{})
 			if err == nil {
 				t.Fatal("Expected error when saving empty certificate chain")
 			}

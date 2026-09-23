@@ -652,7 +652,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		leafCert := createNitrokeyTestCertificate(t, key3, "Nitrokey Leaf Cert")
 
 		chain := []*x509.Certificate{leafCert, intermediateCert, rootCert}
-		chainID := "nitrokey-test-chain"
+		chainID := "nitrokey-test-cert"
 
 		// Try to save certificate chain
 		err = certStorage.SaveCertChain(ctx, chainID, chain)

@@ -367,14 +367,14 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			chain[3] = createTestCert(t, "chain-root")
 
 			// Save the chain
-			err := hwStorage.SaveCertChain("test-chain", chain)
+			err := hwStorage.SaveCertChain("chain-primary-cert", chain)
 			if err != nil {
 				t.Fatalf("Failed to save certificate chain: %v", err)
 			}
 			t.Logf("✓ Saved certificate chain with %d certificates", len(chain))
 
 			// Retrieve the chain
-			retrievedChain, err := hwStorage.GetCertChain("test-chain")
+			retrievedChain, err := hwStorage.GetCertChain("chain-primary-cert")
 			if err != nil {
 				t.Fatalf("Failed to retrieve certificate chain: %v", err)
 			}
@@ -395,7 +395,7 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			t.Log("✓ All certificates in chain match")
 
 			// Clean up
-			hwStorage.DeleteCert("test-chain")
+			hwStorage.DeleteCert("chain-primary-cert")
 		})
 
 		t.Run("OverwriteChain", func(t *testing.T) {
@@ -404,7 +404,7 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			chain1[0] = createTestCert(t, "chain-v1-leaf")
 			chain1[1] = createTestCert(t, "chain-v1-root")
 
-			err := hwStorage.SaveCertChain("overwrite-chain", chain1)
+			err := hwStorage.SaveCertChain("chain-overwrite-cert", chain1)
 			if err != nil {
 				t.Fatalf("Failed to save first chain: %v", err)
 			}
@@ -415,14 +415,14 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			chain2[1] = createTestCert(t, "chain-v2-intermediate")
 			chain2[2] = createTestCert(t, "chain-v2-root")
 
-			err = hwStorage.SaveCertChain("overwrite-chain", chain2)
+			err = hwStorage.SaveCertChain("chain-overwrite-cert", chain2)
 			if err != nil {
 				t.Fatalf("Failed to overwrite chain: %v", err)
 			}
 			t.Log("✓ Certificate chain overwritten")
 
 			// Retrieve and verify
-			retrievedChain, err := hwStorage.GetCertChain("overwrite-chain")
+			retrievedChain, err := hwStorage.GetCertChain("chain-overwrite-cert")
 			if err != nil {
 				t.Fatalf("Failed to retrieve overwritten chain: %v", err)
 			}
@@ -437,7 +437,7 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			t.Log("✓ Overwritten chain retrieved correctly")
 
 			// Clean up
-			hwStorage.DeleteCert("overwrite-chain")
+			hwStorage.DeleteCert("chain-overwrite-cert")
 		})
 
 		t.Run("DeleteChain", func(t *testing.T) {
@@ -447,20 +447,20 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 			chain[1] = createTestCert(t, "delete-chain-intermediate")
 			chain[2] = createTestCert(t, "delete-chain-root")
 
-			err := hwStorage.SaveCertChain("delete-chain", chain)
+			err := hwStorage.SaveCertChain("chain-delete-cert", chain)
 			if err != nil {
 				t.Fatalf("Failed to save chain: %v", err)
 			}
 
 			// Delete the chain
-			err = hwStorage.DeleteCert("delete-chain")
+			err = hwStorage.DeleteCert("chain-delete-cert")
 			if err != nil {
 				t.Fatalf("Failed to delete chain: %v", err)
 			}
 			t.Log("✓ Certificate chain deleted")
 
 			// Verify chain no longer exists
-			_, err = hwStorage.GetCertChain("delete-chain")
+			_, err = hwStorage.GetCertChain("chain-delete-cert")
 			if err == nil {
 				t.Error("Chain should not exist after deletion")
 			}
@@ -544,7 +544,7 @@ func runCertificateStorageTests(t *testing.T, hwStorage hardware.HardwareCertSto
 		})
 
 		t.Run("EmptyChain", func(t *testing.T) {
-			err := hwStorage.SaveCertChain("empty-chain", []*x509.Certificate{})
+			err := hwStorage.SaveCertChain("empty-chain-cert", []*x509.Certificate{})
 			if err == nil {
 				t.Error("Expected error when saving empty chain")
 			}
