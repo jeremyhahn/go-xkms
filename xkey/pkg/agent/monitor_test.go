@@ -263,7 +263,16 @@ func TestCheckMaxAgents_StoreError(t *testing.T) {
 // errorStore is a mock that returns errors from ListAgents.
 type errorStore struct{}
 
-func (s *errorStore) SaveAgent(agent *AgentInfo) error       { return nil }
-func (s *errorStore) GetAgent(id string) (*AgentInfo, error) { return nil, ErrAgentNotFound }
-func (s *errorStore) ListAgents() ([]*AgentInfo, error)      { return nil, errors.New("store error") }
-func (s *errorStore) DeleteAgent(id string) error            { return nil }
+func (s *errorStore) SaveAgent(agent *AgentInfo) error                { return nil }
+func (s *errorStore) GetAgent(id string) (*AgentInfo, error)          { return nil, ErrAgentNotFound }
+func (s *errorStore) ListAgents() ([]*AgentInfo, error)               { return nil, errors.New("store error") }
+func (s *errorStore) DeleteAgent(id string) error                     { return nil }
+func (s *errorStore) SaveCode(hash string, expiresAt time.Time) error { return nil }
+func (s *errorStore) ConsumeCode(hash string) error                   { return ErrEnrollmentCodeInvalid }
+func (s *errorStore) CleanExpiredCodes() (int, error)                 { return 0, nil }
+func (s *errorStore) SavePending(p *PendingEnrollment) error          { return nil }
+func (s *errorStore) GetPending(id string) (*PendingEnrollment, error) {
+	return nil, ErrRequestNotFound
+}
+func (s *errorStore) ListPending() ([]*PendingEnrollment, error) { return nil, nil }
+func (s *errorStore) DeletePending(id string) error              { return nil }

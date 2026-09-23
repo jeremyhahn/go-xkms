@@ -31,12 +31,14 @@ auth:
   enabled: true
   type: "composite"
 
-# Encryption-at-rest, auto-unsealed at node start so a 4-node cluster can form
-# without an unseal ceremony per node.
+# Encryption-at-rest. There is no config-sourced boot-time secret any more
+# (matching go-qrdb's own SealConfig): a software strategy never auto-unseals
+# from configuration, so each node now needs an unseal ceremony (or a
+# hardware seal strategy) instead of the previous config-sourced passphrase.
+# See go-xkms#653.
 barrier:
   enabled: true
   strategy: "passphrase"
-  passphrase: "integration-test-passphrase"
 
 ratelimit:
   enabled: false

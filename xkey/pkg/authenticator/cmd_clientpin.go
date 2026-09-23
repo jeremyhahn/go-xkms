@@ -23,12 +23,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-enclave"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -226,8 +226,14 @@ type authenticatorPINState struct {
 // handleClientPIN implements the CTAP2 authenticatorClientPIN command (0x06).
 // It dispatches to the appropriate subcommand handler based on the request.
 func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
+	// authenticatorClientPIN is required only if the authenticator supports
+	// PIN or a UV mechanism that mints pinUvAuthTokens (CTAP 2.1 §6.5).
+	// Config.SetDefaults forces EnablePIN whenever credential management is
+	// enabled, which is the only feature here that needs a minted token, so
+	// EnablePIN=false means neither applies and getInfo advertises neither
+	// clientPin nor pinUvAuthProtocols; declining is spec-correct.
 	if !a.config.EnablePIN {
-		return nil, ErrNotImplemented
+		return nil, ErrCommandNotSupported
 	}
 
 	req, err := decodeClientPINRequest(data)
@@ -532,24 +538,18 @@ func (a *Authenticator) handleChangePIN(req *ClientPINRequest) ([]byte, error) {
 		return nil, ErrPINAuthInvalid
 	}
 
-	// Decrypt and verify current PIN hash.
+	// Decrypt current PIN hash. A decryption failure is not returned
+	// directly: it is fed to verifyPinHashAndConsumeRetryLocked as a nil
+	// candidate, which CTAP 2.1 treats as an ordinary wrong-PIN guess that
+	// still spends a retry, not a protocol error the platform gets to retry
+	// for free.
 	currentPinHash, err := a.decryptBlock(encKey, req.PinUvAuthProtocol, req.PinHashEnc)
 	if err != nil {
-		a.state.DecrementPINRetries()
-		_ = a.storage.SaveState(a.state)
-		if a.state.PINRetries() <= 0 {
-			return nil, ErrPINBlocked
-		}
-		return nil, ErrPINInvalid
+		currentPinHash = nil
 	}
 
-	if !a.verifyPINHashLocked(currentPinHash) {
-		a.state.DecrementPINRetries()
-		_ = a.storage.SaveState(a.state)
-		if a.state.PINRetries() <= 0 {
-			return nil, ErrPINBlocked
-		}
-		return nil, ErrPINInvalid
+	if err := a.verifyPinHashAndConsumeRetryLocked(currentPinHash); err != nil {
+		return nil, err
 	}
 
 	// Decrypt the new PIN.
@@ -563,10 +563,11 @@ func (a *Authenticator) handleChangePIN(req *ClientPINRequest) ([]byte, error) {
 		return nil, ErrPINPolicyViolation
 	}
 
-	// Hash and store the new PIN.
+	// Hash and store the new PIN. The retry budget was already reset and
+	// persisted by verifyPinHashAndConsumeRetryLocked above when the current
+	// PIN verified; setting it again here would only be redundant.
 	pinHash := sha256.Sum256(newPIN)
 	a.state.PINHash = pinHash[:PINHashSize]
-	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// CTAP 2.1 §6.5.2.1: the token minted under the old PIN stops being usable
 	// here. regeneratePINProtocolKeys below already achieves that as a side
@@ -644,28 +645,19 @@ func (a *Authenticator) handleGetPINToken(req *ClientPINRequest) ([]byte, error)
 		return nil, ErrInvalidParameter
 	}
 
-	// Decrypt and verify current PIN hash.
+	// Decrypt current PIN hash. A decryption failure is not returned
+	// directly: it is fed to verifyPinHashAndConsumeRetryLocked as a nil
+	// candidate, which CTAP 2.1 treats as an ordinary wrong-PIN guess that
+	// still spends a retry, not a protocol error the platform gets to retry
+	// for free.
 	currentPinHash, err := a.decryptBlock(encKey, req.PinUvAuthProtocol, req.PinHashEnc)
 	if err != nil {
-		a.state.DecrementPINRetries()
-		_ = a.storage.SaveState(a.state)
-		if a.state.PINRetries() <= 0 {
-			return nil, ErrPINBlocked
-		}
-		return nil, ErrPINInvalid
+		currentPinHash = nil
 	}
 
-	if !a.verifyPINHashLocked(currentPinHash) {
-		a.state.DecrementPINRetries()
-		_ = a.storage.SaveState(a.state)
-		if a.state.PINRetries() <= 0 {
-			return nil, ErrPINBlocked
-		}
-		return nil, ErrPINInvalid
+	if err := a.verifyPinHashAndConsumeRetryLocked(currentPinHash); err != nil {
+		return nil, err
 	}
-
-	// Reset retry counter on successful PIN verification.
-	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// Generate a new PIN token.
 	pinToken := make([]byte, PINTokenSize)
@@ -846,7 +838,11 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 		"permissions", req.Permissions,
 	)
 
-	// Decrypt and verify current PIN hash.
+	// Decrypt current PIN hash. A decryption failure is not returned
+	// directly: it is fed to verifyPinHashAndConsumeRetryLocked as a nil
+	// candidate, which CTAP 2.1 treats as an ordinary wrong-PIN guess that
+	// still spends a retry, not a protocol error the platform gets to retry
+	// for free.
 	currentPinHash, err := a.decryptBlock(encKey, req.PinUvAuthProtocol, req.PinHashEnc)
 	if err != nil {
 		slog.Warn("[CTAP2] PIN hash decryption failed",
@@ -854,32 +850,18 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 			"protocol", req.PinUvAuthProtocol,
 			"pinHashEnc_len", len(req.PinHashEnc),
 		)
-		a.state.DecrementPINRetries()
-		_ = a.storage.SaveState(a.state)
-		if a.state.PINRetries() <= 0 {
-			return nil, ErrPINBlocked
-		}
-		return nil, ErrPINInvalid
+		currentPinHash = nil
 	}
 
-	if !a.verifyPINHashLocked(currentPinHash) {
-		slog.Warn("[CTAP2] PIN hash mismatch",
-			"retries_remaining", a.state.PINRetries()-1,
-			"decrypted_len", len(currentPinHash),
-			"stored_len", len(a.state.PINHash),
-			"decrypted_prefix", fmt.Sprintf("%x", currentPinHash[:min(4, len(currentPinHash))]),
-			"stored_prefix", fmt.Sprintf("%x", a.state.PINHash[:min(4, len(a.state.PINHash))]),
-		)
-		a.state.DecrementPINRetries()
-		_ = a.storage.SaveState(a.state)
-		if a.state.PINRetries() <= 0 {
-			return nil, ErrPINBlocked
+	if err := a.verifyPinHashAndConsumeRetryLocked(currentPinHash); err != nil {
+		if errors.Is(err, ErrPINInvalid) || errors.Is(err, ErrPINBlocked) {
+			slog.Warn("[CTAP2] PIN hash mismatch",
+				"error", err,
+				"retries_remaining", a.state.PINRetries(),
+			)
 		}
-		return nil, ErrPINInvalid
+		return nil, err
 	}
-
-	// Reset retry counter on successful PIN verification.
-	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// Generate a new PIN token with permissions.
 	pinToken := make([]byte, PINTokenSize)
@@ -909,6 +891,56 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 	}
 
 	return a.successResponse(data), nil
+}
+
+// verifyPinHashAndConsumeRetryLocked implements the CTAP 2.1 §6.5.5.5
+// pinRetries procedure: a retry is spent and persisted durably BEFORE
+// candidateHash is ever compared against the stored PIN, and a successful
+// match resets the retry budget to its configured maximum and persists that
+// too before returning. changePIN, getPinToken, and
+// getPinUvAuthTokenUsingPinWithPermissions are the only three ClientPIN
+// subcommands that check a pinHashEnc, and all three funnel through here so
+// the decrement-before-compare ordering and its persistence cannot drift
+// between them (go-xkms#686).
+//
+// candidateHash may be nil. verifyPINHashLocked treats a nil or empty hash as
+// an automatic mismatch, which is what CTAP 2.1 requires when pinHashEnc
+// itself fails to decrypt: that is an ordinary wrong-PIN attempt, not a
+// protocol error the platform gets to retry for free, so it must still spend
+// a retry.
+//
+// A storage failure while persisting the spent retry fails the whole
+// operation closed: since the persist happens before the comparison, a
+// caller can never learn whether an untested guess was right by racing a
+// flaky store. The failure is reported as ErrStorageError with the backend's
+// cause attached, the same as every other persistence failure in this
+// package. It is deliberately not reported as CTAP2_ERR_PIN_AUTH_BLOCKED:
+// that status promises the platform that a power cycle will resume attempts,
+// and a storage fault is not fixed by one.
+//
+// Returns ErrStorageError if the decremented (or, on success, reset) retry
+// counter could not be persisted, ErrPINBlocked if the retry budget is now
+// exhausted, and ErrPINInvalid if candidateHash does not match.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) verifyPinHashAndConsumeRetryLocked(candidateHash []byte) error {
+	a.state.DecrementPINRetries()
+	if err := a.storage.SaveState(a.state); err != nil {
+		return errors.Join(ErrStorageError, err)
+	}
+
+	if !a.verifyPINHashLocked(candidateHash) {
+		if a.state.PINRetries() <= 0 {
+			return ErrPINBlocked
+		}
+		return ErrPINInvalid
+	}
+
+	a.state.SetPINRetries(a.config.PINMaxRetries)
+	if err := a.storage.SaveState(a.state); err != nil {
+		return errors.Join(ErrStorageError, err)
+	}
+	return nil
 }
 
 // initPINProtocol initializes the PIN protocol state with a new ECDH key pair.
@@ -1334,9 +1366,7 @@ func (a *Authenticator) stopUsingPinUvAuthTokenLocked() {
 	}
 	// Wipe the token bytes rather than only dropping the reference, so expired
 	// key material does not linger in memory until the next collection.
-	for i := range a.pinState.protocol.pinUvAuthToken {
-		a.pinState.protocol.pinUvAuthToken[i] = 0
-	}
+	enclave.Wipe(a.pinState.protocol.pinUvAuthToken)
 	a.pinState.protocol.pinUvAuthToken = nil
 	a.pinState.protocol.tokenPermissions = 0
 	a.pinState.protocol.tokenRPID = ""

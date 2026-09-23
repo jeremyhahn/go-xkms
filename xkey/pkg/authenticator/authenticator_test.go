@@ -198,7 +198,7 @@ func TestAuthenticator_ProcessCBOR_Selection(t *testing.T) {
 	require.Equal(t, byte(StatusOK), response[0])
 }
 
-func TestAuthenticator_ProcessCBOR_NotImplementedCommands(t *testing.T) {
+func TestAuthenticator_ProcessCBOR_UnsupportedCommands(t *testing.T) {
 	auth := createTestAuthenticator(t)
 	defer func() { _ = auth.Close() }()
 
@@ -215,7 +215,7 @@ func TestAuthenticator_ProcessCBOR_NotImplementedCommands(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			response, err := auth.ProcessCBOR(tt.cmd, nil)
 			require.Error(t, err)
-			require.ErrorIs(t, err, ErrNotImplemented)
+			require.ErrorIs(t, err, ErrCommandNotSupported)
 			require.Equal(t, byte(StatusInvalidCommand), response[0])
 		})
 	}
@@ -348,7 +348,7 @@ func TestErrorToStatus(t *testing.T) {
 		{"UnsupportedExtension", ErrUnsupportedExtension, StatusUnsupportedExtension},
 		{"StorageClosed", ErrStorageClosed, StatusOtherError},
 		{"StorageError", ErrStorageError, StatusOtherError},
-		{"NotImplemented", ErrNotImplemented, StatusInvalidCommand},
+		{"CommandNotSupported", ErrCommandNotSupported, StatusInvalidCommand},
 		{"CredMgmtNotEnabled", ErrCredMgmtNotEnabled, StatusInvalidCommand},
 		{"LimitExceeded", ErrLimitExceeded, StatusLimitExceeded},
 		{"UnsupportedCryptoAlgorithm", ErrUnsupportedCryptoAlgorithm, StatusUnsupportedAlgorithm},
@@ -1126,4 +1126,28 @@ func TestNeedsPINBeforeTouch_InvalidCBOR(t *testing.T) {
 				"invalid CBOR should return false, not panic")
 		})
 	}
+}
+
+// TestAuthenticator_SetAlwaysUV proves the setter reaches the same config
+// field the CTAP2 command handlers read (cmd_getassertion.go,
+// cmd_getinfo.go, cmd_largeblobs.go, cmd_config.go), the same shape as the
+// existing SetRequireUserPresence/SetEnableUserIntentCheck setters this one
+// mirrors for the enterprise policy's FIDO2AlwaysUV field (#668).
+func TestAuthenticator_SetAlwaysUV(t *testing.T) {
+	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
+	config.Storage = NewMemoryStorage()
+	config.AlwaysUV = false
+
+	auth, err := NewAuthenticator(config)
+	require.NoError(t, err)
+	defer auth.Close()
+
+	require.False(t, auth.Config().AlwaysUV)
+
+	auth.SetAlwaysUV(true)
+	require.True(t, auth.Config().AlwaysUV)
+
+	auth.SetAlwaysUV(false)
+	require.False(t, auth.Config().AlwaysUV)
 }

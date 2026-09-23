@@ -484,6 +484,6 @@ seal:
 
 ## See Also
 
-- [Barrier Architecture](../../seal/README.md)
+- [Seal & Auto-Unseal Architecture](../../seal/architecture.md)
 - [PIN Commands](pin.md)
 - [Configuration Reference](../../configuration/README.md)

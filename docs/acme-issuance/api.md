@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -86,6 +86,28 @@ The code is the device's own assertion, carrying the same assurance as the EK
 public key the order asserts. An operator who registers the device through an
 EAB with `deviceInfo.tpmManufacturer` bounds it: the device may assert only
 that code, whether or not EAB is required for endorse-01.
+
+### device-attest-01 / permanent-identifier finalize
+
+A `permanent-identifier` order finalized with a standard x509 CSR (rather
+than a TCG-CSR-IDEVID) — `device-attest-01`, or `enroll-01` when the client
+sends a standard CSR instead of a TCG-CSR-IDEVID — is matched against the
+CSR's RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`)
+inside its `subjectAltName` extension. The Common Name is never consulted for
+this identifier.
+
+| Condition | Problem |
+|---|---|
+| the CSR has no `permanentIdentifier` otherName | `badCSR` (400) |
+| the CSR carries more than one `permanentIdentifier` otherName, or an otherName of any other type | `badCSR` (400) |
+| the otherName's value does not equal an identifier the order authorizes | `rejectedIdentifier` (401) |
+| the CSR carries a DNS or IP SAN, or an email/URI SAN | `rejectedIdentifier` (401) / `malformed` (400) unless that exact name is one of the order's authorized `dns`/`ip` identifiers |
+
+As with endorse-01, each is refused before the order moves to `processing`.
+`endorse-01` is the one exception: its permanent identifier is the EK public
+key being certified, authorized when the endorse-01 challenge itself was
+validated, so its finalize CSR is never checked against the order's
+permanent identifier — only its DNS/IP SANs are.
 
 ## Transport adapters
 

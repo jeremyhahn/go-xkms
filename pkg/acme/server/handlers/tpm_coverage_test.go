@@ -1483,10 +1483,12 @@ func TestParseTPMSignature_TPMCoverage(t *testing.T) {
 func TestVerifyRSAQuoteSignature_TPMCoverage(t *testing.T) {
 	t.Run("verifies valid PKCS1v15 signature", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha256.Sum256(quoted)
 		signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+		require.NoError(t, err)
 
 		err = verifyRSAQuoteSignature(quoted, 0, signature, &key.PublicKey)
 		assert.NoError(t, err)
@@ -1494,12 +1496,14 @@ func TestVerifyRSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("verifies valid PSS signature", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha256.Sum256(quoted)
 		signature, err := rsa.SignPSS(rand.Reader, key, crypto.SHA256, hash[:], &rsa.PSSOptions{
 			SaltLength: rsa.PSSSaltLengthAuto,
 		})
+		require.NoError(t, err)
 
 		err = verifyRSAQuoteSignature(quoted, TPMAlgRSAPSS, signature, &key.PublicKey)
 		assert.NoError(t, err)
@@ -1507,6 +1511,7 @@ func TestVerifyRSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("returns error for invalid signature", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		invalidSig := []byte("invalid signature")
@@ -1519,10 +1524,12 @@ func TestVerifyRSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("returns error for tampered data", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha256.Sum256(quoted)
 		signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+		require.NoError(t, err)
 
 		// Tamper with the data
 		tamperedQuote := []byte("tampered quote data")
@@ -1539,10 +1546,12 @@ func TestVerifyRSAQuoteSignature_TPMCoverage(t *testing.T) {
 func TestVerifyECDSAQuoteSignature_TPMCoverage(t *testing.T) {
 	t.Run("verifies valid P-256 signature with ASN.1 encoding", func(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha256.Sum256(quoted)
 		signature, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+		require.NoError(t, err)
 
 		err = verifyECDSAQuoteSignature(quoted, 0, signature, &key.PublicKey)
 		assert.NoError(t, err)
@@ -1550,10 +1559,12 @@ func TestVerifyECDSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("verifies valid P-384 signature with ASN.1 encoding", func(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha512.Sum384(quoted)
 		signature, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+		require.NoError(t, err)
 
 		err = verifyECDSAQuoteSignature(quoted, 0, signature, &key.PublicKey)
 		assert.NoError(t, err)
@@ -1561,10 +1572,12 @@ func TestVerifyECDSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("verifies valid P-521 signature with ASN.1 encoding", func(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha512.Sum512(quoted)
 		signature, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+		require.NoError(t, err)
 
 		err = verifyECDSAQuoteSignature(quoted, 0, signature, &key.PublicKey)
 		assert.NoError(t, err)
@@ -1572,6 +1585,7 @@ func TestVerifyECDSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("returns error for invalid signature", func(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		invalidSig := []byte("invalid signature")
@@ -1584,6 +1598,7 @@ func TestVerifyECDSAQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("returns error for wrong length concatenated signature", func(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		// Create wrong-length concatenated signature
@@ -1606,34 +1621,39 @@ func TestParseRawPublicKey_TPMCoverage(t *testing.T) {
 	})
 
 	t.Run("parses PKCS1 RSA public key", func(t *testing.T) {
-		key, _ := rsa.GenerateKey(rand.Reader, 2048)
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		pkcs1Bytes := x509.MarshalPKCS1PublicKey(&key.PublicKey)
 
-		parsedKey, _ := parseRawPublicKey(pkcs1Bytes)
+		parsedKey, err := parseRawPublicKey(pkcs1Bytes)
+		require.NoError(t, err)
 
 		rsaKey, ok := parsedKey.(*rsa.PublicKey)
 		assert.True(t, ok)
-		assert.Equal(t, key.PublicKey.N, rsaKey.N)
-		assert.Equal(t, key.PublicKey.E, rsaKey.E)
+		assert.Equal(t, key.N, rsaKey.N)
+		assert.Equal(t, key.E, rsaKey.E)
 	})
 
 	t.Run("parses public key from certificate", func(t *testing.T) {
 		// Create a self-signed certificate
-		key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
 
 		template := &x509.Certificate{
 			SerialNumber: big.NewInt(1),
 		}
 
-		certBytes, _ := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		certBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+		require.NoError(t, err)
 
-		parsedKey, _ := parseRawPublicKey(certBytes)
+		parsedKey, err := parseRawPublicKey(certBytes)
+		require.NoError(t, err)
 
 		ecKey, ok := parsedKey.(*ecdsa.PublicKey)
 		assert.True(t, ok)
-		assert.Equal(t, key.PublicKey.X, ecKey.X)
-		assert.Equal(t, key.PublicKey.Y, ecKey.Y)
+		assert.Equal(t, &key.PublicKey, ecKey,
+			"the parsed key must equal the certificate's public key")
 	})
 }
 
@@ -1644,6 +1664,7 @@ func TestParseRawPublicKey_TPMCoverage(t *testing.T) {
 func TestVerifyQuoteSignature_TPMCoverage(t *testing.T) {
 	t.Run("returns error for empty quoted data", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		err = verifyQuoteSignature(nil, []byte("sig"), &key.PublicKey)
 		assert.Error(t, err)
@@ -1654,6 +1675,7 @@ func TestVerifyQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("returns error for empty signature", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		err = verifyQuoteSignature([]byte("quoted"), nil, &key.PublicKey)
 		assert.Error(t, err)
@@ -1674,10 +1696,12 @@ func TestVerifyQuoteSignature_TPMCoverage(t *testing.T) {
 
 	t.Run("uses raw signature when TPM signature parsing fails", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
 
 		quoted := []byte("test quote data")
 		hash := sha256.Sum256(quoted)
 		signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
+		require.NoError(t, err)
 
 		// Pass raw signature (not wrapped in TPMT_SIGNATURE)
 		err = verifyQuoteSignature(quoted, signature, &key.PublicKey)

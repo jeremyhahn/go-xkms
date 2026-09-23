@@ -415,6 +415,157 @@ func TestPairingRefusesAnAttestationThatClaimsNothingAboutBoot(t *testing.T) {
 	}
 }
 
+// TestPairingAcceptsAKeyGeneratedInTEEAndAuthorizedToSign pins the accept
+// path for the go-xkms#132 check: attesttest's default TEE-enforced claims --
+// Origin GENERATED, Purpose including SIGN -- must not, by themselves, refuse
+// an otherwise healthy attestation.
+func TestPairingAcceptsAKeyGeneratedInTEEAndAuthorizedToSign(t *testing.T) {
+	ca := attesttest.NewCA(t, "Trusted Attestation Root")
+	dak := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
+	challenge := testChallenge(pairing.AttestPurposePair, 0x51, 0x52)
+
+	verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &attestation.Trust{Pool: ca.Pool()})
+
+	require.NoError(t, err, "a TEE-enforced GENERATED origin and a SIGN purpose must be accepted")
+	require.NotNil(t, verified)
+}
+
+// TestPairingRefusesAnAttestedKeyNotGeneratedInTEEOrNotAuthorizedToSign is the
+// go-xkms#132 acceptance test end-to-end: the TEE-enforced authorization list
+// must claim the key was GENERATED and may SIGN, and each way that claim can
+// fail to hold is its own subtest.
+func TestPairingRefusesAnAttestedKeyNotGeneratedInTEEOrNotAuthorizedToSign(t *testing.T) {
+	imported := attesttest.DeviceKeyClaims()
+	imported.RootOfTrust = attesttest.AttestedBootState()
+	imported.Origin = xkms.AndroidOriginImported
+
+	noSign := attesttest.DeviceKeyClaims()
+	noSign.RootOfTrust = attesttest.AttestedBootState()
+	noSign.Purpose = []int{xkms.AndroidPurposeVerify}
+
+	noClaimAtAll := &xkms.AndroidAttestationExtensionOptions{
+		RootOfTrust: attesttest.AttestedBootState(),
+		// HasOrigin left false and Purpose left nil: the TEE makes neither
+		// claim, the shape a pre-#132 fixture or an attestation with no
+		// secure hardware produces (see the real-chain evidence in
+		// pkg/attestation/android's TestParseKeyAttestation_RealChainOriginAndPurpose).
+	}
+
+	for _, tc := range []struct {
+		name   string
+		claims *xkms.AndroidAttestationExtensionOptions
+		want   error
+		why    string
+	}{
+		{
+			name: "origin imported, not generated", claims: imported,
+			want: attestation.ErrAttestationKeyOriginNotGenerated,
+			why: "everything else this chain proves is equally consistent with a " +
+				"key generated elsewhere and imported into the TEE",
+		},
+		{
+			name: "purpose does not include sign", claims: noSign,
+			want: attestation.ErrAttestationKeyPurposeNotSign,
+			why:  "a key the TEE never authorized to sign must not attest a signing protocol",
+		},
+		{
+			name: "TEE makes no origin or purpose claim at all", claims: noClaimAtAll,
+			want: attestation.ErrAttestationKeyOriginNotGenerated,
+			why:  "absence is evidence of neither claim, so it must fail exactly as a wrong value would",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ca := attesttest.NewCA(t, "Trusted Attestation Root")
+			dak := attesttest.NewDAKWithClaims(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, tc.claims)
+			challenge := testChallenge(pairing.AttestPurposePair, 0x61, 0x62)
+
+			verified, err := attestation.VerifyDeviceAttestation(respond(t, dak, challenge), challenge, &attestation.Trust{Pool: ca.Pool()})
+
+			require.Error(t, err, tc.why)
+			require.ErrorIs(t, err, attestation.ErrDeviceAttestVerifyFailed)
+			require.ErrorIs(t, err, tc.want)
+			require.Nil(t, verified, "a refused attestation must yield no record")
+		})
+	}
+}
+
+// TestRequireAttestedKeyOrigin_Succeeds is the direct unit test for the
+// go-xkms#132 check's accept path, isolated from chain verification and boot
+// state so a future regression there cannot mask one here.
+func TestRequireAttestedKeyOrigin_Succeeds(t *testing.T) {
+	desc := &xkms.AndroidKeyDescription{
+		TeeEnforced: xkms.AndroidAuthorizationList{
+			Origin:  xkms.AndroidOriginGenerated,
+			Purpose: []int{xkms.AndroidPurposeSign},
+		},
+	}
+
+	require.NoError(t, attestation.RequireAttestedKeyOrigin(desc))
+}
+
+// TestRequireAttestedKeyOrigin_Refuses covers every way the TEE-enforced
+// claim can fail to hold, including the one full-flow fixtures cannot
+// construct directly: a claim present only in SoftwareEnforced (go-xkms#132).
+//
+// The "claim present only in softwareEnforced" subtest is the mutation guard
+// the issue names: if RequireAttestedKeyOrigin were changed to read
+// desc.SoftwareEnforced instead of desc.TeeEnforced, this is the subtest that
+// turns red, because SoftwareEnforced here carries a perfectly valid
+// GENERATED+SIGN claim -- exactly what a real (non-TEE) Android attestation
+// looks like, per the emulator chain in pkg/attestation/android.
+func TestRequireAttestedKeyOrigin_Refuses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		desc *xkms.AndroidKeyDescription
+		want error
+	}{
+		{
+			name: "origin imported",
+			desc: &xkms.AndroidKeyDescription{
+				TeeEnforced: xkms.AndroidAuthorizationList{
+					Origin:  xkms.AndroidOriginImported,
+					Purpose: []int{xkms.AndroidPurposeSign},
+				},
+			},
+			want: attestation.ErrAttestationKeyOriginNotGenerated,
+		},
+		{
+			name: "purpose without sign",
+			desc: &xkms.AndroidKeyDescription{
+				TeeEnforced: xkms.AndroidAuthorizationList{
+					Origin:  xkms.AndroidOriginGenerated,
+					Purpose: []int{xkms.AndroidPurposeVerify},
+				},
+			},
+			want: attestation.ErrAttestationKeyPurposeNotSign,
+		},
+		{
+			name: "no TEE-enforced claim at all",
+			desc: &xkms.AndroidKeyDescription{
+				TeeEnforced: xkms.AndroidAuthorizationList{Origin: xkms.AndroidOriginUnknown},
+			},
+			want: attestation.ErrAttestationKeyOriginNotGenerated,
+		},
+		{
+			name: "claim present only in softwareEnforced",
+			desc: &xkms.AndroidKeyDescription{
+				TeeEnforced: xkms.AndroidAuthorizationList{Origin: xkms.AndroidOriginUnknown},
+				SoftwareEnforced: xkms.AndroidAuthorizationList{
+					Origin:  xkms.AndroidOriginGenerated,
+					Purpose: []int{xkms.AndroidPurposeSign},
+				},
+			},
+			want: attestation.ErrAttestationKeyOriginNotGenerated,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := attestation.RequireAttestedKeyOrigin(tc.desc)
+			require.Error(t, err)
+			require.ErrorIs(t, err, tc.want)
+		})
+	}
+}
+
 // TestPairingIgnoresACertificateAppendedAfterTheVerifiedAnchor is the
 // regression for the finding Codex raised on the first round of #124.
 //

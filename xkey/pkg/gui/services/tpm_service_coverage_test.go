@@ -173,6 +173,7 @@ func TestTPMService_Coverage_ClearTPM(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "nil clear request")
+		assert.True(t, errors.Is(err, ErrTPMNilClearRequest))
 	})
 
 	t.Run("force_flag_delegates_to_ForceClearTPM", func(t *testing.T) {
@@ -249,6 +250,7 @@ func TestTPMService_Coverage_ForceClearTPM(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "nil clear request")
+		assert.True(t, errors.Is(err, ErrTPMNilClearRequest))
 	})
 
 	t.Run("sudo_unavailable", func(t *testing.T) {

@@ -49,9 +49,6 @@ const (
 	// BackupFormatJSON uses JSON serialization (human-readable, good for debugging)
 	BackupFormatJSON BackupFormat = "json"
 
-	// BackupFormatProtobuf uses Protocol Buffers (compact, efficient)
-	BackupFormatProtobuf BackupFormat = "protobuf"
-
 	// BackupFormatEncrypted uses encrypted format (secure, requires key)
 	BackupFormatEncrypted BackupFormat = "encrypted"
 )

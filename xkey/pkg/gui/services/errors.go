@@ -134,6 +134,10 @@ var (
 	// ErrTPMClearFailed indicates the TPM clear operation failed.
 	ErrTPMClearFailed = errors.New("tpm_service: TPM clear failed")
 
+	// ErrTPMNilClearRequest indicates ClearTPM or ForceClearTPM was called
+	// with a nil request.
+	ErrTPMNilClearRequest = errors.New("tpm_service: nil clear request")
+
 	// ErrTPMForceClearFailed indicates the TPM force clear via PPI failed.
 	ErrTPMForceClearFailed = errors.New("tpm_service: TPM force clear via PPI failed")
 
@@ -607,6 +611,28 @@ var (
 	// ErrNVIndexOutOfRange indicates the provided NV index value is outside the valid range.
 	ErrNVIndexOutOfRange = errors.New("nv_index_allocator: NV index out of valid range")
 )
+
+// Policy errors.
+//
+// These are shared across every service that gates an operation behind a
+// PolicySection capability flag (the "UserCan*" deny switches) so that the
+// refusal, and the audit event that records it, take the same shape
+// everywhere: AutoFillService.checkPreconditions established the pattern
+// (ErrAutoFillPolicyEnforced + auditPreconditionFailure) that PolicyDeniedError
+// generalizes for the rest (#668).
+
+// PolicyDeniedError indicates a PolicySection capability flag denies the
+// requested operation. Field names the PolicySection field responsible
+// (its yaml/json tag, e.g. "user_can_manage_trust_store"), for the caller's
+// message and the audit trail.
+type PolicyDeniedError struct {
+	Field string
+}
+
+// Error implements the error interface.
+func (e *PolicyDeniedError) Error() string {
+	return fmt.Sprintf("policy: %s denies this operation", e.Field)
+}
 
 // DetailError appends detail text directly after a wrapped error while
 // preserving errors.Is / errors.As matching of the wrapped error through

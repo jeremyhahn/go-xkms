@@ -314,12 +314,6 @@ Build with `-tags quantum_safe` to enable quantum certificate extensions.
 ```go
 import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-// Create quantum-safe TLS configuration
-tlsConfig, err := authority.QuantumSafeTLSConfig(&xkmssdk.KeyAttributes{
-    CN:        "quantum-server",
-    StoreType: xkmssdk.StoreQuantum,
-})
-
 // Generate ML-DSA signing key via xkms
 attrs := &xkmssdk.KeyAttributes{
     CN:        "quantum-ca-key",

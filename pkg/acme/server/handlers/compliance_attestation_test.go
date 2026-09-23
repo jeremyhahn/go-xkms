@@ -72,11 +72,6 @@ func createInvalidProdCaData() []byte {
 	return buf.Bytes()
 }
 
-// createTruncatedProdCaData creates data that is truncated mid-header.
-func createTruncatedProdCaData() []byte {
-	return []byte{0x00, 0x00, 0x00} // Only 3 bytes, not enough for version
-}
-
 // createTestRSAKeyPair creates an RSA key pair for testing quote verification.
 func createTestRSAKeyPair(t *testing.T) (*rsa.PrivateKey, []byte) {
 	t.Helper()

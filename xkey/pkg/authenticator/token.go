@@ -18,6 +18,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // Token lifecycle.
@@ -233,7 +235,7 @@ func (a *Authenticator) ChangeSOPIN(ctx context.Context, currentPIN, newPIN stri
 	if err != nil {
 		return err
 	}
-	defer clearBytes(currentSMK)
+	defer enclave.Wipe(currentSMK)
 
 	changeErr := a.keyManager.ChangeSOPIN(currentSMK, newPIN)
 

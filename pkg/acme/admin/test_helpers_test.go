@@ -82,19 +82,6 @@ func addUserToRequest(r *http.Request, user *AuthenticatedUser) *http.Request {
 	return r.WithContext(withUser(r.Context(), user))
 }
 
-// extractTenantIDFromResource extracts the tenant ID from a resource path.
-// Resource paths follow the pattern: acme/tenants/{tenant_id}/...
-// This is used in tests for verifying tenant access.
-func extractTenantIDFromResource(resource string) string {
-	parts := strings.Split(resource, "/")
-	for i, part := range parts {
-		if part == "tenants" && i+1 < len(parts) {
-			return parts[i+1]
-		}
-	}
-	return ""
-}
-
 // newTestAuthMiddleware creates an AuthMiddleware for testing with a user of the given role
 func newTestAuthMiddleware(role string) *AuthMiddleware {
 	client := auth.NewMemoryClient()

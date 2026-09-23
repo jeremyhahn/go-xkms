@@ -385,7 +385,7 @@ func TestRegisterPhoneBackend_ResolvableCredentialReference(t *testing.T) {
 	require.NoError(t, svc.StoreCredential(context.Background(), credName, []byte(noiseKeyHex)))
 
 	phoneCfg := newTestPhoneConfig()
-	phoneCfg.NoiseStaticKey = types.SecretValue{Raw: "credential://" + credName}
+	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://" + credName}
 
 	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
 	// Simulates the resolveConfigSecrets call Server.New makes right after
@@ -404,7 +404,7 @@ func TestRegisterPhoneBackend_ResolvableCredentialReference(t *testing.T) {
 	// The field now carries the resolved SecretValue (custody transfer),
 	// with Raw still naming the reference and real material behind it.
 	assert.Equal(t, "credential://"+credName, phoneCfg.NoiseStaticKey.Raw)
-	got, err := types.SecretValueBytes(&phoneCfg.NoiseStaticKey)
+	got, err := types.SecretValueBytes(phoneCfg.NoiseStaticKey)
 	require.NoError(t, err)
 	assert.Equal(t, noiseKeyHex, string(got))
 }
@@ -418,7 +418,7 @@ func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
 	svc := newManualCredentialService(t)
 
 	phoneCfg := newTestPhoneConfig()
-	phoneCfg.NoiseStaticKey = types.SecretValue{Raw: "credential://does-not-exist"}
+	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://does-not-exist"}
 
 	srv := newTestServerForPhoneWithCredentials(t, phoneCfg, svc)
 	// The "manual" strategy's RetrieveCredential blocks waiting for an
@@ -452,7 +452,7 @@ func TestResolveConfigSecrets_UnresolvableCredentialReference(t *testing.T) {
 // regression this fix closes.
 func TestRegisterPhoneBackend_UnresolvedReferenceWithoutCredentialService(t *testing.T) {
 	phoneCfg := newTestPhoneConfig()
-	phoneCfg.NoiseStaticKey = types.SecretValue{Raw: "credential://phone-noise-key"}
+	phoneCfg.NoiseStaticKey = &types.SecretValue{Raw: "credential://phone-noise-key"}
 
 	// No credential service: srv.credentialService stays nil, so
 	// buildSecretRegistry's registry has no CredentialResolver and the

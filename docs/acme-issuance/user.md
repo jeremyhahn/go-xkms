@@ -1,6 +1,6 @@
 # ACME Issuance — User Guide
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Prerequisites
 
@@ -137,6 +137,8 @@ node pinned to one interface serves the exchange on that interface only.
 | `rateLimited` | per-account or per-tenant limit hit | back off; the response carries `Retry-After` |
 | `orderNotReady` on finalize | an authorization is still pending | complete the challenge first |
 | `badCSR` | the CSR does not match the order's identifiers | regenerate the CSR from the order |
+| `badCSR` on a `device-attest-01`/`enroll-01` CSR finalize | the CSR has no RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`) in its `subjectAltName` | the identifier is never read from the Common Name; encode it as the otherName |
+| `rejectedIdentifier` on finalize with a correct otherName | the CSR carries a DNS/IP SAN, or a permanent identifier value, the order did not authorize | regenerate the CSR with only the names the order's identifiers list |
 | `enroll-01` never completes | the TPM's EK does not chain to a manufacturer root the CA trusts | import the manufacturer chain server-side |
 | joining node hangs during enrollment | the server cannot reach `challenge_port` on the node | open it, or fix the advertised address |
 | new orders refused under load | the circuit breaker is open | this is deliberate; the server will not issue unvalidated certificates |

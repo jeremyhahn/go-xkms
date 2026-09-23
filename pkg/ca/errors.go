@@ -25,6 +25,17 @@ var (
 	ErrCSRGenerationFailed = errors.New("ca: csr generation failed")
 )
 
+// SubjectAltName errors indicate issues decoding a GeneralNames extension by
+// hand. crypto/x509 parses dNSName, iPAddress, rfc822Name and
+// uniformResourceIdentifier GeneralNames but silently discards otherName, so
+// recovering an RFC 4043 permanentIdentifier or RFC 4108 hardwareModuleName
+// from a request or certificate requires decoding the extension directly.
+var (
+	// ErrSANDecoding indicates a subjectAltName extension's GeneralNames
+	// SEQUENCE, or one of its otherName entries, could not be ASN.1 decoded.
+	ErrSANDecoding = errors.New("ca: subjectAltName decoding failed")
+)
+
 // Certificate errors indicate issues with certificate operations.
 var (
 	// ErrInvalidCertificate indicates the certificate is malformed or invalid.

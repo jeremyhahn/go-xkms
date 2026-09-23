@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,9 +31,9 @@ import (
 func newEnrollHarness(t *testing.T) *simHarness {
 	t.Helper()
 	return newSimHarness(t, func(c *Config) {
-		c.SSRK.HierarchyAuth = types.SecretValue{}
+		c.SSRK.HierarchyAuth = nil
 
-		c.EK.HierarchyAuth = types.SecretValue{}
+		c.EK.HierarchyAuth = nil
 
 	})
 }

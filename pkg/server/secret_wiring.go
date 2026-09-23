@@ -36,33 +36,65 @@ func (s *Server) buildSecretRegistry() *qrdbsecret.ResolverRegistry {
 
 // resolveConfigSecrets runs go-qrdb's canonical ConfigProcessor once over the
 // entire loaded configuration (s.config), the single resolution point for
-// every types.SecretValue field reachable from it: the CA identity and
+// every *types.SecretValue field reachable from it: the CA identity and
 // software-keystore passwords, the cluster CA key passphrase, and the phone
 // backend's Noise static key all resolve here now, in place of their own
 // former buildSecretRegistry().Resolve call.
 //
-// The walker treats a protected SecretValue target strictly: it must
-// reference a secret a registered resolver actually claims, or the walk
-// reports it via qrdbsecret.UnresolvableTargetError. That is the expected,
-// non-fatal outcome for the overwhelming majority of fields on any given
-// boot -- an unconfigured field (empty Raw) or an operator-supplied literal
-// (a bare passphrase, a bare PIN) is not a reference at all. Both are left
-// exactly as decoded; types.SecretValueBytes already treats an empty or
-// literal SecretValue correctly without ever going through this processor,
-// so nothing here needs to touch them. Only a reference this registry DID
-// claim but could not fetch -- a genuine credential-store failure -- is a
-// real problem, and that is the one case this function reports.
+// go-xkms#654 originally declared every secret-bearing config field as a
+// VALUE types.SecretValue and had this function swallow the resulting
+// qrdbsecret.UnresolvableTargetError as a tolerated "nothing to resolve
+// here" outcome -- a divergence from go-qrdb's own contract
+// (pkg/secret/walker.go), under which a value-typed protected target is
+// ALWAYS required (an empty one fails the walk) and an optional secret can
+// only be spelled as a nil *SecretValue, which the walker skips before ever
+// producing an error. go-xkms#653/#654 corrected the field declarations
+// (every one is now *types.SecretValue; nil means unconfigured), which is
+// what makes this function's contract now correct: every remaining error
+// ConfigProcessor reports is a genuine failure -- a configured-but-
+// unresolvable reference (an inline "literal://" secret, a bare value, or an
+// unclaimed scheme, all of which a protected target refuses by design), or a
+// resolver that was claimed but failed -- and none of it may be suppressed.
+// An unconfigured (nil) field never reaches Process as an error at all: the
+// walker's own reflect.Pointer case skips a nil pointer before it becomes a
+// protected-target failure, which is the qrdb contract's ONLY silent case.
 //
-// Fields consumed earlier in Server.New than the credential service exists
-// to back this call (barrier.passphrase, rng/pkcs11 pins, the AWS/Azure/Vault
-// credentials) are read before resolveConfigSecrets can run and so are
-// unaffected by it: a literal value for them still works exactly as before,
-// and a credential:// reference for them still fails closed the moment it is
-// read, via types.SecretValueBytes's own *types.SecretReferenceUnresolvedError
-// guard -- the same behaviour as before this function existed. Giving those
-// fields real resolution requires a bootstrap-time resolver that does not
-// depend on the barrier the credential service itself needs, which is a
-// separate, scoped change.
+// Server.New now runs this call BEFORE initializeBackends (go-xkms#653's
+// approved item 2), so this is also the resolution point for the five
+// backend-credential fields that used to be read too early to benefit:
+// backends.pkcs11.pin, rng.pkcs11.pin, backends.awskms.secret_key,
+// backends.azurekv.client_secret, and backends.vault.token. A credential://
+// reference for any of them now resolves here exactly like a CA password or
+// the phone backend's Noise static key; TestBackendCredentials_ResolveViaCredentialReference
+// (secret_wiring_test.go) proves all five end to end.
+//
+// This ordering is possible without a cycle against initializeBarrier's own
+// hardware seal strategies (buildHardwareSealStrategies, built from
+// already-initialized backends in s.keyProviders) because that path is now
+// reached only for a barrier strategy BarrierConfig.NodeFlipWired reports
+// false for (pkcs11 and the cloud-KMS strategies) — see resolveNodeSeal and
+// NodeFlipWired's doc. The strategy this call's own ordering exists to
+// serve, tpm2, is built by resolveNodeSeal directly from Backends.TPM2
+// config (never from s.keyProviders) and injected into the qrdb node's own
+// seal subsystem before this call ever runs, so it has no dependency on
+// backend initialization at all. There is no equivalent caveat for the
+// barrier's own boot secret any more: go-xkms#653 removed the
+// config-sourced BarrierConfig.Passphrase field entirely, so the barrier
+// never auto-unseals from configuration at all -- it auto-unseals through a
+// registered hardware seal strategy (tpm2 today), or blocks Server.New at
+// initializeQRDBStorage behind the sealed-window listener for an operator
+// to unseal via `xkmsctl barrier unseal`/`unseal-shares`/the equivalent
+// API call (mirroring go-qrdb's own cmd/qrdbd initSealSubsystem ->
+// awaitUnseal sequence, driven entirely through go-qrdb/sdk/go).
+//
+// A PKCS#11 barrier strategy remains genuinely impossible: it would need
+// the same already-initialized PKCS#11 backend buildHardwareSealStrategies
+// reads from s.keyProviders, which initializeBackends now builds AFTER
+// this call — the same cycle as before, just narrowed to the one strategy
+// (and the cloud-KMS strategies) NodeFlipWired excludes. That is a
+// pkg/seal/pkg/server/types.Sealer interface change (letting a barrier
+// strategy accept a deferred, per-call credential the way the software
+// strategy already does), not a reorder, and is not approved.
 func (s *Server) resolveConfigSecrets() error {
 	reg := s.buildSecretRegistry()
 	proc := qrdbsecret.NewConfigProcessor(reg)
@@ -71,20 +103,12 @@ func (s *Server) resolveConfigSecrets() error {
 		return nil
 	}
 
-	// Partition result.Errors: an UnresolvableTargetError is the tolerated
-	// "nothing to resolve here" outcome described above; anything else (a
-	// ResolutionFailedError from a claimed-but-failed lookup, an
-	// UnwritableTargetError, a MaxDepthExceededError) is a real failure.
-	var genuine []error
-	for _, walkErr := range result.Errors {
-		var unresolvable *qrdbsecret.UnresolvableTargetError
-		if errors.As(walkErr, &unresolvable) {
-			continue
-		}
-		genuine = append(genuine, walkErr)
-	}
-	if len(genuine) == 0 {
-		return nil
-	}
-	return &ErrConfigSecretResolution{Err: errors.Join(genuine...)}
+	// err is qrdbsecret.ErrUnresolvedSecretURI, go-qrdb's own typed sentinel,
+	// unmodified -- propagated via errors.Join alongside result.Errors (the
+	// per-field detail: which path, which typed cause) so both the sentinel
+	// and the field-level typed errors (UnresolvableTargetError,
+	// ResolutionFailedError, UnwritableTargetError, MaxDepthExceededError)
+	// remain reachable through errors.Is / errors.As. Nothing here filters,
+	// tolerates or reinterprets any of it.
+	return &ErrConfigSecretResolution{Err: errors.Join(append([]error{err}, result.Errors...)...)}
 }

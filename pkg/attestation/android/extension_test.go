@@ -1698,3 +1698,269 @@ func BenchmarkVerifyKeyAttestation(b *testing.B) {
 		_, _ = VerifyKeyAttestation(chain, opts)
 	}
 }
+
+// wrapAuthorizationListElements wraps DER-encoded AuthorizationList elements
+// in the outer SEQUENCE findOrigin, findPurpose and findRootOfTrust each
+// expect to walk.
+func wrapAuthorizationListElements(t *testing.T, elements []byte) []byte {
+	t.Helper()
+
+	outer, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassUniversal,
+		Tag:        asn1.TagSequence,
+		IsCompound: true,
+		Bytes:      elements,
+	})
+	if err != nil {
+		t.Fatalf("marshal outer SEQUENCE: %v", err)
+	}
+	return outer
+}
+
+// TestFindOrigin_ValidOrigin verifies that a tag-702 EXPLICIT INTEGER is
+// located and decoded regardless of what else sits beside it (go-xkms#132).
+func TestFindOrigin_ValidOrigin(t *testing.T) {
+	tagged, err := marshalExplicitInt(tagOrigin, OriginImported)
+	if err != nil {
+		t.Fatalf("marshal tagged origin: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, tagged)
+
+	origin, ok := findOrigin(outer)
+	if !ok {
+		t.Fatal("expected ok=true for a present origin tag")
+	}
+	if origin != OriginImported {
+		t.Errorf("origin = %d, want %d (OriginImported)", origin, OriginImported)
+	}
+}
+
+// TestFindOrigin_AbsentTagReturnsNotOK verifies that an AuthorizationList
+// with no tag-702 element reports ok=false rather than defaulting to 0
+// (OriginGenerated's own value) -- the failure mode go-xkms#132 exists to
+// prevent.
+func TestFindOrigin_AbsentTagReturnsNotOK(t *testing.T) {
+	tagged, err := marshalExplicitIntSet(tagPurpose, []int{PurposeSign})
+	if err != nil {
+		t.Fatalf("marshal tagged purpose: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, tagged)
+
+	origin, ok := findOrigin(outer)
+	if ok {
+		t.Fatalf("expected ok=false when no origin tag is present, got origin=%d", origin)
+	}
+}
+
+// TestFindOrigin_InvalidData verifies that malformed input returns ok=false
+// rather than panicking or fabricating a value.
+func TestFindOrigin_InvalidData(t *testing.T) {
+	if _, ok := findOrigin([]byte{0xFF, 0xFF}); ok {
+		t.Error("expected ok=false for malformed data")
+	}
+	if _, ok := findOrigin(nil); ok {
+		t.Error("expected ok=false for nil data")
+	}
+}
+
+// TestFindPurpose_ValidPurpose verifies that a tag-1 EXPLICIT SET OF INTEGER
+// is located and decoded (go-xkms#132).
+func TestFindPurpose_ValidPurpose(t *testing.T) {
+	tagged, err := marshalExplicitIntSet(tagPurpose, []int{PurposeSign, PurposeVerify})
+	if err != nil {
+		t.Fatalf("marshal tagged purpose: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, tagged)
+
+	purposes := findPurpose(outer)
+	if len(purposes) != 2 {
+		t.Fatalf("purposes = %v, want 2 entries", purposes)
+	}
+	if purposes[0] != PurposeSign || purposes[1] != PurposeVerify {
+		t.Errorf("purposes = %v, want [%d %d]", purposes, PurposeSign, PurposeVerify)
+	}
+}
+
+// TestFindPurpose_AbsentTagReturnsNil verifies that an AuthorizationList with
+// no tag-1 element returns nil, distinct from a present but empty set.
+func TestFindPurpose_AbsentTagReturnsNil(t *testing.T) {
+	tagged, err := marshalExplicitInt(tagOrigin, OriginGenerated)
+	if err != nil {
+		t.Fatalf("marshal tagged origin: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, tagged)
+
+	if purposes := findPurpose(outer); purposes != nil {
+		t.Errorf("purposes = %v, want nil when no purpose tag is present", purposes)
+	}
+}
+
+// TestFindPurpose_InvalidData verifies that malformed input returns nil
+// rather than panicking or fabricating a value.
+func TestFindPurpose_InvalidData(t *testing.T) {
+	if purposes := findPurpose([]byte{0xFF, 0xFF}); purposes != nil {
+		t.Errorf("purposes = %v, want nil for malformed data", purposes)
+	}
+	if purposes := findPurpose(nil); purposes != nil {
+		t.Errorf("purposes = %v, want nil for nil data", purposes)
+	}
+}
+
+// TestParseAuthorizationList_OriginDefaultsToUnknownWhenAbsent pins the
+// default parseAuthorizationList must produce when a list makes no origin
+// claim: OriginUnknown, never the bare zero value, because zero is also
+// OriginGenerated's value (go-xkms#132).
+func TestParseAuthorizationList_OriginDefaultsToUnknownWhenAbsent(t *testing.T) {
+	result := parseAuthorizationList(asn1.RawValue{})
+	if result.Origin != OriginUnknown {
+		t.Errorf("Origin = %d, want OriginUnknown (%d) for an empty AuthorizationList",
+			result.Origin, OriginUnknown)
+	}
+
+	tagged, err := marshalExplicitIntSet(tagPurpose, []int{PurposeSign})
+	if err != nil {
+		t.Fatalf("marshal tagged purpose: %v", err)
+	}
+	rawVal := asn1.RawValue{FullBytes: wrapAuthorizationListElements(t, tagged)}
+
+	result = parseAuthorizationList(rawVal)
+	if result.Origin != OriginUnknown {
+		t.Errorf("Origin = %d, want OriginUnknown (%d) when only purpose is claimed",
+			result.Origin, OriginUnknown)
+	}
+}
+
+// TestParseAuthorizationList_WithOriginAndPurpose verifies that
+// parseAuthorizationList populates both fields when present, alongside a
+// RootOfTrust, mirroring how a real TEE-enforced list carries all three.
+func TestParseAuthorizationList_WithOriginAndPurpose(t *testing.T) {
+	originTagged, err := marshalExplicitInt(tagOrigin, OriginGenerated)
+	if err != nil {
+		t.Fatalf("marshal tagged origin: %v", err)
+	}
+	purposeTagged, err := marshalExplicitIntSet(tagPurpose, []int{PurposeSign})
+	if err != nil {
+		t.Fatalf("marshal tagged purpose: %v", err)
+	}
+
+	var elements bytes.Buffer
+	elements.Write(purposeTagged)
+	elements.Write(originTagged)
+	rawVal := asn1.RawValue{FullBytes: wrapAuthorizationListElements(t, elements.Bytes())}
+
+	result := parseAuthorizationList(rawVal)
+	if result.Origin != OriginGenerated {
+		t.Errorf("Origin = %d, want OriginGenerated (%d)", result.Origin, OriginGenerated)
+	}
+	if len(result.Purpose) != 1 || result.Purpose[0] != PurposeSign {
+		t.Errorf("Purpose = %v, want [%d]", result.Purpose, PurposeSign)
+	}
+}
+
+// TestBuildAttestationExtensionWithOptions_RoundTrip verifies that Origin,
+// Purpose and RootOfTrust all survive a build-then-parse round trip inside
+// teeEnforced, and that softwareEnforced stays empty (go-xkms#132).
+func TestBuildAttestationExtensionWithOptions_RoundTrip(t *testing.T) {
+	nonce := []byte("origin-purpose-round-trip")
+	rot := &RootOfTrust{
+		VerifiedBootKey:   []byte("boot-key"),
+		DeviceLocked:      true,
+		VerifiedBootState: VerifiedBootVerified,
+		VerifiedBootHash:  []byte("boot-hash"),
+	}
+
+	extBytes, err := BuildAttestationExtensionWithOptions(
+		3, SecurityLevelStrongBox, 4, SecurityLevelStrongBox, nonce, []byte("unique-id"),
+		&AttestationExtensionOptions{
+			RootOfTrust: rot,
+			HasOrigin:   true,
+			Origin:      OriginGenerated,
+			Purpose:     []int{PurposeSign},
+		},
+	)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	cert := makeCertWithExtension(t, extBytes)
+	desc, err := ParseKeyAttestation(cert)
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+
+	if desc.TeeEnforced.Origin != OriginGenerated {
+		t.Errorf("teeEnforced origin = %d, want OriginGenerated (%d)", desc.TeeEnforced.Origin, OriginGenerated)
+	}
+	if len(desc.TeeEnforced.Purpose) != 1 || desc.TeeEnforced.Purpose[0] != PurposeSign {
+		t.Errorf("teeEnforced purpose = %v, want [%d]", desc.TeeEnforced.Purpose, PurposeSign)
+	}
+	if desc.TeeEnforced.RootOfTrust == nil || !desc.TeeEnforced.RootOfTrust.DeviceLocked {
+		t.Error("teeEnforced root of trust missing or not locked")
+	}
+	if desc.SoftwareEnforced.Origin != OriginUnknown || len(desc.SoftwareEnforced.Purpose) != 0 {
+		t.Errorf("softwareEnforced = %+v, want no claims", desc.SoftwareEnforced)
+	}
+}
+
+// TestBuildAttestationExtensionWithOptions_NilOptions verifies that a nil
+// opts reproduces BuildMinimalAttestationExtension's shape: teeEnforced
+// makes no claim about origin, purpose, or boot state.
+func TestBuildAttestationExtensionWithOptions_NilOptions(t *testing.T) {
+	extBytes, err := BuildAttestationExtensionWithOptions(
+		3, SecurityLevelSoftware, 4, SecurityLevelSoftware,
+		[]byte("nil-options"), []byte("unique-id"), nil,
+	)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	cert := makeCertWithExtension(t, extBytes)
+	desc, err := ParseKeyAttestation(cert)
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+
+	if desc.TeeEnforced.Origin != OriginUnknown {
+		t.Errorf("teeEnforced origin = %d, want OriginUnknown (%d)", desc.TeeEnforced.Origin, OriginUnknown)
+	}
+	if len(desc.TeeEnforced.Purpose) != 0 {
+		t.Errorf("teeEnforced purpose = %v, want none", desc.TeeEnforced.Purpose)
+	}
+	if desc.TeeEnforced.RootOfTrust != nil {
+		t.Error("teeEnforced root of trust present, want none")
+	}
+}
+
+// makeCertWithExtension wraps extBytes in a self-signed certificate carrying
+// the Android key-attestation extension, for tests that only need to parse
+// the extension back out.
+func makeCertWithExtension(t *testing.T, extBytes []byte) *x509.Certificate {
+	t.Helper()
+
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Origin/Purpose Fixture"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		ExtraExtensions: []pkix.Extension{
+			{Id: AndroidKeyAttestationOID, Value: extBytes},
+		},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &privKey.PublicKey, privKey)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+	return cert
+}

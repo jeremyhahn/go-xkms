@@ -28,7 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -98,7 +98,7 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to derive sealing key", Err: err}
 	}
-	defer mem.Zero(sealingKey)
+	defer enclave.Wipe(sealingKey)
 
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(sealingKey)
@@ -201,7 +201,7 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to derive sealing key", Err: err}
 	}
-	defer mem.Zero(sealingKey)
+	defer enclave.Wipe(sealingKey)
 
 	// Create AES-GCM cipher
 	block, err := aes.NewCipher(sealingKey)

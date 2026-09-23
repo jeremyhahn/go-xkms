@@ -78,82 +78,27 @@ func (m *mockTenantAwareFactory90) GetTenantID() string {
 }
 
 func (m *mockTenantAwareFactory90) TenantAccountDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ACMEAccount], error) {
-	return m.Factory.AccountDAO()
+	return m.AccountDAO()
 }
 
 func (m *mockTenantAwareFactory90) TenantOrderDAO(tenantID string, accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEOrder], error) {
-	return m.Factory.OrderDAO(accountID)
+	return m.OrderDAO(accountID)
 }
 
 func (m *mockTenantAwareFactory90) TenantAuthorizationDAO(tenantID string, accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEAuthorization], error) {
-	return m.Factory.AuthorizationDAO(accountID)
+	return m.AuthorizationDAO(accountID)
 }
 
 func (m *mockTenantAwareFactory90) TenantChallengeDAO(tenantID string, accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEChallenge], error) {
-	return m.Factory.ChallengeDAO(accountID)
+	return m.ChallengeDAO(accountID)
 }
 
 func (m *mockTenantAwareFactory90) TenantCertificateDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ACMECertificate], error) {
-	return m.Factory.CertificateDAO()
+	return m.CertificateDAO()
 }
 
 func (m *mockTenantAwareFactory90) TenantExternalAccountBindingDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ExternalAccountBinding], error) {
-	return m.Factory.ExternalAccountBindingDAO()
-}
-
-type mockTenantDAO90 struct {
-	tenants map[string]*entities.Tenant
-	getErr  error
-}
-
-func (m *mockTenantDAO90) Get(ctx context.Context, id string) (*entities.Tenant, error) {
-	if m.getErr != nil {
-		return nil, m.getErr
-	}
-	if tenant, ok := m.tenants[id]; ok {
-		return tenant, nil
-	}
-	return nil, ErrTenantNotFound
-}
-
-func (m *mockTenantDAO90) Save(ctx context.Context, tenant *entities.Tenant) error {
-	if m.tenants == nil {
-		m.tenants = make(map[string]*entities.Tenant)
-	}
-	m.tenants[tenant.ID] = tenant
-	return nil
-}
-
-func (m *mockTenantDAO90) Delete(ctx context.Context, id string) error {
-	delete(m.tenants, id)
-	return nil
-}
-
-func (m *mockTenantDAO90) List(ctx context.Context, status string) ([]*entities.Tenant, error) {
-	result := make([]*entities.Tenant, 0, len(m.tenants))
-	for _, t := range m.tenants {
-		if status == "" || t.Status == status {
-			result = append(result, t)
-		}
-	}
-	return result, nil
-}
-
-func (m *mockTenantDAO90) ListActive(ctx context.Context) ([]*entities.Tenant, error) {
-	return m.List(ctx, entities.TenantStatusActive)
-}
-
-func (m *mockTenantDAO90) Exists(ctx context.Context, id string) (bool, error) {
-	_, ok := m.tenants[id]
-	return ok, nil
-}
-
-func (m *mockTenantDAO90) UpdateStatus(ctx context.Context, id string, status string) error {
-	if tenant, ok := m.tenants[id]; ok {
-		tenant.Status = status
-		return nil
-	}
-	return ErrTenantNotFound
+	return m.ExternalAccountBindingDAO()
 }
 
 type mockKMSService90 struct {
@@ -662,12 +607,9 @@ func TestOrderHandler_ErrorPaths(t *testing.T) {
 	account := createTestAccount(t, service, testKey)
 
 	t.Run("GET method not allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/acme/order/123", nil)
-		req = mux.SetURLVars(req, map[string]string{"id": "123"})
-
 		// Need to set up proper JWS for parseKID
 		url := "https://acme.test.example.com/acme/order/123"
-		req = createJWSRequest(t, service, testKey, url, nil, true, account.ID)
+		req := createJWSRequest(t, service, testKey, url, nil, true, account.ID)
 		req = mux.SetURLVars(req, map[string]string{"id": "123"})
 		req.Method = http.MethodGet
 
@@ -1182,12 +1124,4 @@ func TestEncodeJSONWithLogger_ErrorPath(t *testing.T) {
 		// Should write empty response on error
 		assert.Equal(t, 0, rr.Body.Len())
 	})
-}
-
-// =============================================================================
-// Helper function to create JWS requests
-// =============================================================================
-
-func createJWSRequest90(t *testing.T, service *RestService, key *TestKey, url string, payload interface{}, useKID bool, accountID uint64) *http.Request {
-	return createJWSRequest(t, service, key, url, payload, useKID, accountID)
 }

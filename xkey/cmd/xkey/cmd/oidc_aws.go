@@ -46,6 +46,11 @@ var (
 	ErrAWSCredentialsWriteFailed = errors.New("aws: failed to write credentials")
 	ErrAWSSessionLoadFailed      = errors.New("aws: failed to load session")
 	ErrAWSNoRefreshToken         = errors.New("aws: no refresh token in session")
+	ErrAWSAuthorizationTimeout   = errors.New("aws: authorization timed out")
+	ErrAWSStateMismatch          = errors.New("aws: state mismatch")
+	ErrAWSNoCredentials          = errors.New("aws: no AWS credentials in response")
+	ErrAWSNoAuthCode             = errors.New("aws: no authorization code received")
+	ErrAWSExecRequired           = errors.New("aws: --exec is required when using --output exec")
 )
 
 // AWSStoredSession represents a stored AWS session with DPoP key.
@@ -248,12 +253,12 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 	case err := <-errChan:
 		return &SentinelCauseError{Sentinel: ErrAWSCallbackFailed, Cause: err}
 	case <-ctx.Done():
-		return errors.New("authorization timed out")
+		return ErrAWSAuthorizationTimeout
 	}
 
 	// Verify state
 	if receivedState.Load() != state {
-		return errors.New("state mismatch")
+		return ErrAWSStateMismatch
 	}
 
 	// Exchange code for tokens
@@ -267,7 +272,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 
 	// Check for credentials
 	if !tokenResp.HasCredentials() {
-		return errors.New("no AWS credentials in response")
+		return ErrAWSNoCredentials
 	}
 
 	// Convert to token data
@@ -356,7 +361,7 @@ func handleAWSCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- s
 	if code == "" {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html><body><h1>AWS Authentication Failed</h1><p>No authorization code received</p></body></html>"))
-		errChan <- errors.New("no authorization code received")
+		errChan <- ErrAWSNoAuthCode
 		return
 	}
 
@@ -381,7 +386,7 @@ func handleAWSOutput(outputMode string, data *handlers.TokenData, profile, crede
 			WithAWSOnly()
 	case "exec":
 		if execCmd == "" {
-			return errors.New("--exec is required when using --output exec")
+			return ErrAWSExecRequired
 		}
 		handler = handlers.NewExecHandler(execCmd)
 	case "none":

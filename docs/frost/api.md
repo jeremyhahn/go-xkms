@@ -211,7 +211,14 @@ for _, key := range keys {
 
 ### Signer
 
-Get a crypto.Signer for orchestrated signing.
+Get a crypto.Signer for a key. This succeeds only for a single-participant
+(threshold 1) key. A crypto.Signer performs one synchronous `Sign` call and
+cannot coordinate a multi-party FROST round, so a key whose threshold
+requires more than one participant is refused here with
+`*frost.ThresholdSigningNotSupportedError` instead of returning a signer
+that fails later on `Sign`. Use `GenerateNonces`, `SignRound`, and
+`Aggregate` directly for distributed signing (see
+[Explicit Round API](#explicit-round-api) below).
 
 ```go
 func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
@@ -222,7 +229,8 @@ func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 
 **Returns:**
 - `crypto.Signer` - Signer implementation
-- `error` - Error if key not found
+- `error` - `*frost.ThresholdSigningNotSupportedError` if the key's
+  threshold is greater than 1, or an error if the key is not found
 
 **Example:**
 
@@ -230,7 +238,11 @@ func (b *FrostBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error)
 signer, err := backend.Signer(&types.KeyAttributes{
     CN: "my-frost-key",
 })
-if err != nil {
+var thresholdErr *frost.ThresholdSigningNotSupportedError
+if errors.As(err, &thresholdErr) {
+    // Threshold > 1: coordinate GenerateNonces/SignRound/Aggregate instead.
+    log.Fatal(err)
+} else if err != nil {
     log.Fatal(err)
 }
 
@@ -557,8 +569,10 @@ var (
     // ErrBackendClosed indicates the backend has been closed
     ErrBackendClosed = errors.New("frost: backend closed")
 
-    // ErrNotImplemented indicates a feature is not supported
-    ErrNotImplemented = errors.New("frost: not implemented")
+    // ErrThresholdSigningNotSupported indicates Signer was requested for a
+    // key whose threshold requires more than one participant; use
+    // GenerateNonces, SignRound, and Aggregate instead
+    ErrThresholdSigningNotSupported = errors.New("frost: threshold signing requires the round-based API")
 )
 ```
 

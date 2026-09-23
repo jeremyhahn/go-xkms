@@ -88,6 +88,8 @@ var (
 	debugPCR     = uint(16)      //nolint:unused // used in tests
 	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
+	ErrPlatformPasswordUnavailable     = errors.New("tpm: failed to retrieve platform password")
+	ErrCertStoreNotInitialized         = errors.New("tpm: certificate store not initialized")
 	ErrInvalidAKAttributes             = errors.New("tpm: invalid AK attributes")
 	ErrInvalidEKCertFormat             = errors.New("tpm: invalid endorsement certificate format")
 	ErrInvalidEKAttributes             = errors.New("tpm: invalid EK attributes")
@@ -113,6 +115,11 @@ var (
 	ErrInvalidSessionAuthorization     = errors.New("tpm: invalid session authorization")
 	ErrUnsupportedCertifyScheme        = errors.New("tpm: attestation key signing scheme is not supported for certification")
 	ErrMissingMeasurementLog           = errors.New("tpm: binary measurement log not found")
+	ErrInvalidTPMTransport             = errors.New("tpm: invalid TPM transport configuration")
+	ErrSignValidatePublicRequired      = errors.New("tpm: TPMAttributes.Public is required for SignValidate")
+	ErrSignValidateHashAlgRequired     = errors.New("tpm: TPMAttributes.HashAlg is required for SignValidate")
+	ErrECCEKCertUnsupported            = errors.New("tpm: ECC EK certificates unsupported at this time")
+	ErrEKCertServiceParseFailed        = errors.New("tpm: failed to parse certificate from EK certificate service")
 	ErrRSAPSSNotSupported              = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
 
 	// ErrRawRSASignUnsupported reports that a TPM cannot produce a PKCS#1 v1.5

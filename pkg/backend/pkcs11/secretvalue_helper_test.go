@@ -21,10 +21,12 @@ import "github.com/jeremyhahn/go-xkms/pkg/types"
 // test setup that drives miekg/pkcs11 calls (NewSessionPool, Login,
 // generateRSAKeyPair, ...) directly, mirroring the production
 // Backend.userPIN/soPIN boundary accessors. Errors are ignored: every call
-// site passes a literal or config.Validate-checked PIN, so the only failure
-// mode (the enclave could not be opened) never happens against test fixtures
-// and is not worth threading a *testing.T through every call site for.
-func secretValueString(sv types.SecretValue) string {
-	b, _ := types.SecretValueBytes(&sv)
+// site passes a types.NewLiteralSecretValue-constructed PIN (real material
+// sealed into the enclave immediately, not a bare unresolved Raw), so the
+// only failure mode (the enclave could not be opened) never happens against
+// test fixtures and is not worth threading a *testing.T through every call
+// site for. A nil sv (PIN not configured) yields "".
+func secretValueString(sv *types.SecretValue) string {
+	b, _ := types.SecretValueBytes(sv)
 	return string(b)
 }

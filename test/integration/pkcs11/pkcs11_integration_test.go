@@ -489,13 +489,13 @@ func TestPKCS11Integration(t *testing.T) {
 			cert2 := createTestCertificate(t, "chain-cert-2")
 			chain := []*x509.Certificate{cert1, cert2}
 
-			err := storage.SaveCertChainParsed(context.Background(), certStorage, "test-chain", chain)
+			err := storage.SaveCertChainParsed(context.Background(), certStorage, "chain-primary-cert", chain)
 			if err != nil {
 				t.Fatalf("Failed to save certificate chain: %v", err)
 			}
 			t.Log("✓ Certificate chain saved")
 
-			retrievedChain, err := storage.GetCertChainParsed(context.Background(), certStorage, "test-chain")
+			retrievedChain, err := storage.GetCertChainParsed(context.Background(), certStorage, "chain-primary-cert")
 			if err != nil {
 				t.Fatalf("Failed to retrieve certificate chain: %v", err)
 			}

@@ -338,8 +338,12 @@ func (b *FrostBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 	return result, nil
 }
 
-// Signer returns a crypto.Signer for the key identified by attrs.
-// This provides orchestrated signing that coordinates with other participants.
+// Signer returns a crypto.Signer for the key identified by attrs. It
+// succeeds only for a single-participant (threshold 1) key; a key whose
+// threshold requires coordinating more than one participant returns
+// *ThresholdSigningNotSupportedError, since a crypto.Signer cannot run a
+// multi-party protocol. Use GenerateNonces, SignRound, and Aggregate for
+// distributed signing.
 func (b *FrostBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	if b.closed {
@@ -369,6 +373,15 @@ func (b *FrostBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (
 	pkg, _, err := b.keystore.LoadKeyPackage(ctx, keyID, participantID)
 	if err != nil {
 		return nil, err
+	}
+
+	// A crypto.Signer performs one synchronous Sign call and cannot
+	// coordinate a multi-party FROST signing round, so a key that
+	// requires more than one participant is refused here instead of
+	// failing later inside Sign. Callers must use GenerateNonces,
+	// SignRound, and Aggregate directly for distributed signing.
+	if pkg.MinSigners > 1 {
+		return nil, &ThresholdSigningNotSupportedError{KeyID: keyID, Threshold: pkg.MinSigners}
 	}
 
 	return &FrostSigner{

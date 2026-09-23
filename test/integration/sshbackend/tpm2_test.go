@@ -50,8 +50,8 @@ func newSimulatorTPMProvider(t *testing.T) types.KeyProvider {
 	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.UseSimulator = true
 	tpmConfig.EK.PlatformPolicy = false
-	tpmConfig.EK.HierarchyAuth = types.SecretValue{}
-	tpmConfig.SSRK.HierarchyAuth = types.SecretValue{}
+	tpmConfig.EK.HierarchyAuth = nil
+	tpmConfig.SSRK.HierarchyAuth = nil
 	tpmConfig.IDevID = nil
 	tpmConfig.IAK = nil
 

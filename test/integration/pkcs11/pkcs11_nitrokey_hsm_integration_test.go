@@ -68,7 +68,7 @@ func TestNitrokeyHSM(t *testing.T) {
 	config := &pkcs11.Config{
 		Library:     libPath,
 		TokenLabel:  "go-xkms-test (UserPIN)",
-		PIN:         types.SecretValue{Raw: "648219"},
+		PIN:         &types.SecretValue{Raw: "648219"},
 		KeyStorage:  keyStorage,
 		CertStorage: certStorageBackend,
 	}
@@ -652,7 +652,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		leafCert := createNitrokeyTestCertificate(t, key3, "Nitrokey Leaf Cert")
 
 		chain := []*x509.Certificate{leafCert, intermediateCert, rootCert}
-		chainID := "nitrokey-test-chain"
+		chainID := "nitrokey-test-cert"
 
 		// Try to save certificate chain
 		err = certStorage.SaveCertChain(ctx, chainID, chain)

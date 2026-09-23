@@ -26,39 +26,9 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/stretchr/testify/assert"
 )
-
-// createViewerUser creates a read-only tenant-scoped user. The read-only
-// canonical qrdb role is auditor; the deleted local "viewer" role has no
-// counterpart because qrdb already models read-only access.
-func createViewerUser(tenantID string) *AuthenticatedUser {
-	return &AuthenticatedUser{
-		UserID:   "viewer-user-1",
-		Username: "viewer",
-		Email:    "viewer@example.com",
-		TenantID: tenantID,
-		Roles:    []string{qrdbsdk.RoleNameAuditor},
-		Groups:   []string{"viewers"},
-	}
-}
-
-// createEndorserUser creates a tenant-scoped user holding the EAB-minting
-// authority. The deleted local "endorser" role is expressed in qrdb as a custom
-// role carrying acme_eab:create; the canonical role that already holds it is
-// admin.
-func createEndorserUser(tenantID string) *AuthenticatedUser {
-	return &AuthenticatedUser{
-		UserID:   "endorser-user-1",
-		Username: "endorser",
-		Email:    "endorser@example.com",
-		TenantID: tenantID,
-		Roles:    []string{qrdbsdk.RoleNameAdmin},
-		Groups:   []string{"endorsers"},
-	}
-}
 
 func TestCheckTenantAccess_SuperAdmin(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())

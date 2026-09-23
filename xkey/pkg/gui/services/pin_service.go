@@ -22,6 +22,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // PINStatusInfo describes the current PIN state for the frontend.
@@ -90,6 +91,10 @@ type PINService struct {
 	pinSvc     atomic.Pointer[qrdbsdk.PINService]
 	barrierSvc atomic.Pointer[BarrierService]
 	appLockSvc atomic.Pointer[appLockAttemptsResetter]
+
+	// policy is the enterprise policy section whose UserCanChangeOwnPIN
+	// field gates ChangeUserPIN. nil in personal mode. See SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewPINService creates a new PINService. The underlying qrdbsdk.PINService must
@@ -108,6 +113,14 @@ func (s *PINService) SetContext(ctx context.Context) {
 // SetAuditLogger sets the audit logger for security event logging.
 func (s *PINService) SetAuditLogger(logger audit.Logger) {
 	s.auditLog.Store(&logger)
+}
+
+// SetPolicy installs the enterprise policy section that gates ChangeUserPIN.
+// The GUI calls this with config.DefaultPolicy() before SO login and the
+// verified section afterward; see startupEnterprisePolicy and
+// applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go.
+func (s *PINService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
 }
 
 // SetPINService wires the underlying qrdbsdk.PINService that handles all PIN
@@ -325,6 +338,11 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 
 // ChangeUserPIN changes the user PIN. The FIDO2 PIN hash is updated
 // automatically by the underlying qrdbsdk.PINService.
+//
+// Returns a *PolicyDeniedError if enterprise policy's UserCanChangeOwnPIN
+// is false: the user may not change their own PIN even when it is set.
+// An SO resetting the PIN goes through SetUserPIN instead, which this
+// field does not gate.
 func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -332,6 +350,15 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 			retErr = &MessageError{Msg: fmt.Sprintf("pin_service: panic in ChangeUserPIN: %v", r)}
 		}
 	}()
+
+	if pol := s.policy.Load(); pol != nil && !pol.UserCanChangeOwnPIN {
+		err := &PolicyDeniedError{Field: "user_can_change_own_pin"}
+		s.logPINOperation(audit.OpPolicyDenied, false, err, map[string]any{
+			"operation": "change",
+			"type":      "user_pin",
+		})
+		return err
+	}
 
 	svc, err := s.getPINService()
 	if err != nil {

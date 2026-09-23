@@ -192,29 +192,49 @@ In personal mode, the auth gate is skipped entirely -- barrier unseal is the onl
 
 ## Policy Permissions
 
-The `PolicySection` contains permission flags that control user access in enterprise mode:
+The `PolicySection` contains permission flags that control user access in
+enterprise mode. Each is a deny switch enforced at the service call it
+governs, not just a UI hint (#668): setting it to `false` makes the
+corresponding call return a typed `*PolicyDeniedError` and log an
+`audit.OpPolicyDenied` event.
 
 | Field | Default | Controls |
 |-------|---------|----------|
-| `user_can_configure_auto_unseal` | `true` | Auto-unseal settings access |
-| `user_can_configure_theme` | `true` | Theme toggle availability |
-| `user_can_manage_trust_store` | `true` | Trust store visibility and management |
-| `user_can_view_audit_log` | `true` | Audit log visibility |
-| `user_can_manage_sealed_data` | `true` | Sealed data access |
-| `user_can_change_own_pin` | `true` | User PIN change access |
+| `user_can_configure_auto_unseal` | `true` | `AppService.ToggleBarrierAutoUnseal` (also requires `allow_auto_unseal`) |
+| `user_can_configure_theme` | `true` | `AppService.SetTheme` |
+| `user_can_manage_trust_store` | `true` | Every mutating `TrustService` call (add/remove/import/seed/install) |
+| `user_can_view_audit_log` | `true` | `AuditService.GetEntries` / `ExportEntries` |
+| `user_can_manage_sealed_data` | `true` | `SealService.SealData` / `DeleteBlob` |
+| `user_can_change_own_pin` | `true` | `PINService.ChangeUserPIN` |
+| `user_can_toggle_dev_tools` | `true` | `AppService.SetDeveloperTools` (also requires `developer_tools_enabled`) |
+| `user_can_configure_extension` | `true` | `AutoFillService.SetEnabled` / `SetRequireAuthentication` / `SetPolicy` |
 
-Additional policy fields govern security requirements:
+Additional policy fields govern security requirements. `require_so_pin`,
+`require_user_pin`, `require_encrypted_storage` and `require_tpm` are checked
+once against the host right after the SO PIN verifies the sealed policy; see
+[Security Requirements](enterprise-mode.md#security-requirements) for the
+fail-open-to-defaults behavior when the host cannot meet one of them.
 
 | Field | Description |
 |-------|-------------|
 | `min_pin_length` | Minimum PIN length (default: 6) |
-| `require_so_pin` | SO PIN must be set |
-| `require_user_pin` | User PIN must be set |
-| `require_encrypted_storage` | Barrier encryption required |
-| `require_tpm` | TPM hardware required |
+| `require_so_pin` | SO PIN must be configured on this host |
+| `require_user_pin` | User PIN must be configured on this host |
+| `require_encrypted_storage` | Storage backend must be `barrier` |
+| `require_tpm` | TPM must be available on this host |
 | `allowed_backends` | Whitelist of permitted backends |
+| `api_explorer_enabled` | API Explorer subsystem enabled at all (`APIExplorerService.Execute`) |
+| `developer_tools_enabled` | Developer Tools subsystem enabled at all |
 | `organization_name` | Displayed in user onboarding |
 | `policy_version` | Incremented on policy updates |
+
+**BREAKING** (#668): `platform_pcrs`, `require_password_protection`,
+`password_protection_mode` and `fido2_require_resident_key` have been
+removed from `PolicySection`. They were parsed and signed into the sealed
+policy but never enforced. Remove them from any enterprise config file
+before upgrading; an enterprise deployment must re-seal its policy
+(`ComputePolicyHMAC`) after upgrading regardless, since the field set --
+and therefore the HMAC's canonical JSON input -- changed.
 
 ## Factory Reset
 

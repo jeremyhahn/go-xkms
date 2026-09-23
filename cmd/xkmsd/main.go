@@ -25,9 +25,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/web"
 )
@@ -56,10 +56,21 @@ func run() int {
 	// mlocked memory before exit, and arrange for a graceful Purge on
 	// any orderly shutdown path. Mirrors the qrdbd pattern exactly.
 	// See pkg/secure/interrupt.go in go-qrdb.
+	//
+	// secure.Purge (go-qrdb's memguard-backed Secret/Buffer) and
+	// enclave.WipeAll (go-xkms's own go-enclave-backed MemoryEnclaves --
+	// pintpm2's cached FIDO2 hash, sealed backend DEKs) are two distinct
+	// protected-memory subsystems with no shared lifecycle hook, so the
+	// binary that owns process exit calls both. Libraries in this repo
+	// call neither: WipeAll is a process-wide teardown that belongs only
+	// to the binary (go-xkms#623).
 	secure.CatchInterrupt()
 	defer func() {
 		if err := secure.Purge(); err != nil {
 			fmt.Fprintf(os.Stderr, "xkmsd: secure.Purge: %v\n", err)
+		}
+		if count, err := enclave.WipeAll(); err != nil {
+			fmt.Fprintf(os.Stderr, "xkmsd: enclave.WipeAll: %d still held, %v\n", count, err)
 		}
 	}()
 
@@ -78,7 +89,6 @@ func run() int {
 	daemonShort := flag.Bool("d", false, "Run as daemon (short)")
 	pidFile := flag.String("pid-file", "", "Path to PID file")
 	showVersion := flag.Bool("version", false, "Show version information")
-	sealPassphrase := flag.String("seal-passphrase", "", "Barrier auto-unseal passphrase (prefer XKMS_BARRIER_PASSPHRASE env or a credential:// reference; passing a secret on the command line is discouraged)")
 	srvFlags := registerServerFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -130,13 +140,6 @@ func run() int {
 		slog.Any("backends", cfg.GetEnabledBackends()),
 		slog.String("default_backend", string(cfg.Default)),
 		slog.String("host", cfg.Server.Host))
-
-	// The --seal-passphrase flag takes precedence over XKMS_BARRIER_PASSPHRASE and
-	// the config file (CLI > env > config), giving an operator an explicit
-	// override for the barrier auto-unseal secret.
-	if *sealPassphrase != "" {
-		cfg.Barrier.Passphrase = types.NewLiteralSecretValue([]byte(*sealPassphrase))
-	}
 
 	// Secure-by-default gate: refuse to serve a non-compliant configuration
 	// (no encryption-at-rest / TLS / authentication / CA). There is no

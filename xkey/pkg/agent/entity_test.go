@@ -41,6 +41,7 @@ func TestAgentEntity_ToAgentInfo(t *testing.T) {
 		Name:            "agent-abcdef12",
 		Address:         "192.168.1.100:9443",
 		CertFingerprint: "abcdef1234567890abcdef1234567890",
+		CertSerial:      "1a2b3c",
 		Status:          "active",
 		EnrolledAt:      now,
 		LastSeenAt:      now.Add(-10 * time.Minute),
@@ -60,6 +61,9 @@ func TestAgentEntity_ToAgentInfo(t *testing.T) {
 	if info.CertificateFingerprint != e.CertFingerprint {
 		t.Errorf("CertificateFingerprint = %q, want %q", info.CertificateFingerprint, e.CertFingerprint)
 	}
+	if info.CertificateSerial != e.CertSerial {
+		t.Errorf("CertificateSerial = %q, want %q", info.CertificateSerial, e.CertSerial)
+	}
 	if info.Status != e.Status {
 		t.Errorf("Status = %q, want %q", info.Status, e.Status)
 	}
@@ -78,6 +82,7 @@ func TestAgentEntityFromInfo(t *testing.T) {
 		Name:                   "test-agent",
 		Address:                "10.0.0.1:9443",
 		CertificateFingerprint: "fingerprint-hash",
+		CertificateSerial:      "3d4e5f",
 		Status:                 "revoked",
 		EnrolledAt:             now,
 		LastSeen:               now,
@@ -93,6 +98,9 @@ func TestAgentEntityFromInfo(t *testing.T) {
 	}
 	if e.CertFingerprint != info.CertificateFingerprint {
 		t.Errorf("CertFingerprint = %q, want %q", e.CertFingerprint, info.CertificateFingerprint)
+	}
+	if e.CertSerial != info.CertificateSerial {
+		t.Errorf("CertSerial = %q, want %q", e.CertSerial, info.CertificateSerial)
 	}
 	if e.Status != info.Status {
 		t.Errorf("Status = %q, want %q", e.Status, info.Status)

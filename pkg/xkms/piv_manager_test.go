@@ -463,6 +463,7 @@ func TestInitializePIV_NilConfig(t *testing.T) {
 	err := InitializePIV(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil")
+	assert.True(t, errors.Is(err, ErrPIVConfigRequired))
 }
 
 func TestInitializePIV_NilStores(t *testing.T) {
@@ -1566,6 +1567,28 @@ func TestGeneratePIVKey_OutputFormat_CASigned_CAError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, caErr)
+}
+
+// TestGeneratePIVKey_OutputFormat_CASigned_InvalidCertificatePEM proves that
+// a CA sign function returning bytes that are not a PEM-encoded certificate
+// fails with the typed ErrPIVInvalidCACertificate sentinel, reachable with
+// errors.Is, rather than an inline error (#700).
+func TestGeneratePIVKey_OutputFormat_CASigned_InvalidCertificatePEM(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	err := SetPIVCASignFunc(func(_ context.Context, _ []byte, _ string, _ int) ([]byte, []byte, error) {
+		return []byte("not a PEM certificate"), nil, nil
+	})
+	require.NoError(t, err)
+
+	_, err = GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		OutputFormat: "ca-signed",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVInvalidCACertificate)
 }
 
 func TestGeneratePIVKey_ValidityDays_SelfSigned(t *testing.T) {

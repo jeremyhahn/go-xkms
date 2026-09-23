@@ -25,15 +25,19 @@ import (
 )
 
 // recordingPolicyHandler captures what LoginSO hands to the verified-policy
-// handler, and how often.
+// handler, and how often. err, when set, is returned by every call, as
+// applyVerifiedEnterprisePolicy does when the section's own Require*
+// preconditions are not met by the host.
 type recordingPolicyHandler struct {
 	calls  int
 	policy *config.PolicySection
+	err    error
 }
 
-func (r *recordingPolicyHandler) handle(p *config.PolicySection) {
+func (r *recordingPolicyHandler) handle(p *config.PolicySection) error {
 	r.calls++
 	r.policy = p
+	return r.err
 }
 
 func TestLoginSO_Enterprise_ValidHMAC_HandsVerifiedPolicyToHandler(t *testing.T) {
@@ -102,6 +106,30 @@ func TestLoginSO_PersonalMode_DoesNotCallHandler(t *testing.T) {
 	require.True(t, result.Success)
 	require.False(t, svc.IsEnterpriseMode())
 	assert.Equal(t, 0, rec.calls, "personal mode has no enterprise policy to hand out")
+}
+
+// TestLoginSO_Enterprise_HandlerRefusal_StillSucceeds proves that an SO can
+// still log in when the verified policy fails its own Require* startup
+// preconditions: refusing SO login here would lock out the one person who
+// could fix the deployment (see PolicyPreconditionError).
+func TestLoginSO_Enterprise_HandlerRefusal_StillSucceeds(t *testing.T) {
+	tmpDir := t.TempDir()
+	soPIN := "enterprise-so-pin-12345"
+
+	policy := loadedPolicy(t)
+	require.NoError(t, config.WritePolicyHMAC(policy, soPIN, config.PolicyHMACPath(tmpDir)))
+
+	svc := newTestAuthService(&authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}, tmpDir)
+	rec := &recordingPolicyHandler{err: errors.New("policy: unmet startup preconditions: require_tpm")}
+	svc.SetVerifiedPolicyHandler(rec.handle)
+
+	result := svc.LoginSO(soPIN)
+
+	require.True(t, result.Success, "the SO must still be able to log in and fix the deployment")
+	assert.Equal(t, 1, rec.calls)
+	assert.True(t, result.PolicyVerified, "the HMAC did verify; only applying the section was refused")
+	assert.False(t, result.TamperDetected)
+	assert.Equal(t, rec.err.Error(), result.Error)
 }
 
 func TestSetVerifiedPolicyHandler_NilClearsTheHandler(t *testing.T) {

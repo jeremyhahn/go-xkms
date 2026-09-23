@@ -32,6 +32,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -138,6 +140,12 @@ type APIExplorerService struct {
 	httpClient   *http.Client
 	closed       atomic.Bool
 	mu           sync.RWMutex
+
+	auditLog atomic.Pointer[audit.Logger]
+
+	// policy is the enterprise policy section whose APIExplorerEnabled
+	// field gates Execute. nil in personal mode. See SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewAPIExplorerService creates a new APIExplorerService with the given
@@ -184,6 +192,39 @@ func (s *APIExplorerService) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
+// SetAuditLogger sets the audit logger for security event logging.
+func (s *APIExplorerService) SetAuditLogger(l audit.Logger) {
+	s.auditLog.Store(&l)
+}
+
+// SetPolicy installs the enterprise policy section that gates Execute. The
+// GUI calls this with config.DefaultPolicy() before SO login and the
+// verified section afterward; see startupEnterprisePolicy and
+// applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go.
+func (s *APIExplorerService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// requireExplorerEnabled returns a *PolicyDeniedError, and logs it, if
+// enterprise policy's APIExplorerEnabled is false.
+func (s *APIExplorerService) requireExplorerEnabled() error {
+	pol := s.policy.Load()
+	if pol == nil || pol.APIExplorerEnabled {
+		return nil
+	}
+	err := &PolicyDeniedError{Field: "api_explorer_enabled"}
+	if p := s.auditLog.Load(); p != nil {
+		(*p).Log(audit.Entry{
+			Timestamp: time.Now(),
+			Operation: audit.OpPolicyDenied,
+			Success:   false,
+			Error:     err.Error(),
+			Details:   map[string]any{"operation": "execute"},
+		})
+	}
+	return err
+}
+
 // Execute sends an HTTP request and returns the response. It automatically
 // injects a JWT Authorization header when a token is available for the
 // target server. The request and response are recorded in history.
@@ -194,6 +235,10 @@ func (s *APIExplorerService) SetContext(ctx context.Context) {
 func (s *APIExplorerService) Execute(req *ExplorerRequest) (*ExplorerResponse, error) {
 	if s.closed.Load() {
 		return nil, ErrExplorerClosed
+	}
+
+	if err := s.requireExplorerEnabled(); err != nil {
+		return nil, err
 	}
 
 	if req == nil {

@@ -91,6 +91,12 @@ type EnterpriseExtensionPolicy struct {
 	AllowedDomains        []string
 	BlockedDomains        []string
 	MaxFillsPerMinute     int
+
+	// UserCanConfigure mirrors PolicySection.UserCanConfigureExtension: when
+	// false the user may not change any extension setting through SetEnabled,
+	// SetRequireAuthentication or SetPolicy, even one this section does not
+	// otherwise lock.
+	UserCanConfigure bool
 }
 
 // AutoFillService mediates credential lookups and TOTP generation for the
@@ -162,10 +168,16 @@ func (s *AutoFillService) SetPolicyPersistFunc(fn PolicyPersistFunc) {
 
 // SetEnabled sets the master toggle. When disabled, all operations return
 // ErrAutoFillDisabled. Returns ErrAutoFillPolicyEnforced if enterprise
-// policy forbids enabling the extension.
+// policy forbids enabling the extension, or a *PolicyDeniedError if
+// UserCanConfigureExtension is false.
 func (s *AutoFillService) SetEnabled(enabled bool) error {
-	if enabled {
-		if ep := s.enterprisePolicy.Load(); ep != nil && !ep.Enabled {
+	if ep := s.enterprisePolicy.Load(); ep != nil {
+		if !ep.UserCanConfigure {
+			err := &PolicyDeniedError{Field: "user_can_configure_extension"}
+			s.auditPreconditionFailure(audit.OpPolicyDenied, "set_enabled", err)
+			return err
+		}
+		if enabled && !ep.Enabled {
 			return ErrAutoFillPolicyEnforced
 		}
 	}
@@ -220,8 +232,14 @@ func (s *AutoFillService) GetEnterprisePolicy() *EnterpriseExtensionPolicy {
 }
 
 // SetPolicy validates and stores a new autofill policy, updating the rate
-// limiter limit to match.
+// limiter limit to match. Returns a *PolicyDeniedError if
+// UserCanConfigureExtension is false.
 func (s *AutoFillService) SetPolicy(policy *xkms.AutoFillPolicy) error {
+	if ep := s.enterprisePolicy.Load(); ep != nil && !ep.UserCanConfigure {
+		err := &PolicyDeniedError{Field: "user_can_configure_extension"}
+		s.auditPreconditionFailure(audit.OpPolicyDenied, "set_policy", err)
+		return err
+	}
 	if policy == nil {
 		return ErrAutoFillNotConfigured
 	}
@@ -247,10 +265,16 @@ func (s *AutoFillService) GetRequireAuthentication() bool {
 // SetRequireAuthentication updates the RequireAuthentication flag on the
 // current policy and persists it to the config file if a persist callback
 // is registered. Returns ErrAutoFillPolicyEnforced if enterprise policy
-// requires authentication and the caller attempts to disable it.
+// requires authentication and the caller attempts to disable it, or a
+// *PolicyDeniedError if UserCanConfigureExtension is false.
 func (s *AutoFillService) SetRequireAuthentication(required bool) error {
-	if !required {
-		if ep := s.enterprisePolicy.Load(); ep != nil && ep.RequireAuthentication {
+	if ep := s.enterprisePolicy.Load(); ep != nil {
+		if !ep.UserCanConfigure {
+			err := &PolicyDeniedError{Field: "user_can_configure_extension"}
+			s.auditPreconditionFailure(audit.OpPolicyDenied, "set_require_authentication", err)
+			return err
+		}
+		if !required && ep.RequireAuthentication {
 			return ErrAutoFillPolicyEnforced
 		}
 	}

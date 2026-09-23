@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // StorageType indicates where a sealed blob is physically stored.
@@ -301,6 +302,11 @@ type SealService struct {
 	backend        xkms.StorageBackend // barrier-encrypted storage (nil = direct disk fallback)
 	blobPrefix     string              // key prefix for backend storage (e.g. "sealed/")
 	auditLog       atomic.Pointer[audit.Logger]
+
+	// policy is the enterprise policy section whose UserCanManageSealedData
+	// field gates SealData and DeleteBlob. nil in personal mode. See
+	// SetPolicy.
+	policy atomic.Pointer[config.PolicySection]
 }
 
 // NewSealService creates a new SealService that stores sealed blobs in storageDir.
@@ -376,6 +382,26 @@ func (s *SealService) Backend() xkms.StorageBackend {
 // SetAuditLogger sets the audit logger for security event logging.
 func (s *SealService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
+}
+
+// SetPolicy installs the enterprise policy section that gates SealData and
+// DeleteBlob. The GUI calls this with config.DefaultPolicy() before SO
+// login and the verified section afterward; see startupEnterprisePolicy and
+// applyVerifiedEnterprisePolicy in pkg/gui/enterprise_policy.go.
+func (s *SealService) SetPolicy(pol *config.PolicySection) {
+	s.policy.Store(pol)
+}
+
+// requireManageSealedData returns a *PolicyDeniedError, and logs it, if
+// enterprise policy's UserCanManageSealedData is false.
+func (s *SealService) requireManageSealedData(operation string) error {
+	pol := s.policy.Load()
+	if pol == nil || pol.UserCanManageSealedData {
+		return nil
+	}
+	err := &PolicyDeniedError{Field: "user_can_manage_sealed_data"}
+	s.logSealEvent(audit.OpPolicyDenied, false, err, map[string]any{"operation": operation})
+	return err
 }
 
 // logSealEvent logs a seal-related audit event.
@@ -687,6 +713,10 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 		}
 	}()
 
+	if err := s.requireManageSealedData("seal_data"); err != nil {
+		return nil, err
+	}
+
 	if req == nil || req.Label == "" {
 		return nil, ErrSealInvalidLabel
 	}
@@ -903,6 +933,9 @@ func (s *SealService) UnsealData(id string, password string) (result string, ret
 
 // DeleteBlob removes a sealed blob from storage.
 func (s *SealService) DeleteBlob(id string) error {
+	if err := s.requireManageSealedData("delete_blob"); err != nil {
+		return err
+	}
 	if id == "" {
 		return ErrSealBlobNotFound
 	}

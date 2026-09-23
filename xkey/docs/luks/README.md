@@ -344,6 +344,6 @@ If the container is corrupted:
 - [xkey Configuration](configuration.md) - General configuration options
 - [xkey Architecture](architecture.md) - System design and layered storage model
 - [Auto-Unseal](auto-unseal.md) - Barrier and LUKS auto-unseal via TPM
-- [Barrier Encryption](../../docs/seal/README.md) - Barrier encryption architecture
+- [Barrier Encryption](../../docs/seal/architecture.md) - Barrier encryption architecture
 - [LUKS + Barrier Layered Architecture](../../docs/seal/barrier.md) - Detailed dual-layer encryption design
 - [OIDC Guide](oidc.md) - Token storage in encrypted containers

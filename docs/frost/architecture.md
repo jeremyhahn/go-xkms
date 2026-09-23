@@ -370,8 +370,8 @@ Simple O(1) storage-based nonce tracking to prevent catastrophic nonce reuse:
 │  │  GetKey()        → Loads key package                      │  │
 │  │  DeleteKey()     → Removes key and all shares             │  │
 │  │  ListKeys()      → Lists all FROST keys                   │  │
-│  │  Signer()        → Returns FrostSigner                    │  │
-│  │  Decrypter()     → ErrNotImplemented                      │  │
+│  │  Signer()        → FrostSigner, or refuses threshold > 1  │  │
+│  │  Decrypter()     → ErrDecryptionNotSupported (signing-only)│  │
 │  │  RotateKey()     → Regenerate with same config            │  │
 │  │  Close()         → Cleanup resources                      │  │
 │  └───────────────────────────────────────────────────────────┘  │

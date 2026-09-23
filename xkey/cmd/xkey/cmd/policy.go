@@ -29,9 +29,6 @@ import (
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 )
 
-// Default policy storage path relative to the data directory.
-const defaultPolicyStorePath = "./data/policies"
-
 var (
 	// policyTPMDevice is the --tpm-device flag for policy commands that read
 	// current PCR values from a TPM (create, verify, refresh). It mirrors
@@ -273,9 +270,12 @@ func init() {
 	PolicyCmd.AddCommand(policyVerifyCmd)
 	PolicyCmd.AddCommand(policyExportCmd)
 
-	// Persistent store flag for all subcommands.
-	PolicyCmd.PersistentFlags().String("store", defaultPolicyStorePath,
-		"Path to policy store directory")
+	// Persistent store flag for all subcommands. The default resolves
+	// through resolvePolicyStorePath to <data dir>/pcr_policies -- see its
+	// doc comment for why this must match the xKey GUI's own PCR policy
+	// store location.
+	PolicyCmd.PersistentFlags().String("store", "",
+		"Path to policy store directory (default: <data dir>/pcr_policies)")
 	PolicyCmd.PersistentFlags().StringVar(&policyTPMDevice, "tpm-device", "",
 		"TPM device path used to read current PCR values (default: $TPM_DEVICE_PATH or /dev/tpmrm0)")
 	PolicyCmd.PersistentFlags().BoolVar(&policyTPMSimulator, "tpm-simulator", false,
@@ -803,7 +803,26 @@ func readCurrentPCRValues(indices []uint, bank, device string, useSimulator bool
 // openPolicyStore creates a PolicyStore backed by a file-based kvstore at
 // the given directory path. This is the production implementation of the
 // policyStoreFactory function.
+//
+// An empty storePath (the --store flag's default) resolves through
+// featureDataDir to <data dir>/pcr_policies -- the exact location the xKey
+// GUI's own PCR policy store uses (pkg/gui/app.go, initializeDataDir) and
+// the one every headless auto-unseal caller reads
+// (tryBarrierPolicyAutoUnseal, barrier_auto_unseal.go). A policy created or
+// designated with `xkey policy set-auto-unseal` is therefore visible to
+// the GUI, `xkey extension serve`, `xkey fido2`, and `xkey barrier unseal
+// --auto` without any of them needing to agree on a path explicitly.
+// --store still overrides this for advanced or test use (a second profile,
+// an isolated test directory, ...).
 func openPolicyStore(storePath string) (pcrpolicy.PolicyStore, error) {
+	if storePath == "" {
+		resolved, err := featureDataDir(pcrPolicyStoreSubdir)
+		if err != nil {
+			return nil, err
+		}
+		storePath = resolved
+	}
+
 	backend, err := newFileStorageBackend(storePath)
 	if err != nil {
 		return nil, err

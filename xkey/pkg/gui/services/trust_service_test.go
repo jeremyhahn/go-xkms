@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -1227,6 +1228,94 @@ func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
 			require.NoError(t, err, "method %q must build a config", tc.req.Method)
 			require.Equal(t, tc.wantMode, cfg.Mode)
 			require.Equal(t, tc.req.Server, cfg.ServerURL)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UserCanManageTrustStore policy gate (#668).
+// ---------------------------------------------------------------------------
+
+func TestTrustService_AddCertificatesPEM_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanManageTrustStore false denies", &config.PolicySection{UserCanManageTrustStore: false}, true},
+		{"UserCanManageTrustStore true allows", &config.PolicySection{UserCanManageTrustStore: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestFileStore(t)
+			defer store.Close()
+			svc := NewTrustService(store)
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			cert := generateTestCert(t)
+			pemData := certToPEM(cert)
+
+			count, err := svc.AddCertificatesPEM(pemData)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_manage_trust_store", denied.Field)
+				assert.Equal(t, 0, count)
+				assert.True(t, logger.hasPolicyDenial(), "denial must be audited")
+
+				total, cerr := svc.CertificateCount()
+				require.NoError(t, cerr)
+				assert.Equal(t, 0, total, "the certificate must not be added when denied")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, 1, count)
+				assert.False(t, logger.hasPolicyDenial())
+			}
+		})
+	}
+}
+
+func TestTrustService_RemoveCertificate_PolicyGate(t *testing.T) {
+	tests := []struct {
+		name    string
+		policy  *config.PolicySection
+		wantErr bool
+	}{
+		{"no policy (personal mode) allows", nil, false},
+		{"UserCanManageTrustStore false denies", &config.PolicySection{UserCanManageTrustStore: false}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestFileStore(t)
+			defer store.Close()
+			svc := NewTrustService(store)
+
+			fp := seedAndGetFingerprint(t, svc)
+
+			logger := &recordingAuditLogger{}
+			svc.SetAuditLogger(logger)
+			svc.SetPolicy(tt.policy)
+
+			err := svc.RemoveCertificate(fp)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				var denied *PolicyDeniedError
+				require.ErrorAs(t, err, &denied)
+				assert.Equal(t, "user_can_manage_trust_store", denied.Field)
+				assert.True(t, logger.hasPolicyDenial())
+
+				_, gerr := svc.GetCertificatePEM(fp)
+				assert.NoError(t, gerr, "the certificate must still be present when denied")
+			} else {
+				require.NoError(t, err)
+				assert.False(t, logger.hasPolicyDenial())
+			}
 		})
 	}
 }

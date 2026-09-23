@@ -420,6 +420,16 @@ func TestMCP_ConnectionClosedMidCallBecomesProtocolError(t *testing.T) {
 	if !strings.Contains(protoErr.Message, "receive") {
 		t.Errorf("Message = %q, want a receive failure", protoErr.Message)
 	}
+	// A clean hang-up (no underlying scanner error) must surface as the
+	// typed ConnectionClosedError, reachable with errors.As (#700), rather
+	// than an inline error.
+	var closedErr *sdkssh.ConnectionClosedError
+	if !errors.As(protoErr.Err, &closedErr) {
+		t.Fatalf("expected *ConnectionClosedError wrapped in ProtocolError.Err, got %T %v", protoErr.Err, protoErr.Err)
+	}
+	if closedErr.Error() != "sdk/ssh: connection closed by server" {
+		t.Errorf("ConnectionClosedError.Error() = %q", closedErr.Error())
+	}
 }
 
 // ----------------------------------------------------------------------------

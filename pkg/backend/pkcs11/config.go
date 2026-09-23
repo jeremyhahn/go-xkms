@@ -50,12 +50,12 @@ type Config struct {
 	// reference string in YAML/JSON; the resolved plaintext is sealed into
 	// this field's own memguard enclave rather than kept as a plain Go
 	// string. See types.SecretValue and types.SecretValueBytes.
-	PIN types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
+	PIN *types.SecretValue `yaml:"pin,omitempty" json:"pin,omitempty" mapstructure:"pin"`
 
 	// SOPIN is the Security Officer PIN for the PKCS#11 token. This is used
 	// for administrative operations like token initialization. Same
 	// SecretValue custody rules as PIN.
-	SOPIN types.SecretValue `yaml:"so-pin,omitempty" json:"so_pin,omitempty" mapstructure:"so-pin"`
+	SOPIN *types.SecretValue `yaml:"so-pin,omitempty" json:"so_pin,omitempty" mapstructure:"so-pin"`
 
 	// PlatformPolicy indicates whether platform-specific policies should be applied.
 	// This may affect key generation, storage, and usage policies.
@@ -118,7 +118,7 @@ func (c *Config) Validate() error {
 	}
 
 	// If PIN is set, validate length
-	pin, err := types.SecretValueBytes(&c.PIN)
+	pin, err := types.SecretValueBytes(c.PIN)
 	if err != nil {
 		return &errs.Wrapped{Msg: "resolve PIN", Err: err}
 	}
@@ -127,7 +127,7 @@ func (c *Config) Validate() error {
 	}
 
 	// If SOPIN is set, validate length
-	sopin, err := types.SecretValueBytes(&c.SOPIN)
+	sopin, err := types.SecretValueBytes(c.SOPIN)
 	if err != nil {
 		return &errs.Wrapped{Msg: "resolve SO PIN", Err: err}
 	}
@@ -159,11 +159,11 @@ func (c *Config) IsYubiKeyPIV() bool {
 // String returns a string representation of the config with sensitive data masked.
 func (c *Config) String() string {
 	pinMask := "****"
-	if !types.SecretValueSet(&c.PIN) {
+	if c.PIN == nil {
 		pinMask = "<not set>"
 	}
 	sopinMask := "****"
-	if !types.SecretValueSet(&c.SOPIN) {
+	if c.SOPIN == nil {
 		sopinMask = "<not set>"
 	}
 

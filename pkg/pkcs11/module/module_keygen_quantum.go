@@ -46,7 +46,11 @@
 //   - NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA)
 package module
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+
+	"github.com/jeremyhahn/go-enclave"
+)
 
 // quantumFamily names the post-quantum family a key-pair-generation mechanism
 // belongs to. The zero value means the mechanism is not a post-quantum
@@ -326,7 +330,7 @@ func (m *Module) generateQuantumKeyPair(
 	}
 	// The seed is copied into the private key object below; the generator's own
 	// copy is cleared so it does not outlive the call in this frame.
-	defer zeroize(keyPair.SecretKey)
+	defer enclave.Wipe(keyPair.SecretKey)
 
 	parameterSetValue := NewUint32Attribute(CKA_PARAMETER_SET, uint32(spec.parameterSet)).Value
 

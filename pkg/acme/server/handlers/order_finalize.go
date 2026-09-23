@@ -33,7 +33,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -871,28 +870,32 @@ func (s *RestService) sendFinalizeResponse(
 	s.orderResponse(w, order)
 }
 
-// matchesIdentifier verifies that a CSR's complete identity set - its
-// Subject Common Name together with every DNS and IP Subject Alternative
-// Name - corresponds exactly to the order's authorized identifiers, per
-// RFC 8555 Section 7.4. Both directions are checked: a name the CSR carries
-// that the order did not authorize is rejected (this is what previously let
+// matchesIdentifier verifies that a CSR's complete identity set corresponds
+// exactly to the order's authorized identifiers, per RFC 8555 Section 7.4.
+//
+// An order carrying a permanent-identifier identifier (enroll-01,
+// device-attest-01) is delegated to matchesPermanentIdentifierOrder in full:
+// every identifier the order authorizes - permanent-identifier as well as
+// any accompanying dns/ip identifiers - must be satisfied, and the CSR's
+// Subject Common Name is never consulted, since RFC 4043 defines the
+// permanent identifier as a subjectAltName otherName, not a name in the
+// subject DN. The endorse-01 flow, where the order's permanent identifier is
+// the EK public key being certified rather than a name the CSR carries,
+// uses matchesEndorse01Identifier instead and never reaches this branch.
+//
+// Otherwise the CSR's Subject Common Name together with every DNS and IP
+// Subject Alternative Name must correspond exactly to the order's
+// identifiers. Both directions are checked: a name the CSR carries that the
+// order did not authorize is rejected (this is what previously let
 // unauthorized SAN issuance through, since only the CommonName was ever
 // compared), and an authorized identifier the CSR omits is also rejected. A
 // CSR with no CommonName is valid as long as its SANs alone cover the
 // authorized set exactly.
 //
 // Email address and URI SANs are never permitted in an ACME CSR and are
-// rejected outright, since the CA has no order-identifier type to authorize
-// them against and RFC 8555 orders only ever carry "dns" or "ip"
-// identifiers (aside from the permanent-identifier extension handled
-// below).
-//
-// Orders authorizing a permanent-identifier (enroll-01, device-attest-01)
-// are matched by comparing the permanent identifier embedded in the CSR
-// against the order's identifier value, preserving the pre-existing
-// permanent-identifier semantics unchanged. The endorse-01 flow, where the
-// order's permanent identifier is the EK public key being certified rather
-// than a name the CSR carries, uses matchesEndorse01Identifier instead.
+// rejected outright in either case, since the CA has no order-identifier
+// type to authorize them against and RFC 8555 orders only ever carry "dns"
+// or "ip" identifiers (aside from the permanent-identifier extension).
 func matchesIdentifier(
 	csr *x509.CertificateRequest,
 	order *entities.ACMEOrder) (bool, error) {
@@ -904,25 +907,22 @@ func matchesIdentifier(
 		return false, common.MalformedError("CSR must not contain URI SANs", nil)
 	}
 
-	for _, identifier := range order.Identifiers {
-		if identifier.Type == common.AuthzTypePermanentIdentifier {
-			permanentID, err := parseCertificateRequestPermanentIdentifier(csr)
-			if err != nil {
-				return false, common.MalformedError("Failed to parse permanent-identifier", nil)
-			}
-			return identifier.Value == permanentID, nil
-		}
-	}
-
+	var permanentIDs []string
 	authorized := make(map[string]bool, len(order.Identifiers))
 	for _, identifier := range order.Identifiers {
 		switch identifier.Type {
 		case common.AuthzTypeDNS, common.AuthzTypeIP:
 			authorized[identifier.Value] = true
+		case common.AuthzTypePermanentIdentifier:
+			permanentIDs = append(permanentIDs, identifier.Value)
 		default:
 			return false,
 				common.UnsupportedIdentifier(fmt.Sprintf("Invalid identifier: %s", identifier.Type))
 		}
+	}
+
+	if len(permanentIDs) > 0 {
+		return matchesPermanentIdentifierOrder(csr, permanentIDs, authorized)
 	}
 
 	requested := make(map[string]bool, len(csr.DNSNames)+len(csr.IPAddresses)+1)
@@ -942,6 +942,84 @@ func matchesIdentifier(
 	for name := range requested {
 		if !authorized[name] {
 			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// matchesPermanentIdentifierOrder validates a permanent-identifier order's
+// CSR (enroll-01 or device-attest-01, arriving as a standard x509 CSR rather
+// than a TCG-CSR-IDEVID) against every identifier the order authorizes.
+//
+// The permanent identifier is read from the CSR's RFC 4043
+// permanentIdentifier otherName (OID 1.3.6.1.5.5.7.8.3) inside its
+// subjectAltName extension - never from the Subject Common Name, which is
+// unauthenticated display text a client controls freely. A CSR missing the
+// otherName, carrying more than one, or carrying any other otherName is
+// rejected as badCSR: the shape of the request is wrong regardless of the
+// order. A CSR whose otherName decodes but names a value the order did not
+// authorize, or whose DNS/IP SANs are not exactly the order's authorized
+// dns/ip identifiers, is rejected as rejectedIdentifier: the request is
+// well-formed but asserts an identity the order does not grant.
+func matchesPermanentIdentifierOrder(
+	csr *x509.CertificateRequest,
+	permanentIDs []string,
+	authorizedNames map[string]bool) (bool, error) {
+
+	otherNames, err := ca.ParseOtherNames(csr.Extensions)
+	if err != nil {
+		return false, common.BadCSR(fmt.Sprintf("certificate request subjectAltName could not be decoded: %v", err))
+	}
+
+	var permanentIdentifierValue string
+	foundPermanentIdentifier := false
+	for _, other := range otherNames {
+		if !other.TypeID.Equal(ca.OIDPermanentIdentifier) {
+			return false, common.BadCSR(fmt.Sprintf(
+				"certificate request subjectAltName carries an otherName (%s) the order does not authorize",
+				other.TypeID))
+		}
+		if foundPermanentIdentifier {
+			return false, common.BadCSR(
+				"certificate request subjectAltName carries more than one permanentIdentifier otherName")
+		}
+		parsed, err := ca.ParsePermanentIdentifierExtension(other.Value)
+		if err != nil {
+			return false, common.BadCSR("certificate request permanentIdentifier otherName could not be decoded")
+		}
+		permanentIdentifierValue = parsed.IdentifierValue
+		foundPermanentIdentifier = true
+	}
+	if !foundPermanentIdentifier {
+		return false, common.BadCSR(
+			"certificate request subjectAltName must carry an RFC 4043 permanentIdentifier otherName " +
+				"(OID 1.3.6.1.5.5.7.8.3)")
+	}
+
+	authorizedPermanentIDs := make(map[string]bool, len(permanentIDs))
+	for _, id := range permanentIDs {
+		authorizedPermanentIDs[id] = true
+	}
+	if !authorizedPermanentIDs[permanentIdentifierValue] {
+		return false, common.RejectedIdentifier(
+			"certificate request permanent identifier is not authorized by the order")
+	}
+
+	requested := make(map[string]bool, len(csr.DNSNames)+len(csr.IPAddresses))
+	for _, name := range csr.DNSNames {
+		requested[name] = true
+	}
+	for _, ip := range csr.IPAddresses {
+		requested[ip.String()] = true
+	}
+	if len(requested) != len(authorizedNames) {
+		return false, common.RejectedIdentifier(
+			"certificate request DNS/IP names do not match the order's authorized identifiers")
+	}
+	for name := range requested {
+		if !authorizedNames[name] {
+			return false, common.RejectedIdentifier(fmt.Sprintf(
+				"certificate request contains a name the order did not authorize: %s", name))
 		}
 	}
 	return true, nil
@@ -1421,28 +1499,6 @@ func encodeCSRToPEM(derBytes []byte) []byte {
 		Bytes: derBytes,
 	}
 	return pem.EncodeToMemory(block)
-}
-
-// parseCertificateRequestPermanentIdentifier extracts the permanent identifier
-// from a certificate request's Subject Alternative Name extension.
-func parseCertificateRequestPermanentIdentifier(csr *x509.CertificateRequest) (string, error) {
-	// Look for the permanent identifier in the SAN extension
-	// This is a simplified implementation - you may need to expand based on your requirements
-	for _, ext := range csr.Extensions {
-		// OID 2.5.29.17 is SubjectAltName
-		if ext.Id.Equal([]int{2, 5, 29, 17}) {
-			// For now, we'll just return the subject CN as a fallback
-			// A full implementation would parse the ASN.1 structure properly
-			break
-		}
-	}
-
-	// Fallback to subject common name
-	if csr.Subject.CommonName != "" {
-		return csr.Subject.CommonName, nil
-	}
-
-	return "", caerrors.MalformedError("no permanent identifier found in CSR")
 }
 
 // ErrClusterIssuerUnsupported is returned when cluster CA issuance is configured

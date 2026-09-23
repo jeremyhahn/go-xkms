@@ -386,14 +386,22 @@ func VerifyOptions(pool *x509.CertPool) *xkms.AndroidVerifyOptions {
 //  2. the certificate chain verifies to a trusted Android hardware attestation
 //     root, at or above the required security level, on a verified and locked
 //     boot state;
-//  3. the attested key was GENERATED as an xkey device attestation key;
-//  4. the device produced a live signature, by that same attested key, over a
+//  3. the attested key's genesis challenge marks it as generated for this
+//     protocol (see VerifyGenesisChallenge below);
+//  4. the attested key's TEE-enforced authorization list says the key was
+//     GENERATED inside secure hardware and is authorized to SIGN (#132) —
+//     see RequireAttestedKeyOrigin;
+//  5. the device produced a live signature, by that same attested key, over a
 //     transcript carrying this exchange's nonce, purpose and channel binding.
 //
-// (2) and (3) say the key lives in that handset's secure hardware. (4) says
-// the party on this connection holds it right now. Neither is worth much
-// alone: a chain without a signature is a public document anyone can replay,
-// and a signature without a chain is possession of a key nobody vouched for.
+// (2), (3) and (4) together say the key lives in that handset's secure
+// hardware and was made to be an xkey device key there, never imported into
+// it. (5) says the party on this connection holds it right now. None of these
+// is worth much alone: a chain without a signature is a public document
+// anyone can replay, a signature without a chain is possession of a key
+// nobody vouched for, and a chain plus a signature for a key that was
+// IMPORTED into the TEE proves only that the hardware safeguards a key that
+// existed somewhere else first.
 func VerifyDeviceAttestation(
 	result *pairing.LocalAttestDeviceResult,
 	challenge *Challenge,
@@ -448,6 +456,10 @@ func VerifyDeviceAttestation(
 
 	rot, err := RequireAttestedBootState(desc)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := RequireAttestedKeyOrigin(desc); err != nil {
 		return nil, err
 	}
 
@@ -720,6 +732,55 @@ func RequireAttestedBootState(desc *xkms.AndroidKeyDescription) (*xkms.AndroidRo
 			ErrDeviceAttestVerifyFailed, rot.VerifiedBootState.String())
 	}
 	return rot, nil
+}
+
+// RequireAttestedKeyOrigin refuses an attestation whose TEE-enforced claims
+// do not establish that the attested key was generated inside secure
+// hardware and is authorized to sign (#132).
+//
+// TEE-enforced only, never SoftwareEnforced. A SoftwareEnforced claim is
+// written by the calling application -- the same reason
+// RequireAttestedBootState reads RootOfTrust from TeeEnforced rather than
+// trusting the app's word about boot state.
+//
+// Origin must be GENERATED. Everything else this file verifies -- the chain,
+// the security level, the genesis challenge, the live signature -- is
+// equally consistent with a key generated elsewhere and imported into the
+// TEE; only this claim rules that out. Purpose must include SIGN, or the
+// key's own enforcement domain never authorized the one operation this
+// protocol performs with it.
+//
+// A TEE-enforced authorization list making neither claim -- an absent
+// extension, or a fixture built before #132 -- fails closed:
+// android.parseAuthorizationList's default for an unclaimed Origin is
+// OriginUnknown, never OriginGenerated's zero value by coincidence, and an
+// empty Purpose set contains SIGN no more than any other value.
+func RequireAttestedKeyOrigin(desc *xkms.AndroidKeyDescription) error {
+	tee := desc.TeeEnforced
+
+	if tee.Origin != xkms.AndroidOriginGenerated {
+		return fmt.Errorf("%w: %w (got %d, want %d)",
+			ErrDeviceAttestVerifyFailed, ErrAttestationKeyOriginNotGenerated,
+			tee.Origin, xkms.AndroidOriginGenerated)
+	}
+
+	if !purposesIncludeSign(tee.Purpose) {
+		return fmt.Errorf("%w: %w (got %v)",
+			ErrDeviceAttestVerifyFailed, ErrAttestationKeyPurposeNotSign, tee.Purpose)
+	}
+
+	return nil
+}
+
+// purposesIncludeSign reports whether purposes contains
+// xkms.AndroidPurposeSign.
+func purposesIncludeSign(purposes []int) bool {
+	for _, p := range purposes {
+		if p == xkms.AndroidPurposeSign {
+			return true
+		}
+	}
+	return false
 }
 
 // VerifiedTrustAnchor returns the trust anchor x509 ACTUALLY used to verify the

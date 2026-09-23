@@ -19,11 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/fips140"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 	"crypto/sha256"
 	"crypto/sha512"
@@ -686,49 +682,6 @@ func createMockEventLog(eventData [][]byte, pcrIndex int) ([]byte, []byte) {
 	expectedPCR := computePCRFromEvents(events, initialPCR, crypto.SHA1)
 
 	return log.Build(), expectedPCR
-}
-
-// =============================================================================
-// Test Key Pair Generation Helpers
-// =============================================================================
-
-// createTestRSAKeyPairForQuote creates an RSA key pair for testing quote verification.
-// Returns the private key and PKIX-encoded public key bytes.
-func createTestRSAKeyPairForQuote(t *testing.T) (*rsa.PrivateKey, []byte) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	require.NoError(t, err)
-
-	return key, pubKeyBytes
-}
-
-// createTestECKeyPairForQuote creates an ECDSA key pair for testing quote verification.
-// Returns the private key and PKIX-encoded public key bytes.
-func createTestECKeyPairForQuote(t *testing.T) (*ecdsa.PrivateKey, []byte) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	require.NoError(t, err)
-
-	return key, pubKeyBytes
-}
-
-// createSignedQuoteProdCaData creates ProdCaData with a properly signed quote.
-// The quote is signed with the provided RSA private key.
-func createSignedQuoteProdCaData(t *testing.T, key *rsa.PrivateKey, nonce []byte, pcrs []byte) []byte {
-	t.Helper()
-
-	quoted := []byte("test quote data - TPMS_ATTEST structure")
-	hash := sha256.Sum256(quoted)
-	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
-	require.NoError(t, err)
-
-	return createMockProdCaData(quoted, signature, nonce, pcrs)
 }
 
 // =============================================================================

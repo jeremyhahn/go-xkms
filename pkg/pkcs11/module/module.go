@@ -59,6 +59,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // CK_INFO represents the PKCS#11 library information structure.
@@ -2998,9 +3000,7 @@ func releaseResult(session *Session, opType OperationType) {
 	if op == nil {
 		return
 	}
-	for i := range op.Result {
-		op.Result[i] = 0
-	}
+	enclave.Wipe(op.Result)
 	op.Result = nil
 	op.ResultReady = false
 	if cryptoOp, ok := op.CryptoOp.(CryptoOperation); ok && cryptoOp != nil {
@@ -5460,9 +5460,7 @@ func (m *Module) restoreMessageOperation(sessionHandle SessionHandle, opState *O
 	if cryptoOp, ok := opState.CryptoOp.(CryptoOperation); ok && cryptoOp != nil {
 		cryptoOp.Reset()
 	}
-	for i := range opState.Result {
-		opState.Result[i] = 0
-	}
+	enclave.Wipe(opState.Result)
 	opState.Result = nil
 	opState.ResultReady = false
 	opState.MultiPart = false

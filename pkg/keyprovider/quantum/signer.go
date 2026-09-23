@@ -26,6 +26,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // MLDSAPublicKey represents a post-quantum ML-DSA public key.
@@ -270,11 +272,7 @@ func (k *MLKEMPrivateKey) Encrypt(plaintext []byte, recipientPublicKey []byte) (
 	if err != nil {
 		return nil, nil, &errs.Wrapped{Msg: "encapsulation failed", Err: err}
 	}
-	defer func() {
-		for i := range sharedSecret {
-			sharedSecret[i] = 0
-		}
-	}()
+	defer enclave.Wipe(sharedSecret)
 
 	// Step 2: Encrypt plaintext using shared secret as AES-256 key
 	encryptedData, err = encryptWithAESGCM(plaintext, sharedSecret, nil, k.tracker, k.keyID)
@@ -306,11 +304,7 @@ func (k *MLKEMPrivateKey) Decrypt(kemCiphertext, encryptedData []byte) (plaintex
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "decapsulation failed", Err: err}
 	}
-	defer func() {
-		for i := range sharedSecret {
-			sharedSecret[i] = 0
-		}
-	}()
+	defer enclave.Wipe(sharedSecret)
 
 	// Step 2: Decrypt using shared secret as AES-256 key
 	plaintext, err = decryptWithAESGCM(encryptedData, sharedSecret, nil)
@@ -333,11 +327,7 @@ func (k *MLKEMPrivateKey) EncryptWithAAD(plaintext, aad []byte, recipientPublicK
 	if err != nil {
 		return nil, nil, &errs.Wrapped{Msg: "encapsulation failed", Err: err}
 	}
-	defer func() {
-		for i := range sharedSecret {
-			sharedSecret[i] = 0
-		}
-	}()
+	defer enclave.Wipe(sharedSecret)
 
 	// Step 2: Encrypt with AAD
 	encryptedData, err = encryptWithAESGCM(plaintext, sharedSecret, aad, k.tracker, k.keyID)
@@ -360,11 +350,7 @@ func (k *MLKEMPrivateKey) DecryptWithAAD(kemCiphertext, encryptedData, aad []byt
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "decapsulation failed", Err: err}
 	}
-	defer func() {
-		for i := range sharedSecret {
-			sharedSecret[i] = 0
-		}
-	}()
+	defer enclave.Wipe(sharedSecret)
 
 	// Step 2: Decrypt with AAD validation
 	plaintext, err = decryptWithAESGCM(encryptedData, sharedSecret, aad)

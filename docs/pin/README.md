@@ -65,7 +65,7 @@ All mutable state in xkms's TPM2 backend uses `sync/atomic` operations
 | SO PIN | Not supported (returns `pin.ErrPINNotSet`) | Hash-based, persisted to `storage.Backend` |
 | User PIN | PlatformSRK auth value | Hash-based, persisted to `storage.Backend` |
 | Lockout | TPM dictionary attack protection (hardware counters) | None (hash is the security boundary) |
-| FIDO2 hash | Cached in `mem.GuardedBuffer` on verify/set/change | Cached in `mem.GuardedBuffer` on verify/set/change |
+| FIDO2 hash | Cached in `enclave.MemoryEnclave` on verify/set/change | Cached via go-qrdb's own protected-memory mechanism on verify/set/change |
 | Concurrency | `atomic.Bool` + `atomic.Pointer` | `atomic.Bool` + `atomic.Pointer` |
 | Constructor | `pintpm2.NewTPM2Backend(platformAuthProvider)` | `pin.NewSoftwareBackend(store, hashConfig)` |
 
@@ -244,7 +244,7 @@ The Service integrates with FIDO2/CTAP2 authenticators. When a user PIN is set o
 2. `Service.pushFIDO2Hash` computes `SHA-256(PIN)[:16]` (the CTAP2-mandated 16-byte PIN hash).
 3. The hash is pushed to the authenticator via the registered `FIDO2PINHashSetter` callback.
 
-Both backends cache the 16-byte FIDO2 hash in a `mem.GuardedBuffer` (`mlock`'d, guard-paged memory on Linux) via `atomic.Pointer`. After a restart, the hash is lazily recomputed on the first successful `VerifyUserPIN` call.
+The TPM2 backend caches the 16-byte FIDO2 hash in a go-enclave `MemoryEnclave` (`mlock`'d, guard-paged memory on Linux) via `atomic.Pointer`. After a restart, the hash is lazily recomputed on the first successful `VerifyUserPIN` call.
 
 Backends that cache the FIDO2 hash also implement the `FIDO2HashVerifier` interface, allowing the Service to verify incoming FIDO2 PIN hashes without knowing the raw PIN:
 
@@ -256,8 +256,8 @@ type FIDO2HashVerifier interface {
 
 ### Secure memory
 
-- The FIDO2 hash is held in `mem.GuardedBuffer` (mlock'd, guard-paged) rather than a plain `[]byte`.
-- All intermediate PIN plaintexts are zeroed via `mem.Zero()` after use.
+- The FIDO2 hash is held in a go-enclave `MemoryEnclave` (mlock'd, guard-paged) rather than a plain `[]byte`.
+- All intermediate PIN plaintexts are zeroed via `enclave.Wipe()` after use.
 - Call `Close()` on the backend to free the guarded buffer when done.
 
 ### Registering the callback
@@ -354,8 +354,8 @@ svc = pin.NewService(swBackend, slog.Default())
 
 - **TPM2 backend**: PIN verification is hardware-enforced. PIN values never leave the TPM boundary for verification. Dictionary-attack throttling is effective only when the Platform SRK (at `0x81000002`) has its `NoDA` attribute cleared — a standard SRK template sets `NoDA = true`, which leaves PIN brute-forcing unthrottled despite the TPM DA counter plumbing being present. The Platform SRK used for PIN verification is provisioned with `NoDA = false` so each wrong PIN increments the hardware DA counter toward lockout, while a correct PIN authorizes normally.
 - **Software backend**: PINs are protected by memory-hard (Argon2id) or iteration-hard (PBKDF2) key derivation. Each PIN record includes a unique random salt. Verification uses `subtle.ConstantTimeCompare` to prevent timing side channels.
-- **FIDO2 hash**: Stored in `mlock`'d, guard-paged memory (`mem.GuardedBuffer`) to prevent swapping to disk. Intermediate values are zeroed after use.
-- **Lock-free concurrency**: All mutable state uses `atomic.Bool` and `atomic.Pointer` with no mutexes. The `fido2Guard` pointer is swapped atomically, and the old buffer is freed after replacement.
+- **FIDO2 hash**: Stored in `mlock`'d, guard-paged memory (go-enclave `MemoryEnclave`) to prevent swapping to disk. Intermediate values are zeroed after use.
+- **Lock-free concurrency**: All mutable state uses `atomic.Bool` and `atomic.Pointer` with no mutexes. The `fido2Enclave` pointer is swapped atomically, and the old enclave is destroyed after replacement.
 - **Minimum PIN length**: 6 characters, enforced by both the Service and the backends.
 
 ## Composition into qrdb

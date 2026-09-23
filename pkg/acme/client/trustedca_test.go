@@ -783,8 +783,7 @@ func TestTrustedCA_RestService_BeforeServe(t *testing.T) {
 // TestTrustedCA_Serve_MultiTenantWithAdmin tests the multi-tenant admin server path
 // which includes auth middleware and TenantAwareService registration.
 func TestTrustedCA_Serve_MultiTenantWithAdmin(t *testing.T) {
-	acmePort := getAvailablePort(t)
-	adminPort := getAvailablePort(t)
+	acmePort, adminPort := getTwoDifferentPorts(t)
 
 	cfg := &TrustedCAConfig{
 		ACME: TCAACMEConfig{
@@ -829,8 +828,7 @@ func TestTrustedCA_Serve_MultiTenantWithAdmin(t *testing.T) {
 // TestTrustedCA_Serve_SingleTenantAdminPath tests the single-tenant admin path
 // which uses nil auth middleware.
 func TestTrustedCA_Serve_SingleTenantAdminPath(t *testing.T) {
-	acmePort := getAvailablePort(t)
-	adminPort := getAvailablePort(t)
+	acmePort, adminPort := getTwoDifferentPorts(t)
 
 	cfg := &TrustedCAConfig{
 		ACME: TCAACMEConfig{
@@ -1087,8 +1085,7 @@ func TestTrustedCA_Serve_HealthEndpoints(t *testing.T) {
 
 // TestTrustedCA_Shutdown_WithRunningServers tests shutdown with actually running servers.
 func TestTrustedCA_Shutdown_WithRunningServers(t *testing.T) {
-	acmePort := getAvailablePort(t)
-	adminPort := getAvailablePort(t)
+	acmePort, adminPort := getTwoDifferentPorts(t)
 
 	cfg := &TrustedCAConfig{
 		ACME: TCAACMEConfig{
@@ -1145,8 +1142,7 @@ func TestTrustedCA_Shutdown_WithRunningServers(t *testing.T) {
 // TestTrustedCA_Serve_WithExplicitAddresses tests Serve with all addresses explicitly set.
 // Ensures the explicit address path (before fallbacks) is covered.
 func TestTrustedCA_Serve_WithExplicitAddresses(t *testing.T) {
-	acmePort := getAvailablePort(t)
-	adminPort := getAvailablePort(t)
+	acmePort, adminPort := getTwoDifferentPorts(t)
 
 	tca, err := New(
 		WithCA(newMockCA()),

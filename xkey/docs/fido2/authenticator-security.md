@@ -129,12 +129,8 @@ caller.)
 5. **Clear memory** after key operations
 
 ```go
-// Example: Zeroing sensitive memory
-func clearBytes(b []byte) {
-    for i := range b {
-        b[i] = 0
-    }
-}
+// Example: Zeroing sensitive memory via go-enclave.
+enclave.Wipe(b)
 ```
 
 ## PIN Protocol Security
@@ -251,11 +247,40 @@ than ignoring a scope the platform believes it requested.
 
 ### PIN Attack Mitigations
 
-**Brute Force:**
-- Configurable retry limit (default: 8)
-- Counter persisted to storage
-- Authenticator locks when exhausted
-- Requires factory reset to recover
+**Brute Force -- decrement, persist, then compare (go-xkms#686):**
+
+`changePIN`, `getPinToken`, and `getPinUvAuthTokenUsingPinWithPermissions` --
+the three ClientPIN subcommands that check a `pinHashEnc` -- all funnel
+through one helper, `verifyPinHashAndConsumeRetryLocked`, that implements
+CTAP 2.1 §6.5.5.5's order exactly:
+
+1. **Decrement the retry counter and persist it, before the guess is
+   compared.** A `pinHashEnc` that fails to decrypt is treated as an
+   automatic mismatch here too -- it still spends a retry, rather than
+   giving the platform a free attempt by returning early as a protocol
+   error.
+2. **A failure to persist the spent retry fails the whole operation
+   closed.** The comparison never runs once the persist after decrement has
+   failed, so a caller cannot learn whether an untested guess was right by
+   racing a flaky store. This is reported as the typed `ErrStorageError`
+   (`CTAP2_ERR_OTHER` on the wire), not as a success or a PIN-invalid
+   result.
+3. **A correct guess resets the budget to its configured maximum
+   (default 8, `PINMaxRetries`) and persists that too, before returning.**
+   The reset is not deferred to a later save the caller happens to perform.
+4. **The budget survives a restart.** Because every step above persists
+   before the caller ever sees a result, a fresh authenticator instance
+   over the same storage reflects every attempt spent before the restart,
+   not just the last one that happened to be saved.
+5. **Exhausting the budget requires `authenticatorReset` to recover** --
+   there is no partial credit for a correct guess after lockout.
+
+Before this fix the decrement and the trailing `storage.SaveState` ran
+*after* the hash comparison, and `SaveState`'s own error was discarded
+(`_ = a.storage.SaveState(a.state)`): a storage failure on that trailing
+save let the retry counter silently reset to its pre-attempt value on the
+next restart, undoing the brute-force limit rather than merely failing the
+one request.
 
 **Eavesdropping:**
 - PIN encrypted with ECDH-derived key
@@ -266,8 +291,7 @@ than ignoring a scope the platform believes it requested.
 
 1. **Set minimum PIN length** >= 6 characters
 2. **Reduce retry count** for high-security (3-5 attempts)
-3. **Persist retry counter** atomically with credentials
-4. **Regenerate ECDH keys** after PIN operations
+3. **Regenerate ECDH keys** after PIN operations
 
 ```go
 config := &authenticator.Config{
@@ -822,13 +846,13 @@ func (a *Authenticator) Close() error {
 
     // Clear PIN state
     if a.state != nil {
-        clearBytes(a.state.PINHash)
+        enclave.Wipe(a.state.PINHash)
     }
 
     // Clear PIN protocol state
     if a.pinState.protocol != nil {
-        clearBytes(a.pinState.protocol.pinUvAuthToken)
-        clearBytes(a.pinState.protocol.sharedSecret)
+        enclave.Wipe(a.pinState.protocol.pinUvAuthToken)
+        enclave.Wipe(a.pinState.protocol.sharedSecret)
     }
 
     return a.storage.Close()

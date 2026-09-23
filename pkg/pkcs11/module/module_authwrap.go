@@ -86,6 +86,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 )
 
@@ -561,7 +562,7 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 	}
 
 	// Get wrapping key material (CKA_VALUE) and copy to a local buffer
-	// so the deferred zeroize does not corrupt the object store.
+	// so the deferred enclave.Wipe does not corrupt the object store.
 	wrappingKeyRef := wrappingKey.GetAttribute(CKA_VALUE)
 	if len(wrappingKeyRef) == 0 {
 		return nil, NewPKCS11ErrorWithMessage(CKR_WRAPPING_KEY_HANDLE_INVALID,
@@ -569,7 +570,7 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 	}
 	wrappingKeyValue := make([]byte, len(wrappingKeyRef))
 	copy(wrappingKeyValue, wrappingKeyRef)
-	defer zeroize(wrappingKeyValue)
+	defer enclave.Wipe(wrappingKeyValue)
 
 	// Validate AES key size (16, 24, or 32 bytes)
 	if !validAESKeySize(len(wrappingKeyValue)) {
@@ -577,7 +578,7 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 	}
 
 	// Get target key material to wrap (CKA_VALUE) and copy to a local buffer
-	// so the deferred zeroize does not corrupt the object store.
+	// so the deferred enclave.Wipe does not corrupt the object store.
 	targetKeyRef := targetKey.GetAttribute(CKA_VALUE)
 	if len(targetKeyRef) == 0 {
 		return nil, NewPKCS11ErrorWithMessage(CKR_KEY_NOT_WRAPPABLE,
@@ -585,7 +586,7 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 	}
 	targetKeyValue := make([]byte, len(targetKeyRef))
 	copy(targetKeyValue, targetKeyRef)
-	defer zeroize(targetKeyValue)
+	defer enclave.Wipe(targetKeyValue)
 
 	if err := requireWrappingKeyStrength(wrappingKeyValue, targetKeyValue); err != nil {
 		return nil, err
@@ -968,7 +969,7 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 	}
 
 	// Get unwrapping key material (CKA_VALUE) and copy to a local buffer
-	// so the deferred zeroize does not corrupt the object store.
+	// so the deferred enclave.Wipe does not corrupt the object store.
 	unwrappingKeyRef := unwrappingKey.GetAttribute(CKA_VALUE)
 	if len(unwrappingKeyRef) == 0 {
 		return ObjectHandle(InvalidHandle), NewPKCS11ErrorWithMessage(CKR_UNWRAPPING_KEY_HANDLE_INVALID,
@@ -976,7 +977,7 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 	}
 	unwrappingKeyValue := make([]byte, len(unwrappingKeyRef))
 	copy(unwrappingKeyValue, unwrappingKeyRef)
-	defer zeroize(unwrappingKeyValue)
+	defer enclave.Wipe(unwrappingKeyValue)
 
 	// Validate AES key size (16, 24, or 32 bytes)
 	if !validAESKeySize(len(unwrappingKeyValue)) {
@@ -1021,7 +1022,7 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 		// Authentication tag mismatch or decryption failure
 		return ObjectHandle(InvalidHandle), NewPKCS11Error(CKR_AEAD_DECRYPT_FAILED)
 	}
-	defer zeroize(plaintext)
+	defer enclave.Wipe(plaintext)
 
 	// Build the attribute template for the new key object, injecting CKA_VALUE
 	// with the unwrapped key material and PKCS#11-mandated unwrap attributes.

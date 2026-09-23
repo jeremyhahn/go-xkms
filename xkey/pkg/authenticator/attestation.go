@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"errors"
 
+	"github.com/jeremyhahn/go-enclave"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
@@ -79,7 +80,7 @@ func (s *deviceAttestationSource) GenerateAttestationKey() (crypto.Signer, error
 	}
 	pkcs8Buf, err := secure.NewBufferFromBytes(pkcs8)
 	if err != nil {
-		clearBytes(pkcs8)
+		enclave.Wipe(pkcs8)
 		return nil, &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
 	}
 	defer pkcs8Buf.Destroy()

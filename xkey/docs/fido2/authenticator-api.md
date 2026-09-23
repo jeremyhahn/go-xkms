@@ -400,7 +400,7 @@ type MakeCredentialOptions struct {
 
 ```go
 type MakeCredentialResponse struct {
-    Fmt      string // Attestation format ("packed", "none")
+    Fmt      string // Attestation format ("packed", "tpm", "none")
     AuthData []byte // Authenticator data
     AttStmt  map[string]interface{}
 }
@@ -973,7 +973,7 @@ var (
     ErrAuthenticatorClosed = errors.New("authenticator: authenticator closed")
     ErrCBOREncodingFailed  = errors.New("authenticator: CBOR encoding failed")
     ErrCBORDecodingFailed  = errors.New("authenticator: CBOR decoding failed")
-    ErrNotImplemented      = errors.New("authenticator: command not implemented")
+    ErrCommandNotSupported = errors.New("authenticator: command not supported")
     ErrLimitExceeded       = errors.New("authenticator: limit exceeded")
 )
 ```

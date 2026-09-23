@@ -438,20 +438,6 @@ type CATLSConfig interface {
 	// Thread-safe: Yes
 	ClientTLSConfig(ctx context.Context, attrs *types.KeyAttributes, serverName string) (*tls.Config, error)
 
-	// QuantumSafeTLSConfig creates a TLS configuration optimized for post-quantum
-	// cryptographic algorithms. This configuration enables hybrid key exchange
-	// using both classical and post-quantum algorithms where supported.
-	//
-	// Currently clears CurvePreferences to allow the TLS runtime to negotiate
-	// the best available option. When Go's crypto/tls natively supports hybrid
-	// key exchange (X25519Kyber768), this method will enable it automatically.
-	//
-	// Returns ErrNotInitialized if the CA has not been initialized.
-	// Returns ErrTLSConfigFailed if the configuration cannot be created.
-	//
-	// Thread-safe: Yes
-	QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error)
-
 	// TLSBundle returns a PEM bundle (chain + private key).
 	TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
 
