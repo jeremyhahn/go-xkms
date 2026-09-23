@@ -14,8 +14,32 @@
 package server
 
 import (
+	"path/filepath"
+
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 )
+
+// tpm2KeyDirSubdir is the fixed subdirectory, under the configured storage
+// path, where the TPM2 backend and the TPM2 node-barrier seal strategy
+// persist sealed key blobs.
+const tpm2KeyDirSubdir = "tpm2-keys"
+
+// resolveTPM2KeyDir resolves the directory where TPM2-sealed key material is
+// persisted. It is always derived from the configured storage path and must
+// never fall back to a directory resolved relative to the process's working
+// directory: some callers of this package (embedded/programmatic
+// construction of *config.Config) never run config.Config.Validate, so an
+// empty Storage.Path cannot be assumed to have already been rejected.
+func (s *Server) resolveTPM2KeyDir() (string, error) {
+	if s.config.Storage.Path == "" {
+		return "", &ErrConfigRequired{
+			Field:   "storage.path",
+			Backend: "tpm2",
+			Hint:    "the TPM2 key directory is derived from storage.path and must not resolve relative to the process working directory",
+		}
+	}
+	return filepath.Join(s.config.Storage.Path, tpm2KeyDirSubdir), nil
+}
 
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration
 func (s *Server) initTPM2Backend() error {
@@ -29,6 +53,11 @@ func (s *Server) initTPM2Backend() error {
 		devicePath = "/dev/tpmrm0"
 	}
 
+	keyDir, err := s.resolveTPM2KeyDir()
+	if err != nil {
+		return &ErrBackendCreate{Backend: "TPM2", Err: err}
+	}
+
 	// When the seal autodetect already opened this TPM (node-barrier flip),
 	// reuse that single open: build the general backend over the SAME TPM
 	// connection via NewBackendWithTPM. A second independent open would hang a
@@ -38,7 +67,7 @@ func (s *Server) initTPM2Backend() error {
 	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
 			TPM:    shared.TPM(),
-			KeyDir: s.config.Storage.Path + "/tpm2-keys",
+			KeyDir: keyDir,
 			Logger: s.logger,
 		})
 		if err != nil {
@@ -52,7 +81,7 @@ func (s *Server) initTPM2Backend() error {
 	// Create TPM2 backend configuration
 	tpmConfig := &tpm2backend.Config{
 		Device:          devicePath,
-		KeyDir:          s.config.Storage.Path + "/tpm2-keys",
+		KeyDir:          keyDir,
 		CN:              "xkms",
 		UseSimulator:    s.config.Backends.TPM2.UseSimulator,
 		SimulatorHost:   s.config.Backends.TPM2.SimulatorHost,

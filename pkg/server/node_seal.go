@@ -14,7 +14,6 @@
 package server
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -100,10 +99,14 @@ func (s *Server) resolveNodeSeal() error {
 			return nil
 		}
 		tpmCfg := s.config.Backends.TPM2
+		keyDir, err := s.resolveTPM2KeyDir()
+		if err != nil {
+			return &NodeSealError{Reason: "resolving TPM2 key directory", Err: err}
+		}
 		res := seal.BuildBestStrategy(seal.AutodetectOptions{
 			TPM2: &seal.TPM2ProbeConfig{
 				Device:          tpmCfg.DevicePath,
-				KeyDir:          filepath.Join(s.config.Storage.Path, "tpm2-keys"),
+				KeyDir:          keyDir,
 				UseSimulator:    tpmCfg.UseSimulator,
 				SimulatorHost:   tpmCfg.SimulatorHost,
 				SimulatorPort:   tpmCfg.SimulatorPort,
