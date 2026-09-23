@@ -15,8 +15,14 @@ package services
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"log/slog"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -34,13 +40,53 @@ type mockCAService struct {
 	signCSRFunc    func(csrPEM []byte) ([]byte, error)
 	getCACertFunc  func() ([]byte, error)
 	revokeCertFunc func(serialNumber string) error
+	isRevokedFunc  func(serialNumber string) (bool, error)
+
+	mu             sync.Mutex
+	revokedSerials []string
 }
 
 func (m *mockCAService) SignCSR(csrPEM []byte) ([]byte, error) {
 	if m.signCSRFunc != nil {
 		return m.signCSRFunc(csrPEM)
 	}
-	return []byte("-----BEGIN CERTIFICATE-----\nfake-cert\n-----END CERTIFICATE-----\n"), nil
+	// Return a real, parseable certificate embedding the CSR's own public
+	// key (as a real CA would), so callers that extract the serial or
+	// fingerprint the leaf's key - as enrollment now does - see the same
+	// certificate-issuance path xkmsd exercises in production.
+	return mustMockCertPEMForCSR(csrPEM, time.Now().UnixNano()), nil
+}
+
+// mustMockCertPEMForCSR mints a real, parseable certificate PEM that
+// embeds the given CSR's own public key, signed by a throwaway key. It
+// panics on malformed input since it stands in for a trusted CA that is
+// only ever handed CSRs this test package itself generated.
+func mustMockCertPEMForCSR(csrPEM []byte, serial int64) []byte {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		panic("mustMockCertPEMForCSR: CSR is not PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		panic(err)
+	}
+
+	signerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      csr.Subject,
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, csr.PublicKey, signerKey)
+	if err != nil {
+		panic(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 func (m *mockCAService) GetCACertificate() ([]byte, error) {
@@ -51,10 +97,32 @@ func (m *mockCAService) GetCACertificate() ([]byte, error) {
 }
 
 func (m *mockCAService) RevokeCertificate(serialNumber string) error {
+	m.mu.Lock()
+	m.revokedSerials = append(m.revokedSerials, serialNumber)
+	m.mu.Unlock()
 	if m.revokeCertFunc != nil {
 		return m.revokeCertFunc(serialNumber)
 	}
 	return nil
+}
+
+func (m *mockCAService) IsRevoked(serialNumber string) (bool, error) {
+	if m.isRevokedFunc != nil {
+		return m.isRevokedFunc(serialNumber)
+	}
+	return false, nil
+}
+
+// wasRevoked reports whether RevokeCertificate was called with serial.
+func (m *mockCAService) wasRevoked(serial string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.revokedSerials {
+		if s == serial {
+			return true
+		}
+	}
+	return false
 }
 
 // mockEventCollector captures emitted events for test assertions.
@@ -94,6 +162,14 @@ func setupAgentService(t *testing.T) (*AgentService, *mockEventCollector) {
 // configured enrollment service and memory store.
 func setupAgentServiceWithEnrollment(t *testing.T) (*AgentService, *mockEventCollector, *agent.EnrollmentService, *agent.MemoryStore) {
 	t.Helper()
+	svc, collector, enrollment, store, _ := setupAgentServiceWithEnrollmentAndCA(t)
+	return svc, collector, enrollment, store
+}
+
+// setupAgentServiceWithEnrollmentAndCA is setupAgentServiceWithEnrollment
+// plus the mock CA, for tests that need to assert what was revoked.
+func setupAgentServiceWithEnrollmentAndCA(t *testing.T) (*AgentService, *mockEventCollector, *agent.EnrollmentService, *agent.MemoryStore, *mockCAService) {
+	t.Helper()
 	svc, collector := setupAgentService(t)
 
 	cfg := agent.DefaultConfig()
@@ -113,7 +189,7 @@ func setupAgentServiceWithEnrollment(t *testing.T) (*AgentService, *mockEventCol
 
 	svc.SetEnrollmentService(enrollment)
 	svc.SetEnrollmentStore(store)
-	return svc, collector, enrollment, store
+	return svc, collector, enrollment, store, ca
 }
 
 func TestNewAgentService(t *testing.T) {
@@ -487,11 +563,12 @@ func TestAgentService_RemoveAgent_Success(t *testing.T) {
 	svc, collector, _, store := setupAgentServiceWithEnrollment(t)
 
 	if err := store.SaveAgent(&agent.AgentInfo{
-		ID:         "agent-to-remove",
-		Name:       "removable",
-		Status:     "active",
-		EnrolledAt: time.Now(),
-		LastSeen:   time.Now(),
+		ID:                "agent-to-remove",
+		Name:              "removable",
+		Status:            "active",
+		CertificateSerial: "0a0b0c",
+		EnrolledAt:        time.Now(),
+		LastSeen:          time.Now(),
 	}); err != nil {
 		t.Fatalf("failed to save agent: %v", err)
 	}
@@ -521,6 +598,61 @@ func TestAgentService_RemoveAgent_Success(t *testing.T) {
 
 	if !collector.hasEventType(events.EventAgentRemoved) {
 		t.Error("expected EventAgentRemoved event to be emitted")
+	}
+}
+
+// TestAgentService_RemoveAgent_RevokesCertificate proves the security fix:
+// removing an agent must revoke its certificate through the CA, not just
+// delete the store record.
+func TestAgentService_RemoveAgent_RevokesCertificate(t *testing.T) {
+	svc, _, _, store, ca := setupAgentServiceWithEnrollmentAndCA(t)
+
+	if err := store.SaveAgent(&agent.AgentInfo{
+		ID:                "agent-to-remove",
+		Name:              "removable",
+		Status:            "active",
+		CertificateSerial: "deadbeef",
+		EnrolledAt:        time.Now(),
+		LastSeen:          time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to save agent: %v", err)
+	}
+
+	if err := svc.RemoveAgent("agent-to-remove"); err != nil {
+		t.Fatalf("RemoveAgent failed: %v", err)
+	}
+
+	if !ca.wasRevoked("deadbeef") {
+		t.Error("RemoveAgent did not revoke the agent's certificate")
+	}
+}
+
+// TestAgentService_RemoveAgent_RevocationFailureKeepsRecord proves the
+// other half of the security fix: if revocation fails, the agent must
+// stay enrolled (and therefore rejectable) rather than silently
+// disappearing from the store while its certificate remains valid.
+func TestAgentService_RemoveAgent_RevocationFailureKeepsRecord(t *testing.T) {
+	svc, _, _, store, ca := setupAgentServiceWithEnrollmentAndCA(t)
+	ca.revokeCertFunc = func(string) error { return errors.New("ca unreachable") }
+
+	if err := store.SaveAgent(&agent.AgentInfo{
+		ID:                "agent-to-remove",
+		Name:              "removable",
+		Status:            "active",
+		CertificateSerial: "deadbeef",
+		EnrolledAt:        time.Now(),
+		LastSeen:          time.Now(),
+	}); err != nil {
+		t.Fatalf("failed to save agent: %v", err)
+	}
+
+	err := svc.RemoveAgent("agent-to-remove")
+	if err == nil {
+		t.Fatal("expected an error when certificate revocation fails")
+	}
+
+	if _, getErr := store.GetAgent("agent-to-remove"); getErr != nil {
+		t.Errorf("agent record was deleted despite the revocation failure: %v", getErr)
 	}
 }
 
@@ -631,11 +763,12 @@ func TestAgentService_RemoveAgent_VerifyStoreState(t *testing.T) {
 
 	for _, id := range []string{"keep-1", "remove-me", "keep-2"} {
 		if err := store.SaveAgent(&agent.AgentInfo{
-			ID:         id,
-			Name:       id,
-			Status:     "active",
-			EnrolledAt: time.Now(),
-			LastSeen:   time.Now(),
+			ID:                id,
+			Name:              id,
+			Status:            "active",
+			CertificateSerial: "serial-" + id,
+			EnrolledAt:        time.Now(),
+			LastSeen:          time.Now(),
 		}); err != nil {
 			t.Fatalf("failed to save agent %q: %v", id, err)
 		}

@@ -61,10 +61,6 @@ var (
 	// submitted but not yet approved by an administrator.
 	ErrEnrollmentPending = errors.New("agent: enrollment pending admin approval")
 
-	// ErrEnrollmentRejected is returned when an administrator has rejected
-	// the enrollment request.
-	ErrEnrollmentRejected = errors.New("agent: enrollment rejected")
-
 	// ErrEnrollmentMethodNotAllowed is returned when the requested enrollment
 	// method is not permitted by the current policy.
 	ErrEnrollmentMethodNotAllowed = errors.New("agent: enrollment method not allowed by policy")
@@ -87,6 +83,21 @@ var (
 	// ErrCertificateRevoked is returned when a certificate has been revoked
 	// by the CA.
 	ErrCertificateRevoked = errors.New("agent: certificate revoked")
+
+	// ErrCertificateSerialMissing is returned when an enrolled agent's
+	// record has no recorded certificate serial number, so its
+	// certificate cannot be revoked. Removal fails closed rather than
+	// deleting a record for a certificate that might still be valid.
+	ErrCertificateSerialMissing = errors.New("agent: enrollment record has no certificate serial number")
+
+	// ErrRevocationCheckFailed is returned when the CA's revocation
+	// status for a certificate could not be determined. Callers must
+	// treat this as a rejection, not as "not revoked".
+	ErrRevocationCheckFailed = errors.New("agent: unable to determine certificate revocation status")
+
+	// ErrAgentRevocationFailed is returned when the CA refuses or fails
+	// to revoke an agent's certificate during removal.
+	ErrAgentRevocationFailed = errors.New("agent: failed to revoke agent certificate")
 )
 
 // Policy errors.

@@ -75,7 +75,7 @@ func TestFileStore_SaveAgent_ReportsWriteCause(t *testing.T) {
 	}
 
 	const deviceID = "device-1"
-	if err := os.Mkdir(filepath.Join(dir, deviceID+".json"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "agents", deviceID+".json"), 0700); err != nil {
 		t.Fatalf("staging the unwritable destination: %v", err)
 	}
 

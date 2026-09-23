@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -145,7 +146,18 @@ func (s *phase3FailingAgentStore) GetAgent(_ string) (*agent.AgentInfo, error) {
 func (s *phase3FailingAgentStore) ListAgents() ([]*agent.AgentInfo, error) {
 	return nil, s.listAgentsErr
 }
-func (s *phase3FailingAgentStore) DeleteAgent(_ string) error { return nil }
+func (s *phase3FailingAgentStore) DeleteAgent(_ string) error           { return nil }
+func (s *phase3FailingAgentStore) SaveCode(_ string, _ time.Time) error { return nil }
+func (s *phase3FailingAgentStore) ConsumeCode(_ string) error {
+	return agent.ErrEnrollmentCodeInvalid
+}
+func (s *phase3FailingAgentStore) CleanExpiredCodes() (int, error)              { return 0, nil }
+func (s *phase3FailingAgentStore) SavePending(_ *agent.PendingEnrollment) error { return nil }
+func (s *phase3FailingAgentStore) GetPending(_ string) (*agent.PendingEnrollment, error) {
+	return nil, agent.ErrRequestNotFound
+}
+func (s *phase3FailingAgentStore) ListPending() ([]*agent.PendingEnrollment, error) { return nil, nil }
+func (s *phase3FailingAgentStore) DeletePending(_ string) error                     { return nil }
 
 var _ agent.EnrollmentStore = (*phase3FailingAgentStore)(nil)
 

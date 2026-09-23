@@ -431,3 +431,140 @@ func TestDAOStore_DuplicateDeviceID(t *testing.T) {
 func TestDAOStore_ImplementsEnrollmentStore(t *testing.T) {
 	var _ EnrollmentStore = (*DAOStore)(nil)
 }
+
+// --- Code tests ---
+
+func TestDAOStore_SaveCode_EmptyHash(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.SaveCode("", time.Now().Add(time.Hour)); err == nil {
+		t.Fatal("expected error for empty hash")
+	}
+}
+
+func TestDAOStore_SavePending_Nil(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.SavePending(nil); err == nil {
+		t.Fatal("expected error for nil pending request")
+	}
+}
+
+func TestDAOStore_SaveAndConsumeCode(t *testing.T) {
+	store := newTestDAOStore(t)
+
+	if err := store.SaveCode("hash-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.ConsumeCode("hash-1"); err != nil {
+		t.Fatalf("ConsumeCode: %v", err)
+	}
+	if err := store.ConsumeCode("hash-1"); err != ErrEnrollmentCodeInvalid {
+		t.Errorf("expected ErrEnrollmentCodeInvalid on reuse, got %v", err)
+	}
+}
+
+func TestDAOStore_ConsumeCode_Invalid(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.ConsumeCode("never-saved"); err != ErrEnrollmentCodeInvalid {
+		t.Errorf("expected ErrEnrollmentCodeInvalid, got %v", err)
+	}
+}
+
+func TestDAOStore_ConsumeCode_Expired(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.SaveCode("expired", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.ConsumeCode("expired"); err != ErrEnrollmentCodeExpired {
+		t.Errorf("expected ErrEnrollmentCodeExpired, got %v", err)
+	}
+}
+
+func TestDAOStore_CleanExpiredCodes(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.SaveCode("expired", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.SaveCode("valid", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+
+	removed, err := store.CleanExpiredCodes()
+	if err != nil {
+		t.Fatalf("CleanExpiredCodes: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed code, got %d", removed)
+	}
+	if err := store.ConsumeCode("valid"); err != nil {
+		t.Errorf("valid code should survive cleanup: %v", err)
+	}
+}
+
+// --- Pending tests ---
+
+func TestDAOStore_SaveAndGetPending(t *testing.T) {
+	store := newTestDAOStore(t)
+
+	p := &PendingEnrollment{
+		ID:          "req-1",
+		CSR:         []byte("csr-bytes"),
+		Fingerprint: "fp-1",
+		RequestedAt: time.Now().UTC().Truncate(time.Second),
+		Status:      "pending",
+	}
+	if err := store.SavePending(p); err != nil {
+		t.Fatalf("SavePending: %v", err)
+	}
+
+	got, err := store.GetPending("req-1")
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if got.Fingerprint != p.Fingerprint || string(got.CSR) != string(p.CSR) {
+		t.Errorf("GetPending returned %+v, want %+v", got, p)
+	}
+}
+
+func TestDAOStore_GetPending_NotFound(t *testing.T) {
+	store := newTestDAOStore(t)
+	if _, err := store.GetPending("nonexistent"); err != ErrRequestNotFound {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
+	}
+}
+
+func TestDAOStore_ListPending(t *testing.T) {
+	store := newTestDAOStore(t)
+	for _, id := range []string{"r1", "r2"} {
+		if err := store.SavePending(&PendingEnrollment{ID: id, Status: "pending"}); err != nil {
+			t.Fatalf("SavePending(%s): %v", id, err)
+		}
+	}
+
+	all, err := store.ListPending()
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 pending requests, got %d", len(all))
+	}
+}
+
+func TestDAOStore_DeletePending_Success(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.SavePending(&PendingEnrollment{ID: "to-delete", Status: "pending"}); err != nil {
+		t.Fatalf("SavePending: %v", err)
+	}
+	if err := store.DeletePending("to-delete"); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+	if _, err := store.GetPending("to-delete"); err != ErrRequestNotFound {
+		t.Errorf("expected ErrRequestNotFound after delete, got %v", err)
+	}
+}
+
+func TestDAOStore_DeletePending_NotFound(t *testing.T) {
+	store := newTestDAOStore(t)
+	if err := store.DeletePending("nonexistent"); err != ErrRequestNotFound {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
+	}
+}

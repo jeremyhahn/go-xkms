@@ -236,8 +236,9 @@ func TestFileStore_ListAgents_IgnoresNonJSON(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewFileStore(dir, testLogger())
 
-	// Create a non-JSON file.
-	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hello"), 0600); err != nil {
+	// Create a non-JSON file inside the agents/ subdirectory ListAgents
+	// actually scans.
+	if err := os.WriteFile(filepath.Join(dir, "agents", "readme.txt"), []byte("hello"), 0600); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
@@ -260,8 +261,9 @@ func TestFileStore_ListAgents_IgnoresMalformedJSON(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewFileStore(dir, testLogger())
 
-	// Create a malformed JSON file.
-	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte("{invalid json"), 0600); err != nil {
+	// Create a malformed JSON file inside the agents/ subdirectory
+	// ListAgents actually scans.
+	if err := os.WriteFile(filepath.Join(dir, "agents", "bad.json"), []byte("{invalid json"), 0600); err != nil {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
@@ -271,6 +273,186 @@ func TestFileStore_ListAgents_IgnoresMalformedJSON(t *testing.T) {
 	}
 	if len(agents) != 0 {
 		t.Errorf("expected 0 agents (malformed file ignored), got %d", len(agents))
+	}
+}
+
+// --- FileStore code tests ---
+
+func TestFileStore_SaveCode_EmptyHash(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+	if err := store.SaveCode("", time.Now().Add(time.Hour)); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid, got %v", err)
+	}
+}
+
+func TestFileStore_SavePending_Nil(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+	if err := store.SavePending(nil); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
+	}
+}
+
+func TestFileStore_GetPending_EmptyID(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+	if _, err := store.GetPending(""); err == nil {
+		t.Fatal("expected error for empty ID")
+	}
+}
+
+func TestFileStore_DeletePending_EmptyID(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+	if err := store.DeletePending(""); err == nil {
+		t.Fatal("expected error for empty ID")
+	}
+}
+
+func TestFileStore_SaveAndConsumeCode(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	hash := "deadbeef"
+	if err := store.SaveCode(hash, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+
+	if err := store.ConsumeCode(hash); err != nil {
+		t.Fatalf("ConsumeCode: %v", err)
+	}
+}
+
+func TestFileStore_ConsumeCode_Invalid(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	if err := store.ConsumeCode("never-saved"); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid, got %v", err)
+	}
+}
+
+func TestFileStore_ConsumeCode_Expired(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	hash := "expired-hash"
+	if err := store.SaveCode(hash, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+
+	if err := store.ConsumeCode(hash); !errors.Is(err, ErrEnrollmentCodeExpired) {
+		t.Errorf("expected ErrEnrollmentCodeExpired, got %v", err)
+	}
+
+	// The expired code was consumed on the way out and cannot be retried.
+	if err := store.ConsumeCode(hash); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected the expired code to already be gone, got %v", err)
+	}
+}
+
+func TestFileStore_ConsumeCode_SingleUse(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	hash := "single-use-hash"
+	if err := store.SaveCode(hash, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.ConsumeCode(hash); err != nil {
+		t.Fatalf("first consume: %v", err)
+	}
+	if err := store.ConsumeCode(hash); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid on reuse, got %v", err)
+	}
+}
+
+func TestFileStore_CleanExpiredCodes(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	if err := store.SaveCode("expired", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.SaveCode("valid", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+
+	removed, err := store.CleanExpiredCodes()
+	if err != nil {
+		t.Fatalf("CleanExpiredCodes: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed code, got %d", removed)
+	}
+
+	if err := store.ConsumeCode("valid"); err != nil {
+		t.Errorf("valid code should survive cleanup: %v", err)
+	}
+}
+
+// --- FileStore pending tests ---
+
+func TestFileStore_SaveAndGetPending(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	p := &PendingEnrollment{
+		ID:          "req-1",
+		CSR:         []byte("csr-bytes"),
+		Fingerprint: "fp-1",
+		RequestedAt: time.Now().Truncate(time.Second),
+		Status:      "pending",
+	}
+	if err := store.SavePending(p); err != nil {
+		t.Fatalf("SavePending: %v", err)
+	}
+
+	got, err := store.GetPending("req-1")
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if got.Fingerprint != p.Fingerprint || string(got.CSR) != string(p.CSR) {
+		t.Errorf("GetPending returned %+v, want %+v", got, p)
+	}
+}
+
+func TestFileStore_GetPending_NotFound(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	if _, err := store.GetPending("nonexistent"); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
+	}
+}
+
+func TestFileStore_ListPending(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	for _, id := range []string{"r1", "r2"} {
+		if err := store.SavePending(&PendingEnrollment{ID: id, Status: "pending"}); err != nil {
+			t.Fatalf("SavePending(%s): %v", id, err)
+		}
+	}
+
+	all, err := store.ListPending()
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 pending requests, got %d", len(all))
+	}
+}
+
+func TestFileStore_DeletePending_Success(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	if err := store.SavePending(&PendingEnrollment{ID: "to-delete", Status: "pending"}); err != nil {
+		t.Fatalf("SavePending: %v", err)
+	}
+	if err := store.DeletePending("to-delete"); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+	if _, err := store.GetPending("to-delete"); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound after delete, got %v", err)
+	}
+}
+
+func TestFileStore_DeletePending_NotFound(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir(), testLogger())
+
+	if err := store.DeletePending("nonexistent"); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
 	}
 }
 
@@ -373,5 +555,122 @@ func TestMemoryStore_DeleteAgent_EmptyID(t *testing.T) {
 	err := store.DeleteAgent("")
 	if err == nil {
 		t.Fatal("expected error for empty ID")
+	}
+}
+
+// --- MemoryStore code tests ---
+
+func TestMemoryStore_SaveCode_EmptyHash(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.SaveCode("", time.Now().Add(time.Hour)); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid, got %v", err)
+	}
+}
+
+func TestMemoryStore_SavePending_Nil(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.SavePending(nil); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_SaveAndConsumeCode(t *testing.T) {
+	store := NewMemoryStore()
+
+	if err := store.SaveCode("hash-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.ConsumeCode("hash-1"); err != nil {
+		t.Fatalf("ConsumeCode: %v", err)
+	}
+	if err := store.ConsumeCode("hash-1"); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid on reuse, got %v", err)
+	}
+}
+
+func TestMemoryStore_ConsumeCode_Invalid(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.ConsumeCode("never-saved"); !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid, got %v", err)
+	}
+}
+
+func TestMemoryStore_ConsumeCode_Expired(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.SaveCode("expired", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SaveCode: %v", err)
+	}
+	if err := store.ConsumeCode("expired"); !errors.Is(err, ErrEnrollmentCodeExpired) {
+		t.Errorf("expected ErrEnrollmentCodeExpired, got %v", err)
+	}
+}
+
+func TestMemoryStore_CleanExpiredCodes(t *testing.T) {
+	store := NewMemoryStore()
+	_ = store.SaveCode("expired", time.Now().Add(-time.Minute))
+	_ = store.SaveCode("valid", time.Now().Add(time.Hour))
+
+	removed, err := store.CleanExpiredCodes()
+	if err != nil {
+		t.Fatalf("CleanExpiredCodes: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("expected 1 removed code, got %d", removed)
+	}
+}
+
+// --- MemoryStore pending tests ---
+
+func TestMemoryStore_SaveAndGetPending(t *testing.T) {
+	store := NewMemoryStore()
+	p := &PendingEnrollment{ID: "req-1", Fingerprint: "fp-1", Status: "pending"}
+	if err := store.SavePending(p); err != nil {
+		t.Fatalf("SavePending: %v", err)
+	}
+	got, err := store.GetPending("req-1")
+	if err != nil {
+		t.Fatalf("GetPending: %v", err)
+	}
+	if got.Fingerprint != "fp-1" {
+		t.Errorf("expected fingerprint 'fp-1', got %q", got.Fingerprint)
+	}
+}
+
+func TestMemoryStore_GetPending_NotFound(t *testing.T) {
+	store := NewMemoryStore()
+	if _, err := store.GetPending("nonexistent"); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_ListPending(t *testing.T) {
+	store := NewMemoryStore()
+	_ = store.SavePending(&PendingEnrollment{ID: "r1", Status: "pending"})
+	_ = store.SavePending(&PendingEnrollment{ID: "r2", Status: "pending"})
+
+	all, err := store.ListPending()
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("expected 2 pending requests, got %d", len(all))
+	}
+}
+
+func TestMemoryStore_DeletePending_Success(t *testing.T) {
+	store := NewMemoryStore()
+	_ = store.SavePending(&PendingEnrollment{ID: "to-delete", Status: "pending"})
+	if err := store.DeletePending("to-delete"); err != nil {
+		t.Fatalf("DeletePending: %v", err)
+	}
+	if _, err := store.GetPending("to-delete"); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound after delete, got %v", err)
+	}
+}
+
+func TestMemoryStore_DeletePending_NotFound(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.DeletePending("nonexistent"); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
 	}
 }

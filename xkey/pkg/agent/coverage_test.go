@@ -330,7 +330,9 @@ func TestClient_ConnectWithTLS(t *testing.T) {
 }
 
 // TestRejectEnrollment_DoubleReject tests rejecting an already-rejected
-// enrollment request.
+// enrollment request. Rejection deletes the record, so the second
+// rejection is indistinguishable from rejecting a request that never
+// existed.
 func TestRejectEnrollment_DoubleReject(t *testing.T) {
 	svc, _ := testEnrollmentService(t)
 
@@ -344,8 +346,8 @@ func TestRejectEnrollment_DoubleReject(t *testing.T) {
 	}
 
 	err = svc.RejectEnrollment(requestID, "second")
-	if !errors.Is(err, ErrEnrollmentFailed) {
-		t.Errorf("expected ErrEnrollmentFailed for double reject, got %v", err)
+	if !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound for double reject, got %v", err)
 	}
 }
 

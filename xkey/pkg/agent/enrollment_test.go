@@ -23,6 +23,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,14 +34,19 @@ type mockCAService struct {
 	signCSRFunc    func(csrPEM []byte) ([]byte, error)
 	getCACertFunc  func() ([]byte, error)
 	revokeCertFunc func(serialNumber string) error
+	isRevokedFunc  func(serialNumber string) (bool, error)
 }
 
 func (m *mockCAService) SignCSR(csrPEM []byte) ([]byte, error) {
 	if m.signCSRFunc != nil {
 		return m.signCSRFunc(csrPEM)
 	}
-	// Return a fake cert PEM.
-	return []byte("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"), nil
+	// Return a real, parseable certificate embedding the CSR's own public
+	// key (as a real CA would) with a unique serial number, so callers
+	// that extract the serial or fingerprint the leaf's key (as
+	// enrollment and VerifyAgentCertificate now do) see the same
+	// certificate-issuance path xkmsd exercises in production.
+	return mustTestCertPEMForCSR(csrPEM, time.Now().UnixNano()), nil
 }
 
 func (m *mockCAService) GetCACertificate() ([]byte, error) {
@@ -54,6 +61,47 @@ func (m *mockCAService) RevokeCertificate(serialNumber string) error {
 		return m.revokeCertFunc(serialNumber)
 	}
 	return nil
+}
+
+func (m *mockCAService) IsRevoked(serialNumber string) (bool, error) {
+	if m.isRevokedFunc != nil {
+		return m.isRevokedFunc(serialNumber)
+	}
+	return false, nil
+}
+
+// mustTestCertPEMForCSR mints a real, parseable certificate PEM that
+// embeds the given CSR's own public key, signed by a throwaway key,
+// exactly as xkmsd's CA embeds an enrolling agent's key when it signs the
+// agent's CSR. Chain-of-trust is not exercised by these tests, only that
+// the resulting leaf certificate's public key - and therefore its
+// enrollment fingerprint - matches the CSR that produced it.
+func mustTestCertPEMForCSR(csrPEM []byte, serial int64) []byte {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		panic("mustTestCertPEMForCSR: CSR is not PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		panic(err)
+	}
+
+	signerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      csr.Subject,
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, csr.PublicKey, signerKey)
+	if err != nil {
+		panic(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 func testLogger() *slog.Logger {
@@ -413,9 +461,11 @@ func TestApproveEnrollment_AlreadyRejected(t *testing.T) {
 		t.Fatalf("failed to reject: %v", err)
 	}
 
+	// Rejection deletes the request, so approving it afterward is
+	// indistinguishable from approving a request that never existed.
 	_, _, err = svc.ApproveEnrollment(requestID)
-	if !errors.Is(err, ErrEnrollmentRejected) {
-		t.Errorf("expected ErrEnrollmentRejected, got %v", err)
+	if !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected ErrRequestNotFound, got %v", err)
 	}
 }
 
@@ -510,9 +560,198 @@ func TestCleanExpiredCodes(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	removed := svc.CleanExpiredCodes()
+	removed, err := svc.CleanExpiredCodes()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if removed != 1 {
 		t.Errorf("expected 1 removed code, got %d", removed)
+	}
+}
+
+// twoInstanceEnrollmentServices builds two independent EnrollmentService
+// instances, each wrapping its own FileStore Go value (never a shared Go
+// object, so no in-process state leaks between them) backed by the same
+// on-disk directory - exactly the relationship between "xkey agent start"
+// and a separately-invoked "xkey agent code"/"pending"/"approve" process
+// sharing the same enrollment store directory. Any state one instance
+// observes through the other must have crossed through the store, never
+// through memory.
+func twoInstanceEnrollmentServices(t *testing.T) (a, b *EnrollmentService) {
+	t.Helper()
+
+	dir := t.TempDir()
+	cfg := DefaultConfig()
+	cfg.EnrollmentMethods = []EnrollmentMethod{
+		EnrollOneTimeCode,
+		EnrollAdminApproval,
+	}
+
+	storeA, err := NewFileStore(dir, testLogger())
+	if err != nil {
+		t.Fatalf("NewFileStore (a): %v", err)
+	}
+	storeB, err := NewFileStore(dir, testLogger())
+	if err != nil {
+		t.Fatalf("NewFileStore (b): %v", err)
+	}
+
+	svcA, err := NewEnrollmentService(cfg, &mockCAService{}, storeA, testLogger())
+	if err != nil {
+		t.Fatalf("NewEnrollmentService (a): %v", err)
+	}
+	svcB, err := NewEnrollmentService(cfg, &mockCAService{}, storeB, testLogger())
+	if err != nil {
+		t.Fatalf("NewEnrollmentService (b): %v", err)
+	}
+	return svcA, svcB
+}
+
+// TestGenerateOneTimeCode_HonoredBySecondInstance proves the core
+// persistence requirement: a code generated through one EnrollmentService
+// instance is accepted by a second instance sharing the same store.
+func TestGenerateOneTimeCode_HonoredBySecondInstance(t *testing.T) {
+	a, b := twoInstanceEnrollmentServices(t)
+
+	code, err := a.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("generate code on instance a: %v", err)
+	}
+
+	if _, _, err := b.EnrollWithCode(code.Code, testCSR(t)); err != nil {
+		t.Fatalf("a code generated by instance a was not honored by instance b sharing the same store: %v", err)
+	}
+}
+
+// TestEnrollWithCode_SecondUseAcrossInstancesFails proves single-use is
+// enforced through the store, not through either instance's memory.
+func TestEnrollWithCode_SecondUseAcrossInstancesFails(t *testing.T) {
+	a, b := twoInstanceEnrollmentServices(t)
+
+	code, err := a.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+
+	if _, _, err := b.EnrollWithCode(code.Code, testCSR(t)); err != nil {
+		t.Fatalf("first use (instance b) failed: %v", err)
+	}
+
+	// The code's originating instance must also see it as consumed.
+	_, _, err = a.EnrollWithCode(code.Code, testCSR(t))
+	if !errors.Is(err, ErrEnrollmentCodeInvalid) {
+		t.Errorf("expected ErrEnrollmentCodeInvalid for a reused code, got %v", err)
+	}
+}
+
+// TestEnrollWithCode_ExpiredAcrossInstancesFails proves expiry is honored
+// through the store: an expired code generated by one instance is
+// rejected, not silently accepted, by a second instance.
+func TestEnrollWithCode_ExpiredAcrossInstancesFails(t *testing.T) {
+	a, b := twoInstanceEnrollmentServices(t)
+
+	code, err := a.GenerateOneTimeCode(1 * time.Nanosecond)
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	_, _, err = b.EnrollWithCode(code.Code, testCSR(t))
+	if !errors.Is(err, ErrEnrollmentCodeExpired) {
+		t.Errorf("expected ErrEnrollmentCodeExpired, got %v", err)
+	}
+}
+
+// TestEnrollWithCode_ConcurrentUseIsSingleUse proves ConsumeCode's
+// atomicity claim under contention: of many concurrent attempts to
+// redeem the same code, exactly one succeeds.
+func TestEnrollWithCode_ConcurrentUseIsSingleUse(t *testing.T) {
+	a, _ := twoInstanceEnrollmentServices(t)
+
+	code, err := a.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+
+	const attempts = 8
+	results := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, enrollErr := a.EnrollWithCode(code.Code, testCSR(t))
+			results <- enrollErr
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if !errors.Is(err, ErrEnrollmentCodeInvalid) {
+			t.Errorf("unexpected error from a losing attempt: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Errorf("expected exactly 1 successful enrollment among %d concurrent attempts, got %d", attempts, successes)
+	}
+}
+
+// TestApproveEnrollment_AcrossInstances proves an admin-approval request
+// submitted through one instance can be approved through another sharing
+// the same store, and that the approval is visible everywhere afterward.
+func TestApproveEnrollment_AcrossInstances(t *testing.T) {
+	a, b := twoInstanceEnrollmentServices(t)
+
+	requestID, err := a.SubmitEnrollmentRequest(testCSR(t))
+	if err != nil {
+		t.Fatalf("submit on instance a: %v", err)
+	}
+
+	certPEM, caPEM, err := b.ApproveEnrollment(requestID)
+	if err != nil {
+		t.Fatalf("approve on instance b failed for a request submitted on instance a: %v", err)
+	}
+	if len(certPEM) == 0 || len(caPEM) == 0 {
+		t.Error("expected certificate material from a cross-instance approval")
+	}
+
+	pending, err := a.ListPending()
+	if err != nil {
+		t.Fatalf("list pending on instance a: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending requests visible from instance a after instance b approved, got %d", len(pending))
+	}
+}
+
+// TestRejectEnrollment_AcrossInstances proves rejection is equally
+// visible across instances sharing the same store.
+func TestRejectEnrollment_AcrossInstances(t *testing.T) {
+	a, b := twoInstanceEnrollmentServices(t)
+
+	requestID, err := a.SubmitEnrollmentRequest(testCSR(t))
+	if err != nil {
+		t.Fatalf("submit on instance a: %v", err)
+	}
+
+	if err := b.RejectEnrollment(requestID, "not authorized"); err != nil {
+		t.Fatalf("reject on instance b failed for a request submitted on instance a: %v", err)
+	}
+
+	pending, err := a.ListPending()
+	if err != nil {
+		t.Fatalf("list pending on instance a: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending requests visible from instance a after instance b rejected, got %d", len(pending))
+	}
+
+	if _, _, err := a.ApproveEnrollment(requestID); !errors.Is(err, ErrRequestNotFound) {
+		t.Errorf("expected the rejected request to be gone from instance a too, got %v", err)
 	}
 }
 
@@ -557,6 +796,303 @@ func TestGenerateSecureCode(t *testing.T) {
 			t.Errorf("expected length %d, got %d", l, len(code))
 		}
 	}
+}
+
+func TestEnrollWithCode_RecordsCertificateSerial(t *testing.T) {
+	svc, store := testEnrollmentServiceWithStore(t)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+
+	_, _, err = svc.EnrollWithCode(code.Code, testCSR(t))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	agents, err := store.ListAgents()
+	if err != nil {
+		t.Fatalf("list agents: %v", err)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 enrolled agent, got %d", len(agents))
+	}
+	if agents[0].CertificateSerial == "" {
+		t.Error("enrolled agent has no recorded certificate serial number")
+	}
+}
+
+func TestEnrollWithCode_UnparseableCertificate(t *testing.T) {
+	svc, ca := testEnrollmentService(t)
+	ca.signCSRFunc = func([]byte) ([]byte, error) {
+		return []byte("-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----\n"), nil
+	}
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+
+	_, _, err = svc.EnrollWithCode(code.Code, testCSR(t))
+	if !errors.Is(err, ErrCertificateInvalid) {
+		t.Errorf("expected ErrCertificateInvalid, got %v", err)
+	}
+}
+
+// testEnrollmentServiceWithStore is like testEnrollmentService but also
+// returns the backing store so tests can inspect persisted records.
+func testEnrollmentServiceWithStore(t *testing.T) (*EnrollmentService, *MemoryStore) {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.EnrollmentMethods = []EnrollmentMethod{
+		EnrollOneTimeCode,
+		EnrollAdminApproval,
+	}
+	store := NewMemoryStore()
+	svc, err := NewEnrollmentService(cfg, &mockCAService{}, store, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create enrollment service: %v", err)
+	}
+	return svc, store
+}
+
+func TestVerifyAgentCertificate_NilCertificate(t *testing.T) {
+	svc, _ := testEnrollmentService(t)
+
+	if err := svc.VerifyAgentCertificate(nil); !errors.Is(err, ErrCertificateInvalid) {
+		t.Errorf("expected ErrCertificateInvalid, got %v", err)
+	}
+}
+
+func TestVerifyAgentCertificate_EnrolledAgentConnects(t *testing.T) {
+	svc, store := testEnrollmentServiceWithStore(t)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+	csrPEM := testCSR(t)
+	certPEM, _, err := svc.EnrollWithCode(code.Code, csrPEM)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+
+	agents, err := store.ListAgents()
+	if err != nil || len(agents) != 1 {
+		t.Fatalf("expected 1 enrolled agent, got %d (err=%v)", len(agents), err)
+	}
+
+	leaf := parseTestCertPEM(t, certPEM)
+	if err := svc.VerifyAgentCertificate(leaf); err != nil {
+		t.Errorf("expected an enrolled agent's certificate to be accepted, got %v", err)
+	}
+}
+
+func TestVerifyAgentCertificate_RevokedCertificateIsRefused(t *testing.T) {
+	svc, ca := testEnrollmentServiceWithCA(t)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+	csrPEM := testCSR(t)
+	certPEM, _, err := svc.EnrollWithCode(code.Code, csrPEM)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+
+	ca.isRevokedFunc = func(string) (bool, error) { return true, nil }
+
+	leaf := parseTestCertPEM(t, certPEM)
+	err = svc.VerifyAgentCertificate(leaf)
+	if !errors.Is(err, ErrCertificateRevoked) {
+		t.Errorf("expected ErrCertificateRevoked, got %v", err)
+	}
+}
+
+func TestVerifyAgentCertificate_RevocationCheckFailureIsRefused(t *testing.T) {
+	svc, ca := testEnrollmentServiceWithCA(t)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+	csrPEM := testCSR(t)
+	certPEM, _, err := svc.EnrollWithCode(code.Code, csrPEM)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+
+	ca.isRevokedFunc = func(string) (bool, error) { return false, errors.New("ocsp responder unreachable") }
+
+	leaf := parseTestCertPEM(t, certPEM)
+	err = svc.VerifyAgentCertificate(leaf)
+	if !errors.Is(err, ErrRevocationCheckFailed) {
+		t.Errorf("expected ErrRevocationCheckFailed (fail closed), got %v", err)
+	}
+}
+
+func TestVerifyAgentCertificate_RemovedAgentIsRefused(t *testing.T) {
+	svc, store := testEnrollmentServiceWithStore(t)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+	csrPEM := testCSR(t)
+	certPEM, _, err := svc.EnrollWithCode(code.Code, csrPEM)
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+
+	agents, err := store.ListAgents()
+	if err != nil || len(agents) != 1 {
+		t.Fatalf("expected 1 enrolled agent, got %d (err=%v)", len(agents), err)
+	}
+	// Simulate removal without going through RemoveAgent: the store no
+	// longer has a record, but the certificate itself was never revoked
+	// (e.g. the CA does not know about it, or a revocation check would
+	// return false). The connection must still be refused because the
+	// store lookup is an independent, mandatory check.
+	if err := store.DeleteAgent(agents[0].ID); err != nil {
+		t.Fatalf("delete agent: %v", err)
+	}
+
+	leaf := parseTestCertPEM(t, certPEM)
+	err = svc.VerifyAgentCertificate(leaf)
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound for a removed agent, got %v", err)
+	}
+}
+
+func TestRemoveAgent_EmptyID(t *testing.T) {
+	svc, _ := testEnrollmentService(t)
+
+	if err := svc.RemoveAgent(""); !errors.Is(err, ErrInvalidRequestID) {
+		t.Errorf("expected ErrInvalidRequestID, got %v", err)
+	}
+}
+
+func TestRemoveAgent_NotFound(t *testing.T) {
+	svc, _ := testEnrollmentService(t)
+
+	if err := svc.RemoveAgent("nonexistent"); !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound, got %v", err)
+	}
+}
+
+func TestRemoveAgent_RevokesThenDeletes(t *testing.T) {
+	svc, ca := testEnrollmentServiceWithCA(t)
+	store := svc.store.(*MemoryStore)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+	_, _, err = svc.EnrollWithCode(code.Code, testCSR(t))
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	agents, _ := store.ListAgents()
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 enrolled agent, got %d", len(agents))
+	}
+	id := agents[0].ID
+	serial := agents[0].CertificateSerial
+
+	var revokedSerial string
+	ca.revokeCertFunc = func(s string) error {
+		revokedSerial = s
+		return nil
+	}
+
+	if err := svc.RemoveAgent(id); err != nil {
+		t.Fatalf("RemoveAgent: %v", err)
+	}
+	if revokedSerial != serial {
+		t.Errorf("revoked serial = %q, want %q", revokedSerial, serial)
+	}
+	if _, err := store.GetAgent(id); !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected the agent record to be deleted, got %v", err)
+	}
+}
+
+func TestRemoveAgent_RevocationFailureKeepsRecord(t *testing.T) {
+	svc, ca := testEnrollmentServiceWithCA(t)
+	store := svc.store.(*MemoryStore)
+
+	code, err := svc.GenerateOneTimeCode(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("failed to generate code: %v", err)
+	}
+	_, _, err = svc.EnrollWithCode(code.Code, testCSR(t))
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	agents, _ := store.ListAgents()
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 enrolled agent, got %d", len(agents))
+	}
+	id := agents[0].ID
+
+	ca.revokeCertFunc = func(string) error { return errors.New("ca unreachable") }
+
+	err = svc.RemoveAgent(id)
+	if !errors.Is(err, ErrAgentRevocationFailed) {
+		t.Errorf("expected ErrAgentRevocationFailed, got %v", err)
+	}
+	if _, getErr := store.GetAgent(id); getErr != nil {
+		t.Errorf("record was deleted despite the revocation failure: %v", getErr)
+	}
+}
+
+func TestRemoveAgent_MissingSerialIsRefused(t *testing.T) {
+	svc, store := testEnrollmentServiceWithStore(t)
+	if err := store.SaveAgent(&AgentInfo{ID: "legacy-agent", Status: "active"}); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	err := svc.RemoveAgent("legacy-agent")
+	if !errors.Is(err, ErrCertificateSerialMissing) {
+		t.Errorf("expected ErrCertificateSerialMissing, got %v", err)
+	}
+	if _, getErr := store.GetAgent("legacy-agent"); getErr != nil {
+		t.Errorf("record was deleted despite the missing serial: %v", getErr)
+	}
+}
+
+// testEnrollmentServiceWithCA is like testEnrollmentService but exposes a
+// MemoryStore-backed service for tests that need both the CA mock and
+// direct store inspection.
+func testEnrollmentServiceWithCA(t *testing.T) (*EnrollmentService, *mockCAService) {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.EnrollmentMethods = []EnrollmentMethod{
+		EnrollOneTimeCode,
+		EnrollAdminApproval,
+	}
+	ca := &mockCAService{}
+	store := NewMemoryStore()
+	svc, err := NewEnrollmentService(cfg, ca, store, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create enrollment service: %v", err)
+	}
+	return svc, ca
+}
+
+// parseTestCertPEM parses the leading PEM-encoded certificate.
+func parseTestCertPEM(t *testing.T, certPEM []byte) *x509.Certificate {
+	t.Helper()
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatalf("certificate is not PEM: %q", certPEM)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+	return cert
 }
 
 func TestGenerateSecureCode_Unique(t *testing.T) {
