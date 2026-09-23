@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecpoint"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -255,10 +256,10 @@ func TestExtractPublicKey_RSAAndECC_RoundTrip(t *testing.T) {
 
 		unique, err := pub.Unique.ECC()
 		require.NoError(t, err)
-		assert.Equal(t, new(big.Int).SetBytes(unique.X.Buffer), eccPub.X)
-		assert.Equal(t, new(big.Int).SetBytes(unique.Y.Buffer), eccPub.Y)
-		assert.True(t, eccPub.Curve.IsOnCurve(eccPub.X, eccPub.Y),
-			"the extracted point must lie on the recovered curve")
+		wantPub, err := ecpoint.PublicKey(eccPub.Curve, unique.X.Buffer, unique.Y.Buffer)
+		require.NoError(t, err, "the extracted point must lie on the recovered curve")
+		assert.Equal(t, wantPub, eccPub,
+			"the extracted key must equal the TPM's public area coordinates")
 	})
 
 	t.Run("unsupported algorithm", func(t *testing.T) {

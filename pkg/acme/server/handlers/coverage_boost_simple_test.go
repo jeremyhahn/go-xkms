@@ -73,27 +73,27 @@ func (m *mockTenantAwareFactorySimple) GetTenantID() string {
 }
 
 func (m *mockTenantAwareFactorySimple) TenantAccountDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ACMEAccount], error) {
-	return m.Factory.AccountDAO()
+	return m.AccountDAO()
 }
 
 func (m *mockTenantAwareFactorySimple) TenantOrderDAO(tenantID string, accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEOrder], error) {
-	return m.Factory.OrderDAO(accountID)
+	return m.OrderDAO(accountID)
 }
 
 func (m *mockTenantAwareFactorySimple) TenantAuthorizationDAO(tenantID string, accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEAuthorization], error) {
-	return m.Factory.AuthorizationDAO(accountID)
+	return m.AuthorizationDAO(accountID)
 }
 
 func (m *mockTenantAwareFactorySimple) TenantChallengeDAO(tenantID string, accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEChallenge], error) {
-	return m.Factory.ChallengeDAO(accountID)
+	return m.ChallengeDAO(accountID)
 }
 
 func (m *mockTenantAwareFactorySimple) TenantCertificateDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ACMECertificate], error) {
-	return m.Factory.CertificateDAO()
+	return m.CertificateDAO()
 }
 
 func (m *mockTenantAwareFactorySimple) TenantExternalAccountBindingDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ExternalAccountBinding], error) {
-	return m.Factory.ExternalAccountBindingDAO()
+	return m.ExternalAccountBindingDAO()
 }
 
 type mockTenantDAOSimple struct {

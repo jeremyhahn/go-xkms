@@ -3458,18 +3458,34 @@ LINT_MODULES := . sdk/go xkey web/desktop
 
 # Build tags per module. A linter only analyses packages the tags select, so a
 # module linted without its tags reports a confident total having skipped the
-# code behind them -- xkey shows 69 findings untagged and 82 tagged.
+# code behind them -- xkey shows 69 findings untagged and 82 tagged, and the
+# root module shows 0 findings untagged against 107 under TEST_TAGS (#682):
+# every *_simulator_test.go finding, including the deprecated ecdsa.PublicKey
+# X/Y and elliptic.Curve.IsOnCurve accesses CI never saw, lives behind
+# tpm_simulator and was invisible to a lint run that never passed that tag.
 #
 # It matters in the other direction too: `unused` needs the tagged code
-# COMPILED to see the call sites, so linting xkey untagged reports helpers as
-# unused that are used perfectly well behind a tag.
+# COMPILED to see the call sites, so linting a module untagged reports
+# helpers as unused that are used perfectly well behind a tag.
 #
-# The list is therefore the widest set that compiles together, checked rather
-# than assumed: the transport/hardware tags plus every production backend --
-# tpm2 and the awskms/azurekv/gcpkms/vault implementations, which would
-# otherwise sit outside both vet and lint entirely. All ten build, vet and
-# lint together, so no tag matrix is needed here; if two ever become mutually
-# exclusive this has to become one.
+# Each module is linted under exactly the tags its OWN tests build with --
+# `make lint`/`make vet` are a coverage promise for `make test`, not a
+# separate declaration that can drift from it:
+#   - root and sdk/go build their tests under TEST_TAGS (test-sdk-go runs
+#     `go test $(TEST_FLAGS) ./...`, and TEST_FLAGS carries TEST_TAGS), so
+#     both lint under LINT_TAGS_root, TEST_TAGS comma-joined for
+#     golangci-lint/go vet's -tags flag.
+#   - xkey's LINT_TAGS_xkey is the widest set that compiles together, checked
+#     rather than assumed: the transport/hardware tags plus every production
+#     backend -- tpm2 and the awskms/azurekv/gcpkms/vault implementations,
+#     which would otherwise sit outside both vet and lint entirely. All ten
+#     build, vet and lint together, so no tag matrix is needed here; if two
+#     ever become mutually exclusive this has to become one.
+#   - web/desktop has no test target (it needs cgo + WebKit headers `make
+#     vet`/`make lint` do not carry), so it stays untagged.
+empty :=
+space := $(empty) $(empty)
+LINT_TAGS_root := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
 LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gcpkms,vault
 
 .PHONY: vet
@@ -3477,8 +3493,11 @@ LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gc
 vet:
 	@echo "$(CYAN)$(BOLD)→ Running go vet...$(RESET)"
 	@for m in $(LINT_MODULES); do \
-		tags="$(LINT_TAGS_xkey)"; \
-		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		case "$$m" in \
+			xkey) tags="$(LINT_TAGS_xkey)" ;; \
+			web/desktop) tags="" ;; \
+			*) tags="$(LINT_TAGS_root)" ;; \
+		esac; \
 		echo "$(CYAN)  → go vet ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		( cd "$$m" && $(GOVET) $${tags:+-tags "$$tags"} ./... ) || exit 1; \
 	done
@@ -3502,8 +3521,11 @@ lint:
 		exit 1; \
 	fi; \
 	for m in $(LINT_MODULES); do \
-		tags="$(LINT_TAGS_xkey)"; \
-		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		case "$$m" in \
+			xkey) tags="$(LINT_TAGS_xkey)" ;; \
+			web/desktop) tags="" ;; \
+			*) tags="$(LINT_TAGS_root)" ;; \
+		esac; \
 		echo "$(CYAN)  → golangci-lint ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
 		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run $${tags:+--build-tags "$$tags"} ); then \
 			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
@@ -3546,10 +3568,10 @@ lint:
 # and the pre-existing rule-3 residue reported for triage rather than
 # guessed at in the change that only wires the gate. An entry that stops
 # matching anything fails the sweep as stale rather than aging out silently.
-empty :=
-space := $(empty) $(empty)
-SECURE_ANALYZER_ROOT_TAGS := $(subst $(space),$(comma),$(strip $(TEST_TAGS)))
-export SECURE_ANALYZER_RUNGS := . - . $(SECURE_ANALYZER_ROOT_TAGS) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
+# LINT_TAGS_root (declared with LINT_MODULES above) is the same TEST_TAGS,
+# comma-joined; reused here rather than recomputed so the two sweeps cannot
+# drift apart on what "the root module's tags" means.
+export SECURE_ANALYZER_RUNGS := . - . $(LINT_TAGS_root) sdk/go - xkey $(LINT_TAGS_xkey) web/desktop -
 export SECURE_ANALYZER_ALLOWLIST := $(CURDIR)/scripts/secure-analyzer-allowlist.txt
 
 .PHONY: secure-analyzer
