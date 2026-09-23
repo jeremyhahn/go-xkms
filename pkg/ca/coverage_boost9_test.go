@@ -87,9 +87,11 @@ func setupEd25519CA(t *testing.T) *CA {
 	config.Identity[0].Keys = b9Ed25519KeyConfig()
 
 	caIface, err := NewFromMultiIdentityConfig(&MultiIdentityParams{
-		Config:    config,
-		KeyStore:  backend,
-		CertStore: cs,
+		Config:          config,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	})
 	require.NoError(t, err)
 	require.NoError(t, caIface.Init(context.Background()))
@@ -202,23 +204,27 @@ func TestLoad_WithIntermediate_B9(t *testing.T) {
 
 	// Init: persists root + intermediate certs to cs.
 	initCA := &CA{
-		config:      config,
-		keyStore:    backend,
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
+		config:          config,
+		keyStore:        backend,
+		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
+		certStore:       cs,
+		revocationStore: storage.NewMemory(),
+		revocations:     make(map[string]*RevocationInfo),
+		serialGen:       NewSerialGenerator(NewMemoryStorage()),
+		profiles:        NewDefaultProfileRegistry(),
 	}
 	require.NoError(t, initCA.Init(context.Background()))
 
 	// Load: re-open using same backend/certstore (keys already exist).
 	loadCA := &CA{
-		config:      config,
-		keyStore:    backend,
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
+		config:          config,
+		keyStore:        backend,
+		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
+		certStore:       cs,
+		revocationStore: storage.NewMemory(),
+		revocations:     make(map[string]*RevocationInfo),
+		serialGen:       NewSerialGenerator(NewMemoryStorage()),
+		profiles:        NewDefaultProfileRegistry(),
 	}
 	err := loadCA.Load(context.Background())
 	require.NoError(t, err)
@@ -239,6 +245,7 @@ func TestLoad_RootKeyNotFound_B9(t *testing.T) {
 	initCA := &CA{
 		config:      config,
 		keyStore:    initBackend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: initBackend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -251,6 +258,7 @@ func TestLoad_RootKeyNotFound_B9(t *testing.T) {
 	loadCA := &CA{
 		config:      config,
 		keyStore:    emptyBackend, // keys missing here
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: emptyBackend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -283,6 +291,7 @@ func TestGetOrGenerateCAKey_UnsupportedAlgorithm_B9(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "unsupported-algo-b9",
 		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
+		StoreType:    types.StoreSoftware,
 	}
 	_, err := ca.getOrGenerateCAKey(context.Background(), attrs)
 	require.Error(t, err)
@@ -315,6 +324,7 @@ func TestCreateRootCertificate_WithSANsAndURLs_B9(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -344,10 +354,12 @@ func TestNewCA_RootOnly_B9(t *testing.T) {
 	cfg.Identity[0].Keys[0].KeyType = "CA"
 
 	params := &Params{
-		Identity:  cfg.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        cfg.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
@@ -367,10 +379,12 @@ func TestNewCA_WithIntermediate_B9(t *testing.T) {
 	cfg.Identity[1].Keys[0].KeyType = "CA"
 
 	params := &Params{
-		Identity:  cfg.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        cfg.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)
@@ -459,10 +473,12 @@ func TestNewParentCA_Success_B9(t *testing.T) {
 	cfg.Identity[0].Keys[0].KeyType = "CA"
 
 	params := &Params{
-		Identity:  cfg.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        cfg.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, err := NewParentCA(params)
 	require.NoError(t, err)
@@ -533,7 +549,9 @@ func TestResolveStores_CertStoreFactory_B9(t *testing.T) {
 	backend, cs := newB9Backend(t)
 
 	p := &Params{
-		KeyStore: backend,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
 		CertStoreFactory: func(cn string) (certstore.CertStore, error) {
 			return cs, nil
 		},
@@ -549,7 +567,9 @@ func TestResolveStores_CertStoreFactoryError_B9(t *testing.T) {
 	backend, _ := newB9Backend(t)
 
 	p := &Params{
-		KeyStore: backend,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
 		CertStoreFactory: func(cn string) (certstore.CertStore, error) {
 			return nil, errors.New("certstore factory failure")
 		},
@@ -564,7 +584,9 @@ func TestResolveStores_CertStoreFactoryNil_B9(t *testing.T) {
 	backend, _ := newB9Backend(t)
 
 	p := &Params{
-		KeyStore: backend,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
 		CertStoreFactory: func(cn string) (certstore.CertStore, error) {
 			return nil, nil
 		},
@@ -581,8 +603,10 @@ func TestResolveStores_ObjectStoreFactory_B9(t *testing.T) {
 	objStore := objmemory.New()
 
 	p := &Params{
-		KeyStore:  backend,
-		CertStore: cs,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (objstore.Storage, error) {
 			return objStore, nil
 		}),
@@ -598,8 +622,10 @@ func TestResolveStores_ObjectStoreFactoryError_B9(t *testing.T) {
 	backend, cs := newB9Backend(t)
 
 	p := &Params{
-		KeyStore:  backend,
-		CertStore: cs,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (objstore.Storage, error) {
 			return nil, errors.New("objstore factory failure")
 		}),
@@ -880,6 +906,7 @@ func TestCreateIntermediateCertificates_WithSANsAndURLs_B9(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),

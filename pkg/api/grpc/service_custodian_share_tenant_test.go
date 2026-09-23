@@ -242,13 +242,17 @@ func setupBarrierRegistry(t *testing.T) *seal.BarrierRegistry {
 	t.Helper()
 	reg := testTenantRegistry(t)
 
-	// The tenant barrier init/unseal RPCs delegate to the XKMSService servicer
-	// (so the §3.6 invariant lives in one place). Wire the singleton with the
-	// SAME registry, mirroring production wiring in pkg/server/server.go.
+	// The tenant barrier init/unseal RPCs delegate to the XKMSService servicer,
+	// which requires a composed TenantService (there is no barrier-registry-only
+	// fallback). Build a real go-qrdb TenantService over the SAME registry,
+	// mirroring production wiring in pkg/server/server.go.
+	tenantSvc, err := seal.NewHardwareTenantService(reg.SystemBarrier(), reg, discardLogger(), nil)
+	require.NoError(t, err)
+
 	setupXKMSForTest(t)
 	svc, err := xkms.Get()
 	require.NoError(t, err)
-	svc.SetBarrierRegistry(reg)
+	svc.SetTenantService(tenantSvc)
 	t.Cleanup(func() { xkms.Reset() })
 
 	return reg
@@ -1182,12 +1186,15 @@ func TestTenantBarrierInit(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("succeeds for existing tenant", func(t *testing.T) {
-		testTenantRegisteredTenant(t, reg, "init-tenant")
-
-		_, err := svc.TenantBarrierInit(context.Background(), &pb.TenantBarrierInitRequest{TenantId: "init-tenant"})
-		require.NoError(t, err)
-	})
+	// TestTenantBarrierInit/succeeds_for_existing_tenant is intentionally
+	// absent here: a barrier-isolated tenant's TenantBarrierInit success path
+	// requires go-qrdb's pooled per-tenant storage (WithVolumePool /
+	// WithPerTenantRegistry), which needs real Pebble-backed pool
+	// infrastructure this in-memory unit test suite deliberately does not
+	// stand up. That success path is covered against a fake TenantServicer
+	// in pkg/xkms/servicer_tenant_delegation_test.go
+	// (TestTenantBarrierInit_DelegatesWithStrategy); this file covers the
+	// gRPC-layer request validation and not-found guards above.
 }
 
 func TestTenantBarrierUnseal(t *testing.T) {
@@ -1223,12 +1230,12 @@ func TestTenantBarrierUnseal(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("succeeds for existing tenant", func(t *testing.T) {
-		testTenantRegisteredTenant(t, reg, "unseal-tenant")
-
-		_, err := svc.TenantBarrierUnseal(context.Background(), &pb.TenantBarrierUnsealRequest{TenantId: "unseal-tenant"})
-		require.NoError(t, err)
-	})
+	// TestTenantBarrierUnseal/succeeds_for_existing_tenant is intentionally
+	// absent here for the same reason as TenantBarrierInit's: it requires
+	// go-qrdb's pooled per-tenant storage. That success path (including the
+	// idempotent already-unsealed short-circuit) is covered against a fake
+	// TenantServicer in pkg/xkms/servicer_tenant_delegation_test.go
+	// (TestTenantBarrierUnseal_DelegatesKeyAndShare).
 }
 
 // TestMapTenantError_Denials verifies that go-qrdb tenant entitlement /

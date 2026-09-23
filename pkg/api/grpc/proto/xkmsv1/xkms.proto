@@ -3462,6 +3462,9 @@ message SSHPin {
   string algorithm = 5;
   google.protobuf.Timestamp added_at = 6;
   string source = 7;
+  // public_key is the authorized_keys-format line of the pinned host key.
+  // Every pin carries the full key; there is no fingerprint-only form.
+  string public_key = 8;
 }
 
 message SSHAddKnownHostRequest {
@@ -3471,6 +3474,10 @@ message SSHAddKnownHostRequest {
   string fingerprint = 4;
   string algorithm = 5;
   string source = 6;
+  // public_key is the authorized_keys-format line of the host key being
+  // pinned (e.g. "ssh-ed25519 AAAA..."). Required — the known_hosts store no
+  // longer accepts a fingerprint-only pin.
+  string public_key = 7;
 }
 
 message SSHListKnownHostsRequest {

@@ -57,7 +57,6 @@ func newTenantServiceWiredXKMS(t *testing.T) *xkms.XKMSService {
 	setupXKMSForTest(t)
 	svc, err := xkms.Get()
 	require.NoError(t, err)
-	svc.SetBarrierRegistry(registry)
 	svc.SetTenantService(tenantSvc)
 	t.Cleanup(func() { xkms.Reset() })
 	return svc

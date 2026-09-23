@@ -86,9 +86,11 @@ func setupTestCA(t *testing.T) *CA {
 
 	// Create CA
 	caIface, err := NewFromMultiIdentityConfig(&MultiIdentityParams{
-		Config:    config,
-		KeyStore:  backend,
-		CertStore: cs,
+		Config:          config,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create CA: %v", err)
@@ -144,9 +146,11 @@ func setupUninitializedCA(t *testing.T) *CA {
 	config.Identity[0].Keys[0].KeyType = "CA"
 
 	caIface, err := NewFromMultiIdentityConfig(&MultiIdentityParams{
-		Config:    config,
-		KeyStore:  backend,
-		CertStore: cs,
+		Config:          config,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create CA: %v", err)

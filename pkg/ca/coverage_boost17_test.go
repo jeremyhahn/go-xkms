@@ -150,8 +150,10 @@ func TestNewParentCA_ToKeyAttributesError_B17(t *testing.T) {
 	t.Parallel()
 	ks, cs := buildTestKeyStore(t)
 	params := &Params{
-		KeyStore:  ks,
-		CertStore: cs,
+		KeyStore:        ks,
+		BackendForStore: singleBackendFactory(ks),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 		Identity: []Identity{
 			{
 				Subject: Subject{CommonName: "Root B17"},
@@ -183,8 +185,10 @@ func TestNewIntermediateCA_ToKeyAttributesError_B17(t *testing.T) {
 
 	ks, cs := buildTestKeyStore(t)
 	params := &Params{
-		KeyStore:  ks,
-		CertStore: cs,
+		KeyStore:        ks,
+		BackendForStore: singleBackendFactory(ks),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 		Identity: []Identity{
 			// Identity[0] is the root (not used by NewIntermediateCA but
 			// required to satisfy len(params.Identity) >= 2).

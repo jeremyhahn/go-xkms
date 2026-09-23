@@ -36,9 +36,6 @@ const (
 
 	// DefaultRequestTimeout is the default per-operation timeout for JSON-RPC requests.
 	DefaultRequestTimeout = 30 * time.Second
-
-	// DefaultPlatform is the default phone platform when not explicitly configured.
-	DefaultPlatform = "android"
 )
 
 // transportTypes provides O(1) constant-time validation of transport types.
@@ -53,9 +50,10 @@ var transportTypes = map[string]struct{}{
 // registered platform verifier.
 type AttestationConfig struct {
 	// Platform identifies the phone platform for attestation verification.
-	// Valid values: "android" (default), "ios" (future).
-	// The platform determines which verifier is used to validate the
-	// attestation certificate chain.
+	// Required — must be set explicitly to "android" or "ios" (future);
+	// there is no default. Validate returns ErrMissingAttestationPlatform
+	// when empty. The platform determines which verifier is used to
+	// validate the attestation certificate chain.
 	Platform string `yaml:"platform" json:"platform"`
 
 	// TrustStore configures which root certificates to trust for chain verification.
@@ -152,9 +150,8 @@ func (c *Config) Validate() error {
 		c.Logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 
-	// Default attestation platform to Android for backward compatibility.
 	if c.Attestation != nil && c.Attestation.Platform == "" {
-		c.Attestation.Platform = DefaultPlatform
+		return ErrMissingAttestationPlatform
 	}
 
 	return nil

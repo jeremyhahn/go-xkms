@@ -78,14 +78,6 @@ type listTenantsResponse struct {
 	Pagination transport.PageResponse `json:"pagination"`
 }
 
-// tenantBarrierStatusResponse represents the barrier status for a tenant.
-type tenantBarrierStatusResponse struct {
-	TenantID       string          `json:"tenant_id"`
-	Sealed         bool            `json:"sealed"`
-	Strategy       seal.StrategyID `json:"strategy,omitempty"`
-	HardwareBacked bool            `json:"hardware_backed"`
-}
-
 // tenantBarrierInitRequest represents a request to initialize a tenant barrier.
 // Passphrase carries the tenant admin's caller-supplied secret; the server
 // never generates it (§3.6). Strategy selects the seal strategy (empty means
@@ -104,26 +96,33 @@ type tenantBarrierUnsealRequest struct {
 }
 
 // TenantHandlers provides REST handlers for tenant management and
-// per-tenant barrier operations. Tenants are registered in the
-// BarrierRegistry and each receives an isolated TenantBarrier that
-// scopes all storage operations to the tenant's namespace.
+// per-tenant barrier operations. All tenant CRUD and barrier operations route
+// through xkmsService (which requires go-qrdb's composed TenantService);
+// registry is used only for the supplementary live-sealed-state read
+// tenantSealed needs. Tenants are registered in the BarrierRegistry and each
+// receives an isolated TenantBarrier that scopes all storage operations to
+// the tenant's namespace.
 type TenantHandlers struct {
 	registry    *seal.BarrierRegistry
 	xkmsService *xkms.XKMSService
 }
 
-// NewTenantHandlers creates a new TenantHandlers instance.
-// The registry must not be nil. svc is the injected XKMS service used by
-// barrier-init and barrier-unseal operations.
-func NewTenantHandlers(registry *seal.BarrierRegistry, svc *xkms.XKMSService) *TenantHandlers {
-	return &TenantHandlers{registry: registry, xkmsService: svc}
+// NewTenantHandlers creates a new TenantHandlers instance. registry and svc
+// are both required, and svc must already have a TenantService composed
+// (xkms.XKMSService.SetTenantService) — ErrTenantNotConfigured otherwise.
+// There is no fallback to direct barrier-registry tenant operations.
+func NewTenantHandlers(registry *seal.BarrierRegistry, svc *xkms.XKMSService) (*TenantHandlers, error) {
+	if registry == nil || svc == nil || svc.TenantService() == nil {
+		return nil, ErrTenantNotConfigured
+	}
+	return &TenantHandlers{registry: registry, xkmsService: svc}, nil
 }
 
 // CreateTenantHandler handles POST /tenants requests.
 // It registers a new tenant in the barrier registry, creating an isolated
 // TenantBarrier that scopes all storage operations to the tenant's namespace.
 func (h *TenantHandlers) CreateTenantHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -144,48 +143,28 @@ func (h *TenantHandlers) CreateTenantHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Preferred path: delegate to the XKMS service, which routes through
-	// go-qrdb's TenantService so the requested isolation mode and the
-	// system-managed auto-unseal key-management mode are entitlement-gated and
-	// the per-tenant barrier is sealed by the composed hardware strategies. The
-	// registry fallback below preserves the legacy sealed-shell behavior when no
-	// service is wired.
-	if h.xkmsService != nil {
-		createResp, err := h.xkmsService.CreateTenant(r.Context(), &transport.CreateTenantRequest{
-			ID:                req.ID,
-			Name:              req.Name,
-			IsolationType:     transport.TenantIsolationType(req.IsolationType),
-			BarrierAutoUnseal: req.BarrierAutoUnseal,
-		})
-		if err != nil {
-			handleTenantError(w, err)
-			return
-		}
-		writeJSON(w, wrappedTenantResponse{
-			Tenant: tenantInfoResponse{
-				ID:            createResp.Tenant.ID,
-				Name:          createResp.Tenant.Name,
-				Sealed:        h.tenantSealed(req.ID),
-				IsolationType: string(createResp.Tenant.IsolationType),
-			},
-		}, http.StatusCreated)
-		return
-	}
-
-	tb, err := h.registry.RegisterTenant(req.ID)
+	// Delegate to the XKMS service, which routes through go-qrdb's
+	// TenantService so the requested isolation mode and the system-managed
+	// auto-unseal key-management mode are entitlement-gated and the per-tenant
+	// barrier is sealed by the composed hardware strategies.
+	createResp, err := h.xkmsService.CreateTenant(r.Context(), &transport.CreateTenantRequest{
+		ID:                req.ID,
+		Name:              req.Name,
+		IsolationType:     transport.TenantIsolationType(req.IsolationType),
+		BarrierAutoUnseal: req.BarrierAutoUnseal,
+	})
 	if err != nil {
 		handleTenantError(w, err)
 		return
 	}
-
-	resp := wrappedTenantResponse{
+	writeJSON(w, wrappedTenantResponse{
 		Tenant: tenantInfoResponse{
-			ID:     req.ID,
-			Name:   req.Name,
-			Sealed: tb.IsSealed(),
+			ID:            createResp.Tenant.ID,
+			Name:          createResp.Tenant.Name,
+			Sealed:        h.tenantSealed(req.ID),
+			IsolationType: string(createResp.Tenant.IsolationType),
 		},
-	}
-	writeJSON(w, resp, http.StatusCreated)
+	}, http.StatusCreated)
 }
 
 // tenantSealed reports the live sealed state of a tenant's barrier. Prefix-
@@ -207,7 +186,7 @@ func (h *TenantHandlers) tenantSealed(tenantID string) bool {
 // Tenant-scoped identities see only their own tenant; system-level
 // identities (SO) see all tenants.
 func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -216,46 +195,26 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 
 	tenants := make([]tenantInfoResponse, 0)
 
-	// Preferred path: list through the XKMS tenant service so prefix-isolated
-	// (default) tenants — which are not in the barrier registry — are included,
+	// List through the XKMS tenant service so prefix-isolated (default)
+	// tenants — which are not in the barrier registry — are included,
 	// consistent with the create/get paths.
-	if h.xkmsService != nil {
-		listResp, err := h.xkmsService.ListTenants(r.Context())
-		if err != nil {
-			handleTenantError(w, err)
-			return
-		}
-		for _, ti := range listResp.Tenants {
-			if identity != nil && !auth.IsCrossTenant(identity) && ti.ID != identity.TenantID {
-				continue
-			}
-			tenants = append(tenants, tenantInfoResponse{
-				ID:            ti.ID,
-				Name:          ti.Name,
-				Sealed:        h.tenantSealed(ti.ID),
-				IsolationType: string(ti.IsolationType),
-			})
-		}
-		sort.Slice(tenants, func(i, j int) bool { return tenants[i].ID < tenants[j].ID })
-	} else {
-		ids := h.registry.ListTenants()
-		sort.Strings(ids)
-		for _, id := range ids {
-			// If identity is tenant-scoped, only include the caller's own tenant
-			if identity != nil && !auth.IsCrossTenant(identity) && id != identity.TenantID {
-				continue
-			}
-
-			tb, err := h.registry.Tenant(id)
-			if err != nil {
-				continue
-			}
-			tenants = append(tenants, tenantInfoResponse{
-				ID:     id,
-				Sealed: tb.IsSealed(),
-			})
-		}
+	listResp, err := h.xkmsService.ListTenants(r.Context())
+	if err != nil {
+		handleTenantError(w, err)
+		return
 	}
+	for _, ti := range listResp.Tenants {
+		if identity != nil && !auth.IsCrossTenant(identity) && ti.ID != identity.TenantID {
+			continue
+		}
+		tenants = append(tenants, tenantInfoResponse{
+			ID:            ti.ID,
+			Name:          ti.Name,
+			Sealed:        h.tenantSealed(ti.ID),
+			IsolationType: string(ti.IsolationType),
+		})
+	}
+	sort.Slice(tenants, func(i, j int) bool { return tenants[i].ID < tenants[j].ID })
 
 	pageReq := parsePageRequest(r)
 	paged, pageResp := applyPagination(tenants, pageReq)
@@ -272,7 +231,7 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 // Tenant-scoped identities can only access their own tenant; cross-tenant
 // access returns 404 to prevent tenant enumeration.
 func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -290,42 +249,23 @@ func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Preferred path: the XKMS tenant service is the source of truth for ALL
-	// tenants. Prefix-isolated (default) tenants share the system store and are
-	// NOT registered in the barrier registry, so the registry-only lookup below
-	// would 404 them even though CreateTenant persisted their metadata. Read
-	// through the same service the write path uses to keep create→get
-	// consistent.
-	if h.xkmsService != nil {
-		getResp, err := h.xkmsService.GetTenant(r.Context(), tenantID)
-		if err != nil {
-			handleTenantError(w, err)
-			return
-		}
-		writeJSON(w, wrappedTenantResponse{
-			Tenant: tenantInfoResponse{
-				ID:            getResp.Tenant.ID,
-				Name:          getResp.Tenant.Name,
-				Sealed:        h.tenantSealed(tenantID),
-				IsolationType: string(getResp.Tenant.IsolationType),
-			},
-		}, http.StatusOK)
-		return
-	}
-
-	tb, err := h.registry.Tenant(tenantID)
+	// The XKMS tenant service is the source of truth for ALL tenants.
+	// Prefix-isolated (default) tenants share the system store and are NOT
+	// registered in the barrier registry, so a registry-only lookup would
+	// 404 them even though CreateTenant persisted their metadata.
+	getResp, err := h.xkmsService.GetTenant(r.Context(), tenantID)
 	if err != nil {
 		handleTenantError(w, err)
 		return
 	}
-
-	resp := wrappedTenantResponse{
+	writeJSON(w, wrappedTenantResponse{
 		Tenant: tenantInfoResponse{
-			ID:     tb.TenantID(),
-			Sealed: tb.IsSealed(),
+			ID:            getResp.Tenant.ID,
+			Name:          getResp.Tenant.Name,
+			Sealed:        h.tenantSealed(tenantID),
+			IsolationType: string(getResp.Tenant.IsolationType),
 		},
-	}
-	writeJSON(w, resp, http.StatusOK)
+	}, http.StatusOK)
 }
 
 // DeleteTenantHandler handles DELETE /tenants/{id} requests.
@@ -333,7 +273,7 @@ func (h *TenantHandlers) GetTenantHandler(w http.ResponseWriter, r *http.Request
 // Tenant-scoped identities can only delete their own tenant; cross-tenant
 // access returns 404 to prevent tenant enumeration.
 func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -351,23 +291,13 @@ func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Preferred path: delete through the XKMS tenant service so prefix-isolated
-	// tenants (absent from the barrier registry) are removed, consistent with
-	// the create/get/list paths.
-	if h.xkmsService != nil {
-		if err := h.xkmsService.DeleteTenant(r.Context(), tenantID); err != nil {
-			handleTenantError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	if err := h.registry.UnregisterTenant(tenantID); err != nil {
+	// Delete through the XKMS tenant service so prefix-isolated tenants
+	// (absent from the barrier registry) are removed, consistent with the
+	// create/get/list paths.
+	if err := h.xkmsService.DeleteTenant(r.Context(), tenantID); err != nil {
 		handleTenantError(w, err)
 		return
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -377,7 +307,7 @@ func (h *TenantHandlers) DeleteTenantHandler(w http.ResponseWriter, r *http.Requ
 // own seal state, strategy, and hardware-backed flag.
 // Tenant-scoped identities can only view their own tenant's barrier status.
 func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -395,29 +325,12 @@ func (h *TenantHandlers) TenantBarrierStatusHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Preferred path: the servicer surfaces the full per-tenant status
-	// (initialized flag, active strategy, hardware-backing, Shamir quorum).
-	if h.xkmsService != nil {
-		resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
-		if err != nil {
-			handleTenantError(w, err)
-			return
-		}
-		writeJSON(w, resp, http.StatusOK)
-		return
-	}
-
-	status, err := h.registry.TenantStatus(tenantID)
+	// The servicer surfaces the full per-tenant status (initialized flag,
+	// active strategy, hardware-backing, Shamir quorum).
+	resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
 	if err != nil {
 		handleTenantError(w, err)
 		return
-	}
-
-	resp := tenantBarrierStatusResponse{
-		TenantID:       tenantID,
-		Sealed:         status.Sealed,
-		Strategy:       status.Strategy,
-		HardwareBacked: status.HardwareBacked,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -486,7 +399,7 @@ func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *htt
 // unsealed state after initialization.
 // Tenant-scoped identities can only initialize their own tenant's barrier.
 func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -513,10 +426,6 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 	// Route through the service layer so the §3.6 invariant (the server never
 	// generates a tenant secret) is enforced in exactly one place. The
 	// passphrase is taken verbatim from the caller's request.
-	if h.xkmsService == nil {
-		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
-		return
-	}
 	if err := h.xkmsService.TenantBarrierInit(r.Context(), &transport.TenantBarrierInitRequest{
 		TenantID:   tenantID,
 		Passphrase: []byte(req.Passphrase),
@@ -528,17 +437,10 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	status, err := h.registry.TenantStatus(tenantID)
+	resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
 	if err != nil {
 		handleTenantError(w, err)
 		return
-	}
-
-	resp := tenantBarrierStatusResponse{
-		TenantID:       tenantID,
-		Sealed:         status.Sealed,
-		Strategy:       status.Strategy,
-		HardwareBacked: status.HardwareBacked,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -549,7 +451,7 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 // barrier must have been previously initialized.
 // Tenant-scoped identities can only unseal their own tenant's barrier.
 func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *http.Request) {
-	if h.registry == nil {
+	if h.xkmsService == nil {
 		writeError(w, ErrTenantNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -576,10 +478,6 @@ func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *ht
 	// Route through the service layer; the unseal credentials are taken
 	// verbatim from the caller's request (Key for passphrase strategies, Share
 	// for shamir). The server holds no tenant secret of its own.
-	if h.xkmsService == nil {
-		writeError(w, xkms.ErrNotInitialized, http.StatusServiceUnavailable)
-		return
-	}
 	if err := h.xkmsService.TenantBarrierUnseal(r.Context(), &transport.TenantBarrierUnsealRequest{
 		TenantID: tenantID,
 		Key:      req.Key,
@@ -589,17 +487,10 @@ func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	status, err := h.registry.TenantStatus(tenantID)
+	resp, err := h.xkmsService.TenantBarrierStatus(r.Context(), tenantID)
 	if err != nil {
 		handleTenantError(w, err)
 		return
-	}
-
-	resp := tenantBarrierStatusResponse{
-		TenantID:       tenantID,
-		Sealed:         status.Sealed,
-		Strategy:       status.Strategy,
-		HardwareBacked: status.HardwareBacked,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }

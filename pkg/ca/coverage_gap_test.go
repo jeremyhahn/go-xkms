@@ -320,13 +320,13 @@ func TestRevokeCert_NotInitialized(t *testing.T) {
 // ca_extensions.go — loadPersistedRevocations (70%) — corrupt record path
 // =============================================================================
 
-// This exercises the corrupt-unmarshal branch by inserting junk blobs into the
-// revocationStore via the objectStore path.
+// This exercises the corrupt-unmarshal branch by inserting a junk blob
+// directly into revocationStore, the sole persistence medium.
 func TestLoadPersistedRevocations_CorruptBlob(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
+	ca := setupTestCA(t)
 	// Insert a non-JSON blob under the revocation key prefix.
 	key := revocationKeyPrefix + "badrecord.json"
-	require.NoError(t, ca.objectStore.Put(key, &stubReader{data: []byte("not-json")}))
+	require.NoError(t, ca.revocationStore.Put(context.Background(), key, []byte("not-json")))
 	// loadPersistedRevocations should log+skip, not return an error.
 	err := ca.loadPersistedRevocations(context.Background())
 	assert.NoError(t, err)
@@ -350,12 +350,13 @@ func (s *stubReader) Read(p []byte) (n int, err error) {
 func (s *stubReader) Close() error { return nil }
 
 // =============================================================================
-// ca_extensions.go — listRevocationBlobs (76%) — objectStore path
+// ca_extensions.go — listRevocationBlobs (76%) — revocationStore path
 // =============================================================================
 
-func TestListRevocationBlobs_ObjectStorePath(t *testing.T) {
+func TestListRevocationBlobs_RevocationStorePath(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	// Revoke a cert to trigger blob write via objectStore path.
+	// Revoke a cert to trigger a blob write; objectStore is configured but
+	// unused for revocation persistence.
 	require.NoError(t, ca.Revoke(context.Background(), big.NewInt(77777), 0))
 	blobs, err := ca.listRevocationBlobs(context.Background())
 	require.NoError(t, err)
@@ -370,21 +371,16 @@ func TestListRevocationBlobs_EmptyStores(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob (80%) — objectStore path
+// ca_extensions.go — putRevocationBlob: revocationStore is the sole
+// persistence medium, whether or not an objectStore is also configured
 // =============================================================================
 
-func TestPutRevocationBlob_ObjectStorePath(t *testing.T) {
+func TestPutRevocationBlob_PersistsThroughRevocationStore(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
-	persisted, err := ca.putRevocationBlob(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`))
+	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(88888), []byte(`{"serial":"88888"}`)))
+	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(88888))+".json")
 	require.NoError(t, err)
-	assert.True(t, persisted)
-}
-
-func TestPutRevocationBlob_NoStoreReturnsFalse(t *testing.T) {
-	ca := setupTestCA(t)
-	persisted, err := ca.putRevocationBlob(context.Background(), big.NewInt(99999), []byte(`{}`))
-	require.NoError(t, err)
-	assert.False(t, persisted)
+	assert.Equal(t, []byte(`{"serial":"88888"}`), got)
 }
 
 // =============================================================================

@@ -273,7 +273,6 @@ func TestBuildTLSConfig_CABacked(t *testing.T) {
 					Subject: ca.Subject{
 						CommonName: "Test Root CA",
 					},
-					KeystoreType: types.StoreSoftware,
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -352,7 +351,6 @@ func TestBuildTLSConfig_CATLSCertificateError(t *testing.T) {
 					Subject: ca.Subject{
 						CommonName: "Test Root CA",
 					},
-					KeystoreType: types.StoreSoftware,
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,

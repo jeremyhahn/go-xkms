@@ -183,7 +183,7 @@ extraExtensions := []pkix.Extension{
 
     // Trusted Platform extensions
     CreateTPKeyStoreExtension("TPM2"),
-    CreateTPIssuerKeyStoreExtension(signingIdentity.KeystoreType),
+    CreateTPIssuerKeyStoreExtension(signingIdentity.GetStoreType()),
 }
 ```
 

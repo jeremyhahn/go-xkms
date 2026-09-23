@@ -845,18 +845,17 @@ func (a *Authenticator) isPINSetLocked() bool {
 	return a.state.PINSet
 }
 
-// verifyPINHashLocked verifies a FIDO2 PIN hash against the stored PIN.
-// Delegates to PINVerifier.VerifyFIDO2Hash when available, falls back to
-// constant-time comparison against a.state.PINHash for standalone mode
-// or lazy-init scenarios where the verifier may not have the hash yet.
+// verifyPINHashLocked verifies a FIDO2 PIN hash against the stored PIN. When
+// a PINVerifier is configured its result is authoritative and final — a
+// negative result is never re-checked against a.state.PINHash, which could
+// be stale relative to the PIN system's own source of truth. The local
+// constant-time comparison against a.state.PINHash is the verification
+// mechanism only for standalone mode (no PINVerifier configured, e.g. tests
+// and offline authenticators), not a fallback for a verifier's failure.
 // Must be called with a.mu already held (Lock or RLock).
 func (a *Authenticator) verifyPINHashLocked(hash []byte) bool {
 	if a.pinVerifier != nil {
-		if a.pinVerifier.VerifyFIDO2Hash(hash) {
-			return true
-		}
-		// Verifier failed — fall through to local hash comparison for
-		// backward compatibility during lazy-init or sync race scenarios.
+		return a.pinVerifier.VerifyFIDO2Hash(hash)
 	}
 	if len(a.state.PINHash) == 0 || len(hash) == 0 {
 		return false

@@ -6,9 +6,14 @@ go-xkms CA supports routing each key in a CA identity's `Keys` slice to a
 different backend — software PKCS#8, TPM 2.0, or PKCS#11 — within the same
 CA instance. This is called per-key keystore routing.
 
-The model is additive and fully backward-compatible. Callers that do not
-supply a `BackendForStoreFunc` continue to use the legacy single-keystore
-path with no behavior change.
+**BREAKING**: `BackendForStoreFunc` is required on every CA constructor
+(`New`, `NewParentCA`, `NewIntermediateCA`, `NewCA`,
+`NewFromMultiIdentityConfig`, `NewHierarchicalCA`). There is no fallback to
+a single shared `KeyStore` for every `StoreType`; a caller that omits
+`BackendForStore` gets `ErrBackendForStoreRequired` at construction. A
+caller with one uniform backend for every key supplies a factory that
+returns it for every `StoreType` — an explicit, visible choice in the
+caller's own code rather than an implicit default.
 
 ## Key Routing Model
 
@@ -127,7 +132,7 @@ type BackendForStoreFunc func(cn string, storeType types.StoreType) (xkms.Backen
 ```
 
 Supply a `BackendForStoreFunc` via `Params.BackendForStore` (or
-`MultiIdentityParams.BackendForStore`) to activate per-key routing.
+`MultiIdentityParams.BackendForStore`); it is required, not optional.
 
 The CA calls the function **once per unique `StoreType`** found in the
 identity's `Keys` slice and caches the result in an internal
@@ -152,14 +157,22 @@ authority, err := ca.NewWithParams(ca.Params{
 })
 ```
 
-## Backward-Compatible Fallback
+## A Single Uniform Backend
 
-When `Params.BackendForStore` is nil:
+There is no implicit fallback to `Params.KeyStore` for every `StoreType`. A
+caller whose CA identity only ever uses one backend supplies a trivial
+factory that ignores `storeType` and returns that one backend:
 
-- `keystoreMap` is not populated.
-- Every key resolves to `Params.KeyStore` (the single injected backend).
-- Behavior is identical to the legacy single-keystore path — no changes
-  required for existing callers.
+```go
+backendForStore := func(cn string, storeType types.StoreType) (xkms.Backend, error) {
+    return softwareBackend, nil
+}
+```
+
+This keeps the choice explicit and visible in the caller's own
+composition root rather than an implicit default `pkg/ca` supplies. Passing
+`nil` for `Params.BackendForStore` (or `MultiIdentityParams.BackendForStore`)
+returns `ErrBackendForStoreRequired`.
 
 ## Worked YAML Example
 
@@ -182,7 +195,6 @@ certificate-authority:
       valid: 20
       key-algorithm: RSA
       key-size: 4096
-      keystore-type: software
       is-root: true
       keystores:
         software:
@@ -194,7 +206,6 @@ certificate-authority:
         organization: "Example Corp"
         country: "US"
       valid: 10
-      keystore-type: software   # drives Keys[0] when keystores: is also set
       keystores:
         software:
           password: "${INT_CA_SW_PASSWORD}"  # fallback for software keys

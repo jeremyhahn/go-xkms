@@ -18937,14 +18937,17 @@ func (x *SSHSignResponse) GetBlob() []byte {
 
 // SSHPin is the transport-safe representation of a host-key pin.
 type SSHPin struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Scope         string                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
-	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
-	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
-	Fingerprint   string                 `protobuf:"bytes,4,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
-	Algorithm     string                 `protobuf:"bytes,5,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
-	AddedAt       *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
-	Source        string                 `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Scope       string                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Owner       string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	Host        string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
+	Fingerprint string                 `protobuf:"bytes,4,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
+	Algorithm   string                 `protobuf:"bytes,5,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	AddedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=added_at,json=addedAt,proto3" json:"added_at,omitempty"`
+	Source      string                 `protobuf:"bytes,7,opt,name=source,proto3" json:"source,omitempty"`
+	// public_key is the authorized_keys-format line of the pinned host key.
+	// Every pin carries the full key; there is no fingerprint-only form.
+	PublicKey     string `protobuf:"bytes,8,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -19028,14 +19031,25 @@ func (x *SSHPin) GetSource() string {
 	return ""
 }
 
+func (x *SSHPin) GetPublicKey() string {
+	if x != nil {
+		return x.PublicKey
+	}
+	return ""
+}
+
 type SSHAddKnownHostRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Scope         string                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
-	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
-	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
-	Fingerprint   string                 `protobuf:"bytes,4,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
-	Algorithm     string                 `protobuf:"bytes,5,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
-	Source        string                 `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Scope       string                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Owner       string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	Host        string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
+	Fingerprint string                 `protobuf:"bytes,4,opt,name=fingerprint,proto3" json:"fingerprint,omitempty"`
+	Algorithm   string                 `protobuf:"bytes,5,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	Source      string                 `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`
+	// public_key is the authorized_keys-format line of the host key being
+	// pinned (e.g. "ssh-ed25519 AAAA..."). Required — the known_hosts store no
+	// longer accepts a fingerprint-only pin.
+	PublicKey     string `protobuf:"bytes,7,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -19108,6 +19122,13 @@ func (x *SSHAddKnownHostRequest) GetAlgorithm() string {
 func (x *SSHAddKnownHostRequest) GetSource() string {
 	if x != nil {
 		return x.Source
+	}
+	return ""
+}
+
+func (x *SSHAddKnownHostRequest) GetPublicKey() string {
+	if x != nil {
+		return x.PublicKey
 	}
 	return ""
 }
@@ -21278,7 +21299,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x06digest\x18\x02 \x01(\fR\x06digest\"=\n" +
 	"\x0fSSHSignResponse\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\tR\x06format\x12\x12\n" +
-	"\x04blob\x18\x02 \x01(\fR\x04blob\"\xd7\x01\n" +
+	"\x04blob\x18\x02 \x01(\fR\x04blob\"\xf6\x01\n" +
 	"\x06SSHPin\x12\x14\n" +
 	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x12\n" +
@@ -21286,14 +21307,18 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\vfingerprint\x18\x04 \x01(\tR\vfingerprint\x12\x1c\n" +
 	"\talgorithm\x18\x05 \x01(\tR\talgorithm\x125\n" +
 	"\badded_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\aaddedAt\x12\x16\n" +
-	"\x06source\x18\a \x01(\tR\x06source\"\xb0\x01\n" +
+	"\x06source\x18\a \x01(\tR\x06source\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\b \x01(\tR\tpublicKey\"\xcf\x01\n" +
 	"\x16SSHAddKnownHostRequest\x12\x14\n" +
 	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x12\n" +
 	"\x04host\x18\x03 \x01(\tR\x04host\x12 \n" +
 	"\vfingerprint\x18\x04 \x01(\tR\vfingerprint\x12\x1c\n" +
 	"\talgorithm\x18\x05 \x01(\tR\talgorithm\x12\x16\n" +
-	"\x06source\x18\x06 \x01(\tR\x06source\"F\n" +
+	"\x06source\x18\x06 \x01(\tR\x06source\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\a \x01(\tR\tpublicKey\"F\n" +
 	"\x18SSHListKnownHostsRequest\x12\x14\n" +
 	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\"@\n" +

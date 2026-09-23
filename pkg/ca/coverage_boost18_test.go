@@ -22,6 +22,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -52,9 +53,11 @@ func TestNewHierarchicalCA_InvalidConfig_B18(t *testing.T) {
 	// the underlying error (not necessarily ErrInvalidConfig itself) surfaces
 	// unwrapped from NewHierarchicalCA.
 	_, err := NewHierarchicalCA(&MultiIdentityParams{
-		Config:    &MultiIdentityCAConfig{},
-		KeyStore:  backend,
-		CertStore: cs,
+		Config:          &MultiIdentityCAConfig{},
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	})
 	require.Error(t, err)
 }
@@ -70,9 +73,11 @@ func TestNewHierarchicalCA_PreservesFullTopology_B18(t *testing.T) {
 	cfg := clusterTestConfig()
 
 	got, err := NewHierarchicalCA(&MultiIdentityParams{
-		Config:    cfg,
-		KeyStore:  backend,
-		CertStore: cs,
+		Config:          cfg,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, got)
@@ -114,6 +119,7 @@ func TestNewHierarchicalCA_WithBackendForStore_B18(t *testing.T) {
 	got, err := NewHierarchicalCA(&MultiIdentityParams{
 		Config:          cfg,
 		KeyStore:        backend,
+		RevocationStore: storage.NewMemory(),
 		CertStore:       cs,
 		BackendForStore: factory,
 	})
@@ -143,6 +149,7 @@ func TestNewHierarchicalCA_BackendForStoreError_B18(t *testing.T) {
 	_, err := NewHierarchicalCA(&MultiIdentityParams{
 		Config:          cfg,
 		KeyStore:        backend,
+		RevocationStore: storage.NewMemory(),
 		CertStore:       cs,
 		BackendForStore: factory,
 	})
@@ -162,11 +169,13 @@ func TestNewHierarchicalCA_CustomSerialGenAndProfiles_B18(t *testing.T) {
 	customProfiles := NewDefaultProfileRegistry()
 
 	got, err := NewHierarchicalCA(&MultiIdentityParams{
-		Config:    cfg,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: customSerialGen,
-		Profiles:  customProfiles,
+		Config:          cfg,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       customSerialGen,
+		Profiles:        customProfiles,
 	})
 	require.NoError(t, err)
 	caImpl, ok := got.(*CA)

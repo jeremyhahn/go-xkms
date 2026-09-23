@@ -84,6 +84,11 @@ type Pin struct {
 	Algorithm   string    `json:"algorithm,omitempty"`
 	AddedAt     time.Time `json:"added_at"`
 	Source      string    `json:"source,omitempty"`
+
+	// PublicKey is the authorized_keys-format line of the pinned host key.
+	// Required on every pin created via AddKnownHostRequest — the known_hosts
+	// store no longer accepts or trusts a fingerprint-only pin.
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 // AuthorizedEntry is the transport-safe representation of an
@@ -156,7 +161,10 @@ type ExportRequest struct {
 	Name  string `json:"name"`
 }
 
-// AddKnownHostRequest persists a new host-key pin.
+// AddKnownHostRequest persists a new host-key pin. PublicKey is required —
+// the known_hosts store no longer accepts a fingerprint-only pin. Fingerprint
+// and Algorithm, when supplied, are validated against PublicKey rather than
+// trusted on their own.
 type AddKnownHostRequest struct {
 	Scope       string `json:"scope"`
 	Owner       string `json:"owner"`
@@ -164,6 +172,10 @@ type AddKnownHostRequest struct {
 	Fingerprint string `json:"fingerprint"`
 	Algorithm   string `json:"algorithm,omitempty"`
 	Source      string `json:"source,omitempty"`
+
+	// PublicKey is the authorized_keys-format line of the host key being
+	// pinned (e.g. "ssh-ed25519 AAAA...").
+	PublicKey string `json:"public_key"`
 }
 
 // ListKnownHostsRequest enumerates pins.

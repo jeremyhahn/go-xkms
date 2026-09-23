@@ -17,7 +17,6 @@
 package ca
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -143,7 +142,7 @@ func TestLoadRevocationFromStore_ValidRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	key := revocationKey(serial) + ".json"
-	require.NoError(t, ca.objectStore.Put(key, bytes.NewReader(data)))
+	require.NoError(t, ca.revocationStore.Put(context.Background(), key, data))
 
 	loaded, err := resp.loadRevocationFromStore(context.Background(), serial)
 	require.NoError(t, err)
@@ -645,7 +644,8 @@ func TestProfileRegistry_CaseInsensitive(t *testing.T) {
 }
 
 // =============================================================================
-// listRevocationBlobs — object-store path
+// listRevocationBlobs — revocationStore is the sole source, objectStore
+// entries are never consulted
 // =============================================================================
 
 func TestListRevocationBlobs_WithObjectStore_Empty_B3(t *testing.T) {
@@ -655,14 +655,18 @@ func TestListRevocationBlobs_WithObjectStore_Empty_B3(t *testing.T) {
 	assert.Empty(t, blobs)
 }
 
-func TestListRevocationBlobs_WithObjectStore_OneEntry_B3(t *testing.T) {
+// TestListRevocationBlobs_ObjectStoreEntryIgnored_B3 proves an entry written
+// directly to objectStore under the revocation key prefix is not surfaced by
+// listRevocationBlobs: the deleted objectStore fallback is gone, not merely
+// unreachable through some other path.
+func TestListRevocationBlobs_ObjectStoreEntryIgnored_B3(t *testing.T) {
 	ca := setupTestCAWithObjectStore(t)
 	key := revocationKeyPrefix + "test-serial.json"
 	require.NoError(t, ca.objectStore.Put(key, strings.NewReader(`{"serial":"01"}`)))
 
 	blobs, err := ca.listRevocationBlobs(context.Background())
 	require.NoError(t, err)
-	assert.Len(t, blobs, 1)
+	assert.Empty(t, blobs, "objectStore entries must not be surfaced")
 }
 
 // =============================================================================

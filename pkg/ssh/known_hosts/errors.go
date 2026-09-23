@@ -37,6 +37,20 @@ func (e *NoPublicKeyError) Error() string {
 	return "ssh/known_hosts: pin for host " + e.Host + " has no public key to emit"
 }
 
+// LegacyPinError is returned by Get / Verify / List when a stored pin
+// predates envelope v2 (it carries a fingerprint but no full SSH wire-format
+// public key). Fingerprint-only matching is no longer supported: the host
+// must be re-pinned (Remove then Add with a current PinFromPublicKey) so the
+// full key is on file.
+type LegacyPinError struct {
+	Host string
+}
+
+// Error implements the error interface.
+func (e *LegacyPinError) Error() string {
+	return "ssh/known_hosts: pin for host " + e.Host + " predates full-key storage (v1) and must be re-pinned"
+}
+
 // NotFoundError is returned by Get / Verify / Remove when no pin exists
 // for the requested (scope, owner, host).
 type NotFoundError struct {
@@ -107,6 +121,18 @@ type InvalidHostError struct {
 // Error implements the error interface.
 func (e *InvalidHostError) Error() string {
 	return "ssh/known_hosts: invalid host: " + e.Reason
+}
+
+// PublicKeyRequiredError is returned by Store.Add when pin carries no
+// PublicKey. Every new pin must carry the full SSH wire-format host key —
+// fingerprint-only pins can no longer be created.
+type PublicKeyRequiredError struct {
+	Host string
+}
+
+// Error implements the error interface.
+func (e *PublicKeyRequiredError) Error() string {
+	return "ssh/known_hosts: pin for host " + e.Host + " requires a public key"
 }
 
 // InvalidFingerprintError is returned when a fingerprint string does not

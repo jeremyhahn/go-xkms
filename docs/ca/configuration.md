@@ -62,15 +62,15 @@ type Identity struct {
     // Hash algorithm (SHA-256, SHA-384, SHA-512)
     Hash string `yaml:"hash"`
 
-    // XKMS backend type (software, tpm2, pkcs11)
-    KeystoreType string `yaml:"keystore-type"`
-
-    // Multi-key support
+    // Multi-key support. Each key names its own backend via its `store`
+    // field (software, tpm2, pkcs11, ...); there is no identity-level
+    // KeystoreType field. GetStoreType() reports Keys[0].StoreType.
     Keys []*types.KeyConfig `yaml:"keys"`
 
-    // Per-identity keystore configurations. Nil => legacy single-backend
-    // path (uses scalar KeystoreType). Non-nil => per-key routing: each
-    // key in Keys is routed to the backend matching its StoreType.
+    // Per-backend settings (SRK handle, PIN, password, platform policy)
+    // for the backends this identity's Keys[*].StoreType name. Optional; a
+    // nil (or nil sub-field) entry means that backend uses its zero-value
+    // settings, not that the backend goes unused.
     Keystores *CAKeystoresConfig `yaml:"keystores,omitempty"`
 
     // Whether this is the root CA
@@ -140,7 +140,6 @@ certificate-authority:
       valid: 10  # 10 years
       key-algorithm: RSA
       key-size: 4096
-      keystore-type: software
       is-root: true
 
     # Intermediate CA (index 1)
@@ -151,7 +150,6 @@ certificate-authority:
       valid: 5  # 5 years
       key-algorithm: ECDSA
       ecc-curve: P-256
-      keystore-type: software
 ```
 
 ### Production Configuration with TPM
@@ -177,7 +175,6 @@ certificate-authority:
       valid: 20
       key-algorithm: RSA
       key-size: 4096
-      keystore-type: tpm2
       is-root: true
       keystores:
         tpm2:
@@ -200,7 +197,6 @@ certificate-authority:
       valid: 10
       key-algorithm: ECDSA
       ecc-curve: P-256
-      keystore-type: tpm2
       keys:
         # TPM-backed ECDSA (primary)
         - algorithm: ECDSA
@@ -244,7 +240,6 @@ certificate-authority:
       valid: 25
       key-algorithm: ECDSA
       ecc-curve: P-384
-      keystore-type: pkcs11
       is-root: true
       keystores:
         pkcs11:
@@ -263,7 +258,6 @@ certificate-authority:
       valid: 10
       key-algorithm: ECDSA
       ecc-curve: P-256
-      keystore-type: pkcs11
       keystores:
         pkcs11:
           library: /usr/lib/softhsm/libsofthsm2.so
@@ -375,7 +369,6 @@ hash: SHA-256
 ### Software (PKCS#8)
 
 ```yaml
-keystore-type: software
 keystores:
   software:
     password: "${KEY_PASSWORD}"
@@ -390,7 +383,6 @@ keystores:
 ### TPM 2.0
 
 ```yaml
-keystore-type: tpm2
 keystores:
   tpm2:
     srk-handle: 0x81000001
@@ -407,7 +399,6 @@ keystores:
 ### PKCS#11 (HSM)
 
 ```yaml
-keystore-type: pkcs11
 keystores:
   pkcs11:
     library: /usr/lib/pkcs11/libsofthsm2.so
@@ -501,7 +492,6 @@ func DefaultConfig() Config {
                 Valid:        10,
                 KeyAlgorithm: x509.RSA,
                 KeySize:      2048,
-                KeystoreType: "software",
                 IsRoot:       true,
             },
             {
@@ -513,7 +503,6 @@ func DefaultConfig() Config {
                 Valid:        5,
                 KeyAlgorithm: x509.RSA,
                 KeySize:      2048,
-                KeystoreType: "software",
             },
         },
     }

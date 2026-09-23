@@ -86,9 +86,8 @@ func TestCA_PKCS11Key_InitAndSign(t *testing.T) {
 
 	const cn = "PKCS11 Secondary Root CA"
 	id := Identity{
-		Subject:      Subject{CommonName: cn, Organization: "Test Org"},
-		Valid:        DefaultRootValidityYears,
-		KeystoreType: types.StoreSoftware,
+		Subject: Subject{CommonName: cn, Organization: "Test Org"},
+		Valid:   DefaultRootValidityYears,
 		Keys: []*types.KeyConfig{
 			keyConfig(types.AlgorithmECDSA, types.StoreSoftware), // [0] primary (software)
 			keyConfig(types.AlgorithmECDSA, types.StorePKCS11),   // [1] HSM-backed
@@ -102,6 +101,7 @@ func TestCA_PKCS11Key_InitAndSign(t *testing.T) {
 		KeyStore:        swBackend,
 		CertStore:       newInMemoryCertStore(t),
 		BackendForStore: factory,
+		RevocationStore: storage.NewMemory(),
 	}
 
 	root, _, err := NewCA(context.Background(), params)

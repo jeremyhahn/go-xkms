@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -99,8 +100,9 @@ func keyConfig(algo types.KeyAlgorithmString, store types.StoreType) *types.KeyC
 func TestBuildKeystoreMap_NilFactory(t *testing.T) {
 	id := rootIdentity("Nil Factory CA")
 	m, err := buildKeystoreMap(&id, id.Subject.CommonName, nil)
-	require.NoError(t, err)
-	assert.Nil(t, m, "nil factory must yield a nil map (legacy path)")
+	assert.Nil(t, m)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackendForStoreRequired, "nil factory must be rejected: there is no single-keystore fallback")
 }
 
 func TestBuildKeystoreMap_NilIdentity(t *testing.T) {
@@ -109,8 +111,9 @@ func TestBuildKeystoreMap_NilIdentity(t *testing.T) {
 		return nil, nil
 	}
 	m, err := buildKeystoreMap(nil, "cn", factory)
-	require.NoError(t, err)
 	assert.Nil(t, m)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 func TestBuildKeystoreMap_FactoryCalled(t *testing.T) {
@@ -197,41 +200,87 @@ func TestBuildKeystoreMap_FactoryReturnedNil(t *testing.T) {
 func TestResolveKeyBackend_WithMap(t *testing.T) {
 	sw := newInMemoryBackend(t)
 	tpm := newInMemoryBackend(t)
-	fallback := newInMemoryBackend(t)
 	ca := &CA{
-		keyStore: fallback,
 		keystoreMap: map[types.StoreType]xkms.Backend{
 			types.StoreSoftware: sw,
 			types.StoreTPM2:     tpm,
 		},
 	}
-	assert.Same(t, sw, ca.resolveKeyBackend(types.StoreSoftware))
-	assert.Same(t, tpm, ca.resolveKeyBackend(types.StoreTPM2))
-	// A store type absent from the map falls back to the single keyStore.
-	assert.Same(t, fallback, ca.resolveKeyBackend(types.StorePKCS11))
+	got, err := ca.resolveKeyBackend(types.StoreSoftware)
+	require.NoError(t, err)
+	assert.Same(t, sw, got)
+
+	got, err = ca.resolveKeyBackend(types.StoreTPM2)
+	require.NoError(t, err)
+	assert.Same(t, tpm, got)
 }
 
-func TestResolveKeyBackend_Fallback(t *testing.T) {
-	fallback := newInMemoryBackend(t)
-	ca := &CA{keyStore: fallback} // nil keystoreMap == legacy path
-	assert.Same(t, fallback, ca.resolveKeyBackend(types.StoreTPM2))
-	assert.Same(t, fallback, ca.resolveKeyBackend(types.StoreSoftware))
+// TestResolveKeyBackend_MissingStoreType proves a StoreType absent from
+// keystoreMap fails with a typed error instead of silently falling back to
+// a single shared backend.
+func TestResolveKeyBackend_MissingStoreType(t *testing.T) {
+	ca := &CA{
+		keystoreMap: map[types.StoreType]xkms.Backend{
+			types.StoreSoftware: newInMemoryBackend(t),
+		},
+	}
+	got, err := ca.resolveKeyBackend(types.StorePKCS11)
+	assert.Nil(t, got)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrKeyStoreRequired)
 }
 
 // =============================================================================
-// Backward compatibility gate
+// BackendForStore / RevocationStore are mandatory
 // =============================================================================
 
-// TestNewCA_BackwardCompat is the mandatory non-regression gate: an existing
-// single-KeyStore CA (no BackendForStore, no Keystores) must behave identically
-// to before — nil keystoreMap, all key ops routed to the single keyStore, and a
-// fully functional init/sign/issue lifecycle.
-func TestNewCA_BackwardCompat(t *testing.T) {
+// TestNewCA_RequiresBackendForStore is the compat-removal gate: constructing
+// a CA the old single-KeyStore way — no BackendForStore, no per-StoreType
+// routing — now fails with a typed error instead of silently succeeding.
+func TestNewCA_RequiresBackendForStore(t *testing.T) {
 	ks := newInMemoryBackend(t)
 	params := &Params{
-		Identity:  []Identity{rootIdentity("BackwardCompat Root CA")},
-		KeyStore:  ks,
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{rootIdentity("No BackendForStore Root CA")},
+		KeyStore:        ks,
+		CertStore:       newInMemoryCertStore(t),
+		RevocationStore: storage.NewMemory(),
+	}
+
+	_, _, err := NewCA(context.Background(), params)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackendForStoreRequired)
+}
+
+// TestNewCA_RequiresRevocationStore is the compat-removal gate for the
+// revocation persistence fallback: constructing a CA without a
+// RevocationStore now fails with a typed error instead of silently falling
+// back to the object store or in-memory-only tracking.
+func TestNewCA_RequiresRevocationStore(t *testing.T) {
+	ks := newInMemoryBackend(t)
+	params := &Params{
+		Identity:        []Identity{rootIdentity("No RevocationStore Root CA")},
+		KeyStore:        ks,
+		CertStore:       newInMemoryCertStore(t),
+		BackendForStore: singleBackendFactory(ks),
+	}
+
+	_, _, err := NewCA(context.Background(), params)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrRevocationStoreRequired)
+}
+
+// TestNewCA_ExplicitSingleBackend proves the canonical replacement for the
+// deleted fallback: a caller with one uniform backend supplies a
+// BackendForStore factory that returns it for every StoreType, an explicit
+// choice rather than an implicit default, and the CA operates normally.
+func TestNewCA_ExplicitSingleBackend(t *testing.T) {
+	ks := newInMemoryBackend(t)
+	params := &Params{
+		Identity:        []Identity{rootIdentity("Explicit Single Backend Root CA")},
+		KeyStore:        ks,
+		CertStore:       newInMemoryCertStore(t),
+		BackendForStore: singleBackendFactory(ks),
+		RevocationStore: storage.NewMemory(),
 	}
 
 	root, intermediate, err := NewCA(context.Background(), params)
@@ -241,19 +290,15 @@ func TestNewCA_BackwardCompat(t *testing.T) {
 
 	caImpl, ok := root.(*CA)
 	require.True(t, ok)
-
-	// The defining backward-compat invariant: no per-store map, and every
-	// store type resolves to the single injected keyStore.
-	assert.Nil(t, caImpl.keystoreMap, "no BackendForStore => keystoreMap must be nil")
-	assert.Same(t, ks, caImpl.resolveKeyBackend(types.StoreSoftware))
-	assert.Same(t, ks, caImpl.resolveKeyBackend(types.StoreTPM2))
-	assert.Same(t, ks, caImpl.resolveKeyBackend(types.StorePKCS11))
+	got, err := caImpl.resolveKeyBackend(types.StoreSoftware)
+	require.NoError(t, err)
+	assert.Same(t, ks, got)
 
 	// Lifecycle still works end-to-end: the self-signed root cert exists...
 	caCert, err := root.CACertificate()
 	require.NoError(t, err)
 	require.NotNil(t, caCert)
-	assert.Equal(t, "BackwardCompat Root CA", caCert.Subject.CommonName)
+	assert.Equal(t, "Explicit Single Backend Root CA", caCert.Subject.CommonName)
 	assert.Equal(t, caCert.Subject.String(), caCert.Issuer.String())
 
 	// ...and the CA can still issue and verify a leaf certificate.
@@ -291,9 +336,8 @@ func TestInitSecondaryKeys_AllGenerated(t *testing.T) {
 	}
 
 	id := Identity{
-		Subject:      Subject{CommonName: "Multi-Key Root CA", Organization: "Test Org"},
-		Valid:        DefaultRootValidityYears,
-		KeystoreType: types.StoreSoftware, // primary is software
+		Subject: Subject{CommonName: "Multi-Key Root CA", Organization: "Test Org"},
+		Valid:   DefaultRootValidityYears,
 		Keys: []*types.KeyConfig{
 			keyConfig(types.AlgorithmRSA, types.StoreSoftware),   // [0] primary
 			keyConfig(types.AlgorithmRSA, types.StoreTPM2),       // [1] secondary tpm2
@@ -305,9 +349,10 @@ func TestInitSecondaryKeys_AllGenerated(t *testing.T) {
 
 	params := &Params{
 		Identity:        []Identity{id},
-		KeyStore:        sw, // fallback (also software-routed)
+		KeyStore:        sw, // used for TLS/CSR paths, not CA signing key routing
 		CertStore:       newInMemoryCertStore(t),
 		BackendForStore: factory,
+		RevocationStore: storage.NewMemory(),
 	}
 
 	root, _, err := NewCA(context.Background(), params)

@@ -10,6 +10,14 @@
 > described below. See [`ca/multi-keystore.md`](./ca/multi-keystore.md) for the
 > user-facing reference. The consumer-wiring phases (go-trusted-platform /
 > go-quicbaas `BackendForStore` factories) remain follow-on work.
+>
+> **BREAKING (superseding this document's "additive, backward-compatible"
+> framing below)**: the single-keystore fallback this design preserved for
+> callers that left `BackendForStore` nil has been deleted. `BackendForStore`
+> is required on every constructor; `Identity.KeystoreType` no longer exists
+> (`GetStoreType()` now reports `Keys[0].StoreType`). See
+> [`ca/multi-keystore.md`](./ca/multi-keystore.md) for the current contract —
+> this file is kept as the historical design record.
 
 ---
 

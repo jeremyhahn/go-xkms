@@ -72,8 +72,10 @@ type storedEnvelope struct {
 	AddedAt     time.Time `json:"added"`
 	Source      string    `json:"source,omitempty"`
 
-	// PublicKey is the base64 (std) SSH wire-format host key, present from
-	// envelope v2 onward. omitempty keeps v1 pins decoding unchanged.
+	// PublicKey is the base64 (std) SSH wire-format host key. Required from
+	// envelope v2 onward; decodeEnvelope rejects a pre-v2 envelope that
+	// lacks it with *LegacyPinError rather than reconstructing a
+	// fingerprint-only Pin.
 	PublicKey string `json:"pub,omitempty"`
 }
 
@@ -106,6 +108,9 @@ func (s *BackendStore) Add(ctx context.Context, pin *Pin) error {
 	if err := ValidateFingerprint(pin.Fingerprint); err != nil {
 		return err
 	}
+	if len(pin.PublicKey) == 0 {
+		return &PublicKeyRequiredError{Host: pin.Host}
+	}
 
 	// Duplicate check. The backend's Exists is advisory (TOCTOU
 	// window) but Store contract says Add is the explicit-pin path;
@@ -127,9 +132,7 @@ func (s *BackendStore) Add(ctx context.Context, pin *Pin) error {
 		Algorithm:   pin.Algorithm,
 		AddedAt:     pin.AddedAt,
 		Source:      pin.Source,
-	}
-	if len(pin.PublicKey) > 0 {
-		env.PublicKey = base64.StdEncoding.EncodeToString(pin.PublicKey)
+		PublicKey:   base64.StdEncoding.EncodeToString(pin.PublicKey),
 	}
 	if env.AddedAt.IsZero() {
 		env.AddedAt = time.Now().UTC()
@@ -181,6 +184,15 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 	scanErr := s.backend.Scan(ctx, prefix, func(_ string, value []byte) error {
 		pin, perr := decodeEnvelope(value)
 		if perr != nil {
+			// A single unmatchable legacy (pre-v2) pin must not block
+			// listing every other pin in scope — List is the discovery
+			// path an operator uses to find which hosts still need
+			// re-pinning, so it skips rather than aborts. Get and Verify
+			// (single-host lookups) still fail closed on the same pin.
+			var legacy *LegacyPinError
+			if errors.As(perr, &legacy) {
+				return nil
+			}
 			return perr
 		}
 		out = append(out, pin)
@@ -233,7 +245,9 @@ func buildPath(sc scope.Scope, owner, host string) (string, error) {
 	return b.String(), nil
 }
 
-// decodeEnvelope reads a JSON envelope and reconstructs a *Pin.
+// decodeEnvelope reads a JSON envelope and reconstructs a *Pin. Returns
+// *LegacyPinError for a pre-v2 envelope that carries no PublicKey: such a
+// pin can no longer be trusted for matching and must be re-pinned.
 func decodeEnvelope(data []byte) (*Pin, error) {
 	var env storedEnvelope
 	if jerr := json.Unmarshal(data, &env); jerr != nil {
@@ -243,6 +257,13 @@ func decodeEnvelope(data []byte) (*Pin, error) {
 	if err != nil {
 		return nil, err
 	}
+	if env.PublicKey == "" {
+		return nil, &LegacyPinError{Host: env.Host}
+	}
+	raw, derr := base64.StdEncoding.DecodeString(env.PublicKey)
+	if derr != nil {
+		return nil, &SerializationError{Op: "decode public key", Err: derr}
+	}
 	pin := &Pin{
 		Host:        env.Host,
 		Fingerprint: env.Fingerprint,
@@ -251,11 +272,7 @@ func decodeEnvelope(data []byte) (*Pin, error) {
 		Owner:       env.Owner,
 		AddedAt:     env.AddedAt,
 		Source:      env.Source,
-	}
-	if env.PublicKey != "" {
-		if raw, derr := base64.StdEncoding.DecodeString(env.PublicKey); derr == nil {
-			pin.PublicKey = raw
-		}
+		PublicKey:   raw,
 	}
 	return pin, nil
 }

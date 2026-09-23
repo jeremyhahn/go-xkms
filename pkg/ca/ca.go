@@ -110,8 +110,10 @@ type Params struct {
 	// Required.
 	KeyAttributes *types.KeyAttributes
 
-	// KeyStore provides cryptographic key storage and operations.
-	// All CA private keys are stored and accessed through this interface.
+	// KeyStore provides cryptographic key storage and operations for
+	// non-CA-signing-key paths (TLS certificate issuance, CSR signing for
+	// leaf certificates, and the certificate cache). CA signing keys
+	// (Identity.Keys) are always routed through BackendForStore.
 	// Required.
 	KeyStore xkms.Backend
 
@@ -140,10 +142,10 @@ type Params struct {
 	// Optional.
 	ObjectStore objstore.Storage
 
-	// RevocationStore durably persists certificate revocations in the
-	// datastore. When set, the revocation set survives restarts and replicates
-	// under Raft. Optional; if nil, revocations fall back to ObjectStore (if
-	// set) or in-memory-only tracking.
+	// RevocationStore durably persists certificate revocations and the
+	// derived CRL artifact in the datastore so both survive restarts and
+	// replicate under Raft. Required. There is no fallback to ObjectStore or
+	// to in-memory-only tracking.
 	RevocationStore storage.Backend
 
 	// Identity carries one or two CA identities for the multi-identity
@@ -168,13 +170,15 @@ type Params struct {
 	// Optional.
 	ObjectStoreFactory ObjectStoreFactoryFunc
 
-	// BackendForStore resolves an xkms.Backend per (CA CN, StoreType). When
-	// set, the constructors call it for every unique StoreType in the CA
-	// identity's Keys and build an internal keystoreMap; keys are then routed
+	// BackendForStore resolves an xkms.Backend per (CA CN, StoreType). The
+	// constructors call it for every unique StoreType in the CA identity's
+	// Keys and build an internal keystoreMap; every CA signing key is routed
 	// to the matching backend at generation and signing time.
 	//
-	// Callers that leave this nil get zero behavior change: every key uses the
-	// single Params.KeyStore backend. Optional.
+	// Required. There is no fallback to a single shared KeyStore for every
+	// StoreType: a caller with a single uniform backend supplies a factory
+	// that returns it for every StoreType, making that an explicit choice
+	// rather than an implicit default.
 	BackendForStore BackendForStoreFunc
 
 	// RequireKeyPassword mirrors MultiIdentityCAConfig.RequireKeyPassword for
@@ -204,6 +208,12 @@ func (p *Params) Validate() error {
 	if p.CertStore == nil {
 		return ErrCertStoreRequired
 	}
+	if p.BackendForStore == nil {
+		return ErrBackendForStoreRequired
+	}
+	if p.RevocationStore == nil {
+		return ErrRevocationStoreRequired
+	}
 	return nil
 }
 
@@ -232,26 +242,28 @@ type CA struct {
 	keyAttrs *types.KeyAttributes
 
 	// Storage backends
-	// keyStore backend used for CA operations
+	// keyStore backend used for non-CA-signing-key operations (TLS
+	// certificates, leaf CSR signing, certificate cache).
 	keyStore  xkms.Backend
 	certStore certstore.CertStore
 
-	// keystoreMap holds one xkms.Backend per StoreType for this CA instance.
-	// Populated by the constructors when Params.BackendForStore is set; nil
-	// otherwise. Read-only after construction, so concurrent reads via
-	// resolveKeyBackend need no synchronization.
+	// keystoreMap holds one xkms.Backend per StoreType for this CA instance,
+	// populated by the constructors from the required Params.BackendForStore.
+	// Every CA signing key is routed through this map. Read-only after
+	// construction, so concurrent reads via resolveKeyBackend need no
+	// synchronization.
 	keystoreMap map[types.StoreType]xkms.Backend
 
 	// objectStore is the optional blob store for cross-signed certs, AIA
-	// trust-chain cache, CRL snapshots, and attestation evidence. May be nil;
-	// features that require it return ErrObjectStoreRequired in that case.
+	// trust-chain cache, and attestation evidence. May be nil; features that
+	// require it return ErrObjectStoreRequired in that case.
 	objectStore objstore.Storage
 
-	// revocationStore durably persists revocation records in the datastore so
-	// the revocation set survives restarts (and replicates under Raft). When
-	// set it is the primary persistence medium for revocations, preferred over
-	// objectStore. May be nil (revocations then persist to objectStore if set,
-	// otherwise stay in-memory only).
+	// revocationStore durably persists revocation records and the derived CRL
+	// artifact in the datastore so both survive restarts (and replicate under
+	// Raft). Always non-nil on a constructed CA: Params.Validate() rejects a
+	// nil RevocationStore. There is no fallback to objectStore or to
+	// in-memory-only tracking.
 	revocationStore storage.Backend
 
 	// Serial number generator
@@ -388,7 +400,6 @@ func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *Mult
 		Subject:                subject,
 		Valid:                  validYears,
 		Keys:                   keys,
-		KeystoreType:           storeType,
 		IsRoot:                 cfg.IsRootCA,
 		CRLDistributionPoints:  cfg.CRLDistributionPoints,
 		OCSPServers:            cfg.OCSPServers,
@@ -420,7 +431,8 @@ func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *Mult
 //   - params: Configuration and dependencies for the CA. See Params for details.
 //
 // Returns an error if:
-//   - Required parameters are nil (ErrKeyStoreRequired, ErrCertStoreRequired)
+//   - Required parameters are nil (ErrKeyStoreRequired, ErrCertStoreRequired,
+//     ErrBackendForStoreRequired)
 //   - Configuration validation fails (ErrInvalidConfig)
 //
 // Thread-safe: Yes
@@ -439,27 +451,23 @@ func New(params *Params) (TrustedCA, error) {
 	// getOrGenerateCAKey can enforce it without needing a separate field on CA.
 	multiConfig.RequireKeyPassword = params.RequireKeyPassword
 
-	// Build the per-StoreType backend map when the caller supplies a factory.
-	// Prefer the caller-supplied Identity[0] (carries the full Keys slice from
-	// NewParentCA / NewIntermediateCA); fall back to the issuing identity
-	// synthesized from the flat CAConfig (Keys[0] only). When BackendForStore
-	// is nil the map stays nil and resolveKeyBackend returns ca.keyStore
-	// unconditionally — identical behavior to legacy callers.
-	var keystoreMap map[types.StoreType]xkms.Backend
-	if params.BackendForStore != nil {
-		cn := params.Config.Identity
-		if params.Config.Subject != nil && params.Config.Subject.CommonName != "" {
-			cn = params.Config.Subject.CommonName
-		}
-		idForMap := multiConfig.IssuingIdentity()
-		if len(params.Identity) > 0 {
-			idForMap = &params.Identity[0]
-		}
-		var err error
-		keystoreMap, err = buildKeystoreMap(idForMap, cn, params.BackendForStore)
-		if err != nil {
-			return nil, err
-		}
+	// Build the per-StoreType backend map. Prefer the caller-supplied
+	// Identity[0] (carries the full Keys slice from NewParentCA /
+	// NewIntermediateCA); fall back to the issuing identity synthesized from
+	// the flat CAConfig (Keys[0] only). params.Validate() has already
+	// rejected a nil params.BackendForStore, so every CA signing key is
+	// routed through this map.
+	cn := params.Config.Identity
+	if params.Config.Subject != nil && params.Config.Subject.CommonName != "" {
+		cn = params.Config.Subject.CommonName
+	}
+	idForMap := multiConfig.IssuingIdentity()
+	if len(params.Identity) > 0 {
+		idForMap = &params.Identity[0]
+	}
+	keystoreMap, err := buildKeystoreMap(idForMap, cn, params.BackendForStore)
+	if err != nil {
+		return nil, err
 	}
 
 	ca := &CA{
@@ -517,18 +525,20 @@ type MultiIdentityParams struct {
 	Profiles ProfileRegistry
 
 	// ObjectStore provides blob storage for cross-signed certificates, AIA
-	// trust-chain cache, CRL snapshots, and attestation evidence.
+	// trust-chain cache, and attestation evidence.
 	// Optional. If nil, features that require it return ErrObjectStoreRequired.
 	ObjectStore objstore.Storage
 
-	// RevocationStore durably persists certificate revocations in the
-	// datastore so the revocation set survives restarts. Optional.
+	// RevocationStore durably persists certificate revocations and the
+	// derived CRL artifact in the datastore so both survive restarts.
+	// Required. There is no fallback to ObjectStore or in-memory-only
+	// tracking.
 	RevocationStore storage.Backend
 
-	// BackendForStore resolves an xkms.Backend per (CA CN, StoreType). When
-	// set, it is forwarded to the inner New() call so the CA routes each key
-	// to the backend matching its StoreType. Optional; nil is fully
-	// backward-compatible.
+	// BackendForStore resolves an xkms.Backend per (CA CN, StoreType). It is
+	// forwarded to the inner New() call (or, for NewHierarchicalCA, invoked
+	// directly per identity) so the CA routes each key to the backend
+	// matching its StoreType. Required.
 	BackendForStore BackendForStoreFunc
 }
 
@@ -603,12 +613,15 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 // Use this when the configuration declares more than one issuing intermediate
 // — for example a platform CA and a dedicated cluster CA as siblings under
 // the root — so that Init creates every intermediate and IssuerForIdentity
-// can resolve any of them by common name. When BackendForStore is nil all
-// identities route to the single KeyStore; supply BackendForStore to place
-// different identities in different keystore backends.
+// can resolve any of them by common name. mp.BackendForStore is required: it
+// is invoked once per unique StoreType across every configured identity to
+// build the per-instance keystoreMap that routes every CA signing key to its
+// backend. There is no fallback to a single shared KeyStore.
 //
 // The behavior is identical to NewFromMultiIdentityConfig for a config with a
 // single issuing identity, so callers may use it unconditionally.
+//
+// Returns ErrBackendForStoreRequired when mp.BackendForStore is nil.
 //
 // Thread-safe: Yes
 func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
@@ -618,24 +631,26 @@ func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
 	if err := mp.Config.Validate(); err != nil {
 		return nil, err
 	}
+	if mp.BackendForStore == nil {
+		return nil, ErrBackendForStoreRequired
+	}
+	if mp.RevocationStore == nil {
+		return nil, ErrRevocationStoreRequired
+	}
 
 	config := mp.Config
 	config.RequireKeyPassword = mp.Config.RequireKeyPassword
 
-	var keystoreMap map[types.StoreType]xkms.Backend
-	if mp.BackendForStore != nil {
-		built := make(map[types.StoreType]xkms.Backend, len(config.Identity))
-		for i := range config.Identity {
-			id := &config.Identity[i]
-			m, err := buildKeystoreMap(id, id.Subject.CommonName, mp.BackendForStore)
-			if err != nil {
-				return nil, err
-			}
-			for storeType, backend := range m {
-				built[storeType] = backend
-			}
+	keystoreMap := make(map[types.StoreType]xkms.Backend, len(config.Identity))
+	for i := range config.Identity {
+		id := &config.Identity[i]
+		m, err := buildKeystoreMap(id, id.Subject.CommonName, mp.BackendForStore)
+		if err != nil {
+			return nil, err
 		}
-		keystoreMap = built
+		for storeType, backend := range m {
+			keystoreMap[storeType] = backend
+		}
 	}
 
 	instance := &CA{
@@ -753,7 +768,11 @@ func (ca *CA) Load(ctx context.Context) error {
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
-	if _, err := ca.resolveKeyBackend(rootAttrs.StoreType).Signer(ctx, rootAttrs); err != nil {
+	rootBackend, err := ca.resolveKeyBackend(rootAttrs.StoreType)
+	if err != nil {
+		return err
+	}
+	if _, err := rootBackend.Signer(ctx, rootAttrs); err != nil {
 		return &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("root key not found: %v", err)}
 	}
 
@@ -775,7 +794,11 @@ func (ca *CA) Load(ctx context.Context) error {
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
-		if _, err := ca.resolveKeyBackend(intermediateAttrs.StoreType).Signer(ctx, intermediateAttrs); err != nil {
+		intermediateBackend, err := ca.resolveKeyBackend(intermediateAttrs.StoreType)
+		if err != nil {
+			return err
+		}
+		if _, err := intermediateBackend.Signer(ctx, intermediateAttrs); err != nil {
 			return &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("intermediate key not found: %v", err)}
 		}
 
@@ -795,7 +818,11 @@ func (ca *CA) Load(ctx context.Context) error {
 			if err != nil {
 				return &errs.Wrapped{Msg: fmt.Sprintf("failed to get intermediate %q key attributes", cn), Err: err}
 			}
-			if _, err := ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs); err != nil {
+			backend, err := ca.resolveKeyBackend(attrs.StoreType)
+			if err != nil {
+				return err
+			}
+			if _, err := backend.Signer(ctx, attrs); err != nil {
 				return &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("intermediate %q key not found: %v", cn, err)}
 			}
 		}
@@ -1043,7 +1070,11 @@ func (ca *CA) getSigner(ctx context.Context) (crypto.Signer, error) {
 		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
 	}
 
-	return ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs)
+	backend, err := ca.resolveKeyBackend(attrs.StoreType)
+	if err != nil {
+		return nil, err
+	}
+	return backend.Signer(ctx, attrs)
 }
 
 // getCAKeyAttributes returns KeyAttributes for the specified identity.
@@ -1068,10 +1099,12 @@ func (ca *CA) getCAKeyAttributes(identity *Identity) (*types.KeyAttributes, erro
 // This makes key operations idempotent, allowing CA initialization to be retried
 // without failing on "key already exists" errors.
 func (ca *CA) getOrGenerateCAKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	// Route to the backend configured for this key's StoreType. When no
-	// keystoreMap is present this is the single ca.keyStore — identical to
-	// the legacy behavior.
-	backend := ca.resolveKeyBackend(attrs.StoreType)
+	// Route to the backend configured for this key's StoreType via the
+	// per-instance keystoreMap built from BackendForStore.
+	backend, err := ca.resolveKeyBackend(attrs.StoreType)
+	if err != nil {
+		return nil, err
+	}
 
 	// First, try to get the existing key
 	privateKey, err := backend.GetKey(ctx, attrs)
@@ -1116,30 +1149,35 @@ func (ca *CA) getOrGenerateCAKey(ctx context.Context, attrs *types.KeyAttributes
 }
 
 // resolveKeyBackend returns the xkms.Backend for a key with the given
-// StoreType. When keystoreMap has a matching entry it is returned; otherwise
-// the single fallback ca.keyStore is returned. keystoreMap is read-only after
-// construction, so this is safe for concurrent use without locking.
-func (ca *CA) resolveKeyBackend(storeType types.StoreType) xkms.Backend {
-	if len(ca.keystoreMap) > 0 {
-		if b, ok := ca.keystoreMap[storeType]; ok {
-			return b
-		}
+// StoreType from keystoreMap. keystoreMap is read-only after construction, so
+// this is safe for concurrent use without locking.
+//
+// Returns ErrKeyStoreRequired when storeType has no entry in keystoreMap:
+// every StoreType that appears in an identity's Keys is populated by
+// buildKeystoreMap at construction time, so a miss here means attrs.StoreType
+// names a backend the CA was never configured with.
+func (ca *CA) resolveKeyBackend(storeType types.StoreType) (xkms.Backend, error) {
+	if b, ok := ca.keystoreMap[storeType]; ok {
+		return b, nil
 	}
-	return ca.keyStore
+	return nil, &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("no backend configured for store type %q", storeType)}
 }
 
 // buildKeystoreMap iterates identity.Keys, collects the unique StoreTypes, and
-// invokes factory once per unique type to populate the returned map. A nil
-// factory or nil identity yields (nil, nil) — the legacy single-keystore path.
-// An empty StoreType defaults to types.StoreSoftware so unconfigured keys land
-// in the software backend.
+// invokes factory once per unique type to populate the returned map. factory
+// and identity are both required: there is no fallback to a single shared
+// backend for every StoreType. An empty per-key StoreType defaults to
+// types.StoreSoftware so unconfigured keys land in the software backend.
 func buildKeystoreMap(
 	identity *Identity,
 	cn string,
 	factory BackendForStoreFunc,
 ) (map[types.StoreType]xkms.Backend, error) {
-	if factory == nil || identity == nil {
-		return nil, nil
+	if factory == nil {
+		return nil, ErrBackendForStoreRequired
+	}
+	if identity == nil {
+		return nil, &errs.Detail{Err: ErrInvalidConfig, Detail: "buildKeystoreMap: identity is required"}
 	}
 	seen := make(map[types.StoreType]bool)
 	m := make(map[types.StoreType]xkms.Backend)
@@ -1300,7 +1338,11 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
 
-	parentSigner, err := ca.resolveKeyBackend(rootAttrs.StoreType).Signer(ctx, rootAttrs)
+	rootBackend, err := ca.resolveKeyBackend(rootAttrs.StoreType)
+	if err != nil {
+		return err
+	}
+	parentSigner, err := rootBackend.Signer(ctx, rootAttrs)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to get root signer", Err: err}
 	}
@@ -1358,7 +1400,11 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
 
-		parentSigner, err = ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs)
+		intermediateBackend, err := ca.resolveKeyBackend(attrs.StoreType)
+		if err != nil {
+			return err
+		}
+		parentSigner, err = intermediateBackend.Signer(ctx, attrs)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to get intermediate signer", Err: err}
 		}

@@ -57,8 +57,8 @@ func TestDefaultMultiIdentityCAConfig_ReturnsValidDefaults(t *testing.T) {
 	if len(rootID.Keys) == 0 {
 		t.Fatal("Keys: expected at least 1 key configuration")
 	}
-	if rootID.KeystoreType != "software" {
-		t.Errorf("KeystoreType: expected %q, got %q", "software", rootID.KeystoreType)
+	if rootID.GetStoreType() != types.StoreSoftware {
+		t.Errorf("GetStoreType(): expected %q, got %q", types.StoreSoftware, rootID.GetStoreType())
 	}
 
 	if config.SelectedCA != 0 {
@@ -182,22 +182,20 @@ func TestIdentity_Validate_Success(t *testing.T) {
 		{
 			name: "root CA identity",
 			identity: Identity{
-				Subject:      Subject{CommonName: "Root CA", Organization: "Org"},
-				Valid:        10,
-				Keys:         DefaultKeyConfig(),
-				KeystoreType: "software",
-				IsRoot:       true,
+				Subject: Subject{CommonName: "Root CA", Organization: "Org"},
+				Valid:   10,
+				Keys:    DefaultKeyConfig(),
+				IsRoot:  true,
 			},
 		},
 		{
 			name: "intermediate CA identity",
 			identity: Identity{
-				Subject:      Subject{CommonName: "Intermediate CA"},
-				Valid:        5,
-				Keys:         DefaultKeyConfig(),
-				KeystoreType: "software",
-				IsRoot:       false,
-				ParentCA:     "Root CA",
+				Subject:  Subject{CommonName: "Intermediate CA"},
+				Valid:    5,
+				Keys:     DefaultKeyConfig(),
+				IsRoot:   false,
+				ParentCA: "Root CA",
 			},
 		},
 	}
@@ -326,11 +324,22 @@ func TestIdentity_GetStoreType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			identity := Identity{KeystoreType: tt.keystoreType}
+			identity := Identity{Keys: []*types.KeyConfig{{StoreType: tt.keystoreType}}}
 			if got := identity.GetStoreType(); got != tt.expected {
 				t.Errorf("GetStoreType() = %v, expected %v", got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestIdentity_GetStoreType_NoKeys proves the software default applies when
+// an identity has no keys configured at all, not only when Keys[0].StoreType
+// is empty.
+func TestIdentity_GetStoreType_NoKeys(t *testing.T) {
+	t.Parallel()
+	identity := Identity{}
+	if got := identity.GetStoreType(); got != types.StoreSoftware {
+		t.Errorf("GetStoreType() = %v, expected %v", got, types.StoreSoftware)
 	}
 }
 

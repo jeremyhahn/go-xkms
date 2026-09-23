@@ -819,9 +819,6 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		} else {
 			svc.SetClusterClient(nil, s.config.Cluster.ShardID, s.config.Cluster.NodeID)
 		}
-		if s.barrierRegistry != nil {
-			svc.SetBarrierRegistry(s.barrierRegistry)
-		}
 		// Wire the embedded qrdb node as the encryption-migration provider so
 		// BarrierEnableEncryption can migrate an unencrypted barrier to a keyed
 		// strategy in place. The node satisfies xkms.EncryptionMigrator (its
@@ -2120,6 +2117,23 @@ func (s *Server) initializeCA() error {
 		backend = b
 	}
 
+	// backendForStore routes every CA signing key to its backend by
+	// StoreType (pkg/ca requires this; there is no single-keystore
+	// fallback). In cluster-ACME mode the cluster CA key custody strategy
+	// resolves a single runtime keystore for every StoreType, mirroring
+	// `backend` above; outside cluster mode each StoreType resolves to its
+	// own registered backend.
+	backendForStore := func(cn string, st types.StoreType) (xkms.Backend, error) {
+		if s.clusterCAKeyStrategy != nil {
+			return backend, nil
+		}
+		b, ok := s.backends[string(st)]
+		if !ok {
+			return nil, &ErrBackendNotAvailable{Backend: string(st), Purpose: "CA keystore"}
+		}
+		return b, nil
+	}
+
 	// Create certificate storage for the CA
 	caStorage, err := s.createStorage("ca")
 	if err != nil {
@@ -2187,6 +2201,7 @@ func (s *Server) initializeCA() error {
 		CertStore:       caCertStore,
 		SerialGen:       ca.NewSerialGenerator(ca.NewBackendStorage(serialStore)),
 		RevocationStore: revocationStore,
+		BackendForStore: backendForStore,
 	})
 	if err != nil {
 		return &ErrCAInit{Operation: "create CA", Err: err}

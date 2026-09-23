@@ -81,9 +81,11 @@ func TestNewParentCA_EmptyCN_B13(t *testing.T) {
 				Keys:    DefaultKeyConfig(),
 			},
 		},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	_, err := NewParentCA(params)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
@@ -114,9 +116,11 @@ func TestNewParentCA_NoKeyType_B13(t *testing.T) {
 				Keys:    keys,
 			},
 		},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, err := NewParentCA(params)
 	require.NoError(t, err)
@@ -140,20 +144,24 @@ func TestNewIntermediateCA_EmptyIntermediateCN_B13(t *testing.T) {
 	config.Identity[1].Keys[0].KeyType = "CA"
 
 	rootParams := &Params{
-		Identity:  []Identity{config.Identity[0]},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        []Identity{config.Identity[0]},
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, err := NewParentCA(rootParams)
 	require.NoError(t, err)
 	require.NoError(t, root.Init(context.Background()))
 
 	intParams := &Params{
-		Identity:  config.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        config.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	_, err = NewIntermediateCA(context.Background(), intParams, root)
 	assert.ErrorIs(t, err, ErrInvalidConfig)
@@ -177,20 +185,24 @@ func TestNewIntermediateCA_NoKeyType_B13(t *testing.T) {
 	config.Identity[1].Keys[0].KeyType = ""
 
 	rootParams := &Params{
-		Identity:  []Identity{config.Identity[0]},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        []Identity{config.Identity[0]},
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, err := NewParentCA(rootParams)
 	require.NoError(t, err)
 	require.NoError(t, root.Init(context.Background()))
 
 	intParams := &Params{
-		Identity:  config.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        config.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	intermediate, err := NewIntermediateCA(context.Background(), intParams, root)
 	require.NoError(t, err)
@@ -451,9 +463,11 @@ func TestNewCA_SingleIdentity_B13(t *testing.T) {
 				Keys:    DefaultKeyConfig(),
 			},
 		},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	root, intermediate, err := NewCA(context.Background(), params)
 	require.NoError(t, err)

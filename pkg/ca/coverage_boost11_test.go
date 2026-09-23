@@ -24,11 +24,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
-	"math/big"
 	"testing"
 
 	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -151,22 +152,26 @@ func TestNewIntermediateCA_WithConfig_B11(t *testing.T) {
 	cfg.Identity[1].Keys[0].KeyType = "CA"
 
 	rootParams := &Params{
-		Identity:  cfg.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
-		Config:    &CAConfig{DefaultCertValidityDays: 365},
+		Identity:        cfg.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
+		Config:          &CAConfig{DefaultCertValidityDays: 365},
 	}
 	root, err := NewParentCA(rootParams)
 	require.NoError(t, err)
 	require.NoError(t, root.Init(context.Background()))
 
 	intParams := &Params{
-		Identity:  cfg.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
-		Config:    &CAConfig{DefaultCertValidityDays: 365},
+		Identity:        cfg.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
+		Config:          &CAConfig{DefaultCertValidityDays: 365},
 	}
 	intermediate, err := NewIntermediateCA(context.Background(), intParams, root)
 	require.NoError(t, err)
@@ -272,30 +277,13 @@ func TestGetSigner_GetCAKeyAttributesError_B11(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: no-store path returns (false, nil)
+// ca_extensions.go — listRevocationBlobs: revocationStore scan coverage
 // =============================================================================
 
-// TestPutRevocationBlob_NoStore_B11 exercises the case where neither
-// revocationStore nor objectStore is configured.
-func TestPutRevocationBlob_NoStore_B11(t *testing.T) {
-	t.Parallel()
-	ca := &CA{
-		revocationStore: nil,
-		objectStore:     nil,
-		revocations:     make(map[string]*RevocationInfo),
-	}
-	persisted, err := ca.putRevocationBlob(context.Background(), big.NewInt(88888), []byte(`{}`))
-	require.NoError(t, err)
-	assert.False(t, persisted)
-}
-
-// =============================================================================
-// ca_extensions.go — listRevocationBlobs: objectStore scan coverage
-// =============================================================================
-
-// TestListRevocationBlobs_ObjectStoreRevocation_B11 exercises the objectStore
-// fallback in listRevocationBlobs by revoking a cert with objectStore configured.
-func TestListRevocationBlobs_ObjectStoreRevocation_B11(t *testing.T) {
+// TestListRevocationBlobs_RevocationStoreScan_B11 revokes a certificate with
+// an (unused for revocation) objectStore also configured, and proves the
+// blob is scanned back from revocationStore, not objectStore.
+func TestListRevocationBlobs_RevocationStoreScan_B11(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
 	ca.objectStore = objmemory.New()
@@ -311,6 +299,10 @@ func TestListRevocationBlobs_ObjectStoreRevocation_B11(t *testing.T) {
 	blobs, err := ca.listRevocationBlobs(context.Background())
 	require.NoError(t, err)
 	assert.NotEmpty(t, blobs)
+
+	objKeys, err := ca.objectStore.List(revocationKeyPrefix)
+	require.NoError(t, err)
+	assert.Empty(t, objKeys, "objectStore must not receive revocation blobs")
 }
 
 // =============================================================================
@@ -338,6 +330,7 @@ func TestGetOrGenerateCAKey_RSA_B11(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -438,10 +431,12 @@ func TestParams_Validate_NilKeyAttributes_B11(t *testing.T) {
 	}
 
 	p := &Params{
-		Config:        caConfig,
-		KeyAttributes: nil,
-		KeyStore:      backend,
-		CertStore:     cs,
+		Config:          caConfig,
+		KeyAttributes:   nil,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	}
 	err := p.Validate()
 	assert.ErrorIs(t, err, ErrInvalidConfig)

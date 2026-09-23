@@ -201,6 +201,7 @@ func (s *Service) SSHAddKnownHost(ctx context.Context, req *pb.SSHAddKnownHostRe
 		Fingerprint: req.GetFingerprint(),
 		Algorithm:   req.GetAlgorithm(),
 		Source:      req.GetSource(),
+		PublicKey:   req.GetPublicKey(),
 	}); err != nil {
 		return nil, sshStatus(err)
 	}
@@ -232,6 +233,7 @@ func (s *Service) SSHListKnownHosts(ctx context.Context, req *pb.SSHListKnownHos
 			Algorithm:   p.Algorithm,
 			AddedAt:     timestamppb.New(p.AddedAt),
 			Source:      p.Source,
+			PublicKey:   p.PublicKey,
 		})
 	}
 	return &pb.SSHListKnownHostsResponse{Pins: out}, nil

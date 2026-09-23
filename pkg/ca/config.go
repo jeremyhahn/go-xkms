@@ -62,10 +62,6 @@ type Identity struct {
 	// (e.g., RSA + ECDSA for hybrid certificates)
 	Keys []*types.KeyConfig `yaml:"keys" json:"keys" mapstructure:"keys"`
 
-	// KeystoreType specifies which backend to use for key storage
-	// Values: types.StoreSoftware, types.StoreTPM2, types.StorePKCS11, etc.
-	KeystoreType types.StoreType `yaml:"keystore-type" json:"keystore_type" mapstructure:"keystore-type"`
-
 	// SANS contains Subject Alternative Names for this identity
 	SANS *SubjectAlternativeNames `yaml:"sans,omitempty" json:"sans,omitempty" mapstructure:"sans"`
 
@@ -103,11 +99,12 @@ type Identity struct {
 	// (as opposed to being absent from the certificate).
 	MaxPathLengthZero bool `yaml:"max-path-length-zero,omitempty" json:"max_path_length_zero,omitempty" mapstructure:"max-path-length-zero"`
 
-	// Keystores holds per-backend configuration for this identity's keys.
-	// When nil, the legacy single-keystore path (KeystoreType) is used.
-	// When set, callers can build a per-StoreType backend map (via
-	// Params.BackendForStore) and route each key in Keys[*] to the backend
-	// matching its StoreType. Optional, additive: nil means no behavior change.
+	// Keystores holds per-backend configuration (SRK handle, PIN, password,
+	// platform policy) for the backends named by this identity's Keys[*]
+	// StoreType. Every key is always routed to its backend via
+	// Params.BackendForStore / Identity.Keys[*].StoreType regardless of
+	// whether Keystores is set; a nil (or nil sub-field) entry here just
+	// means that backend uses its zero-value settings. Optional.
 	Keystores *CAKeystoresConfig `yaml:"keystores,omitempty" json:"keystores,omitempty" mapstructure:"keystores"`
 }
 
@@ -115,9 +112,11 @@ type Identity struct {
 // Per-Identity Keystore Configuration
 // =============================================================================
 //
-// These types describe the "keystores:" block that the platform YAML already
-// declares per CA identity. They are additive and optional; a nil
-// CAKeystoresConfig (or nil sub-field) selects the legacy single-keystore path.
+// These types describe the "keystores:" block that the platform YAML
+// declares per CA identity: per-backend settings (SRK handle, PIN, password,
+// platform policy) for the backends its Keys[*] StoreType names. They are
+// optional; a nil CAKeystoresConfig (or nil sub-field) means that backend
+// uses its zero-value settings, not that the backend goes unused.
 
 // CAKeystoreSoftwareConfig carries per-identity configuration for the
 // software (PKCS#8) backend.
@@ -197,15 +196,17 @@ func (id *Identity) GetCRLValidityDays() int {
 	return DefaultCRLValidityDays
 }
 
-// GetStoreType returns the keystore type for this identity.
-// This preserves custom backend names (e.g., "pkcs8-ca2") instead of
-// converting them to "unknown" via ParseStoreType, allowing the xkms
-// facade to route operations to the correct registered backend.
+// GetStoreType returns the primary (Keys[0]) keystore type for this
+// identity. This preserves custom backend names (e.g., "pkcs8-ca2") instead
+// of converting them to "unknown" via ParseStoreType, allowing the xkms
+// facade to route operations to the correct registered backend. Returns
+// types.StoreSoftware when no keys are configured or Keys[0].StoreType is
+// unset.
 func (id *Identity) GetStoreType() types.StoreType {
-	if id.KeystoreType == "" {
-		return types.StoreSoftware // Default to software if not specified
+	if len(id.Keys) == 0 || id.Keys[0] == nil || id.Keys[0].StoreType == "" {
+		return types.StoreSoftware
 	}
-	return id.KeystoreType
+	return id.Keys[0].StoreType
 }
 
 // =============================================================================
@@ -367,7 +368,6 @@ func DefaultMultiIdentityCAConfig() *MultiIdentityCAConfig {
 				},
 				Valid:         DefaultRootValidityYears,
 				Keys:          DefaultKeyConfig(),
-				KeystoreType:  types.StoreSoftware,
 				IsRoot:        true,
 				MaxPathLength: 1,
 			},
@@ -391,7 +391,6 @@ func DefaultMultiIdentityCAConfigWithIntermediate() *MultiIdentityCAConfig {
 				},
 				Valid:         DefaultRootValidityYears,
 				Keys:          DefaultKeyConfig(),
-				KeystoreType:  types.StoreSoftware,
 				IsRoot:        true,
 				MaxPathLength: 1,
 			},
@@ -401,10 +400,9 @@ func DefaultMultiIdentityCAConfigWithIntermediate() *MultiIdentityCAConfig {
 					Organization: "Organization",
 					Country:      "US",
 				},
-				Valid:        DefaultIntermediateValidityYears,
-				Keys:         DefaultKeyConfig(),
-				KeystoreType: types.StoreSoftware,
-				IsRoot:       false,
+				Valid:  DefaultIntermediateValidityYears,
+				Keys:   DefaultKeyConfig(),
+				IsRoot: false,
 				// ParentCA deliberately unset: with a single intermediate the
 				// sequential default (signed by the previous identity — the
 				// root) yields the identical topology, and a hardcoded name
@@ -454,7 +452,9 @@ func NewConfigBuilder() *ConfigBuilder {
 	}
 }
 
-// WithRootCA adds a root CA identity.
+// WithRootCA adds a root CA identity. keystoreType, when non-empty, is
+// applied to any key in keys whose own StoreType is unset — it does not
+// override a key's explicit StoreType.
 func (b *ConfigBuilder) WithRootCA(subject Subject, validYears int, keys []*types.KeyConfig, keystoreType types.StoreType) *ConfigBuilder {
 	if b.err != nil {
 		return b
@@ -463,21 +463,23 @@ func (b *ConfigBuilder) WithRootCA(subject Subject, validYears int, keys []*type
 	if len(keys) == 0 {
 		keys = DefaultKeyConfig()
 	}
+	applyDefaultStoreType(keys, keystoreType)
 
 	b.config.Identity = append([]Identity{
 		{
-			Subject:      subject,
-			Valid:        validYears,
-			Keys:         keys,
-			KeystoreType: keystoreType,
-			IsRoot:       true,
+			Subject: subject,
+			Valid:   validYears,
+			Keys:    keys,
+			IsRoot:  true,
 		},
 	}, b.config.Identity...)
 
 	return b
 }
 
-// WithIntermediateCA adds an intermediate CA identity.
+// WithIntermediateCA adds an intermediate CA identity. keystoreType, when
+// non-empty, is applied to any key in keys whose own StoreType is unset — it
+// does not override a key's explicit StoreType.
 func (b *ConfigBuilder) WithIntermediateCA(subject Subject, validYears int, keys []*types.KeyConfig, keystoreType types.StoreType, parentCA string) *ConfigBuilder {
 	if b.err != nil {
 		return b
@@ -486,17 +488,30 @@ func (b *ConfigBuilder) WithIntermediateCA(subject Subject, validYears int, keys
 	if len(keys) == 0 {
 		keys = DefaultKeyConfig()
 	}
+	applyDefaultStoreType(keys, keystoreType)
 
 	b.config.Identity = append(b.config.Identity, Identity{
-		Subject:      subject,
-		Valid:        validYears,
-		Keys:         keys,
-		KeystoreType: keystoreType,
-		IsRoot:       false,
-		ParentCA:     parentCA,
+		Subject:  subject,
+		Valid:    validYears,
+		Keys:     keys,
+		IsRoot:   false,
+		ParentCA: parentCA,
 	})
 
 	return b
+}
+
+// applyDefaultStoreType sets StoreType on every key in keys whose own
+// StoreType is unset. A no-op when keystoreType is empty.
+func applyDefaultStoreType(keys []*types.KeyConfig, keystoreType types.StoreType) {
+	if keystoreType == "" {
+		return
+	}
+	for _, k := range keys {
+		if k != nil && k.StoreType == "" {
+			k.StoreType = keystoreType
+		}
+	}
 }
 
 // WithSelectedCA sets the issuing CA index.

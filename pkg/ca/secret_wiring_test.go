@@ -107,9 +107,11 @@ func TestCA_EmptyPassword_AllowedByDefault(t *testing.T) {
 
 	// rootIdentity carries no KeyConfig.Password, so attrs.Password will be nil.
 	root, _, err := NewCA(context.Background(), &Params{
-		Identity:  []Identity{rootIdentity("NoPassword Root CA")},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{rootIdentity("NoPassword Root CA")},
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 		// RequireKeyPassword defaults to false — plaintext key is allowed.
 	})
 	require.NoError(t, err, "CA init with empty password must succeed when RequireKeyPassword=false (default)")
@@ -127,6 +129,8 @@ func TestCA_RequireKeyPassword_RejectsEmptyPassword(t *testing.T) {
 	_, _, err := NewCA(context.Background(), &Params{
 		Identity:           []Identity{rootIdentity("RequirePW Root CA")},
 		KeyStore:           newInMemoryBackend(t),
+		BackendForStore:    singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore:    storage.NewMemory(),
 		CertStore:          newInMemoryCertStore(t),
 		RequireKeyPassword: true,
 	})

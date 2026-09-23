@@ -227,7 +227,13 @@ func TestVerifyPINHashLocked_WrongHash(t *testing.T) {
 	require.False(t, result)
 }
 
-func TestVerifyPINHashLocked_VerifierFailsFallsBackToState(t *testing.T) {
+// TestVerifyPINHashLocked_VerifierRejectionIsNotOverridden proves a
+// configured verifier's negative result stands even though a.state.PINHash
+// carries a hash that would itself match — there is no fallback to local
+// state once a verifier is configured. See also
+// TestAuthenticator_VerifyPINHash_VerifierRejectionIsFinal for the
+// restart/lazy-init scenario this compat path used to paper over.
+func TestVerifyPINHashLocked_VerifierRejectionIsNotOverridden(t *testing.T) {
 	auth := createTestAuthenticator(t)
 	defer func() { _ = auth.Close() }()
 
@@ -237,16 +243,16 @@ func TestVerifyPINHashLocked_VerifierFailsFallsBackToState(t *testing.T) {
 	// Set the PIN hash in state directly.
 	auth.SetFIDO2PINHash(hash)
 
-	// Set verifier that does NOT know the hash (simulates lazy-init race).
+	// Set a verifier that does NOT know the hash (e.g. lazy-init race).
 	verifier := &testPINVerifier{pinSet: true, fido2Hash: nil}
 	auth.SetPINVerifier(verifier)
 
-	// Verifier fails, but state has the hash — should fall back.
+	// The verifier is authoritative once configured: its rejection is final.
 	auth.mu.RLock()
 	result := auth.verifyPINHashLocked(hash)
 	auth.mu.RUnlock()
 
-	require.True(t, result)
+	require.False(t, result)
 }
 
 func TestVerifyPINHashLocked_NoPINHashStored(t *testing.T) {
@@ -264,83 +270,82 @@ func TestVerifyPINHashLocked_NoPINHashStored(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Regression: restart fallback
+// PINVerifier is authoritative: no local-hash fallback
 // ---------------------------------------------------------------------------
 
-// TestAuthenticator_VerifyPINHash_FallbackAfterRestart is a regression test for
-// a bug where PINVerifier.VerifyFIDO2Hash returned false after an application
-// restart because the SoftwareBackend's fido2Guard was nil (not yet
-// re-initialized). The authenticator must fall back to hmac.Equal against
-// the persisted state.PINHash in that scenario so that PIN verification
-// continues to work immediately after restart, before the PINService has
-// fully re-initialized the backend guard.
-func TestAuthenticator_VerifyPINHash_FallbackAfterRestart(t *testing.T) {
-	// Step 1: Create shared storage and an authenticator, set a PIN hash.
+// TestAuthenticator_VerifyPINHash_VerifierRejectionIsFinal proves a
+// configured PINVerifier's negative result is final: verifyPINHashLocked no
+// longer re-checks a.state.PINHash after the verifier rejects a hash, even
+// when the persisted hash would itself have matched. The previous fallback
+// (kept for "restart / lazy-init" scenarios where the verifier's backend
+// guard was still nil) re-checked a second, potentially-stale source of
+// truth after an explicit negative result; that compat path is deleted, so
+// a caller with a configured PINVerifier that is not yet ready to answer
+// must report itself unready (or initialize synchronously) rather than
+// relying on the authenticator to paper over it.
+func TestAuthenticator_VerifyPINHash_VerifierRejectionIsFinal(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	config := DefaultConfig()
 	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
-	auth1, err := NewAuthenticator(config)
+	auth, err := NewAuthenticator(config)
 	require.NoError(t, err)
+	defer func() { _ = auth.Close() }()
 
 	pinHash := sha256.Sum256([]byte("restart-pin-test"))
 	hash := pinHash[:PINHashSize]
 
-	// Persist the PIN hash to storage via the authenticator.
-	auth1.SetFIDO2PINHash(hash)
+	// Persist a PIN hash directly on the authenticator's internal state, so
+	// a local hmac.Equal comparison (if one ran) would succeed.
+	auth.SetFIDO2PINHash(hash)
+	require.True(t, auth.state.PINSet)
+	require.Equal(t, hash, auth.state.PINHash)
 
-	// Confirm state was persisted correctly.
-	require.True(t, auth1.state.PINSet)
-	require.Equal(t, hash, auth1.state.PINHash)
-
-	// Close the first authenticator (simulates app shutdown).
-	// Note: Close does NOT close the storage — the caller owns the storage
-	// lifecycle, which mirrors real production behavior.
-	require.NoError(t, auth1.Close())
-
-	// Step 2: Create a NEW authenticator from the same storage (simulates
-	// restart). NewAuthenticator calls storage.LoadState(), which should
-	// restore the persisted PINHash.
-	config2 := DefaultConfig()
-	config2.UserPresenceHandler = NewAutoGrantHandler()
-	config2.Storage = storage
-
-	auth2, err := NewAuthenticator(config2)
-	require.NoError(t, err)
-	defer func() { _ = auth2.Close() }()
-
-	// Verify the PIN hash was loaded from storage.
-	require.True(t, auth2.state.PINSet,
-		"PINSet must be true after restart — state was loaded from storage")
-	require.Equal(t, hash, auth2.state.PINHash,
-		"PINHash must match the original — state was loaded from storage")
-
-	// Step 3: Set a PINVerifier that always returns false for VerifyFIDO2Hash.
-	// This simulates the SoftwareBackend after restart when fido2Guard is nil.
+	// A PINVerifier that rejects every hash (e.g. its own backend not yet
+	// initialized) must be trusted as-is — not overridden by the matching
+	// local state.
 	verifier := &testPINVerifier{pinSet: true, fido2Hash: nil}
-	auth2.SetPINVerifier(verifier)
+	auth.SetPINVerifier(verifier)
 
-	// Step 4: Verify the fallback path. The verifier rejects the hash, but
-	// the authenticator should fall back to hmac.Equal against the persisted
-	// state.PINHash and succeed.
-	auth2.mu.RLock()
-	result := auth2.verifyPINHashLocked(hash)
-	auth2.mu.RUnlock()
+	auth.mu.RLock()
+	result := auth.verifyPINHashLocked(hash)
+	auth.mu.RUnlock()
 
-	require.True(t, result,
-		"verifyPINHashLocked must succeed via hmac.Equal fallback when "+
-			"PINVerifier.VerifyFIDO2Hash returns false (restart scenario)")
+	require.False(t, result,
+		"verifyPINHashLocked must honor the PINVerifier's rejection even though "+
+			"a.state.PINHash matches — there is no local-hash fallback")
+}
 
-	// Step 5: Verify that a wrong hash still fails — the fallback does not
-	// blindly accept everything.
+// TestAuthenticator_VerifyPINHash_NoVerifierUsesLocalState proves the local
+// hmac.Equal comparison against a.state.PINHash remains the verification
+// mechanism for standalone mode — no PINVerifier configured at all — which
+// is a distinct, still-supported case from a configured verifier's negative
+// result.
+func TestAuthenticator_VerifyPINHash_NoVerifierUsesLocalState(t *testing.T) {
+	storage := NewMemoryStorage()
+
+	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
+	config.Storage = storage
+
+	auth, err := NewAuthenticator(config)
+	require.NoError(t, err)
+	defer func() { _ = auth.Close() }()
+
+	pinHash := sha256.Sum256([]byte("standalone-pin-test"))
+	hash := pinHash[:PINHashSize]
+	auth.SetFIDO2PINHash(hash)
+
+	auth.mu.RLock()
+	result := auth.verifyPINHashLocked(hash)
+	auth.mu.RUnlock()
+	require.True(t, result, "no PINVerifier configured: local state.PINHash must verify")
+
 	wrongHash := sha256.Sum256([]byte("wrong-pin"))
-
-	auth2.mu.RLock()
-	wrongResult := auth2.verifyPINHashLocked(wrongHash[:PINHashSize])
-	auth2.mu.RUnlock()
-
-	require.False(t, wrongResult,
-		"verifyPINHashLocked must reject incorrect hash even in fallback path")
+	auth.mu.RLock()
+	wrongResult := auth.verifyPINHashLocked(wrongHash[:PINHashSize])
+	auth.mu.RUnlock()
+	require.False(t, wrongResult, "no PINVerifier configured: an incorrect hash must still fail")
 }

@@ -31,7 +31,6 @@
 package ca
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/x509"
@@ -39,7 +38,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/big"
 	"time"
@@ -51,9 +49,8 @@ import (
 // crlKeyPrefix is the storage key prefix for persisted CRL artifacts, a
 // sibling of revocationKeyPrefix in the same store: revocation STATE lives
 // under "revocations/<serial>.json", the signed CRL BYTES derived from that
-// state live under "crl/<issuer-ski-hex>". Both go through
-// ca.revocationStore (preferred) or ca.objectStore (legacy fallback), so
-// the artifact replicates the same way the state that produced it does.
+// state live under "crl/<issuer-ski-hex>". Both go through ca.revocationStore,
+// so the artifact replicates the same way the state that produced it does.
 const crlKeyPrefix = "crl/"
 
 // crlKey returns the storage key for the CRL published by the issuing
@@ -90,66 +87,29 @@ func (ca *CA) now() time.Time {
 	return time.Now()
 }
 
-// putCRLBlob persists a signed CRL artifact, preferring the datastore-backed
-// revocation store and falling back to the legacy object store -- the same
-// preference order recordRevocation uses for revocation state. Returns
-// persisted=false when neither is configured (the artifact is returned to
-// the immediate caller but not durable).
-func (ca *CA) putCRLBlob(ctx context.Context, ski []byte, rec *persistedCRL) (persisted bool, err error) {
+// putCRLBlob persists a signed CRL artifact to the datastore-backed
+// revocation store, the sole persistence medium for the CRL artifact.
+func (ca *CA) putCRLBlob(ctx context.Context, ski []byte, rec *persistedCRL) error {
 	buf, err := json.Marshal(rec)
 	if err != nil {
-		return false, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("marshal crl: %v", err)}
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("marshal crl: %v", err)}
 	}
-
-	key := crlKey(ski)
-	if ca.revocationStore != nil {
-		if err := ca.revocationStore.Put(ctx, key, buf); err != nil {
-			return false, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("persist crl: %v", err)}
-		}
-		return true, nil
+	if err := ca.revocationStore.Put(ctx, crlKey(ski), buf); err != nil {
+		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("persist crl: %v", err)}
 	}
-	if ca.objectStore != nil {
-		if err := ca.objectStore.Put(key, bytes.NewReader(buf)); err != nil {
-			return false, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("persist crl: %v", err)}
-		}
-		return true, nil
-	}
-	return false, nil
+	return nil
 }
 
 // getCRLBlob reads the persisted CRL artifact for the issuer identified by
-// ski, preferring the datastore-backed revocation store and falling back to
-// the legacy object store. Returns ErrCRLNotFound when no artifact has been
-// published yet for that issuer or when neither store is configured.
+// ski from the datastore-backed revocation store. Returns ErrCRLNotFound
+// when no artifact has been published yet for that issuer.
 func (ca *CA) getCRLBlob(ctx context.Context, ski []byte) (*persistedCRL, error) {
-	key := crlKey(ski)
-
-	var data []byte
-	switch {
-	case ca.revocationStore != nil:
-		v, err := ca.revocationStore.Get(ctx, key)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				return nil, ErrCRLNotFound
-			}
-			return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get crl: %v", err)}
-		}
-		data = v
-
-	case ca.objectStore != nil:
-		reader, err := ca.objectStore.Get(key)
-		if err != nil {
+	data, err := ca.revocationStore.Get(ctx, crlKey(ski))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrCRLNotFound
 		}
-		v, err := io.ReadAll(reader)
-		_ = reader.Close()
-		if err != nil {
-			return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("read crl: %v", err)}
-		}
-		data = v
-
-	default:
-		return nil, ErrCRLNotFound
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get crl: %v", err)}
 	}
 
 	var rec persistedCRL
@@ -239,13 +199,8 @@ func (ca *CA) generateAndPersistCRL(ctx context.Context) ([]byte, error) {
 		ThisUpdate: template.ThisUpdate,
 		NextUpdate: template.NextUpdate,
 	}
-	persisted, err := ca.putCRLBlob(ctx, issuingCert.SubjectKeyId, rec)
-	if err != nil {
+	if err := ca.putCRLBlob(ctx, issuingCert.SubjectKeyId, rec); err != nil {
 		return nil, err
-	}
-	if !persisted {
-		slog.Warn("ca: crl generated without persistence (no revocation store or object store configured)",
-			"number", rec.Number)
 	}
 
 	// Warm the in-memory cache so subsequent reads on this instance are
@@ -267,8 +222,8 @@ func (ca *CA) generateAndPersistCRL(ctx context.Context) ([]byte, error) {
 //
 // certStore's in-memory CRL cache (StoreCRL/GetCRL) is checked first as a
 // fast path -- it is warmed by every call on this instance that
-// (re)generates a CRL. The persisted artifact in ca.revocationStore /
-// ca.objectStore is the source of truth every instance reads from.
+// (re)generates a CRL. The persisted artifact in ca.revocationStore is the
+// source of truth every instance reads from.
 //
 // Any instance may serve this call; there is no leader election and no
 // background scheduler (go-xkms#275, option A). Staleness is detected and

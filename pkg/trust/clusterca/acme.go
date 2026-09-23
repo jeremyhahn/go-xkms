@@ -41,6 +41,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // tpmProvider is the surface a backend must expose for enroll-01: access to
@@ -321,12 +323,20 @@ func (p *Provisioner) stageBootstrapCA(ctx context.Context) (CAIssuer, error) {
 		return nil, err
 	}
 
+	// p.opts.Backends resolves a key backend by name, and the StoreType names
+	// line up with those backend names (software, tpm2, ...), so it doubles
+	// as the per-StoreType resolver every CA signing key is routed through.
+	backendForStore := func(cn string, st types.StoreType) (xkms.Backend, error) {
+		return p.opts.Backends(string(st))
+	}
+
 	bootstrapCA, err := ca.NewHierarchicalCA(&ca.MultiIdentityParams{
 		Config:          p.opts.CAConfig,
 		KeyStore:        keystoreBackend,
 		CertStore:       stagingCertStore,
 		SerialGen:       ca.NewSerialGenerator(ca.NewMemoryStorage()),
 		RevocationStore: storage.NewMemory(),
+		BackendForStore: backendForStore,
 	})
 	if err != nil {
 		return nil, err

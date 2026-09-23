@@ -40,8 +40,18 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// singleBackendFactory returns a ca.BackendForStoreFunc that resolves every
+// StoreType to the same backend — the canonical, explicit way for a fixture
+// with one uniform backend to satisfy the required BackendForStore.
+func singleBackendFactory(b xkms.Backend) ca.BackendForStoreFunc {
+	return func(string, types.StoreType) (xkms.Backend, error) {
+		return b, nil
+	}
+}
 
 // =============================================================================
 // X.509 Extension OIDs asserted by these tests
@@ -247,10 +257,12 @@ func newIssuingCA(t *testing.T, config *ca.MultiIdentityCAConfig, registry ca.Pr
 	require.NoError(t, err)
 
 	trustedCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
-		Config:    config,
-		KeyStore:  backend,
-		CertStore: certStore,
-		Profiles:  registry,
+		Config:          config,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       certStore,
+		Profiles:        registry,
 	})
 	require.NoError(t, err)
 	require.NoError(t, trustedCA.Init(context.Background()))
@@ -279,10 +291,12 @@ func newHierarchicalIssuingCA(t *testing.T, config *ca.MultiIdentityCAConfig, re
 	require.NoError(t, err)
 
 	trustedCA, err := ca.NewHierarchicalCA(&ca.MultiIdentityParams{
-		Config:    config,
-		KeyStore:  backend,
-		CertStore: certStore,
-		Profiles:  registry,
+		Config:          config,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       certStore,
+		Profiles:        registry,
 	})
 	require.NoError(t, err)
 	require.NoError(t, trustedCA.Init(context.Background()))

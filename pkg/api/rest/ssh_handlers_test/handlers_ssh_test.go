@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/base64"
@@ -295,16 +296,32 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	srv, _, cleanup := newSSHTestServer(t)
 	defer cleanup()
 
-	// Add a pin.
-	addBody := `{"scope":"user","owner":"alice","host":"bastion","fingerprint":"SHA256:7QJFe1xB2WTb0vKmCdY/4bt1KNvlXhq/W1LCSc1zV5c","algorithm":"ssh-ed25519"}`
-	resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts", "application/json", bytes.NewBufferString(addBody))
+	line, fingerprint := randomHostKey(t)
+	_, otherFingerprint := randomHostKey(t)
+
+	// Add a pin. PublicKey is required — the store no longer accepts a
+	// fingerprint-only pin.
+	addReq := sdkssh.AddKnownHostRequest{
+		Scope: "user", Owner: "alice", Host: "bastion",
+		PublicKey: line, Fingerprint: fingerprint, Algorithm: "ssh-ed25519",
+	}
+	addBody, err := json.Marshal(addReq)
+	if err != nil {
+		t.Fatalf("marshal add: %v", err)
+	}
+	resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts", "application/json", bytes.NewReader(addBody))
 	if err != nil {
 		t.Fatalf("add: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		raw, _ := readAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("add status %d: %s", resp.StatusCode, string(raw))
 	}
 	resp.Body.Close()
 
 	// Verify a different fingerprint → 409 with expected + received.
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"SHA256:RiX9Y7Dpb8DWVq5zgWBeSNSg9joxn8dDrfImiGE4g8c","algorithm":"ssh-ed25519"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"` + otherFingerprint + `","algorithm":"ssh-ed25519"}`
 	resp, err = http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/bastion/verify", "application/json", bytes.NewBufferString(verifyBody))
 	if err != nil {
 		t.Fatalf("verify: %v", err)
@@ -322,12 +339,31 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Expected != "SHA256:7QJFe1xB2WTb0vKmCdY/4bt1KNvlXhq/W1LCSc1zV5c" || env.Received != "SHA256:RiX9Y7Dpb8DWVq5zgWBeSNSg9joxn8dDrfImiGE4g8c" {
+	if env.Expected != fingerprint || env.Received != otherFingerprint {
 		t.Fatalf("unexpected mismatch body: %+v", env)
 	}
 	if env.Host != "bastion" {
 		t.Fatalf("unexpected host: %q", env.Host)
 	}
+}
+
+// randomHostKey generates an ed25519 keypair and returns its
+// authorized_keys-format line together with its OpenSSH SHA256 fingerprint,
+// for tests that need a real host key rather than a synthetic fingerprint
+// string (the known_hosts store requires the full key on every pin).
+func randomHostKey(t *testing.T) (line, fingerprint string) {
+	t.Helper()
+
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	sshPub, err := gossh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("ssh public key: %v", err)
+	}
+	line = strings.TrimRight(string(gossh.MarshalAuthorizedKey(sshPub)), "\n")
+	return line, gossh.FingerprintSHA256(sshPub)
 }
 
 // TestHandlers_BadBody returns 400 for malformed JSON.

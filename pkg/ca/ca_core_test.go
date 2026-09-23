@@ -118,10 +118,12 @@ func TestCA_Load_AlreadyInitialized(t *testing.T) {
 func TestCA_Load_AfterInit(t *testing.T) {
 	ca1 := setupTestCA(t)
 	ca2 := &CA{
-		keyStore:    ca1.keyStore,
-		certStore:   ca1.certStore,
-		config:      ca1.config,
-		revocations: make(map[string]*RevocationInfo),
+		keyStore:        ca1.keyStore,
+		keystoreMap:     ca1.keystoreMap,
+		certStore:       ca1.certStore,
+		config:          ca1.config,
+		revocationStore: ca1.revocationStore,
+		revocations:     make(map[string]*RevocationInfo),
 	}
 	err := ca2.Load(context.Background())
 	require.NoError(t, err)

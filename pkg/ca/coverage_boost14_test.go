@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,9 +51,11 @@ func TestParamsValidate_InvalidCAConfig_B14(t *testing.T) {
 			Identity:     "bad-validity-b14",
 			ValidityDays: -1,
 		},
-		KeyAttributes: softwareKeyAttrs("bad-validity-b14"),
-		KeyStore:      backend,
-		CertStore:     cs,
+		KeyAttributes:   softwareKeyAttrs("bad-validity-b14"),
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	}
 	err := params.Validate()
 	assert.ErrorIs(t, err, ErrInvalidConfig)
@@ -74,9 +77,11 @@ func TestNewFromMultiIdentityConfig_InvalidConfig_B14(t *testing.T) {
 	backend, cs := newB9Backend(t)
 	mp := &MultiIdentityParams{
 		// Empty MultiIdentityCAConfig has no identities — Validate() fails.
-		Config:    &MultiIdentityCAConfig{},
-		KeyStore:  backend,
-		CertStore: cs,
+		Config:          &MultiIdentityCAConfig{},
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	}
 	_, err := NewFromMultiIdentityConfig(mp)
 	assert.Error(t, err)
@@ -297,9 +302,11 @@ func TestNewCA_IntermediateError_B14(t *testing.T) {
 				Keys:    DefaultKeyConfig(),
 			},
 		},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}
 	_, _, err := NewCA(context.Background(), params)
 	assert.ErrorIs(t, err, ErrInvalidConfig)

@@ -151,10 +151,26 @@ func TestNewServer_WithBarrierRegistry(t *testing.T) {
 	registry, regErr := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, regErr)
 
+	// Tenant handlers require an XKMSService with a composed TenantService
+	// (there is no barrier-registry-only fallback); build a real go-qrdb
+	// TenantService over the same registry.
+	tenantSvc, err := seal.NewHardwareTenantService(barrier, registry, slog.Default(), nil)
+	require.NoError(t, err)
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": ks},
+		DefaultBackend: "test",
+	}))
+	t.Cleanup(func() { xkms.Reset() })
+	xkmsSvc, err := xkms.Get()
+	require.NoError(t, err)
+	xkmsSvc.SetTenantService(tenantSvc)
+
 	cfg := &Config{
 		Authenticator:   auth.NewNoOpAuthenticator(),
 		Backends:        map[string]xkms.Backend{"test": ks},
 		BarrierRegistry: registry,
+		XKMSService:     xkmsSvc,
 	}
 
 	server, err := NewServer(cfg)
@@ -196,11 +212,27 @@ func TestNewServer_WithPasswordStoreAndRegistry(t *testing.T) {
 	registry, regErr := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, regErr)
 
+	// Tenant handlers require an XKMSService with a composed TenantService
+	// (there is no barrier-registry-only fallback); build a real go-qrdb
+	// TenantService over the same registry.
+	tenantSvc, err := seal.NewHardwareTenantService(barrier, registry, slog.Default(), nil)
+	require.NoError(t, err)
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": ks},
+		DefaultBackend: "test",
+	}))
+	t.Cleanup(func() { xkms.Reset() })
+	xkmsSvc, err := xkms.Get()
+	require.NoError(t, err)
+	xkmsSvc.SetTenantService(tenantSvc)
+
 	cfg := &Config{
 		Authenticator:   auth.NewNoOpAuthenticator(),
 		Backends:        map[string]xkms.Backend{"test": ks},
 		PasswordStore:   pwStore,
 		BarrierRegistry: registry,
+		XKMSService:     xkmsSvc,
 	}
 
 	server, err := NewServer(cfg)

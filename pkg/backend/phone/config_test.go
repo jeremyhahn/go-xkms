@@ -14,6 +14,7 @@
 package phone
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -263,7 +264,10 @@ func TestConfig_Validate_ValidationOrder(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_DefaultPlatform(t *testing.T) {
+// TestConfig_Validate_MissingPlatformIsError proves the platform default is
+// deleted: an AttestationConfig with no Platform set is a typed config
+// error, not a silent default to "android".
+func TestConfig_Validate_MissingPlatformIsError(t *testing.T) {
 	cfg := &Config{
 		Transport:      TransportBLE,
 		DeviceAddress:  "AA:BB:CC:DD:EE:FF",
@@ -274,12 +278,9 @@ func TestConfig_Validate_DefaultPlatform(t *testing.T) {
 		},
 	}
 
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if cfg.Attestation.Platform != DefaultPlatform {
-		t.Errorf("expected default platform %q, got %q", DefaultPlatform, cfg.Attestation.Platform)
+	err := cfg.Validate()
+	if !errors.Is(err, ErrMissingAttestationPlatform) {
+		t.Fatalf("expected ErrMissingAttestationPlatform, got %v", err)
 	}
 }
 
@@ -318,11 +319,5 @@ func TestConfig_Validate_NilAttestationNoPlatformDefault(t *testing.T) {
 
 	if cfg.Attestation != nil {
 		t.Error("expected nil Attestation to remain nil")
-	}
-}
-
-func TestDefaultPlatformConstant(t *testing.T) {
-	if DefaultPlatform != "android" {
-		t.Errorf("expected DefaultPlatform to be 'android', got %q", DefaultPlatform)
 	}
 }

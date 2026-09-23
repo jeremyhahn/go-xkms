@@ -66,10 +66,11 @@ func Emit(pin *Pin) (string, error) {
 	return pin.Host + " " + line, nil
 }
 
-// EmitAll renders every pin under (sc, owner) that carries a PublicKey into a
-// single OpenSSH known_hosts file body. Pins without a PublicKey are skipped
-// (they remain usable for in-process Verify). The returned bytes are suitable
-// for writing to a temp UserKnownHostsFile.
+// EmitAll renders every pin under (sc, owner) into a single OpenSSH
+// known_hosts file body. Store.List already excludes legacy (pre-v2,
+// fingerprint-only) pins that fail to decode — see BackendStore.List — so
+// every pin reaching Emit here carries a PublicKey. The returned bytes are
+// suitable for writing to a temp UserKnownHostsFile.
 func EmitAll(ctx context.Context, store Store, sc scope.Scope, owner string) ([]byte, error) {
 	pins, err := store.List(ctx, sc, owner)
 	if err != nil {
@@ -79,7 +80,7 @@ func EmitAll(ctx context.Context, store Store, sc scope.Scope, owner string) ([]
 	for _, pin := range pins {
 		line, lerr := Emit(pin)
 		if lerr != nil {
-			continue // skip fingerprint-only pins
+			continue
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')

@@ -48,7 +48,6 @@ func clusterTestConfig() *MultiIdentityCAConfig {
 		},
 		Valid:             DefaultIntermediateValidityYears,
 		Keys:              clusterKeys,
-		KeystoreType:      types.StoreSoftware,
 		ParentCA:          "Test Root CA",
 		MaxPathLengthZero: true,
 	})
@@ -79,6 +78,7 @@ func newClusterTestCA(t *testing.T, cfg *MultiIdentityCAConfig) (*CA, xkms.Backe
 	testCA := &CA{
 		config:      cfg,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -203,12 +203,14 @@ func TestLoad_AllIntermediates(t *testing.T) {
 	// A second CA instance over the same stores loads successfully and can
 	// issue from the non-selected cluster intermediate afterwards.
 	reloaded := &CA{
-		config:      cfg,
-		keyStore:    backend,
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
+		config:          cfg,
+		keyStore:        backend,
+		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
+		certStore:       cs,
+		revocationStore: storage.NewMemory(),
+		revocations:     make(map[string]*RevocationInfo),
+		serialGen:       NewSerialGenerator(NewMemoryStorage()),
+		profiles:        NewDefaultProfileRegistry(),
 	}
 	require.NoError(t, reloaded.Load(context.Background()))
 
@@ -237,12 +239,14 @@ func TestLoad_MissingNonSelectedIntermediateFails(t *testing.T) {
 	require.NoError(t, partial.StoreCertificate(platformCert))
 
 	reloaded := &CA{
-		config:      cfg,
-		keyStore:    backend,
-		certStore:   partial,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
+		config:          cfg,
+		keyStore:        backend,
+		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
+		certStore:       partial,
+		revocationStore: storage.NewMemory(),
+		revocations:     make(map[string]*RevocationInfo),
+		serialGen:       NewSerialGenerator(NewMemoryStorage()),
+		profiles:        NewDefaultProfileRegistry(),
 	}
 	err = reloaded.Load(context.Background())
 	require.Error(t, err)

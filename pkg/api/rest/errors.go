@@ -127,6 +127,16 @@ func mapErrorToStatusCode(err error) int {
 		// Plan does not entitle the requested isolation mode / barrier mode /
 		// feature.
 		return http.StatusForbidden
+	case errors.Is(err, qrdbsdk.ErrTenantMissing):
+		// go-qrdb's TenantService reports an unknown tenant with its own
+		// sentinel (pkg/tenant.ErrTenantNotFound), distinct from the seal
+		// package's ErrTenantNotFound handleTenantError checks directly.
+		return http.StatusNotFound
+	case errors.Is(err, qrdbsdk.ErrTenantExists):
+		// go-qrdb's TenantService reports a duplicate tenant with its own
+		// sentinel (pkg/tenant.ErrTenantAlreadyExists), distinct from the
+		// seal package's ErrTenantAlreadyExists.
+		return http.StatusConflict
 	case errors.Is(err, qrdbsdk.ErrSharedBarrierImmutable):
 		// A shared-barrier tenant's barrier mode cannot be changed in place.
 		return http.StatusConflict

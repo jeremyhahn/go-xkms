@@ -38,7 +38,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -99,7 +98,6 @@ func clusterCAConfig() *ca.MultiIdentityCAConfig {
 		},
 		Valid:             ca.DefaultIntermediateValidityYears,
 		Keys:              clusterKeys,
-		KeystoreType:      types.StoreSoftware,
 		ParentCA:          "Cluster Test Root CA",
 		MaxPathLengthZero: true,
 	})

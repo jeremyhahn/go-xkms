@@ -55,9 +55,7 @@ func TestCRLBlob_PersistReadRoundTrip(t *testing.T) {
 	}
 
 	writer := &CA{revocationStore: backend}
-	persisted, err := writer.putCRLBlob(context.Background(), ski, rec)
-	require.NoError(t, err)
-	assert.True(t, persisted)
+	require.NoError(t, writer.putCRLBlob(context.Background(), ski, rec))
 
 	reader := &CA{revocationStore: backend}
 	got, err := reader.getCRLBlob(context.Background(), ski)
@@ -74,25 +72,6 @@ func TestGetCRLBlob_NotFound(t *testing.T) {
 	ca := &CA{revocationStore: storage.NewMemory()}
 	_, err := ca.getCRLBlob(context.Background(), []byte{0xAA, 0xBB})
 	assert.ErrorIs(t, err, ErrCRLNotFound)
-}
-
-// TestGetCRLBlob_NoStoreConfigured covers the case where neither
-// revocationStore nor objectStore is configured: reads report "not found"
-// rather than panicking.
-func TestGetCRLBlob_NoStoreConfigured(t *testing.T) {
-	ca := &CA{}
-	_, err := ca.getCRLBlob(context.Background(), []byte{0x01})
-	assert.ErrorIs(t, err, ErrCRLNotFound)
-}
-
-// TestPutCRLBlob_NoStoreConfigured covers the case where neither store is
-// configured: the write is reported as not persisted but is not an error
-// (matches putRevocationBlob's contract for the same condition).
-func TestPutCRLBlob_NoStoreConfigured(t *testing.T) {
-	ca := &CA{}
-	persisted, err := ca.putCRLBlob(context.Background(), []byte{0x01}, &persistedCRL{Number: "1"})
-	require.NoError(t, err)
-	assert.False(t, persisted)
 }
 
 // errCRLStoreFault is a non-sentinel storage fault used to exercise
@@ -119,7 +98,7 @@ func (f *faultyCRLBackend) Get(ctx context.Context, key string) ([]byte, error) 
 // silently swallowed.
 func TestPutCRLBlob_StoreError(t *testing.T) {
 	ca := &CA{revocationStore: &faultyCRLBackend{Backend: storage.NewMemory()}}
-	_, err := ca.putCRLBlob(context.Background(), []byte{0x01}, &persistedCRL{Number: "1"})
+	err := ca.putCRLBlob(context.Background(), []byte{0x01}, &persistedCRL{Number: "1"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageError)
 	assert.Contains(t, err.Error(), errCRLStoreFault.Error())

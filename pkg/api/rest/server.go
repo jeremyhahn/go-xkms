@@ -496,9 +496,16 @@ func NewServer(cfg *Config) (*Server, error) {
 		log.Info("Share handlers enabled")
 	}
 
-	// Set up tenant handlers if barrier registry is configured
+	// Set up tenant handlers if barrier registry is configured. TenantService
+	// must already be composed on cfg.XKMSService; NewTenantHandlers rejects
+	// a barrier registry without one rather than falling back to direct
+	// barrier-registry tenant operations.
 	if cfg.BarrierRegistry != nil {
-		server.tenantHandlers = NewTenantHandlers(cfg.BarrierRegistry, cfg.XKMSService)
+		tenantHandlers, err := NewTenantHandlers(cfg.BarrierRegistry, cfg.XKMSService)
+		if err != nil {
+			return nil, err
+		}
+		server.tenantHandlers = tenantHandlers
 		log.Info("Tenant handlers enabled")
 	}
 

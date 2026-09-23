@@ -145,4 +145,9 @@ var (
 	// verifier. Import the platform package to register it
 	// (e.g., _ "github.com/jeremyhahn/go-xkms/pkg/backend/phone/android").
 	ErrUnsupportedPlatform = errors.New("phone backend: unsupported platform")
+
+	// ErrMissingAttestationPlatform indicates AttestationConfig.Platform was
+	// not set. The platform must be named explicitly (e.g. "android"); there
+	// is no default.
+	ErrMissingAttestationPlatform = errors.New("phone backend: attestation platform is required")
 )

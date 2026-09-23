@@ -428,7 +428,7 @@ func (ca *CA) IsAutoImportingIssuerCAs() bool {
 
 // CAKeyAttributes returns the KeyAttributes for the CA's signing key in the
 // specified store type. The requested store type must match the identity's
-// configured KeystoreType.
+// configured store type (GetStoreType, derived from Keys[0].StoreType).
 //
 // Thread-safe: Yes
 func (ca *CA) CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, error) {
@@ -513,7 +513,11 @@ func (ca *CA) IssuerForIdentity(ctx context.Context, cn string) (crypto.Signer, 
 	if err != nil {
 		return nil, nil, err
 	}
-	signer, err := ca.resolveKeyBackend(attrs.StoreType).Signer(ctx, attrs)
+	backend, err := ca.resolveKeyBackend(attrs.StoreType)
+	if err != nil {
+		return nil, nil, err
+	}
+	signer, err := backend.Signer(ctx, attrs)
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrKeyStoreRequired, Detail: fmt.Sprintf("identity %q key: %v", cn, err)}
 	}
@@ -553,9 +557,9 @@ func (ca *CA) CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.Publ
 			return
 		}
 		// storeType filtering: when a storeType is specified, restrict the
-		// bundle to CAs whose configured KeystoreType matches. We resolve via
-		// the issuing identity (rootIdentity for root, intermediateIdentity
-		// for intermediate).
+		// bundle to CAs whose configured store type (GetStoreType) matches.
+		// We resolve via the issuing identity (rootIdentity for root,
+		// intermediateIdentity for intermediate).
 		if storeType != "" {
 			matched := false
 			for _, id := range ca.config.Identity {
@@ -683,13 +687,8 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 	if err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("marshal revocation: %v", err)}
 	}
-	persisted, err := ca.putRevocationBlob(ctx, serial, buf)
-	if err != nil {
+	if err := ca.putRevocationBlob(ctx, serial, buf); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("persist revocation: %v", err)}
-	}
-	if !persisted {
-		slog.Warn("ca: revocation recorded without persistence (no revocation store configured)",
-			"serial", key, "reason", reason)
 	}
 
 	// Refresh the published CRL so it reflects this revocation without
@@ -705,114 +704,38 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 	return nil
 }
 
-// putRevocationBlob persists a serialized revocation record, preferring the
-// datastore-backed revocation store and falling back to the legacy object
-// store. Returns false when neither is configured (no persistence).
-func (ca *CA) putRevocationBlob(ctx context.Context, serial *big.Int, buf []byte) (bool, error) {
-	key := revocationKey(serial) + ".json"
-	if ca.revocationStore != nil {
-		if err := ca.revocationStore.Put(ctx, key, buf); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	if ca.objectStore != nil {
-		if err := ca.objectStore.Put(key, bytes.NewReader(buf)); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	return false, nil
+// putRevocationBlob persists a serialized revocation record to the
+// datastore-backed revocation store, the sole persistence medium for
+// revocation state.
+func (ca *CA) putRevocationBlob(ctx context.Context, serial *big.Int, buf []byte) error {
+	return ca.revocationStore.Put(ctx, revocationKey(serial)+".json", buf)
 }
 
-// getRevocationBlob reads a single persisted revocation record, preferring
-// the datastore-backed revocation store and falling back to the legacy
-// object store -- the same preference order putRevocationBlob writes with.
-// Returns ErrCRLNotFound when no record exists for serial or neither store
-// is configured; the OCSP responder's cold path relies on that distinction
-// to answer ocsp.Good rather than ocsp.Unknown for a never-revoked serial.
+// getRevocationBlob reads a single persisted revocation record from the
+// datastore-backed revocation store. Returns ErrCRLNotFound when no record
+// exists for serial; the OCSP responder's cold path relies on that
+// distinction to answer ocsp.Good rather than ocsp.Unknown for a
+// never-revoked serial.
 func (ca *CA) getRevocationBlob(ctx context.Context, serial *big.Int) ([]byte, error) {
-	key := revocationKey(serial) + ".json"
-
-	if ca.revocationStore != nil {
-		data, err := ca.revocationStore.Get(ctx, key)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				return nil, ErrCRLNotFound
-			}
-			return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get revocation: %v", err)}
-		}
-		return data, nil
-	}
-
-	if ca.objectStore != nil {
-		reader, err := ca.objectStore.Get(key)
-		if err != nil {
-			// List-and-scan fallback for backends that return opaque errors
-			// on missing keys. Keeps callers robust against divergent store
-			// implementations.
-			keys, listErr := ca.objectStore.List(revocationKeyPrefix)
-			if listErr != nil {
-				return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("list revocations: %v", listErr)}
-			}
-			for _, k := range keys {
-				if k == key {
-					// Key exists in listing but Get failed — surface the
-					// original Get error rather than pretending it's absent.
-					return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get revocation: %v", err)}
-				}
-			}
+	data, err := ca.revocationStore.Get(ctx, revocationKey(serial)+".json")
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrCRLNotFound
 		}
-		defer func() { _ = reader.Close() }()
-
-		data, err := io.ReadAll(reader)
-		if err != nil {
-			return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("read revocation: %v", err)}
-		}
-		return data, nil
+		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("get revocation: %v", err)}
 	}
-
-	return nil, ErrCRLNotFound
+	return data, nil
 }
 
 // listRevocationBlobs reads all persisted revocation records (key -> JSON
-// payload) from the configured store, preferring the datastore-backed
-// revocation store and falling back to the legacy object store.
+// payload) from the datastore-backed revocation store.
 func (ca *CA) listRevocationBlobs(ctx context.Context) (map[string][]byte, error) {
 	out := make(map[string][]byte)
-	if ca.revocationStore != nil {
-		err := ca.revocationStore.Scan(ctx, revocationKeyPrefix, func(k string, v []byte) error {
-			out[k] = append([]byte(nil), v...)
-			return nil
-		})
-		return out, err
-	}
-	if ca.objectStore != nil {
-		keys, err := ca.objectStore.List(revocationKeyPrefix)
-		if err != nil {
-			return nil, err
-		}
-		for _, k := range keys {
-			if len(k) == 0 || k[len(k)-1] == '/' {
-				continue
-			}
-			reader, err := ca.objectStore.Get(k)
-			if err != nil {
-				slog.Warn("ca: failed to read persisted revocation", "key", k, "err", err)
-				continue
-			}
-			data, err := io.ReadAll(reader)
-			_ = reader.Close()
-			if err != nil {
-				slog.Warn("ca: failed to read persisted revocation body", "key", k, "err", err)
-				continue
-			}
-			out[k] = data
-		}
-		return out, nil
-	}
-	return out, nil
+	err := ca.revocationStore.Scan(ctx, revocationKeyPrefix, func(k string, v []byte) error {
+		out[k] = append([]byte(nil), v...)
+		return nil
+	})
+	return out, err
 }
 
 // loadPersistedRevocations reads revocation records from the object store

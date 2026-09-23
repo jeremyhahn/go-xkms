@@ -383,13 +383,10 @@ var (
 	// ErrTenantNameRequired is returned when a tenant name is empty.
 	ErrTenantNameRequired = errors.New("keystore: tenant name is required")
 
-	// ErrBarrierRegistryNotConfigured is returned when tenant operations are attempted
-	// but the barrier registry has not been configured.
-	ErrBarrierRegistryNotConfigured = errors.New("keystore: barrier registry not configured")
-
-	// ErrTenantServiceNotConfigured is returned when an operation that requires
-	// the composed go-qrdb TenantService (entitlement/quota management) is
-	// attempted but only the legacy barrier-registry path is wired.
+	// ErrTenantServiceNotConfigured is returned when a tenant operation is
+	// attempted but the composed go-qrdb TenantService (SetTenantService) has
+	// not been wired. There is no fallback: every tenant operation requires
+	// the TenantService.
 	ErrTenantServiceNotConfigured = errors.New("keystore: tenant service not configured")
 
 	// ErrTenantPassphraseRequired is returned when a tenant barrier is

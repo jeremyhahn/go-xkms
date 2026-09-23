@@ -99,6 +99,34 @@ func (e *InvalidScopeError) Error() string {
 	return "sdk/ssh: invalid scope: " + e.Value
 }
 
+// MissingPublicKeyError is returned by KnownHostsClient.Add when
+// AddKnownHostRequest.PublicKey is empty. Every pin now requires the full
+// host key; there is no fingerprint-only form.
+type MissingPublicKeyError struct {
+	Host string
+}
+
+// Error implements the error interface.
+func (e *MissingPublicKeyError) Error() string {
+	return "sdk/ssh: pin for host " + e.Host + " requires a public key"
+}
+
+// InvalidPublicKeyError is returned by KnownHostsClient.Add when
+// AddKnownHostRequest.PublicKey cannot be parsed as an authorized_keys-format
+// line.
+type InvalidPublicKeyError struct {
+	Host string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *InvalidPublicKeyError) Error() string {
+	return "sdk/ssh: pin for host " + e.Host + " has an invalid public key: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying parse failure.
+func (e *InvalidPublicKeyError) Unwrap() error { return e.Err }
+
 // NotFoundError is returned by REST client methods that receive a 404
 // response from the server. The Resource field describes the logical
 // resource ("key", "known_host", "authorized_entry").

@@ -36,7 +36,17 @@ import (
 	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// singleBackendFactory returns a ca.BackendForStoreFunc that resolves every
+// StoreType to the same backend — the canonical, explicit way for a fixture
+// with one uniform backend to satisfy the required BackendForStore.
+func singleBackendFactory(b xkms.Backend) ca.BackendForStoreFunc {
+	return func(string, types.StoreType) (xkms.Backend, error) {
+		return b, nil
+	}
+}
 
 // createAdminUser creates a tenant-scoped AuthenticatedUser holding qrdb's
 // canonical admin role.
@@ -201,11 +211,13 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	multiConfig.Identity[1].Keys = multiKeys
 
 	_, intermediate, err := ca.NewCA(context.Background(), &ca.Params{
-		Identity:    multiConfig.Identity,
-		Config:      &ca.CAConfig{DefaultCertValidityDays: multiConfig.GetDefaultValidityDays()},
-		KeyStore:    keyStore,
-		CertStore:   certStore,
-		ObjectStore: blobStorage,
+		Identity:        multiConfig.Identity,
+		Config:          &ca.CAConfig{DefaultCertValidityDays: multiConfig.GetDefaultValidityDays()},
+		KeyStore:        keyStore,
+		BackendForStore: singleBackendFactory(keyStore),
+		RevocationStore: xkmsstorage.NewMemory(),
+		CertStore:       certStore,
+		ObjectStore:     blobStorage,
 	})
 	require.NoError(t, err)
 	testCA, ok := intermediate.(ca.TCGCA)

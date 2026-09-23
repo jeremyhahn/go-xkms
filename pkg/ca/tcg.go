@@ -567,7 +567,7 @@ func (ca *CA) resolveTCGSigner(ctx context.Context, request *CertificateRequest)
 	issuerKeyStoreType := ""
 	issuingIdentity := ca.config.IssuingIdentity()
 	if issuingIdentity != nil {
-		issuerKeyStoreType = string(issuingIdentity.KeystoreType)
+		issuerKeyStoreType = string(issuingIdentity.GetStoreType())
 	}
 
 	return signer, signingCert, issuerKeyStoreType, nil

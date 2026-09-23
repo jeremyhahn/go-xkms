@@ -190,8 +190,7 @@ func TestSSHKnownHostsLifecycle(t *testing.T) {
 	// Pin the host key.
 	addCmd := newSSHExtCmd()
 	_ = addCmd.Flags().Set("host", "git.example.com")
-	_ = addCmd.Flags().Set("fingerprint", fingerprint)
-	_ = addCmd.Flags().Set("algorithm", pub.Type())
+	_ = addCmd.Flags().Set("key", string(gossh.MarshalAuthorizedKey(pub)))
 	out = captureStdout(t, func() {
 		if err := runXkmsctlSSHKnownHostsAdd(addCmd, nil); err != nil {
 			t.Fatalf("add: %v", err)
@@ -263,20 +262,21 @@ func TestRunXkmsctlSSHKnownHostsAdd_MissingHost(t *testing.T) {
 	}
 }
 
-func TestRunXkmsctlSSHKnownHostsAdd_MissingFingerprint(t *testing.T) {
+func TestRunXkmsctlSSHKnownHostsAdd_MissingKey(t *testing.T) {
 	withGlobalConfig(t, newSSHTestConfig(t))
 	cmd := newSSHExtCmd()
 	_ = cmd.Flags().Set("host", "git.example.com")
-	if err := runXkmsctlSSHKnownHostsAdd(cmd, nil); !errors.Is(err, ErrSSHFingerprint) {
-		t.Fatalf("want ErrSSHFingerprint, got %v", err)
+	if err := runXkmsctlSSHKnownHostsAdd(cmd, nil); !errors.Is(err, ErrSSHLine) {
+		t.Fatalf("want ErrSSHLine, got %v", err)
 	}
 }
 
 func TestRunXkmsctlSSHKnownHostsAdd_ClientError(t *testing.T) {
 	withGlobalConfig(t, &Config{OutputFormat: "text", Protocol: "grpc", Server: ""})
+	_, pub, _ := newTestSSHKeyPair(t)
 	cmd := newSSHExtCmd()
 	_ = cmd.Flags().Set("host", "git.example.com")
-	_ = cmd.Flags().Set("fingerprint", "SHA256:abc")
+	_ = cmd.Flags().Set("key", string(gossh.MarshalAuthorizedKey(pub)))
 	if err := runXkmsctlSSHKnownHostsAdd(cmd, nil); err == nil {
 		t.Fatal("expected error when the SSH client cannot be constructed")
 	}
@@ -329,7 +329,7 @@ func TestRunXkmsctlSSHKnownHostsVerify_KeyFromFile(t *testing.T) {
 
 	addCmd := newSSHExtCmd()
 	_ = addCmd.Flags().Set("host", "files.example.com")
-	_ = addCmd.Flags().Set("fingerprint", gossh.FingerprintSHA256(pub))
+	_ = addCmd.Flags().Set("key", string(gossh.MarshalAuthorizedKey(pub)))
 	if err := runXkmsctlSSHKnownHostsAdd(addCmd, nil); err != nil {
 		t.Fatalf("add: %v", err)
 	}

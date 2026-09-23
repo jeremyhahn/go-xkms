@@ -335,24 +335,27 @@ type embeddedKnownHostsClient struct {
 	store pkgknownhosts.Store
 }
 
-// Add implements KnownHostsClient.Add.
+// Add implements KnownHostsClient.Add. PublicKey is required — the store no
+// longer accepts a fingerprint-only pin. Fingerprint and Algorithm are
+// derived from the parsed PublicKey rather than trusted from the request, so
+// a caller cannot pin a fingerprint that does not match the key it supplied.
 func (c *embeddedKnownHostsClient) Add(ctx context.Context, req AddKnownHostRequest) error {
 	sc, err := pkgscope.Parse(req.Scope)
 	if err != nil {
 		return &InvalidScopeError{Value: req.Scope}
 	}
-	pin := &pkgknownhosts.Pin{
-		Host:        req.Host,
-		Fingerprint: req.Fingerprint,
-		Algorithm:   req.Algorithm,
-		Scope:       sc,
-		Owner:       req.Owner,
-		AddedAt:     time.Now().UTC(),
-		Source:      req.Source,
+	if strings.TrimSpace(req.PublicKey) == "" {
+		return &MissingPublicKeyError{Host: req.Host}
 	}
-	if pin.Source == "" {
-		pin.Source = pkgknownhosts.SourceManual
+	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(req.PublicKey))
+	if perr != nil {
+		return &InvalidPublicKeyError{Host: req.Host, Err: perr}
 	}
+	source := req.Source
+	if source == "" {
+		source = pkgknownhosts.SourceManual
+	}
+	pin := pkgknownhosts.PinFromPublicKey(req.Host, sc, req.Owner, pub, source)
 	return c.store.Add(ctx, pin)
 }
 
@@ -380,9 +383,26 @@ func (c *embeddedKnownHostsClient) List(ctx context.Context, req ListKnownHostsR
 			Algorithm:   p.Algorithm,
 			AddedAt:     p.AddedAt,
 			Source:      p.Source,
+			PublicKey:   authorizedKeysLine(p),
 		})
 	}
 	return out, nil
+}
+
+// authorizedKeysLine renders a Pin's PublicKey as an authorized_keys-format
+// line, or "" if Emit cannot render it (defensive only: Store.List already
+// excludes legacy pins that have no PublicKey).
+func authorizedKeysLine(p *pkgknownhosts.Pin) string {
+	line, err := pkgknownhosts.Emit(p)
+	if err != nil {
+		return ""
+	}
+	// Emit returns "<host> <algo> <base64>"; the DTO carries only the
+	// key portion (host is already a separate field).
+	if idx := strings.Index(line, " "); idx >= 0 {
+		return line[idx+1:]
+	}
+	return ""
 }
 
 // Remove implements KnownHostsClient.Remove.

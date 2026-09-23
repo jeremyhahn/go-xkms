@@ -29,6 +29,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +55,7 @@ func TestCreateRootCertificate_WithCRLAndOCSP_B12(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -399,6 +401,7 @@ func TestGetOrGenerateCAKey_CachedKey_B12(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -411,6 +414,7 @@ func TestGetOrGenerateCAKey_CachedKey_B12(t *testing.T) {
 	ca2 := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),

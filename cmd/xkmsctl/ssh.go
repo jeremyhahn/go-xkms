@@ -41,10 +41,6 @@ var (
 	// ErrSSHHost is returned when a required --host flag is absent.
 	ErrSSHHost = errors.New("ssh: --host is required")
 
-	// ErrSSHFingerprint is returned when a required --fingerprint flag
-	// is absent.
-	ErrSSHFingerprint = errors.New("ssh: --fingerprint is required")
-
 	// ErrSSHLine is returned when a required --line flag is absent.
 	ErrSSHLine = errors.New("ssh: --line is required")
 
@@ -235,8 +231,8 @@ func init() {
 	sshKeysImportCmd.Flags().String("comment", "", "Key comment")
 
 	sshKnownHostsAddCmd.Flags().String("host", "", "Host address (required)")
-	sshKnownHostsAddCmd.Flags().String("fingerprint", "", "OpenSSH SHA256 host-key fingerprint (required)")
-	sshKnownHostsAddCmd.Flags().String("algorithm", "", "Host-key algorithm")
+	sshKnownHostsAddCmd.Flags().String("key", "", "Host key as an authorized_keys-format line (required unless --file)")
+	sshKnownHostsAddCmd.Flags().String("file", "", "Read the host key from a file instead of --key")
 	sshKnownHostsAddCmd.Flags().String("source", "xkmsctl", "Provenance of the pin")
 	sshKnownHostsRemoveCmd.Flags().String("host", "", "Host address (required)")
 	sshKnownHostsVerifyCmd.Flags().String("host", "", "Host address (required)")
@@ -481,26 +477,26 @@ func runXkmsctlSSHKnownHostsAdd(cmd *cobra.Command, _ []string) error {
 	scope, _ := cmd.Flags().GetString("scope")
 	owner, _ := cmd.Flags().GetString("owner")
 	host, _ := cmd.Flags().GetString("host")
-	fingerprint, _ := cmd.Flags().GetString("fingerprint")
-	algorithm, _ := cmd.Flags().GetString("algorithm")
 	source, _ := cmd.Flags().GetString("source")
 	if host == "" {
 		return ErrSSHHost
 	}
-	if fingerprint == "" {
-		return ErrSSHFingerprint
+	pub, err := sshPublicKeyFromFlags(cmd)
+	if err != nil {
+		return err
 	}
 	client, closer, err := xkmsctlSSHClient()
 	if err != nil {
 		return err
 	}
 	defer closer()
+	line := strings.TrimRight(string(gossh.MarshalAuthorizedKey(pub)), "\n")
 	if err := client.KnownHosts().Add(context.Background(), sshsdk.AddKnownHostRequest{
-		Scope: scope, Owner: owner, Host: host, Fingerprint: fingerprint, Algorithm: algorithm, Source: source,
+		Scope: scope, Owner: owner, Host: host, PublicKey: line, Source: source,
 	}); err != nil {
 		return err
 	}
-	fmt.Printf("Pinned host key for %q\n", host)
+	fmt.Printf("Pinned host key for %q (%s)\n", host, gossh.FingerprintSHA256(pub))
 	return nil
 }
 

@@ -298,6 +298,7 @@ func TestRESTKnownHosts_AddListVerifyRemove(t *testing.T) {
 
 	if err := client.KnownHosts().Add(ctx, sdkssh.AddKnownHostRequest{
 		Scope: "user", Owner: "alice", Host: "bastion.example.com",
+		PublicKey:   string(gossh.MarshalAuthorizedKey(sshPub)),
 		Fingerprint: fp, Algorithm: sshPub.Type(),
 	}); err != nil {
 		t.Fatalf("Add: %v", err)

@@ -470,31 +470,6 @@ func TestRecordRevocation_NilSerial_B8(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — listRevocationBlobs: objectStore with directory entries
-// (the `k[len(k)-1] == '/'` skip guard at line 689)
-// =============================================================================
-
-func TestListRevocationBlobs_ObjectStoreWithDirEntry_B8(t *testing.T) {
-	ca := setupTestCA(t)
-	ca.objectStore = objmemory.New()
-
-	// Write a real blob and a directory-like key ending in '/' to test the skip guard.
-	realKey := "revocations/12345.json"
-	dirKey := "revocations/"
-	payload := []byte(`{"serial":"12345","reason":0,"revoked_at":"2024-01-01T00:00:00Z"}`)
-	require.NoError(t, ca.objectStore.Put(realKey, &pemBytesReader{data: payload}))
-	// Store an empty payload under the "directory" key to ensure List returns it.
-	require.NoError(t, ca.objectStore.Put(dirKey, &pemBytesReader{data: nil}))
-
-	blobs, err := ca.listRevocationBlobs(context.Background())
-	require.NoError(t, err)
-	// The dir-key entry should be skipped; only the real blob should appear.
-	assert.Len(t, blobs, 1)
-	_, ok := blobs[realKey]
-	assert.True(t, ok)
-}
-
-// =============================================================================
 // ca_extensions.go — putRevocationBlob with revocationStore (Backend)
 // =============================================================================
 
@@ -505,9 +480,7 @@ func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
 		revocationStore: backend,
 		revocations:     make(map[string]*RevocationInfo),
 	}
-	persisted, err := ca.putRevocationBlob(context.Background(), big.NewInt(55555), []byte(`{"serial":"55555"}`))
-	require.NoError(t, err)
-	assert.True(t, persisted)
+	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(55555), []byte(`{"serial":"55555"}`)))
 }
 
 // =============================================================================

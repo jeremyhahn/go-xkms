@@ -15,6 +15,8 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // sshTestCmd builds a detached cobra command carrying the union of every
@@ -36,7 +39,7 @@ func sshTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	fs := cmd.Flags()
 	for _, name := range []string{
 		"scope", "owner", "name", "type", "comment", "backend",
-		"host", "fingerprint", "algorithm", "source",
+		"host", "key", "file", "algorithm", "source",
 		"server", "tls-ca",
 	} {
 		fs.String(name, "", "")
@@ -159,13 +162,13 @@ func TestSSHHandlers_RejectMissingRequiredFlags(t *testing.T) {
 	}
 }
 
-func TestRunSSHHostKeysAdd_RequiresFingerprint(t *testing.T) {
+func TestRunSSHHostKeysAdd_RequiresHostKey(t *testing.T) {
 	cmd, _ := sshTestCmd(t)
 	setSSHFlags(t, cmd, map[string]string{"host": "bastion.example.com"})
 
 	err := runSSHHostKeysAdd(cmd, nil)
-	assert.ErrorIs(t, err, ErrSSHMissingFingerprint,
-		"a pin without a fingerprint would pin nothing and must be refused")
+	assert.ErrorIs(t, err, ErrSSHMissingHostKey,
+		"a pin without a public key would pin nothing and must be refused")
 }
 
 func TestRunSSHKeysGenerate_RejectsUnsupportedAlgorithm(t *testing.T) {
@@ -258,16 +261,32 @@ func TestSSHKeys_GenerateDefaultsScopeOwnerAlgorithm(t *testing.T) {
 	assert.Contains(t, out, "Algorithm:   ed25519")
 }
 
+// randomHostKeyLine generates an ed25519 keypair and returns its
+// authorized_keys-format line together with its OpenSSH SHA256
+// fingerprint. Host-key pins now require the full key, so tests can no
+// longer pin a synthetic fingerprint string.
+func randomHostKeyLine(t *testing.T) (line, fingerprint string) {
+	t.Helper()
+
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	sshPub, err := gossh.NewPublicKey(pub)
+	require.NoError(t, err)
+
+	line = strings.TrimRight(string(gossh.MarshalAuthorizedKey(sshPub)), "\n")
+	return line, gossh.FingerprintSHA256(sshPub)
+}
+
 func TestSSHHostKeys_AddListRemove(t *testing.T) {
 	withEmbeddedSSHStore(t)
 
-	const fingerprint = "SHA256:0123456789abcdef0123456789abcdef0123456789a"
+	line, fingerprint := randomHostKeyLine(t)
 
 	add, addBuf := sshTestCmd(t)
 	setSSHFlags(t, add, map[string]string{
 		"scope": "user", "owner": "alice",
-		"host": "bastion.example.com", "fingerprint": fingerprint,
-		"algorithm": "ssh-ed25519", "source": "tofu",
+		"host": "bastion.example.com", "key": line,
+		"source": "tofu",
 	})
 	require.NoError(t, runSSHHostKeysAdd(add, nil))
 	assert.Contains(t, addBuf.String(), "Pinned bastion.example.com -> "+fingerprint)

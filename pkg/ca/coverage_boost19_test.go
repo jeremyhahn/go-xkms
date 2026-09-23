@@ -12,19 +12,16 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package ca coverage boost, nineteenth pass: revocation-persistence storage
-// faults (both the revocationStore and legacy objectStore backends of
-// putRevocationBlob) and the mustMarshal panic-on-unsupported-type guard.
+// faults (the revocationStore backend of putRevocationBlob) and the
+// mustMarshal panic-on-unsupported-type guard.
 package ca
 
 import (
 	"context"
 	"errors"
-	"io"
 	"math/big"
 	"testing"
 
-	objstore "github.com/jeremyhahn/go-objstore/pkg/common"
-	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,31 +51,6 @@ func TestPutRevocationBlob_RevocationStoreError_B19(t *testing.T) {
 	ca.revocationStore = &faultyPutBackend{Backend: storage.NewMemory()}
 
 	err := ca.Revoke(context.Background(), big.NewInt(4242), 0)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrStorageError)
-	assert.Contains(t, err.Error(), errRevocationStoreFault.Error())
-}
-
-// failPutObjectStore wraps a real objstore.Storage and forces Put to fail,
-// letting tests drive putRevocationBlob's legacy-objectStore fallback error
-// branch (only reached when no revocationStore is configured).
-type failPutObjectStore struct {
-	objstore.Storage
-}
-
-func (f *failPutObjectStore) Put(key string, data io.Reader) error {
-	return errRevocationStoreFault
-}
-
-// TestPutRevocationBlob_ObjectStoreError_B19 exercises the legacy objectStore
-// fallback's Put error branch of putRevocationBlob.
-func TestPutRevocationBlob_ObjectStoreError_B19(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	ca.revocationStore = nil
-	ca.objectStore = &failPutObjectStore{Storage: objmemory.New()}
-
-	err := ca.Revoke(context.Background(), big.NewInt(4343), 0)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrStorageError)
 	assert.Contains(t, err.Error(), errRevocationStoreFault.Error())

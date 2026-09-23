@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
+	"strings"
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -237,16 +238,36 @@ func TestSSHKeys_Import(t *testing.T) {
 	})
 }
 
+// randomHostKey generates an ed25519 keypair and returns its
+// authorized_keys-format line together with its OpenSSH SHA256 fingerprint,
+// for tests that need a real host key rather than a synthetic fingerprint
+// string (the known_hosts store requires the full key on every pin).
+func randomHostKey(t *testing.T) (line, fingerprint string) {
+	t.Helper()
+
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	sshPub, err := gossh.NewPublicKey(pub)
+	require.NoError(t, err)
+
+	line = strings.TrimRight(string(gossh.MarshalAuthorizedKey(sshPub)), "\n")
+	return line, gossh.FingerprintSHA256(sshPub)
+}
+
 // TestSSHKnownHosts_AddListVerifyRemove exercises the host-key pin surface,
 // including the MITM-indicating fingerprint mismatch.
 func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	server := newSSHServer(t)
 	ctx := context.Background()
 
+	line, fingerprint := randomHostKey(t)
+	_, otherFingerprint := randomHostKey(t)
+
 	added, err := server.handleSSHKnownHostsAdd(ctx, sshRequest(t, "ssh.knownHosts.add",
 		sdkssh.AddKnownHostRequest{
 			Scope: "user", Owner: "alice",
-			Host: "git.example.com", Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0", Algorithm: "ssh-ed25519",
+			Host: "git.example.com", PublicKey: line, Fingerprint: fingerprint, Algorithm: "ssh-ed25519",
 		}))
 	require.NoError(t, err)
 	assert.Equal(t, SSHSuccessResult{Success: true}, added)
@@ -257,19 +278,19 @@ func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	require.Len(t, listed.(SSHPinListResult).Items, 1)
 
 	ok, err := server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: fingerprint}))
 	require.NoError(t, err)
 	assert.Equal(t, SSHSuccessResult{Success: true}, ok)
 
 	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:F/Fl1aW6aV8nwCOoOqKzRj4jgQ42C3UXEn6QFh7rq9o"}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: otherFingerprint}))
 	var mismatch *SSHMismatchError
 	require.ErrorAs(t, err, &mismatch, "a changed host key must be reported as a mismatch, not a generic failure")
-	assert.Equal(t, "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0", mismatch.Expected)
-	assert.Equal(t, "SHA256:F/Fl1aW6aV8nwCOoOqKzRj4jgQ42C3UXEn6QFh7rq9o", mismatch.Received)
+	assert.Equal(t, fingerprint, mismatch.Expected)
+	assert.Equal(t, otherFingerprint, mismatch.Received)
 
 	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "other.example.com", Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "other.example.com", Fingerprint: fingerprint}))
 	var notFound *SSHNotFoundError
 	require.ErrorAs(t, err, &notFound)
 	assert.Equal(t, "known_host", notFound.Resource)

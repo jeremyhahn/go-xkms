@@ -118,10 +118,22 @@ var (
 
 	// ErrObjectStoreRequired indicates an object store must be configured for
 	// the invoked operation. CA-adjacent features like cross-signing, AIA
-	// trust-chain caching, CRL snapshot storage, and attestation evidence
-	// persistence require a blob-style store that CertStore's CN-keyed model
-	// cannot serve.
+	// trust-chain caching, and attestation evidence persistence require a
+	// blob-style store that CertStore's CN-keyed model cannot serve.
 	ErrObjectStoreRequired = errors.New("ca: object store required")
+
+	// ErrRevocationStoreRequired indicates a durable revocation store
+	// (Params.RevocationStore) must be configured. Revocation state and the
+	// derived CRL artifact are always persisted through RevocationStore; there
+	// is no fallback to the object store or to in-memory-only tracking.
+	ErrRevocationStoreRequired = errors.New("ca: revocation store required")
+
+	// ErrBackendForStoreRequired indicates Params.BackendForStore (or
+	// MultiIdentityParams.BackendForStore) must be supplied. Every CA key is
+	// routed to its backend by StoreType through the per-instance keystoreMap
+	// built from BackendForStore; there is no fallback to a single shared
+	// KeyStore for every StoreType.
+	ErrBackendForStoreRequired = errors.New("ca: BackendForStore is required")
 
 	// ErrStorageError indicates a storage operation failed.
 	ErrStorageError = errors.New("ca: storage operation failed")

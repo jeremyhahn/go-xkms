@@ -227,14 +227,18 @@ Host-key pin management (`known-hosts` is an alias for the parent command).
 
 | Command | Purpose |
 |---------|---------|
-| `add` | Pin a host-key fingerprint (`--host`, `--fingerprint` required; `--algorithm`, `--source` optional). |
-| `list` (`ls`) | List pinned fingerprints. |
+| `add` | Pin a host key (`--host` required; the key as an `authorized_keys`-format line via `--key`, or read from a file via `--file` — exactly one required; `--source` optional). |
+| `list` (`ls`) | List pinned host keys. |
 | `remove` (`rm`, `delete`) | Remove a pin (`--host` required). |
 
 All three accept `--scope` (default `user`) and `--owner` (default `$USER`).
+**BREAKING:** a pin can no longer be created from a fingerprint alone —
+`add` requires the full public key so the pin can be matched byte-for-byte
+on every future connection, not just by its fingerprint.
 
 ```bash
-xkey ssh host-keys add --host bastion.example.com --fingerprint SHA256:abc... --algorithm ssh-ed25519
+xkey ssh host-keys add --host bastion.example.com --key "ssh-ed25519 AAAA..."
+xkey ssh host-keys add --host bastion.example.com --file bastion_host_key.pub
 xkey ssh host-keys list
 xkey ssh host-keys remove --host bastion.example.com
 ```

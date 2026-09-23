@@ -76,12 +76,14 @@ func setupTestCAWithRealIntermediate(t *testing.T) *CA {
 	// Directly construct CA with the full multi-identity config
 	// so that createIntermediateCertificates is exercised during Init.
 	ca := &CA{
-		config:      config,
-		keyStore:    backend,
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
+		config:          config,
+		keyStore:        backend,
+		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
+		certStore:       cs,
+		revocationStore: storage.NewMemory(),
+		revocations:     make(map[string]*RevocationInfo),
+		serialGen:       NewSerialGenerator(NewMemoryStorage()),
+		profiles:        NewDefaultProfileRegistry(),
 	}
 
 	err = ca.Init(context.Background())
@@ -202,6 +204,7 @@ func TestCA_IntermediateCA_WithSANSAndExtensions(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -225,12 +228,14 @@ func TestCA_Load_WithIntermediate(t *testing.T) {
 	ca1 := setupTestCAWithRealIntermediate(t)
 
 	ca2 := &CA{
-		keyStore:    ca1.keyStore,
-		certStore:   ca1.certStore,
-		config:      ca1.config,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
+		keyStore:        ca1.keyStore,
+		keystoreMap:     ca1.keystoreMap,
+		certStore:       ca1.certStore,
+		config:          ca1.config,
+		revocationStore: ca1.revocationStore,
+		revocations:     make(map[string]*RevocationInfo),
+		serialGen:       NewSerialGenerator(NewMemoryStorage()),
+		profiles:        NewDefaultProfileRegistry(),
 	}
 
 	err := ca2.Load(context.Background())
@@ -516,9 +521,11 @@ func TestParams_Validate_NilCertStore(t *testing.T) {
 	require.NoError(t, err)
 
 	p := &Params{
-		Config:        &CAConfig{Identity: "test", Subject: &Subject{CommonName: "test"}},
-		KeyAttributes: &types.KeyAttributes{},
-		KeyStore:      backend,
+		Config:          &CAConfig{Identity: "test", Subject: &Subject{CommonName: "test"}},
+		KeyAttributes:   &types.KeyAttributes{},
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
 	}
 	err = p.Validate()
 	assert.ErrorIs(t, err, ErrCertStoreRequired)
@@ -599,7 +606,7 @@ func TestCaConfigToMultiIdentity_EmptySubject(t *testing.T) {
 func TestCaConfigToMultiIdentity_EmptyStoreType(t *testing.T) {
 	cfg := &CAConfig{Identity: "test", StoreType: ""}
 	multi := caConfigToMultiIdentity(cfg, nil)
-	assert.Equal(t, types.StoreSoftware, multi.Identity[0].KeystoreType)
+	assert.Equal(t, types.StoreSoftware, multi.Identity[0].GetStoreType())
 }
 
 func TestCaConfigToMultiIdentity_WithPolicyAndCRL(t *testing.T) {
@@ -645,7 +652,7 @@ func TestCA_GetOrGenerateCAKey_ExistingKey(t *testing.T) {
 func TestCA_GetOrGenerateCAKey_UnsupportedAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
 	attrs := &types.KeyAttributes{
-		CN: "unsupported-algo", KeyAlgorithm: x509.DSA, KeyType: types.KeyTypeCA,
+		CN: "unsupported-algo", KeyAlgorithm: x509.DSA, KeyType: types.KeyTypeCA, StoreType: types.StoreSoftware,
 	}
 	_, err := ca.getOrGenerateCAKey(context.Background(), attrs)
 	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
@@ -852,6 +859,7 @@ func TestCA_Init_RootWithSANSAndExtensions(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -923,8 +931,10 @@ func TestNew_Success(t *testing.T) {
 			CN: "Flat CA", KeyAlgorithm: x509.ECDSA, KeyType: types.KeyTypeCA,
 			ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
 		},
-		KeyStore:  backend,
-		CertStore: cs,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
 	}
 
 	caIface, err := New(params)
@@ -959,10 +969,12 @@ func TestNew_WithCustomSerialGenAndProfiles(t *testing.T) {
 			CN: "Custom CA", KeyAlgorithm: x509.ECDSA, KeyType: types.KeyTypeCA,
 			ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
 		},
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: customSerialGen,
-		Profiles:  customProfiles,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       customSerialGen,
+		Profiles:        customProfiles,
 	}
 
 	caIface, err := New(params)

@@ -196,6 +196,7 @@ func TestKHStore_Add_ZeroAddedAt(t *testing.T) {
 		Owner:       "alice",
 		Host:        "bastion.example.com",
 		Fingerprint: keys.Fingerprint(pub),
+		PublicKey:   pub.Marshal(),
 		// AddedAt intentionally zero
 	})
 	if err != nil {
@@ -343,6 +344,7 @@ func TestKHStripPort_NoPort(t *testing.T) {
 		Host:        "bastion.example.com",
 		Fingerprint: keys.Fingerprint(pub),
 		Algorithm:   pub.Type(),
+		PublicKey:   pub.Marshal(),
 		Scope:       scope.User,
 		Owner:       "alice",
 	}); err != nil {
@@ -372,6 +374,85 @@ func TestKHStore_Get_InvalidScopeInEnvelope(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// v1 (fingerprint-only) pins: no full-key matching, no new fingerprint-only
+// pins, and List skips rather than aborts on one.
+// ---------------------------------------------------------------------------
+
+// legacyV1Envelope is a pre-v2 stored envelope: a fingerprint but no "pub"
+// field, exactly what a pin recorded before PublicKey existed looks like on
+// disk.
+const legacyV1Envelope = `{"v":1,"scope":"user","owner":"alice","host":"bastion.example.com","fp":"SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU","added":"2025-01-01T00:00:00Z"}`
+
+// TestKHStore_Get_LegacyPinRequiresRepin proves a v1 (fingerprint-only)
+// stored pin is not silently accepted: Get fails closed with
+// *LegacyPinError rather than returning a Pin with an empty PublicKey.
+func TestKHStore_Get_LegacyPinRequiresRepin(t *testing.T) {
+	store, err := known_hosts.NewBackendStore(&khPayloadBackend{data: []byte(legacyV1Envelope)})
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	_, err = store.Get(context.Background(), scope.User, "alice", "bastion.example.com")
+	var legacy *known_hosts.LegacyPinError
+	if !errors.As(err, &legacy) {
+		t.Fatalf("expected LegacyPinError, got %T: %v", err, err)
+	}
+	if legacy.Host != "bastion.example.com" {
+		t.Fatalf("Host = %q, want bastion.example.com", legacy.Host)
+	}
+}
+
+// TestKHVerify_LegacyPinRequiresRepin proves Verify propagates the same
+// fail-closed rejection: a v1 pin can no longer be matched against, whether
+// or not the presented key is the one that was originally pinned.
+func TestKHVerify_LegacyPinRequiresRepin(t *testing.T) {
+	store, err := known_hosts.NewBackendStore(&khPayloadBackend{data: []byte(legacyV1Envelope)})
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	pub := newEd25519PublicKey(t)
+	err = known_hosts.Verify(context.Background(), store, scope.User, "alice", "bastion.example.com", pub)
+	var legacy *known_hosts.LegacyPinError
+	if !errors.As(err, &legacy) {
+		t.Fatalf("expected LegacyPinError, got %T: %v", err, err)
+	}
+}
+
+// TestKHStore_List_SkipsLegacyPin proves List discovery is not blocked by
+// one unmatchable v1 pin in scope: it is skipped, not surfaced as a scan
+// failure that would hide every other pin under the same prefix.
+func TestKHStore_List_SkipsLegacyPin(t *testing.T) {
+	store, err := known_hosts.NewBackendStore(&khPayloadBackend{data: []byte(legacyV1Envelope)})
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	pins, err := store.List(context.Background(), scope.User, "alice")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(pins) != 0 {
+		t.Fatalf("expected legacy pin to be skipped, got %d pins", len(pins))
+	}
+}
+
+// TestKHStore_Add_RequiresPublicKey proves a new pin cannot be created
+// fingerprint-only: Store.Add now requires a PublicKey.
+func TestKHStore_Add_RequiresPublicKey(t *testing.T) {
+	store := newStore(t)
+	pub := newEd25519PublicKey(t)
+	err := store.Add(context.Background(), &known_hosts.Pin{
+		Scope:       scope.User,
+		Owner:       "alice",
+		Host:        "bastion.example.com",
+		Fingerprint: keys.Fingerprint(pub),
+		// PublicKey intentionally omitted.
+	})
+	var req *known_hosts.PublicKeyRequiredError
+	if !errors.As(err, &req) {
+		t.Fatalf("expected PublicKeyRequiredError, got %T: %v", err, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Add: StorageError from backend.Exists + Put failures
 // ---------------------------------------------------------------------------
 
@@ -386,6 +467,7 @@ func TestKHStore_Add_ExistsStorageError(t *testing.T) {
 		Owner:       "alice",
 		Host:        "bastion.example.com",
 		Fingerprint: keys.Fingerprint(pub),
+		PublicKey:   pub.Marshal(),
 	})
 	var se *known_hosts.StorageError
 	if !errors.As(err, &se) {
@@ -404,6 +486,7 @@ func TestKHStore_Add_PutStorageError(t *testing.T) {
 		Owner:       "alice",
 		Host:        "bastion.example.com",
 		Fingerprint: keys.Fingerprint(pub),
+		PublicKey:   pub.Marshal(),
 	})
 	var se *known_hosts.StorageError
 	if !errors.As(err, &se) {

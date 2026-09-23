@@ -86,9 +86,8 @@ func TestCA_TPM2Key_InitAndSign(t *testing.T) {
 
 	const cn = "TPM2 Secondary Root CA"
 	id := Identity{
-		Subject:      Subject{CommonName: cn, Organization: "Test Org"},
-		Valid:        DefaultRootValidityYears,
-		KeystoreType: types.StoreSoftware,
+		Subject: Subject{CommonName: cn, Organization: "Test Org"},
+		Valid:   DefaultRootValidityYears,
 		Keys: []*types.KeyConfig{
 			keyConfig(types.AlgorithmECDSA, types.StoreSoftware), // [0] primary (software)
 			keyConfig(types.AlgorithmECDSA, types.StoreTPM2),     // [1] TPM-backed
@@ -102,6 +101,7 @@ func TestCA_TPM2Key_InitAndSign(t *testing.T) {
 		KeyStore:        swBackend,
 		CertStore:       newInMemoryCertStore(t),
 		BackendForStore: factory,
+		RevocationStore: storage.NewMemory(),
 	}
 
 	root, _, err := NewCA(context.Background(), params)
@@ -147,9 +147,8 @@ func TestCA_TPM2PrimaryKey_InitAndSign(t *testing.T) {
 
 	const cn = "TPM2 Primary Root CA"
 	id := Identity{
-		Subject:      Subject{CommonName: cn, Organization: "Test Org"},
-		Valid:        DefaultRootValidityYears,
-		KeystoreType: types.StoreTPM2,
+		Subject: Subject{CommonName: cn, Organization: "Test Org"},
+		Valid:   DefaultRootValidityYears,
 		Keys: []*types.KeyConfig{
 			keyConfig(types.AlgorithmECDSA, types.StoreTPM2), // [0] primary (TPM-backed)
 		},
@@ -162,6 +161,7 @@ func TestCA_TPM2PrimaryKey_InitAndSign(t *testing.T) {
 		KeyStore:        swBackend,
 		CertStore:       newInMemoryCertStore(t),
 		BackendForStore: factory,
+		RevocationStore: storage.NewMemory(),
 	}
 
 	root, _, err := NewCA(context.Background(), params)

@@ -67,7 +67,7 @@ xkmsctl --server mcp://host:8445 ssh keys list
 
 # xkmsctl also covers key import and the pin / authorized-key stores
 xkmsctl ssh keys import --file ~/.ssh/id_ed25519 --name laptop
-xkmsctl ssh known-hosts add --host git.example.com --fingerprint SHA256:...
+xkmsctl ssh known-hosts add --host git.example.com --key "ssh-ed25519 AAAA..."
 xkmsctl ssh known-hosts verify --host git.example.com --file host.pub
 xkmsctl ssh authorized-keys add --name ci-runner --line "ssh-ed25519 AAAA..."
 xkmsctl ssh authorized-keys emit --line "ssh-ed25519 AAAA..." --option no-pty
@@ -84,9 +84,10 @@ Every subcommand except `authorized-keys emit` (a pure formatting helper) is
 addressed by `--scope` / `--owner`. `keys import` reads an encrypted PEM's
 passphrase without echo from the terminal, or from stdin when the CLI is not
 attached to one; the plaintext is read straight into an enclaved buffer.
-`known-hosts verify` and `authorized-keys verify` take the public key as an
-`authorized_keys`-format line via `--key`, or read it from a file via
-`--file`.
+`known-hosts add`, `known-hosts verify`, and `authorized-keys verify` all take
+the public key as an `authorized_keys`-format line via `--key`, or read it
+from a file via `--file` — a pin can no longer be created from a fingerprint
+alone (see the note under "Host-key pin storage" below).
 
 ## GUI
 
@@ -381,9 +382,12 @@ This policy applies to both the system-terminal path (`--known-hosts-policy`)
 and the embedded console (`ConsoleTarget.KnownHostsExtraFiles` /
 `KnownHostsSkipStore`, above).
 
-Host pins now carry the full host public key (`known_hosts` envelope v2) so they
-can be emitted as OpenSSH `known_hosts` lines; legacy fingerprint-only pins (v1)
-still verify in-process.
+Host pins carry the full host public key (`known_hosts` envelope v2) so they
+can be emitted as OpenSSH `known_hosts` lines and matched byte-for-byte rather
+than by fingerprint alone. **BREAKING:** a pin created before envelope v2
+(fingerprint-only, v1) is no longer trusted — `Get` and `Verify` fail closed
+with a typed error naming the host that must be re-pinned, and `List` skips
+it rather than aborting the scan.
 
 ### Profiles
 

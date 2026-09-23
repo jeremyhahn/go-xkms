@@ -17,7 +17,10 @@ Creates a new Certificate Authority instance with legacy single-store configurat
 **Parameters:**
 - `config` - CA configuration including root and intermediate CA settings
 - `certStore` - go-xkms CertStore for certificate management
-- `objectStore` - go-objstore Storage for revocation data and attestation
+- `objectStore` - go-objstore Storage for cross-signed certs, AIA cache, and
+  attestation evidence. **Not** revocation state or the CRL artifact:
+  `Params.RevocationStore` is the sole persistence medium for both — there is
+  no objectStore fallback.
 
 **Returns:**
 - Fully initialized CA ready to sign certificates

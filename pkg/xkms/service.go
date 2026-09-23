@@ -68,8 +68,7 @@ type XKMSService struct {
 	// Optional subsystems — when set via Set* methods, XKMSService implements
 	// the full transport.XKMSServicer interface. Each field starts nil (returning
 	// ErrNotConfigured) until wired by the server or application.
-	barrier         *seal.Barrier
-	barrierRegistry *seal.BarrierRegistry
+	barrier *seal.Barrier
 
 	// encMigrator enables at-rest encryption on a previously-unencrypted
 	// barrier by migrating it to a keyed strategy in place. It is the embedded
@@ -86,11 +85,12 @@ type XKMSService struct {
 	migrationsInFlight sync.Map
 
 	// tenantService is go-qrdb's canonical TenantService, composed over the
-	// barrier registry with xkms hardware seal strategies injected. When set it
-	// owns tenant lifecycle: entitlement-gated isolation modes, system-managed
-	// auto-unseal, quotas, and per-tenant hardware/cloud barrier sealing. The
-	// tenant servicer methods delegate to it. It is nil in legacy wiring, where
-	// the servicer falls back to direct barrierRegistry operations.
+	// barrier registry with xkms hardware seal strategies injected. It owns
+	// tenant lifecycle: entitlement-gated isolation modes, system-managed
+	// auto-unseal, quotas, and per-tenant hardware/cloud barrier sealing. Every
+	// tenant servicer method requires it; when nil they return
+	// ErrTenantServiceNotConfigured. There is no fallback to direct
+	// barrier-registry operations.
 	tenantService qrdbsdk.ServiceTenantServicer
 
 	pinManager    qrdbsdk.PINBackend
@@ -320,17 +320,15 @@ func (s *XKMSService) SetClusterClient(c ClusterClient, shardID, nodeID uint64) 
 	s.clusterNodeID = nodeID
 }
 
-// SetBarrierRegistry sets the barrier registry for multi-tenant barrier management.
-func (s *XKMSService) SetBarrierRegistry(r *seal.BarrierRegistry) { s.barrierRegistry = r }
-
 // SetTenantService injects go-qrdb's TenantService so the tenant servicer
 // delegates lifecycle (entitlement-gated isolation, system-managed auto-unseal,
-// quotas, per-tenant hardware barrier sealing) to the canonical implementation
-// instead of operating the barrier registry directly.
+// quotas, per-tenant hardware barrier sealing) to the canonical implementation.
+// Every tenant servicer method requires this to be set; there is no
+// barrier-registry fallback.
 func (s *XKMSService) SetTenantService(t qrdbsdk.ServiceTenantServicer) { s.tenantService = t }
 
-// TenantService returns the composed go-qrdb TenantService, or nil when the
-// service was wired with the legacy barrier-registry-only path.
+// TenantService returns the composed go-qrdb TenantService, or nil when it has
+// not been wired.
 func (s *XKMSService) TenantService() qrdbsdk.ServiceTenantServicer { return s.tenantService }
 
 // SetPasswordStoreManager sets the per-tenant password store manager.

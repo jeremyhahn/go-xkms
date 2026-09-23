@@ -30,6 +30,7 @@ import (
 	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,6 +60,7 @@ func TestCreateIntermediateCertificates_NoSelectedCA_B10(t *testing.T) {
 	ca := &CA{
 		config:      config,
 		keyStore:    backend,
+		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
 		certStore:   cs,
 		revocations: make(map[string]*RevocationInfo),
 		serialGen:   NewSerialGenerator(NewMemoryStorage()),
@@ -87,10 +89,12 @@ func TestNewIntermediateCA_InvalidIdentity_B10(t *testing.T) {
 
 	backend, cs := newB9Backend(t)
 	_, err := NewIntermediateCA(context.Background(), &Params{
-		Identity:  cfg.Identity,
-		KeyStore:  backend,
-		CertStore: cs,
-		SerialGen: NewSerialGenerator(NewMemoryStorage()),
+		Identity:        cfg.Identity,
+		KeyStore:        backend,
+		BackendForStore: singleBackendFactory(backend),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       cs,
+		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
 	}, root)
 	require.Error(t, err)
 }
@@ -371,20 +375,28 @@ func TestSign_Ed25519_B10(t *testing.T) {
 }
 
 // =============================================================================
-// ca_extensions.go — putRevocationBlob: objectStore fallback path
+// ca_extensions.go — putRevocationBlob: revocationStore is the sole
+// persistence medium (the objectStore fallback was deleted)
 // =============================================================================
 
-// TestPutRevocationBlob_ObjectStorePath_B10 exercises the objectStore fallback
-// (lines 662-666) when revocationStore is nil but objectStore is set.
-func TestPutRevocationBlob_ObjectStorePath_B10(t *testing.T) {
+// TestPutRevocationBlob_ObjectStoreIgnored_B10 proves an objectStore alone,
+// with no revocationStore, is not consulted for revocation persistence: the
+// deleted fallback is gone, not merely unreachable through some other path.
+func TestPutRevocationBlob_ObjectStoreIgnored_B10(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
 	ca.objectStore = objmemory.New()
+	ca.revocationStore = storage.NewMemory()
 
 	payload := []byte(`{"serial":"77777","reason":0,"revoked_at":"2024-01-01T00:00:00Z"}`)
-	persisted, err := ca.putRevocationBlob(context.Background(), big.NewInt(77777), payload)
+	require.NoError(t, ca.putRevocationBlob(context.Background(), big.NewInt(77777), payload))
+
+	// Persisted through revocationStore, not objectStore.
+	_, err := ca.objectStore.Get(revocationKey(big.NewInt(77777)) + ".json")
+	assert.Error(t, err, "objectStore must not receive the revocation blob")
+	got, err := ca.revocationStore.Get(context.Background(), revocationKey(big.NewInt(77777))+".json")
 	require.NoError(t, err)
-	assert.True(t, persisted)
+	assert.Equal(t, payload, got)
 }
 
 // =============================================================================

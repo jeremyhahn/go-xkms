@@ -82,11 +82,12 @@ type Pin struct {
 	Source string
 
 	// PublicKey is the SSH wire-format host public key
-	// (ssh.PublicKey.Marshal()). It is OPTIONAL — Verify needs only the
-	// Fingerprint — but when present it lets the pin be emitted as an
-	// OpenSSH known_hosts line (Emit / EmitAll) so the system ssh client can
-	// verify the host. Non-secret; safe to log/ship. Empty for legacy pins
-	// recorded before this field existed.
+	// (ssh.PublicKey.Marshal()). Required: Store.Add rejects a pin with no
+	// PublicKey (*PublicKeyRequiredError), and Verify compares the full key,
+	// not just the Fingerprint. It also lets the pin be emitted as an
+	// OpenSSH known_hosts line (Emit / EmitAll). Non-secret; safe to
+	// log/ship. A pin persisted before this field existed decodes as
+	// *LegacyPinError, not as a Pin with an empty PublicKey.
 	PublicKey []byte
 }
 

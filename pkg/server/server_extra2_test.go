@@ -859,10 +859,10 @@ func TestBuildTLSConfig_CABackedKeyAttrError(t *testing.T) {
 					Subject: ca.Subject{
 						CommonName: "Test Root CA",
 					},
-					KeystoreType: types.StoreSoftware,
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
+							StoreType:    types.StoreSoftware,
 							ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
 						},
 					},
@@ -894,9 +894,8 @@ func TestBuildTLSConfig_KeyAttrParseError(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					IsRoot:       true,
-					Subject:      ca.Subject{CommonName: "Test Root CA"},
-					KeystoreType: types.StoreSoftware,
+					IsRoot:  true,
+					Subject: ca.Subject{CommonName: "Test Root CA"},
 					Keys: []*types.KeyConfig{
 						{
 							// "invalid-algo" is not recognised by ParseKeyAlgorithm,
@@ -1080,8 +1079,7 @@ func TestEnsureTLSServerCert_CertAlreadyExists(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -1187,8 +1185,7 @@ func TestEnsureTLSServerCert_StaleSANsAreReissued(t *testing.T) {
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{{
-				Subject:      ca.Subject{CommonName: "Test CA"},
-				KeystoreType: types.StoreSoftware,
+				Subject: ca.Subject{CommonName: "Test CA"},
 				Keys: []*types.KeyConfig{{
 					KeyAlgorithm: types.AlgorithmECDSA,
 					ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
@@ -1239,8 +1236,7 @@ func TestEnsureTLSServerCert_IssueAndStore(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -1274,8 +1270,7 @@ func TestEnsureTLSServerCert_IssueError(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -2055,7 +2050,6 @@ func TestInitializeCA_BackendNotAvailable(t *testing.T) {
 					},
 					// StoreSoftware is the default; the backends map is empty
 					// so lookups will fail.
-					KeystoreType: types.StoreSoftware,
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -2099,7 +2093,6 @@ func TestNew_WithCAConfig_Succeeds(t *testing.T) {
 					Organization: "Test Org",
 					Country:      "US",
 				},
-				KeystoreType: types.StoreSoftware,
 				Keys: []*types.KeyConfig{
 					{
 						KeyAlgorithm: types.AlgorithmECDSA,
@@ -3145,10 +3138,9 @@ func TestInitializeCA_NewFromConfigFails(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					IsRoot:       true,
-					Valid:        1,
-					Subject:      ca.Subject{CommonName: "Test Root CA"},
-					KeystoreType: types.StoreSoftware,
+					IsRoot:  true,
+					Valid:   1,
+					Subject: ca.Subject{CommonName: "Test Root CA"},
 					Keys: []*types.KeyConfig{
 						{
 							// "invalid-algo" passes id.Validate() but fails ParseKeyAlgorithm
@@ -3194,7 +3186,6 @@ func TestInitializeCA_StorageCreateFails(t *testing.T) {
 					Subject: ca.Subject{
 						CommonName: "Test Root CA",
 					},
-					KeystoreType: types.StoreSoftware,
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -3873,15 +3864,15 @@ func TestInitializeCA_BackendNotAvailableCustomType(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					IsRoot:       true,
-					Valid:        1,
-					KeystoreType: "custom-hsm-backend",
+					IsRoot: true,
+					Valid:  1,
 					Subject: ca.Subject{
 						CommonName: "Test Root CA",
 					},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
+							StoreType:    "custom-hsm-backend",
 							ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
 						},
 					},
@@ -4427,8 +4418,7 @@ func TestEnsureTLSServerCert_AlreadyExistsCallsSync(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -4638,8 +4628,7 @@ func tlsServerCertTestConfig(cn string, includeLoopback bool) *config.Config {
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{{
-				Subject:      ca.Subject{CommonName: "Test CA"},
-				KeystoreType: types.StoreSoftware,
+				Subject: ca.Subject{CommonName: "Test CA"},
 				Keys: []*types.KeyConfig{{
 					KeyAlgorithm: types.AlgorithmECDSA,
 					ECCConfig:    &types.ECCConfig{Curve: types.CurveP256},
@@ -4691,8 +4680,7 @@ func TestEnsureTLSServerCert_StoreCertError(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -4741,8 +4729,7 @@ func TestBuildTLSConfig_CABackedFallsBackToCertFile(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							KeyAlgorithm: types.AlgorithmECDSA,
@@ -4788,8 +4775,7 @@ func TestBuildTLSConfig_KeyAttrsFailFallbackToCertFile(t *testing.T) {
 			SelectedCA: 0,
 			Identity: []ca.Identity{
 				{
-					Subject:      ca.Subject{CommonName: "Test CA"},
-					KeystoreType: types.StoreSoftware,
+					Subject: ca.Subject{CommonName: "Test CA"},
 					Keys: []*types.KeyConfig{
 						{
 							// Invalid algorithm → KeyAttributesFromConfig returns error.

@@ -275,6 +275,7 @@ func TestKnownHosts_AddListRemoveVerify(t *testing.T) {
 		Scope:       "user",
 		Owner:       "alice",
 		Host:        "bastion.example.com",
+		PublicKey:   string(gossh.MarshalAuthorizedKey(sshPub)),
 		Fingerprint: fp,
 		Algorithm:   sshPub.Type(),
 	}); err != nil {

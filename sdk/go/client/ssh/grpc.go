@@ -246,6 +246,7 @@ func (k *grpcKnownHostsClient) Add(ctx context.Context, req AddKnownHostRequest)
 		Fingerprint: req.Fingerprint,
 		Algorithm:   req.Algorithm,
 		Source:      req.Source,
+		PublicKey:   req.PublicKey,
 	})
 	return mapGRPCError(err)
 }
@@ -265,6 +266,7 @@ func (k *grpcKnownHostsClient) List(ctx context.Context, req ListKnownHostsReque
 			Algorithm:   p.GetAlgorithm(),
 			AddedAt:     p.GetAddedAt().AsTime(),
 			Source:      p.GetSource(),
+			PublicKey:   p.GetPublicKey(),
 		})
 	}
 	return out, nil

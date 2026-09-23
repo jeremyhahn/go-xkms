@@ -216,16 +216,24 @@ func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (initialize.CeremonyCA
 		},
 		Valid:         ca.DefaultRootValidityYears,
 		Keys:          ca.DefaultKeyConfig(),
-		KeystoreType:  types.StoreSoftware,
 		IsRoot:        true,
 		MaxPathLength: 1,
 	}
 
+	// The ceremony CA is software-only (a single in-memory backend for its
+	// one key), so BackendForStore trivially returns that backend for every
+	// StoreType.
+	backendForStore := func(string, types.StoreType) (xkms.Backend, error) {
+		return keystore, nil
+	}
+
 	root, _, err := ca.NewCA(ctx, &ca.Params{
-		Identity:  []ca.Identity{identity},
-		KeyStore:  keystore,
-		CertStore: certStore,
-		Profiles:  profiles,
+		Identity:        []ca.Identity{identity},
+		KeyStore:        keystore,
+		CertStore:       certStore,
+		Profiles:        profiles,
+		BackendForStore: backendForStore,
+		RevocationStore: storage.NewMemory(),
 	})
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrCAConstructFailed, Err: err}

@@ -146,7 +146,6 @@ ca:
         - algorithm: "ECDSA"
           ecc-curve: "P-384"
           hash: "SHA-384"
-      keystore-type: "software"
       is-root: true
 
     - subject:
@@ -158,7 +157,6 @@ ca:
         - algorithm: "ECDSA"
           ecc-curve: "P-256"
           hash: "SHA-256"
-      keystore-type: "software"
       is-root: false
       parent-ca: "Example Root CA"
 

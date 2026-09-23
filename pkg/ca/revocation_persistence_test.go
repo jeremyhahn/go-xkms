@@ -49,26 +49,6 @@ func TestRevocationPersistence_SurvivesReload(t *testing.T) {
 	}
 }
 
-// TestRevocationPersistence_NoStoreInMemoryOnly verifies that without a store the
-// revocation is still tracked in memory (Revoke does not fail) but nothing is
-// persisted.
-func TestRevocationPersistence_NoStoreInMemoryOnly(t *testing.T) {
-	ca := &CA{revocations: make(map[string]*RevocationInfo)}
-	if err := ca.recordRevocation(context.Background(), big.NewInt(7), 0, false); err != nil {
-		t.Fatalf("recordRevocation without store: %v", err)
-	}
-	if _, ok := ca.revocations["7"]; !ok {
-		t.Fatal("expected in-memory revocation to be tracked")
-	}
-	blobs, err := ca.listRevocationBlobs(context.Background())
-	if err != nil {
-		t.Fatalf("listRevocationBlobs: %v", err)
-	}
-	if len(blobs) != 0 {
-		t.Fatalf("expected no persisted blobs without a store, got %d", len(blobs))
-	}
-}
-
 // TestRevocationPersistence_AlreadyRevoked verifies the duplicate-revocation
 // guard holds with a backing store.
 func TestRevocationPersistence_AlreadyRevoked(t *testing.T) {

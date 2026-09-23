@@ -29,7 +29,18 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// singleBackendFactory returns a ca.BackendForStoreFunc that resolves every
+// StoreType to the same backend — the explicit, canonical choice for a
+// fixture with one uniform backend.
+func singleBackendFactory(b xkms.Backend) ca.BackendForStoreFunc {
+	return func(string, types.StoreType) (xkms.Backend, error) {
+		return b, nil
+	}
+}
 
 // clusterIntermediateCN is the cluster intermediate identity in clusterCAConfig().
 const clusterIntermediateCN = "Cluster Test Cluster CA"
@@ -86,6 +97,7 @@ func TestBarrierStrategy_AnyNodeIssues(t *testing.T) {
 	caA, err := ca.NewHierarchicalCA(&ca.MultiIdentityParams{
 		Config:          caConfigA,
 		KeyStore:        backendA,
+		BackendForStore: singleBackendFactory(backendA),
 		CertStore:       certStore,
 		SerialGen:       ca.NewSerialGenerator(ca.NewMemoryStorage()),
 		RevocationStore: storage.NewMemory(),
@@ -107,6 +119,7 @@ func TestBarrierStrategy_AnyNodeIssues(t *testing.T) {
 	caB, err := ca.NewHierarchicalCA(&ca.MultiIdentityParams{
 		Config:          caConfigB,
 		KeyStore:        backendB,
+		BackendForStore: singleBackendFactory(backendB),
 		CertStore:       certStore, // shared — has the first node's CA certs
 		SerialGen:       ca.NewSerialGenerator(ca.NewMemoryStorage()),
 		RevocationStore: storage.NewMemory(),

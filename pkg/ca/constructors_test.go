@@ -53,6 +53,17 @@ func newInMemoryCertStore(t *testing.T) certstore.CertStore {
 	return cs
 }
 
+// singleBackendFactory returns a BackendForStoreFunc that resolves every
+// StoreType to the same backend. It is the canonical, explicit way for a
+// caller with one uniform backend to satisfy the required BackendForStore:
+// an intentional, visible choice in the caller's own code rather than an
+// implicit fallback pkg/ca supplies on the caller's behalf.
+func singleBackendFactory(b xkms.Backend) BackendForStoreFunc {
+	return func(string, types.StoreType) (xkms.Backend, error) {
+		return b, nil
+	}
+}
+
 // rootIdentity builds a valid root CA Identity with the given CN and ECDSA
 // P-256 key configuration.
 func rootIdentity(cn string) Identity {
@@ -69,7 +80,6 @@ func rootIdentity(cn string) Identity {
 				KeyType:            "CA",
 			},
 		},
-		KeystoreType:  types.StoreSoftware,
 		IsRoot:        true,
 		MaxPathLength: 1,
 	}
@@ -90,7 +100,6 @@ func intermediateIdentity(cn, parentCN string) Identity {
 				KeyType:            "CA",
 			},
 		},
-		KeystoreType:      types.StoreSoftware,
 		IsRoot:            false,
 		ParentCA:          parentCN,
 		MaxPathLengthZero: true,
@@ -103,9 +112,11 @@ func intermediateIdentity(cn, parentCN string) Identity {
 
 func TestNewCA_RootOnly(t *testing.T) {
 	params := &Params{
-		Identity:  []Identity{rootIdentity("Root Only CA")},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{rootIdentity("Root Only CA")},
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 
 	root, intermediate, err := NewCA(context.Background(), params)
@@ -129,8 +140,10 @@ func TestNewCA_RootAndIntermediate(t *testing.T) {
 			rootIdentity("Root+Int Root"),
 			intermediateIdentity("Root+Int Intermediate", "Root+Int Root"),
 		},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 
 	root, intermediate, err := NewCA(context.Background(), params)
@@ -158,8 +171,10 @@ func TestNewCA_NilParams(t *testing.T) {
 
 func TestNewCA_EmptyIdentity(t *testing.T) {
 	_, _, err := NewCA(context.Background(), &Params{
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	})
 	assert.ErrorIs(t, err, ErrNoIdentity)
 }
@@ -170,8 +185,10 @@ func TestNewCA_EmptyIdentity(t *testing.T) {
 
 func TestNewParentCA_ValidatesIdentity(t *testing.T) {
 	_, err := NewParentCA(&Params{
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	})
 	assert.ErrorIs(t, err, ErrNoIdentity)
 }
@@ -183,9 +200,11 @@ func TestNewParentCA_NilParams(t *testing.T) {
 
 func TestNewParentCA_ReturnsUninitialized(t *testing.T) {
 	params := &Params{
-		Identity:  []Identity{rootIdentity("Uninit Root")},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{rootIdentity("Uninit Root")},
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 	root, err := NewParentCA(params)
 	require.NoError(t, err)
@@ -207,8 +226,10 @@ func TestNewIntermediateCA_RequiresParentInitialized(t *testing.T) {
 			rootIdentity("Uninit Parent"),
 			intermediateIdentity("Intermediate", "Uninit Parent"),
 		},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 	root, err := NewParentCA(params)
 	require.NoError(t, err)
@@ -224,8 +245,10 @@ func TestNewIntermediateCA_RequiresParent(t *testing.T) {
 			rootIdentity("R"),
 			intermediateIdentity("I", "R"),
 		},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 	_, err := NewIntermediateCA(context.Background(), params, nil)
 	assert.ErrorIs(t, err, ErrParentCARequired)
@@ -233,9 +256,11 @@ func TestNewIntermediateCA_RequiresParent(t *testing.T) {
 
 func TestNewIntermediateCA_RequiresIntermediateIdentity(t *testing.T) {
 	params := &Params{
-		Identity:  []Identity{rootIdentity("Solo Root")},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{rootIdentity("Solo Root")},
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 	root, err := NewParentCA(params)
 	require.NoError(t, err)
@@ -288,6 +313,10 @@ func TestNewCA_FactoryResolution(t *testing.T) {
 		},
 		KeyStoreFactory:  keyFactory,
 		CertStoreFactory: certFactory,
+		BackendForStore: func(cn string, _ types.StoreType) (xkms.Backend, error) {
+			return keyFactory(cn)
+		},
+		RevocationStore: storage.NewMemory(),
 	}
 
 	root, intermediate, err := NewCA(context.Background(), params)
@@ -353,8 +382,10 @@ func TestNewCA_SharedStores(t *testing.T) {
 			rootIdentity("Shared Root"),
 			intermediateIdentity("Shared Intermediate", "Shared Root"),
 		},
-		KeyStore:  sharedKS,
-		CertStore: sharedCS,
+		KeyStore:        sharedKS,
+		BackendForStore: singleBackendFactory(sharedKS),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       sharedCS,
 	}
 
 	root, intermediate, err := NewCA(context.Background(), params)
@@ -439,7 +470,6 @@ func multiKeyIdentity(cn string) Identity {
 		Subject:       Subject{CommonName: cn, Organization: "Multi-Key Org"},
 		Valid:         DefaultRootValidityYears,
 		Keys:          keys,
-		KeystoreType:  types.StoreSoftware,
 		IsRoot:        true,
 		MaxPathLength: 1,
 	}
@@ -455,9 +485,11 @@ func multiKeyIdentity(cn string) Identity {
 func TestIssuingIdentity_PreservesMultiKeySlice(t *testing.T) {
 	root := multiKeyIdentity("Multi-Key Root")
 	params := &Params{
-		Identity:  []Identity{root},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{root},
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 
 	instance, err := NewParentCA(params)
@@ -491,9 +523,11 @@ func TestIssuingIdentity_PreservesMultiKeySlice_Intermediate(t *testing.T) {
 	intermediate.Valid = DefaultIntermediateValidityYears
 
 	params := &Params{
-		Identity:  []Identity{root, intermediate},
-		KeyStore:  newInMemoryBackend(t),
-		CertStore: newInMemoryCertStore(t),
+		Identity:        []Identity{root, intermediate},
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	}
 
 	_, intInstance, err := NewCA(context.Background(), params)
@@ -541,9 +575,11 @@ func TestIssuingIdentity_SingleKeyFallback(t *testing.T) {
 			IsRootCA:  true,
 			StoreType: types.StoreSoftware,
 		},
-		KeyAttributes: keyAttrs,
-		KeyStore:      newInMemoryBackend(t),
-		CertStore:     newInMemoryCertStore(t),
+		KeyAttributes:   keyAttrs,
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	})
 	require.NoError(t, err)
 

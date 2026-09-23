@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-17
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-22
 
 ## Exported surface — `sdk/go/transport`
 
@@ -51,6 +51,18 @@ a code change.
 
 ## Invariants
 
+- **TenantService is required; there is no barrier-registry-only fallback
+  (BREAKING).** `pkg/xkms.XKMSService`'s tenant servicer methods
+  (`CreateTenant`, `GetTenant`, `ListTenants`, `DeleteTenant`,
+  `TenantBarrierInit`, `TenantBarrierUnseal`, `TenantBarrierStatus`,
+  `UpdateTenantEntitlements`, `UpdateTenantQuotas`) all require
+  `SetTenantService` to have been called; a nil `TenantService` returns
+  `ErrTenantServiceNotConfigured` rather than falling back to direct
+  `*seal.BarrierRegistry` operations. `pkg/api/rest.NewTenantHandlers`
+  enforces the same rule at construction: it now returns `(*TenantHandlers,
+  error)` and rejects a `BarrierRegistry` configured without a `TenantService`
+  composed on the `XKMSService`, so a misconfigured deployment fails server
+  startup instead of exposing routes that 500 under load.
 - **Isolation mode is fixed at creation.** There is no in-place upgrade from
   `prefix` to `barrier`; that is a data migration.
 - **A requested mode outside the tenant's entitlements is refused**, not
