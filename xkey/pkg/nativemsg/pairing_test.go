@@ -21,11 +21,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
 const testOrigin = "chrome-extension://abcdefghijklmnopqrstuvwxyz123456/"
@@ -908,4 +911,74 @@ func TestVerifyIdentity_UnknownOriginWithOtherPairings(t *testing.T) {
 	err = v.VerifyIdentity(pubKey, []byte("sig"), ephemeralKey, unknownOrigin)
 	assert.ErrorIs(t, err, ErrIdentityOriginMismatch,
 		fmt.Sprintf("verifying with unpaired origin %s should return origin mismatch", unknownOrigin))
+}
+
+// recordingPairingAudit captures audit entries emitted by a PairingVerifier.
+type recordingPairingAudit struct {
+	audit.Logger
+
+	mu      sync.Mutex
+	entries []audit.Entry
+}
+
+func (l *recordingPairingAudit) Log(e audit.Entry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, e)
+}
+
+func (l *recordingPairingAudit) recorded() []audit.Entry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]audit.Entry(nil), l.entries...)
+}
+
+// TestPairingVerifier_LegacyMigrationSaveFailureIsAuditLoggedNotFatal is the
+// failure-injection test for issue #687: loadLocked's `_ = v.saveLocked()`
+// on the legacy-format migration path used to discard the persist error
+// entirely. It proves the failure is now audit-logged (OpPairingStateMigrated,
+// success=false) while load itself still succeeds — the migrated state is
+// valid in memory even though it could not be written back, which is the
+// documented, deliberate behavior this fix must not change.
+func TestPairingVerifier_LegacyMigrationSaveFailureIsAuditLoggedNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "pairing_state.json")
+
+	pub, _ := generateTestIdentity(t)
+	legacy := legacyPairingState{
+		ExtensionOrigin: testOrigin,
+		IdentityKey:     pub,
+		PairedAt:        time.Now().UTC(),
+	}
+	data, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statePath, data, 0o600))
+
+	// Make the directory read-only so the migration's save (temp file write
+	// + rename) fails, while the legacy file itself remains readable.
+	require.NoError(t, os.Chmod(dir, 0o500))
+	defer func() { _ = os.Chmod(dir, 0o700) }()
+
+	v, err := NewPairingVerifier(statePath)
+	require.NoError(t, err, "a migration-save failure must not fail construction/load")
+
+	rec := &recordingPairingAudit{}
+	v.SetAuditLogger(rec)
+
+	// Re-run load with the audit logger installed: the constructor's own
+	// load ran before SetAuditLogger, so it could not have recorded
+	// anything. The legacy file is untouched (its migration save failed),
+	// so this reproduces the same migration attempt.
+	require.NoError(t, v.load())
+	assert.True(t, v.IsPairedForOrigin(testOrigin), "the in-memory state is migrated even though the save failed")
+
+	var found bool
+	for _, e := range rec.recorded() {
+		if e.Operation == audit.OpPairingStateMigrated {
+			found = true
+			assert.False(t, e.Success)
+			assert.NotEmpty(t, e.Error, "the discarded saveLocked error must be recorded")
+		}
+	}
+	assert.True(t, found, "expected an OpPairingStateMigrated audit entry for the discarded save failure")
 }

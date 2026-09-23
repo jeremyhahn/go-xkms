@@ -395,8 +395,17 @@ func (v *PairingVerifier) loadLocked() error {
 				PairedAt:    legacy.PairedAt,
 			},
 		}
-		// Persist in new format (best-effort; if it fails, the old file still works).
-		_ = v.saveLocked()
+		// Persist in new format is best-effort: the in-memory state is
+		// already migrated and valid, so a write failure here must not fail
+		// the load — the legacy on-disk file still parses next time. The
+		// failure is no longer silently dropped, though: it is audit-logged
+		// so an operator can see the migration never landed on disk (the
+		// process keeps re-migrating from the legacy file on every restart
+		// until the underlying write failure is fixed).
+		if err := v.saveLocked(); err != nil {
+			v.logPairingEvent(audit.OpPairingStateMigrated, false, err,
+				map[string]any{"origin": legacy.ExtensionOrigin})
+		}
 		return nil
 	}
 

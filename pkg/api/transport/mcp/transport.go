@@ -1898,27 +1898,10 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 	return &result, nil
 }
 
-// Escrow Operations
-//
-// No MCP tool exists yet for external key escrow (pkg/escrow); see
-// docs/escrow/architecture.md. These stubs keep Transport satisfying
-// transport.XKMSServicer.
-
-func (t *Transport) EscrowKey(ctx context.Context, _ *transport.EscrowRequest) ([]*transport.EscrowReceipt, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RecoverKey(ctx context.Context, _ *transport.RecoverRequest) (*transport.RecoverResponse, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) ListEscrowed(ctx context.Context) ([]transport.EscrowRecord, error) {
-	return nil, ErrNotSupported
-}
-
-func (t *Transport) RevokeEscrow(ctx context.Context, _ string) error {
-	return ErrNotSupported
-}
+// External key escrow (pkg/escrow) is embedded-only (go-xkms#692): its RBAC
+// model is undecided, so Transport does not implement EscrowKey/RecoverKey/
+// ListEscrowed/RevokeEscrow at all. transport.EscrowService is no longer
+// part of transport.Client — see docs/escrow/architecture.md.
 
 // Policy Operations
 
@@ -2239,48 +2222,75 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 
 // ==================== User Operations ====================
 //
-// User management over the MCP transport is not yet wired; the CLI/webui
-// reach xkms user management via the REST transport. These stubs keep the
-// Client interface satisfied.
+// xkms presents its own user model; the backing store is the embedded qrdb
+// node, reached server-side through pkg/api/mcp's user.* handlers
+// (handlers_user.go), the same XKMSService the REST transport dials.
+// WebAuthn/FIDO2 enrollment itself stays off this transport (#193, see the
+// package doc); these eight cover account lifecycle only.
 
-// CreateUser is not supported over the MCP transport.
-func (t *Transport) CreateUser(ctx context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
-	return nil, ErrNotSupported
+// bindUserCertParams is the wire shape for user.bindCert: username plus the
+// two fields BindUserCert takes as positional arguments.
+type bindUserCertParams struct {
+	Username     string `json:"username"`
+	Thumbprint   string `json:"thumbprint"`
+	NotAfterUnix int64  `json:"not_after_unix"`
 }
 
-// ListUsers is not supported over the MCP transport.
+// CreateUser creates a new xkms user.
+func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	var result transport.GetUserResponse
+	if err := t.rpcCall(ctx, "user.create", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListUsers lists xkms users.
 func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return nil, ErrNotSupported
+	var result transport.ListUsersResponse
+	if err := t.rpcCall(ctx, "user.list", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// GetUser is not supported over the MCP transport.
-func (t *Transport) GetUser(ctx context.Context, _ string) (*transport.GetUserResponse, error) {
-	return nil, ErrNotSupported
+// GetUser retrieves a user by username.
+func (t *Transport) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	var result transport.GetUserResponse
+	if err := t.rpcCall(ctx, "user.get", map[string]string{"username": username}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
-// DeleteUser is not supported over the MCP transport.
-func (t *Transport) DeleteUser(ctx context.Context, _ string) error {
-	return ErrNotSupported
+// DeleteUser deletes a user by username.
+func (t *Transport) DeleteUser(ctx context.Context, username string) error {
+	return t.rpcCall(ctx, "user.delete", map[string]string{"username": username}, nil)
 }
 
-// EnableUser is not supported over the MCP transport.
-func (t *Transport) EnableUser(ctx context.Context, _ string) error {
-	return ErrNotSupported
+// EnableUser enables a user by username.
+func (t *Transport) EnableUser(ctx context.Context, username string) error {
+	return t.rpcCall(ctx, "user.enable", map[string]string{"username": username}, nil)
 }
 
-// DisableUser is not supported over the MCP transport.
-func (t *Transport) DisableUser(ctx context.Context, _ string) error {
-	return ErrNotSupported
+// DisableUser disables a user by username.
+func (t *Transport) DisableUser(ctx context.Context, username string) error {
+	return t.rpcCall(ctx, "user.disable", map[string]string{"username": username}, nil)
 }
 
-// BindUserCert is not supported over the MCP transport.
-func (t *Transport) BindUserCert(ctx context.Context, _, _ string, _ int64) error {
-	return ErrNotSupported
+// BindUserCert binds an mTLS certificate's SPKI thumbprint to a user.
+func (t *Transport) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	params := bindUserCertParams{Username: username, Thumbprint: thumbprint, NotAfterUnix: notAfterUnix}
+	return t.rpcCall(ctx, "user.bindCert", params, nil)
 }
 
-// ListUserCredentials is not supported over the MCP transport.
-func (t *Transport) ListUserCredentials(ctx context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, ErrNotSupported
+// ListUserCredentials lists the credentials enrolled for a user.
+func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	var result transport.ListUserCredentialsResponse
+	if err := t.rpcCall(ctx, "user.listCredentials", map[string]string{"username": username}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Compile-time interface assertion.

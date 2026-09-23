@@ -1,6 +1,6 @@
 # ACME Issuance — CLI
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Binary: **`trusted-acme-client`** (`cmd/acme-client`). Command groups:
 `account`, `cert`, `device`, `service`, plus `serve` and `version`.
@@ -91,42 +91,51 @@ trusted-acme-client cert deploy web-prod
 ## `trusted-acme-client device`
 
 The hardware-identity path. This is what `enroll-01` and `device-attest-01`
-exist for.
+exist for. Like certificates, devices are named specs in the config file
+(`devices.<name>`) — the account, the TPM to open, the ACME permanent
+identifier, the common name, the PCR selection and the local challenge
+server's bind address/port are configured once, and the verbs act on the
+name. There is no flag-based, config-free form.
 
-### `device enroll`
-
-| Flag | Type | Default | Required |
-|---|---|---|---|
-| `--account` | string | — | **yes** |
-| `--device-id` | string | — | **yes** |
-| `--cn` | string | `""` | no — certificate common name |
-| `--output-cert` | string | `""` | no — write the certificate |
-| `--output-iak` | string | `""` | no — write the IAK certificate |
-
-```
-trusted-acme-client device enroll --account prod --device-id node-07 \
-    --cn node-07.example.com --output-cert node.crt --output-iak node-iak.crt
-```
-
-### `device attest`
-
-| Flag | Type | Default | Required |
-|---|---|---|---|
-| `--account` | string | — | **yes** |
-| `--device-id` | string | — | **yes** |
-| `--cn` | string | `""` | no |
-| `--pcrs` | string | `0,1,2,3,4,5,6,7` | no — comma-separated PCR indices |
-| `--output-cert` | string | `""` | no |
+| Verb | Args | Purpose |
+|---|---|---|
+| `device enroll <name>` | spec name | Enroll the device via `enroll-01`, issuing its IAK and IDevID certificates |
+| `device attest <name>` | spec name | Attest the device via `device-attest-01`, using the spec's PCR selection |
 
 ```
-trusted-acme-client device attest --account prod --device-id node-07 \
-    --pcrs 0,1,2,3,4,5,6,7 --output-cert node-attested.crt
+trusted-acme-client device enroll edge-gateway-01
+trusted-acme-client device attest edge-gateway-01
 ```
 
-Changing `--pcrs` changes what the certificate attests to. The default set is
-the firmware and boot measurements; adding a PCR that changes on every update
-makes the attestation fail after the next update, which is sometimes exactly
-what you want and sometimes an outage.
+A minimal device spec:
+
+```yaml
+devices:
+  edge-gateway-01:
+    account: prod
+    common-name: edge-gateway-01.example.com
+    identifier: edge-gateway-01.example.com   # ACME permanent-identifier value
+    pcr-selection: [0, 1, 2, 3, 4, 5, 6, 7]
+    challenge:
+      port: "8080"
+    tpm:
+      key-dir: /var/lib/trusted-acme/tpm-keys
+      config:
+        device: /dev/tpmrm0
+```
+
+`tpm` is optional. Left unset, the device opens go-xkms's own TPM2 defaults —
+the in-process simulator, provisioned on first use — which is appropriate
+only for development and testing; a production device spec must set
+`tpm.config.device` (or `tpm.config.simulator: true` for an explicitly
+simulated node) naming an already-provisioned TPM. go-xkms never
+auto-provisions real hardware: an unprovisioned physical TPM is refused, not
+silently provisioned, by this command.
+
+Changing `pcr-selection` changes what the attestation certificate attests to.
+The default set is the firmware and boot measurements; adding a PCR that
+changes on every update makes the attestation fail after the next update,
+which is sometimes exactly what you want and sometimes an outage.
 
 ## `trusted-acme-client service`
 

@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/acme"
+
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Config is the top-level multi-account ACME client configuration.
@@ -33,6 +35,7 @@ type Config struct {
 	Challenge    ChallengeConfig             `yaml:"challenge" json:"challenge" mapstructure:"challenge"`
 	Accounts     map[string]*AccountConfig   `yaml:"accounts" json:"accounts" mapstructure:"accounts"`
 	Certificates map[string]*CertificateSpec `yaml:"certificates" json:"certificates" mapstructure:"certificates"`
+	Devices      map[string]*DeviceSpec      `yaml:"devices,omitempty" json:"devices,omitempty" mapstructure:"devices"`
 }
 
 // AccountConfig holds per-account ACME settings including directory URL,
@@ -127,6 +130,108 @@ type CrossSignerRef struct {
 	Account   string `yaml:"account,omitempty" json:"account,omitempty" mapstructure:"account"`
 	Directory string `yaml:"directory,omitempty" json:"directory,omitempty" mapstructure:"directory"`
 	Challenge string `yaml:"challenge" json:"challenge" mapstructure:"challenge"`
+}
+
+// DeviceSpec defines the desired state for a managed TPM device identity:
+// the account used to enroll and attest it via the enroll-01 and
+// device-attest-01 ACME challenges, the TPM to open, and the PCR selection
+// used for attestation quotes.
+type DeviceSpec struct {
+	// Account names the AccountConfig this device enrolls and attests
+	// through, exactly as CertificateSpec.Account does for certificates.
+	Account string `yaml:"account" json:"account" mapstructure:"account"`
+
+	// CommonName is the subject common name requested for the device's
+	// IAK/IDevID certificate (enroll-01) or attestation certificate
+	// (device-attest-01).
+	CommonName string `yaml:"common-name" json:"common_name" mapstructure:"common-name"`
+
+	// Identifier is the ACME permanent-identifier authorization value that
+	// names this device to the CA — typically its IP address or hostname.
+	// ${ENV_VAR} references are expanded at enrollment/attestation time.
+	Identifier string `yaml:"identifier" json:"identifier" mapstructure:"identifier"`
+
+	// TPM selects and configures the TPM 2.0 device, or the in-process
+	// simulator, this spec enrolls and attests. Nil selects go-xkms's own
+	// TPM2 defaults (the in-process simulator) — development and testing
+	// only.
+	TPM *DeviceTPMConfig `yaml:"tpm,omitempty" json:"tpm,omitempty" mapstructure:"tpm"`
+
+	// PCRSelection lists the PCR indices (0-23) quoted for device-attest-01.
+	PCRSelection []int `yaml:"pcr-selection,omitempty" json:"pcr_selection,omitempty" mapstructure:"pcr-selection"`
+
+	// Challenge configures the local HTTP server enroll-01 and
+	// device-attest-01 open to serve their challenge and
+	// credential-activation endpoints.
+	Challenge DeviceChallengeConfig `yaml:"challenge,omitempty" json:"challenge,omitempty" mapstructure:"challenge"`
+}
+
+// DeviceTPMConfig selects and opens the TPM used by a DeviceSpec.
+type DeviceTPMConfig struct {
+	// KeyDir is the directory where the opened TPM persists IAK and IDevID
+	// key blobs. Empty uses a process-local temporary directory that is
+	// removed when the TPM is closed — acceptable for the in-process
+	// simulator, never for a real device, whose keys would not survive a
+	// restart.
+	KeyDir string `yaml:"key-dir,omitempty" json:"key_dir,omitempty" mapstructure:"key-dir"`
+
+	// EKCertificatePEM optionally provisions a PEM-encoded Endorsement Key
+	// certificate into the TPM's NVRAM before use. Real hardware normally
+	// already carries a manufacturer-issued EK certificate and leaves this
+	// empty; it exists for TPMs that have none but still need one to carry
+	// in the TCG-CSR-IDEVID (TCG "TPM 2.0 Keys for Device Identity and
+	// Attestation" v1.00 r12, section 6.2.2 step 4b) — including the
+	// in-process simulator, which is self-provisioned with a throwaway
+	// certificate when this is left empty (development and testing only).
+	EKCertificatePEM string `yaml:"ek-certificate-pem,omitempty" json:"ek_certificate_pem,omitempty" mapstructure:"ek-certificate-pem"`
+
+	// Config carries the complete go-xkms TPM2 configuration: device path
+	// or in-process simulator, and the EK/IAK/SSRK/Platform SRK templates
+	// and hierarchy authorizations. Nil selects go-xkms's own
+	// xkmssdk.DefaultTPMConfig (the in-process simulator), which is
+	// appropriate only for development and testing — a production device
+	// must supply Config naming its real device path and already-provisioned
+	// key templates; go-xkms never auto-provisions real hardware.
+	Config *xkmssdk.TPMConfig `yaml:"config,omitempty" json:"config,omitempty" mapstructure:"config"`
+}
+
+// useSimulator reports whether c selects the in-process TPM simulator,
+// including the case where c or its Config is nil and go-xkms's own
+// xkmssdk.DefaultTPMConfig (simulator-backed) therefore applies.
+func (c *DeviceTPMConfig) useSimulator() bool {
+	if c == nil || c.Config == nil {
+		return xkmssdk.DefaultTPMConfig.UseSimulator
+	}
+	return c.Config.UseSimulator
+}
+
+// keyDir returns the configured key directory, or "" when c is nil.
+func (c *DeviceTPMConfig) keyDir() string {
+	if c == nil {
+		return ""
+	}
+	return c.KeyDir
+}
+
+// resolvedConfig returns the concrete *xkmssdk.TPMConfig this device opens
+// with: c.Config when set, otherwise a copy of xkmssdk.DefaultTPMConfig.
+func (c *DeviceTPMConfig) resolvedConfig() *xkmssdk.TPMConfig {
+	if c != nil && c.Config != nil {
+		return c.Config
+	}
+	cfg := xkmssdk.DefaultTPMConfig
+	return &cfg
+}
+
+// DeviceChallengeConfig configures the local HTTP server enroll-01 and
+// device-attest-01 open to serve their challenge and credential-activation
+// endpoints, and the timeout applied to the overall operation.
+type DeviceChallengeConfig struct {
+	// ListenHost is the address the challenge server binds, joined with
+	// Port through net.JoinHostPort. Empty binds every interface.
+	ListenHost string        `yaml:"listen-host,omitempty" json:"listen_host,omitempty" mapstructure:"listen-host"`
+	Port       string        `yaml:"port,omitempty" json:"port,omitempty" mapstructure:"port"`
+	Timeout    time.Duration `yaml:"timeout,omitempty" json:"timeout,omitempty" mapstructure:"timeout"`
 }
 
 // StorageConfig defines the backend used for persistent client state storage.
@@ -302,6 +407,7 @@ func DefaultConfig() *Config {
 		},
 		Accounts:     make(map[string]*AccountConfig),
 		Certificates: make(map[string]*CertificateSpec),
+		Devices:      make(map[string]*DeviceSpec),
 	}
 }
 
@@ -361,6 +467,20 @@ func (c *Config) Validate() error {
 			return &ErrValidation{
 				Field:  "certificates." + name + ".key",
 				Reason: "key configuration is required",
+			}
+		}
+	}
+	for name, spec := range c.Devices {
+		if _, ok := c.Accounts[spec.Account]; !ok {
+			return &ErrValidation{
+				Field:  "devices." + name + ".account",
+				Reason: "references unknown account: " + spec.Account,
+			}
+		}
+		if spec.Identifier == "" {
+			return &ErrValidation{
+				Field:  "devices." + name + ".identifier",
+				Reason: "permanent identifier is required",
 			}
 		}
 	}

@@ -1,28 +1,38 @@
 # Key Escrow — API
 
-> **Status: NORMATIVE** · Feature: `escrow` · Repo: `go-xkms` · Last verified: 2026-09-15
+> **Status: NORMATIVE** · Feature: `escrow` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
 ## Capability matrix
 
-| Capability | REST | gRPC / Unix / QUIC / USB | MCP | Embedded (`EscrowService.`) | Permission |
-|---|---|---|---|---|---|
-| Escrow a key | not supported (`ErrNotSupported`) | not supported | not supported | `EscrowKey` | **unresolved — see below** |
-| Recover a key | not supported | not supported | not supported | `RecoverKey` | **unresolved — see below** |
-| List escrowed keys | not supported | not supported | not supported | `ListEscrowed` | **unresolved — see below** |
-| Revoke an escrowed key | not supported | not supported | not supported | `RevokeEscrow` | **unresolved — see below** |
+| Capability | REST / gRPC / Unix / QUIC / MCP / USB | Embedded (`EscrowService.`) | Permission |
+|---|---|---|---|
+| Escrow a key | not implemented | `EscrowKey` | **unresolved — see below** |
+| Recover a key | not implemented | `RecoverKey` | **unresolved — see below** |
+| List escrowed keys | not implemented | `ListEscrowed` | **unresolved — see below** |
+| Revoke an escrowed key | not implemented | `RevokeEscrow` | **unresolved — see below** |
 
-`transport.EscrowService` (in `pkg/api/transport/client.go`, part of the
-`Client` interface every transport implements) and the equivalent
-`transport.EscrowServicer` (server side, part of `XKMSServicer`) exist and are
-fully implemented by the embedded transport and the `pkg/xkms.XKMSService`
-service layer. Every network transport (REST, gRPC, QUIC, Unix, MCP, USB)
-implements the four methods as typed `ErrNotSupported` stubs — the same
-pattern the pre-existing `SealStoreService` uses for a capability with no
-route yet — purely so each transport's concrete type keeps satisfying
-`Client` / `XKMSServicer`. No route exists on any network transport.
+**BREAKING (go-xkms#692):** `transport.EscrowService` (`pkg/api/transport/client.go`)
+and `transport.EscrowServicer` (`pkg/api/transport/servicer.go`) are no longer
+embedded in `Client` / `XKMSServicer`. Escrow's RBAC model is still unresolved
+— see below — and carrying four methods that every network transport could
+only ever answer with `ErrNotSupported` on the interface every transport must
+satisfy misrepresented the six network transports as "escrow-capable, just not
+wired up yet." They are not: nothing about REST, gRPC, QUIC, Unix, MCP or USB
+routes to escrow, and none of the six implements the four methods any more —
+they were deleted, not left as stubs.
+
+`embedded.XKMSServicer` (`pkg/api/transport/embedded/servicer.go`) is now the
+one place in the stack that still composes `EscrowServicer` into the wider
+servicer surface it requires from its backing service, and
+`*embedded.Transport` is the one concrete type satisfying
+`transport.EscrowService` (`pkg/api/transport/embedded/transport.go` delegates
+each method straight to the injected service). A caller holding a generic
+`transport.Client` that needs escrow type-asserts it to `transport.EscrowService`
+and handles the "not this transport" case; there is no route to reach it
+through the umbrella interfaces.
 
 ## Embedded Go SDK works today
 
@@ -59,7 +69,7 @@ which is also true of every other embedded-only capability (`SealStore*`,
 resolving the open question below: the embedding process is already the
 trust boundary.
 
-## Why every network transport returns `ErrNotSupported`
+## Why no network transport implements it
 
 Every existing key-material REST route (`keys:*`, `certs:*`, `barrier:*`,
 `frost:*` in `pkg/api/rest/routes.go`) is gated by an RBAC
@@ -74,9 +84,14 @@ recovery), is a security-policy decision this change does not make on its
 own. See [`architecture.md`](architecture.md#what-is-not-wired-yet-and-why)
 for the full reasoning and the two concrete paths to resolve it.
 
-Once resolved, registering the routes is mechanical: add four `perm(...)`
-entries to `pkg/api/rest/routes.go` calling `s.escrowHandlers.*Handler`
-(a new `EscrowHandlers` type following `pkg/api/rest/handlers_custodian.go`),
-and the equivalent gRPC/QUIC/Unix/MCP dispatch entries — the servicer,
-request/response types, and error handling underneath are already in place
-and tested.
+Once resolved, wiring a transport back in is mechanical but no longer a stub
+edit: add the four `EscrowKey`/`RecoverKey`/`ListEscrowed`/`RevokeEscrow`
+methods to that transport's `Transport` type (delegating to the wire call,
+exactly as every other implemented capability does), four `perm(...)` entries
+to `pkg/api/rest/routes.go` calling `s.escrowHandlers.*Handler` (a new
+`EscrowHandlers` type following `pkg/api/rest/handlers_custodian.go`), and the
+equivalent gRPC/QUIC/Unix/MCP dispatch entries — the servicer, request/response
+types, and error handling underneath are already in place and tested. Adding
+those four methods back to a transport is also what makes it implement
+`transport.EscrowService` again (go-xkms#692); until then it deliberately does
+not.

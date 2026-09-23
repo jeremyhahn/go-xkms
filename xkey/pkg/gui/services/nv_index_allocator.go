@@ -79,9 +79,19 @@ func (a *NVIndexAllocator) NextIndex() (uint32, error) {
 		}
 		next := current + 1
 		if a.counter.CompareAndSwap(current, next) {
-			// Best-effort persist after successful allocation.
 			if a.dataDir != "" {
-				_ = a.persistCounter()
+				if err := a.persistCounter(); err != nil {
+					// The in-memory counter has already advanced past
+					// current (the CAS above), so current can never be
+					// handed out again by a future call even though it is
+					// withheld here: no caller ever receives an NV index
+					// whose counter update did not durably persist, which is
+					// what matters to avoid a colliding NV object on a later
+					// restart from stale on-disk state. The cost is one
+					// permanently skipped index per persist failure, cheap
+					// against the owner-defined range.
+					return 0, &SentinelCauseError{Sentinel: ErrNVIndexPersistFailed, Cause: err}
+				}
 			}
 			return current, nil
 		}

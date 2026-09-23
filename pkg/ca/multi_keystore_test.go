@@ -391,3 +391,107 @@ func TestInitSecondaryKeys_NoSecondaryNoop(t *testing.T) {
 	id := rootIdentity("Single Key CA")
 	require.NoError(t, ca.initSecondaryKeys(context.Background(), &id))
 }
+
+// failGenerateRSABackend wraps a real xkms.Backend and fails every
+// GenerateRSA call, so a secondary RSA key can be made to fail generation
+// while the primary key's own (different) backend keeps working normally.
+type failGenerateRSABackend struct {
+	xkms.Backend
+	err error
+}
+
+func (b *failGenerateRSABackend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	return nil, b.err
+}
+
+// TestInit_SecondaryKeyFailureIsRecordedNotFatal is the failure-injection
+// test for issue #687: initSecondaryKeys' discarded error (`_ =
+// ca.initSecondaryKeys(...)` in Init) must no longer vanish silently. It
+// proves that when a secondary key (Keys[1]) fails to generate, Init still
+// succeeds (the documented best-effort contract: the CA is usable off its
+// primary key) but SecondaryKeyInitError reports the failure instead of the
+// caller having no way to learn a multi-key CA is only partially
+// provisioned.
+func TestInit_SecondaryKeyFailureIsRecordedNotFatal(t *testing.T) {
+	primary := newInMemoryBackend(t)
+	injected := errors.New("injected secondary key generation failure")
+	secondary := &failGenerateRSABackend{Backend: newInMemoryBackend(t), err: injected}
+
+	factory := func(cn string, st types.StoreType) (xkms.Backend, error) {
+		switch st {
+		case types.StoreSoftware:
+			return primary, nil
+		case types.StoreTPM2:
+			return secondary, nil
+		default:
+			return nil, errors.New("unexpected store type")
+		}
+	}
+
+	id := Identity{
+		Subject: Subject{CommonName: "Secondary Key Failure Root CA", Organization: "Test Org"},
+		Valid:   DefaultRootValidityYears,
+		Keys: []*types.KeyConfig{
+			keyConfig(types.AlgorithmECDSA, types.StoreSoftware), // [0] primary
+			keyConfig(types.AlgorithmRSA, types.StoreTPM2),       // [1] secondary, generation fails
+		},
+		IsRoot:        true,
+		MaxPathLength: 1,
+	}
+
+	params := &Params{
+		Identity:        []Identity{id},
+		KeyStore:        primary,
+		CertStore:       newInMemoryCertStore(t),
+		BackendForStore: factory,
+		RevocationStore: storage.NewMemory(),
+	}
+
+	root, _, err := NewCA(context.Background(), params)
+	require.NoError(t, err, "a secondary-key failure must not fail Init/NewCA")
+	caImpl := root.(*CA)
+
+	secErr := caImpl.SecondaryKeyInitError()
+	require.Error(t, secErr, "the discarded secondary-key failure must be recorded, not silently dropped")
+	assert.ErrorIs(t, secErr, injected)
+
+	// The CA is still fully usable off its primary key.
+	issued, err := caImpl.IssueCertificate(context.Background(), &CertificateRequest{
+		Subject: Subject{CommonName: "leaf.example.com"},
+		Valid:   1,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, issued)
+}
+
+// TestInit_SecondaryKeySuccessLeavesNoError proves the happy path (all
+// secondary keys generated) leaves SecondaryKeyInitError nil.
+func TestInit_SecondaryKeySuccessLeavesNoError(t *testing.T) {
+	sw := newCountingBackend(t)
+
+	id := Identity{
+		Subject: Subject{CommonName: "Secondary Key Success Root CA", Organization: "Test Org"},
+		Valid:   DefaultRootValidityYears,
+		Keys: []*types.KeyConfig{
+			keyConfig(types.AlgorithmECDSA, types.StoreSoftware), // [0] primary
+			keyConfig(types.AlgorithmRSA, types.StoreSoftware),   // [1] secondary
+		},
+		IsRoot:        true,
+		MaxPathLength: 1,
+	}
+
+	params := &Params{
+		Identity:        []Identity{id},
+		KeyStore:        sw,
+		CertStore:       newInMemoryCertStore(t),
+		BackendForStore: singleBackendFactory(sw),
+		RevocationStore: storage.NewMemory(),
+	}
+
+	root, _, err := NewCA(context.Background(), params)
+	require.NoError(t, err)
+	caImpl := root.(*CA)
+
+	assert.NoError(t, caImpl.SecondaryKeyInitError())
+	assert.Equal(t, int32(1), sw.genRSA.Load(), "secondary RSA key generated")
+}

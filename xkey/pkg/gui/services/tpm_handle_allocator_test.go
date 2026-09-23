@@ -15,6 +15,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -503,6 +504,50 @@ func TestTPMHandleAllocator_SetHandle_ThenAllocate(t *testing.T) {
 	}
 	if h != OwnerHandleStart+100 {
 		t.Errorf("expected %#x, got %#x", OwnerHandleStart+100, h)
+	}
+}
+
+// TestTPMHandleAllocator_NextHandle_PersistFailureWithholdsHandle is the
+// failure-injection test for issue #687: `_ = a.persistCounters()` used to
+// discard the persistence error and still hand out the allocated handle. A
+// data directory that does not exist makes persistCounters fail (the load
+// at construction tolerates the same absence, so the allocator itself
+// still constructs). It proves NextHandle now returns the persist error
+// instead of the handle, and that the in-memory counter has still moved
+// past the withheld handle — so a later, successful allocation can never
+// reissue it once the failure is retried away.
+func TestTPMHandleAllocator_NextHandle_PersistFailureWithholdsHandle(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "does-not-exist")
+	alloc, err := NewTPMHandleAllocator(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	before := alloc.counters[HierarchyOwner].Load()
+	_, err = alloc.NextHandle(HierarchyOwner)
+	if err == nil {
+		t.Fatal("expected a persist-failure error, got nil")
+	}
+	if !errors.Is(err, ErrTPMHandlePersistFailed) {
+		t.Errorf("expected ErrTPMHandlePersistFailed, got %v", err)
+	}
+
+	after := alloc.counters[HierarchyOwner].Load()
+	if after != before+1 {
+		t.Errorf("expected the counter to advance from %#x to %#x despite the withheld handle, got %#x", before, before+1, after)
+	}
+
+	// Once persistence can succeed, the withheld handle (before) is never
+	// reissued: the next allocation returns before+1.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	h, err := alloc.NextHandle(HierarchyOwner)
+	if err != nil {
+		t.Fatalf("unexpected error once the directory exists: %v", err)
+	}
+	if h != before+1 {
+		t.Errorf("expected %#x (the withheld handle must not be reissued), got %#x", before+1, h)
 	}
 }
 

@@ -177,6 +177,39 @@ func TestController_RekeyBeforeInitIsNoOp(t *testing.T) {
 	assert.Equal(t, []byte("v"), got)
 }
 
+// TestController_RekeyChangePasswordFailureSurfacesErrorAndReseals is the
+// failure-injection test for the reseal-on-failure paths in Rekey: an empty
+// new passphrase makes qrdb's ChangePassword fail with ErrInvalidPassphrase
+// (CredentialsFor tolerates an empty secret; ChangePassword itself does not).
+// It proves the failure (a) is returned to the caller rather than swallowed,
+// and (b) still leaves the barrier resealed — a rekey attempted from a sealed
+// (public) session must never exit unsealed, success or failure.
+func TestController_RekeyChangePasswordFailureSurfacesErrorAndReseals(t *testing.T) {
+	base := storage.NewMemory()
+	ctx := context.Background()
+	pin := []byte("p1")
+
+	ctrl, sealed, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	require.NoError(t, ctrl.Unseal(pin))
+	require.NoError(t, sealed.Put(ctx, "keys/priv", []byte("material")))
+	require.NoError(t, ctrl.Seal())
+
+	// Rekey from a sealed session with an empty new passphrase: ChangePassword
+	// rejects it with ErrInvalidPassphrase instead of the silent success a
+	// discarded reseal error used to allow.
+	err = ctrl.Rekey(pin, nil)
+	assert.Error(t, err, "an empty new passphrase must fail the rekey rather than succeed silently")
+	assert.True(t, ctrl.barrier.IsSealed(), "a rekey that fails after unsealing to re-wrap must still reseal")
+
+	// The original PIN must still open the barrier: the failed rekey did not
+	// commit a new (invalid) password.
+	require.NoError(t, ctrl.Unseal(pin))
+	got, err := sealed.Get(ctx, "keys/priv")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("material"), got, "data must survive a rejected rekey")
+}
+
 // TestController_SealIsIdempotent proves Seal is safe to call when already
 // sealed (the module calls it on every logout and finalize).
 func TestController_SealIsIdempotent(t *testing.T) {

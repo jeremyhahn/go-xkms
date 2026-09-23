@@ -654,6 +654,16 @@ var goldenMethodPermissions = map[string]string{
 	"credentials.strategy": "credentials:strategy",
 	"credentials.submit":   "credentials:submit",
 
+	// User management — pkg/api/rest/routes.go's /api/v1/users decorators.
+	"user.bindCert":        "users:update",
+	"user.create":          "users:create",
+	"user.delete":          "users:delete",
+	"user.disable":         "users:update",
+	"user.enable":          "users:update",
+	"user.get":             "users:read",
+	"user.list":            "users:list",
+	"user.listCredentials": "users:read",
+
 	// Password vault — pkg/api/quic/handlers_password.go.
 	"password.add":      "passwords:write",
 	"password.delete":   "passwords:delete",
@@ -775,6 +785,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
 		auth.ResourcePIN: {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
+		auth.ResourceUsers: {},
 	}
 
 	for method, perm := range methodPermissions {

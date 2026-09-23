@@ -563,6 +563,12 @@ type TenantService interface {
 // The key material carried in every request and response here is always
 // already wrapped (AES-KW or RSA-OAEP) by the caller — no escrow agent, and
 // no transport carrying these calls, ever sees plaintext key material.
+//
+// It is embedded-only (go-xkms#692) and deliberately NOT part of Client:
+// Escrow's RBAC model is undecided, so no network transport (gRPC, REST,
+// QUIC, Unix, MCP, USB) implements it. A caller that needs escrow
+// type-asserts its Client to EscrowService — the embedded transport is the
+// only implementation — rather than finding it on Client itself.
 type EscrowService interface {
 	// EscrowKey sends wrapped key material to every configured escrow agent.
 	EscrowKey(ctx context.Context, req *EscrowRequest) ([]*EscrowReceipt, error)
@@ -587,6 +593,9 @@ type EscrowService interface {
 // This is fully backward compatible: any type that satisfies Client
 // also satisfies all sub-interfaces, and any type that satisfies all
 // sub-interfaces also satisfies Client.
+//
+// EscrowService is deliberately NOT part of this composition (go-xkms#692):
+// see its doc comment. Only the embedded transport implements it.
 type Client interface {
 	ConnectionService
 	BackendService
@@ -610,6 +619,5 @@ type Client interface {
 	InitCeremonyService
 	CredentialManagementService
 	AuditService
-	EscrowService
 	BootstrapService
 }

@@ -14,6 +14,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -592,6 +593,73 @@ func TestSyncIfChangedTriggersOnNewHash(t *testing.T) {
 	nssdbDir := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb")
 	_, statErr := os.Stat(nssdbDir)
 	assert.NoError(t, statErr, "nssdb should exist after triggered sync")
+}
+
+// TestSyncIfChanged_TrustHashReadFailureLogsAndForcesResync is the
+// failure-injection test for issue #687: `storedHash, _ :=
+// s.readTrustHash(family)` used to discard a genuine read failure (as
+// opposed to the file simply not existing yet) with no signal at all. It
+// proves a non-ErrNotExist failure is now logged, while syncIfChanged still
+// treats it as "changed" and proceeds to sync — the pre-existing, safe
+// fallback behavior this fix must not disturb.
+func TestSyncIfChanged_TrustHashReadFailureLogsAndForcesResync(t *testing.T) {
+	cert := testSecureBrowserCA(t, "Read Failure CA")
+	baseDir := filepath.Join(t.TempDir(), "browsers")
+	require.NoError(t, os.MkdirAll(baseDir, 0o700))
+	configPath := filepath.Join(t.TempDir(), "browser.json")
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	browserSvc, err := NewBrowserService(configPath, logger)
+	require.NoError(t, err)
+	trustSvc := NewTrustService(&mockSecureBrowserTrustStore{certs: []*x509.Certificate{cert}})
+	svc := NewSecureBrowserService(baseDir, browserSvc, trustSvc, logger)
+	svc.execCommand = mockSecureBrowserExecCommand
+
+	// Pre-create the trust-hash path as a directory so os.ReadFile fails
+	// with something other than ErrNotExist (EISDIR). This also makes the
+	// later writeTrustHash fail (same clobbered path), which is how the
+	// test observes that syncIfChanged took the real sync branch rather
+	// than the fast-path skip: a skip would return nil without ever
+	// reaching writeTrustHash.
+	hashPath := filepath.Join(baseDir, trustHashFilePrefix+".chrome.isolated")
+	require.NoError(t, os.MkdirAll(hashPath, 0o700))
+
+	err = svc.syncIfChanged("chrome", []*x509.Certificate{cert})
+	require.Error(t, err, "writeTrustHash fails against the clobbered path, proving the sync branch (not the fast-path skip) ran")
+	assert.Contains(t, err.Error(), "failed to write trust hash")
+	assert.Contains(t, logBuf.String(), "failed to read stored trust hash",
+		"the discarded read failure must be logged, not silently dropped")
+
+	// The sync itself ran (before the final write step) despite the
+	// unreadable hash file.
+	nssdbDir := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb")
+	_, statErr := os.Stat(nssdbDir)
+	assert.NoError(t, statErr, "nssdb should exist: the sync ran before the write step failed")
+}
+
+// TestSyncIfChanged_MissingTrustHashDoesNotLog proves the common first-sync
+// case (no hash file yet) is not logged as a failure: it is the expected,
+// benign condition that already forces a resync via an empty stored hash.
+func TestSyncIfChanged_MissingTrustHashDoesNotLog(t *testing.T) {
+	cert := testSecureBrowserCA(t, "Missing Hash CA")
+	baseDir := filepath.Join(t.TempDir(), "browsers")
+	require.NoError(t, os.MkdirAll(baseDir, 0o700))
+	configPath := filepath.Join(t.TempDir(), "browser.json")
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	browserSvc, err := NewBrowserService(configPath, logger)
+	require.NoError(t, err)
+	trustSvc := NewTrustService(&mockSecureBrowserTrustStore{certs: []*x509.Certificate{cert}})
+	svc := NewSecureBrowserService(baseDir, browserSvc, trustSvc, logger)
+	svc.execCommand = mockSecureBrowserExecCommand
+
+	// No hash file exists yet (first sync ever) — this must not be logged.
+	err = svc.syncIfChanged("chrome", []*x509.Certificate{cert})
+	require.NoError(t, err)
+	assert.NotContains(t, logBuf.String(), "failed to read stored trust hash",
+		"a first-run missing hash file is expected and must not be logged as a failure")
 }
 
 // TestTrustHashReadWrite verifies trust hash persistence.

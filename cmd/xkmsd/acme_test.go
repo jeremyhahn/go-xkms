@@ -95,6 +95,16 @@ func TestACMEConfig_Validate(t *testing.T) {
 			&config.ACMEConfig{Enabled: true, HTTPSAddr: ":8443", ExternalURL: "https://acme.example.com"},
 			config.ErrACMEMissingKeystoreBackend,
 		},
+		{
+			"missing_caa_identities",
+			&config.ACMEConfig{
+				Enabled:         true,
+				HTTPSAddr:       ":8443",
+				ExternalURL:     "https://acme.example.com",
+				KeystoreBackend: "software",
+			},
+			config.ErrACMEMissingCAAIdentities,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

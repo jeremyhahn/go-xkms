@@ -51,6 +51,7 @@ func TestTrustedCAConfig_ValidateRejectsUnwritableAuditSection(t *testing.T) {
 	cfg.Audit.LogPath = ""
 
 	cfg.ACME.ExternalURL = "https://acme.example.com"
+	cfg.ACME.CAIdentifiers = []string{"ca.example.com"}
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("an enabled audit trail with no log path must be rejected")

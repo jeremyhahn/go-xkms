@@ -24,6 +24,15 @@ import (
 // This is fully backward compatible: any type that implements all methods
 // still satisfies XKMSServicer, and the sub-interfaces can be used
 // independently for interface segregation and targeted test mocks.
+//
+// EscrowServicer is deliberately NOT part of this composition (go-xkms#692).
+// External key escrow's RBAC model is undecided, so it stays an
+// embedded-only capability: embedded.XKMSServicer composes XKMSServicer with
+// EscrowServicer for the one transport that reaches it, and no network
+// transport (rest, grpc, quic, unix, mcp, usb) carries Escrow methods at
+// all. A caller that genuinely needs escrow type-asserts its transport.Client
+// to EscrowService, or is handed the embedded transport's wider interface
+// explicitly — never through this composition.
 type XKMSServicer interface {
 	HealthServicer
 	BackendServicer
@@ -47,7 +56,6 @@ type XKMSServicer interface {
 	InitCeremonyServicer
 	CredentialManagementServicer
 	AuditServicer
-	EscrowServicer
 	BootstrapServicer
 }
 
@@ -252,6 +260,12 @@ type PolicyServicer interface {
 // EscrowServicer provides external key-escrow operations (pkg/escrow):
 // replicating already-wrapped key material to configured escrow agents,
 // recovering it, listing what is escrowed, and revoking an escrowed key.
+//
+// It is embedded-only (go-xkms#692): XKMSServicer does not embed it, so no
+// network transport is required to carry Escrow methods. embedded.XKMSServicer
+// composes it in for the one transport that reaches escrow; a caller elsewhere
+// in the stack type-asserts to this interface (or EscrowService in client.go,
+// its SDK-facing counterpart) rather than finding it on XKMSServicer/Client.
 type EscrowServicer interface {
 	EscrowKey(ctx context.Context, req *EscrowRequest) ([]*EscrowReceipt, error)
 	RecoverKey(ctx context.Context, req *RecoverRequest) (*RecoverResponse, error)

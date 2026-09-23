@@ -64,6 +64,20 @@ type ACMENonceGeneratorFunc = acmehandler.NonceGeneratorFunc
 // ACMECAAValidatorInterface defines the interface for CAA validation.
 type ACMECAAValidatorInterface = acmehandler.CAAValidatorInterface
 
+// ACMECAAValidator is the RFC 8659 CAA validator order finalize consults
+// before signing. Construct one with NewACMECAAValidator and set it on
+// ACMERestServiceParams.CAAValidator.
+type ACMECAAValidator = acmeserver.CAAValidator
+
+// ACMECAAValidatorParams contains configuration for creating a CAA validator.
+type ACMECAAValidatorParams = acmeserver.CAAValidatorParams
+
+// ACMEErrCAAValidationFailed is returned when CAA records prevent issuance.
+type ACMEErrCAAValidationFailed = acmeserver.ErrCAAValidationFailed
+
+// ACMEErrCAADNSError is returned when the CAA RRset could not be determined.
+type ACMEErrCAADNSError = acmeserver.ErrCAADNSError
+
 // ACMENewAccountRequest represents the structure of a new ACME account registration request.
 type ACMENewAccountRequest = acmehandler.NewAccountRequest
 
@@ -193,6 +207,14 @@ type ACMEChainInfo = acmeclient.ChainInfo
 
 // NewACMERestService creates a new ACME REST service from the given parameters.
 var NewACMERestService = acmehandler.NewRestService
+
+// NewACMECAAValidator creates the RFC 8659 CAA validator order finalize
+// consults before signing. This is the single construction path for a CAA
+// validator: cmd/xkmsd's ACME composition and the pkg/acme/client TrustedCA
+// composition both call it, and any SDK consumer composing its own
+// ACMERestServiceParams should too rather than implementing ACMECAAValidatorInterface
+// itself.
+var NewACMECAAValidator = acmeserver.NewCAAValidator
 
 // NewACMEOrderFinalizeHookRegistry creates a new order finalization hook registry.
 var NewACMEOrderFinalizeHookRegistry = acmehandler.NewOrderFinalizeHookRegistry
