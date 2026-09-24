@@ -134,43 +134,10 @@ func TestInitializePlatformStore_TPM2NotConfiguredFailsClosed(t *testing.T) {
 	assert.Equal(t, "tpm2", unavailableErr.Strategy)
 }
 
-// TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed proves the
-// owner ruling directly: go-xkms seals under the Platform SRK only, never
-// the Shared SRK, so a TPM that is open and usable but has no Platform SRK
-// enrolled yet (the standalone/autodetect path, seal.BuildBestStrategy,
-// never enrolls one -- enrollment is a deliberate separate operator/ceremony
-// action) must fail closed rather than fall back to the SSRK.
-//
-// This runs without the tpm_simulator build tag: UseSimulator: true still
-// reaches seal.BuildBestStrategy, whose TPM open fails with
-// pkgtpm2.ErrSimulatorNotAvailable when the simulator isn't compiled in --
-// a different underlying cause than "no usable, provisioned TPM was found",
-// but the same typed ErrPlatformStoreStrategyUnavailable{Strategy: "tpm2"}
-// this test asserts, so it is a real (if incidental) exercise of the same
-// fail-closed path either way. The tpm2 tests that need a working simulator
-// (a genuinely enrolled Platform SRK) live in
-// platform_store_simulator_test.go, tagged tpm_simulator.
-func TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{
-		Storage:     config.StorageConfig{Backend: "file", Path: t.TempDir()},
-		Credentials: config.CredentialsConfig{SealStrategy: "tpm2"},
-		Backends: config.BackendsConfig{
-			TPM2: &config.TPM2Config{
-				Enabled:      true,
-				UseSimulator: true,
-			},
-		},
-	})
-
-	err := s.initializePlatformStore()
-	require.Error(t, err, "no Shared-SRK fallback: an unenrolled Platform SRK must fail closed")
-	assert.Nil(t, s.platformStore)
-	t.Cleanup(s.closePlatformStoreTPM)
-
-	var unavailableErr *ErrPlatformStoreStrategyUnavailable
-	require.ErrorAs(t, err, &unavailableErr)
-	assert.Equal(t, "tpm2", unavailableErr.Strategy)
-}
+// TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed moved to
+// platform_store_no_simulator_test.go (build tag !tpm_simulator): see that
+// file's doc comment for why it cannot live in a file built with
+// tpm_simulator.
 
 // ============================================================================
 // Tests — credential service integration through the platform store

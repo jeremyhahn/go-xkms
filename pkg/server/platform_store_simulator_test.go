@@ -199,12 +199,25 @@ func TestCredentialService_TPM2Strategy_StoresAndLoadsThroughPlatformStore(t *te
 // (s.nodeSealTPM) rather than opening a second one, when both the barrier
 // and the credential strategy are tpm2 on an embedded-qrdb deployment. A
 // second independent simulator open would otherwise be attempted -- and a
-// real swtpm hangs on that -- so platformStoreTPMClose must stay nil
-// regardless of how the platform-store build itself concludes. The flip's
-// own autodetect (resolveNodeSeal, unchanged by this issue) does not enroll
-// a Platform SRK either, so initializePlatformStore is expected to fail
-// closed here too -- the point under test is the absence of a double open
-// and a hang, not a successful build.
+// real swtpm hangs on that -- so platformStoreTPMClose must stay nil and
+// s.platformStoreTPM must be the exact same backend as s.nodeSealTPM: the
+// point under test is the absence of a double open and a hang.
+//
+// New(cfg) succeeds here, not fails closed: the flip's autodetect
+// (resolveNodeSeal) opens the TPM through the same tpm2backend.NewBackend
+// every simulator-backed open in this codebase goes through, and NewBackend's
+// first-boot path (pkg/backend/tpm2/backend.go's provisionSimulatorEKSRK,
+// added by go-xkms#681 -- "seal only under the Platform SRK") provisions the
+// EK, SSRK AND Platform SRK together on a fresh simulator, deliberately, so
+// every simulator-backed test in this codebase gets a seal-capable device
+// without a separate enrollment step. A physical TPM is never
+// auto-provisioned this way (see NewBackend's own comment); this convenience
+// is simulator-only. So by the time initializePlatformStore reuses
+// s.nodeSealTPM, its Platform SRK already exists and the platform store
+// builds successfully -- unlike the standalone (non-flip) probe path
+// TestInitializePlatformStore_TPM2WithoutEnrolledPSRKFailsClosed in
+// platform_store_test.go exercises, where nothing provisions the device
+// first.
 func TestInitializePlatformStore_TPM2ReusesNodeSealFlip(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -214,16 +227,20 @@ func TestInitializePlatformStore_TPM2ReusesNodeSealFlip(t *testing.T) {
 	cfg.Backends.TPM2 = &config.TPM2Config{UseSimulator: true}
 	cfg.Credentials = config.CredentialsConfig{SealStrategy: "tpm2"}
 
+	// Registered unconditionally, before any assertion, so a future
+	// assertion failure here can never leak a live server (and its open TPM
+	// simulator handle -- go-tpm-tools' simulator.Get() is a single global
+	// process-wide lock) the way an assertion positioned before this defer
+	// once did, hanging every later simulator-backed test in the package.
 	s, err := New(cfg)
-	require.Error(t, err, "the flip's autodetect enrolls no Platform SRK; the platform store must fail closed, not fall back to the SSRK")
 	if s != nil {
 		defer func() { _ = s.Shutdown() }()
-		assert.Nil(t, s.platformStoreTPMClose, "the flip's TPM open must be reused, not duplicated, even on this failure path")
 	}
+	require.NoError(t, err, "the flip's simulator open provisions the Platform SRK as part of its first-boot recipe, so the platform store should build")
+	require.NotNil(t, s)
 
-	var svcErr *ErrServiceInit
-	require.ErrorAs(t, err, &svcErr)
-	assert.Equal(t, "platform store", svcErr.Service)
+	assert.Nil(t, s.platformStoreTPMClose, "the flip's TPM open must be reused, not duplicated")
+	assert.Same(t, s.nodeSealTPM, s.platformStoreTPM, "the platform store must reuse the exact flip backend, not open a second one")
 }
 
 // TestInitializePlatformStore_TPM2PlatformPolicy_PCRExtendBreaksGet proves
