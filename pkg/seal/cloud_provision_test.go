@@ -45,6 +45,9 @@ type cloudProvisionProvider struct {
 	saveErr    error
 	savedAttrs *types.KeyAttributes
 	savedData  []byte
+	// operatorKeyID, when non-empty, is returned by OperatorSealKeyID to
+	// simulate an operator-configured CMK (AWS KMS Config.KeyID).
+	operatorKeyID string
 }
 
 func (p *cloudProvisionProvider) Type() types.BackendType          { return "test-cloud" }
@@ -105,12 +108,17 @@ func (p *cloudProvisionProvider) Save(attrs *types.KeyAttributes, data []byte, _
 	return p.saveErr
 }
 
+func (p *cloudProvisionProvider) OperatorSealKeyID() string {
+	return p.operatorKeyID
+}
+
 var (
 	_ types.KeyProvider          = (*cloudProvisionProvider)(nil)
 	_ types.Sealer               = (*cloudProvisionProvider)(nil)
 	_ types.SymmetricKeyProvider = (*cloudProvisionProvider)(nil)
 	_ SealLoginProvider          = (*cloudProvisionProvider)(nil)
 	_ SealMetadataSaver          = (*cloudProvisionProvider)(nil)
+	_ SealOperatorKeyProvider    = (*cloudProvisionProvider)(nil)
 )
 
 // notSymmetricProvider implements types.KeyProvider and types.Sealer but,
@@ -222,22 +230,49 @@ func TestEnsureSealKey_LoginErrorPropagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "token login failed")
 }
 
-func TestEnsureSealKey_AWSKMSMetadataSeeded(t *testing.T) {
-	prov := &cloudProvisionProvider{}
+// TestEnsureSealKey_AWSKMSOperatorKeyIDSeeded proves that an
+// operator-configured CMK (SealOperatorKeyProvider.OperatorSealKeyID, backed
+// by awskms.Config.KeyID) seeds the metadata store with that real key
+// identifier -- never the seal key's CN (go-xkms#839).
+func TestEnsureSealKey_AWSKMSOperatorKeyIDSeeded(t *testing.T) {
+	prov := &cloudProvisionProvider{operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/operator-cmk"}
 	keyAttrs := SealKeyAttributes(types.StoreAWSKMS)
 	err := EnsureSealKey(context.Background(), StrategyAWSKMS, prov, keyAttrs)
 	require.NoError(t, err)
 	require.NotNil(t, prov.savedAttrs)
 	assert.Equal(t, keyAttrs.CN, prov.savedAttrs.CN)
-	assert.Contains(t, string(prov.savedData), keyAttrs.CN)
+	assert.Contains(t, string(prov.savedData), prov.operatorKeyID)
+	assert.NotContains(t, string(prov.savedData), keyAttrs.CN,
+		"the seal key's CN must never be persisted as a KMS key identifier")
 }
 
-func TestEnsureSealKey_AWSKMSMetadataSaveErrorPropagates(t *testing.T) {
-	prov := &cloudProvisionProvider{saveErr: errors.New("metadata store unavailable")}
+// TestEnsureSealKey_AWSKMSOperatorKeyIDSaveErrorPropagates proves a metadata
+// store failure while seeding an operator-configured CMK surfaces as an
+// error rather than silently falling through to key creation.
+func TestEnsureSealKey_AWSKMSOperatorKeyIDSaveErrorPropagates(t *testing.T) {
+	prov := &cloudProvisionProvider{
+		operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/operator-cmk",
+		saveErr:       errors.New("metadata store unavailable"),
+	}
 	keyAttrs := SealKeyAttributes(types.StoreAWSKMS)
 	err := EnsureSealKey(context.Background(), StrategyAWSKMS, prov, keyAttrs)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "metadata store unavailable")
+}
+
+// TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne proves that without an
+// operator-configured CMK, EnsureSealKey seeds nothing (go-xkms#839: the
+// previous behavior seeded the seal key's CN itself, which made
+// GenerateSymmetricKey's own "already exists" guard skip CreateKey on every
+// boot) and instead falls through to GenerateSymmetricKey so the backend
+// creates a real CMK.
+func TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne(t *testing.T) {
+	prov := &cloudProvisionProvider{getKeyErr: backend.ErrKeyNotFound}
+	keyAttrs := SealKeyAttributes(types.StoreAWSKMS)
+	err := EnsureSealKey(context.Background(), StrategyAWSKMS, prov, keyAttrs)
+	require.NoError(t, err)
+	assert.Nil(t, prov.savedAttrs, "no metadata should be pre-seeded without an operator-configured key")
+	assert.True(t, prov.genKeyCalled, "GenerateSymmetricKey must run to create the seal key")
 }
 
 func TestBuildCloudKMSStrategy_AllFourStrategies(t *testing.T) {

@@ -60,6 +60,18 @@ type SealMetadataSaver interface {
 	Save(attrs *types.KeyAttributes, data []byte, extension types.FSExtension, overwrite bool) error
 }
 
+// SealOperatorKeyProvider is implemented by cloud-KMS backends (AWS KMS)
+// that can resolve the seal key from an existing, operator-managed key
+// configured out-of-band -- for AWS KMS, Config.KeyID -- instead of one
+// EnsureSealKey creates itself. OperatorSealKeyID returns that key's ID,
+// ARN, or alias verbatim, or "" when the operator configured none; it must
+// never be derived from the seal key's CN (SealKeyCN), which is a fixed,
+// backend-agnostic label, not an AWS-assigned or operator-assigned key
+// identifier.
+type SealOperatorKeyProvider interface {
+	OperatorSealKeyID() string
+}
+
 // ErrSealBackendUnavailable indicates a hardware/cloud backend does not
 // implement the interface (types.Sealer / types.SymmetricKeyProvider) a
 // seal strategy requires.
@@ -107,15 +119,21 @@ func IsCloudSealStrategy(id StrategyID) bool {
 // strategy:
 //
 //   - PKCS#11 opens no session until Login(); this seeds it first.
-//   - AWS KMS resolves its operator-provisioned CMK through an in-process
-//     metadata store keyed on CN, which starts empty each boot; this seeds it
-//     (upsert) so GetSymmetricKey can read the key id.
+//   - AWS KMS keeps its key identifier in an in-process metadata store that
+//     starts empty each boot. When the backend reports an operator-configured
+//     CMK (SealOperatorKeyProvider, backed by Config.KeyID), that key's real
+//     ID/ARN/alias -- never the seal key's CN -- seeds the store so
+//     GetSymmetricKey resolves it below. Without one, nothing is seeded and
+//     the check-and-skip creates a new CMK through GenerateSymmetricKey,
+//     which calls AWS KMS's CreateKey and persists the ID AWS assigns it.
 //   - Every backend then check-and-skips: GetSymmetricKey reuses an existing
 //     key, and only a genuine not-found triggers GenerateSymmetricKey (first
 //     init).
 //
 // The operation is idempotent: an existing key is detected and reused
-// unchanged, so previously-sealed data unseals after a restart.
+// unchanged, so previously-sealed data unseals after a restart, as long as
+// the resolved key -- operator-configured or backend-persisted -- stays the
+// same across restarts.
 func EnsureSealKey(
 	ctx context.Context,
 	id StrategyID,
@@ -134,16 +152,24 @@ func EnsureSealKey(
 	}
 
 	// AWS KMS keeps its key identifier in an in-process metadata store that
-	// must be seeded before GetSymmetricKey can resolve the
-	// operator-managed CMK.
+	// must be seeded with the operator's real CMK identifier before
+	// GetSymmetricKey can resolve it. A backend with no operator-configured
+	// key seeds nothing here, so the check-and-skip below falls through to
+	// GenerateSymmetricKey and creates one.
 	if id == StrategyAWSKMS {
-		if saver, ok := provider.(SealMetadataSaver); ok {
-			metadata, err := json.Marshal(map[string]string{"key_id": keyAttrs.CN})
-			if err != nil {
-				return err
-			}
-			if err := saver.Save(keyAttrs, metadata, types.FSExtPrivateBlob, true); err != nil {
-				return err
+		if opProvider, ok := provider.(SealOperatorKeyProvider); ok {
+			if operatorKeyID := opProvider.OperatorSealKeyID(); operatorKeyID != "" {
+				saver, ok := provider.(SealMetadataSaver)
+				if !ok {
+					return &ErrSealBackendUnavailable{Strategy: string(id), Purpose: "operator-configured seal key metadata"}
+				}
+				metadata, err := json.Marshal(map[string]string{"key_id": operatorKeyID})
+				if err != nil {
+					return err
+				}
+				if err := saver.Save(keyAttrs, metadata, types.FSExtPrivateBlob, true); err != nil {
+					return err
+				}
 			}
 		}
 	}
