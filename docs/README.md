@@ -30,6 +30,7 @@ the folder in the same commit that changes the behavior.
 | [frost-threshold-signing](frost-threshold-signing/) | RFC 9591 FROST threshold signing (`-tags frost`) — trusted-dealer keygen, the explicit round API, and why the CLI's local path and the REST/gRPC/MCP network surface are independent |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
+| [luks](luks/) | The root module's `pkg/luks`: FIPS-aware LUKS volume lifecycle (`Manager`/`Executor`) and TPM 2.0 passphrase sealing (`TPMSealer`); `xkey`'s own LUKS2 implementation is documented separately in `xkey/docs/luks/` |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
 | [observability](observability/) | Prometheus instrumentation — operation counters/histograms, backend health, keys/certs totals, connection tracking |
 | [password-vault](password-vault/) | Stored password credentials and their access modes |
@@ -127,6 +128,7 @@ by five and reports unconverted folders as converted.
 | [symmetric-aead](symmetric-aead/) | `architecture/symmetric-encryption.md`, `configuration/aead-auto-selection.md`, `configuration/symmetric-encryption.md` |
 | [audit-log](audit-log/) | — |
 | [cluster](cluster/) | `cluster/README.md` — **absorbed and deleted**; `cluster/ca-key-custody.md` retained as a companion deep-dive, linked from [`cluster/architecture.md`](cluster/architecture.md) |
+| [luks](luks/) | — |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — the legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions describe a proxy plane that was since deleted; the feature folder documents the current `xkmsctl cluster`/`rebalance` → qrdb control-plane design instead |
@@ -226,7 +228,6 @@ Ordered "under active development first, then most often read":
 | Clustering | [`cluster/`](cluster/) | includes CA key custody |
 | Web console | [`web/`](web/) | 5 files |
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
-| LUKS | — | `pkg/luks`; documented on the xkey side only |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
 
 [`frost-threshold-signing/`](frost-threshold-signing/) and
