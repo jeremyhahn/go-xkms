@@ -33,7 +33,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-
 // insecureTestTLSConfig returns the explicit TLS configuration that the
 // hardened transport contract requires alongside Insecure=true
 // (InsecureSkipVerify is forbidden). These tests never complete a TLS
