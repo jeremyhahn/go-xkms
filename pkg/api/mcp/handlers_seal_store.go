@@ -15,10 +15,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -37,8 +35,8 @@ func (s *Server) handleSealStorePut(ctx context.Context, req *JSONRPCRequest) (i
 		return nil, ErrSealStoreNotConfigured
 	}
 	var params transport.SealStorePutRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if err := s.xkmsService.SealStorePut(ctx, &params); err != nil {
 		return nil, err
@@ -52,8 +50,8 @@ func (s *Server) handleSealStoreGet(ctx context.Context, req *JSONRPCRequest) (i
 		return nil, ErrSealStoreNotConfigured
 	}
 	var params transport.SealStoreGetRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	resp, err := s.xkmsService.SealStoreGet(ctx, &params)
 	if err != nil {
@@ -68,8 +66,8 @@ func (s *Server) handleSealStoreDelete(ctx context.Context, req *JSONRPCRequest)
 		return nil, ErrSealStoreNotConfigured
 	}
 	var params transport.SealStoreDeleteRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if err := s.xkmsService.SealStoreDelete(ctx, &params); err != nil {
 		return nil, err
@@ -95,8 +93,8 @@ func (s *Server) handleSealStoreReseal(ctx context.Context, req *JSONRPCRequest)
 		return nil, ErrSealStoreNotConfigured
 	}
 	var params transport.SealStoreResealRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if err := s.xkmsService.SealStoreReseal(ctx, &params); err != nil {
 		return nil, err

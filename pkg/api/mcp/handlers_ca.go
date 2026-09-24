@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -29,7 +28,7 @@ func (s *Server) handleGetCABundle(ctx context.Context, req *JSONRPCRequest) (in
 	}
 
 	var params transport.GetCABundleRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -45,7 +44,7 @@ func (s *Server) handleGetCACertificate(ctx context.Context, req *JSONRPCRequest
 	}
 
 	var params transport.GetCACertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -61,7 +60,7 @@ func (s *Server) handleSignCSR(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	var params transport.SignCSRRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -77,7 +76,7 @@ func (s *Server) handleIssueCertificate(ctx context.Context, req *JSONRPCRequest
 	}
 
 	var params transport.IssueCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -93,7 +92,7 @@ func (s *Server) handleRevokeCertificate(ctx context.Context, req *JSONRPCReques
 	}
 
 	var params transport.RevokeCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -109,7 +108,7 @@ func (s *Server) handleGenerateCRL(ctx context.Context, req *JSONRPCRequest) (in
 	}
 
 	var params transport.GenerateCRLRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -125,7 +124,7 @@ func (s *Server) handleIsRevoked(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	var params transport.IsRevokedRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 

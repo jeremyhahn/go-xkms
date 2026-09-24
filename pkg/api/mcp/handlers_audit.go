@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -26,8 +25,8 @@ import (
 func (s *Server) handleQueryAudit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.AuditFilter
 	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+		if err := decodeParams(req, &params); err != nil {
+			return nil, err
 		}
 	}
 

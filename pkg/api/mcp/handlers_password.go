@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -198,7 +197,7 @@ func (s *Server) resolvePasswordStore(ctx context.Context) (staticpw.Store, erro
 // handlePasswordAdd handles the password.add method.
 func (s *Server) handlePasswordAdd(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordAddParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -232,7 +231,7 @@ func (s *Server) handlePasswordAdd(ctx context.Context, req *JSONRPCRequest) (in
 // handlePasswordGet handles the password.get method.
 func (s *Server) handlePasswordGet(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordGetParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -270,7 +269,7 @@ func (s *Server) handlePasswordGet(ctx context.Context, req *JSONRPCRequest) (in
 // handlePasswordList handles the password.list method.
 func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordListParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -328,7 +327,7 @@ func (s *Server) handlePasswordList(ctx context.Context, req *JSONRPCRequest) (i
 // handlePasswordUpdate handles the password.update method.
 func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordUpdateParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -384,7 +383,7 @@ func (s *Server) handlePasswordUpdate(ctx context.Context, req *JSONRPCRequest) 
 // handlePasswordDelete handles the password.delete method.
 func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordDeleteParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -428,8 +427,8 @@ func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) 
 	// servicer rejects.
 	var unlockReq transport.PasswordStoreUnlockRequest
 	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &unlockReq); err != nil {
-			return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+		if err := decodeParams(req, &unlockReq); err != nil {
+			return nil, err
 		}
 	}
 
@@ -518,7 +517,7 @@ func (s *Server) handlePasswordStatus(ctx context.Context, req *JSONRPCRequest) 
 // handlePasswordGenerate handles the password.generate method.
 func (s *Server) handlePasswordGenerate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params PasswordGenerateParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -555,8 +554,8 @@ func (s *Server) handlePasswordSetAccessMode(ctx context.Context, req *JSONRPCRe
 	}
 
 	var params transport.PasswordStoreSetAccessModeRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "invalid params", Err: err}}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if params.Mode == "" {
 		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: xkms.ErrInvalidAccessMode}

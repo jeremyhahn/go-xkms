@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -26,8 +25,8 @@ import (
 // handleListPIVSlots handles the listPIVSlots method.
 func (s *Server) handleListPIVSlots(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.ListPIVSlotsRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.ListPIVSlots(ctx, &params)
@@ -41,8 +40,8 @@ func (s *Server) handleListPIVSlots(ctx context.Context, req *JSONRPCRequest) (i
 // handleGetPIVCertificate handles the getPIVCertificate method.
 func (s *Server) handleGetPIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GetPIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.GetPIVCertificate(ctx, &params)
@@ -56,8 +55,8 @@ func (s *Server) handleGetPIVCertificate(ctx context.Context, req *JSONRPCReques
 // handleStorePIVCertificate handles the storePIVCertificate method.
 func (s *Server) handleStorePIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.StorePIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := xkms.StorePIVCertificate(ctx, &params); err != nil {
@@ -70,8 +69,8 @@ func (s *Server) handleStorePIVCertificate(ctx context.Context, req *JSONRPCRequ
 // handleDeletePIVCertificate handles the deletePIVCertificate method.
 func (s *Server) handleDeletePIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.DeletePIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := xkms.DeletePIVCertificate(ctx, &params); err != nil {
@@ -84,8 +83,8 @@ func (s *Server) handleDeletePIVCertificate(ctx context.Context, req *JSONRPCReq
 // handleGeneratePIVKey handles the generatePIVKey method.
 func (s *Server) handleGeneratePIVKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GeneratePIVKeyRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.GeneratePIVKey(ctx, &params)
@@ -99,8 +98,8 @@ func (s *Server) handleGeneratePIVKey(ctx context.Context, req *JSONRPCRequest) 
 // handleImportPIVCertificate handles the importPIVCertificate method.
 func (s *Server) handleImportPIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.StorePIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if err := xkms.ImportPIVCertificate(ctx, &params); err != nil {
@@ -113,8 +112,8 @@ func (s *Server) handleImportPIVCertificate(ctx context.Context, req *JSONRPCReq
 // handleExportPIVCertificate handles the exportPIVCertificate method.
 func (s *Server) handleExportPIVCertificate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GetPIVCertificateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.ExportPIVCertificate(ctx, &params)
@@ -128,8 +127,8 @@ func (s *Server) handleExportPIVCertificate(ctx context.Context, req *JSONRPCReq
 // handleGeneratePIVCSR handles the generatePIVCSR method.
 func (s *Server) handleGeneratePIVCSR(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params transport.GeneratePIVCSRRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := xkms.GeneratePIVCSR(ctx, &params)

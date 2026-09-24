@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -48,7 +47,7 @@ func (s *Server) handleClaimCertBegin(ctx context.Context, req *JSONRPCRequest) 
 	}
 
 	var params transport.ClaimCertBeginRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -63,7 +62,7 @@ func (s *Server) handleClaimCertComplete(ctx context.Context, req *JSONRPCReques
 	}
 
 	var params transport.ClaimCertCompleteRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -101,7 +100,7 @@ func (s *Server) handleClaimShareBegin(ctx context.Context, req *JSONRPCRequest)
 	}
 
 	var params transport.ClaimShareBeginRequest
-	if decErr := json.Unmarshal(req.Params, &params); decErr != nil {
+	if decErr := decodeParams(req, &params); decErr != nil {
 		return nil, decErr
 	}
 	// Never from the wire: overwrite whatever decoding produced.
@@ -125,7 +124,7 @@ func (s *Server) handleClaimShareComplete(ctx context.Context, req *JSONRPCReque
 	}
 
 	var params transport.ClaimShareCompleteRequest
-	if decErr := json.Unmarshal(req.Params, &params); decErr != nil {
+	if decErr := decodeParams(req, &params); decErr != nil {
 		return nil, decErr
 	}
 	params.CallerCertThumbprint = thumbprint
@@ -141,7 +140,7 @@ func (s *Server) handleSignCSRInit(ctx context.Context, req *JSONRPCRequest) (in
 	}
 
 	var params transport.SignCSRInitRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 
@@ -156,7 +155,7 @@ func (s *Server) handleCredentialSubmit(ctx context.Context, req *JSONRPCRequest
 	}
 
 	var params transport.CredentialSubmitRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := decodeParams(req, &params); err != nil {
 		return nil, err
 	}
 

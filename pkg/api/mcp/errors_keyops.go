@@ -17,6 +17,7 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // KeyOpError carries a JSON-RPC error code alongside the underlying error
@@ -47,25 +48,29 @@ func (e *KeyOpError) Unwrap() error { return e.Err }
 // This mirrors pkg/api/grpc/errors_keyops.go's keyOpSentinelCodes, translated
 // onto the JSON-RPC 2.0 error vocabulary (which is far coarser than gRPC's
 // codes.Code): ErrOperationNotSupported is the only sentinel with a distinct
-// wire-level code (Method not found, MCP's "unimplemented" signal); every
-// other sentinel here reports as an internal error since JSON-RPC has no
-// standard NotFound/FailedPrecondition/Unavailable codes.
+// wire-level code (Method not found, MCP's "unimplemented" signal), and
+// ErrBackendNotFound/ErrKeyNotFound -- codes.NotFound over gRPC -- carry
+// sdkssh.JSONRPCCodeNotFound, the reserved-range code this package's SSH
+// sub-system already defined for the identical wire.CodeNotFound outcome
+// (errors_ssh.go's mapSSHError; go-xkms#814). Every other sentinel here
+// reports as an internal error since JSON-RPC has no standard
+// FailedPrecondition/Unavailable code.
 var keyOpSentinelCodes = []struct {
 	sentinel error
 	code     int
 }{
 	{xkms.ErrOperationNotSupported, ErrCodeMethodNotFound},
 	{xkms.ErrExportKeyMaterialFailed, ErrCodeInternalError},
-	{xkms.ErrBackendNotFound, ErrCodeInternalError},
-	{xkms.ErrKeyNotFound, ErrCodeInternalError},
+	{xkms.ErrBackendNotFound, sdkssh.JSONRPCCodeNotFound},
+	{xkms.ErrKeyNotFound, sdkssh.JSONRPCCodeNotFound},
 	{xkms.ErrNotInitialized, ErrCodeInternalError},
 }
 
 // mapKeyOpError converts an error returned by the xkms service layer into a
 // *KeyOpError carrying the JSON-RPC error code InvokeMethod should report.
-// Validation failures and unresolved participants (a named backend or key
-// that could not be found) become Invalid params, since JSON-RPC has no
-// dedicated NotFound code; a backend that lacks the requested hardware
+// Validation failures and an unresolved role become Invalid params; an
+// unresolved backend or key becomes Not found (sdkssh.JSONRPCCodeNotFound,
+// via keyOpSentinelCodes); a backend that lacks the requested hardware
 // capability becomes Method not found, MCP's signal for "not implemented by
 // this backend". Anything else is an internal fault.
 func mapKeyOpError(err error) error {

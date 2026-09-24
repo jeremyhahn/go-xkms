@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -80,8 +79,8 @@ func (s *Server) handleBarrierInitialize(ctx context.Context, req *JSONRPCReques
 	}
 
 	var params BarrierInitializeParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Secret == "" {
@@ -114,8 +113,8 @@ func (s *Server) handleBarrierInitializeShamir(ctx context.Context, req *JSONRPC
 	}
 
 	var params BarrierInitializeShamirParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	creds, err := seal.CredentialsFor([]byte(params.Secret))
@@ -144,8 +143,8 @@ func (s *Server) handleBarrierUnseal(ctx context.Context, req *JSONRPCRequest) (
 	}
 
 	var params BarrierUnsealParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Secret == "" {
@@ -175,8 +174,8 @@ func (s *Server) handleBarrierUnsealShare(ctx context.Context, req *JSONRPCReque
 	}
 
 	var params BarrierUnsealShareParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Share == "" {
@@ -203,8 +202,8 @@ func (s *Server) handleBarrierUnsealShares(ctx context.Context, req *JSONRPCRequ
 	}
 
 	var params BarrierUnsealSharesParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if len(params.Shares) == 0 {
@@ -261,8 +260,8 @@ func (s *Server) handleBarrierRekey(ctx context.Context, req *JSONRPCRequest) (i
 	}
 
 	var params BarrierRekeyParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Threshold < 2 {
@@ -294,8 +293,8 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(ctx context.Context, req *JSO
 	}
 
 	var params BarrierGenerateRecoveryKeysParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if params.Threshold < 2 {
@@ -329,8 +328,8 @@ func (s *Server) handleBarrierEnableEncryption(ctx context.Context, req *JSONRPC
 	}
 
 	var params transport.BarrierEnableEncryptionRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	resp, err := s.xkmsService.BarrierEnableEncryption(ctx, &params)
@@ -349,8 +348,8 @@ func (s *Server) handleBarrierRecoverWithKeys(ctx context.Context, req *JSONRPCR
 	}
 
 	var params BarrierRecoverWithKeysParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if len(params.Keys) == 0 {
@@ -412,8 +411,8 @@ func (s *Server) handleBarrierGenerateRootToken(ctx context.Context, req *JSONRP
 	}
 
 	var params BarrierGenerateRootTokenParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 
 	if len(params.Shares) == 0 {
