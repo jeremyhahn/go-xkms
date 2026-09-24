@@ -27,11 +27,17 @@ the endpoint is unauthenticated (see [`api.md`](api.md)).
 
 ## What you get
 
-- **Per-operation totals, durations, and errors** — key generate/get/delete/
-  list/import/export/rotate, crypto sign/verify/encrypt/decrypt, and CA
-  issue/revoke/sign-CSR/generate-CRL — each labeled by backend and outcome, so
-  you can build a dashboard panel like "sign operations by backend, error rate
-  over 5m" directly from `xkms_operations_total` and `xkms_errors_total`.
+- **Per-operation totals, durations, and errors** — key
+  generate/get/delete/list/import/export/rotate/copy/wrap/unwrap (both the
+  BYOK ceremony and the by-key-ID PKCS#11 `C_WrapKey`/`C_UnwrapKey`
+  primitives)/export-material/get-import-parameters, crypto
+  sign/verify/encrypt/decrypt/derive-key/derive-key-ECDH/attest, and CA
+  issue/revoke/sign-CSR/generate-CRL — each labeled by backend and outcome,
+  so you can build a dashboard panel like "sign operations by backend, error
+  rate over 5m" directly from `xkms_operations_total` and `xkms_errors_total`.
+  See [`engineering.md`](engineering.md)'s operation-to-servicer-method table
+  for the full list of operation names and which backend each is labeled
+  with.
 - **Real backend health**, not a static "up" value: `xkms_backend_healthy`
   reflects the same responsiveness probe the daemon's own readiness check
   uses, refreshed every 30 seconds. A backend that stops responding (a

@@ -422,7 +422,14 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 }
 
 // GetImportParameters retrieves the parameters needed to import a key into a backend.
-func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
+func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (resp *transport.GetImportParametersResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpGetImportParameters, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilConfig
 	}
@@ -476,7 +483,7 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 		return nil, &ErrKeyOperation{Operation: "marshal wrapping public key", Err: err}
 	}
 
-	resp := &transport.GetImportParametersResponse{
+	resp = &transport.GetImportParametersResponse{
 		WrappingPublicKey: wrappingPubKeyBytes,
 		ImportToken:       params.ImportToken,
 		Algorithm:         string(params.Algorithm),
@@ -491,7 +498,20 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 }
 
 // CopyKey copies a key from one backend to another using secure key wrapping.
-func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) (*transport.CopyKeyResponse, error) {
+//
+// The operation is metered under the destination backend: that is where the
+// copy's effect lands (a new key is imported there), matching how
+// GenerateKey/ImportKey meter and increment the keys-total gauge for the
+// backend they write to. The source backend's own operations (export,
+// lookup) are not separately metered here.
+func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) (resp *transport.CopyKeyResponse, err error) {
+	start := time.Now()
+	destBackend := ""
+	if req != nil {
+		destBackend = s.metricsBackendName(req.DestBackend)
+	}
+	defer func() { recordServiceOp(metrics.OpCopyKey, destBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilConfig
 	}
@@ -503,10 +523,9 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	if sourceBackend == "" {
 		sourceBackend = s.defaultBackendName()
 	}
-	destBackend := req.DestBackend
-	if destBackend == "" {
-		destBackend = s.defaultBackendName()
-	}
+	// destBackend was already resolved above, before the guard clauses, for
+	// the metrics label -- s.metricsBackendName applies the same
+	// empty-string-to-default resolution used here.
 
 	srcB, err := s.resolveTenantBackend(sourceBackend, req.TenantID)
 	if err != nil {
@@ -587,6 +606,8 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		return nil, &ErrKeyOperation{Operation: "import key", Err: err}
 	}
 
+	incrementKeysTotal(destBackend)
+
 	return &transport.CopyKeyResponse{
 		Success: true,
 		KeyID:   req.DestKeyID,
@@ -600,7 +621,14 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 // on a backend implementing backend.ImportExportBackend; asymmetric keys and
 // hardware-resident keys are rejected by the backend. Use ExportKey for secure
 // key transport between backends.
-func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error) {
+func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (resp *transport.ExportKeyMaterialResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = req.Backend
+	}
+	defer func() { recordServiceOp(metrics.OpExportKeyMaterial, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -673,7 +701,14 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 }
 
 // WrapKey wraps key material for secure transport using the specified parameters.
-func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) (*transport.WrapKeyResponse, error) {
+func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) (resp *transport.WrapKeyResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpWrapKey, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilConfig
 	}
@@ -731,7 +766,14 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 }
 
 // UnwrapKey unwraps key material that was previously wrapped.
-func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyRequest) (*transport.UnwrapKeyResponse, error) {
+func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyRequest) (resp *transport.UnwrapKeyResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpUnwrapKey, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilConfig
 	}
@@ -809,7 +851,14 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 // never a symmetric one, since that ceremony's ImportParameters models only
 // an RSA wrapping public key. Only the target backend needs
 // backend.ImportExportBackend now, for ExportKeyMaterial.
-func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
+func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (resp *transport.WrapKeyByIDResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = req.WrappingKeyBackend
+	}
+	defer func() { recordServiceOp(metrics.OpWrapKeyByID, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -939,7 +988,21 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 // not be conflated). The recovered plaintext material is then imported into
 // the target backend using the key template carried in the request, exactly
 // as before.
-func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
+//
+// The operation is metered under the unwrapping key's backend, the same way
+// WrapKeyByID is metered under the wrapping key's backend: that backend does
+// the cryptographic work (the decrypt), symmetric with how Sign/Verify/
+// Encrypt/Decrypt meter the backend holding the operating key. The keys-total
+// gauge, in contrast, is incremented for the target backend, which is where
+// the recovered key actually lands -- the two need not be the same backend.
+func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (resp *transport.UnwrapKeyByIDResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = req.UnwrappingKeyBackend
+	}
+	defer func() { recordServiceOp(metrics.OpUnwrapKeyByID, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -1023,6 +1086,8 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 	if err := importKeyMaterial(ctx, targetImportExport, targetAttrs, keyMaterial); err != nil {
 		return nil, &ErrKeyOperation{Operation: "import unwrapped key", KeyID: req.TargetKeyID, Err: err}
 	}
+
+	incrementKeysTotal(req.TargetKeyBackend)
 
 	return &transport.UnwrapKeyByIDResponse{
 		KeyID:   req.TargetKeyID,

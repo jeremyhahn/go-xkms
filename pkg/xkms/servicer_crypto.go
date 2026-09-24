@@ -1068,7 +1068,14 @@ func (b deriveKeyBridge) params(req *transport.DeriveKeyRequest, keyLength int, 
 // refuses the derivation itself because it is a genuine capability boundary
 // (see isBackendCapabilityRefusal) is classified the same way, rather than as
 // the generic key-derivation failure deriveBaseKeyMaterial otherwise reports.
-func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
+func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (resp *transport.DeriveKeyResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpDeriveKey, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil derive-key request"}
 	}
@@ -1140,7 +1147,14 @@ func (s *XKMSService) DeriveKey(ctx context.Context, req *transport.DeriveKeyReq
 // most cloud KMS backends) yield ErrOperationNotSupported, which is a genuine
 // capability boundary rather than a missing implementation.
 // Implements the CryptoServicer interface.
-func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyECDHRequest) (*transport.DeriveKeyECDHResponse, error) {
+func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyECDHRequest) (resp *transport.DeriveKeyECDHResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = req.Backend
+	}
+	defer func() { recordServiceOp(metrics.OpDeriveKeyECDH, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -1208,7 +1222,14 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 // that cannot attest yield ErrOperationNotSupported — a real capability
 // boundary, not a stub.
 // Implements the CryptoServicer interface.
-func (s *XKMSService) AttestKey(ctx context.Context, req *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
+func (s *XKMSService) AttestKey(ctx context.Context, req *transport.AttestKeyRequest) (resp *transport.AttestKeyResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = req.Backend
+	}
+	defer func() { recordServiceOp(metrics.OpAttestKey, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}

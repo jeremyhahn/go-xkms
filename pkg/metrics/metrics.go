@@ -62,6 +62,17 @@ const (
 	OpIssueCert   = "issue_cert"   // CA certificate issuance
 	OpRevokeCert  = "revoke_cert"  // CA certificate revocation
 	OpGenerateCRL = "generate_crl" // CA CRL generation
+
+	OpCopyKey             = "copy_key"              // key copy between backends (BYOK re-wrap)
+	OpWrapKey             = "wrap_key"              // wrap caller-supplied key material for transport
+	OpUnwrapKey           = "unwrap_key"            // unwrap previously wrapped key material
+	OpWrapKeyByID         = "wrap_key_by_id"        // wrap a server-side key under a server-side wrapping key (PKCS#11 C_WrapKey)
+	OpUnwrapKeyByID       = "unwrap_key_by_id"      // unwrap and import a server-side key (PKCS#11 C_UnwrapKey)
+	OpExportKeyMaterial   = "export_key_material"   // export raw symmetric key bytes for an exportable key
+	OpGetImportParameters = "get_import_parameters" // BYOK import ceremony wrapping-key parameters
+	OpDeriveKey           = "derive_key"            // KDF-based key derivation
+	OpDeriveKeyECDH       = "derive_key_ecdh"       // ECDH key agreement plus KDF
+	OpAttestKey           = "attest_key"            // hardware attestation of a key
 )
 
 var (
