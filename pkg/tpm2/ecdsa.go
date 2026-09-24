@@ -136,7 +136,16 @@ func (tpm *TPM2) CreateECDSA(
 				return nil, err
 			}
 
-			session2, closer, err := tpm.CreateKeySession(keyAttrs)
+			// TPM2_Load authorizes the PARENT (the SRK), not the child key
+			// being loaded -- the child has no TPM-resident auth yet, only
+			// the blob pair being loaded. CreateSession(keyAttrs) resolves
+			// the session against keyAttrs.Parent for exactly this reason;
+			// CreateKeySession(keyAttrs) would instead build a session
+			// against the child's own (nil) auth, which authorizes nothing
+			// TPM2_Load's ParentHandle checks against and fails
+			// TPM_RC_AUTH_FAIL against any SRK with a real auth value. See
+			// the matching, correct call in rsa.go's identical fallback.
+			session2, closer, err := tpm.CreateSession(keyAttrs)
 			if err != nil {
 				return nil, err
 			}

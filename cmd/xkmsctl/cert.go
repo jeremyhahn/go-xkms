@@ -91,7 +91,7 @@ func saveCert(cfg *Config, printer *Printer, keyID, certPEM string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -141,7 +141,7 @@ func getCert(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -201,7 +201,7 @@ func deleteCert(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -243,7 +243,7 @@ func listCerts(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -296,7 +296,7 @@ func certExists(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -373,7 +373,7 @@ func saveChain(cfg *Config, printer *Printer, keyID string, chainPEMs []string) 
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -423,7 +423,7 @@ func getChain(cfg *Config, printer *Printer, keyID string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -715,17 +715,22 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		cn, _ := cmd.Flags().GetString("cn")
-		org, _ := cmd.Flags().GetString("org")
-		ou, _ := cmd.Flags().GetString("ou")
-		country, _ := cmd.Flags().GetString("country")
-		province, _ := cmd.Flags().GetString("province")
-		locality, _ := cmd.Flags().GetString("locality")
-		validityDays, _ := cmd.Flags().GetInt("validity")
-		keyAlg, _ := cmd.Flags().GetString("key-algorithm")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		outputFile, _ := cmd.Flags().GetString("output")
-		keyOutputFile, _ := cmd.Flags().GetString("key-output")
+		fr := newFlagReader(cmd)
+		cn := fr.String("cn")
+		org := fr.String("org")
+		ou := fr.String("ou")
+		country := fr.String("country")
+		province := fr.String("province")
+		locality := fr.String("locality")
+		validityDays := fr.Int("validity")
+		keyAlg := fr.String("key-algorithm")
+		keySize := fr.Int("key-size")
+		outputFile := fr.String("output")
+		keyOutputFile := fr.String("key-output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if cn == "" {
 			handleError(ErrCommonNameRequired)
@@ -854,23 +859,28 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		caCertFile, _ := cmd.Flags().GetString("ca-cert")
-		caKeyFile, _ := cmd.Flags().GetString("ca-key")
-		cn, _ := cmd.Flags().GetString("cn")
-		certType, _ := cmd.Flags().GetString("type")
-		org, _ := cmd.Flags().GetString("org")
-		ou, _ := cmd.Flags().GetString("ou")
-		country, _ := cmd.Flags().GetString("country")
-		province, _ := cmd.Flags().GetString("province")
-		locality, _ := cmd.Flags().GetString("locality")
-		validityDays, _ := cmd.Flags().GetInt("validity")
-		keyAlg, _ := cmd.Flags().GetString("key-algorithm")
-		keySize, _ := cmd.Flags().GetInt("key-size")
-		dnsNames, _ := cmd.Flags().GetString("dns")
-		ipAddrs, _ := cmd.Flags().GetString("ip")
-		emails, _ := cmd.Flags().GetString("email")
-		outputFile, _ := cmd.Flags().GetString("output")
-		keyOutputFile, _ := cmd.Flags().GetString("key-output")
+		fr := newFlagReader(cmd)
+		caCertFile := fr.String("ca-cert")
+		caKeyFile := fr.String("ca-key")
+		cn := fr.String("cn")
+		certType := fr.String("type")
+		org := fr.String("org")
+		ou := fr.String("ou")
+		country := fr.String("country")
+		province := fr.String("province")
+		locality := fr.String("locality")
+		validityDays := fr.Int("validity")
+		keyAlg := fr.String("key-algorithm")
+		keySize := fr.Int("key-size")
+		dnsNames := fr.String("dns")
+		ipAddrs := fr.String("ip")
+		emails := fr.String("email")
+		outputFile := fr.String("output")
+		keyOutputFile := fr.String("key-output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if caCertFile == "" {
 			handleError(ErrCACertFileRequired)
@@ -1102,7 +1112,7 @@ func init() {
 	certGenerateCACmd.Flags().Int("key-size", 256, "key size (RSA: 2048/4096, ECDSA: 256/384/521)")
 	certGenerateCACmd.Flags().String("output", "", "output file for certificate (PEM)")
 	certGenerateCACmd.Flags().String("key-output", "", "output file for private key (PEM)")
-	_ = certGenerateCACmd.MarkFlagRequired("cn")
+	markFlagRequired(certGenerateCACmd, "cn")
 
 	// issue flags
 	certIssueCmd.Flags().String("ca-cert", "", "CA certificate file (PEM)")
@@ -1122,7 +1132,7 @@ func init() {
 	certIssueCmd.Flags().String("email", "", "email addresses (comma-separated)")
 	certIssueCmd.Flags().String("output", "", "output file for certificate (PEM)")
 	certIssueCmd.Flags().String("key-output", "", "output file for private key (PEM)")
-	_ = certIssueCmd.MarkFlagRequired("ca-cert")
-	_ = certIssueCmd.MarkFlagRequired("ca-key")
-	_ = certIssueCmd.MarkFlagRequired("cn")
+	markFlagRequired(certIssueCmd, "ca-cert")
+	markFlagRequired(certIssueCmd, "ca-key")
+	markFlagRequired(certIssueCmd, "cn")
 }

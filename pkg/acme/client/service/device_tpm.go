@@ -81,19 +81,18 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 	if err != nil {
 		if errors.Is(err, xkmssdk.ErrTPMNotInitialized) && simulator && tpm != nil {
 			if perr := provisionSimulatorIdentity(name, tpm, tpmCfg); perr != nil {
-				_ = tpm.Close()
-				_ = factory.Close()
-				return nil, perr
+				return nil, errors.Join(perr, tpm.Close(), factory.Close())
 			}
 		} else {
+			var closeErrs []error
 			if tpm != nil {
-				_ = tpm.Close()
+				closeErrs = append(closeErrs, tpm.Close())
 			}
-			_ = factory.Close()
+			closeErrs = append(closeErrs, factory.Close())
 			if errors.Is(err, xkmssdk.ErrTPMNotInitialized) {
-				return nil, ErrDeviceTPMNotProvisioned{Name: name}
+				return nil, errors.Join(append([]error{ErrDeviceTPMNotProvisioned{Name: name}}, closeErrs...)...)
 			}
-			return nil, ErrDeviceTPMOpenFailed{Name: name, Err: err}
+			return nil, errors.Join(append([]error{ErrDeviceTPMOpenFailed{Name: name, Err: err}}, closeErrs...)...)
 		}
 	}
 
@@ -103,8 +102,7 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 	}
 
 	if err := ensureEKCertificate(name, module, dev, simulator); err != nil {
-		_ = module.Close()
-		return nil, err
+		return nil, errors.Join(err, module.Close())
 	}
 
 	return module, nil

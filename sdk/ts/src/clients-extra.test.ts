@@ -344,17 +344,17 @@ describe('CaClient (issue/revoke/tcg endpoints)', () => {
   });
 });
 
-describe('ClusterClient (members/addMember)', () => {
-  it('routes members list and addMember', async () => {
+describe('ClusterClient (status/members, read-only)', () => {
+  it('routes status and members list', async () => {
     const fake = newFakeFetch({ body: {} });
     const c = make(fake);
-    await c.cluster.members();
-    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/cluster/members`);
+    await c.cluster.status();
+    expect(fake.calls[0]?.method).toBe('GET');
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/cluster/status`);
 
-    await c.cluster.addMember({ replica_id: 4, raft_address: '10.0.0.4:9000' });
-    expect(fake.calls[1]?.method).toBe('POST');
+    await c.cluster.members();
+    expect(fake.calls[1]?.method).toBe('GET');
     expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/cluster/members`);
-    expect(fake.calls[1]?.body).toEqual({ replica_id: 4, raft_address: '10.0.0.4:9000' });
   });
 });
 

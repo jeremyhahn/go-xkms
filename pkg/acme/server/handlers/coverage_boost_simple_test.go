@@ -638,8 +638,7 @@ func TestNewAccountHandler_DAOErrorSimple(t *testing.T) {
 	payload := NewAccountRequest{Contact: []string{"mailto:test@example.com"}, TermsOfServiceAgreed: true}
 
 	url := params.BaseRESTURI + "/acme/new-account"
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.(*RestService).nonceStore.Add(nonce)
+	nonce, _ := service.(*RestService).GetNonceService().Generate()
 
 	signerOpts := &jose.SignerOptions{NonceSource: &staticNonceSource{nonce: nonce}, ExtraHeaders: map[jose.HeaderKey]interface{}{"url": url}}
 	signerOpts.EmbedJWK = true

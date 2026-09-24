@@ -55,7 +55,7 @@ func TestNewRestService_Success(t *testing.T) {
 	assert.NotNil(t, service.ca)
 	assert.NotNil(t, service.logger)
 	assert.NotNil(t, service.storageFactory)
-	assert.NotNil(t, service.nonceStore)
+	assert.NotNil(t, service.nonceService)
 	assert.NotNil(t, service.challengeMap)
 }
 
@@ -736,9 +736,8 @@ func TestParseKID_InvalidAccountID(t *testing.T) {
 	key := generateTestKey(t)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS with invalid KID (non-numeric ID)
 	payload := map[string]interface{}{"test": "data"}
@@ -886,9 +885,8 @@ func TestParseJWS_InvalidSignature(t *testing.T) {
 	key := generateTestKey(t)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS with valid key
 	payload := map[string]interface{}{"test": "data"}
@@ -944,9 +942,8 @@ func TestParseKID_URLMismatch(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS with URL pointing to a different endpoint than the request
 	payload := map[string]interface{}{"test": "data"}
@@ -990,9 +987,8 @@ func TestParseKID_MissingURL(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS WITHOUT the url header
 	payload := map[string]interface{}{"test": "data"}
@@ -1033,9 +1029,8 @@ func TestParseJWS_URLMismatch(t *testing.T) {
 	key := generateTestKey(t)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS with URL pointing to a different endpoint
 	payload := map[string]interface{}{"test": "data"}
@@ -1077,9 +1072,8 @@ func TestParseJWS_MissingURL(t *testing.T) {
 	key := generateTestKey(t)
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	// Create JWS WITHOUT the url header
 	payload := map[string]interface{}{"test": "data"}

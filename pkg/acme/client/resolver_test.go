@@ -604,6 +604,64 @@ func TestResolverSolveWithCleanup(t *testing.T) {
 			t.Error("Cleanup should be called")
 		}
 	})
+
+	t.Run("cleanup failure is joined into the returned error", func(t *testing.T) {
+		resolver := NewChallengeResolver()
+		mockSolv := newMockSolver("dns-01")
+		cleanupErr := errors.New("stale TXT record could not be removed")
+		mockSolv.cleanupFunc = func(ctx context.Context, domain string, challenge *acme.Challenge) error {
+			return cleanupErr
+		}
+		_ = resolver.RegisterSolver(mockSolv)
+
+		authz := &acme.Authorization{
+			Identifier: acme.AuthzID{Type: "dns", Value: "example.com"},
+			Challenges: []*acme.Challenge{
+				{Type: "dns-01", Status: acme.StatusPending, Token: "test-token"},
+			},
+		}
+
+		err := resolver.SolveWithCleanup(context.Background(), authz, "keyAuth", func(ctx context.Context, challenge *acme.Challenge) error {
+			return nil
+		})
+		if err == nil {
+			t.Fatal("expected an error when cleanup fails")
+		}
+		if !errors.Is(err, cleanupErr) {
+			t.Errorf("expected returned error to wrap cleanup error, got %v", err)
+		}
+		if !errors.Is(err, ErrChallengeCleanupFailed) {
+			t.Errorf("expected returned error to match ErrChallengeCleanupFailed, got %v", err)
+		}
+	})
+
+	t.Run("cleanup failure is joined with the afterSolve error, not hidden by it", func(t *testing.T) {
+		resolver := NewChallengeResolver()
+		mockSolv := newMockSolver("dns-01")
+		cleanupErr := errors.New("stale TXT record could not be removed")
+		mockSolv.cleanupFunc = func(ctx context.Context, domain string, challenge *acme.Challenge) error {
+			return cleanupErr
+		}
+		_ = resolver.RegisterSolver(mockSolv)
+
+		authz := &acme.Authorization{
+			Identifier: acme.AuthzID{Type: "dns", Value: "example.com"},
+			Challenges: []*acme.Challenge{
+				{Type: "dns-01", Status: acme.StatusPending, Token: "test-token"},
+			},
+		}
+
+		afterSolveErr := errors.New("afterSolve error")
+		err := resolver.SolveWithCleanup(context.Background(), authz, "keyAuth", func(ctx context.Context, challenge *acme.Challenge) error {
+			return afterSolveErr
+		})
+		if !errors.Is(err, afterSolveErr) {
+			t.Errorf("expected returned error to wrap afterSolve error, got %v", err)
+		}
+		if !errors.Is(err, cleanupErr) {
+			t.Errorf("expected returned error to also wrap cleanup error, got %v", err)
+		}
+	})
 }
 
 func TestResolverCleanup(t *testing.T) {

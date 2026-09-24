@@ -169,8 +169,7 @@ func TestKeyChangeHandlerSuccessful(t *testing.T) {
 
 	// Create outer JWS with old key KID
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -431,6 +430,30 @@ func TestJwkKeysMatchUnknownType(t *testing.T) {
 
 	// Unknown types fall through to JSON comparison
 	assert.True(t, jwkKeysMatch(key1, key2))
+}
+
+// TestJwkKeysMatchUnknownTypeMarshalFailure verifies that when the fallback
+// JSON comparison for an unrecognized kty cannot marshal one of the keys, the
+// keys are reported as not matching rather than as equal. Before this was
+// fixed, a marshal failure produced two empty (nil) byte slices, and
+// bytes.Equal(nil, nil) is true — turning an internal error into a false
+// positive on a security-relevant key comparison.
+func TestJwkKeysMatchUnknownTypeMarshalFailure(t *testing.T) {
+	key1 := map[string]interface{}{
+		"kty": "UNKNOWN",
+		// func values are never JSON-marshalable, forcing json.Marshal to
+		// fail the way it would for any unmarshalable value that reached
+		// this map through some path other than json.Unmarshal.
+		"foo": func() {},
+	}
+	key2 := map[string]interface{}{
+		"kty": "UNKNOWN",
+		"foo": "bar",
+	}
+
+	assert.False(t, jwkKeysMatch(key1, key2))
+	// Also verify the failure isn't masked when both sides fail to marshal.
+	assert.False(t, jwkKeysMatch(key1, key1))
 }
 
 // TestNewEventLogValidationHookNoEventLog tests event log validation with no event log

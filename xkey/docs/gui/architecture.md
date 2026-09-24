@@ -1,530 +1,163 @@
-# xKey Desktop GUI - Architecture
+# xKey Desktop GUI — Architecture
 
-## Overview
+> **Status: NORMATIVE** · Feature: `gui` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
-The xKey Desktop GUI is built using Wails v2, combining a Go backend with a Svelte frontend. This architecture provides native performance, cross-platform compatibility, and a premium user experience matching the Android app.
+This file replaces the pre-convention `gui/architecture.md`. The other files
+in this folder — `README.md`, `features.md`, `design-system.md`,
+`setup-wizard.md`, `api-explorer.md`, `browser-settings.md`, `ROADMAP.md` —
+predate the five-file convention and are superseded where they disagree with
+this folder; see the "Disagreements" note at the end.
 
-## System Architecture
+## What it is
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Operating System                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────┐    ┌──────────────────────────────────────────────────┐   │
-│  │   Systray   │    │              Wails Application                    │   │
-│  │  (Optional) │    │  ┌────────────────────────────────────────────┐  │   │
-│  │             │    │  │            Frontend (WebView)               │  │   │
-│  │  ┌───────┐  │    │  │  ┌──────────────────────────────────────┐  │  │   │
-│  │  │ Icon  │  │    │  │  │         Svelte Application           │  │  │   │
-│  │  └───────┘  │    │  │  │  ┌────────┐ ┌────────┐ ┌────────┐   │  │  │   │
-│  │  ┌───────┐  │    │  │  │  │ Stores │ │  Views │ │ Comps  │   │  │  │   │
-│  │  │ Menu  │──┼────┼──┼──│  └────────┘ └────────┘ └────────┘   │  │  │   │
-│  │  └───────┘  │    │  │  └──────────────────────────────────────┘  │  │   │
-│  └─────────────┘    │  └────────────────────────────────────────────┘  │   │
-│                     │                      │ Wails Bindings            │   │
-│                     │                      ▼                           │   │
-│                     │  ┌────────────────────────────────────────────┐  │   │
-│                     │  │              Go Backend                     │  │   │
-│                     │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │   │
-│                     │  │  │   App    │ │  Phone   │ │  Crypto  │   │  │   │
-│                     │  │  │ Service  │ │ Backend  │ │ Backend  │   │  │   │
-│                     │  │  └──────────┘ └──────────┘ └──────────┘   │  │   │
-│                     │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │   │
-│                     │  │  │  FIDO2   │ │   OATH   │ │   PIV    │   │  │   │
-│                     │  │  │ Service  │ │ Service  │ │ Service  │   │  │   │
-│                     │  │  └──────────┘ └──────────┘ └──────────┘   │  │   │
-│                     │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐   │  │   │
-│                     │  │  │   TPM    │ │  Audit   │ │  Admin   │   │  │   │
-│                     │  │  │ Service  │ │ Service  │ │ Service  │   │  │   │
-│                     │  │  └──────────┘ └──────────┘ └──────────┘   │  │   │
-│                     │  └────────────────────────────────────────────┘  │   │
-│                     └──────────────────────────────────────────────────┘   │
-│                                          │                                  │
-│                     ┌────────────────────┴───────────────────┐             │
-│                     ▼                    ▼                   ▼              │
-│              ┌───────────┐        ┌───────────┐       ┌───────────┐        │
-│              │   Phone   │        │  Hardware │       │ xkmsd │        │
-│              │   (BLE)   │        │   (TPM)   │       │  Server   │        │
-│              └───────────┘        └───────────┘       └───────────┘        │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Directory Structure
+The desktop GUI is a [Wails v2](https://wails.io) application: a Go backend
+(`xkey/pkg/gui`) driving native OS windowing, paired with a Svelte/TypeScript
+frontend (`xkey/frontend`) rendered in a native WebView. `xkey/wails.json`
+configures the build (`build:dir: cmd/xkey`, frontend build via `npm run
+build`, tags `ble,production,codec_json`).
 
 ```
-xkey/
-├── cmd/
-│   └── xkey/
-│       ├── main.go              # Entry point with GUI detection
-│       └── cmd/
-│           └── root.go          # Cobra root command (existing)
-├── pkg/
-│   └── gui/
-│       ├── app.go               # Wails application setup
-│       ├── systray.go           # System tray management
-│       ├── services/
-│       │   ├── app_service.go   # Application state & lifecycle
-│       │   ├── phone_service.go # Phone backend operations
-│       │   ├── fido2_service.go # FIDO2/WebAuthn operations
-│       │   ├── oath_service.go  # TOTP/HOTP operations
-│       │   ├── piv_service.go   # PIV certificate operations
-│       │   ├── tpm_service.go   # TPM2 operations
-│       │   ├── audit_service.go # Audit log operations
-│       │   └── admin_service.go # xkmsd admin operations
-│       └── bindings/
-│           └── bindings.go      # Wails binding exports
-├── frontend/
-│   ├── package.json
-│   ├── svelte.config.js
-│   ├── tailwind.config.js       # Android design system colors
-│   ├── src/
-│   │   ├── main.ts
-│   │   ├── App.svelte
-│   │   ├── lib/
-│   │   │   ├── stores/          # Svelte stores
-│   │   │   │   ├── app.ts       # Application state
-│   │   │   │   ├── phone.ts     # Phone connection state
-│   │   │   │   ├── keys.ts      # Keys state
-│   │   │   │   └── theme.ts     # Theme state
-│   │   │   ├── components/      # Reusable components
-│   │   │   │   ├── Card.svelte
-│   │   │   │   ├── Button.svelte
-│   │   │   │   ├── StatusBadge.svelte
-│   │   │   │   ├── KeyListItem.svelte
-│   │   │   │   ├── DeviceCard.svelte
-│   │   │   │   └── ...
-│   │   │   └── utils/
-│   │   │       ├── theme.ts     # Theme utilities
-│   │   │       └── format.ts    # Formatting utilities
-│   │   ├── views/
-│   │   │   ├── Dashboard.svelte
-│   │   │   ├── Keys.svelte
-│   │   │   ├── Devices.svelte
-│   │   │   ├── FIDO2.svelte
-│   │   │   ├── OATH.svelte
-│   │   │   ├── PIV.svelte
-│   │   │   ├── TPM.svelte
-│   │   │   ├── Settings.svelte
-│   │   │   ├── AuditLog.svelte
-│   │   │   └── Admin.svelte
-│   │   └── assets/
-│   │       ├── icons/
-│   │       └── images/
-│   └── wailsjs/                 # Auto-generated Wails bindings
-└── build/
-    └── appicon.png              # Application icon
+Frontend (Svelte, xkey/frontend/src)
+    views/*.svelte  --calls-->  wailsjs/go/services/<Service>  (generated)
+                                        |
+                                        v
+Go backend (xkey/pkg/gui)
+    App (app.go)  --binds-->  ~44 *Service structs (xkey/pkg/gui/services)
+                                        |
+                                        v
+                    xkey/pkg/*  (phone, authenticator, ssh, pkcs11, ...)
+                    go-xkms sdk/go  (xkmsd, backends)
 ```
 
-## Entry Point Flow
-
-```go
-// cmd/xkey/main.go
-func main() {
-    // Parse early flags for mode detection
-    args := os.Args[1:]
-
-    // Check for explicit mode flags
-    forceGUI := hasFlag(args, "--tray")
-    forceCLI := hasFlag(args, "--no-tray") || hasFlag(args, "--help") || hasFlag(args, "-h")
-
-    // Detect GUI environment
-    if !forceCLI && (forceGUI || hasGUIEnvironment()) {
-        // Launch Wails application with systray
-        gui.Run()
-    } else {
-        // Execute CLI via cobra
-        cmd.Execute()
-    }
-}
-
-// hasGUIEnvironment detects if a display server is available
-func hasGUIEnvironment() bool {
-    switch runtime.GOOS {
-    case "windows":
-        // Windows always has GUI unless running in WSL/container
-        return os.Getenv("WT_SESSION") != "" ||
-               os.Getenv("TERM_PROGRAM") == "" ||
-               !isRunningInContainer()
-    case "darwin":
-        // macOS: check for display
-        return os.Getenv("DISPLAY") != "" ||
-               os.Getenv("TERM_PROGRAM") != ""
-    case "linux":
-        // Linux: check for X11 or Wayland
-        return os.Getenv("DISPLAY") != "" ||
-               os.Getenv("WAYLAND_DISPLAY") != ""
-    default:
-        return false
-    }
-}
-```
-
-## Backend Services
-
-Each service wraps existing CLI functionality and exposes it to the frontend via Wails bindings.
-
-### AppService
-
-```go
-// pkg/gui/services/app_service.go
-type AppService struct {
-    ctx     context.Context
-    config  *viper.Viper
-    audit   *audit.SlogLogger
-    runtime wailsruntime.Runtime
-}
-
-// Exposed methods (Wails bindings)
-func (s *AppService) GetStatus() *AppStatus
-func (s *AppService) GetConfig() *GUIConfig
-func (s *AppService) UpdateConfig(cfg *GUIConfig) error
-func (s *AppService) GetTheme() string
-func (s *AppService) SetTheme(theme string) error
-func (s *AppService) Quit()
-```
-
-### PhoneService
-
-```go
-// pkg/gui/services/phone_service.go
-type PhoneService struct {
-    ctx     context.Context
-    backend *phone.PhoneKeyBackend
-    audit   *audit.SlogLogger
-}
-
-// Exposed methods
-func (s *PhoneService) ListDevices() ([]PairedDevice, error)
-func (s *PhoneService) GetDeviceStatus(name string) (*DeviceStatus, error)
-func (s *PhoneService) Scan(timeout time.Duration) ([]DiscoveredDevice, error)
-func (s *PhoneService) Pair(address string) (*PairedDevice, error)
-func (s *PhoneService) Unpair(name string) error
-func (s *PhoneService) Connect(name string) error
-func (s *PhoneService) Disconnect(name string) error
-func (s *PhoneService) AttestDevice(name string) (*AttestationResult, error)
-```
-
-### FIDO2Service
-
-```go
-// pkg/gui/services/fido2_service.go
-type FIDO2Service struct {
-    ctx   context.Context
-    audit *audit.SlogLogger
-}
-
-// Exposed methods
-func (s *FIDO2Service) ListCredentials() ([]FIDO2Credential, error)
-func (s *FIDO2Service) GetCredential(id string) (*FIDO2Credential, error)
-func (s *FIDO2Service) DeleteCredential(id string) error
-func (s *FIDO2Service) GetRelyingParties() ([]RelyingParty, error)
-func (s *FIDO2Service) StartPhoneBridge() error
-func (s *FIDO2Service) StopPhoneBridge() error
-func (s *FIDO2Service) GetBridgeStatus() *BridgeStatus
-```
-
-### OATHService
-
-```go
-// pkg/gui/services/oath_service.go
-type OATHService struct {
-    ctx   context.Context
-    store *oath.Store
-    audit *audit.SlogLogger
-}
-
-// Exposed methods
-func (s *OATHService) ListAccounts() ([]OATHAccount, error)
-func (s *OATHService) AddAccount(uri string) (*OATHAccount, error)
-func (s *OATHService) DeleteAccount(id string) error
-func (s *OATHService) GenerateTOTP(id string) (*TOTPCode, error)
-func (s *OATHService) GenerateHOTP(id string) (*HOTPCode, error)
-func (s *OATHService) ImportFromQR(imageData []byte) (*OATHAccount, error)
-```
-
-### TPMService
-
-```go
-// pkg/gui/services/tpm_service.go
-type TPMService struct {
-    ctx   context.Context
-    tpm   *tpm2.TPM
-    audit *audit.SlogLogger
-}
-
-// Exposed methods
-func (s *TPMService) GetStatus() (*TPMStatus, error)
-func (s *TPMService) GetInfo() (*TPMInfo, error)
-func (s *TPMService) ListKeys() ([]TPMKey, error)
-func (s *TPMService) GetPCRs() ([]PCRValue, error)
-func (s *TPMService) GetEKInfo() (*EKInfo, error)
-func (s *TPMService) GetIAKInfo() (*IAKInfo, error)
-func (s *TPMService) GetIDevIDInfo() (*IDevIDInfo, error)
-func (s *TPMService) Provision(opts *ProvisionOptions) error
-func (s *TPMService) GenerateQuote(nonce []byte, pcrs []int) (*Quote, error)
-```
-
-### AdminService
-
-```go
-// pkg/gui/services/admin_service.go
-type AdminService struct {
-    ctx    context.Context
-    client transport.Client
-    audit  *audit.SlogLogger
-}
-
-// Exposed methods (requires admin role)
-func (s *AdminService) IsAdmin() bool
-func (s *AdminService) GetServerStatus() (*ServerStatus, error)
-func (s *AdminService) ListBackends() ([]BackendInfo, error)
-func (s *AdminService) GetBackendInfo(id string) (*BackendInfo, error)
-func (s *AdminService) ListUsers() ([]User, error)
-func (s *AdminService) CreateUser(user *CreateUserRequest) error
-func (s *AdminService) DeleteUser(id string) error
-func (s *AdminService) GetAuditLogs(filter *AuditFilter) ([]AuditEntry, error)
-func (s *AdminService) ExportAuditLogs(format string) ([]byte, error)
-```
-
-## Systray Integration
-
-```go
-// pkg/gui/systray.go
-package gui
-
-import (
-    "fyne.io/systray"
-)
-
-type TrayManager struct {
-    app        *App
-    mStatus    *systray.MenuItem
-    mPhone     *systray.MenuItem
-    mKeys      *systray.MenuItem
-    mFIDO2     *systray.MenuItem
-    mOATH      *systray.MenuItem
-    mPIV       *systray.MenuItem
-    mTPM       *systray.MenuItem
-    mSettings  *systray.MenuItem
-    mAuditLog  *systray.MenuItem
-    mAdmin     *systray.MenuItem
-    mQuit      *systray.MenuItem
-}
-
-func (t *TrayManager) Setup() {
-    systray.SetIcon(icon.Data)
-    systray.SetTitle("xKey")
-    systray.SetTooltip("xKey - Hardware Security Key")
-
-    // Status section
-    t.mStatus = systray.AddMenuItem("Status: Ready", "Current status")
-    t.mStatus.Disable()
-
-    systray.AddSeparator()
-
-    // Phone section
-    t.mPhone = systray.AddMenuItem("📱 Phone: Not Connected", "Phone backend")
-
-    // Keys section
-    t.mKeys = systray.AddMenuItem("🔑 Keys (0)", "Manage keys")
-
-    systray.AddSeparator()
-
-    // Protocol sections
-    t.mFIDO2 = systray.AddMenuItem("🛡️ FIDO2", "FIDO2/WebAuthn")
-    t.mOATH = systray.AddMenuItem("🔢 OATH TOTP", "One-time passwords")
-    t.mPIV = systray.AddMenuItem("💳 PIV", "Smart card certificates")
-    t.mTPM = systray.AddMenuItem("🔒 TPM", "TPM operations")
-
-    systray.AddSeparator()
-
-    // Settings & Admin
-    t.mSettings = systray.AddMenuItem("⚙️ Settings...", "Configure xKey")
-    t.mAuditLog = systray.AddMenuItem("📋 Audit Log...", "View audit log")
-    t.mAdmin = systray.AddMenuItem("🔧 Server Admin...", "Manage xkmsd")
-    t.mAdmin.Hide() // Only show if admin
-
-    systray.AddSeparator()
-
-    t.mQuit = systray.AddMenuItem("❌ Quit", "Exit xKey")
-}
-
-func (t *TrayManager) Run() {
-    systray.Run(t.Setup, t.onExit)
-}
-```
-
-## Event System
-
-The GUI uses a reactive event system for real-time updates.
-
-```go
-// pkg/gui/events/events.go
-type EventType string
-
-const (
-    EventPhoneConnected    EventType = "phone:connected"
-    EventPhoneDisconnected EventType = "phone:disconnected"
-    EventKeyCreated        EventType = "key:created"
-    EventKeyDeleted        EventType = "key:deleted"
-    EventKeyUsed           EventType = "key:used"
-    EventTOTPGenerated     EventType = "oath:totp_generated"
-    EventBridgeStarted     EventType = "fido2:bridge_started"
-    EventBridgeStopped     EventType = "fido2:bridge_stopped"
-    EventAttestationResult EventType = "attestation:result"
-    EventSettingsChanged   EventType = "settings:changed"
-    EventAuditEntry        EventType = "audit:entry"
-)
-
-type Event struct {
-    Type    EventType      `json:"type"`
-    Payload interface{}    `json:"payload"`
-    Time    time.Time      `json:"time"`
-}
-
-// Emit events to frontend
-func (a *App) EmitEvent(event Event) {
-    wailsruntime.EventsEmit(a.ctx, string(event.Type), event)
-}
-```
-
-## Frontend Event Handling
-
-```typescript
-// frontend/src/lib/stores/events.ts
-import { EventsOn } from '../../wailsjs/runtime/runtime';
-
-export function setupEventListeners() {
-    EventsOn('phone:connected', (event) => {
-        phoneStore.update(s => ({ ...s, connected: true, device: event.payload }));
-    });
-
-    EventsOn('phone:disconnected', (event) => {
-        phoneStore.update(s => ({ ...s, connected: false, device: null }));
-    });
-
-    EventsOn('key:used', (event) => {
-        addRecentActivity(event);
-    });
-
-    // ... more event handlers
-}
-```
-
-## Configuration Integration
-
-The GUI reads and writes to the same configuration as the CLI.
-
-```go
-// pkg/gui/config.go
-type GUIConfig struct {
-    AutoTray        bool   `mapstructure:"auto_tray"`
-    Theme           string `mapstructure:"theme"` // light, dark, system
-    StartMinimized  bool   `mapstructure:"start_minimized"`
-    Notifications   bool   `mapstructure:"notifications"`
-    WindowWidth     int    `mapstructure:"window_width"`
-    WindowHeight    int    `mapstructure:"window_height"`
-    RememberPosition bool  `mapstructure:"remember_position"`
-    WindowX         int    `mapstructure:"window_x"`
-    WindowY         int    `mapstructure:"window_y"`
-}
-
-func LoadGUIConfig() *GUIConfig {
-    cfg := &GUIConfig{
-        AutoTray:       true,
-        Theme:          "system",
-        StartMinimized: false,
-        Notifications:  true,
-        WindowWidth:    1200,
-        WindowHeight:   800,
-        RememberPosition: true,
-    }
-
-    if err := viper.UnmarshalKey("gui", cfg); err != nil {
-        slog.Warn("failed to load GUI config, using defaults", "error", err)
-    }
-
-    return cfg
-}
-
-func SaveGUIConfig(cfg *GUIConfig) error {
-    viper.Set("gui", cfg)
-    return viper.WriteConfig()
-}
-```
-
-## Build System
-
-```makefile
-# xkey/Makefile additions
-
-.PHONY: build-gui dev-gui
-
-# Build GUI application
-build-gui:
-	@echo "Building xKey GUI..."
-	cd frontend && npm ci && npm run build
-	wails build -platform $(GOOS)/$(GOARCH) -o xkey
-
-# Development mode with hot reload
-dev-gui:
-	wails dev
-
-# Build for all platforms
-build-gui-all:
-	wails build -platform windows/amd64 -o xkey.exe
-	wails build -platform darwin/amd64 -o xkey-darwin-amd64
-	wails build -platform darwin/arm64 -o xkey-darwin-arm64
-	wails build -platform linux/amd64 -o xkey-linux-amd64
-```
-
-## Security Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Security Boundaries                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────────┐      ┌──────────────────┐                │
-│  │    Frontend      │      │     Backend      │                │
-│  │    (WebView)     │      │      (Go)        │                │
-│  │                  │      │                  │                │
-│  │  • UI rendering  │      │  • Crypto ops    │                │
-│  │  • User input    │◄────►│  • Key access    │                │
-│  │  • Display only  │ IPC  │  • TPM access    │                │
-│  │                  │      │  • Phone comms   │                │
-│  │  NO access to:   │      │                  │                │
-│  │  - Private keys  │      │  Protected by:   │                │
-│  │  - TPM handles   │      │  - OS process    │                │
-│  │  - Raw crypto    │      │  - Memory safety │                │
-│  │                  │      │  - Audit logging │                │
-│  └──────────────────┘      └──────────────────┘                │
-│                                    │                            │
-│                                    ▼                            │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                    Hardware Security                       │  │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────────────────────┐  │  │
-│  │  │   TPM   │  │  Phone  │  │  xkmsd (optional)   │  │  │
-│  │  │ (local) │  │ (BLE)   │  │  (gRPC/Unix socket)     │  │  │
-│  │  └─────────┘  └─────────┘  └─────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Performance Considerations
-
-1. **Lazy Loading**: Views are loaded on-demand
-2. **Efficient Updates**: Only changed data is sent to frontend
-3. **Background Processing**: Heavy operations run in goroutines
-4. **Caching**: Frequently accessed data is cached
-5. **Debouncing**: Rapid UI events are debounced
-
-## Testing Strategy
-
-1. **Unit Tests**: Go services tested independently
-2. **Integration Tests**: Wails bindings tested with mock frontend
-3. **E2E Tests**: Playwright tests for full UI flows
-4. **Snapshot Tests**: UI component visual regression testing
+## Entry point and the App type
+
+`App` (`xkey/pkg/gui/app.go`) is the central orchestrator: it owns every
+backend service as a struct field (`app.go:100-146`), wires cross-service
+dependencies during startup (for example
+`phoneService.SetBarrierService(barrierService)`, `app.go:755`), and starts
+the Wails runtime in `Run()`. `Run()` builds the `Bind` slice — every backend
+type the Wails runtime exposes to the frontend — and passes it to
+`wails.Run` via `options.App{Bind: bindings, ...}` (`app.go:2578-2650`).
+
+`App` itself is also in the `Bind` slice (`app.go:2579`), so a handful of
+top-level methods on `*App` are frontend-callable in addition to the ~43
+service types.
+
+## The backend-service surface
+
+Every struct in `xkey/pkg/gui/services` that `Run()` binds becomes a
+frontend-callable object at `wailsjs/go/services/<TypeName>`. The set is
+large — see [api.md](api.md) for the full inventory with citations — and
+groups naturally by domain:
+
+| Domain | Representative services |
+|---|---|
+| Credentials & backends | `FIDO2Service`, `FIDO2DeviceService`, `OATHService`, `PIVService`, `StaticPasswordService`, `SSHService`/`SSHProfileService`/`SSHConnectService`/`SSHConsoleService`/`SSHLocalService`, `PKCS11Service`, `TPMService`, `KeyService`, `CertificateService` |
+| Phone | `PhoneService` — see [../phone/](../phone/architecture.md) |
+| Barrier / seal / lock | `SealService`, `SealProtectionService`, `BarrierService`, `BarrierAutoUnsealService`, `AutoUnsealService`, `AppLockService`, `PasswordProtectionService`, `PlatformPolicyService`, `PINService` |
+| Identity & auth | `AuthService`, `SecurityFactorService`, `OIDCService`, `PairingService` (extension pairing) |
+| Admin & multi-tenant | `AdminService`, `TrustService`, `TenantService`, `TeamService`, `AgentService`, `ConnectionService` |
+| Browser | `BrowserService`, `SecureBrowserService`, `AutoFillService` (all three appended only when non-nil, `app.go:2650-2659`) |
+| Storage, audit, misc | `StorageService`, `AuditService`, `NotificationService`, `ClipboardService`, `SetupWizardService`, `ShareService`, `CustodianService`, `APIExplorerService`, `AppService` |
+
+## Two IPC surfaces, not one
+
+The GUI is reachable two ways, and they are architecturally distinct:
+
+1. **Wails bindings** — in-process, generated at build time, the frontend's
+   only channel to the Go backend. This is what [api.md](api.md) documents.
+2. **A Unix-domain-socket IPC server** (`ipc.Server`, field
+   `ipcServer *ipc.Server` at `app.go:196`) that lets *other processes*
+   running as the same user reach the live GUI: the CLI's `xkey touch`,
+   `xkey pin status`, `xkey barrier status`, and the browser extension's
+   native-messaging host. `guiIPCHandler` implements four separate
+   interfaces for this — `ipc.Handler` (touch/password/status),
+   `ipc.AutofillHandler`, `ipc.PairingHandler`, and `ipc.StateHandler`
+   (`app.go:3159-3164`, `xkey/pkg/gui/ipc_state.go:32-33`). The state
+   queries exist specifically so `xkey pin status`/`xkey barrier status`
+   report this process's live (possibly unsealed) state instead of a fresh
+   process's false-negative read of the sealed on-disk data directory
+   (comment at `ipc_state.go:22-30`). No PIN, password value, or key
+   material is ever returned over it; the socket's only authentication is
+   filesystem permission.
+
+## Systray
+
+`TrayManager` (`xkey/pkg/gui/systray.go`) is optional tray integration built
+on `fyne.io/systray`. Its menu is a live status/shortcut surface, not a
+duplicate of the window: status line, a Phone submenu (connection status,
+Connect/Disconnect, Attest Device), a managed-key counter, storage status, an
+FIDO2 submenu (Start/Stop Bridge, Credentials), OATH/PIV/TPM entries,
+Settings, Audit Log, and Quit (`systray.go:65-121`). Phone connection status
+reaches the tray through the same `PhoneStatusChangeFunc` hook `PhoneService`
+uses to notify the rest of the app (`app.go:2376-2383`).
+
+## Events
+
+`xkey/pkg/gui/events` defines the typed event vocabulary the Go backend
+pushes to the frontend over the Wails runtime event system — phone
+(`phone:connected`, `phone:disconnected`, `phone:scan_result`,
+`phone:pairing_request`), key, OATH, FIDO2 (bridge lifecycle, touch
+required/resolved, credential created), attestation, and policy-violation
+events (`xkey/pkg/gui/events/events.go:24-58`). Each domain service emits
+its own subset; there is no central event bus beyond the shared `EventType`
+vocabulary and the Wails runtime's own dispatch.
+
+## Configuration
+
+`xkey/pkg/gui/config.go` defines the GUI's local config (theme constants
+`ThemeLight`/`ThemeDark`/`ThemeSystem`, window geometry, start-minimized,
+etc.), loaded through the same `viper`-backed precedence (flags > env >
+config file) the CLI uses. `xkey/pkg/gui/enterprise_policy.go`'s
+`startupEnterprisePolicy` resolves an enterprise policy the GUI may need to
+apply before the Security Officer has logged in — see
+[setup-wizard](../setup-wizard/architecture.md) for what that policy governs.
+
+## Frontend
+
+`xkey/frontend` is Svelte 4 + Vite + TypeScript + Tailwind (`package.json`).
+Structure: `src/views` (one `.svelte` per screen — Dashboard, Pairing,
+PairingDetail, FIDO2, FIDO2Credential, OATH, PIV, PIVSlot, TPM, TPMInfo, SSH,
+Passwords, Certificates, Keys, IdentityKeys, PlatformKeys, Seal,
+SecurityFactors, OIDC, Browser, APIExplorer, TrustStore, AuditLog, Admin and
+its sub-views, Settings and its sub-views, SetupWizard, FactoryReset,
+PolicyEditor, UserPINManagement — `xkey/frontend/src/views/`), `src/lib/
+stores` (Svelte stores per domain: `app`, `auth`, `auth-factors`, `backends`,
+`connection`, `events`, `fido2`, `keys`, `notifications`, `oath`, `oidc`,
+`pairing`, `ssh`, `theme`, `touch`, `wizard`), `src/lib/components`,
+`src/lib/api`, `src/lib/actions`, `src/lib/types`, and the generated
+`src/wailsjs`/`wailsjs` bindings directories.
+
+## Security architecture, briefly
+
+The GUI carries no separate custody model of its own: it drives the same
+barrier, PIN, TPM, and backend-registry primitives the CLI uses, through the
+service layer above rather than by re-implementing key handling. Where a
+service must hold sensitive material at rest before a barrier exists (for
+example `PhoneService`'s local Noise private key), it follows the same
+fail-closed rule documented in [../phone-hsm/engineering.md](../phone-hsm/engineering.md)
+(#42): sealed when a barrier is open, refused when one is initialized but
+not open, and unsealed-with-a-warning only when no barrier exists.
+
+## Disagreements with the superseded `gui/` files
+
+Verified against the code as of this revision:
+
+- **`gui/architecture.md`'s "Backend Services" section listed six services**
+  (`AppService`, `PhoneService`, `FIDO2Service`, `OATHService`,
+  `TPMService`, `AdminService`). The actual `Run()` binding list is
+  ~44 services (`app.go:2578-2650`) — see [api.md](api.md).
+- **Its "Directory Structure" showed `pkg/gui/bindings/bindings.go`.** No
+  such file or package exists; the `Bind` slice is built inline in
+  `App.Run()`.
+- **Its frontend view list included `Devices.svelte`.** The actual view is
+  `Pairing.svelte`/`PairingDetail.svelte`
+  (`xkey/frontend/src/views/Pairing.svelte`); there is no `Devices.svelte`.
+  Its view list is also missing the large majority of the ~30 views that
+  exist today (SSH, PIV, TPM detail, Seal, SecurityFactors, OIDC, Browser,
+  APIExplorer, TrustStore, Admin sub-views, Settings sub-views,
+  SetupWizard, and more).
+- **Its System Architecture diagram's Go-backend box names a "Crypto
+  Backend" service.** No service by that name exists; cryptographic backend
+  selection is a `go-xkms` SDK concept the individual credential services
+  (FIDO2, PIV, SSH, ...) each configure, not a single GUI service.

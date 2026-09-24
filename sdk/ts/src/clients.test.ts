@@ -186,10 +186,10 @@ describe('ClusterClient / CustodianClient / SharesClient', () => {
     await c.cluster.status();
     expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/cluster/status`);
 
-    fake.respond({ body: { shard_id: 1, replica_id: 4 } });
-    await c.cluster.removeMember(4);
-    expect(fake.calls[1]?.method).toBe('DELETE');
-    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/cluster/members/4`);
+    fake.respond({ body: { members: [] } });
+    await c.cluster.members();
+    expect(fake.calls[1]?.method).toBe('GET');
+    expect(fake.calls[1]?.url).toBe(`${BASE}/api/v1/cluster/members`);
 
     fake.respond({ body: { group: {} } });
     await c.custodian.createGroup({

@@ -45,5 +45,7 @@ func (s *RestService) CertificateHandler(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(certificate.PEM))
+	if _, err := w.Write([]byte(certificate.PEM)); err != nil {
+		s.logger.Error("failed to write certificate response", "error", err.Error())
+	}
 }

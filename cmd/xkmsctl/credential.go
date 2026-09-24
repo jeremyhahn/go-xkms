@@ -120,12 +120,15 @@ func runCredentialSubmit(cmd *cobra.Command, args []string) error {
 		return ErrServerRequired
 	}
 
-	name, _ := cmd.Flags().GetString("name")
+	fr := newFlagReader(cmd)
+	name := fr.String("name")
+	value := fr.String("value")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if name == "" {
 		return ErrCredentialNameRequired
 	}
-
-	value, _ := cmd.Flags().GetString("value")
 	if value == "" {
 		return ErrCredentialValueRequired
 	}
@@ -210,10 +213,10 @@ func runCredentialStrategy(cmd *cobra.Command, args []string) error {
 			"auto_unseal": result.AutoUnseal,
 		})
 	default:
-		_, _ = fmt.Fprintf(printer.writer, "Credential Strategy:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Strategy:    %s\n", result.Strategy)
-		_, _ = fmt.Fprintf(printer.writer, "  Auto-unseal: %t\n", result.AutoUnseal)
-		return nil
+		printer.printf("Credential Strategy:\n")
+		printer.printf("  Strategy:    %s\n", result.Strategy)
+		printer.printf("  Auto-unseal: %t\n", result.AutoUnseal)
+		return printer.Err()
 	}
 }
 
@@ -254,14 +257,14 @@ func runCredentialList(cmd *cobra.Command, args []string) error {
 		return printer.PrintJSON(map[string]interface{}{"names": result.Names})
 	default:
 		if len(result.Names) == 0 {
-			_, _ = fmt.Fprintf(printer.writer, "No credentials submitted.\n")
-			return nil
+			printer.printf("No credentials submitted.\n")
+			return printer.Err()
 		}
-		_, _ = fmt.Fprintf(printer.writer, "Submitted credentials:\n")
+		printer.printf("Submitted credentials:\n")
 		for _, name := range result.Names {
-			_, _ = fmt.Fprintf(printer.writer, "  %s\n", name)
+			printer.printf("  %s\n", name)
 		}
-		return nil
+		return printer.Err()
 	}
 }
 

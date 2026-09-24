@@ -1,6 +1,6 @@
 # TPM 2.0 — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## The problem
 
@@ -30,6 +30,7 @@ sealed unlock — need the rest:
 | IDevID / TCG enrollment | `cert_idevid.go`, `idevid_csr.go`, `tcg_csr_serverside.go`, `cert_convert.go` |
 | IDevID / IAK key policy and delegation | `devid_policy.go`, `devid_policy_session.go`, `devid_delegation.go` |
 | Platform provisioning | `platform.go`, `platform_keystore.go`, `platform_types.go`, `provision.go` |
+| Provisioning state, reprovisioning, EK credential challenge | `provisioning_state.go`, `credential_challenge.go`, `activation_key.go` |
 | Capabilities | `capabilities.go`, `capability_device.go`, `version.go` |
 | Simulator | `tpm_simulator.go`, `tpm_simulator_stub.go` |
 
@@ -48,6 +49,12 @@ Rejected alternatives:
   suite for precisely this.
 - **Requiring hardware for development.** Rejected: `tpm_simulator.go` means
   the whole surface is testable without a TPM.
+- **Reimplementing `TPM2_MakeCredential`'s software construction by hand.**
+  Rejected in favour of go-tpm's own `tpm2.CreateCredential` /
+  `tpm2.ImportEncapsulationKey` (`credential_challenge.go`,
+  `NewCredentialChallenge`): the KDFa/AES-CFB/HMAC construction TCG TPM 2.0
+  Part 1 §24 defines is exactly what those functions already do, and go-tpm
+  is the one dependency every consumer of this package already carries.
 
 ## Component boundaries
 
@@ -178,6 +185,14 @@ configuration shape, configured independently
   §7.3.5 — the operator running provisioning is the Owner). The authValue
   remains a USER path on Template H-0 (§7.2.4); the library does not forget
   it on the Owner's behalf.
+- **A verifier needs no TPM of its own to build an EK credential challenge.**
+  `NewCredentialChallenge` performs `TPM2_MakeCredential`'s construction in
+  software against any EK public key, so a CA or installer that has never
+  touched a TPM can still prove a remote device possesses one
+  (go-xkms#798); the device side still needs a real TPM to answer
+  (`AnswerCredentialChallenge` / `ActivateCredential`), which is the actual
+  proof of possession. `pkg/ca`'s `VerifyTCG_CSR_IDevIDBytes` uses this, and
+  no longer requires `SetTPM` to have been called.
 - **A quote proves state at a moment**, bound to a nonce. A quote without a
   fresh nonce proves nothing about now.
 - **PCR selection is the security policy.** Sealing to firmware PCRs survives

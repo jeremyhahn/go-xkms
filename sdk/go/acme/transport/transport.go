@@ -17,16 +17,26 @@ package transport
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
+	"net/http"
 	"time"
 )
+
+// CloseResponseBody closes resp.Body and logs a failure at debug level.
+// Shared by every HTTP-based transport (rest, quic, mcp, unix): each calls
+// this from a defer after it has already read (or decided not to read) the
+// body and computed its result, so a close failure changes nothing about
+// the caller's outcome.
+func CloseResponseBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		slog.Debug("acme/transport: failed to close HTTP response body", "error", err)
+	}
+}
 
 // Transport is the interface for protocol-specific communication with the ACME CA.
 type Transport interface {
 	// Request sends a unary request and returns the response.
 	Request(ctx context.Context, service, method string, req interface{}) (interface{}, error)
-
-	// RequestStream initiates a streaming request.
-	RequestStream(ctx context.Context, service, method string, req interface{}) (Stream, error)
 
 	// Conn returns the underlying connection for advanced usage.
 	Conn() interface{}
@@ -36,21 +46,6 @@ type Transport interface {
 
 	// Healthy returns true if the transport is healthy.
 	Healthy() bool
-}
-
-// Stream represents a bidirectional stream.
-type Stream interface {
-	// Send sends a message on the stream.
-	Send(msg interface{}) error
-
-	// Recv receives a message from the stream.
-	Recv() (interface{}, error)
-
-	// CloseSend closes the send side of the stream.
-	CloseSend() error
-
-	// Close closes the stream entirely.
-	Close() error
 }
 
 // Config holds common transport configuration.

@@ -342,11 +342,12 @@ func TestCLI_PasswordDelete(t *testing.T) {
 }
 
 // TestCLI_Password_EncryptionVerified documents the storage behavior of the
-// static password store. The default BackendStore (without the encrypted_store
-// wrapper) serializes passwords as JSON. This test verifies that the raw file
-// on disk reflects the expected behavior: without encryption enabled, the
-// password value is present in cleartext in the JSON file. When the
-// EncryptedStore wrapper is used, the password would be encrypted.
+// static password store. The default BackendStore serializes passwords as
+// JSON. This test verifies that the raw file on disk reflects the expected
+// behavior: without a barrier protecting the store, the password value is
+// present in cleartext in the JSON file. At-rest confidentiality comes from
+// the xkey barrier (`xkey barrier init`), the same mechanism the OATH and
+// FIDO2 stores use -- there is no separate field-level encryption wrapper.
 func TestCLI_Password_EncryptionVerified(t *testing.T) {
 	binary := getOrBuildBinary(t)
 	dataDir := SetupCleanEnvironment(t)
@@ -399,11 +400,11 @@ func TestCLI_Password_EncryptionVerified(t *testing.T) {
 
 	// Document current behavior: the default CLI password store does not
 	// encrypt at rest. The BackendStore writes JSON with cleartext passwords.
-	// The EncryptedStore wrapper must be used to enable at-rest encryption.
+	// Run `xkey barrier init` to enable at-rest encryption.
 	if containsCleartext {
 		t.Log("Password stored in cleartext (default BackendStore behavior). " +
-			"Use EncryptedStore wrapper for at-rest encryption.")
+			"Run `xkey barrier init` for at-rest encryption.")
 	} else {
-		t.Log("Password is NOT stored in cleartext. Encrypted store is in use.")
+		t.Log("Password is NOT stored in cleartext. A barrier is protecting the store.")
 	}
 }

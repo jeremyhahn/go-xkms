@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -818,6 +819,51 @@ func TestPreCheckDNSSolverSolve(t *testing.T) {
 		cleanupCalls := provider.getCleanupCalls()
 		if len(cleanupCalls) != 1 {
 			t.Errorf("expected cleanup to be called on failure, got %d calls", len(cleanupCalls))
+		}
+	})
+
+	t.Run("solve with failing check func and failing cleanup joins both errors", func(t *testing.T) {
+		provider := newMockDNSProvider()
+		cleanupErr := errors.New("provider cleanup failed")
+		provider.cleanupFunc = func(ctx context.Context, domain, fqdn, value string) error {
+			return cleanupErr
+		}
+		solver, _ := NewDNSSolver(provider)
+
+		checkErr := errors.New("check failed")
+		wrapped := WrapPreCheck(solver, &PreCheckOption{
+			Timeout:      50 * time.Millisecond,
+			Interval:     10 * time.Millisecond,
+			AllowFailure: false,
+			CheckFunc: func(ctx context.Context, fqdn, value string) error {
+				return checkErr
+			},
+		})
+
+		challenge := &acme.Challenge{Type: "dns-01", Token: "token"}
+		err := wrapped.Solve(context.Background(), "example.com", challenge, "keyAuth")
+		if err == nil {
+			t.Fatal("expected error when pre-check fails")
+		}
+
+		// The stale TXT record left behind by the failed cleanup must be
+		// visible, not hidden behind the pre-check failure. DNSSolver.Cleanup
+		// reformats the provider's error into a new message rather than
+		// wrapping it with %w, so identity is checked by message content
+		// here, not errors.Is.
+		if !strings.Contains(err.Error(), cleanupErr.Error()) {
+			t.Errorf("expected returned error to mention the cleanup error, got %v", err)
+		}
+		if !errors.Is(err, ErrDNSRecordCleanup) {
+			t.Errorf("expected returned error to match ErrDNSRecordCleanup, got %v", err)
+		}
+
+		var dnsCleanupErr *DNSCleanupError
+		if !errors.As(err, &dnsCleanupErr) {
+			t.Fatalf("expected a *DNSCleanupError in the chain, got %v", err)
+		}
+		if dnsCleanupErr.Domain != "example.com" {
+			t.Errorf("expected domain example.com, got %q", dnsCleanupErr.Domain)
 		}
 	})
 

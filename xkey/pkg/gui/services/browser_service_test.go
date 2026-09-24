@@ -525,6 +525,20 @@ func TestKnownBrowsers_ReturnsSlice(t *testing.T) {
 	assert.NotNil(t, browsers)
 }
 
+// TestKnownBrowsersForGOOS covers every platform branch directly, including
+// the ones this build is not running on.
+func TestKnownBrowsersForGOOS(t *testing.T) {
+	linux := knownBrowsersForGOOS("linux")
+	require.NotEmpty(t, linux)
+	assert.Equal(t, "Firefox", linux[0].Name)
+
+	darwin := knownBrowsersForGOOS("darwin")
+	require.NotEmpty(t, darwin)
+	assert.Equal(t, "Safari", darwin[0].Name)
+
+	assert.Nil(t, knownBrowsersForGOOS("plan9"), "an unsupported platform must return no candidates rather than guessing")
+}
+
 // --- BrowserSystem constant ---
 
 func TestBrowserSystemConstant(t *testing.T) {

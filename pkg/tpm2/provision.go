@@ -36,6 +36,13 @@ func (tpm *TPM2) Clear(lockoutAuth []byte) error {
 	return nil
 }
 
+// ppiRequestWriter is the seam through which ForceClear performs its single
+// sysfs write. Production leaves it at its default (os.WriteFile); tests
+// substitute a func that records the call without touching the host --
+// CI runs the test suite as root, so a permission-bit trick can't stand in
+// for "the write did not happen" the way it would for an unprivileged user.
+var ppiRequestWriter = os.WriteFile
+
 // ForceClear schedules a TPM clear via the UEFI Physical Presence Interface (PPI).
 // This bypasses Dictionary Attack lockout because the clear is performed by the
 // firmware during POST with physical presence assertion. The system must be
@@ -49,7 +56,7 @@ func (tpm *TPM2) ForceClear() error {
 	}
 	ppiPath := fmt.Sprintf("/sys/class/tpm/%s/ppi/request", deviceName)
 
-	if err := os.WriteFile(ppiPath, []byte("5"), 0644); err != nil { // #nosec G306 - existing sysfs node, not a created file
+	if err := ppiRequestWriter(ppiPath, []byte("5"), 0644); err != nil { // #nosec G306 - existing sysfs node, not a created file
 		return &errs.Detail{Err: ErrForceClear, Detail: fmt.Sprintf("%v", err)}
 	}
 
@@ -58,6 +65,66 @@ func (tpm *TPM2) ForceClear() error {
 		slog.String("request_code", "5"))
 
 	return nil
+}
+
+// clearViaPlatform performs TPM2_Clear authorized by the PLATFORM hierarchy
+// with empty auth. TPM2_Clear accepts LOCKOUT or PLATFORM authorization
+// (TCG TPM 2.0 Part 3, section 24.6); the PLATFORM path succeeds only when
+// firmware has left the platform hierarchy's auth empty at the point this
+// runs -- true on U-Boot and Raspberry Pi UEFI, neither of which implements
+// the PPI ClearForReprovision falls back to -- and refused by firmware that
+// locks the platform hierarchy during POST.
+func (tpm *TPM2) clearViaPlatform() error {
+	_, err := tpm2.Clear{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHPlatform,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+	}.Execute(tpm.transport)
+	return err
+}
+
+// ClearForReprovision returns the TPM to factory-fresh hierarchy state so a
+// new provisioning pass can start clean. It tries three paths in order and
+// stops at the first that succeeds:
+//
+//  1. TPM2_Clear via the LOCKOUT hierarchy with empty auth (Clear). This is
+//     immediate and succeeds whenever lockout auth is still empty -- the
+//     common case for a TPM that was never fully provisioned, or whose
+//     provisioning failed before SetHierarchyAuth ran.
+//  2. TPM2_Clear via the PLATFORM hierarchy with empty auth (clearViaPlatform),
+//     when firmware leaves it open (U-Boot, Raspberry Pi UEFI; neither
+//     implements the PPI). Also immediate.
+//  3. The UEFI Physical Presence Interface ForceClear request, which
+//     firmware services during the next POST with physical presence
+//     asserted. rebootRequired is true only for this path.
+//
+// Each refused path is logged with its own typed error (ErrClearLockoutRefused,
+// ErrClearPlatformRefused) so the reason the next path was attempted is
+// visible; if ForceClear itself fails, its own error is returned directly,
+// since it is the last path attempted.
+func (tpm *TPM2) ClearForReprovision() (rebootRequired bool, err error) {
+	lockoutErr := tpm.Clear(nil)
+	if lockoutErr == nil {
+		tpm.logger.Info("tpm: cleared for reprovisioning via LOCKOUT hierarchy")
+		return false, nil
+	}
+	tpm.logger.Debug("tpm: TPM2_Clear via LOCKOUT hierarchy refused, trying PLATFORM hierarchy",
+		slog.String("error", (&errs.Detail{Err: ErrClearLockoutRefused, Detail: lockoutErr.Error()}).Error()))
+
+	platformErr := tpm.clearViaPlatform()
+	if platformErr == nil {
+		tpm.logger.Info("tpm: cleared for reprovisioning via PLATFORM hierarchy")
+		return false, nil
+	}
+	tpm.logger.Debug("tpm: TPM2_Clear via PLATFORM hierarchy refused, scheduling ForceClear via PPI",
+		slog.String("error", (&errs.Detail{Err: ErrClearPlatformRefused, Detail: platformErr.Error()}).Error()))
+
+	if forceErr := tpm.ForceClear(); forceErr != nil {
+		return false, forceErr
+	}
+	tpm.logger.Info("tpm: TPM clear scheduled via PPI; a reboot is required for it to take effect")
+	return true, nil
 }
 
 // FactoryReset returns the TPM to a manufacturer-like state by evicting all
@@ -111,6 +178,28 @@ func (tpm *TPM2) FactoryResetWithClear(ownerAuth []byte) error {
 
 // factoryResetInternal is the shared implementation. attemptClear gates
 // the destructive TPM2_Clear pre-pass.
+// ownedPersistentHandles returns the persistent handles this package's own
+// configuration places keys at: the IAK, IDevID and Platform SRK. Unset
+// handles are omitted.
+func (tpm *TPM2) ownedPersistentHandles() []tpm2.TPMHandle {
+	var owned []tpm2.TPMHandle
+	add := func(h uint32) {
+		if h != 0 {
+			owned = append(owned, tpm2.TPMHandle(h))
+		}
+	}
+	if tpm.config.IAK != nil {
+		add(tpm.config.IAK.Handle)
+	}
+	if tpm.config.IDevID != nil {
+		add(tpm.config.IDevID.Handle)
+	}
+	if tpm.config.PlatformSRK != nil {
+		add(tpm.config.PlatformSRK.SRKHandle)
+	}
+	return owned
+}
+
 func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error {
 
 	tpm.logger.Info("Factory resetting TPM to manufacturer state",
@@ -135,13 +224,26 @@ func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error
 
 	var firstErr error
 
-	// TCG-standard EK persistent key handles that MUST be preserved.
-	// These are defined by the Trusted Computing Group and contain
-	// manufacturer-provisioned Endorsement Keys and their certificates.
-	// Reference: TCG TPM 2.0 Provisioning Guidance, Section 7.8, Table 2
+	// Manufacturer-provisioned EKs must be preserved: they are the persistent
+	// objects FactoryReset did not create and cannot recreate, and the TPM
+	// provisioning rules keep EKs untouched. TCG reserves 0x81010001 for the
+	// RSA EK and 0x81010002 for the ECC EK (TCG TPM 2.0 Provisioning Guidance,
+	// Section 7.8, Table 2), and the configured EK handle is preserved too.
+	//
+	// This package's default IAK handle is also 0x81010002 (IAKConfig.Handle),
+	// so a TCG address is released for eviction only when it is one of the
+	// handles this package's own configuration places a key at: the IAK,
+	// IDevID or Platform SRK. A foreign object at a TCG EK address -- a
+	// manufacturer ECC EK beside a configured RSA EK -- stays (go-xkms#798).
 	preserveHandles := map[tpm2.TPMHandle]bool{
-		0x81010001: true, // EK RSA 2048 (TCG default)
-		0x81010002: true, // EK ECC P-256 (TCG default)
+		0x81010001: true, // TCG EK RSA
+		0x81010002: true, // TCG EK ECC
+	}
+	for _, owned := range tpm.ownedPersistentHandles() {
+		delete(preserveHandles, owned)
+	}
+	if tpm.config.EK != nil && tpm.config.EK.Handle != 0 {
+		preserveHandles[tpm2.TPMHandle(tpm.config.EK.Handle)] = true
 	}
 
 	// TCG-standard EK certificate NV indices that MUST be preserved.

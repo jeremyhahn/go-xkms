@@ -298,7 +298,11 @@ func (ca *CA) Blob(key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
 	}
-	defer func() { _ = reader.Close() }()
+	defer func() {
+		if cerr := reader.Close(); cerr != nil {
+			slog.Debug("ca: failed to close object store blob reader", "key", string(key), "error", cerr)
+		}
+	}()
 	return io.ReadAll(reader)
 }
 

@@ -133,12 +133,12 @@ re-enroll again on the current release.
 
 ## Virtual Authenticator
 
-For development and testing, the xkey virtual authenticator (`xkey/cmd/xkey/`) can expose a software-based FIDO2 authenticator as a USB HID device via Linux UHID. See the [xkey FIDO2 documentation](../../xkey/docs/fido2/overview.md) for details.
+For development and testing, the xkey virtual authenticator (`xkey/cmd/xkey/`) can expose a software-based FIDO2 authenticator as a USB HID device via Linux UHID. See the [xkey FIDO2 documentation](../../xkey/docs/fido2/architecture.md) for details.
 
 ## Documentation
 
-- [xkey FIDO2 Virtual Authenticator](../../xkey/docs/fido2/overview.md) - Virtual FIDO2 device for development
-- [xkey Architecture](../../xkey/docs/fido2/authenticator-architecture.md) - xkey FIDO2 component design
+- [xkey FIDO2 Virtual Authenticator](../../xkey/docs/fido2/architecture.md) - The `xkey fido2` daemon process and GUI device host
+- [xkey Virtual Authenticator](../../xkey/docs/virtual-authenticator/architecture.md) - The CTAP2 authenticator's component design
 - [WebAuthn Usage](../../xkey/docs/usage/webauthn.md) - Server-side WebAuthn integration
 
 ## Requirements
