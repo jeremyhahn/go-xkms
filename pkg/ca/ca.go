@@ -84,6 +84,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
@@ -189,6 +190,15 @@ type Params struct {
 	// which is appropriate when the storage layer provides equivalent
 	// protection. Optional.
 	RequireKeyPassword bool
+
+	// AuditLogger records CA lifecycle events (root/intermediate
+	// initialization, CRL generation, cross-signing) per the go-xkms audit
+	// write-failure policy (docs/audit-log/engineering.md): every CA
+	// lifecycle action is SeveritySecurity, so a failed write refuses the
+	// operation rather than let it complete unaudited. A nil logger disables
+	// audit logging for the CA entirely (opt-in wiring) and is not itself a
+	// failure. Optional.
+	AuditLogger audit.Logger
 }
 
 // Validate checks that all required parameters are present.
@@ -286,6 +296,10 @@ type CA struct {
 	// regenerate-on-read behavior deterministic instead of sleeping out a
 	// real validity window.
 	clock Clock
+
+	// auditLogger records CA lifecycle events (see Params.AuditLogger and
+	// pkg/ca/audit.go). nil disables audit logging for this CA instance.
+	auditLogger audit.Logger
 
 	// secondaryKeyErr records the error from the most recent
 	// initSecondaryKeys call during Init, or nil if every secondary key
@@ -492,6 +506,7 @@ func New(params *Params) (TrustedCA, error) {
 		objectStore:     params.ObjectStore,
 		revocationStore: params.RevocationStore,
 		revocations:     make(map[string]*RevocationInfo),
+		auditLogger:     params.AuditLogger,
 	}
 
 	// Set up serial generator (use memory storage if not provided)
@@ -552,6 +567,10 @@ type MultiIdentityParams struct {
 	// directly per identity) so the CA routes each key to the backend
 	// matching its StoreType. Required.
 	BackendForStore BackendForStoreFunc
+
+	// AuditLogger records CA lifecycle events. See Params.AuditLogger.
+	// Optional.
+	AuditLogger audit.Logger
 }
 
 // NewFromMultiIdentityConfig creates a new CA from a MultiIdentityCAConfig.
@@ -616,6 +635,7 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 		RevocationStore:    mp.RevocationStore,
 		BackendForStore:    mp.BackendForStore,
 		RequireKeyPassword: mp.Config.RequireKeyPassword,
+		AuditLogger:        mp.AuditLogger,
 	})
 }
 
@@ -674,6 +694,7 @@ func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
 		objectStore:     mp.ObjectStore,
 		revocationStore: mp.RevocationStore,
 		revocations:     make(map[string]*RevocationInfo),
+		auditLogger:     mp.AuditLogger,
 	}
 	if mp.SerialGen != nil {
 		instance.serialGen = mp.SerialGen
@@ -1341,6 +1362,14 @@ func (ca *CA) createRootCertificate(ctx context.Context) error {
 		return &errs.Wrapped{Msg: "failed to create root certificate", Err: err}
 	}
 
+	// CA_INITIALIZED is SeveritySecurity (docs/audit-log/engineering.md): the
+	// audit record is written before the certificate is persisted, so a
+	// failed write refuses initialization rather than leave an unaudited CA
+	// root in the certificate store.
+	if auditErr := ca.emitAudit(ctx, auditActionCAInit, auditResourceCA, rootIdentity.Subject.CommonName); auditErr != nil {
+		return auditErr
+	}
+
 	// Store the certificate
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
 		return &errs.Wrapped{Msg: "failed to store root certificate", Err: err}
@@ -1412,6 +1441,12 @@ func (ca *CA) createIntermediateCertificates(ctx context.Context) error {
 		cert, err := ca.createSingleIntermediateCertificate(ctx, &identity, issuer.cert, issuer.signer)
 		if err != nil {
 			return &errs.Wrapped{Msg: fmt.Sprintf("failed to create intermediate CA %d", i+1), Err: err}
+		}
+
+		// CA_INITIALIZED (see createRootCertificate): the audit record is
+		// written before the intermediate certificate is persisted.
+		if auditErr := ca.emitAudit(ctx, auditActionCAInit, auditResourceCA, identity.Subject.CommonName); auditErr != nil {
+			return auditErr
 		}
 
 		// Store the certificate
