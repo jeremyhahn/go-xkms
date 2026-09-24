@@ -140,7 +140,7 @@ func runFIDO2ListDevicesWithWriter(cmd *cobra.Command, args []string, writer io.
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// List devices
 	devices, err := handler.ListDevices()
@@ -195,7 +195,12 @@ func runFIDO2WaitDeviceWithWriter(cmd *cobra.Command, args []string, writer io.W
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	timeout, _ := cmd.Flags().GetDuration("timeout")
+	fr := newFlagReader(cmd)
+	timeout := fr.Duration("timeout")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	if err := printer.PrintMessage("Waiting for FIDO2 device... (press Ctrl+C to cancel)"); err != nil {
 		handleError(err)
@@ -209,7 +214,7 @@ func runFIDO2WaitDeviceWithWriter(cmd *cobra.Command, args []string, writer io.W
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// Wait for device
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -250,12 +255,17 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	rpID, _ := cmd.Flags().GetString("rp-id")
-	rpName, _ := cmd.Flags().GetString("rp-name")
-	displayName, _ := cmd.Flags().GetString("display-name")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	devicePath, _ := cmd.Flags().GetString("device")
-	requireUV, _ := cmd.Flags().GetBool("user-verification")
+	fr := newFlagReader(cmd)
+	rpID := fr.String("rp-id")
+	rpName := fr.String("rp-name")
+	displayName := fr.String("display-name")
+	timeout := fr.Duration("timeout")
+	devicePath := fr.String("device")
+	requireUV := fr.Bool("user-verification")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	if displayName == "" {
 		displayName = username
@@ -272,7 +282,7 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// Create enrollment config
 	enrollConfig := fido2.DefaultEnrollmentConfig(username)
@@ -343,13 +353,18 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	credIDStr, _ := cmd.Flags().GetString("credential-id")
-	saltStr, _ := cmd.Flags().GetString("salt")
-	rpID, _ := cmd.Flags().GetString("rp-id")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	devicePath, _ := cmd.Flags().GetString("device")
-	requireUV, _ := cmd.Flags().GetBool("user-verification")
-	outputHex, _ := cmd.Flags().GetBool("hex")
+	fr := newFlagReader(cmd)
+	credIDStr := fr.String("credential-id")
+	saltStr := fr.String("salt")
+	rpID := fr.String("rp-id")
+	timeout := fr.Duration("timeout")
+	devicePath := fr.String("device")
+	requireUV := fr.Bool("user-verification")
+	outputHex := fr.Bool("hex")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	if credIDStr == "" {
 		handleError(ErrCredentialIDRequired)
@@ -384,7 +399,7 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// Create authentication config
 	authConfig := fido2.DefaultAuthenticationConfig(credID, salt)
@@ -420,13 +435,20 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 			"derived_key": keyOutput,
 			"key_length":  len(derivedKey),
 		}
-		data, _ := json.MarshalIndent(result, "", "  ")
-		_, _ = fmt.Fprintln(writer, string(data))
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err})
+			return
+		}
+		printer.println(string(data))
 	} else {
 		if err := printer.PrintSuccess("Authentication successful"); err != nil {
 			handleError(err)
 		}
-		_, _ = fmt.Fprintf(writer, "Derived Key (%d bytes): %s\n", len(derivedKey), keyOutput)
+		printer.printf("Derived Key (%d bytes): %s\n", len(derivedKey), keyOutput)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -448,7 +470,12 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 	cfg := getConfig()
 	printer := NewPrinter(cfg.OutputFormat, writer)
 
-	devicePath, _ := cmd.Flags().GetString("device")
+	fr := newFlagReader(cmd)
+	devicePath := fr.String("device")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return
+	}
 
 	printVerbose("Getting FIDO2 device info...")
 
@@ -460,7 +487,7 @@ func runFIDO2InfoWithWriter(cmd *cobra.Command, args []string, writer io.Writer)
 		handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 		return
 	}
-	defer func() { _ = handler.Close() }()
+	defer closeQuietly(handler)
 
 	// List devices and get info for first one (or specified device)
 	devices, err := handler.ListDevices()
@@ -536,8 +563,8 @@ func init() {
 	fido2AuthenticateCmd.Flags().String("device", "", "specific device path to use")
 	fido2AuthenticateCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 	fido2AuthenticateCmd.Flags().Bool("hex", false, "output derived key in hex format instead of base64")
-	_ = fido2AuthenticateCmd.MarkFlagRequired("credential-id")
-	_ = fido2AuthenticateCmd.MarkFlagRequired("salt")
+	markFlagRequired(fido2AuthenticateCmd, "credential-id")
+	markFlagRequired(fido2AuthenticateCmd, "salt")
 
 	// info flags
 	fido2InfoCmd.Flags().String("device", "", "specific device path to use")

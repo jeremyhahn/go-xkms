@@ -16,7 +16,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -47,17 +46,22 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		groupID, _ := cmd.Flags().GetString("group-id")
+		fr := newFlagReader(cmd)
+		groupID := fr.String("group-id")
+		groupName := fr.String("group-name")
+		serverURL := fr.String("server-url")
+		shareIndex := fr.Int("share-index")
+		purpose := fr.String("purpose")
+		dataB64 := fr.String("data")
+		file := fr.String("file")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if groupID == "" {
 			handleError(ErrShareGroupIDRequired)
 			return
 		}
-		groupName, _ := cmd.Flags().GetString("group-name")
-		serverURL, _ := cmd.Flags().GetString("server-url")
-		shareIndex, _ := cmd.Flags().GetInt("share-index")
-		purpose, _ := cmd.Flags().GetString("purpose")
-		dataB64, _ := cmd.Flags().GetString("data")
-		file, _ := cmd.Flags().GetString("file")
 
 		if dataB64 != "" && file != "" {
 			handleError(ErrShareDataSourceConflict)
@@ -123,7 +127,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		groupID, _ := cmd.Flags().GetString("group-id")
+		fr := newFlagReader(cmd)
+		groupID := fr.String("group-id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if groupID == "" {
 			handleError(ErrShareGroupIDRequired)
 			return
@@ -185,17 +194,22 @@ Example:
 // It reports the error itself and returns ok=false when a flag is missing, so
 // callers stay a straight line.
 func shareCoordinates(cmd *cobra.Command) (serverURL, groupID string, shareIndex int, ok bool) {
-	serverURL, _ = cmd.Flags().GetString("server-url")
+	fr := newFlagReader(cmd)
+	serverURL = fr.String("server-url")
+	groupID = fr.String("group-id")
+	shareIndex = fr.Int("share-index")
+	if err := fr.Err(); err != nil {
+		handleError(err)
+		return "", "", 0, false
+	}
 	if serverURL == "" {
 		handleError(ErrShareServerURLRequired)
 		return "", "", 0, false
 	}
-	groupID, _ = cmd.Flags().GetString("group-id")
 	if groupID == "" {
 		handleError(ErrShareGroupIDRequired)
 		return "", "", 0, false
 	}
-	shareIndex, _ = cmd.Flags().GetInt("share-index")
 	return serverURL, groupID, shareIndex, true
 }
 
@@ -206,10 +220,10 @@ func createShareClient(cfg *Config) (client.Client, func(), error) {
 		return nil, nil, &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 	if err := cl.Connect(context.Background()); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
-	return cl, func() { _ = cl.Close() }, nil
+	return cl, func() { closeQuietly(cl) }, nil
 }
 
 func shareSubmit(cfg *Config, printer *Printer, req *client.SubmitShareRequest) {
@@ -233,10 +247,13 @@ func shareSubmit(cfg *Config, printer *Printer, req *client.SubmitShareRequest) 
 		}
 	default:
 		if resp.Accepted {
-			_, _ = fmt.Fprintf(printer.writer, "Share accepted for group %q (index %d).\n", req.GroupID, req.ShareIndex)
+			printer.printf("Share accepted for group %q (index %d).\n", req.GroupID, req.ShareIndex)
 		} else {
-			_, _ = fmt.Fprintf(printer.writer, "Share was not accepted.\n")
+			printer.printf("Share was not accepted.\n")
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -261,14 +278,17 @@ func shareList(cfg *Config, printer *Printer) {
 		}
 	default:
 		if len(resp.Shares) == 0 {
-			_, _ = fmt.Fprintf(printer.writer, "No shares collected.\n")
+			printer.printf("No shares collected.\n")
 			return
 		}
-		_, _ = fmt.Fprintf(printer.writer, "Collected shares:\n")
+		printer.printf("Collected shares:\n")
 		for _, s := range resp.Shares {
-			_, _ = fmt.Fprintf(printer.writer, "  group=%s index=%d server=%s purpose=%s received=%s\n",
+			printer.printf("  group=%s index=%d server=%s purpose=%s received=%s\n",
 				s.GroupID, s.ShareIndex, s.ServerURL, s.Purpose, s.ReceivedAt.Format("2006-01-02T15:04:05Z07:00"))
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -292,13 +312,16 @@ func shareGet(cfg *Config, printer *Printer, serverURL, groupID string, shareInd
 			handleError(err)
 		}
 	default:
-		_, _ = fmt.Fprintf(printer.writer, "Share:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Server:   %s\n", info.ServerURL)
-		_, _ = fmt.Fprintf(printer.writer, "  Group:    %s\n", info.GroupID)
-		_, _ = fmt.Fprintf(printer.writer, "  Name:     %s\n", info.GroupName)
-		_, _ = fmt.Fprintf(printer.writer, "  Index:    %d\n", info.ShareIndex)
-		_, _ = fmt.Fprintf(printer.writer, "  Purpose:  %s\n", info.Purpose)
-		_, _ = fmt.Fprintf(printer.writer, "  Received: %s\n", info.ReceivedAt.Format("2006-01-02T15:04:05Z07:00"))
+		printer.printf("Share:\n")
+		printer.printf("  Server:   %s\n", info.ServerURL)
+		printer.printf("  Group:    %s\n", info.GroupID)
+		printer.printf("  Name:     %s\n", info.GroupName)
+		printer.printf("  Index:    %d\n", info.ShareIndex)
+		printer.printf("  Purpose:  %s\n", info.Purpose)
+		printer.printf("  Received: %s\n", info.ReceivedAt.Format("2006-01-02T15:04:05Z07:00"))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -326,7 +349,10 @@ func shareDelete(cfg *Config, printer *Printer, serverURL, groupID string, share
 			handleError(err)
 		}
 	default:
-		_, _ = fmt.Fprintf(printer.writer, "Deleted share %d for group %q.\n", shareIndex, groupID)
+		printer.printf("Deleted share %d for group %q.\n", shareIndex, groupID)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -350,12 +376,15 @@ func shareStatus(cfg *Config, printer *Printer, groupID string) {
 			handleError(err)
 		}
 	default:
-		_, _ = fmt.Fprintf(printer.writer, "Share Collection Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Group:     %s\n", resp.GroupID)
-		_, _ = fmt.Fprintf(printer.writer, "  Collected: %d\n", resp.Collected)
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d\n", resp.Threshold)
-		_, _ = fmt.Fprintf(printer.writer, "  Total:     %d\n", resp.Total)
-		_, _ = fmt.Fprintf(printer.writer, "  Ready:     %t\n", resp.Ready)
+		printer.printf("Share Collection Status:\n")
+		printer.printf("  Group:     %s\n", resp.GroupID)
+		printer.printf("  Collected: %d\n", resp.Collected)
+		printer.printf("  Threshold: %d\n", resp.Threshold)
+		printer.printf("  Total:     %d\n", resp.Total)
+		printer.printf("  Ready:     %t\n", resp.Ready)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

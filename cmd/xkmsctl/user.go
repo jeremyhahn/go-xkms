@@ -194,12 +194,17 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		email, _ := cmd.Flags().GetString("email")
-		displayName, _ := cmd.Flags().GetString("display-name")
-		devicePath, _ := cmd.Flags().GetString("device")
-		timeout, _ := cmd.Flags().GetDuration("timeout")
-		requireUV, _ := cmd.Flags().GetBool("user-verification")
-		roleStr, _ := cmd.Flags().GetString("role")
+		fr := newFlagReader(cmd)
+		email := fr.String("email")
+		displayName := fr.String("display-name")
+		devicePath := fr.String("device")
+		timeout := fr.Duration("timeout")
+		requireUV := fr.Bool("user-verification")
+		roleStr := fr.String("role")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if email == "" {
 			// handleError, not print-and-return: a bare return leaves Cobra's
@@ -235,7 +240,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -281,7 +286,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 			return
 		}
-		defer func() { _ = handler.Close() }()
+		defer closeQuietly(handler)
 
 		if err := printer.PrintMessage("Registering new user..."); err != nil {
 			handleError(err)
@@ -418,9 +423,14 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		timeout, _ := cmd.Flags().GetDuration("timeout")
-		devicePath, _ := cmd.Flags().GetString("device")
-		requireUV, _ := cmd.Flags().GetBool("user-verification")
+		fr := newFlagReader(cmd)
+		timeout := fr.Duration("timeout")
+		devicePath := fr.String("device")
+		requireUV := fr.Bool("user-verification")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		// Resolve the PIN before anything reaches the network: a --pin-stdin
 		// with nothing on standard input is operator input to correct, and
@@ -439,7 +449,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -479,7 +489,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err})
 			return
 		}
-		defer func() { _ = handler.Close() }()
+		defer closeQuietly(handler)
 
 		if err := printer.PrintPrompt("\nPlease touch your security key to authenticate..."); err != nil {
 			handleError(err)
@@ -547,7 +557,7 @@ var userListCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -633,7 +643,7 @@ var userGetCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -723,7 +733,7 @@ Note: You cannot delete the last administrator account.`,
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -767,7 +777,7 @@ var userDisableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -812,7 +822,7 @@ var userEnableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -855,7 +865,7 @@ var userStatusCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -929,7 +939,7 @@ Example:
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -996,8 +1006,13 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		enable, _ := cmd.Flags().GetBool("enable")
-		disable, _ := cmd.Flags().GetBool("disable")
+		fr := newFlagReader(cmd)
+		enable := fr.Bool("enable")
+		disable := fr.Bool("disable")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if enable == disable {
 			handleError(ErrUserUpdateEnableFlagRequired)
@@ -1015,7 +1030,7 @@ func userUpdate(cfg *Config, printer *Printer, username string, enable bool) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -1079,9 +1094,14 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		thumbprint, _ := cmd.Flags().GetString("thumbprint")
-		certFile, _ := cmd.Flags().GetString("cert-file")
-		notAfter, _ := cmd.Flags().GetInt64("not-after")
+		fr := newFlagReader(cmd)
+		thumbprint := fr.String("thumbprint")
+		certFile := fr.String("cert-file")
+		notAfter := fr.Int64("not-after")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if (thumbprint == "") == (certFile == "") {
 			handleError(ErrUserCertSourceRequired)
@@ -1127,7 +1147,7 @@ func userBindCert(cfg *Config, printer *Printer, username, thumbprint string, no
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
