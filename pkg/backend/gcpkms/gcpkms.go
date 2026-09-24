@@ -277,9 +277,17 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 		Name: keyName,
 	}
 
+	// Only a gRPC NotFound status -- Cloud KMS's signal that the key version
+	// genuinely does not exist -- is reported as ErrKeyNotFound. Any other
+	// failure (throttling, a transport fault, an IAM/authorization denial)
+	// must not be conflated with "no key yet" (matches GetKey's
+	// classification).
 	pubKey, err := b.client.GetPublicKey(ctx, req)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
+		if status.Code(err) == codes.NotFound {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Return PEM-encoded public key
@@ -718,11 +726,19 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 
 	keyName := b.cryptoKeyName(attrs.CN)
 
+	// Only a gRPC NotFound status -- Cloud KMS's signal that the crypto key
+	// resource genuinely does not exist -- is reported as ErrKeyNotFound.
+	// Any other failure (throttling, a transport fault, an IAM/authorization
+	// denial) must not be conflated with "no key yet" (matches GetKey's
+	// classification).
 	cryptoKey, err := b.client.GetCryptoKey(ctx, &kmspb.GetCryptoKeyRequest{
 		Name: keyName,
 	})
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		if status.Code(err) == codes.NotFound {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 
 	// Verify this is a symmetric encryption key
@@ -781,9 +797,15 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		Name: keyName,
 	}
 
+	// Only a gRPC NotFound status is reported as ErrKeyNotFound; any other
+	// failure must not be conflated with "no key yet" (matches GetKey's
+	// classification).
 	pubKey, err := b.client.GetPublicKey(ctx, req)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
+		if status.Code(err) == codes.NotFound {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Parse the PEM-encoded public key
@@ -1158,9 +1180,15 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		Name: keyName,
 	}
 
+	// Only a gRPC NotFound status is reported as ErrKeyNotFound; any other
+	// failure must not be conflated with "no key yet" (matches GetKey's
+	// classification).
 	pubKey, err := b.client.GetPublicKey(ctx, req)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
+		if status.Code(err) == codes.NotFound {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Verify the key supports decryption
@@ -1277,11 +1305,19 @@ func (b *Backend) resolvePrimaryVersionName(ctx context.Context, keyID string) (
 		return cached.(string), nil
 	}
 
+	// Only a gRPC NotFound status -- Cloud KMS's signal that the crypto key
+	// resource genuinely does not exist -- is reported as ErrKeyNotFound.
+	// Any other failure (throttling, a transport fault, an IAM/authorization
+	// denial) must not be conflated with "no key yet" (matches GetKey's
+	// classification).
 	cryptoKey, err := b.client.GetCryptoKey(ctx, &kmspb.GetCryptoKeyRequest{
 		Name: b.cryptoKeyName(keyID),
 	})
 	if err != nil {
-		return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", keyID, err)}
+		if status.Code(err) == codes.NotFound {
+			return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s: %v", keyID, err)}
+		}
+		return "", &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", keyID, err)}
 	}
 
 	if cryptoKey.Primary == nil || cryptoKey.Primary.Name == "" {

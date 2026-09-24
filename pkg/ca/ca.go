@@ -1972,7 +1972,10 @@ func (ca *CA) IssueCertificateWithProfile(ctx context.Context, request *Certific
 		Bytes: cert.Raw,
 	})
 
-	caCertPEM, _ := ca.CABundle()
+	caCertPEM, err := ca.CABundle()
+	if err != nil {
+		return nil, err
+	}
 
 	issued := &IssuedCertificate{
 		Certificate:      cert,

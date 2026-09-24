@@ -190,21 +190,22 @@ func NewBackend(config *Config) (*Backend, error) {
 		// is an operator action (`xkmsd init`).
 		if err == pkgtpm2.ErrNotInitialized && config.UseSimulator && tpm != nil {
 			if perr := provisionSimulatorEKSRK(tpm, tpmConfig); perr != nil {
-				_ = tpm.Close()
-				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: perr}
+				closeErr := tpm.Close()
+				return nil, &errs.Joined{Lead: ErrNotInitialized, Detail: "simulator provisioning failed", Cause: errors.Join(perr, closeErr)}
 			}
 		} else {
 			// Close the TPM if it was partially initialized. Without closing,
 			// the simulator's global mutex is never released, causing
 			// deadlocks in subsequent calls.
+			var closeErr error
 			if tpm != nil {
-				_ = tpm.Close()
+				closeErr = tpm.Close()
 			}
 			// Check for initialization error - TPM may need provisioning
 			if err == pkgtpm2.ErrNotInitialized {
-				return nil, &errs.Detail{Err: ErrNotInitialized, Detail: "TPM needs provisioning"}
+				return nil, errors.Join(&errs.Detail{Err: ErrNotInitialized, Detail: "TPM needs provisioning"}, closeErr)
 			}
-			return nil, &errs.Wrapped{Msg: "failed to initialize TPM", Err: err}
+			return nil, &errs.Wrapped{Msg: "failed to initialize TPM", Err: errors.Join(err, closeErr)}
 		}
 	}
 
@@ -212,8 +213,8 @@ func NewBackend(config *Config) (*Backend, error) {
 	// resolveSRKAttributes for why this backend always uses the Platform SRK).
 	srkAttrs, err := resolveSRKAttributes(tpm)
 	if err != nil {
-		_ = tpm.Close()
-		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: err}
+		closeErr := tpm.Close()
+		return nil, &errs.Wrapped{Msg: "failed to get SRK attributes", Err: errors.Join(err, closeErr)}
 	}
 
 	return &Backend{

@@ -259,3 +259,40 @@ func TestStart_ExtraFilesAndOptions(t *testing.T) {
 		t.Fatalf("KnownHostsFile should be empty after Stop")
 	}
 }
+
+// TestSyncAndStop_WorkDirCleanupFailureSurfacesViaErr verifies that a failure
+// removing the owned work directory during teardown is reported -- via both
+// SyncAndStop's own error return and Session.Err() -- rather than being
+// silently discarded (#701). Before, cleanupDir dropped os.RemoveAll's error
+// unconditionally, so a work directory that could not be removed (permission
+// denied, a stray open handle) was reported as a perfectly clean shutdown.
+func TestSyncAndStop_WorkDirCleanupFailureSurfacesViaErr(t *testing.T) {
+	ctx := context.Background()
+	store, _ := known_hosts.NewBackendStore(storage.New())
+
+	sess, err := Start(ctx, Request{
+		Host:            "cleanup-fail.example.com",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !sess.ownsWorkDir {
+		t.Fatal("test requires an owned (auto-created) work directory")
+	}
+
+	// Fail the work-directory removal through the seam: permission bits
+	// cannot make os.RemoveAll fail when the tests run as root.
+	errCleanup := errors.New("injected cleanup failure")
+	orig := removeAll
+	removeAll = func(string) error { return errCleanup }
+	t.Cleanup(func() { removeAll = orig; _ = os.RemoveAll(sess.workDir) })
+
+	if _, _, err := sess.SyncAndStop(ctx); err == nil {
+		t.Fatal("expected SyncAndStop to surface the work-directory cleanup failure")
+	}
+	if sessErr := sess.Err(); !errors.Is(sessErr, errCleanup) {
+		t.Fatalf("expected Session.Err() to report the cleanup failure, got %v", sessErr)
+	}
+}

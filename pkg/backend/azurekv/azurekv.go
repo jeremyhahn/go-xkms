@@ -931,10 +931,19 @@ type azurekvDecrypter struct {
 // construction and pass it explicitly on every subsequent operation instead
 // of the empty string, which Azure would otherwise resolve to whatever is
 // latest at call time.
+//
+// As with GetKey, only an HTTP 404 -- Key Vault's signal that the key
+// genuinely does not exist -- is reported as ErrKeyNotFound. Any other
+// failure (throttling, a transport fault, an RBAC/authorization denial)
+// becomes ErrKeyRetrievalFailed so it is never conflated with "no key yet".
 func (b *Backend) resolveKeyVersion(ctx context.Context, name string) (string, error) {
 	resp, err := b.client.GetKey(ctx, name, "", nil)
 	if err != nil {
-		return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+			return "", &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		}
+		return "", &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 	if resp.Key == nil || resp.Key.KID == nil {
 		return "", &errs.Detail{Err: ErrKeyNotFound, Detail: name}
