@@ -2227,9 +2227,22 @@ func (s *Server) initializeCA() error {
 		return &ErrCAInit{Operation: "adopt staged cluster CA certificates", Err: err}
 	}
 
-	// Try to load existing CA state (certificates and keys from a previous run).
-	// If loading fails, the CA has not been initialized yet, so create it.
+	// Try to load existing CA state (certificates and keys from a previous
+	// run). Only a genuine ca.ErrCertificateNotFound -- the root (or an
+	// intermediate) certificate is simply absent, the one condition Load
+	// reports that legitimately means "never initialized" -- falls through to
+	// Init, which getOrGenerateCAKey makes safe to (re)run over a partial
+	// state. Any other Load failure (a corrupt or unreadable persisted
+	// certificate, an unavailable keystore backend, a key-attributes defect)
+	// is a distinct problem with existing state and must fail startup closed
+	// instead of silently forging a new root over it (go-xkms#793: initializeCA
+	// used to treat every Load error alike, so a Load bug unrelated to
+	// "not found" minted a brand new CA -- and therefore a new TLS SPKI and a
+	// new client pin -- on every restart).
 	if err := trustedCA.Load(s.ctx); err != nil {
+		if !errors.Is(err, ca.ErrCertificateNotFound) {
+			return &ErrCAInit{Operation: "load existing CA", Err: err}
+		}
 		s.logger.Info("No existing CA found, initializing new CA", "reason", err.Error())
 		if initErr := trustedCA.Init(s.ctx); initErr != nil {
 			return &ErrCAInit{Operation: "initialize new CA", Err: initErr}
