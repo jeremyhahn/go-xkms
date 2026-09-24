@@ -1075,6 +1075,44 @@ func TestFileBackend_Delete(t *testing.T) {
 			t.Errorf("Delete() error = %v, want %v", err, errMockBackend)
 		}
 	})
+
+	t.Run("delete Exists backend error propagates", func(t *testing.T) {
+		// Before #701, Delete discarded the error from both Exists calls it
+		// makes to decide what to remove: a storage failure while checking
+		// existence looked identical to "nothing here", so Delete reported
+		// ErrCertificateNotFound instead of the real I/O failure.
+		inner := storage.NewMemory()
+		mock := newMockErrorBackend(inner)
+
+		config := &pivcert.FileStorageConfig{
+			Backend:    mock,
+			DEREnabled: true,
+			PEMEnabled: true,
+		}
+		backend, err := NewFileBackend(config)
+		if err != nil {
+			t.Fatalf("NewFileBackend() error = %v", err)
+		}
+		defer func() { _ = backend.Close() }()
+
+		cert := generateTestCertificate(t, "test-delete-exists-err")
+		if err := backend.Store(pivcert.PIVSlotAuthentication, cert); err != nil {
+			t.Fatalf("Store() error = %v", err)
+		}
+
+		mock.existsErr = errMockBackend
+
+		err = backend.Delete(pivcert.PIVSlotAuthentication)
+		if err == nil {
+			t.Fatal("Delete() expected error from backend Exists failure, got nil")
+		}
+		if !errors.Is(err, errMockBackend) {
+			t.Errorf("Delete() error = %v, want %v", err, errMockBackend)
+		}
+		if errors.Is(err, pivcert.ErrCertificateNotFound) {
+			t.Error("Delete() must not report ErrCertificateNotFound when Exists itself failed")
+		}
+	})
 }
 
 func TestFileBackend_List(t *testing.T) {
@@ -1209,6 +1247,40 @@ func TestFileBackend_List(t *testing.T) {
 		}
 		if !errors.Is(err, errMockBackend) {
 			t.Errorf("List() error = %v, want %v", err, errMockBackend)
+		}
+	})
+
+	t.Run("list with corrupt StoredAt metadata reports an error", func(t *testing.T) {
+		// Before #701, List discarded time.Parse's error on StoredAt and
+		// silently substituted the zero time, so corrupt metadata was
+		// indistinguishable from a certificate genuinely stored at the Unix
+		// epoch.
+		config := createValidConfig()
+		backend, err := NewFileBackend(config)
+		if err != nil {
+			t.Fatalf("NewFileBackend() error = %v", err)
+		}
+		defer func() { _ = backend.Close() }()
+
+		cert := generateTestCertificate(t, "test-list-corrupt-storedat")
+		if err := backend.Store(pivcert.PIVSlotAuthentication, cert); err != nil {
+			t.Fatalf("Store() error = %v", err)
+		}
+
+		metadata, err := backend.loadMetadata()
+		if err != nil {
+			t.Fatalf("loadMetadata() error = %v", err)
+		}
+		meta := metadata.Slots[string(pivcert.PIVSlotAuthentication)]
+		meta.StoredAt = "not-a-timestamp"
+		metadata.Slots[string(pivcert.PIVSlotAuthentication)] = meta
+		if err := backend.saveMetadata(metadata); err != nil {
+			t.Fatalf("saveMetadata() error = %v", err)
+		}
+
+		_, err = backend.List()
+		if err == nil {
+			t.Fatal("List() expected error from corrupt StoredAt metadata, got nil")
 		}
 	})
 }

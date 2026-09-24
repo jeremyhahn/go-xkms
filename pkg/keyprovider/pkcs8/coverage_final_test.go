@@ -22,7 +22,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestSigner_X25519NotSigner verifies that calling Signer on an X25519 key
@@ -38,10 +37,11 @@ func TestSigner_X25519NotSigner(t *testing.T) {
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
-	_, err := be.GenerateKey(context.Background(), attrs)
-	require.NoError(t, err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
+	}
 
-	_, err = be.Signer(context.Background(), attrs)
+	_, err := be.Signer(context.Background(), attrs)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrKeyNotSigner))
 }

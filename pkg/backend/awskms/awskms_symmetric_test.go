@@ -269,7 +269,7 @@ func TestGetSymmetricKey(t *testing.T) {
 				_ = storage.SaveKey(context.Background(), b.config.KeyStorage, "deleted-key", metadataBytes)
 
 				m.DescribeKeyFunc = func(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
-					return nil, errors.New("NotFoundException: Key not found")
+					return nil, &kmstypes.NotFoundException{Message: aws.String("Key not found")}
 				}
 			},
 			wantErr:     true,

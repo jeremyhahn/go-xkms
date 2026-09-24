@@ -104,8 +104,14 @@ func TestResolveOAEPHash_IgnoresWeakHashPolicy(t *testing.T) {
 	t.Cleanup(func() { types.SetAllowWeakHashes(restore) })
 
 	// Precondition: the policy really is on, so signing would accept SHA-1.
-	if _, err := ResolveHash("SHA-1"); err != nil {
-		t.Fatalf("precondition: with weak hashes allowed, ResolveHash(SHA-1) must succeed, got %v", err)
+	// SetAllowWeakHashes(true) is a deliberate no-op under FIPSMode()
+	// (see pkg/types/hashpolicy.go): the Go Cryptographic Module's own
+	// boundary is the ceiling, so this precondition does not hold in that
+	// mode and is skipped rather than asserted.
+	if !types.FIPSMode() {
+		if _, err := ResolveHash("SHA-1"); err != nil {
+			t.Fatalf("precondition: with weak hashes allowed, ResolveHash(SHA-1) must succeed, got %v", err)
+		}
 	}
 
 	if h, err := ResolveOAEPHash("SHA-1"); !errors.Is(err, ErrWeakOAEPHash) {

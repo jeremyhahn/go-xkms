@@ -158,12 +158,17 @@ func testPrologue(publicKey, fingerprint []byte) []byte {
 }
 
 // newPairedTransport returns a transport whose Noise handshake has completed
-// against the fake phone, ready to serve requests.
-func newPairedTransport(t *testing.T, fake *fakePhone) *Transport {
+// against the fake phone, ready to serve requests. The bool return is false
+// when the handshake key was refused for the expected
+// GODEBUG=fips140=only reason (see requireStaticKey); the caller must
+// return immediately in that case.
+func newPairedTransport(t *testing.T, fake *fakePhone) (*Transport, bool) {
 	t.Helper()
 
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return nil, false
+	}
 
 	tr, err := New()
 	require.NoError(t, err)
@@ -171,7 +176,7 @@ func newPairedTransport(t *testing.T, fake *fakePhone) *Transport {
 	tr.WithNoiseConfig(&NoiseConfig{LocalStaticPrivateKey: key.Private})
 
 	require.NoError(t, tr.Connect(context.Background()))
-	return tr
+	return tr, true
 }
 
 func TestNew(t *testing.T) {
@@ -242,7 +247,10 @@ func TestConnectWithInvalidPrivateKey(t *testing.T) {
 
 func TestConnectPerformsIdentityExchangeAndHandshake(t *testing.T) {
 	fake := &fakePhone{}
-	tr := newPairedTransport(t, fake)
+	tr, ok := newPairedTransport(t, fake)
+	if !ok {
+		return
+	}
 
 	assert.True(t, tr.connected)
 	assert.True(t, fake.handshook, "the phone side must complete the Noise XX handshake")
@@ -255,8 +263,10 @@ func TestConnectBindsDeviceFingerprintIntoPrologue(t *testing.T) {
 		fingerprint[i] = byte(i)
 	}
 
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 
 	tr, err := New()
 	require.NoError(t, err)
@@ -276,8 +286,10 @@ func TestConnectRejectsFingerprintMismatch(t *testing.T) {
 	expected := make([]byte, 32)
 	expected[0] = 0xff
 
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 
 	tr, err := New()
 	require.NoError(t, err)
@@ -294,8 +306,10 @@ func TestConnectRejectsFingerprintMismatch(t *testing.T) {
 }
 
 func TestConnectFailsWhenBusUnavailable(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 
 	tr, err := New()
 	require.NoError(t, err)
@@ -315,7 +329,10 @@ func TestCloseNotConnected(t *testing.T) {
 }
 
 func TestCloseClearsSession(t *testing.T) {
-	tr := newPairedTransport(t, &fakePhone{})
+	tr, ok := newPairedTransport(t, &fakePhone{})
+	if !ok {
+		return
+	}
 	require.NoError(t, tr.Close())
 	assert.False(t, tr.connected)
 	assert.Nil(t, tr.session)
@@ -385,7 +402,10 @@ func TestRequestWithoutSession(t *testing.T) {
 }
 
 func TestRequestMarshalError(t *testing.T) {
-	tr := newPairedTransport(t, &fakePhone{})
+	tr, ok := newPairedTransport(t, &fakePhone{})
+	if !ok {
+		return
+	}
 
 	// Channels cannot be marshalled to JSON.
 	err := tr.Request(context.Background(), "test", make(chan int), nil)
@@ -404,7 +424,10 @@ func TestRequestSendsJSONRPCEnvelope(t *testing.T) {
 			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		},
 	}
-	tr := newPairedTransport(t, fake)
+	tr, ok := newPairedTransport(t, fake)
+	if !ok {
+		return
+	}
 
 	var resp struct {
 		Status string `json:"status"`
@@ -425,7 +448,10 @@ func TestRequestNilResponseTarget(t *testing.T) {
 			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		},
 	}
-	tr := newPairedTransport(t, fake)
+	tr, ok := newPairedTransport(t, fake)
+	if !ok {
+		return
+	}
 
 	require.NoError(t, tr.Request(context.Background(), "ping", nil, nil))
 	assert.True(t, tr.connected)
@@ -441,7 +467,10 @@ func TestRequestPropagatesRPCError(t *testing.T) {
 			}
 		},
 	}
-	tr := newPairedTransport(t, fake)
+	tr, ok := newPairedTransport(t, fake)
+	if !ok {
+		return
+	}
 
 	err := tr.Request(context.Background(), "nope", nil, nil)
 	require.ErrorIs(t, err, ErrRequestFailed)
@@ -450,7 +479,10 @@ func TestRequestPropagatesRPCError(t *testing.T) {
 
 func TestRequestSendReceiveError(t *testing.T) {
 	fake := &fakePhone{}
-	tr := newPairedTransport(t, fake)
+	tr, ok := newPairedTransport(t, fake)
+	if !ok {
+		return
+	}
 	fake.sendErr = errors.New("send failed")
 
 	err := tr.Request(context.Background(), "test", "hello", nil)
@@ -465,7 +497,10 @@ func TestRequestUnmarshalError(t *testing.T) {
 			return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`"a string"`)}
 		},
 	}
-	tr := newPairedTransport(t, fake)
+	tr, ok := newPairedTransport(t, fake)
+	if !ok {
+		return
+	}
 
 	var resp struct {
 		Status string `json:"status"`
@@ -576,7 +611,10 @@ func TestPasswordSealStoreOperationsRoundTrip(t *testing.T) {
 					return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{}`)}
 				},
 			}
-			tr := newPairedTransport(t, fake)
+			tr, ok := newPairedTransport(t, fake)
+			if !ok {
+				return
+			}
 
 			require.NoError(t, op.call(context.Background(), tr))
 			assert.Equal(t, op.method, seenMethod)
@@ -599,7 +637,10 @@ func TestPasswordSealStoreOperationsPropagateRPCError(t *testing.T) {
 					}
 				},
 			}
-			tr := newPairedTransport(t, fake)
+			tr, ok := newPairedTransport(t, fake)
+			if !ok {
+				return
+			}
 
 			err := op.call(context.Background(), tr)
 			require.Error(t, err)
@@ -652,8 +693,10 @@ func TestPolicyOperationsNotSupported(t *testing.T) {
 // TestConnectFailsWithoutUSBDevice covers the real driver path: with pairing
 // keys configured but no accessory attached, the bus open fails.
 func TestConnectFailsWithoutUSBDevice(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 
 	tr, err := New()
 	require.NoError(t, err)
@@ -666,8 +709,10 @@ func TestConnectFailsWithoutUSBDevice(t *testing.T) {
 }
 
 func TestConnectWithCustomTimeout(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 
 	tr, err := New(func(cfg *transport.Config) error {
 		cfg.Timeout = 1 * time.Second
@@ -682,8 +727,10 @@ func TestConnectWithCustomTimeout(t *testing.T) {
 }
 
 func TestConnectWithZeroTimeout(t *testing.T) {
-	key, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	key, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 
 	tr, err := NewWithConfig(&transport.Config{Timeout: 0})
 	require.NoError(t, err)

@@ -16,6 +16,7 @@ package console
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"os"
@@ -90,8 +91,8 @@ func TestDial_KnownHostsExtraFiles_Known(t *testing.T) {
 			return true, nil
 		},
 	}, Config{})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer c.Close()
 
@@ -134,9 +135,17 @@ func TestDial_KnownHostsExtraFiles_Mismatch(t *testing.T) {
 			return true, nil
 		},
 	}, Config{})
-	var mm *known_hosts.MismatchError
-	if !errors.As(err, &mm) {
-		t.Fatalf("expected MismatchError, got %T: %v", err, err)
+	// Under GODEBUG=fips140=only, the handshake's key exchange fails (see
+	// requireHandshake) before the server's host key is ever verified
+	// against the extra file this test targets, so the error is a
+	// handshake failure, not *known_hosts.MismatchError.
+	if !fips140.Enforced() {
+		var mm *known_hosts.MismatchError
+		if !errors.As(err, &mm) {
+			t.Fatalf("expected MismatchError, got %T: %v", err, err)
+		}
+	} else if err == nil {
+		t.Fatal("expected an error under GODEBUG=fips140=only")
 	}
 	if confirmCalled {
 		t.Fatal("HostKeyConfirm must not be consulted on an extra-file mismatch")
@@ -170,8 +179,8 @@ func TestDial_HostKeyConfirm_FreshAcceptMirrorsIntoExtraFiles(t *testing.T) {
 			return true, nil
 		},
 	}, Config{})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer c.Close()
 
@@ -218,8 +227,8 @@ func TestDial_KnownHostsSkipStore_NeverConsultsOrWritesStore(t *testing.T) {
 			return true, nil
 		},
 	}, Config{})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer c.Close()
 

@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,11 +34,16 @@ import (
 // report — a handshake must complete against one configuration, never a splice
 // of two.
 func TestWithNoiseConfigDoesNotRaceConnect(t *testing.T) {
-	tr, g := newGatedTransport(t)
+	tr, g, ok := newGatedTransport(t)
+	if !ok {
+		return
+	}
 	close(g.gate) // no blocking; the point here is the concurrent reconfigure.
 
-	rotated, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	rotated, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 	t.Cleanup(rotated.Destroy)
 
 	// Both the transport's configured key and the session key a successful
@@ -94,8 +98,10 @@ func TestWithNoiseConfigDoesNotRaceConnect(t *testing.T) {
 // protected StaticKey, so the assertion here is that the loaded key still
 // derives the same public key after the caller has scribbled over its slice.
 func TestWithNoiseConfigCopiesTheCallersConfig(t *testing.T) {
-	source, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	source, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 	t.Cleanup(source.Destroy)
 
 	local := bytes.Clone(source.Private)
@@ -141,8 +147,10 @@ func TestWithNoiseConfigCopiesTheCallersConfig(t *testing.T) {
 // copy taken with bytes.Clone would be abandoned unzeroized on every rotation
 // and would outlive any wipe the caller performs on its own copy.
 func TestWithNoiseConfigHoldsThePrivateKeyInProtectedMemory(t *testing.T) {
-	source, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	source, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 	t.Cleanup(source.Destroy)
 
 	tr, err := New()
@@ -159,11 +167,15 @@ func TestWithNoiseConfigHoldsThePrivateKeyInProtectedMemory(t *testing.T) {
 // displaces. Dropping the reference would strand a locked, unswappable page for
 // the life of the process on every rotation.
 func TestWithNoiseConfigDestroysTheDisplacedKey(t *testing.T) {
-	first, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	first, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 	t.Cleanup(first.Destroy)
-	second, err := pairing.GenerateStaticKey()
-	require.NoError(t, err)
+	second, ok := requireStaticKey(t)
+	if !ok {
+		return
+	}
 	t.Cleanup(second.Destroy)
 
 	tr, err := New()

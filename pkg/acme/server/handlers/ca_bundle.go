@@ -25,9 +25,16 @@ func (s *RestService) CABundleHandler(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Debug("CABundleHandler", "method", r.Method, "url", r.URL)
 
-	// Serve the default CA bundle using software store and RSA algorithm
-	// These are reasonable defaults for ACME client compatibility
-	bundle, err := s.ca.CABundleFiltered(xkmssdk.StoreSoftware, x509.RSA)
+	// Serve the default CA bundle using software store and RSA algorithm.
+	// These are reasonable defaults for ACME client compatibility. The call
+	// runs through the storage breaker so a failing CA/keystore backend both
+	// surfaces here and trips the breaker; while it is open (or a live call
+	// fails and no fresh cache exists) this falls back to the last
+	// known-good bundle in the degradation cache.
+	const cacheKey = "default"
+	bundle, degraded, err := s.serveOrDegrade(s.storageBreaker, s.caBundleCache, cacheKey, func() ([]byte, error) {
+		return s.ca.CABundleFiltered(xkmssdk.StoreSoftware, x509.RSA)
+	})
 	if err != nil {
 		writeError(w, common.ServerInternal("Failed to get CA bundle"))
 		return
@@ -35,6 +42,7 @@ func (s *RestService) CABundleHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/pem-certificate-chain")
+	setDegradedHeader(w, degraded)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(bundle)
 }

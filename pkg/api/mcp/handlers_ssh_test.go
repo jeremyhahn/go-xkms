@@ -347,6 +347,95 @@ func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	assert.Empty(t, listed.(SSHPinListResult).Items)
 }
 
+// TestSSHKnownHosts_VerifyMismatchReportsConflictCode proves a host-key
+// mismatch -- the MITM-indicating condition the issue calls out by name --
+// carries JSONRPCCodeMismatch, not the ErrCodeInternalError every SSH store
+// error used to collapse into before every handler routed through
+// mapSSHError (#769).
+func TestSSHKnownHosts_VerifyMismatchReportsConflictCode(t *testing.T) {
+	server := newSSHServer(t)
+	ctx := context.Background()
+
+	line, _ := randomHostKey(t)
+	otherLine, _ := randomHostKey(t)
+	_, err := server.handleSSHKnownHostsAdd(ctx, sshRequest(t, "ssh.knownHosts.add",
+		sdkssh.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: line}))
+	require.NoError(t, err)
+
+	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: otherLine}))
+	var opErr *KeyOpError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeMismatch, opErr.Code)
+	var mismatch *pkgknownhosts.MismatchError
+	require.ErrorAs(t, err, &mismatch)
+}
+
+// TestSSHKnownHosts_VerifyMissingPinReportsNotFoundCode proves a missing
+// pin carries JSONRPCCodeNotFound, matching the code the keys and
+// authorized_keys stores report for the same class of failure.
+func TestSSHKnownHosts_VerifyMissingPinReportsNotFoundCode(t *testing.T) {
+	server := newSSHServer(t)
+
+	line, _ := randomHostKey(t)
+	_, err := server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "ghost.example.com", PublicKey: line}))
+	var opErr *KeyOpError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, opErr.Code)
+}
+
+// TestSSHKnownHosts_AddDuplicateReportsConflictCode proves re-pinning an
+// existing host reports JSONRPCCodeDuplicate.
+func TestSSHKnownHosts_AddDuplicateReportsConflictCode(t *testing.T) {
+	server := newSSHServer(t)
+	ctx := context.Background()
+
+	line, _ := randomHostKey(t)
+	req := sdkssh.AddKnownHostRequest{Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: line}
+	_, err := server.handleSSHKnownHostsAdd(ctx, sshRequest(t, "ssh.knownHosts.add", req))
+	require.NoError(t, err)
+
+	_, err = server.handleSSHKnownHostsAdd(ctx, sshRequest(t, "ssh.knownHosts.add", req))
+	var opErr *KeyOpError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeDuplicate, opErr.Code)
+}
+
+// TestSSHKeys_GetMissingReportsNotFoundCode proves *pkgkeys.KeyNotFoundError
+// -- the case the issue names explicitly ("keys-store errors fall through to
+// Internal") -- carries JSONRPCCodeNotFound.
+func TestSSHKeys_GetMissingReportsNotFoundCode(t *testing.T) {
+	server := newSSHServer(t)
+
+	_, err := server.handleSSHKeysGet(context.Background(), sshRequest(t, "ssh.keys.get",
+		sdkssh.GetKeyRequest{Scope: "user", Owner: "alice", Name: "ghost"}))
+	var opErr *KeyOpError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, opErr.Code)
+}
+
+// TestMapSSHError_UnknownErrorStaysInternal proves an error mapSSHError's
+// table does not recognize reports ErrCodeInternalError rather than being
+// misclassified as one of the specific NotFound/Duplicate/Mismatch/
+// InvalidParams codes -- a caller must never be told a genuinely internal
+// failure is a missing resource or a bad request. The underlying error
+// stays reachable via Unwrap for server-side logging (mirroring
+// mapKeyOpError's identical fallback in errors_keyops.go); wire-level
+// redaction for codes.Internal is enforced at the gRPC transport (see
+// pkg/api/grpc's sshStatus and TestSSHStatus_UnknownErrorStaysInternal
+// WithoutLeakingDetail), the one transport that currently serializes an SSH
+// error onto the wire in production.
+func TestMapSSHError_UnknownErrorStaysInternal(t *testing.T) {
+	opaque := errors.New("open /var/lib/xkms/data/secret-envelope.json: permission denied")
+
+	mapped := mapSSHError(opaque)
+	var opErr *KeyOpError
+	require.ErrorAs(t, mapped, &opErr)
+	assert.Equal(t, ErrCodeInternalError, opErr.Code)
+	assert.Same(t, opaque, opErr.Err)
+}
+
 // TestSSHKnownHosts_VerifyRequiredFields proves both required fields are
 // validated before the store is touched.
 func TestSSHKnownHosts_VerifyRequiredFields(t *testing.T) {

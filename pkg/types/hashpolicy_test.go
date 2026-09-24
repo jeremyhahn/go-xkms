@@ -15,6 +15,7 @@ package types
 
 import (
 	"crypto"
+	"crypto/fips140"
 	"testing"
 )
 
@@ -126,6 +127,19 @@ func TestAvailableHashes_AdmitsWeakHashesUnderPolicy(t *testing.T) {
 				t.Fatalf("%s is not linked into the test binary; this test cannot prove the policy", name)
 			}
 			got, ok := hashes[name]
+			if fips140.Enforced() {
+				// This doc comment's own premise is "outside FIPS mode":
+				// under GODEBUG=fips140=only, crypto/sha1 and crypto/md5
+				// refuse to run at all (a fixed toolchain boundary this
+				// repository's own weak-hash policy cannot and must not
+				// override -- see AllowWeakHashes/SetAllowWeakHashes), so
+				// the policy opt-in this test otherwise proves has no
+				// effect here and both names stay absent.
+				if ok {
+					t.Errorf("AvailableHashes()[%q] = %v, want absent under GODEBUG=fips140=only", name, got)
+				}
+				continue
+			}
 			if !ok || got != want {
 				t.Errorf("AvailableHashes()[%q] = %v (present=%v), want %v", name, got, ok, want)
 			}

@@ -609,7 +609,12 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
-	// Verify key exists in KMS
+	// Verify key exists in KMS. Only a genuine NotFoundException -- KMS's
+	// signal that the key ID/ARN names no key it has ever heard of -- is
+	// reported as ErrKeyNotFound. Any other failure (throttling, a network
+	// fault, an IAM/authorization denial) must not be conflated with "no
+	// key yet": getOrGenerateCAKey relies on that distinction to decide
+	// whether generating a replacement key is safe.
 	keyID, err := b.getKeyID(ctx, attrs.CN)
 	if err != nil {
 		return nil, err
@@ -618,7 +623,11 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to describe key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from KMS

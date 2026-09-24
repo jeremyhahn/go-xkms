@@ -66,9 +66,22 @@ func TestWeakHashPolicy_DefaultIsRefuseInAFreshProcess(t *testing.T) {
 		return
 	}
 
+	// This test's whole point is the seed's value outside FIPS, so the
+	// child must run with no FIPS selector even when the parent test binary
+	// itself was invoked under GODEBUG=fips140=only (as go-xkms#23 requires
+	// for the rest of this suite): a GODEBUG inherited from the parent's
+	// environment would fail the child's own FIPSMode() guard above for a
+	// reason that has nothing to do with the weak-hash seed.
+	env := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GODEBUG=") {
+			continue
+		}
+		env = append(env, kv)
+	}
 	cmd := exec.Command(os.Args[0],
 		"-test.run=^TestWeakHashPolicy_DefaultIsRefuseInAFreshProcess$", "-test.v")
-	cmd.Env = append(os.Environ(), weakHashDefaultSubprocessEnv+"=1")
+	cmd.Env = append(env, weakHashDefaultSubprocessEnv+"=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fresh-process subprocess failed: %v\n%s", err, out)

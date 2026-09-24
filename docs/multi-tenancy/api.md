@@ -1,26 +1,30 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
-Tenant routes are `RouteAuthSession` under `/api/v1/tenants`, registered on the
-`hasTenants` predicate.
+Tenant routes are `RouteAuthPermission` under `/api/v1/tenants`, registered on
+the `hasTenants` predicate. Each demands the permission gRPC enforces for the
+same RPC (the **Permission** column): tenant metadata is `tenants:*`, and the
+per-tenant barrier lifecycle is its own `tenant_barrier:*` family, distinct
+from the system barrier's `seal:*`. An authenticated session alone reaches none
+of them. Admin and Owner hold every one of them by default.
 
 ## Capability matrix
 
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`TenantService.`) |
-|---|---|---|---|---|---|
-| Create tenant | `POST /api/v1/tenants/` | `CreateTenant` | same as REST | **MISSING — docs/13** | `CreateTenant` |
-| List tenants | `GET /api/v1/tenants/` | `ListTenants` | same as REST | **MISSING — docs/13** | `ListTenants` |
-| Get tenant | `GET /api/v1/tenants/{tenantID}` | `GetTenant` | same as REST | **MISSING — docs/13** | `GetTenant` |
-| Delete tenant | `DELETE /api/v1/tenants/{tenantID}` | `DeleteTenant` | same as REST | **MISSING — docs/13** | `DeleteTenant` |
-| Tenant barrier status | `GET /api/v1/tenants/{tenantID}/barrier/status` | `TenantBarrierStatus` | same as REST | **MISSING — docs/13** | `TenantBarrierStatus` |
-| Tenant barrier init | `POST /api/v1/tenants/{tenantID}/barrier/init` | `TenantBarrierInit` | same as REST | **MISSING — docs/13** | `TenantBarrierInit` |
-| Tenant barrier unseal | `POST /api/v1/tenants/{tenantID}/barrier/unseal` | `TenantBarrierUnseal` | same as REST | **MISSING — docs/13** | `TenantBarrierUnseal` |
-| Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | **MISSING — docs/13** | `UpdateTenantEntitlements` |
-| Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | **MISSING — docs/13** | `UpdateTenantQuotas` |
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`TenantService.`) | Permission |
+|---|---|---|---|---|---|---|
+| Create tenant | `POST /api/v1/tenants/` | `CreateTenant` | same as REST | **MISSING — docs/13** | `CreateTenant` | `tenants:create` |
+| List tenants | `GET /api/v1/tenants/` | `ListTenants` | same as REST | **MISSING — docs/13** | `ListTenants` | `tenants:list` |
+| Get tenant | `GET /api/v1/tenants/{tenantID}` | `GetTenant` | same as REST | **MISSING — docs/13** | `GetTenant` | `tenants:read` |
+| Delete tenant | `DELETE /api/v1/tenants/{tenantID}` | `DeleteTenant` | same as REST | **MISSING — docs/13** | `DeleteTenant` | `tenants:delete` |
+| Tenant barrier status | `GET /api/v1/tenants/{tenantID}/barrier/status` | `TenantBarrierStatus` | same as REST | **MISSING — docs/13** | `TenantBarrierStatus` | `tenant_barrier:status` |
+| Tenant barrier init | `POST /api/v1/tenants/{tenantID}/barrier/init` | `TenantBarrierInit` | same as REST | **MISSING — docs/13** | `TenantBarrierInit` | `tenant_barrier:init` |
+| Tenant barrier unseal | `POST /api/v1/tenants/{tenantID}/barrier/unseal` | `TenantBarrierUnseal` | same as REST | **MISSING — docs/13** | `TenantBarrierUnseal` | `tenant_barrier:unseal` |
+| Update entitlements | `PUT /api/v1/tenants/{tenantID}/entitlements` | `UpdateTenantEntitlements` | same as REST | **MISSING — docs/13** | `UpdateTenantEntitlements` | `tenants:update` |
+| Update quotas | `PUT /api/v1/tenants/{tenantID}/quotas` | `UpdateTenantQuotas` | same as REST | **MISSING — docs/13** | `UpdateTenantQuotas` | `tenants:update` |
 
 **MCP carries none of the tenant surface.** Nine gaps, recorded rather than
 omitted. Tenant administration is an operator activity and an MCP tool server is
@@ -127,6 +131,7 @@ Tenant barrier status is the same `BarrierStatus` shape as the system barrier.
 | Condition | REST | gRPC / Unix |
 |---|---|---|
 | success | 200 | `OK` |
+| caller lacks the route's permission | 403 | `PermissionDenied` |
 | tenant barrier sealed (from `status`) | 200 | `OK` |
 | isolation mode not entitled | 403 | `PermissionDenied` |
 | quota exceeded | 429 | `ResourceExhausted` |
@@ -136,6 +141,12 @@ Tenant barrier status is the same `BarrierStatus` shape as the system barrier.
 
 Cross-tenant access is deliberately **404, not 403**. A permission-denied answer
 would confirm that the tenant exists, making tenant IDs enumerable.
+
+The permission gate does not reopen that oracle. It decides before any tenant
+lookup, from the caller's grant alone, so a caller without the permission gets
+the same `403` for every `{tenantID}`, and a caller with it still gets the
+handler's identical `404` for another tenant's ID and for one that does not
+exist.
 
 ## Pagination
 

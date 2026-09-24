@@ -41,15 +41,18 @@ func freshHostStore(t *testing.T) known_hosts.Store {
 	return store
 }
 
-// dialWS dials the WebSocket endpoint under test.
-func dialWS(t *testing.T, ts *httptest.Server) *websocket.Conn {
+// dialWS dials the WebSocket endpoint under test. The bool return is false
+// when the upgrade was refused for the expected GODEBUG=fips140=only
+// reason (see requireWSUpgrade); the caller must return immediately in
+// that case.
+func dialWS(t *testing.T, ts *httptest.Server) (*websocket.Conn, bool) {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("ws dial: %v", err)
+	if !requireWSUpgrade(t, err) {
+		return nil, false
 	}
-	return conn
+	return conn, true
 }
 
 // readEcho drains BinaryMessage frames until want appears (or the deadline
@@ -96,7 +99,10 @@ func TestWSHandler_AskAccept(t *testing.T) {
 	ts := httptest.NewServer(NewWSHandler(resolver, WithCheckOrigin(func(*http.Request) bool { return true })))
 	defer ts.Close()
 
-	conn := dialWS(t, ts)
+	conn, ok := dialWS(t, ts)
+	if !ok {
+		return
+	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
@@ -173,7 +179,10 @@ func TestWSHandler_AskAccept_IgnoresUnrelatedFramesWhileWaiting(t *testing.T) {
 	ts := httptest.NewServer(NewWSHandler(resolver, WithCheckOrigin(func(*http.Request) bool { return true })))
 	defer ts.Close()
 
-	conn := dialWS(t, ts)
+	conn, ok := dialWS(t, ts)
+	if !ok {
+		return
+	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
@@ -228,7 +237,10 @@ func TestWSHandler_AskReject(t *testing.T) {
 	ts := httptest.NewServer(NewWSHandler(resolver, WithCheckOrigin(func(*http.Request) bool { return true })))
 	defer ts.Close()
 
-	conn := dialWS(t, ts)
+	conn, ok := dialWS(t, ts)
+	if !ok {
+		return
+	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
@@ -296,7 +308,10 @@ func TestWSHandler_AskTimeout(t *testing.T) {
 	))
 	defer ts.Close()
 
-	conn := dialWS(t, ts)
+	conn, ok := dialWS(t, ts)
+	if !ok {
+		return
+	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
@@ -352,7 +367,10 @@ func TestWSHandler_AcceptNew(t *testing.T) {
 	ts := httptest.NewServer(NewWSHandler(resolver, WithCheckOrigin(func(*http.Request) bool { return true })))
 	defer ts.Close()
 
-	conn := dialWS(t, ts)
+	conn, ok := dialWS(t, ts)
+	if !ok {
+		return
+	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 
@@ -411,7 +429,10 @@ func TestWSHandler_StrictDefaultRegression(t *testing.T) {
 	ts := httptest.NewServer(NewWSHandler(resolver, WithCheckOrigin(func(*http.Request) bool { return true })))
 	defer ts.Close()
 
-	conn := dialWS(t, ts)
+	conn, ok := dialWS(t, ts)
+	if !ok {
+		return
+	}
 	defer conn.Close()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 

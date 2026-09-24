@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -204,6 +205,54 @@ func TestExportKeyMaterial_RefusesAsymmetricKey(t *testing.T) {
 
 	_, err := b.ExportKeyMaterial(context.Background(), attrs)
 	assert.ErrorIs(t, err, backend.ErrAsymmetricKeyExportNotAllowed)
+}
+
+// TestExportKeyMaterial_NotFound verifies that a genuine storage.ErrNotFound
+// from the local metadata store is classified as backend.ErrKeyNotFound
+// (go-xkms#808).
+func TestExportKeyMaterial_NotFound(t *testing.T) {
+	b, _ := newVaultTestBackend(t)
+
+	attrs := &types.KeyAttributes{
+		CN:                 "not-found-exportable-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_VAULT,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+	}
+
+	_, err := b.ExportKeyMaterial(context.Background(), attrs)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, backend.ErrKeyNotFound), "expected errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+}
+
+// TestExportKeyMaterial_MetadataRetrievalError verifies that a
+// metadata-store failure other than storage.ErrNotFound is classified as
+// ErrKeyRetrievalFailed and does NOT satisfy
+// errors.Is(err, backend.ErrKeyNotFound) -- go-xkms#808.
+func TestExportKeyMaterial_MetadataRetrievalError(t *testing.T) {
+	config := &Config{
+		Address:     "http://127.0.0.1:8200",
+		Token:       "test-token",
+		TransitPath: "transit",
+		KeyStorage:  &failingStorage{err: errors.New("disk i/o error")},
+		CertStorage: storage.New(),
+	}
+	b, err := NewBackendWithClient(config, nil)
+	require.NoError(t, err)
+
+	attrs := &types.KeyAttributes{
+		CN:                 "transient-failure-exportable-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_VAULT,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+	}
+
+	_, err = b.ExportKeyMaterial(context.Background(), attrs)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, backend.ErrKeyNotFound), "a metadata I/O failure must not satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	assert.True(t, errors.Is(err, ErrKeyRetrievalFailed), "expected errors.Is(err, ErrKeyRetrievalFailed), got %v", err)
 }
 
 // TestImportKey_RefusesExistingKey verifies ImportKey refuses to overwrite a

@@ -78,6 +78,23 @@ var (
 	// public key does not match the issuer certificate it would be paired
 	// with, which would produce a certificate chain that never verifies.
 	ErrTenantSignerIssuerMismatch = errors.New("handlers: tenant CA signer does not match issuer certificate")
+
+	// ErrCAAAuthorizationLookup is returned when an order's authorization
+	// cannot be retrieved from storage while resolving the challenge type
+	// that validated a DNS identifier, needed to enforce a CAA record's RFC
+	// 8657 validationmethods parameter.
+	ErrCAAAuthorizationLookup = errors.New("handlers: failed to retrieve order authorization for CAA validation")
+
+	// ErrCAAAuthorizationNotFound is returned when none of an order's
+	// authorizations match the DNS identifier and wildcard flag being CAA
+	// validated, so the challenge type that validated it cannot be
+	// determined.
+	ErrCAAAuthorizationNotFound = errors.New("handlers: no authorization found for CAA-validated identifier")
+
+	// ErrCAAChallengeNotValidated is returned when an identifier's
+	// authorization has no challenge in the "valid" state, so the RFC 8657
+	// validationmethods check cannot determine which method validated it.
+	ErrCAAChallengeNotValidated = errors.New("handlers: authorization has no validated challenge")
 )
 
 // resolveTenantSigningCA determines which CA should sign certificates for the given account.
@@ -519,8 +536,17 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Perform CAA validation for DNS identifiers before certificate issuance
-	// per RFC 8555 Section 8.1 and RFC 8659
+	// per RFC 8555 Section 8.1, RFC 8659, and RFC 8657 (accounturi /
+	// validationmethods).
 	if s.caaValidator != nil {
+		authzDAO, err := s.storageFactory.AuthorizationDAO(account.ID)
+		if err != nil {
+			writeError(w, common.ServerInternal("Failed to create authorization DAO"))
+			return
+		}
+
+		accountURI := s.accountURL(account)
+
 		for _, identifier := range order.Identifiers {
 			// Only validate DNS identifiers - skip IP and permanent-identifier types
 			if identifier.Type != common.AuthzTypeDNS {
@@ -535,8 +561,19 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				domain = strings.TrimPrefix(domain, "*.")
 			}
 
+			// RFC 8657 Section 4 restricts issuance to the challenge type
+			// that actually validated the identifier, so resolve it before
+			// invoking the CAA validator.
+			validationMethod, err := s.caaValidationMethod(ctx, authzDAO, order, domain, isWildcard)
+			if err != nil {
+				s.logger.Error("Failed to resolve validated challenge type for CAA",
+					"domain", domain, "wildcard", isWildcard, "error", err)
+				s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to resolve validated challenge type for CAA validation"))
+				return
+			}
+
 			// Perform CAA validation
-			if err := s.caaValidator.Validate(ctx, domain, isWildcard); err != nil {
+			if err := s.caaValidator.Validate(ctx, domain, isWildcard, accountURI, validationMethod); err != nil {
 				s.logger.Error("CAA validation failed",
 					"domain", domain,
 					"wildcard", isWildcard,
@@ -1169,6 +1206,58 @@ func (s *RestService) failOrder(
 			"error", saveErr, "order_id", order.ID)
 	}
 	writeError(w, acmeErr)
+}
+
+// caaValidationMethod returns the RFC 8657 method-label (e.g. "http-01",
+// "dns-01") of the challenge that validated the order's authorization for
+// domain, so the CAA validator can enforce a record's validationmethods
+// parameter (RFC 8657 Section 4). It matches authorizations by identifier
+// value and wildcard flag, since a wildcard and non-wildcard identifier for
+// the same domain name are authorized separately per RFC 8555 Section 7.1.3.
+func (s *RestService) caaValidationMethod(
+	ctx context.Context,
+	authzDAO qrdbsdk.GenericDAO[*entities.ACMEAuthorization],
+	order *entities.ACMEOrder,
+	domain string,
+	isWildcard bool,
+) (string, error) {
+
+	for _, authzURL := range order.Authorizations {
+		pieces := strings.Split(authzURL, "/")
+		authzID, err := strconv.ParseUint(pieces[len(pieces)-1], 10, 64)
+		if err != nil {
+			s.logger.Error("Failed to parse authorization ID from URL for CAA validation",
+				"authz_url", authzURL, "error", err)
+			return "", ErrCAAAuthorizationLookup
+		}
+
+		authz, err := authzDAO.Get(ctx, authzID)
+		if err != nil {
+			s.logger.Error("Failed to retrieve authorization for CAA validation",
+				"authz_id", authzID, "error", err)
+			return "", ErrCAAAuthorizationLookup
+		}
+
+		if authz.Identifier.Type != common.AuthzTypeDNS ||
+			!strings.EqualFold(authz.Identifier.Value, domain) ||
+			authz.Wildcard != isWildcard {
+			continue
+		}
+
+		for _, challenge := range authz.Challenges {
+			if challenge.Status == common.StatusValid {
+				return challenge.Type, nil
+			}
+		}
+
+		s.logger.Error("Authorization has no validated challenge for CAA validation",
+			"authz_id", authzID, "domain", domain, "wildcard", isWildcard)
+		return "", ErrCAAChallengeNotValidated
+	}
+
+	s.logger.Error("No authorization found for CAA-validated identifier",
+		"domain", domain, "wildcard", isWildcard, "order_id", order.ID)
+	return "", ErrCAAAuthorizationNotFound
 }
 
 // Finalize a TCG-CSR-IDEVID for a successful enroll-01 challenge verification

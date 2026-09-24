@@ -16,11 +16,33 @@ package pkcs11test
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
+
+// requireMockEncrypt runs CryptoMockClient.Encrypt for a test that needs the
+// result to exercise further behavior, and reports whether the caller can
+// continue using it. The mock always builds its AES-GCM AEAD with
+// crypto/cipher's classic, arbitrary-IV-capable constructor -- see
+// newGCMWithTagSize in crypto_mock_client.go -- which GODEBUG=fips140=only
+// refuses outright regardless of whether this particular call supplied its
+// own nonce or let the mock generate one; only cipher.NewGCMWithRandomNonce
+// is usable in that mode, and the mock does not use it (see
+// docs/fips/README.md "AEAD construction").
+func requireMockEncrypt(t *testing.T, c *CryptoMockClient, ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, bool) {
+	t.Helper()
+	resp, err := c.Encrypt(ctx, req)
+	if err != nil {
+		if fips140.Enforced() {
+			return nil, false
+		}
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+	return resp, true
+}
 
 // TestCryptoMockClient_EncryptDecrypt verifies the round trip works and
 // returns a nonce/tag of the expected AES-GCM sizes.
@@ -28,12 +50,12 @@ func TestCryptoMockClient_EncryptDecrypt(t *testing.T) {
 	c := NewCryptoMockClient()
 	ctx := context.Background()
 
-	encResp, err := c.Encrypt(ctx, &transport.EncryptRequest{
+	encResp, ok := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
 		KeyID:     "test-key",
 		Plaintext: []byte("mock pkcs11 plaintext"),
 	})
-	if err != nil {
-		t.Fatalf("Encrypt() error = %v", err)
+	if !ok {
+		return
 	}
 	if len(encResp.Nonce) != 12 {
 		t.Fatalf("Nonce length = %d, want 12", len(encResp.Nonce))
@@ -62,12 +84,12 @@ func TestCryptoMockClient_Decrypt_WrongNonceLength(t *testing.T) {
 	c := NewCryptoMockClient()
 	ctx := context.Background()
 
-	encResp, err := c.Encrypt(ctx, &transport.EncryptRequest{
+	encResp, ok := requireMockEncrypt(t, c, ctx, &transport.EncryptRequest{
 		KeyID:     "test-key",
 		Plaintext: []byte("mock pkcs11 plaintext"),
 	})
-	if err != nil {
-		t.Fatalf("Encrypt() error = %v", err)
+	if !ok {
+		return
 	}
 
 	tests := []struct {

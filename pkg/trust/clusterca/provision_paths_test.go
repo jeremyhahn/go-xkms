@@ -717,6 +717,23 @@ func TestNodeLocalBackendSet_RejectsUnusableDataDir(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestNodeLocalBackendSet_RejectsUnusableCertsPath verifies that a failure
+// specific to the cert store -- as opposed to the shared data directory
+// (covered above) or the key store -- is also surfaced. A file sitting where
+// the "certs" subdirectory must be created fails even for root.
+func TestNodeLocalBackendSet_RejectsUnusableCertsPath(t *testing.T) {
+	dataDir := t.TempDir()
+	blocker := filepath.Join(dataDir, "certs")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600),
+		"pre-create a file where the certs store directory must be created")
+
+	_, err := NewNodeLocalBackends(context.Background(), &NodeLocalBackendsParams{
+		DataDir:    dataDir,
+		Protection: KeyProtection{Mode: KeyProtectPassphrase, Passphrase: mustSecret(t, "x")},
+	})
+	require.Error(t, err, "cert store construction must fail when its path is not a directory")
+}
+
 // TestNodeLocalBackends_TPMBackendUsedWhenItIsAKeyProvider verifies the shared
 // TPM handle is reused for the "tpm2" key backend, which is what keeps the
 // device from being opened twice.

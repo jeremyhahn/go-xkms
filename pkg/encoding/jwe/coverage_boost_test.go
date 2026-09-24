@@ -61,8 +61,12 @@ func TestEncryptWithHeader_EmptyHeaders(t *testing.T) {
 	enc, err := NewEncrypter("RSA-OAEP-256", "A256GCM", &key.PublicKey)
 	require.NoError(t, err)
 
-	jweStr, err := enc.EncryptWithHeader([]byte("test data"), map[string]interface{}{})
-	require.NoError(t, err)
+	jweStr, ok := requireJWE(t, func() (string, error) {
+		return enc.EncryptWithHeader([]byte("test data"), map[string]interface{}{})
+	})
+	if !ok {
+		return
+	}
 	assert.NotEmpty(t, jweStr)
 
 	dec := NewDecrypter()
@@ -80,10 +84,14 @@ func TestEncryptWithHeader_ECDSAKey(t *testing.T) {
 	enc, err := NewEncrypter("ECDH-ES+A256KW", "A256GCM", &key.PublicKey)
 	require.NoError(t, err)
 
-	jweStr, err := enc.EncryptWithHeader([]byte("ecdh payload"), map[string]interface{}{
-		"kid": "ec-key-1",
+	jweStr, ok := requireJWE(t, func() (string, error) {
+		return enc.EncryptWithHeader([]byte("ecdh payload"), map[string]interface{}{
+			"kid": "ec-key-1",
+		})
 	})
-	require.NoError(t, err)
+	if !ok {
+		return
+	}
 	assert.NotEmpty(t, jweStr)
 
 	kid, err := ExtractKID(jweStr)
@@ -106,11 +114,15 @@ func TestEncryptWithHeader_SymmetricKey(t *testing.T) {
 	enc, err := NewEncrypter("A256KW", "A256GCM", symKey)
 	require.NoError(t, err)
 
-	jweStr, err := enc.EncryptWithHeader([]byte("symmetric payload"), map[string]interface{}{
-		"kid": "sym-key-1",
-		"cty": "application/json",
+	jweStr, ok := requireJWE(t, func() (string, error) {
+		return enc.EncryptWithHeader([]byte("symmetric payload"), map[string]interface{}{
+			"kid": "sym-key-1",
+			"cty": "application/json",
+		})
 	})
-	require.NoError(t, err)
+	if !ok {
+		return
+	}
 	assert.NotEmpty(t, jweStr)
 
 	kid, err := ExtractKID(jweStr)

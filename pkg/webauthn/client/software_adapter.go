@@ -14,6 +14,7 @@
 package client
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -90,9 +91,17 @@ func (a *SoftwareAdapter) Available() bool {
 // JSON. It translates the WebAuthn JSON into a CTAP2 MakeCredential command,
 // calls the real authenticator, and translates the response back to WebAuthn
 // JSON for the RP server.
-func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
+//
+// SoftwareAdapter has no PIN, so ceremonyOpts.PIN is ignored: the software
+// authenticator's Config sets EnablePIN false, so no CTAP2 request it builds
+// is ever authorized by one.
+func (a *SoftwareAdapter) MakeCredential(_ context.Context, ceremonyOpts *CeremonyOptions) ([]byte, error) {
+	if ceremonyOpts == nil {
+		return nil, ErrNilRequest
+	}
+
 	var opts creationOptions
-	if err := json.Unmarshal(options, &opts); err != nil {
+	if err := json.Unmarshal(ceremonyOpts.OptionsJSON, &opts); err != nil {
 		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to parse creation options", Cause: err}
 	}
 
@@ -101,13 +110,18 @@ func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "missing RP ID in creation options"}
 	}
 
+	origin := ceremonyOpts.Origin
+	if origin == "" {
+		origin = "https://" + rpID
+	}
+
 	challenge, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.Challenge)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrInvalidChallenge, Cause: err}
 	}
 
 	// Build CollectedClientData JSON and compute clientDataHash
-	clientData := buildCollectedClientData("webauthn.create", challenge, "https://"+rpID)
+	clientData := buildCollectedClientData("webauthn.create", challenge, origin)
 	clientDataBytes, err := json.Marshal(clientData)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to marshal client data", Cause: err}
@@ -217,9 +231,15 @@ func (a *SoftwareAdapter) MakeCredential(options []byte) ([]byte, error) {
 // GetAssertion gets an assertion for the given assertion options by delegating
 // to the real CTAP2 authenticator. It translates the WebAuthn JSON into a
 // GetAssertion command and translates the response back.
-func (a *SoftwareAdapter) GetAssertion(options []byte) ([]byte, error) {
+//
+// SoftwareAdapter has no PIN; see MakeCredential.
+func (a *SoftwareAdapter) GetAssertion(_ context.Context, ceremonyOpts *CeremonyOptions) ([]byte, error) {
+	if ceremonyOpts == nil {
+		return nil, ErrNilRequest
+	}
+
 	var opts assertionOptions
-	if err := json.Unmarshal(options, &opts); err != nil {
+	if err := json.Unmarshal(ceremonyOpts.OptionsJSON, &opts); err != nil {
 		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to parse assertion options", Cause: err}
 	}
 
@@ -228,13 +248,18 @@ func (a *SoftwareAdapter) GetAssertion(options []byte) ([]byte, error) {
 		return nil, &errs.Detail{Err: ErrCTAPOperationFailed, Detail: "missing RP ID in assertion options"}
 	}
 
+	origin := ceremonyOpts.Origin
+	if origin == "" {
+		origin = "https://" + rpID
+	}
+
 	challenge, err := base64.RawURLEncoding.DecodeString(opts.PublicKey.Challenge)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrInvalidChallenge, Cause: err}
 	}
 
 	// Build CollectedClientData JSON and compute clientDataHash
-	clientData := buildCollectedClientData("webauthn.get", challenge, "https://"+rpID)
+	clientData := buildCollectedClientData("webauthn.get", challenge, origin)
 	clientDataBytes, err := json.Marshal(clientData)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrCTAPOperationFailed, Detail: "failed to marshal client data", Cause: err}

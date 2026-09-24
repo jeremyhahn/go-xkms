@@ -158,6 +158,15 @@ func TestResolveHash_WeakHashesUnderPolicy(t *testing.T) {
 	defer types.SetAllowWeakHashes(false)
 
 	h, err := ResolveHash("SHA-1")
+	if types.FIPSMode() {
+		// SetAllowWeakHashes(true) is a deliberate no-op under
+		// FIPSMode(): the Go Cryptographic Module's own boundary is the
+		// ceiling this repository's policy switch must never be able to
+		// re-open (see pkg/types/hashpolicy.go), so the escape hatch this
+		// test targets has nothing to reach in that mode.
+		require.Error(t, err)
+		return
+	}
 	require.NoError(t, err)
 	assert.Equal(t, crypto.SHA1, h)
 }
