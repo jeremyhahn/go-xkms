@@ -19,7 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -390,51 +390,23 @@ func TestDefaultFIDO2HandlerFactory_DefaultEnumerator(t *testing.T) {
 	defer func() { _ = handler.Close() }()
 }
 
-func TestDefaultFIDO2HandlerFactory_VirtualEnumerator(t *testing.T) {
-	originalValue := os.Getenv("FIDO2_USE_VIRTUAL")
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "true"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
-	}
-	defer func() {
-		if originalValue == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalValue)
-		}
-	}()
+// TestDefaultFIDO2HandlerFactory_IgnoresVirtualSwitch is a regression test for
+// go-xkms#807: the release factory must never build a software authenticator,
+// no matter what the process environment says. FIDO2_VIRTUAL_STATE_DIR is set
+// to a path that cannot be created; if defaultFIDO2HandlerFactory still
+// consulted the virtual-device switch, it would try to initialize file-backed
+// credential storage there and fail with ErrVirtualStorageInit (see the
+// //go:build integration && fido2 tests for that failure mode). It must
+// instead ignore both variables entirely and enumerate hardware.
+func TestDefaultFIDO2HandlerFactory_IgnoresVirtualSwitch(t *testing.T) {
+	t.Setenv("FIDO2_USE_VIRTUAL", "true")
+	t.Setenv("FIDO2_VIRTUAL_STATE_DIR", "/dev/null/impossible/path")
 
 	config := &fido2.Config{}
 
 	handler, err := defaultFIDO2HandlerFactory(config)
 	if err != nil {
-		t.Fatalf("defaultFIDO2HandlerFactory with virtual failed: %v", err)
-	}
-	if handler == nil {
-		t.Fatal("defaultFIDO2HandlerFactory with virtual returned nil handler")
-	}
-	defer func() { _ = handler.Close() }()
-}
-
-func TestDefaultFIDO2HandlerFactory_VirtualEnumeratorFalse(t *testing.T) {
-	originalValue := os.Getenv("FIDO2_USE_VIRTUAL")
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "false"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
-	}
-	defer func() {
-		if originalValue == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalValue)
-		}
-	}()
-
-	config := &fido2.Config{}
-
-	handler, err := defaultFIDO2HandlerFactory(config)
-	if err != nil {
-		t.Fatalf("defaultFIDO2HandlerFactory failed: %v", err)
+		t.Fatalf("defaultFIDO2HandlerFactory must ignore FIDO2_USE_VIRTUAL and FIDO2_VIRTUAL_STATE_DIR, got error: %v", err)
 	}
 	if handler == nil {
 		t.Fatal("defaultFIDO2HandlerFactory returned nil handler")
@@ -442,30 +414,17 @@ func TestDefaultFIDO2HandlerFactory_VirtualEnumeratorFalse(t *testing.T) {
 	defer func() { _ = handler.Close() }()
 }
 
-func TestDefaultFIDO2HandlerFactory_VirtualEnumeratorOtherValue(t *testing.T) {
-	originalValue := os.Getenv("FIDO2_USE_VIRTUAL")
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "yes"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
+// TestFIDO2HandlerFactory_DefaultsToHardwareFactory asserts that the
+// package-level factory variable used by every fido2 command is, in the
+// release build (no "integration fido2" tags), the hardware-only
+// defaultFIDO2HandlerFactory and nothing else can have swapped it out at
+// init time.
+func TestFIDO2HandlerFactory_DefaultsToHardwareFactory(t *testing.T) {
+	got := reflect.ValueOf(fido2HandlerFactory).Pointer()
+	want := reflect.ValueOf(FIDO2HandlerFactory(defaultFIDO2HandlerFactory)).Pointer()
+	if got != want {
+		t.Fatal("fido2HandlerFactory must be defaultFIDO2HandlerFactory in the release build; found it overridden")
 	}
-	defer func() {
-		if originalValue == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalValue)
-		}
-	}()
-
-	config := &fido2.Config{}
-
-	handler, err := defaultFIDO2HandlerFactory(config)
-	if err != nil {
-		t.Fatalf("defaultFIDO2HandlerFactory failed: %v", err)
-	}
-	if handler == nil {
-		t.Fatal("defaultFIDO2HandlerFactory returned nil handler")
-	}
-	defer func() { _ = handler.Close() }()
 }
 
 func TestDefaultFIDO2HandlerFactory_NilConfig(t *testing.T) {
@@ -1498,178 +1457,6 @@ func TestFIDO2InfoCmd_JSONOutput(t *testing.T) {
 	if !strings.Contains(output, "\"vendor_id\"") {
 		t.Errorf("expected JSON output with 'vendor_id' key, got: %s", output)
 	}
-}
-
-// =============================================================================
-// File-Based Credential Storage Tests
-// =============================================================================
-
-func TestNewFileCredentialStorage_ValidDirectory(t *testing.T) {
-	stateDir := t.TempDir()
-
-	storage, err := newFileCredentialStorage(stateDir)
-	if err != nil {
-		t.Fatalf("newFileCredentialStorage failed with valid directory: %v", err)
-	}
-	if storage == nil {
-		t.Fatal("newFileCredentialStorage returned nil storage")
-	}
-	defer func() { _ = storage.Close() }()
-}
-
-func TestNewFileCredentialStorage_InvalidDirectory(t *testing.T) {
-	// Use a path that cannot be created (nested under a file that does not exist
-	// as a directory). On Linux /dev/null is a file, so /dev/null/subdir fails.
-	invalidDir := "/dev/null/impossible/path"
-
-	storage, err := newFileCredentialStorage(invalidDir)
-	if err == nil {
-		_ = storage.Close()
-		t.Fatal("newFileCredentialStorage should fail with invalid directory")
-	}
-	if !errors.Is(err, ErrVirtualStorageInit) {
-		t.Errorf("expected error wrapping ErrVirtualStorageInit, got: %v", err)
-	}
-}
-
-func TestDefaultFIDO2HandlerFactory_VirtualWithStateDir(t *testing.T) {
-	originalVirtual := os.Getenv("FIDO2_USE_VIRTUAL")
-	originalStateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR")
-
-	stateDir := t.TempDir()
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "true"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
-	}
-	if err := os.Setenv("FIDO2_VIRTUAL_STATE_DIR", stateDir); err != nil {
-		t.Fatalf("Failed to set FIDO2_VIRTUAL_STATE_DIR: %v", err)
-	}
-	defer func() {
-		if originalVirtual == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalVirtual)
-		}
-		if originalStateDir == "" {
-			_ = os.Unsetenv("FIDO2_VIRTUAL_STATE_DIR")
-		} else {
-			_ = os.Setenv("FIDO2_VIRTUAL_STATE_DIR", originalStateDir)
-		}
-	}()
-
-	config := &fido2.Config{}
-	handler, err := defaultFIDO2HandlerFactory(config)
-	if err != nil {
-		t.Fatalf("defaultFIDO2HandlerFactory with state dir failed: %v", err)
-	}
-	if handler == nil {
-		t.Fatal("defaultFIDO2HandlerFactory with state dir returned nil handler")
-	}
-	defer func() { _ = handler.Close() }()
-}
-
-func TestDefaultFIDO2HandlerFactory_VirtualWithInvalidStateDir(t *testing.T) {
-	originalVirtual := os.Getenv("FIDO2_USE_VIRTUAL")
-	originalStateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR")
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "true"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
-	}
-	if err := os.Setenv("FIDO2_VIRTUAL_STATE_DIR", "/dev/null/impossible/path"); err != nil {
-		t.Fatalf("Failed to set FIDO2_VIRTUAL_STATE_DIR: %v", err)
-	}
-	defer func() {
-		if originalVirtual == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalVirtual)
-		}
-		if originalStateDir == "" {
-			_ = os.Unsetenv("FIDO2_VIRTUAL_STATE_DIR")
-		} else {
-			_ = os.Setenv("FIDO2_VIRTUAL_STATE_DIR", originalStateDir)
-		}
-	}()
-
-	config := &fido2.Config{}
-	handler, err := defaultFIDO2HandlerFactory(config)
-	if err == nil {
-		_ = handler.Close()
-		t.Fatal("defaultFIDO2HandlerFactory should fail with invalid state dir")
-	}
-	if !errors.Is(err, ErrVirtualStorageInit) {
-		t.Errorf("expected error wrapping ErrVirtualStorageInit, got: %v", err)
-	}
-}
-
-func TestDefaultFIDO2HandlerFactory_VirtualWithEmptyStateDir(t *testing.T) {
-	// When FIDO2_VIRTUAL_STATE_DIR is empty string, the factory should
-	// fall back to in-memory storage (no file storage created).
-	originalVirtual := os.Getenv("FIDO2_USE_VIRTUAL")
-	originalStateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR")
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "true"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
-	}
-	if err := os.Setenv("FIDO2_VIRTUAL_STATE_DIR", ""); err != nil {
-		t.Fatalf("Failed to set FIDO2_VIRTUAL_STATE_DIR: %v", err)
-	}
-	defer func() {
-		if originalVirtual == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalVirtual)
-		}
-		if originalStateDir == "" {
-			_ = os.Unsetenv("FIDO2_VIRTUAL_STATE_DIR")
-		} else {
-			_ = os.Setenv("FIDO2_VIRTUAL_STATE_DIR", originalStateDir)
-		}
-	}()
-
-	config := &fido2.Config{}
-	handler, err := defaultFIDO2HandlerFactory(config)
-	if err != nil {
-		t.Fatalf("defaultFIDO2HandlerFactory with empty state dir failed: %v", err)
-	}
-	if handler == nil {
-		t.Fatal("defaultFIDO2HandlerFactory with empty state dir returned nil handler")
-	}
-	defer func() { _ = handler.Close() }()
-}
-
-func TestDefaultFIDO2HandlerFactory_VirtualWithoutStateDir(t *testing.T) {
-	// When FIDO2_VIRTUAL_STATE_DIR is not set at all, the factory should
-	// use in-memory storage (same as before the change).
-	originalVirtual := os.Getenv("FIDO2_USE_VIRTUAL")
-	originalStateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR")
-
-	if err := os.Setenv("FIDO2_USE_VIRTUAL", "true"); err != nil {
-		t.Fatalf("Failed to set FIDO2_USE_VIRTUAL: %v", err)
-	}
-	_ = os.Unsetenv("FIDO2_VIRTUAL_STATE_DIR")
-	defer func() {
-		if originalVirtual == "" {
-			_ = os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			_ = os.Setenv("FIDO2_USE_VIRTUAL", originalVirtual)
-		}
-		if originalStateDir == "" {
-			_ = os.Unsetenv("FIDO2_VIRTUAL_STATE_DIR")
-		} else {
-			_ = os.Setenv("FIDO2_VIRTUAL_STATE_DIR", originalStateDir)
-		}
-	}()
-
-	config := &fido2.Config{}
-	handler, err := defaultFIDO2HandlerFactory(config)
-	if err != nil {
-		t.Fatalf("defaultFIDO2HandlerFactory without state dir failed: %v", err)
-	}
-	if handler == nil {
-		t.Fatal("defaultFIDO2HandlerFactory without state dir returned nil handler")
-	}
-	defer func() { _ = handler.Close() }()
 }
 
 // =============================================================================
