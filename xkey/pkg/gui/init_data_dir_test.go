@@ -36,6 +36,7 @@ package gui
 import (
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -43,6 +44,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,6 +127,7 @@ func newMinimalApp(t *testing.T) *App {
 		sshConnectService:  services.NewSSHConnectService(),
 		sshConsoleService:  services.NewSSHConsoleService(),
 		sshLocalService:    services.NewSSHLocalService(),
+		storageService:     services.NewStorageService(),
 		shutdownDone:       make(chan struct{}),
 	}
 }
@@ -200,4 +203,45 @@ func TestInitializeDataDir_DataDirSetDoesNotImplyInit(t *testing.T) {
 	err := app.initializeDataDir()
 	assert.False(t, errors.Is(err, ErrDataDirAlreadyInit),
 		"a pre-set dataDir with dataDirInit=false must not be rejected as already initialized")
+}
+
+// TestInitializeDataDir_LUKSLocked_FailsClosed_NoPlaintextWritten is the
+// go-xkms#722 regression test: when a LUKS volume is configured for this
+// xkey home but not mounted, initializeDataDir must refuse to open any
+// store — returning the canonical xkmssdk.ErrLUKSVolumeLocked sentinel —
+// rather than silently creating the data directory on the plain,
+// unencrypted filesystem beneath the unmounted mount point.
+func TestInitializeDataDir_LUKSLocked_FailsClosed_NoPlaintextWritten(t *testing.T) {
+	app := newMinimalApp(t)
+
+	vol, err := luks.NewVolume()
+	require.NoError(t, err, "luks.NewVolume")
+	require.NoError(t, os.WriteFile(vol.LUKSPath, []byte("fake luks container"), 0600))
+
+	err = app.initializeDataDir()
+	require.Error(t, err, "initializeDataDir must fail while the LUKS volume is locked")
+	assert.ErrorIs(t, err, xkmssdk.ErrLUKSVolumeLocked)
+	assert.False(t, app.dataDirInit, "dataDirInit must remain false while locked")
+
+	// Nothing must have been written beneath the mount point: the data
+	// subdirectory that initializeDataDir populates must not exist on the
+	// plain filesystem underneath the unmounted mount point. (The mount
+	// point directory itself already exists — it is XKEY_HOME, created by
+	// t.TempDir() before the volume was even configured.)
+	dataSubdir := filepath.Join(vol.MountPoint, "data")
+	_, statErr := os.Stat(dataSubdir)
+	assert.True(t, os.IsNotExist(statErr),
+		"no plaintext data must be written beneath the unmounted LUKS mount point, got stat err: %v", statErr)
+}
+
+// TestInitializeDataDir_StorageServiceWired_NoLUKS_Unchanged verifies that
+// wiring a.storageService does not change behavior for a home with no LUKS
+// volume configured: RequireUnlocked is a no-op and initialization succeeds
+// exactly as it did before go-xkms#722.
+func TestInitializeDataDir_StorageServiceWired_NoLUKS_Unchanged(t *testing.T) {
+	app := newMinimalApp(t)
+
+	err := app.initializeDataDir()
+	assert.NoError(t, err, "initializeDataDir must succeed unchanged when no LUKS volume is configured")
+	assert.True(t, app.dataDirInit)
 }

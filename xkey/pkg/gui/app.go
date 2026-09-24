@@ -715,6 +715,22 @@ func (a *App) initializeDataDir() error {
 		return ErrDataDirAlreadyInit
 	}
 
+	// Fail closed on a configured-but-locked LUKS volume: refuse to open any
+	// store rather than silently writing to the plain, unencrypted directory
+	// beneath an unmounted mount point. This is a defense-in-depth backstop
+	// behind startupReturningUser's own LUKS check (which normally keeps
+	// initializeDataDir from being called at all while locked, instead
+	// emitting EventStorageLUKSLocked for the frontend's unlock dialog) —
+	// it also covers callers added later, and the setup wizard and
+	// PostUnlockInitialize paths that call initializeDataDir directly once
+	// they believe the volume is mounted. No-LUKS configurations are
+	// unaffected: RequireUnlocked returns nil immediately.
+	if a.storageService != nil {
+		if err := a.storageService.RequireUnlocked(); err != nil {
+			return err
+		}
+	}
+
 	dir := a.dataDir
 	if dir == "" {
 		var err error
