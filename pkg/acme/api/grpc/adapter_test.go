@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/api"
@@ -1017,7 +1018,7 @@ func TestCreateTenantUser_Success(t *testing.T) {
 	assert.Equal(t, "testuser", result.Username)
 	assert.Equal(t, "tenant-1", result.TenantID)
 	assert.Equal(t, []string{"role-1"}, result.RoleIDs)
-	assert.True(t, result.Enabled)
+	assert.Equal(t, string(qrdbsdk.LifecycleActive), result.Lifecycle)
 	assert.False(t, result.System)
 }
 
@@ -1063,7 +1064,7 @@ func TestGetTenantUser_Success(t *testing.T) {
 	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "testuser", result.Username)
 	assert.Equal(t, []string{"role-1", "role-2"}, result.RoleIDs)
-	assert.True(t, result.Enabled)
+	assert.Equal(t, string(qrdbsdk.LifecycleActive), result.Lifecycle)
 }
 
 func TestGetTenantUser_Error(t *testing.T) {
@@ -1701,7 +1702,7 @@ func TestPbToUser_AllFields(t *testing.T) {
 	assert.Equal(t, "alice", result.Username)
 	assert.Equal(t, "tenant-1", result.TenantID)
 	assert.Equal(t, []string{"role-1", "role-2"}, result.RoleIDs)
-	assert.True(t, result.Enabled)
+	assert.Equal(t, string(qrdbsdk.LifecycleActive), result.Lifecycle)
 	assert.False(t, result.System)
 	assert.Equal(t, "2026-03-11T00:00:00Z", result.CreatedAt)
 	assert.Equal(t, "2026-03-11T12:00:00Z", result.UpdatedAt)
@@ -1729,4 +1730,11 @@ func TestWithAuth_WithoutToken(t *testing.T) {
 
 	// The context should be unchanged
 	assert.Equal(t, ctx, authCtx)
+}
+
+func TestPbToUser_DisabledMapsToDisabledLifecycle(t *testing.T) {
+	result, err := pbToUser(&pb.User{Id: "2", Username: "bob", TenantId: "tenant-1", Enabled: false})
+
+	require.NoError(t, err)
+	assert.Equal(t, string(qrdbsdk.LifecycleDisabled), result.Lifecycle)
 }

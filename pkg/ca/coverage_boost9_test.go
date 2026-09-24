@@ -32,6 +32,8 @@ import (
 
 	objstore "github.com/jeremyhahn/go-objstore/pkg/common"
 	objmemory "github.com/jeremyhahn/go-objstore/pkg/memory"
+	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -283,19 +285,32 @@ func TestGetOrGenerateCAKey_Ed25519_B9(t *testing.T) {
 }
 
 // TestGetOrGenerateCAKey_UnsupportedAlgorithm_B9 exercises the default error
-// branch in getOrGenerateCAKey by injecting an x509.UnknownPublicKeyAlgorithm.
+// branch in getOrGenerateCAKey by injecting an x509.UnknownPublicKeyAlgorithm
+// on a key the backend genuinely reports as not found. The generation
+// switch's default branch (ErrInvalidKeyAlgorithm) is only reachable past
+// go-xkms#801's fail-closed check when GetKey's failure classifies as
+// errors.Is(err, backend.ErrKeyNotFound); it is exercised here through a
+// mock backend rather than the software backend's own KeyAttributes.Validate
+// (which would itself reject an unset algorithm before getOrGenerateCAKey's
+// generation switch ever runs).
 func TestGetOrGenerateCAKey_UnsupportedAlgorithm_B9(t *testing.T) {
 	t.Parallel()
-	ca := setupTestCA(t)
+	mockKP := mocks.NewMockBackend()
+	mockKP.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+		return nil, backendpkg.ErrKeyNotFound
+	}
+	ca := setupUninitializedCAWithKeyProvider(t, mockKP)
 
 	attrs := &types.KeyAttributes{
 		CN:           "unsupported-algo-b9",
 		KeyAlgorithm: x509.UnknownPublicKeyAlgorithm,
+		KeyType:      types.KeyTypeCA,
 		StoreType:    types.StoreSoftware,
 	}
 	_, err := ca.getOrGenerateCAKey(context.Background(), attrs)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
+	assert.Empty(t, mockKP.GenerateKeyCalls)
 }
 
 // =============================================================================

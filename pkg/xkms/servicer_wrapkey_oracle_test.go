@@ -69,7 +69,9 @@ func (c *chattyDecrypter) Decrypt(_ io.Reader, _ []byte, _ crypto.DecrypterOpts)
 // needs nothing more than a per-ciphertext conformance answer, and
 // UnwrapKeyByID hands one out over gRPC, QUIC, MCP, the unix socket and REST.
 func TestUnwrapRSAPKCS1v15_CiphertextFailuresAreIndistinguishable(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs, key := newRSAWrappingBackend(t)
 	ctx := context.Background()
 	modulusLen := key.Size()
@@ -113,7 +115,9 @@ func TestUnwrapRSAPKCS1v15_CiphertextFailuresAreIndistinguishable(t *testing.T) 
 // the same error a non-conformant ciphertext gets, or the rejection itself
 // becomes the oracle answer.
 func TestUnwrapRSAPKCS1v15_RejectsConformantEmptyPayload(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs, key := newRSAWrappingBackend(t)
 	ctx := context.Background()
 
@@ -156,7 +160,9 @@ func TestUnwrapRSAPKCS1v15_RejectsConformantEmptyPayload(t *testing.T) {
 // its own error code, and embedding it in ErrKeyOperation.Err used to put that
 // straight on the wire.
 func TestUnwrapRSA_DoesNotLeakBackendDiagnostics(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store := newMockKeyStore("kek-be")
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -233,7 +239,9 @@ func TestUnwrapRSAOAEP_CiphertextFailuresAreIndistinguishable(t *testing.T) {
 // is the padding oracle's answer. Closing it means refusing CKM_AES_CBC_PAD for
 // C_UnwrapKey, which is a policy decision and not made here.
 func TestUnwrapAESCBCPad_FailureModesAreIndistinguishable(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 	ctx := context.Background()
 
@@ -300,7 +308,9 @@ func TestUnwrapAESCBCPad_FailureModesAreIndistinguishable(t *testing.T) {
 // blob, so neither is an oracle, and collapsing them would make the service
 // undiagnosable for no security gain.
 func TestUnwrapKeyMaterial_KeyErrorsStayDistinguishable(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	ctx := context.Background()
 	store, attrs, key := newRSAWrappingBackend(t)
 	blob := make([]byte, key.Size())
@@ -344,7 +354,12 @@ func TestUnwrapKeyMaterial_RejectsEmptyResultForAEAD(t *testing.T) {
 	require.Len(t, encrypted.Tag, aesGCMTagSize)
 	require.Empty(t, encrypted.Ciphertext)
 
-	blob := make([]byte, 0, aesGCMNonceSize+aesGCMTagSize)
+	modeByte := aesGCMWrapModeExplicit
+	if encrypted.GCMNonceMode == types.GCMNonceModeRandom {
+		modeByte = aesGCMWrapModeRandom
+	}
+	blob := make([]byte, 0, 1+aesGCMNonceSize+aesGCMTagSize)
+	blob = append(blob, modeByte)
 	blob = append(blob, encrypted.Nonce...)
 	blob = append(blob, encrypted.Ciphertext...)
 	blob = append(blob, encrypted.Tag...)

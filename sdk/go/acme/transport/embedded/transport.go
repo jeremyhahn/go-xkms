@@ -478,22 +478,65 @@ func (t *Transport) parseCertificateResponse(body []byte, nonce, method string) 
 	}, nil
 }
 
-// parseErrorResponse parses an ACME error response.
+// parseErrorResponse parses an ACME (or admin RFC 7807 problem) error
+// response.
+//
+// The ACME URN type ("urn:ietf:params:acme:error:*") only covers the RFC
+// 8555 protocol surface. Admin responses use their own problem types (e.g.
+// "urn:trusted-ca:error:forbidden") that ParseACMEErrorType does not
+// recognize and that therefore resolve to CodeUnknown, silently discarding
+// the distinction between a 403 permission denial and a 404 not-found. The
+// REST transport (transport/rest) already falls back to the HTTP status
+// code in that case; the embedded transport mirrors it here so admin
+// clients get identical typed errors over both transports.
 func (t *Transport) parseErrorResponse(recorder *httptest.ResponseRecorder) error {
 	const op = "embedded.Transport.parseErrorResponse"
 
 	body := recorder.Body.Bytes()
+	status := recorder.Code
 
 	var acmeErr acmeErrorResponse
 	if err := json.Unmarshal(body, &acmeErr); err != nil {
 		// Return generic error if cannot parse
-		return errors.NewInternal(op, "request failed with status "+recorder.Result().Status)
+		return errors.New(httpStatusToErrorCode(status), op, "request failed with status "+recorder.Result().Status)
 	}
 
-	// Map ACME error type to SDK error code
+	// Map ACME error type to SDK error code, falling back to the HTTP
+	// status when the type is not one of the RFC 8555 URNs.
 	code := errors.ParseACMEErrorType(acmeErr.Type)
+	if code == errors.CodeUnknown {
+		code = httpStatusToErrorCode(status)
+	}
 
 	return errors.New(code, op, acmeErr.Detail)
+}
+
+// httpStatusToErrorCode maps HTTP status codes to SDK error codes,
+// mirroring transport/rest's Transport.httpStatusToErrorCode.
+func httpStatusToErrorCode(status int) errors.ErrorCode {
+	statusCodeMap := map[int]errors.ErrorCode{
+		http.StatusBadRequest:          errors.CodeInvalidInput,
+		http.StatusUnauthorized:        errors.CodeUnauthorized,
+		http.StatusForbidden:           errors.CodeForbidden,
+		http.StatusNotFound:            errors.CodeNotFound,
+		http.StatusConflict:            errors.CodeConflict,
+		http.StatusTooManyRequests:     errors.CodeRateLimited,
+		http.StatusInternalServerError: errors.CodeInternal,
+		http.StatusBadGateway:          errors.CodeUnavailable,
+		http.StatusServiceUnavailable:  errors.CodeUnavailable,
+		http.StatusGatewayTimeout:      errors.CodeTimeout,
+	}
+
+	if code, ok := statusCodeMap[status]; ok {
+		return code
+	}
+	if status >= 400 && status < 500 {
+		return errors.CodeInvalidInput
+	}
+	if status >= 500 {
+		return errors.CodeInternal
+	}
+	return errors.CodeUnknown
 }
 
 // Conn returns the underlying embedded server reference.

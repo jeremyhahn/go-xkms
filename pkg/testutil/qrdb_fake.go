@@ -206,7 +206,8 @@ func (f *QRDBFakeTransport) CreateUser(ctx context.Context, req *qrdbtransport.C
 		Name:     req.Name,
 		TenantID: req.TenantID,
 		RoleIDs:  append([]string{}, req.RoleIDs...),
-		Enabled:  true,
+		// qrdb v0.20: Lifecycle is the only account state.
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
 	f.users[u.ID] = u
 	f.usersByName[nameKey] = u.ID
@@ -370,7 +371,7 @@ func (f *QRDBFakeTransport) EnableUser(ctx context.Context, id uint64) error {
 	if !ok {
 		return &qrdbtransport.UserNotFoundError{ID: id}
 	}
-	u.Enabled = true
+	u.Lifecycle = string(qrdbsdk.LifecycleActive)
 	return nil
 }
 
@@ -382,7 +383,7 @@ func (f *QRDBFakeTransport) DisableUser(ctx context.Context, id uint64) error {
 	if !ok {
 		return &qrdbtransport.UserNotFoundError{ID: id}
 	}
-	u.Enabled = false
+	u.Lifecycle = string(qrdbsdk.LifecycleDisabled)
 	return nil
 }
 

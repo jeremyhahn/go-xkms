@@ -52,7 +52,10 @@ type Backend interface {
 	// Ed25519 keys have a fixed size and do not require additional parameters.
 	GenerateEd25519(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
-	// GetKey retrieves an existing private key by its attributes.
+	// GetKey retrieves an existing private key by its attributes. See the
+	// error contract documented on types.KeyProvider.GetKey: only a
+	// genuine not-found condition may satisfy
+	// errors.Is(err, backend.ErrKeyNotFound).
 	GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error)
 
 	// DeleteKey removes a key identified by its attributes.

@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -180,9 +181,9 @@ func TestUserToTransport_ResolvesFirstRoleName(t *testing.T) {
 	}
 
 	info := svc.userToTransport(context.Background(), &qrdbtransport.User{
-		Username: "alice",
-		Enabled:  true,
-		RoleIDs:  []string{"role-1", "role-2"},
+		Username:  "alice",
+		Lifecycle: string(qrdbsdk.LifecycleActive),
+		RoleIDs:   []string{"role-1", "role-2"},
 	})
 
 	assert.Equal(t, "alice", info.Username)
@@ -194,8 +195,8 @@ func TestUserToTransport_NoRoles(t *testing.T) {
 	svc, _, _ := setupServiceWithUserClients(t)
 
 	info := svc.userToTransport(context.Background(), &qrdbtransport.User{
-		Username: "bob",
-		Enabled:  false,
+		Username:  "bob",
+		Lifecycle: string(qrdbsdk.LifecycleDisabled),
 	})
 
 	assert.Equal(t, "bob", info.Username)
@@ -302,7 +303,7 @@ func TestCreateUser_Success(t *testing.T) {
 		// projection bug in exactly the way this one hid.
 		return &qrdbtransport.User{
 			Username: "dave", Email: req.Email, Name: req.Name,
-			Enabled: true, RoleIDs: []string{"id-admin"},
+			Lifecycle: string(qrdbsdk.LifecycleActive), RoleIDs: []string{"id-admin"},
 		}, nil
 	}
 
@@ -377,7 +378,7 @@ func TestListUsers_Success(t *testing.T) {
 	}
 	users.listUsers = func(_ context.Context, _ *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
 		return &qrdbtransport.ListUsersResponse{Users: []*qrdbtransport.User{
-			{Username: "u1", RoleIDs: []string{"r1"}, Enabled: true},
+			{Username: "u1", RoleIDs: []string{"r1"}, Lifecycle: string(qrdbsdk.LifecycleActive)},
 			{Username: "u2"},
 		}}, nil
 	}
@@ -422,7 +423,7 @@ func TestGetUser_Success(t *testing.T) {
 
 	users.getUserByUsername = func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
 		assert.Equal(t, "alice", username)
-		return &qrdbtransport.User{Username: "alice", Enabled: true}, nil
+		return &qrdbtransport.User{Username: "alice", Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 	}
 
 	resp, err := svc.GetUser(context.Background(), "alice")
@@ -751,7 +752,7 @@ func TestCreateUser_EmailAndNameReachTheStore(t *testing.T) {
 	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 		got = req
 		return &qrdbtransport.User{
-			Username: req.Username, Email: req.Email, Name: req.Name, Enabled: true,
+			Username: req.Username, Email: req.Email, Name: req.Name, Lifecycle: string(qrdbsdk.LifecycleActive),
 		}, nil
 	}
 
@@ -779,7 +780,7 @@ func TestCreateUser_EmailAndNameReachTheStore(t *testing.T) {
 // name (Codex, go-xkms #190).
 func TestUserReads_ProjectEmailAndDisplayName(t *testing.T) {
 	stored := &qrdbtransport.User{
-		ID: 7, Username: "frank", Email: "frank@example.com", Name: "Frank Example", Enabled: true,
+		ID: 7, Username: "frank", Email: "frank@example.com", Name: "Frank Example", Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
 
 	t.Run("GetUser", func(t *testing.T) {

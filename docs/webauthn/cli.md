@@ -1,14 +1,19 @@
 # WebAuthn Relying Party — CLI
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-10
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 The relying party is a server component and has **no CLI verbs of its own**.
-What the CLI offers is the client side of its ceremonies.
+What the CLI offers is the client side of its ceremonies, all driven through
+the single ceremony driver `pkg/webauthn/client` (re-exported at
+`sdk/go/webauthnclient`) — see [`engineering.md`](engineering.md)
+§"The headless client". `xkey`, `xkmsctl` and `xkmsctl fido2` each use their
+own `RelyingParty`/`AuthenticatorAdapter` pair over that one driver; none
+reimplements the ceremony.
 
 ## Driving a ceremony from `xkmsctl`
 
-`xkmsctl fido2` uses the headless client (`pkg/webauthn/client`) plus the CTAP2
-layer to run registration and authentication against a real authenticator:
+`xkmsctl fido2` uses the headless client's `HardwareAdapter` (`pkg/fido2`) to
+run registration and authentication against a real authenticator:
 
 ```
 xkmsctl fido2 list-devices

@@ -254,6 +254,81 @@ shared type set.
 The mapping is implemented once per transport in `errors_keyops.go`
 (`pkg/api/rest`, `pkg/api/grpc`, `pkg/api/mcp`, `pkg/xkms`).
 
+### The real MCP tool surface carries go-qrdb's wire classification (#791)
+
+The MCP column above is the JSON-RPC dispatch core, `pkg/api/mcp.Server`. The
+unified API server never speaks that JSON-RPC-over-the-wire shape directly:
+`pkg/apimodule.RegisterMCP` registers one real mcp-go tool per JSON-RPC
+method, and `mcpToolHandler` calls `Server.InvokeMethod` and adapts its
+answer. Per the Model Context Protocol specification, a failure *inside* a
+tool is an ordinary tool result (`isError: true`), never a JSON-RPC protocol
+error, so the code has nowhere to ride except that result.
+
+Before #791, `mcpToolHandler` rendered every `InvokeMethod` failure as prose
+only (`err.Error()`) — none of the codes `pkg/api/mcp`'s handlers and gates
+compute (`*KeyOpError.Code`; see `errors_keyops.go`, `authz.go`, `tenant.go`)
+reached the caller. `mcpToolHandler` now unwraps a `*KeyOpError` (`errors.As`)
+and renders it as go-qrdb's own MCP wire contract instead of inventing a
+parallel one: the tool result's `structuredContent` carries a
+`wire.ErrorEnvelope` (`code`, `status`, `message`, `tool`) — the exact shape
+go-qrdb's own MCP server produces for its own tools
+(`go-qrdb/pkg/api/mcp/status.go`'s `toolErrorResult`) and the shape go-qrdb's
+own SDK client (`sdk/go/transport/mcp`) already decodes. An `InvokeMethod`
+failure that is not a `*KeyOpError` renders as a generic, undetailed internal
+fault (`wire.CodeInternal`, message `"xkms: internal error"`) rather than
+leaking its text to the caller.
+
+| `KeyOpError.Code` (`pkg/api/mcp`, JSON-RPC numbering) | go-qrdb `wire.Code` |
+|---|---|
+| `ErrCodeParseError` (-32700) | `CodeInvalidArgument` (-32012) |
+| `ErrCodeInvalidRequest` (-32600) | `CodeInvalidArgument` (-32012) |
+| `ErrCodeMethodNotFound` (-32601) | `CodeUnimplemented` (-32014) |
+| `ErrCodeInvalidParams` (-32602) | `CodeInvalidArgument` (-32012) |
+| `ErrCodeInternalError` (-32603) | `CodeInternal` (-32603) |
+| `ErrCodeUnauthorized` (-32002) | `CodeUnauthenticated` (-32001) |
+| `ErrCodeForbidden` (-32003) | `CodePermissionDenied` (-32003) |
+| `ErrCodeServiceUnavailable` (-32004) | `CodeUnavailable` (-32006) |
+
+**Closed (#797)**: xkms's own SDK client for this surface
+(`pkg/api/transport/mcp.Transport`) now reads `structuredContent` instead of
+classifying a tool failure by matching keywords in the error text. `rpcCall`
+runs every failing tool result through `classifyToolError` (`status.go`),
+which decodes the envelope with `wire.DecodeErrorPayload` and maps its
+`wire.Code` back onto the JSON-RPC error codes `*RPCError.Code` has always
+carried — the same fail-open pattern go-qrdb's own SDK client replaced with
+this envelope (go-qrdb#438), adopted here rather than reinvented. The
+previous `newToolError`/`toolErrorCode` keyword matcher, and the legacy
+"`JSON-RPC error <code>: <message>`" text-embedded-code fallback it also
+carried, are both deleted; there is no text fallback left.
+
+| go-qrdb `wire.Code` | `*RPCError.Code` (`pkg/api/mcp`, JSON-RPC numbering) |
+|---|---|
+| `CodeUnauthenticated` (-32001) | `ErrCodeUnauthorized` (-32002) |
+| `CodePermissionDenied` (-32003) | `ErrCodeForbidden` (-32003) |
+| `CodeNotFound` (-32004) | `ErrCodeInvalidParams` (-32602) |
+| `CodeUnavailable` (-32006) | `ErrCodeServiceUnavailable` (-32004) |
+| `CodeInvalidArgument` (-32012) | `ErrCodeInvalidParams` (-32602) |
+| `CodeUnimplemented` (-32014) | `ErrCodeMethodNotFound` (-32601) |
+| `CodeInternal` (-32603) | `ErrCodeInternalError` (-32603) |
+| any other code (`CodeDeadlineExceeded`, `CodeResourceExhausted`, `CodeFailedPrecondition`, `CodeCanceled`, `CodeAlreadyExists`, `CodeAborted`, `CodeOutOfRange`, `CodeDataLoss`, `CodeUnknown`, or a number this build predates) | `ErrCodeInternalError` (-32603), same floor `mapKeyOpError` uses server-side |
+
+`wire.CodeNotFound` joins `CodeInvalidArgument` in `ErrCodeInvalidParams`
+because xkms's JSON-RPC vocabulary has no dedicated NotFound member (see the
+table above); the classification a caller observes for a "not found" failure
+does not move even though the mechanism producing it changed. Note that no
+current server code path actually emits `wire.CodeNotFound` — every
+not-found sentinel in `errors_keyops.go`'s `keyOpSentinelCodes` renders as
+`ErrCodeInternalError` today — so this row is the client's readiness for a
+code the server does not yet send, not a currently reachable classification;
+closing that server-side gap is tracked separately.
+
+A failing tool result whose `structuredContent` carries no envelope is not
+degraded into a keyword guess. Per the project's no-backward-compatibility
+rule it is reported as `*EnvelopeMissingError`, a protocol error: the unified
+server stamps an envelope onto every failing xkms tool result
+(`codedToolResult`), so a response with none did not come from that
+contract.
+
 ## Pagination
 
 `ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values and

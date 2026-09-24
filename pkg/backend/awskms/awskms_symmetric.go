@@ -18,6 +18,7 @@ package awskms
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -203,12 +204,21 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, &errs.Message{Msg: "invalid metadata: missing key_id"}
 	}
 
-	// Verify key exists in KMS
+	// Verify key exists in KMS. Only a genuine NotFoundException -- KMS's
+	// signal that the key ID/ARN names no key it has ever heard of -- is
+	// reported as ErrKeyNotFound. Any other failure (throttling, a network
+	// fault, an IAM/authorization denial) must not be conflated with "no
+	// key yet": getOrGenerateCAKey relies on that distinction to decide
+	// whether generating a replacement key is safe.
 	_, err := b.client.DescribeKey(ctx, &kms.DescribeKeyInput{
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to describe key: %v", err)}
 	}
 
 	return &awsKMSSymmetricKey{

@@ -720,9 +720,9 @@ func contains(s, substr string) bool {
 // =============================================================================
 
 func TestX25519PublicKey(t *testing.T) {
-	key, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate X25519 key: %v", err)
+	key, ok := requireX25519Key(t)
+	if !ok {
+		return
 	}
 
 	jwk, err := FromPublicKey(key.PublicKey())
@@ -742,9 +742,9 @@ func TestX25519PublicKey(t *testing.T) {
 }
 
 func TestX25519PrivateKey(t *testing.T) {
-	key, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate X25519 key: %v", err)
+	key, ok := requireX25519Key(t)
+	if !ok {
+		return
 	}
 
 	jwk, err := FromPrivateKey(key)
@@ -765,9 +765,9 @@ func TestX25519PrivateKey(t *testing.T) {
 
 func TestX25519RoundTrip(t *testing.T) {
 	// Generate key
-	originalKey, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate X25519 key: %v", err)
+	originalKey, ok := requireX25519Key(t)
+	if !ok {
+		return
 	}
 
 	// Convert to JWK

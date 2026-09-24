@@ -14,62 +14,24 @@
 package client
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
-const (
-	// headerSessionID is the header key for passing session IDs between begin/finish calls.
-	headerSessionID = "X-Session-Id"
-
-	// headerUserID is the header key for passing user IDs.
-	headerUserID = "X-User-Id"
-
-	// headerAuthorization is the standard Authorization header.
-	headerAuthorization = "Authorization"
-
-	// headerContentType is the Content-Type header.
-	headerContentType = "Content-Type"
-
-	// contentTypeJSON is the JSON content type.
-	contentTypeJSON = "application/json"
-
-	// pathRegistrationBegin is the server endpoint for starting registration.
-	pathRegistrationBegin = "/api/v1/webauthn/registration/begin"
-
-	// pathRegistrationFinish is the server endpoint for finishing registration.
-	pathRegistrationFinish = "/api/v1/webauthn/registration/finish"
-
-	// pathLoginBegin is the server endpoint for starting login.
-	pathLoginBegin = "/api/v1/webauthn/login/begin"
-
-	// pathLoginFinish is the server endpoint for finishing login.
-	pathLoginFinish = "/api/v1/webauthn/login/finish"
-
-	// pathHealthCheck is used to verify server availability.
-	pathHealthCheck = "/api/v1/webauthn/registration/status"
-
-	// maxResponseBodySize is the maximum response body size we read (1MB).
-	maxResponseBodySize = 1 << 20
-)
-
 // Client is a headless WebAuthn client that performs registration and
-// authentication against a WebAuthn relying party server. It acts as the
-// "browser" in the WebAuthn flow, bridging the RP server and a local
-// authenticator.
+// authentication ceremonies. It acts as the "browser" in the WebAuthn flow,
+// bridging a RelyingParty (the server side) and an AuthenticatorAdapter (the
+// authenticator side).
 type Client struct {
-	mu         sync.RWMutex
-	config     *Config
-	httpClient *http.Client
-	adapter    AuthenticatorAdapter
-	serverURL  string
+	mu      sync.RWMutex
+	config  *Config
+	adapter AuthenticatorAdapter
+	rp      RelyingParty
+	origin  string
 }
 
 // NewClient creates a new headless WebAuthn client with the provided configuration.
@@ -84,32 +46,32 @@ func NewClient(config *Config) (*Client, error) {
 		return nil, err
 	}
 
-	httpClient := config.HTTPClient
-	if httpClient == nil {
-		transport := &http.Transport{}
-		if config.TLSConfig != nil {
-			transport.TLSClientConfig = config.TLSConfig
+	rp := config.RelyingParty
+	if rp == nil {
+		httpRP, err := newDefaultHTTPRelyingParty(config)
+		if err != nil {
+			return nil, err
 		}
-		httpClient = &http.Client{
-			Transport: transport,
-			Timeout:   config.Timeout,
-		}
+		rp = httpRP
 	}
 
-	serverURL := strings.TrimRight(config.ServerURL, "/")
+	origin := config.Origin
+	if origin == "" {
+		origin = deriveOrigin(config.ServerURL)
+	}
 
 	return &Client{
-		config:     config,
-		httpClient: httpClient,
-		adapter:    config.AuthenticatorAdapter,
-		serverURL:  serverURL,
+		config:  config,
+		adapter: config.AuthenticatorAdapter,
+		rp:      rp,
+		origin:  origin,
 	}, nil
 }
 
 // Register performs a full WebAuthn registration ceremony:
-//  1. POST registration/begin to get creation options from the server
-//  2. Call the authenticator's MakeCredential with those options
-//  3. POST registration/finish with the attestation response
+//  1. Ask the RelyingParty to begin registration, for the creation options.
+//  2. Call the authenticator's MakeCredential with those options.
+//  3. Ask the RelyingParty to finish registration with the attestation.
 func (c *Client) Register(ctx context.Context, req *RegistrationRequest) (*RegistrationResult, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -126,20 +88,21 @@ func (c *Client) Register(ctx context.Context, req *RegistrationRequest) (*Regis
 		return nil, ErrAuthenticatorNotFound
 	}
 
-	// Step 1: Begin registration with the server
-	creationOptions, sessionID, err := c.beginRegistration(ctx, req)
+	begin, err := c.rp.BeginRegistration(ctx, req)
 	if err != nil {
 		return nil, wrapError("begin registration", err)
 	}
 
-	// Step 2: Create credential with the authenticator
-	attestationResponse, err := adapter.MakeCredential(creationOptions)
+	attestation, err := adapter.MakeCredential(ctx, &CeremonyOptions{
+		OptionsJSON: begin.OptionsJSON,
+		Origin:      c.origin,
+		PIN:         req.PIN,
+	})
 	if err != nil {
 		return nil, wrapError("make credential", &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: err})
 	}
 
-	// Step 3: Finish registration with the server
-	result, err := c.finishRegistration(ctx, sessionID, attestationResponse, req.AuthToken)
+	result, err := c.rp.FinishRegistration(ctx, begin, req, attestation)
 	if err != nil {
 		return nil, wrapError("finish registration", err)
 	}
@@ -148,9 +111,9 @@ func (c *Client) Register(ctx context.Context, req *RegistrationRequest) (*Regis
 }
 
 // Login performs a full WebAuthn authentication ceremony:
-//  1. POST login/begin to get assertion options from the server
-//  2. Call the authenticator's GetAssertion with those options
-//  3. POST login/finish with the assertion response
+//  1. Ask the RelyingParty to begin authentication, for the request options.
+//  2. Call the authenticator's GetAssertion with those options.
+//  3. Ask the RelyingParty to finish authentication with the assertion.
 func (c *Client) Login(ctx context.Context, req *AuthenticationRequest) (*AuthenticationResult, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -167,20 +130,21 @@ func (c *Client) Login(ctx context.Context, req *AuthenticationRequest) (*Authen
 		return nil, ErrAuthenticatorNotFound
 	}
 
-	// Step 1: Begin login with the server
-	assertionOptions, sessionID, userID, err := c.beginLogin(ctx, req)
+	begin, err := c.rp.BeginAuthentication(ctx, req)
 	if err != nil {
 		return nil, wrapError("begin login", err)
 	}
 
-	// Step 2: Get assertion from the authenticator
-	assertionResponse, err := adapter.GetAssertion(assertionOptions)
+	assertion, err := adapter.GetAssertion(ctx, &CeremonyOptions{
+		OptionsJSON: begin.OptionsJSON,
+		Origin:      c.origin,
+		PIN:         req.PIN,
+	})
 	if err != nil {
 		return nil, wrapError("get assertion", &errs.Joined{Lead: ErrCTAPOperationFailed, Cause: err})
 	}
 
-	// Step 3: Finish login with the server
-	result, err := c.finishLogin(ctx, sessionID, userID, assertionResponse, req.AuthToken)
+	result, err := c.rp.FinishAuthentication(ctx, begin, req, assertion)
 	if err != nil {
 		return nil, wrapError("finish login", err)
 	}
@@ -188,234 +152,33 @@ func (c *Client) Login(ctx context.Context, req *AuthenticationRequest) (*Authen
 	return result, nil
 }
 
-// Available checks if both the server and authenticator are reachable.
+// Available checks if both the relying party and the authenticator are
+// reachable. A RelyingParty that does not implement AvailabilityChecker is
+// assumed reachable.
 func (c *Client) Available(ctx context.Context) bool {
 	c.mu.RLock()
 	adapter := c.adapter
+	rp := c.rp
 	c.mu.RUnlock()
 
 	if !adapter.Available() {
 		return false
 	}
 
-	return c.serverAvailable(ctx)
+	if checker, ok := rp.(AvailabilityChecker); ok {
+		return checker.Available(ctx)
+	}
+	return true
 }
 
-// beginRegistration sends the registration begin request to the server.
-func (c *Client) beginRegistration(ctx context.Context, req *RegistrationRequest) ([]byte, string, error) {
-	displayName := req.DisplayName
-	if displayName == "" {
-		displayName = req.Username
+// deriveOrigin derives the WebAuthn origin from a server URL: the scheme
+// and authority with no path, which is what a browser would report. An
+// unparsable or scheme-less URL yields an empty string, letting the caller
+// fall back to the WebAuthn same-origin default "https://<rpId>".
+func deriveOrigin(serverURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
 	}
-
-	body := beginRegistrationRequest{
-		Email:       req.Username,
-		DisplayName: displayName,
-	}
-
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return nil, "", wrapError("marshal request", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.serverURL+pathRegistrationBegin, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, "", wrapError("create request", err)
-	}
-	httpReq.Header.Set(headerContentType, contentTypeJSON)
-
-	if req.AuthToken != "" {
-		httpReq.Header.Set(headerAuthorization, "Bearer "+req.AuthToken)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, "", &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
-	if err != nil {
-		return nil, "", wrapError("read response", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", parseServerError(resp.StatusCode, respBody)
-	}
-
-	sessionID := resp.Header.Get(headerSessionID)
-	if sessionID == "" {
-		return nil, "", ErrInvalidServerResponse
-	}
-
-	return respBody, sessionID, nil
-}
-
-// finishRegistration sends the registration finish request to the server.
-func (c *Client) finishRegistration(ctx context.Context, sessionID string, attestation []byte, authToken string) (*RegistrationResult, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.serverURL+pathRegistrationFinish, bytes.NewReader(attestation))
-	if err != nil {
-		return nil, wrapError("create request", err)
-	}
-	httpReq.Header.Set(headerContentType, contentTypeJSON)
-	httpReq.Header.Set(headerSessionID, sessionID)
-
-	if authToken != "" {
-		httpReq.Header.Set(headerAuthorization, "Bearer "+authToken)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
-	if err != nil {
-		return nil, wrapError("read response", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &errs.Joined{Lead: ErrRegistrationFailed, Cause: parseServerError(resp.StatusCode, respBody)}
-	}
-
-	var authResp authResponse
-	if err := json.Unmarshal(respBody, &authResp); err != nil {
-		return nil, &errs.Joined{Lead: ErrInvalidServerResponse, Detail: "failed to decode response", Cause: err}
-	}
-
-	return &RegistrationResult{
-		UserID: authResp.UserID,
-		JWT:    authResp.Token,
-	}, nil
-}
-
-// beginLogin sends the login begin request to the server.
-func (c *Client) beginLogin(ctx context.Context, req *AuthenticationRequest) ([]byte, string, string, error) {
-	body := beginLoginRequest{
-		Email: req.Username,
-	}
-
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return nil, "", "", wrapError("marshal request", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.serverURL+pathLoginBegin, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, "", "", wrapError("create request", err)
-	}
-	httpReq.Header.Set(headerContentType, contentTypeJSON)
-
-	if req.AuthToken != "" {
-		httpReq.Header.Set(headerAuthorization, "Bearer "+req.AuthToken)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, "", "", &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
-	if err != nil {
-		return nil, "", "", wrapError("read response", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", "", parseServerError(resp.StatusCode, respBody)
-	}
-
-	sessionID := resp.Header.Get(headerSessionID)
-	if sessionID == "" {
-		return nil, "", "", ErrInvalidServerResponse
-	}
-
-	userID := resp.Header.Get(headerUserID)
-
-	return respBody, sessionID, userID, nil
-}
-
-// finishLogin sends the login finish request to the server.
-func (c *Client) finishLogin(ctx context.Context, sessionID, userID string, assertion []byte, authToken string) (*AuthenticationResult, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.serverURL+pathLoginFinish, bytes.NewReader(assertion))
-	if err != nil {
-		return nil, wrapError("create request", err)
-	}
-	httpReq.Header.Set(headerContentType, contentTypeJSON)
-	httpReq.Header.Set(headerSessionID, sessionID)
-
-	if userID != "" {
-		httpReq.Header.Set(headerUserID, userID)
-	}
-
-	if authToken != "" {
-		httpReq.Header.Set(headerAuthorization, "Bearer "+authToken)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
-	if err != nil {
-		return nil, wrapError("read response", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, &errs.Joined{Lead: ErrAuthenticationFailed, Cause: parseServerError(resp.StatusCode, respBody)}
-	}
-
-	var authResp authResponse
-	if err := json.Unmarshal(respBody, &authResp); err != nil {
-		return nil, &errs.Joined{Lead: ErrInvalidServerResponse, Detail: "failed to decode response", Cause: err}
-	}
-
-	return &AuthenticationResult{
-		UserID: authResp.UserID,
-		JWT:    authResp.Token,
-	}, nil
-}
-
-// serverAvailable checks if the server is reachable by issuing a lightweight
-// GET to the registration status endpoint.
-func (c *Client) serverAvailable(ctx context.Context) bool {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.serverURL+pathHealthCheck, nil)
-	if err != nil {
-		return false
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Drain the body to allow connection reuse.
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	return resp.StatusCode < 500
-}
-
-// parseServerError extracts an error from the response body.
-func parseServerError(statusCode int, body []byte) error {
-	var errResp errorResponse
-	if err := json.Unmarshal(body, &errResp); err != nil {
-		return &ServerError{
-			StatusCode: statusCode,
-			Message:    string(body),
-		}
-	}
-	return &ServerError{
-		StatusCode: statusCode,
-		ErrorCode:  errResp.Error,
-		Message:    errResp.Message,
-	}
+	return parsed.Scheme + "://" + parsed.Host
 }

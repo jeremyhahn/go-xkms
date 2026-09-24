@@ -96,6 +96,12 @@ type Session struct {
 	stopped chan struct{}
 	track   *tracker
 	agent   *Agent
+
+	// teardownErr is written once, by the reaper goroutine, strictly before
+	// it closes stopped, and read only through Err after Done() confirms
+	// stopped is closed -- the channel close/receive is what makes that
+	// write visible to Err's caller without a lock of its own.
+	teardownErr error
 }
 
 // ShutdownReport is what Stop returns. Abandoned counts the signature
@@ -191,7 +197,7 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 	abs, err := filepath.Abs(workDir)
 	if err != nil {
 		if ownsWorkDir {
-			_ = os.RemoveAll(workDir)
+			err = errors.Join(err, os.RemoveAll(workDir))
 		}
 		return nil, &WorkDirError{Err: err}
 	}
@@ -201,7 +207,7 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 	ln, err := listen(sock)
 	if err != nil {
 		if ownsWorkDir {
-			_ = os.RemoveAll(workDir)
+			err = errors.Join(err, os.RemoveAll(workDir))
 		}
 		return nil, err
 	}
@@ -210,9 +216,10 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 	track := &tracker{}
 	srv := New(signers...)
 	served := make(chan struct{})
+	var serveErr error
 	go func() {
 		defer close(served)
-		_ = serveListener(agentCtx, ln, srv, track)
+		serveErr = serveListener(agentCtx, ln, srv, track)
 	}()
 
 	sess := &Session{
@@ -231,13 +238,35 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 	// calls Stop and a signer is wedged.
 	go func() {
 		<-served
+		// The bool joinWithin reports is "did every handler finish" -- the
+		// same fact Stop's ShutdownReport.Joined documents when Stop drives
+		// the shutdown. When ctx cancellation drives it instead (nobody calls
+		// Stop), a handler abandoned here simply contributes nothing to
+		// track.err() below, which is that same documented meaning; there is
+		// no separate report type on this path to put the bool itself in.
 		_ = track.joinWithin(after(defaultJoinBound()))
+		teardownErr := errors.Join(serveErr, track.err())
 		if ownsWorkDir {
-			_ = os.RemoveAll(workDir)
+			teardownErr = errors.Join(teardownErr, os.RemoveAll(workDir))
 		}
+		sess.teardownErr = teardownErr
 		close(sess.stopped)
 	}()
 	return sess, nil
+}
+
+// Err returns the first error(s) encountered while serving and tearing down
+// the session -- a genuine (non-EOF, non-net.ErrClosed) handler error, a
+// Close failure on the listener or a connection, or a failure to remove an
+// owned work directory. It is nil until Done is closed, and nil after a
+// clean shutdown.
+func (s *Session) Err() error {
+	select {
+	case <-s.stopped:
+		return s.teardownErr
+	default:
+		return nil
+	}
 }
 
 // Done is closed once the agent has stopped, the socket has been removed, and

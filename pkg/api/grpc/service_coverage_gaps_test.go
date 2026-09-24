@@ -17,6 +17,7 @@ package grpc
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -3136,6 +3137,15 @@ func TestEncrypt_WithAsymmetricKey(t *testing.T) {
 		Backend:   "software",
 		Plaintext: []byte("data"),
 	})
+	if fips140.Enforced() {
+		// This RPC's asymmetric fallback deliberately mirrors PKCS#11's
+		// CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5 encryption, no OAEP
+		// digest involved -- for the local-fallback KEK-wrap path (see
+		// servicer_crypto.go's Encrypt). rsa.EncryptPKCS1v15 refuses that
+		// construction outright under GODEBUG=fips140=only.
+		require.Error(t, err)
+		return
+	}
 	require.NoError(t, err)
 
 	assert.Len(t, resp.Ciphertext, 256, "RSA-2048 OAEP output is one 256-byte block")
@@ -3167,13 +3177,18 @@ func TestDecrypt_SymmetricKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Decrypt
+	// Decrypt. GCMNonceMode must be echoed back unchanged: under
+	// GODEBUG=fips140=only, Encrypt's default (no caller nonce) path
+	// produces a types.GCMNonceModeRandom ciphertext (pkg/crypto/aead.
+	// NewGCMForFreshEncrypt), and Decrypt needs that mode to reconstruct
+	// the matching AEAD (go-xkms#23).
 	decResp, err := svc.Decrypt(context.Background(), &pb.DecryptRequest{
-		KeyId:      "aes-for-decrypt",
-		Backend:    "software",
-		Ciphertext: encResp.Ciphertext,
-		Nonce:      encResp.Nonce,
-		Tag:        encResp.Tag,
+		KeyId:        "aes-for-decrypt",
+		Backend:      "software",
+		Ciphertext:   encResp.Ciphertext,
+		Nonce:        encResp.Nonce,
+		Tag:          encResp.Tag,
+		GcmNonceMode: encResp.GcmNonceMode,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []byte("hello symmetric world"), decResp.Plaintext)

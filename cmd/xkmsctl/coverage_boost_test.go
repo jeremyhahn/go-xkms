@@ -899,47 +899,6 @@ func TestShowSPKIPin_ValidCert(t *testing.T) {
 }
 
 // =============================================================================
-// newFileCredentialStorage - error path for invalid state dir
-// =============================================================================
-
-func TestNewFileCredentialStorage_ValidDir(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "fido2-state")
-	storage, err := newFileCredentialStorage(dir)
-	require.NoError(t, err)
-	require.NotNil(t, storage)
-}
-
-// =============================================================================
-// FIDO2 virtual device with state dir
-// =============================================================================
-
-func TestDefaultFIDO2HandlerFactory_VirtualWithPersistentStorage(t *testing.T) {
-	origVirtual := os.Getenv("FIDO2_USE_VIRTUAL")
-	origStateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR")
-
-	require.NoError(t, os.Setenv("FIDO2_USE_VIRTUAL", "true"))
-	require.NoError(t, os.Setenv("FIDO2_VIRTUAL_STATE_DIR", t.TempDir()))
-	defer func() {
-		if origVirtual == "" {
-			os.Unsetenv("FIDO2_USE_VIRTUAL")
-		} else {
-			os.Setenv("FIDO2_USE_VIRTUAL", origVirtual)
-		}
-		if origStateDir == "" {
-			os.Unsetenv("FIDO2_VIRTUAL_STATE_DIR")
-		} else {
-			os.Setenv("FIDO2_VIRTUAL_STATE_DIR", origStateDir)
-		}
-	}()
-
-	config := &fido2.Config{}
-	handler, err := defaultFIDO2HandlerFactory(config)
-	require.NoError(t, err)
-	require.NotNil(t, handler)
-	defer handler.Close()
-}
-
-// =============================================================================
 // PrintImportParameters - text format with wrapping key branch (83.3%)
 // =============================================================================
 
