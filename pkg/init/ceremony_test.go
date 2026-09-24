@@ -1630,6 +1630,64 @@ func TestCeremonyAdapter_ClaimShare_Success(t *testing.T) {
 	assert.Equal(t, 1, resp.ShareIndex)
 }
 
+// TestCeremonyAdapter_ClaimShareComplete_InvalidBase64Signature verifies
+// ClaimShareComplete rejects a malformed signature before ever consulting the
+// service, mirroring ClaimCertComplete's own base64 guard.
+func TestCeremonyAdapter_ClaimShareComplete_InvalidBase64Signature(t *testing.T) {
+	svc, _, _ := initServiceMofN(t, 2, 3)
+	adapter := NewCeremonyAdapter(svc)
+
+	resp, err := adapter.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{
+		Username:             "officer-A",
+		Nonce:                "somenonce",
+		Signature:            "not-valid-base64!!!",
+		CallerCertThumbprint: "thumb",
+	})
+	assert.ErrorIs(t, err, ErrChallengeVerificationFailed)
+	assert.Nil(t, resp)
+}
+
+// TestCeremonyService_RegisterOfficer_MissingUsernameRejected verifies
+// RegisterOfficer forwards the request (and the underlying rejection) rather
+// than swallowing or reshaping it: an officer with no username could never be
+// looked up again to claim their share.
+func TestCeremonyService_RegisterOfficer_MissingUsernameRejected(t *testing.T) {
+	svc, _, _ := initServiceMofN(t, 2, 3)
+
+	result, err := svc.RegisterOfficer(context.Background(), RegisterOfficerRequest{
+		CSRPEM: []byte("irrelevant"),
+	})
+	require.Error(t, err)
+	assert.Nil(t, result)
+}
+
+// TestCeremonyService_OfficerClaimStatus_ReportsEnrolledOfficers verifies the
+// delegation returns real per-officer status rather than an empty/nil result,
+// for a service that actually enrolled officers via Initialize.
+func TestCeremonyService_OfficerClaimStatus_ReportsEnrolledOfficers(t *testing.T) {
+	svc, _, _ := initServiceMofN(t, 2, 3)
+
+	statuses, err := svc.OfficerClaimStatus(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, statuses, len(officerUsernames))
+}
+
+// TestCeremonyService_EnrollExternalOfficer_InvalidShareIndexRejected
+// verifies EnrollExternalOfficer forwards the underlying validation error for
+// a structurally invalid request (a share index must be 1-based) rather than
+// enrolling a broken officer record.
+func TestCeremonyService_EnrollExternalOfficer_InvalidShareIndexRejected(t *testing.T) {
+	svc, _, _ := initServiceMofN(t, 2, 3)
+
+	resp, err := svc.EnrollExternalOfficer(context.Background(), EnrollExternalOfficerRequest{
+		Username:   "officer-new",
+		ShareIndex: 0,
+		AuthFactor: "mtls",
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+}
+
 func TestCeremonyAdapter_ClaimShare_NotFound(t *testing.T) {
 	svc, _, _ := initServiceMofN(t, 2, 3)
 	adapter := NewCeremonyAdapter(svc)

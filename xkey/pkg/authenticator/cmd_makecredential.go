@@ -22,6 +22,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -1083,6 +1084,22 @@ func (a *Authenticator) storeCredentialWithPolicy(p *storeCredentialParams) erro
 	// after this call in either MakeCredential path.
 	if err := storedCred.SetPrivateKey(p.privateKeyBytes); err != nil {
 		return err
+	}
+
+	// OpFIDO2CredentialCreated is SeveritySecurity (xkey/pkg/audit/severity.go):
+	// the audit record is written before the credential is persisted, so a
+	// failed write refuses credential creation rather than leave an unaudited
+	// credential in storage. LogKeyOperation already applies the
+	// write-failure policy (see establishPINLocked), matching the
+	// LogKeyOperation(OpFIDO2Credential*, ...) calls pkg/gui/services/
+	// fido2_service.go already makes for credential access/delete.
+	if a.auditLog != nil {
+		if err := a.auditLog.LogKeyOperation(
+			audit.OpFIDO2CredentialCreated, "fido2",
+			fmt.Sprintf("%x", p.credentialID),
+			true, nil, 0); err != nil {
+			return err
+		}
 	}
 
 	if err := a.storage.Store(storedCred); err != nil {

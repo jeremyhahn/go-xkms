@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -209,8 +210,8 @@ func TestHandleListUsers_Success(t *testing.T) {
 	users := &restMockUserClient{
 		listUsers: func(_ context.Context, _ *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
 			return &qrdbtransport.ListUsersResponse{Users: []*qrdbtransport.User{
-				{ID: 1, Username: "alice", Enabled: true},
-				{ID: 2, Username: "bob", Enabled: false},
+				{ID: 1, Username: "alice", Lifecycle: string(qrdbsdk.LifecycleActive)},
+				{ID: 2, Username: "bob", Lifecycle: string(qrdbsdk.LifecycleDisabled)},
 			}}, nil
 		},
 	}
@@ -271,7 +272,7 @@ func TestHandleListUsers_ServiceNotInitialized(t *testing.T) {
 func TestHandleListUserCredentials_Success(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
-			return &qrdbtransport.User{ID: 7, Username: username, Enabled: true}, nil
+			return &qrdbtransport.User{ID: 7, Username: username, Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 		},
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
@@ -320,7 +321,7 @@ func TestHandleUpdateUser_Enable(t *testing.T) {
 	enabled := false
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
-			return &qrdbtransport.User{ID: 3, Username: username, Enabled: enabled}, nil
+			return &qrdbtransport.User{ID: 3, Username: username, Lifecycle: lifecycleOf(enabled)}, nil
 		},
 		enableUser: func(_ context.Context, _ uint64) error {
 			enabled = true
@@ -343,7 +344,7 @@ func TestHandleUpdateUser_Enable(t *testing.T) {
 func TestHandleUpdateUser_Disable(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
-			return &qrdbtransport.User{ID: 4, Username: username, Enabled: false}, nil
+			return &qrdbtransport.User{ID: 4, Username: username, Lifecycle: string(qrdbsdk.LifecycleDisabled)}, nil
 		},
 		disableUser: func(_ context.Context, _ uint64) error { return nil },
 	}
@@ -436,7 +437,7 @@ func TestHandleCreateUser_Success(t *testing.T) {
 		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 			// Echo the persisted fields, as the real store does.
 			return &qrdbtransport.User{
-				ID: 1, Username: req.Username, Email: req.Email, Name: req.Name, Enabled: true,
+				ID: 1, Username: req.Username, Email: req.Email, Name: req.Name, Lifecycle: string(qrdbsdk.LifecycleActive),
 			}, nil
 		},
 	}
@@ -483,7 +484,7 @@ func TestHandleCreateUser_ServiceError(t *testing.T) {
 func TestHandleGetUser_Success(t *testing.T) {
 	users := &restMockUserClient{
 		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
-			return &qrdbtransport.User{ID: 9, Username: username, Enabled: true}, nil
+			return &qrdbtransport.User{ID: 9, Username: username, Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 		},
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
@@ -624,7 +625,7 @@ func TestHandleCreateUser_EmailReachesTheStore(t *testing.T) {
 	users := &restMockUserClient{
 		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 			got = req
-			return &qrdbtransport.User{ID: 1, Username: req.Username, Email: req.Email, Name: req.Name, Enabled: true}, nil
+			return &qrdbtransport.User{ID: 1, Username: req.Username, Email: req.Email, Name: req.Name, Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 		},
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
@@ -637,4 +638,13 @@ func TestHandleCreateUser_EmailReachesTheStore(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "dan@example.com", got.Email)
 	assert.Equal(t, "Dan", got.Name)
+}
+
+// lifecycleOf maps a test's enabled flag to qrdb's account lifecycle, the only
+// account state since qrdb v0.20.
+func lifecycleOf(enabled bool) string {
+	if enabled {
+		return string(qrdbsdk.LifecycleActive)
+	}
+	return string(qrdbsdk.LifecycleDisabled)
 }

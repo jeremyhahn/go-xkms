@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"fmt"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"time"
 
@@ -598,7 +599,7 @@ func convertDBUserToProto(u *db.User) *adminv1.User {
 		Username:  u.Username,
 		TenantId:  u.TenantID,
 		RoleIds:   u.RoleIDs,
-		Enabled:   u.Enabled,
+		Enabled:   (u.Lifecycle == string(qrdbsdk.LifecycleActive)),
 		System:    u.System,
 		CreatedAt: u.CreatedAt,
 		UpdatedAt: u.UpdatedAt,

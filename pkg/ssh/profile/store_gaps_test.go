@@ -448,6 +448,37 @@ func TestStore_PutErrors(t *testing.T) {
 	}
 }
 
+// TestStore_RenameFolder_PropagatesRemoveFolderError verifies that a storage
+// failure while migrating a folder marker during RenameFolder is reported to
+// the caller rather than silently discarded (#701): before, a failed
+// RemoveFolder left both the old and the new marker behind (RenameFolder
+// still called CreateFolder next and returned nil), which is exactly the
+// inconsistent state propagating the error prevents.
+func TestStore_RenameFolder_PropagatesRemoveFolderError(t *testing.T) {
+	st, fb := newFaultStore(t)
+	if err := st.CreateFolder("work/prod"); err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	fb.failDelete = true
+	if err := st.RenameFolder("work/prod", "work/production"); err == nil {
+		t.Fatal("expected RenameFolder to propagate the RemoveFolder failure, got nil")
+	}
+}
+
+// TestStore_DeleteFolder_PropagatesRemoveFolderError is the DeleteFolder
+// counterpart: a storage failure removing a folder marker must not be
+// swallowed into a reported success.
+func TestStore_DeleteFolder_PropagatesRemoveFolderError(t *testing.T) {
+	st, fb := newFaultStore(t)
+	if err := st.CreateFolder("work/prod"); err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	fb.failDelete = true
+	if err := st.DeleteFolder("work/prod"); err == nil {
+		t.Fatal("expected DeleteFolder to propagate the RemoveFolder failure, got nil")
+	}
+}
+
 func contains(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {

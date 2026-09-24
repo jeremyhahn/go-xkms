@@ -676,11 +676,12 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 
 	t.Run("routes xkms.decrypt", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-decrypt-route-key",
-			Backend:    "software",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-decrypt-route-key",
+			Backend:      "software",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 

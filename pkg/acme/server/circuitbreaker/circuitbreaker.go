@@ -231,6 +231,38 @@ func (cb *CircuitBreaker) ExecuteContext(ctx context.Context, fn func() error) e
 	return err
 }
 
+// Admission is what Allow granted a single call. Complete must be called
+// exactly once with the call's outcome to settle it.
+//
+// Allow/Complete exist alongside Execute/ExecuteContext for callers whose
+// operation must not be run inside Execute's goroutine: Execute abandons that
+// goroutine on context timeout without waiting for it, which is fine for an
+// idempotent network call but wrong for an HTTP handler writing directly to
+// a ResponseWriter (the goroutine can still be writing after the timed-out
+// caller returns and the connection is reused or closed) or for a write
+// whose caller must not believe it failed while it is still committing.
+// Allow admits the call and returns immediately; the caller performs the
+// operation synchronously, under its own context and timeout, and reports
+// the outcome with Complete. No goroutine, no breaker-imposed timeout.
+type Admission struct {
+	adm admission
+}
+
+// Allow reports whether a call may proceed under cb's current state,
+// admitting it if so. The zero Admission is not valid; only the Admission
+// Allow returns may be passed to Complete.
+func (cb *CircuitBreaker) Allow() (Admission, error) {
+	adm, err := cb.beforeRequest()
+	return Admission{adm: adm}, err
+}
+
+// Complete settles the call admitted by a. err is the outcome of the call:
+// nil for success, non-nil for failure. Complete must be called exactly once
+// per Admission.
+func (cb *CircuitBreaker) Complete(a Admission, err error) {
+	cb.afterRequest(a.adm, err)
+}
+
 // admission is what beforeRequest granted a single call. afterRequest settles
 // against it rather than re-reading the breaker's state, because the two run
 // either side of the caller's function and the state can move in between.

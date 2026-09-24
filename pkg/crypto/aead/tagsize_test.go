@@ -17,10 +17,30 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"errors"
 	"fmt"
 	"testing"
 )
+
+// requireGCM builds a GCM AEAD via NewGCM for a test that needs one to
+// exercise further behavior, and reports whether the caller can continue
+// using it. NewGCM's full-tag path calls cipher.NewGCM and its truncated-tag
+// path calls cipher.NewGCMWithTagSize, both the arbitrary-IV constructors
+// GODEBUG=fips140=only refuses outright (see docs/fips/README.md "AEAD
+// construction"); this package's FIPS-safe replacement for a fresh
+// encryption is NewGCMForFreshEncrypt, not NewGCM directly.
+func requireGCM(t *testing.T, block cipher.Block, tagSize int) (cipher.AEAD, bool) {
+	t.Helper()
+	gcm, err := NewGCM(block, tagSize)
+	if err != nil {
+		if fips140.Enforced() {
+			return nil, false
+		}
+		t.Fatalf("NewGCM: %v", err)
+	}
+	return gcm, true
+}
 
 func testBlock(t *testing.T) cipher.Block {
 	t.Helper()
@@ -44,18 +64,18 @@ func TestNewGCM_ProducesTheLeadingBitsOfTheFullTag(t *testing.T) {
 	plaintext := []byte("truncate my tag")
 	aad := []byte("aad")
 
-	full, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatalf("cipher.NewGCM: %v", err)
+	full, ok := requireGCM(t, block, GCMFullTagSize)
+	if !ok {
+		return
 	}
 	fullSealed := full.Seal(nil, nonce, plaintext, aad)
 	fullTag := fullSealed[len(fullSealed)-16:]
 
 	for _, tagSize := range []int{12, 13, 14, 15, 16} {
 		t.Run(fmt.Sprintf("tagSize=%d", tagSize), func(t *testing.T) {
-			gcm, err := NewGCM(block, tagSize)
-			if err != nil {
-				t.Fatalf("NewGCM: %v", err)
+			gcm, ok := requireGCM(t, block, tagSize)
+			if !ok {
+				return
 			}
 			if gcm.Overhead() != tagSize {
 				t.Fatalf("Overhead() = %d, want %d", gcm.Overhead(), tagSize)
@@ -74,9 +94,9 @@ func TestNewGCM_ProducesTheLeadingBitsOfTheFullTag(t *testing.T) {
 // TestNewGCM_ZeroSelectsTheFullTag pins the zero value's meaning: no request,
 // so the cipher's own full-length tag.
 func TestNewGCM_ZeroSelectsTheFullTag(t *testing.T) {
-	gcm, err := NewGCM(testBlock(t), 0)
-	if err != nil {
-		t.Fatalf("NewGCM: %v", err)
+	gcm, ok := requireGCM(t, testBlock(t), 0)
+	if !ok {
+		return
 	}
 	if gcm.Overhead() != GCMFullTagSize {
 		t.Fatalf("Overhead() = %d, want %d", gcm.Overhead(), GCMFullTagSize)

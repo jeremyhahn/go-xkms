@@ -108,8 +108,8 @@ func TestWSHandler_AskMalformedResponseAborts(t *testing.T) {
 	defer httpSrv.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(httpSrv.URL, "http"), nil)
-	if err != nil {
-		t.Fatalf("ws dial: %v", err)
+	if !requireWSUpgrade(t, err) {
+		return
 	}
 	defer func() { _ = conn.Close() }()
 

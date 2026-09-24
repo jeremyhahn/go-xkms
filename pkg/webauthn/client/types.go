@@ -14,34 +14,57 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"time"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Config configures the WebAuthn client.
 type Config struct {
 	// ServerURL is the base URL of the WebAuthn relying party server.
-	// Example: "https://xkms.company.com:8443"
+	// Example: "https://xkms.company.com:8443". Required unless
+	// RelyingParty is set directly, and always used (when non-empty) to
+	// derive the default WebAuthn Origin.
 	ServerURL string
 
-	// HTTPClient is the HTTP client to use for requests. If nil, a default
-	// client with TLS configuration is created.
+	// HTTPClient is the HTTP client the default HTTPRelyingParty uses. If
+	// nil, a default client with TLSConfig is created. Ignored when
+	// RelyingParty is set directly.
 	HTTPClient *http.Client
 
-	// TLSConfig is used when HTTPClient is nil to create the default client.
+	// TLSConfig is used when HTTPClient is nil to create the default
+	// client. Ignored when RelyingParty is set directly.
 	TLSConfig *tls.Config
 
-	// Timeout is the timeout for HTTP requests. Default: 30s.
+	// Timeout is the timeout for HTTP requests. Default: 30s. Ignored when
+	// RelyingParty is set directly.
 	Timeout time.Duration
 
-	// AuthenticatorAdapter bridges to the local CTAP2 authenticator.
+	// Origin is the WebAuthn origin bound into clientDataJSON. Empty
+	// derives it from ServerURL's scheme and host; if ServerURL is also
+	// empty, each AuthenticatorAdapter falls back to the WebAuthn
+	// same-origin default "https://<rpId>".
+	Origin string
+
+	// AuthenticatorAdapter bridges to the local CTAP2 authenticator:
+	// SoftwareAdapter for headless testing/CI, or HardwareAdapter for a
+	// real authenticator reachable over HID.
 	AuthenticatorAdapter AuthenticatorAdapter
+
+	// RelyingParty is the server-side seam of the ceremony. Nil builds the
+	// default HTTPRelyingParty from ServerURL/HTTPClient/TLSConfig/Timeout,
+	// speaking the browser-shaped pkg/webauthn/http routes. Set it to a
+	// TransportRelyingParty to drive the ceremony over the SDK transport
+	// routes instead.
+	RelyingParty RelyingParty
 }
 
 // Validate checks the configuration for required fields.
 func (c *Config) Validate() error {
-	if c.ServerURL == "" {
+	if c.RelyingParty == nil && c.ServerURL == "" {
 		return ErrServerURLRequired
 	}
 	if c.AuthenticatorAdapter == nil {
@@ -66,8 +89,17 @@ type RegistrationRequest struct {
 	DisplayName string `json:"display_name,omitempty"`
 
 	// AuthToken is a JWT or setup token for authenticating the registration
-	// request with the RP server.
+	// request with the RP server. HTTPRelyingParty sends it as a bearer
+	// token; TransportRelyingParty ignores it because the transport
+	// connection already carries its own authentication.
 	AuthToken string `json:"auth_token,omitempty"`
+
+	// PIN is the authenticator's CTAP2 PIN, consumed by HardwareAdapter. An
+	// authenticator with a PIN set refuses the ceremony outright
+	// (CTAP2_ERR_PIN_REQUIRED) unless it is supplied. Nil is correct for an
+	// authenticator with no PIN configured, and is ignored by
+	// SoftwareAdapter, which never has one.
+	PIN *secure.Secret `json:"-"`
 }
 
 // Validate checks the registration request for required fields.
@@ -81,7 +113,9 @@ func (r *RegistrationRequest) Validate() error {
 // RegistrationResult contains the result of a successful registration.
 type RegistrationResult struct {
 	// UserID is the server-assigned user identifier (base64-encoded).
-	UserID string `json:"user_id"`
+	// Populated by HTTPRelyingParty; empty for TransportRelyingParty, which
+	// does not return one.
+	UserID string `json:"user_id,omitempty"`
 
 	// CredentialID is the registered credential identifier (base64-encoded).
 	CredentialID string `json:"credential_id,omitempty"`
@@ -96,8 +130,12 @@ type AuthenticationRequest struct {
 	// non-discoverable flow).
 	Username string `json:"username"`
 
-	// AuthToken is an optional pre-authentication token.
+	// AuthToken is an optional pre-authentication token. See
+	// RegistrationRequest.AuthToken.
 	AuthToken string `json:"auth_token,omitempty"`
+
+	// PIN is the authenticator's CTAP2 PIN. See RegistrationRequest.PIN.
+	PIN *secure.Secret `json:"-"`
 }
 
 // Validate checks the authentication request for required fields.
@@ -110,52 +148,52 @@ func (r *AuthenticationRequest) Validate() error {
 
 // AuthenticationResult contains the result of a successful authentication.
 type AuthenticationResult struct {
-	// UserID is the authenticated user identifier (base64-encoded).
+	// UserID is the authenticated user identifier: HTTPRelyingParty's
+	// server-assigned base64 user ID, or TransportRelyingParty's resolved
+	// username (its FinishAuthenticationResponse carries one, not the
+	// other).
 	UserID string `json:"user_id"`
 
 	// JWT is the authentication token for API access.
 	JWT string `json:"jwt"`
 }
 
-// AuthenticatorAdapter bridges the WebAuthn client to a local authenticator.
-// Implementations can use IPC to communicate with xkey, wrap hardware
-// tokens, or provide a software-only implementation for testing.
-type AuthenticatorAdapter interface {
-	// MakeCredential creates a new credential using the authenticator.
-	// The options parameter contains the JSON-encoded PublicKeyCredentialCreationOptions
-	// from the server's BeginRegistration response.
-	// Returns the JSON-encoded attestation response.
-	MakeCredential(options []byte) ([]byte, error)
+// CeremonyOptions carries one AuthenticatorAdapter call's inputs: the
+// relying party's JSON options plus the two things those options cannot
+// carry — the WebAuthn origin, which a browser takes from its security
+// context, and the authenticator's CTAP2 PIN, which a browser prompts for.
+//
+// The fields are named rather than positional because Origin and a PIN's
+// string form are easy to confuse: a positional signature carrying values
+// this similar side by side would let a transposition send the PIN to the
+// relying party as an origin.
+type CeremonyOptions struct {
+	// OptionsJSON is the JSON-encoded PublicKeyCredentialCreationOptions or
+	// PublicKeyCredentialRequestOptions from the RelyingParty's begin call.
+	OptionsJSON []byte
 
-	// GetAssertion gets an assertion using the authenticator.
-	// The options parameter contains the JSON-encoded PublicKeyCredentialRequestOptions
-	// from the server's BeginLogin response.
-	// Returns the JSON-encoded assertion response.
-	GetAssertion(options []byte) ([]byte, error)
+	// Origin is the WebAuthn origin to bind into clientDataJSON. Empty
+	// selects the WebAuthn same-origin default "https://<rpId>".
+	Origin string
+
+	// PIN is the authenticator's CTAP2 PIN. Nil is correct for an
+	// authenticator with no PIN configured.
+	PIN *secure.Secret
+}
+
+// AuthenticatorAdapter bridges the WebAuthn client to a local authenticator.
+// Two implementations ship in this package: SoftwareAdapter, a software-only
+// CTAP2 authenticator for headless testing and CI, and HardwareAdapter, which
+// drives a real CTAP2 authenticator over HID.
+type AuthenticatorAdapter interface {
+	// MakeCredential creates a new credential using the authenticator and
+	// returns the JSON-encoded WebAuthn attestation response.
+	MakeCredential(ctx context.Context, opts *CeremonyOptions) ([]byte, error)
+
+	// GetAssertion gets an assertion using the authenticator and returns
+	// the JSON-encoded WebAuthn assertion response.
+	GetAssertion(ctx context.Context, opts *CeremonyOptions) ([]byte, error)
 
 	// Available checks if the authenticator is available and ready.
 	Available() bool
-}
-
-// beginRegistrationRequest is the request body for the registration/begin endpoint.
-type beginRegistrationRequest struct {
-	Email       string `json:"email"`
-	DisplayName string `json:"display_name,omitempty"`
-}
-
-// beginLoginRequest is the request body for the login/begin endpoint.
-type beginLoginRequest struct {
-	Email string `json:"email,omitempty"`
-}
-
-// authResponse is the response from the server after successful registration or login.
-type authResponse struct {
-	Token  string `json:"token"`
-	UserID string `json:"user_id"`
-}
-
-// errorResponse is the error response format from the server.
-type errorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
 }

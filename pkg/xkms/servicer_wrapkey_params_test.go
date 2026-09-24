@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -43,6 +44,11 @@ import (
 // PKCS#11 v3.2 §6.13.3 defines all three, and NIST SP 800-38D §5.2.1.2 defines
 // a t-bit tag as the leading t bits of the full tag.
 func TestWrapAESGCM_HonoursCallerNonceAADAndTagBits(t *testing.T) {
+	if fips140.Enforced() {
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	store, attrs := newAESWrappingBackend(t)
 	target := []byte("target key material for a parameterised gcm wrap")
 
@@ -56,10 +62,10 @@ func TestWrapAESGCM_HonoursCallerNonceAADAndTagBits(t *testing.T) {
 	wrapped, err := wrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESGCM), params, target)
 	require.NoError(t, err)
 
-	// Framing: nonce || ciphertext || tag, with the tag at the requested
-	// length rather than the full 16 bytes.
-	require.Len(t, wrapped, aesGCMNonceSize+len(target)+12)
-	assert.Equal(t, params.iv, wrapped[:aesGCMNonceSize],
+	// Framing: mode-byte || nonce || ciphertext || tag, with the tag at the
+	// requested length rather than the full 16 bytes.
+	require.Len(t, wrapped, 1+aesGCMNonceSize+len(target)+12)
+	assert.Equal(t, params.iv, wrapped[1:1+aesGCMNonceSize],
 		"the nonce in the blob must be the CK_GCM_PARAMS.pIv the caller named")
 
 	kek := rawKeyBytes(t, store, attrs)
@@ -68,13 +74,13 @@ func TestWrapAESGCM_HonoursCallerNonceAADAndTagBits(t *testing.T) {
 	gcm, err := cipher.NewGCMWithTagSize(block, 12)
 	require.NoError(t, err)
 
-	oracleRecovered, err := gcm.Open(nil, wrapped[:aesGCMNonceSize], wrapped[aesGCMNonceSize:], params.aad)
+	oracleRecovered, err := gcm.Open(nil, wrapped[1:1+aesGCMNonceSize], wrapped[1+aesGCMNonceSize:], params.aad)
 	require.NoError(t, err, "crypto/cipher must accept the blob under the caller's own nonce, AAD and tag length")
 	assert.Equal(t, target, oracleRecovered)
 
 	// The AAD is genuinely bound: crypto/cipher must reject the same blob
 	// presented with different associated data.
-	_, err = gcm.Open(nil, wrapped[:aesGCMNonceSize], wrapped[aesGCMNonceSize:], []byte("tenant-43"))
+	_, err = gcm.Open(nil, wrapped[1:1+aesGCMNonceSize], wrapped[1+aesGCMNonceSize:], []byte("tenant-43"))
 	assert.Error(t, err, "AAD that was not authenticated would let any value open the blob")
 
 	recovered, err := unwrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESGCM), params, wrapped)
@@ -86,6 +92,11 @@ func TestWrapAESGCM_HonoursCallerNonceAADAndTagBits(t *testing.T) {
 // that does not repeat the wrap's AAD or tag length must fail rather than
 // return material.
 func TestUnwrapAESGCM_RejectsMismatchedParameters(t *testing.T) {
+	if fips140.Enforced() {
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	store, attrs := newAESWrappingBackend(t)
 	target := []byte("0123456789ABCDEF")
 
@@ -141,7 +152,9 @@ func TestWrapAESGCM_RejectsInvalidParameters(t *testing.T) {
 // TestWrapAESCBC_HonoursCallerIV proves CK_AES_CBC's IV parameter reaches the
 // cipher and is the IV the blob carries, checked with crypto/cipher directly.
 func TestWrapAESCBC_HonoursCallerIV(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 	target := []byte("0123456789ABCDEF") // one AES block, so the unpadded mode accepts it
 
@@ -165,7 +178,9 @@ func TestWrapAESCBC_HonoursCallerIV(t *testing.T) {
 // TestWrapAESCBC_RejectsBadIV is the bad-input half: a wrong-length IV on the
 // wrap, and an IV asserted on the unwrap that the blob does not carry.
 func TestWrapAESCBC_RejectsBadIV(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 	target := []byte("0123456789ABCDEF")
 

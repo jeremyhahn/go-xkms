@@ -444,6 +444,8 @@ func mapGRPCError(err error) error {
 	switch st.Code() {
 	case codes.NotFound:
 		return &NotFoundError{Resource: "ssh", Message: st.Message()}
+	case codes.AlreadyExists:
+		return &DuplicateError{Resource: "ssh", Message: st.Message()}
 	case codes.InvalidArgument:
 		return &InvalidRequestError{Message: st.Message()}
 	case codes.FailedPrecondition, codes.Unavailable:
