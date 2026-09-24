@@ -25,9 +25,6 @@ type Transport interface {
 	// Request sends a unary request and returns the response.
 	Request(ctx context.Context, service, method string, req interface{}) (interface{}, error)
 
-	// RequestStream initiates a streaming request.
-	RequestStream(ctx context.Context, service, method string, req interface{}) (Stream, error)
-
 	// Conn returns the underlying connection for advanced usage.
 	Conn() interface{}
 
@@ -36,21 +33,6 @@ type Transport interface {
 
 	// Healthy returns true if the transport is healthy.
 	Healthy() bool
-}
-
-// Stream represents a bidirectional stream.
-type Stream interface {
-	// Send sends a message on the stream.
-	Send(msg interface{}) error
-
-	// Recv receives a message from the stream.
-	Recv() (interface{}, error)
-
-	// CloseSend closes the send side of the stream.
-	CloseSend() error
-
-	// Close closes the stream entirely.
-	Close() error
 }
 
 // Config holds common transport configuration.

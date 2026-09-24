@@ -50,7 +50,9 @@ var (
 	// ErrNotSupported is returned when an operation is not supported.
 	ErrNotSupported = errors.New("operation not supported by this protocol")
 
-	// ErrStreamNotSupported is returned when streaming is requested.
+	// ErrStreamNotSupported re-exports the package-level sentinel for SDK
+	// consumers that classify errors by it (go-xkms#727: this transport has
+	// no streaming operation left to return it from).
 	ErrStreamNotSupported = transport.ErrStreamNotSupported
 
 	// ErrNoiseNotConfigured is returned when the transport is asked to connect
@@ -594,12 +596,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	}
 
 	return nil
-}
-
-// RequestStream returns ErrStreamNotSupported since USB AOA does not
-// support bidirectional streaming.
-func (t *Transport) RequestStream(_ context.Context, _ string, _ interface{}) (transport.Stream, error) {
-	return nil, ErrStreamNotSupported
 }
 
 // Config returns the transport configuration.

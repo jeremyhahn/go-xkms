@@ -30,9 +30,6 @@ type Transport struct {
 	// RequestFunc is called by Request. If nil, returns (nil, nil).
 	RequestFunc func(ctx context.Context, service, method string, req interface{}) (interface{}, error)
 
-	// RequestStreamFunc is called by RequestStream. If nil, returns (nil, nil).
-	RequestStreamFunc func(ctx context.Context, service, method string, req interface{}) (transport.Stream, error)
-
 	// CloseFunc is called by Close. If nil, returns nil.
 	CloseFunc func() error
 
@@ -47,14 +44,6 @@ type Transport struct {
 func (m *Transport) Request(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
 	if m.RequestFunc != nil {
 		return m.RequestFunc(ctx, service, method, req)
-	}
-	return nil, nil
-}
-
-// RequestStream initiates a streaming request using the configured RequestStreamFunc.
-func (m *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	if m.RequestStreamFunc != nil {
-		return m.RequestStreamFunc(ctx, service, method, req)
 	}
 	return nil, nil
 }

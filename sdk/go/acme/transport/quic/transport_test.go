@@ -267,27 +267,6 @@ func TestTransportConn(t *testing.T) {
 	}
 }
 
-func TestTransportRequestStream(t *testing.T) {
-	cfg := &transport.Config{
-		Address:   "localhost:9444",
-		TLSConfig: testTLSConfig(),
-	}
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	_, err = tr.RequestStream(ctx, "test", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for streaming request")
-	}
-	if !errors.IsUnimplemented(err) {
-		t.Errorf("expected unimplemented error, got: %v", err)
-	}
-}
-
 func TestTransportRequestUnknownRoute(t *testing.T) {
 	cfg := &transport.Config{
 		Address:   "localhost:9444",
