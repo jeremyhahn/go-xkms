@@ -621,3 +621,123 @@ func TestQRDBAdapter_GetByEmail_MaterializeError(t *testing.T) {
 		t.Fatalf("expected materialize error via GetByEmail, got %v", err)
 	}
 }
+
+// ----- discarded-error fixes (#701) -----
+//
+// The four tests below each exercise a call that used to be
+// "_, _ := ..." or "_ = ...": a failure was silently swallowed and the
+// caller went on to persist state built from an empty or partial read.
+// Each now proves the failure is reported instead.
+
+// TestQRDBAdapter_CredSave_ListIndexError proves Save reports a failure to
+// read the existing credential index rather than persisting a rewritten
+// index containing only the new credential, which would have deleted every
+// other credential the user has from the index.
+func TestQRDBAdapter_CredSave_ListIndexError(t *testing.T) {
+	kv := &faultyKV{
+		inner:             newFakeKV(),
+		getErr:            errKVFault,
+		getFaultKeyPrefix: "__xkms:webauthn/users/",
+	}
+	_, cs := newFaultyAdapter(t, newFakeUserClient(), kv)
+	cred := &Credential{ID: []byte("c"), UserID: HandleFromUserID(1)}
+	if err := cs.Save(context.Background(), cred); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected list-index error, got %v", err)
+	}
+}
+
+// TestQRDBAdapter_CredDelete_ListIndexError proves Delete reports a failure
+// to read the existing credential index rather than persisting a rewritten
+// index built from a failed (effectively empty) read, which would have
+// wiped every other credential the user has from the index.
+func TestQRDBAdapter_CredDelete_ListIndexError(t *testing.T) {
+	ctx := context.Background()
+	kv := newFakeKV()
+	uc := newFakeUserClient()
+	us, cs := newFaultyAdapter(t, uc, kv)
+	user, err := us.Create(ctx, "creddel@example.com", "Cred Del")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	faulty := &faultyKV{inner: kv, getErr: errKVFault, getFaultKeyPrefix: "__xkms:webauthn/users/"}
+	_, faultyCS := newFaultyAdapter(t, uc, faulty)
+
+	if err := faultyCS.Delete(ctx, []byte("a")); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected list-index error, got %v", err)
+	}
+}
+
+// TestQRDBAdapter_UserDelete_ListIndexError proves UserStore.Delete reports
+// a failure to read the credential index after the user record itself is
+// gone, rather than silently leaving every credential blob behind,
+// orphaned and still referencing the deleted user.
+func TestQRDBAdapter_UserDelete_ListIndexError(t *testing.T) {
+	ctx := context.Background()
+	kv := newFakeKV()
+	uc := newFakeUserClient()
+	us, _ := newFaultyAdapter(t, uc, kv)
+	user, err := us.Create(ctx, "userdel@example.com", "User Del")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	faulty := &faultyKV{inner: kv, getErr: errKVFault, getFaultKeyPrefix: "__xkms:webauthn/users/"}
+	faultyUS, _ := newFaultyAdapter(t, uc, faulty)
+
+	if err := faultyUS.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected list-index error, got %v", err)
+	}
+}
+
+// TestQRDBAdapter_UserDelete_CredCleanupErrorsPropagate proves a failure to
+// delete an individual orphaned-credential blob during UserStore.Delete's
+// best-effort cleanup is joined into the returned error instead of
+// discarded.
+func TestQRDBAdapter_UserDelete_CredCleanupErrorsPropagate(t *testing.T) {
+	ctx := context.Background()
+	kv := newFakeKV()
+	uc := newFakeUserClient()
+	us, cs := newFaultyAdapter(t, uc, kv)
+	user, err := us.Create(ctx, "userdel2@example.com", "User Del2")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	faulty := &faultyKV{inner: kv, deleteErr: errKVFault}
+	faultyUS, _ := newFaultyAdapter(t, uc, faulty)
+
+	if err := faultyUS.Delete(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected joined credential-cleanup error, got %v", err)
+	}
+}
+
+// TestQRDBAdapter_DeleteByUserID_CredDeleteErrorsPropagate proves a failure
+// to delete an individual credential blob during DeleteByUserID is joined
+// into the returned error instead of discarded.
+func TestQRDBAdapter_DeleteByUserID_CredDeleteErrorsPropagate(t *testing.T) {
+	ctx := context.Background()
+	kv := newFakeKV()
+	uc := newFakeUserClient()
+	us, cs := newFaultyAdapter(t, uc, kv)
+	user, err := us.Create(ctx, "cleanup@example.com", "Cleanup")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := cs.Save(ctx, &Credential{ID: []byte("a"), UserID: user.WebAuthnID()}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	faulty := &faultyKV{inner: kv, deleteErr: errKVFault}
+	_, faultyCS := newFaultyAdapter(t, uc, faulty)
+
+	if err := faultyCS.DeleteByUserID(ctx, user.WebAuthnID()); !errors.Is(err, errKVFault) {
+		t.Fatalf("expected joined credential-delete error, got %v", err)
+	}
+}

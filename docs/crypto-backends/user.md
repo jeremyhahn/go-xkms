@@ -14,6 +14,7 @@
 | post-quantum signatures or encapsulation | `quantum` | ML-DSA, ML-KEM |
 | a signing key split across several holders | `frost` | threshold signatures; see the FROST guide |
 | your phone as the secure element | `phone` | TEE/StrongBox via the xkey pairing protocol |
+| an AVR device whose identity lives in a secure element | `avr` | read-only: the device's public identity, DICE attestation, and what it says about its own root of trust |
 
 ## Before you commit to one
 
@@ -48,6 +49,8 @@ The capabilities you will care about most:
 - **cloud (awskms / gcpkms / azurekv / vault)** — credentials in the
   **server's** environment. You never pass these on the command line.
 - **phone** — a paired xkey-android device.
+- **avr** — a device running arduino-generic firmware, on a serial link the
+  caller opens. There is no credential: the link is the access.
 
 ## "That backend is not available"
 
