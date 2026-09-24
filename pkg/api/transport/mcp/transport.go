@@ -616,11 +616,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	return t.rpcCall(ctx, rpcMethod, req, resp)
 }
 
-// RequestStream opens a bidirectional stream (not supported for MCP).
-func (t *Transport) RequestStream(ctx context.Context, _ string, _ interface{}) (transport.Stream, error) {
-	return nil, transport.ErrStreamNotSupported
-}
-
 // rpcErrorPattern recovers a JSON-RPC-style error code from a tool-error
 // message, for a server that still embeds the legacy "<label> error <code>:
 // <message>" text (e.g. the format the previous TCP transport's RPCError

@@ -496,12 +496,6 @@ func (t *Transport) parseErrorResponse(recorder *httptest.ResponseRecorder) erro
 	return errors.New(code, op, acmeErr.Detail)
 }
 
-// RequestStream initiates a streaming request.
-// Note: Streaming is not supported for embedded transport as ACME is request/response.
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	return nil, errors.NewUnimplemented("embedded.Transport.RequestStream", "streaming not supported for embedded transport")
-}
-
 // Conn returns the underlying embedded server reference.
 func (t *Transport) Conn() interface{} {
 	return t.service

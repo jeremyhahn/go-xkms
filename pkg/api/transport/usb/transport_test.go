@@ -475,15 +475,6 @@ func TestRequestUnmarshalError(t *testing.T) {
 	assert.ErrorIs(t, err, transport.ErrInvalidResponse)
 }
 
-func TestRequestStreamNotSupported(t *testing.T) {
-	tr, err := New()
-	require.NoError(t, err)
-	s, err := tr.RequestStream(context.Background(), "test", nil)
-	require.Error(t, err)
-	assert.Nil(t, s)
-	assert.ErrorIs(t, err, ErrStreamNotSupported)
-}
-
 // TestPasswordStoreSetAccessModeNotSupported pins the one Password method
 // this transport does not yet proxy: access-mode changes are handled
 // separately (go-xkms#691).

@@ -319,11 +319,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	return t.DoRequest(ctx, http.MethodPost, method, req, resp)
 }
 
-// RequestStream opens a bidirectional stream (not fully supported for HTTP/3).
-func (t *Transport) RequestStream(ctx context.Context, method string, req interface{}) (transport.Stream, error) {
-	return nil, transport.ErrStreamNotSupported
-}
-
 // DoRequest performs an HTTP/3 request and unmarshals the response.
 func (t *Transport) DoRequest(ctx context.Context, httpMethod, path string, body interface{}, result interface{}) error {
 	respBody, err := t.DoRawRequest(ctx, httpMethod, path, body)

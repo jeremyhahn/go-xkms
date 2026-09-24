@@ -372,21 +372,6 @@ func substitutePathParams(url string, req interface{}) string {
 	return url
 }
 
-// RequestStream initiates a streaming request.
-// Note: Streaming is not natively supported over HTTP/1.1 Unix sockets.
-// For streaming operations, consider using the gRPC transport.
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	const op = "unix.Transport.RequestStream"
-
-	if t.closed.Load() {
-		return nil, caerrors.NewUnavailable(op, "transport is closed")
-	}
-
-	// Unix socket transport over HTTP does not support streaming
-	// Return a specific error indicating this limitation
-	return nil, caerrors.NewUnimplemented(op, "streaming not supported for HTTP over Unix socket transport; use gRPC transport for streaming operations")
-}
-
 // Conn returns the underlying HTTP client.
 func (t *Transport) Conn() interface{} {
 	return t.client

@@ -637,13 +637,6 @@ func (t *Transport) handleJSONRPCError(op string, rpcErr *JSONRPCError) error {
 	return errors.New(code, op, rpcErr.Message)
 }
 
-// RequestStream initiates a streaming request.
-// Note: MCP over HTTP does not natively support streaming. This method returns
-// an error indicating streaming is not supported.
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	return nil, errors.NewUnimplemented("mcp.Transport.RequestStream", "streaming not supported for MCP transport")
-}
-
 // Conn returns the underlying HTTP client.
 func (t *Transport) Conn() interface{} {
 	return t.httpClient

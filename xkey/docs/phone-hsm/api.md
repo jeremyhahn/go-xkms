@@ -1,6 +1,6 @@
 # Phone as HSM — API
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
 
 Transport shapes:
 [`../../../docs/key-management/api.md`](../../../docs/key-management/api.md).
@@ -16,7 +16,7 @@ what its device protocol can and nothing else.
 | Channel | USB AOA, TCP relay, or BLE |
 | Session | Noise XX — `Noise_XX_25519_ChaChaPoly_SHA256` |
 | Payload | JSON-RPC over the encrypted session |
-| Streaming | none — `RequestStream` returns `ErrStreamNotSupported` |
+| Streaming | none — the transport only implements `Connect`/`Close`/`Healthy`/`Request` |
 | Concurrency | serialised; one request at a time per session |
 | Implementation | `go-xkms/pkg/api/transport/usb`, `xkey/pkg/pairing` |
 
@@ -99,7 +99,6 @@ the session.
 | send failed | `transport.ErrConnectionFailed`; **transport marked disconnected** |
 | decrypt failed | `transport.ErrInvalidResponse` |
 | phone returned a JSON-RPC error | `ErrRequestFailed` with `[code] message` |
-| streaming attempted | `ErrStreamNotSupported` |
 | any service method | `ErrNotSupported` |
 
 A failed send disconnects rather than retrying: a Noise session cannot be
