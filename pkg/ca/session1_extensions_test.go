@@ -517,10 +517,15 @@ func TestImportDistributionCRLs_NilCert(t *testing.T) {
 // VerifyTCG_CSR_IDevIDBytes
 // =============================================================================
 
-func TestVerifyTCG_CSR_IDevIDBytes_WithoutTPM(t *testing.T) {
+// TestVerifyTCG_CSR_IDevIDBytes_NoTPMRequired proves VerifyTCG_CSR_IDevIDBytes
+// no longer requires a TPM (go-xkms#798): the credential challenge is built
+// in software via tpm2.NewCredentialChallenge, so a garbage CSR fails at CSR
+// unmarshalling, never at a TPM-not-configured check.
+func TestVerifyTCG_CSR_IDevIDBytes_NoTPMRequired(t *testing.T) {
 	ca := setupTestCA(t)
 	_, _, _, err := ca.VerifyTCG_CSR_IDevIDBytes([]byte("packed-csr"), x509.ECDSAWithSHA256)
-	assert.ErrorIs(t, err, ErrTPMNotConfigured)
+	assert.NotErrorIs(t, err, ErrTPMNotConfigured)
+	assert.ErrorIs(t, err, ErrTCGCSRUnmarshalFailed)
 }
 
 // =============================================================================

@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface — `pkg/ca`
 
@@ -79,6 +79,11 @@ and the `…WithXSigner` variants.
 
 **`CATCGEnrollment`** —
 `VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) (blob, secret, plain []byte, err error)`.
+The `TPM2_MakeCredential` challenge is built in software
+(`tpm2.NewCredentialChallenge`, `tpm2.ActivationKeyName`); this method no
+longer calls `ca.getTPM()` and no longer requires `SetTPM` to have been
+called (go-xkms#798) -- `EnrollDevice` (the full IAK/IDevID issuance path)
+still does, for `SignTCGCSRIDevID`.
 
 **TCG DevID certificate conformance** (`tcg.go`, `tcg_oids.go`,
 `tcg_devid_name.go`, `san.go`) — the IDevID and IAK certificates
