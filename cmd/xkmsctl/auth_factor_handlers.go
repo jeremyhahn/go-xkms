@@ -230,13 +230,13 @@ func defaultUserAuthFactorClientFactory(ctx context.Context) (qrdbtransport.User
 		return nil, nil, &QRDBControlConnectError{Cause: err}
 	}
 	if err := qc.Connect(ctx); err != nil {
-		_ = qc.Close()
+		closeQuietly(qc)
 		return nil, nil, &QRDBControlConnectError{Cause: err}
 	}
 
 	cl := qc.UserAuthFactors()
 	if cl == nil {
-		_ = qc.Close()
+		closeQuietly(qc)
 		return nil, nil, &AuthFactorMissingClientError{}
 	}
 	return cl, qc.Close, nil
@@ -429,25 +429,25 @@ func runXKMSAuthFactorList(ctx context.Context, user string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = invokeClose(closeFn) }()
+	defer closeFuncQuietly(closeFn)
 
 	resp, err := cl.ListAuthFactors(ctx, &qrdbtransport.AuthFactorListRequest{UserID: userID})
 	if err != nil {
 		return err
 	}
 
-	out := os.Stdout
+	out := newOutputWriter(os.Stdout)
 	if len(resp.Factors) == 0 {
-		_, _ = fmt.Fprintln(out, "(no enrolled factors)")
-		return nil
+		out.println("(no enrolled factors)")
+		return out.Err()
 	}
-	_, _ = fmt.Fprintln(out, "ID\tTYPE\tUSER\tLABEL\tREGISTERED\tREVOKED")
+	out.println("ID\tTYPE\tUSER\tLABEL\tREGISTERED\tREVOKED")
 	for _, f := range resp.Factors {
 		revoked := "-"
 		if f.RevokedAt != nil {
 			revoked = f.RevokedAt.Format("2006-01-02T15:04:05Z")
 		}
-		_, _ = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\n",
+		out.printf("%s\t%s\t%d\t%s\t%s\t%s\n",
 			f.ID,
 			f.Type,
 			f.UserID,
@@ -456,7 +456,7 @@ func runXKMSAuthFactorList(ctx context.Context, user string) error {
 			revoked,
 		)
 	}
-	return nil
+	return out.Err()
 }
 
 // runXKMSAuthFactorAdd enrolls a new factor.
@@ -472,7 +472,7 @@ func runXKMSAuthFactorAdd(ctx context.Context, f *authFactorAddFlags) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = invokeClose(closeFn) }()
+	defer closeFuncQuietly(closeFn)
 
 	req, err := buildXKMSAddRequest(userID, f)
 	if err != nil {
@@ -482,8 +482,7 @@ func runXKMSAuthFactorAdd(ctx context.Context, f *authFactorAddFlags) error {
 	if err != nil {
 		return err
 	}
-	printXKMSFactorRecord(&resp.Factor)
-	return nil
+	return printXKMSFactorRecord(&resp.Factor)
 }
 
 // runXKMSAuthFactorRemove revokes a factor.
@@ -495,7 +494,7 @@ func runXKMSAuthFactorRemove(ctx context.Context, factorID string, force bool) e
 	if err != nil {
 		return err
 	}
-	defer func() { _ = invokeClose(closeFn) }()
+	defer closeFuncQuietly(closeFn)
 
 	if _, err := cl.RemoveAuthFactor(ctx, &qrdbtransport.AuthFactorRemoveRequest{
 		FactorID: factorID,
@@ -503,8 +502,8 @@ func runXKMSAuthFactorRemove(ctx context.Context, factorID string, force bool) e
 	}); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(os.Stdout, "OK")
-	return nil
+	_, err = fmt.Fprintln(os.Stdout, "OK")
+	return err
 }
 
 // runXKMSAuthFactorRotate atomically rotates a factor via the M14
@@ -525,7 +524,7 @@ func runXKMSAuthFactorRotate(ctx context.Context, oldID string, f *authFactorAdd
 	if err != nil {
 		return err
 	}
-	defer func() { _ = invokeClose(closeFn) }()
+	defer closeFuncQuietly(closeFn)
 
 	addReq, err := buildXKMSAddRequest(userID, f)
 	if err != nil {
@@ -538,10 +537,12 @@ func runXKMSAuthFactorRotate(ctx context.Context, oldID string, f *authFactorAdd
 	if err != nil {
 		return err
 	}
-	out := os.Stdout
-	_, _ = fmt.Fprintf(out, "Old factor revoked: %s\n", oldID)
-	printXKMSFactorRecord(&resp.NewFactor)
-	return nil
+	out := newOutputWriter(os.Stdout)
+	out.printf("Old factor revoked: %s\n", oldID)
+	if err := out.Err(); err != nil {
+		return err
+	}
+	return printXKMSFactorRecord(&resp.NewFactor)
 }
 
 // runXKMSAuthFactorRelabel renames a factor via the M14
@@ -551,7 +552,7 @@ func runXKMSAuthFactorRelabel(ctx context.Context, factorID, label string) error
 	if err != nil {
 		return err
 	}
-	defer func() { _ = invokeClose(closeFn) }()
+	defer closeFuncQuietly(closeFn)
 
 	resp, err := cl.RelabelAuthFactor(ctx, &qrdbtransport.AuthFactorRelabelRequest{
 		FactorID: factorID,
@@ -560,8 +561,7 @@ func runXKMSAuthFactorRelabel(ctx context.Context, factorID, label string) error
 	if err != nil {
 		return err
 	}
-	printXKMSFactorRecord(&resp.Factor)
-	return nil
+	return printXKMSFactorRecord(&resp.Factor)
 }
 
 // runXKMSAuthLogin resolves an inbound (method, lookup-key) tuple to a
@@ -582,7 +582,7 @@ func runXKMSAuthLogin(ctx context.Context, method, certPath, credHex string) err
 	if err != nil {
 		return err
 	}
-	defer func() { _ = invokeClose(closeFn) }()
+	defer closeFuncQuietly(closeFn)
 
 	resp, err := cl.LoginAuthFactor(ctx, &qrdbtransport.AuthFactorLoginRequest{
 		Type:      method,
@@ -591,22 +591,22 @@ func runXKMSAuthLogin(ctx context.Context, method, certPath, credHex string) err
 	if err != nil {
 		return err
 	}
-	out := os.Stdout
-	_, _ = fmt.Fprintf(out, "User ID:   %d\n", resp.UserID)
-	_, _ = fmt.Fprintf(out, "Username:  %s\n", resp.Username)
+	out := newOutputWriter(os.Stdout)
+	out.printf("User ID:   %d\n", resp.UserID)
+	out.printf("Username:  %s\n", resp.Username)
 	if resp.Email != "" {
-		_, _ = fmt.Fprintf(out, "Email:     %s\n", resp.Email)
+		out.printf("Email:     %s\n", resp.Email)
 	}
 	if resp.TenantID != "" {
-		_, _ = fmt.Fprintf(out, "Tenant:    %s\n", resp.TenantID)
+		out.printf("Tenant:    %s\n", resp.TenantID)
 	}
-	_, _ = fmt.Fprintf(out, "Active:    %t\n", resp.Active)
+	out.printf("Active:    %t\n", resp.Active)
 	if len(resp.Roles) > 0 {
-		_, _ = fmt.Fprintf(out, "Roles:     %v\n", resp.Roles)
+		out.printf("Roles:     %v\n", resp.Roles)
 	}
-	_, _ = fmt.Fprintf(out, "Factor ID: %s\n", resp.Factor.ID)
-	_, _ = fmt.Fprintf(out, "Factor:    %s (%s)\n", resp.Factor.Label, resp.Factor.Type)
-	return nil
+	out.printf("Factor ID: %s\n", resp.Factor.ID)
+	out.printf("Factor:    %s (%s)\n", resp.Factor.Label, resp.Factor.Type)
+	return out.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -614,21 +614,22 @@ func runXKMSAuthLogin(ctx context.Context, method, certPath, credHex string) err
 // ---------------------------------------------------------------------------
 
 // printXKMSFactorRecord renders an AuthFactorRecord to stdout.
-func printXKMSFactorRecord(rec *qrdbtransport.AuthFactorRecord) {
-	out := os.Stdout
-	_, _ = fmt.Fprintf(out, "ID:            %s\n", rec.ID)
-	_, _ = fmt.Fprintf(out, "Type:          %s\n", rec.Type)
-	_, _ = fmt.Fprintf(out, "User:          %d\n", rec.UserID)
+func printXKMSFactorRecord(rec *qrdbtransport.AuthFactorRecord) error {
+	out := newOutputWriter(os.Stdout)
+	out.printf("ID:            %s\n", rec.ID)
+	out.printf("Type:          %s\n", rec.Type)
+	out.printf("User:          %d\n", rec.UserID)
 	if rec.Label != "" {
-		_, _ = fmt.Fprintf(out, "Label:         %s\n", rec.Label)
+		out.printf("Label:         %s\n", rec.Label)
 	}
-	_, _ = fmt.Fprintf(out, "Registered At: %s\n", rec.RegisteredAt.Format("2006-01-02T15:04:05Z"))
+	out.printf("Registered At: %s\n", rec.RegisteredAt.Format("2006-01-02T15:04:05Z"))
 	if rec.RevokedAt != nil {
-		_, _ = fmt.Fprintf(out, "Revoked At:    %s\n", rec.RevokedAt.Format("2006-01-02T15:04:05Z"))
+		out.printf("Revoked At:    %s\n", rec.RevokedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	if rec.CreatedBy != "" {
-		_, _ = fmt.Fprintf(out, "Created By:    %s\n", rec.CreatedBy)
+		out.printf("Created By:    %s\n", rec.CreatedBy)
 	}
+	return out.Err()
 }
 
 // buildXKMSAddRequest validates the canonical add/rotate flag set and

@@ -82,11 +82,14 @@ Example (mTLS with PKCS#11 token):
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
+		fr := newFlagReader(cmd)
+		storagePath := fr.String("storage-path")
+		method := fr.String("method")
+		if err := fr.Err(); err != nil {
+			return err
+		}
 		storagePath = resolveStoragePath(storagePath)
 		printVerbose("Using user store at: %s", storagePath)
-
-		method, _ := cmd.Flags().GetString("method")
 
 		handler, ok := adminCreateHandlers[method]
 		if !ok {
@@ -106,11 +109,15 @@ Example (mTLS with PKCS#11 token):
 // server-side WebAuthn registration ceremony through the SDK. The admin role is
 // always assigned.
 func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
-	email, _ := cmd.Flags().GetString("email")
-	displayName, _ := cmd.Flags().GetString("display-name")
-	devicePath, _ := cmd.Flags().GetString("device")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	requireUV, _ := cmd.Flags().GetBool("user-verification")
+	fr := newFlagReader(cmd)
+	email := fr.String("email")
+	displayName := fr.String("display-name")
+	devicePath := fr.String("device")
+	timeout := fr.Duration("timeout")
+	requireUV := fr.Bool("user-verification")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 
 	if displayName == "" {
 		displayName = username
@@ -130,7 +137,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	if err != nil {
 		return &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -211,7 +218,11 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 // (--pkcs11-module), computes the canonical SPKI thumbprint, and creates an admin
 // user with a CertBinding.
 func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
-	displayName, _ := cmd.Flags().GetString("display-name")
+	fr := newFlagReader(cmd)
+	displayName := fr.String("display-name")
+	if err := fr.Err(); err != nil {
+		return err
+	}
 	if displayName == "" {
 		displayName = username
 	}
@@ -249,7 +260,7 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 	if err != nil {
 		return &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -314,7 +325,11 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 // loadEnrollmentCert loads an X.509 certificate from either --cert-file or --pkcs11-module.
 // Returns the parsed certificate or a typed error.
 func loadEnrollmentCert(cmd *cobra.Command, cfg *Config) (*x509.Certificate, error) {
-	certFile, _ := cmd.Flags().GetString("cert-file")
+	fr := newFlagReader(cmd)
+	certFile := fr.String("cert-file")
+	if err := fr.Err(); err != nil {
+		return nil, err
+	}
 
 	if certFile != "" {
 		return loadCertFromFile(certFile)
@@ -375,7 +390,7 @@ var adminListCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -463,7 +478,7 @@ var adminGetCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -555,7 +570,7 @@ Note: You cannot delete the last administrator account.`,
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -599,7 +614,7 @@ var adminDisableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -644,7 +659,7 @@ var adminEnableCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {
@@ -687,7 +702,7 @@ var adminStatusCmd = &cobra.Command{
 			handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 			return
 		}
-		defer func() { _ = cl.Close() }()
+		defer closeQuietly(cl)
 
 		ctx := context.Background()
 		if err := cl.Connect(ctx); err != nil {

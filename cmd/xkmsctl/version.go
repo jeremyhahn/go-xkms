@@ -37,14 +37,16 @@ var versionCmd = &cobra.Command{
 		printer := NewPrinter(getConfig().OutputFormat, os.Stdout)
 
 		if getConfig().OutputFormat == "json" {
-			_ = printer.printJSON(map[string]interface{}{
+			if err := printer.printJSON(map[string]interface{}{
 				"version":    Version,
 				"commit":     GitCommit,
 				"build_date": BuildDate,
 				"go_version": runtime.Version(),
 				"os":         runtime.GOOS,
 				"arch":       runtime.GOARCH,
-			})
+			}); err != nil {
+				handleError(err)
+			}
 		} else {
 			fmt.Printf("xkmsctl version %s\n", Version)
 			fmt.Printf("Git commit: %s\n", GitCommit)

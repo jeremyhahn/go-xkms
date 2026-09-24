@@ -117,7 +117,7 @@ func rebalanceClient(ctx context.Context) (qrdbtransport.RebalanceClient, func()
 		return nil, nil, err
 	}
 	if ctrl.Rebalance == nil {
-		_ = closer()
+		closeFuncQuietly(closer)
 		return nil, nil, &RebalanceUnsupportedError{}
 	}
 	return ctrl.Rebalance, closer, nil
@@ -155,7 +155,7 @@ func newRebalanceStatsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			stats, err := rc.GetShardStats(cmd.Context(), shardID)
 			if err != nil {
@@ -193,7 +193,7 @@ for later verbatim execution with "rebalance execute --plan FILE".`,
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			plan, err := rc.CreateRebalancePlan(cmd.Context(), &qrdbtransport.RebalancePlanRequest{
 				MaxMoves:      maxMoves,
@@ -244,7 +244,7 @@ is executed verbatim. Without --plan, a fresh plan is computed server-side
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			var plan *qrdbtransport.RebalancePlan
 			if planFile != "" {
@@ -288,7 +288,7 @@ func newRebalanceReportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer func() { _ = closer() }()
+			defer closeFuncQuietly(closer)
 
 			report, err := rc.GetImbalanceReport(cmd.Context())
 			if err != nil {
@@ -360,7 +360,7 @@ func (p *Printer) PrintShardStats(stats *qrdbtransport.ShardStatsResponse) error
 			fprintf(p.writer, "Leader:   unknown\n")
 		}
 		fprintf(p.writer, "Replicas: %d\n", stats.ReplicaCount)
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -377,13 +377,13 @@ func (p *Printer) PrintRebalancePlan(plan *qrdbtransport.RebalancePlan) error {
 		fprintf(p.writer, "Planned moves:      %d\n", len(plan.Moves))
 		if len(plan.Moves) == 0 {
 			fprintf(p.writer, "Cluster is balanced; nothing to move\n")
-			return nil
+			return p.writer.Err()
 		}
 		fprintf(p.writer, "%-8s %-25s %-25s %s\n", "SHARD", "FROM", "TO", "EST. BYTES")
 		for _, m := range plan.Moves {
 			fprintf(p.writer, "%-8d %-25s %-25s %d\n", m.ShardID, m.FromNode, m.ToNode, m.EstimatedBytes)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -399,7 +399,7 @@ func (p *Printer) PrintRebalanceResult(result *qrdbtransport.RebalanceResult) er
 		fprintf(p.writer, "Moves failed:    %d\n", result.MovesFailed)
 		fprintf(p.writer, "Duration:        %s\n", result.Duration)
 		fprintf(p.writer, "Final imbalance: %.2f\n", result.FinalImbalance)
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}
@@ -419,7 +419,7 @@ func (p *Printer) PrintImbalanceReport(report *qrdbtransport.ImbalanceReport) er
 		}
 		if len(report.Nodes) == 0 {
 			fprintf(p.writer, "No nodes reported\n")
-			return nil
+			return p.writer.Err()
 		}
 		fprintf(p.writer, "%-20s %-25s %-8s %-12s %-12s %s\n",
 			"NODE", "ADDRESS", "SHARDS", "KEYS", "BYTES", "LEADERS")
@@ -427,7 +427,7 @@ func (p *Printer) PrintImbalanceReport(report *qrdbtransport.ImbalanceReport) er
 			fprintf(p.writer, "%-20s %-25s %-8d %-12d %-12d %d\n",
 				n.NodeID, n.Address, n.ShardCount, n.TotalKeys, n.TotalBytes, n.LeaderCount)
 		}
-		return nil
+		return p.writer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
 	}

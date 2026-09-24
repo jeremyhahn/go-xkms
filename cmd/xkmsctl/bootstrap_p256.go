@@ -72,7 +72,12 @@ instead of one the server generates for itself, place this file at
 <storage.path>/bootstrap-noise-p256.key before the server's first boot --
 that is the exact path the no-barrier custody path reads.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		generateP256Key(outputFile)
 	},
 }
@@ -85,8 +90,13 @@ var p256ShowKeyCmd = &cobra.Command{
 private key file or hex string. This is the value clients pin as the server's
 responder key for the TSBOOT1_P256_AESGCM_SHA256 suite.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		keyFile, _ := cmd.Flags().GetString("key-file")
-		keyHex, _ := cmd.Flags().GetString("key-hex")
+		fr := newFlagReader(cmd)
+		keyFile := fr.String("key-file")
+		keyHex := fr.String("key-hex")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		showP256Key(keyFile, keyHex)
 	},
 }

@@ -62,10 +62,15 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
-		name, _ := cmd.Flags().GetString("name")
-		isolation, _ := cmd.Flags().GetString("isolation")
-		autoUnseal, _ := cmd.Flags().GetBool("barrier-auto-unseal")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		name := fr.String("name")
+		isolation := fr.String("isolation")
+		autoUnseal := fr.Bool("barrier-auto-unseal")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if id == "" {
 			handleError(ErrTenantIDRequired)
@@ -108,7 +113,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrTenantIDRequired)
 			return
@@ -133,7 +143,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrTenantIDRequired)
 			return
@@ -160,11 +175,16 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
-		threshold, _ := cmd.Flags().GetInt("threshold")
-		shares, _ := cmd.Flags().GetInt("shares")
-		passphrase, _ := cmd.Flags().GetString("passphrase")
-		strategy, _ := cmd.Flags().GetString("strategy")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		threshold := fr.Int("threshold")
+		shares := fr.Int("shares")
+		passphrase := fr.String("passphrase")
+		strategy := fr.String("strategy")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if id == "" {
 			handleError(ErrTenantIDRequired)
@@ -190,8 +210,13 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
-		share, _ := cmd.Flags().GetString("share")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		share := fr.String("share")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if id == "" {
 			handleError(ErrTenantIDRequired)
@@ -215,7 +240,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrTenantIDRequired)
 			return
@@ -235,11 +265,11 @@ func createTenantClient(cfg *Config) (client.Client, func(), error) {
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	cleanup := func() { _ = cl.Close() }
+	cleanup := func() { closeQuietly(cl) }
 	return cl, cleanup, nil
 }
 
@@ -429,15 +459,20 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		modes := fr.StringSlice("isolation-modes")
+		allowRaft := fr.Bool("allow-raft")
+		allowVolume := fr.Bool("allow-volume")
+		allowSystemManaged := fr.Bool("allow-system-managed")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrTenantIDRequired)
 			return
 		}
-		modes, _ := cmd.Flags().GetStringSlice("isolation-modes")
-		allowRaft, _ := cmd.Flags().GetBool("allow-raft")
-		allowVolume, _ := cmd.Flags().GetBool("allow-volume")
-		allowSystemManaged, _ := cmd.Flags().GetBool("allow-system-managed")
 
 		tenantUpdateEntitlements(cfg, printer, id, modes, allowRaft, allowVolume, allowSystemManaged)
 	},
@@ -456,19 +491,30 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrTenantIDRequired)
 			return
 		}
-		var q transport.TenantQuotas
-		q.MaxDatabases, _ = cmd.Flags().GetInt64("max-databases")
-		q.MaxKeys, _ = cmd.Flags().GetInt64("max-keys")
-		q.MaxCollections, _ = cmd.Flags().GetInt64("max-collections")
-		q.MaxStorageBytes, _ = cmd.Flags().GetInt64("max-storage-bytes")
-		q.MaxUsers, _ = cmd.Flags().GetInt64("max-users")
-		q.MaxRoles, _ = cmd.Flags().GetInt64("max-roles")
-		q.MaxCertificates, _ = cmd.Flags().GetInt64("max-certificates")
+		qfr := newFlagReader(cmd)
+		q := transport.TenantQuotas{
+			MaxDatabases:    qfr.Int64("max-databases"),
+			MaxKeys:         qfr.Int64("max-keys"),
+			MaxCollections:  qfr.Int64("max-collections"),
+			MaxStorageBytes: qfr.Int64("max-storage-bytes"),
+			MaxUsers:        qfr.Int64("max-users"),
+			MaxRoles:        qfr.Int64("max-roles"),
+			MaxCertificates: qfr.Int64("max-certificates"),
+		}
+		if err := qfr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		tenantUpdateQuotas(cfg, printer, id, q)
 	},
@@ -527,11 +573,14 @@ func printTenantInfo(printer *Printer, tenant *transport.TenantInfo, header stri
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "%s:\n", header)
-		_, _ = fmt.Fprintf(printer.writer, "  ID:      %s\n", tenant.ID)
-		_, _ = fmt.Fprintf(printer.writer, "  Name:    %s\n", tenant.Name)
-		_, _ = fmt.Fprintf(printer.writer, "  Created: %s\n", tenant.CreatedAt.Format(time.RFC3339))
-		_, _ = fmt.Fprintf(printer.writer, "  Updated: %s\n", tenant.UpdatedAt.Format(time.RFC3339))
+		printer.printf("%s:\n", header)
+		printer.printf("  ID:      %s\n", tenant.ID)
+		printer.printf("  Name:    %s\n", tenant.Name)
+		printer.printf("  Created: %s\n", tenant.CreatedAt.Format(time.RFC3339))
+		printer.printf("  Updated: %s\n", tenant.UpdatedAt.Format(time.RFC3339))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -548,27 +597,30 @@ func printTenantList(printer *Printer, tenants []transport.TenantInfo) {
 		}
 	case OutputFormatTable:
 		if len(tenants) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No tenants found")
+			printer.println("No tenants found")
 			return
 		}
-		_, _ = fmt.Fprintf(printer.writer, "%-20s %-30s %-25s\n", "ID", "NAME", "CREATED")
-		_, _ = fmt.Fprintln(printer.writer, repeatString("-", 77))
+		printer.printf("%-20s %-30s %-25s\n", "ID", "NAME", "CREATED")
+		printer.println(repeatString("-", 77))
 		for _, t := range tenants {
-			_, _ = fmt.Fprintf(printer.writer, "%-20s %-30s %-25s\n",
+			printer.printf("%-20s %-30s %-25s\n",
 				truncateString(t.ID, 20),
 				truncateString(t.Name, 30),
 				t.CreatedAt.Format("2006-01-02 15:04"))
 		}
-		_, _ = fmt.Fprintf(printer.writer, "\nTotal: %d tenant(s)\n", len(tenants))
+		printer.printf("\nTotal: %d tenant(s)\n", len(tenants))
 	case OutputFormatText:
 		if len(tenants) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No tenants found")
+			printer.println("No tenants found")
 			return
 		}
-		_, _ = fmt.Fprintln(printer.writer, "Tenants:")
+		printer.println("Tenants:")
 		for _, t := range tenants {
-			_, _ = fmt.Fprintf(printer.writer, "  - %s (%s)\n", t.Name, t.ID)
+			printer.printf("  - %s (%s)\n", t.Name, t.ID)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -587,15 +639,18 @@ func printTenantBarrierStatus(printer *Printer, resp *transport.TenantBarrierSta
 		if resp.Sealed {
 			sealState = "sealed"
 		}
-		_, _ = fmt.Fprintf(printer.writer, "Tenant Barrier Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Tenant:          %s\n", resp.TenantID)
-		_, _ = fmt.Fprintf(printer.writer, "  State:           %s\n", sealState)
-		_, _ = fmt.Fprintf(printer.writer, "  Initialized:     %t\n", resp.Initialized)
-		_, _ = fmt.Fprintf(printer.writer, "  Strategy:        %s\n", resp.Strategy)
-		_, _ = fmt.Fprintf(printer.writer, "  Hardware Backed: %t\n", resp.HardwareBacked)
+		printer.printf("Tenant Barrier Status:\n")
+		printer.printf("  Tenant:          %s\n", resp.TenantID)
+		printer.printf("  State:           %s\n", sealState)
+		printer.printf("  Initialized:     %t\n", resp.Initialized)
+		printer.printf("  Strategy:        %s\n", resp.Strategy)
+		printer.printf("  Hardware Backed: %t\n", resp.HardwareBacked)
 		if resp.ShamirThreshold > 0 {
-			_, _ = fmt.Fprintf(printer.writer, "  Shamir:          %d-of-%d\n", resp.ShamirThreshold, resp.ShamirTotal)
+			printer.printf("  Shamir:          %d-of-%d\n", resp.ShamirThreshold, resp.ShamirTotal)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
