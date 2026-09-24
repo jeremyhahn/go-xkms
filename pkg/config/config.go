@@ -269,9 +269,51 @@ type PINConfig struct {
 // NOTE: SO PIN is NEVER stored -- always verified against the actual backend.
 type CredentialsConfig struct {
 	// SealStrategy determines how backend credentials are sealed at rest.
-	// Valid values: manual, barrier, tpm2, pkcs11, aws_kms, gcp_kms, azure_kv, vault, software
+	// Valid values: manual, barrier, tpm2, pkcs11, awskms, gcpkms, azurekv, vault, passphrase.
 	// "manual" (default): credentials NOT stored -- operator enters at each startup.
+	//
+	// "barrier" requires CredentialsBarrierStrategySupported(): the credential
+	// service is constructed, and resolves every backend's credential:// secret
+	// (pkg/server's resolveConfigSecrets), before the general (non-node) xkms
+	// barrier can exist -- that barrier's own hardware seal strategies are built
+	// from already-initialized backends (buildHardwareSealStrategies), which is
+	// the exact set "barrier" would need to unseal first. Only the qrdb node's
+	// OWN barrier (Storage.Backend=="qrdb", hosted embedded, with a strategy
+	// BarrierConfig.NodeFlipWired reports true for) is built independently of
+	// backend initialization and is therefore available in time. Every other
+	// configuration is refused at Validate() with a typed error rather than
+	// failing deep inside Server.New (go-xkms#812).
 	SealStrategy string `yaml:"seal_strategy" json:"seal_strategy"`
+}
+
+// CredentialsBarrierStrategySupported reports whether
+// Credentials.SealStrategy "barrier" can be satisfied by this configuration.
+//
+// The credential service is constructed, and resolves every backend's
+// credential:// secret, before the general (non-node) xkms barrier can exist
+// -- initializeBarrier builds that barrier's hardware seal strategies from
+// ALREADY-INITIALIZED backends, the same backends whose own credentials a
+// "barrier" strategy would need the barrier to unseal first. That is a
+// structural cycle, not an ordering bug.
+//
+// The one barrier that IS available before backend initialization is the
+// qrdb node's own (the "flip", see pkg/server/node_seal.go's resolveNodeSeal
+// and BarrierConfig.NodeFlipWired): it is built directly from
+// Backends.TPM2/SealConfig, never from already-initialized backends, and is
+// adopted before the credential service is constructed. That requires
+// Storage.Backend=="qrdb" hosted with the embedded transport (a remote/
+// clustered qrdb deployment dials out instead of hosting the node that would
+// adopt the barrier), Barrier.Enabled, and a strategy NodeFlipWired reports
+// true for.
+func (c *Config) CredentialsBarrierStrategySupported() bool {
+	if !strings.EqualFold(c.Storage.Backend, "qrdb") {
+		return false
+	}
+	transport := strings.ToLower(strings.TrimSpace(c.Storage.QRDB.Transport))
+	if transport != "" && transport != "embedded" {
+		return false
+	}
+	return c.Barrier.Enabled && c.Barrier.NodeFlipWired()
 }
 
 // DefaultServerHost is the defaults-layer value of server.host: the empty
@@ -1366,6 +1408,24 @@ func (c *Config) Validate() error {
 
 	if _, err := c.Barrier.SealedWindowTimeoutDuration(); err != nil {
 		return err
+	}
+
+	// credentials.seal_strategy "barrier" is refused unless this deployment's
+	// barrier IS the qrdb node's own (see CredentialsBarrierStrategySupported):
+	// every other configuration builds the general xkms barrier from
+	// already-initialized backends, which is a structural cycle against a
+	// credential service that must resolve those same backends' credentials
+	// first (go-xkms#812).
+	if strings.EqualFold(c.Credentials.SealStrategy, "barrier") && !c.CredentialsBarrierStrategySupported() {
+		return &errs.Message{Msg: "credentials.seal_strategy \"barrier\" requires an embedded qrdb-hosted " +
+			"barrier: storage.backend \"qrdb\" with storage.qrdb.transport \"embedded\" (or unset), " +
+			"barrier.enabled true, and a barrier.strategy the node barrier supports (none, passphrase, " +
+			"shamir, or tpm2) -- got storage.backend " + fmt.Sprintf("%q", c.Storage.Backend) +
+			", storage.qrdb.transport " + fmt.Sprintf("%q", c.Storage.QRDB.Transport) +
+			", barrier.enabled " + fmt.Sprintf("%t", c.Barrier.Enabled) +
+			", barrier.strategy " + fmt.Sprintf("%q", c.Barrier.SealStrategy()) +
+			". The credential service resolves backend credentials before the general xkms barrier " +
+			"exists, so a barrier-backed credential store in any other configuration cannot unseal in time"}
 	}
 
 	// Validate at least one protocol is enabled (Unix socket counts as a protocol)
