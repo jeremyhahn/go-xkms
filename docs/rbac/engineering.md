@@ -1,0 +1,274 @@
+# RBAC — Engineering Contract
+
+> **Status: NORMATIVE** · Feature: `rbac` · Repo: `go-xkms` · Last verified: 2026-09-24
+
+## Exported surface
+
+### `pkg/auth/authorize.go`
+
+```go
+type Authorizer struct{ /* unexported */ }
+
+func NewAuthorizer(rbac qrdbtransport.RBACClient) *Authorizer
+func (a *Authorizer) Enabled() bool
+func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource, action string) error
+```
+
+`Enabled()` is `false` for a nil `*Authorizer` or one built with a nil RBAC
+client. `Authorize` returns `nil` (allowed) whenever `!Enabled()`;
+`ErrUnauthenticated` when `identity == nil`; otherwise delegates to
+`rbac.Authorize` after normalizing an empty `identity.TenantID` to
+`qrdbsdk.SystemTenantID`.
+
+### `pkg/auth/permissions.go` — the vocabulary
+
+The full resource and action list, verbatim from the constants (this file is
+"the ONLY authorization vocabulary in the xkms process" — doc comment):
+
+**Resources:** `keys`, `certs`, `backends`, `users`, `roles`, `tenants`,
+`audit`, `admin`, `seal`, `barrier`, `piv`, `ssh`, `passwords`, `pin`,
+`tenant_barrier`, `ceremony`, `credentials`, `bootstrap`, `acme_accounts`,
+`acme_orders`, `acme_eab`, `ca`.
+
+**Actions:** `sign`, `verify`, `encrypt`, `decrypt`, `create`, `rotate`,
+`delete`, `list`, `get`, `import`, `export`, `wrap`, `unwrap`, `derive`,
+`generate`, `revoke`, `read`, `update`, `write`, `use`, `disable`, `status`,
+`capabilities`, `bootstrap`, `seal`, `unseal`, `rekey`, `rotate_root_key`,
+`generate_recovery`, `recover_with_keys`, `initialize_shamir`,
+`unseal-share`, `enable_encryption`, `init`, `claim_cert`,
+`claim_share_begin`, `claim_share_complete`, `sign_csr`,
+`enroll_custodian`, `revoke_custodian`, `submit`, `strategy`, `lock`,
+`unlock`.
+
+A permission is a `resource:action` pair. A transport must never declare its
+own resource or action string literal — `internal/authzscan` enforces this
+for the per-call-site transports (gRPC, QUIC) by parsing their source and
+rejecting a raw string literal or an unknown constant name (see Test
+strategy).
+
+### `cmd/xkmsctl/roles.go` — CLI role names
+
+```go
+type Role string
+const (
+	RoleSO        Role = "so"
+	RoleAdmin     Role = "admin"
+	RoleOperator  Role = "operator"
+	RoleUser      Role = "user"
+	RoleAuditor   Role = "auditor"
+	RoleCustodian Role = "custodian"
+)
+func IsValidRole(r Role) bool
+```
+
+These mirror **six** of go-qrdb's seven built-in roles (verified against
+the vendored `go-qrdb@v0.19.0-alpha` dependency, `pkg/permission/builtin_role_grants.go`):
+SO, Admin, Operator, User, Auditor are derived from a shared registry;
+Custodian holds a fixed, minimal Shamir/barrier share-submission set; Owner
+is the standard-posture superuser (`permission.All()`). **`xkmsctl` cannot
+assign `"owner"`** — `IsValidRole` rejects it; only the six roles above are
+CLI-assignable.
+
+`userRegisterCmd`'s `--role` flag help text (`cmd/xkmsctl/user.go`) lists
+exactly these six roles; any other value fails at runtime with
+`ErrInvalidRole`.
+
+### `pkg/apimodule/module_scopes.go` — the permissions xkms alone scopes
+
+Since go-qrdb#504 removed the implicit default, every permission must
+declare a tenancy scope (`self` / `tenant-only` / `cross`) or the authorizer
+refuses it. qrdb declares the scope of its own canonical vocabulary; xkms
+declares scope **only** for the resource:action pairs it alone owns —
+verified as exactly five, all `ScopeSelf`:
+
+```go
+func selfScopedPermissions() []qrdbsdk.Permission {
+	return []qrdbsdk.Permission{
+		"keys:read",    // PKCS#11 object-state + seal-store reads (system-barrier state)
+		"keys:write",   // the mutating half of the same two stores
+		"keys:update",  // one compare-and-swap route on the PKCS#11 state store
+		"ssh:use",      // blanket gate on the SSH CA route group
+		"bootstrap:read", // the trust-bootstrap listener's own public keys (go-xkms#632)
+	}
+}
+```
+
+An in-code comment above this function states "the four below are the
+exceptions" — that count is **stale**; the function returns five. This
+document reflects the code, not the comment.
+
+### `pkg/apimodule/module_grants.go` — what xkms grants, and to whom
+
+```go
+func registerRoleGrants()      // runs once, before the embedded node seeds roles
+func modulePermissions() []qrdbsdk.Permission
+```
+
+`modulePermissions` derives the full set of resource:action pairs xkms
+declares, from **three** surfaces: the REST route table (`xkmsrest.Routes()`),
+the MCP method specs (`xkmsmcp.ModuleMethods()`), and the
+`qrdb.v1.permission` proto option on the `xkmsv1` gRPC service descriptors —
+so a new RPC/route/tool is granted the moment it is declared, with no
+hand-maintained list to fall out of sync.
+
+`registerRoleGrants` then, in this fixed order (permission → scope → grant,
+because the authorizer resolves scope before consulting a grant):
+
+1. Registers every derived permission into qrdb's global registry.
+2. Declares the tenancy scope of the five xkms-owned exceptions above.
+3. Grants the **entire** derived permission set to exactly **two** built-in
+   roles: `Admin` and `Owner`.
+
+**The Security Officer role receives none of it** — the doc comment states
+why explicitly: "xkms's surface is overwhelmingly cryptographic and qrdb's
+SoD invariant (FIPS 140-3 AS10.03) forbids crypto grants to SO." Operator,
+User, Auditor, and Custodian are **not** bulk-granted xkms's permission set
+either; those roles hold only whatever go-qrdb's own built-in role
+definitions already assign for the permission *names* xkms happens to share
+with qrdb's canonical vocabulary (e.g. `keys:sign`, `certs:generate`). For
+the xkms-exclusive families — `ssh:*`, `piv:*`, `passwords:*`, `seal:*`,
+`barrier:*`, `ceremony:*`, `credentials:*`, `bootstrap:read`,
+`tenant_barrier:*` — a role other than Admin or Owner has whatever qrdb's
+registry independently decided for that exact name, which this document
+does not enumerate permission-by-permission; verify against
+`pkg/permission/builtin_role_grants.go` in the go-qrdb dependency for a
+specific permission before assuming a non-Admin role holds it.
+
+## Invariants
+
+- **xkms registers no parallel resource/action vocabulary.** Every constant
+  in `pkg/auth/permissions.go` mirrors a name qrdb's canonical registry
+  already uses, or (for the handful xkms alone owns) is registered into that
+  same registry — never checked against a separate local table.
+- **Scope declaration order matters and is enforced in code.** Permissions,
+  then scopes, then grants — reversing it breaks token issuance for any
+  identity holding a not-yet-scoped permission.
+- **`RegisterPermissionScope` overwrites and runs after qrdb's own
+  `init()`.** Re-declaring a name qrdb already scopes would silently
+  override an upstream decision; `pkg/apimodule/module_scopes_test.go`
+  (`TestModuleDeclaresOnlyItsOwnScopes`) is the build gate against that.
+- **A route/RPC/tool's resource and action must be `pkg/auth` constants,
+  never string literals**, on the two transports without an in-process
+  table to check against (gRPC, QUIC) — enforced by `internal/authzscan`.
+- **Role reassignment after user creation does not exist.** `roleNameToID`
+  runs once, at `CreateUser`; there is no update path.
+
+## Error semantics
+
+| Error | Where | Meaning |
+|---|---|---|
+| `ErrUnauthenticated` | `pkg/auth/errors.go` | `Authorize` called with a nil identity while enabled |
+| qrdb's `PermissionDeniedError` | returned by `rbac.Authorize` | grant missing, or tenant scope gate rejects the request |
+| `ErrAuthorizerRequired` | `pkg/api/rest/errors.go` | `rest.NewServer` refuses to construct when `EnableRBAC` is true but no usable authorizer was supplied — fails closed at construction, never falls back to allow-all |
+| `*ErrUnknownRole{Role}` | `pkg/xkms/errors.go` | `CreateUser`'s role name does not match any existing qrdb role, wrapped in `*ErrUserOperation{Operation: "resolve role"}` |
+| `ErrInvalidRole` | `cmd/xkmsctl` | `--role` value fails `IsValidRole` |
+
+MCP fails closed the same way REST does: `mcp.NewServer` refuses to start
+serving when RBAC is enabled without a usable authorizer, rather than
+silently running with RBAC believed-enabled-but-not-enforced (comment,
+`pkg/server/server.go`).
+
+## Configuration
+
+```go
+type AuthConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	Type       string `yaml:"type"` // noop, mtls, jwt, adaptive, composite
+	EnableRBAC bool `yaml:"enable_rbac"`
+	// ...
+}
+```
+
+`auth.enable_rbac` defaults to `false` (no default set in `Defaults()`).
+Environment variable: `XKMS_AUTH_ENABLE_RBAC` (the general `XKMS_<PATH>`
+rule). RBAC requires `storage.backend: "qrdb"` — see architecture.md and
+[`../storage-engines/engineering.md`](../storage-engines/engineering.md).
+
+```yaml
+storage:
+  backend: "qrdb"
+auth:
+  enabled: true
+  type: mtls
+  enable_rbac: true
+```
+
+`Server.initializeAuthorization` (`pkg/server/server.go`):
+
+```go
+if s.config.Auth.EnableRBAC && s.qrdbClient != nil {
+	s.rbacAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+} else {
+	s.rbacAuthorizer = nil // "RBAC enabled but no qrdb identity plane" warns; otherwise "disabled (allow all)"
+}
+```
+
+This warning path is reachable only by an embedded or test caller that
+constructs `pkg/server` directly with a non-`qrdb` backend and
+`enable_rbac: true` — `cmd/xkmsd` never reaches it, because
+`Config.ComplianceGaps` refuses that combination before startup.
+
+## Transport enforcement
+
+| Transport | Gate | Notes |
+|---|---|---|
+| REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`), applied per `RouteSpec` in `pkg/api/rest/routes.go` where `Auth == RouteAuthPermission` | table-driven; a route's `Enabled` guard can also remove it entirely when its subsystem is unconfigured |
+| gRPC | `Service.authorize(ctx, resource, action, resourceID)` (`pkg/api/grpc/service.go`) | emits an `audit.Event` (`Outcome: OutcomeAllow`/`OutcomeDeny`) on every call — see Observability |
+| QUIC | Same as REST — HTTP/3 on the unified REST listener, no separate package | |
+| MCP | `Server.authorizeMethod` / the `methodPermissions` table (`pkg/api/mcp/authz.go`) | fails closed at `NewServer` if RBAC is enabled without a usable authorizer |
+
+Authentication is mandatory on every transport whether or not RBAC is
+enabled; RBAC only governs authorization once an identity is established.
+
+## Role assignment mechanism
+
+There is exactly one entry point: `xkmsctl user register <username> --role
+<name>` (`cmd/xkmsctl/user.go`), or the admin-enrollment commands
+(`cmd/xkmsctl/admin.go`), which always assign `RoleAdmin`. Server-side,
+`XKMSService.CreateUser` (`pkg/xkms/servicer_user.go`) resolves the role
+name to a qrdb role ID via `roles.ListRoles` and an exact name match — the
+role must already exist (one of qrdb's built-ins; xkms creates none). The
+**first** user ever registered always receives `admin`, regardless of
+`--role`. There is no `xkmsctl user assign-role` or equivalent, and
+`xkmsctl user update` only toggles `--enable`/`--disable`
+(`pkg/api/rest/user_handlers.go:handleUpdateUser`, body `{enabled: *bool}`).
+
+Role CRUD (defining a **custom** role beyond the built-ins) is reachable
+only through the embedded Go SDK:
+
+```go
+import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
+ac := xkms.Auth(qrdbClient) // qrdbClient backed by the embedded node
+ac.Roles()       // qrdb RoleClient: CreateRole, GetRole, UpdateRole, DeleteRole, ListRoles, AssignRole, ...
+ac.Permissions() // qrdb PermissionClient: the permission registry
+ac.RBAC()        // qrdb RBACClient: Authorize, ListPermissions
+```
+
+(`sdk/go/auth.go:Auth`.) xkms contributes no CLI verb, REST route, gRPC RPC,
+or MCP tool for role CRUD; every accessor above is qrdb's own client,
+re-exported verbatim so a downstream consumer needs a single import.
+
+## Test strategy
+
+- **Unit** — `pkg/auth` (authorizer, permissions); `pkg/apimodule/module_scopes_test.go`
+  (`TestEveryModulePermissionDeclaresItsScope`, `TestModuleDeclaresOnlyItsOwnScopes`,
+  `TestModuleScopeDeclarationsAreAllContributed`, `TestUndeclaredPermissionHasNoScope`).
+- **Vocabulary consistency** — `internal/authzscan` builds a checked-in
+  resource:action table from the gRPC/QUIC source (the two transports that
+  gate per call site rather than per table), rejecting a raw string literal
+  or an unrecognized `pkg/auth` constant name; `pkg/api/grpc/authz_golden_test.go`
+  is the golden test built on it.
+- **Makefile targets** — `test-auth`, `coverage-auth`.
+
+## Observability
+
+gRPC's `Service.authorize` (`pkg/api/grpc/service.go`) emits a structured
+`audit.Event{Subject, Action, Resource, ResourceID, Outcome, Details:
+{"transport": "grpc"}}` on **every** authorization decision, allow or deny.
+REST's `RBACMiddleware` and MCP's authorization gate log via structured
+`slog` (`Warn` on denial, `Debug` on grant) but do not construct an
+`audit.Event` record — verified: neither `pkg/api/rest/rbac_middleware.go`
+nor `pkg/api/mcp/authz.go` references the `audit` package. This is an
+asymmetry across transports worth knowing about if you are building
+detection on the `audit.Event` stream specifically rather than on logs.

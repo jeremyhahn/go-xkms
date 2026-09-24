@@ -1179,7 +1179,7 @@ func init() {
 	// register flags
 	userRegisterCmd.Flags().String("email", "", "canonical login key for the user (REQUIRED)")
 	userRegisterCmd.Flags().String("display-name", "", "user display name (defaults to username)")
-	userRegisterCmd.Flags().String("role", "", "user role (admin, operator, auditor, user, readonly, guest)")
+	userRegisterCmd.Flags().String("role", "", "user role (so, admin, operator, user, auditor, custodian)")
 	userRegisterCmd.Flags().String("rp-id", "go-xkms", "relying party ID")
 	userRegisterCmd.Flags().String("rp-name", "Go xKMS", "relying party name")
 	userRegisterCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
