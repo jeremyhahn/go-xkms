@@ -98,7 +98,7 @@ func webAuthnRegistration(
 		return nil, &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
 	}
 	if closer, ok := adapter.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
+		defer closeQuietly(closer)
 	}
 
 	if err := printer.PrintPrompt("\nPlease touch your security key to register..."); err != nil {

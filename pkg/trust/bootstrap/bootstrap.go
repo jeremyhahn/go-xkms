@@ -386,6 +386,19 @@ func DeriveNoiseAddr(serverURL string) string {
 // Per-mode implementations
 // =============================================================================
 
+// closeBootstrapper closes bs and logs a failure at debug level. Every
+// caller has already extracted its CABundle (or its error) from bs by the
+// time this deferred call runs, so a close failure changes nothing about
+// the caller's result. logger may be nil (Config.Logger is optional).
+func closeBootstrapper(logger *slog.Logger, mode Mode, bs truststrap.Bootstrapper) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if err := bs.Close(); err != nil {
+		logger.Debug("trust/bootstrap: failed to close bootstrapper", "mode", mode, "error", err)
+	}
+}
+
 func fetchDANE(ctx context.Context, cfg Config) (*CABundle, error) {
 	if cfg.DANE == nil {
 		return nil, ErrModeNotConfigured
@@ -406,7 +419,7 @@ func fetchDANE(ctx context.Context, cfg Config) (*CABundle, error) {
 	if err != nil {
 		return nil, &FetchError{Mode: ModeDANE, Cause: err}
 	}
-	defer func() { _ = bs.Close() }()
+	defer closeBootstrapper(cfg.Logger, ModeDANE, bs)
 	return invoke(ctx, ModeDANE, bs)
 }
 
@@ -428,7 +441,7 @@ func fetchNoise(ctx context.Context, cfg Config) (*CABundle, error) {
 	if err != nil {
 		return nil, &FetchError{Mode: ModeNoise, Cause: err}
 	}
-	defer func() { _ = bs.Close() }()
+	defer closeBootstrapper(cfg.Logger, ModeNoise, bs)
 	return invoke(ctx, ModeNoise, bs)
 }
 
@@ -449,7 +462,7 @@ func fetchSPKI(ctx context.Context, cfg Config) (*CABundle, error) {
 	if err != nil {
 		return nil, &FetchError{Mode: ModeSPKI, Cause: err}
 	}
-	defer func() { _ = bs.Close() }()
+	defer closeBootstrapper(cfg.Logger, ModeSPKI, bs)
 	return invoke(ctx, ModeSPKI, bs)
 }
 
@@ -469,7 +482,7 @@ func fetchDirect(ctx context.Context, cfg Config) (*CABundle, error) {
 	if err != nil {
 		return nil, &FetchError{Mode: ModeDirect, Cause: err}
 	}
-	defer func() { _ = bs.Close() }()
+	defer closeBootstrapper(cfg.Logger, ModeDirect, bs)
 	return invoke(ctx, ModeDirect, bs)
 }
 
@@ -491,7 +504,7 @@ func fetchTOFU(ctx context.Context, cfg Config) (*CABundle, error) {
 	if err != nil {
 		return nil, &FetchError{Mode: ModeTOFU, Cause: err}
 	}
-	defer func() { _ = bs.Close() }()
+	defer closeBootstrapper(cfg.Logger, ModeTOFU, bs)
 	return invoke(ctx, ModeTOFU, bs)
 }
 

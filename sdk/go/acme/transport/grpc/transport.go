@@ -42,6 +42,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	stderrors "errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -781,8 +782,7 @@ func newConnectionPool(t *Transport, target string, opts []grpc.DialOption) (*co
 	// Create minimum connections.
 	for i := 0; i < t.cfg.PoolMinSize; i++ {
 		if err := pool.addConnection(); err != nil {
-			_ = pool.Close()
-			return nil, err
+			return nil, stderrors.Join(err, pool.Close())
 		}
 	}
 
@@ -1099,7 +1099,9 @@ func (p *connectionPool) performHealthCheck() {
 		default:
 			// Not leased and not healthy, and it will not recover: close it
 			// and let the pool refill below.
-			_ = pc.conn.Close()
+			if cerr := pc.conn.Close(); cerr != nil {
+				slog.Debug("acme/transport/grpc: failed to close an unhealthy pooled connection", "error", cerr)
+			}
 		}
 	}
 	p.connections = healthy

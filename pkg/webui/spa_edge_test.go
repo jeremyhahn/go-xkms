@@ -14,6 +14,8 @@
 package webui
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"log/slog"
@@ -218,5 +220,80 @@ func TestServeIndex_ReadFailureIs500(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "__API_BASE_URL__") {
 		t.Error("a partial injection was written despite the read failure")
+	}
+}
+
+// closeErrorFile serves real content successfully (via a real bytes.Reader,
+// so http.ServeContent's Seek-to-measure-length dance works exactly as it
+// does for a real file) but fails on Close, exercising go-xkms#876's "log,
+// don't fail" close contract: the response has already been written by the
+// time Close runs, so a Close failure must be logged, never surfaced to the
+// client.
+type closeErrorFile struct {
+	*bytes.Reader
+}
+
+func (f *closeErrorFile) Close() error                       { return errors.New("simulated close failure") }
+func (f *closeErrorFile) Readdir(int) ([]fs.FileInfo, error) { return nil, nil }
+func (f *closeErrorFile) Stat() (fs.FileInfo, error)         { return closeErrorFileInfo{size: f.Size()}, nil }
+
+type closeErrorFileInfo struct{ size int64 }
+
+func (fi closeErrorFileInfo) Name() string       { return "asset.txt" }
+func (fi closeErrorFileInfo) Size() int64        { return fi.size }
+func (fi closeErrorFileInfo) Mode() fs.FileMode  { return 0o644 }
+func (fi closeErrorFileInfo) ModTime() time.Time { return time.Unix(0, 0) }
+func (fi closeErrorFileInfo) IsDir() bool        { return false }
+func (fi closeErrorFileInfo) Sys() any           { return nil }
+
+// closeErrorFS serves closeErrorFile for every path.
+type closeErrorFS struct{}
+
+func (closeErrorFS) Open(string) (http.File, error) {
+	return &closeErrorFile{Reader: bytes.NewReader([]byte("ok"))}, nil
+}
+
+// recordingHandler is a minimal slog.Handler that records every record
+// passed to Handle, so a test can assert a specific message/level was
+// logged without parsing formatted output.
+type recordingHandler struct {
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *recordingHandler) hasRecordContaining(level slog.Level, substr string) bool {
+	for _, r := range h.records {
+		if r.Level == level && strings.Contains(r.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestServeHTTP_CloseFailure_LoggedNotFatal proves a static asset's Close
+// failure is logged at debug and does not affect the already-served
+// response (go-xkms#876).
+func TestServeHTTP_CloseFailure_LoggedNotFatal(t *testing.T) {
+	handler := &recordingHandler{}
+	sfs := &spaFileServer{fs: closeErrorFS{}, logger: slog.New(handler)}
+
+	rec := httptest.NewRecorder()
+	sfs.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/asset.txt", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 despite the close failure", rec.Code)
+	}
+	if rec.Body.String() != "ok" {
+		t.Fatalf("body = %q, want %q", rec.Body.String(), "ok")
+	}
+	if !handler.hasRecordContaining(slog.LevelDebug, "failed to close static asset file") {
+		t.Fatal("expected a debug log recording the close failure")
 	}
 }

@@ -18,12 +18,22 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
+
+// closeResponseBody closes resp.Body and logs a failure at debug level.
+// Every call site here has already decided its result before this deferred
+// call runs, so a close failure changes nothing about the caller's outcome.
+func closeResponseBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		slog.Debug("webauthn/client: failed to close HTTP response body", "error", err)
+	}
+}
 
 const (
 	// headerSessionID is the header key for passing session IDs between begin/finish calls.
@@ -141,7 +151,7 @@ func (rp *HTTPRelyingParty) BeginRegistration(ctx context.Context, req *Registra
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -178,7 +188,7 @@ func (rp *HTTPRelyingParty) FinishRegistration(ctx context.Context, begin *Begin
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -226,7 +236,7 @@ func (rp *HTTPRelyingParty) BeginAuthentication(ctx context.Context, req *Authen
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -271,7 +281,7 @@ func (rp *HTTPRelyingParty) FinishAuthentication(ctx context.Context, begin *Beg
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrServerUnavailable, Cause: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -306,7 +316,7 @@ func (rp *HTTPRelyingParty) Available(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	// Drain the body to allow connection reuse.
 	_, _ = io.Copy(io.Discard, resp.Body)

@@ -515,7 +515,7 @@ func (t *Transport) doRequest(ctx context.Context, route RouteInfo, url string, 
 		t.healthy.Store(false)
 		return nil, t.wrapHTTPError(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer transport.CloseResponseBody(resp)
 
 	t.healthy.Store(true)
 

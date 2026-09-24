@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net"
 
@@ -87,8 +88,7 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 	}
 	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
-		_ = ln.Close()
-		return nil, &LaunchError{Reason: "unexpected listener address type"}
+		return nil, errors.Join(&LaunchError{Reason: "unexpected listener address type"}, ln.Close())
 	}
 	port := tcpAddr.Port
 
@@ -116,8 +116,7 @@ func Launch(ctx context.Context, o Options) (*Instance, error) {
 
 	srv, err := server.New(cfg, server.WithAuthenticatorDecorator(decorator))
 	if err != nil {
-		_ = ln.Close()
-		return nil, &LaunchError{Reason: "construct engine", Err: err}
+		return nil, errors.Join(&LaunchError{Reason: "construct engine", Err: err}, ln.Close())
 	}
 	srv.SetRESTListener(ln)
 

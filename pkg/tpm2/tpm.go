@@ -2320,7 +2320,11 @@ func (tpm *TPM2) fetchEKCertFromService(ekURL string) (*x509.Certificate, error)
 		tpm.logger.Error("failed to download EK certificate", slog.String("error", err.Error()))
 		return nil, &errs.Detail{Err: ErrEKCertServiceUnreachable, Detail: err.Error()}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			tpm.logger.Debug("failed to close EK certificate service response body", slog.String("error", cerr.Error()))
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEKCertServiceResponseBytes))
 	if err != nil {

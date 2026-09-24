@@ -181,7 +181,7 @@ func (h *TPMSealer) SealPassphrase(ctx context.Context, handle string, pcrs []in
 	if err != nil {
 		return nil, err
 	}
-	defer closeTPMIgnore(tpm)
+	defer h.closeTPM(tpm)
 
 	// Build PCR selection + policy digest. When no PCRs are requested we
 	// still compute an empty policy so the sealed object has an auth policy
@@ -291,7 +291,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 	if err != nil {
 		return nil, err
 	}
-	defer closeTPMIgnore(tpm)
+	defer h.closeTPM(tpm)
 
 	// Load the sealed object back under the parent. The stored public blob
 	// is the TPMTPublic contents (TPM2BPublic.Bytes() strips the size
@@ -517,10 +517,15 @@ func (h *TPMSealer) flushContext(tpm transport.TPM, handle libtpm2.TPMHandle) {
 	}
 }
 
-// closeTPMIgnore closes the transport and swallows the error. The caller
-// has already extracted everything of value from the transport.
-func closeTPMIgnore(c io.Closer) {
-	if c != nil {
-		_ = c.Close()
+// closeTPM closes the transport. The caller has already extracted
+// everything of value from it, so a close failure is logged rather than
+// surfaced.
+func (h *TPMSealer) closeTPM(c io.Closer) {
+	if c == nil {
+		return
+	}
+	if err := c.Close(); err != nil {
+		h.logger.Debug("luks: tpm transport close failed",
+			slog.String("error", err.Error()))
 	}
 }
