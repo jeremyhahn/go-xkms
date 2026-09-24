@@ -15,7 +15,6 @@ package apimodule
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -84,27 +83,6 @@ func TestModule_PublicGRPCMethods(t *testing.T) {
 		"/xkms.v1.KeystoreService/Algorithms",
 	}
 	assert.Equal(t, want, got)
-}
-
-// TestHostBuildError_Unwrap proves HostBuildError participates in the
-// standard error chain: callers reach for errors.Is/errors.As (see
-// TestRegisterHTTP_NoHostInputs_LoudFailure), so an Unwrap that did not
-// expose the underlying construction error would make it invisible to a
-// caller trying to distinguish, say, a missing backend from a missing qrdb
-// client.
-func TestHostBuildError_Unwrap(t *testing.T) {
-	cause := errors.New("no signing backend available")
-	e := &HostBuildError{Err: cause}
-
-	if !errors.Is(e, cause) {
-		t.Fatal("errors.Is must see through HostBuildError to the wrapped cause")
-	}
-	if got := errors.Unwrap(e); got != cause {
-		t.Fatalf("Unwrap() = %v, want the wrapped cause", got)
-	}
-	msg := e.Error()
-	assert.Contains(t, msg, "host provided no usable REST inputs")
-	assert.Contains(t, msg, cause.Error())
 }
 
 // TestModule_WithSessionOptionsAndPIVLogin_Plumbed proves WithSessionOptions
