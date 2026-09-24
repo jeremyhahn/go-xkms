@@ -111,6 +111,21 @@ func TestNewIssuer_Validation(t *testing.T) {
 	}
 }
 
+// TestIssuer_AccessTTL pins the accessor's contract: an unset Config.AccessTTL
+// falls back to DefaultAccessTTL, and an explicit positive value is returned
+// verbatim.
+func TestIssuer_AccessTTL(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		issuer := newTestIssuer(t)
+		assert.Equal(t, DefaultAccessTTL, issuer.AccessTTL())
+	})
+
+	t.Run("explicit", func(t *testing.T) {
+		issuer := newTestIssuer(t, func(c *Config) { c.AccessTTL = 5 * time.Minute })
+		assert.Equal(t, 5*time.Minute, issuer.AccessTTL())
+	})
+}
+
 // TestMint_AccessTokenVerifiesThroughJWTAuthenticator is the load-bearing
 // compatibility test: the minted access token must authenticate through the
 // production auth.JWTAuthenticator with all identity fields intact.
