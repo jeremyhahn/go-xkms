@@ -169,7 +169,7 @@ func NewSessionPool(ctx *pkcs11.Ctx, slotID uint, pin string, size int) (*Sessio
 		if err != nil {
 			// CKR_USER_ALREADY_LOGGED_IN is expected when the manager
 			// or another pool already logged in on this token
-			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				drainErr := pool.drainAndClose()
 				return nil, errors.Join(&errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("%v", err)}, drainErr)
 			}
@@ -508,19 +508,19 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	}()
 
 	// Logout current user (CKU_USER)
-	if err := p.ctx.Logout(session); err != nil && err != pkcs11.Error(pkcs11.CKR_USER_NOT_LOGGED_IN) {
+	if err := p.ctx.Logout(session); err != nil && !isCKR(err, pkcs11.CKR_USER_NOT_LOGGED_IN) {
 		discard = true
 		return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("logout before SO login: %v", err)}
 	}
 
 	// Login as Security Officer
 	if err := p.ctx.Login(session, pkcs11.CKU_SO, soPin); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+		if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 			// Restore user login before returning. If the restore itself
 			// fails, the token's login state is unknown, so the session is
 			// discarded on the way out.
 			detail := fmt.Sprintf("SO login: %v", err)
-			if restoreErr := p.ctx.Login(session, pkcs11.CKU_USER, userPin); restoreErr != nil && restoreErr != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if restoreErr := p.ctx.Login(session, pkcs11.CKU_USER, userPin); restoreErr != nil && !isCKR(restoreErr, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				discard = true
 				detail = fmt.Sprintf("%s (user login restore also failed: %v)", detail, restoreErr)
 			}
@@ -532,13 +532,13 @@ func (p *SessionPool) WithSOSession(soPin, userPin string, fn func(session pkcs1
 	fnErr := fn(session)
 
 	// Restore user login: logout SO, then login as user
-	if err := p.ctx.Logout(session); err != nil && err != pkcs11.Error(pkcs11.CKR_USER_NOT_LOGGED_IN) {
+	if err := p.ctx.Logout(session); err != nil && !isCKR(err, pkcs11.CKR_USER_NOT_LOGGED_IN) {
 		discard = true
 		return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("logout after SO operation: %v (original: %v)", err, fnErr)}
 	}
 	if userPin != "" {
 		if err := p.ctx.Login(session, pkcs11.CKU_USER, userPin); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+			if !isCKR(err, pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
 				discard = true
 				return &errs.Detail{Err: ErrSessionPoolLogin, Detail: fmt.Sprintf("user login restore: %v (original: %v)", err, fnErr)}
 			}

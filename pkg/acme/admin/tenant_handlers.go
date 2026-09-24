@@ -16,6 +16,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -170,7 +171,7 @@ func (h *TenantHandlers) CreateTenant(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := h.service.CreateTenant(ctx, req)
 	if err != nil {
-		if err == ErrTenantAlreadyExists {
+		if errors.Is(err, ErrTenantAlreadyExists) {
 			writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:conflict", "Tenant already exists")
 			return
 		}
@@ -203,7 +204,7 @@ func (h *TenantHandlers) GetTenant(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := h.service.GetTenant(ctx, tenantID)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -241,7 +242,7 @@ func (h *TenantHandlers) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := h.service.UpdateTenant(ctx, tenantID, req)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -278,7 +279,7 @@ func (h *TenantHandlers) UpdateTenantStatus(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.service.UpdateTenantStatus(ctx, tenantID, req.Status); err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -297,7 +298,7 @@ func (h *TenantHandlers) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	tenantID := vars["id"]
 
 	if err := h.service.DeleteTenant(ctx, tenantID); err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -374,11 +375,11 @@ func (h *TenantHandlers) CreateTenantRootCA(w http.ResponseWriter, r *http.Reque
 
 	rootCA, err := h.service.CreateTenantRootCA(ctx, tenantID, req)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrTenantRootCAExists {
+		if errors.Is(err, ErrTenantRootCAExists) {
 			writeProblem(w, http.StatusConflict, "urn:trusted-ca:error:conflict", "Tenant root CA already exists")
 			return
 		}
@@ -441,7 +442,7 @@ func (h *TenantHandlers) CreateTenantIntermediateCA(w http.ResponseWriter, r *ht
 
 	intCA, err := h.service.CreateTenantIntermediateCA(ctx, tenantID, req)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -473,7 +474,7 @@ func (h *TenantHandlers) GetTenantCAStatus(w http.ResponseWriter, r *http.Reques
 
 	status, err := h.service.GetTenantCAStatus(ctx, tenantID)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -505,7 +506,7 @@ func (h *TenantHandlers) ListTenantIntermediateCAs(w http.ResponseWriter, r *htt
 
 	cas, err := h.service.ListTenantIntermediateCAs(ctx, tenantID)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
@@ -541,11 +542,11 @@ func (h *TenantHandlers) GetTenantIntermediateCA(w http.ResponseWriter, r *http.
 
 	ca, err := h.service.GetTenantIntermediateCA(ctx, tenantID, caID)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrTenantCANotConfigured {
+		if errors.Is(err, ErrTenantCANotConfigured) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Intermediate CA not found")
 			return
 		}
@@ -595,11 +596,11 @@ func (h *TenantHandlers) UpdateTenantIntermediateCAStatus(w http.ResponseWriter,
 	}
 
 	if err := h.service.UpdateTenantIntermediateCAStatus(ctx, tenantID, caID, req.Status); err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrTenantCANotConfigured {
+		if errors.Is(err, ErrTenantCANotConfigured) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Intermediate CA not found")
 			return
 		}
@@ -641,11 +642,11 @@ func (h *TenantHandlers) SetTenantDefaultIntermediateCA(w http.ResponseWriter, r
 	}
 
 	if err := h.service.SetTenantDefaultIntermediateCA(ctx, tenantID, req.IntermediateCAID); err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrTenantCANotConfigured {
+		if errors.Is(err, ErrTenantCANotConfigured) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Intermediate CA not found")
 			return
 		}
@@ -700,11 +701,11 @@ func (h *TenantHandlers) CreateTenantEAB(w http.ResponseWriter, r *http.Request)
 
 	eabResp, err := h.service.CreateTenantEAB(ctx, tenantID, req)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrInvalidEABPurpose {
+		if errors.Is(err, ErrInvalidEABPurpose) {
 			writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid EAB purpose")
 			return
 		}
@@ -737,11 +738,11 @@ func (h *TenantHandlers) GetTenantEAB(w http.ResponseWriter, r *http.Request) {
 
 	eab, err := h.service.GetTenantEAB(ctx, tenantID, kid)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrEABNotFound {
+		if errors.Is(err, ErrEABNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "External account binding not found")
 			return
 		}
@@ -773,11 +774,11 @@ func (h *TenantHandlers) DeleteTenantEAB(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.service.DeleteTenantEAB(ctx, tenantID, kid); err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}
-		if err == ErrEABNotFound {
+		if errors.Is(err, ErrEABNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "External account binding not found")
 			return
 		}
@@ -817,7 +818,7 @@ func (h *TenantHandlers) ListTenantEABs(w http.ResponseWriter, r *http.Request) 
 
 	eabs, pagination, err := h.service.ListTenantEABs(ctx, tenantID, req)
 	if err != nil {
-		if err == ErrTenantNotFound {
+		if errors.Is(err, ErrTenantNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Tenant not found")
 			return
 		}

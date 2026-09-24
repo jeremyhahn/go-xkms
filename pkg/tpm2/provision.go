@@ -3,6 +3,7 @@ package tpm2
 import (
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -339,7 +340,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 	if opts.EK {
 		ekAttrs, err := tpm.EKAttributes()
 		if err != nil {
-			if err == tpm2.TPMRC(0x18b) {
+			if errors.Is(err, tpmRCHandle) {
 				// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
 				tpm.logger.Info("Creating Endorsement Key")
 				policyDigest, pdErr := tpm.PlatformPolicyDigest()
@@ -372,7 +373,7 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
 		_, err := tpm.SSRKAttributes()
 		if err != nil {
-			if err == tpm2.TPMRC(0x18b) {
+			if errors.Is(err, tpmRCHandle) {
 				tpm.logger.Info("Creating Shared SRK")
 				// No platform policy digest is read here: the Shared SRK never
 				// carries one. The policy this SRK would have been given is
@@ -450,7 +451,7 @@ const tpmRCHandle = tpm2.TPMRC(0x18b)
 func (tpm *TPM2) installIAK(ekAttrs *types.KeyAttributes) error {
 	if _, err := tpm.IAKAttributes(); err == nil {
 		return nil
-	} else if err != tpmRCHandle {
+	} else if !errors.Is(err, tpmRCHandle) {
 		return &errs.Joined{Lead: ErrDevIDProvisionLookup, Detail: "IAK", Cause: err}
 	}
 	tpm.logger.Info("Creating Initial Attestation Key")
@@ -478,7 +479,7 @@ func (tpm *TPM2) installIDevID() error {
 	}
 	if _, err := tpm.IDevIDAttributes(); err == nil {
 		return nil
-	} else if err != tpmRCHandle {
+	} else if !errors.Is(err, tpmRCHandle) {
 		return &errs.Joined{Lead: ErrDevIDProvisionLookup, Detail: "IDevID", Cause: err}
 	}
 	tpm.logger.Info("Creating Initial Device Identity Key")
@@ -582,7 +583,7 @@ func (tpm *TPM2) Provision(soPIN types.Password) error {
 	// Provision Owner hierarchy with new EK and SRK
 	srkAttrs, err := tpm.ProvisionOwner(soPIN)
 	if err != nil {
-		if err == tpm2.TPMRC(0x14c) {
+		if errors.Is(err, tpmRCNVDefined) {
 			// TPM_RC_NV_DEFINED: NV Index or persistent object already defined
 			return store.ErrAlreadyInitialized
 		}

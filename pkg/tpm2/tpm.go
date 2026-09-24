@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1188,7 +1189,7 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		}
 		ekCert, err := tpm.certStore.Get(ekAttrs)
 		if err != nil {
-			if err == store.ErrCertNotFound {
+			if errors.Is(err, store.ErrCertNotFound) {
 				return nil, ErrEndorsementCertNotFound
 			}
 			return nil, err

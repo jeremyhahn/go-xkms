@@ -16,6 +16,7 @@ package pairing
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -281,7 +282,7 @@ func (t *TCPTransport) resolveDeadline(ctx context.Context) time.Time {
 
 // classifyReadError maps a read error to the appropriate typed error.
 func (t *TCPTransport) classifyReadError(err error) error {
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		t.log.Warn("peer disconnected during read")
 		t.connected.Store(false)
 		return ErrNotConnected

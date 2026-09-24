@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"math/big"
 	"time"
@@ -78,7 +79,7 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 		Logger:    logger,
 	})
 	if err != nil {
-		if err == xkmssdk.ErrTPMNotInitialized && simulator && tpm != nil {
+		if errors.Is(err, xkmssdk.ErrTPMNotInitialized) && simulator && tpm != nil {
 			if perr := provisionSimulatorIdentity(name, tpm, tpmCfg); perr != nil {
 				_ = tpm.Close()
 				_ = factory.Close()
@@ -89,7 +90,7 @@ func openDeviceTPM(name string, spec *DeviceSpec, logger *slog.Logger) (client.T
 				_ = tpm.Close()
 			}
 			_ = factory.Close()
-			if err == xkmssdk.ErrTPMNotInitialized {
+			if errors.Is(err, xkmssdk.ErrTPMNotInitialized) {
 				return nil, ErrDeviceTPMNotProvisioned{Name: name}
 			}
 			return nil, ErrDeviceTPMOpenFailed{Name: name, Err: err}

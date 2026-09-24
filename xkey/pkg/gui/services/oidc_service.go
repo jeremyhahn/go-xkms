@@ -1154,7 +1154,7 @@ func (s *OIDCService) Logout(providerName string) error {
 
 	if err := s.tokenStore.Delete(entry.Issuer); err != nil {
 		// Treat "not found" as success.
-		if err == oidc.ErrTokenNotFound {
+		if errors.Is(err, oidc.ErrTokenNotFound) {
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrOIDCLogoutFailed, Cause: err}

@@ -18,6 +18,8 @@ package hardware
 import (
 	"errors"
 	"fmt"
+
+	"github.com/miekg/pkcs11"
 )
 
 var (
@@ -130,4 +132,13 @@ func (e *OperationError) Unwrap() error {
 // NewOperationError creates a new operation error
 func NewOperationError(op string, err error) error {
 	return &OperationError{Op: op, Err: err}
+}
+
+// isCKR reports whether err is, or wraps, a pkcs11.Error carrying the given
+// Cryptoki return code (CKR_*). Call sites use this instead of comparing err
+// to a pkcs11.Error value with == so a wrapped Cryptoki error still
+// classifies correctly.
+func isCKR(err error, code uint) bool {
+	var ckErr pkcs11.Error
+	return errors.As(err, &ckErr) && ckErr == pkcs11.Error(code)
 }
