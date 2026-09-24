@@ -40,6 +40,7 @@ import (
 	"encoding/asn1"
 	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -216,6 +217,49 @@ type Module struct {
 	// still initialize the token if the store is unavailable — but the failure
 	// is recorded rather than discarded so operators can see it.
 	lastStorageError atomic.Value
+
+	// lastInitWarning records the most recent best-effort failure from
+	// Initialize's own optional steps (loading persisted lockout state,
+	// auto-initializing the token, loading configured PIV objects). None of
+	// these may fail C_Initialize itself, but a discarded failure here is
+	// invisible to the operator, so it is recorded the same way
+	// lastStorageError is.
+	lastInitWarning atomic.Value
+}
+
+// initWarning describes a best-effort Initialize step that failed and the
+// operation that hit it.
+type initWarning struct {
+	Operation string
+	Err       error
+}
+
+// Error implements the error interface.
+func (f initWarning) Error() string {
+	return f.Operation + ": " + f.Err.Error()
+}
+
+// Unwrap exposes the underlying error for errors.Is and errors.As.
+func (f initWarning) Unwrap() error {
+	return f.Err
+}
+
+// logInitWarning records a best-effort Initialize step failure. A nil err is
+// not a failure and is ignored.
+func (m *Module) logInitWarning(operation string, err error) {
+	if err == nil {
+		return
+	}
+	m.lastInitWarning.Store(initWarning{Operation: operation, Err: err})
+}
+
+// LastInitWarning returns the most recent best-effort failure from
+// Initialize's optional steps, or nil if none has occurred.
+func (m *Module) LastInitWarning() error {
+	if warning, ok := m.lastInitWarning.Load().(initWarning); ok {
+		return warning
+	}
+	return nil
 }
 
 // storageFailure describes a persistence error and the operation that hit it.
@@ -498,11 +542,12 @@ func (m *Module) Initialize(config *Config) CK_RV {
 		m.sessionManagers[slotID] = sm
 	}
 
-	// Load persisted state
-	if rv := m.loadPersistedState(); rv != CKR_OK {
-		// Log warning but continue - persistence failure shouldn't prevent operation
-		_ = rv
-	}
+	// Load persisted state. Persistence failure shouldn't prevent operation,
+	// and the non-OK rv here is not silently discarded: loadPersistedState
+	// already records the underlying cause via logStorageError/
+	// LastStorageError on every path that can return non-CKR_OK, so there is
+	// nothing further to capture at this call site.
+	m.loadPersistedState()
 
 	// Initialize v3.0 interfaces
 	m.interfaces = []CK_INTERFACE{
@@ -521,9 +566,9 @@ func (m *Module) Initialize(config *Config) CK_RV {
 	// Perform auto-initialization if configured
 	if m.config.AutoInitToken && m.config.SOPIN != "" {
 		if rv := m.autoInitializeToken(); rv != CKR_OK {
-			// Log warning but don't fail initialization
-			// Token can still be initialized manually
-			_ = rv // auto-init is best effort
+			// Don't fail initialization -- the token can still be initialized
+			// manually -- but record the failure rather than discard it.
+			m.logInitWarning("auto-initialize token", NewPKCS11Error(rv))
 		}
 	}
 
@@ -534,7 +579,12 @@ func (m *Module) Initialize(config *Config) CK_RV {
 		pivCtx, pivCancel := context.WithTimeout(context.Background(), m.config.Timeout)
 		defer pivCancel()
 		for _, backend := range m.config.PIVBackends {
-			_ = m.LoadPIVObjects(pivCtx, backend) // best effort
+			if err := m.LoadPIVObjects(pivCtx, backend); err != nil {
+				// Best effort: one backend's PIV objects failing to load must
+				// not prevent the module from initializing, but is recorded
+				// rather than discarded.
+				m.logInitWarning("load PIV objects for backend "+backend, err)
+			}
 		}
 	}
 
@@ -1780,8 +1830,8 @@ func (m *Module) Login(sessionHandle SessionHandle, userType UserType, pin []byt
 	// present an authenticated session that cannot use its keys.
 	if userType == CKU_USER {
 		if err := m.unsealPrivateStore(pin); err != nil {
-			_ = sm.Logout(sessionHandle)
-			m.logStorageError("unseal private key store at login", err)
+			logoutErr := sm.Logout(sessionHandle)
+			m.logStorageError("unseal private key store at login", errors.Join(err, logoutErr))
 			return CKR_DEVICE_ERROR
 		}
 	}

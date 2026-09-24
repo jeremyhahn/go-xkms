@@ -1050,28 +1050,31 @@ func (tpm *TPM2) BackupEKCertificates() {
 // final fallback. The function does not return on success; the CPU
 // resets before the later fallbacks run.
 func hardResetViaSysRq(logger *slog.Logger) {
+	warn := func(msg string, err error) {
+		if logger != nil && err != nil {
+			logger.Warn(msg, slog.String("error", err.Error()))
+		}
+	}
+
 	// Flush in-flight writes.
-	_ = exec.Command("sync").Run()
+	warn("hardReset: sync failed", exec.Command("sync").Run())
 	time.Sleep(100 * time.Millisecond)
 
 	// Ensure SysRq mask allows reboot + crash (1 = all enabled).
-	_ = os.WriteFile("/proc/sys/kernel/sysrq", []byte("1"), 0o644) // #nosec G306 - existing kernel sysctl node, not a created file
+	warn("hardReset: SysRq mask write failed",
+		os.WriteFile("/proc/sys/kernel/sysrq", []byte("1"), 0o644)) // #nosec G306 - existing kernel sysctl node, not a created file
 
 	// SysRq 'b' — immediate CPU reset, skips init/ACPI entirely.
-	if err := os.WriteFile("/proc/sysrq-trigger", []byte("b"), 0o200); err != nil {
-		if logger != nil {
-			logger.Warn("hardReset: SysRq-b write failed", slog.String("error", err.Error()))
-		}
-	}
+	warn("hardReset: SysRq-b write failed", os.WriteFile("/proc/sysrq-trigger", []byte("b"), 0o200))
 	time.Sleep(2 * time.Second)
 
 	// SysRq 'c' — crash → panic → reset (panic=1 cmdline or default).
-	_ = os.WriteFile("/proc/sysrq-trigger", []byte("c"), 0o200)
+	warn("hardReset: SysRq-c write failed", os.WriteFile("/proc/sysrq-trigger", []byte("c"), 0o200))
 	time.Sleep(2 * time.Second)
 
 	// Final fallback: busybox/openrc reboot. Some platforms translate
 	// this to ACPI S5, which is why SysRq was tried first.
-	_ = exec.Command("reboot", "-f").Run()
+	warn("hardReset: reboot -f failed", exec.Command("reboot", "-f").Run())
 	time.Sleep(2 * time.Second)
-	_ = exec.Command("reboot").Run()
+	warn("hardReset: reboot failed", exec.Command("reboot").Run())
 }
