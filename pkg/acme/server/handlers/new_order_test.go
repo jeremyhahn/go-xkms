@@ -690,7 +690,7 @@ func TestCreateChallenges_UnsupportedIdentifier(t *testing.T) {
 
 	challenges, err := service.createChallenges(accountID, authzID, identifier, false)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no challenges configured for identifier type")
+	assert.Contains(t, err.Error(), "unsupported identifier type")
 	assert.Len(t, challenges, 0)
 }
 

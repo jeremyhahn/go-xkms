@@ -120,14 +120,17 @@ func TestSignTCGCSRIDevID_ValidRSAEnrollment(t *testing.T) {
 	assert.Contains(t, iakCert.ExtKeyUsage, x509.ExtKeyUsageClientAuth)
 	assert.Contains(t, iakCert.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
 
+	// tcg-kp-AIKCertificate (2.23.133.8.3) is an Extended Key Usage purpose,
+	// so it appears in UnknownExtKeyUsage rather than as a standalone
+	// extension -- see WebAuthn L2 §8.3.1.
 	hasAIKMarker := false
-	for _, ext := range iakCert.Extensions {
-		if ext.Id.Equal(ca.OIDTCGKpAIKCertificate) {
+	for _, oid := range iakCert.UnknownExtKeyUsage {
+		if oid.Equal(ca.OIDTCGKpAIKCertificate) {
 			hasAIKMarker = true
 			break
 		}
 	}
-	assert.True(t, hasAIKMarker, "IAK certificate should have TCG AIK Certificate marker")
+	assert.True(t, hasAIKMarker, "IAK certificate should have TCG AIK Certificate extended key usage")
 
 	assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMResidency), "IAK should have VerifiedTPMResidency policy")
 	assert.True(t, hasPolicyIdentifier(iakCert, ca.OIDTCGVerifiedTPMFixed), "IAK should have VerifiedTPMFixed policy")
@@ -256,15 +259,23 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("IAK TPM Extensions", func(t *testing.T) {
-		hasAIKMarker := false
 		hasTPMModel := false
 		hasTPMVersion := false
 		hasTPKeyStore := false
 
+		// tcg-kp-AIKCertificate (2.23.133.8.3) is an Extended Key Usage
+		// purpose (WebAuthn L2 §8.3.1), so it is read from UnknownExtKeyUsage
+		// rather than the loop over standalone Extensions below.
+		hasAIKMarker := false
+		for _, oid := range iakCert.UnknownExtKeyUsage {
+			if oid.Equal(ca.OIDTCGKpAIKCertificate) {
+				hasAIKMarker = true
+				break
+			}
+		}
+
 		for _, ext := range iakCert.Extensions {
 			switch {
-			case ext.Id.Equal(ca.OIDTCGKpAIKCertificate):
-				hasAIKMarker = true
 			case ext.Id.Equal(ca.OIDTCGAttributeTPMModel):
 				hasTPMModel = true
 				var model string
@@ -286,7 +297,7 @@ func TestSignTCGCSRIDevID_TPMExtensions(t *testing.T) {
 			}
 		}
 
-		assert.True(t, hasAIKMarker, "IAK should have AIK Certificate marker")
+		assert.True(t, hasAIKMarker, "IAK should have AIK Certificate extended key usage")
 		assert.True(t, hasTPMModel, "IAK should have TPM model extension")
 		assert.True(t, hasTPMVersion, "IAK should have TPM version extension")
 		assert.True(t, hasTPKeyStore, "IAK should have TPKeyStore extension")
