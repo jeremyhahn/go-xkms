@@ -444,10 +444,15 @@ func (v *PairingVerifier) loadLocked() error {
 		// failure is no longer silently dropped, though: it is audit-logged
 		// so an operator can see the migration never landed on disk (the
 		// process keeps re-migrating from the legacy file on every restart
-		// until the underlying write failure is fixed).
+		// until the underlying write failure is fixed). OpPairingStateMigrated
+		// is a security event (#688): if the audit record of the failed write
+		// cannot be persisted either, nothing would record the failure, so
+		// the load fails closed with both errors.
 		if err := v.saveLocked(); err != nil {
-			v.logPairingEvent(audit.OpPairingStateMigrated, false, err,
-				map[string]any{"origin": legacy.ExtensionOrigin})
+			if auditErr := v.logPairingEvent(audit.OpPairingStateMigrated, false, err,
+				map[string]any{"origin": legacy.ExtensionOrigin}); auditErr != nil {
+				return errors.Join(err, auditErr)
+			}
 		}
 		return nil
 	}

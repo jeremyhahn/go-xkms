@@ -609,7 +609,7 @@ var frostDeleteCmd = &cobra.Command{
 			fmt.Printf("Are you sure you want to delete key '%s'? [y/N]: ", keyID)
 			var response string
 			_, _ = fmt.Scanln(&response)
-			if strings.ToLower(response) != "y" {
+			if !strings.EqualFold(response, "y") {
 				fmt.Println("Aborted")
 				return
 			}
@@ -644,8 +644,6 @@ type CommitmentFile struct {
 	ParticipantID uint32                          `json:"participant_id"`
 	SessionID     string                          `json:"session_id"`
 	Commitments   *client.FrostSigningCommitments `json:"commitments"`
-	// Nonces are stored separately and kept secret
-	nonces *client.FrostSigningNonces
 }
 
 // NonceFile represents the internal nonce storage (kept secret)
@@ -762,7 +760,7 @@ var frostRound2Cmd = &cobra.Command{
 		// Load nonces (from the .nonces file)
 		noncePath := noncesPath
 		if !strings.HasSuffix(noncePath, ".nonces") {
-			noncePath = noncePath + ".nonces"
+			noncePath += ".nonces"
 		}
 
 		nonceData, err := os.ReadFile(noncePath)

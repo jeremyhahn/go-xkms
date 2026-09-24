@@ -137,6 +137,14 @@ of truth — the persisted artifact in `revocationStore`/`objectStore` is, and
 every path that bypasses the cache (a miss, or a different instance) reads
 that.
 
+A fourth sibling row shares the same rationale: `issued-keys/<serial>`
+(`pkg/ca/ca_extensions.go`, go-xkms#751) records the exact `KeyAttributes` a
+server-side key generation used, written by whichever node issued the
+certificate. `RevokeCert`'s `DeleteKeys` option can be served by any
+instance, so that record has to be replicated state in `revocationStore`
+like the revocation record itself, not something held only in the memory of
+the node that issued the certificate.
+
 OCSP (`pkg/ca/ocsp.go`) answers from the same revocation state: its hot path
 is the in-memory map, refreshed by every `Revoke`/`RevokeCert` on that
 instance; its cold path (a fresh process, or a revocation written by another

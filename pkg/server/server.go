@@ -57,7 +57,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
-	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
@@ -1846,7 +1845,7 @@ func (s *Server) initializeFactorRegistry() error {
 	if s.factorRegistry != nil {
 		return nil
 	}
-	registry, err := factor.NewDefaultRegistry(factor.Config{})
+	registry, err := NewNodeFactorRegistry()
 	if err != nil {
 		return &ErrServiceInit{Service: "factor registry", Err: err}
 	}

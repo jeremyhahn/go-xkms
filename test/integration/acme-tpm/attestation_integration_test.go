@@ -508,14 +508,19 @@ func TestAttestationSignTCGCSRIDevID_CertificateExtensions(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("IAK Certificate Has TCG AIK Marker", func(t *testing.T) {
+		// tcg-kp-AIKCertificate (2.23.133.8.3) is an Extended Key Usage
+		// purpose: WebAuthn L2 §8.3.1 and go-webauthn's "tpm" attestation
+		// format verifier both require it inside the certificate's standard
+		// ExtKeyUsage extension, so it appears in UnknownExtKeyUsage rather
+		// than as a standalone extension.
 		hasAIKMarker := false
-		for _, ext := range iakCert.Extensions {
-			if ext.Id.Equal(ca.OIDTCGKpAIKCertificate) {
+		for _, oid := range iakCert.UnknownExtKeyUsage {
+			if oid.Equal(ca.OIDTCGKpAIKCertificate) {
 				hasAIKMarker = true
 				break
 			}
 		}
-		assert.True(t, hasAIKMarker, "IAK certificate must have TCG AIK Certificate marker (OID 2.23.133.8.3)")
+		assert.True(t, hasAIKMarker, "IAK certificate must have TCG AIK Certificate extended key usage (OID 2.23.133.8.3)")
 	})
 
 	t.Run("Certificates Have TCG Policy Identifiers", func(t *testing.T) {

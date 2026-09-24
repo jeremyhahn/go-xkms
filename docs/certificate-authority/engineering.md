@@ -26,6 +26,11 @@ startup.
 **`CARevoker`** — `Revoke(ctx, serial *big.Int, reason int) error`,
 `RevokeCert(ctx, cert, opts RevokeOptions) error`, `GenerateCRL(ctx) ([]byte, error)`,
 `CRL(ctx) ([]byte, error)`, `IsRevoked(serial *big.Int) (bool, error)`.
+`RevokeCert`'s `RevokeOptions.DeleteKeys` deletes exactly the key the CA
+generated or resolved at issuance, resolved from the `issued-keys/` record
+(see "Issued-key persistence" under Persistence) rather than reconstructed
+from the certificate; a CSR-signed certificate — one whose key the CA never
+held — is a no-op, not a failure (go-xkms#751).
 `GenerateCRL` always signs a new CRL (the explicit force-refresh verb,
 `POST /ca/crl`); `CRL` returns the persisted DER, regenerating first only
 when none exists or the published `NextUpdate` has passed (`GET /ca/crl`).
@@ -338,6 +343,46 @@ gated on the underlying cause being `storage.ErrNotFound`, not any
 `certStore.GetCertificate` failure -- authorizes `initializeCA` to
 (re-)initialize.
 
+### Issued-key persistence (#751)
+
+`pkg/ca/ca_extensions.go`. A third sibling of `revocations/` and `crl/` in
+the same `ca.revocationStore`, written once per certificate whose key the CA
+itself generated or resolved:
+
+| key | value | written by |
+|---|---|---|
+| `issued-keys/<serial-decimal>.json` | `persistedIssuedKey{Serial, CN, TenantID, Partition, Backend, StoreType, KeyType, KeyAlgorithm, ECCCurve, RSAKeySize}` | `recordIssuedKey` (`IssueCertificateWithProfile`, after `signCSR` succeeds) |
+
+Why this exists: a certificate's `Subject.CommonName` and
+`PublicKeyAlgorithm` are not enough to reconstruct a `types.KeyAttributes`
+that `types.KeyAttributes.Validate` accepts (`StoreType` and `KeyType` are
+also required) or that names the same key ID generation stored it under
+(`KeyAttributes.ID`, which also folds in `Partition` and `TenantID` when
+set). `RevokeCert`'s `DeleteKeys` option reads this record back
+(`resolveIssuedKeyAttributes`) instead of guessing, and deletes the record
+itself (`deleteIssuedKeyRecord`) once the key is gone.
+
+`recordIssuedKey` is called only when `CertificateRequest.Signer == nil` —
+i.e. `CreateCSR` generated or fetched the key through `ca.keyStore` for this
+request. `SignCSR` (the caller-supplied-CSR path) never calls it, because
+the CA never holds that key. `resolveIssuedKeyAttributes` returns `(nil,
+nil)` — not an error — when no record exists, which is both the CSR-signed
+case and a certificate issued before this recording existed;
+`RevokeCert(DeleteKeys: true)` treats that as a no-op key deletion, logs it,
+and still deletes the certificate from `certStore`.
+
+A real failure at any cleanup step (`keyStore.DeleteKey`,
+`deleteIssuedKeyRecord`, `certStore.DeleteCertificate`) is wrapped in a
+typed error and joined with `errors.Join` into `RevokeCert`'s return rather
+than discarded; the revocation record itself is already durable by the time
+cleanup runs, so a cleanup failure never leaves a certificate un-revoked
+(go-xkms#687, go-xkms#751). `RevokeCert` no longer calls
+`keyStore.DeleteCert`: the keystore's own certificate side is never
+populated for issued certificates — only `ImportCertificate` /
+`ImportCertificatePEM` call `keyStore.SaveCert`, and only best-effort — so
+`certStore` is the sole authoritative certificate store this method cleans
+up.
+
 ## Test strategy
 
 - **Unit** — `pkg/ca` carries the repo's densest suite: `ca_core_test.go`,
@@ -348,8 +393,13 @@ gated on the underlying cause being `storage.ErrNotFound`, not any
   `multi_keystore_tpm2_sim_test.go`. CRL persistence:
   `crl_persistence_test.go` (round trip across independent `*CA` instances
   sharing a backend, refresh-on-revoke, regenerate-on-read past/before
-  `NextUpdate` via an injected `Clock`, force-regenerate) and
-  `ocsp_revocationstore_test.go` (the OCSP cold-path fix). EK chain trust:
+  `NextUpdate` via an injected `Clock`, force-regenerate),
+  `ocsp_revocationstore_test.go` (the OCSP cold-path fix), and
+  `revoke_delete_keys_test.go` (`RevokeCert(DeleteKeys)`: server-generated
+  key + certificate deleted and subsequently not found, CSR-signed no-op,
+  injected keystore/revocation-store failure propagation, and the
+  `recordIssuedKey`/`resolveIssuedKeyAttributes`/`deleteIssuedKeyRecord`
+  helpers directly). EK chain trust:
   `tcg_ek_trust_test.go` — real generated root/intermediate/leaf chains
   covering a trusted root, a trusted configured intermediate, a
   request-supplied intermediate, an unknown root, a missing

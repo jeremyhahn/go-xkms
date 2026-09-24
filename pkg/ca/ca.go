@@ -1906,6 +1906,19 @@ func (ca *CA) IssueCertificateWithProfile(ctx context.Context, request *Certific
 		return nil, err
 	}
 
+	// Record the exact KeyAttributes the CA generated or resolved for this
+	// certificate's key, keyed by its serial number, so a later
+	// RevokeCert(..., RevokeOptions{DeleteKeys: true}) can delete precisely
+	// this key instead of reconstructing incomplete attributes from the
+	// certificate alone (go-xkms#751). Skipped when the caller supplied an
+	// external Signer: CreateCSR never touched ca.keyStore for that request,
+	// so there is no CA-held key to record.
+	if request.Signer == nil {
+		if err := ca.recordIssuedKey(ctx, cert.SerialNumber, request.KeyAttributes); err != nil {
+			return nil, err
+		}
+	}
+
 	// Build response
 	certPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",

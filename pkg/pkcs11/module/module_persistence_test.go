@@ -309,6 +309,49 @@ func TestModule_LastStorageError_ReportsBestEffortFailures(t *testing.T) {
 	assert.Contains(t, recorded.Error(), "backend unavailable")
 }
 
+// TestModule_FinalizeOperationType_RecordsFailure proves a
+// SessionManager.FinalizeOperationType failure is recorded via
+// LastStorageError instead of being discarded (#701): every one of its ~60
+// call sites in Sign/Verify/Encrypt/etc. runs this cleanup step after the
+// CK_RV it returns is already decided, so it cannot fail the Cryptoki call
+// over it, but a failure here still needs to be visible to an operator.
+func TestModule_FinalizeOperationType_RecordsFailure(t *testing.T) {
+	m, err := New(WithClient(newMockClient()), WithConfig(DefaultConfig()))
+	require.NoError(t, err)
+	assert.NoError(t, m.LastStorageError())
+
+	sm := NewSessionManager(0, 10)
+	handle, err := sm.OpenSession(CKF_SERIAL_SESSION)
+	require.NoError(t, err)
+
+	// OperationSign was never initialized on this session, so
+	// FinalizeOperationType must fail with CKR_OPERATION_NOT_INITIALIZED.
+	m.finalizeOperationType(sm, handle, OperationSign)
+
+	recorded := m.LastStorageError()
+	require.Error(t, recorded)
+	assert.Contains(t, recorded.Error(), "finalize OperationSign operation")
+	var pkErr *PKCS11Error
+	require.ErrorAs(t, recorded, &pkErr)
+	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkErr.Code)
+}
+
+// TestModule_FinalizeOperationType_NoErrorWhenActive proves a successful
+// finalize does not record a spurious failure.
+func TestModule_FinalizeOperationType_NoErrorWhenActive(t *testing.T) {
+	m, err := New(WithClient(newMockClient()), WithConfig(DefaultConfig()))
+	require.NoError(t, err)
+
+	sm := NewSessionManager(0, 10)
+	handle, err := sm.OpenSession(CKF_SERIAL_SESSION)
+	require.NoError(t, err)
+	require.NoError(t, sm.InitializeOperation(handle, OperationSign, CKM_SHA256_RSA_PKCS, ObjectHandle(1)))
+
+	m.finalizeOperationType(sm, handle, OperationSign)
+
+	assert.NoError(t, m.LastStorageError())
+}
+
 // errObjectWriteRejected is the cause a rejectingObjectStore reports, so a test
 // can match the failure it injected rather than any error at all.
 var errObjectWriteRejected = &errs.Message{Msg: "object writes are rejected by this store"}
