@@ -11,52 +11,91 @@
 //  2. Commercial License
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
-// MCP (JSON-RPC 2.0 over TCP) transport for the SSH SDK client.
+// MCP (Model Context Protocol) transport for the SSH SDK client.
 //
-// NewMCP dials the xkmsd MCP server and returns a Client that issues
-// JSON-RPC 2.0 requests over a persistent TCP (or TLS) connection with
-// newline-delimited JSON framing — the same wire format used by the
-// existing pkg/api/transport/mcp Transport.
+// NewMCP dials the unified qrdb MCP server's Streamable HTTP endpoint and
+// returns a Client that issues ssh.keys.*, ssh.knownHosts.*, and
+// ssh.authorizedKeys.* calls as MCP "tools/call" requests, using
+// pkg/mcptool.Client for the connection, TLS/mTLS setup, protocol handshake,
+// tool-call framing, and go-qrdb wire.ErrorEnvelope decoding — the same
+// machinery pkg/api/transport/mcp.Transport uses to reach that server for
+// the rest of the xkms SDK. This package builds on pkg/mcptool rather than
+// on pkg/api/transport/mcp directly because pkg/api/mcp's Server holds an
+// sdk/go/client/ssh.Client for its own SSH sub-system (Config.SSHClient):
+// importing pkg/api/transport/mcp here would cycle back through it, since
+// that package imports pkg/api/mcp for its xkms-specific error-code
+// classification. pkg/mcptool is the shared leaf both packages depend on
+// instead of duplicating the session and tool-call code — see its doc
+// comment.
 //
-// Session.Dial is supported: it dials the target SSH host directly from
-// this process and uses MCP only for the signing and host-key-verification
-// RPCs, neither of which needs a stream. Console is not supported over this
-// transport — an interactive console needs a stateful bidirectional byte
-// stream that JSON-RPC 2.0 over TCP does not model.
+// There is deliberately no second hand-rolled MCP client here: the raw
+// line-framed JSON-RPC-over-TCP plane this package spoke previously was
+// retired with pkg/api/mcp's standalone listener (see that package's doc
+// comment), and this client now reaches the sole remaining MCP surface, the
+// unified server's tool-call plane.
+//
+// # Error classification
+//
+// call (below) reconstructs this package's own typed errors --
+// *NotFoundError, *DuplicateError, *MismatchError, *InvalidRequestError,
+// *NotImplementedError, *AuthError -- from a failed call's
+// *mcptool.RPCError.WireCode, the raw go-qrdb wire.Code classification,
+// mirroring how the REST transport's decodeErrorResponse reconstructs them
+// from an HTTP status. It is not a full reconstruction: the server's
+// mapSSHError (pkg/api/mcp/errors_ssh.go) classifies every SSH sub-system
+// error onto the eight JSON-RPC codes pkg/api/mcp/types.go already declares,
+// which has no dedicated NotFound or AlreadyExists member, so a stored
+// pin/key/entry not found, a non-idempotent duplicate, and a host-key
+// mismatch all land on the same wire.CodeInvalidArgument as an ordinary
+// validation failure -- go-xkms#792 traced this all the way to the wire
+// rather than assuming it, and documents it here rather than papering over
+// it with a guess parsed from the message text. All four reconstitute as
+// *InvalidRequestError, the closest existing type, with the server's
+// message intact; wire.CodeNotFound and wire.CodeAlreadyExists are still
+// decoded into *NotFoundError/*DuplicateError below, for forward
+// compatibility with a server that later gains a finer-grained mapSSHError.
+//
+// Session.Dial is supported: it resolves the signing and host-key-
+// verification RPCs over MCP, then dials the target SSH host directly from
+// this process — it needs no bidirectional stream from the MCP connection.
+// Console is not supported over this transport — an interactive console
+// needs a stateful bidirectional byte stream that MCP tool calls do not
+// model.
 package ssh
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	gossh "golang.org/x/crypto/ssh"
 
+	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+
+	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
-// MCPOptions configures the MCP (JSON-RPC 2.0 over TCP) transport
-// Client. Only Addr is required; all other fields are optional.
+// MCPOptions configures the MCP transport Client. Only Addr is required;
+// all other fields are optional.
 type MCPOptions struct {
-	// Addr is the TCP address of the xkmsd MCP server (e.g.
-	// "xkms.example.com:9444"). Required.
+	// Addr is the host:port of the unified qrdb MCP server's Streamable
+	// HTTP endpoint (e.g. "xkms.example.com:9444"). Required.
 	Addr string
 
-	// TLSConfig enables TLS when non-nil. nil means plain TCP (not
+	// TLSConfig enables TLS when non-nil. nil means plain HTTP (not
 	// recommended for production deployments).
 	TLSConfig *tls.Config
 }
 
-// NewMCP constructs an MCP SSH Client, dials Addr, performs a health
-// check, and returns the connected client. The caller must call
-// Close() to release the TCP connection.
+// NewMCP constructs an MCP SSH Client, connects to Addr (negotiating the
+// MCP protocol version and confirming the session with a health-check tool
+// call), and returns the connected client. The caller must call Close() to
+// release the underlying HTTP transport.
 //
 // Returns *NilInputError when Addr is empty.
 func NewMCP(opts MCPOptions) (Client, error) {
@@ -64,48 +103,39 @@ func NewMCP(opts MCPOptions) (Client, error) {
 		return nil, &NilInputError{Field: "Addr"}
 	}
 
-	var conn net.Conn
-	var dialErr error
+	cfg := apitransport.DefaultConfig()
+	cfgOpts := []apitransport.Option{apitransport.WithAddress(opts.Addr)}
 	if opts.TLSConfig != nil {
-		dialer := &tls.Dialer{Config: opts.TLSConfig}
-		conn, dialErr = dialer.DialContext(context.Background(), "tcp", opts.Addr)
-	} else {
-		conn, dialErr = net.Dial("tcp", opts.Addr)
+		cfgOpts = append(cfgOpts, apitransport.WithTLSConfig(opts.TLSConfig))
 	}
-	if dialErr != nil {
-		return nil, &ProtocolError{Message: "dial " + opts.Addr, Err: dialErr}
+	if err := apitransport.ApplyOptions(cfg, cfgOpts...); err != nil {
+		return nil, &ProtocolError{Message: "configure mcp transport", Err: err}
 	}
 
-	c := &mcpClient{
-		conn:    conn,
-		enc:     json.NewEncoder(conn),
-		scanner: bufio.NewScanner(conn),
+	client := mcptool.NewClient(cfg)
+	if connErr := client.Connect(context.Background()); connErr != nil {
+		return nil, &ProtocolError{Message: "connect " + opts.Addr, Err: connErr}
 	}
-	// Allow up to 10 MB for large responses (consistent with the MCP transport).
-	c.scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 
-	// Health check: ensures the server is alive and speaks our protocol.
-	if err := c.call(context.Background(), "health", nil, nil); err != nil {
-		_ = conn.Close()
+	// Confirm the session is usable before handing it to the caller, the
+	// same guarantee the retired TCP transport gave with its post-dial
+	// health probe.
+	if err := client.Call(context.Background(), "health", nil, nil); err != nil {
+		_ = client.Close()
 		return nil, &ProtocolError{Message: "health check after connect", Err: err}
 	}
 
-	return c, nil
+	return &mcpClient{client: client}, nil
 }
 
 // ----------------------------------------------------------------------------
 // mcpClient — top-level Client.
 // ----------------------------------------------------------------------------
 
-// mcpClient is the MCP-transport SSH Client. It owns a single TCP
-// connection serialised with write/read mutexes.
+// mcpClient is the MCP-transport SSH Client. It forwards every call through
+// a pkg/mcptool.Client, which owns the Streamable HTTP session.
 type mcpClient struct {
-	conn    net.Conn
-	enc     *json.Encoder
-	scanner *bufio.Scanner
-	nextID  atomic.Int64
-	writeMu sync.Mutex
-	readMu  sync.Mutex
+	client *mcptool.Client
 }
 
 func (c *mcpClient) Keys() KeysClient             { return &mcpKeysClient{c: c} }
@@ -115,100 +145,67 @@ func (c *mcpClient) AuthorizedKeys() AuthorizedKeysClient {
 }
 func (c *mcpClient) Session() SessionClient { return &mcpSessionClient{c: c} }
 
-// Console is unsupported over MCP: JSON-RPC request/response cannot carry an
-// interactive byte stream.
+// Console is unsupported over MCP: a tool call cannot carry an interactive
+// byte stream.
 func (c *mcpClient) Console(_ context.Context, _ ConsoleConnectRequest, _ ConsoleConfig) (ConsoleSession, error) {
 	return nil, &ConsoleUnsupportedError{Transport: "mcp"}
 }
 
 func (c *mcpClient) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
-	}
-	return nil
+	return c.client.Close()
 }
 
-// call sends a JSON-RPC 2.0 request and unmarshals the result into
-// out. out may be nil when the caller does not need the response body.
+// call invokes method as an MCP tool call and unmarshals the result into
+// out. out may be nil when the caller does not need the response body. Any
+// failure from the underlying client (connection, protocol, or tool-level)
+// is wrapped in a *ProtocolError so callers keep a single error type to
+// match against; classifyMCPError (below) reconstructs this package's own
+// typed error as .Err when the failure is a classified *mcptool.RPCError,
+// so errors.As also reaches *NotFoundError/*DuplicateError/*MismatchError-
+// adjacent conditions (as *InvalidRequestError; see the package doc
+// comment), *AuthError, or *NotImplementedError. An unclassified failure
+// (*mcptool.ReceiveError, *mcptool.MarshalError, *mcptool.UnmarshalError,
+// *mcptool.EnvelopeMissingError, or mcptool.ErrNotConnected) is wrapped
+// unchanged, exactly as before.
 func (c *mcpClient) call(ctx context.Context, method string, params, out interface{}) error {
-	id := c.nextID.Add(1)
-
-	var rawParams json.RawMessage
-	if params != nil {
-		b, err := json.Marshal(params)
-		if err != nil {
-			return &ProtocolError{Message: "marshal params for " + method, Err: err}
-		}
-		rawParams = b
+	if err := c.client.Call(ctx, method, params, out); err != nil {
+		return &ProtocolError{Message: method, Err: classifyMCPError(err)}
 	}
-
-	req := &mcpRequest{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  rawParams,
-		ID:      id,
-	}
-
-	c.writeMu.Lock()
-	sendErr := c.enc.Encode(req)
-	c.writeMu.Unlock()
-	if sendErr != nil {
-		return &ProtocolError{Message: "send " + method, Err: sendErr}
-	}
-
-	c.readMu.Lock()
-	defer c.readMu.Unlock()
-
-	if !c.scanner.Scan() {
-		readErr := c.scanner.Err()
-		if readErr == nil {
-			readErr = &ConnectionClosedError{}
-		}
-		return &ProtocolError{Message: "receive " + method, Err: readErr}
-	}
-
-	var resp mcpResponse
-	if err := json.Unmarshal(c.scanner.Bytes(), &resp); err != nil {
-		return &ProtocolError{Message: "decode response for " + method, Err: err}
-	}
-
-	if resp.Error != nil {
-		return &ProtocolError{
-			Message: fmt.Sprintf("server error %d: %s", resp.Error.Code, resp.Error.Message),
-		}
-	}
-
-	if out != nil && len(resp.Result) > 0 {
-		if err := json.Unmarshal(resp.Result, out); err != nil {
-			return &ProtocolError{Message: "decode result for " + method, Err: err}
-		}
-	}
-
 	return nil
 }
 
-// ----------------------------------------------------------------------------
-// JSON-RPC 2.0 envelope types (unexported; wire-compatible with the
-// pkg/api/mcp server and pkg/api/transport/mcp transport).
-// ----------------------------------------------------------------------------
-
-type mcpRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      int64           `json:"id"`
-}
-
-type mcpResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *mcpRPCError    `json:"error,omitempty"`
-	ID      int64           `json:"id,omitempty"`
-}
-
-type mcpRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+// classifyMCPError reconstructs this package's typed errors from a
+// *mcptool.RPCError's WireCode, mirroring decodeErrorResponse's HTTP-status
+// switch (rest.go) for the MCP transport. A non-*RPCError failure (or an
+// *RPCError whose WireCode this switch does not recognize) is returned
+// unchanged.
+func classifyMCPError(err error) error {
+	var rpcErr *mcptool.RPCError
+	if !errors.As(err, &rpcErr) {
+		return err
+	}
+	switch rpcErr.WireCode {
+	case wire.CodeUnauthenticated:
+		return &AuthError{StatusCode: 401, Message: rpcErr.Message}
+	case wire.CodePermissionDenied:
+		return &AuthError{StatusCode: 403, Message: rpcErr.Message}
+	case wire.CodeUnimplemented:
+		return &NotImplementedError{Transport: "mcp", Op: rpcErr.Message}
+	case wire.CodeUnavailable:
+		return &ServerError{StatusCode: 503, Message: rpcErr.Message}
+	case wire.CodeNotFound:
+		// Forward-compatible: mapSSHError does not emit this today (see the
+		// package doc comment), but a server that later distinguishes
+		// not-found must be decoded correctly by an SDK already built.
+		return &NotFoundError{Message: rpcErr.Message}
+	case wire.CodeAlreadyExists:
+		// Same forward-compatibility rationale as CodeNotFound.
+		return &DuplicateError{Message: rpcErr.Message}
+	case wire.CodeInvalidArgument:
+		return &InvalidRequestError{Message: rpcErr.Message}
+	default:
+		return err
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -315,7 +312,7 @@ func (k *mcpKeysClient) Generate(ctx context.Context, req GenerateRequest) (*Key
 // is fetched and included in the wire body as raw bytes; it is wiped
 // from the local buffer before the call returns regardless of outcome.
 func (k *mcpKeysClient) Import(ctx context.Context, req ImportRequest, provider secure.PassphraseProvider) (*Key, error) {
-	wire := mcpImportWire{
+	body := mcpImportWire{
 		Scope:   req.Scope,
 		Owner:   req.Owner,
 		Name:    req.Name,
@@ -327,15 +324,15 @@ func (k *mcpKeysClient) Import(ctx context.Context, req ImportRequest, provider 
 		if err != nil {
 			return nil, err
 		}
-		wire.Passphrase = make([]byte, buf.Size())
-		copy(wire.Passphrase, buf.Bytes())
+		body.Passphrase = make([]byte, buf.Size())
+		copy(body.Passphrase, buf.Bytes())
 		buf.Destroy()
 	}
 	var out Key
-	err := k.c.call(ctx, "ssh.keys.import", wire, &out)
+	err := k.c.call(ctx, "ssh.keys.import", body, &out)
 	// Wipe the passphrase copy regardless of outcome.
-	secure.Wipe(wire.Passphrase)
-	wire.Passphrase = nil
+	secure.Wipe(body.Passphrase)
+	body.Passphrase = nil
 	if err != nil {
 		return nil, err
 	}
@@ -565,7 +562,7 @@ func (a *mcpAuthorizedKeysClient) Verify(ctx context.Context, scope, owner strin
 // bidirectional stream from the MCP connection: it only uses MCP for the
 // signing and host-key-verification RPCs, then dials the SSH connection
 // directly from this process. Only Console needs a persistent byte stream
-// (see mcpClient.Console), which JSON-RPC 2.0 request/response cannot carry.
+// (see mcpClient.Console), which MCP tool calls cannot carry.
 type mcpSessionClient struct {
 	c *mcpClient
 }

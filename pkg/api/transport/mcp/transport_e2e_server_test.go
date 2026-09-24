@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -128,8 +129,7 @@ func connectInProcessToModule(t *testing.T, backend *xkmsmcp.Server) *Transport 
 
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
-	tr.client = client
-	tr.connected = true
+	tr.core = mcptool.NewClientWithSession(tr.config, client, mcptool.WithErrorClassifier(classifyWireCode))
 	return tr
 }
 
@@ -258,8 +258,7 @@ func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
-	tr.client = client
-	tr.connected = true
+	tr.core = mcptool.NewClientWithSession(tr.config, client, mcptool.WithErrorClassifier(classifyWireCode))
 
 	_, err = tr.GetKey(ctx, "software", "does-not-exist")
 	require.Error(t, err)
@@ -267,4 +266,6 @@ func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 	var rpcErr *RPCError
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, xkmsmcp.ErrCodeInvalidParams, rpcErr.Code)
+	require.Equal(t, wire.CodeNotFound, rpcErr.WireCode,
+		"WireCode must carry go-qrdb's raw classification even though xkms's coarser Code cannot")
 }

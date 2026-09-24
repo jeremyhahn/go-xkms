@@ -42,11 +42,29 @@ Backend-backed generation is enabled by passing a `BackendProvider`
 | `grpc(s)://` | gRPC (`grpcs` = TLS) |
 | `unix://<path>` | gRPC over a Unix domain socket |
 | `quic://` | HTTP/3 (dials the REST port -- there is no separate QUIC port) |
-| `mcp(s)://` | MCP JSON-RPC (`mcps` = TLS) |
+| `mcp(s)://` | MCP Streamable HTTP tool calls against the unified qrdb MCP server (`mcps` = TLS), on `mcp_port` |
 
 The server mounts SSH over every transport when an SSH client is wired
 (`pkg/server` builds one embedded client with a backend provider over the
 `XKMSService` and injects it into all transports).
+
+`mcp(s)://` dials the same unified MCP surface the rest of the SDK reaches
+through `pkg/api/transport/mcp` — `NewMCP` (`sdk/go/client/ssh/mcp.go`)
+issues `ssh.keys.*`/`ssh.knownHosts.*`/`ssh.authorizedKeys.*` as MCP
+`tools/call` requests via `pkg/mcptool`, the connection and tool-call
+machinery both clients share. There is no separate raw-socket MCP listener:
+an earlier, line-framed JSON-RPC-over-TCP plane in `pkg/api/mcp` was retired
+when the unified server replaced it (see that package's doc comment), and
+this client now reaches that one remaining MCP surface (go-xkms#792).
+Server-side SSH failures are classified onto go-qrdb's `wire.ErrorEnvelope`
+by `mapSSHError` (`pkg/api/mcp/errors_ssh.go`), the same envelope-only
+contract every other MCP method uses (go-xkms#797) — there is no
+keyword/text-based classification anywhere in this path. A stored
+key/pin/entry not found, a non-idempotent duplicate, and a host-key mismatch
+currently share one JSON-RPC code (xkms's vocabulary has no dedicated
+NotFound or AlreadyExists member) and all reconstitute client-side as
+`*sdkssh.InvalidRequestError`; the server's message still distinguishes
+them.
 
 ### `SessionClient.Dial` — non-interactive outbound sessions, every transport
 
@@ -59,13 +77,13 @@ process (`golang.org/x/crypto/ssh`) — the xkms transport itself carries only
 two RPCs, `Keys().Signer` (a forward-signing proxy; the private key never
 leaves xkmsd) and `KnownHosts().Callback` (host-key verification against the
 server's pins), neither of which needs a byte stream. That is why MCP's
-request/response JSON-RPC framing, which cannot carry Console, has no
+request/response tool-call framing, which cannot carry Console, has no
 trouble with Dial. Host-key verification fails closed on every transport: an
 unrecognized or mismatched host key is a typed error
 (`*sdkssh.NotFoundError` / `*sdkssh.MismatchError` on REST and gRPC; MCP
-collapses server-side verify failures to `*sdkssh.ProtocolError` — still
-typed, never a silent accept) — there is no `InsecureIgnoreHostKey` path
-anywhere in the SDK.
+reconstructs `*sdkssh.InvalidRequestError` from the server's classification,
+wrapped in `*sdkssh.ProtocolError` — still typed, never a silent accept) —
+there is no `InsecureIgnoreHostKey` path anywhere in the SDK.
 
 ## CLI
 

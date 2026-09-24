@@ -14,8 +14,6 @@
 package mcp
 
 import (
-	"github.com/mark3labs/mcp-go/mcp"
-
 	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
@@ -48,48 +46,17 @@ var wireCodeToRPCCode = map[wire.Code]int{
 	wire.CodeInternal:         xkmsmcp.ErrCodeInternalError,
 }
 
-// classifyToolError turns a failing MCP tool result into the typed error an
-// SDK caller sees.
-//
-// A result carrying go-qrdb's wire.ErrorEnvelope in its StructuredContent is
-// classified by CODE, never by its prose: this is the fail-open
-// classification go-qrdb#438 deleted from go-qrdb's own SDK client, adopted
-// here rather than re-invented (go-xkms#797). A code this build does not
-// have a JSON-RPC counterpart for (DeadlineExceeded, ResourceExhausted,
-// FailedPrecondition, Canceled, AlreadyExists, Aborted, OutOfRange, DataLoss,
-// Unknown, or a number a future server sends that predates this table)
-// degrades to ErrCodeInternalError: the caller still gets the server's
-// message, it is simply not distinguished from an unclassified fault --
-// exactly the floor mapKeyOpError itself uses server-side ("anything else is
-// an internal fault").
-//
-// A failing result with NO envelope is not a degraded guess parsed from
-// text. The unified server stamps one onto every failing xkms tool result
-// (pkg/apimodule/module_mcp.go's codedToolResult), so a response with none
-// did not come from that contract, and is reported as a protocol error
-// (*EnvelopeMissingError) instead. There is no text fallback here, per the
-// project's no-backward-compatibility rule.
-func classifyToolError(tool string, result *mcp.CallToolResult) error {
-	payload, ok := wire.DecodeErrorPayload(result.StructuredContent)
-	if !ok {
-		return &EnvelopeMissingError{Tool: tool, Message: extractToolErrorText(result)}
+// classifyWireCode implements mcptool.ErrorClassifier: it looks up code in
+// wireCodeToRPCCode, defaulting to ErrCodeInternalError for a code the table
+// does not declare (a code with no JSON-RPC counterpart, or a number a
+// future server sends that predates this table) -- the same floor
+// mapKeyOpError itself uses server-side ("anything else is an internal
+// fault"). This is the sole place this package's Transport still classifies
+// by CODE; the envelope decoding itself belongs to pkg/mcptool now (see
+// mcptool.Client.newToolError), shared with sdk/go/client/ssh's MCP client.
+func classifyWireCode(code wire.Code) int {
+	if c, ok := wireCodeToRPCCode[code]; ok {
+		return c
 	}
-
-	code, known := wireCodeToRPCCode[payload.Code]
-	if !known {
-		code = xkmsmcp.ErrCodeInternalError
-	}
-	return &RPCError{Code: code, Message: payload.Message}
-}
-
-// extractToolErrorText returns the first text content item's text from a
-// failing tool result, or a fallback when the result carries no content at
-// all.
-func extractToolErrorText(result *mcp.CallToolResult) string {
-	if len(result.Content) > 0 {
-		if text, ok := mcp.AsTextContent(result.Content[0]); ok && text.Text != "" {
-			return text.Text
-		}
-	}
-	return "tool call failed"
+	return xkmsmcp.ErrCodeInternalError
 }
