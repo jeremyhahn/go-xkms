@@ -61,15 +61,6 @@ func TestValidateConfig_InvalidAdmin(t *testing.T) {
 	assert.Contains(t, err.Error(), "admin.https_addr")
 }
 
-func TestValidateConfig_InvalidMultiTenant(t *testing.T) {
-	cfg := validConfig()
-	cfg.MultiTenant.Enabled = true
-	cfg.MultiTenant.DefaultTenantID = ""
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multi_tenant.default_tenant_id")
-}
-
 // --- ACMEConfig ---
 
 func TestValidateACMEConfig_Valid(t *testing.T) {
@@ -295,36 +286,6 @@ func TestValidateAdminConfig_EnabledInvalidTLS(t *testing.T) {
 	assert.Contains(t, err.Error(), "tls.min_version")
 }
 
-// --- MultiTenantConfig ---
-
-func TestValidateMultiTenantConfig_ValidEnabled(t *testing.T) {
-	mt := MultiTenantConfig{
-		Enabled:         true,
-		DefaultTenantID: "my-tenant",
-	}
-	err := mt.Validate()
-	require.NoError(t, err)
-}
-
-func TestValidateMultiTenantConfig_DisabledSkipsValidation(t *testing.T) {
-	mt := MultiTenantConfig{
-		Enabled:         false,
-		DefaultTenantID: "", // would be invalid if enabled
-	}
-	err := mt.Validate()
-	require.NoError(t, err)
-}
-
-func TestValidateMultiTenantConfig_EnabledMissingTenantID(t *testing.T) {
-	mt := MultiTenantConfig{
-		Enabled:         true,
-		DefaultTenantID: "",
-	}
-	err := mt.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multi_tenant.default_tenant_id")
-}
-
 // --- helpers ---
 
 func validACMEConfig() TCAACMEConfig {
@@ -352,10 +313,6 @@ func validConfig() *TrustedCAConfig {
 			Enabled:   false,
 			HTTPSAddr: ":9443",
 			TLS:       TCATLSConfig{MinVersion: "1.3", MaxVersion: "1.3"},
-		},
-		MultiTenant: MultiTenantConfig{
-			Enabled:         false,
-			DefaultTenantID: "default",
 		},
 	}
 }

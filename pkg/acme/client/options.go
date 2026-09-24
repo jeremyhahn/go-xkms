@@ -91,8 +91,12 @@ func WithVersion(version string) Option {
 	}
 }
 
-// WithMultiTenant enables multi-tenant mode.
-// This requires a QRDB instance to be configured.
+// WithMultiTenant enables multi-tenant mode. This requires a QRDB instance
+// to be configured with WithQRDB; New returns ErrMissingQRDB otherwise. It
+// is the only switch for multi-tenancy on a standalone TrustedCA -- there is
+// no config-file equivalent, matching xkmsd's embedded ACME server, which
+// always constructs its admin service tenant-aware and has no
+// pkg/config.ACMEConfig multi-tenant key (go-xkms#946).
 func WithMultiTenant() Option {
 	return func(tca *TrustedCA) error {
 		tca.multiTenant = true

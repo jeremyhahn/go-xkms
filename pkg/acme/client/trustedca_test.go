@@ -288,14 +288,6 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 			wantMessage: "admin.https_addr is required",
 		},
 		{
-			name: "multi_tenant enabled missing default_tenant_id",
-			mutate: func(cfg *TrustedCAConfig) {
-				cfg.MultiTenant.Enabled = true
-				cfg.MultiTenant.DefaultTenantID = ""
-			},
-			wantMessage: "multi_tenant.default_tenant_id is required",
-		},
-		{
 			name: "audit enabled with no log path and no data_dir",
 			mutate: func(cfg *TrustedCAConfig) {
 				cfg.Audit.Enabled = true
@@ -585,12 +577,6 @@ func TestDefaultTrustedCAConfig(t *testing.T) {
 	assert.True(t, cfg.Admin.RequireAuth)
 	assert.Equal(t, "1.3", cfg.Admin.TLS.MinVersion)
 	assert.Equal(t, "1.3", cfg.Admin.TLS.MaxVersion)
-
-	// Multi-tenant defaults
-	assert.False(t, cfg.MultiTenant.Enabled)
-	assert.Equal(t, "default", cfg.MultiTenant.DefaultTenantID)
-	assert.True(t, cfg.MultiTenant.TenantIsolation.EnforceIsolation)
-	assert.True(t, cfg.MultiTenant.TenantIsolation.AllowCrossTenantSuperAdmin)
 }
 
 func TestErrors(t *testing.T) {
@@ -749,19 +735,6 @@ func TestConfigTypes(t *testing.T) {
 		assert.Equal(t, "1.3", cfg.TLS.MinVersion)
 	})
 
-	t.Run("MultiTenantConfig", func(t *testing.T) {
-		cfg := MultiTenantConfig{
-			Enabled:         true,
-			DefaultTenantID: "default",
-			TenantIsolation: TenantIsolationConfig{
-				EnforceIsolation:           true,
-				AllowCrossTenantSuperAdmin: true,
-			},
-		}
-		assert.True(t, cfg.Enabled)
-		assert.Equal(t, "default", cfg.DefaultTenantID)
-		assert.True(t, cfg.TenantIsolation.EnforceIsolation)
-	})
 }
 
 // Test options individually

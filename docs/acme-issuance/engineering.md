@@ -387,6 +387,34 @@ off by default, threaded into `handlers.Params.AllowLoopbackIdentifier` in
 than through xkmsd) sets this field itself; there is no `XKMS_`-prefixed
 environment name for it (#140).
 
+**Multi-tenancy is a construction-time `Option`, not a `TrustedCAConfig`
+field (`options.go` `WithMultiTenant`, `trustedca.go` `tca.multiTenant`,
+go-xkms#946).** `WithMultiTenant()` is the only switch: it sets the
+unexported `TrustedCA.multiTenant` bool that `validate` and `initialize`
+read to require a QRDB service (`ErrMissingQRDB` otherwise) and to construct
+`admin.NewTenantAwareAdminService` instead of `admin.NewAdminService`. A
+`TrustedCAConfig.MultiTenant` section (`Enabled`, `DefaultTenantID`,
+`TenantIsolation.{EnforceIsolation,AllowCrossTenantSuperAdmin}`) existed
+alongside it — defaulted by `DefaultTrustedCAConfig` and checked by
+`Validate` — but nothing in `pkg/acme/client` or `pkg/acme/admin` ever read
+those fields: an operator setting `multi_tenant.enabled: true` in a config
+file got a single-tenant server with no error, because `WithMultiTenant()`
+was the only thing `New` actually consulted. It traces to the go-trusted-ca
+heritage of this package and was never wired to xkms's own
+`admin.TenantAwareAdminService`, which takes no tenant-default or
+isolation-level parameter. The fix picks the option as the one interface
+(go-xkms#946) rather than wiring the config section, to match how xkmsd's
+embedded ACME server decides multi-tenancy: `cmd/xkmsd/admin.go`
+`finalizeAdminModule` always calls `admin.NewTenantAwareAdminService`
+directly, and `pkg/config.ACMEConfig` (`pkg/config/acme.go`) has no
+multi-tenant key at all — the switch there is structural (which constructor
+runs), not a boolean read from config. `DefaultTenantID` and
+`TenantIsolation` had no runtime meaning anywhere in the tree (confirmed by
+searching every package for the field names before deleting them), so
+neither was wired; the whole `MultiTenantConfig`/`TenantIsolationConfig`
+section, its `Validate` method, and the `multi_tenant:` YAML key were
+deleted rather than kept as a second, inert switch.
+
 **`TrustedCAConfig.Validate` runs once, at construction, and fails closed
 (`trustedca.go` `New`, `trustedca_config.go` `TrustedCAConfig.Validate`,
 go-xkms#938).** `client.New` calls `tca.config.Validate()` after applying
