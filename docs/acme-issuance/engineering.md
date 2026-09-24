@@ -16,7 +16,10 @@
 - `pkg/acme/nonce` — nonce issue and consume.
 - `pkg/acme/issuance` — the bridge to `pkg/ca`.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
-- `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy and CAA.
+- `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
+  public suffix, reserved-IP, per-identifier-type challenge selection) and
+  CAA. `pkg/acme/policy` is wired into `NewOrderHandler` and
+  `createChallenges`; see Identifier policy below.
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go`,
   `circuit_breaker.go`, `server/degradation` — the protective layer.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
@@ -83,6 +86,14 @@ once, to the externally visible base.
 - **`enroll-01` succeeds only if the TPM can activate the credential.** The
   server never accepts a secret it did not itself protect with
   `TPM2_MakeCredential` against the verified EK.
+- **Every identifier is checked against the issuance policy engine before
+  its authorization is created.** `NewOrderHandler`
+  (`pkg/acme/server/handlers/new_order.go`) runs each identifier through
+  `pkg/acme/policy` in two phases, and never creates an authorization for an
+  identifier that fails either: format validation (RFC 1035 for DNS, RFC
+  8738 for IP), which fails `malformed`; then the blocklist, public-suffix,
+  and reserved-IP policy, which fails `rejectedIdentifier`. See Identifier
+  policy below.
 - **CAA (RFC 8659) is checked before issuance**, not after. Order finalize
   (`order_finalize.go`) calls `Params.CAAValidator.Validate` for every DNS
   identifier on the order before the CA signs; a rejection moves the order to

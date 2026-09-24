@@ -152,7 +152,7 @@ func TestErrorTypes(t *testing.T) {
 			name:           "RejectedIdentifier",
 			errorFunc:      common.RejectedIdentifier,
 			expectedType:   "urn:ietf:params:acme:error:rejectedIdentifier",
-			expectedStatus: http.StatusUnauthorized,
+			expectedStatus: http.StatusForbidden,
 		},
 		{
 			name:           "ServerInternal",

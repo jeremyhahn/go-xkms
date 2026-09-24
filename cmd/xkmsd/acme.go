@@ -269,6 +269,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		ExternalAccountRequired: acmeCfg.ExternalAccountRequired,
 		Logger:                  logger,
 		OrderPreSignHooks:       preSignHooks,
+		Policy:                  acmeCfg.Policy.PolicyConfig(),
 		StorageFactory:          storageFactory,
 		TermsOfService:          acmeCfg.TermsOfService,
 	})

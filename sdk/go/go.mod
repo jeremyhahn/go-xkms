@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/google/go-tpm v0.9.8
+	github.com/jeremyhahn/go-enclave v0.5.0-alpha
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
@@ -142,7 +143,6 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.19.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
@@ -205,6 +205,7 @@ require (
 	github.com/viterin/vek v0.4.3 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+	github.com/weppos/publicsuffix-go v0.50.3 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
