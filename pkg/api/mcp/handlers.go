@@ -252,10 +252,10 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 	if params.Algorithm == "" {
-		return nil, &errs.Message{Msg: "algorithm is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "algorithm is required"}}
 	}
 
 	// A named curve is validated here rather than left to the service, which
@@ -266,7 +266,7 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 	// interprets no crypto: the attributes are still built by the service.
 	if params.Curve != "" {
 		if _, curveErr := types.ParseCurve(params.Curve); curveErr != nil {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid curve: %s", params.Curve)}
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: fmt.Sprintf("invalid curve: %s", params.Curve)}}
 		}
 	}
 
@@ -478,7 +478,7 @@ func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	// The key is resolved here so a missing key keeps this transport's
@@ -529,7 +529,7 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if err := s.requireKey(ctx, params.KeyID, params.Backend); err != nil {
@@ -582,7 +582,7 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	resp, err := s.xkmsService.RotateKey(ctx, &transport.RotateKeyRequest{
@@ -753,22 +753,22 @@ func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (inter
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if params.CertPEM == "" {
-		return nil, &errs.Message{Msg: "cert_pem is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "cert_pem is required"}}
 	}
 
 	// Parse PEM certificate
 	block, _ := pem.Decode([]byte(params.CertPEM))
 	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, &errs.Message{Msg: "invalid certificate PEM"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "invalid certificate PEM"}}
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse certificate", Err: err}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "failed to parse certificate", Err: err}}
 	}
 
 	if err := s.keystore.SaveCert(ctx, params.KeyID, cert); err != nil {
@@ -788,7 +788,7 @@ func (s *Server) handleGetCert(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	cert, err := s.keystore.GetCert(ctx, params.KeyID)
@@ -817,7 +817,7 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if err := s.keystore.DeleteCert(ctx, params.KeyID); err != nil {
@@ -859,7 +859,7 @@ func (s *Server) handleCertExists(ctx context.Context, req *JSONRPCRequest) (int
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	exists, err := s.keystore.CertExists(ctx, params.KeyID)
@@ -880,11 +880,11 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if len(params.ChainPEMs) == 0 {
-		return nil, &errs.Message{Msg: "chain_pems is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "chain_pems is required"}}
 	}
 
 	// Parse all certificates
@@ -892,12 +892,12 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 	for i, pemStr := range params.ChainPEMs {
 		block, _ := pem.Decode([]byte(pemStr))
 		if block == nil || block.Type != "CERTIFICATE" {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid certificate PEM at index %d", i)}
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: fmt.Sprintf("invalid certificate PEM at index %d", i)}}
 		}
 
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to parse certificate at index %d", i), Err: err}
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: fmt.Sprintf("failed to parse certificate at index %d", i), Err: err}}
 		}
 
 		chain = append(chain, cert)
@@ -920,7 +920,7 @@ func (s *Server) handleGetCertChain(ctx context.Context, req *JSONRPCRequest) (i
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	chain, err := s.keystore.GetCertChain(ctx, params.KeyID)
@@ -1022,7 +1022,7 @@ func (s *Server) handleGetImportParameters(ctx context.Context, req *JSONRPCRequ
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if err := s.refuseUnknownBackend(params.Backend); err != nil {
@@ -1082,12 +1082,12 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 	// Parse wrapping public key from PEM
 	block, _ := pem.Decode([]byte(params.WrappingPublicKeyPEM))
 	if block == nil {
-		return nil, &errs.Message{Msg: "invalid wrapping public key PEM"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "invalid wrapping public key PEM"}}
 	}
 
 	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse public key", Err: err}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "failed to parse public key", Err: err}}
 	}
 
 	// Build import parameters
@@ -1120,13 +1120,13 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	if len(params.WrappedKey) == 0 {
-		return nil, &errs.Message{Msg: "wrapped_key is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "wrapped_key is required"}}
 	}
 	if params.WrappingPublicKey == "" {
-		return nil, &errs.Message{Msg: "wrapping_public_key is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "wrapping_public_key is required"}}
 	}
 	if params.Algorithm == "" {
-		return nil, &errs.Message{Msg: "algorithm is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "algorithm is required"}}
 	}
 
 	// Check if backend supports import/export
@@ -1138,12 +1138,12 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 	// Parse wrapping public key from PEM
 	block, _ := pem.Decode([]byte(params.WrappingPublicKey))
 	if block == nil {
-		return nil, &errs.Message{Msg: "invalid wrapping public key PEM"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "invalid wrapping public key PEM"}}
 	}
 
 	wrappingPubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse wrapping public key", Err: err}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "failed to parse wrapping public key", Err: err}}
 	}
 
 	// Build wrapped key material
@@ -1201,7 +1201,7 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	// The backend name is refused here, through the service's own lookup,
@@ -1392,7 +1392,7 @@ func (s *Server) refuseUnknownBackend(name string) error {
 // callerTenantID and the wire format has no field for the caller to set.
 func tenantForRequest(ctx context.Context, supplied string) (string, error) {
 	if supplied != "" {
-		return "", ErrTenantIDNotAccepted
+		return "", &KeyOpError{Code: ErrCodeInvalidParams, Err: ErrTenantIDNotAccepted}
 	}
 	return callerTenantID(ctx), nil
 }
@@ -1534,7 +1534,7 @@ func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCReques
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if err := s.refuseUnknownBackend(params.Backend); err != nil {
@@ -1576,7 +1576,7 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 	}
 
 	if params.KeyID == "" {
-		return nil, &errs.Message{Msg: "key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "key_id is required"}}
 	}
 
 	if err := s.refuseUnknownBackend(params.Backend); err != nil {
@@ -1627,19 +1627,19 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 
 	// Validate required fields
 	if params.SourceBackend == "" {
-		return nil, &errs.Message{Msg: "source_backend is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "source_backend is required"}}
 	}
 	if params.SourceKeyID == "" {
-		return nil, &errs.Message{Msg: "source_key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "source_key_id is required"}}
 	}
 	if params.DestBackend == "" {
-		return nil, &errs.Message{Msg: "dest_backend is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "dest_backend is required"}}
 	}
 	if params.DestKeyID == "" {
-		return nil, &errs.Message{Msg: "dest_key_id is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "dest_key_id is required"}}
 	}
 	if params.Algorithm == "" {
-		return nil, &errs.Message{Msg: "algorithm is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "algorithm is required"}}
 	}
 
 	// The copy is the service's, not this handler's. It resolves the source
@@ -1674,12 +1674,12 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 		TenantID:      tenantID,
 	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to copy key", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 	if !resp.Success {
 		// The service reports failure through its error; a nil error with
 		// Success false is a contract violation and must not read as success.
-		return nil, ErrCopyKeyIncomplete
+		return nil, &KeyOpError{Code: ErrCodeInternalError, Err: ErrCopyKeyIncomplete}
 	}
 
 	return CopyKeyResult{

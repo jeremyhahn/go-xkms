@@ -20,6 +20,16 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
+// auditOperationError wraps an error from QueryAudit as a *KeyOpError
+// carrying ErrCodeInternalError, mirroring pkg/api/grpc/service_audit.go's
+// QueryAudit, which reports codes.Internal for any failure of the call
+// unconditionally (its own "not configured" and "nil request" guards run
+// before the call and are handled separately, exactly as this handler's own
+// nil-check and decodeParams run before this wrapper is ever reached).
+func auditOperationError(msg string, err error) error {
+	return &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: msg, Err: err}}
+}
+
 // handleQueryAudit handles the xkms.queryAudit method. Audit state lives in
 // the embedded go-qrdb node, reached through the XKMS service.
 func (s *Server) handleQueryAudit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
@@ -32,7 +42,7 @@ func (s *Server) handleQueryAudit(ctx context.Context, req *JSONRPCRequest) (int
 
 	page, err := s.xkmsService.QueryAudit(ctx, &params)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to query audit", Err: err}
+		return nil, auditOperationError("failed to query audit", err)
 	}
 
 	return page, nil
