@@ -125,7 +125,11 @@ func (c *Client) GetRenewalInfo(ctx context.Context, certID string) (*RenewalInf
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("renewal info request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Handle error responses
 	if resp.StatusCode != http.StatusOK {
@@ -371,7 +375,11 @@ func (c *Client) getRenewalInfoEndpoint(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", caerrors.ConnectionFailureError("failed to fetch directory: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", caerrors.ConnectionFailureError("directory request failed with status %d", resp.StatusCode)

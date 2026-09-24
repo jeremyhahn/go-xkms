@@ -54,6 +54,9 @@ func OCSPHandler(responder OCSPResponderInterface) http.HandlerFunc {
 			http.Error(w, "Failed to read OCSP request", http.StatusBadRequest)
 			return
 		}
+		// The body has already been read in full above, and net/http closes
+		// the server request body itself once the handler returns, so a
+		// close error here is neither actionable nor meaningful (go-xkms#866).
 		defer func() { _ = r.Body.Close() }()
 
 		// Validate request size

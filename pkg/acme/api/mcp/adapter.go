@@ -134,7 +134,7 @@ func (a *Adapter) call(ctx context.Context, method string, params interface{}, r
 	if err != nil {
 		return caerrors.ConnectionFailureError("failed to send request: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer api.CloseResponseBody(resp)
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, readErr := io.ReadAll(resp.Body)
