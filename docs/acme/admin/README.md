@@ -454,4 +454,4 @@ type QRDBAuthService interface {
 
 - [ACME API Documentation](../README.md) - RFC 8555 ACME protocol
 - [QRDB Storage](../qrdb/) - KV storage and RBAC backend
-- [OpenAPI Specification](../api/openapi.yaml) - Complete API specification
+- [OpenAPI Specification](../../acme-issuance/api.md#interactive-documentation-swagger-ui) - `GET /openapi/admin-api.yaml` on a running deployment, or `pkg/acme/api/swagger/openapi/admin-api.yaml` in the source tree
