@@ -290,8 +290,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		}
 	}
 
-	// Build the TLS configuration. Currently only dedicated TLS material is
-	// supported; reusing the xkmsd TLS config is deferred to a follow-up.
+	// Build the TLS configuration for the dedicated ACME listener.
 	tlsCfg, err := buildACMETLSConfig(acmeCfg)
 	if err != nil {
 		return nil, &acmeInitError{Stage: "build TLS config", Sentinel: ErrACMETLSConfig, Err: err}
@@ -484,15 +483,13 @@ func buildACMERouter(svc handlers.RestServicer, directoryPath string) http.Handl
 
 // buildACMETLSConfig loads the TLS material for the ACME listener.
 //
-// Reuse of the primary xkmsd TLS config (acme.reuse_tls: true) is a
-// follow-up item: the xkmsd TLS stack is authenticated against the xkmsd
-// REST/gRPC server CN and would generally not match an ACME client's
-// expected hostname. Operators should provision a dedicated TLS cert for
-// the ACME endpoint until that support lands.
+// The ACME listener always uses its own dedicated TLS certificate rather
+// than the primary xkmsd TLS config: the xkmsd TLS stack is authenticated
+// against the xkmsd REST/gRPC server CN and would generally not match an
+// ACME client's expected hostname. Operators provision a dedicated TLS
+// cert/key pair for the ACME endpoint via acme.tls.cert_file and
+// acme.tls.key_file.
 func buildACMETLSConfig(cfg *config.ACMEConfig) (*tls.Config, error) {
-	if cfg.ReuseTLS {
-		return nil, errors.New("acme: reuse_tls is not yet supported; set acme.tls.cert_file and acme.tls.key_file")
-	}
 	cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
 	if err != nil {
 		return nil, err
