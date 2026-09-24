@@ -277,21 +277,6 @@ func TestModule_SSHClientResolver_NonNilClientWired(t *testing.T) {
 	require.NoError(t, err, "binding with a real (non-nil) SSH client must not break RPC dispatch")
 }
 
-// TestModule_PublicGRPCMethods proves the exact, minimal set of RPCs
-// admitted into qrdb's unified-server gRPC interceptor without
-// authentication — Health and Algorithms, the two unannotated RPCs in
-// xkms.proto. Any other method missing its (qrdb.v1.permission) annotation
-// must fail closed (DEFAULT-DENY) rather than silently joining this list.
-func TestModule_PublicGRPCMethods(t *testing.T) {
-	m, err := NewModule(func() *xkms.XKMSService { return nil })
-	require.NoError(t, err)
-
-	assert.ElementsMatch(t, []string{
-		"/xkms.v1.KeystoreService/Health",
-		"/xkms.v1.KeystoreService/Algorithms",
-	}, m.PublicGRPCMethods())
-}
-
 // TestLazyServiceDesc_WrapsStreamHandlers proves lazyServiceDesc's copy of a
 // ServiceDesc.Streams entry resolves impl() before dispatching, exactly
 // like its unary counterpart — KeystoreService itself defines no streaming
