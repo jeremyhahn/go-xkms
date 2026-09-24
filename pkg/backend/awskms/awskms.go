@@ -321,6 +321,9 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 		return "", &errs.Wrapped{Msg: "failed to create KMS key", Err: err}
 	}
 
+	if output == nil || output.KeyMetadata == nil || output.KeyMetadata.KeyId == nil {
+		return "", &errs.Detail{Err: ErrMalformedResponse, Detail: "CreateKey returned no key metadata"}
+	}
 	keyID := aws.ToString(output.KeyMetadata.KeyId)
 
 	// Create an alias for easier reference

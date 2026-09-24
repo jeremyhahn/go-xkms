@@ -120,6 +120,9 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to create symmetric key in AWS KMS", Err: err}
 	}
 
+	if output == nil || output.KeyMetadata == nil || output.KeyMetadata.KeyId == nil {
+		return nil, &errs.Detail{Err: ErrMalformedResponse, Detail: "CreateKey returned no key metadata"}
+	}
 	keyID := aws.ToString(output.KeyMetadata.KeyId)
 
 	// Create an alias for easier reference
