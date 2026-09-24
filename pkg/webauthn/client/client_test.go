@@ -31,22 +31,22 @@ import (
 // mockAdapter implements AuthenticatorAdapter for testing.
 type mockAdapter struct {
 	available        bool
-	makeCredentialFn func(options []byte) ([]byte, error)
-	getAssertionFn   func(options []byte) ([]byte, error)
+	makeCredentialFn func(opts *CeremonyOptions) ([]byte, error)
+	getAssertionFn   func(opts *CeremonyOptions) ([]byte, error)
 }
 
 func (m *mockAdapter) Available() bool { return m.available }
 
-func (m *mockAdapter) MakeCredential(options []byte) ([]byte, error) {
+func (m *mockAdapter) MakeCredential(_ context.Context, opts *CeremonyOptions) ([]byte, error) {
 	if m.makeCredentialFn != nil {
-		return m.makeCredentialFn(options)
+		return m.makeCredentialFn(opts)
 	}
 	return nil, ErrCTAPOperationFailed
 }
 
-func (m *mockAdapter) GetAssertion(options []byte) ([]byte, error) {
+func (m *mockAdapter) GetAssertion(_ context.Context, opts *CeremonyOptions) ([]byte, error) {
 	if m.getAssertionFn != nil {
-		return m.getAssertionFn(options)
+		return m.getAssertionFn(opts)
 	}
 	return nil, ErrCTAPOperationFailed
 }
@@ -111,7 +111,11 @@ func TestNewClient_WithHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error: %v", err)
 	}
-	if c.httpClient != httpClient {
+	httpRP, ok := c.rp.(*HTTPRelyingParty)
+	if !ok {
+		t.Fatalf("rp = %T, want *HTTPRelyingParty", c.rp)
+	}
+	if httpRP.httpClient != httpClient {
 		t.Error("client should use the provided HTTP client")
 	}
 }
@@ -124,8 +128,12 @@ func TestNewClient_StripsTrailingSlash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error: %v", err)
 	}
-	if c.serverURL != "https://example.com" {
-		t.Errorf("serverURL = %q, want %q", c.serverURL, "https://example.com")
+	httpRP, ok := c.rp.(*HTTPRelyingParty)
+	if !ok {
+		t.Fatalf("rp = %T, want *HTTPRelyingParty", c.rp)
+	}
+	if httpRP.serverURL != "https://example.com" {
+		t.Errorf("serverURL = %q, want %q", httpRP.serverURL, "https://example.com")
 	}
 }
 
@@ -194,7 +202,7 @@ func TestRegister_Success(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]interface{}{
 				"id":    "credential-id",
 				"rawId": "credential-id",
@@ -330,7 +338,7 @@ func TestRegister_AuthenticatorError(t *testing.T) {
 	adapterErr := &errs.Message{Msg: "authenticator device not connected"}
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return nil, adapterErr
 		},
 	}
@@ -409,7 +417,7 @@ func TestRegister_FinishServerError(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
 		},
 	}
@@ -460,7 +468,7 @@ func TestRegister_WithAuthToken(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
 		},
 	}
@@ -521,7 +529,7 @@ func TestLogin_Success(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]interface{}{
 				"id":    "cred-id",
 				"rawId": "cred-id",
@@ -643,7 +651,7 @@ func TestLogin_AuthenticatorError(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return nil, &errs.Message{Msg: "device disconnected"}
 		},
 	}
@@ -716,7 +724,7 @@ func TestLogin_FinishServerError(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
 		},
 	}
@@ -765,7 +773,7 @@ func TestLogin_WithAuthToken(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "c", "type": "public-key"})
 		},
 	}
@@ -962,7 +970,7 @@ func TestRegister_InvalidFinishResponseJSON(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
 		},
 	}
@@ -1007,7 +1015,7 @@ func TestLogin_InvalidFinishResponseJSON(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "c", "type": "public-key"})
 		},
 	}
@@ -1054,7 +1062,7 @@ func TestRegister_DisplayNameDefault(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
 		},
 	}
@@ -1147,7 +1155,7 @@ func TestLogin_UserIDPropagated(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "c", "type": "public-key"})
 		},
 	}
@@ -1210,7 +1218,7 @@ func TestRegister_FinishServerUnavailable(t *testing.T) {
 	// Create client pointing to the server
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			// Close the server after begin succeeds but before finish
 			server.Close()
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
@@ -1250,7 +1258,7 @@ func TestLogin_FinishServerUnavailable(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			// Close server after begin succeeds
 			server.Close()
 			return json.Marshal(map[string]string{"id": "c", "type": "public-key"})
@@ -1296,7 +1304,7 @@ func TestRegister_WithDisplayName(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		makeCredentialFn: func(options []byte) ([]byte, error) {
+		makeCredentialFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "cred", "type": "public-key"})
 		},
 	}
@@ -1350,7 +1358,7 @@ func TestLogin_WithAuthTokenOnFinish(t *testing.T) {
 
 	adapter := &mockAdapter{
 		available: true,
-		getAssertionFn: func(options []byte) ([]byte, error) {
+		getAssertionFn: func(_ *CeremonyOptions) ([]byte, error) {
 			return json.Marshal(map[string]string{"id": "c", "type": "public-key"})
 		},
 	}

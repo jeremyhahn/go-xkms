@@ -61,6 +61,18 @@ var (
 
 	// ErrNilAuthenticatorAdapter is returned when no authenticator adapter is configured.
 	ErrNilAuthenticatorAdapter = errors.New("webauthn/client: nil authenticator adapter")
+
+	// ErrNilTransportClient is returned when NewTransportRelyingParty is
+	// given a nil transport client.
+	ErrNilTransportClient = errors.New("webauthn/client: nil transport client")
+
+	// ErrPINRequired is returned by HardwareAdapter when the authenticator
+	// has a CTAP2 PIN set and the ceremony carried none. It replaces the raw
+	// fido2.ErrPINRequired, which names neither the PIN nor the way to
+	// supply it, with a message a caller can act on: an authenticator
+	// configured with a PIN refuses the ceremony outright
+	// (CTAP2_ERR_PIN_REQUIRED) unless CeremonyOptions.PIN is set.
+	ErrPINRequired = errors.New("webauthn/client: this authenticator requires a PIN; set CeremonyOptions.PIN")
 )
 
 // ClientError wraps an error with the operation context.
@@ -111,4 +123,27 @@ func (e *ServerError) Is(target error) bool {
 		return errors.Is(target, ErrServerUnavailable)
 	}
 	return false
+}
+
+// RelyingPartyRejection reports a ceremony the relying party completed but
+// declined (a transport FinishRegistration/FinishAuthentication response
+// with Success: false), carrying the reason it gave, if any. It is
+// TransportRelyingParty's counterpart to HTTPRelyingParty's ServerError,
+// which instead reports a non-2xx HTTP status.
+type RelyingPartyRejection struct {
+	Err     error  // ErrRegistrationFailed or ErrAuthenticationFailed
+	Message string // server-supplied reason; empty if the server gave none
+}
+
+// Error returns the error message.
+func (e *RelyingPartyRejection) Error() string {
+	if e.Message == "" {
+		return e.Err.Error() + ": rejected"
+	}
+	return e.Err.Error() + ": " + e.Message
+}
+
+// Unwrap returns the wrapped sentinel.
+func (e *RelyingPartyRejection) Unwrap() error {
+	return e.Err
 }

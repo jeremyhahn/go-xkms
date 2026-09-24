@@ -15,6 +15,7 @@ package signing
 
 import (
 	"crypto"
+	"crypto/fips140"
 	"crypto/rsa"
 	"testing"
 
@@ -311,6 +312,15 @@ func TestSignerOptsMultipleHashes(t *testing.T) {
 
 			digest, err := opts.GetDigest(nil)
 			if err != nil {
+				// SHA-1's hash.Hash.Write itself refuses under
+				// GODEBUG=fips140=only (the registered crypto.SHA1
+				// constructor, unlike calling crypto/sha1.New directly,
+				// reports the refusal through Write's error return rather
+				// than panicking in Sum), so GetDigest correctly propagates
+				// it as an error here.
+				if tt.hash == crypto.SHA1 && fips140.Enforced() {
+					return
+				}
 				t.Fatalf("unexpected error: %v", err)
 			}
 

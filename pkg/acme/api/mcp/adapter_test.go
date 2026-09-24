@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1264,11 +1265,11 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("CreateTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.createUser"] = db.User{
-			ID:       1,
-			Username: "alice",
-			TenantID: "tenant-1",
-			RoleIDs:  []string{"role-1"},
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice",
+			TenantID:  "tenant-1",
+			RoleIDs:   []string{"role-1"},
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		}
 		server := httptest.NewServer(handler)
 		defer server.Close()
@@ -1295,7 +1296,7 @@ func TestAdapterUserOperations(t *testing.T) {
 		if user.Username != "alice" {
 			t.Errorf("Expected username 'alice', got '%s'", user.Username)
 		}
-		if !user.Enabled {
+		if user.Lifecycle != string(qrdbsdk.LifecycleActive) {
 			t.Error("Expected user to be enabled")
 		}
 	})
@@ -1327,10 +1328,10 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("GetTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.getUser"] = db.User{
-			ID:       1,
-			Username: "alice",
-			TenantID: "tenant-1",
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice",
+			TenantID:  "tenant-1",
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		}
 		handler.validateParams = func(method string, params json.RawMessage) error {
 			if method == "admin.getUser" {
@@ -1394,11 +1395,11 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("UpdateTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.updateUser"] = db.User{
-			ID:       1,
-			Username: "alice-updated",
-			TenantID: "tenant-1",
-			RoleIDs:  []string{"role-1", "role-2"},
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice-updated",
+			TenantID:  "tenant-1",
+			RoleIDs:   []string{"role-1", "role-2"},
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		}
 		server := httptest.NewServer(handler)
 		defer server.Close()

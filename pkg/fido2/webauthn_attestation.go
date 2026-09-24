@@ -25,6 +25,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/go-webauthn/webauthn/protocol"
 )
 
 // WebAuthnRegistrationOptions carries the parameters the client needs to drive a
@@ -264,6 +265,94 @@ func buildWebAuthnAttestation(resp *MakeCredentialResponse, challenge []byte, or
 // to use call this so selectDevice does not independently choose another.
 func (h *FIDO2Handler) BindDevice(path string) {
 	h.config.DevicePath = path
+}
+
+// ParseWebAuthnRegistrationOptions decodes a relying party's registration
+// options document into WebAuthnRegistrationOptions, the RegisterWebAuthn
+// input. Both the browser-shaped wrapped document ({"publicKey": {...}}) and
+// the bare PublicKeyCredentialCreationOptions object are accepted, mirroring
+// parseRequestOptions on the assertion side.
+//
+// The origin is NOT carried in the options - a browser supplies it from its
+// security context - so the caller provides it. When origin is empty, the
+// WebAuthn-standard same-origin default "https://<rpId>" is used; this is
+// correct whenever the relying party origin host equals the RP ID. Callers
+// whose origin host differs from the RP ID (a registrable-suffix RP ID) must
+// pass the explicit origin.
+func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAuthnRegistrationOptions, error) {
+	if len(optionsJSON) == 0 {
+		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrRegistrationOptionsRequired}
+	}
+
+	// Accept the wrapped CredentialCreation ({"publicKey": {...}}) first; if
+	// the publicKey member is absent the document is a bare creation-options
+	// object, which we then decode directly.
+	var wrapped protocol.CredentialCreation
+	if err := json.Unmarshal(optionsJSON, &wrapped); err != nil {
+		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2: failed to parse registration options", Err: err}
+	}
+
+	opts := wrapped.Response
+	if len(opts.Challenge) == 0 {
+		// No publicKey wrapper present — decode the bare creation options.
+		if err := json.Unmarshal(optionsJSON, &opts); err != nil {
+			return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2: failed to parse registration options", Err: err}
+		}
+	}
+
+	if len(opts.Challenge) == 0 {
+		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrRegistrationChallengeMissing}
+	}
+	if opts.RelyingParty.ID == "" {
+		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2", Err: ErrRegistrationRPIDMissing}
+	}
+
+	userID, err := decodeWebAuthnUserHandle(opts.User.ID)
+	if err != nil {
+		return WebAuthnRegistrationOptions{}, &errs.Wrapped{Msg: "fido2: failed to decode user handle", Err: err}
+	}
+
+	resolvedOrigin := origin
+	if resolvedOrigin == "" {
+		resolvedOrigin = "https://" + opts.RelyingParty.ID
+	}
+
+	challenge := make([]byte, len(opts.Challenge))
+	copy(challenge, opts.Challenge)
+
+	return WebAuthnRegistrationOptions{
+		Challenge:               challenge,
+		Origin:                  resolvedOrigin,
+		RPID:                    opts.RelyingParty.ID,
+		RPName:                  opts.RelyingParty.Name,
+		UserID:                  userID,
+		UserName:                opts.User.Name,
+		UserDisplayName:         opts.User.DisplayName,
+		RequireUserVerification: opts.AuthenticatorSelection.UserVerification == protocol.VerificationRequired,
+		Timeout:                 time.Duration(opts.Timeout) * time.Millisecond,
+	}, nil
+}
+
+// decodeWebAuthnUserHandle extracts the WebAuthn user handle bytes from the
+// JSON-decoded User.ID field of a PublicKeyCredentialCreationOptions. The
+// go-webauthn protocol package types User.ID as `any` because a generically
+// decoded JSON document represents it as a base64url string rather than raw
+// bytes.
+func decodeWebAuthnUserHandle(id any) ([]byte, error) {
+	switch v := id.(type) {
+	case string:
+		decoded, err := base64.RawURLEncoding.DecodeString(v)
+		if err != nil {
+			return nil, err
+		}
+		return decoded, nil
+	case []byte:
+		return v, nil
+	case nil:
+		return nil, nil
+	default:
+		return nil, &errs.Message{Msg: fmt.Sprintf("fido2: unsupported user handle type %T", id)}
+	}
 }
 
 func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebAuthnAttestation, error) {

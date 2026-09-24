@@ -159,6 +159,14 @@ type ACMEConfig struct {
 	// Section 6.5's Replay-Nonce / badNonce mechanism. See ACMENonceConfig.
 	Nonce ACMENonceConfig `yaml:"nonce"`
 
+	// Resilience configures the circuit breakers guarding the ACME server's
+	// outbound dependencies (the http-01 and dns-01 challenge verifiers, CT
+	// log submission, the tenant KMS signer, and CA-bundle storage access)
+	// and the degradation cache the directory and CA-bundle endpoints serve
+	// from while CA-bundle storage access is unavailable. See
+	// ACMEResilienceConfig.
+	Resilience ACMEResilienceConfig `yaml:"resilience"`
+
 	// Policy configures the ACME identifier issuance policy engine: the
 	// domain/FQDN/wildcard/CIDR blocklist, public-suffix and reserved-IP
 	// enforcement, and per-identifier-type challenge selection. See
@@ -460,6 +468,9 @@ func (c *ACMEConfig) Validate() error {
 		return err
 	}
 	if err := c.Nonce.Validate(); err != nil {
+		return err
+	}
+	if err := c.Resilience.Validate(); err != nil {
 		return err
 	}
 	if err := c.Policy.Validate(); err != nil {

@@ -15,7 +15,11 @@
 
 package awskms
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
 	// ErrNotInitialized is returned when the KMS client is not initialized.
@@ -24,8 +28,17 @@ var (
 	// ErrInvalidConfig is returned when the configuration is invalid.
 	ErrInvalidConfig = errors.New("awskms: invalid configuration")
 
-	// ErrKeyNotFound is returned when a key is not found in KMS.
-	ErrKeyNotFound = errors.New("awskms: key not found")
+	// ErrKeyNotFound is returned when a key is not found in KMS. It is an
+	// alias of backend.ErrKeyNotFound so errors.Is(err, backend.ErrKeyNotFound)
+	// recognizes it without any wrapping, matching every other backend.
+	ErrKeyNotFound = backend.ErrKeyNotFound
+
+	// ErrKeyRetrievalFailed is returned when DescribeKey fails for a reason
+	// other than the key genuinely not existing -- throttling, a network
+	// fault, or an IAM/authorization failure. It must not satisfy
+	// errors.Is(err, backend.ErrKeyNotFound): callers use that distinction
+	// to decide whether generating a replacement key is safe.
+	ErrKeyRetrievalFailed = errors.New("awskms: key retrieval failed")
 
 	// ErrUnsupportedKeyType is returned when an unsupported key type is requested.
 	ErrUnsupportedKeyType = errors.New("awskms: unsupported key type")

@@ -30,7 +30,9 @@ import (
 // rather than written out, so a renamed constant fails here instead of
 // silently narrowing what the wire accepts.
 func TestWrapVocabulary_CanonicalAlgorithms(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	tests := map[types.KeyWrapAlgorithm]struct {
 		kind   wrapKind
 		digest crypto.Hash

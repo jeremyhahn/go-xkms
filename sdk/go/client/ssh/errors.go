@@ -234,11 +234,3 @@ func (e *ProtocolError) Error() string {
 // Unwrap returns the underlying decode failure so callers can inspect
 // the specific encoding/json error type if they need to.
 func (e *ProtocolError) Unwrap() error { return e.Err }
-
-// ConnectionClosedError indicates the MCP transport's connection was
-// closed by the server before a response was received, with no
-// underlying scanner error to report.
-type ConnectionClosedError struct{}
-
-// Error implements the error interface.
-func (e *ConnectionClosedError) Error() string { return "sdk/ssh: connection closed by server" }

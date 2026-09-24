@@ -772,6 +772,9 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	if len(req.AdditionalData) > 0 {
 		body["additional_data"] = req.AdditionalData
 	}
+	if req.GCMNonceMode != "" {
+		body["gcm_nonce_mode"] = req.GCMNonceMode
+	}
 	if req.Mode != "" {
 		body["mode"] = req.Mode
 	}

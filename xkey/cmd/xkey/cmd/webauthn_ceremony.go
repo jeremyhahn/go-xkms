@@ -15,8 +15,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/url"
 	"strings"
@@ -24,13 +22,15 @@ import (
 
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 )
 
 // This file is the client ("browser") half of the WebAuthn ceremonies the
 // xkey CLI drives. The server half travels over the SDK transport
 // (BeginRegistration / FinishRegistration, BeginAuthentication /
-// FinishAuthentication); the authenticator half is the canonical CTAP2
-// implementation re-exported at sdk/go/fido2, which speaks to whichever
+// FinishAuthentication); the authenticator half is driven by
+// webauthnclient.HardwareAdapter, the SDK re-export of the single canonical
+// WebAuthn ceremony driver (pkg/webauthn/client), which speaks to whichever
 // FIDO2 HID device is attached - including the virtual authenticator that
 // "xkey fido2" exposes.
 
@@ -44,18 +44,6 @@ var (
 	// could be opened for the ceremony.
 	ErrWebAuthnAuthenticatorUnavailable = errors.New("webauthn: no FIDO2 authenticator available; " +
 		"attach a security key or start the xkey virtual authenticator with 'xkey fido2'")
-
-	// ErrWebAuthnOptionsInvalid indicates the relying party's ceremony
-	// options could not be parsed.
-	ErrWebAuthnOptionsInvalid = errors.New("webauthn: relying party ceremony options are invalid")
-
-	// ErrWebAuthnChallengeMissing indicates the ceremony options carried no
-	// challenge.
-	ErrWebAuthnChallengeMissing = errors.New("webauthn: relying party ceremony options carry no challenge")
-
-	// ErrWebAuthnRPIDMissing indicates the ceremony options carried no
-	// relying party ID.
-	ErrWebAuthnRPIDMissing = errors.New("webauthn: relying party ceremony options carry no relying party ID")
 
 	// ErrWebAuthnRegistrationFailed indicates the authenticator refused or
 	// failed the registration (MakeCredential) ceremony.
@@ -149,10 +137,11 @@ var webauthnCeremonyFactory = newFIDO2Ceremony
 // without depending on hardware being attached to the machine.
 var webauthnEnumeratorFactory = fido2.NewDefaultEnumerator
 
-// fido2Ceremony drives a CTAP2 authenticator over HID through the canonical
-// FIDO2 implementation re-exported by the SDK.
+// fido2Ceremony drives a CTAP2 authenticator over HID through
+// webauthnclient.HardwareAdapter, the SDK re-export of the single canonical
+// WebAuthn ceremony driver's hardware authenticator adapter.
 type fido2Ceremony struct {
-	handler *fido2.FIDO2Handler
+	adapter *webauthnclient.HardwareAdapter
 }
 
 // fido2Ceremony satisfies the ceremony contract.
@@ -166,48 +155,32 @@ func newFIDO2Ceremony() (WebAuthnCeremony, error) {
 	cfg.Timeout = webauthnCeremonyTimeout
 	cfg.UserPresenceTimeout = webauthnCeremonyTimeout
 
-	handler, err := fido2.NewHandler(&cfg, webauthnEnumeratorFactory())
+	adapter, err := webauthnclient.NewHardwareAdapter(&cfg, webauthnEnumeratorFactory())
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnAuthenticatorUnavailable, Cause: err}
 	}
 
-	devices, err := handler.ListDevices()
-	if err != nil {
-		_ = handler.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnAuthenticatorUnavailable, Cause: err}
-	}
-	if len(devices) == 0 {
-		_ = handler.Close()
-		return nil, ErrWebAuthnAuthenticatorUnavailable
-	}
-
-	return &fido2Ceremony{handler: handler}, nil
+	return &fido2Ceremony{adapter: adapter}, nil
 }
 
 // Register drives the authenticator through authenticatorMakeCredential and
 // assembles the PublicKeyCredential attestation document.
 func (c *fido2Ceremony) Register(ctx context.Context, req CeremonyRequest) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	opts, err := parseCreationOptions(req.OptionsJSON, req.Origin)
-	if err != nil {
-		return nil, err
-	}
-	opts.PIN = req.PIN
-
-	attestation, err := c.handler.RegisterWebAuthn(opts)
+	attestation, err := c.adapter.MakeCredential(ctx, &webauthnclient.CeremonyOptions{
+		OptionsJSON: req.OptionsJSON,
+		Origin:      req.Origin,
+		PIN:         req.PIN,
+	})
 	if err != nil {
 		return nil, ceremonyFailure(ErrWebAuthnRegistrationFailed, req.PIN, err)
 	}
-	return attestation.PublicKeyCredentialJSON, nil
+	return attestation, nil
 }
 
 // Assert drives the authenticator through authenticatorGetAssertion and
 // assembles the PublicKeyCredential assertion document.
 func (c *fido2Ceremony) Assert(ctx context.Context, req CeremonyRequest) ([]byte, error) {
-	assertion, err := c.handler.Assert(ctx, fido2.WebAuthnAssertionRequest{
+	assertion, err := c.adapter.GetAssertion(ctx, &webauthnclient.CeremonyOptions{
 		OptionsJSON: req.OptionsJSON,
 		Origin:      req.Origin,
 		PIN:         req.PIN,
@@ -235,111 +208,12 @@ func ceremonyFailure(sentinel error, pin *secure.Secret, cause error) error {
 	return &SentinelCauseError{Sentinel: sentinel, Cause: cause}
 }
 
-// Close releases the authenticator handler.
+// Close releases the authenticator handle.
 func (c *fido2Ceremony) Close() error {
-	return c.handler.Close()
-}
-
-// creationOptionsDocument is the browser-shaped registration options
-// document ({"publicKey": {...}}) a relying party serves for
-// navigator.credentials.create().
-type creationOptionsDocument struct {
-	PublicKey *publicKeyCreationOptions `json:"publicKey"`
-}
-
-// publicKeyCreationOptions is the subset of
-// PublicKeyCredentialCreationOptions a CTAP2 authenticatorMakeCredential
-// call needs. Fields the authenticator does not consume (attestation
-// preference, excludeCredentials, extensions) are deliberately not decoded.
-type publicKeyCreationOptions struct {
-	Challenge string `json:"challenge"`
-	RP        struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"rp"`
-	User struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		DisplayName string `json:"displayName"`
-	} `json:"user"`
-	AuthenticatorSelection struct {
-		UserVerification string `json:"userVerification"`
-	} `json:"authenticatorSelection"`
-	Timeout int `json:"timeout"`
-}
-
-// parseCreationOptions decodes a relying party's registration options into
-// the structured form the CTAP2 registration ceremony consumes. Both the
-// browser-shaped wrapped document ({"publicKey": {...}}) and the bare
-// PublicKeyCredentialCreationOptions object are accepted, mirroring the
-// assertion path in the canonical FIDO2 package.
-//
-// The origin is not carried in the options - a browser supplies it from its
-// security context - so the caller provides it. An empty origin falls back to
-// the WebAuthn same-origin default "https://<rpId>".
-func parseCreationOptions(optionsJSON []byte, origin string) (fido2.WebAuthnRegistrationOptions, error) {
-	var zero fido2.WebAuthnRegistrationOptions
-
-	if len(optionsJSON) == 0 {
-		return zero, &DetailError{Err: ErrWebAuthnOptionsInvalid, Detail: ": options are empty"}
+	if c.adapter == nil {
+		return nil
 	}
-
-	var wrapped creationOptionsDocument
-	if err := json.Unmarshal(optionsJSON, &wrapped); err != nil {
-		return zero, &SentinelCauseError{Sentinel: ErrWebAuthnOptionsInvalid, Cause: err}
-	}
-
-	opts := wrapped.PublicKey
-	if opts == nil {
-		// No publicKey wrapper: the document is a bare creation-options object.
-		opts = &publicKeyCreationOptions{}
-		if err := json.Unmarshal(optionsJSON, opts); err != nil {
-			return zero, &SentinelCauseError{Sentinel: ErrWebAuthnOptionsInvalid, Cause: err}
-		}
-	}
-
-	challenge, err := decodeWebAuthnBase64(opts.Challenge)
-	if err != nil {
-		return zero, &SentinelCauseError{Sentinel: ErrWebAuthnOptionsInvalid, Cause: err}
-	}
-	if len(challenge) == 0 {
-		return zero, ErrWebAuthnChallengeMissing
-	}
-	if opts.RP.ID == "" {
-		return zero, ErrWebAuthnRPIDMissing
-	}
-
-	userID, err := decodeWebAuthnBase64(opts.User.ID)
-	if err != nil {
-		return zero, &SentinelCauseError{Sentinel: ErrWebAuthnOptionsInvalid, Cause: err}
-	}
-
-	resolvedOrigin := origin
-	if resolvedOrigin == "" {
-		resolvedOrigin = "https://" + opts.RP.ID
-	}
-
-	return fido2.WebAuthnRegistrationOptions{
-		Challenge:               challenge,
-		Origin:                  resolvedOrigin,
-		RPID:                    opts.RP.ID,
-		RPName:                  opts.RP.Name,
-		UserID:                  userID,
-		UserName:                opts.User.Name,
-		UserDisplayName:         opts.User.DisplayName,
-		RequireUserVerification: opts.AuthenticatorSelection.UserVerification == "required",
-		Timeout:                 time.Duration(opts.Timeout) * time.Millisecond,
-	}, nil
-}
-
-// decodeWebAuthnBase64 decodes a WebAuthn binary JSON field. WebAuthn
-// documents use unpadded base64url, but relying parties have been observed
-// emitting the padded form, so both are accepted.
-func decodeWebAuthnBase64(value string) ([]byte, error) {
-	if value == "" {
-		return nil, nil
-	}
-	return base64.RawURLEncoding.DecodeString(strings.TrimRight(value, "="))
+	return c.adapter.Close()
 }
 
 // webauthnOrigin derives the WebAuthn origin from a server URL: the scheme

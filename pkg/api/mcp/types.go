@@ -244,6 +244,10 @@ type DecryptParams struct {
 	Nonce          []byte `json:"nonce,omitempty"`           // For symmetric decryption
 	Tag            []byte `json:"tag,omitempty"`             // For symmetric decryption
 	AdditionalData []byte `json:"additional_data,omitempty"` // For symmetric decryption with AAD
+	// GCMNonceMode is the value the matching EncryptResult.GCMNonceMode
+	// reported; see its doc comment. Required, unchanged, to decrypt an
+	// AES-GCM ciphertext produced under GODEBUG=fips140=only.
+	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
 	// Mode selects the cipher mode of operation: "" (default AEAD, AES-GCM or
 	// ChaCha20-Poly1305), "cbc" (unpadded AES-CBC), or "cbc-pad" (AES-CBC with
 	// PKCS#7 padding). Must match the Mode used to produce Ciphertext.
@@ -305,6 +309,13 @@ type EncryptResult struct {
 	// IV is the AES-CBC initialization vector used for encryption. Populated
 	// only when the request's Mode was "cbc" or "cbc-pad".
 	IV []byte `json:"iv,omitempty"`
+	// GCMNonceMode mirrors transport.EncryptResponse.GCMNonceMode: "" for a
+	// caller- or RNG-supplied nonce, "random" when GODEBUG=fips140=only
+	// forced this encryption through cipher.NewGCMWithRandomNonce (see
+	// docs/fips/README.md "AEAD construction"). Echo it back unchanged on
+	// the matching DecryptParams; Decrypt cannot infer it from the
+	// ciphertext bytes alone.
+	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
 }
 
 // SaveCertParams represents parameters for saving a certificate

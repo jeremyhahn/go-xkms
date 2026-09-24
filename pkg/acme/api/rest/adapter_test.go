@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1530,11 +1531,11 @@ func TestCreateTenantUser(t *testing.T) {
 			},
 			statusCode: http.StatusCreated,
 			response: &db.User{
-				ID:       1,
-				Username: "testuser",
-				TenantID: "tenant-1",
-				RoleIDs:  []string{"role-1"},
-				Enabled:  true,
+				ID:        1,
+				Username:  "testuser",
+				TenantID:  "tenant-1",
+				RoleIDs:   []string{"role-1"},
+				Lifecycle: string(qrdbsdk.LifecycleActive),
 			},
 			wantError: false,
 		},
