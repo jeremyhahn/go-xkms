@@ -16,7 +16,9 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -354,6 +356,53 @@ func TestNewAccountHandler_EmptyContact(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, common.StatusValid, account.Status)
+}
+
+// TestNewAccountHandler_OptionalEABVerificationFailureStillCreatesAccount
+// verifies that when an ExternalAccountBinding is supplied but not required
+// (per RFC 8555, the CA may still attempt to verify one if present) and
+// verification fails, account creation still succeeds — the failure must
+// never block the request — but is reported through the service logger
+// rather than being silently dropped.
+func TestNewAccountHandler_OptionalEABVerificationFailureStillCreatesAccount(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	var logBuf bytes.Buffer
+	service.logger = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	key := generateTestKey(t)
+
+	// A structurally invalid EAB JWS: "protected" is not valid base64url, so
+	// ExternalAccountBindingVerifier.Verify fails at header decoding.
+	payload := NewAccountRequest{
+		Contact:              []string{"mailto:test@example.com"},
+		TermsOfServiceAgreed: true,
+		ExternalAccountBinding: map[string]interface{}{
+			"protected": "not-valid-base64url!!!",
+			"payload":   "",
+			"signature": "",
+		},
+	}
+
+	url := service.baseRESTURI + "/acme/new-account"
+	req := createJWSRequest(t, service, key, url, payload, false, 0)
+
+	resp := httptest.NewRecorder()
+	service.NewAccountHandler(resp, req)
+
+	// The binding is optional, so its failure must not fail the request.
+	require.Equal(t, http.StatusCreated, resp.Code)
+
+	var account struct {
+		Status string `json:"status"`
+	}
+	err := json.NewDecoder(resp.Body).Decode(&account)
+	require.NoError(t, err)
+	assert.Equal(t, common.StatusValid, account.Status)
+
+	// The failed verification attempt was reported, not silently dropped.
+	assert.Contains(t, logBuf.String(), "optional external account binding failed verification")
 }
 
 func TestNewAccountHandler_ReplayNonceHeader(t *testing.T) {

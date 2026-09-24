@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -207,11 +208,10 @@ func (s *Server) buildTPM2PlatformSealer() (types.Sealer, error) {
 		}
 		tpmBackend, ok := res.Sealer.(*tpm2backend.Backend)
 		if !ok {
-			_ = res.Close()
-			return nil, &ErrPlatformStoreStrategyUnavailable{
+			return nil, errors.Join(&ErrPlatformStoreStrategyUnavailable{
 				Strategy: "tpm2",
 				Reason:   "seal autodetect returned an unexpected sealer type",
-			}
+			}, res.Close())
 		}
 		backend = tpmBackend
 		s.platformStoreTPMClose = res.Close

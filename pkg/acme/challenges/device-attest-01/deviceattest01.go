@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -305,7 +306,11 @@ func VerifyAttestation(
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("device-attest-01: failed to contact client: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("device-attest-01: failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, caerrors.ConnectionFailureError("device-attest-01: unexpected status code: %d", resp.StatusCode)

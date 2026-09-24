@@ -183,7 +183,7 @@ func TestAccountHandler_NonceGenerationFailure(t *testing.T) {
 	account := createTestAccount(t, service, key)
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(length int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", caerrors.InternalServerError("mock nonce generation failure")
 	})
 
@@ -824,7 +824,7 @@ func TestWriteChallengeResponse_NonceGenerationError(t *testing.T) {
 	defer cleanup()
 
 	// Set failing nonce generator
-	service.SetNonceGenerator(func(length int) (string, error) {
+	service.SetNonceGenerator(func() (string, error) {
 		return "", caerrors.InternalServerError("nonce generation failed")
 	})
 

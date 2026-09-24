@@ -47,6 +47,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -572,7 +573,11 @@ func (p *Provider) makeRequest(ctx context.Context, method, uri string, body io.
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("cloudflare: failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodySize)).Decode(&apiResp); err != nil {

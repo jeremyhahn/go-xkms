@@ -61,8 +61,13 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		value, _ := cmd.Flags().GetString("value")
-		file, _ := cmd.Flags().GetString("file")
+		fr := newFlagReader(cmd)
+		value := fr.String("value")
+		file := fr.String("file")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if value != "" && file != "" {
 			handleError(ErrPlatformSecretSourceConflict)
@@ -115,7 +120,12 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		platformGet(cfg, printer, args[0], outputFile)
 	},
@@ -199,11 +209,11 @@ func createPlatformClient(cfg *Config) (client.Client, func(), error) {
 	}
 
 	if err := cl.Connect(context.Background()); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	return cl, func() { _ = cl.Close() }, nil
+	return cl, func() { closeQuietly(cl) }, nil
 }
 
 // platformPut stores a secret via the SDK client.
@@ -261,9 +271,12 @@ func platformGet(cfg *Config, printer *Printer, name, outputFile string) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Platform Secret:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Name:   %s\n", resp.Name)
-		_, _ = fmt.Fprintf(printer.writer, "  Secret: %s\n", base64.StdEncoding.EncodeToString(resp.Secret))
+		printer.printf("Platform Secret:\n")
+		printer.printf("  Name:   %s\n", resp.Name)
+		printer.printf("  Secret: %s\n", base64.StdEncoding.EncodeToString(resp.Secret))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -315,14 +328,17 @@ func platformList(cfg *Config, printer *Printer) {
 		}
 	case OutputFormatTable, OutputFormatText:
 		if len(resp.Names) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No secrets stored")
+			printer.println("No secrets stored")
 			return
 		}
-		_, _ = fmt.Fprintln(printer.writer, "Platform Secrets:")
+		printer.println("Platform Secrets:")
 		for _, name := range resp.Names {
-			_, _ = fmt.Fprintf(printer.writer, "  - %s\n", name)
+			printer.printf("  - %s\n", name)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "\nTotal: %d secret(s)\n", len(resp.Names))
+		printer.printf("\nTotal: %d secret(s)\n", len(resp.Names))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -370,15 +386,18 @@ func platformStatus(cfg *Config, printer *Printer) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Platform Store Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Available: %t\n", resp.Available)
+		printer.printf("Platform Store Status:\n")
+		printer.printf("  Available: %t\n", resp.Available)
 		if resp.SealerID != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Sealer:    %s\n", resp.SealerID)
+			printer.printf("  Sealer:    %s\n", resp.SealerID)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "  Secrets:   %d\n", resp.SecretCount)
+		printer.printf("  Secrets:   %d\n", resp.SecretCount)
 		for _, name := range resp.SecretNames {
-			_, _ = fmt.Fprintf(printer.writer, "    - %s\n", name)
+			printer.printf("    - %s\n", name)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

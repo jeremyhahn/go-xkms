@@ -121,6 +121,18 @@ func ResolveNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedNodeSeal,
 		if err != nil {
 			return ResolvedNodeSeal{}, &NodeSealError{Reason: "resolving TPM2 key directory", Err: err}
 		}
+		if tpmCfg == nil {
+			// barrier.strategy selects tpm2 for the node-seal flip
+			// independently of backends.tpm2 (the crypto-operation TPM2
+			// backend, gated by its own Enabled flag — see
+			// (*Server).initTPM2Backend). An operator can reasonably set one
+			// without the other, so a missing section here must fail closed
+			// with the same typed error as "hardware not found" rather than
+			// dereferencing a nil *config.TPM2Config below.
+			return ResolvedNodeSeal{}, &NodeSealError{
+				Reason: "strategy tpm2 configured for the node-seal flip but backends.tpm2 is not set",
+			}
+		}
 		res := seal.BuildBestStrategy(seal.AutodetectOptions{
 			TPM2: &seal.TPM2ProbeConfig{
 				Device:          tpmCfg.DevicePath,

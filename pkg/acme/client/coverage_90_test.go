@@ -1163,6 +1163,38 @@ func TestClient_fetchOrdersList_Client90(t *testing.T) {
 			t.Error("expected error for invalid JSON")
 		}
 	})
+
+	t.Run("server error status with unreadable body", func(t *testing.T) {
+		// Declaring a larger Content-Length than actually written causes
+		// io.ReadAll(resp.Body) to fail with an unexpected EOF once the
+		// server closes the connection, without any permission tricks.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "1000")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("short"))
+		}))
+		defer server.Close()
+
+		var logBuf bytes.Buffer
+		client := &Client{
+			httpClient: server.Client(),
+			logger:     slog.New(slog.NewTextHandler(&logBuf, nil)),
+		}
+
+		_, err := client.fetchOrdersList(context.Background(), server.URL)
+		if err == nil {
+			t.Fatal("expected error for server error")
+		}
+		var caErr *caerrors.TrustedCAError
+		if !errors.As(err, &caErr) || caErr.Type != caerrors.ConnectionFailure {
+			t.Errorf("expected caerrors.ConnectionFailure, got %v", err)
+		}
+		// The failure to read the diagnostic body is itself reported, not
+		// silently dropped.
+		if !strings.Contains(logBuf.String(), "bodyReadError") {
+			t.Errorf("expected bodyReadError to be logged, got: %s", logBuf.String())
+		}
+	})
 }
 
 func TestClient_GetOrder_Client90(t *testing.T) {

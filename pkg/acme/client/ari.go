@@ -125,17 +125,23 @@ func (c *Client) GetRenewalInfo(ctx context.Context, certID string) (*RenewalInf
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("renewal info request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Handle error responses
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Error("renewal info request failed",
-			slog.Int("status", resp.StatusCode),
-			slog.String("body", string(body)))
+		body, readErr := io.ReadAll(resp.Body)
+		attrs := []any{slog.Int("status", resp.StatusCode), slog.String("body", string(body))}
+		if readErr != nil {
+			attrs = append(attrs, slog.String("bodyReadError", readErr.Error()))
+		}
+		c.logger.Error("renewal info request failed", attrs...)
 
-		// Parse ACME error if present
-		if resp.StatusCode >= 400 {
+		// Parse ACME error if present and the body was actually read.
+		if resp.StatusCode >= 400 && readErr == nil {
 			acmeErr, parseErr := ParseACMEErrorFromBytes(body, resp.StatusCode)
 			if parseErr == nil && acmeErr != nil {
 				return nil, acmeErr
@@ -369,7 +375,11 @@ func (c *Client) getRenewalInfoEndpoint(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", caerrors.ConnectionFailureError("failed to fetch directory: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", caerrors.ConnectionFailureError("directory request failed with status %d", resp.StatusCode)

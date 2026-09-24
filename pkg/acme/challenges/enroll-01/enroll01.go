@@ -181,7 +181,11 @@ func Verify(
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("DEBUG: enroll-01: failed to close challenge response body: %v", closeErr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return caerrors.ConnectionFailureError("enroll-01: unexpected status code: %d", resp.StatusCode)
@@ -222,21 +226,25 @@ func Verify(
 
 	// The activation response gets its OWN variable rather than reusing resp.
 	//
-	// Reusing it was a latent panic: the GET above registered
-	// `defer func() { _ = resp.Body.Close() }()`, which closes over the
-	// VARIABLE. A failed Post assigns nil to that same variable and returns,
-	// and the deferred close then dereferenced the nil response instead of the
-	// GET's — so every transport failure on this request crashed the goroutine
-	// rather than returning the error four lines above. Verify runs against a
-	// host named by the challenge, so the peer chooses when to drop the
-	// connection. Found by making TestVerify_PostError deterministic
-	// (go-xkms#243): the timing race meant the test usually failed the GET and
-	// returned early, never reaching this line.
+	// Reusing it was a latent panic: the GET above registered a deferred
+	// close closing over the VARIABLE. A failed Post assigns nil to that
+	// same variable and returns, and the deferred close then dereferenced
+	// the nil response instead of the GET's — so every transport failure on
+	// this request crashed the goroutine rather than returning the error
+	// four lines above. Verify runs against a host named by the challenge,
+	// so the peer chooses when to drop the connection. Found by making
+	// TestVerify_PostError deterministic (go-xkms#243): the timing race
+	// meant the test usually failed the GET and returned early, never
+	// reaching this line.
 	activationResp, err := client.Post(secretEndpoint, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
-	defer func() { _ = activationResp.Body.Close() }()
+	defer func() {
+		if closeErr := activationResp.Body.Close(); closeErr != nil {
+			log.Printf("DEBUG: enroll-01: failed to close activation response body: %v", closeErr)
+		}
+	}()
 
 	if activationResp.StatusCode != http.StatusOK {
 		return caerrors.ConnectionFailureError("enroll-01: activation failed with status code: %d", activationResp.StatusCode)
@@ -398,6 +406,9 @@ func activateCredentialHandlerWithShutdown(
 			log.Printf("Error reading request body: %v", err)
 			return
 		}
+		// The body has already been read in full above, and net/http closes
+		// the server request body itself once the handler returns, so a
+		// close error here is neither actionable nor meaningful (go-xkms#866).
 		defer func() { _ = r.Body.Close() }()
 
 		// Limit the size of the request body to prevent abuse
