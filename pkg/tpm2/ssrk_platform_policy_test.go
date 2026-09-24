@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -217,7 +218,7 @@ func TestBuildSRKAttrsFromConfigTakesPolicyFromPlatformSRK(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			attrs, err := buildSRKAttrsFromConfig(&Config{
+			attrs, err := PlatformSRKAttributesFromConfig(&Config{
 				PlatformSRK: tc.platformSRK,
 				SSRK:        tc.ssrk,
 			})
@@ -232,11 +233,36 @@ func TestBuildSRKAttrsFromConfigTakesPolicyFromPlatformSRK(t *testing.T) {
 }
 
 func TestBuildSRKAttrsFromConfigRejectsUnusableSSRK(t *testing.T) {
-	attrs, err := buildSRKAttrsFromConfig(&Config{
+	attrs, err := PlatformSRKAttributesFromConfig(&Config{
 		PlatformSRK: &PlatformSRKConfig{SRKHandle: 0x81000002, PlatformPolicy: true},
 		SSRK:        &SRKConfig{Handle: 0x81000001, KeyAlgorithm: "INVALID"},
 	})
 
 	require.Error(t, err, "an unparseable key algorithm must not yield attributes")
 	assert.Nil(t, attrs)
+}
+
+// TestPlatformSRKAttributesFromConfig_HierarchyAuthNeverFromConfig proves the
+// Platform SRK's owner-hierarchy authorization is never read from
+// configuration -- not the SSRK's, and not PlatformSRKConfig's, which has no
+// such field to read. The Security Officer PIN, when an operator has set
+// one, reaches TPM2_CreatePrimary only as the soPIN argument threaded
+// through Initialize/EnrollPlatformSRK at the moment of the operation. No SO
+// PIN means the attributes carry empty hierarchy auth, matching the TCG
+// factory-default owner-hierarchy state.
+func TestPlatformSRKAttributesFromConfig_HierarchyAuthNeverFromConfig(t *testing.T) {
+	ssrk := &SRKConfig{
+		Handle:        0x81000001,
+		KeyAlgorithm:  x509.RSA.String(),
+		HierarchyAuth: types.NewLiteralSecretValue([]byte("ssrk-only-secret")),
+		RSAConfig:     &store.RSAConfig{KeySize: 2048},
+	}
+
+	attrs, err := PlatformSRKAttributesFromConfig(&Config{
+		PlatformSRK: &PlatformSRKConfig{SRKHandle: 0x81000002},
+		SSRK:        ssrk,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, attrs.TPMAttributes.HierarchyAuth,
+		"the SSRK's hierarchy auth must never be borrowed for the Platform SRK, and PlatformSRKConfig carries no hierarchy-auth field of its own")
 }

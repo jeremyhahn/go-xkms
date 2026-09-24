@@ -389,3 +389,47 @@ func TestPlatformSealer_UnsealError_WithAuditLogger(t *testing.T) {
 	_, err = ps.Unseal(context.Background(), sealed, nil)
 	assert.ErrorIs(t, err, unsealErr)
 }
+
+// TestPlatformSealer_Seal_AuditWriteFailureFailsOperation verifies the
+// issue #688 policy: seal is a SeveritySecurity action, so a failed audit
+// write fails Seal even though the underlying sealer succeeded.
+func TestPlatformSealer_Seal_AuditWriteFailureFailsOperation(t *testing.T) {
+	auditErr := errors.New("audit backend unavailable")
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
+		AuditLogger:     &failingAuditLogger{logErr: auditErr},
+		PreferenceOrder: []StrategyID{StrategyPassphrase},
+	}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
+	})
+	require.NoError(t, err)
+
+	_, err = ps.Seal(context.Background(), []byte("data"), nil)
+	require.Error(t, err)
+	var writeErr *audit.ErrAuditWriteFailed
+	require.ErrorAs(t, err, &writeErr)
+	assert.ErrorIs(t, err, auditErr)
+}
+
+// TestPlatformSealer_Unseal_AuditWriteFailureFailsOperation verifies the
+// issue #688 policy: unseal is a SeveritySecurity action, so a failed audit
+// write fails Unseal even though the underlying sealer succeeded.
+func TestPlatformSealer_Unseal_AuditWriteFailureFailsOperation(t *testing.T) {
+	auditErr := errors.New("audit backend unavailable")
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
+		AuditLogger:     &audit.NoOpLogger{},
+		PreferenceOrder: []StrategyID{StrategyPassphrase},
+	}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
+	})
+	require.NoError(t, err)
+
+	sealed, err := ps.Seal(context.Background(), []byte("data"), nil)
+	require.NoError(t, err)
+
+	ps.config.AuditLogger = &failingAuditLogger{logErr: auditErr}
+	_, err = ps.Unseal(context.Background(), sealed, nil)
+	require.Error(t, err)
+	var writeErr *audit.ErrAuditWriteFailed
+	require.ErrorAs(t, err, &writeErr)
+	assert.ErrorIs(t, err, auditErr)
+}

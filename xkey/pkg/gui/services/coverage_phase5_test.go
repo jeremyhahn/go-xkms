@@ -183,7 +183,7 @@ func TestP5B_OIDCService_SetDataDir_LoadProvidersError(t *testing.T) {
 }
 
 // TestP5B_OIDCService_Login_AWSProviderType verifies that logging in with an
-// AWS provider type returns the unsupported error.
+// AWS provider type with no aws_region is refused before any login attempt.
 func TestP5B_OIDCService_Login_AWSProviderType(t *testing.T) {
 	svc := NewOIDCService(nil)
 	svc.providers["aws-test"] = &OIDCProviderEntry{
@@ -195,7 +195,7 @@ func TestP5B_OIDCService_Login_AWSProviderType(t *testing.T) {
 	assert.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 }
 
 // TestP5B_OIDCService_Login_NilCtxFallsBack verifies that Login uses

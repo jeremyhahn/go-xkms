@@ -59,27 +59,36 @@ type fcpPasswordOp struct {
 	details map[string]any
 }
 
-func (m *fcpMockAuditLogger) Log(e audit.Entry) {
+func (m *fcpMockAuditLogger) Log(e audit.Entry) error {
 	m.entries = append(m.entries, e)
+	return nil
 }
-func (m *fcpMockAuditLogger) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) {
+func (m *fcpMockAuditLogger) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *fcpMockAuditLogger) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) {
+func (m *fcpMockAuditLogger) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *fcpMockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) {
+func (m *fcpMockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) error {
+	return nil
 }
-func (m *fcpMockAuditLogger) LogServiceEvent(_ audit.OperationType, details map[string]any) {
+func (m *fcpMockAuditLogger) LogServiceEvent(_ audit.OperationType, details map[string]any) error {
 	m.serviceEvts = append(m.serviceEvts, details)
+	return nil
 }
-func (m *fcpMockAuditLogger) LogPINOperation(op audit.OperationType, backend string, success bool, err error, details map[string]any) {
+func (m *fcpMockAuditLogger) LogPINOperation(op audit.OperationType, backend string, success bool, err error, details map[string]any) error {
 	m.pinOps = append(m.pinOps, fcpPINOp{op: op, backend: backend, success: success, err: err, details: details})
+	return nil
 }
-func (m *fcpMockAuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) {
+func (m *fcpMockAuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
-func (m *fcpMockAuditLogger) LogPasswordStoreOperation(op audit.OperationType, source string, success bool, err error, details map[string]any) {
+func (m *fcpMockAuditLogger) LogPasswordStoreOperation(op audit.OperationType, source string, success bool, err error, details map[string]any) error {
 	m.passwordOps = append(m.passwordOps, fcpPasswordOp{op: op, source: source, success: success, err: err, details: details})
+	return nil
 }
-func (m *fcpMockAuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) {
+func (m *fcpMockAuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) error {
+	return nil
 }
 
 var _ audit.Logger = (*fcpMockAuditLogger)(nil)
@@ -92,21 +101,30 @@ type fcpMockAuditStore struct {
 	entries []audit.Entry
 }
 
-func (m *fcpMockAuditStore) Log(_ audit.Entry) {}
-func (m *fcpMockAuditStore) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) {
+func (m *fcpMockAuditStore) Log(_ audit.Entry) error { return nil }
+func (m *fcpMockAuditStore) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *fcpMockAuditStore) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) {
+func (m *fcpMockAuditStore) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *fcpMockAuditStore) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) {
+func (m *fcpMockAuditStore) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) error {
+	return nil
 }
-func (m *fcpMockAuditStore) LogServiceEvent(_ audit.OperationType, _ map[string]any) {}
-func (m *fcpMockAuditStore) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) {
+func (m *fcpMockAuditStore) LogServiceEvent(_ audit.OperationType, _ map[string]any) error {
+	return nil
 }
-func (m *fcpMockAuditStore) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) {
+func (m *fcpMockAuditStore) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
-func (m *fcpMockAuditStore) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) {
+func (m *fcpMockAuditStore) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
-func (m *fcpMockAuditStore) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) {
+func (m *fcpMockAuditStore) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
+	return nil
+}
+func (m *fcpMockAuditStore) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) error {
+	return nil
 }
 func (m *fcpMockAuditStore) Count() int                              { return len(m.entries) }
 func (m *fcpMockAuditStore) Query(_ audit.QueryFilter) []audit.Entry { return m.entries }

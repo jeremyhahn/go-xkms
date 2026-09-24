@@ -497,7 +497,8 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 
 		// Skip quantum keys - they are handled by the quantum backend
 		algoLower := strings.ToLower(parsed.Algorithm)
-		if strings.HasPrefix(algoLower, "ml-dsa") || strings.HasPrefix(algoLower, "ml-kem") {
+		quantumAlgo := types.QuantumAlgorithm(strings.ToUpper(parsed.Algorithm))
+		if quantumAlgo.IsSignature() || quantumAlgo.IsKEM() {
 			continue
 		}
 

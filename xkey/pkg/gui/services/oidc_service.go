@@ -35,6 +35,8 @@ import (
 
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	oidcaws "github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/handlers"
 	"github.com/pkg/browser"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -194,6 +196,13 @@ type OIDCService struct {
 	browserOpen   BrowserOpenFunc
 	callback      oidc.Callback
 	callbackErr   error
+
+	// awsAuthorizeEndpoint and awsTokenEndpoint override the AWS sign-in
+	// endpoints Login uses for OIDCProviderTypeAWS providers; empty means
+	// the real regional endpoints. Set only by tests, through
+	// SetAWSEndpointOverrides.
+	awsAuthorizeEndpoint string
+	awsTokenEndpoint     string
 }
 
 // NewOIDCService creates a new OIDCService.
@@ -305,6 +314,14 @@ func (s *OIDCService) SetContext(ctx context.Context) {
 // SetBrowserOpen allows replacing the browser open function (for testing).
 func (s *OIDCService) SetBrowserOpen(fn BrowserOpenFunc) {
 	s.browserOpen = fn
+}
+
+// SetAWSEndpointOverrides points the AWS OIDC login flow at authorizeURL
+// and tokenURL instead of the real regional AWS sign-in endpoints (used
+// for testing).
+func (s *OIDCService) SetAWSEndpointOverrides(authorizeURL, tokenURL string) {
+	s.awsAuthorizeEndpoint = authorizeURL
+	s.awsTokenEndpoint = tokenURL
 }
 
 // Close stops all background refresh goroutines and closes the token store.
@@ -540,7 +557,7 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 	}
 
 	if entry.Type == OIDCProviderTypeAWS {
-		return &OIDCLoginResult{Success: false, Error: "AWS login is not yet supported in the GUI"}, nil
+		return s.loginAWS(providerName, entry)
 	}
 
 	// A configuration that failed to load is not replaced by the built-in
@@ -749,6 +766,214 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 	}
 
 	return &OIDCLoginResult{Success: true, Token: info}, nil
+}
+
+// loginAWS performs the AWS OIDC sign-in for entry through the shared
+// oidcaws.Login flow -- the same code the "xkey oidc aws" CLI command
+// calls -- writes the resulting credentials through the provider's
+// configured output mode, and returns the outcome in the OIDCLoginResult
+// shape used by every provider type.
+func (s *OIDCService) loginAWS(providerName string, entry *OIDCProviderEntry) (*OIDCLoginResult, error) {
+	if entry.AWSRegion == "" {
+		return &OIDCLoginResult{Success: false, Error: ErrOIDCAWSRegionRequired.Error()}, nil
+	}
+
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	result, err := oidcaws.Login(ctx, oidcaws.LoginOptions{
+		Region:                    entry.AWSRegion,
+		CrossDevice:               entry.AWSCrossDevice,
+		Callback:                  s.Callback(),
+		Timeout:                   oidcCallbackTimeout,
+		AuthorizeEndpointOverride: s.awsAuthorizeEndpoint,
+		TokenEndpointOverride:     s.awsTokenEndpoint,
+	}, func(authURL string) {
+		if s.browserOpen == nil {
+			return
+		}
+		if openErr := s.browserOpen(authURL); openErr != nil {
+			s.log.Warn("failed to open browser for AWS login", "provider", providerName, "error", openErr)
+		}
+	})
+	if err != nil {
+		s.log.Warn("AWS login failed", "provider", providerName, "error", err)
+		return &OIDCLoginResult{Success: false, Error: err.Error()}, nil
+	}
+
+	profile, credentialsFile := awsOutputDefaults(entry)
+
+	tokenData, err := result.TokenResponse.ToTokenData(entry.AWSRegion)
+	if err != nil {
+		s.log.Warn("AWS login failed: token conversion", "provider", providerName, "error", err)
+		return &OIDCLoginResult{Success: false, Error: err.Error()}, nil
+	}
+
+	handler, err := handlers.NewForMode(entry.AWSOutput, profile, credentialsFile, entry.Exec)
+	if err != nil {
+		s.log.Warn("AWS login failed: output handler", "provider", providerName, "error", err)
+		return &OIDCLoginResult{Success: false, Error: err.Error()}, nil
+	}
+	if handleErr := handler.Handle(ctx, tokenData); handleErr != nil {
+		s.log.Warn("AWS login failed: writing credentials", "provider", providerName, "error", handleErr)
+		return &OIDCLoginResult{Success: false, Error: handleErr.Error()}, nil
+	}
+
+	info := s.awsTokenInfo(providerName, entry, result.TokenResponse)
+
+	s.log.Info("AWS OIDC login complete",
+		"provider", providerName,
+		"region", entry.AWSRegion,
+		"has_refresh_token", result.TokenResponse.RefreshToken != "",
+	)
+
+	// Start auto-refresh if configured, mirroring the standard flow below.
+	if entry.AutoRefresh > 0 && result.TokenResponse.RefreshToken != "" {
+		go func() {
+			client, clientErr := oidcaws.NewClient(&oidcaws.ClientConfig{
+				Region:                    entry.AWSRegion,
+				CrossDevice:               entry.AWSCrossDevice,
+				RedirectURL:               s.Callback().AWSRedirectURL(),
+				AuthorizeEndpointOverride: s.awsAuthorizeEndpoint,
+				TokenEndpointOverride:     s.awsTokenEndpoint,
+			}, result.DPoPKey)
+			if clientErr != nil {
+				s.log.Warn("AWS auto-refresh start failed: client", "provider", providerName, "error", clientErr)
+				return
+			}
+			if startErr := s.startAWSAutoRefresh(providerName, entry, client, result.TokenResponse.RefreshToken); startErr != nil {
+				s.log.Warn("AWS auto-refresh start failed", "provider", providerName, "error", startErr)
+			}
+		}()
+	}
+
+	return &OIDCLoginResult{Success: true, Token: info}, nil
+}
+
+// awsOutputDefaults resolves entry's AWS profile and credentials file
+// against the shared handlers package defaults, the same defaults the CLI
+// applies when the flags are left unset.
+func awsOutputDefaults(entry *OIDCProviderEntry) (profile, credentialsFile string) {
+	profile = entry.AWSProfile
+	if profile == "" {
+		profile = handlers.DefaultAWSProfile
+	}
+	credentialsFile = entry.AWSCredentialsFile
+	if credentialsFile == "" {
+		credentialsFile = handlers.DefaultAWSCredentialsPath
+	}
+	return profile, credentialsFile
+}
+
+// awsTokenInfo builds the GUI-facing token summary for a completed AWS
+// login. AWS credentials are not OIDC tokens, so the subject/email/name
+// claims are left empty; ExpiresAt/ExpiresIn/IsExpired reflect the AWS
+// credential expiration rather than an ID token's, and HasDPoP is always
+// true because AWS sign-in always DPoP-binds the credentials it issues.
+func (s *OIDCService) awsTokenInfo(providerName string, entry *OIDCProviderEntry, tokenResp *oidcaws.TokenResponse) *OIDCTokenInfo {
+	info := &OIDCTokenInfo{
+		Provider:   providerName,
+		Issuer:     entry.Issuer,
+		HasRefresh: tokenResp.RefreshToken != "",
+		HasDPoP:    true,
+	}
+	if expiration, expErr := tokenResp.GetExpirationTime(); expErr == nil {
+		info.ExpiresAt = expiration.Format(time.RFC3339)
+		info.ExpiresIn = int64(time.Until(expiration).Seconds())
+		info.IsExpired = tokenResp.IsCredentialsExpired()
+	}
+	return info
+}
+
+// startAWSAutoRefresh starts a goroutine-based refresh loop for an AWS
+// provider, sharing the refreshProcs bookkeeping (status, cancellation)
+// StartAutoRefresh uses for standard OIDC providers, but refreshing AWS
+// credentials through oidcaws.RefreshCredentials instead of the standard
+// token store.
+func (s *OIDCService) startAWSAutoRefresh(providerName string, entry *OIDCProviderEntry, client *oidcaws.Client, refreshToken string) error {
+	if entry.AutoRefresh <= 0 {
+		return ErrOIDCAutoRefreshDisabled
+	}
+
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	if _, exists := s.refreshProcs[providerName]; exists {
+		return ErrOIDCRefreshAlreadyRunning
+	}
+
+	refreshCtx, cancel := context.WithCancel(context.Background())
+	proc := &refreshProcess{provider: providerName, cancel: cancel}
+	proc.status.Store(&OIDCRefreshStatus{Provider: providerName, Running: true})
+	s.refreshProcs[providerName] = proc
+
+	go s.awsRefreshLoop(refreshCtx, proc, entry, client, refreshToken)
+
+	s.log.Info("started AWS auto-refresh", "provider", providerName, "interval_secs", entry.AutoRefresh)
+	return nil
+}
+
+// awsRefreshLoop runs the periodic AWS credential refresh in a goroutine,
+// mirroring refreshLoop's status bookkeeping for standard OIDC providers.
+func (s *OIDCService) awsRefreshLoop(ctx context.Context, proc *refreshProcess, entry *OIDCProviderEntry, client *oidcaws.Client, refreshToken string) {
+	ticker := time.NewTicker(time.Duration(entry.AutoRefresh) * time.Second)
+	defer ticker.Stop()
+
+	profile, credentialsFile := awsOutputDefaults(entry)
+
+	for {
+		select {
+		case <-ctx.Done():
+			status := proc.status.Load()
+			if status != nil {
+				updated := *status
+				updated.Running = false
+				proc.status.Store(&updated)
+			}
+			return
+
+		case <-ticker.C:
+			tokenResp, nextRefreshToken, err := oidcaws.RefreshCredentials(ctx, client, refreshToken)
+
+			status := proc.status.Load()
+			if status == nil {
+				status = &OIDCRefreshStatus{Provider: proc.provider, Running: true}
+			}
+			updated := *status
+			updated.RefreshCount++
+			updated.LastRefresh = time.Now().Format(time.RFC3339)
+			updated.NextRefresh = time.Now().Add(time.Duration(entry.AutoRefresh) * time.Second).Format(time.RFC3339)
+
+			if err != nil {
+				updated.LastStatus = "error"
+				updated.LastError = err.Error()
+				proc.status.Store(&updated)
+				s.log.Warn("AWS auto-refresh failed", "provider", proc.provider, "error", err)
+				continue
+			}
+			refreshToken = nextRefreshToken
+
+			tokenData, convErr := tokenResp.ToTokenData(entry.AWSRegion)
+			if convErr == nil {
+				var handler handlers.OutputHandler
+				if handler, convErr = handlers.NewForMode(entry.AWSOutput, profile, credentialsFile, entry.Exec); convErr == nil {
+					convErr = handler.Handle(ctx, tokenData)
+				}
+			}
+
+			if convErr != nil {
+				updated.LastStatus = "error"
+				updated.LastError = convErr.Error()
+				s.log.Warn("AWS auto-refresh output failed", "provider", proc.provider, "error", convErr)
+			} else {
+				updated.LastStatus = "success"
+				updated.LastError = ""
+			}
+			proc.status.Store(&updated)
+		}
+	}
 }
 
 // GetTokenInfo returns the current token information for the named provider.

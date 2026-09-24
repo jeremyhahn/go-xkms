@@ -19,6 +19,49 @@ import (
 	"time"
 )
 
+// Output modes accepted by NewForMode.
+const (
+	// ModeAWSCredentials writes AWS credentials to a credentials file
+	// profile. It is the default mode.
+	ModeAWSCredentials = "aws-credentials"
+
+	// ModeJSON prints AWS-CLI-compatible JSON credentials.
+	ModeJSON = "json"
+
+	// ModeExec runs a command with the credentials in its environment.
+	ModeExec = "exec"
+
+	// ModeNone discards the result.
+	ModeNone = "none"
+)
+
+// NewForMode builds the output handler named by mode, configured for AWS
+// credential output: ModeAWSCredentials (and the empty mode, its default)
+// writes credentialsFile under profile, ModeExec runs execCmd with the
+// credentials in its environment, ModeJSON prints AWS-CLI-compatible JSON,
+// and ModeNone discards the result.
+//
+// NewForMode is shared by every caller that offers these AWS output modes
+// -- the "xkey oidc aws" CLI command and the xKey GUI's OIDC service --
+// so the mode semantics stay identical everywhere they are offered.
+func NewForMode(mode, profile, credentialsFile, execCmd string) (OutputHandler, error) {
+	switch mode {
+	case ModeAWSCredentials, "":
+		return NewAWSCredentialsHandler(profile).WithPath(credentialsFile), nil
+	case ModeJSON:
+		return NewJSONHandler().WithAWSOnly(), nil
+	case ModeExec:
+		if execCmd == "" {
+			return nil, ErrExecModeRequiresCommand
+		}
+		return NewExecHandler(execCmd), nil
+	case ModeNone:
+		return NewNoopHandler(), nil
+	default:
+		return nil, &DetailError{Err: ErrUnknownOutputMode, Detail: ": " + mode}
+	}
+}
+
 // TokenData represents the token data passed to output handlers.
 // This is a handler-specific view of the token response that includes
 // both standard OIDC tokens and provider-specific data.

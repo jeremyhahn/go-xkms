@@ -20,10 +20,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -633,20 +636,136 @@ func TestOIDCService_Login_ProviderNotFound(t *testing.T) {
 	assert.False(t, result.Success)
 }
 
-func TestOIDCService_Login_AWSUnsupported(t *testing.T) {
+// TestOIDCService_Login_AWSMissingRegion proves the GUI refuses an AWS
+// login up front, the same way the CLI does, when the provider carries no
+// region.
+func TestOIDCService_Login_AWSMissingRegion(t *testing.T) {
 	svc := NewOIDCService(nil)
 	entry := &OIDCProviderEntry{
-		Name:     "aws-test",
-		Type:     OIDCProviderTypeAWS,
-		Issuer:   "https://aws.example.com",
-		ClientID: "id",
+		Name: "aws-test",
+		Type: OIDCProviderTypeAWS,
 	}
 	require.NoError(t, svc.AddProvider(entry))
 
 	result, err := svc.Login("aws-test")
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
 	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "aws_region")
+}
+
+// TestOIDCService_Login_AWSSuccess proves the GUI's AWS login goes through
+// the same shared xkey/pkg/oidc/aws.Login flow the CLI's "xkey oidc aws"
+// command uses: it drives the mocked AWS sign-in endpoint end to end
+// (authorization URL, local callback, token exchange) and writes the
+// resulting credentials to the configured file.
+func TestOIDCService_Login_AWSSuccess(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"access_token": {
+				"access_key_id": "AKIAGUITEST",
+				"secret_access_key": "secret",
+				"session_token": "session-token",
+				"expiration": "` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"
+			},
+			"token_type": "DPoP",
+			"expires_in": 3600,
+			"refresh_token": "refresh-abc"
+		}`))
+	}))
+	defer tokenServer.Close()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, listener.Close())
+
+	credentialsFile := filepath.Join(t.TempDir(), "credentials")
+
+	svc := NewOIDCService(nil)
+	svc.SetCallback("127.0.0.1", port)
+	svc.SetAWSEndpointOverrides("", tokenServer.URL)
+
+	var openedURL string
+	svc.SetBrowserOpen(func(authURL string) error {
+		openedURL = authURL
+		u, parseErr := url.Parse(authURL)
+		require.NoError(t, parseErr)
+		state := u.Query().Get("state")
+		redirect := "http://127.0.0.1:" + strconv.Itoa(port) + "/oauth/callback" +
+			"?code=test-code&state=" + url.QueryEscape(state)
+		resp, getErr := http.Get(redirect) //nolint:noctx // fixed test-local callback URL
+		require.NoError(t, getErr)
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	entry := &OIDCProviderEntry{
+		Name:               "aws-test",
+		Type:               OIDCProviderTypeAWS,
+		AWSRegion:          "us-east-1",
+		AWSProfile:         "gui-test",
+		AWSCredentialsFile: credentialsFile,
+		AWSOutput:          "aws-credentials",
+	}
+	require.NoError(t, svc.AddProvider(entry))
+
+	result, err := svc.Login("aws-test")
+	require.NoError(t, err)
+	require.True(t, result.Success, "login error: %s", result.Error)
+	assert.NotEmpty(t, openedURL)
+	require.NotNil(t, result.Token)
+	assert.True(t, result.Token.HasRefresh)
+	assert.True(t, result.Token.HasDPoP)
+	assert.NotEmpty(t, result.Token.ExpiresAt)
+
+	content, err := os.ReadFile(credentialsFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "AKIAGUITEST")
+	assert.Contains(t, string(content), "[gui-test]")
+}
+
+// TestOIDCService_Login_AWSTokenExchangeFailed proves a token endpoint
+// error surfaces as a failed OIDCLoginResult instead of a panic or a
+// silently empty success.
+func TestOIDCService_Login_AWSTokenExchangeFailed(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error": "invalid_grant", "error_description": "code expired"}`))
+	}))
+	defer tokenServer.Close()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, listener.Close())
+
+	svc := NewOIDCService(nil)
+	svc.SetCallback("127.0.0.1", port)
+	svc.SetAWSEndpointOverrides("", tokenServer.URL)
+	svc.SetBrowserOpen(func(authURL string) error {
+		u, parseErr := url.Parse(authURL)
+		require.NoError(t, parseErr)
+		state := u.Query().Get("state")
+		redirect := "http://127.0.0.1:" + strconv.Itoa(port) + "/oauth/callback" +
+			"?code=test-code&state=" + url.QueryEscape(state)
+		resp, getErr := http.Get(redirect) //nolint:noctx // fixed test-local callback URL
+		require.NoError(t, getErr)
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	entry := &OIDCProviderEntry{
+		Name:      "aws-fail",
+		Type:      OIDCProviderTypeAWS,
+		AWSRegion: "us-east-1",
+	}
+	require.NoError(t, svc.AddProvider(entry))
+
+	result, err := svc.Login("aws-fail")
+	require.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "token exchange")
 }
 
 // --- RefreshToken error tests ---

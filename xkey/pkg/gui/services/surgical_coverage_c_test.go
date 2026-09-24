@@ -528,14 +528,16 @@ func TestSC_OIDCService_Login_DiscoveryFails(t *testing.T) {
 	assert.False(t, result.Success)
 }
 
-// TestSC_OIDCService_Login_AWSType covers L452-453 AWS rejection.
+// TestSC_OIDCService_Login_AWSType covers the AWS branch's up-front
+// validation: a provider with no aws_region is refused before any login
+// attempt.
 func TestSC_OIDCService_Login_AWSType(t *testing.T) {
 	svc := NewOIDCService(nil)
 	svc.providers["aws"] = &OIDCProviderEntry{Name: "aws", Type: OIDCProviderTypeAWS}
 
 	result, err := svc.Login("aws")
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 	assert.False(t, result.Success)
 }
 

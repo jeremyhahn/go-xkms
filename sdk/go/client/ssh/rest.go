@@ -92,9 +92,8 @@ func (c *restClient) AuthorizedKeys() AuthorizedKeysClient {
 	return &restAuthorizedKeysClient{c: c}
 }
 
-// Session returns the REST Session sub-client. Dial on this sub-client
-// returns *NotImplementedError — see the package doc for rationale.
-func (c *restClient) Session() SessionClient { return &restSessionClient{} }
+// Session returns the REST Session sub-client.
+func (c *restClient) Session() SessionClient { return &restSessionClient{c: c} }
 
 // Console is not supported by the REST/QUIC Go client: the interactive console
 // over HTTP is served by the WebSocket bridge (NewConsoleWSHandler) and consumed
@@ -562,20 +561,20 @@ func (a *restAuthorizedKeysClient) Verify(ctx context.Context, scope, owner stri
 }
 
 // ----------------------------------------------------------------------------
-// Session sub-client stub.
+// Session sub-client.
 // ----------------------------------------------------------------------------
 
-// restSessionClient implements SessionClient over REST. Dial is not
-// implemented — see package doc for the rationale.
-type restSessionClient struct{}
+// restSessionClient implements SessionClient over REST.
+type restSessionClient struct {
+	c *restClient
+}
 
-// Dial returns *NotImplementedError. The SSH transport for REST will
-// land in a later phase.
-func (s *restSessionClient) Dial(_ context.Context, _ SessionDialRequest) (Session, error) {
-	return nil, &NotImplementedError{
-		Transport: "rest",
-		Op:        "Session.Dial (use embedded transport, or wait for streaming-session phase)",
-	}
+// Dial resolves the authentication key to a forward-signing proxy and the
+// target host to a wire-verified callback, both over REST, then dials the
+// SSH connection directly from this process. See dialNetworkSession for the
+// shared implementation and its host-key trust model.
+func (s *restSessionClient) Dial(ctx context.Context, req SessionDialRequest) (Session, error) {
+	return dialNetworkSession(ctx, &restKeysClient{c: s.c}, &restKnownHostsClient{c: s.c}, req)
 }
 
 // Ensure the interface wiring is compile-time checked.

@@ -46,6 +46,33 @@ var (
 
 	// ErrNonceRetryExhausted is returned when nonce retry attempts are exhausted.
 	ErrNonceRetryExhausted = errors.New("aws: nonce retry attempts exhausted")
+
+	// ErrLoginFailed is returned when the interactive login flow could not
+	// be set up (key generation, client construction, callback listener).
+	ErrLoginFailed = errors.New("aws: login failed")
+
+	// ErrCallbackFailed is returned when the local OAuth2 callback reports
+	// an error, such as the user denying consent.
+	ErrCallbackFailed = errors.New("aws: callback failed")
+
+	// ErrLoginTimeout is returned when the browser callback does not
+	// arrive before the login's timeout elapses.
+	ErrLoginTimeout = errors.New("aws: authorization timed out")
+
+	// ErrStateMismatch is returned when the callback's state parameter
+	// does not match the one sent in the authorization request.
+	ErrStateMismatch = errors.New("aws: state mismatch -- possible CSRF attack")
+
+	// ErrNoAuthorizationCode is returned when the callback carries no
+	// "code" query parameter and no "error" parameter either.
+	ErrNoAuthorizationCode = errors.New("aws: no authorization code received")
+
+	// ErrTokenExchangeFailed is returned when exchanging the authorization
+	// code for credentials fails.
+	ErrTokenExchangeFailed = errors.New("aws: token exchange failed")
+
+	// ErrRefreshFailed is returned when refreshing AWS credentials fails.
+	ErrRefreshFailed = errors.New("aws: credential refresh failed")
 )
 
 // DetailError appends detail text directly after a wrapped error while

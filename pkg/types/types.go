@@ -605,6 +605,37 @@ const (
 	QuantumAlgorithmMLKEM1024 QuantumAlgorithm = "ML-KEM-1024"
 )
 
+// quantumAlgorithmKind classifies a QuantumAlgorithm as a signature scheme or
+// a key-encapsulation mechanism.
+type quantumAlgorithmKind uint8
+
+const (
+	quantumAlgorithmKindUnknown quantumAlgorithmKind = iota
+	quantumAlgorithmKindSignature
+	quantumAlgorithmKindKEM
+)
+
+// quantumAlgorithmKinds maps every known QuantumAlgorithm to its kind, so
+// IsSignature and IsKEM classify in O(1) instead of string prefix matching.
+var quantumAlgorithmKinds = map[QuantumAlgorithm]quantumAlgorithmKind{
+	QuantumAlgorithmMLDSA44:   quantumAlgorithmKindSignature,
+	QuantumAlgorithmMLDSA65:   quantumAlgorithmKindSignature,
+	QuantumAlgorithmMLDSA87:   quantumAlgorithmKindSignature,
+	QuantumAlgorithmMLKEM512:  quantumAlgorithmKindKEM,
+	QuantumAlgorithmMLKEM768:  quantumAlgorithmKindKEM,
+	QuantumAlgorithmMLKEM1024: quantumAlgorithmKindKEM,
+}
+
+// IsSignature reports whether algo is an ML-DSA digital-signature algorithm.
+func (algo QuantumAlgorithm) IsSignature() bool {
+	return quantumAlgorithmKinds[algo] == quantumAlgorithmKindSignature
+}
+
+// IsKEM reports whether algo is an ML-KEM key-encapsulation-mechanism algorithm.
+func (algo QuantumAlgorithm) IsKEM() bool {
+	return quantumAlgorithmKinds[algo] == quantumAlgorithmKindKEM
+}
+
 // QuantumAttributes contains quantum-safe cryptography specific parameters.
 // Used with ML-DSA (signatures) and ML-KEM (key encapsulation) algorithms.
 type QuantumAttributes struct {
