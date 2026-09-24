@@ -214,7 +214,6 @@ Ordered "under active development first, then most often read":
 | Area | Legacy path | Note |
 |---|---|---|
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
-| Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
 
 [`frost-threshold-signing/`](frost-threshold-signing/) and
 [`ssh-keys/`](ssh-keys/) are now NORMATIVE folders, but neither fully
