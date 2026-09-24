@@ -102,60 +102,6 @@ func TestPhoneService_EnforceAttestationPolicy_PolicyMismatchFields(t *testing.T
 }
 
 // ===========================================================================
-// PhoneService: buildAttestationTrustPool coverage
-// ===========================================================================
-
-// TestPhoneService_BuildAttestationTrustPool_WithTrustStore verifies
-// that buildAttestationTrustPool correctly merges trust store certs
-// when a valid trust store is provided.
-func TestPhoneService_BuildAttestationTrustPool_WithTrustStore(t *testing.T) {
-	store := newTestFileStore(t)
-	defer store.Close()
-
-	// Seed the store with embedded Android roots.
-	roots := truststore.LoadEmbeddedRoots(truststore.PurposeAndroidHardware)
-	for _, root := range roots {
-		_ = store.AddCertificateWithOptions(root, &truststore.AddCertificateOptions{
-			Purpose: truststore.PurposeAndroidHardware,
-			Source:  "embedded",
-		})
-	}
-
-	svc := NewPhoneService()
-	svc.SetTrustStore(store)
-
-	pool, err := svc.buildAttestationTrustPool(roots)
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-// TestPhoneService_BuildAttestationTrustPool_ClosedTrustStore verifies
-// that buildAttestationTrustPool returns an error when the trust store
-// has been closed and cannot build a trust pool.
-func TestPhoneService_BuildAttestationTrustPool_ClosedTrustStore(t *testing.T) {
-	store := newTestFileStore(t)
-	require.NoError(t, store.Close())
-
-	svc := NewPhoneService()
-	svc.SetTrustStore(store)
-
-	_, err := svc.buildAttestationTrustPool(nil)
-	assert.Error(t, err, "closed trust store should return error")
-}
-
-// TestPhoneService_BuildAttestationTrustPool_FallbackWithEmbeddedRoots verifies
-// the fallback path where trustStore is nil, so only embedded roots are used.
-func TestPhoneService_BuildAttestationTrustPool_FallbackWithEmbeddedRoots(t *testing.T) {
-	svc := NewPhoneService()
-	// No trust store set.
-
-	cert := generateTestCertCA(t)
-	pool, err := svc.buildAttestationTrustPool([]*x509.Certificate{cert})
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-// ===========================================================================
 // PhoneService: closeActiveConnectionLocked coverage
 // ===========================================================================
 

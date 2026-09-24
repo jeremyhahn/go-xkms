@@ -145,21 +145,25 @@ func (s *PairingService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logPairingEvent logs a pairing-related audit event.
-func (s *PairingService) logPairingEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logPairingEvent logs a pairing-related audit event. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (s *PairingService) logPairingEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }
 
 // IsPaired returns true if an extension is currently paired.
@@ -212,7 +216,9 @@ func (s *PairingService) RequestPairing(identityKeyBase64, origin string) (strin
 			"origin", origin,
 			"error", err,
 		)
-		s.logPairingEvent(audit.OpPairingStarted, false, err, map[string]any{"origin": origin})
+		if auditErr := s.logPairingEvent(audit.OpPairingStarted, false, err, map[string]any{"origin": origin}); auditErr != nil {
+			return "", auditErr
+		}
 		return "", &SentinelCauseError{Sentinel: ErrPairingFailed, Cause: err}
 	}
 
@@ -225,7 +231,9 @@ func (s *PairingService) RequestPairing(identityKeyBase64, origin string) (strin
 		Origin: origin,
 	})
 
-	s.logPairingEvent(audit.OpPairingStarted, true, nil, map[string]any{"origin": origin})
+	if auditErr := s.logPairingEvent(audit.OpPairingStarted, true, nil, map[string]any{"origin": origin}); auditErr != nil {
+		return "", auditErr
+	}
 	return code, nil
 }
 
@@ -260,7 +268,9 @@ func (s *PairingService) VerifyPairingCode(identityKeyBase64, origin, code strin
 			"origin", origin,
 			"error", err,
 		)
-		s.logPairingEvent(audit.OpPairingFailed, false, err, map[string]any{"origin": origin})
+		if auditErr := s.logPairingEvent(audit.OpPairingFailed, false, err, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return &SentinelCauseError{Sentinel: ErrPairingFailed, Cause: err}
 	}
 
@@ -272,7 +282,9 @@ func (s *PairingService) VerifyPairingCode(identityKeyBase64, origin, code strin
 		Origin: origin,
 	})
 
-	s.logPairingEvent(audit.OpPairingCompleted, true, nil, map[string]any{"origin": origin})
+	if auditErr := s.logPairingEvent(audit.OpPairingCompleted, true, nil, map[string]any{"origin": origin}); auditErr != nil {
+		return auditErr
+	}
 	return nil
 }
 
@@ -299,12 +311,16 @@ func (s *PairingService) Unpair(origin string) error {
 			"origin", origin,
 			"error", err,
 		)
-		s.logPairingEvent(audit.OpPairingUnpaired, false, err, map[string]any{"origin": origin})
+		if auditErr := s.logPairingEvent(audit.OpPairingUnpaired, false, err, map[string]any{"origin": origin}); auditErr != nil {
+			return auditErr
+		}
 		return &SentinelCauseError{Sentinel: ErrPairingFailed, Cause: err}
 	}
 
 	s.log.Info("extension unpaired", "origin", origin)
-	s.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"origin": origin})
+	if auditErr := s.logPairingEvent(audit.OpPairingUnpaired, true, nil, map[string]any{"origin": origin}); auditErr != nil {
+		return auditErr
+	}
 
 	s.emit(events.EventExtensionUnpaired, events.ExtensionPairedPayload{
 		Origin: origin,
@@ -404,13 +420,14 @@ func (s *PairingService) InstallManifest(browser string) error {
 
 	if err := nativemsg.InstallManifest(b, binaryPath); err != nil {
 		s.log.Error("manifest install failed", "browser", b, "error", err)
-		s.logPairingEvent(audit.OpPairingManifest, false, err, map[string]any{"browser": browser, "action": "install"})
+		if auditErr := s.logPairingEvent(audit.OpPairingManifest, false, err, map[string]any{"browser": browser, "action": "install"}); auditErr != nil {
+			return auditErr
+		}
 		return &SentinelCauseError{Sentinel: ErrManifestInstallFailed, Cause: err}
 	}
 
 	s.log.Info("manifest installed", "browser", b)
-	s.logPairingEvent(audit.OpPairingManifest, true, nil, map[string]any{"browser": browser, "action": "install"})
-	return nil
+	return s.logPairingEvent(audit.OpPairingManifest, true, nil, map[string]any{"browser": browser, "action": "install"})
 }
 
 // UninstallManifest removes the native messaging manifest for the specified
@@ -443,13 +460,14 @@ func (s *PairingService) UninstallManifest(browser string) error {
 
 	if err := nativemsg.UninstallManifest(b); err != nil {
 		s.log.Error("manifest uninstall failed", "browser", b, "error", err)
-		s.logPairingEvent(audit.OpPairingManifest, false, err, map[string]any{"browser": browser, "action": "uninstall"})
+		if auditErr := s.logPairingEvent(audit.OpPairingManifest, false, err, map[string]any{"browser": browser, "action": "uninstall"}); auditErr != nil {
+			return auditErr
+		}
 		return &SentinelCauseError{Sentinel: ErrManifestUninstallFailed, Cause: err}
 	}
 
 	s.log.Info("manifest uninstalled", "browser", b)
-	s.logPairingEvent(audit.OpPairingManifest, true, nil, map[string]any{"browser": browser, "action": "uninstall"})
-	return nil
+	return s.logPairingEvent(audit.OpPairingManifest, true, nil, map[string]any{"browser": browser, "action": "uninstall"})
 }
 
 // getPairedExtensionsLocked returns pairing status for all paired extensions

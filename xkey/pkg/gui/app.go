@@ -2059,6 +2059,7 @@ func NewApp(cfg *GUIConfig) *App {
 	barrierSvc.SetAuditLogger(auditStore)
 	sealProtSvc.SetAuditLogger(auditStore)
 	appSvc.SetAuditLogger(auditStore)
+	staticPWSvc.SetAuditLogger(auditStore)
 	trustSvc.SetAuditLogger(auditStore)
 	if apiExplorerSvc != nil {
 		apiExplorerSvc.SetAuditLogger(auditStore)

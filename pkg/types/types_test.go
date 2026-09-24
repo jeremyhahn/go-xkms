@@ -627,6 +627,52 @@ func TestKeyAttributes_AlgorithmString_AgreesWithID(t *testing.T) {
 	}
 }
 
+func TestQuantumAlgorithm_IsSignature(t *testing.T) {
+	tests := []struct {
+		name string
+		algo QuantumAlgorithm
+		want bool
+	}{
+		{"MLDSA44_Signature", QuantumAlgorithmMLDSA44, true},
+		{"MLDSA65_Signature", QuantumAlgorithmMLDSA65, true},
+		{"MLDSA87_Signature", QuantumAlgorithmMLDSA87, true},
+		{"MLKEM512_NotSignature", QuantumAlgorithmMLKEM512, false},
+		{"MLKEM768_NotSignature", QuantumAlgorithmMLKEM768, false},
+		{"MLKEM1024_NotSignature", QuantumAlgorithmMLKEM1024, false},
+		{"Unknown_NotSignature", QuantumAlgorithm("ML-DSA-9000"), false},
+		{"Empty_NotSignature", QuantumAlgorithm(""), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.algo.IsSignature())
+		})
+	}
+}
+
+func TestQuantumAlgorithm_IsKEM(t *testing.T) {
+	tests := []struct {
+		name string
+		algo QuantumAlgorithm
+		want bool
+	}{
+		{"MLKEM512_KEM", QuantumAlgorithmMLKEM512, true},
+		{"MLKEM768_KEM", QuantumAlgorithmMLKEM768, true},
+		{"MLKEM1024_KEM", QuantumAlgorithmMLKEM1024, true},
+		{"MLDSA44_NotKEM", QuantumAlgorithmMLDSA44, false},
+		{"MLDSA65_NotKEM", QuantumAlgorithmMLDSA65, false},
+		{"MLDSA87_NotKEM", QuantumAlgorithmMLDSA87, false},
+		{"Unknown_NotKEM", QuantumAlgorithm("ML-KEM-9000"), false},
+		{"Empty_NotKEM", QuantumAlgorithm(""), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.algo.IsKEM())
+		})
+	}
+}
+
 func TestCapabilities_SupportsSymmetricEncryption(t *testing.T) {
 	caps := Capabilities{
 		SymmetricEncryption: true,

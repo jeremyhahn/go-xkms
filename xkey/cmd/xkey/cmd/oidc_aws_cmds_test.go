@@ -17,19 +17,17 @@ import (
 	"bytes"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 )
 
 // awsTestCmd builds a detached cobra command carrying every flag the AWS
@@ -161,74 +159,9 @@ func TestIsAWSProcessRunning(t *testing.T) {
 	assert.False(t, running)
 }
 
-// --- handleAWSCallback ---
-
-func TestHandleAWSCallback_DeliversCodeAndState(t *testing.T) {
-	codeChan := make(chan string, 1)
-	errChan := make(chan error, 1)
-	var state atomic.Value
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/callback?code=auth-code&state=xyz", nil)
-
-	handleAWSCallback(recorder, req, codeChan, errChan, &state)
-
-	select {
-	case code := <-codeChan:
-		assert.Equal(t, "auth-code", code)
-	default:
-		t.Fatal("no authorization code delivered")
-	}
-
-	assert.Equal(t, "xyz", state.Load(),
-		"the state parameter must be captured so CSRF can be checked")
-	assert.Contains(t, recorder.Body.String(), "AWS Authentication Successful")
-	assert.Equal(t, "text/html", recorder.Header().Get("Content-Type"))
-}
-
-func TestHandleAWSCallback_ReportsProviderError(t *testing.T) {
-	codeChan := make(chan string, 1)
-	errChan := make(chan error, 1)
-	var state atomic.Value
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet,
-		"/callback?error=access_denied&error_description=user+declined", nil)
-
-	handleAWSCallback(recorder, req, codeChan, errChan, &state)
-
-	select {
-	case err := <-errChan:
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "access_denied")
-		assert.Contains(t, err.Error(), "user declined")
-	default:
-		t.Fatal("no error delivered")
-	}
-
-	assert.Contains(t, recorder.Body.String(), "AWS Authentication Failed")
-	assert.Empty(t, codeChan, "an error response must not also deliver a code")
-}
-
-func TestHandleAWSCallback_RejectsMissingCode(t *testing.T) {
-	codeChan := make(chan string, 1)
-	errChan := make(chan error, 1)
-	var state atomic.Value
-
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/callback", nil)
-
-	handleAWSCallback(recorder, req, codeChan, errChan, &state)
-
-	select {
-	case err := <-errChan:
-		assert.Contains(t, err.Error(), "no authorization code received")
-		assert.ErrorIs(t, err, ErrAWSNoAuthCode)
-	default:
-		t.Fatal("no error delivered")
-	}
-	assert.Contains(t, recorder.Body.String(), "No authorization code received")
-}
+// The OAuth2 callback handler itself moved to the shared
+// xkey/pkg/oidc/aws package (aws.Login's internal handleLoginCallback); see
+// xkey/pkg/oidc/aws/login_test.go for its coverage.
 
 // --- runOIDCAWS / runAWSLogin argument validation ---
 
@@ -247,9 +180,10 @@ func TestRunAWSLogin_RequiresRegion(t *testing.T) {
 }
 
 // TestRunAWSLogin_StateMismatch proves that a callback delivering a code
-// under a state the login never generated is rejected with the typed
-// ErrAWSStateMismatch sentinel, reachable via errors.Is, rather than an
-// inline error.
+// under a state the login never generated is rejected with aws.Login's
+// typed ErrStateMismatch sentinel, reachable via errors.Is all the way
+// through runAWSLogin's propagation -- not re-wrapped or swallowed into a
+// second, cmd-level sentinel for the same concept.
 func TestRunAWSLogin_StateMismatch(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -279,7 +213,7 @@ func TestRunAWSLogin_StateMismatch(t *testing.T) {
 	select {
 	case err := <-done:
 		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrAWSStateMismatch)
+		assert.ErrorIs(t, err, aws.ErrStateMismatch)
 	case <-time.After(5 * time.Second):
 		t.Fatal("runAWSLogin did not return after the mismatched callback")
 	}
@@ -296,6 +230,5 @@ func TestHandleAWSOutput_RejectsUnknownMode(t *testing.T) {
 func TestHandleAWSOutput_ExecRequiresCommand(t *testing.T) {
 	err := handleAWSOutput("exec", nil, "default", "", "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--exec is required when using --output exec")
-	assert.ErrorIs(t, err, ErrAWSExecRequired)
+	assert.Contains(t, err.Error(), "exec output mode requires a command")
 }

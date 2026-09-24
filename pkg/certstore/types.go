@@ -151,6 +151,41 @@ var (
 	// OIDTCGCredentialSpecification is tcg-at-credentialSpecification (2.23.133.2.24)
 	OIDTCGCredentialSpecification = asn1.ObjectIdentifier{2, 23, 133, 2, 24}
 
+	// OIDTCGDice is tcg-dice (2.23.133.5.4), the arc carrying DICE-based
+	// device identity with a hardware root of trust.
+	OIDTCGDice = asn1.ObjectIdentifier{2, 23, 133, 5, 4}
+	// OIDTCGDiceTcbInfo is tcg-dice-TcbInfo (2.23.133.5.4.1)
+	OIDTCGDiceTcbInfo = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 1}
+	// OIDTCGDiceEndorsementManifest is tcg-dice-endorsement-manifest (2.23.133.5.4.2)
+	OIDTCGDiceEndorsementManifest = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 2}
+	// OIDTCGDiceEndorsementManifestURI is tcg-dice-endorsement-manifest-uri (2.23.133.5.4.3)
+	OIDTCGDiceEndorsementManifestURI = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 3}
+	// OIDTCGDiceUeid is tcg-dice-Ueid (2.23.133.5.4.4)
+	OIDTCGDiceUeid = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 4}
+	// OIDTCGDiceMultiTcbInfo is tcg-dice-MultiTcbInfo (2.23.133.5.4.5)
+	OIDTCGDiceMultiTcbInfo = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 5}
+	// OIDTCGDiceUccsEvidence is tcg-dice-UCCS-evidence (2.23.133.5.4.6)
+	OIDTCGDiceUccsEvidence = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 6}
+	// OIDTCGDiceManifestEvidence is tcg-dice-manifest-evidence (2.23.133.5.4.7)
+	OIDTCGDiceManifestEvidence = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 7}
+
+	// OIDTCGDiceKp is tcg-dice-kp (2.23.133.5.4.100), the DICE key purpose arc
+	OIDTCGDiceKp = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100}
+	// OIDTCGDiceKpIdentityInit is tcg-dice-kp-identityInit (2.23.133.5.4.100.6)
+	OIDTCGDiceKpIdentityInit = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 6}
+	// OIDTCGDiceKpIdentityLoc is tcg-dice-kp-identityLoc (2.23.133.5.4.100.7)
+	OIDTCGDiceKpIdentityLoc = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 7}
+	// OIDTCGDiceKpAttestInit is tcg-dice-kp-attestInit (2.23.133.5.4.100.8)
+	OIDTCGDiceKpAttestInit = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 8}
+	// OIDTCGDiceKpAttestLoc is tcg-dice-kp-attestLoc (2.23.133.5.4.100.9)
+	OIDTCGDiceKpAttestLoc = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 9}
+	// OIDTCGDiceKpAssertInit is tcg-dice-kp-assertInit (2.23.133.5.4.100.10)
+	OIDTCGDiceKpAssertInit = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 10}
+	// OIDTCGDiceKpAssertLoc is tcg-dice-kp-assertLoc (2.23.133.5.4.100.11)
+	OIDTCGDiceKpAssertLoc = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 11}
+	// OIDTCGDiceKpECA is tcg-dice-kp-eca (2.23.133.5.4.100.12)
+	OIDTCGDiceKpECA = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 12}
+
 	// OIDTCGKpEKCertificate is tcg-kp-EKCertificate (2.23.133.8.1)
 	OIDTCGKpEKCertificate = asn1.ObjectIdentifier{2, 23, 133, 8, 1}
 	// OIDTCGKpPlatformCertificate is tcg-kp-PlatformCertificate (2.23.133.8.2)
@@ -214,6 +249,26 @@ var oidNames = map[string]string{
 	"2.23.133.2.23": "tcg-at-credentialType",
 	"2.23.133.2.24": "tcg-at-credentialSpecification",
 
+	// TCG DICE Extensions
+	"2.23.133.5.4":   "tcg-dice",
+	"2.23.133.5.4.1": "tcg-dice-TcbInfo",
+	"2.23.133.5.4.2": "tcg-dice-endorsement-manifest",
+	"2.23.133.5.4.3": "tcg-dice-endorsement-manifest-uri",
+	"2.23.133.5.4.4": "tcg-dice-Ueid",
+	"2.23.133.5.4.5": "tcg-dice-MultiTcbInfo",
+	"2.23.133.5.4.6": "tcg-dice-UCCS-evidence",
+	"2.23.133.5.4.7": "tcg-dice-manifest-evidence",
+
+	// TCG DICE Key Purposes
+	"2.23.133.5.4.100":    "tcg-dice-kp",
+	"2.23.133.5.4.100.6":  "tcg-dice-kp-identityInit",
+	"2.23.133.5.4.100.7":  "tcg-dice-kp-identityLoc",
+	"2.23.133.5.4.100.8":  "tcg-dice-kp-attestInit",
+	"2.23.133.5.4.100.9":  "tcg-dice-kp-attestLoc",
+	"2.23.133.5.4.100.10": "tcg-dice-kp-assertInit",
+	"2.23.133.5.4.100.11": "tcg-dice-kp-assertLoc",
+	"2.23.133.5.4.100.12": "tcg-dice-kp-eca",
+
 	// TCG Certificate Types
 	"2.23.133.8.1": "tcg-kp-EKCertificate",
 	"2.23.133.8.2": "tcg-kp-PlatformCertificate",
@@ -274,6 +329,17 @@ func OIDToName(oid asn1.ObjectIdentifier) string {
 // IsTCGOID checks if an OID belongs to the TCG arc (2.23.133)
 func IsTCGOID(oid asn1.ObjectIdentifier) bool {
 	return len(oid) >= 3 && oid[0] == 2 && oid[1] == 23 && oid[2] == 133
+}
+
+// IsDICEOID checks if an OID belongs to the TCG DICE arc (2.23.133.5.4).
+//
+// The DICE arc sits under the TCG arc, so IsTCGOID already answers true for
+// every one of these. This is the narrower question -- "is this DICE evidence"
+// -- which a caller needs to render a DiceTcbInfo as the structure it is
+// rather than as the hex an unrecognised TCG extension falls back to.
+func IsDICEOID(oid asn1.ObjectIdentifier) bool {
+	return len(oid) >= 5 && oid[0] == 2 && oid[1] == 23 && oid[2] == 133 &&
+		oid[3] == 5 && oid[4] == 4
 }
 
 // IsTrustedPlatformOID checks if an OID belongs to the Trusted Platform arc

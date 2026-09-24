@@ -91,11 +91,15 @@ func NewHostWithIO(ipcSocketPath string, logger *slog.Logger, stdin io.Reader, s
 // cancelled, or an error occurs.
 func (h *Host) Run(ctx context.Context) error {
 	if err := h.handshake(); err != nil {
-		h.logHostEvent(audit.OpExtensionHandshake, false, err, nil)
+		if auditErr := h.logHostEvent(audit.OpExtensionHandshake, false, err, nil); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
-	h.logHostEvent(audit.OpExtensionHandshake, true, nil, nil)
+	if auditErr := h.logHostEvent(audit.OpExtensionHandshake, true, nil, nil); auditErr != nil {
+		return auditErr
+	}
 	h.logger.Info("native messaging handshake completed")
 	return h.relayLoop(ctx)
 }
@@ -195,12 +199,16 @@ func (h *Host) handshakeWithIdentity(msg *NativeMessage, ourPubKey []byte) error
 			}
 		}
 
-		h.logHostEvent(audit.OpExtensionRejected, false, verifyErr, map[string]any{"origin": msg.Origin, "reason": verifyErr.Error()})
+		if auditErr := h.logHostEvent(audit.OpExtensionRejected, false, verifyErr, map[string]any{"origin": msg.Origin, "reason": verifyErr.Error()}); auditErr != nil {
+			return auditErr
+		}
 		return h.sendHandshakeRejected(ourPubKey, verifyErr.Error())
 	}
 
 	h.logger.Info("identity verified", "origin", msg.Origin)
-	h.logHostEvent(audit.OpExtensionIdentityOK, true, nil, map[string]any{"origin": msg.Origin})
+	if auditErr := h.logHostEvent(audit.OpExtensionIdentityOK, true, nil, map[string]any{"origin": msg.Origin}); auditErr != nil {
+		return auditErr
+	}
 	h.extensionOrigin = msg.Origin
 	return h.sendHandshakeOK(ourPubKey)
 }
@@ -420,7 +428,9 @@ func (h *Host) relayLoop(ctx context.Context) error {
 			// EOF means the browser closed the extension. This is a clean exit.
 			if isEOF(err) {
 				h.logger.Info("browser extension disconnected")
-				h.logHostEvent(audit.OpExtensionDisconnected, true, nil, map[string]any{"origin": h.extensionOrigin})
+				if auditErr := h.logHostEvent(audit.OpExtensionDisconnected, true, nil, map[string]any{"origin": h.extensionOrigin}); auditErr != nil {
+					return auditErr
+				}
 				return nil
 			}
 			h.logger.Error("failed to read message", "error", err)
@@ -450,7 +460,14 @@ func (h *Host) relayLoop(ctx context.Context) error {
 
 		if err := h.handleEncryptedMessage(msg); err != nil {
 			h.logger.Error("failed to handle encrypted message", "error", err)
-			h.logHostEvent(audit.OpExtensionRelay, false, err, nil)
+			if auditErr := h.logHostEvent(audit.OpExtensionRelay, false, err, nil); auditErr != nil {
+				// OpExtensionRelay is SeverityInformational: logHostEvent
+				// returns nil for it today. Handled defensively in case
+				// that classification ever changes; relayLoop has no
+				// return path here without disconnecting every extension
+				// on a single relay's audit failure.
+				h.logger.Error("audit log failed", "error", auditErr)
+			}
 			if writeErr := WriteError(h.stdout, err.Error()); writeErr != nil {
 				h.logger.Error("failed to write error response", "error", writeErr)
 			}
@@ -543,19 +560,23 @@ func (h *Host) SetAuditLogger(l audit.Logger) {
 	h.auditLog.Store(&l)
 }
 
-// logHostEvent logs an audit event for native messaging operations.
-func (h *Host) logHostEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := h.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logHostEvent logs an audit event for native messaging operations. Callers
+// must propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (h *Host) logHostEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := h.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }

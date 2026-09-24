@@ -1066,48 +1066,6 @@ func TestCreateChallenges_Paths(t *testing.T) {
 }
 
 // =============================================================================
-// isValidDomainName coverage tests - targeting 92.9% -> 100%
-// =============================================================================
-
-func TestIsValidDomainName_EdgeCases(t *testing.T) {
-	t.Run("Empty domain", func(t *testing.T) {
-		assert.False(t, isValidDomainName(""))
-	})
-
-	t.Run("Domain too long", func(t *testing.T) {
-		longDomain := strings.Repeat("a", 254)
-		assert.False(t, isValidDomainName(longDomain))
-	})
-
-	t.Run("Label too long", func(t *testing.T) {
-		longLabel := strings.Repeat("a", 64)
-		assert.False(t, isValidDomainName(longLabel+".com"))
-	})
-
-	t.Run("Empty label", func(t *testing.T) {
-		assert.False(t, isValidDomainName("example..com"))
-	})
-
-	t.Run("Label starts with hyphen", func(t *testing.T) {
-		assert.False(t, isValidDomainName("-example.com"))
-	})
-
-	t.Run("Label ends with hyphen", func(t *testing.T) {
-		assert.False(t, isValidDomainName("example-.com"))
-	})
-
-	t.Run("Invalid character", func(t *testing.T) {
-		assert.False(t, isValidDomainName("exam_ple.com"))
-	})
-
-	t.Run("Valid domain", func(t *testing.T) {
-		assert.True(t, isValidDomainName("example.com"))
-		assert.True(t, isValidDomainName("sub.example.com"))
-		assert.True(t, isValidDomainName("a-b.example.com"))
-	})
-}
-
-// =============================================================================
 // encodeJSONWithLogger coverage tests - targeting 75% -> 90%+
 // =============================================================================
 

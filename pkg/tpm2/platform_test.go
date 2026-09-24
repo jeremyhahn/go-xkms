@@ -990,14 +990,14 @@ func TestPlatformKeyStore_DictionaryAttackLockoutReset(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildSRKAttrsFromConfig tests
+// PlatformSRKAttributesFromConfig tests
 // ---------------------------------------------------------------------------
 
 func TestPlatformKeyStore_BuildSRKAttrsNoSSRK(t *testing.T) {
 	cfg := testConfigForPKS(false)
 	cfg.SSRK = nil
 
-	attrs, err := buildSRKAttrsFromConfig(cfg)
+	attrs, err := PlatformSRKAttributesFromConfig(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	assert.Equal(t, "srk", attrs.CN)
@@ -1010,7 +1010,7 @@ func TestPlatformKeyStore_BuildSRKAttrsNoPlatformSRKConfig(t *testing.T) {
 	cfg.PlatformSRK = nil
 	cfg.SSRK = nil
 
-	attrs, err := buildSRKAttrsFromConfig(cfg)
+	attrs, err := PlatformSRKAttributesFromConfig(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, attrs)
 	// Should fall back to tpSRKIndex = 0x81000002

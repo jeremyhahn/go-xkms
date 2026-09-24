@@ -349,7 +349,7 @@ func TestFB_OIDCService_Login_AWSType(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.False(t, result.Success)
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 }
 
 func TestFB_OIDCService_RefreshToken_NoStore(t *testing.T) {

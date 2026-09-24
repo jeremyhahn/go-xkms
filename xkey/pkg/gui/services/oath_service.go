@@ -106,21 +106,26 @@ func (s *OATHService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logOATHEvent logs an OATH-related audit event.
-func (s *OATHService) logOATHEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logOATHEvent logs an OATH-related audit event. Every OATH operation is
+// SeveritySecurity (it creates, deletes, or discloses a shared secret or a
+// generated code), so the caller must propagate a non-nil return and fail
+// the request rather than proceed unaudited.
+func (s *OATHService) logOATHEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }
 
 // ListAccounts returns all OATH credentials in the store.
@@ -154,12 +159,16 @@ func (s *OATHService) AddAccount(uri string) (*OATHAccount, error) {
 	}
 
 	if err := s.store.Add(cred); err != nil {
-		s.logOATHEvent(audit.OpOATHCredentialCreated, false, err, map[string]any{"issuer": cred.Issuer, "account": cred.AccountName})
+		if auditErr := s.logOATHEvent(audit.OpOATHCredentialCreated, false, err, map[string]any{"issuer": cred.Issuer, "account": cred.AccountName}); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
 	acct := credentialToAccount(cred)
-	s.logOATHEvent(audit.OpOATHCredentialCreated, true, nil, map[string]any{"issuer": cred.Issuer, "account": cred.AccountName})
+	if auditErr := s.logOATHEvent(audit.OpOATHCredentialCreated, true, nil, map[string]any{"issuer": cred.Issuer, "account": cred.AccountName}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &acct, nil
 }
 
@@ -173,11 +182,12 @@ func (s *OATHService) DeleteAccount(id string) error {
 	}
 	err := s.store.Delete(id)
 	if err != nil {
-		s.logOATHEvent(audit.OpOATHCredentialDeleted, false, err, map[string]any{"account_id": id})
+		if auditErr := s.logOATHEvent(audit.OpOATHCredentialDeleted, false, err, map[string]any{"account_id": id}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
-	s.logOATHEvent(audit.OpOATHCredentialDeleted, true, nil, map[string]any{"account_id": id})
-	return nil
+	return s.logOATHEvent(audit.OpOATHCredentialDeleted, true, nil, map[string]any{"account_id": id})
 }
 
 // GenerateTOTP generates a TOTP code for the given account.
@@ -205,11 +215,15 @@ func (s *OATHService) GenerateTOTP(id string) (*TOTPCode, error) {
 
 	code, err := gen.Generate()
 	if err != nil {
-		s.logOATHEvent(audit.OpOATHCodeGenerated, false, err, map[string]any{"account_id": id, "type": "totp"})
+		if auditErr := s.logOATHEvent(audit.OpOATHCodeGenerated, false, err, map[string]any{"account_id": id, "type": "totp"}); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
-	s.logOATHEvent(audit.OpOATHCodeGenerated, true, nil, map[string]any{"account_id": id, "type": "totp"})
+	if auditErr := s.logOATHEvent(audit.OpOATHCodeGenerated, true, nil, map[string]any{"account_id": id, "type": "totp"}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &TOTPCode{
 		Code:      code,
 		TimeLeft:  gen.TimeRemaining(),
@@ -244,7 +258,9 @@ func (s *OATHService) GenerateHOTP(id string) (*HOTPCode, error) {
 
 	code, err := gen.Generate()
 	if err != nil {
-		s.logOATHEvent(audit.OpOATHCodeGenerated, false, err, map[string]any{"account_id": id, "type": "hotp"})
+		if auditErr := s.logOATHEvent(audit.OpOATHCodeGenerated, false, err, map[string]any{"account_id": id, "type": "hotp"}); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -254,7 +270,9 @@ func (s *OATHService) GenerateHOTP(id string) (*HOTPCode, error) {
 		return nil, updateErr
 	}
 
-	s.logOATHEvent(audit.OpOATHCodeGenerated, true, nil, map[string]any{"account_id": id, "type": "hotp"})
+	if auditErr := s.logOATHEvent(audit.OpOATHCodeGenerated, true, nil, map[string]any{"account_id": id, "type": "hotp"}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &HOTPCode{
 		Code:      code,
 		Counter:   cred.Counter,
@@ -302,12 +320,16 @@ func (s *OATHService) AddAccountManual(accountName, issuer, secret string) (*OAT
 	}
 
 	if err := s.store.Add(cred); err != nil {
-		s.logOATHEvent(audit.OpOATHCredentialCreated, false, err, map[string]any{"issuer": issuer, "account": accountName})
+		if auditErr := s.logOATHEvent(audit.OpOATHCredentialCreated, false, err, map[string]any{"issuer": issuer, "account": accountName}); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
 	acct := credentialToAccount(cred)
-	s.logOATHEvent(audit.OpOATHCredentialCreated, true, nil, map[string]any{"issuer": issuer, "account": accountName})
+	if auditErr := s.logOATHEvent(audit.OpOATHCredentialCreated, true, nil, map[string]any{"issuer": issuer, "account": accountName}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &acct, nil
 }
 

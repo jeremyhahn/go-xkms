@@ -96,14 +96,16 @@ func (b *Bridge) handleSharePublicKey(ctx context.Context, params json.RawMessag
 
 	// Audit log the key import.
 	if b.auditLogger != nil {
-		b.auditLogger.LogKeyOperation(
+		if auditErr := b.auditLogger.LogKeyOperation(
 			audit.OpKeyCreated,
 			targetBackend,
 			resp.KeyID,
 			true,
 			nil,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return &RemoteSharePublicKeyResult{
@@ -166,14 +168,16 @@ func (b *Bridge) handleShareSymmetric(ctx context.Context, params json.RawMessag
 
 	// Audit log the symmetric key import.
 	if b.auditLogger != nil {
-		b.auditLogger.LogKeyOperation(
+		if auditErr := b.auditLogger.LogKeyOperation(
 			audit.OpKeyCreated,
 			targetBackend,
 			resp.KeyID,
 			true,
 			nil,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return &RemoteShareSymmetricResult{
@@ -244,14 +248,16 @@ func (b *Bridge) handleImportSharedKey(ctx context.Context, params json.RawMessa
 
 	// Audit log the export.
 	if b.auditLogger != nil {
-		b.auditLogger.LogKeyOperation(
+		if auditErr := b.auditLogger.LogKeyOperation(
 			audit.OpKeyAccessed,
 			p.Backend,
 			p.KeyID,
 			true,
 			nil,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return result, nil

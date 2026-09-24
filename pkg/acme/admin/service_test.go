@@ -23,14 +23,18 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 func TestAdminService_ListCertificates(t *testing.T) {
@@ -264,6 +268,50 @@ func TestAdminService_GetStatus(t *testing.T) {
 	assert.NotEmpty(t, status.SignatureAlgo)
 }
 
+// intermediateFaultCA wraps a real ca.TCGCA and overrides TrustedIntermediate
+// to return an injected error, so GetStatus's handling of that call can be
+// exercised without a pure-root CA fixture.
+type intermediateFaultCA struct {
+	ca.TCGCA
+	err error
+}
+
+func (f *intermediateFaultCA) TrustedIntermediate() (*x509.Certificate, error) {
+	return nil, f.err
+}
+
+// TestAdminService_GetStatus_IntermediateLookupError proves a genuine
+// TrustedIntermediate failure (anything other than "no intermediate
+// configured") is reported by GetStatus instead of being discarded and
+// read back to the caller as "this CA has no intermediate" (#701).
+func TestAdminService_GetStatus_IntermediateLookupError(t *testing.T) {
+	ctx := context.Background()
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	boom := errors.New("intermediate lookup: transport failure")
+	service.ca = &intermediateFaultCA{TCGCA: service.ca, err: boom}
+
+	_, err := service.GetStatus(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), boom.Error())
+}
+
+// TestAdminService_GetStatus_NoIntermediateStillWorks proves
+// ca.ErrIntermediateNotFound -- the expected outcome for a pure-root CA --
+// still leaves GetStatus and its IntermediateCA field unaffected.
+func TestAdminService_GetStatus_NoIntermediateStillWorks(t *testing.T) {
+	ctx := context.Background()
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	service.ca = &intermediateFaultCA{TCGCA: service.ca, err: ca.ErrIntermediateNotFound}
+
+	status, err := service.GetStatus(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, status.IntermediateCA)
+}
+
 func TestAdminService_GetStatus_KeyDetails(t *testing.T) {
 	ctx := context.Background()
 	service, _, cleanup := setupTestService(t)
@@ -309,6 +357,62 @@ func TestAdminService_GetStats(t *testing.T) {
 	assert.GreaterOrEqual(t, stats.TotalCertificates, 0)
 	assert.GreaterOrEqual(t, stats.TotalAccounts, 0)
 	assert.GreaterOrEqual(t, stats.TotalOrders, 0)
+}
+
+// faultyOrderDAO wraps a real order GenericDAO and overrides ForEachPage to
+// return an injected error, leaving every other DAO method delegated.
+type faultyOrderDAO struct {
+	qrdbsdk.GenericDAO[*entities.ACMEOrder]
+	err error
+}
+
+func (f *faultyOrderDAO) ForEachPage(ctx context.Context, q qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ACMEOrder]) error {
+	return f.err
+}
+
+// faultyOrderFactory wraps a real storage.Factory and makes OrderDAO return
+// a faultyOrderDAO for one specific account, leaving every other DAO (and
+// every other account's OrderDAO) delegated to the real factory.
+type faultyOrderFactory struct {
+	acmestorage.Factory
+	faultAccountID uint64
+	err            error
+}
+
+func (f *faultyOrderFactory) OrderDAO(accountID uint64) (qrdbsdk.GenericDAO[*entities.ACMEOrder], error) {
+	realDAO, err := f.Factory.OrderDAO(accountID)
+	if err != nil {
+		return nil, err
+	}
+	if accountID == f.faultAccountID {
+		return &faultyOrderDAO{GenericDAO: realDAO, err: f.err}, nil
+	}
+	return realDAO, nil
+}
+
+// TestAdminService_GetStats_OrderListErrorPropagates proves a failure to
+// list one account's orders fails GetStats instead of being discarded and
+// read back to the caller as that account having zero orders (#701).
+func TestAdminService_GetStats_OrderListErrorPropagates(t *testing.T) {
+	ctx := context.Background()
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	accountDAO, err := service.storageFactory.AccountDAO()
+	require.NoError(t, err)
+	account := &entities.ACMEAccount{ID: 1, Status: "valid", CreatedAt: time.Now()}
+	require.NoError(t, accountDAO.Save(ctx, account))
+
+	boom := errors.New("order list: transport failure")
+	service.storageFactory = &faultyOrderFactory{
+		Factory:        service.storageFactory,
+		faultAccountID: account.ID,
+		err:            boom,
+	}
+
+	_, err = service.GetStats(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), boom.Error())
 }
 
 func TestAdminService_ListExpiringCertificates(t *testing.T) {

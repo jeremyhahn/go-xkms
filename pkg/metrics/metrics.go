@@ -93,6 +93,22 @@ var (
 		[]string{LabelOperation, LabelBackend, LabelErrorType},
 	)
 
+	// AuditWriteFailuresTotal tracks SeverityInformational audit events that
+	// failed to persist, labeled by the audit Action/OperationType. A
+	// SeveritySecurity event that fails to persist does not increment this
+	// counter: it is surfaced as audit.ErrAuditWriteFailed / the xkey
+	// audit.ErrAuditWriteFailed instead and fails the request, per
+	// docs/audit-log/engineering.md.
+	AuditWriteFailuresTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "audit",
+			Name:      "write_failures_total",
+			Help:      "Total number of informational audit events that failed to persist",
+		},
+		[]string{LabelOperation},
+	)
+
 	// ActiveConnections tracks the number of active connections by protocol (REST, gRPC, QUIC, MCP).
 	ActiveConnections = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
