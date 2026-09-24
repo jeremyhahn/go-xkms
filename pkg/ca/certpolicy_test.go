@@ -63,7 +63,13 @@ var caPolicyGoldens = map[string]string{
 	// attribute, per §8.1 "the subject field's DN encoding SHOULD include the
 	// 'serialNumber' attribute". Verified field by field against the renderer's
 	// output before and after, not re-pinned blindly.
-	"tcg_ek": "29b934d5b7f803f62cc05a46c4f1c894166fb1ba6a04f789183c5b98a065ab5e",
+	//
+	// Changed again 2026-09-23 (#715): the tcg-kp-EKCertificate marker
+	// (2.23.133.8.1) moved out of a standalone extension under its own Id and
+	// into the standard ExtKeyUsage extension's unknown_ext_key_usage, where
+	// RFC 5280 section 4.2.1.12 puts extended key usage purposes and where
+	// requireTCGEKCertificateEKU already looked for it.
+	"tcg_ek": "a213376725473c2e005717a7f7ef6a28d30fc01c9ac052acc65374903b154e8d",
 	// tcg_ak changed 2026-09-04 (#358): the certificatePolicies extension
 	// carries tcg-cap-verifiedTPMRestricted (2.23.133.11.1.3). TCG DevID v1 r12
 	// §8.2 makes checking it a MUST for a relying party evaluating an
@@ -75,7 +81,15 @@ var caPolicyGoldens = map[string]string{
 	// extended key usage gained 2.23.133.11.1.3, "the one TCG OID most
 	// appropriate for the type of key used" per §8.1. Both diffs read off the
 	// renderer's output before and after; every other field is unchanged.
-	"tcg_ak": "48c75d734aa71251561c7a873ecaa2f54999cf9644ba88135bc223f35d7ee868",
+	//
+	// Changed again 2026-09-23 (#715, WebAuthn L2 §8.3.1 TPM Attestation
+	// Statement Certificate Requirements): the tcg-kp-AIKCertificate marker
+	// (2.23.133.8.3) moved out of a standalone extension and into the standard
+	// ExtKeyUsage extension, where go-webauthn's "tpm" attestation format
+	// verifier requires it; and basicConstraints is now explicitly asserted
+	// with CA:false (requirement 5), which the TCG spec never mentions for an
+	// AK/IAK certificate and therefore does not forbid.
+	"tcg_ak": "b31b34b2efa8d19e98e6390bcee2796f137aa716f3a1d230a6f1a3a12f562218",
 }
 
 // caPolicyCase names one issuance path and the certificate it produced.
