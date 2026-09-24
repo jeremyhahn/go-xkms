@@ -69,11 +69,12 @@ func (s *Server) initTPM2Backend() error {
 	// node-seal autodetect built (pkg/seal.BuildBestStrategy ->
 	// tpm2backend.NewBackend) over this identical keyDir — rather than
 	// opening a second file.New over the same directory. Key blobs created
-	// under the shared TPM are parented to the exact same SRK the barrier
-	// itself uses: both paths call config.TPM.SSRKAttributes() against this
+	// under the shared TPM are parented to the same Platform SRK the barrier
+	// uses: both paths resolve it through resolveSRKAttributes against this
 	// one open TPM (authValue/authPolicy sourced from Backends.TPM2, never
-	// hardcoded), so both the barrier and this backend read and write the
-	// same on-disk key store and share one parent key.
+	// hardcoded), so the barrier and this backend read and write the same
+	// on-disk key store and share one parent key. The TCG Shared SRK is
+	// never used.
 	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
 			TPM:        shared.TPM(),
