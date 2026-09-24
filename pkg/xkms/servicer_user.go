@@ -42,7 +42,8 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 		Email:       u.Email,
 		DisplayName: u.Name,
 		Role:        role,
-		Enabled:     u.Enabled,
+		// qrdb v0.20: Lifecycle is the only account state; only active is enabled.
+		Enabled: u.Lifecycle == string(qrdbsdk.LifecycleActive),
 	}
 }
 

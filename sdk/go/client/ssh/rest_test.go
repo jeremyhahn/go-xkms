@@ -477,6 +477,26 @@ func TestRESTStatusMapping(t *testing.T) {
 				return errors.As(err, &e)
 			},
 		},
+		{
+			name:   "not_implemented",
+			status: http.StatusNotImplemented,
+			body:   `{"error":"nope","message":"remote signer unsupported"}`,
+			wantAs: func(err error) bool {
+				var e *sdkssh.NotImplementedError
+				return errors.As(err, &e)
+			},
+		},
+		{
+			// A status this client has no specific mapping for still falls
+			// through to *ServerError rather than losing the failure.
+			name:   "unmapped_status_falls_back_to_server_error",
+			status: http.StatusTeapot,
+			body:   `{"error":"teapot"}`,
+			wantAs: func(err error) bool {
+				var e *sdkssh.ServerError
+				return errors.As(err, &e)
+			},
+		},
 	}
 	for _, tc := range cases {
 		tc := tc

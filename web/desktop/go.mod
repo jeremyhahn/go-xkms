@@ -12,7 +12,7 @@ replace (
 )
 
 require (
-	github.com/jeremyhahn/go-xkms v0.22.0-alpha
+	github.com/jeremyhahn/go-xkms v0.24.0-alpha
 	github.com/wailsapp/wails/v2 v2.12.0
 )
 
@@ -122,7 +122,6 @@ require (
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/go-tpm-tools v0.4.8 // indirect
-	github.com/google/gousb v1.1.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
@@ -147,15 +146,15 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
-	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
+	github.com/jeremyhahn/go-enclave v0.6.0-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.19.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.20.2-alpha // indirect
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.2-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/sdk/go v0.22.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.22.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/sdk/go v0.24.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.24.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -198,17 +197,13 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.62.0 // indirect
+	github.com/quic-go/quic-go v0.63.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
-	github.com/saltosystems/winrt-go v0.0.0-20260513072510-45f10383b2b8 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/soypat/cyw43439 v0.1.1 // indirect
-	github.com/soypat/lneto v0.1.0 // indirect
-	github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
@@ -216,8 +211,6 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/tidwall/btree v1.8.1 // indirect
-	github.com/tinygo-org/cbgo v0.0.4 // indirect
-	github.com/tinygo-org/pio v0.3.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
@@ -250,16 +243,16 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
-	golang.org/x/crypto v0.56.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
-	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/api v0.293.0 // indirect
@@ -272,5 +265,4 @@ require (
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
-	tinygo.org/x/bluetooth v0.15.0 // indirect
 )

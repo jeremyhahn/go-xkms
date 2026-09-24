@@ -15,7 +15,11 @@
 
 package gcpkms
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
 	// ErrNotInitialized is returned when the KMS client is not initialized.
@@ -24,8 +28,19 @@ var (
 	// ErrInvalidConfig is returned when the configuration is invalid.
 	ErrInvalidConfig = errors.New("gcpkms: invalid configuration")
 
-	// ErrKeyNotFound is returned when the specified key cannot be found.
-	ErrKeyNotFound = errors.New("gcpkms: key not found")
+	// ErrKeyNotFound is returned when the specified key cannot be found. It
+	// is an alias of backend.ErrKeyNotFound so
+	// errors.Is(err, backend.ErrKeyNotFound) recognizes it without any
+	// wrapping, matching every other backend.
+	ErrKeyNotFound = backend.ErrKeyNotFound
+
+	// ErrKeyRetrievalFailed is returned when GetCryptoKey (or the local
+	// metadata lookup that precedes it) fails for a reason other than the
+	// key genuinely not existing -- a gRPC transport fault, throttling, or
+	// an IAM/authorization denial. It must not satisfy
+	// errors.Is(err, backend.ErrKeyNotFound): callers use that distinction
+	// to decide whether generating a replacement key is safe.
+	ErrKeyRetrievalFailed = errors.New("gcpkms: key retrieval failed")
 
 	// ErrUnsupportedKeyType is returned when an unsupported key type is requested.
 	ErrUnsupportedKeyType = errors.New("gcpkms: unsupported key type")

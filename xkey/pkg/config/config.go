@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Config is the top-level unified configuration for the xKey CLI and GUI
@@ -40,6 +42,15 @@ type Config struct {
 	Log                LogConfig                `yaml:"log" json:"log" mapstructure:"log"`
 	GUI                GUISection               `yaml:"gui" json:"gui" mapstructure:"gui"`
 	State              StateSection             `yaml:"state" json:"state" mapstructure:"state"`
+	Barrier            BarrierSection           `yaml:"barrier,omitempty" json:"barrier,omitempty" mapstructure:"barrier"`
+}
+
+// BarrierSection holds settings for barrier sealing strategies that need
+// more than a CLI flag to configure. Today that is only the cloud KMS
+// strategies (aws_kms, gcp_kms, azure_kv, vault); tpm2 and software need
+// nothing here.
+type BarrierSection struct {
+	CloudKMS BarrierCloudKMSConfig `yaml:"cloud_kms,omitempty" json:"cloud_kms,omitempty" mapstructure:"cloud_kms"`
 }
 
 // BackendConfig holds the cryptographic backend selection and TPM2
@@ -360,6 +371,41 @@ func DefaultConfig() *Config {
 		},
 		State: StateSection{
 			StorageEngine: "file",
+		},
+		// Barrier.CloudKMS's four provider pointers are initialized (empty,
+		// not nil) rather than left nil: registerConfigKeys/walkConfigKeys
+		// (load.go) descends through every direct struct-pointer config
+		// field to register its leaf keys for env-var binding, and
+		// unmarshalAndValidate's viper decode allocates the same pointers
+		// on every Load() as a side effect of that registration -- so a
+		// round-tripped Config always has them non-nil regardless of what
+		// DefaultConfig returns. Matching that here keeps DefaultConfig an
+		// honest representation of Load()'s actual output (see
+		// TestLoad_PartialPolicyKeepsDefaults) rather than a shape no load
+		// path ever produces. A provider's fields being present-but-empty
+		// is not "configured": every Validate() treats an empty required
+		// field as an error the same way it would treat a nil pointer, and
+		// build<Provider>BarrierStrategy normalizes an empty-Raw
+		// *SecretValue field to nil before resolving credentials, so this
+		// costs nothing functionally -- it only makes the zero state
+		// consistent between an in-memory default and a loaded one.
+		// The *SecretValue fields nested inside the four provider structs are
+		// walked (and so materialized on Load) exactly the same way; they are
+		// given the same empty-not-nil treatment here for the same reason.
+		Barrier: BarrierSection{
+			CloudKMS: BarrierCloudKMSConfig{
+				AWSKMS: &BarrierAWSKMSConfig{
+					SecretAccessKey: &xkms.SecretValue{},
+					SessionToken:    &xkms.SecretValue{},
+				},
+				GCPKMS: &BarrierGCPKMSConfig{},
+				AzureKV: &BarrierAzureKVConfig{
+					ClientSecret: &xkms.SecretValue{},
+				},
+				Vault: &BarrierVaultConfig{
+					Token: &xkms.SecretValue{},
+				},
+			},
 		},
 	}
 }

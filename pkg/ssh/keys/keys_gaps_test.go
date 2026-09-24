@@ -16,11 +16,56 @@ package keys
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 )
+
+// failingRandReader is an io.Reader that always fails. It is swapped into
+// the package-level crypto/rand.Reader var (never in parallel with other
+// tests, since none of these gap tests call t.Parallel()) to force key
+// generation failures that cannot otherwise be injected -- generatePrivateKey
+// always draws from rand.Reader itself, not an injectable field.
+type failingRandReader struct{}
+
+func (failingRandReader) Read(_ []byte) (int, error) {
+	return 0, &errs.Message{Msg: "injected rand failure"}
+}
+
+// withFailingRand swaps crypto/rand.Reader for the duration of fn and
+// restores the original reader afterward.
+func withFailingRand(fn func()) {
+	orig := rand.Reader
+	rand.Reader = failingRandReader{}
+	defer func() { rand.Reader = orig }()
+	fn()
+}
+
+// TestGenerate_RandFailurePropagatesAsKeyMaterialError verifies that
+// Ed25519 generation surfaces a *KeyMaterialError -- rather than a raw
+// stdlib error or a panic -- when the CSPRNG it draws from fails.
+//
+// This repo builds with GOEXPERIMENT=BoringCrypto, under which
+// rsa.GenerateKey and ecdsa.GenerateKey route through BoringSSL's own FIPS
+// RNG and ignore the passed io.Reader entirely, so overriding
+// crypto/rand.Reader cannot force a failure for those algorithms in this
+// build (see pkg/keyprovider/pkcs8's TestGenerateKey_RandFailure for the
+// same constraint). ed25519.GenerateKey has no BoringCrypto substitution
+// and reads directly from the supplied io.Reader, so it remains the one
+// algorithm this technique can exercise.
+func TestGenerate_RandFailurePropagatesAsKeyMaterialError(t *testing.T) {
+	var err error
+	withFailingRand(func() {
+		_, err = generatePrivateKey(GenerateOptions{Algorithm: AlgorithmEd25519})
+	})
+	var kme *KeyMaterialError
+	if !errors.As(err, &kme) {
+		t.Fatalf("Generate(ed25519) under a failing rand.Reader = %v, want *KeyMaterialError", err)
+	}
+}
 
 // TestGenerate_AllAlgorithms exercises generatePrivateKey and
 // keyFromCryptoPrivate across every supported algorithm, covering the ECDSA

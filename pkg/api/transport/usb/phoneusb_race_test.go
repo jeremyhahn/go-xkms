@@ -36,7 +36,10 @@ import (
 // and prove nothing.
 func TestCloseDoesNotRaceHealthy(t *testing.T) {
 	for range 20 {
-		tr, g := newGatedTransport(t)
+		tr, g, ok := newGatedTransport(t)
+		if !ok {
+			return
+		}
 		close(g.gate)
 
 		require.NoError(t, tr.Connect(context.Background()))
@@ -61,7 +64,10 @@ func TestCloseDoesNotRaceHealthy(t *testing.T) {
 
 func TestCloseDoesNotRaceConn(t *testing.T) {
 	for range 20 {
-		tr, g := newGatedTransport(t)
+		tr, g, ok := newGatedTransport(t)
+		if !ok {
+			return
+		}
 		close(g.gate)
 
 		require.NoError(t, tr.Connect(context.Background()))
@@ -88,7 +94,10 @@ func TestCloseDoesNotRaceConn(t *testing.T) {
 // writer of the field, so it races the same readers.
 func TestDiscardDoesNotRaceHealthy(t *testing.T) {
 	for range 20 {
-		tr, g := newGatedTransport(t)
+		tr, g, ok := newGatedTransport(t)
+		if !ok {
+			return
+		}
 		close(g.gate)
 
 		var wg sync.WaitGroup

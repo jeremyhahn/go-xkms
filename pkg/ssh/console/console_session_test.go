@@ -16,6 +16,7 @@ package console
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -199,8 +200,8 @@ func TestConsole_EnvIsSentToRemoteSession(t *testing.T) {
 		Cols: 80,
 		Env:  map[string]string{"XKMS_CONSOLE": "1", "LANG": "C.UTF-8"},
 	})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer func() { _ = c.Close() }()
 
@@ -227,9 +228,14 @@ func TestConsole_DialFailsWhenPTYRefused(t *testing.T) {
 		_ = c.Close()
 		t.Fatal("Dial must fail when the server refuses a PTY")
 	}
-	var sessErr *SessionError
-	if !errors.As(err, &sessErr) {
-		t.Fatalf("error = %T (%v), want *SessionError", err, err)
+	// Under GODEBUG=fips140=only the handshake itself is refused (see
+	// requireHandshake) before the client ever reaches the PTY request this
+	// test targets, so the error is a handshake failure, not *SessionError.
+	if !fips140.Enforced() {
+		var sessErr *SessionError
+		if !errors.As(err, &sessErr) {
+			t.Fatalf("error = %T (%v), want *SessionError", err, err)
+		}
 	}
 	if c != nil {
 		t.Error("no console may be returned when session setup fails")
@@ -246,9 +252,15 @@ func TestConsole_DialFailsWhenShellRefused(t *testing.T) {
 		_ = c.Close()
 		t.Fatal("Dial must fail when the server refuses to start a shell")
 	}
-	var sessErr *SessionError
-	if !errors.As(err, &sessErr) {
-		t.Fatalf("error = %T (%v), want *SessionError", err, err)
+	// Under GODEBUG=fips140=only the handshake itself is refused (see
+	// requireHandshake) before the client ever reaches the shell request
+	// this test targets, so the error is a handshake failure, not
+	// *SessionError.
+	if !fips140.Enforced() {
+		var sessErr *SessionError
+		if !errors.As(err, &sessErr) {
+			t.Fatalf("error = %T (%v), want *SessionError", err, err)
+		}
 	}
 }
 
@@ -264,8 +276,8 @@ func TestOpen_FailsOnClosedClient(t *testing.T) {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // test server key is generated per test
 		Timeout:         10 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("ssh.Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	_ = client.Close()
 
@@ -288,8 +300,8 @@ func TestConsole_ResizeClampsNonPositiveDimensions(t *testing.T) {
 	srv := startSessionServer(t, sessionServerOptions{})
 
 	c, err := dialSessionServer(t, srv, Config{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer func() { _ = c.Close() }()
 
@@ -317,8 +329,8 @@ func TestConsole_ResizeAfterCloseIsRejected(t *testing.T) {
 	srv := startSessionServer(t, sessionServerOptions{})
 
 	c, err := dialSessionServer(t, srv, Config{})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -338,8 +350,8 @@ func TestConsole_CloseIsIdempotent(t *testing.T) {
 	srv := startSessionServer(t, sessionServerOptions{})
 
 	c, err := dialSessionServer(t, srv, Config{})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 
 	if err := c.Close(); err != nil {
@@ -370,8 +382,8 @@ func TestConsole_ConcurrentReadResizeAndClose(t *testing.T) {
 	srv := startSessionServer(t, sessionServerOptions{})
 
 	c, err := dialSessionServer(t, srv, Config{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 
 	// Writer runs to completion first (see the note above).

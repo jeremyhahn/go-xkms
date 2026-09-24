@@ -3115,7 +3115,13 @@ type EncryptResponse struct {
 	// iv is the AES-CBC initialization vector used for encryption. Populated
 	// when the request's mode was "cbc" or "cbc-pad"; empty for the default
 	// AEAD modes, which populate nonce instead.
-	Iv            []byte `protobuf:"bytes,4,opt,name=iv,proto3" json:"iv,omitempty"`
+	Iv []byte `protobuf:"bytes,4,opt,name=iv,proto3" json:"iv,omitempty"`
+	// gcm_nonce_mode mirrors transport.EncryptResponse.GCMNonceMode: "" for a
+	// caller- or RNG-supplied nonce, "random" when GODEBUG=fips140=only
+	// forced this encryption through cipher.NewGCMWithRandomNonce. Echo it
+	// back unchanged on the matching DecryptRequest; Decrypt cannot infer it
+	// from the ciphertext bytes alone.
+	GcmNonceMode  string `protobuf:"bytes,5,opt,name=gcm_nonce_mode,json=gcmNonceMode,proto3" json:"gcm_nonce_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3178,6 +3184,13 @@ func (x *EncryptResponse) GetIv() []byte {
 	return nil
 }
 
+func (x *EncryptResponse) GetGcmNonceMode() string {
+	if x != nil {
+		return x.GcmNonceMode
+	}
+	return ""
+}
+
 // DecryptRequest requests decryption of data
 type DecryptRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -3205,7 +3218,11 @@ type DecryptRequest struct {
 	// tag_size is the AEAD authentication tag length in bytes that tag
 	// carries; 0 selects the cipher's full-length tag. It must equal the
 	// tag_size used to encrypt.
-	TagSize       int32 `protobuf:"varint,12,opt,name=tag_size,json=tagSize,proto3" json:"tag_size,omitempty"`
+	TagSize int32 `protobuf:"varint,12,opt,name=tag_size,json=tagSize,proto3" json:"tag_size,omitempty"`
+	// gcm_nonce_mode is the value the matching EncryptResponse.gcm_nonce_mode
+	// reported. Required, unchanged, to decrypt an AES-GCM ciphertext
+	// produced under GODEBUG=fips140=only.
+	GcmNonceMode  string `protobuf:"bytes,13,opt,name=gcm_nonce_mode,json=gcmNonceMode,proto3" json:"gcm_nonce_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3322,6 +3339,13 @@ func (x *DecryptRequest) GetTagSize() int32 {
 		return x.TagSize
 	}
 	return 0
+}
+
+func (x *DecryptRequest) GetGcmNonceMode() string {
+	if x != nil {
+		return x.GcmNonceMode
+	}
+	return ""
 }
 
 // DecryptResponse contains the decrypted data
@@ -20115,14 +20139,15 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x05nonce\x18\x05 \x01(\fR\x05nonce\x12\x12\n" +
 	"\x04mode\x18\x06 \x01(\tR\x04mode\x12\x0e\n" +
 	"\x02iv\x18\a \x01(\fR\x02iv\x12\x19\n" +
-	"\btag_size\x18\b \x01(\x05R\atagSize\"i\n" +
+	"\btag_size\x18\b \x01(\x05R\atagSize\"\x8f\x01\n" +
 	"\x0fEncryptResponse\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x01 \x01(\fR\n" +
 	"ciphertext\x12\x14\n" +
 	"\x05nonce\x18\x02 \x01(\fR\x05nonce\x12\x10\n" +
 	"\x03tag\x18\x03 \x01(\fR\x03tag\x12\x0e\n" +
-	"\x02iv\x18\x04 \x01(\fR\x02iv\"\xb5\x02\n" +
+	"\x02iv\x18\x04 \x01(\fR\x02iv\x12$\n" +
+	"\x0egcm_nonce_mode\x18\x05 \x01(\tR\fgcmNonceMode\"\xdb\x02\n" +
 	"\x0eDecryptRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1e\n" +
@@ -20138,7 +20163,8 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x04mode\x18\n" +
 	" \x01(\tR\x04mode\x12\x0e\n" +
 	"\x02iv\x18\v \x01(\fR\x02iv\x12\x19\n" +
-	"\btag_size\x18\f \x01(\x05R\atagSize\"/\n" +
+	"\btag_size\x18\f \x01(\x05R\atagSize\x12$\n" +
+	"\x0egcm_nonce_mode\x18\r \x01(\tR\fgcmNonceMode\"/\n" +
 	"\x0fDecryptResponse\x12\x1c\n" +
 	"\tplaintext\x18\x01 \x01(\fR\tplaintext\"\x8d\x01\n" +
 	"\x12EncryptAsymRequest\x12\x15\n" +

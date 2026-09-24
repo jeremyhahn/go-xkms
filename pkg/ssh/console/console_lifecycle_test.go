@@ -179,8 +179,11 @@ func (s *lifecycleServer) runShell(ch ssh.Channel) {
 	}
 }
 
-// dialLifecycleServer opens a console against the lifecycle server.
-func dialLifecycleServer(t *testing.T, srv *lifecycleServer) Console {
+// dialLifecycleServer opens a console against the lifecycle server. The
+// bool return is false when the handshake was refused for the expected
+// GODEBUG=fips140=only reason (see requireHandshake); the caller must
+// return immediately in that case.
+func dialLifecycleServer(t *testing.T, srv *lifecycleServer) (Console, bool) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -195,10 +198,10 @@ func dialLifecycleServer(t *testing.T, srv *lifecycleServer) Console {
 		HostKeyScope: scope.User,
 		HostKeyOwner: "tester",
 	}, Config{Rows: 24, Cols: 80})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return nil, false
 	}
-	return c
+	return c, true
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +220,10 @@ func dialLifecycleServer(t *testing.T, srv *lifecycleServer) Console {
 // mutated concurrently.
 func TestConsole_ConcurrentWriteReadAndClose(t *testing.T) {
 	srv := startLifecycleServer(t, modeEcho)
-	c := dialLifecycleServer(t, srv)
+	c, ok := dialLifecycleServer(t, srv)
+	if !ok {
+		return
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(3)
@@ -278,7 +284,10 @@ func TestConsole_ConcurrentWriteReadAndClose(t *testing.T) {
 // would otherwise turn "disconnect" into a permanent hang.
 func TestConsole_CloseReturnsWhileWriteIsBlocked(t *testing.T) {
 	srv := startLifecycleServer(t, modeStalled)
-	c := dialLifecycleServer(t, srv)
+	c, ok := dialLifecycleServer(t, srv)
+	if !ok {
+		return
+	}
 
 	writeDone := make(chan error, 1)
 	go func() {
@@ -318,7 +327,10 @@ func TestConsole_CloseReturnsWhileWriteIsBlocked(t *testing.T) {
 // calls are safe and that the first one really terminated the remote session.
 func TestConsole_CloseIsIdempotentAndTearsDownSession(t *testing.T) {
 	srv := startLifecycleServer(t, modeEcho)
-	c := dialLifecycleServer(t, srv)
+	c, ok := dialLifecycleServer(t, srv)
+	if !ok {
+		return
+	}
 
 	if err := c.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
@@ -343,7 +355,10 @@ func TestConsole_CloseIsIdempotentAndTearsDownSession(t *testing.T) {
 // it is now an explicit, deliberate call.
 func TestConsole_CloseWriteSignalsEOFAndSessionSurvives(t *testing.T) {
 	srv := startLifecycleServer(t, modeDrainUntilEOF)
-	c := dialLifecycleServer(t, srv)
+	c, ok := dialLifecycleServer(t, srv)
+	if !ok {
+		return
+	}
 
 	if _, err := c.Write([]byte("some input\n")); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -402,7 +417,10 @@ func TestConsole_CloseWriteSignalsEOFAndSessionSurvives(t *testing.T) {
 // the typed closed error rather than touching a torn-down channel.
 func TestConsole_CloseWriteOnClosedConsole(t *testing.T) {
 	srv := startLifecycleServer(t, modeEcho)
-	c := dialLifecycleServer(t, srv)
+	c, ok := dialLifecycleServer(t, srv)
+	if !ok {
+		return
+	}
 
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -427,8 +445,8 @@ func TestConsole_OpenLeavesClientUsable(t *testing.T) {
 		HostKeyCallback: ssh.FixedHostKey(srv.hostPub),
 		Timeout:         10 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("ssh.Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer func() { _ = client.Close() }()
 

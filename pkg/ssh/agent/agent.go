@@ -22,6 +22,8 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -193,11 +195,43 @@ type tracker struct {
 	// without limit against a single wedged KMS.
 	waiterOnce sync.Once
 	complete   chan struct{}
+
+	// errMu guards errs, which accumulates the per-connection errors
+	// recordErr is given. It is a separate lock from serveListener's own
+	// connection-bookkeeping mutex because a handler records its error after
+	// it is no longer tracked in serveListener's live map.
+	errMu sync.Mutex
+	errs  []error
 }
 
 func (t *tracker) begin() { t.wg.Add(1) }
 
 func (t *tracker) end() { t.wg.Done() }
+
+// recordErr appends a non-nil handler error, other than the two shapes that
+// mean nothing more than "the connection ended": the client disconnecting
+// (io.EOF) and this package closing the connection itself during shutdown
+// (net.ErrClosed). Safe to call concurrently and after err() has already
+// been read -- a caller that wants every error waits for joinWithin (or
+// Session.Done) first.
+func (t *tracker) recordErr(err error) {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return
+	}
+	t.errMu.Lock()
+	t.errs = append(t.errs, err)
+	t.errMu.Unlock()
+}
+
+// err returns every handler error recorded so far, joined into one. A
+// handler still running when this is called (see joinWithin) contributes
+// nothing -- the same "abandoned work" the tracker's other accessors already
+// document.
+func (t *tracker) err() error {
+	t.errMu.Lock()
+	defer t.errMu.Unlock()
+	return errors.Join(t.errs...)
+}
 
 // completion returns the shared channel, starting its single waiter on first
 // use.
@@ -279,8 +313,7 @@ func listen(socketPath string) (net.Listener, error) {
 			return nil, &ListenError{Err: ErrPathOccupied}
 		}
 		if c, derr := net.DialTimeout("unix", socketPath, occupancyProbeTimeout); derr == nil {
-			_ = c.Close()
-			return nil, &ListenError{Err: ErrSocketInUse}
+			return nil, errors.Join(&ListenError{Err: ErrSocketInUse}, c.Close())
 		}
 		// A socket nobody answers is a leftover, and it is the directory
 		// owner's to remove -- see the note on this function.
@@ -291,8 +324,7 @@ func listen(socketPath string) (net.Listener, error) {
 		return nil, &ListenError{Err: err}
 	}
 	if cerr := os.Chmod(socketPath, 0o600); cerr != nil {
-		_ = ln.Close()
-		return nil, &ListenError{Err: cerr}
+		return nil, errors.Join(&ListenError{Err: cerr}, ln.Close())
 	}
 	return ln, nil
 }
@@ -314,6 +346,13 @@ func listen(socketPath string) (net.Listener, error) {
 // removal of whatever holds the path *by then* -- and joining slow handlers
 // takes long enough for a successor session on the same WorkDir to have bound
 // it, whose live socket we would then delete.
+//
+// Every Close error and every non-EOF ServeAgent error is recorded on t
+// (tracker.recordErr) rather than dropped: a caller that wants the complete
+// set reads t.err() once joinWithin (or Session.Done) confirms every handler
+// has finished. A double Close of ln -- both this function's own defer and
+// the ctx watcher can trigger one -- reports net.ErrClosed, which recordErr
+// already treats as the meaningless "already closed" shape, not a failure.
 func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tracker) error {
 	var (
 		mu       sync.Mutex
@@ -326,7 +365,7 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tr
 		defer mu.Unlock()
 		draining = true
 		for c := range live {
-			_ = c.Close()
+			t.recordErr(c.Close())
 		}
 	}
 
@@ -336,7 +375,7 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tr
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = ln.Close()
+			t.recordErr(ln.Close())
 			drain()
 		case <-returned:
 		}
@@ -346,7 +385,7 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tr
 		// Closing the listener unlinks the socket; drain disconnects everyone
 		// already attached. Together those are what make the session unusable,
 		// and both are unconditional.
-		_ = ln.Close()
+		t.recordErr(ln.Close())
 		drain()
 		// The handlers are deliberately NOT joined here. A handler stuck inside
 		// Signer.Sign -- a TPM awaiting touch, a stalled KMS -- cannot be
@@ -370,7 +409,7 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tr
 			// Accepted in the window between cancellation and the listener
 			// closing; it must not be served.
 			mu.Unlock()
-			_ = conn.Close()
+			t.recordErr(conn.Close())
 			continue
 		}
 		live[conn] = struct{}{}
@@ -388,9 +427,12 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tr
 				mu.Lock()
 				delete(live, c)
 				mu.Unlock()
-				_ = c.Close()
+				t.recordErr(c.Close())
 			}()
-			_ = sshagent.ServeAgent(a, c)
+			// ServeAgent returns io.EOF on an ordinary client disconnect;
+			// recordErr already treats that (and net.ErrClosed, from the
+			// shutdown paths above racing this handler) as meaningless.
+			t.recordErr(sshagent.ServeAgent(a, c))
 		}(conn)
 	}
 }
@@ -415,9 +457,13 @@ func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error {
 	var t tracker
 	serr := serveListener(ctx, ln, a, &t)
 	// Serve is a single blocking call, so it joins on the caller's behalf --
-	// within the default bound, because it has no other one to use.
+	// within the default bound, because it has no other one to use. The bool
+	// it reports is "did every handler finish", already exactly what
+	// ShutdownReport.Joined documents elsewhere for the same call; Serve has
+	// no report type to put it in, and a handler abandoned here contributes
+	// nothing to t.err() below, consistent with that documented meaning.
 	_ = t.joinWithin(after(defaultJoinBound()))
-	return serr
+	return errors.Join(serr, t.err())
 }
 
 // bytesEqual reports whether two byte slices are equal.

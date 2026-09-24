@@ -1,6 +1,6 @@
 # Platform Secrets — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `platform-secrets` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/seal`
 
@@ -92,12 +92,44 @@ ciphertext as if it were the secret, and nothing falls back to an unsealed copy.
 The only configuration that matters is **which `storage.Backend` the store is
 constructed on**:
 
-- `sealed.Backend` over the barrier — production. Protection follows the
-  barrier's strategy: TPM PCR binding, HSM, cloud KMS, passphrase.
+- `sealed.Backend` over a strategy-specific sealer — production.
 - plain file or memory — tests. **Values are not sealed.**
 
-Per-tenant stores are `pkg/seal/platform_store_tenant.go`; the sealer is
-`pkg/seal/platform_sealer.go`.
+For xkmsd's own (system) platform store, `pkg/server.initializePlatformStore`
+is the composition root: `credentials.seal_strategy` (config) selects one
+`types.Sealer` (`pkg/server/platform_store.go`'s `buildPlatformSealer`),
+composed into a single-strategy `seal.PlatformSealer` and wrapped in
+`pkg/storage/sealed.New` over `s.createStorage("platform-store")`. `manual`
+and `barrier` skip building it (`manual` stores nothing; `barrier` is stored
+directly in the qrdb barrier by `credentials.Service`, not here).
+
+- **`tpm2`** reuses a shared TPM open (the node-seal flip's, or the general
+  tpm2 backend's — never opens the device/simulator a second time) and
+  seals under the Platform SRK only, never the Shared SRK (owner ruling;
+  matches PR #681). It requires `TPM.PlatformSRKAttributes()` to succeed and
+  fails closed with a typed error naming
+  `PlatformKeyStore.EnrollPlatformSRK` when the Platform SRK is not yet
+  enrolled. When `Backends.TPM2.PlatformPolicy` is set, `platformPolicySealer`
+  additionally binds every seal/unseal to the platform PCR.
+- **`awskms`/`gcpkms`/`azurekv`** authenticate with ambient credentials (IAM
+  role, Application Default Credentials, `DefaultAzureCredential`) and
+  resolve their symmetric wrapping key through `sealKeyAttributesFor`/
+  `ensureSealKey` (`seal_strategies.go`, shared with the barrier's own
+  cloud-KMS strategy), wrapped in `fixedKeyAttrsSealer` since
+  `sealed.Backend` cannot carry `opts.KeyAttributes` through to `Unseal`.
+- **`pkcs11`/`vault`** fail closed: their secret is only resolvable through
+  the credential service this call builds the storage for (go-xkms#677).
+- **`passphrase`** fails closed pending an owner ruling on where the
+  operator passphrase comes from — `CredentialsConfig` has no field for one
+  today, and the qrdb secret-value contract refuses an inline/literal secret
+  in a protected field.
+
+A strategy that cannot build a sealer aborts `Server.New` with a typed error
+— never a silent skip.
+
+Per-tenant stores are `pkg/seal/platform_store_tenant.go`; the sealer type is
+`pkg/seal/platform_sealer.go`'s `PlatformSealer`, reused by both the system
+and the per-tenant composition roots.
 
 ## Persistence
 
@@ -110,12 +142,28 @@ existing name is the only update path and it discards the previous value.
 - **Unit** — `pkg/seal/platform_store_test.go`,
   `platform_store_tenant_test.go`, `platform_sealer_test.go`.
 - **Transport** — `pkg/api/rest/seal_store_handlers_test.go`.
+- **Composition root** — `pkg/server/platform_store_test.go` covers every
+  `credentials.seal_strategy` outcome end to end: the skip strategies, each
+  fail-closed strategy's typed error, and a real Put/Get/Reseal round-trip
+  for `tpm2` (Platform SRK enrolled via the same construction the
+  not-yet-merged go-xkms#681's `tpm2test.EnrollPlatformSRK` uses) both with
+  and without `Backends.TPM2.PlatformPolicy`. `platform_store_awskms_test.go`
+  / `_gcpkms_test.go` prove the `awskms`/`gcpkms` composition
+  (`sealKeyAttributesFor` + `ensureSealKey` + `fixedKeyAttrsSealer`) against
+  each backend's own mock KMS client; `azurekv` has no equivalent mock
+  round-trip because `pkg/backend/azurekv`'s mock client does not implement
+  the Secrets API `GetSymmetricKey`/`GenerateSymmetricKey` resolve through
+  (that package's own unit suite has the same gap and defers to the
+  emulator-backed `test/integration/azurekv` suite).
 - **Sealed-backend behaviour** — the TPM simulator suites under `pkg/tpm2`
   cover seal-with-PCR-policy, which is what makes `Get` fail after a state
-  change and `Reseal` recover it.
+  change.
 
 The case worth an explicit test in any consumer: a `Get` that fails because the
-platform state changed must be distinguishable from `ErrSecretNotFound`.
+platform state changed must be distinguishable from `ErrSecretNotFound`. A
+second case worth remembering: `Reseal` cannot recover a secret whose `Get`
+already fails — it reads the current plaintext first, so it fails identically
+once the old seal is broken (see the architecture doc's Trust boundaries).
 
 ## Observability
 

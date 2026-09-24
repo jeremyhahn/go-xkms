@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/api"
@@ -672,12 +673,16 @@ func pbToUser(u *pb.User) (*db.User, error) {
 		}
 		id = parsed
 	}
+	lifecycle := qrdbsdk.LifecycleActive
+	if !u.Enabled {
+		lifecycle = qrdbsdk.LifecycleDisabled
+	}
 	return &db.User{
 		ID:        id,
 		Username:  u.Username,
 		TenantID:  u.TenantId,
 		RoleIDs:   u.RoleIds,
-		Enabled:   u.Enabled,
+		Lifecycle: string(lifecycle),
 		System:    u.System,
 		CreatedAt: u.CreatedAt,
 		UpdatedAt: u.UpdatedAt,

@@ -658,6 +658,7 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		Nonce:          params.Nonce,
 		Tag:            params.Tag,
 		AdditionalData: params.AdditionalData,
+		GCMNonceMode:   params.GCMNonceMode,
 		Mode:           params.Mode,
 		IV:             params.IV,
 		TagSize:        params.TagSize,
@@ -730,10 +731,11 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	return EncryptResult{
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-		IV:         resp.IV,
+		Ciphertext:   resp.Ciphertext,
+		Nonce:        resp.Nonce,
+		Tag:          resp.Tag,
+		IV:           resp.IV,
+		GCMNonceMode: resp.GCMNonceMode,
 	}, nil
 }
 

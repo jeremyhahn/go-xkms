@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 )
 
 // CA attestation errors.
@@ -71,7 +73,10 @@ func (s *XKMSService) getCA() (provider.CA, error) {
 }
 
 // GetCABundle retrieves the CA certificate bundle.
-func (s *XKMSService) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (*transport.GetCABundleResponse, error) {
+func (s *XKMSService) GetCABundle(ctx context.Context, req *transport.GetCABundleRequest) (resp *transport.GetCABundleResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpGet, caMetricsBackend, start, err) }()
+
 	ca, err := s.getCA()
 	if err != nil {
 		return nil, err
@@ -104,7 +109,10 @@ func (s *XKMSService) GetCABundle(ctx context.Context, req *transport.GetCABundl
 }
 
 // GetCACertificate retrieves the CA certificate.
-func (s *XKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
+func (s *XKMSService) GetCACertificate(ctx context.Context, req *transport.GetCACertificateRequest) (resp *transport.GetCACertificateResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpGet, caMetricsBackend, start, err) }()
+
 	ca, err := s.getCA()
 	if err != nil {
 		return nil, err
@@ -132,7 +140,10 @@ func (s *XKMSService) GetCACertificate(ctx context.Context, req *transport.GetCA
 }
 
 // SignCSR signs a certificate signing request using the CA.
-func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (*transport.SignCSRResponse, error) {
+func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest) (resp *transport.SignCSRResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpSign, caMetricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -364,7 +375,10 @@ func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error 
 }
 
 // IssueCertificate issues a new certificate from the CA.
-func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (*transport.IssueCertificateResponse, error) {
+func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.IssueCertificateRequest) (resp *transport.IssueCertificateResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpIssueCert, caMetricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -399,7 +413,10 @@ func (s *XKMSService) IssueCertificate(ctx context.Context, req *transport.Issue
 }
 
 // RevokeCertificate revokes a certificate by serial number.
-func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (*transport.RevokeCertificateResponse, error) {
+func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.RevokeCertificateRequest) (resp *transport.RevokeCertificateResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpRevokeCert, caMetricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -428,7 +445,10 @@ func (s *XKMSService) RevokeCertificate(ctx context.Context, req *transport.Revo
 }
 
 // GenerateCRL generates a certificate revocation list.
-func (s *XKMSService) GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (*transport.GenerateCRLResponse, error) {
+func (s *XKMSService) GenerateCRL(ctx context.Context, req *transport.GenerateCRLRequest) (resp *transport.GenerateCRLResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpGenerateCRL, caMetricsBackend, start, err) }()
+
 	ca, err := s.getCA()
 	if err != nil {
 		return nil, err
@@ -468,7 +488,10 @@ func (s *XKMSService) CRL(ctx context.Context) ([]byte, error) {
 }
 
 // IsRevoked checks whether a certificate has been revoked.
-func (s *XKMSService) IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (*transport.IsRevokedResponse, error) {
+func (s *XKMSService) IsRevoked(ctx context.Context, req *transport.IsRevokedRequest) (resp *transport.IsRevokedResponse, err error) {
+	start := time.Now()
+	defer func() { recordServiceOp(metrics.OpGet, caMetricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -491,7 +514,7 @@ func (s *XKMSService) IsRevoked(ctx context.Context, req *transport.IsRevokedReq
 		return nil, &ErrCAOperation{Operation: "is revoked", Err: err}
 	}
 
-	resp := &transport.IsRevokedResponse{
+	resp = &transport.IsRevokedResponse{
 		Revoked: revoked,
 	}
 	if revoked {

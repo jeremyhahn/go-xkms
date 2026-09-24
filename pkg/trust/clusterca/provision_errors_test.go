@@ -296,6 +296,35 @@ func TestBarrierStrategy_CloseBootstrapStorageReleasesBothStores(t *testing.T) {
 	require.Error(t, s.bootstrapKeyStorage.Put(ctx, "after/close", []byte("x")))
 }
 
+// closeErrorBackend is a storage.Backend whose Close always fails, so
+// closeBootstrapStorage's error-aggregation path can be exercised without a
+// real storage failure.
+type closeErrorBackend struct {
+	storage.Backend
+	err error
+}
+
+func (b *closeErrorBackend) Close() error { return b.err }
+
+// TestBarrierStrategy_CloseBootstrapStorageJoinsBothFailures verifies that a
+// Close failure on either store is reported, and that failures on both are
+// joined rather than the second silently discarding the first -- an operator
+// diagnosing a stuck node-local directory needs to see every handle that
+// refused to release.
+func TestBarrierStrategy_CloseBootstrapStorageJoinsBothFailures(t *testing.T) {
+	keyErr := errors.New("key store close failed")
+	certErr := errors.New("cert store close failed")
+	s := &barrierStrategy{
+		bootstrapKeyStorage:  &closeErrorBackend{err: keyErr},
+		bootstrapCertStorage: &closeErrorBackend{err: certErr},
+	}
+
+	err := s.closeBootstrapStorage()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, keyErr)
+	assert.ErrorIs(t, err, certErr)
+}
+
 // TestBarrierStrategy_RuntimeRejectsMissingCertStorage verifies both halves of
 // the replicated store are required, not just the key half.
 func TestBarrierStrategy_RuntimeRejectsMissingCertStorage(t *testing.T) {

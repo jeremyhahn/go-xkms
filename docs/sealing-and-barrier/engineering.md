@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface — `pkg/seal`
 
@@ -53,6 +53,115 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult
 func (r *AutodetectResult) HardwareAvailable() bool
 func (r *AutodetectResult) Close() error
 ```
+
+### Cloud KMS strategy composition (`cloud_provision.go`, go-xkms#757)
+
+The ONE function `xkmsd` (`pkg/server/seal_strategies.go`) and `xkey`
+(`go-xkms/xkey`, which has no backend/provider registry of its own) both
+call to turn an already-constructed cloud KMS backend into a
+`CloudKMSStrategy`:
+
+```go
+const SealKeyCN = "xkms-barrier-seal"
+
+func SealKeyAttributes(store types.StoreType) *types.KeyAttributes
+func IsCloudSealStrategy(id StrategyID) bool
+func EnsureSealKey(ctx context.Context, id StrategyID, provider types.KeyProvider, keyAttrs *types.KeyAttributes) error
+func BuildCloudKMSStrategy(ctx context.Context, id StrategyID, store types.StoreType, provider types.KeyProvider) (SealingStrategy, error)
+
+type SealLoginProvider interface{ Login() error }
+type SealMetadataSaver interface {
+	Save(attrs *types.KeyAttributes, data []byte, extension types.FSExtension, overwrite bool) error
+}
+type SealOperatorKeyProvider interface{ OperatorSealKeyID() string }
+type ErrSealBackendUnavailable struct{ Strategy, Purpose string }
+type ErrNotCloudSealStrategy struct{ Strategy string }
+```
+
+`BuildCloudKMSStrategy` accepts only `StrategyAWSKMS`/`StrategyGCPKMS`/
+`StrategyAzureKV`/`StrategyVault` (`ErrNotCloudSealStrategy` otherwise); it
+provisions (creates on first use, reuses thereafter, via `EnsureSealKey`)
+the symmetric wrapping key identified by `SealKeyAttributes(store)` — the
+fixed `SealKeyCN` identifies the key's *purpose* (`"xkms-barrier-seal"`) to
+every backend, but is never itself passed to a cloud KMS as a key ID — and
+wraps the provider's `types.Sealer` in a `CloudKMSStrategy`. `pkg/server`'s
+own `buildHardwareSealStrategy` calls this for its four cloud IDs and
+continues to wrap TPM2/PKCS11 (not shared with xkey) inline; see
+`xkey/docs/seal/architecture.md` for xkey's side of the composition
+(per-provider backend construction gated by that provider's build tag, then
+this same call).
+
+**AWS KMS key lifecycle (go-xkms#839).** GCP KMS, Azure Key Vault and
+HashiCorp Vault all let the caller choose the key's own name, so
+`SealKeyCN` doubles as that name and `GetSymmetricKey` addresses the
+provider directly by it. AWS KMS does not: `CreateKey` always returns a
+provider-assigned key ID, so `pkg/backend/awskms.Backend` needs a durable
+CN -> AWS-key-ID mapping. That mapping is persisted through
+`Config.KeyStorage` (`storage.SaveKey`/`storage.GetKey`/`storage.KeyExists`/
+`storage.DeleteKey`/`storage.ListKeys`, the same helpers `pkg/backend/vault`
+uses) for every key the backend handles — symmetric and asymmetric alike —
+never cached in an in-process map. A second `*Backend` built over the same
+`Config.KeyStorage` (a process restart, or a second node sharing the same
+metadata store) sees exactly what the first one persisted; `Backend.Close`
+releases only the AWS client handle and never touches `Config.KeyStorage`,
+whose lifecycle belongs to the caller that constructed it. `EnsureSealKey`'s
+AWS branch resolves the CN -> key-ID mapping before the shared
+check-and-skip runs:
+
+- If the backend implements `SealOperatorKeyProvider` and
+  `OperatorSealKeyID()` returns a non-empty key ID, ARN, or alias — for
+  `*awskms.Backend`, `Config.KeyID` — that real identifier seeds the
+  persisted metadata via `SealMetadataSaver.Save`, and `GetSymmetricKey`'s
+  `DescribeKey` call confirms it still exists before reuse. `CreateKey` is
+  never called.
+- Otherwise nothing is seeded. `GetSymmetricKey` reads `Config.KeyStorage`
+  directly: on a truly fresh key it misses and `GenerateSymmetricKey` calls
+  AWS KMS's `CreateKey`, persisting the AWS-assigned key ID it returns —
+  never `SealKeyCN` itself. On a restart it hits the record the prior
+  process (or Backend instance) persisted and resolves the same AWS key, so
+  `CreateKey` runs exactly once for the seal key's whole lifetime, not once
+  per process boot.
+
+Before this fix (go-xkms#839, landed in two parts), `EnsureSealKey`
+unconditionally seeded an in-process `Backend.metadata` map with
+`{"key_id": SealKeyCN}`, which made `GenerateSymmetricKey`'s own "already
+exists" guard succeed on the very first call — `CreateKey` never ran, and
+every later `Encrypt`/`Decrypt` addressed AWS KMS with the literal string
+`"xkms-barrier-seal"` as the key ID, which is not a valid key identifier on
+a real AWS account; the `awskms` barrier strategy could not work outside a
+mock. Fixing only that (part 1) without also persisting
+`GenerateSymmetricKey`'s metadata (part 2) would have traded a barrier that
+fails at init for one that fails later and loses data: with no
+operator-configured key, every process restart would have seen an empty
+in-process cache, called `CreateKey` again, and orphaned the CMK data was
+already sealed under. See `cloud_provision_awskms_test.go`'s
+`newAWSKMSMockBackend` doc comment and
+`TestBuildCloudKMSStrategy_AWSKMSBackend_RestartReusesPersistedKey`.
+
+**`getKeyID` error semantics.** The ten other `*awskms.Backend` methods that
+resolve a key by CN outside the seal-key path (`Get`, `Delete`, `Sign`,
+`Verify`, `Signer`, `Decrypter`, `RotateKey`, `GetImportParameters`,
+`ImportKey`, and `SymmetricEncrypter`) all go through the private
+`getKeyID(ctx, cn) (string, error)` helper, which returns exactly one
+silent answer and errors on everything else:
+
+- `storage.ErrNotFound` (no metadata record was ever written for `cn`)
+  resolves to the `"alias/{cn}"` alias. This is safe specifically because
+  both `CreateKey` (asymmetric) and `GenerateSymmetricKey` attempt to
+  create that exact alias alongside every key they provision — best-effort
+  in AWS terms (a failed `CreateAlias` only logs a warning and does not
+  fail key creation), but always attempted. A CN that was never used to
+  create a key has no alias either, so AWS KMS itself reports "alias not
+  found" on the caller's next API call: an honest failure, not a masked
+  one.
+- Any other `Config.KeyStorage` error, a metadata record that fails to
+  parse as JSON, or a record missing `key_id` all return `ErrMetadataStorage`
+  (wrapped with `errs.Joined`/`errs.Detail` for context, reachable through
+  `errors.Is`). None of these fall back to the alias: now that
+  `Config.KeyStorage` is the sole source of truth for which AWS key a CN
+  maps to, silently guessing on a transient storage failure would risk a
+  caller addressing a different KMS key than the one actually recorded,
+  with nothing surfaced to say so.
 
 ### Other components
 
@@ -115,7 +224,7 @@ Per-strategy credentials:
 |---|---|
 | `tpm2` | platform/TPM authorization, plus PCR policy where configured |
 | `pkcs11` | SO PIN and/or user PIN |
-| `awskms` / `gcpkms` / `azurekv` / `vault` | the provider's credentials, from the **server's** environment |
+| `awskms` / `gcpkms` / `azurekv` / `vault` | the provider's own ambient credential chain by default, from the **process's** environment — `xkmsd`'s or `xkey`'s, whichever builds the strategy (go-xkms#757); an explicit credential is a `*types.SecretValue` config reference, never a literal |
 | `passphrase` | a passphrase |
 | `shamir` | M-of-N shares |
 | `none` | none — encryption disabled |
@@ -172,6 +281,40 @@ so this is the one compatibility rule in the repo with no workaround.
   `barrier_adapter_test.go`, `platform_sealer_test.go`,
   `platform_store_test.go`, `platform_store_tenant_test.go`,
   `secret_sealer_test.go`, `hardware_encryptor_test.go`, `audit_test.go`.
+- **Cloud KMS composition** — `cloud_provision_test.go` (no build tag: all
+  four strategy IDs against a generic mock `types.KeyProvider` — key-exists,
+  first-init create, idempotent-generate, login branches,
+  provider-not-sealer/not-symmetric errors, and the AWS
+  operator-key-configured/no-operator-key metadata-seed branches);
+  `cloud_provision_awskms_test.go` (`awskms` tag: the same composition
+  against the real `*awskms.Backend` and its own `MockKMSClient` — first
+  provisioning calls `CreateKey` exactly once and every Encrypt/Decrypt
+  addresses the AWS-assigned ID, a second provisioning in the same process
+  reuses it without a second `CreateKey`, **a second `*awskms.Backend` built
+  over the same `storage.Backend` — a simulated restart —
+  (`TestBuildCloudKMSStrategy_AWSKMSBackend_RestartReusesPersistedKey`)
+  resolves the persisted key and unseals data sealed before the restart,
+  without calling `CreateKey` again**, an operator-configured `Config.KeyID`
+  is resolved and reused without ever calling `CreateKey`, an init→seal→unseal
+  round trip, and a missing-credentials failure surfacing from
+  `BuildCloudKMSStrategy` itself).
+- **AWS KMS metadata persistence** — `pkg/backend/awskms/persistence_test.go`
+  (`awskms` tag): a `failingStorage` wrapper injects a `Config.KeyStorage`
+  failure into one call at a time, proving `GenerateSymmetricKey`,
+  `SymmetricEncrypter`, `CreateKey` (asymmetric), `GetKey`, `Save`,
+  `Delete`, `ListKeys`, and `Get` all propagate a storage failure as an
+  error instead of silently treating it as "not found" or panicking; the
+  updated `TestClose` in `awskms_test.go` proves `Close` leaves persisted
+  metadata intact.
+- **`getKeyID` error semantics** — `TestGetKeyID` (`awskms_test.go`) covers
+  the one silent fallback (no metadata record → the `alias/{cn}` alias);
+  `persistence_test.go`'s
+  `TestGetKeyID_StorageErrorPropagatesThroughSign` and
+  `..._StorageErrorPropagatesThroughDecrypter` prove a `Config.KeyStorage`
+  failure surfaces as `ErrMetadataStorage` through two representative
+  callers without ever reaching AWS KMS with a guessed key ID;
+  `TestGetKeyID_CorruptMetadataRecord` and `..._MissingKeyIDField` cover a
+  record that fails to parse and one that parses but lacks `key_id`.
 - **Composition** — `hardware_compose_test.go` covers registration into qrdb's
   registry.
 - **Concurrency** — `mock_putifabsent_test.go` covers the CAS init path.

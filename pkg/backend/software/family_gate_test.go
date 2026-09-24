@@ -15,6 +15,7 @@ package software
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/x509"
 	"testing"
 
@@ -209,8 +210,12 @@ func TestRequireSingleAlgorithmFamily_AdmitsEveryListKeysDescriptor(t *testing.T
 		CN: "gate-x25519", StoreType: types.StoreSoftware, KeyType: types.KeyTypeEncryption,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = b.GenerateKey(ctx, x25519Attrs)
-	require.NoError(t, err, "generate X25519")
+	// X25519 is refused outright under GODEBUG=fips140=only (see
+	// requireX25519Key); the other three families below still exercise the
+	// gate in that mode.
+	if _, err := b.GenerateKey(ctx, x25519Attrs); err != nil && !fips140.Enforced() {
+		require.NoError(t, err, "generate X25519")
+	}
 
 	quantumAttrs := &types.KeyAttributes{
 		CN: "gate-quantum", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning,

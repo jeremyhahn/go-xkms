@@ -1,0 +1,1 @@
+- **AWS KMS key creation returns a typed error instead of crashing when CreateKey returns no key metadata** (#839). `GenerateSymmetricKey` and `CreateKey` dereferenced `output.KeyMetadata.KeyId` unchecked, so a malformed success response from a misbehaving endpoint or proxy panicked the process. Both now return `ErrMalformedResponse`.

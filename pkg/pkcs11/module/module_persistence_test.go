@@ -15,6 +15,7 @@ package module
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -350,6 +351,57 @@ func TestModule_FinalizeOperationType_NoErrorWhenActive(t *testing.T) {
 	m.finalizeOperationType(sm, handle, OperationSign)
 
 	assert.NoError(t, m.LastStorageError())
+}
+
+// TestModule_LastInitWarning_ReportsBestEffortFailures proves the seam that
+// makes Initialize's best-effort steps auditable (#701): loading persisted
+// lockout state, auto-initializing the token, and loading configured PIV
+// objects must all complete regardless of whether any one of them failed, so
+// none of their failures reach Initialize's own CK_RV. Before this fix they
+// were discarded outright (`_ = rv`); recording the most recent one keeps the
+// failure visible instead.
+func TestModule_LastInitWarning_ReportsBestEffortFailures(t *testing.T) {
+	m, err := New(WithClient(newMockClient()), WithConfig(DefaultConfig()))
+	require.NoError(t, err)
+
+	assert.NoError(t, m.LastInitWarning(), "a module that has never failed a best-effort init step reports no error")
+
+	m.logInitWarning("auto-initialize token", nil)
+	assert.NoError(t, m.LastInitWarning(), "a nil error is not a failure and must not be recorded")
+
+	cause := &errs.Message{Msg: "PIV backend unreachable"}
+	m.logInitWarning("load PIV objects for backend tpm2", cause)
+
+	recorded := m.LastInitWarning()
+	require.Error(t, recorded)
+	assert.ErrorIs(t, recorded, cause, "the recorded failure must unwrap to its cause")
+	assert.Contains(t, recorded.Error(), "load PIV objects for backend tpm2",
+		"the recorded failure must name the operation that hit it")
+	assert.Contains(t, recorded.Error(), "PIV backend unreachable")
+}
+
+// TestModule_Initialize_PIVBackendFailureRecordedNotDiscarded exercises the
+// same composition Initialize uses for its PIV-loading loop -- LoadPIVObjects
+// returning an error and that error reaching logInitWarning -- without
+// standing up the full local-transport Initialize path newTestModule's
+// fixture does not wire. LoadPIVObjects' own error paths are covered
+// separately (TestLoadPIVObjects_ListSlotsError and neighbors); this proves
+// the call site that used to be `_ = m.LoadPIVObjects(pivCtx, backend) //
+// best effort` now keeps the failure visible.
+func TestModule_Initialize_PIVBackendFailureRecordedNotDiscarded(t *testing.T) {
+	mc := newPIVMockClient()
+	mc.listPIVSlotsErr = errors.New("connection refused")
+	m := newTestModule(mc)
+
+	assert.NoError(t, m.LastInitWarning())
+
+	if err := m.LoadPIVObjects(context.Background(), "tpm2"); err != nil {
+		m.logInitWarning("load PIV objects for backend tpm2", err)
+	}
+
+	recorded := m.LastInitWarning()
+	require.Error(t, recorded, "a failed PIV backend load must be visible via LastInitWarning, not silently discarded")
+	assert.ErrorIs(t, recorded, ErrPIVListSlots)
 }
 
 // errObjectWriteRejected is the cause a rejectingObjectStore reports, so a test

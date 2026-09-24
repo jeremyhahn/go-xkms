@@ -11,31 +11,52 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package client provides a headless WebAuthn client that acts as the "browser"
-// in the WebAuthn flow. It communicates with a WebAuthn relying party (server)
-// over HTTP and delegates CTAP2 operations to a local authenticator via the
-// AuthenticatorAdapter interface.
+// Package client provides the single headless WebAuthn ceremony driver in
+// go-xkms. It acts as the "browser" in the WebAuthn flow, bridging a
+// RelyingParty (the server side) and an AuthenticatorAdapter (the
+// authenticator side).
 //
 // # Architecture
 //
-// The client bridges two sides of the WebAuthn protocol:
+// Client is deliberately thin: it drives the three-step ceremony
+// (begin -> authenticator -> finish) and leaves the two sides pluggable.
 //
-//   - Server side: HTTP communication with the RP endpoints
-//     (registration/begin, registration/finish, login/begin, login/finish)
-//   - Authenticator side: CTAP2 operations via the AuthenticatorAdapter
-//     interface, which can be backed by xkey IPC, hardware tokens, or
-//     a software adapter for testing
+//   - Server side (RelyingParty): HTTPRelyingParty speaks the browser-shaped
+//     pkg/webauthn/http routes (registration/begin, .../finish, login/begin,
+//     .../finish); TransportRelyingParty speaks the SDK transport routes
+//     (/api/v1/webauthn/sdk/...) through a pkg/api/transport.Client, in
+//     whichever protocol that client was built with.
+//   - Authenticator side (AuthenticatorAdapter): HardwareAdapter drives a
+//     real CTAP2 authenticator over HID via pkg/fido2, including xkey's
+//     virtual "xkey fido2" uhid authenticator; SoftwareAdapter is a
+//     software-only CTAP2 authenticator for headless testing and CI.
+//
+// Every consumer in the stack — xkey, xkmsctl, and any composer reached
+// through sdk/go — drives ceremonies through this one Client with one of
+// these RelyingParty/AuthenticatorAdapter pairs; none reimplements the
+// ceremony.
 //
 // # Usage
 //
-// With a real authenticator (via IPC to xkey):
+// Browser-shaped RP with a real authenticator:
 //
+//	adapter, err := client.NewHardwareAdapter(nil, nil)
+//	// ... defer adapter.Close()
 //	c, err := client.NewClient(&client.Config{
 //	    ServerURL:            "https://xkms.example.com:8443",
-//	    AuthenticatorAdapter: ipcAdapter,
+//	    AuthenticatorAdapter: adapter,
 //	})
 //	result, err := c.Register(ctx, &client.RegistrationRequest{
 //	    Username: "user@example.com",
+//	})
+//
+// SDK transport RP (xkey/xkmsctl shape) with a real authenticator:
+//
+//	rp, err := client.NewTransportRelyingParty(transportClient) // e.g. an sdk/go Client
+//	adapter, err := client.NewHardwareAdapter(nil, nil)
+//	c, err := client.NewClient(&client.Config{
+//	    RelyingParty:         rp,
+//	    AuthenticatorAdapter: adapter,
 //	})
 //
 // With the software adapter (for testing):

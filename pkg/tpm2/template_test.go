@@ -285,3 +285,63 @@ type unsupportedCurve struct{ elliptic.Curve }
 func (unsupportedCurve) Params() *elliptic.CurveParams {
 	return &elliptic.CurveParams{Name: "unsupported-test-curve"}
 }
+
+// TestDescribeSpec_RendersEveryPresentField pins the shape of the
+// ParametersNotSupportedError message: an operator reading "this TPM
+// declined the requested key parameters: ECDSA P-256 256-bit ECDSA/SHA-256"
+// needs every field that was actually set in the spec to appear, and nothing
+// that was not.
+func TestDescribeSpec_RendersEveryPresentField(t *testing.T) {
+	tests := []struct {
+		name string
+		spec KeyTemplateSpec
+		want string
+	}{
+		{
+			name: "algorithm only",
+			spec: KeyTemplateSpec{Algorithm: x509.RSA},
+			want: "RSA",
+		},
+		{
+			name: "algorithm and curve",
+			spec: KeyTemplateSpec{Algorithm: x509.ECDSA, Curve: elliptic.P256()},
+			want: "ECDSA P-256",
+		},
+		{
+			name: "algorithm and key bits",
+			spec: KeyTemplateSpec{Algorithm: x509.RSA, KeyBits: 3072},
+			want: "RSA 3072-bit",
+		},
+		{
+			name: "algorithm and scheme",
+			spec: KeyTemplateSpec{Algorithm: x509.RSA, Scheme: tpm2.TPMAlgRSASSA},
+			want: "RSA RSASSA",
+		},
+		{
+			name: "scheme null is not rendered",
+			spec: KeyTemplateSpec{Algorithm: x509.RSA, Scheme: tpm2.TPMAlgNull},
+			want: "RSA",
+		},
+		{
+			name: "scheme hash without a fixed scheme",
+			spec: KeyTemplateSpec{Algorithm: x509.RSA, SchemeHash: tpm2.TPMAlgSHA256},
+			want: "RSA/SHA-256",
+		},
+		{
+			name: "every field present",
+			spec: KeyTemplateSpec{
+				Algorithm:  x509.ECDSA,
+				Curve:      elliptic.P256(),
+				KeyBits:    256,
+				Scheme:     tpm2.TPMAlgECDSA,
+				SchemeHash: tpm2.TPMAlgSHA256,
+			},
+			want: "ECDSA P-256 256-bit ECDSA/SHA-256",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, describeSpec(tt.spec))
+		})
+	}
+}

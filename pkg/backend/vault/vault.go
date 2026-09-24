@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -242,10 +243,17 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
-	// Load metadata to verify key exists
+	// Load metadata to verify key exists. Only a genuine storage.ErrNotFound
+	// is reported as ErrKeyNotFound; any other failure from the metadata
+	// store (I/O error, unavailable backend) must not be conflated with "no
+	// key yet" -- getOrGenerateCAKey relies on that distinction to decide
+	// whether generating a replacement key is safe.
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -400,10 +408,15 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
-	// Verify key exists
+	// Verify key exists. Only a genuine storage.ErrNotFound is reported as
+	// ErrKeyNotFound; any other failure from the metadata store must not be
+	// conflated with "no key yet" (matches GetKey's classification).
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -430,10 +443,15 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "CN is required"}
 	}
 
-	// Verify key exists
+	// Verify key exists. Only a genuine storage.ErrNotFound is reported as
+	// ErrKeyNotFound; any other failure from the metadata store must not be
+	// conflated with "no key yet" (matches GetKey's classification).
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)
@@ -462,10 +480,15 @@ func (b *Backend) Encrypt(ctx context.Context, attrs *types.KeyAttributes, plain
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("encrypt only supports RSA keys, got: %v", attrs.KeyAlgorithm)}
 	}
 
-	// Verify key exists
+	// Verify key exists. Only a genuine storage.ErrNotFound is reported as
+	// ErrKeyNotFound; any other failure from the metadata store must not be
+	// conflated with "no key yet" (matches GetKey's classification).
 	_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 
 	keyName := b.sanitizeKeyName(attrs.CN)

@@ -311,6 +311,13 @@ func (f *failingStorageBackend) List(ctx context.Context, prefix string) ([]stri
 	return f.mockStorageBackend.List(ctx, prefix)
 }
 
+func (f *failingStorageBackend) Delete(ctx context.Context, key string) error {
+	if f.failOn == "delete" {
+		return errors.New("storage error")
+	}
+	return f.mockStorageBackend.Delete(ctx, key)
+}
+
 func TestNonceTracker_MarkUsed_ExistsError(t *testing.T) {
 	storage := newFailingStorageBackend("exists")
 	tracker := NewNonceTracker(storage)

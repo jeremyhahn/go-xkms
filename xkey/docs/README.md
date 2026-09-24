@@ -18,10 +18,13 @@ tell.
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
+| [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
+| [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
 | [seal](seal/) | The Barrier, barrier PCR-policy auto-unseal (shared by the CLI and GUI), the named PCR policy store, and the legacy sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
+| [secret-service](secret-service/) | The `org.freedesktop.secrets` D-Bus daemon exposing the static-password store to secret-tool, git-credential-libsecret and browsers, with Lock/Unlock tied to the barrier | — |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
@@ -41,7 +44,7 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
+Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `oath/`,
 `password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
@@ -66,6 +69,7 @@ Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, 
 | [pkcs11/](pkcs11/) | PKCS#11 IPC transport for Unix socket crypto operations |
 | [roadmap/](roadmap/) | Feature roadmaps for media, PIV, and web |
 | [seal/](seal/) | The Barrier, TPM PCR-policy auto-unseal, named PCR policies, and the legacy sealed-blob store |
+| [secret-service/](secret-service/) | The `org.freedesktop.secrets` D-Bus Secret Service daemon |
 | [ssh/](ssh/) | SSH agent with standalone and server modes |
 | [testing/](testing/) | Testing guides and end-to-end test documentation |
 | [usage/](usage/) | CLI usage guides, tutorials, and command reference |

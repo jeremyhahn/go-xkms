@@ -13,7 +13,11 @@
 
 package tpm2
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
 	// ErrNotInitialized indicates the TPM2 backend has not been initialized
@@ -25,8 +29,20 @@ var (
 	// ErrInvalidConfig indicates the configuration is invalid
 	ErrInvalidConfig = errors.New("tpm2: invalid configuration")
 
-	// ErrKeyNotFound indicates the requested key was not found
-	ErrKeyNotFound = errors.New("tpm2: key not found")
+	// ErrKeyNotFound indicates the requested key was not found. It is an
+	// alias of backend.ErrKeyNotFound (rather than a distinct sentinel) so
+	// errors.Is(err, backend.ErrKeyNotFound) recognizes it without any
+	// wrapping, keeping this backend's not-found signal identical to every
+	// other backend's.
+	ErrKeyNotFound = backend.ErrKeyNotFound
+
+	// ErrKeyRetrievalFailed indicates GetKey could not determine whether the
+	// requested key exists because the underlying key store (file, TPM
+	// context, etc.) returned an error other than "not found" -- a
+	// transient I/O failure, permission error, or corrupt blob. Callers
+	// must not treat this as ErrKeyNotFound: doing so risks silently
+	// generating a replacement for a key the backend merely failed to read.
+	ErrKeyRetrievalFailed = errors.New("tpm2: key retrieval failed")
 
 	// ErrUnsupportedKeyAlgorithm indicates the key algorithm is not supported
 	ErrUnsupportedKeyAlgorithm = errors.New("tpm2: unsupported key algorithm")

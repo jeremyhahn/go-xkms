@@ -25,11 +25,11 @@ import (
 	"errors"
 	"io"
 	"testing"
-	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 )
 
 // fakeDirectoryClient is a stateful stand-in for the server's user directory.
@@ -104,23 +104,56 @@ func (f *fakeDirectoryClient) BeginRegistration(_ context.Context, req *client.B
 	}, nil
 }
 
-// newDeviceLessHandler builds the same FIDO2 handler the commands build, aimed
-// at a device path that cannot exist. Construction succeeds and the ceremony
-// fails deterministically at the authenticator, which is well after the two
-// server calls under test have already been made.
-func newDeviceLessHandler(t *testing.T) *fido2.FIDO2Handler {
+// unresponsiveHIDDevice is a HID device double that enumerates as attached
+// but fails every I/O call, so a ceremony driven against it fails
+// deterministically at the authenticator without needing real hardware.
+type unresponsiveHIDDevice struct{ path string }
+
+func (d *unresponsiveHIDDevice) Write([]byte) (int, error) {
+	return 0, errors.New("no real authenticator attached")
+}
+func (d *unresponsiveHIDDevice) Read([]byte) (int, error) {
+	return 0, errors.New("no real authenticator attached")
+}
+func (d *unresponsiveHIDDevice) Close() error         { return nil }
+func (d *unresponsiveHIDDevice) Path() string         { return d.path }
+func (d *unresponsiveHIDDevice) ProductID() uint16    { return 0x0001 }
+func (d *unresponsiveHIDDevice) VendorID() uint16     { return 0xF1D0 }
+func (d *unresponsiveHIDDevice) Product() string      { return "Test Authenticator" }
+func (d *unresponsiveHIDDevice) Manufacturer() string { return "xkmsctl tests" }
+func (d *unresponsiveHIDDevice) SerialNumber() string { return "TEST-0001" }
+
+// unresponsiveHIDEnumerator reports one attached, unresponsive device so
+// webauthnclient.NewHardwareAdapter's discovery probe succeeds, letting the
+// ceremony fail at the authenticator I/O step instead of at discovery.
+type unresponsiveHIDEnumerator struct{}
+
+func (unresponsiveHIDEnumerator) Enumerate(_, _ uint16) ([]fido2.HIDDevice, error) {
+	return []fido2.HIDDevice{&unresponsiveHIDDevice{path: "/nonexistent/fido2-device"}}, nil
+}
+
+func (unresponsiveHIDEnumerator) Open(path string) (fido2.HIDDevice, error) {
+	return &unresponsiveHIDDevice{path: path}, nil
+}
+
+// newDeviceLessAdapter builds the same hardware authenticator adapter the
+// commands build, aimed at a device that enumerates but never responds.
+// Construction succeeds and the ceremony fails deterministically at the
+// authenticator, which is well after the two server calls under test have
+// already been made.
+func newDeviceLessAdapter(t *testing.T) webauthnclient.AuthenticatorAdapter {
 	t.Helper()
 
 	cfg := fido2.DefaultConfig
 	cfg.DevicePath = "/nonexistent/fido2-device"
 
-	handler, err := fido2.NewHandler(&cfg, fido2.NewDefaultEnumerator())
+	adapter, err := webauthnclient.NewHardwareAdapter(&cfg, unresponsiveHIDEnumerator{})
 	if err != nil {
-		t.Fatalf("build fido2 handler: %v", err)
+		t.Fatalf("build hardware adapter: %v", err)
 	}
-	t.Cleanup(func() { _ = handler.Close() })
+	t.Cleanup(func() { _ = adapter.Close() })
 
-	return handler
+	return adapter
 }
 
 // The ceremony must be begun against the email, not the username, whether or
@@ -146,10 +179,10 @@ func TestWebAuthnRegistration_BeginsCeremonyByEmailNotUsername(t *testing.T) {
 			_, err := webAuthnRegistration(
 				context.Background(),
 				cl,
-				newDeviceLessHandler(t),
+				func() (webauthnclient.AuthenticatorAdapter, error) { return newDeviceLessAdapter(t), nil },
 				NewPrinter("text", io.Discard),
 				username, email, "Admin", string(RoleAdmin), "",
-				false, time.Second, nil,
+				nil,
 			)
 
 			// The ceremony can only fail at the local authenticator: reaching it
@@ -203,10 +236,10 @@ func TestWebAuthnRegistration_BeginRegistrationFailureIsWrapped(t *testing.T) {
 	_, err := webAuthnRegistration(
 		context.Background(),
 		cl,
-		newDeviceLessHandler(t),
+		func() (webauthnclient.AuthenticatorAdapter, error) { return newDeviceLessAdapter(t), nil },
 		NewPrinter("text", io.Discard),
 		"admin", email, "Admin", string(RoleAdmin), "",
-		false, time.Second, nil,
+		nil,
 	)
 
 	if !errors.Is(err, ErrBeginRegistrationFailed) {

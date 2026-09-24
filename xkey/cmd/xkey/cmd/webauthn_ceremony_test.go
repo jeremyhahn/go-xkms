@@ -15,10 +15,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,99 +24,20 @@ import (
 	fido2 "github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 )
 
-// --- parseCreationOptions ---
-
-// TestParseCreationOptions_WrappedDocument verifies the browser-shaped
-// registration options a relying party serves are decoded into the CTAP2
-// registration parameters.
-func TestParseCreationOptions_WrappedDocument(t *testing.T) {
-	challenge := []byte("registration-challenge")
-	userID := []byte("user-handle-1")
-
-	optionsJSON := []byte(`{"publicKey":{` +
-		`"challenge":"` + base64.RawURLEncoding.EncodeToString(challenge) + `",` +
-		`"rp":{"id":"xkms.example.com","name":"xKMS"},` +
-		`"user":{"id":"` + base64.RawURLEncoding.EncodeToString(userID) + `","name":"alice","displayName":"Alice Example"},` +
-		`"authenticatorSelection":{"userVerification":"required"},` +
-		`"timeout":90000}}`)
-
-	opts, err := parseCreationOptions(optionsJSON, "https://xkms.example.com:8443")
-	require.NoError(t, err)
-
-	assert.Equal(t, challenge, opts.Challenge)
-	assert.Equal(t, "xkms.example.com", opts.RPID)
-	assert.Equal(t, "xKMS", opts.RPName)
-	assert.Equal(t, userID, opts.UserID)
-	assert.Equal(t, "alice", opts.UserName)
-	assert.Equal(t, "Alice Example", opts.UserDisplayName)
-	assert.True(t, opts.RequireUserVerification)
-	assert.Equal(t, 90*time.Second, opts.Timeout)
-	assert.Equal(t, "https://xkms.example.com:8443", opts.Origin)
-}
-
-// TestParseCreationOptions_BareDocument verifies the unwrapped
-// PublicKeyCredentialCreationOptions shape is accepted too.
-func TestParseCreationOptions_BareDocument(t *testing.T) {
-	optionsJSON := []byte(`{"challenge":"Y2hhbGxlbmdl","rp":{"id":"xkms.example.com"},"user":{"name":"bob"}}`)
-
-	opts, err := parseCreationOptions(optionsJSON, "")
-	require.NoError(t, err)
-
-	assert.Equal(t, []byte("challenge"), opts.Challenge)
-	assert.Equal(t, "xkms.example.com", opts.RPID)
-	assert.Equal(t, "bob", opts.UserName)
-	assert.False(t, opts.RequireUserVerification)
-}
-
-// TestParseCreationOptions_DefaultsOrigin verifies the WebAuthn same-origin
-// default is applied when the caller supplies no origin.
-func TestParseCreationOptions_DefaultsOrigin(t *testing.T) {
-	optionsJSON := []byte(`{"publicKey":{"challenge":"Y2hhbGxlbmdl","rp":{"id":"xkms.example.com"}}}`)
-
-	opts, err := parseCreationOptions(optionsJSON, "")
-	require.NoError(t, err)
-	assert.Equal(t, "https://xkms.example.com", opts.Origin)
-}
-
-// TestParseCreationOptions_PaddedBase64 verifies padded base64url fields are
-// tolerated, since relying parties have been observed emitting them.
-func TestParseCreationOptions_PaddedBase64(t *testing.T) {
-	optionsJSON := []byte(`{"publicKey":{"challenge":"Y2hhbGxlbmdlLTE=","rp":{"id":"rp.example"}}}`)
-
-	opts, err := parseCreationOptions(optionsJSON, "")
-	require.NoError(t, err)
-	assert.Equal(t, []byte("challenge-1"), opts.Challenge)
-}
-
-// TestParseCreationOptions_Errors verifies every malformed options document
-// is rejected with the matching typed error.
-func TestParseCreationOptions_Errors(t *testing.T) {
-	tests := []struct {
-		name        string
-		optionsJSON string
-		wantErr     error
-	}{
-		{"empty", "", ErrWebAuthnOptionsInvalid},
-		{"not json", "{not json", ErrWebAuthnOptionsInvalid},
-		{"no challenge", `{"publicKey":{"rp":{"id":"rp.example"}}}`, ErrWebAuthnChallengeMissing},
-		{"no rp id", `{"publicKey":{"challenge":"Y2hhbGxlbmdl","rp":{"name":"rp"}}}`, ErrWebAuthnRPIDMissing},
-		{"bad challenge encoding", `{"publicKey":{"challenge":"!!!!","rp":{"id":"rp.example"}}}`, ErrWebAuthnOptionsInvalid},
-		{"bad user id encoding", `{"publicKey":{"challenge":"Y2hhbGxlbmdl","rp":{"id":"rp.example"},"user":{"id":"!!!!"}}}`, ErrWebAuthnOptionsInvalid},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := parseCreationOptions([]byte(tc.optionsJSON), "")
-			require.Error(t, err)
-			assert.ErrorIs(t, err, tc.wantErr)
-		})
-	}
-}
-
 // --- fido2Ceremony guard paths ---
+//
+// The options-JSON parsing that used to live here (parseCreationOptions,
+// decodeWebAuthnBase64) moved to the canonical FIDO2 CTAP2 implementation
+// (pkg/fido2.ParseWebAuthnRegistrationOptions, exercised through
+// webauthnclient.HardwareAdapter), which is the single ceremony driver now.
+// Its own test suite covers those parsing paths; what remains here is the
+// xkey-local wrapping: bad options and a cancelled context must still stop a
+// ceremony before any authenticator is touched.
 
 // TestFIDO2Ceremony_RegisterRejectsBadOptions verifies malformed options are
-// rejected before any authenticator is touched.
+// rejected before any authenticator is touched, and reported as a
+// registration failure rather than a missing PIN or a panic on the
+// zero-value ceremony.
 func TestFIDO2Ceremony_RegisterRejectsBadOptions(t *testing.T) {
 	ceremony := &fido2Ceremony{}
 
@@ -127,7 +46,8 @@ func TestFIDO2Ceremony_RegisterRejectsBadOptions(t *testing.T) {
 		Origin:      "https://rp.example",
 	})
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrWebAuthnOptionsInvalid)
+	assert.ErrorIs(t, err, ErrWebAuthnRegistrationFailed)
+	assert.NotErrorIs(t, err, ErrWebAuthnPINRequired)
 }
 
 // TestFIDO2Ceremony_RegisterHonorsContext verifies a cancelled context stops
@@ -142,35 +62,6 @@ func TestFIDO2Ceremony_RegisterHonorsContext(t *testing.T) {
 		Origin:      "https://rp.example",
 	})
 	assert.ErrorIs(t, err, context.Canceled)
-}
-
-// --- decodeWebAuthnBase64 ---
-
-func TestDecodeWebAuthnBase64(t *testing.T) {
-	tests := []struct {
-		name    string
-		value   string
-		want    []byte
-		wantErr bool
-	}{
-		{"empty", "", nil, false},
-		{"unpadded", "Y2hhbGxlbmdl", []byte("challenge"), false},
-		{"padded", "Y2hhbGxlbmdlLTE=", []byte("challenge-1"), false},
-		{"url safe alphabet", base64.RawURLEncoding.EncodeToString([]byte{0xfb, 0xff, 0x00}), []byte{0xfb, 0xff, 0x00}, false},
-		{"invalid", "!!!!", nil, true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := decodeWebAuthnBase64(tc.value)
-			if tc.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
 }
 
 // --- webauthnOrigin ---

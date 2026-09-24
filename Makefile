@@ -2626,13 +2626,17 @@ devcontainer-server-wait:
 
 .PHONY: integration-test-fido2
 ## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
+# xkmsctl is built with the same "integration,fido2" tags as the test package:
+# only that build compiles in the //go:build integration && fido2 virtual-device
+# seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
+# binary (make build / make release-*) never carries those tags. See #807.
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='integration$(comma)fido2$(comma)gms_pure_go' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='integration$(comma)fido2$(comma)gms_pure_go' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
@@ -2644,12 +2648,12 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='integration$(comma)fido2$(comma)gms_pure_go' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='integration$(comma)fido2' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
@@ -2662,6 +2666,16 @@ integration-test-uhid:
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
 integration-test-xkey-fido2:
 	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/... -timeout 5m,integration-test-xkey-fido2)
+
+.PHONY: integration-test-secretservice
+## integration-test-secretservice: Run the freedesktop Secret Service daemon integration tests
+## (secret-tool store/lookup/clear and git-credential-libsecret store/get/erase round trips)
+## against `xkey secret-service` under a private dbus-run-session bus. Runs only in the
+## devcontainer: it execs the real secret-tool and git-credential-libsecret binaries, which
+## are not installed in the devcontainer image today (see docs/secret-service/engineering.md
+## and go-xkms#723) -- this target reports that missing-tool failure rather than skip it.
+integration-test-secretservice:
+	$(call run_in_devcontainer,cd xkey && dbus-run-session -- $(GO) test -v -tags='integration$(comma)linux' -run 'TestSecretService' ./test/integration -timeout 5m,integration-test-secretservice)
 
 .PHONY: integration-test-xkey-webauthn
 ## integration-test-xkey-webauthn: Run Playwright browser tests against webauthn.io (Docker)

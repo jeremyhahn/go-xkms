@@ -545,3 +545,11 @@ type SecretValue = types.SecretValue
 // arrive as literals (a CLI flag, an interactive prompt) rather than from a
 // configuration reference.
 var NewLiteralSecretValue = types.NewLiteralSecretValue
+
+// SecretValueBytes resolves sv to its plaintext bytes, or (nil, nil) for a
+// nil sv (an optional secret that was never configured). The plaintext
+// leaves sv's protected-memory enclave only for the duration the caller
+// holds the returned slice; callers that pass it to an SDK expecting a
+// plain string (an AWS/Azure/Vault credential field) convert and discard it
+// immediately rather than retaining it.
+var SecretValueBytes = types.SecretValueBytes

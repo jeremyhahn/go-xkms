@@ -240,6 +240,7 @@ func NewParentCA(params *Params) (TrustedCA, error) {
 		Profiles:           params.Profiles,
 		BackendForStore:    params.BackendForStore,
 		RequireKeyPassword: params.RequireKeyPassword,
+		AuditLogger:        params.AuditLogger,
 		// Pass the root Identity as index 0 so New() builds the keystoreMap
 		// from its full multi-key slice (the flat CAConfig keeps only Keys[0]).
 		Identity: []Identity{root},
@@ -325,6 +326,7 @@ func NewIntermediateCA(ctx context.Context, params *Params, parent TrustedCA) (T
 		Profiles:           params.Profiles,
 		BackendForStore:    params.BackendForStore,
 		RequireKeyPassword: params.RequireKeyPassword,
+		AuditLogger:        params.AuditLogger,
 		// Pass the intermediate Identity as index 0 so New() builds the
 		// keystoreMap from its full multi-key slice.
 		Identity: []Identity{intermediateID},
@@ -380,6 +382,12 @@ func initializeAsIntermediate(ctx context.Context, caInstance *CA, identity Iden
 	cert, err := caInstance.createSingleIntermediateCertificate(ctx, &identity, parentCert, parentSigner)
 	if err != nil {
 		return &errs.Wrapped{Msg: "ca: create intermediate certificate", Err: err}
+	}
+
+	// CA_INITIALIZED (see createRootCertificate): the audit record is
+	// written before the intermediate certificate is persisted.
+	if auditErr := caInstance.emitAudit(ctx, auditActionCAInit, auditResourceCA, identity.Subject.CommonName); auditErr != nil {
+		return auditErr
 	}
 
 	if err := caInstance.certStore.StoreCertificate(cert); err != nil {

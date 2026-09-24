@@ -69,14 +69,14 @@ func (a KeyAlgorithmString) Equals(s string) bool {
 
 // ToX509 converts the KeyAlgorithmString to x509.PublicKeyAlgorithm.
 func (a KeyAlgorithmString) ToX509() x509.PublicKeyAlgorithm {
-	switch KeyAlgorithmString(strings.ToUpper(string(a))) {
-	case AlgorithmRSA:
+	switch {
+	case a.Equals(string(AlgorithmRSA)):
 		return x509.RSA
-	case AlgorithmECDSA:
+	case a.Equals(string(AlgorithmECDSA)):
 		return x509.ECDSA
-	case AlgorithmEd25519:
+	case a.Equals(string(AlgorithmEd25519)):
 		return x509.Ed25519
-	case AlgorithmDSA:
+	case a.Equals(string(AlgorithmDSA)):
 		return x509.DSA
 	default:
 		return x509.UnknownPublicKeyAlgorithm

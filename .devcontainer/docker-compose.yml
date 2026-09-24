@@ -122,7 +122,10 @@ services:
       - XKMS_PKCS11_TOKEN_LABEL=test-token
       - XKMS_PKCS11_STORAGE_TYPE=file
       - XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage
-      # FIDO2 configuration (auto-detect device or use FIDO2_DEVICE_PATH)
+      # FIDO2 configuration (auto-detect device or use FIDO2_DEVICE_PATH).
+      # FIDO2_USE_VIRTUAL only has any effect on an xkmsctl built with the
+      # "integration,fido2" tags (see Makefile integration-test-fido2* targets
+      # and cmd/xkmsctl/fido2_virtual.go); the release binary ignores it (#807).
       - FIDO2_PIN=123456
       - FIDO2_DEVICE_PATH=
       - FIDO2_USE_VIRTUAL=true

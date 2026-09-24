@@ -14,9 +14,12 @@
 package secretservice
 
 import (
+	"context"
 	"time"
 
 	"github.com/godbus/dbus/v5"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // D-Bus interface names and paths
@@ -53,6 +56,13 @@ const (
 
 	// BusName is the well-known D-Bus name for the Secret Service.
 	BusName = "org.freedesktop.secrets"
+
+	// DBusPropertiesInterface is the standard D-Bus properties interface
+	// that Collection and Item objects implement (Get/GetAll/Set) instead
+	// of the godbus prop package's static value cache, so Locked always
+	// reflects live barrier state rather than a snapshot that must be
+	// re-broadcast on every seal/unseal.
+	DBusPropertiesInterface = "org.freedesktop.DBus.Properties"
 )
 
 // Algorithm identifiers for session encryption.
@@ -163,53 +173,64 @@ type SessionInfo struct {
 	ClientPath string
 }
 
-// PromptInfo holds state for a pending prompt.
+// PromptInfo holds state for a pending prompt. The only prompted operation
+// this daemon issues is unlocking the barrier (see Daemon.Unlock):
+// Collection/Item Delete and Collection CreateItem execute immediately and
+// never return a prompt path, so PromptType is always PromptTypeUnlock
+// today. The field is kept for the same reason the Secret Service API keeps
+// a "prompt" out-parameter on every method that can require one: a future
+// prompted operation (e.g. a delete confirmation) adds a case here rather
+// than a parallel mechanism.
 type PromptInfo struct {
 	// Path is the D-Bus object path.
 	Path dbus.ObjectPath
 
-	// Type indicates what the prompt is for (unlock, delete, create).
+	// Type indicates what the prompt is for.
 	Type PromptType
 
 	// Objects are the object paths involved in the prompted operation.
+	// For PromptTypeUnlock, these are the collections that were locked
+	// when Unlock was called.
 	Objects []dbus.ObjectPath
 
 	// CreatedAt is when the prompt was created.
 	CreatedAt time.Time
 
-	// Completed indicates whether the prompt has been completed.
-	Completed bool
-
-	// Dismissed indicates whether the user dismissed the prompt.
-	Dismissed bool
-
-	// Result holds the result of the prompt operation.
-	Result interface{}
+	// done is closed once Prompt or Dismiss has resolved this prompt, so a
+	// second call is rejected instead of re-running the unlock flow or
+	// re-emitting Completed.
+	done chan struct{}
 }
 
 // PromptType indicates the type of operation requiring a prompt.
 type PromptType int
 
 const (
-	// PromptTypeUnlock is for unlocking collections or items.
+	// PromptTypeUnlock is for unlocking the barrier on behalf of one or
+	// more locked collections.
 	PromptTypeUnlock PromptType = iota
-
-	// PromptTypeDelete is for deleting items.
-	PromptTypeDelete
-
-	// PromptTypeCreate is for creating items in locked collections.
-	PromptTypeCreate
 )
+
+// UnlockFunc collects the credentials needed to unseal the barrier -- a
+// terminal password prompt, a GUI dialog, or a configured auto-unseal
+// factor -- and returns them. It is supplied by the code that wires the
+// daemon (the `xkey secret-service` CLI verb or a GUI toggle) so this
+// package stays free of terminal/GUI dependencies; see
+// xkey/cmd/xkey/cmd/secret_service.go for the CLI implementation, which
+// reuses the same --barrier-password/--barrier-password-file/
+// XKEY_BARRIER_PASSWORD resolution as `xkey barrier unseal`.
+//
+// A nil UnlockFunc means the daemon can service Unlock only when the
+// barrier is already open by some other means (e.g. TPM auto-unseal run
+// before the daemon started): every Prompt created while sealed then
+// resolves as dismissed.
+type UnlockFunc func(ctx context.Context) (xkms.SealCredentials, error)
 
 // ServiceConfig holds configuration for the Secret Service daemon.
 type ServiceConfig struct {
 	// Bus specifies which D-Bus bus to use ("session" or "system").
 	// Defaults to "session".
 	Bus string
-
-	// AutoUnlock controls whether collections are automatically unlocked
-	// when the password store is unlocked.
-	AutoUnlock bool
 
 	// DefaultCollectionFolder is the folder path for the default/login collections.
 	// Defaults to "" (root folder).
@@ -224,7 +245,6 @@ type ServiceConfig struct {
 func DefaultConfig() *ServiceConfig {
 	return &ServiceConfig{
 		Bus:                     "session",
-		AutoUnlock:              true,
 		DefaultCollectionFolder: "",
 		CollectionFolderMap: map[string]string{
 			"ssh":  "ssh",
