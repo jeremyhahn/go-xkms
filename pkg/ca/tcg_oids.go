@@ -46,6 +46,42 @@ var (
 	// hwType of the RFC 4108 HardwareModuleName carried inside subjectAltName.
 	OIDTCGHwTypeTPM2 = asn1.ObjectIdentifier{2, 23, 133, 1, 2}
 
+	// TCG DICE Extensions (2.23.133.5.4)
+	//
+	// tcg-dice OBJECT IDENTIFIER ::= {tcg platformClass(5) 4}. These carry
+	// DICE-based device identity with a hardware root of trust: what a DICE
+	// layer measured about the layer below it, and the device's unique
+	// identifier.
+	//
+	// The canonical definitions live in pkg/attestation/dice, which owns the
+	// structures these identify. They are restated here because this file is
+	// the CA's flat OID registry and every other TCG identifier the CA uses is
+	// stated the same way; TestDICEOIDsMatchTheAttestationPackage pins the two
+	// sets together so they cannot drift.
+	OIDTCGDice                       = asn1.ObjectIdentifier{2, 23, 133, 5, 4}
+	OIDTCGDiceTcbInfo                = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 1}
+	OIDTCGDiceEndorsementManifest    = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 2}
+	OIDTCGDiceEndorsementManifestURI = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 3}
+	OIDTCGDiceUeid                   = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 4}
+	OIDTCGDiceMultiTcbInfo           = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 5}
+	OIDTCGDiceUccsEvidence           = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 6}
+	OIDTCGDiceManifestEvidence       = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 7}
+
+	// TCG DICE Key Purposes (2.23.133.5.4.100)
+	//
+	// DICE Certificate Profiles section 5.1.5 defines these as policy OIDs
+	// authorising what a certified key may be used for. crypto/x509 has no
+	// ExtKeyUsage constant for any of them, so a profile that stamps them
+	// carries them in UnknownExtKeyUsage.
+	OIDTCGDiceKp             = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100}
+	OIDTCGDiceKpIdentityInit = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 6}
+	OIDTCGDiceKpIdentityLoc  = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 7}
+	OIDTCGDiceKpAttestInit   = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 8}
+	OIDTCGDiceKpAttestLoc    = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 9}
+	OIDTCGDiceKpAssertInit   = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 10}
+	OIDTCGDiceKpAssertLoc    = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 11}
+	OIDTCGDiceKpECA          = asn1.ObjectIdentifier{2, 23, 133, 5, 4, 100, 12}
+
 	// TCG Certificate Types (2.23.133.8)
 	OIDTCGKpEKCertificate       = asn1.ObjectIdentifier{2, 23, 133, 8, 1}
 	OIDTCGKpPlatformCertificate = asn1.ObjectIdentifier{2, 23, 133, 8, 2}

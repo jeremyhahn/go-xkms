@@ -81,6 +81,7 @@ key encryption; cloud KMS → envelope encryption; PKCS#8 → HKDF + AES-GCM.
 | vault | `vault` | no | policy | no | transit | HashiCorp Vault transit engine |
 | frost | `frost` | n/a | n/a | no | — | threshold signing; see `../frost-threshold/` |
 | phone | — | **yes** (TEE/StrongBox) | no | yes | — | xkey-android as HSM; see `../../xkey/docs/phone-hsm/` |
+| avr | — | **yes** (secure element) when the device reports that tier | no | **yes** (DICE alias certificate) | — | read-only device identity; see `../avr-device-backend/` |
 
 Never assume a capability from this table at a call site — read
 `Capabilities` from the backend, because a deployment's token or provider policy

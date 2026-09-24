@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -244,6 +245,28 @@ type EKConfig struct {
 	Password       *types.SecretValue `yaml:"password,omitempty" json:"password" mapstructure:"password"`
 	PlatformPolicy bool               `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
 	RSAConfig      *store.RSAConfig   `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+
+	// CertDownload opts in to downloading the EK certificate from the TPM
+	// manufacturer's EK certificate service (e.g. Intel's ekop.intel.com)
+	// when no certificate is found locally in NV RAM or the certificate
+	// store. It defaults to false: an air-gapped host must never block
+	// indefinitely on an outbound network call it did not ask for. When
+	// false, EKCertificate returns ErrEndorsementCertNotFound as soon as
+	// every local lookup fails, without attempting any network access.
+	CertDownload bool `yaml:"cert-download" json:"cert_download" mapstructure:"cert-download"`
+
+	// CertDownloadURL overrides the manufacturer EK certificate service
+	// endpoint used when CertDownload is true. It must be reachable by
+	// appending the URL-safe base64 SHA-256 digest of the EK public key
+	// directly, the same convention as the compiled-in Intel endpoint
+	// ("https://ekop.intel.com/ekcertservice/"). Empty (the default) uses
+	// that compiled-in endpoint. The scheme must be "https"; any other
+	// scheme is rejected before the request is made.
+	CertDownloadURL string `yaml:"cert-download-url,omitempty" json:"cert_download_url" mapstructure:"cert-download-url"`
+
+	// CertDownloadTimeout bounds the manufacturer EK certificate service
+	// HTTP request. The zero value uses DefaultEKCertDownloadTimeout.
+	CertDownloadTimeout time.Duration `yaml:"cert-download-timeout,omitempty" json:"cert_download_timeout" mapstructure:"cert-download-timeout"`
 }
 
 // SRKConfig configures the Shared Storage Root Key (SSRK), the TCG-standard
