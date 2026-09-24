@@ -481,6 +481,7 @@ func (s *Server) capabilityFlags() map[string]bool {
 		"frost":      frostEnabled,
 		"factors":    s.authFactorHandlers != nil,
 		"audit":      s.auditHandlers != nil,
+		"cluster":    s.xkmsService != nil && s.xkmsService.Clustered(),
 	}
 }
 

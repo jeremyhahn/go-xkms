@@ -6,12 +6,12 @@ HSM, and TPM-rooted deployments — through one pluggable strategy consumed
 identically by every product in the stack.
 
 This is the internal design companion to the operator-facing
-[Clustering guide](README.md); see that document for configuration.
+[Clustering user guide](user.md); see that document for configuration.
 
 ## Problem
 
-ACME-attested cluster enrollment (see [Clustering guide → ACME-attested cluster
-enrollment](README.md#acme-attested-cluster-enrollment)) makes the runtime
+ACME-attested cluster enrollment (see [Clustering user guide → ACME-attested
+cluster enrollment](user.md#acme-attested-cluster-enrollment)) makes the runtime
 TrustedCA the single cluster trust anchor and issues each Raft node's transport
 certificate from a dedicated cluster intermediate. That raises a custody
 question: **where does the cluster intermediate's signing key live, and which

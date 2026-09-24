@@ -347,6 +347,23 @@ func Routes() []RouteSpec {
 	hasAudit := func(s *Server) bool { return s.auditHandlers != nil }
 	permIf("GET", "/audit/", auth.ResourceAudit, auth.ActionRead, hasAudit, func(s *Server) http.HandlerFunc { return s.auditHandlers.QueryHandler })
 
+	// --- Cluster (go-xkms#847). Raft shard status and membership, backed by
+	// the embedded go-qrdb node's own cluster client
+	// (pkg/xkms/servicer_cluster.go). Status and membership reads never fail
+	// on a standalone node — they report clustered:false and an empty
+	// member list — so both GET routes register unconditionally, matching
+	// clusterHandlers' own unconditional construction in NewServer.
+	// Membership mutation is NOT exposed over REST at all — there is no
+	// POST/DELETE here to stub out. Raft membership changes go through
+	// go-qrdb's own control plane exclusively, via `xkmsctl cluster
+	// add`/`remove` (docs/cluster/api.md, docs/web/parity.md "Cluster
+	// mutations"). Permissions mirror go-qrdb's own AdminService vocabulary
+	// exactly (admin:status, admin:peers — pkg/permission/constants.go),
+	// matching what xkmsd registers on its control-plane gRPC surface
+	// (pkg/server/qrdb_control_plane.go). ---
+	perm("GET", "/cluster/status", auth.ResourceAdmin, auth.ActionStatus, func(s *Server) http.HandlerFunc { return s.clusterHandlers.StatusHandler })
+	perm("GET", "/cluster/members", auth.ResourceAdmin, auth.ActionPeers, func(s *Server) http.HandlerFunc { return s.clusterHandlers.MembersHandler })
+
 	// --- Session endpoints. Exchange endpoints are unauthenticated (they
 	// ARE the authentication); introspection requires a live session. ---
 	hasIssuer := func(s *Server) bool { return s.tokenIssuer != nil }
