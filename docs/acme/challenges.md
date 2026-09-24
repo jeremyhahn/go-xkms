@@ -757,5 +757,5 @@ case common.AuthzTypeIP, common.AuthzTypePermanentIdentifier:
 
 - [README](README.md) - Module overview
 - [Architecture](architecture.md) - System architecture
-- [Configuration](configuration.md) - Server configuration
+- [Configuration](../acme-issuance/engineering.md) - Server configuration (`acme/configuration.md` was deleted by go-xkms#942)
 - [API Reference](api-reference.md) - HTTP API documentation
