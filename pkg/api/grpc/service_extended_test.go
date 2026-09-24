@@ -103,13 +103,16 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 			t.Error("Expected non-empty nonce")
 		}
 
-		// Decrypt data
+		// Decrypt data. GCMNonceMode must be echoed back unchanged so
+		// Decrypt can reconstruct the AEAD construction Encrypt used under
+		// GODEBUG=fips140=only (go-xkms#23).
 		decResp, err := service.Decrypt(context.Background(), &pb.DecryptRequest{
-			KeyId:      "encrypt-decrypt-key",
-			Backend:    "software",
-			Ciphertext: encResp.Ciphertext,
-			Nonce:      encResp.Nonce,
-			Tag:        encResp.Tag,
+			KeyId:        "encrypt-decrypt-key",
+			Backend:      "software",
+			Ciphertext:   encResp.Ciphertext,
+			Nonce:        encResp.Nonce,
+			Tag:          encResp.Tag,
+			GcmNonceMode: encResp.GcmNonceMode,
 		})
 		if err != nil {
 			t.Fatalf("Decrypt failed: %v", err)
@@ -146,7 +149,9 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 			t.Fatalf("Encrypt failed: %v", err)
 		}
 
-		// Decrypt with AAD
+		// Decrypt with AAD. GCMNonceMode must be echoed back unchanged so
+		// Decrypt can reconstruct the AEAD construction Encrypt used under
+		// GODEBUG=fips140=only (go-xkms#23).
 		decResp, err := service.Decrypt(context.Background(), &pb.DecryptRequest{
 			KeyId:          "aad-encrypt-key",
 			Backend:        "software",
@@ -154,6 +159,7 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 			Nonce:          encResp.Nonce,
 			Tag:            encResp.Tag,
 			AdditionalData: aad,
+			GcmNonceMode:   encResp.GcmNonceMode,
 		})
 		if err != nil {
 			t.Fatalf("Decrypt failed: %v", err)

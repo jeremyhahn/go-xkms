@@ -234,6 +234,77 @@ practice:
 credential, or an unmet PIN requirement all return an error. No backend falls
 back to software.
 
+**The not-found contract is exact, not "any error means absent" (#801,
+#808).** It binds every backend method that resolves a key by name, not
+only `GetKey`: `Get` (the raw-blob path some backends route through KMS),
+`Signer`, `Decrypter`, `Encrypt`, `GetSymmetricKey`, `SymmetricEncrypter`,
+and `ExportKeyMaterial` all reach the same underlying lookup `GetKey` does —
+directly, through a shared helper such as `azurekv`'s `resolveKeyVersion` or
+`gcpkms`'s `resolvePrimaryVersionName`, or by delegating to `GetKey` itself
+— and every one of them must return an error satisfying
+`errors.Is(err, backend.ErrKeyNotFound)` if, and only if, the key genuinely
+does not exist: a missing object, a missing TPM handle or blob, a PKCS#11 or
+cloud-KMS search that returns zero results, a Key Vault or Vault 404. Every
+other failure — a login/auth failure, a transient I/O or network error,
+throttling, a corrupt or partially written blob — is a distinct error that
+must NOT satisfy that check. `pkg/ca`'s `getOrGenerateCAKey` (and any caller
+doing get-or-create) relies on this to decide whether generating a
+replacement key is safe; collapsing every failure into "not found" lets a
+reachability problem silently regenerate and persist a new key over a
+hardware-backed one the caller could not currently reach.
+
+Each backend's local `ErrKeyNotFound` (where one exists — `tpm2`, `awskms`,
+`gcpkms`, `azurekv`, `vault`) is an alias of `backend.ErrKeyNotFound`, not a
+separate `errors.New`, so `errors.Is` recognizes it with no wrapping
+required. `pkcs11`, `pkcs8` and `software` have no local sentinel and return
+`backend.ErrKeyNotFound` directly. The classification each backend applies
+before returning it, applied consistently across every method listed above:
+
+| Backend | Genuine not-found signal | Everything else |
+|---|---|---|
+| `software` / `pkcs8` / `quantum` | `storage.ErrNotFound` from the key store | wrapped, does not match |
+| `tpm2` | `storage.ErrNotFound` from `keyBackend.Get` (private or public blob), applied by `pkg/backend/tpm2.Backend.GetKey` and, since #816, by `pkg/tpm2.TPM2.GetSymmetricKey` (`SymmetricEncrypter` delegates to it) | `pkg/backend/tpm2.ErrKeyRetrievalFailed` for `GetKey`; `pkg/tpm2.ErrKeyRetrievalFailed` for `GetSymmetricKey`/`SymmetricEncrypter` |
+| `pkcs11` | a zero-result PKCS#11 object search (`FindObjectHandle` returns `(0, nil)`) | the search/session error itself (e.g. `ErrSessionPoolClosed`, `ErrSessionPoolFailed`) |
+| `awskms` | `*kmstypes.NotFoundException` from `DescribeKey` (`GetKey`, `GetSymmetricKey`) | `awskms.ErrKeyRetrievalFailed` |
+| `gcpkms` | `storage.ErrNotFound` from the metadata store, or a `codes.NotFound` gRPC status from `GetCryptoKey`/`GetPublicKey` (`GetKey`, `Get`, `Signer`, `Decrypter`, `GetSymmetricKey`, all through `resolvePrimaryVersionName` where applicable) | `gcpkms.ErrKeyRetrievalFailed` |
+| `azurekv` | an HTTP 404 `*azcore.ResponseError` from the Key Vault client's `GetKey` (`GetKey`, and `Signer`/`Decrypter` through `resolveKeyVersion`) | `azurekv.ErrKeyRetrievalFailed` |
+| `vault` | `storage.ErrNotFound` from the local metadata store for the metadata-existence check every method makes (`GetKey`, `Signer`, `Decrypter`, `Encrypt`, `ExportKeyMaterial`); for `GetSymmetricKey`'s Transit read, a nil secret with no error — Vault's own convention for a path that does not exist | `vault.ErrKeyRetrievalFailed` |
+
+`resolveKeyVersion` (`azurekv`) and `resolvePrimaryVersionName` (`gcpkms`)
+are the shared choke points `Signer`, `Decrypter` and, for `gcpkms`, `Get`
+and `Delete` funnel through to resolve a key's current version before an
+operation; classifying the lookup once there, rather than per caller, is
+what keeps every caller's not-found behavior in agreement (#808).
+
+`getOrGenerateCAKey` (`pkg/ca/ca.go`) is the canonical caller: it generates
+only when `errors.Is(err, backend.ErrKeyNotFound)`, and returns
+`ca.ErrKeyRetrievalFailed` (fail closed, no generation) for anything else.
+
+**`pkg/tpm2` is a lower layer than `pkg/backend/tpm2`, and both classify
+independently (#816).** `pkg/backend/tpm2.Backend.GetKey` reads its blobs
+directly and classifies there; `pkg/backend/tpm2.Backend.GetSymmetricKey`
+and `.SymmetricEncrypter` instead delegate straight to
+`pkg/tpm2.TPM2.GetSymmetricKey`, so the classification for the symmetric
+path lives in `pkg/tpm2` itself, not in the `Backend` wrapper. Before #816
+that method returned every store failure -- including a genuinely absent
+key -- as a generic wrapped error, so `errors.Is(err, backend.ErrKeyNotFound)`
+never matched for a missing symmetric key; `pkg/tpm2.ErrKeyRetrievalFailed`
+mirrors `pkg/backend/tpm2.ErrKeyRetrievalFailed`'s role for everything that
+is not a genuine absence.
+
+**`gcpkms.Backend.ExportKey`'s body was unreachable, not merely
+unclassified (#816).** GCP Cloud KMS exposes no API to release private key
+material for any protection level or import method -- an HSM-protected key
+never leaves the HSM, and a `SOFTWARE` key imported via
+`GetImportParameters`/`ImportKey` is write-only through that import job,
+with no corresponding export job. `Capabilities().Export` is therefore
+`false` unconditionally, so the capability check at the top of `ExportKey`
+always refuses first; a `GetCryptoKey` call and a `backend.ErrKeyNotFound`
+mapping below it could never run. That dead code is deleted; `ExportKey`
+now matches `awskms` and `azurekv`'s shape and returns
+`backend.ErrExportNotSupported` directly, consistent with the rest of the
+not-found contract never applying to a method that cannot reach a lookup.
+
 ## Configuration
 
 Build tags are assembled in the `Makefile`:

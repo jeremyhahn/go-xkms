@@ -119,7 +119,9 @@ func TestLegacyWrapGate_RefusesAtTheServiceBoundary(t *testing.T) {
 // section 6.1 (CKM_RSA_PKCS) sanction all three, and an operator who must
 // interoperate with an application that requires one has to be able to get it.
 func TestLegacyWrapGate_EnabledRoundTrips(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	ctx := context.Background()
 
 	aesStore, aesAttrs := newAESWrappingBackend(t)
@@ -245,7 +247,9 @@ func TestLegacyWrapGate_ClosesTheKeyInjectionPrimitive(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLegacyWrapDisabled)
 	assert.Empty(t, injected)
 
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	injected, err = unwrapKeyMaterial(ctx, store, attrs, string(types.WrapAESCBC), wrapParams{}, blob)
 	require.NoError(t, err, "with the policy enabled the mechanism is performed as PKCS#11 v3.2 section 6.10 describes")
 	assert.Len(t, injected, 32,
@@ -285,7 +289,9 @@ func TestLegacyWrapGate_PaddingOracleIsMeasurable(t *testing.T) {
 		require.ErrorIs(t, err, ErrLegacyWrapDisabled)
 	}
 
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	accepted := 0
 	for _, blob := range blobs {
 		if _, err := unwrapKeyMaterial(ctx, store, attrs, string(types.WrapAESCBCPad), wrapParams{}, blob); err == nil {

@@ -1759,7 +1759,18 @@ type KeyProvider interface {
 	GenerateKey(ctx context.Context, attrs *KeyAttributes) (crypto.PrivateKey, error)
 
 	// GetKey retrieves an existing private key by its attributes.
-	// Returns an error if the key does not exist.
+	//
+	// Error contract: implementations must return an error satisfying
+	// errors.Is(err, backend.ErrKeyNotFound) if, and only if, the key
+	// genuinely does not exist -- a missing object, a missing TPM handle or
+	// blob, a PKCS#11/KMS search with zero results, or a 404/NotFound from
+	// a cloud or Vault API. Every other failure (an auth or login failure,
+	// a transient I/O or network error, throttling) must be returned as a
+	// distinct error that does NOT satisfy that check. Callers such as
+	// pkg/ca's getOrGenerateCAKey use errors.Is(err, backend.ErrKeyNotFound)
+	// to decide whether generating a replacement key is safe; collapsing
+	// every failure into "not found" would let a reachability problem
+	// silently generate and persist a new key over an existing one.
 	GetKey(ctx context.Context, attrs *KeyAttributes) (crypto.PrivateKey, error)
 
 	// DeleteKey removes a key identified by its attributes.

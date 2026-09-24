@@ -48,11 +48,51 @@ func boolString(b bool) string {
 	return "false"
 }
 
+// runOutsideFIPS reports whether the caller is already running with no
+// GODEBUG selector, in which case it returns true so the caller performs
+// its real assertion. Otherwise it re-execs the current test binary with
+// GODEBUG stripped from the environment, asserts the child exits zero and
+// prints PASS, and returns false so the caller performs no assertion of its
+// own -- the parent's own environment may still have a FIPS selector (as
+// go-xkms#23 requires when running this whole suite under
+// GODEBUG=fips140=only), and crypto/fips140.Enabled is fixed for the life
+// of the process, so only the child's answer is meaningful for a test whose
+// premise is "outside FIPS mode".
+func runOutsideFIPS(t *testing.T, testName string) bool {
+	t.Helper()
+	if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+		return true
+	}
+	env := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GODEBUG=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+testName+"$", "-test.v")
+	cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("no-GODEBUG subprocess failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("no-GODEBUG subprocess did not pass:\n%s", out)
+	}
+	return false
+}
+
 func TestDefaultKDF_ReturnsArgon2idOutsideFIPS(t *testing.T) {
+	if !runOutsideFIPS(t, "TestDefaultKDF_ReturnsArgon2idOutsideFIPS") {
+		return
+	}
 	assert.Equal(t, KDFArgon2id, DefaultKDF(), "DefaultKDF must return argon2id outside FIPS mode")
 }
 
 func TestDefaultLUKSKDF_ReturnsArgon2idOutsideFIPS(t *testing.T) {
+	if !runOutsideFIPS(t, "TestDefaultLUKSKDF_ReturnsArgon2idOutsideFIPS") {
+		return
+	}
 	assert.Equal(t, KDFArgon2id, DefaultLUKSKDF(), "DefaultLUKSKDF must return argon2id outside FIPS mode")
 }
 

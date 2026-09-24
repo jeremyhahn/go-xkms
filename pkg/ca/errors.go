@@ -117,6 +117,17 @@ var (
 	// password on the KeyConfig (or the identity-level Keystores.Software.Password)
 	// or set RequireKeyPassword to false to permit plaintext key storage.
 	ErrKeyPasswordRequired = errors.New("ca: key password required (RequireKeyPassword=true)")
+
+	// ErrKeyRetrievalFailed indicates the configured backend returned an
+	// error other than "key not found" (errors.Is(err, backend.ErrKeyNotFound))
+	// while getOrGenerateCAKey checked whether a CA key already exists.
+	// getOrGenerateCAKey fails closed on this rather than falling through to
+	// generation: a TPM transient fault, a PKCS#11 login failure, cloud KMS
+	// throttling, or any other I/O error must never be treated as "no key
+	// yet", because doing so would silently generate and persist a
+	// replacement for a hardware-backed signing key the backend merely
+	// failed to reach.
+	ErrKeyRetrievalFailed = errors.New("ca: key retrieval failed")
 )
 
 // Storage errors indicate issues with key and certificate storage.

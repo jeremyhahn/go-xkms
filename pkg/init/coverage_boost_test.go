@@ -22,6 +22,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -277,6 +278,24 @@ func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestCAAdapter_IssueCertificate_SPIFFEStampFailurePropagates verifies that
+// IssueCertificate surfaces a SPIFFE URI construction failure (an empty
+// CommonName leaves the workload name empty) rather than issuing a
+// certificate with a malformed or missing SPIFFE SAN.
+func TestCAAdapter_IssueCertificate_SPIFFEStampFailurePropagates(t *testing.T) {
+	mCA := newMockCA(t)
+	adapter := NewCAAdapter(mCA, "xkms.example.com")
+
+	req := &qrdbsdk.IssueCertRequest{
+		CommonName:   "",
+		ValidityDays: 365,
+	}
+
+	issued, err := adapter.IssueCertificate(context.Background(), req)
+	assert.ErrorIs(t, err, spiffe.ErrNameEmpty)
+	assert.Nil(t, issued)
+}
+
 // ---------------------------------------------------------------------------
 // CAAdapter - SignCSR, CACertificate, CABundle error delegation
 // ---------------------------------------------------------------------------
@@ -293,6 +312,25 @@ func TestCAAdapter_SignCSR_Error(t *testing.T) {
 		ValidityDays: 365,
 	})
 	assert.Error(t, err)
+}
+
+// TestCAAdapter_SignCSR_StampsSPIFFEWhenTrustDomainConfigured verifies that a
+// non-empty spiffeTrustDomain makes SignCSR stamp the system-tenant SPIFFE
+// SAN fields onto the underlying SignOptions, not just pass validity/profile
+// through unchanged.
+func TestCAAdapter_SignCSR_StampsSPIFFEWhenTrustDomainConfigured(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "xkms.example.com")
+
+	csrPEM, _ := generateTestCSR(t, "test-cn")
+	_, err := adapter.SignCSR(context.Background(), csrPEM, &qrdbsdk.SignCSROptions{
+		ValidityDays: 365,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rec.lastSignOpts)
+	assert.Equal(t, "xkms.example.com", rec.lastSignOpts.SPIFFETrustDomain)
+	assert.Equal(t, systemTenantID, rec.lastSignOpts.TenantID)
+	assert.Equal(t, spiffe.KindUser, rec.lastSignOpts.SPIFFEKind)
 }
 
 func TestCAAdapter_CACertificate_Error(t *testing.T) {
@@ -359,4 +397,31 @@ func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 	_, err := adapter.IssueCertificate(context.Background(), req)
 	require.NoError(t, err)
 	assert.Nil(t, sanCA.lastSANs)
+}
+
+// ---------------------------------------------------------------------------
+// CeremonyService.SetSPIFFETrustDomain - covers ceremony.go:112 (0.0% -> 100%)
+// ---------------------------------------------------------------------------
+
+// TestCeremonyService_SetSPIFFETrustDomain_StampsSOCertificate verifies that
+// SetSPIFFETrustDomain is not a bare setter: Initialize builds its CAAdapter
+// from the configured trust domain on every call, so the SO/bootstrap
+// certificate issued by a single-admin ceremony carries the system-tenant
+// SPIFFE SAN once a trust domain is configured.
+func TestCeremonyService_SetSPIFFETrustDomain_StampsSOCertificate(t *testing.T) {
+	svc, err := NewCeremonyService(validConfig(), testBarrier(t), testCredService(t), testLogger())
+	require.NoError(t, err)
+	svc.SetSPIFFETrustDomain("xkms.example.com")
+
+	rec := newRecordingCA(t)
+	_, err = svc.Initialize(context.Background(), rec)
+	require.NoError(t, err)
+
+	require.NotNil(t, rec.lastIssueReq, "expected the SO certificate to be issued via IssueCertificate")
+	require.NotNil(t, rec.lastIssueReq.SANS)
+	require.NotEmpty(t, rec.lastIssueReq.SANS.URIs)
+
+	wantURI, err := spiffe.BuildURI("xkms.example.com", systemTenantID, spiffe.KindUser, rec.lastIssueReq.Subject.CommonName)
+	require.NoError(t, err)
+	assert.Contains(t, rec.lastIssueReq.SANS.URIs, wantURI.String())
 }

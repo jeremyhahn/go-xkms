@@ -536,10 +536,11 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 
 	t.Run("decrypts without specifying backend - searches backends", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-decrypt-sym-search",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-decrypt-sym-search",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 			// No backend specified - should search
 		}
 		paramsJSON, _ := json.Marshal(params)

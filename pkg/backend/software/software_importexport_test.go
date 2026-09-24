@@ -15,6 +15,7 @@ package software
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -282,6 +283,13 @@ func TestUnwrapKey(t *testing.T) {
 
 			wrapped, err := be.(backend.ImportExportBackend).WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
+				// RSAES_OAEP_SHA_1 uses SHA-1 as the RSA-OAEP hash (RFC
+				// 8017 -- its name says so), which crypto/rsa refuses
+				// under GODEBUG=fips140=only. It is deliberately retained
+				// for legacy PKCS#11 wrap interop; see docs/fips/README.md.
+				if tt.algorithm == backend.WrappingAlgorithmRSAES_OAEP_SHA_1 && fips140.Enforced() {
+					return
+				}
 				t.Fatalf("WrapKey failed: %v", err)
 			}
 

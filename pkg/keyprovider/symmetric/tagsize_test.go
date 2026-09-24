@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"errors"
 	"fmt"
 	"testing"
@@ -91,13 +92,13 @@ func TestEncrypt_TagSize_MatchesCryptoCipher(t *testing.T) {
 			enc, rawKey := newTagSizeFixture(t, types.SymmetricAES256GCM)
 			nonce := fixedNonce()
 
-			got, err := enc.Encrypt(plaintext, &types.EncryptOptions{
+			got, ok := requireEncrypt(t, enc, plaintext, &types.EncryptOptions{
 				Nonce:          nonce,
 				AdditionalData: aad,
 				TagSize:        tagSize,
 			})
-			if err != nil {
-				t.Fatalf("Encrypt: %v", err)
+			if !ok {
+				return
 			}
 
 			block, err := aes.NewCipher(rawKey)
@@ -137,13 +138,13 @@ func TestEncryptDecrypt_TagSize_RoundTrip(t *testing.T) {
 		t.Run(fmt.Sprintf("tagSize=%d", tagSize), func(t *testing.T) {
 			enc, _ := newTagSizeFixture(t, types.SymmetricAES256GCM)
 
-			encrypted, err := enc.Encrypt(plaintext, &types.EncryptOptions{
+			encrypted, ok := requireEncrypt(t, enc, plaintext, &types.EncryptOptions{
 				Nonce:          fixedNonce(),
 				AdditionalData: aad,
 				TagSize:        tagSize,
 			})
-			if err != nil {
-				t.Fatalf("Encrypt: %v", err)
+			if !ok {
+				return
 			}
 
 			recovered, err := enc.Decrypt(encrypted, &types.DecryptOptions{
@@ -166,12 +167,12 @@ func TestDecrypt_TagSize_MismatchIsRejected(t *testing.T) {
 	plaintext := []byte("authenticate me")
 	enc, _ := newTagSizeFixture(t, types.SymmetricAES256GCM)
 
-	encrypted, err := enc.Encrypt(plaintext, &types.EncryptOptions{
+	encrypted, ok := requireEncrypt(t, enc, plaintext, &types.EncryptOptions{
 		Nonce:   fixedNonce(),
 		TagSize: 12,
 	})
-	if err != nil {
-		t.Fatalf("Encrypt: %v", err)
+	if !ok {
+		return
 	}
 
 	t.Run("decrypting a 96-bit tag at the full length is refused", func(t *testing.T) {
@@ -226,7 +227,13 @@ func TestTagSize_InvalidLengthsAreRefused(t *testing.T) {
 			if err == nil {
 				t.Fatal("Decrypt accepted an unapproved tag size")
 			}
-			if !errors.Is(err, ErrInvalidTagSize) {
+			// Under GODEBUG=fips140=only, this fixture's explicit nonce
+			// (types.GCMNonceModeExplicit, the zero value on a hand-built
+			// types.EncryptedData) makes Decrypt refuse to open it at all,
+			// before the tag-size check this subtest targets ever runs --
+			// see requireEncrypt's doc comment and docs/fips/README.md
+			// "AEAD construction".
+			if !fips140.Enforced() && !errors.Is(err, ErrInvalidTagSize) {
 				t.Fatalf("Decrypt error = %v, want ErrInvalidTagSize", err)
 			}
 		})
@@ -249,15 +256,21 @@ func TestTagSize_Poly1305IsRefused(t *testing.T) {
 			if err == nil {
 				t.Fatal("Encrypt accepted a truncated tag request for Poly1305")
 			}
-			if !errors.Is(err, ErrTagSizeNotSupported) {
+			// Under GODEBUG=fips140=only, ChaCha20-Poly1305/XChaCha20-Poly1305
+			// themselves are refused (golang.org/x/crypto/chacha20poly1305 is
+			// outside the Go Cryptographic Module boundary -- see
+			// requireEncrypt's doc comment) before this package's own
+			// tag-size check ever runs.
+			if !fips140.Enforced() && !errors.Is(err, ErrTagSizeNotSupported) {
 				t.Fatalf("Encrypt error = %v, want ErrTagSizeNotSupported", err)
 			}
 
-			// The full length must still work: the refusal is about
-			// truncation, not about the field being present.
-			encrypted, err := enc.Encrypt([]byte("data"), &types.EncryptOptions{TagSize: 16})
-			if err != nil {
-				t.Fatalf("Encrypt with the full 16-byte tag failed: %v", err)
+			// The full length must still work outside FIPS: the refusal is
+			// about truncation, not about the field being present. Under FIPS
+			// the cipher itself is unavailable regardless of tag size.
+			encrypted, ok := requireEncrypt(t, enc, []byte("data"), &types.EncryptOptions{TagSize: 16})
+			if !ok {
+				return
 			}
 			if _, err := enc.Decrypt(encrypted, &types.DecryptOptions{TagSize: 16}); err != nil {
 				t.Fatalf("Decrypt with the full 16-byte tag failed: %v", err)

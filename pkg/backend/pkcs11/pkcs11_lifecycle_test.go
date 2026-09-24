@@ -639,3 +639,34 @@ func TestBackend_Initialize_SecondBackendInProcess(t *testing.T) {
 	require.NoError(t, err, "the second backend must have a usable pool")
 	require.Len(t, secondRandom, 8)
 }
+
+// TestBackend_Close_SecondBackendDoesNotFinalizeSharedLibrary verifies that a
+// backend which attached to an already-initialized Cryptoki library (see
+// TestBackend_Initialize_SecondBackendInProcess) does not call C_Finalize
+// when it closes.
+//
+// C_Initialize/C_Finalize are process-global, not per-Ctx: before #701,
+// Backend.Close discarded its own C_Finalize error, which hid that every
+// backend unconditionally believed it owned finalization. Closing the second
+// backend first used to tear down the one shared module out from under the
+// first, so the first backend's own (still-silently-discarded) Finalize call
+// then failed with CKR_CRYPTOKI_NOT_INITIALIZED -- invisibly, because nothing
+// checked it. Surfacing the error exposed the bug this test now guards.
+func TestBackend_Close_SecondBackendDoesNotFinalizeSharedLibrary(t *testing.T) {
+	first := newProvisionedBackend(t, "second-backend-no-finalize")
+
+	second, err := NewBackend(testConfig(first.config.Library, first.config.TokenLabel))
+	require.NoError(t, err)
+	require.NoError(t, second.Initialize(softhsmtest.SOPIN, softhsmtest.UserPIN))
+
+	require.True(t, second.ownsP11ctx, "second backend created its own *pkcs11.Ctx and must Destroy it")
+	require.False(t, second.ownsP11Init, "second backend attached to an already-initialized library and must not Finalize it")
+
+	// Closing the second backend first must not disturb the first, which is
+	// the actual owner of C_Initialize/C_Finalize for this shared module.
+	require.NoError(t, second.Close())
+
+	firstRandom, err := first.GenerateRandom(8)
+	require.NoError(t, err, "the first backend must still be usable after the second backend closed")
+	require.Len(t, firstRandom, 8)
+}

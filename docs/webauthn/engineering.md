@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/webauthn`
 
@@ -77,9 +77,11 @@ type TokenPairGenerator interface { GenerateTokenPair(ctx, user User) (access, r
 
 ### Headless client
 
-`pkg/webauthn/client` — the programmatic "browser" used by `xkmsctl` and tests.
-`pkg/webauthn/mock_authenticator.go` is the in-process authenticator for unit
-tests.
+`pkg/webauthn/client` — the single programmatic "browser" ceremony driver,
+re-exported at `sdk/go/webauthnclient` and used by `xkey`, `xkmsctl` and
+tests; see [§"The headless client"](#the-headless-client--pkgwebauthnclient)
+below. `pkg/webauthn/mock_authenticator.go` is a separate, RP-side test
+double for `pkg/webauthn` itself (not the client).
 
 ## `Config` (`config.go`)
 
@@ -277,14 +279,19 @@ metered in `pkg/metrics`.
 
 ## The headless client — `pkg/webauthn/client`
 
-The "browser" in the WebAuthn protocol, for callers that are not one. It sits
-between the relying party and a local authenticator and runs both ceremonies
-programmatically. `xkmsctl` and the test suites drive it.
+The **single** headless WebAuthn ceremony driver in go-xkms: the "browser" in
+the protocol, for callers that are not one. It bridges a `RelyingParty` (the
+server side) and an `AuthenticatorAdapter` (the authenticator side) and runs
+both ceremonies programmatically. Re-exported at `sdk/go/webauthnclient`;
+`xkey`, `xkmsctl` and the test suites all drive ceremonies through this one
+`Client`, with one `RelyingParty`/`AuthenticatorAdapter` pair each — none
+reimplements the ceremony (go-xkms#721 consolidated three prior
+implementations onto it).
 
 ```
-  RP Server (go-xkms)          Headless Client           Authenticator
+  RelyingParty                 Client                   AuthenticatorAdapter
        |                            |                         |
-       |  POST registration/begin   |                         |
+       |  BeginRegistration         |                         |
        |<---------------------------|                         |
        |  CreationOptions           |                         |
        |--------------------------->|                         |
@@ -292,68 +299,127 @@ programmatically. `xkmsctl` and the test suites drive it.
        |                            |------------------------>|
        |                            |  AttestationResponse    |
        |                            |<------------------------|
-       |  POST registration/finish  |                         |
+       |  FinishRegistration        |                         |
        |<---------------------------|                         |
-       |  { user_id, token }        |                         |
+       |  { credential_id, token }  |                         |
        |--------------------------->|                         |
 ```
+
+### `RelyingParty` — the server-side seam
+
+`Client` is deliberately thin: it drives begin → authenticator → finish and
+leaves both sides pluggable. Two `RelyingParty` implementations ship:
+
+| Implementation | Speaks | Used by |
+|---|---|---|
+| `HTTPRelyingParty` (`NewHTTPRelyingParty`, or the `Client` default built from `Config.ServerURL`) | The browser-shaped `pkg/webauthn/http` routes (`registration/begin`, `.../finish`, `login/begin`, `.../finish`) | Direct HTTP callers, tests |
+| `TransportRelyingParty` (`NewTransportRelyingParty(TransportClient)`) | The SDK transport routes (`/api/v1/webauthn/sdk/...`) through a `pkg/api/transport.Client`, any protocol (REST, gRPC, QUIC, Unix, MCP) | `xkey`, `xkmsctl` |
+
+```go
+type RelyingParty interface {
+	BeginRegistration(ctx context.Context, req *RegistrationRequest) (*BeginResult, error)
+	FinishRegistration(ctx context.Context, begin *BeginResult, req *RegistrationRequest, attestation []byte) (*RegistrationResult, error)
+	BeginAuthentication(ctx context.Context, req *AuthenticationRequest) (*BeginResult, error)
+	FinishAuthentication(ctx context.Context, begin *BeginResult, req *AuthenticationRequest, assertion []byte) (*AuthenticationResult, error)
+}
+```
+
+`TransportClient` is the four-method SDK-ceremony subset of
+`pkg/api/transport.Client`; a connected `sdk/go` `Client` (any protocol
+binding) satisfies it directly with no adapter. Unlike `HTTPRelyingParty`,
+which sends `RegistrationRequest.AuthToken`/`AuthenticationRequest.AuthToken`
+as a bearer header per request, `TransportRelyingParty` ignores that field —
+the transport connection already carries its own authentication.
 
 ### Client API
 
 | Method | Description |
 |---|---|
-| `NewClient(config)` | Creates a client with an authenticator adapter |
-| `Register(ctx, req)` | Full registration ceremony: begin, CTAP, finish |
-| `Login(ctx, req)` | Full authentication ceremony: begin, CTAP, finish |
-| `Available(ctx)` | Checks both server and authenticator reachability |
+| `NewClient(config)` | Creates a client with a `RelyingParty` and an `AuthenticatorAdapter` |
+| `Register(ctx, req)` | Full registration ceremony: begin, authenticator, finish |
+| `Login(ctx, req)` | Full authentication ceremony: begin, authenticator, finish |
+| `Available(ctx)` | Checks both the relying party (if it implements `AvailabilityChecker`) and the authenticator |
 
-### `AuthenticatorAdapter`
+### `AuthenticatorAdapter` — the authenticator-side seam
 
-| Method | Description |
-|---|---|
-| `MakeCredential(options)` | Creates a credential from JSON CreationOptions; returns JSON attestation |
-| `GetAssertion(options)` | Gets an assertion from JSON RequestOptions; returns JSON assertion |
-| `Available()` | Reports whether the authenticator is ready |
+```go
+type AuthenticatorAdapter interface {
+	MakeCredential(ctx context.Context, opts *CeremonyOptions) ([]byte, error)
+	GetAssertion(ctx context.Context, opts *CeremonyOptions) ([]byte, error)
+	Available() bool
+}
+```
 
-Two adapters ship. `SoftwareAdapter` is the in-memory one for testing:
-ephemeral ECDSA P-256 keypairs, `"none"` attestation format, a per-credential
-sign counter, thread-safe credential storage. The CTAP2 adapter bridges to real
-hardware through [`../fido2-ctap2/`](../fido2-ctap2/engineering.md).
+`CeremonyOptions` carries the relying party's JSON options plus the two
+things they cannot carry: `Origin` (a browser takes it from its security
+context) and `PIN` (a browser prompts for it).
+
+Two adapters ship:
+
+- **`SoftwareAdapter`** (`NewSoftwareAdapter`) — the in-memory one for
+  headless testing and CI: ephemeral ECDSA P-256 keypairs, `"none"`
+  attestation format, a per-credential sign counter, thread-safe credential
+  storage, no PIN. No HID or hardware required.
+- **`HardwareAdapter`** (`NewHardwareAdapter(config *fido2.Config, enumerator fido2.HIDDeviceEnumerator)`)
+  — drives a real CTAP2 authenticator over HID through `pkg/fido2`, the
+  single canonical FIDO2 CTAP2 implementation in the stack (see
+  [`../fido2-ctap2/`](../fido2-ctap2/engineering.md)), including xkey's
+  virtual "xkey fido2" uhid authenticator, which enumerates
+  indistinguishably from real hardware. It fails closed
+  (`ErrAuthenticatorNotFound`) when discovery finds no device, and carries
+  the CTAP2 PIN through `CeremonyOptions.PIN`, surfacing a PIN-protected
+  authenticator's refusal as `ErrPINRequired` rather than the raw
+  `CTAP2_ERR_PIN_REQUIRED`.
 
 ### `Config`
 
 ```go
 type Config struct {
-	ServerURL            string               // RP server base URL (required)
-	HTTPClient           *http.Client         // custom HTTP client (optional)
+	ServerURL            string               // RP server base URL; required unless RelyingParty is set
+	HTTPClient           *http.Client         // default HTTPRelyingParty's client (optional)
 	TLSConfig            *tls.Config          // used when HTTPClient is nil
 	Timeout              time.Duration        // default 30s
-	AuthenticatorAdapter AuthenticatorAdapter // CTAP2 bridge (required)
+	Origin               string               // WebAuthn origin; empty derives it from ServerURL
+	AuthenticatorAdapter AuthenticatorAdapter // required
+	RelyingParty         RelyingParty         // nil builds the default HTTPRelyingParty from ServerURL
 }
 ```
 
+Browser-shaped RP with a real authenticator:
+
 ```go
-adapter := client.NewSoftwareAdapter()
-c, _ := client.NewClient(&client.Config{
+adapter, err := webauthnclient.NewHardwareAdapter(nil, nil) // defer adapter.Close()
+c, _ := webauthnclient.NewClient(&webauthnclient.Config{
 	ServerURL:            "https://kms.example.com:8443",
 	AuthenticatorAdapter: adapter,
 })
 
-reg, err := c.Register(ctx, &client.RegistrationRequest{
+reg, err := c.Register(ctx, &webauthnclient.RegistrationRequest{
 	Username:    "alice@example.com",
 	DisplayName: "Alice",
 	AuthToken:   setupToken, // optional JWT or bootstrap token
 })
-// reg.UserID, reg.JWT
+// reg.CredentialID, reg.JWT
 
-login, err := c.Login(ctx, &client.AuthenticationRequest{
+login, err := c.Login(ctx, &webauthnclient.AuthenticationRequest{
 	Username:  "alice@example.com",
 	AuthToken: existingJWT, // optional
 })
 // login.UserID, login.JWT
 ```
 
-### Ceremony correlation headers
+SDK-transport RP (the `xkey`/`xkmsctl` shape), over an already-connected
+`sdk/go` client:
+
+```go
+rp, _ := webauthnclient.NewTransportRelyingParty(transportClient)
+c, _ := webauthnclient.NewClient(&webauthnclient.Config{
+	RelyingParty:         rp,
+	AuthenticatorAdapter: adapter,
+})
+```
+
+### `HTTPRelyingParty` correlation headers
 
 | Header | Direction | Purpose |
 |---|---|---|
@@ -361,8 +427,16 @@ login, err := c.Login(ctx, &client.AuthenticationRequest{
 | `X-User-Id` | server → client → server | correlates the user during login |
 | `Authorization` | client → server | `Bearer <token>` on authenticated requests |
 
+`TransportRelyingParty` carries the equivalent correlation (session ID, email)
+inside the SDK's typed request/response bodies instead of headers, and relies
+on the transport connection for authentication.
+
 ### Client errors
 
 `ErrServerURLRequired`, `ErrUsernameRequired`, `ErrRegistrationFailed`,
 `ErrAuthenticationFailed`, `ErrServerUnavailable`, `ErrAuthenticatorNotFound`,
-`ErrCTAPOperationFailed`, `ErrInvalidServerResponse`, `ErrInvalidChallenge`.
+`ErrCTAPOperationFailed`, `ErrInvalidServerResponse`, `ErrInvalidChallenge`,
+`ErrPINRequired`, `ErrNilTransportClient`. `ServerError` reports an
+`HTTPRelyingParty` non-2xx response; `RelyingPartyRejection` reports a
+`TransportRelyingParty` ceremony the server completed but declined
+(`Success: false`).

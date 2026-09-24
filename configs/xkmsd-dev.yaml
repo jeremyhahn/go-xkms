@@ -89,7 +89,7 @@ ca:
           ecc:
             curve: "P-256"
           hash: "SHA-256"
-          key_type: "CA"
+          key-type: "CA"
       keystore-type: "software"
       is-root: true
   selected-ca: 0

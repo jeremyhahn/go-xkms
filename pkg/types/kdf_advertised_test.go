@@ -242,9 +242,17 @@ func TestPRFKDFHashes_ExcludeWeakDigests(t *testing.T) {
 	}
 
 	// Concretely: SHA-1 derives under X9.63 and is refused under HKDF, in the
-	// same binary, with no policy switch involved.
-	if _, err := paramsForBridge(KDFAlgorithmX963, "SHA-1", 32).Derive(kdfConformanceSecret); err != nil {
-		t.Errorf("X9.63 with SHA-1 must derive (PKCS#11 CKD_SHA1_KDF): %v", err)
+	// same binary, with no policy switch involved -- except under
+	// GODEBUG=fips140=only, where Go refuses crypto/sha1 for every use
+	// including X9.63's, so X9.63-with-SHA-1 is refused there too
+	// (go-xkms#292; see TestKDFHashSets_AreIndependentOfWeakHashPolicy).
+	_, err := paramsForBridge(KDFAlgorithmX963, "SHA-1", 32).Derive(kdfConformanceSecret)
+	if HashUsable(crypto.SHA1) {
+		if err != nil {
+			t.Errorf("X9.63 with SHA-1 must derive (PKCS#11 CKD_SHA1_KDF): %v", err)
+		}
+	} else if !errors.Is(err, ErrUnsupportedKDFHash) {
+		t.Errorf("X9.63 with SHA-1 must be refused under GODEBUG=fips140=only, got %v", err)
 	}
 	if _, err := paramsForBridge(KDFAlgorithmHKDF, "SHA-1", 32).Derive(kdfConformanceSecret); !errors.Is(err, ErrUnsupportedKDFHash) {
 		t.Errorf("HKDF with SHA-1 must be refused, got %v", err)
