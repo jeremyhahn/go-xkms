@@ -141,9 +141,11 @@ decision is visible.
 ## The xkms control-plane view of ACME
 
 Separately from the RFC surface, the ACME server's **administration** is
-reachable through `pkg/acme/admin` (accounts, policy, barrier). That plane is
-not RFC 8555 and is not documented as if it were; it follows the repo's normal
-authenticated-API conventions.
+reachable through `pkg/acme/admin` (accounts, certificates, EAB, tenants,
+roles, users, CA status/stats, policy, barrier). That plane is not RFC 8555
+and is not documented as if it were; it follows the repo's normal
+authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
+the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
 ## Response schemas
 
