@@ -265,6 +265,65 @@ func TestAuthMe_ReturnsIdentityPermissionsCapabilities(t *testing.T) {
 	assert.False(t, resp.Capabilities["ssh"])
 }
 
+// TestAuthMe_PermissionsReflectRBACGrant proves /auth/me reports audit:read
+// as true when the identity's RBAC grant covers it. This is the regression
+// case for go-xkms#846: uiPermissionMatrix must carry every pair nav.ts
+// gates on, or the key never reaches the response at all.
+func TestAuthMe_PermissionsReflectRBACGrant(t *testing.T) {
+	rbac := &recordingRBACClient{allowResource: auth.ResourceAudit, allowAction: auth.ActionRead}
+
+	server, err := NewServer(&Config{
+		Authenticator:  auth.NewNoOpAuthenticator(),
+		Backends:       map[string]xkms.Backend{"test": newMockKeyStore()},
+		Logger:         testLogger(),
+		TokenIssuer:    newTestTokenIssuer(t),
+		EnableRBAC:     true,
+		RBACAuthorizer: auth.NewAuthorizer(rbac),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	w := doAuthRequest(t, server, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp authMeResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	allowed, ok := resp.Permissions["audit:read"]
+	require.True(t, ok, "uiPermissionMatrix must report audit:read")
+	assert.True(t, allowed, "identity holding audit:read must see it as true")
+}
+
+// TestAuthMe_PermissionsDenyWithoutRBACGrant is the error-path counterpart:
+// an identity whose RBAC grant does not cover audit:read must see it as
+// false rather than absent or true.
+func TestAuthMe_PermissionsDenyWithoutRBACGrant(t *testing.T) {
+	// allowResource/allowAction left zero-valued: every Authorize call is
+	// denied regardless of the resource:action pair asked for.
+	rbac := &recordingRBACClient{}
+
+	server, err := NewServer(&Config{
+		Authenticator:  auth.NewNoOpAuthenticator(),
+		Backends:       map[string]xkms.Backend{"test": newMockKeyStore()},
+		Logger:         testLogger(),
+		TokenIssuer:    newTestTokenIssuer(t),
+		EnableRBAC:     true,
+		RBACAuthorizer: auth.NewAuthorizer(rbac),
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	w := doAuthRequest(t, server, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp authMeResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	allowed, ok := resp.Permissions["audit:read"]
+	require.True(t, ok, "uiPermissionMatrix must report audit:read")
+	assert.False(t, allowed, "identity without audit:read must see it as false")
+}
+
 func TestAuthValidate_ReturnsSubject(t *testing.T) {
 	server := newAuthTestServer(t, nil)
 
