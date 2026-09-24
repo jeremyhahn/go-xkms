@@ -25,18 +25,21 @@ the folder in the same commit that changes the behavior.
 | [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions, their verification, and the `dice-idevid` issuance profile |
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
 | [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
+| [frost-threshold-signing](frost-threshold-signing/) | RFC 9591 FROST threshold signing (`-tags frost`) — trusted-dealer keygen, the explicit round API, and why the CLI's local path and the REST/gRPC/MCP network surface are independent |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
 | [password-vault](password-vault/) | Stored password credentials and their access modes |
 | [pin-management](pin-management/) | The PIN service and its TPM 2.0 backend |
 | [piv-smartcard](piv-smartcard/) | PIV slot operations as a factor and as a CLI/SDK verb |
+| [pkcs11-backend](pkcs11-backend/) | `pkg/backend/pkcs11` — xkms as a PKCS#11 *client* consuming an HSM/token (`-tags pkcs11`), distinct from the provider module below |
 | [pkcs11-provider-module](pkcs11-provider-module/) | The `pkcs11-module` cgo provider and its slot/token lifecycle |
 | [platform-secrets](platform-secrets/) | Platform secret storage and resolution |
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
+| [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |
 | [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
 | [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
 | [webauthn](webauthn/) | The canonical WebAuthn relying party |
@@ -93,6 +96,7 @@ by five and reports unconverted folders as converted.
 | [crypto-backends](crypto-backends/) | `backends/` |
 | [tpm2](tpm2/) | `attestation/`, `configuration/tpm2-session-encryption.md` |
 | [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
+| [pkcs11-backend](pkcs11-backend/) | `pkcs11/backend/` (architecture.md, configuration.md, operations.md, runbook.md, security.md, README.md) — also corrects that folder's config.Pin/SOPIN description (now `*types.SecretValue`, credential-resolved) and its AttestKey "placeholder" claim (now fully implemented) |
 | [certificate-authority](certificate-authority/) | `ca/`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
 | [acme-issuance](acme-issuance/) | `acme/` (excluding `acme/ROADMAP.md`) |
 | [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md`, `cli/trust-platform.md` |
@@ -130,9 +134,6 @@ Ordered "under active development first, then most often read":
 
 | Area | Legacy path | Note |
 |---|---|---|
-| FROST threshold signatures | [`frost/`](frost/) | 8 files; full CLI, REST, gRPC and MCP surface |
-| SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage. **Agent-only sessions are already converted** — [`ssh-agent-sessions/`](ssh-agent-sessions/) is NORMATIVE for that capability; the rest of `ssh/` is still legacy |
-| PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
 | Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
 | Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
 | Web console | [`web/`](web/) | 5 files |
@@ -141,6 +142,25 @@ Ordered "under active development first, then most often read":
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
 | Storage engines | [`storage/`](storage/) | File, PebbleDB, memory, and object storage backends |
+
+[`frost-threshold-signing/`](frost-threshold-signing/) and
+[`ssh-keys/`](ssh-keys/) are now NORMATIVE folders, but neither fully
+absorbs its legacy path, so neither gets a "legacy paths superseded" row
+above — the two are recorded here instead:
+
+- **FROST** — [`frost-threshold-signing/`](frost-threshold-signing/) is
+  NORMATIVE for `pkg/keyprovider/frost` and its CLI/REST/gRPC/MCP surface.
+  The legacy [`frost/`](frost/) folder's `backends.md` (per-backend
+  `SecretBackend` setup) and `dkg-integration.md` (writing a custom
+  `KeyGenerator`) were not re-verified for this conversion and remain
+  legacy-only; treat them as unconfirmed until someone re-verifies them
+  against source the way the rest of this folder was.
+- **SSH** — [`ssh-keys/`](ssh-keys/) is NORMATIVE for SSH keys,
+  known-hosts, and authorized-keys, the same way
+  [`ssh-agent-sessions/`](ssh-agent-sessions/) is already NORMATIVE for
+  agent-only sessions. The remainder of [`ssh/README.md`](ssh/README.md) —
+  interactive console sessions, the `xkey` connection-profile manager,
+  local system SSH config discovery — is still legacy.
 
 ### Cross-cutting, and never getting a folder
 
