@@ -19,6 +19,8 @@ import (
 
 	"github.com/godbus/dbus/v5"
 	"github.com/stretchr/testify/assert"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func TestPathMapper_CollectionPathRoundTrip(t *testing.T) {
@@ -161,61 +163,12 @@ func TestPathMapper_IsDefaultCollection(t *testing.T) {
 	}
 }
 
-func TestAttributesToSearchCriteria(t *testing.T) {
-	tests := []struct {
-		name  string
-		attrs ItemAttributes
-		want  map[string]string
-	}{
-		{
-			name:  "empty",
-			attrs: ItemAttributes{},
-			want:  map[string]string{},
-		},
-		{
-			name: "standard attributes",
-			attrs: ItemAttributes{
-				"service":  "github",
-				"username": "user@example.com",
-			},
-			want: map[string]string{
-				"service":  "github",
-				"username": "user@example.com",
-			},
-		},
-		{
-			name: "normalized attributes",
-			attrs: ItemAttributes{
-				"Application": "github",
-				"User":        "testuser",
-				"URL":         "https://github.com",
-			},
-			want: map[string]string{
-				"service":  "github",
-				"username": "testuser",
-				"url":      "https://github.com",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := AttributesToSearchCriteria(tt.attrs)
-			if len(got) != len(tt.want) {
-				t.Errorf("length mismatch: got %d, want %d", len(got), len(tt.want))
-				return
-			}
-			for k, v := range tt.want {
-				if got[k] != v {
-					t.Errorf("key %q: got %q, want %q", k, got[k], v)
-				}
-			}
-		})
-	}
-}
-
-func TestPasswordToItemAttributes(t *testing.T) {
-	attrs := PasswordToItemAttributes("GitHub", "user@example.com", "https://github.com")
+func TestItemAttributesFromPassword(t *testing.T) {
+	attrs := ItemAttributesFromPassword(&xkms.StaticPassword{
+		Name:     "GitHub",
+		Username: "user@example.com",
+		URL:      "https://github.com",
+	})
 
 	if attrs["service"] != "GitHub" {
 		t.Errorf("service = %q, want %q", attrs["service"], "GitHub")
@@ -229,6 +182,25 @@ func TestPasswordToItemAttributes(t *testing.T) {
 	if attrs["xdg:schema"] != "org.freedesktop.Secret.Generic" {
 		t.Errorf("xdg:schema = %q, want %q", attrs["xdg:schema"], "org.freedesktop.Secret.Generic")
 	}
+}
+
+// TestItemAttributesFromPassword_ExplicitAttributesWin proves that
+// attributes stored verbatim via CreateItem take precedence over the
+// legacy derived ones, so a client that wrote "service": "custom-value"
+// reads that value back rather than the password entry's Name.
+func TestItemAttributesFromPassword_ExplicitAttributesWin(t *testing.T) {
+	attrs := ItemAttributesFromPassword(&xkms.StaticPassword{
+		Name: "GitHub",
+		Attributes: map[string]string{
+			"service":  "custom-value",
+			"protocol": "https",
+			"host":     "github.com",
+		},
+	})
+
+	assert.Equal(t, "custom-value", attrs["service"])
+	assert.Equal(t, "https", attrs["protocol"])
+	assert.Equal(t, "github.com", attrs["host"])
 }
 
 func TestMatchAttributes(t *testing.T) {
@@ -386,18 +358,23 @@ func TestPathMapper_CollectionNameFromPath_ForeignPath(t *testing.T) {
 	assert.False(t, m.IsDefaultCollection("/com/example/other"))
 }
 
-func TestAttributesToSearchCriteria_PassesThroughUnknownKeys(t *testing.T) {
-	criteria := AttributesToSearchCriteria(ItemAttributes{
-		"Application": "example.com",
-		"custom_key":  "custom_value",
-		"host":        "vault.example.com",
+// TestItemAttributesFromPassword_GitCredentialShape proves the merged
+// attribute set can carry the exact keys git-credential-libsecret searches
+// on (protocol/host/username), none of which collide with the legacy
+// derived keys.
+func TestItemAttributesFromPassword_GitCredentialShape(t *testing.T) {
+	attrs := ItemAttributesFromPassword(&xkms.StaticPassword{
+		Name: "git:https://github.com",
+		Attributes: map[string]string{
+			"protocol": "https",
+			"host":     "github.com",
+			"username": "octocat",
+		},
 	})
 
-	assert.Equal(t, map[string]string{
-		"service":    "example.com",
-		"custom_key": "custom_value",
-		"url":        "vault.example.com",
-	}, criteria)
+	assert.Equal(t, "https", attrs["protocol"])
+	assert.Equal(t, "github.com", attrs["host"])
+	assert.Equal(t, "octocat", attrs["username"])
 }
 
 func TestWrappedError_ErrorAndUnwrap(t *testing.T) {

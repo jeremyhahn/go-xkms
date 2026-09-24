@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -223,20 +225,124 @@ func TestKeyStore_DeleteKey(t *testing.T) {
 	err = ks.DeleteKey(context.Background(), keyID)
 	assert.NoError(t, err)
 
-	// Verify deleted
+	// Verify every component is gone: metadata, group public key,
+	// verification shares, and the secret share held by the secret backend.
+	exists, err = ks.KeyExists(context.Background(), keyID)
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	_, err = publicStorage.Get(context.Background(), keyPath(keyID, groupPublicKeyFile))
+	assert.ErrorIs(t, err, storage.ErrNotFound)
+
+	for participantID := range pkg.VerificationShares {
+		_, err := publicStorage.Get(context.Background(), verificationSharePath(keyID, participantID))
+		assert.ErrorIs(t, err, storage.ErrNotFound)
+	}
+
+	_, err = secretBackend.GetKey(context.Background(), &types.KeyAttributes{CN: keyID})
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+}
+
+// TestKeyStore_DeleteKey_MissingMetadata verifies that deleting a key whose
+// metadata was never stored (or was already fully deleted) returns the
+// typed *KeyNotFoundError rather than succeeding silently.
+func TestKeyStore_DeleteKey_MissingMetadata(t *testing.T) {
+	publicStorage := newMockStorageBackend()
+	secretBackend := newMockSecretBackend()
+	ks := NewKeyStore(publicStorage, secretBackend)
+
+	err := ks.DeleteKey(context.Background(), "nonexistent")
+	require.Error(t, err)
+
+	var notFoundErr *KeyNotFoundError
+	require.True(t, errors.As(err, &notFoundErr), "error must unwrap to *KeyNotFoundError, got %v (%T)", err, err)
+	assert.Equal(t, "nonexistent", notFoundErr.KeyID)
+	assert.True(t, errors.Is(err, ErrKeyNotFound))
+}
+
+// TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry proves
+// DeleteKey is resumable: when the secret backend fails to delete the
+// share, the error propagates and the metadata record is left in place (not
+// deleted), so a retried DeleteKey — once the secret backend recovers —
+// finds the key by its still-present metadata and finishes the delete.
+func TestKeyStore_DeleteKey_SecretBackendFailure_LeavesMetadataForRetry(t *testing.T) {
+	publicStorage := newMockStorageBackend()
+	secretBackend := newMockSecretBackend()
+	ks := NewKeyStore(publicStorage, secretBackend)
+
+	keyID := "retry-key"
+	pkg := &KeyPackage{
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1, 2, 3}},
+		GroupPublicKey:     []byte{10, 20, 30},
+		VerificationShares: map[uint32][]byte{1: {100}, 2: {200}},
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
+	}
+	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 2}
+	require.NoError(t, ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
+
+	// First attempt: the secret backend fails to delete the share.
+	secretBackend.deleteErr = errors.New("secret backend unavailable")
+	err := ks.DeleteKey(context.Background(), keyID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete secret share")
+
+	// The metadata record — and everything else — must still be present:
+	// nothing beyond the failed step was touched.
+	exists, err := ks.KeyExists(context.Background(), keyID)
+	require.NoError(t, err)
+	assert.True(t, exists, "metadata must remain so a retry can find the key")
+
+	// Second attempt, secret backend recovered: the retry succeeds and
+	// finishes the delete.
+	secretBackend.deleteErr = nil
+	require.NoError(t, ks.DeleteKey(context.Background(), keyID))
+
 	exists, err = ks.KeyExists(context.Background(), keyID)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
 
-func TestKeyStore_DeleteKey_NonexistentKey(t *testing.T) {
-	publicStorage := newMockStorageBackend()
+// TestKeyStore_DeleteKey_PublicStorageFailure_Propagates verifies that a
+// failure deleting a public component (verification share or group public
+// key) is returned rather than swallowed.
+func TestKeyStore_DeleteKey_PublicStorageFailure_Propagates(t *testing.T) {
+	failing := newFailingStorageBackend("delete")
 	secretBackend := newMockSecretBackend()
-	ks := NewKeyStore(publicStorage, secretBackend)
+	ks := NewKeyStore(failing, secretBackend)
 
-	// Should not error even if key doesn't exist
-	err := ks.DeleteKey(context.Background(), "nonexistent")
-	assert.NoError(t, err)
+	keyID := "propagate-key"
+	pkg := &KeyPackage{
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1, 2, 3}},
+		GroupPublicKey:     []byte{10, 20, 30},
+		VerificationShares: map[uint32][]byte{1: {100}},
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
+	}
+	metadata := &KeyMetadata{KeyID: keyID, Algorithm: types.FrostAlgorithmEd25519, Threshold: 2, Total: 1}
+	// failing only fails Delete, so StoreKeyPackage's own Put calls succeed
+	// normally through it.
+	require.NoError(t, ks.StoreKeyPackage(context.Background(), keyID, pkg, metadata))
+
+	err := ks.DeleteKey(context.Background(), keyID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to delete")
+
+	// The secret share was already deleted (it goes first, before the
+	// failing public-storage step) — this is real progress a retry does not
+	// need to redo, not evidence the failure was swallowed.
+	_, err = secretBackend.GetKey(context.Background(), &types.KeyAttributes{CN: keyID})
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+
+	// The metadata record must still be present: the public-storage failure
+	// happened before the metadata delete step.
+	exists, err := failing.mockStorageBackend.Exists(context.Background(), keyPath(keyID, metadataFile))
+	require.NoError(t, err)
+	assert.True(t, exists)
 }
 
 func TestKeyStore_KeyExists(t *testing.T) {

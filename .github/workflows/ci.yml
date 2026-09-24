@@ -449,7 +449,7 @@ jobs:
       # tests that `go vet -tags ble ./...` compiled and no job ran, and a test
       # that is only compiled cannot fail. The set is the security surface of
       # the product -- truststore, tokenstore, luks, ca, secretservice, nssdb,
-      # pivcert, pkcs11mgr, sshstore, sshlocal, config, audit -- and #182 was
+      # pivcert, sshstore, sshlocal, config, audit -- and #182 was
       # an open defect in truststore while its 266 tests sat dark.
       #
       # -tags codec_json for the same reason as the step above: the DAO-backed
@@ -540,7 +540,7 @@ jobs:
             ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
             ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
             ./pkg/oidc ./pkg/oidc/aws ./pkg/oidc/handlers \
-            ./pkg/pcr_policy ./pkg/pkcs11mgr \
+            ./pkg/pcr_policy \
             ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
             ./pkg/serverregistry ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
             ./pkg/tokenstore ./pkg/truststore ./pkg/uhid ./pkg/usb \

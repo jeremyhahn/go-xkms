@@ -34,9 +34,10 @@ import (
 // must reach fido2.WebAuthnRegistrationOptions / WebAuthnAuthenticationOptions,
 // because a PIN-protected authenticator refuses both ceremonies without it.
 // They drive the real pkg/fido2 platform stack against the real virtual
-// authenticator — the same pairing xkmsctl ships in FIDO2_USE_VIRTUAL mode —
-// so a green run proves the PIN completed an actual pinUvAuthParam
-// authorization, not that a double recorded a string.
+// authenticator — the same pairing the FIDO2 integration harness drives
+// through an "integration,fido2"-tagged xkmsctl build (see
+// cmd/xkmsctl/fido2_virtual.go) — so a green run proves the PIN completed an
+// actual pinUvAuthParam authorization, not that a double recorded a string.
 
 const (
 	testPIN      = "123456"

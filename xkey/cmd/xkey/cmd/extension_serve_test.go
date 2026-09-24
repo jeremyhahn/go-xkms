@@ -682,7 +682,6 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 		ErrServeAuthenticatorInitFailed,
 		ErrServePKCS11StrategyUnavailable,
 		ErrServeShamirStrategyUnavailable,
-		ErrServeCloudKMSStrategyUnavailable,
 	}
 	seen := make(map[string]bool, len(errs))
 	for _, e := range errs {
@@ -769,11 +768,14 @@ func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
 	}
 }
 
-// TestExtensionServe_CloudKMSStrategy_Refused proves headless mode refuses
-// every cloud KMS strategy (AWS KMS, GCP KMS, Azure Key Vault, Vault) with
-// a typed error: xkey has no backend wiring for any of them yet, headless
-// or interactive, so none can be silently attempted.
-func TestExtensionServe_CloudKMSStrategy_Refused(t *testing.T) {
+// TestExtensionServe_CloudKMSStrategy_Attempted proves headless mode no
+// longer refuses a cloud KMS barrier strategy outright (go-xkms#757
+// replaces the #699 refusal): it reaches buildCloudKMSBarrierStrategy and
+// fails there. This binary is built without any cloud KMS build tag, so
+// every strategy ID has no registered builder and the error names the
+// build tag needed -- proving the strategy is genuinely attempted rather
+// than rejected by a blanket sentinel before ever trying.
+func TestExtensionServe_CloudKMSStrategy_Attempted(t *testing.T) {
 	for _, strategy := range []string{"awskms", "gcpkms", "azurekv", "vault"} {
 		t.Run(strategy, func(t *testing.T) {
 			tmpDir := t.TempDir()
@@ -795,8 +797,11 @@ func TestExtensionServe_CloudKMSStrategy_Refused(t *testing.T) {
 			cmd.Flags().Bool("no-pairing", false, "")
 
 			err := cmd.Execute()
-			if !errors.Is(err, ErrServeCloudKMSStrategyUnavailable) {
-				t.Fatalf("expected ErrServeCloudKMSStrategyUnavailable, got %v", err)
+			if !errors.Is(err, ErrServeBarrierUnsealFailed) {
+				t.Fatalf("expected ErrServeBarrierUnsealFailed (build-tag-gated backend unavailable), got %v", err)
+			}
+			if !strings.Contains(err.Error(), "built without -tags") {
+				t.Fatalf("expected the cause to name the missing build tag, got %q", err.Error())
 			}
 		})
 	}

@@ -64,6 +64,9 @@ var (
 	// ErrFolderEmpty is returned when the folder path is empty where one is required.
 	ErrFolderEmpty = errors.New("staticpw: folder path is empty")
 
+	// ErrAliasNameEmpty is returned when an alias name is empty where one is required.
+	ErrAliasNameEmpty = errors.New("staticpw: alias name is empty")
+
 	// ErrMoveToSameFolder is returned when moving an entry to its current folder.
 	ErrMoveToSameFolder = errors.New("staticpw: already in target folder")
 

@@ -1038,6 +1038,66 @@ var (
 	ErrWriteWrappedKeyFileFailed = errors.New("failed to write wrapped key file")
 )
 
+// ACME admin errors (cmd/xkmsctl/acme*.go). Kept distinct from the local
+// xkms admin/cert sentinels above: both domains speak of "accounts" and
+// "certificates", but they name different servers over different SDKs, and
+// collapsing them onto the same sentinel would make an error message from
+// one read as if it came from the other.
+var (
+	// ErrInvalidAccountID is returned when an ACME account ID argument does
+	// not parse as an unsigned integer.
+	ErrInvalidAccountID = errors.New("invalid ACME account ID")
+
+	// ErrListAccountsFailed is the sentinel error "failed to list ACME accounts".
+	ErrListAccountsFailed = errors.New("failed to list ACME accounts")
+
+	// ErrGetACMEAccountFailed is the sentinel error "failed to get ACME account".
+	ErrGetACMEAccountFailed = errors.New("failed to get ACME account")
+
+	// ErrDisableACMEAccountFailed is the sentinel error "failed to disable ACME account".
+	ErrDisableACMEAccountFailed = errors.New("failed to disable ACME account")
+
+	// ErrListACMECertificatesFailed is the sentinel error "failed to list ACME certificates".
+	ErrListACMECertificatesFailed = errors.New("failed to list ACME certificates")
+
+	// ErrGetACMECertificateFailed is the sentinel error "failed to get ACME certificate".
+	ErrGetACMECertificateFailed = errors.New("failed to get ACME certificate")
+
+	// ErrRevokeACMECertificateFailed is the sentinel error "failed to revoke ACME certificate".
+	ErrRevokeACMECertificateFailed = errors.New("failed to revoke ACME certificate")
+
+	// ErrInvalidACMESerial is returned when an ACME certificate serial
+	// argument is empty.
+	ErrInvalidACMESerial = errors.New("certificate serial number is required")
+
+	// ErrACMETenantIDRequired is returned when an "acme eab" verb is
+	// invoked without --tenant. EAB is tenant-scoped in go-xkms's ACME
+	// admin plane, so there is no default tenant to fall back to.
+	ErrACMETenantIDRequired = errors.New("--tenant is required for EAB operations")
+
+	// ErrACMEEABKIDRequired is returned when "acme eab get/delete" is
+	// invoked without a key-ID argument.
+	ErrACMEEABKIDRequired = errors.New("EAB key ID is required")
+
+	// ErrCreateACMEEABFailed is the sentinel error "failed to create EAB".
+	ErrCreateACMEEABFailed = errors.New("failed to create EAB")
+
+	// ErrGetACMEEABFailed is the sentinel error "failed to get EAB".
+	ErrGetACMEEABFailed = errors.New("failed to get EAB")
+
+	// ErrDeleteACMEEABFailed is the sentinel error "failed to delete EAB".
+	ErrDeleteACMEEABFailed = errors.New("failed to delete EAB")
+
+	// ErrListACMEEABFailed is the sentinel error "failed to list EABs".
+	ErrListACMEEABFailed = errors.New("failed to list EABs")
+
+	// ErrGetACMEStatusFailed is the sentinel error "failed to get CA status".
+	ErrGetACMEStatusFailed = errors.New("failed to get CA status")
+
+	// ErrGetACMEStatsFailed is the sentinel error "failed to get CA statistics".
+	ErrGetACMEStatsFailed = errors.New("failed to get CA statistics")
+)
+
 // Sentinel errors for the password / platform / policy / pin / status
 // command groups and the key attestation, ECDH derivation, by-ID wrap,
 // and key-material export verbs.

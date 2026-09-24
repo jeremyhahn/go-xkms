@@ -294,7 +294,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user (only logout if we performed the login)
 	var didLogin bool
@@ -313,7 +317,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		didLogin = true
 	}
 	if didLogin {
-		defer b.p11ctx.Logout(session)
+		defer func() {
+			if logoutErr := b.p11ctx.Logout(session); logoutErr != nil {
+				err = errors.Join(err, logoutErr)
+			}
+		}()
 	}
 
 	// Find the wrapping key (private key handle). The label is the package
@@ -744,7 +752,7 @@ func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyL
 //   - The exported key is wrapped using the HSM's wrapping key
 //   - Keys imported with CKA_EXTRACTABLE=false cannot be exported
 //   - The export operation happens entirely within the HSM for maximum security
-func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (wrapped *backend.WrappedKeyMaterial, err error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -795,7 +803,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user (only logout if we performed the login)
 	var didLogin bool
@@ -814,7 +826,11 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		didLogin = true
 	}
 	if didLogin {
-		defer b.p11ctx.Logout(session)
+		defer func() {
+			if logoutErr := b.p11ctx.Logout(session); logoutErr != nil {
+				err = errors.Join(err, logoutErr)
+			}
+		}()
 	}
 
 	// Find the key to export. The class is part of the template because an RSA
@@ -1032,7 +1048,7 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 //
 // Note: Most HSM security policies will prevent keys from having CKA_EXTRACTABLE=true.
 // This is primarily useful for testing with SoftHSM or specific compliance scenarios.
-func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
+func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) (keyMaterial []byte, err error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -1068,7 +1084,11 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login if required
 	if b.config.PIN != nil {

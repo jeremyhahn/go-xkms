@@ -368,7 +368,9 @@ func (s *BackendStore) RenameFolder(oldPath, newPath string) error {
 	}
 	for _, f := range folders {
 		if f == oldPath || strings.HasPrefix(f, oldPath+"/") {
-			_ = s.RemoveFolder(f)
+			if rErr := s.RemoveFolder(f); rErr != nil {
+				return rErr
+			}
 			if cErr := s.CreateFolder(newPath + strings.TrimPrefix(f, oldPath)); cErr != nil {
 				return cErr
 			}
@@ -397,7 +399,9 @@ func (s *BackendStore) DeleteFolder(path string) error {
 	}
 	for _, f := range folders {
 		if f == path || strings.HasPrefix(f, path+"/") {
-			_ = s.RemoveFolder(f)
+			if rErr := s.RemoveFolder(f); rErr != nil {
+				return rErr
+			}
 		}
 	}
 	return nil

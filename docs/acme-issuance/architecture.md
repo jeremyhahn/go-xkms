@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## The problem
 
@@ -63,7 +63,8 @@ Rejected alternatives:
 | Challenge implementations | `pkg/acme/challenges/{http-01,dns-01,device-attest-01,enroll-01,endorse-01}` |
 | Issuance | `pkg/acme/issuance` → `pkg/ca` |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
-| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/server/rate_limiter.go`, `pkg/acme/server/{circuitbreaker,degradation}` |
+| Policy, CAA, rate limits | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/server/rate_limiter.go` |
+| Circuit breakers, degradation cache | `pkg/acme/server/circuitbreaker` (breakers, `Manager`, the HTTP middleware, and the `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators), `pkg/acme/server/degradation` (the cache `GET /acme/directory` and `GET /acme/ca-bundle` fall back to) |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
@@ -128,15 +129,43 @@ through ACME against an existing node's directory.
   parameters are enforced against reality, not merely parsed.
   `pkg/acme/server/rate_limiter.go` and the tenant rate limiter bound
   per-account and per-tenant issuance.
-- **The circuit breaker and degradation paths fail closed** — under pressure the
-  server refuses new orders rather than issuing unvalidated ones.
+- **Circuit breakers guard individual outbound dependencies, not order
+  creation.** `pkg/acme/server/circuitbreaker` wraps five dependencies, each
+  with its own breaker: the `http-01` and `dns-01` challenge verifiers
+  (wrapped where `cmd/xkmsd` builds the challenge map), CT log submission
+  (`circuitbreaker.WrapLogSubmitter`, available wherever a CT submitter is
+  constructed — see "What this feature deliberately does not do"), the
+  tenant KMS signer (`Params.KMSService`, wrapped automatically by
+  `NewRestService` when both it and `Params.Breakers` are set), and the
+  CA/keystore-backed certificate storage `GET /acme/ca-bundle` reads from.
+  An open breaker fails only the call it guards — a challenge validation
+  attempt returns an `incorrectResponse` problem instead of hanging on a dead
+  verifier target, a KMS-backed finalize fails instead of blocking — it does
+  not intercept `POST /acme/new-order`, which calls none of these five.
+  `GET /acme/directory` and `GET /acme/ca-bundle` degrade rather than fail:
+  while the storage breaker is open they serve their last computed response
+  from a `pkg/acme/server/degradation` cache (falling back to a *stale*
+  cache entry only past its TTL; a still-fresh one is served as a normal,
+  non-degraded response). `GET /acme/health` reports every breaker's state
+  and counters and whether the directory/CA-bundle endpoints are currently
+  degraded.
+  The ACME protocol state itself — accounts, orders, authorizations,
+  challenges, nonces (`pkg/acme/storage` → `go-qrdb/sdk/go`) — is not wrapped
+  in a circuit breaker: go-qrdb owns that storage's consistency and retry
+  semantics, and a breaker's goroutine-plus-timeout can abandon a call
+  without waiting for it, which is safe for an idempotent read or a network
+  probe but not for a durable write whose caller must not believe it failed
+  while it is still committing. Lower layers win.
 
 ## What this feature deliberately does not do
 
 - **It does not run a public web PKI.** OCSP stapling, CRL distribution-point
   automation, CT log submission and cross-signing automation are on the roadmap,
-  not in the tree; `pkg/acme/ct` is present but the surrounding automation is
-  not.
+  not in the tree; `pkg/acme/ct` and `pkg/acme/issuance` (the bridge that would
+  call it) are present but neither is wired into `OrderFinalizeHandler`, which
+  issues through `TrustedCA.SignCSR` directly. `circuitbreaker.WrapLogSubmitter`
+  exists so whatever wires CT submission in does not have to build its own
+  resilience layer, but there is no production call site to wrap yet.
 - **It does not own the CA.** Issuance is `TrustedCA`'s; ACME is the protocol in
   front of it.
 - **It does not define identity.** Accounts are ACME accounts. Platform users,

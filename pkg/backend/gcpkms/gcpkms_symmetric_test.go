@@ -25,6 +25,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -207,11 +209,27 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
-					return nil, errors.New("not found")
+					return nil, status.Error(codes.NotFound, "crypto key not found")
 				}
 			},
 			wantErr: true,
 			errType: backend.ErrKeyNotFound,
+		},
+		{
+			name: "key retrieval error",
+			attrs: &types.KeyAttributes{
+				CN:                 "unreachable-key",
+				KeyType:            backend.KEY_TYPE_SECRET,
+				StoreType:          backend.STORE_GCPKMS,
+				SymmetricAlgorithm: types.SymmetricAES256GCM,
+			},
+			mockFunc: func(m *MockKMSClient) {
+				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
+					return nil, status.Error(codes.PermissionDenied, "caller lacks cloudkms.cryptoKeys.get")
+				}
+			},
+			wantErr: true,
+			errType: ErrKeyRetrievalFailed,
 		},
 		{
 			name: "wrong key purpose",

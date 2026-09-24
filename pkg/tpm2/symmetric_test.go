@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -33,6 +34,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// errStoreKeyBackend is a minimal store.KeyBackend whose every method
+// returns a fixed error. It simulates a key-store failure that is not
+// "not found" -- a permission error, a transient I/O fault, a corrupt
+// blob -- so tests can verify that GetSymmetricKey and SymmetricEncrypter
+// classify it as ErrKeyRetrievalFailed rather than backend.ErrKeyNotFound.
+type errStoreKeyBackend struct {
+	err error
+}
+
+func (b *errStoreKeyBackend) Get(attrs *types.KeyAttributes, ext types.FSExtension) ([]byte, error) {
+	return nil, b.err
+}
+
+func (b *errStoreKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	return b.err
+}
+
+func (b *errStoreKeyBackend) Delete(attrs *types.KeyAttributes) error {
+	return b.err
+}
+
+var _ store.KeyBackend = (*errStoreKeyBackend)(nil)
 
 // TestGenerateSymmetricKey tests generating an AES symmetric key in the TPM
 func TestGenerateSymmetricKey(t *testing.T) {
@@ -98,6 +122,107 @@ func TestGetSymmetricKey(t *testing.T) {
 	if key.KeySize() != 256 {
 		t.Errorf("Expected key size 256, got %d", key.KeySize())
 	}
+}
+
+// TestGetSymmetricKey_NotFound verifies that resolving a symmetric key
+// that was never generated returns an error satisfying
+// errors.Is(err, backend.ErrKeyNotFound), matching the not-found contract
+// every other backend method already honors (#801, #808, #816).
+func TestGetSymmetricKey_NotFound(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-symmetric-never-generated",
+		StoreType:          types.StoreTPM2,
+		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.GetSymmetricKey(attrs)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, kbackend.ErrKeyNotFound)
+	assert.NotErrorIs(t, err, ErrKeyRetrievalFailed)
+}
+
+// TestGetSymmetricKey_RetrievalError verifies that a key-store failure
+// other than "not found" -- a transient I/O error, a permission failure, a
+// corrupt blob -- is reported as ErrKeyRetrievalFailed and does NOT
+// satisfy errors.Is(err, backend.ErrKeyNotFound). A get-or-create caller
+// must not mistake "the store failed to answer" for "the key does not
+// exist yet" and silently generate a replacement for a hardware-backed
+// key (#816).
+func TestGetSymmetricKey_RetrievalError(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	tpmObj.backend = &errStoreKeyBackend{err: errors.New("i/o timeout reading key blob")}
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-symmetric-retrieval-error",
+		StoreType:          types.StoreTPM2,
+		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.GetSymmetricKey(attrs)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, kbackend.ErrKeyNotFound)
+	assert.ErrorIs(t, err, ErrKeyRetrievalFailed)
+}
+
+// TestSymmetricEncrypter_NotFound verifies that SymmetricEncrypter
+// propagates GetSymmetricKey's not-found classification for a key that
+// was never generated, rather than a generic wrapped error.
+func TestSymmetricEncrypter_NotFound(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-encrypter-never-generated",
+		StoreType:          types.StoreTPM2,
+		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.SymmetricEncrypter(attrs)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, kbackend.ErrKeyNotFound)
+	assert.NotErrorIs(t, err, ErrKeyRetrievalFailed)
+}
+
+// TestSymmetricEncrypter_RetrievalError verifies that SymmetricEncrypter
+// propagates ErrKeyRetrievalFailed, not ErrKeyNotFound, for a key-store
+// failure that does not mean the key is absent.
+func TestSymmetricEncrypter_RetrievalError(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	tpmObj.backend = &errStoreKeyBackend{err: errors.New("permission denied")}
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-encrypter-retrieval-error",
+		StoreType:          types.StoreTPM2,
+		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.SymmetricEncrypter(attrs)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, kbackend.ErrKeyNotFound)
+	assert.ErrorIs(t, err, ErrKeyRetrievalFailed)
 }
 
 // TestSymmetricEncryptDecrypt tests encrypting and decrypting data

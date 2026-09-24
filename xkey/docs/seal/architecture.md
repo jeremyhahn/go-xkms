@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — Architecture
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 ## Scope
 
@@ -13,8 +13,10 @@ unlocks it again without (or with) a human. Two independent layers make up
    that wraps the xKey data directory's storage backend. Every CLI command
    and the GUI that persists a secret (OATH credentials, FIDO2 keys, the
    OIDC token store, static passwords, PIV keys stored in software) writes
-   through it once it is initialized. Sealed with one of three strategies:
-   TPM 2.0, PKCS#11, or a software Argon2id-derived key.
+   through it once it is initialized. Sealed with one of seven strategies:
+   TPM 2.0, PKCS#11, a software Argon2id-derived key, or one of four cloud
+   KMS strategies (AWS KMS, GCP Cloud KMS, Azure Key Vault, HashiCorp Vault
+   — go-xkms#757).
 2. **The legacy sealed-blob store** (`pkg/gui/services.SealService`,
    `PlatformPolicyService`, `AutoUnsealService`) — a GUI-only, pre-barrier
    mechanism for sealing individual named secrets (a LUKS passphrase, the
@@ -82,6 +84,62 @@ though the command still proceeds. The typed sentinel is
 This auto-unseal is distinct from — and does not touch — the legacy
 `AutoUnsealService`'s LUKS-volume and pre-barrier-password auto-unseal
 described below.
+
+## Cloud KMS strategies: one composition path, two entry points
+
+`xkmsd` (`pkg/server/seal_strategies.go`) and xkey both build a cloud KMS
+seal strategy (`aws_kms`/`gcp_kms`/`azure_kv`/`vault`) through the same
+function, `pkg/seal.BuildCloudKMSStrategy` (re-exported as
+`sdk/go.BuildCloudKMSStrategy`): given an already-constructed backend
+(`AWSKMSBackend`, `GCPKMSBackend`, `AzureKVBackend`, or `VaultBackend`, all
+implementing `types.KeyProvider`), it provisions the symmetric wrapping key
+the barrier root key is sealed under — a fixed name (`sdk/go.SealKeyCN`),
+created on first use and reused thereafter — and returns the matching
+`CloudKMSStrategy`. Sharing this one function is what lets a barrier
+initialized by `xkmsd` unseal under xkey and vice versa; xkmsd's
+`buildHardwareSealStrategy` calls it for the same four strategy IDs xkey
+does.
+
+What differs between the two is how the backend itself gets built, because
+xkey has no backend/provider registry of its own the way `xkmsd`'s
+`s.keyProviders` is:
+
+- `cmd/xkey/cmd/barrier_cloudkms_<provider>.go` (one file per provider,
+  gated by that provider's Go build tag — `awskms`, `gcpkms`, `azurekv`,
+  `vault`, matching `pkg/backend/<provider>`'s own gating) constructs the
+  backend from `xkey/pkg/config.BarrierCloudKMSConfig` (persisted by `xkey
+  barrier init --strategy <id> --<provider>-...`, see cli.md) and registers
+  itself into a small dispatch map (`cloudKMSStrategyBuilders`,
+  `barrier_cloudkms.go`) keyed by `sdk/go.StrategyID`. A binary built
+  without a provider's tag has no entry for that ID and reports a typed
+  error naming the missing tag rather than a compile error or a silent
+  fallback.
+- `services.BarrierService` (used by both the GUI and, via
+  `cmd/xkey/cmd/extension_serve.go`, the headless daemon) has no cloud
+  backend wiring of its own either. `SetCloudKMSStrategyFunc` injects a
+  `func(strategyID string) (xkms.SealingStrategy, error)` the same way
+  `SetTPMSealerFunc` injects a TPM2 sealer; `extension serve` builds the
+  strategy via the dispatch map above and injects it before calling
+  `Unseal`. This replaces the flat refusal `extension serve` used to return
+  for every cloud KMS strategy (go-xkms#699); `pkcs11` and `shamir` are
+  still refused (see cli.md) because unsealing them headlessly needs a
+  secret source (a TPM-sealed PIN store, an operator share quorum) that does
+  not exist yet — a different problem from "no backend wiring", which cloud
+  KMS had until this issue.
+
+Credentials follow the layer that owns the concept: an explicit credential
+is a `*xkms.SecretValue` config field (`BarrierAWSKMSConfig.SecretAccessKey`,
+`BarrierAzureKVConfig.ClientSecret`, `BarrierVaultConfig.Token`), resolved
+through `sdk/go.NewSecretConfigProcessor`/`NewSecretResolverRegistry` — the
+same go-qrdb secret-reference contract `xkmsd` resolves its own backend
+credentials through (`pkg/server/secret_wiring.go`) — never a plain string.
+xkey registers no resolvers of its own (it has no credential store), so a
+field left `nil` is skipped (ambient credentials — the AWS SDK default
+chain, GCP Application Default Credentials, Azure `DefaultAzureCredential`,
+or Vault's `VAULT_TOKEN`, and the documented default for every provider),
+while a field naming an explicit reference fails closed with
+`sdk/go.ErrUnresolvedSecretURI` until a resolver for a scheme xkey can
+serve is registered.
 
 ## Named PCR policies: one store, shared by the GUI and every CLI command
 

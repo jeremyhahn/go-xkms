@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -357,7 +358,11 @@ func (b *Backend) importDuplicate(encoded []byte) (*tpm2.TPMTPublic, tpm2.TPM2BP
 	if err != nil {
 		return nil, tpm2.TPM2BPrivate{}, &errs.Detail{Err: ErrSessionCreationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if closeErr := closer(); closeErr != nil {
+			b.logger.Error("failed to close import session", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	imp, err := tpm2.Import{
 		ParentHandle: tpm2.AuthHandle{
@@ -403,7 +408,9 @@ func (b *Backend) loadAndUnseal(public *tpm2.TPMTPublic, outPrivate tpm2.TPM2BPr
 		InPublic:  tpm2.New2B(*public),
 		InPrivate: outPrivate,
 	}.Execute(b.tpm.Transport())
-	_ = loadCloser()
+	if closeErr := loadCloser(); closeErr != nil {
+		b.logger.Error("failed to close load session", slog.String("error", closeErr.Error()))
+	}
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to load imported object: %v", err)}
 	}

@@ -50,9 +50,7 @@ func TestBackend_GetKey_NotFound(t *testing.T) {
 	// The backend only calls DescribeKey once local metadata says the CN is
 	// known, so seed it directly: this exercises the DescribeKey
 	// classification path rather than the earlier "no local record" gate.
-	b.mu.Lock()
-	b.metadata[attrs.CN] = []byte(`{}`)
-	b.mu.Unlock()
+	require.NoError(t, storage.SaveKey(context.Background(), config.KeyStorage, attrs.CN, []byte(`{"key_id":"test-key-id"}`)))
 
 	_, err = b.GetKey(context.Background(), attrs)
 	require.Error(t, err)
@@ -81,9 +79,7 @@ func TestBackend_GetKey_RetrievalError(t *testing.T) {
 		KeyType:      backend.KEY_TYPE_SIGNING,
 		StoreType:    backend.STORE_AWSKMS,
 	}
-	b.mu.Lock()
-	b.metadata[attrs.CN] = []byte(`{}`)
-	b.mu.Unlock()
+	require.NoError(t, storage.SaveKey(context.Background(), config.KeyStorage, attrs.CN, []byte(`{"key_id":"test-key-id"}`)))
 
 	_, err = b.GetKey(context.Background(), attrs)
 	require.Error(t, err)

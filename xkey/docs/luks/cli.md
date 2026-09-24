@@ -1,164 +1,145 @@
 # LUKS2 Encrypted Storage — CLI
 
-> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `luks` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
-Binary: `xkey`. Parent command: `xkey luks2` (`cmd/xkey/cmd/luks2.go`).
-Every subcommand requires root; run under `sudo`.
+All LUKS commands live under `xkey luks2` and require root (directly, or via
+`sudo`). They are exempt from the ordinary unlock gate described below —
+they *are* the commands that manage the volume the gate checks.
 
-## `xkey luks2 seal`
+## The unlock gate (every other command)
 
-Creates a new LUKS2 container and, if `~/.xkey/` already holds data, migrates
-it in.
+Every `xkey` command **other than** `luks2 *`, `barrier *`, `pin *`, and `usb
+*` (see `luksExemptGroups`, `cmd/xkey/cmd/root.go`) passes through
+`checkLUKSVolume()` before it runs:
 
-| Flag | Default | Description |
-|---|---|---|
-| `--size` | `100M` | Container size (`100M`, `1G`, …) |
-| `--path` | `~/.xkey.luks` | Custom container path |
-| `--mount-point` | `~/.xkey` | Custom mount point |
-| `--unseal` | `false` | Unlock and mount immediately after creating |
-| `--skip-migrate` | `false` | Create the container without migrating existing data |
+- No container configured (`~/.xkey.luks` does not exist): no-op, the
+  command runs against the plain data directory exactly as it always has.
+- Container exists and is already mounted: no-op, the command runs.
+- Container exists, is not mounted, and the process is not root:
 
+  ```
+  Encrypted storage detected at /home/you/.xkey.luks
+  Run with sudo to unlock: sudo xkey luks2 unseal
+  ```
+
+  and the command exits with an error matching
+  `errors.Is(err, xkms.ErrLUKSVolumeLocked)` — the same sentinel the GUI
+  reports for the identical condition. `errors.Is(err,
+  luks.ErrPermissionDenied)` also matches, for the more specific cause.
+- Container exists, is not mounted, process is root: prompts for the
+  passphrase on stderr, unlocks and mounts, then the command runs.
+
+## seal — create an encrypted container
+
+```bash
+sudo xkey luks2 seal [flags]
 ```
-sudo xkey luks2 seal
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--size` | Container size (e.g. `100M`, `1G`, `500M`) | `100M` |
+| `--path` | Custom LUKS file path | `~/.xkey.luks` |
+| `--mount-point` | Custom mount point | `~/.xkey` |
+| `--unseal` | Unlock immediately after creating | `false` |
+| `--skip-migrate` | Do not migrate existing plaintext data into the new container | `false` |
+
+```bash
+sudo xkey luks2 seal                              # 100MB, default paths
 sudo xkey luks2 seal --size 500M
-sudo xkey luks2 seal --path /secure/xkey.luks
-sudo xkey luks2 seal --unseal
+sudo xkey luks2 seal --size 1G --path /secure/mydata.luks
+sudo xkey luks2 seal --mount-point /mnt/xkey
+echo -e "mypassphrase\nmypassphrase" | sudo xkey luks2 seal   # scripted (passphrase + confirmation)
 ```
 
-Prompts for a passphrase (with confirmation) on a terminal, or reads two
-newline-separated lines from piped stdin for automation:
+Process: prompts for passphrase with confirmation → creates a sparse file of
+the requested size → formats it LUKS2 → creates an ext4 filesystem inside →
+migrates existing plaintext data from the mount point unless
+`--skip-migrate` → locks the container (unless `--unseal`).
 
+## unseal — unlock and mount
+
+```bash
+sudo xkey luks2 unseal [flags]
 ```
-echo -e "mypassphrase\nmypassphrase" | sudo xkey luks2 seal
-```
 
-## `xkey luks2 unseal`
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--path` | Custom LUKS file path | `~/.xkey.luks` |
+| `--mount-point` | Custom mount point | `~/.xkey` |
 
-| Flag | Default | Description |
-|---|---|---|
-| `--path` | `~/.xkey.luks` | Custom container path |
-| `--mount-point` | `~/.xkey` | Custom mount point |
-
-```
+```bash
 sudo xkey luks2 unseal
-sudo xkey luks2 unseal --path /secure/xkey.luks
-echo "mypassphrase" | sudo xkey luks2 unseal
+sudo xkey luks2 unseal --path /secure/mydata.luks
+echo "mypassphrase" | sudo xkey luks2 unseal   # scripted
 ```
 
-Already-mounted is a no-op success, not an error.
+## lock — unmount and close
 
-## `xkey luks2 lock`
-
-| Flag | Default | Description |
-|---|---|---|
-| `--path` | `~/.xkey.luks` | Custom container path |
-| `--mount-point` | `~/.xkey` | Custom mount point |
-
+```bash
+sudo xkey luks2 lock [flags]
 ```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--path` | Custom LUKS file path | `~/.xkey.luks` |
+| `--mount-point` | Custom mount point | `~/.xkey` |
+
+```bash
 sudo xkey luks2 lock
 ```
 
-## `xkey luks2 migrate`
+## migrate — move to a new or larger container
 
-Moves to a new or larger container.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--size` | 2x current | New container size |
-| `--path` | same as current | New container path |
-| `--source-path` | `~/.xkey.luks` | Source container path |
-| `--keep-old` | `false` | Keep the old container as `<path>.old` |
-| `--wipe` | `false` | Securely wipe the old container instead of a plain remove |
-| `--wipe-standard` | `dod3` | `nist`, `dod3`, or `dod7` |
-
+```bash
+sudo xkey luks2 migrate [flags]
 ```
-sudo xkey luks2 migrate                             # double the size
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--size` | New container size | 2x current |
+| `--path` | New container path | same as current |
+| `--source-path` | Source container path | `~/.xkey.luks` |
+| `--keep-old` | Keep old container as `.old` backup | `false` |
+| `--wipe` | Securely wipe the old container after migration | `false` |
+| `--wipe-standard` | `nist` \| `dod3` \| `dod7` | `dod3` |
+
+```bash
+sudo xkey luks2 migrate                        # double the size
 sudo xkey luks2 migrate --size 500M
+sudo xkey luks2 migrate --path /new/location.luks
 sudo xkey luks2 migrate --keep-old
 sudo xkey luks2 migrate --wipe --wipe-standard dod7
-sudo xkey luks2 migrate --path /new/location.luks
 ```
 
-Prompts for the current container's passphrase, then a new one (pressing
-Enter reuses the current one). Runs the kernel-keyring preflight before
-renaming the source container, so a blocked keyring leaves the original
-container untouched — see
-[architecture.md](architecture.md#kernel-keyring-preflight).
+## wipe — securely destroy a container
 
-## `xkey luks2 wipe`
-
-Irreversibly destroys a container.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--standard` | `dod3` | `nist`, `dod3`, or `dod7` |
-| `--force` | `false` | Skip the `DESTROY` confirmation prompt |
-| `--path` | `~/.xkey.luks` | Container path |
-| `--mount-point` | `~/.xkey` | Mount point (locked first if open) |
-
-```
-sudo xkey luks2 wipe
-sudo xkey luks2 wipe --standard nist
-sudo xkey luks2 wipe --standard dod7
-sudo xkey luks2 wipe --force
+```bash
+sudo xkey luks2 wipe [flags]
 ```
 
-Without `--force`, requires typing `DESTROY` at a prompt that also shows the
-container path, size, standard and pattern.
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--standard` | `nist` \| `dod3` \| `dod7` | `dod3` |
+| `--force` | Skip the "type DESTROY to confirm" prompt | `false` |
+| `--path` | Custom LUKS file path | `~/.xkey.luks` |
+| `--mount-point` | Custom mount point | `~/.xkey` |
 
-## `xkey luks2 import-data`
-
-Copies an existing plaintext directory into an already-created LUKS
-container, using a temporary mount point so it works even while xkey is
-actively using the source directory.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--path` | `~/.xkey.luks` | LUKS container path |
-| `--source` | `~/.xkey` | Source directory to import from |
-| `--mount-point` | `~/.xkey` | Final mount point for `--unseal` |
-| `--cleanup` | `false` | Remove the plaintext source after a successful import |
-| `--backup` | `false` | With `--cleanup`, rename the source to `<source>-backup` instead of deleting it |
-| `--unseal` | `false` | Unlock at the final mount point after import (and cleanup, if requested) |
-
-```
-sudo xkey luks2 import-data --source ~/.xkey --path ~/.xkey.luks --cleanup
-sudo xkey luks2 import-data --source ~/.xkey --path ~/.xkey.luks --cleanup --backup
-sudo xkey luks2 import-data --source ~/.xkey --path ~/.xkey.luks --cleanup --unseal --mount-point ~/.xkey
+```bash
+sudo xkey luks2 wipe                     # DoD 3-pass, prompts for confirmation
+sudo xkey luks2 wipe --standard nist     # fastest
+sudo xkey luks2 wipe --standard dod7     # most thorough
+sudo xkey luks2 wipe --force             # scripting
 ```
 
-## Wipe standards
-
-| Value | Name | Pattern |
-|---|---|---|
-| `nist` | NIST SP 800-88 Rev 1 | Random, 1 pass (fastest) |
-| `dod3` | DoD 5220.22-M 3-pass | Zeros → Ones → Random (default) |
-| `dod7` | DoD 5220.22-M ECE 7-pass | (Z→O→R) + R + (Z→O→R), most thorough |
-
-`wipe --standard` and `migrate --wipe-standard` accept the same three values
-and run the same overwrite implementation.
-
-## Common errors
-
-| Message | Cause |
-|---|---|
-| `luks: permission denied (requires root)` | Not running as root |
-| `luks: encrypted container already exists - use 'xkey luks2 wipe' first to destroy existing data` | `seal` against an existing container path |
-| `luks: volume not found` | `unseal`/`lock` against a path with no container |
-| `luks: volume already mounted` | `unseal` when already mounted (reported as success, not this error, by `unseal` itself) |
-| `luks: kernel keyring preflight failed: ...` | `add_key`/`keyctl`/`request_key` blocked — see [architecture.md](architecture.md#kernel-keyring-preflight) |
+Wipe standards: `nist` (NIST SP 800-88 Rev 1, single random pass — fastest,
+recommended for SSDs with TRIM), `dod3` (DoD 5220.22-M, zeros → ones →
+random — default), `dod7` (DoD 5220.22-M ECE, extended 7-pass — slowest,
+most thorough).
 
 ## Automation
 
-```
-echo -e "mypassphrase\nmypassphrase" | sudo xkey luks2 seal
-echo "mypassphrase" | sudo xkey luks2 unseal
-sudo xkey luks2 wipe --force
-```
-
-An example systemd unit for unlocking at boot (not installed by xkey):
-
-```ini
+```bash
+# systemd unit to auto-unlock on boot (stdin-fed passphrase)
 [Unit]
 Description=xkey LUKS Unlock
 After=local-fs.target
@@ -171,3 +152,27 @@ StandardInput=tty-force
 [Install]
 WantedBy=multi-user.target
 ```
+
+For an unattended, hardware-backed alternative see the GUI's TPM
+auto-unseal (`xkey/docs/seal/`, `AutoUnsealService`) — it does not use this
+systemd unit.
+
+## Troubleshooting
+
+- **"Encrypted storage detected ... Run with sudo to unlock"** — expected
+  when a non-root invocation hits a locked, configured volume; run the
+  suggested `sudo xkey luks2 unseal`, or re-run your original command as
+  root.
+- **"No encrypted volume found"** — no container at the expected path;
+  check `ls -la ~/.xkey.luks` or pass `--path`.
+- **"Device or resource busy"** — the container is already open/mounted
+  (possibly by another process); run `xkey luks2 lock` first, or — if a
+  second process legitimately needs to use an already-mounted volume —
+  that is exactly what `Backend.Attach` (architecture.md) is for; no
+  command-line action needed.
+- **"Wrong passphrase"** — self-explanatory; retry.
+- **"kernel keyring preflight failed"** — every operation that creates or
+  unlocks a volume needs `add_key`/`keyctl`/`request_key`, which a
+  container's default seccomp profile (Docker) blocks even with
+  `--cap-add SYS_ADMIN`; allow those three syscalls in a custom profile or
+  run on the host.

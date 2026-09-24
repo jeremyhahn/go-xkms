@@ -38,6 +38,49 @@ type Config struct {
 }
 ```
 
+## xkmsd Server Configuration (`backends.frost`)
+
+Everything below this section documents the programmatic `frost.Config` Go
+struct, for embedders that construct a `*frost.FrostBackend` directly.
+`xkmsd` (the server) instead reads a `backends.frost` YAML section and
+builds that same `frost.Config` from it at startup
+(`pkg/config.FrostConfig`, wired in `pkg/server/backend_frost.go`, `frost`
+build tag). This is a smaller surface than the Go struct: `xkmsd` derives
+`PublicStorage` from `public_path` using its own configured storage engine,
+resolves `SecretBackend` by name against the backend it already
+constructed, and does not expose `DKG`, `ParticipantID`, `Participants`, or
+`NonceStorage` as separate YAML keys (nonce tracking always rides
+`public_path`'s storage — see "NonceStorage" below).
+
+```yaml
+backends:
+  frost:
+    enabled: true
+    # Storage location for public group components (group public key,
+    # verification shares, metadata, used-nonce markers). Not secret;
+    # resolved through the same storage engine (storage.backend) as every
+    # other backend's own path-based config.
+    public_path: /var/lib/xkms/frost/public
+    # Name of another backends.* section that holds this node's FROST
+    # secret key share. Must be one of: software, pkcs8, tpm2, pkcs11,
+    # awskms, gcpkms, azurekv, vault — and that section must itself be
+    # configured and enabled.
+    secret_backend: tpm2
+    # Default FROST ciphersuite (RFC 9591) for newly generated keys.
+    # Defaults to FROST-Ed25519-SHA512.
+    algorithm: FROST-Ed25519-SHA512
+    # Default M-of-N for newly generated keys. threshold defaults to 2,
+    # total defaults to 3; total must be >= threshold and neither may
+    # exceed 255.
+    default_threshold: 2
+    default_total: 3
+```
+
+`default_backend` in the top-level config may name `frost` like any other
+backend. `secret_backend` is validated at startup: an unconfigured, unknown,
+or disabled backend name is refused before the node comes up, rather than
+failing later at first key operation.
+
 ## Configuration Options
 
 ### PublicStorage (Required)

@@ -15,6 +15,7 @@ package pkcs11state
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 
@@ -130,6 +131,74 @@ func TestStore_Isolation_TenantAndTokenNamespacesDoNotAlias(t *testing.T) {
 // wraps: its method set is exactly storage.Backend's.
 type noGuardedDeleteBackend struct {
 	storage.Backend
+}
+
+// erroringBackend wraps a real backend but forces Get and List to fail with
+// errBackendUnavailable, so tests can exercise the error path Store must
+// propagate rather than swallow.
+type erroringBackend struct {
+	storage.Backend
+}
+
+var errBackendUnavailable = errors.New("pkcs11state test: backend unavailable")
+
+func (erroringBackend) Get(context.Context, string) ([]byte, error) {
+	return nil, errBackendUnavailable
+}
+
+func (erroringBackend) List(context.Context, string) ([]string, error) {
+	return nil, errBackendUnavailable
+}
+
+func TestStore_Get_PropagatesNonNotFoundErrors(t *testing.T) {
+	s, err := NewStore(erroringBackend{Backend: storage.NewMemory()})
+	require.NoError(t, err)
+
+	_, found, err := s.Get(context.Background(), "t", "tok0", "k")
+	require.ErrorIs(t, err, errBackendUnavailable,
+		"an error other than ErrNotFound must be returned to the caller, not swallowed")
+	assert.False(t, found)
+}
+
+func TestStore_List_PropagatesBackendErrors(t *testing.T) {
+	s, err := NewStore(erroringBackend{Backend: storage.NewMemory()})
+	require.NoError(t, err)
+
+	keys, err := s.List(context.Background(), "t", "tok0", "")
+	require.ErrorIs(t, err, errBackendUnavailable)
+	assert.Nil(t, keys)
+}
+
+func TestStore_CompareAndSwap_SwapsOnlyWhenExpectedMatches(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.Put(ctx, "t", "tok0", "counter", []byte("1")))
+
+	swapped, current, err := s.CompareAndSwap(ctx, "t", "tok0", "counter", []byte("wrong"), []byte("2"))
+	require.NoError(t, err)
+	assert.False(t, swapped, "a mismatched expected value must refuse without an error")
+	assert.Equal(t, []byte("1"), current, "the refusal must report the current value")
+
+	swapped, _, err = s.CompareAndSwap(ctx, "t", "tok0", "counter", []byte("1"), []byte("2"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+
+	got, found, err := s.Get(ctx, "t", "tok0", "counter")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, []byte("2"), got, "a successful swap must persist the new value")
+}
+
+func TestStore_CompareAndSwap_UnsupportedBackendIsAnError(t *testing.T) {
+	s, err := NewStore(noGuardedDeleteBackend{Backend: storage.NewMemory()})
+	require.NoError(t, err)
+
+	swapped, current, err := s.CompareAndSwap(context.Background(), "t", "tok0", "counter", nil, []byte("1"))
+	require.ErrorIs(t, err, ErrCompareAndSwapUnsupported,
+		"a backend without the capability must refuse with an error, never emulate the guard")
+	assert.False(t, swapped)
+	assert.Nil(t, current)
 }
 
 func TestStore_CompareAndDelete_ReleasesOnlyTheObservedValue(t *testing.T) {

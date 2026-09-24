@@ -598,6 +598,7 @@ func passwordToEntity(pw *StaticPassword) *PasswordEntity {
 		UpdatedAt:     pw.UpdatedAt,
 		OwnerID:       pw.OwnerID,
 		Shared:        pw.Shared,
+		Attributes:    pw.Attributes,
 	}
 }
 
@@ -618,5 +619,6 @@ func entityToPassword(entity *PasswordEntity) *StaticPassword {
 		UpdatedAt:     entity.UpdatedAt,
 		OwnerID:       entity.OwnerID,
 		Shared:        entity.Shared,
+		Attributes:    entity.Attributes,
 	}
 }

@@ -413,6 +413,90 @@ func TestUnlock_DelegateCreateFails(t *testing.T) {
 	}
 }
 
+func TestAttach_AlreadyMounted_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	mock := newMockVolumeOperator(tmpDir)
+	mock.isMounted = true
+	mock.isOpen = true
+	b := NewBackend(mock)
+
+	err := b.Attach()
+	if err != nil {
+		t.Fatalf("Attach failed: %v", err)
+	}
+	if !b.IsUnlocked() {
+		t.Error("expected backend to be unlocked after Attach")
+	}
+	if mock.unlocked {
+		t.Error("Attach must not call volume.Unlock")
+	}
+
+	// Storage operations should work against the existing mount.
+	if err := b.Put(context.Background(), "attach-key", []byte("attach-value")); err != nil {
+		t.Fatalf("Put after Attach failed: %v", err)
+	}
+	data, err := b.Get(context.Background(), "attach-key")
+	if err != nil {
+		t.Fatalf("Get after Attach failed: %v", err)
+	}
+	if string(data) != "attach-value" {
+		t.Errorf("expected 'attach-value', got %q", string(data))
+	}
+}
+
+func TestAttach_NotMounted_ReturnsError(t *testing.T) {
+	mock := newMockVolumeOperator(t.TempDir())
+	b := NewBackend(mock)
+
+	err := b.Attach()
+	if !errors.Is(err, ErrVolumeNotMounted) {
+		t.Errorf("expected ErrVolumeNotMounted, got %v", err)
+	}
+	if b.IsUnlocked() {
+		t.Error("backend should remain locked when nothing is mounted to attach to")
+	}
+}
+
+func TestAttach_VolumeNotInitialized_ReturnsError(t *testing.T) {
+	mock := newMockVolumeOperator(t.TempDir())
+	mock.exists = false
+	b := NewBackend(mock)
+
+	err := b.Attach()
+	if !errors.Is(err, ErrVolumeNotInitialized) {
+		t.Errorf("expected ErrVolumeNotInitialized, got %v", err)
+	}
+}
+
+func TestAttach_AlreadyUnlocked_ReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	mock := newMockVolumeOperator(tmpDir)
+	b := NewBackend(mock)
+
+	if err := b.Unlock("test-passphrase"); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
+	}
+
+	err := b.Attach()
+	if !errors.Is(err, ErrVolumeAlreadyUnlocked) {
+		t.Errorf("expected ErrVolumeAlreadyUnlocked, got %v", err)
+	}
+}
+
+func TestAttach_DelegateCreateFails(t *testing.T) {
+	mock := newMockVolumeOperator("")
+	mock.isMounted = true
+	b := NewBackend(mock)
+
+	err := b.Attach()
+	if !errors.Is(err, ErrDelegateCreateFailed) {
+		t.Errorf("expected ErrDelegateCreateFailed, got %v", err)
+	}
+	if b.IsUnlocked() {
+		t.Error("backend should remain locked when delegate creation fails")
+	}
+}
+
 func TestIsUnlocked_ReflectsState(t *testing.T) {
 	tmpDir := t.TempDir()
 	mock := newMockVolumeOperator(tmpDir)

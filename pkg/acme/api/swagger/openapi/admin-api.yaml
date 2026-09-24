@@ -1,38 +1,42 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
-  title: go-trusted-ca Admin API
+  title: go-xkms Admin API
   description: |
-    Administrative API for managing the go-trusted-ca Certificate Authority.
+    Administrative API for the go-xkms ACME Certificate Authority.
 
     This API provides endpoints for:
     - **Tenant Management**: Multi-tenant CRUD operations with isolated CA hierarchies
+    - **Tenant Roles/Users**: Per-tenant RBAC role and user administration
     - **Certificate Management**: List, view, and revoke certificates
     - **Account Management**: Manage ACME accounts
     - **Order Management**: View certificate orders
     - **External Account Binding (EAB)**: Manage pre-authorized account bindings
-    - **Policy Management**: RBAC policy configuration
+    - **Audit**: Query the append-only audit trail
+    - **Algorithm Discovery**: Report the cryptographic algorithms this deployment can execute
+    - **Barrier**: Initialize, seal, unseal, rekey and recover the storage barrier
     - **CA Status/Stats**: Monitor CA health and metrics
 
     ## Authentication
 
-    All endpoints require authentication via API key or mTLS client certificate.
-    Role-based access control (RBAC) determines operation permissions.
+    Every endpoint requires either a Bearer JWT (`Authorization: Bearer <token>`)
+    or an mTLS client certificate. There is no unauthenticated route on this API.
 
-    ## Roles
+    ## Authorization
 
-    | Role | Level | Permissions |
-    |------|-------|-------------|
-    | super-admin | 100 | Full system access, manage all tenants and root CA |
-    | admin | 80 | Tenant-level full access, manage intermediate CAs |
-    | endorser | 60 | Operator permissions plus EAB management |
-    | operator | 40 | Read/write access, no delete or CA management |
-    | viewer | 20 | Read-only access |
+    Every operation is decorated with a `resource:action` grant (for example
+    `certs:revoke`, `barrier:seal`, `roles:create`) and evaluated against the
+    caller's identity by the hosted go-qrdb node's RBAC service. A grant means
+    exactly the same thing here as it does on the gRPC, QUIC and MCP admin
+    transports; this API carries no role or permission model of its own. Each
+    operation below documents the grant it requires. When RBAC is disabled
+    (no qrdb identity plane hosted) any authenticated caller is allowed;
+    authentication is mandatory either way.
 
   version: 1.0.0
   contact:
     name: Automate The Things, LLC
     email: support@automatethethings.com
-    url: https://github.com/jeremyhahn/go-trusted-ca
+    url: https://github.com/jeremyhahn/go-xkms
   license:
     name: AGPL-3.0 / Commercial
     url: https://www.gnu.org/licenses/agpl-3.0.html
@@ -45,24 +49,32 @@ servers:
 
 tags:
   - name: Tenants
-    description: Multi-tenant management operations (super-admin/admin)
+    description: Multi-tenant management operations (tenants:*)
   - name: Tenant CA
-    description: Tenant Certificate Authority operations
+    description: Tenant Certificate Authority operations (ca:*)
   - name: EAB
-    description: External Account Binding management
-  - name: Policies
-    description: RBAC policy management
+    description: External Account Binding management (acme_eab:*)
+  - name: Roles
+    description: Per-tenant RBAC role management (roles:*)
+  - name: Users
+    description: Per-tenant user management (users:*)
   - name: Certificates
-    description: Certificate management operations
+    description: Certificate management operations (certs:*)
   - name: Accounts
-    description: ACME account management
+    description: ACME account management (acme_accounts:*)
   - name: Orders
-    description: ACME order management
+    description: ACME order management (acme_orders:*)
+  - name: Audit
+    description: Audit trail query (audit:read)
+  - name: Algorithms
+    description: Cryptographic algorithm discovery (admin:capabilities)
+  - name: Barrier
+    description: Storage barrier lifecycle (seal:*, barrier:*)
   - name: Status
-    description: CA status and statistics
+    description: CA status and statistics (admin:status)
 
 security:
-  - ApiKeyAuth: []
+  - BearerAuth: []
   - mTLS: []
 
 paths:
@@ -93,22 +105,13 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/TenantInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListTenantsResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
         - Tenants
@@ -140,31 +143,26 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantInfo'
+                $ref: '#/components/schemas/TenantInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '409':
           description: Tenant already exists
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/ProblemDetail'
               example:
-                success: false
-                error:
-                  code: "ALREADY_EXISTS"
-                  message: "Tenant already exists"
+                type: "urn:trusted-ca:error:conflict"
+                title: "Conflict"
+                detail: "Tenant already exists"
+                status: 409
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}:
     get:
@@ -183,20 +181,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantInfo'
+                $ref: '#/components/schemas/TenantInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     put:
       tags:
         - Tenants
@@ -219,22 +212,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantInfo'
+                $ref: '#/components/schemas/TenantInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
         - Tenants
@@ -251,24 +239,19 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Tenant deleted successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Tenant deleted successfully"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/status:
     put:
@@ -293,26 +276,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Tenant status updated successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Tenant status updated successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Tenant CA Endpoints
@@ -345,22 +323,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantRootCAInfo'
+                $ref: '#/components/schemas/TenantRootCAInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/intermediate-cas:
     get:
@@ -375,26 +348,24 @@ paths:
         - $ref: '#/components/parameters/TenantIdParam'
       responses:
         '200':
-          description: List of intermediate CAs
+          description: >-
+            List of intermediate CAs. The handler writes the array directly
+            (no pagination envelope): ListTenantIntermediateCAs returns every
+            intermediate CA for the tenant in one response.
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/TenantIntCAInfo'
+                type: array
+                items:
+                  $ref: '#/components/schemas/TenantIntCAInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
         - Tenant CA
@@ -425,22 +396,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantIntCAInfo'
+                $ref: '#/components/schemas/TenantIntCAInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/intermediate-cas/{caId}:
     get:
@@ -460,20 +426,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantIntCAInfo'
+                $ref: '#/components/schemas/TenantIntCAInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/intermediate-cas/{caId}/status:
     put:
@@ -500,26 +461,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Intermediate CA status updated successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Intermediate CA status updated successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/default-intermediate-ca:
     put:
@@ -544,26 +500,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Default intermediate CA updated successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Default intermediate CA updated successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/ca-status:
     get:
@@ -583,20 +534,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantCAStatusInfo'
+                $ref: '#/components/schemas/TenantCAStatusInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # External Account Binding (EAB) Endpoints
@@ -632,24 +578,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/EABInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListEABResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
         - EAB
@@ -706,22 +643,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CreateEABResponse'
+                $ref: '#/components/schemas/CreateEABResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/eab/{kid}:
     get:
@@ -742,20 +674,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/EABInfo'
+                $ref: '#/components/schemas/EABInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
         - EAB
@@ -773,80 +700,59 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "EAB deleted successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "EAB deleted successfully"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
-  # Policy Management Endpoints (RBAC)
+  # Tenant Role Management Endpoints (roles:*)
+  #
+  # Every response body below is written directly by writeJSON (or a
+  # ListResponse for the paginated list operations); every error is RFC 7807
+  # application/problem+json (writeProblem). That is true of every operation
+  # in this document, not only this section: matches
+  # pkg/acme/admin/tenant_handlers.go exactly.
   # ============================================================================
-  /api/v1/tenants/{tenantId}/policies:
+  /api/v1/tenants/{tenantId}/roles:
     get:
       tags:
-        - Policies
-      summary: List tenant policies
-      description: |
-        Returns a paginated list of RBAC policies for the tenant.
-        Policies are managed via RBAC.
-        Requires admin role.
-      operationId: listTenantPolicies
+        - Roles
+      summary: List tenant roles
+      description: Returns a paginated list of qrdb RBAC roles for the tenant. Requires roles:list.
+      operationId: listTenantRoles
       parameters:
         - $ref: '#/components/parameters/TenantIdParam'
         - $ref: '#/components/parameters/PageParam'
         - $ref: '#/components/parameters/PerPageParam'
-        - name: purpose
-          in: query
-          description: Filter by policy label purpose
-          schema:
-            type: string
       responses:
         '200':
-          description: List of policies
+          description: List of roles
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/IAMPolicy'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListRolesResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemForbidden'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
-        - Policies
-      summary: Create tenant policy
-      description: |
-        Creates a new RBAC policy for the tenant.
-        Uses RBAC policy format.
-        Requires admin role.
-      operationId: createTenantPolicy
+        - Roles
+      summary: Create tenant role
+      description: Creates a new qrdb RBAC role scoped to the tenant. Requires roles:create.
+      operationId: createTenantRole
       parameters:
         - $ref: '#/components/parameters/TenantIdParam'
       requestBody:
@@ -854,180 +760,254 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IAMPolicy'
+              $ref: '#/components/schemas/CreateRoleRequest'
             example:
-              apiVersion: "rbac.trustedca.io/v1"
-              kind: "Policy"
-              metadata:
-                name: "allow-server-certs"
-                labels:
-                  purpose: "certificate-issuance"
-              spec:
-                description: "Allow issuance of server certificates"
-                effect: "allow"
-                subjects:
-                  - kind: "ServiceAccount"
-                    name: "acme-client"
-                resources:
-                  - kind: "Certificate"
-                    name: "*"
-                actions:
-                  - "issue"
-                  - "renew"
-                conditions:
-                  - attribute: "certificate.type"
-                    operator: "equals"
-                    value: "server"
+              name: "endorser"
+              permissions: ["acme_eab:create", "acme_eab:list"]
       responses:
         '201':
-          description: Policy created successfully
+          description: Role created successfully
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/IAMPolicy'
+                $ref: '#/components/schemas/RoleInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: Policy already exists
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/ProblemForbidden'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
-  /api/v1/tenants/{tenantId}/policies/{policyName}:
+  /api/v1/tenants/{tenantId}/roles/{roleID}:
     get:
       tags:
-        - Policies
-      summary: Get policy by name
-      description: |
-        Retrieves a specific RBAC policy by name.
-        Requires admin role.
-      operationId: getTenantPolicy
+        - Roles
+      summary: Get role by ID
+      description: Retrieves a specific role. Requires roles:read.
+      operationId: getTenantRole
       parameters:
         - $ref: '#/components/parameters/TenantIdParam'
-        - $ref: '#/components/parameters/PolicyNameParam'
+        - $ref: '#/components/parameters/RoleIdParam'
       responses:
         '200':
-          description: Policy details
+          description: Role details
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/IAMPolicy'
+                $ref: '#/components/schemas/RoleInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     put:
       tags:
-        - Policies
-      summary: Update policy
-      description: |
-        Updates an existing RBAC policy.
-        System-managed policies cannot be modified.
-        Requires admin role.
-      operationId: updateTenantPolicy
+        - Roles
+      summary: Update role
+      description: Updates an existing role's name and/or permissions. Requires roles:update.
+      operationId: updateTenantRole
       parameters:
         - $ref: '#/components/parameters/TenantIdParam'
-        - $ref: '#/components/parameters/PolicyNameParam'
+        - $ref: '#/components/parameters/RoleIdParam'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IAMPolicy'
+              $ref: '#/components/schemas/UpdateRoleRequest'
       responses:
         '200':
-          description: Policy updated successfully
+          description: Role updated successfully
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/IAMPolicy'
+                $ref: '#/components/schemas/RoleInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          description: Policy is immutable
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-              example:
-                success: false
-                error:
-                  code: "POLICY_IMMUTABLE"
-                  message: "System-managed policies cannot be modified"
-        '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemForbidden'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
-        - Policies
-      summary: Delete policy
-      description: |
-        Deletes an RBAC policy.
-        System-managed policies cannot be deleted.
-        Requires admin role.
-      operationId: deleteTenantPolicy
+        - Roles
+      summary: Delete role
+      description: Deletes a role. A built-in (system) role cannot be deleted. Requires roles:delete.
+      operationId: deleteTenantRole
       parameters:
         - $ref: '#/components/parameters/TenantIdParam'
-        - $ref: '#/components/parameters/PolicyNameParam'
+        - $ref: '#/components/parameters/RoleIdParam'
       responses:
         '200':
-          description: Policy deleted successfully
+          description: Role deleted successfully
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Policy deleted successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Role deleted successfully"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          description: Policy is immutable
+          $ref: '#/components/responses/ProblemForbidden'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  # ============================================================================
+  # Tenant User Management Endpoints (users:*)
+  # ============================================================================
+  /api/v1/tenants/{tenantId}/users:
+    get:
+      tags:
+        - Users
+      summary: List tenant users
+      description: Returns a paginated list of qrdb users for the tenant. Requires users:list.
+      operationId: listTenantUsers
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        '200':
+          description: List of users
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: '#/components/schemas/ListUsersResponse'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
+    post:
+      tags:
+        - Users
+      summary: Create tenant user
+      description: >-
+        Creates a new qrdb user scoped to the tenant. Authentication is
+        exclusively mTLS X.509; there is no password to set. Requires
+        users:create.
+      operationId: createTenantUser
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+            example:
+              username: "jdoe"
+              email: "jdoe@example.com"
+              name: "Jane Doe"
+              role_ids: ["role_01hq..."]
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /api/v1/tenants/{tenantId}/users/{userID}:
+    get:
+      tags:
+        - Users
+      summary: Get user by ID
+      description: Retrieves a specific user. Requires users:read.
+      operationId: getTenantUser
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '404':
+          $ref: '#/components/responses/ProblemNotFound'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+    put:
+      tags:
+        - Users
+      summary: Update user
+      description: Updates an existing user. Requires users:update.
+      operationId: updateTenantUser
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+    delete:
+      tags:
+        - Users
+      summary: Delete user
+      description: Deletes a user. Requires users:delete.
+      operationId: deleteTenantUser
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "User deleted successfully"
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Certificate Management Endpoints
@@ -1061,20 +1041,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/CertificateInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListCertificatesResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/certificates/expiring:
     get:
@@ -1102,20 +1073,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/CertificateInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListCertificatesResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/certificates/{serial}:
     get:
@@ -1134,18 +1096,13 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CertificateInfo'
+                $ref: '#/components/schemas/CertificateInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/certificates/{serial}/revoke:
     post:
@@ -1172,26 +1129,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Certificate revoked successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Certificate revoked successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Account Management Endpoints
@@ -1220,20 +1172,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/AccountInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListAccountsResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/accounts/{accountId}:
     get:
@@ -1252,20 +1195,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/AccountInfo'
+                $ref: '#/components/schemas/AccountInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
         - Accounts
@@ -1282,26 +1220,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Account disabled successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Account disabled successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Order Management Endpoints
@@ -1336,20 +1269,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/OrderInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListOrdersResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/orders/{orderId}:
     get:
@@ -1375,20 +1299,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/OrderInfo'
+                $ref: '#/components/schemas/OrderInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Status and Stats Endpoints
@@ -1409,27 +1328,20 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CAStatus'
+                $ref: '#/components/schemas/CAStatus'
               example:
-                success: true
-                data:
-                  identity: "go-trusted-ca"
-                  initialized: true
-                  version: "1.0.0"
-                  started_at: "2025-01-03T10:00:00Z"
-                  key_algorithm: "ECDSA-P384"
-                  signature_algorithm: "SHA384-ECDSA"
-                  root_ca: "CN=Trusted Root CA"
-                  intermediate_ca: "CN=Trusted Issuing CA"
+                identity: "go-trusted-ca"
+                initialized: true
+                version: "1.0.0"
+                started_at: "2025-01-03T10:00:00Z"
+                key_algorithm: "ECDSA-P384"
+                signature_algorithm: "SHA384-ECDSA"
+                root_ca: "CN=Trusted Root CA"
+                intermediate_ca: "CN=Trusted Issuing CA"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/stats:
     get:
@@ -1446,39 +1358,489 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CAStats'
+                $ref: '#/components/schemas/CAStats'
               example:
-                success: true
-                data:
-                  total_certificates: 1250
-                  valid_certificates: 1100
-                  revoked_certificates: 50
-                  expired_certificates: 100
-                  total_accounts: 85
-                  active_accounts: 80
-                  total_orders: 1500
-                  pending_orders: 12
-                  completed_orders: 1450
+                total_certificates: 1250
+                valid_certificates: 1100
+                revoked_certificates: 50
+                expired_certificates: 100
+                total_accounts: 85
+                active_accounts: 80
+                total_orders: 1500
+                pending_orders: 12
+                completed_orders: 1450
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
+
+  # ============================================================================
+  # Audit Endpoint (audit:read)
+  # ============================================================================
+  /admin/audit:
+    get:
+      tags:
+        - Audit
+      summary: Query the audit trail
+      description: >-
+        Returns a paginated, filtered slice of the append-only audit trail.
+        Answers 501 (Not Implemented, as a problem+json body) when this
+        deployment has no audit trail configured, rather than claiming the
+        trail is empty. Requires audit:read.
+      operationId: listAuditLogs
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: event_type
+          in: query
+          schema:
+            type: string
+        - name: actor
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum: [success, failure]
+        - name: request_id
+          in: query
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          description: RFC 3339 timestamp, inclusive lower bound
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          description: RFC 3339 timestamp, inclusive upper bound
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Page of audit events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAuditLogsResponse'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+        '501':
+          description: No audit trail is configured on this deployment
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+  # ============================================================================
+  # Algorithm Discovery Endpoint (admin:capabilities)
+  # ============================================================================
+  /admin/algorithms:
+    get:
+      tags:
+        - Algorithms
+      summary: Discover supported cryptographic algorithms
+      description: >-
+        Reports the cryptographic algorithms this deployment can actually
+        execute, derived from the backends currently configured: hardware
+        algorithms appear only when a hardware backend is loaded. Requires
+        admin:capabilities.
+      operationId: getAlgorithms
+      responses:
+        '200':
+          description: Supported algorithms
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlgorithmsResponse'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+
+  # ============================================================================
+  # Barrier Endpoints (seal:*, barrier:*)
+  #
+  # Every mutating operation answers 409 Conflict (problem+json) when the
+  # barrier is remote-managed, not yet initialized, or otherwise refuses the
+  # requested transition; see BarrierRemoteModeError / BarrierNotInitializedError
+  # in pkg/acme/admin/barrier_service.go.
+  # ============================================================================
+  /admin/barrier/status:
+    get:
+      tags:
+        - Barrier
+      summary: Get barrier status
+      description: Returns the current barrier mode, seal state and strategy. Requires seal:status.
+      operationId: getBarrierStatus
+      responses:
+        '200':
+          description: Barrier status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierStatusInfo'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/initialize:
+    post:
+      tags:
+        - Barrier
+      summary: Initialize the barrier
+      description: Initializes the barrier with a single passphrase (embedded mode only). Requires seal:bootstrap.
+      operationId: initializeBarrier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierInitializeRequest'
+      responses:
+        '200':
+          description: Barrier initialized successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Barrier initialized successfully"
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/seal:
+    post:
+      tags:
+        - Barrier
+      summary: Seal the barrier
+      description: Seals the barrier, blocking storage access until unsealed (embedded mode only). Requires seal:seal.
+      operationId: sealBarrier
+      responses:
+        '200':
+          description: Barrier sealed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Barrier sealed successfully"
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/unseal:
+    post:
+      tags:
+        - Barrier
+      summary: Unseal the barrier
+      description: Unseals the barrier with the passphrase set at initialize (embedded mode only). Requires seal:unseal.
+      operationId: unsealBarrier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierUnsealRequest'
+      responses:
+        '200':
+          description: Barrier unsealed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Barrier unsealed successfully"
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/shamir/initialize:
+    post:
+      tags:
+        - Barrier
+      summary: Initialize the barrier with Shamir secret sharing
+      description: >-
+        Initializes the barrier under a Shamir quorum instead of a single
+        passphrase (embedded mode only). Share material is never returned;
+        shares are sealed to enrolled Security Officers. Requires
+        seal:initialize_shamir.
+      operationId: initializeBarrierShamir
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierInitializeShamirRequest'
+      responses:
+        '200':
+          description: Shamir quorum initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierInitializeShamirResponse'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/shamir/unseal-share:
+    post:
+      tags:
+        - Barrier
+      summary: Submit a Shamir unseal share
+      description: >-
+        Submits one Shamir share toward the unseal threshold (embedded mode
+        only). Requires barrier:unseal-share.
+      operationId: submitBarrierUnsealShare
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierUnsealShareRequest'
+      responses:
+        '200':
+          description: Share accepted; reports progress toward the threshold
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierUnsealShareResponse'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/rekey:
+    post:
+      tags:
+        - Barrier
+      summary: Rekey the barrier's Shamir shares
+      description: >-
+        Generates a new Shamir quorum (embedded mode only). New shares are
+        sealed to enrolled Security Officers and never returned. Requires
+        seal:rekey.
+      operationId: rekeyBarrier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierRekeyRequest'
+      responses:
+        '200':
+          description: Barrier rekeyed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierRekeyResponse'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/recovery/generate:
+    post:
+      tags:
+        - Barrier
+      summary: Generate disaster recovery keys
+      description: >-
+        Generates a new disaster-recovery Shamir quorum (embedded mode only).
+        Recovery shares are sealed to enrolled recovery officers and never
+        returned. Requires seal:generate_recovery.
+      operationId: generateBarrierRecoveryKeys
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierGenerateRecoveryKeysRequest'
+      responses:
+        '200':
+          description: Recovery keys generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierRecoveryKeysResponse'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/recovery/recover:
+    post:
+      tags:
+        - Barrier
+      summary: Recover the barrier with recovery keys
+      description: >-
+        Recovers the barrier using previously generated disaster-recovery
+        keys (embedded mode only). Requires seal:recover_with_keys.
+      operationId: recoverBarrierWithKeys
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierRecoverWithKeysRequest'
+      responses:
+        '200':
+          description: Barrier recovered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Barrier recovered successfully"
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/recovery/status:
+    get:
+      tags:
+        - Barrier
+      summary: Report whether disaster recovery keys exist
+      description: Requires seal:status.
+      operationId: getBarrierRecoveryStatus
+      responses:
+        '200':
+          description: Recovery key status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierRecoveryStatusResponse'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
+
+  /admin/barrier/root-token:
+    post:
+      tags:
+        - Barrier
+      summary: Generate a root token from Shamir shares
+      description: >-
+        Exchanges a quorum of Shamir shares for a time-limited root token
+        (embedded mode only). Requires seal:rotate_root_key.
+      operationId: generateBarrierRootToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BarrierGenerateRootTokenRequest'
+      responses:
+        '200':
+          description: Root token generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BarrierRootTokenResponse'
+        '400':
+          $ref: '#/components/responses/ProblemBadRequest'
+        '401':
+          $ref: '#/components/responses/ProblemUnauthorized'
+        '403':
+          $ref: '#/components/responses/ProblemForbidden'
+        '409':
+          $ref: '#/components/responses/ProblemConflict'
+        '500':
+          $ref: '#/components/responses/ProblemInternalError'
 
 components:
   # ============================================================================
   # Security Schemes
   # ============================================================================
   securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: X-API-Key
-      description: API key for authentication
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT bearer token, `Authorization: Bearer <token>`"
     mTLS:
       type: mutualTLS
       description: Mutual TLS client certificate authentication
@@ -1517,15 +1879,24 @@ components:
         type: string
       example: "eab-abc123"
 
-    PolicyNameParam:
-      name: policyName
+    RoleIdParam:
+      name: roleID
       in: path
       required: true
-      description: Policy name
+      description: qrdb role identifier
       schema:
         type: string
-        pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
-      example: "allow-server-certs"
+      example: "role_01hq..."
+
+    UserIdParam:
+      name: userID
+      in: path
+      required: true
+      description: qrdb user identifier (uint64 Snowflake, decimal string)
+      schema:
+        type: string
+        pattern: '^[0-9]+$'
+      example: "123456789012345"
 
     SerialParam:
       name: serial
@@ -1580,127 +1951,108 @@ components:
   # Response Schemas
   # ============================================================================
   responses:
-    BadRequest:
+    # ==========================================================================
+    # RFC 7807 problem+json responses. Every admin error response, on every
+    # operation in this document, is written by writeProblem
+    # (pkg/acme/admin/handlers.go) or PermissionGate.Wrap's own 401/403
+    # writeProblem calls (pkg/acme/admin/authz.go): there is no
+    # success/data/error JSON envelope anywhere on this API, on the success
+    # side or the error side.
+    # ==========================================================================
+    ProblemBadRequest:
       description: Bad request - invalid input
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ProblemDetail'
           example:
-            success: false
-            error:
-              code: "INVALID_REQUEST"
-              message: "Invalid request body"
+            type: "urn:trusted-ca:error:bad-request"
+            title: "Bad Request"
+            detail: "Invalid request body"
+            status: 400
 
-    Unauthorized:
+    ProblemUnauthorized:
       description: Unauthorized - authentication required
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ProblemDetail'
           example:
-            success: false
-            error:
-              code: "UNAUTHORIZED"
-              message: "Authentication required"
+            type: "urn:trusted-ca:error:unauthorized"
+            title: "Unauthorized"
+            detail: "Authentication required"
+            status: 401
 
-    Forbidden:
+    ProblemForbidden:
       description: Forbidden - insufficient permissions
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ProblemDetail'
           example:
-            success: false
-            error:
-              code: "FORBIDDEN"
-              message: "Insufficient permissions for this operation"
+            type: "urn:trusted-ca:error:forbidden"
+            title: "Forbidden"
+            detail: "Access denied: insufficient permissions"
+            status: 403
 
-    NotFound:
+    ProblemNotFound:
       description: Resource not found
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ProblemDetail'
           example:
-            success: false
-            error:
-              code: "NOT_FOUND"
-              message: "Resource not found"
+            type: "urn:trusted-ca:error:not-found"
+            title: "Not Found"
+            detail: "Resource not found"
+            status: 404
 
-    InternalError:
+    ProblemConflict:
+      description: Conflict - the barrier is in a state that refuses this operation
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: "urn:trusted-ca:error:barrier-not-initialized"
+            title: "Conflict"
+            detail: "admin: barrier not initialized"
+            status: 409
+
+    ProblemInternalError:
       description: Internal server error
       content:
-        application/json:
+        application/problem+json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ProblemDetail'
           example:
-            success: false
-            error:
-              code: "INTERNAL_ERROR"
-              message: "An internal error occurred"
+            type: "urn:trusted-ca:error:internal"
+            title: "Internal Server Error"
+            detail: "An internal error occurred"
+            status: 500
 
   # ============================================================================
   # Schemas
   # ============================================================================
   schemas:
-    SuccessResponse:
-      type: object
-      required:
-        - success
-      properties:
-        success:
-          type: boolean
-          example: true
-        data:
-          description: Response payload
-        pagination:
-          $ref: '#/components/schemas/Pagination'
-
-    ErrorResponse:
-      type: object
-      required:
-        - success
-        - error
-      properties:
-        success:
-          type: boolean
-          example: false
-        error:
-          $ref: '#/components/schemas/ErrorInfo'
-
-    ErrorInfo:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          description: Machine-readable error code
-          example: "NOT_FOUND"
-        message:
-          type: string
-          description: Human-readable error message
-          example: "Resource not found"
-
-    Pagination:
+    # Tenant Schemas
+    ListTenantsResponse:
+      description: >-
+        The literal shape ListTenants writes: admin.ListResponse{Items:
+        tenants, Total, Page, PerPage} (pkg/acme/admin/tenant_handlers.go).
       type: object
       properties:
-        page:
-          type: integer
-          description: Current page number
-          example: 1
-        per_page:
-          type: integer
-          description: Items per page
-          example: 20
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantInfo'
         total:
           type: integer
-          description: Total number of items
-          example: 150
+        page:
+          type: integer
+        per_page:
+          type: integer
 
-    # Tenant Schemas
     TenantInfo:
       type: object
       properties:
@@ -1742,6 +2094,37 @@ components:
           description: User who created the tenant
           example: "admin@example.com"
 
+    # KeyInfo describes one key configuration in a CA's key set (algorithm
+    # agility: a CA can carry more than one signing key). Mirrors
+    # admin.KeyInfo (pkg/acme/admin/types.go), emitted by admin.CAStatus.Keys,
+    # admin.TenantRootCAInfo.Keys and admin.TenantIntCAInfo.Keys.
+    KeyInfo:
+      type: object
+      properties:
+        algorithm:
+          type: string
+          description: "Key algorithm family: ECDSA, RSA, Ed25519"
+          example: "ECDSA"
+        signature_algorithm:
+          type: string
+          example: "ECDSAWithSHA256"
+        store:
+          type: string
+          description: "Key store backend: software, tpm2, pkcs11"
+          example: "software"
+        key_size:
+          type: integer
+          description: RSA key size in bits (RSA only)
+          example: 2048
+        curve:
+          type: string
+          description: ECDSA curve name (ECDSA only)
+          example: "P-256"
+        default:
+          type: boolean
+          description: True for the primary signing key
+          example: true
+
     TenantRootCAInfo:
       type: object
       properties:
@@ -1754,6 +2137,10 @@ components:
         key_algorithm:
           type: string
           example: "ECDSA-P384"
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
         not_before:
           type: string
           format: date-time
@@ -1792,6 +2179,10 @@ components:
         key_algorithm:
           type: string
           example: "ECDSA-P256"
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
         not_before:
           type: string
           format: date-time
@@ -2110,150 +2501,527 @@ components:
         expires_at:
           type: string
           format: date-time
+
+    ListEABResponse:
+      description: >-
+        The literal shape ListTenantEABs writes: admin.ListResponse{Items:
+        eabs, Total, Page, PerPage} (pkg/acme/admin/tenant_handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EABInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
           nullable: true
 
-    # Policy Schemas (RBAC)
-    IAMPolicy:
+    # Role Schemas (per-tenant RBAC, backed by go-qrdb sdk/go/transport.Role)
+    RoleInfo:
       type: object
-      required:
-        - metadata
-        - spec
       properties:
-        apiVersion:
+        id:
           type: string
-          description: API version
-          default: "rbac.trustedca.io/v1"
-          example: "rbac.trustedca.io/v1"
-        kind:
-          type: string
-          description: Resource kind
-          default: "Policy"
-          example: "Policy"
-        metadata:
-          $ref: '#/components/schemas/IAMPolicyMetadata'
-        spec:
-          $ref: '#/components/schemas/IAMPolicySpec'
-
-    IAMPolicyMetadata:
-      type: object
-      required:
-        - name
-      properties:
+          example: "role_01hq..."
         name:
           type: string
-          description: Policy name (unique within tenant)
-          example: "allow-server-certs"
-        tenant:
+          example: "endorser"
+        tenant_id:
           type: string
-          description: Owning tenant ID
           example: "acme-corp"
-        labels:
-          type: object
-          additionalProperties:
+        permissions:
+          type: array
+          items:
             type: string
-          description: Labels for filtering and organization
-          example:
-            purpose: "certificate-issuance"
-            environment: "production"
-        annotations:
-          type: object
-          additionalProperties:
+          description: qrdb "resource:action" permission strings
+          example: ["acme_eab:create", "acme_eab:list"]
+        system:
+          type: boolean
+          description: True for a built-in role seeded by qrdb; built-ins cannot be deleted.
+        retired_permissions:
+          type: array
+          items:
             type: string
-          description: Annotations for additional metadata
+          description: >-
+            Members of permissions that the running server's build no longer
+            defines, derived on read from the live permission registry.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
-    IAMPolicySpec:
+    CreateRoleRequest:
       type: object
       required:
-        - effect
-        - subjects
-        - resources
-        - actions
-      properties:
-        description:
-          type: string
-          description: Human-readable policy description
-          example: "Allow issuance of server certificates"
-        effect:
-          type: string
-          enum: [allow, deny]
-          description: Policy effect
-          example: "allow"
-        subjects:
-          type: array
-          items:
-            $ref: '#/components/schemas/IAMSubject'
-          description: Subjects the policy applies to
-        resources:
-          type: array
-          items:
-            $ref: '#/components/schemas/IAMResource'
-          description: Resources the policy applies to
-        actions:
-          type: array
-          items:
-            type: string
-          description: Allowed or denied actions
-          example: ["issue", "renew", "revoke"]
-        conditions:
-          type: array
-          items:
-            $ref: '#/components/schemas/IAMCondition'
-          description: Additional conditions for policy evaluation
-
-    IAMSubject:
-      type: object
-      required:
-        - kind
         - name
+        - permissions
       properties:
-        kind:
+        id:
           type: string
-          description: Subject kind (User, ServiceAccount, Group)
-          example: "ServiceAccount"
+          description: Optional pre-assigned identifier; the server generates a UUID when omitted.
         name:
           type: string
-          description: Subject name or pattern (* for all)
-          example: "acme-client"
+          example: "endorser"
+        permissions:
+          type: array
+          items:
+            type: string
+          example: ["acme_eab:create", "acme_eab:list"]
 
-    IAMResource:
+    UpdateRoleRequest:
       type: object
-      required:
-        - kind
-        - name
       properties:
-        kind:
-          type: string
-          description: Resource kind (Certificate, Account, Order, etc.)
-          example: "Certificate"
         name:
           type: string
-          description: Resource name or pattern (* for all)
-          example: "*"
+        permissions:
+          type: array
+          items:
+            type: string
 
-    IAMCondition:
+    ListRolesResponse:
+      type: object
+      properties:
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleInfo'
+        total:
+          type: integer
+        has_more:
+          type: boolean
+
+    # User Schemas (per-tenant, backed by go-qrdb sdk/go/transport.User)
+    UserInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          description: uint64 Snowflake, carried as a decimal string
+          example: "123456789012345"
+        username:
+          type: string
+        email:
+          type: string
+          description: Canonical tenant-unique login key; empty only for system users
+        name:
+          type: string
+        tenant_id:
+          type: string
+        role_ids:
+          type: array
+          nullable: true
+          description: >-
+            db.User.RoleIDs carries no omitempty tag, so a user with no role
+            assignments serializes this as JSON null rather than [].
+          items:
+            type: string
+        enabled:
+          type: boolean
+        system:
+          type: boolean
+        lifecycle:
+          type: string
+          enum: [pending, active, suspended, locked, disabled, deleting]
+        group_ids:
+          type: array
+          items:
+            type: string
+        auth_methods:
+          type: array
+          items:
+            type: string
+          example: ["webauthn", "piv"]
+        last_auth:
+          type: string
+          format: date-time
+        cert_bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/CertBindingInfo'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CertBindingInfo:
+      type: object
+      properties:
+        thumbprint:
+          type: string
+          description: base64url SHA-256 the certificate is matched by
+        kind:
+          type: string
+          enum: [spki_thumbprint, full_cert_fingerprint, piv_attested]
+        not_after:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
       type: object
       required:
-        - attribute
-        - operator
-        - value
+        - username
       properties:
-        attribute:
+        username:
           type: string
-          description: Attribute to evaluate
-          example: "certificate.type"
-        operator:
+        email:
           type: string
-          enum: [equals, not_equals, in, not_in, contains, starts_with, ends_with, regex]
-          description: Comparison operator
-          example: "equals"
-        value:
-          description: Value to compare against
-          oneOf:
-            - type: string
-            - type: array
-              items:
-                type: string
-          example: "server"
+          description: Required unless without_email_login_key is true
+        name:
+          type: string
+        without_email_login_key:
+          type: boolean
+          description: Creates a certificate-only or bootstrap identity with no email login key
+        role_ids:
+          type: array
+          items:
+            type: string
+        group_ids:
+          type: array
+          items:
+            type: string
+        auth_methods:
+          type: array
+          items:
+            type: string
+        lifecycle:
+          type: string
+          enum: [pending, active, disabled]
+        pending:
+          type: boolean
+          description: Shorthand for lifecycle "pending"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        role_ids:
+          type: array
+          items:
+            type: string
+        group_ids:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Replaces the set when non-null; null leaves it unchanged, [] clears it.
+        auth_methods:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Replaces the set when non-null; null leaves it unchanged, [] clears it.
+        lifecycle:
+          type: string
+        last_auth:
+          type: string
+          format: date-time
+
+    ListUsersResponse:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserInfo'
+        total:
+          type: integer
+        has_more:
+          type: boolean
+
+    # RFC 7807 problem detail, written by pkg/acme/admin.writeProblem for
+    # every roles/users/audit/algorithms/barrier error response below.
+    ProblemDetail:
+      type: object
+      properties:
+        type:
+          type: string
+          example: "urn:trusted-ca:error:not-found"
+        title:
+          type: string
+          example: "Not Found"
+        detail:
+          type: string
+          example: "Role not found"
+        status:
+          type: integer
+          example: 404
+
+    # Audit Schemas
+    AuditEventInfo:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+        actor:
+          type: string
+          example: "admin:user@example.com"
+        resource:
+          type: string
+          example: "certificate:abc123"
+        action:
+          type: string
+          example: "revoke"
+        result:
+          type: string
+          enum: [success, failure]
+        request_id:
+          type: string
+        source_ip:
+          type: string
+        user_agent:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+        error_message:
+          type: string
+        duration_ms:
+          type: integer
+
+    ListAuditLogsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEventInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    # Algorithm Discovery Schemas
+    AlgorithmInfo:
+      type: object
+      properties:
+        algorithm:
+          type: string
+          example: "ECDSA"
+        curves:
+          type: array
+          items:
+            type: string
+          example: ["P-256", "P-384"]
+        key_sizes:
+          type: array
+          items:
+            type: integer
+          example: [2048, 3072, 4096]
+        backends:
+          type: array
+          items:
+            type: string
+          example: ["software", "tpm2"]
+        post_quantum:
+          type: boolean
+
+    AlgorithmsResponse:
+      type: object
+      properties:
+        signing:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlgorithmInfo'
+        key_encapsulation:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlgorithmInfo'
+
+    # Barrier Schemas
+    BarrierStatusInfo:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [embedded, remote]
+        enabled:
+          type: boolean
+        sealed:
+          type: boolean
+        strategy:
+          type: string
+          example: "shamir"
+        hardware_backed:
+          type: boolean
+        initialized_at:
+          type: string
+          format: date-time
+
+    BarrierInitializeRequest:
+      type: object
+      required:
+        - secret
+      properties:
+        secret:
+          type: string
+          format: password
+
+    BarrierUnsealRequest:
+      type: object
+      required:
+        - secret
+      properties:
+        secret:
+          type: string
+          format: password
+
+    BarrierInitializeShamirRequest:
+      type: object
+      required:
+        - secret
+        - threshold
+        - total_shares
+      properties:
+        secret:
+          type: string
+          format: password
+        threshold:
+          type: integer
+          minimum: 1
+        total_shares:
+          type: integer
+          minimum: 1
+
+    BarrierInitializeShamirResponse:
+      type: object
+      description: >-
+        Share material is never returned (qrdb share-free contract); shares
+        are sealed to enrolled Security Officers.
+      properties:
+        threshold:
+          type: integer
+        total_shares:
+          type: integer
+        share_count:
+          type: integer
+
+    BarrierUnsealShareRequest:
+      type: object
+      required:
+        - share
+      properties:
+        share:
+          type: string
+          format: password
+
+    BarrierUnsealShareResponse:
+      type: object
+      properties:
+        required:
+          type: integer
+        submitted:
+          type: integer
+        complete:
+          type: boolean
+
+    BarrierRekeyRequest:
+      type: object
+      required:
+        - threshold
+        - total
+      properties:
+        threshold:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 1
+
+    BarrierRekeyResponse:
+      type: object
+      description: >-
+        New shares are sealed to enrolled Security Officers and never
+        returned (qrdb share-free contract).
+      properties:
+        threshold:
+          type: integer
+        total_shares:
+          type: integer
+        share_count:
+          type: integer
+
+    BarrierGenerateRecoveryKeysRequest:
+      type: object
+      required:
+        - threshold
+        - total
+      properties:
+        threshold:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 1
+
+    BarrierRecoveryKeysResponse:
+      type: object
+      description: >-
+        Recovery shares are sealed to enrolled recovery officers and never
+        returned (qrdb share-free contract).
+      properties:
+        threshold:
+          type: integer
+        total:
+          type: integer
+        share_count:
+          type: integer
+
+    BarrierRecoverWithKeysRequest:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+            format: password
+          minItems: 1
+
+    BarrierRecoveryStatusResponse:
+      type: object
+      properties:
+        has_recovery_keys:
+          type: boolean
+
+    BarrierGenerateRootTokenRequest:
+      type: object
+      required:
+        - shares
+      properties:
+        shares:
+          type: array
+          items:
+            type: string
+            format: password
+          minItems: 1
+
+    BarrierRootTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        created_at:
+          type: string
+          format: date-time
 
     # Certificate Schemas
     CertificateInfo:
@@ -2292,6 +3060,24 @@ components:
           type: string
           format: uri
           description: URL to download the certificate
+
+    ListCertificatesResponse:
+      description: >-
+        The literal shape ListCertificates and ListExpiringCertificates write:
+        admin.ListResponse{Items: certs, Total, Page, PerPage}
+        (pkg/acme/admin/handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CertificateInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
 
     RevokeRequest:
       type: object
@@ -2343,6 +3129,23 @@ components:
           description: Total number of orders
           example: 15
 
+    ListAccountsResponse:
+      description: >-
+        The literal shape ListAccounts writes: admin.ListResponse{Items:
+        accounts, Total, Page, PerPage} (pkg/acme/admin/handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
     # Order Schemas
     OrderInfo:
       type: object
@@ -2382,6 +3185,23 @@ components:
           type: string
           format: date-time
 
+    ListOrdersResponse:
+      description: >-
+        The literal shape ListOrders writes: admin.ListResponse{Items:
+        orders, Total, Page, PerPage} (pkg/acme/admin/handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
     # Status Schemas
     CAStatus:
       type: object
@@ -2418,6 +3238,10 @@ components:
           type: string
           description: Default intermediate CA subject
           example: "CN=Trusted Issuing CA"
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
 
     CAStats:
       type: object

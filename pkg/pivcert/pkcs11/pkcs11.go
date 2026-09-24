@@ -248,14 +248,18 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 		// that boundary.
 		soPIN, pinErr := pinPlaintext(config.SOPIN)
 		if pinErr != nil {
-			pool.Close()
+			if closeErr := pool.Close(); closeErr != nil {
+				slog.Warn("pivcert: pkcs11 session pool close failed", "error", closeErr)
+			}
 			teardown()
 			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
 				&errs.Wrapped{Msg: "pkcs11: open SO PIN", Err: pinErr})
 		}
 		userPIN, pinErr := pinPlaintext(config.PIN)
 		if pinErr != nil {
-			pool.Close()
+			if closeErr := pool.Close(); closeErr != nil {
+				slog.Warn("pivcert: pkcs11 session pool close failed", "error", closeErr)
+			}
 			teardown()
 			return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11,
 				&errs.Wrapped{Msg: "pkcs11: open PIN", Err: pinErr})
@@ -265,7 +269,9 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, "", "", false)
 	}
 	if err != nil {
-		pool.Close()
+		if closeErr := pool.Close(); closeErr != nil {
+			slog.Warn("pivcert: pkcs11 session pool close failed", "error", closeErr)
+		}
 		teardown()
 		return nil, pivcert.NewStorageTypeError("New", pivcert.StorageTypePKCS11, err)
 	}
@@ -499,7 +505,7 @@ func (s *PKCS11CertStorage) Close() error {
 
 	err := s.hw.Close()
 	if s.pool != nil {
-		s.pool.Close()
+		err = errors.Join(err, s.pool.Close())
 	}
 	if s.libPath != "" {
 		if rerr := releaseModule(s.libPath); rerr != nil && err == nil {
@@ -537,25 +543,31 @@ func (p *singleSessionProvider) SlotID() uint  { return p.slotID }
 // WithSOSession switches the session login from CKU_USER to CKU_SO,
 // executes fn, then restores CKU_USER login.
 func (p *singleSessionProvider) WithSOSession(soPin, userPin string, fn func(p11.SessionHandle) error) error {
-	_ = p.ctx.Logout(p.session)
+	// The pre-SO-login logout's own failure has no bearing on whether the SO
+	// login that follows succeeds -- CKU_USER and CKU_SO are mutually
+	// exclusive token login states, so Login below will itself report
+	// CKR_USER_ALREADY_LOGGED_IN or succeed regardless -- but it is still
+	// surfaced, joined onto whatever this call goes on to return, rather than
+	// discarded.
+	logoutErr := p.ctx.Logout(p.session)
 	if err := p.ctx.Login(p.session, p11.CKU_SO, soPin); err != nil {
 		if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
-			_ = p.ctx.Login(p.session, p11.CKU_USER, userPin)
-			return &errs.Wrapped{Msg: "pkcs11: SO login", Err: err}
+			restoreErr := p.ctx.Login(p.session, p11.CKU_USER, userPin)
+			return errors.Join(&errs.Wrapped{Msg: "pkcs11: SO login", Err: err}, restoreErr, logoutErr)
 		}
 	}
 
 	fnErr := fn(p.session)
 
-	_ = p.ctx.Logout(p.session)
+	logoutErr = p.ctx.Logout(p.session)
 	if userPin != "" {
 		if err := p.ctx.Login(p.session, p11.CKU_USER, userPin); err != nil {
 			if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
-				return &errs.Affix{Prefix: "pkcs11: user login restore: ", Err: err, Suffix: fmt.Sprintf(" (original: %v)", fnErr)}
+				return errors.Join(&errs.Affix{Prefix: "pkcs11: user login restore: ", Err: err, Suffix: fmt.Sprintf(" (original: %v)", fnErr)}, logoutErr)
 			}
 		}
 	}
-	return fnErr
+	return errors.Join(fnErr, logoutErr)
 }
 
 // newSessionPool creates a minimal session pool for standalone use.
@@ -575,16 +587,14 @@ func newSessionPool(ctx *p11.Ctx, slotID uint, pin *secure.Secret, size int) (*s
 	for i := 0; i < size; i++ {
 		sess, err := ctx.OpenSession(slotID, p11.CKF_SERIAL_SESSION|p11.CKF_RW_SESSION)
 		if err != nil {
-			pool.Close()
-			return nil, err
+			return nil, errors.Join(err, pool.Close())
 		}
 		pool.ch <- sess
 	}
 	if pin != nil {
 		buf, err := pin.Open()
 		if err != nil {
-			pool.Close()
-			return nil, err
+			return nil, errors.Join(err, pool.Close())
 		}
 		sess := <-pool.ch
 		// miekg/pkcs11's Login takes a Go string, so this converts the
@@ -594,8 +604,7 @@ func newSessionPool(ctx *p11.Ctx, slotID uint, pin *secure.Secret, size int) (*s
 		buf.Destroy()
 		pool.ch <- sess
 		if loginErr != nil && !isPKCS11Error(loginErr, p11.CKR_USER_ALREADY_LOGGED_IN) {
-			pool.Close()
-			return nil, loginErr
+			return nil, errors.Join(loginErr, pool.Close())
 		}
 	}
 	return pool, nil
@@ -616,34 +625,40 @@ func (p *standalonePool) WithSOSession(soPin, userPin string, fn func(p11.Sessio
 	sess := <-p.ch
 	defer func() { p.ch <- sess }()
 
-	_ = p.ctx.Logout(sess)
+	// See singleSessionProvider.WithSOSession for why the pre-SO-login
+	// logout's error is joined rather than discarded even though it cannot
+	// change the Login call that follows.
+	logoutErr := p.ctx.Logout(sess)
 	if err := p.ctx.Login(sess, p11.CKU_SO, soPin); err != nil {
 		if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
-			_ = p.ctx.Login(sess, p11.CKU_USER, userPin)
-			return &errs.Wrapped{Msg: "pkcs11: SO login", Err: err}
+			restoreErr := p.ctx.Login(sess, p11.CKU_USER, userPin)
+			return errors.Join(&errs.Wrapped{Msg: "pkcs11: SO login", Err: err}, restoreErr, logoutErr)
 		}
 	}
 
 	fnErr := fn(sess)
 
-	_ = p.ctx.Logout(sess)
+	logoutErr = p.ctx.Logout(sess)
 	if userPin != "" {
 		if err := p.ctx.Login(sess, p11.CKU_USER, userPin); err != nil {
 			if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
-				return &errs.Affix{Prefix: "pkcs11: user login restore: ", Err: err, Suffix: fmt.Sprintf(" (original: %v)", fnErr)}
+				return errors.Join(&errs.Affix{Prefix: "pkcs11: user login restore: ", Err: err, Suffix: fmt.Sprintf(" (original: %v)", fnErr)}, logoutErr)
 			}
 		}
 	}
-	return fnErr
+	return errors.Join(fnErr, logoutErr)
 }
 
-func (p *standalonePool) Close() {
+// Close closes every session this pool holds and joins their C_CloseSession
+// errors into a single returned error.
+func (p *standalonePool) Close() error {
+	var err error
 	for {
 		select {
 		case sess := <-p.ch:
-			p.ctx.CloseSession(sess)
+			err = errors.Join(err, p.ctx.CloseSession(sess))
 		default:
-			return
+			return err
 		}
 	}
 }

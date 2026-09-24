@@ -23,6 +23,12 @@
 // s.sshClient. Session.Dial is not supported over the MCP transport;
 // clients that need interactive sessions should use the embedded or
 // gRPC transport instead.
+//
+// Every error this file returns passes through mapSSHError (errors_ssh.go)
+// before reaching InvokeMethod, so it carries a *KeyOpError the unified
+// server's mcpToolHandler (pkg/apimodule/module_mcp.go) can classify onto
+// go-qrdb's wire.Code envelope instead of collapsing to a bare "internal
+// error" with the detail discarded (go-xkms#792).
 package mcp
 
 import (
@@ -56,11 +62,11 @@ func (s *Server) checkSSHClient() error {
 // handleSSHKeysGenerate handles ssh.keys.generate.
 func (s *Server) handleSSHKeysGenerate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.GenerateRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	key, err := s.sshClient.Keys().Generate(ctx, params)
 	if err != nil {
@@ -75,11 +81,11 @@ func (s *Server) handleSSHKeysGenerate(ctx context.Context, req *JSONRPCRequest)
 // passphrase bytes in transit.
 func (s *Server) handleSSHKeysImport(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params SSHImportParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	importReq := sdkssh.ImportRequest{
 		Scope:   params.Scope,
@@ -102,7 +108,7 @@ func (s *Server) handleSSHKeysImport(ctx context.Context, req *JSONRPCRequest) (
 // handleSSHKeysList handles ssh.keys.list.
 func (s *Server) handleSSHKeysList(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.ListKeysRequest
 	if len(req.Params) > 0 {
@@ -120,11 +126,11 @@ func (s *Server) handleSSHKeysList(ctx context.Context, req *JSONRPCRequest) (in
 // handleSSHKeysGet handles ssh.keys.get.
 func (s *Server) handleSSHKeysGet(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.GetKeyRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	key, err := s.sshClient.Keys().Get(ctx, params)
 	if err != nil {
@@ -136,11 +142,11 @@ func (s *Server) handleSSHKeysGet(ctx context.Context, req *JSONRPCRequest) (int
 // handleSSHKeysDelete handles ssh.keys.delete.
 func (s *Server) handleSSHKeysDelete(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.DeleteKeyRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if err := s.sshClient.Keys().Delete(ctx, params); err != nil {
 		return nil, mapSSHError(err)
@@ -152,11 +158,11 @@ func (s *Server) handleSSHKeysDelete(ctx context.Context, req *JSONRPCRequest) (
 // public half of the key — no private material leaves the server.
 func (s *Server) handleSSHKeysExport(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.ExportRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	pub, err := s.sshClient.Keys().ExportPublic(ctx, params)
 	if err != nil {
@@ -171,14 +177,14 @@ func (s *Server) handleSSHKeysExport(ctx context.Context, req *JSONRPCRequest) (
 // additional hashing is performed server-side.
 func (s *Server) handleSSHKeysSign(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params SSHSignParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if len(params.Digest) == 0 {
-		return nil, &SSHInvalidParamsError{Err: errors.New("digest is required")}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("digest is required")})
 	}
 	signer, err := s.sshClient.Keys().Signer(ctx, sdkssh.GetKeyRequest{
 		Scope: params.Scope,
@@ -202,11 +208,11 @@ func (s *Server) handleSSHKeysSign(ctx context.Context, req *JSONRPCRequest) (in
 // handleSSHKnownHostsAdd handles ssh.knownHosts.add.
 func (s *Server) handleSSHKnownHostsAdd(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.AddKnownHostRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if err := s.sshClient.KnownHosts().Add(ctx, params); err != nil {
 		return nil, mapSSHError(err)
@@ -217,7 +223,7 @@ func (s *Server) handleSSHKnownHostsAdd(ctx context.Context, req *JSONRPCRequest
 // handleSSHKnownHostsList handles ssh.knownHosts.list.
 func (s *Server) handleSSHKnownHostsList(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.ListKnownHostsRequest
 	if len(req.Params) > 0 {
@@ -235,11 +241,11 @@ func (s *Server) handleSSHKnownHostsList(ctx context.Context, req *JSONRPCReques
 // handleSSHKnownHostsRemove handles ssh.knownHosts.remove.
 func (s *Server) handleSSHKnownHostsRemove(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.RemoveKnownHostRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if err := s.sshClient.KnownHosts().Remove(ctx, params); err != nil {
 		return nil, mapSSHError(err)
@@ -255,17 +261,17 @@ func (s *Server) handleSSHKnownHostsRemove(ctx context.Context, req *JSONRPCRequ
 // caller can detect MITM-indicating key changes.
 func (s *Server) handleSSHKnownHostsVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params SSHKnownHostsVerifyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if params.Host == "" {
-		return nil, &SSHInvalidParamsError{Err: errors.New("host is required")}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("host is required")})
 	}
 	if params.PublicKey == "" {
-		return nil, &SSHInvalidParamsError{Err: errors.New("public_key is required")}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("public_key is required")})
 	}
 	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(params.PublicKey))
 	if perr != nil {
@@ -284,11 +290,11 @@ func (s *Server) handleSSHKnownHostsVerify(ctx context.Context, req *JSONRPCRequ
 // handleSSHAuthorizedKeysAdd handles ssh.authorizedKeys.add.
 func (s *Server) handleSSHAuthorizedKeysAdd(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.AddAuthorizedKeyRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if err := s.sshClient.AuthorizedKeys().Add(ctx, params); err != nil {
 		return nil, mapSSHError(err)
@@ -299,11 +305,11 @@ func (s *Server) handleSSHAuthorizedKeysAdd(ctx context.Context, req *JSONRPCReq
 // handleSSHAuthorizedKeysGet handles ssh.authorizedKeys.get.
 func (s *Server) handleSSHAuthorizedKeysGet(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params SSHAuthorizedKeysGetParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	entry, err := s.sshClient.AuthorizedKeys().Get(ctx, params.Scope, params.Owner, params.Name)
 	if err != nil {
@@ -315,7 +321,7 @@ func (s *Server) handleSSHAuthorizedKeysGet(ctx context.Context, req *JSONRPCReq
 // handleSSHAuthorizedKeysList handles ssh.authorizedKeys.list.
 func (s *Server) handleSSHAuthorizedKeysList(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.ListAuthorizedKeysRequest
 	if len(req.Params) > 0 {
@@ -333,11 +339,11 @@ func (s *Server) handleSSHAuthorizedKeysList(ctx context.Context, req *JSONRPCRe
 // handleSSHAuthorizedKeysRemove handles ssh.authorizedKeys.remove.
 func (s *Server) handleSSHAuthorizedKeysRemove(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params SSHAuthorizedKeysRemoveParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if err := s.sshClient.AuthorizedKeys().Remove(ctx, params.Scope, params.Owner, params.Name); err != nil {
 		return nil, mapSSHError(err)
@@ -348,11 +354,11 @@ func (s *Server) handleSSHAuthorizedKeysRemove(ctx context.Context, req *JSONRPC
 // handleSSHAuthorizedKeysEmit handles ssh.authorizedKeys.emit.
 func (s *Server) handleSSHAuthorizedKeysEmit(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params sdkssh.EmitRequest
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	line, err := s.sshClient.AuthorizedKeys().Emit(ctx, params)
 	if err != nil {
@@ -366,14 +372,14 @@ func (s *Server) handleSSHAuthorizedKeysEmit(ctx context.Context, req *JSONRPCRe
 // first entry whose public-key fingerprint matches the caller's.
 func (s *Server) handleSSHAuthorizedKeysVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if err := s.checkSSHClient(); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	var params SSHAuthorizedKeysVerifyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &SSHInvalidParamsError{Err: err}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
 	if params.Fingerprint == "" {
-		return nil, &SSHInvalidParamsError{Err: errors.New("fingerprint is required")}
+		return nil, mapSSHError(&SSHInvalidParamsError{Err: errors.New("fingerprint is required")})
 	}
 	entries, err := s.sshClient.AuthorizedKeys().List(ctx, sdkssh.ListAuthorizedKeysRequest{
 		Scope: params.Scope,
