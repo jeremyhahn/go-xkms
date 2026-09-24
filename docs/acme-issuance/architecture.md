@@ -111,7 +111,15 @@ through ACME against an existing node's directory.
 - **Account keys are the client's identity.** Every POST is JWS-signed by the
   account key; the server binds orders to the account, not to a session.
 - **Nonces are single-use and server-issued.** Replay protection is the nonce
-  service, `pkg/acme/nonce`.
+  service, `pkg/acme/nonce`: an AES-GCM-encrypted, monotonic counter validated
+  by decryption rather than by a lookup table, with a `NonceMaxUsed`-bounded
+  redeemed-set and a `NonceLifetime`-bounded signing epoch — see
+  [`engineering.md`](engineering.md) Configuration and Persistence. Nonce
+  validity across nodes in a load-balanced deployment requires every node to
+  share the same encryption key (`handlers.Params.NonceKey`); absent that,
+  each node mints from its own key and a request that lands on a different
+  node than the one that issued the nonce gets `badNonce`, which RFC 8555
+  clients already retry.
 - **Challenge validation happens server-side, out of band.** Nothing the client
   asserts about itself is trusted; the server fetches, resolves, or activates.
 - **`enroll-01` trusts the TPM manufacturer chain**, not the requester. If the

@@ -26,12 +26,11 @@ import (
 func (s *RestService) NewNonceHandler(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug("NewNonceHandler", "method", r.Method, "url", r.URL.String())
 
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	w.Header().Set("Replay-Nonce", nonce)
 	w.Header().Set("Cache-Control", "no-store")

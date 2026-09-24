@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ import (
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	acmenonce "github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
@@ -276,6 +278,9 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		EndorseDeviceIDMetaKey:  acmeCfg.EndorseDeviceIDMetaKey,
 		ExternalAccountRequired: acmeCfg.ExternalAccountRequired,
 		Logger:                  logger,
+		NoncePrefix:             clusterNoncePrefix(cfg),
+		NonceLifetime:           acmeCfg.Nonce.ResolveLifetime(),
+		NonceMaxUsed:            acmeCfg.Nonce.ResolveMaxUsed(),
 		OrderPreSignHooks:       preSignHooks,
 		Policy:                  acmeCfg.Policy.PolicyConfig(),
 		StorageFactory:          storageFactory,
@@ -487,6 +492,30 @@ func clusterACMEIssuerCN(cfg *config.Config) string {
 		return ""
 	}
 	return cfg.Cluster.RaftEnrollment.ClusterCACN
+}
+
+// noncePrefixSalt is the HMAC key nonce.DerivePrefix uses to turn a node ID
+// into an 8-character ACME nonce prefix. The prefix is a public routing tag
+// embedded in every issued nonce (pkg/acme/nonce.MultiService routes
+// redemption by it), not a value that needs to stay secret, so a fixed salt
+// shared by every deployment is sufficient — it only needs to be stable so
+// the same node ID always derives the same prefix.
+var noncePrefixSalt = []byte("go-xkms/acme/nonce-prefix-v1")
+
+// clusterNoncePrefix derives this node's ACME nonce-service prefix from its
+// Raft NodeID, so pkg/acme/nonce.MultiService can distinguish nonces minted
+// by different nodes in a load-balanced deployment. A standalone node (Raft
+// clustering off) has no peer to disambiguate from and mints unprefixed
+// nonces.
+//
+// The prefix alone does not make nonces portable across nodes: that also
+// requires every node to encrypt with the same key (handlers.Params.NonceKey),
+// which is not wired here — see docs/acme-issuance/engineering.md.
+func clusterNoncePrefix(cfg *config.Config) string {
+	if !cfg.Cluster.Enabled {
+		return ""
+	}
+	return acmenonce.DerivePrefix(strconv.FormatUint(cfg.Cluster.NodeID, 10), noncePrefixSalt)
 }
 
 // defaultClusterTrustDomain mirrors pkg/server's defaultRaftTrustDomain so the

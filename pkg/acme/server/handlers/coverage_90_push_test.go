@@ -347,9 +347,6 @@ func TestKeyChangeHandlerNewKeyMatchesCurrent(t *testing.T) {
 	// Create inner JWS with same key
 	newKey := oldKey // Use same key
 
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
-
 	// Build the key change request
 	oldPublicKeyPEM, _ := xkmssdk.EncodePublicKeyPEM(oldKey.PublicKey)
 	oldJWK := &jose.JSONWebKey{Key: oldKey.PublicKey}
@@ -380,8 +377,7 @@ func TestKeyChangeHandlerNewKeyMatchesCurrent(t *testing.T) {
 
 	// Create outer JWS with KID
 	outerPayload := []byte(innerJWS.FullSerialize())
-	outerNonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(outerNonce)
+	outerNonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -495,8 +491,7 @@ func TestKeyChangeHandlerNewKeyExistsOnOtherAccount(t *testing.T) {
 
 	// Create outer JWS with account1's KID
 	outerPayload := []byte(innerJWS.FullSerialize())
-	outerNonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(outerNonce)
+	outerNonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -548,8 +543,7 @@ func TestKeyChangeHandlerInnerJWSNoJWK(t *testing.T) {
 
 	// Create outer JWS
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -649,8 +643,7 @@ func TestKeyChangeHandlerMismatchedURLs(t *testing.T) {
 
 	// Create outer JWS with correct URL
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -714,8 +707,7 @@ func TestKeyChangeHandlerMismatchedAccountURL(t *testing.T) {
 
 	// Create outer JWS
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -780,8 +772,7 @@ func TestKeyChangeHandlerOldKeyMismatch(t *testing.T) {
 
 	// Create outer JWS with correct account key
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -892,8 +883,7 @@ func TestKeyChangeHandlerInvalidInnerJWS(t *testing.T) {
 	url := "https://acme.test.example.com/acme/key-change"
 	payload := "this is not a valid JWS"
 
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -944,8 +934,7 @@ func TestKeyChangeHandlerInvalidInnerPayload(t *testing.T) {
 
 	// Create outer JWS
 	outerPayload := []byte(innerJWS.FullSerialize())
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -984,8 +973,7 @@ func TestKeyChangeHandlerInnerJWSNoSignatures(t *testing.T) {
 	// This tests the "no signatures found" path
 	emptyJWS := `{"payload":"dGVzdA","signatures":[]}`
 
-	nonce, _ := common.GenerateNonce(nonceSize)
-	service.nonceStore.Add(nonce)
+	nonce, _ := service.GetNonceService().Generate()
 
 	signerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
