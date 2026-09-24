@@ -16,6 +16,7 @@ package unix
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -26,9 +27,11 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/stats"
 
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -36,6 +39,45 @@ import (
 
 // DefaultSocketPath is the default path for the Unix socket
 const DefaultSocketPath = "/var/run/xkms/xkms.sock"
+
+// connTrackerKey is the stats.Handler connection context key connMetricsHandler
+// stashes its metrics.ConnectionTracker under between TagConn and HandleConn.
+type connTrackerKey struct{}
+
+// connMetricsHandler is a grpc.StatsHandler that tracks the unix listener's
+// active connections (metrics.ProtocolUnix) through metrics.ConnectionTracker.
+// It implements only the connection-lifecycle half of stats.Handler
+// (TagConn/HandleConn); the RPC half (TagRPC/HandleRPC) is a required no-op
+// passthrough -- per-RPC accounting on this listener is
+// TenantUnaryInterceptor/TenantStreamInterceptor's job, not this handler's.
+type connMetricsHandler struct{}
+
+// TagRPC is a no-op passthrough; connMetricsHandler only tracks connections.
+func (connMetricsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	return ctx
+}
+
+// HandleRPC is a no-op; connMetricsHandler only tracks connections.
+func (connMetricsHandler) HandleRPC(context.Context, stats.RPCStats) {}
+
+// TagConn starts a ConnectionTracker for the new connection and stashes it
+// in the context HandleConn receives when the connection ends.
+func (connMetricsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return context.WithValue(ctx, connTrackerKey{}, metrics.NewConnectionTracker(metrics.ProtocolUnix))
+}
+
+// HandleConn closes the connection's tracker on stats.ConnEnd, decrementing
+// the active-connections gauge. Every other stats.ConnStats variant
+// (currently only stats.ConnBegin, already accounted for by TagConn's
+// NewConnectionTracker call) is ignored.
+func (connMetricsHandler) HandleConn(ctx context.Context, cs stats.ConnStats) {
+	if _, ok := cs.(*stats.ConnEnd); !ok {
+		return
+	}
+	if tracker, ok := ctx.Value(connTrackerKey{}).(*metrics.ConnectionTracker); ok {
+		tracker.Close()
+	}
+}
 
 // GRPCConfig holds the gRPC Unix socket server configuration
 type GRPCConfig struct {
@@ -169,8 +211,8 @@ func (s *GRPCServer) Start() error {
 
 	// Set socket permissions
 	if err := os.Chmod(s.config.SocketPath, s.config.SocketMode); err != nil {
-		_ = s.listener.Close()
-		return &errs.Wrapped{Msg: "failed to set socket permissions", Err: err}
+		closeErr := s.listener.Close()
+		return errors.Join(&errs.Wrapped{Msg: "failed to set socket permissions", Err: err}, closeErr)
 	}
 
 	s.logger.Info("gRPC Unix socket created", slog.String("path", s.config.SocketPath))
@@ -189,6 +231,11 @@ func (s *GRPCServer) Start() error {
 		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
 		grpc.ChainUnaryInterceptor(grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger)),
 		grpc.ChainStreamInterceptor(grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger)),
+		// Tracks this listener's active connections (go-xkms#720): the unix
+		// socket has no per-request middleware chain the way REST and network
+		// gRPC do (metrics.HTTPMiddleware, metrics.GRPCUnaryServerInterceptor),
+		// so connection lifecycle is the only point at which to count it.
+		grpc.StatsHandler(connMetricsHandler{}),
 	}
 
 	s.mu.Lock()
@@ -196,7 +243,9 @@ func (s *GRPCServer) Start() error {
 		// Stop already ran; do not start serving a listener nothing can
 		// stop. Release the socket and return as a clean shutdown.
 		s.mu.Unlock()
-		_ = listener.Close()
+		if err := listener.Close(); err != nil {
+			s.logger.Warn("Failed to close listener during shutdown race", slog.String("error", err.Error()))
+		}
 		if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
 			s.logger.Warn("Failed to remove socket file", slog.String("error", err.Error()))
 		}

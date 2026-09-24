@@ -117,15 +117,6 @@ func TestHealthy_NilClient(t *testing.T) {
 	assert.False(t, tr.Healthy(context.Background()))
 }
 
-// --- RequestStream ---
-
-func TestRequestStream_NotSupported(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	_, err = tr.RequestStream(context.Background(), "test", nil)
-	assert.ErrorIs(t, err, transport.ErrStreamNotSupported)
-}
-
 // --- NotConnected error paths ---
 
 func TestHealth_NotConnected(t *testing.T) {

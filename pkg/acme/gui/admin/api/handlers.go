@@ -56,7 +56,11 @@ func writeJSON(w http.ResponseWriter, statusCode int, data interface{}, paginati
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Headers and status are already written; there is no way to
+		// report this to the client, so it's only logged.
+		slog.Error("failed to write JSON response", slog.String("error", err.Error()))
+	}
 }
 
 func writeErrorResponse(w http.ResponseWriter, statusCode int, code, message string) {
@@ -69,7 +73,9 @@ func writeErrorResponse(w http.ResponseWriter, statusCode int, code, message str
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("failed to write JSON error response", slog.String("error", err.Error()))
+	}
 }
 
 func parseInt(s string, defaultValue int) int {

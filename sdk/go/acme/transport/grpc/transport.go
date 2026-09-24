@@ -42,6 +42,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	stderrors "errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -340,38 +341,6 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 	return handler(ctx, t, service, method, req)
 }
 
-// RequestStream initiates a streaming request.
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	if t.closed.Load() {
-		return nil, errors.NewUnavailable("grpc.Transport.RequestStream", "transport is closed")
-	}
-
-	// Normalize service name.
-	service = strings.ToLower(service)
-
-	// Check if this is an ACME service (not supported).
-	if t.isACMEService(service) {
-		return nil, errors.NewUnimplemented("grpc.Transport.RequestStream",
-			"ACME streaming not supported via gRPC; use REST transport for ACME operations")
-	}
-
-	// Admin API streaming is supported.
-	conn, err := t.getConnection(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create a generic stream wrapper. The connection came from getConnection,
-	// which takes an exclusive pool lease; Close returns it via this callback.
-	stream := &grpcStream{
-		ctx:     ctx,
-		conn:    conn,
-		release: func() { t.releaseConnection(conn) },
-	}
-
-	return stream, nil
-}
-
 // Conn returns the underlying gRPC connection.
 func (t *Transport) Conn() interface{} {
 	t.mu.RLock()
@@ -475,16 +444,6 @@ func (t *Transport) releaseConnection(conn *grpc.ClientConn) {
 	if t.pool != nil {
 		t.pool.Put(conn)
 	}
-}
-
-// isACMEService returns true if the service is an ACME-specific service.
-func (t *Transport) isACMEService(service string) bool {
-	switch service {
-	case ServiceDirectory, ServiceNonce, ServiceAccount, ServiceOrder,
-		ServiceAuthorization, ServiceChallenge, ServiceFinalize, ServiceRevoke:
-		return true
-	}
-	return false
 }
 
 // handleAdminRequest handles Admin API requests via gRPC.
@@ -767,80 +726,6 @@ func grpcCodeToErrorCode(code codes.Code) errors.ErrorCode {
 	return errors.CodeUnknown
 }
 
-// grpcStream implements transport.Stream for gRPC bidirectional streaming.
-type grpcStream struct {
-	ctx     context.Context
-	conn    *grpc.ClientConn
-	stream  grpc.ClientStream
-	release func()
-	closed  atomic.Bool
-}
-
-// Send sends a message on the stream.
-func (s *grpcStream) Send(msg interface{}) error {
-	if s.closed.Load() {
-		return errors.NewUnavailable("grpc.Stream.Send", "stream is closed")
-	}
-
-	if s.stream == nil {
-		return errors.NewNotInitialized("grpc.Stream.Send", "stream not initialized")
-	}
-
-	if err := s.stream.SendMsg(msg); err != nil {
-		return errors.Wrap(err, errors.CodeTransport, "grpc.Stream.Send", "failed to send message")
-	}
-
-	return nil
-}
-
-// Recv receives a message from the stream.
-func (s *grpcStream) Recv() (interface{}, error) {
-	if s.closed.Load() {
-		return nil, errors.NewUnavailable("grpc.Stream.Recv", "stream is closed")
-	}
-
-	if s.stream == nil {
-		return nil, errors.NewNotInitialized("grpc.Stream.Recv", "stream not initialized")
-	}
-
-	var msg interface{}
-	if err := s.stream.RecvMsg(&msg); err != nil {
-		return nil, errors.Wrap(err, errors.CodeTransport, "grpc.Stream.Recv", "failed to receive message")
-	}
-
-	return msg, nil
-}
-
-// CloseSend closes the send side of the stream.
-func (s *grpcStream) CloseSend() error {
-	if s.stream == nil {
-		return nil
-	}
-
-	if err := s.stream.CloseSend(); err != nil {
-		return errors.Wrap(err, errors.CodeTransport, "grpc.Stream.CloseSend", "failed to close send")
-	}
-
-	return nil
-}
-
-// Close closes the stream entirely and returns its pooled connection lease.
-func (s *grpcStream) Close() error {
-	if !s.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-
-	err := s.CloseSend()
-	// RequestStream took an exclusive pool lease for this stream; return it
-	// exactly once (the CompareAndSwap above guarantees single entry), and do so
-	// regardless of whether CloseSend reported an error -- otherwise the
-	// connection is never lent again and the pool exhausts (go-xkms#104).
-	if s.release != nil {
-		s.release()
-	}
-	return err
-}
-
 // connectionPool manages a pool of gRPC connections.
 type connectionPool struct {
 	transport     *Transport
@@ -897,8 +782,7 @@ func newConnectionPool(t *Transport, target string, opts []grpc.DialOption) (*co
 	// Create minimum connections.
 	for i := 0; i < t.cfg.PoolMinSize; i++ {
 		if err := pool.addConnection(); err != nil {
-			_ = pool.Close()
-			return nil, err
+			return nil, stderrors.Join(err, pool.Close())
 		}
 	}
 
@@ -1215,7 +1099,9 @@ func (p *connectionPool) performHealthCheck() {
 		default:
 			// Not leased and not healthy, and it will not recover: close it
 			// and let the pool refill below.
-			_ = pc.conn.Close()
+			if cerr := pc.conn.Close(); cerr != nil {
+				slog.Debug("acme/transport/grpc: failed to close an unhealthy pooled connection", "error", cerr)
+			}
 		}
 	}
 	p.connections = healthy
@@ -1265,6 +1151,5 @@ func (f *Factory) Create(cfg *transport.Config) (transport.Transport, error) {
 // Verify interface compliance.
 var (
 	_ transport.Transport = (*Transport)(nil)
-	_ transport.Stream    = (*grpcStream)(nil)
 	_ transport.Factory   = (*Factory)(nil)
 )

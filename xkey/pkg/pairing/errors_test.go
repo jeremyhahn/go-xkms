@@ -191,3 +191,24 @@ func TestErrors_IsChecks(t *testing.T) {
 		})
 	}
 }
+
+// TestDetailError_Error verifies the wrapped error message is followed
+// directly by the detail text, with no separator inserted, and that
+// errors.Is still matches the wrapped sentinel through Unwrap.
+func TestDetailError_Error(t *testing.T) {
+	err := &DetailError{Err: ErrDeviceNotFound, Detail: ": no matching device"}
+
+	assert.Equal(t, "pairing: device not found: no matching device", err.Error())
+	assert.True(t, errors.Is(err, ErrDeviceNotFound))
+}
+
+// TestSentinelCauseError_Error verifies the message joins the sentinel and
+// the cause, and that errors.Is matches both through Unwrap.
+func TestSentinelCauseError_Error(t *testing.T) {
+	cause := errors.New("connection reset")
+	err := &SentinelCauseError{Sentinel: ErrConnectionFailed, Cause: cause}
+
+	assert.Equal(t, "pairing: connection failed: connection reset", err.Error())
+	assert.True(t, errors.Is(err, ErrConnectionFailed))
+	assert.True(t, errors.Is(err, cause))
+}

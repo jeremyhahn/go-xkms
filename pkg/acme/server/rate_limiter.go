@@ -490,6 +490,9 @@ func ClientID(r *http.Request) string {
 	if err != nil {
 		return ClientIP(r)
 	}
+	// The body has already been read in full above, and net/http closes the
+	// server request body itself once the handler returns, so a close error
+	// here is neither actionable nor meaningful (go-xkms#866).
 	defer func() { _ = r.Body.Close() }()
 
 	// Restore the body so it can be read again by the handler

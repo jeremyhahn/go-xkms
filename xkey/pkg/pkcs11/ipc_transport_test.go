@@ -335,12 +335,17 @@ func TestIPCTransport_NotImplemented_Methods(t *testing.T) {
 		{"GenerateKey", func() error { _, err := tr.GenerateKey(ctx, &transport.GenerateKeyRequest{}); return err }},
 		{"Verify", func() error { _, err := tr.Verify(ctx, &transport.VerifyRequest{}); return err }},
 		{"Encrypt", func() error { _, err := tr.Encrypt(ctx, &transport.EncryptRequest{}); return err }},
+		{"EncryptAsym", func() error { _, err := tr.EncryptAsym(ctx, &transport.EncryptAsymRequest{}); return err }},
 		{"Decrypt", func() error { _, err := tr.Decrypt(ctx, &transport.DecryptRequest{}); return err }},
 		{"DeriveKey", func() error { _, err := tr.DeriveKey(ctx, &transport.DeriveKeyRequest{}); return err }},
 		{"DeriveKeyECDH", func() error { _, err := tr.DeriveKeyECDH(ctx, &transport.DeriveKeyECDHRequest{}); return err }},
 		{"WrapKeyByID", func() error { _, err := tr.WrapKeyByID(ctx, &transport.WrapKeyByIDRequest{}); return err }},
 		{"UnwrapKeyByID", func() error { _, err := tr.UnwrapKeyByID(ctx, &transport.UnwrapKeyByIDRequest{}); return err }},
 		{"ExportKeyMaterial", func() error { _, err := tr.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{}); return err }},
+		{"GetImportParameters", func() error {
+			_, err := tr.GetImportParameters(ctx, &transport.GetImportParametersRequest{})
+			return err
+		}},
 		{"GeneratePIVKey", func() error { _, err := tr.GeneratePIVKey(ctx, &transport.GeneratePIVKeyRequest{}); return err }},
 		{"StorePIVCertificate", func() error { return tr.StorePIVCertificate(ctx, &transport.StorePIVCertificateRequest{}) }},
 		{"DeletePIVCertificate", func() error { return tr.DeletePIVCertificate(ctx, &transport.DeletePIVCertificateRequest{}) }},

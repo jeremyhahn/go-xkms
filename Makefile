@@ -2667,6 +2667,16 @@ integration-test-uhid:
 integration-test-xkey-fido2:
 	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/... -timeout 5m,integration-test-xkey-fido2)
 
+.PHONY: integration-test-secretservice
+## integration-test-secretservice: Run the freedesktop Secret Service daemon integration tests
+## (secret-tool store/lookup/clear and git-credential-libsecret store/get/erase round trips)
+## against `xkey secret-service` under a private dbus-run-session bus. Runs only in the
+## devcontainer: it execs the real secret-tool and git-credential-libsecret binaries, which
+## are not installed in the devcontainer image today (see docs/secret-service/engineering.md
+## and go-xkms#723) -- this target reports that missing-tool failure rather than skip it.
+integration-test-secretservice:
+	$(call run_in_devcontainer,cd xkey && dbus-run-session -- $(GO) test -v -tags='integration$(comma)linux' -run 'TestSecretService' ./test/integration -timeout 5m,integration-test-secretservice)
+
 .PHONY: integration-test-xkey-webauthn
 ## integration-test-xkey-webauthn: Run Playwright browser tests against webauthn.io (Docker)
 ## Tests use Chrome CDP virtual authenticator to validate full WebAuthn registration + authentication flow

@@ -14,7 +14,10 @@
 package qrdb
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -122,6 +125,31 @@ func TestShutdownManagerShutdown(t *testing.T) {
 		err := m.Shutdown(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, ShutdownStateStopped, m.State())
+	})
+
+	t.Run("drain failure is logged and shutdown proceeds anyway", func(t *testing.T) {
+		cfg := &ShutdownConfig{
+			GracePeriod:    1 * time.Second,
+			DrainTimeout:   500 * time.Millisecond,
+			TransferLeader: false,
+		}
+		admin := newTestAdminClient()
+		drainErr := errors.New("drain rpc unavailable")
+		admin.drainErr = drainErr
+		m := NewShutdownManager(cfg, admin, 1, 100, false)
+
+		var logBuf bytes.Buffer
+		prevLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+		defer slog.SetDefault(prevLogger)
+
+		err := m.Shutdown(context.Background())
+		require.NoError(t, err, "a failed drain must never block shutdown")
+		assert.Equal(t, ShutdownStateStopped, m.State())
+
+		// The drain failure was reported, not silently dropped.
+		assert.Contains(t, logBuf.String(), "drain failed")
+		assert.Contains(t, logBuf.String(), drainErr.Error())
 	})
 
 	t.Run("shutdown waits for inflight requests", func(t *testing.T) {

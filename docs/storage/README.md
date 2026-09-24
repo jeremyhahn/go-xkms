@@ -126,7 +126,7 @@ Each provider accepts different options; consult go-objstore documentation for d
 
 ## Clustering
 
-Clustering (Raft replication across multiple nodes) requires the **qrdb** embedded backend and is configured separately in the `cluster:` block. See [Clustering](../cluster/README.md) for details.
+Clustering (Raft replication across multiple nodes) requires the **qrdb** embedded backend and is configured separately in the `cluster:` block. See [Clustering](../cluster/user.md) for details.
 
 ## Selecting an Engine
 

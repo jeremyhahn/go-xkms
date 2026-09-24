@@ -139,6 +139,9 @@ func TestPasswordField_UnmarshalJSON_NonString(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected error, got nil body=%s", body)
 			}
+			if !errors.Is(err, ErrPasswordFieldNotString) {
+				t.Fatalf("expected errors.Is to match ErrPasswordFieldNotString, got %v", err)
+			}
 		})
 	}
 }

@@ -131,12 +131,14 @@ collector := metrics.StartResourceCollector(ctx, 30*time.Second)
 
 ### Manual Connection Tracking
 
-For protocols without built-in middleware (QUIC, MCP):
+For a listener with no per-request middleware -- the Unix domain socket is
+the shipped example, wired as a `grpc.StatsHandler`
+(`pkg/api/unix/grpc_server.go`):
 
 ```go
 import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
-tracker := metrics.NewConnectionTracker(metrics.ProtocolQUIC)
+tracker := metrics.NewConnectionTracker(metrics.ProtocolUnix)
 defer tracker.Close()
 
 // Handle connection...
@@ -206,27 +208,35 @@ xkms_backend_healthy{backend="pkcs8"} 1
 The package defines constants for common operations:
 
 - `OpGenerate`: Key generation
-- `OpStore`: Key storage
-- `OpGet`: Key retrieval
-- `OpDelete`: Key deletion
-- `OpList`: Key listing
-- `OpSign`: Signing operation
+- `OpStore`: Certificate save
+- `OpGet`: Key/certificate/CA read
+- `OpDelete`: Key/certificate deletion
+- `OpList`: Key/certificate listing
+- `OpSign`: Signing operation (crypto sign, CA CSR signing)
 - `OpVerify`: Signature verification
 - `OpEncrypt`: Encryption operation
 - `OpDecrypt`: Decryption operation
-- `OpExport`: Key export
-- `OpImport`: Key import
+- `OpExport`: Key export (BYOK wrapped export)
+- `OpImport`: Key import (BYOK wrapped import)
 - `OpRotate`: Key rotation
-- `OpBackup`: Backup operation
-- `OpRestore`: Restore operation
-- `OpHealthCheck`: Health check
+- `OpHealthCheck`: Per-backend health probe
+- `OpIssueCert`: CA certificate issuance
+- `OpRevokeCert`: CA certificate revocation
+- `OpGenerateCRL`: CA CRL generation
+
+Every name above has a real caller at the `XKMSService` boundary
+(`pkg/xkms`) — see `docs/observability/engineering.md` for the
+operation-to-servicer-method mapping.
 
 ## Protocol Constants
 
 - `ProtocolHTTP`: HTTP/REST
 - `ProtocolGRPC`: gRPC
-- `ProtocolQUIC`: QUIC/HTTP3
-- `ProtocolMCP`: MCP JSON-RPC
+- `ProtocolQUIC`: QUIC/HTTP3 (defined; not currently wired -- see
+  `docs/observability/architecture.md`)
+- `ProtocolMCP`: MCP JSON-RPC (defined; not currently wired -- see
+  `docs/observability/architecture.md`)
+- `ProtocolUnix`: Unix domain socket (local IPC)
 
 ## Label Constants
 

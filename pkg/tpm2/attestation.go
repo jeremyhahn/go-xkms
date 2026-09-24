@@ -501,34 +501,8 @@ func (tpm *TPM2) ActivateCredential(
 	ekAttrs := tpm.iakAttrs.Parent
 
 	var hierarchyAuth []byte
-	var err error
-
 	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.HierarchyAuth != nil {
 		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
-	}
-
-	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, 16)
-	if err != nil {
-		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
-		return nil, err
-	}
-	defer func() {
-		if err := closer(); err != nil {
-			tpm.logger.Error("failed to close policy session", slog.String("error", err.Error()))
-		}
-	}()
-
-	_, err = tpm2.PolicySecret{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(hierarchyAuth),
-		},
-		NonceTPM:      session.NonceTPM(),
-		PolicySession: session.Handle(),
-	}.Execute(tpm.transport)
-	if err != nil {
-		tpm.logger.Error("PolicySecret failed", slog.String("error", err.Error()))
-		return nil, err
 	}
 
 	// Always use IAK for credential activation. The credential was made using
@@ -558,7 +532,7 @@ func (tpm *TPM2) ActivateCredential(
 	// the ActivateCredential branch of the policy, satisfied as the Privacy
 	// Administrator with endorsementAuth, is what releases the credential
 	// (section 7.3.6.3). keyHandle is the EK, at the USER role, under the
-	// EK policy session built above.
+	// EK policy session built by activateCredential below.
 	iakNameAlg, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return nil, err
@@ -574,11 +548,64 @@ func (tpm *TPM2) ActivateCredential(
 		}
 	}()
 
+	return tpm.activateCredential(
+		ekAttrs, keyAttrs.TPMAttributes.Handle, keyAttrs.TPMAttributes.Name, iakAdmin,
+		credentialBlob, encryptedSecret)
+}
+
+// activateCredential is the TPM2_ActivateCredential mechanics shared by
+// ActivateCredential (always the IAK) and AnswerCredentialChallenge (any
+// CreateActivationKey object): build an EK policy session satisfying
+// PolicySecret(ENDORSEMENT), then activate credentialBlob/encryptedSecret
+// against activateHandle/activateName, authorized in the ADMIN role by
+// activateAuth.
+//
+// Only how each caller builds activateAuth differs, because the two kinds
+// of key satisfy the ADMIN role differently: the IAK's adminWithPolicy Key
+// Policy needs a policy session (DevIDAdminSession, built by the caller); an
+// ordinary CreateActivationKey object clears adminWithPolicy, so its own
+// (empty) password auth already satisfies ADMIN.
+func (tpm *TPM2) activateCredential(
+	ekAttrs *types.KeyAttributes,
+	activateHandle tpm2.TPMHandle,
+	activateName tpm2.TPM2BName,
+	activateAuth tpm2.Session,
+	credentialBlob, encryptedSecret []byte) ([]byte, error) {
+
+	var hierarchyAuth []byte
+	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.HierarchyAuth != nil {
+		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
+	}
+
+	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, 16)
+	if err != nil {
+		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
+		return nil, err
+	}
+	defer func() {
+		if closeErr := closer(); closeErr != nil {
+			tpm.logger.Error("failed to close policy session", slog.String("error", closeErr.Error()))
+		}
+	}()
+
+	_, err = tpm2.PolicySecret{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHEndorsement,
+			Auth:   tpm2.PasswordAuth(hierarchyAuth),
+		},
+		NonceTPM:      session.NonceTPM(),
+		PolicySession: session.Handle(),
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("PolicySecret failed", slog.String("error", err.Error()))
+		return nil, err
+	}
+
 	activateCredentialsResponse, err := tpm2.ActivateCredential{
 		ActivateHandle: tpm2.AuthHandle{
-			Handle: keyAttrs.TPMAttributes.Handle,
-			Name:   keyAttrs.TPMAttributes.Name,
-			Auth:   iakAdmin,
+			Handle: activateHandle,
+			Name:   activateName,
+			Auth:   activateAuth,
 		},
 		KeyHandle: tpm2.AuthHandle{
 			Handle: ekAttrs.TPMAttributes.Handle,

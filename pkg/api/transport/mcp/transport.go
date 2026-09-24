@@ -439,11 +439,6 @@ func (t *Transport) Request(ctx context.Context, method string, req, resp interf
 	return t.rpcCall(ctx, rpcMethod, req, resp)
 }
 
-// RequestStream opens a bidirectional stream (not supported for MCP).
-func (t *Transport) RequestStream(ctx context.Context, _ string, _ interface{}) (transport.Stream, error) {
-	return nil, transport.ErrStreamNotSupported
-}
-
 // rpcCall invokes method as an MCP tool call. params, when non-nil, is
 // marshaled to JSON and passed as the tool's single "params_json" string
 // argument. On success, the tool's first text content item is unmarshaled

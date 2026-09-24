@@ -54,12 +54,18 @@ type apiResponse struct {
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(&apiResponse{Data: data})
+	if err := json.NewEncoder(w).Encode(&apiResponse{Data: data}); err != nil {
+		// Headers and status are already written; there is no way to
+		// report this to the client, so it's only logged.
+		slog.Error("failed to write JSON response", slog.String("error", err.Error()))
+	}
 }
 
 // writeError writes a JSON error response with the given status code.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(&apiResponse{Error: msg})
+	if err := json.NewEncoder(w).Encode(&apiResponse{Error: msg}); err != nil {
+		slog.Error("failed to write JSON error response", slog.String("error", err.Error()))
+	}
 }

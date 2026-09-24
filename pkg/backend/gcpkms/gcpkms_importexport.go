@@ -244,7 +244,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 			return &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}

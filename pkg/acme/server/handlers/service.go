@@ -34,6 +34,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -43,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
+	acmenonce "github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
@@ -92,11 +95,50 @@ var (
 	// randReader is the random reader used for ID and token generation.
 	// This is a package-level variable to allow testing with mock readers.
 	randReader io.Reader = rand.Reader
+
+	// ErrNonceKeyGenerate is returned when a random nonce encryption key
+	// cannot be generated because the entropy source failed.
+	ErrNonceKeyGenerate = errors.New("handlers: failed to generate nonce encryption key")
+
+	// ErrNonceServiceCreate is returned when the underlying pkg/acme/nonce
+	// service cannot be constructed from the configured key, prefix, and
+	// per-epoch redeemed-nonce cap.
+	ErrNonceServiceCreate = errors.New("handlers: failed to create nonce service")
 )
+
+// ErrNonceServiceInit wraps a failure to stand up the ACME nonce service
+// during NewRestService. Sentinel is one of ErrNonceKeyGenerate (the random
+// key could not be generated) or ErrNonceServiceCreate (pkg/acme/nonce
+// rejected the resolved key/prefix/max-used).
+type ErrNonceServiceInit struct {
+	Sentinel error
+	Cause    error
+}
+
+// Error implements the error interface.
+func (e *ErrNonceServiceInit) Error() string {
+	return e.Sentinel.Error() + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause, so errors.Is(err, ErrNonceKeyGenerate)
+// and errors.Is(err, ErrNonceServiceCreate) both work against Sentinel, and
+// errors.As reaches whatever concrete type Cause is.
+func (e *ErrNonceServiceInit) Unwrap() []error {
+	return []error{e.Sentinel, e.Cause}
+}
+
+// nonceClock is the time source epoch rotation reads to decide whether the
+// current nonce-signing epoch has outlived NonceLifetime. Production never
+// reassigns it; tests do, the same seam randReader provides for ID/token
+// generation, so epoch rotation is deterministic instead of sleep-dependent.
+var nonceClock = time.Now
+
+// nonceKeyLen is the AES-128 key size pkg/acme/nonce.Service requires.
+const nonceKeyLen = 16
 
 // NonceGeneratorFunc is a function type for generating nonces.
 // This allows dependency injection for testing error paths.
-type NonceGeneratorFunc func(length int) (string, error)
+type NonceGeneratorFunc func() (string, error)
 
 // RestServicer defines the interface for ACME REST service handlers.
 // Each handler corresponds to an ACME protocol endpoint per RFC 8555.
@@ -197,10 +239,44 @@ type Params struct {
 	// Logger is the structured logger
 	Logger *slog.Logger
 
-	// NonceGenerator is the function used to generate nonces.
-	// If nil, uses common.GenerateNonce.
-	// This allows tests to inject a failing generator for error path testing.
+	// NonceGenerator is the function used to mint a Replay-Nonce.
+	// If nil, uses the RestService's own pkg/acme/nonce-backed generator
+	// (see NoncePrefix, NonceKey, NonceLifetime, NonceMaxUsed). This allows
+	// tests to inject a failing generator for error path testing.
 	NonceGenerator NonceGeneratorFunc
+
+	// NoncePrefix identifies this node's issued nonces in a load-balanced,
+	// multi-node ACME deployment. It is one input (with NonceKey and each
+	// signing epoch's start time — see nonceEpochPrefix) to the actual
+	// per-epoch prefix pkg/acme/nonce.MultiService routes nonce redemption
+	// by, so nonces minted here stay distinguishable from ones minted by
+	// another node across every epoch rotation. Derive it from a stable
+	// per-node identifier (e.g. the Raft NodeID). Empty is fine for a
+	// standalone node: NonceKey and the epoch start time alone already make
+	// each epoch's derived prefix unique.
+	NoncePrefix string
+
+	// NonceKey is the 16-byte AES-128 key pkg/acme/nonce.Service uses to
+	// encrypt and validate nonces. It MUST be identical on every node in a
+	// load-balanced deployment: a nonce minted on one node only decrypts on
+	// another node holding the same key. When nil, NewRestService generates
+	// a random key for this process — correct for a single-node deployment,
+	// but nonces minted by one process never validate on another.
+	NonceKey []byte
+
+	// NonceLifetime bounds how long a nonce-signing epoch lives before
+	// RestService rotates to a fresh pkg/acme/nonce.Service counter window,
+	// retiring every nonce still outstanding from the previous epoch. This
+	// is how a wall-clock lifetime is enforced on a scheme that otherwise
+	// tracks validity by a monotonic counter, not a per-nonce timestamp.
+	// Zero selects DefaultNonceLifetime.
+	NonceLifetime time.Duration
+
+	// NonceMaxUsed bounds the number of redeemed nonces tracked within a
+	// single signing epoch (see NonceLifetime) before the oldest is
+	// retired — the defense against an unbounded-memory nonce flood. Zero
+	// selects nonce.DefaultMaxUsed.
+	NonceMaxUsed int
 
 	// StorageFactory creates DAO instances for persistence
 	StorageFactory storage.Factory
@@ -335,6 +411,11 @@ type CAAValidatorInterface interface {
 	Validate(ctx context.Context, domain string, isWildcard bool, accountURI string, validationMethod string) error
 }
 
+// DefaultNonceLifetime is the epoch lifetime NewRestService applies when
+// Params.NonceLifetime is zero. It matches the TTL the previous in-memory
+// nonce store used.
+const DefaultNonceLifetime = 10 * time.Minute
+
 // RestService implements the ACME REST service handlers.
 type RestService struct {
 	allowLoopbackIdentifier bool
@@ -355,15 +436,36 @@ type RestService struct {
 	kmsService              kms.KMSService
 	logger                  *slog.Logger
 	nonceGenerator          NonceGeneratorFunc
-	nonceStore              *common.NonceStore
-	orderFinalizeHooks      *OrderFinalizeHookRegistry
-	params                  *Params
-	preIssuanceHooks        *PreIssuanceHookRegistry
-	preSignHooks            *OrderPreSignHookRegistry
-	rejectReservedIPs       bool
-	requirePublicSuffix     bool
-	storageFactory          storage.Factory
-	termsOfService          string
+
+	// nonceService routes a nonce's redemption to the epoch registered under
+	// its prefix (see nonceEpoch and nonceRotateMu). It always holds exactly
+	// this process's current epoch as its local/default service; remote-node
+	// registration in a load-balanced deployment is future work.
+	nonceService *acmenonce.MultiService
+	// nonceEpoch is the signing epoch minting currently goes through. It is
+	// an atomic.Pointer so the hot mint/redeem path never takes a lock; only
+	// rotation (rare, gated by nonceLifetime) takes nonceRotateMu.
+	nonceEpoch atomic.Pointer[acmenonce.Service]
+	// nonceEpochAt is the UnixNano timestamp the current epoch began, read
+	// and written atomically for the same reason.
+	nonceEpochAt atomic.Int64
+	// nonceRotateMu serializes epoch rotation so concurrent requests that
+	// all observe an expired epoch do not each construct and register a
+	// separate replacement.
+	nonceRotateMu sync.Mutex
+	nonceKey      []byte
+	noncePrefix   string
+	nonceLifetime time.Duration
+	nonceMaxUsed  int
+
+	orderFinalizeHooks  *OrderFinalizeHookRegistry
+	params              *Params
+	preIssuanceHooks    *PreIssuanceHookRegistry
+	preSignHooks        *OrderPreSignHookRegistry
+	rejectReservedIPs   bool
+	requirePublicSuffix bool
+	storageFactory      storage.Factory
+	termsOfService      string
 
 	// Resilience: nil breakers and caches when Params.Breakers is nil, which
 	// is the default. See serveOrDegrade and serveCachedWhenOpen in
@@ -376,6 +478,35 @@ type RestService struct {
 	degradationStaleTTL time.Duration
 
 	RestServicer
+}
+
+// newNonceEpoch constructs the pkg/acme/nonce.Service for one signing epoch:
+// the same key every epoch in this process uses (so a shared Params.NonceKey
+// keeps validating cross-node nonces across rotations), and a fresh, empty
+// counter window under a prefix unique to this epoch.
+//
+// The prefix MUST change every rotation. AES-GCM authenticates a nonce
+// against the key alone, not against which *Service instance minted it, so
+// two epochs sharing both a key and a prefix are indistinguishable to
+// decrypt(): a still-well-formed nonce from a retired epoch would decrypt
+// cleanly against the new epoch and be checked against its bounds/used-map
+// instead of being rejected outright — exactly the stale-nonce acceptance
+// NonceLifetime exists to prevent. Deriving the prefix from the epoch's own
+// start time closes that: decrypt()'s prefix check alone rejects a
+// retired-epoch nonce once nonceService.SetLocal has moved the registry on.
+func newNonceEpoch(key []byte, prefix string, maxUsed int) (*acmenonce.Service, error) {
+	opts := []acmenonce.Option{acmenonce.WithKey(key), acmenonce.WithMaxUsed(maxUsed), acmenonce.WithPrefix(prefix)}
+	return acmenonce.NewService(opts...)
+}
+
+// nonceEpochPrefix derives the per-epoch prefix newNonceEpoch requires:
+// deterministic given (node identity, key, epoch start), but unique across
+// epochs because epochStartNano is. node is Params.NoncePrefix (empty for a
+// standalone node); key is the shared nonce encryption key, reused here as
+// the HMAC key since it is already the one secret every node in a
+// load-balanced deployment holds in common.
+func nonceEpochPrefix(node string, key []byte, epochStartNano int64) string {
+	return acmenonce.DerivePrefix(node+":"+strconv.FormatInt(epochStartNano, 10), key)
 }
 
 // xkmsDefaultIdentifierChallengeTypes returns go-xkms's default candidate
@@ -480,17 +611,41 @@ func NewRestService(params *Params) (RestServicer, error) {
 		params.ChallengeMap = make(map[string]common.ChallengeVerifierFunc)
 	}
 
-	// Default nonce generator if not provided
-	nonceGen := params.NonceGenerator
-	if nonceGen == nil {
-		nonceGen = common.GenerateNonce
-	}
-
 	// The audit trail is always present so call sites never branch on nil; a
 	// service configured without a logger records to the no-op logger.
 	auditLog := params.AuditLogger
 	if auditLog == nil {
 		auditLog = audit.NewNoOpLogger()
+	}
+
+	// The nonce encryption key MUST be identical on every node for a nonce
+	// minted on one node to validate on another. Params.NonceKey is that
+	// shared secret when the caller has one; absent it, a key is generated
+	// for this process alone, which keeps a single-node deployment correct
+	// but does not make nonces portable across nodes.
+	nonceKey := params.NonceKey
+	if len(nonceKey) == 0 {
+		generated := make([]byte, nonceKeyLen)
+		if _, err := rand.Read(generated); err != nil {
+			return nil, &ErrNonceServiceInit{Sentinel: ErrNonceKeyGenerate, Cause: err}
+		}
+		nonceKey = generated
+	}
+
+	nonceMaxUsed := params.NonceMaxUsed
+	if nonceMaxUsed <= 0 {
+		nonceMaxUsed = acmenonce.DefaultMaxUsed
+	}
+
+	nonceLifetime := params.NonceLifetime
+	if nonceLifetime <= 0 {
+		nonceLifetime = DefaultNonceLifetime
+	}
+
+	epochAt := nonceClock()
+	epoch, err := newNonceEpoch(nonceKey, nonceEpochPrefix(params.NoncePrefix, nonceKey, epochAt.UnixNano()), nonceMaxUsed)
+	if err != nil {
+		return nil, &ErrNonceServiceInit{Sentinel: ErrNonceServiceCreate, Cause: err}
 	}
 
 	// Resilience is opt-in: a nil Manager leaves storageBreaker and the
@@ -541,7 +696,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		return nil, caerrors.MalformedError("handlers: failed to build identifier policy: %v", err)
 	}
 
-	return &RestService{
+	svc := &RestService{
 		allowLoopbackIdentifier: params.AllowLoopbackIdentifier,
 		auditLog:                auditLog,
 		baseRESTURI:             params.BaseRESTURI,
@@ -559,8 +714,12 @@ func NewRestService(params *Params) (RestServicer, error) {
 		globalComplianceConfig:  params.GlobalComplianceConfig,
 		kmsService:              kmsService,
 		logger:                  params.Logger,
-		nonceGenerator:          nonceGen,
-		nonceStore:              common.NewNonceStore(time.Minute * 10),
+		nonceGenerator:          params.NonceGenerator,
+		nonceService:            acmenonce.NewMultiService(epoch),
+		nonceKey:                nonceKey,
+		noncePrefix:             params.NoncePrefix,
+		nonceLifetime:           nonceLifetime,
+		nonceMaxUsed:            nonceMaxUsed,
 		orderFinalizeHooks:      params.OrderFinalizeHooks,
 		params:                  params,
 		preIssuanceHooks:        params.PreIssuanceHooks,
@@ -575,7 +734,14 @@ func NewRestService(params *Params) (RestServicer, error) {
 		caBundleCache:           caBundleCache,
 		degradationCacheTTL:     degradationCacheTTL,
 		degradationStaleTTL:     degradationStaleTTL,
-	}, nil
+	}
+	svc.nonceEpoch.Store(epoch)
+	svc.nonceEpochAt.Store(epochAt.UnixNano())
+	if svc.nonceGenerator == nil {
+		svc.nonceGenerator = svc.mintNonce
+	}
+
+	return svc, nil
 }
 
 // GetStorageFactory returns the storage factory for creating DAOs.
@@ -584,10 +750,13 @@ func (s *RestService) GetStorageFactory() storage.Factory {
 	return s.storageFactory
 }
 
-// GetNonceStore returns the nonce store for managing replay protection.
-// This is useful for tests that need to add valid nonces.
-func (s *RestService) GetNonceStore() *common.NonceStore {
-	return s.nonceStore
+// GetNonceService returns the nonce service backing replay protection
+// (RFC 8555 Section 6.5). Tests that need a nonce a request will accept
+// should call generateNonce/mintNonce rather than construct one by hand:
+// pkg/acme/nonce nonces are encrypted counters, not opaque tokens, so only
+// this service can mint one its own Redeem/Valid will later accept.
+func (s *RestService) GetNonceService() *acmenonce.MultiService {
+	return s.nonceService
 }
 
 // SetOrderFinalizeHooks sets the order finalize hook registry.
@@ -672,22 +841,84 @@ func (s *RestService) GetNonceGenerator() NonceGeneratorFunc {
 	return s.nonceGenerator
 }
 
-// generateNonce generates a nonce using the configured generator.
-// This internal method allows all nonce generation to be controlled via dependency injection.
-func (s *RestService) generateNonce(length int) (string, error) {
-	return s.nonceGenerator(length)
+// generateNonce mints a Replay-Nonce using the configured generator. This
+// internal method allows all nonce generation to be controlled via
+// dependency injection (see SetNonceGenerator).
+func (s *RestService) generateNonce() (string, error) {
+	return s.nonceGenerator()
+}
+
+// mintNonce is the default NonceGeneratorFunc: it rotates the signing epoch
+// when NonceLifetime has elapsed, then mints from whichever epoch is
+// current.
+func (s *RestService) mintNonce() (string, error) {
+	return s.currentNonceEpoch().Generate()
+}
+
+// redeemNonce validates and consumes nonce (RFC 8555 Section 6.5), routing
+// through nonceService so a correctly-prefixed nonce from another node in a
+// load-balanced deployment is handled per MultiService's routing semantics
+// rather than always compared against this process's own epoch.
+func (s *RestService) redeemNonce(nonce string) error {
+	return s.nonceService.Redeem(nonce)
+}
+
+// currentNonceEpoch returns the signing epoch minting should use, rotating
+// to a fresh one first if the current epoch has outlived nonceLifetime.
+// Reading nonceEpoch/nonceEpochAt never blocks; only rotation itself takes
+// nonceRotateMu, and only when the epoch has actually expired.
+func (s *RestService) currentNonceEpoch() *acmenonce.Service {
+	epoch := s.nonceEpoch.Load()
+	age := nonceClock().Sub(time.Unix(0, s.nonceEpochAt.Load()))
+	if age < s.nonceLifetime {
+		return epoch
+	}
+	return s.rotateNonceEpoch(epoch)
+}
+
+// rotateNonceEpoch replaces stale with a freshly-counted epoch built from
+// the same key under a new, epoch-unique prefix (see newNonceEpoch).
+// SetLocal moves pkg/acme/nonce.MultiService's registration from stale's
+// prefix to fresh's, so a nonce still outstanding from the previous epoch no
+// longer decrypts against a registered prefix and is rejected instead of
+// being checked against the new epoch's unrelated counter state.
+//
+// A rotation failure (only reachable if the process is out of entropy for
+// AES-GCM setup, since the key is already validated) logs and keeps serving
+// stale rather than losing nonce issuance entirely.
+func (s *RestService) rotateNonceEpoch(stale *acmenonce.Service) *acmenonce.Service {
+	s.nonceRotateMu.Lock()
+	defer s.nonceRotateMu.Unlock()
+
+	// Another goroutine may have rotated already while this one waited for
+	// the lock.
+	if current := s.nonceEpoch.Load(); current != stale {
+		return current
+	}
+
+	epochAt := nonceClock()
+	fresh, err := newNonceEpoch(s.nonceKey, nonceEpochPrefix(s.noncePrefix, s.nonceKey, epochAt.UnixNano()), s.nonceMaxUsed)
+	if err != nil {
+		s.logger.Error("acme: failed to rotate nonce epoch, continuing on the previous epoch",
+			slog.String("error", err.Error()))
+		return stale
+	}
+
+	s.nonceService.SetLocal(fresh)
+	s.nonceEpoch.Store(fresh)
+	s.nonceEpochAt.Store(epochAt.UnixNano())
+	return fresh
 }
 
 // respondWithAccount writes an ACME account response to the HTTP response writer.
 func (s *RestService) respondWithAccount(
 	w http.ResponseWriter, account *entities.ACMEAccount, statusCode int) {
 
-	nonce, err := s.generateNonce(nonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Replay-Nonce", nonce)
@@ -742,12 +973,11 @@ func ValidateContactURLs(contacts []string) *entities.Error {
 
 // orderResponse writes an ACME order response to the HTTP response writer.
 func (s *RestService) orderResponse(w http.ResponseWriter, order *entities.ACMEOrder) {
-	nonce, err := s.generateNonce(nonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	clientOrder := struct {
 		Status         string                    `json:"status"`
@@ -859,6 +1089,9 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 	if err != nil {
 		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)
 	}
+	// The body has already been read in full above, and net/http closes the
+	// server request body itself once the handler returns, so a close error
+	// here is neither actionable nor meaningful (go-xkms#866).
 	defer func() { _ = r.Body.Close() }()
 
 	jwsString := strings.TrimSpace(string(body))
@@ -881,7 +1114,7 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 		return nil, nil, caerrors.MalformedError("KID not found in JWS header")
 	}
 
-	if !s.nonceStore.Exists(protectedHeader.Nonce) {
+	if err := s.redeemNonce(protectedHeader.Nonce); err != nil {
 		if auditErr := s.recordAudit(audit.EventInvalidNonce, s.auditLog.LogWithContext(auditContext(r),
 			audit.EventInvalidNonce,
 			"unknown",
@@ -964,6 +1197,9 @@ func (s *RestService) parseJWS(r *http.Request) (*jose.JSONWebKey, []byte, error
 	if err != nil {
 		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)
 	}
+	// The body has already been read in full above, and net/http closes the
+	// server request body itself once the handler returns, so a close error
+	// here is neither actionable nor meaningful (go-xkms#866).
 	defer func() { _ = r.Body.Close() }()
 
 	jwsString := strings.TrimSpace(string(body))
@@ -982,7 +1218,7 @@ func (s *RestService) parseJWS(r *http.Request) (*jose.JSONWebKey, []byte, error
 		return nil, nil, caerrors.MalformedError("JWK not found in JWS header")
 	}
 
-	if !s.nonceStore.Exists(protectedHeader.Nonce) {
+	if err := s.redeemNonce(protectedHeader.Nonce); err != nil {
 		if auditErr := s.recordAudit(audit.EventInvalidNonce, s.auditLog.LogWithContext(auditContext(r),
 			audit.EventInvalidNonce,
 			"unknown",

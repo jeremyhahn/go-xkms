@@ -177,7 +177,9 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult {
 			return empty
 		}
 		if !r.backend.CanSeal() {
-			_ = r.backend.Close()
+			if cerr := r.backend.Close(); cerr != nil {
+				logger.Debug("seal autodetect: failed to close a non-seal-capable TPM backend", slog.String("error", cerr.Error()))
+			}
 			logger.Debug("seal autodetect: TPM open but not seal-capable; selecting software")
 			return empty
 		}
@@ -193,7 +195,9 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult {
 		go func() {
 			r := <-resultCh
 			if r.err == nil && r.backend != nil {
-				_ = r.backend.Close()
+				if cerr := r.backend.Close(); cerr != nil {
+					logger.Debug("seal autodetect: failed to close a late-arriving TPM open", slog.String("error", cerr.Error()))
+				}
 			}
 		}()
 		logger.Warn("seal autodetect: TPM open timed out; selecting software", slog.Duration("timeout", timeout))

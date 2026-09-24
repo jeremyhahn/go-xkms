@@ -103,6 +103,48 @@ func TestEnrollmentPolicy_DefaultsFailClosed(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEnrollmentChainUntrusted)
 }
 
+// TestMinSecurityRank verifies the configured minimum resolves to the right
+// rank, and that an unset minimum defaults to TEE rather than software.
+func TestMinSecurityRank(t *testing.T) {
+	tests := []struct {
+		name  string
+		level string
+		want  int
+	}{
+		{"unset defaults to TEE", "", securityRank(SecurityLevelTEE)},
+		{"software", SecurityLevelSoftware, securityRank(SecurityLevelSoftware)},
+		{"TEE", SecurityLevelTEE, securityRank(SecurityLevelTEE)},
+		{"StrongBox", SecurityLevelStrongBox, securityRank(SecurityLevelStrongBox)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &EnrollmentPolicy{MinSecurityLevel: tt.level}
+			assert.Equal(t, tt.want, p.minSecurityRank())
+		})
+	}
+}
+
+// TestSecurityLevelName verifies each parsed Android security level renders
+// as the corresponding wire name, and that an unrecognised level (the zero
+// value included) renders as software rather than a blank string.
+func TestSecurityLevelName(t *testing.T) {
+	tests := []struct {
+		name  string
+		level android.SecurityLevel
+		want  string
+	}{
+		{"StrongBox", android.SecurityLevelStrongBox, SecurityLevelStrongBox},
+		{"TEE", android.SecurityLevelTrustedEnvironment, SecurityLevelTEE},
+		{"software", android.SecurityLevelSoftware, SecurityLevelSoftware},
+		{"unrecognised", android.SecurityLevel(99), SecurityLevelSoftware},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, securityLevelName(tt.level))
+		})
+	}
+}
+
 func TestEnrollmentPolicy_RefusesMissingEvidence(t *testing.T) {
 	p := newTestPolicy()
 
@@ -187,6 +229,27 @@ func TestCSRMatchesAttestedKey_RefusesAnUnsignedCSR(t *testing.T) {
 
 	err := csrMatchesAttestedKey(tampered, leaf)
 	assert.ErrorIs(t, err, ErrEnrollmentKeyMismatch)
+}
+
+// TestBytesEqual verifies the constant-time comparison agrees with a normal
+// byte comparison for equal, unequal, and different-length inputs.
+func TestBytesEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b []byte
+		want bool
+	}{
+		{"equal", []byte("challenge"), []byte("challenge"), true},
+		{"different content, same length", []byte("challenge"), []byte("chocolate"), false},
+		{"different length", []byte("short"), []byte("a much longer value"), false},
+		{"both empty", nil, []byte{}, true},
+		{"one empty", []byte{}, []byte("x"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, bytesEqual(tt.a, tt.b))
+		})
+	}
 }
 
 func TestEnrollmentPolicy_MatchApplication(t *testing.T) {

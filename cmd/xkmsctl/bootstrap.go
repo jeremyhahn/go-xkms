@@ -48,17 +48,21 @@ Direct is a last-resort fallback that uses standard HTTPS with the system trust
 store. It requires the server to already have a certificate trusted by a public
 CA or one installed in the OS trust store.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		serverURL, _ := cmd.Flags().GetString("server-url")
-		daneHostname, _ := cmd.Flags().GetString("dane-hostname")
-		daneDNSServer, _ := cmd.Flags().GetString("dane-dns-server")
-		noiseKey, _ := cmd.Flags().GetString("noise-key")
-		p256Key, _ := cmd.Flags().GetString("p256-key")
-		noiseAddr, _ := cmd.Flags().GetString("noise-addr")
-		spkiPin, _ := cmd.Flags().GetString("spki-pin")
-		directEnabled, _ := cmd.Flags().GetBool("direct")
-		bundlePath, _ := cmd.Flags().GetString("bundle-path")
-		bundleOutput, _ := cmd.Flags().GetString("bundle-output")
-		configFile, _ := cmd.Flags().GetString("config")
+		fr := newFlagReader(cmd)
+		serverURL := fr.String("server-url")
+		daneHostname := fr.String("dane-hostname")
+		daneDNSServer := fr.String("dane-dns-server")
+		noiseKey := fr.String("noise-key")
+		p256Key := fr.String("p256-key")
+		noiseAddr := fr.String("noise-addr")
+		spkiPin := fr.String("spki-pin")
+		directEnabled := fr.Bool("direct")
+		bundlePath := fr.String("bundle-path")
+		bundleOutput := fr.String("bundle-output")
+		configFile := fr.String("config")
+		if err := fr.Err(); err != nil {
+			return err
+		}
 
 		// Resolve the config file path: local --config flag takes
 		// precedence, then the global --config flag from root.
@@ -155,14 +159,14 @@ func printBootstrapListenerKeys(printer *Printer, resp *transport.BootstrapListe
 		}
 		return printer.PrintJSON(result)
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Bootstrap Listener Keys:\n")
+		printer.printf("Bootstrap Listener Keys:\n")
 		if resp.NoisePublicKey != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Noise_NK Public Key (--noise-key): %s\n", resp.NoisePublicKey)
+			printer.printf("  Noise_NK Public Key (--noise-key): %s\n", resp.NoisePublicKey)
 		}
 		if resp.P256PublicKey != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  P-256 Public Key (--p256-key):     %s\n", resp.P256PublicKey)
+			printer.printf("  P-256 Public Key (--p256-key):     %s\n", resp.P256PublicKey)
 		}
-		return nil
+		return printer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}

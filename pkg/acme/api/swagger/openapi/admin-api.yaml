@@ -105,22 +105,13 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/TenantInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListTenantsResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
         - Tenants
@@ -152,31 +143,26 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantInfo'
+                $ref: '#/components/schemas/TenantInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '409':
           description: Tenant already exists
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/ProblemDetail'
               example:
-                success: false
-                error:
-                  code: "ALREADY_EXISTS"
-                  message: "Tenant already exists"
+                type: "urn:trusted-ca:error:conflict"
+                title: "Conflict"
+                detail: "Tenant already exists"
+                status: 409
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}:
     get:
@@ -195,20 +181,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantInfo'
+                $ref: '#/components/schemas/TenantInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     put:
       tags:
         - Tenants
@@ -231,22 +212,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantInfo'
+                $ref: '#/components/schemas/TenantInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
         - Tenants
@@ -263,24 +239,19 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Tenant deleted successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Tenant deleted successfully"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/status:
     put:
@@ -305,26 +276,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Tenant status updated successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Tenant status updated successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Tenant CA Endpoints
@@ -357,22 +323,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantRootCAInfo'
+                $ref: '#/components/schemas/TenantRootCAInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/intermediate-cas:
     get:
@@ -387,26 +348,24 @@ paths:
         - $ref: '#/components/parameters/TenantIdParam'
       responses:
         '200':
-          description: List of intermediate CAs
+          description: >-
+            List of intermediate CAs. The handler writes the array directly
+            (no pagination envelope): ListTenantIntermediateCAs returns every
+            intermediate CA for the tenant in one response.
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/TenantIntCAInfo'
+                type: array
+                items:
+                  $ref: '#/components/schemas/TenantIntCAInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
         - Tenant CA
@@ -437,22 +396,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantIntCAInfo'
+                $ref: '#/components/schemas/TenantIntCAInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/intermediate-cas/{caId}:
     get:
@@ -472,20 +426,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantIntCAInfo'
+                $ref: '#/components/schemas/TenantIntCAInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/intermediate-cas/{caId}/status:
     put:
@@ -512,26 +461,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Intermediate CA status updated successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Intermediate CA status updated successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/default-intermediate-ca:
     put:
@@ -556,26 +500,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Default intermediate CA updated successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Default intermediate CA updated successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/ca-status:
     get:
@@ -595,20 +534,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/TenantCAStatusInfo'
+                $ref: '#/components/schemas/TenantCAStatusInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # External Account Binding (EAB) Endpoints
@@ -644,24 +578,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/EABInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListEABResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     post:
       tags:
         - EAB
@@ -718,22 +643,17 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CreateEABResponse'
+                $ref: '#/components/schemas/CreateEABResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /api/v1/tenants/{tenantId}/eab/{kid}:
     get:
@@ -754,20 +674,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/EABInfo'
+                $ref: '#/components/schemas/EABInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
         - EAB
@@ -785,31 +700,27 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "EAB deleted successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "EAB deleted successfully"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Tenant Role Management Endpoints (roles:*)
   #
-  # Unlike the tenant/EAB endpoints above, these write the response body
-  # directly (writeJSON) rather than the SuccessResponse envelope, and report
-  # errors as RFC 7807 application/problem+json (writeProblem), matching
+  # Every response body below is written directly by writeJSON (or a
+  # ListResponse for the paginated list operations); every error is RFC 7807
+  # application/problem+json (writeProblem). That is true of every operation
+  # in this document, not only this section: matches
   # pkg/acme/admin/tenant_handlers.go exactly.
   # ============================================================================
   /api/v1/tenants/{tenantId}/roles:
@@ -1130,20 +1041,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/CertificateInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListCertificatesResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/certificates/expiring:
     get:
@@ -1171,20 +1073,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/CertificateInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListCertificatesResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/certificates/{serial}:
     get:
@@ -1203,18 +1096,13 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CertificateInfo'
+                $ref: '#/components/schemas/CertificateInfo'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/certificates/{serial}/revoke:
     post:
@@ -1241,26 +1129,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Certificate revoked successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Certificate revoked successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Account Management Endpoints
@@ -1289,20 +1172,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/AccountInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListAccountsResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/accounts/{accountId}:
     get:
@@ -1321,20 +1195,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/AccountInfo'
+                $ref: '#/components/schemas/AccountInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
     delete:
       tags:
         - Accounts
@@ -1351,26 +1220,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: object
-                        properties:
-                          message:
-                            type: string
-                            example: "Account disabled successfully"
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Account disabled successfully"
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/ProblemForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Order Management Endpoints
@@ -1405,20 +1269,11 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/OrderInfo'
-                      pagination:
-                        $ref: '#/components/schemas/Pagination'
+                $ref: '#/components/schemas/ListOrdersResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/orders/{orderId}:
     get:
@@ -1444,20 +1299,15 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/OrderInfo'
+                $ref: '#/components/schemas/OrderInfo'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/ProblemBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProblemNotFound'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Status and Stats Endpoints
@@ -1478,27 +1328,20 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CAStatus'
+                $ref: '#/components/schemas/CAStatus'
               example:
-                success: true
-                data:
-                  identity: "go-trusted-ca"
-                  initialized: true
-                  version: "1.0.0"
-                  started_at: "2025-01-03T10:00:00Z"
-                  key_algorithm: "ECDSA-P384"
-                  signature_algorithm: "SHA384-ECDSA"
-                  root_ca: "CN=Trusted Root CA"
-                  intermediate_ca: "CN=Trusted Issuing CA"
+                identity: "go-trusted-ca"
+                initialized: true
+                version: "1.0.0"
+                started_at: "2025-01-03T10:00:00Z"
+                key_algorithm: "ECDSA-P384"
+                signature_algorithm: "SHA384-ECDSA"
+                root_ca: "CN=Trusted Root CA"
+                intermediate_ca: "CN=Trusted Issuing CA"
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   /admin/stats:
     get:
@@ -1515,28 +1358,21 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/SuccessResponse'
-                  - type: object
-                    properties:
-                      data:
-                        $ref: '#/components/schemas/CAStats'
+                $ref: '#/components/schemas/CAStats'
               example:
-                success: true
-                data:
-                  total_certificates: 1250
-                  valid_certificates: 1100
-                  revoked_certificates: 50
-                  expired_certificates: 100
-                  total_accounts: 85
-                  active_accounts: 80
-                  total_orders: 1500
-                  pending_orders: 12
-                  completed_orders: 1450
+                total_certificates: 1250
+                valid_certificates: 1100
+                revoked_certificates: 50
+                expired_certificates: 100
+                total_accounts: 85
+                active_accounts: 80
+                total_orders: 1500
+                pending_orders: 12
+                completed_orders: 1450
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/ProblemUnauthorized'
         '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/ProblemInternalError'
 
   # ============================================================================
   # Audit Endpoint (audit:read)
@@ -2115,72 +1951,13 @@ components:
   # Response Schemas
   # ============================================================================
   responses:
-    BadRequest:
-      description: Bad request - invalid input
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "INVALID_REQUEST"
-              message: "Invalid request body"
-
-    Unauthorized:
-      description: Unauthorized - authentication required
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "UNAUTHORIZED"
-              message: "Authentication required"
-
-    Forbidden:
-      description: Forbidden - insufficient permissions
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "FORBIDDEN"
-              message: "Insufficient permissions for this operation"
-
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "NOT_FOUND"
-              message: "Resource not found"
-
-    InternalError:
-      description: Internal server error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            success: false
-            error:
-              code: "INTERNAL_ERROR"
-              message: "An internal error occurred"
-
     # ==========================================================================
-    # RFC 7807 problem+json responses, used by the roles, users, audit,
-    # algorithms and barrier routes below. Those handlers write
-    # application/problem+json directly (writeProblem in pkg/acme/admin);
-    # they never wrap the body in the success/data envelope the routes above
-    # use.
+    # RFC 7807 problem+json responses. Every admin error response, on every
+    # operation in this document, is written by writeProblem
+    # (pkg/acme/admin/handlers.go) or PermissionGate.Wrap's own 401/403
+    # writeProblem calls (pkg/acme/admin/authz.go): there is no
+    # success/data/error JSON envelope anywhere on this API, on the success
+    # side or the error side.
     # ==========================================================================
     ProblemBadRequest:
       description: Bad request - invalid input
@@ -2258,63 +2035,24 @@ components:
   # Schemas
   # ============================================================================
   schemas:
-    SuccessResponse:
-      type: object
-      required:
-        - success
-      properties:
-        success:
-          type: boolean
-          example: true
-        data:
-          description: Response payload
-        pagination:
-          $ref: '#/components/schemas/Pagination'
-
-    ErrorResponse:
-      type: object
-      required:
-        - success
-        - error
-      properties:
-        success:
-          type: boolean
-          example: false
-        error:
-          $ref: '#/components/schemas/ErrorInfo'
-
-    ErrorInfo:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          description: Machine-readable error code
-          example: "NOT_FOUND"
-        message:
-          type: string
-          description: Human-readable error message
-          example: "Resource not found"
-
-    Pagination:
+    # Tenant Schemas
+    ListTenantsResponse:
+      description: >-
+        The literal shape ListTenants writes: admin.ListResponse{Items:
+        tenants, Total, Page, PerPage} (pkg/acme/admin/tenant_handlers.go).
       type: object
       properties:
-        page:
-          type: integer
-          description: Current page number
-          example: 1
-        per_page:
-          type: integer
-          description: Items per page
-          example: 20
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantInfo'
         total:
           type: integer
-          description: Total number of items
-          example: 150
+        page:
+          type: integer
+        per_page:
+          type: integer
 
-    # Tenant Schemas
     TenantInfo:
       type: object
       properties:
@@ -2356,6 +2094,37 @@ components:
           description: User who created the tenant
           example: "admin@example.com"
 
+    # KeyInfo describes one key configuration in a CA's key set (algorithm
+    # agility: a CA can carry more than one signing key). Mirrors
+    # admin.KeyInfo (pkg/acme/admin/types.go), emitted by admin.CAStatus.Keys,
+    # admin.TenantRootCAInfo.Keys and admin.TenantIntCAInfo.Keys.
+    KeyInfo:
+      type: object
+      properties:
+        algorithm:
+          type: string
+          description: "Key algorithm family: ECDSA, RSA, Ed25519"
+          example: "ECDSA"
+        signature_algorithm:
+          type: string
+          example: "ECDSAWithSHA256"
+        store:
+          type: string
+          description: "Key store backend: software, tpm2, pkcs11"
+          example: "software"
+        key_size:
+          type: integer
+          description: RSA key size in bits (RSA only)
+          example: 2048
+        curve:
+          type: string
+          description: ECDSA curve name (ECDSA only)
+          example: "P-256"
+        default:
+          type: boolean
+          description: True for the primary signing key
+          example: true
+
     TenantRootCAInfo:
       type: object
       properties:
@@ -2368,6 +2137,10 @@ components:
         key_algorithm:
           type: string
           example: "ECDSA-P384"
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
         not_before:
           type: string
           format: date-time
@@ -2406,6 +2179,10 @@ components:
         key_algorithm:
           type: string
           example: "ECDSA-P256"
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
         not_before:
           type: string
           format: date-time
@@ -2724,6 +2501,23 @@ components:
         expires_at:
           type: string
           format: date-time
+
+    ListEABResponse:
+      description: >-
+        The literal shape ListTenantEABs writes: admin.ListResponse{Items:
+        eabs, Total, Page, PerPage} (pkg/acme/admin/tenant_handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EABInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
           nullable: true
 
     # Role Schemas (per-tenant RBAC, backed by go-qrdb sdk/go/transport.Role)
@@ -2821,6 +2615,10 @@ components:
           type: string
         role_ids:
           type: array
+          nullable: true
+          description: >-
+            db.User.RoleIDs carries no omitempty tag, so a user with no role
+            assignments serializes this as JSON null rather than [].
           items:
             type: string
         enabled:
@@ -3263,6 +3061,24 @@ components:
           format: uri
           description: URL to download the certificate
 
+    ListCertificatesResponse:
+      description: >-
+        The literal shape ListCertificates and ListExpiringCertificates write:
+        admin.ListResponse{Items: certs, Total, Page, PerPage}
+        (pkg/acme/admin/handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CertificateInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
     RevokeRequest:
       type: object
       properties:
@@ -3313,6 +3129,23 @@ components:
           description: Total number of orders
           example: 15
 
+    ListAccountsResponse:
+      description: >-
+        The literal shape ListAccounts writes: admin.ListResponse{Items:
+        accounts, Total, Page, PerPage} (pkg/acme/admin/handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
     # Order Schemas
     OrderInfo:
       type: object
@@ -3352,6 +3185,23 @@ components:
           type: string
           format: date-time
 
+    ListOrdersResponse:
+      description: >-
+        The literal shape ListOrders writes: admin.ListResponse{Items:
+        orders, Total, Page, PerPage} (pkg/acme/admin/handlers.go).
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderInfo'
+        total:
+          type: integer
+        page:
+          type: integer
+        per_page:
+          type: integer
+
     # Status Schemas
     CAStatus:
       type: object
@@ -3388,6 +3238,10 @@ components:
           type: string
           description: Default intermediate CA subject
           example: "CN=Trusted Issuing CA"
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyInfo'
 
     CAStats:
       type: object

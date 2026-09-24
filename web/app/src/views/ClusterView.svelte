@@ -13,14 +13,14 @@
   let loading = $state(true);
 
   const columns = [
-    { key: "node_id", label: "Node ID" },
+    { key: "replica_id", label: "Replica ID" },
     { key: "address", label: "Address" },
     { key: "leader", label: "Leader" },
   ];
 
   const rows = $derived(
     members.map((m) => ({
-      node_id: m.node_id,
+      replica_id: m.replica_id,
       address: m.address,
       leader: m.is_leader ? "yes" : "no",
     })),

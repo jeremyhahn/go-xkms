@@ -183,13 +183,17 @@ func (tca *TrustedCA) initialize() error {
 	// Set up admin service
 	if tca.multiTenant && tca.qrdbService != nil {
 		// Multi-tenant mode with QRDB
-		tca.adminService = admin.NewTenantAwareAdminService(
+		tenantAwareAdminSvc, err := admin.NewTenantAwareAdminService(
 			tca.ca,
 			tca.storageFactory,
 			tca.qrdbService,
 			tca.logger,
 			tca.version,
 		)
+		if err != nil {
+			return caerrors.Wrap(caerrors.StorageFailure, err, "trustedca: failed to construct tenant-aware admin service: %s", err)
+		}
+		tca.adminService = tenantAwareAdminSvc
 	} else {
 		// Single-tenant mode
 		tca.adminService = admin.NewAdminService(
@@ -448,7 +452,9 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	router.HandleFunc("/health", restService.HealthHandler).Methods("GET")
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
+		if _, err := w.Write([]byte("ready")); err != nil {
+			tca.logger.Error("failed to write readiness check response", slog.String("error", err.Error()))
+		}
 	}).Methods("GET")
 	router.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{})).Methods("GET")
 

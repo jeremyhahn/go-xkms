@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -479,7 +480,11 @@ func (trl *TenantRateLimiter) writeRateLimitError(w http.ResponseWriter, tenantI
 	detail := formatRateLimitDetail(retryAfterSeconds)
 	acmeError := common.RateLimited(detail)
 
-	_ = writeJSONError(w, acmeError)
+	if err := writeJSONError(w, acmeError); err != nil {
+		// Headers and status are already written; there is no way to
+		// report this to the client, so it's only logged.
+		slog.Error("failed to write rate limit error response", slog.String("error", err.Error()))
+	}
 }
 
 // formatRetryAfter formats the retry after value as a string.

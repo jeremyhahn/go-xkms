@@ -1,9 +1,11 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
 
-Binary: `xkey`. Groups: `fido2` (the daemon) and `uhid` (device setup and
-policy). Sources: `xkey/cmd/xkey/cmd/fido2.go`, `uhid.go`.
+Binary: `xkey`. Groups: `fido2` (the daemon, token lifecycle, and per-RP
+policy) and `uhid` (device setup). Sources: `xkey/cmd/xkey/cmd/fido2.go`,
+`fido2_init_token.go`, `fido2_provision_attestation.go`, `fido2_policy.go`,
+`uhid.go`.
 
 ## `xkey fido2` — run the authenticator
 
@@ -115,7 +117,7 @@ Anything that can reach that debugging port can drive the authenticator.
 xkey fido2 status
 ```
 
-## The token lifecycle — `init-token` and `change-so-pin`
+## The token lifecycle — `init-token`, `change-so-pin`, and `provision-attestation`
 
 The authenticator has two credentials with different jobs. The **user PIN**
 authorises ceremonies; the **Security Officer PIN** authorises administration —
@@ -131,10 +133,12 @@ refusal, never a waiver.
 |---|---|---|
 | `fido2 init-token` | Establish the SO PIN. Runs once. | nothing — the token has no SO yet |
 | `fido2 change-so-pin` | Replace the SO PIN. | the current SO PIN |
+| `fido2 provision-attestation` | Provision (or rotate) the device's FIDO2 attestation identity. | the SO PIN |
 
 ```
 xkey fido2 init-token
 xkey fido2 change-so-pin
+xkey fido2 provision-attestation
 ```
 
 Both write the persisted device state `fido2.storage` and `fido2.storage_path`
@@ -154,6 +158,32 @@ back to uninitialized.
 SO PIN, a separate credential under the data directory. Changing one does not
 change the other.
 
+### `provision-attestation`
+
+Provisions or rotates the device's FIDO2 attestation identity through the
+xkms enterprise CA: the device generates an attestation key on-device, the
+command submits the resulting CSR, and the issued chain is installed back
+onto the device. This is SO-gated — it prompts for the SO PIN — and, like
+`init-token`/`change-so-pin`, refuses while the daemon is running.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--rotate` | `false` | replace an existing attestation identity (invalidates statements issued under the old key) |
+| `--profile` | `""` | CA certificate profile to issue under (default: the CA's own default) |
+| `--validity-days` | `0` | certificate validity in days (default: the CA's own default) |
+| `--socket` | `""` | FIDO2 daemon IPC socket path used for the liveness check (default: auto-detect) |
+| `--tls-ca` | `""` | CA bundle used to verify TLS transports to xkmsd |
+
+```
+xkey fido2 provision-attestation
+xkey fido2 provision-attestation --profile attestation --validity-days 730
+xkey fido2 provision-attestation --rotate
+```
+
+Set `fido2.attestation` to `packed` so the daemon presents the installed
+identity once provisioning finishes; the command reports when that setting
+would leave it unused.
+
 ### What actually authorises the first one
 
 The first SO PIN cannot be authenticated against anything — there is no
@@ -169,19 +199,26 @@ Record the SO PIN somewhere outside the device. It is not kept in xKey's
 password store — that store is unlocked by the *user* PIN, and the SO PIN is
 what recovers a forgotten user PIN — so nothing can show it to you again.
 
-## `xkey uhid`
-
-Device-level setup and per-relying-party policy.
+## `xkey uhid` — device setup
 
 | Verb | Purpose |
 |---|---|
-| `uhid setup` | Set up the UHID device |
-| `uhid policy list` | List relying-party policies |
-| `uhid policy set` | Set a policy |
-| `uhid policy get` | Show a policy |
-| `uhid policy delete` | Remove a policy |
-| `uhid profile set` | Set the device profile |
-| `uhid profile show` | Show the device profile |
+| `uhid setup` | Configure `/dev/uhid` permissions (requires root) |
+
+```
+xkey uhid setup
+```
+
+## `xkey fido2 policy` / `xkey fido2 profile` — per-relying-party policy
+
+| Verb | Purpose |
+|---|---|
+| `fido2 policy list` | List relying-party policies |
+| `fido2 policy set` | Set a policy |
+| `fido2 policy get` | Show a policy |
+| `fido2 policy delete` | Remove a policy |
+| `fido2 profile set` | Set the device profile |
+| `fido2 profile show` | Show the device profile |
 
 `policy set` applies only the flags given on the command line. A flag left
 unset keeps the stored value; an explicit zero (`--blocked=false`, `--uv ""`)
@@ -190,8 +227,8 @@ do not mention `--blocked`.
 
 ```
 xkey uhid setup
-xkey uhid policy list
-xkey uhid profile show
+xkey fido2 policy list
+xkey fido2 profile show
 ```
 
 ## A working starting point

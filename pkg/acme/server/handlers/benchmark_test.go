@@ -411,11 +411,10 @@ func createBenchmarkJWSRequest(
 	b.Helper()
 
 	// Get a valid nonce
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	if err != nil {
 		b.Fatalf("failed to generate nonce: %v", err)
 	}
-	service.nonceStore.Add(nonce)
 
 	// Marshal payload
 	var payloadBytes []byte

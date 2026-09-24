@@ -85,8 +85,7 @@ func TestNewAccountHandler_MalformedPayload_90(t *testing.T) {
 	testKey := generateTestKey(t)
 
 	t.Run("Invalid JSON in request body", func(t *testing.T) {
-		nonce, _ := common.GenerateNonce(nonceSize)
-		service.nonceStore.Add(nonce)
+		nonce, _ := service.GetNonceService().Generate()
 
 		signerOpts := &jose.SignerOptions{
 			NonceSource: &staticNonceSource{nonce: nonce},

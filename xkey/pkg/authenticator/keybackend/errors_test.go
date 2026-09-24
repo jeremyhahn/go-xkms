@@ -163,3 +163,62 @@ func TestBackendType_Constants(t *testing.T) {
 		t.Errorf("BackendTypePKCS11 = %q, want %q", xkms.BackendTypePKCS11, "pkcs11")
 	}
 }
+
+// TestDetailError_ComposesAndUnwraps verifies DetailError's documented
+// contract: Error() appends Detail directly after the wrapped error's own
+// message, and Unwrap() still exposes the wrapped sentinel to errors.Is.
+func TestDetailError_ComposesAndUnwraps(t *testing.T) {
+	err := &DetailError{Err: ErrKeyNotFound, Detail: ": credential-abc"}
+
+	if got, want := err.Error(), ErrKeyNotFound.Error()+": credential-abc"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Error("errors.Is(err, ErrKeyNotFound) = false, want true")
+	}
+}
+
+// TestMessageError_CarriesItsMessageVerbatim verifies MessageError is a leaf
+// error whose Error() returns exactly the preformatted message, with no
+// accidental relation to an unrelated sentinel.
+func TestMessageError_CarriesItsMessageVerbatim(t *testing.T) {
+	err := &MessageError{Msg: "unsupported key type: string"}
+
+	if got, want := err.Error(), "unsupported key type: string"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if errors.Is(err, ErrKeyNotFound) {
+		t.Error("errors.Is(err, ErrKeyNotFound) = true, want false (no relation)")
+	}
+}
+
+// TestSentinelCauseError_MatchesBothSentinelAndCause verifies errors.Is
+// matches both the package sentinel and the backend's underlying cause.
+func TestSentinelCauseError_MatchesBothSentinelAndCause(t *testing.T) {
+	cause := errors.New("provider: connection reset")
+	err := &SentinelCauseError{Sentinel: ErrKeyGenerationFailed, Cause: cause}
+
+	if got, want := err.Error(), ErrKeyGenerationFailed.Error()+": "+cause.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(err, ErrKeyGenerationFailed) {
+		t.Error("errors.Is(err, ErrKeyGenerationFailed) = false, want true")
+	}
+	if !errors.Is(err, cause) {
+		t.Error("errors.Is(err, cause) = false, want true")
+	}
+}
+
+// TestWrappedError_ComposesAndUnwraps verifies WrappedError joins Msg and
+// the wrapped cause with ": " and exposes the cause to errors.Is.
+func TestWrappedError_ComposesAndUnwraps(t *testing.T) {
+	cause := errors.New("x509: malformed certificate")
+	err := &WrappedError{Msg: "attestation certificate", Err: cause}
+
+	if got, want := err.Error(), "attestation certificate: x509: malformed certificate"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(err, cause) {
+		t.Error("errors.Is(err, cause) = false, want true")
+	}
+}

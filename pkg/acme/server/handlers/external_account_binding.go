@@ -276,9 +276,17 @@ func jwkKeysMatch(a, b map[string]interface{}) bool {
 		// Compare crv and x for Ed25519
 		return a["crv"] == b["crv"] && a["x"] == b["x"]
 	default:
-		// For unknown types, do a full comparison
-		aBytes, _ := json.Marshal(a)
-		bBytes, _ := json.Marshal(b)
+		// For unknown types, do a full comparison. a and b were themselves
+		// produced by json.Unmarshal, so Marshal cannot fail on them in
+		// practice; still, treat either failing as "does not match" rather
+		// than comparing two empty byte slices as equal, which would turn a
+		// marshal failure into a false positive on a security-relevant key
+		// comparison.
+		aBytes, aErr := json.Marshal(a)
+		bBytes, bErr := json.Marshal(b)
+		if aErr != nil || bErr != nil {
+			return false
+		}
 		return bytes.Equal(aBytes, bBytes)
 	}
 }

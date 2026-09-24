@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/x509"
@@ -20,14 +21,23 @@ func CertificateToTPMPublic(cert *x509.Certificate) (*tpm2.TPMTPublic, error) {
 	if cert == nil {
 		return nil, &errs.Message{Msg: "certificate is nil"}
 	}
+	return publicKeyToTPMPublic(cert.PublicKey)
+}
 
-	switch pub := cert.PublicKey.(type) {
+// publicKeyToTPMPublic converts a crypto.PublicKey -- an RSA or ECDSA
+// public key, however the caller obtained it (a certificate's PublicKey
+// field, or a bare key with no certificate) -- to a TPM public structure
+// with EK default attributes. CertificateToTPMPublic and
+// NewCredentialChallenge both route through this one conversion so an EK's
+// TPM public area is built identically regardless of which the caller has.
+func publicKeyToTPMPublic(pub crypto.PublicKey) (*tpm2.TPMTPublic, error) {
+	switch key := pub.(type) {
 	case *rsa.PublicKey:
-		return rsaPublicKeyToTPMPublic(pub)
+		return rsaPublicKeyToTPMPublic(key)
 	case *ecdsa.PublicKey:
-		return ecdsaPublicKeyToTPMPublic(pub)
+		return ecdsaPublicKeyToTPMPublic(key)
 	default:
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", cert.PublicKey)}
+		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}
 }
 

@@ -23,7 +23,8 @@ import (
 )
 
 func main() {
-    client, err := trustedca.NewClient("/var/run/trusted-ca.sock")
+    client, err := trustedca.NewClient("/var/run/trusted-ca.sock",
+        trustedca.WithUnix("/var/run/trusted-ca.sock"))
     if err != nil {
         log.Fatal(err)
     }
@@ -102,12 +103,16 @@ func main() {
 
 | Protocol | Constructor | Use Case |
 |----------|-------------|----------|
-| Unix Socket | `NewClient("/var/run/trusted-ca.sock")` | Local IPC (fastest) |
-| gRPC | `NewClient("host:9443")` | High-performance service-to-service |
+| Unix Socket | `NewClient("/var/run/trusted-ca.sock", WithUnix("/var/run/trusted-ca.sock"))` | Local IPC (fastest) |
 | REST | `NewClient("https://host:8443", WithREST())` | Web clients, external systems |
 | QUIC | `NewClient("host:9444", WithQUIC())` | Low-latency, mobile clients |
 | MCP | `NewClient("host:9445", WithMCP())` | AI/LLM integration |
 | Embedded | `NewClient("", WithEmbedded(svc))` | Testing, in-process scenarios |
+
+gRPC is not a transport option for this client: RFC 8555 defines ACME as
+HTTP+JWS, so there is no gRPC binding for the protocol, and `NewClient`
+refuses gRPC (the zero-value default) with a typed `Unimplemented` error at
+construction (go-xkms#727). Always pass one of the options above.
 
 ## Configuration via Functional Options
 

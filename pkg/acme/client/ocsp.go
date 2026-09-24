@@ -218,7 +218,11 @@ func GetOCSP(ctx context.Context, cert, issuer *x509.Certificate, ocspURL string
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("OCSP: HTTP request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("ocsp: failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	// Check HTTP status
 	if resp.StatusCode != http.StatusOK {

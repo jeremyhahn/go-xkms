@@ -17,15 +17,21 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 )
 
 // GetCertificate retrieves a certificate by key ID from the specified backend.
 // If backendName is empty, the default backend is used.
 // Implements the CertServicer interface.
-func (s *XKMSService) GetCertificate(ctx context.Context, backendName, keyID string) (*transport.GetCertificateResponse, error) {
+func (s *XKMSService) GetCertificate(ctx context.Context, backendName, keyID string) (resp *transport.GetCertificateResponse, err error) {
+	start := time.Now()
+	metricsBackend := s.metricsBackendName(backendName)
+	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
+
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
 		return nil, err
@@ -48,7 +54,14 @@ func (s *XKMSService) GetCertificate(ctx context.Context, backendName, keyID str
 
 // SaveCertificate saves a PEM-encoded certificate to the specified backend.
 // Implements the CertServicer interface.
-func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCertificateRequest) error {
+func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCertificateRequest) (err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpStore, metricsBackend, start, err) }()
+
 	if req == nil {
 		return ErrNilRequest
 	}
@@ -58,7 +71,7 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 		return err
 	}
 
-	if err := validation.ValidateKeyReference(req.KeyID); err != nil {
+	if err = validation.ValidateKeyReference(req.KeyID); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
 
@@ -67,35 +80,53 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 		return &ErrCertOperation{Operation: "parse certificate PEM", Err: err}
 	}
 
-	return b.SaveCert(ctx, req.KeyID, cert)
+	if saveErr := b.SaveCert(ctx, req.KeyID, cert); saveErr != nil {
+		return saveErr
+	}
+
+	incrementCertsTotal(metricsBackend)
+	return nil
 }
 
 // DeleteCertificate deletes a certificate by key ID from the specified backend.
 // If backendName is empty, the default backend is used.
 // Implements the CertServicer interface.
-func (s *XKMSService) DeleteCertificate(ctx context.Context, backendName, keyID string) error {
+func (s *XKMSService) DeleteCertificate(ctx context.Context, backendName, keyID string) (err error) {
+	start := time.Now()
+	metricsBackend := s.metricsBackendName(backendName)
+	defer func() { recordServiceOp(metrics.OpDelete, metricsBackend, start, err) }()
+
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
 		return err
 	}
 
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+	if err = validation.ValidateKeyReference(keyID); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
 
-	return b.DeleteCert(ctx, keyID)
+	if delErr := b.DeleteCert(ctx, keyID); delErr != nil {
+		return delErr
+	}
+
+	decrementCertsTotal(metricsBackend)
+	return nil
 }
 
 // CertificateExists checks if a certificate exists for the given key ID.
 // If backendName is empty, the default backend is used.
 // Implements the CertServicer interface.
-func (s *XKMSService) CertificateExists(ctx context.Context, backendName, keyID string) (bool, error) {
+func (s *XKMSService) CertificateExists(ctx context.Context, backendName, keyID string) (exists bool, err error) {
+	start := time.Now()
+	metricsBackend := s.metricsBackendName(backendName)
+	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
+
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
 		return false, err
 	}
 
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+	if err = validation.ValidateKeyReference(keyID); err != nil {
 		return false, &ErrKeyIDParse{Err: err}
 	}
 
@@ -105,7 +136,11 @@ func (s *XKMSService) CertificateExists(ctx context.Context, backendName, keyID 
 // ListCertificates lists all certificates from the specified backend.
 // If backendName is empty, the default backend is used.
 // Implements the CertServicer interface.
-func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, opts ...transport.ListOption) (*transport.ListCertificatesResponse, error) {
+func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, opts ...transport.ListOption) (resp *transport.ListCertificatesResponse, err error) {
+	start := time.Now()
+	metricsBackend := s.metricsBackendName(backendName)
+	defer func() { recordServiceOp(metrics.OpList, metricsBackend, start, err) }()
+
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
 		return nil, err
@@ -144,7 +179,14 @@ func (s *XKMSService) ListCertificates(ctx context.Context, backendName string, 
 
 // SaveCertificateChain saves a PEM-encoded certificate chain to the specified backend.
 // Implements the CertServicer interface.
-func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.SaveCertificateChainRequest) error {
+func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.SaveCertificateChainRequest) (err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpStore, metricsBackend, start, err) }()
+
 	if req == nil {
 		return ErrNilRequest
 	}
@@ -154,7 +196,7 @@ func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.S
 		return err
 	}
 
-	if err := validation.ValidateKeyReference(req.KeyID); err != nil {
+	if err = validation.ValidateKeyReference(req.KeyID); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
 
@@ -171,19 +213,27 @@ func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.S
 		chain = append(chain, cert)
 	}
 
+	// Deliberately no certs-total gauge update here: a chain is stored under
+	// a distinct key (storage.CertChainPath) that ListCerts excludes from
+	// the count that gauge tracks, so saving a chain does not change it --
+	// see incrementCertsTotal's doc comment.
 	return b.SaveCertChain(ctx, req.KeyID, chain)
 }
 
 // GetCertificateChain retrieves a certificate chain by key ID from the specified backend.
 // If backendName is empty, the default backend is used.
 // Implements the CertServicer interface.
-func (s *XKMSService) GetCertificateChain(ctx context.Context, backendName, keyID string) (*transport.GetCertificateChainResponse, error) {
+func (s *XKMSService) GetCertificateChain(ctx context.Context, backendName, keyID string) (resp *transport.GetCertificateChainResponse, err error) {
+	start := time.Now()
+	metricsBackend := s.metricsBackendName(backendName)
+	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
+
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+	if err = validation.ValidateKeyReference(keyID); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
 
@@ -206,13 +256,17 @@ func (s *XKMSService) GetCertificateChain(ctx context.Context, backendName, keyI
 // GetTLSCertificate retrieves a TLS certificate bundle (leaf + chain) by key ID.
 // If backendName is empty, the default backend is used.
 // Implements the CertServicer interface.
-func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID string) (*transport.GetTLSCertificateResponse, error) {
+func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID string) (resp *transport.GetTLSCertificateResponse, err error) {
+	start := time.Now()
+	metricsBackend := s.metricsBackendName(backendName)
+	defer func() { recordServiceOp(metrics.OpGet, metricsBackend, start, err) }()
+
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+	if err = validation.ValidateKeyReference(keyID); err != nil {
 		return nil, &ErrKeyIDParse{Err: err}
 	}
 
@@ -222,7 +276,7 @@ func (s *XKMSService) GetTLSCertificate(ctx context.Context, backendName, keyID 
 		return nil, &ErrCertOperation{Operation: "get leaf certificate", Err: err}
 	}
 
-	resp := &transport.GetTLSCertificateResponse{
+	resp = &transport.GetTLSCertificateResponse{
 		KeyID:          keyID,
 		CertificatePEM: certToPEM(leafCert),
 	}
