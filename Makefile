@@ -1171,6 +1171,46 @@ test-verification:
 	@echo "$(CYAN)→ Testing verification package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/verification/...
 
+.PHONY: test-attestation
+## test-attestation: Run attestation package unit tests (invariants, android, dice)
+test-attestation:
+	@echo "$(CYAN)→ Testing attestation packages...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/...
+
+.PHONY: test-dice
+## test-dice: Run TCG DICE attestation package unit tests
+test-dice:
+	@echo "$(CYAN)→ Testing DICE attestation package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/dice/...
+
+.PHONY: bench-dice
+## bench-dice: Run TCG DICE attestation package benchmarks
+bench-dice:
+	@echo "$(CYAN)→ Benchmarking DICE attestation package...$(RESET)"
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/dice/... -bench=. -benchmem -run=^$$
+
+.PHONY: coverage-dice
+## coverage-dice: Generate coverage report for the TCG DICE attestation package
+coverage-dice:
+	@echo "$(CYAN)→ Generating DICE attestation coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/dice/... -coverprofile=$(COVERAGE_DIR)/dice.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/dice.out -o $(COVERAGE_DIR)/dice-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/dice.out > $(COVERAGE_DIR)/dice.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/dice.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)dice coverage: $${TOTAL}$(RESET)"
+
+.PHONY: coverage-attestation
+## coverage-attestation: Generate coverage report for the attestation packages
+coverage-attestation:
+	@echo "$(CYAN)→ Generating attestation coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/... -coverprofile=$(COVERAGE_DIR)/attestation.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/attestation.out -o $(COVERAGE_DIR)/attestation-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/attestation.out > $(COVERAGE_DIR)/attestation.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/attestation.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)attestation coverage: $${TOTAL}$(RESET)"
+
 .PHONY: test-certstore
 ## test-certstore: Run certstore package unit tests
 test-certstore:
@@ -1236,6 +1276,29 @@ test-x25519:
 test-chacha20poly1305:
 	@echo "$(CYAN)→ Testing ChaCha20-Poly1305 package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/chacha20poly1305/...
+
+.PHONY: test-avr
+## test-avr: Run AVR device backend unit tests
+test-avr:
+	@echo "$(CYAN)→ Testing AVR device backend...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/avr/...
+
+.PHONY: bench-avr
+## bench-avr: Run AVR device backend benchmarks
+bench-avr:
+	@echo "$(CYAN)→ Benchmarking AVR device backend...$(RESET)"
+	@$(GO) test $(TAG_FLAGS) ./pkg/backend/avr/... -bench=. -benchmem -run=^$$
+
+.PHONY: coverage-avr
+## coverage-avr: Generate coverage report for the AVR device backend
+coverage-avr:
+	@echo "$(CYAN)→ Generating AVR device backend coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/backend/avr/... -coverprofile=$(COVERAGE_DIR)/avr.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/avr.out -o $(COVERAGE_DIR)/avr-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/avr.out > $(COVERAGE_DIR)/avr.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/avr.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)avr coverage: $${TOTAL}$(RESET)"
 
 .PHONY: test-software
 ## test-software: Run unified software backend unit tests

@@ -140,6 +140,7 @@ require (
 	github.com/hashicorp/vault/api v1.23.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
+	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect

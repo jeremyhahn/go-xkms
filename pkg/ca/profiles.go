@@ -47,6 +47,7 @@ type defaultProfileRegistry struct {
 //   - timestamping: Timestamp authority
 //   - ca: Certificate Authority (subordinate CA)
 //   - fido2-attestation: FIDO2 authenticator attestation (WebAuthn L2 8.2.1)
+//   - dice-idevid: DICE initial device identity (DICE Certificate Profiles 5.1.6.1)
 //
 // Thread-safe: Yes
 func NewDefaultProfileRegistry() ProfileRegistry {
@@ -76,6 +77,7 @@ func (r *defaultProfileRegistry) registerBuiltinProfiles() {
 		NewTCGInitialAttestationKeyProfile(),
 		NewTCGDeviceIdentityProfile(),
 		NewFIDO2AttestationProfile(),
+		NewDICEDeviceIdentityProfile(),
 	}
 
 	for _, profile := range profiles {
