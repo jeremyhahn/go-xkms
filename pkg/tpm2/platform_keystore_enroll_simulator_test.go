@@ -4,6 +4,7 @@
 package tpm2
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -17,24 +18,26 @@ import (
 // sealing. Each test owns one simulator via newSimHarness (the go-tpm-tools
 // simulator is a process-global singleton, so only one may be live at a time).
 
-// newEnrollHarness returns a harness whose configured SSRK hierarchy auth
-// matches the hierarchy auth that provisioning actually installs.
+// newEnrollHarness returns a harness whose configured EK and Shared SRK
+// hierarchy auths match the empty hierarchy auth that provisioning actually
+// installs.
 //
 // This matters: TPM2.ProvisionOwner OVERRIDES the configured hierarchy auth
-// with the soPIN it was called with (provision.go), whereas the PlatformKeyStore
-// derives its own hierarchy auth from config.SSRK.HierarchyAuth verbatim
-// (buildSRKAttrsFromConfig). The harness provisions with Provision(nil), i.e.
-// an empty hierarchy auth, so the config must say the same or every owner-
-// hierarchy command from the key store fails with TPM_RC_BAD_AUTH. See
-// TestEnrollPlatformSRK_HierarchyAuthMismatch_ReportsBadAuth, which pins that
-// divergence.
+// with the soPIN it was called with (provision.go). PlatformKeyStore never
+// reads a hierarchy auth from configuration at all -- PlatformSRKConfig has
+// no such field -- so the Platform SRK's owner-hierarchy authorization comes
+// only from the soPIN argument threaded through
+// Initialize/EnrollPlatformSRK/ensureSRKAuth at the moment of the operation.
+// The harness provisions with Provision(nil), i.e. an empty hierarchy auth,
+// so every owner-hierarchy command the key store issues with no soPIN
+// argument matches what the TPM actually carries. See
+// TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller for the case
+// where the TPM's owner hierarchy carries a real auth value.
 func newEnrollHarness(t *testing.T) *simHarness {
 	t.Helper()
 	return newSimHarness(t, func(c *Config) {
 		c.SSRK.HierarchyAuth = nil
-
 		c.EK.HierarchyAuth = nil
-
 	})
 }
 
@@ -268,52 +271,6 @@ func TestPlatformKeyStore_GetLockoutInfo_ReportsTPMCounters(t *testing.T) {
 		"GetLockoutInfo must report the TPM's own lockout counter")
 }
 
-// TestEnrollPlatformSRK_HierarchyAuthMismatch_ReportsBadAuth pins the diagnosis
-// emitted when the configured owner hierarchy auth is not the one the TPM
-// actually carries.
-//
-// TPM2.ProvisionOwner overrides the configured hierarchy auth with the soPIN it
-// was called with:
-//
-//	srkAttrs.TPMAttributes.HierarchyAuth = soPIN
-//
-// so the auth actually installed on the TPM is whatever Provision() received.
-// PlatformKeyStore, by contrast, builds its SRK attributes via
-// buildSRKAttrsFromConfig, which takes config.SSRK.HierarchyAuth verbatim and
-// never learns what Provision() actually used.
-//
-// When those two disagree -- the default in this package's own sample config,
-// which declares "changeme" while Provision(nil) installs an empty auth --
-// first-boot enrollment fails. It used to fail with a bare TPM_RC_BAD_AUTH
-// naming neither the hierarchy nor the mismatch; it now reports
-// ErrPlatformSRKHierarchyAuth, which names both and says how to supply the auth.
-//
-// The caller-supplied soPIN cannot rescue this particular configuration: the
-// hierarchy the TPM carries here is the EMPTY one, and an empty soPIN means
-// "leave the configured hierarchy auth in force" rather than "the hierarchy auth
-// is empty". Supplying a non-empty owner hierarchy auth IS honoured -- see
-// TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller.
-func TestEnrollPlatformSRK_HierarchyAuthMismatch_ReportsBadAuth(t *testing.T) {
-	// Provision(nil) installs an EMPTY owner hierarchy auth...
-	h := newSimHarness(t, nil)
-	// ...while the default config claims a non-empty one.
-	require.NotEmpty(t, h.TPM.config.SSRK.HierarchyAuth,
-		"precondition: the sample config declares a hierarchy auth")
-
-	pks := newPlatformKeyStore(t, h)
-
-	err := pks.EnrollPlatformSRK("", "operator-pin-4821")
-	require.Error(t, err,
-		"a hierarchy auth mismatch must not silently enroll")
-	assert.ErrorIs(t, err, ErrPlatformSRKHierarchyAuth,
-		"the failure must name the owner hierarchy and the missing auth value")
-	assert.True(t, isTPMBadAuth(err) || isTPMAuthError(err),
-		"the underlying TPM authorization failure must still be unwrappable, got %v", err)
-
-	assert.False(t, pks.IsAuthReady(),
-		"a failed enrollment must not report the auth state as ready")
-}
-
 // TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller proves the fix for
 // the defect this file previously only diagnosed: the Platform SRK is a
 // persistent object in the TPM owner hierarchy, so a hierarchy carrying an auth
@@ -323,17 +280,14 @@ func TestEnrollPlatformSRK_HierarchyAuthMismatch_ReportsBadAuth(t *testing.T) {
 // deployed configuration for every operator who set an SO PIN.
 //
 // The harness provisions with an empty owner auth and then installs a real one,
-// which is exactly the state ProvisionOwner(soPIN) leaves behind, while the
-// configured SRK hierarchy auth stays empty so nothing but the caller's argument
-// can satisfy the TPM.
+// which is exactly the state ProvisionOwner(soPIN) leaves behind. Configuration
+// supplies no Platform SRK hierarchy auth at all -- PlatformSRKConfig has no
+// such field -- so nothing but the caller's argument can satisfy the TPM.
 func TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller(t *testing.T) {
 	const ownerAuth = "owner-hierarchy-secret"
 	const userPIN = "operator-pin-4821"
 
 	h := newEnrollHarness(t)
-	require.Empty(t, h.TPM.config.SSRK.HierarchyAuth,
-		"precondition: the config must supply no hierarchy auth, so only the "+
-			"caller's argument can authorize the owner hierarchy")
 
 	ownerHierarchy := tpm2.TPMRHOwner
 	require.NoError(t,
@@ -374,4 +328,93 @@ func TestEnrollPlatformSRK_OwnerHierarchyAuth_SuppliedByCaller(t *testing.T) {
 	assert.NoError(t, pks.VerifyAuth(userPIN),
 		"the enrolled PIN must authorize against the platform SRK")
 	assert.ErrorIs(t, pks.VerifyAuth("not-the-pin"), ErrAuthFailed)
+}
+
+// TestEnrollPlatformSRK_DefaultSealUnseal_PCRBranchUnattended proves the
+// high-level TPM2.Seal/Unseal API -- the entry point the barrier's
+// TPM2Strategy and PlatformSealer actually call through
+// defaultSealKeyAttributes/defaultUnsealKeyAttributes -- authorizes the
+// enrolled Platform SRK on its PolicyPCR branch with NO PlatformKeyStore
+// attached to the TPM instance: exactly the state an unattended daemon boot
+// is in before any operator has presented a PIN.
+//
+// Configuration is the source of truth here: TPM2.PlatformSRKAttributes
+// takes PlatformPolicy from PlatformSRKAttributesFromConfig on this path too
+// (not only when a PlatformKeyStore is attached to sync from), so
+// CreateSession still selects PlatformPolicySession instead of a plain
+// password session with empty auth bytes -- which would be refused with
+// TPM_RC_AUTH_FAIL against the SRK's real, non-empty (enrolled) auth value.
+func TestEnrollPlatformSRK_DefaultSealUnseal_PCRBranchUnattended(t *testing.T) {
+	h := newEnrollHarness(t)
+	pks := newPlatformKeyStore(t, h)
+
+	const userPIN = "operator-pin-4821"
+	require.NoError(t, pks.EnrollPlatformSRK("", userPIN))
+
+	// No PlatformKeyStore is attached to h.TPM: this is the unattended state.
+	secret := []byte("auto-unsealed-through-the-default-api")
+	ctx := context.Background()
+
+	sealed, err := h.TPM.Seal(ctx, secret, nil)
+	require.NoError(t, err,
+		"sealing through the default API must succeed unattended, via the SRK's PCR branch")
+
+	recovered, err := h.TPM.Unseal(ctx, sealed, nil)
+	require.NoError(t, err,
+		"unsealing through the default API must succeed unattended, via the SRK's PCR branch")
+	assert.Equal(t, secret, recovered)
+
+	// The platform changes state. Unattended, with no PIN to offer, the PCR
+	// branch must refuse -- that is the platform binding working as intended,
+	// not a defect: an unattended process that could still open this object
+	// after the measurements moved would defeat the point of sealing to them.
+	h.extendPlatformPCR(t, []byte("post-enrollment-measurement"))
+
+	_, err = h.TPM.Unseal(ctx, sealed, nil)
+	require.Error(t, err,
+		"unattended unseal must not survive a platform change: there is no PIN to fall back to")
+	assert.Equal(t, ErrPolicyCheckFailed, err)
+}
+
+// TestEnrollPlatformSRK_DefaultSealUnseal_PINBranchViaPlatformKeyStore proves
+// the same high-level API authorizes the enrolled Platform SRK on its
+// PolicyAuthValue branch once a PlatformKeyStore with the enrolled PIN is
+// attached to the TPM instance (TPM2.PlatformSRKAttributes syncs the
+// Password from it), and that this keeps working after the platform state
+// changes -- the PIN, not the live PCR state, is what TPM2_Load checks on
+// this branch.
+func TestEnrollPlatformSRK_DefaultSealUnseal_PINBranchViaPlatformKeyStore(t *testing.T) {
+	h := newEnrollHarness(t)
+	pks := newPlatformKeyStore(t, h)
+
+	const userPIN = "operator-pin-4821"
+	require.NoError(t, pks.EnrollPlatformSRK("", userPIN))
+
+	secret := []byte("sealed-through-the-default-api")
+	ctx := context.Background()
+
+	// TPM2.PlatformSRKAttributes syncs the enrolled Password onto the
+	// resolved parent only once the PlatformKeyStore is attached, and the
+	// session then authorizes the SRK on its PolicyAuthValue branch.
+	h.TPM.SetPlatformKeyStore(pks)
+	t.Cleanup(func() { h.TPM.SetPlatformKeyStore(nil) })
+
+	sealed, err := h.TPM.Seal(ctx, secret, nil)
+	require.NoError(t, err, "sealing must succeed on the PIN branch")
+
+	recovered, err := h.TPM.Unseal(ctx, sealed, nil)
+	require.NoError(t, err, "unsealing must succeed on the PIN branch")
+	assert.Equal(t, secret, recovered)
+
+	// The platform changes state. The PIN branch, still attached, must not
+	// care -- this is the property that makes the PIN a real recovery path
+	// rather than a second way to reach the same PCR-gated door.
+	h.extendPlatformPCR(t, []byte("post-enrollment-measurement"))
+
+	sealed2, err := h.TPM.Seal(ctx, secret, nil)
+	require.NoError(t, err,
+		"the PIN branch must still authorize the Platform SRK after a platform change")
+	recovered2, err := h.TPM.Unseal(ctx, sealed2, nil)
+	require.NoError(t, err)
+	assert.Equal(t, secret, recovered2)
 }

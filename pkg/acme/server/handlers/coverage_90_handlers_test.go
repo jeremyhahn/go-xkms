@@ -679,37 +679,6 @@ func TestNewOrderHandlerUnsupportedIdentifierType(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-func TestIsValidDomainNameEdgeCases(t *testing.T) {
-	tests := []struct {
-		name     string
-		domain   string
-		expected bool
-	}{
-		{"empty", "", false},
-		{"single char", "a", true},
-		{"valid domain", "example.com", true},
-		{"subdomain", "sub.example.com", true},
-		{"hyphen middle", "ex-ample.com", true},
-		{"hyphen start", "-example.com", false},
-		{"hyphen end", "example-.com", false},
-		{"numbers only", "123.456", true},
-		{"uppercase", "EXAMPLE.COM", true},
-		{"mixed case", "ExAmPlE.CoM", true},
-		{"too long label", string(make([]byte, 64)), false},
-		{"valid long domain", "a." + string(make([]byte, 63)) + ".com", false}, // label too long
-		{"empty label", "example..com", false},
-		{"special char", "exam!ple.com", false},
-		{"underscore", "exam_ple.com", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isValidDomainName(tt.domain)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestAccountHandlerPostAsGet(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()

@@ -29,7 +29,6 @@ import (
 	"math/big"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -1400,7 +1399,7 @@ func TestQuantumKeyID_RoundTripsThroughListKeys(t *testing.T) {
 	}
 	keyTypes := map[types.QuantumAlgorithm]uint{}
 	for _, algorithm := range algorithms {
-		if strings.HasPrefix(string(algorithm), "ML-DSA") {
+		if algorithm.IsSignature() {
 			keyTypes[algorithm] = CKK_ML_DSA
 			continue
 		}

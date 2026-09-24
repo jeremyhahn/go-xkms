@@ -146,21 +146,37 @@ func (s *BarrierService) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logBarrierEvent logs a barrier-related audit event.
-func (s *BarrierService) logBarrierEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logBarrierEvent logs a barrier-related audit event. Every barrier
+// operation is SeveritySecurity, so the caller must propagate a non-nil
+// return and fail the request rather than proceed unaudited.
+func (s *BarrierService) logBarrierEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
+}
+
+// barrierAuditErr logs a barrier-related audit event and reports the
+// error the caller should return: the audit write failure if
+// logBarrierEvent returned one (a SeveritySecurity write failure must
+// fail the request), otherwise origErr so the operation's own failure
+// reason is preserved.
+func (s *BarrierService) barrierAuditErr(op audit.OperationType, success bool, origErr error, details map[string]any) error {
+	if auditErr := s.logBarrierEvent(op, success, origErr, details); auditErr != nil {
+		return auditErr
+	}
+	return origErr
 }
 
 // IsInitialized returns true if the barrier root key exists in storage.
@@ -303,7 +319,9 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		_ = base.Close()
 		s.log.Error("barrier: barrier.Initialize failed",
 			"strategy", strategyID, "error", initErr)
-		s.logBarrierEvent(audit.OpBarrierInitialized, false, initErr, map[string]any{"strategy": strategyID})
+		if auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, false, initErr, map[string]any{"strategy": strategyID}); auditErr != nil {
+			return auditErr
+		}
 		return initErr
 	}
 
@@ -312,7 +330,9 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier initialized", slog.String("strategy", strategyID))
-	s.logBarrierEvent(audit.OpBarrierInitialized, true, nil, map[string]any{"strategy": strategyID})
+	if auditErr := s.logBarrierEvent(audit.OpBarrierInitialized, true, nil, map[string]any{"strategy": strategyID}); auditErr != nil {
+		return auditErr
+	}
 	unlocked = true
 	s.mu.Unlock()
 
@@ -358,18 +378,19 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 		creds, credErr := xkms.CredentialsFor([]byte(password))
 		if credErr != nil {
 			s.mu.Unlock()
-			s.logBarrierEvent(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
-			return credErr
+			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
 		defer creds.Secret.Destroy()
 
 		if err := s.barrier.Unseal(s.context(), creds); err != nil {
 			s.mu.Unlock()
-			s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
-			return err
+			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
 		}
 		s.log.Info("barrier re-unsealed in place", slog.String("strategy", s.lastStrategy))
-		s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy})
+		if auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy}); auditErr != nil {
+			s.mu.Unlock()
+			return auditErr
+		}
 		s.mu.Unlock()
 		return nil
 	}
@@ -430,16 +451,14 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	if credErr != nil {
 		_ = base.Close()
 		s.mu.Unlock()
-		s.logBarrierEvent(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID})
-		return credErr
+		return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID})
 	}
 	defer creds.Secret.Destroy()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		_ = base.Close()
 		s.mu.Unlock()
-		s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
-		return err
+		return s.barrierAuditErr(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
 	}
 
 	s.barrier = barrier
@@ -447,8 +466,11 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	s.lastStrategy = strategyID
 	hook := s.postUnsealHook
 	s.log.Info("barrier unsealed", slog.String("strategy", strategyID))
-	s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": strategyID})
+	auditErr := s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": strategyID})
 	s.mu.Unlock()
+	if auditErr != nil {
+		return auditErr
+	}
 
 	// Run the post-unseal hook outside the mutex to allow re-entrant
 	// calls to BarrierService methods (e.g. GetBackend, IsUnsealed).
@@ -472,11 +494,9 @@ func (s *BarrierService) Seal() error {
 	}
 	err := s.barrier.Seal()
 	if err != nil {
-		s.logBarrierEvent(audit.OpBarrierSealed, false, err, nil)
-		return err
+		return s.barrierAuditErr(audit.OpBarrierSealed, false, err, nil)
 	}
-	s.logBarrierEvent(audit.OpBarrierSealed, true, nil, nil)
-	return nil
+	return s.logBarrierEvent(audit.OpBarrierSealed, true, nil, nil)
 }
 
 // ChangePassword re-seals the barrier root key with new credentials.
@@ -497,17 +517,17 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	// the doc comment above); NewCredentials would reject that empty input.
 	creds, credErr := xkms.CredentialsFor([]byte(newPassword))
 	if credErr != nil {
-		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, credErr, nil)
-		return credErr
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
 	defer creds.Secret.Destroy()
 
 	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
-		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, err, nil)
-		return err
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
 
-	s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil)
+	if auditErr := s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil); auditErr != nil {
+		return auditErr
+	}
 	s.log.Info("barrier password changed")
 	return nil
 }

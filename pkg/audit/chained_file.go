@@ -38,12 +38,11 @@ func NewChainedFileLogger(path string) (*ChainedFileLogger, error) {
 }
 
 // Log converts the xkms Event to the canonical audit record and emits it
-// onto the chain. The sink does not block the audited operation, but a failed
-// emission IS returned rather than dropped: QRDBLogger.Log returns its sink's
-// error and callers already choose per site whether that is fatal -- the gRPC
-// service discards it deliberately ("do not disrupt the request pipeline"),
-// the REST auth handler and the ACME hooks act on it. Swallowing it here made
-// this the one audit sink that could fail silently.
+// onto the chain. A failed emission IS returned rather than dropped:
+// QRDBLogger.Log returns its sink's error, and every call site runs it
+// through HandleWriteFailure so a SeveritySecurity action (e.g. "authorize",
+// "seal", "unseal") fails the request rather than complete unaudited. See
+// docs/audit-log/engineering.md.
 func (l *ChainedFileLogger) Log(ctx context.Context, event *Event) error {
 	if event == nil {
 		return ErrNilEvent

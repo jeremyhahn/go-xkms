@@ -158,17 +158,27 @@ type ppTestAuditLogger struct {
 	called bool
 }
 
-func (l *ppTestAuditLogger) Log(audit.Entry) {}
-func (l *ppTestAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) {
+func (l *ppTestAuditLogger) Log(audit.Entry) error { return nil }
+func (l *ppTestAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *ppTestAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (l *ppTestAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *ppTestAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {}
-func (l *ppTestAuditLogger) LogServiceEvent(audit.OperationType, map[string]any)                    {}
-func (l *ppTestAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *ppTestAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (l *ppTestAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {}
-func (l *ppTestAuditLogger) LogPasswordStoreOperation(op audit.OperationType, source string, success bool, err error, details map[string]any) {
+func (l *ppTestAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) error { return nil }
+func (l *ppTestAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
+}
+func (l *ppTestAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
+}
+func (l *ppTestAuditLogger) LogPasswordStoreOperation(op audit.OperationType, source string, success bool, err error, details map[string]any) error {
 	l.called = true
+	return nil
 }
-func (l *ppTestAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {}
+func (l *ppTestAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
+}

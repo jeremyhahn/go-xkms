@@ -135,8 +135,11 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 
 			// A rejected external account binding is a refused enrollment, not
 			// a protocol nicety: record it before the request is answered.
-			s.recordAudit(audit.LogAuthenticationFailed(auditContext(r), s.auditLog,
-				"external account binding verification failed: "+err.Error()))
+			if auditErr := s.recordAudit(audit.EventAuthenticationFailed, audit.LogAuthenticationFailed(auditContext(r), s.auditLog,
+				"external account binding verification failed: "+err.Error())); auditErr != nil {
+				writeError(w, common.ServerInternal("Failed to record audit event"))
+				return
+			}
 
 			// Return appropriate error based on the verification failure.
 			// Check sentinel errors first (returned directly by the verifier),
@@ -220,7 +223,10 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Info("Account created", "id", accountID, "contacts", req.Contact,
 		"external_account_bound", verifiedBinding != nil, "tenant_id", newAccount.TenantID)
-	s.recordAudit(audit.LogAccountCreated(auditContext(r), s.auditLog,
-		auditAccountID(accountID), req.Contact, verifiedBinding != nil))
+	if auditErr := s.recordAudit(audit.EventAccountCreated, audit.LogAccountCreated(auditContext(r), s.auditLog,
+		auditAccountID(accountID), req.Contact, verifiedBinding != nil)); auditErr != nil {
+		writeError(w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
 	s.respondWithAccount(w, newAccount, http.StatusCreated)
 }

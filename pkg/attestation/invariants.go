@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
@@ -58,6 +59,7 @@ const (
 	FormatAndroidKey = "android-key-attestation"
 	FormatYubiKeyPIV = "yubikey-piv"
 	FormatTPM2       = "tpm2"
+	FormatDICE       = "dice"
 )
 
 // Evidence is one attestation submission, normalised away from whichever
@@ -141,6 +143,19 @@ var profiles = map[string]formatProfile{
 	FormatTPM2: {
 		bindTPMCertify: true,
 		note:           "the attesting key certifies the subject key through TPM2_Certify",
+	},
+	FormatDICE: {
+		bindLeafSPKI: true,
+		challenge:    dice.Challenge,
+		// A DICE device has no clock, so a nonce is the only freshness this
+		// format can offer -- there is no device-supplied timestamp that would
+		// mean anything, and none is read. The device echoes the challenge in
+		// the eat_nonce claim of the tcg-dice-UCCS-evidence extension of the
+		// alias certificate it mints for the exchange: the mechanism TCG DICE
+		// Attestation Architecture section 6.1.4 defines, so another DICE
+		// verifier reading the same certificate finds the nonce where it
+		// expects it.
+		note: "the alias certificate certifies the attested key; the challenge is echoed in the eat_nonce claim of tcg-dice-UCCS-evidence",
 	},
 }
 

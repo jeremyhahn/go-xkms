@@ -140,8 +140,6 @@ var methodMapping = map[string]string{
 	"/v1/barrier/seal":                   "barrier.seal",
 	"/v1/barrier/status":                 "barrier.status",
 	"/v1/barrier/rekey":                  "barrier.rekey",
-	"/v1/barrier/shamir/verify":          "barrier.shamirVerify",
-	"/v1/barrier/shamir/shares":          "barrier.shamirListShares",
 	"/v1/barrier/root-token":             "barrier.generateRootToken",
 	"/v1/barrier/recovery-keys":          "barrier.deleteRecoveryKeys",
 	"/v1/barrier/recovery-keys/generate": "barrier.generateRecoveryKeys",
@@ -151,11 +149,12 @@ var methodMapping = map[string]string{
 	"/api/v1/attest": "xkms.attestKey",
 
 	// Init Ceremony
-	"/api/v1/init/status":              "init.getStatus",
-	"/api/v1/init/claim-cert/begin":    "init.claimCertBegin",
-	"/api/v1/init/claim-cert/complete": "init.claimCertComplete",
-	"/api/v1/init/claim-share":         "init.claimShare",
-	"/api/v1/init/sign-csr":            "init.signCSR",
+	"/api/v1/init/status":               "init.getStatus",
+	"/api/v1/init/claim-cert/begin":     "init.claimCertBegin",
+	"/api/v1/init/claim-cert/complete":  "init.claimCertComplete",
+	"/api/v1/init/claim-share/begin":    "init.claimShareBegin",
+	"/api/v1/init/claim-share/complete": "init.claimShareComplete",
+	"/api/v1/init/sign-csr":             "init.signCSR",
 
 	// Credentials
 	"/api/v1/credentials/submit":   "credentials.submit",
@@ -172,12 +171,12 @@ var methodMapping = map[string]string{
 	"/v1/pin/lockout/reset":   "xkms.resetLockout",
 
 	// Password Store
-	"/api/v1/passwords":             "xkms.passwordList",
-	"/api/v1/passwords/unlock":      "xkms.passwordStoreUnlock",
-	"/api/v1/passwords/lock":        "xkms.passwordStoreLock",
-	"/api/v1/passwords/status":      "xkms.passwordStoreStatus",
-	"/api/v1/passwords/access-mode": "xkms.passwordStoreSetAccessMode",
-	"/api/v1/passwords/generate":    "xkms.passwordGenerate",
+	"/api/v1/passwords":             "password.list",
+	"/api/v1/passwords/unlock":      "password.unlock",
+	"/api/v1/passwords/lock":        "password.lock",
+	"/api/v1/passwords/status":      "password.status",
+	"/api/v1/passwords/access-mode": "password.setAccessMode",
+	"/api/v1/passwords/generate":    "password.generate",
 
 	// Key derivation
 	"/api/v1/keys/derive":      "xkms.deriveKey",
@@ -267,7 +266,7 @@ var dynamicPatterns = []struct {
 	{
 		prefix: "/api/v1/passwords/",
 		patterns: []pathPattern{
-			{suffix: "", method: "xkms.passwordGet"},
+			{suffix: "", method: "password.get"},
 		},
 	},
 	{
@@ -279,12 +278,6 @@ var dynamicPatterns = []struct {
 			{suffix: "/export", method: "xkms.exportPIVCertificate"},
 			{suffix: "/csr", method: "xkms.generatePIVCSR"},
 			{suffix: "", method: "xkms.listPIVSlots"},
-		},
-	},
-	{
-		prefix: "/v1/barrier/shamir/shares/",
-		patterns: []pathPattern{
-			{suffix: "", method: "barrier.shamirDeleteShare"},
 		},
 	},
 	{
@@ -1473,7 +1466,7 @@ func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddR
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordAddResponse
-	if err := t.rpcCall(ctx, "xkms.passwordAdd", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "password.add", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1485,7 +1478,7 @@ func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetR
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordGetResponse
-	if err := t.rpcCall(ctx, "xkms.passwordGet", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "password.get", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1497,7 +1490,7 @@ func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordLis
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordListResponse
-	if err := t.rpcCall(ctx, "xkms.passwordList", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "password.list", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1508,7 +1501,7 @@ func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordU
 	if !t.IsConnected() {
 		return ErrNotConnected
 	}
-	return t.rpcCall(ctx, "xkms.passwordUpdate", req, nil)
+	return t.rpcCall(ctx, "password.update", req, nil)
 }
 
 // PasswordDelete deletes a password entry.
@@ -1516,7 +1509,7 @@ func (t *Transport) PasswordDelete(ctx context.Context, req *transport.PasswordD
 	if !t.IsConnected() {
 		return ErrNotConnected
 	}
-	return t.rpcCall(ctx, "xkms.passwordDelete", req, nil)
+	return t.rpcCall(ctx, "password.delete", req, nil)
 }
 
 // PasswordStoreUnlock unlocks the password store.
@@ -1524,7 +1517,7 @@ func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.Pass
 	if !t.IsConnected() {
 		return ErrNotConnected
 	}
-	return t.rpcCall(ctx, "xkms.passwordStoreUnlock", req, nil)
+	return t.rpcCall(ctx, "password.unlock", req, nil)
 }
 
 // PasswordStoreLock locks the password store.
@@ -1532,7 +1525,7 @@ func (t *Transport) PasswordStoreLock(ctx context.Context) error {
 	if !t.IsConnected() {
 		return ErrNotConnected
 	}
-	return t.rpcCall(ctx, "xkms.passwordStoreLock", nil, nil)
+	return t.rpcCall(ctx, "password.lock", nil, nil)
 }
 
 // PasswordStoreStatus returns the password store status.
@@ -1541,7 +1534,7 @@ func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.Passwor
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordStoreStatusResponse
-	if err := t.rpcCall(ctx, "xkms.passwordStoreStatus", nil, &result); err != nil {
+	if err := t.rpcCall(ctx, "password.status", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1552,7 +1545,7 @@ func (t *Transport) PasswordStoreSetAccessMode(ctx context.Context, req *transpo
 	if !t.IsConnected() {
 		return ErrNotConnected
 	}
-	return t.rpcCall(ctx, "xkms.passwordStoreSetAccessMode", req, nil)
+	return t.rpcCall(ctx, "password.setAccessMode", req, nil)
 }
 
 // PasswordGenerate generates a random password.
@@ -1561,7 +1554,7 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordGenerateResponse
-	if err := t.rpcCall(ctx, "xkms.passwordGenerate", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "password.generate", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -497,14 +497,16 @@ func (b *PhoneKeyBackend) Connect(ctx context.Context) error {
 
 	// Log connection established
 	if b.auditLogger != nil {
-		b.auditLogger.LogConnectionEvent(
+		if auditErr := b.auditLogger.LogConnectionEvent(
 			audit.OpConnectionEstablished,
 			b.cfg.DeviceAddress,
 			b.cfg.DeviceName,
 			map[string]any{
 				"transport": "non-ble",
 			},
-		)
+		); auditErr != nil {
+			return auditErr
+		}
 	}
 
 	return nil
@@ -591,7 +593,7 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 
 		// Log connection established
 		if b.auditLogger != nil {
-			b.auditLogger.LogConnectionEvent(
+			if auditErr := b.auditLogger.LogConnectionEvent(
 				audit.OpConnectionEstablished,
 				address,
 				b.cfg.DeviceName,
@@ -599,7 +601,9 @@ func (b *PhoneKeyBackend) connectBLE(ctx context.Context, bleTransport BLECapabl
 					"transport": "ble",
 					"mtu":       b.cfg.MTU,
 				},
-			)
+			); auditErr != nil {
+				return auditErr
+			}
 		}
 
 		return nil
@@ -1149,14 +1153,21 @@ func (b *PhoneKeyBackend) close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Log connection closed before actually closing
+	// Log connection closed before actually closing. OpConnectionClosed is
+	// SeverityInformational: LogConnectionEvent returns nil for it today.
+	// Logged defensively rather than propagated in case that classification
+	// ever changes — close() must still release the transport, router, and
+	// in-flight leases below even if the audit write failed; refusing to
+	// shut down here would leak the resources this method exists to free.
 	if b.auditLogger != nil && b.connected.Load() {
-		b.auditLogger.LogConnectionEvent(
+		if auditErr := b.auditLogger.LogConnectionEvent(
 			audit.OpConnectionClosed,
 			b.cfg.DeviceAddress,
 			b.cfg.DeviceName,
 			nil,
-		)
+		); auditErr != nil {
+			b.log.Error("audit log failed", "error", auditErr)
+		}
 	}
 
 	b.connected.Store(false)
@@ -1403,14 +1414,16 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 	if resp.Error != nil {
 		// Log pairing denied
 		if b.auditLogger != nil {
-			b.auditLogger.LogConnectionEvent(
+			if auditErr := b.auditLogger.LogConnectionEvent(
 				audit.OpPairingDenied,
 				b.cfg.DeviceAddress,
 				b.cfg.DeviceName,
 				map[string]any{
 					"reason": resp.Error.Message,
 				},
-			)
+			); auditErr != nil {
+				return nil, auditErr
+			}
 		}
 		return nil, pairing.MapRPCError(resp.Error)
 	}
@@ -1423,26 +1436,30 @@ func (b *PhoneKeyBackend) SendPairingConfirm(ctx context.Context, deviceName str
 	if !result.Confirmed {
 		// Log pairing denied
 		if b.auditLogger != nil {
-			b.auditLogger.LogConnectionEvent(
+			if auditErr := b.auditLogger.LogConnectionEvent(
 				audit.OpPairingDenied,
 				b.cfg.DeviceAddress,
 				b.cfg.DeviceName,
 				map[string]any{
 					"reason": "user rejected",
 				},
-			)
+			); auditErr != nil {
+				return nil, auditErr
+			}
 		}
 		return nil, ErrPairingRejected
 	}
 
 	// Log pairing approved
 	if b.auditLogger != nil {
-		b.auditLogger.LogConnectionEvent(
+		if auditErr := b.auditLogger.LogConnectionEvent(
 			audit.OpPairingApproved,
 			b.cfg.DeviceAddress,
 			result.DeviceName,
 			nil,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return result, nil
