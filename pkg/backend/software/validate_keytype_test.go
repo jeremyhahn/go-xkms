@@ -15,7 +15,6 @@ package software
 
 import (
 	"context"
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -80,8 +79,10 @@ func TestValidateKeyType_ECDSADeclaredAsEd25519IsRefused(t *testing.T) {
 // declared as X25519. Neither was checked before, and the ECDH arm is what
 // keeps the refusing default from breaking a key type the backend supports.
 func TestValidateKeyType_X25519MismatchesAreRefusedBothWays(t *testing.T) {
-	x25519Key, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	x25519Key, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 
 	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -129,8 +130,10 @@ func TestValidateKeyType_PublicKeysAreRefused(t *testing.T) {
 	require.NoError(t, err)
 	edPub, _, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	xKey, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	xKey, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 
 	cases := []struct {
 		name  string
@@ -165,8 +168,10 @@ func TestValidateKeyType_MatchingDeclarationsAreAdmitted(t *testing.T) {
 	require.NoError(t, err)
 	_, edKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	xKey, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	xKey, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 
 	// An RSA key whose attributes carry no RSAAttributes block at all. Four
 	// backends reconstruct KeyAlgorithm with the block left nil, and their

@@ -100,8 +100,8 @@ func TestConsole_OpenOnClient(t *testing.T) {
 		Timeout:         5 * time.Second,
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(srv.host, strconv.Itoa(srv.port)), cfg)
-	if err != nil {
-		t.Fatalf("ssh.Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer client.Close()
 

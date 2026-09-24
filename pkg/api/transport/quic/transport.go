@@ -797,6 +797,9 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	if req.TagSize != 0 {
 		body["tag_size"] = req.TagSize
 	}
+	if req.GCMNonceMode != "" {
+		body["gcm_nonce_mode"] = req.GCMNonceMode
+	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {

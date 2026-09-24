@@ -16,6 +16,9 @@ package apimodule
 import (
 	"context"
 	"encoding/json"
+	"errors"
+
+	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -109,7 +112,19 @@ func (m *Module) mcpToolHandler(spec xkmsmcp.MethodSpec) mcpserver.ToolHandlerFu
 
 		result, err := backend.InvokeMethod(ctx, spec.Method, params)
 		if err != nil {
-			return mcpgo.NewToolResultError(err.Error()), nil
+			// *KeyOpError carries the JSON-RPC code pkg/api/mcp's handlers and
+			// gates already computed (see errors_keyops.go's mapKeyOpError and
+			// authz.go/tenant.go's gate failures); without this errors.As
+			// unwrap, that code never left the handler and every dispatch
+			// failure reached the caller as an indistinguishable prose-only
+			// tool error.
+			var keyErr *xkmsmcp.KeyOpError
+			if errors.As(err, &keyErr) {
+				return codedToolResult(spec.Tool, wireCodeForKeyOp(keyErr.Code), keyErr.Error()), nil
+			}
+			// An error InvokeMethod did not classify is reported generically:
+			// its detail is not the caller's to see, only that the call failed.
+			return codedToolResult(spec.Tool, wire.CodeInternal, "xkms: internal error"), nil
 		}
 		out, err := json.Marshal(result)
 		if err != nil {

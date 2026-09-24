@@ -25,6 +25,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/spf13/cobra"
 )
 
@@ -144,17 +145,18 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	}
 	printVerbose("Connected to xkms service")
 
-	// Create FIDO2 handler
+	// The hardware CTAP2 authenticator adapter is opened lazily by
+	// webAuthnRegistration, only after CreateUser and BeginRegistration have
+	// already succeeded server-side.
 	fidoConfig := fido2.DefaultConfig
 	fidoConfig.DevicePath = devicePath
 	fidoConfig.RequireUserVerification = requireUV
+	fidoConfig.UserPresenceTimeout = timeout
 	enumerator := fido2.NewDefaultEnumerator()
 
-	handler, err := fido2.NewHandler(&fidoConfig, enumerator)
-	if err != nil {
-		return &WrappedError{Sentinel: ErrCreateFIDO2HandlerFailed, Err: err}
+	newAdapter := func() (webauthnclient.AuthenticatorAdapter, error) {
+		return webauthnclient.NewHardwareAdapter(&fidoConfig, enumerator)
 	}
-	defer closeQuietly(handler)
 
 	if err := printer.PrintMessage("Creating administrator account..."); err != nil {
 		return err
@@ -172,7 +174,12 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return ErrEmailRequired
 	}
 
-	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, string(RoleAdmin), "", requireUV, timeout, pin)
+	attestation, err := webAuthnRegistration(ctx, cl, newAdapter, printer, username, email, displayName, string(RoleAdmin), "", pin)
+	if err != nil {
+		return err
+	}
+
+	credentialID, err := extractWebAuthnCredentialID(attestation)
 	if err != nil {
 		return err
 	}
@@ -191,7 +198,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 			"display_name":  displayName,
 			"role":          "admin",
 			"auth_method":   "fido2",
-			"credential_id": base64.URLEncoding.EncodeToString(att.CredentialID),
+			"credential_id": base64.URLEncoding.EncodeToString(credentialID),
 		}
 		if err := printer.PrintJSON(summary); err != nil {
 			return err
@@ -199,7 +206,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 	} else {
 		fmt.Printf("\nUsername: %s\n", username)
 		fmt.Printf("Role: %s\n", string(RoleAdmin))
-		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(att.CredentialID))
+		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(credentialID))
 		fmt.Printf("\nYou can now use this security key to authenticate to the xkms web UI.\n")
 	}
 

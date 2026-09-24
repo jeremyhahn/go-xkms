@@ -130,23 +130,31 @@ func startCAAFinalizeMockDNS(t *testing.T, mock *caaFinalizeMockDNS) string {
 	return addr
 }
 
-// finalizeCAAOrder finalizes a DNS-identifier order against the given
-// caaIdentities/resolver, returning the HTTP response and the order as it
-// stands in storage afterward.
-func finalizeCAAOrder(t *testing.T, resolverAddr string, caaIdentities []string, wildcard bool) (*httptest.ResponseRecorder, *entities.ACMEOrder) {
+// caaFinalizeFixture holds an ACME account, order, and validated
+// authorization prepared for a CAA finalize test. Its account is created
+// before any DNS state, so a test that needs a CAA record's accounturi
+// parameter to reference the real (or a deliberately different) account
+// URI can read accountURI before building the mock DNS resolver, then call
+// finalize.
+type caaFinalizeFixture struct {
+	service         *RestService
+	account         *entities.ACMEAccount
+	accountURI      string
+	order           *entities.ACMEOrder
+	key             *TestKey
+	commonName      string
+	identifierValue string
+}
+
+// newCAAFinalizeFixture creates a ready-to-finalize order for "example.com"
+// (or "*.example.com" if wildcard) whose sole authorization is valid,
+// validated by validationMethod (defaulting to the RFC 8555-mandated method
+// for wildcard vs non-wildcard identifiers: dns-01 or http-01).
+func newCAAFinalizeFixture(t *testing.T, wildcard bool, validationMethod string) *caaFinalizeFixture {
 	t.Helper()
 
 	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-
-	validator, err := acmeserver.NewCAAValidator(&acmeserver.CAAValidatorParams{
-		Logger:        slog.Default(),
-		Resolver:      resolverAddr,
-		Timeout:       2 * time.Second,
-		CAAIdentities: caaIdentities,
-	})
-	require.NoError(t, err)
-	service.caaValidator = validator
+	t.Cleanup(cleanup)
 
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
@@ -159,39 +167,113 @@ func finalizeCAAOrder(t *testing.T, resolverAddr string, caaIdentities []string,
 		commonName = identifierValue
 	}
 
+	if validationMethod == "" {
+		if wildcard {
+			validationMethod = common.ChallengeTypeDNS01
+		} else {
+			validationMethod = common.ChallengeTypeHTTP01
+		}
+	}
+
+	ctx := context.Background()
+
+	authzDAO, err := service.storageFactory.AuthorizationDAO(account.ID)
+	require.NoError(t, err)
+	authzID, err := GenerateID()
+	require.NoError(t, err)
+	authz := &entities.ACMEAuthorization{
+		ID:         authzID,
+		Identifier: entities.ACMEIdentifier{Type: common.AuthzTypeDNS, Value: domain},
+		Status:     common.StatusValid,
+		Expires:    time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		Wildcard:   wildcard,
+		AccountID:  account.ID,
+		Challenges: []entities.ACMEChallenge{
+			{
+				ID:        1,
+				Type:      validationMethod,
+				Status:    common.StatusValid,
+				Validated: time.Now().Format(time.RFC3339),
+				AccountID: account.ID,
+			},
+		},
+	}
+	require.NoError(t, authzDAO.Save(ctx, authz))
+
 	order := createTestOrderSimple(t, service, account.ID)
 	order.Status = common.StatusReady
 	order.Identifiers = []entities.ACMEIdentifier{
 		{Type: common.AuthzTypeDNS, Value: identifierValue},
 	}
+	order.Authorizations = []string{fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, authzID)}
+	authz.OrderID = order.ID
+	require.NoError(t, authzDAO.Save(ctx, authz))
 
-	ctx := context.Background()
 	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
 	require.NoError(t, err)
 	require.NoError(t, orderDAO.Save(ctx, order))
+
+	return &caaFinalizeFixture{
+		service:         service,
+		account:         account,
+		accountURI:      service.accountURL(account),
+		order:           order,
+		key:             key,
+		commonName:      commonName,
+		identifierValue: identifierValue,
+	}
+}
+
+// finalize configures the fixture's CAA validator against resolverAddr and
+// caaIdentities, submits the finalize request, and returns the HTTP
+// response and the order as it stands in storage afterward.
+func (f *caaFinalizeFixture) finalize(t *testing.T, resolverAddr string, caaIdentities []string) (*httptest.ResponseRecorder, *entities.ACMEOrder) {
+	t.Helper()
+
+	validator, err := acmeserver.NewCAAValidator(&acmeserver.CAAValidatorParams{
+		Logger:        slog.Default(),
+		Resolver:      resolverAddr,
+		Timeout:       2 * time.Second,
+		CAAIdentities: caaIdentities,
+	})
+	require.NoError(t, err)
+	f.service.caaValidator = validator
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	template := &x509.CertificateRequest{
-		Subject:  pkix.Name{CommonName: commonName},
-		DNSNames: []string{identifierValue},
+		Subject:  pkix.Name{CommonName: f.commonName},
+		DNSNames: []string{f.identifierValue},
 	}
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
 	require.NoError(t, err)
 
 	payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString(csrDER)}
-	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+	finalizeURL := fmt.Sprintf("%s/acme/orders/%d/finalize", f.service.baseRESTURI, f.order.ID)
+	req := createJWSRequest(t, f.service, f.key, finalizeURL, payload, true, f.account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", f.order.ID)})
 
 	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
+	f.service.OrderFinalizeHandler(resp, req)
 
-	got, err := orderDAO.Get(ctx, order.ID)
+	orderDAO, err := f.service.storageFactory.OrderDAO(f.account.ID)
+	require.NoError(t, err)
+	got, err := orderDAO.Get(context.Background(), f.order.ID)
 	require.NoError(t, err)
 
 	return resp, got
+}
+
+// finalizeCAAOrder finalizes a DNS-identifier order against the given
+// caaIdentities/resolver, returning the HTTP response and the order as it
+// stands in storage afterward. The order's authorization is recorded as
+// validated by the RFC 8555-mandated method for the identifier kind
+// (dns-01 for wildcard, http-01 otherwise).
+func finalizeCAAOrder(t *testing.T, resolverAddr string, caaIdentities []string, wildcard bool) (*httptest.ResponseRecorder, *entities.ACMEOrder) {
+	t.Helper()
+	fixture := newCAAFinalizeFixture(t, wildcard, "")
+	return fixture.finalize(t, resolverAddr, caaIdentities)
 }
 
 // TestOrderFinalize_CAA_Forbidden verifies that a domain whose CAA record
@@ -290,4 +372,155 @@ func TestOrderFinalize_CAA_DNSFailureFailsClosed(t *testing.T) {
 
 	assertErrorType(t, resp, common.ErrTypeCAAError, http.StatusUnauthorized)
 	assert.Equal(t, common.StatusInvalid, order.Status)
+}
+
+// TestOrderFinalize_CAA_AccountURI_Mismatch verifies RFC 8657 Section 3: an
+// issue record naming a different ACME account's URI does not authorize
+// this order's account, even though the issuer domain matches.
+func TestOrderFinalize_CAA_AccountURI_Mismatch(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, "")
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;accounturi=https://acme.example.org/acme/account/999999", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	assertErrorType(t, resp, common.ErrTypeCAAError, http.StatusUnauthorized)
+	assert.Equal(t, common.StatusInvalid, order.Status)
+}
+
+// TestOrderFinalize_CAA_AccountURI_Match verifies that an issue record whose
+// accounturi parameter exactly matches the finalizing account's URI
+// authorizes issuance.
+func TestOrderFinalize_CAA_AccountURI_Match(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, "")
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", fmt.Sprintf("ca.example.com;accounturi=%s", fixture.accountURI), 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, common.StatusValid, order.Status)
+}
+
+// TestOrderFinalize_CAA_ValidationMethods_Excludes verifies RFC 8657
+// Section 4: an issue record whose validationmethods list excludes the
+// challenge type that actually validated the identifier does not authorize
+// issuance, even though the issuer domain matches.
+func TestOrderFinalize_CAA_ValidationMethods_Excludes(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, common.ChallengeTypeHTTP01)
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;validationmethods=dns-01", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	assertErrorType(t, resp, common.ErrTypeCAAError, http.StatusUnauthorized)
+	assert.Equal(t, common.StatusInvalid, order.Status)
+}
+
+// TestOrderFinalize_CAA_ValidationMethods_Includes verifies that an issue
+// record whose validationmethods list includes the challenge type that
+// validated the identifier authorizes issuance.
+func TestOrderFinalize_CAA_ValidationMethods_Includes(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, common.ChallengeTypeHTTP01)
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;validationmethods=dns-01,http-01", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, common.StatusValid, order.Status)
+}
+
+// TestOrderFinalize_CAA_ValidationMethods_Wildcard verifies the RFC 8657
+// validationmethods restriction is also enforced on the issuewild path used
+// for wildcard identifiers.
+func TestOrderFinalize_CAA_ValidationMethods_Wildcard(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, true, common.ChallengeTypeDNS01)
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issuewild", "ca.example.com;validationmethods=http-01", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	assertErrorType(t, resp, common.ErrTypeCAAError, http.StatusUnauthorized)
+	assert.Equal(t, common.StatusInvalid, order.Status)
+}
+
+// TestOrderFinalize_CAA_MalformedAccountURI_Forbidden verifies RFC 8657's
+// fail-closed handling of a malformed parameter: an accounturi value
+// containing whitespace is not a syntactically valid RFC 8659 Section 4.2
+// parameter value, so the record must not authorize issuance even though
+// the issuer domain matches.
+func TestOrderFinalize_CAA_MalformedAccountURI_Forbidden(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, "")
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;accounturi=https://acme.example.org/has space", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	assertErrorType(t, resp, common.ErrTypeCAAError, http.StatusUnauthorized)
+	assert.Equal(t, common.StatusInvalid, order.Status)
+}
+
+// TestOrderFinalize_CAA_MalformedValidationMethods_Forbidden verifies that
+// a validationmethods value containing a syntactically invalid method-label
+// (here, an empty entry from a doubled comma) makes the record
+// non-authorizing rather than silently permitting issuance.
+func TestOrderFinalize_CAA_MalformedValidationMethods_Forbidden(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, common.ChallengeTypeHTTP01)
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;validationmethods=http-01,,dns-01", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	assertErrorType(t, resp, common.ErrTypeCAAError, http.StatusUnauthorized)
+	assert.Equal(t, common.StatusInvalid, order.Status)
+}
+
+// TestOrderFinalize_CAA_UnknownParameter_Ignored verifies that a
+// non-RFC-8657 parameter tag this validator does not implement is simply
+// ignored (per the extensible parameter model), so an otherwise-matching
+// record with an unrelated parameter still authorizes issuance.
+func TestOrderFinalize_CAA_UnknownParameter_Ignored(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, "")
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;policy=ev", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, common.StatusValid, order.Status)
+}
+
+// TestOrderFinalize_CAA_MixedRecords_OneMatches verifies that CAA records
+// are evaluated independently: an accounturi-restricted record naming a
+// different account does not prevent an unrestricted, matching record from
+// authorizing issuance.
+func TestOrderFinalize_CAA_MixedRecords_OneMatches(t *testing.T) {
+	fixture := newCAAFinalizeFixture(t, false, "")
+
+	mock := newCAAFinalizeMockDNS()
+	mock.addCAARecord("example.com", "issue", "ca.example.com;accounturi=https://acme.example.org/acme/account/999999", 0)
+	mock.addCAARecord("example.com", "issue", "ca.example.com", 0)
+	addr := startCAAFinalizeMockDNS(t, mock)
+
+	resp, order := fixture.finalize(t, addr, []string{"ca.example.com"})
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Equal(t, common.StatusValid, order.Status)
 }

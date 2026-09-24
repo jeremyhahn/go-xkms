@@ -75,11 +75,19 @@ type PINAttemptsError = pkgfido2.PINAttemptsError
 
 // Re-exported constructors, defaults, and helpers.
 var (
-	DefaultConfig               = pkgfido2.DefaultConfig
-	NewAuthenticator            = pkgfido2.NewAuthenticator
-	NewCTAPHIDDevice            = pkgfido2.NewCTAPHIDDevice
-	NewDefaultEnumerator        = pkgfido2.NewDefaultEnumerator
-	NewHandler                  = pkgfido2.NewHandler
-	DefaultEnrollmentConfig     = pkgfido2.DefaultEnrollmentConfig
-	DefaultAuthenticationConfig = pkgfido2.DefaultAuthenticationConfig
+	DefaultConfig                    = pkgfido2.DefaultConfig
+	NewAuthenticator                 = pkgfido2.NewAuthenticator
+	NewCTAPHIDDevice                 = pkgfido2.NewCTAPHIDDevice
+	NewDefaultEnumerator             = pkgfido2.NewDefaultEnumerator
+	NewHandler                       = pkgfido2.NewHandler
+	DefaultEnrollmentConfig          = pkgfido2.DefaultEnrollmentConfig
+	DefaultAuthenticationConfig      = pkgfido2.DefaultAuthenticationConfig
+	ParseWebAuthnRegistrationOptions = pkgfido2.ParseWebAuthnRegistrationOptions
+)
+
+// Re-exported registration-options parsing error sentinels.
+var (
+	ErrRegistrationOptionsRequired  = pkgfido2.ErrRegistrationOptionsRequired
+	ErrRegistrationChallengeMissing = pkgfido2.ErrRegistrationChallengeMissing
+	ErrRegistrationRPIDMissing      = pkgfido2.ErrRegistrationRPIDMissing
 )

@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // HashVersion identifies the password hashing version.
@@ -91,8 +92,15 @@ func NewFIPSAwareHasher() *PasswordHasher {
 	if fips140.Enabled() {
 		version = HashV2
 	}
-	// Version is always valid here, so the error can be safely ignored.
-	h, _ := NewPasswordHasher(version)
+	// version is always HashV1 or HashV2 here, the only two values
+	// NewPasswordHasher accepts, so err is unreachable. A third HashVersion
+	// added to this package without updating this function is exactly the
+	// programming error panic exists for: NewFIPSAwareHasher has no error
+	// return of its own to surface it through instead.
+	h, err := NewPasswordHasher(version)
+	if err != nil {
+		panic(&errs.Wrapped{Msg: "kdf: unreachable invalid hasher version", Err: err})
+	}
 	return h
 }
 

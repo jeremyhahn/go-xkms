@@ -433,6 +433,40 @@ func (e *ErrSealStrategyBuild) Unwrap() error {
 	return e.Err
 }
 
+// ErrPlatformStoreBuild represents a failure constructing the platform
+// store's sealer or its sealed storage backend for the configured
+// credentials.seal_strategy. Strategy names the strategy that failed; Err
+// carries the underlying cause.
+type ErrPlatformStoreBuild struct {
+	Strategy string
+	Err      error
+}
+
+// Error returns the error message.
+func (e *ErrPlatformStoreBuild) Error() string {
+	return fmt.Sprintf("failed to build platform store for strategy %q: %s", e.Strategy, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrPlatformStoreBuild) Unwrap() error {
+	return e.Err
+}
+
+// ErrPlatformStoreStrategyUnavailable represents a credentials.seal_strategy
+// that initializePlatformStore cannot build a sealer for. Reason explains
+// why: a real structural dependency (e.g. a secret only resolvable once the
+// credential service the platform store itself gates exists), not a stub —
+// startup fails closed rather than silently skipping the store.
+type ErrPlatformStoreStrategyUnavailable struct {
+	Strategy string
+	Reason   string
+}
+
+// Error returns the error message.
+func (e *ErrPlatformStoreStrategyUnavailable) Error() string {
+	return fmt.Sprintf("platform store: strategy %q is not available: %s", e.Strategy, e.Reason)
+}
+
 // ErrSealBackendNotConfigured indicates a hardware/cloud seal strategy was
 // listed in the barrier preference order but its backend is not configured or
 // not compiled into the binary, so no sealer is available to back it.

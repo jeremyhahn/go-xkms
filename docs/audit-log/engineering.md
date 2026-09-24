@@ -102,16 +102,59 @@ one real call site, or is removed with a comment explaining why the
 operation does not exist in this codebase (e.g. `xkey`'s
 `OpOATHCredentialUpdated`/`OpOATHCredentialAccessed`/`OpOATHCodeValidated`/
 `OpOATHCodeInvalid`/`OpTouchEventReceived`, `pkg/acme/audit`'s
-`EventCAKeyRotated`). A small number of declared, still-unemitted events
-remain because wiring them touches an area with no audit hook today and an
-architecture decision the owner has not made yet — `pkg/ca` (CA
-initialization, CRL generation, cross-signing: `EventCAInitialized`,
-`EventCACRLGenerated`, `EventCACrossSign`), the shared ACME challenge
-verifier signature (`EventTPMAttestation`, `EventDeviceAttestation`,
-`EventEndorsementVerified`), and `pkg/authenticator`'s core CTAP2 path
-(`OpFIDO2CredentialCreated`, `OpPINSeeded`). These are tracked, not silently
-dropped — see the issue #688 delivery report for the specific reasoning per
-event.
+`EventCAKeyRotated`).
+
+Issue #766 wired the remaining `SeveritySecurity` events #688 deferred, each
+gating the state change it describes — the audit record is written before
+the CA persists a certificate/CRL, before the ACME challenge is allowed to
+transition to valid, or before the FIDO2/PIN state reaches storage, so a
+write failure refuses the operation rather than let a completed action go
+unaudited (`pkg/ca/audit.go`'s `CA.emitAudit`; the attestation gate in
+`pkg/acme/server/handlers/challenge.go`'s `ChallengeHandler`;
+`establishPINLocked` and `storeCredentialWithPolicy` in
+`xkey/pkg/authenticator`):
+
+- `pkg/ca` — `CA_INITIALIZED` (`CA.createRootCertificate`,
+  `createIntermediateCertificates`, and `initializeAsIntermediate` for
+  `NewIntermediateCA`), `CA_CRL_GENERATED` (`generateAndPersistCRL`),
+  `CA_CROSS_SIGN` (`ImportXSignedCertificate`). `pkg/ca` cannot import
+  `pkg/acme/audit` (ACME depends on `pkg/ca`, not the reverse — `pkg/ca` is
+  also embedded by non-ACME callers such as the `xkmsd init` ceremony), so
+  these emit through the generic `pkg/audit.Logger`/`Event` (the same
+  contract `pkg/seal` and `pkg/api/grpc` already use) with action strings
+  `ca_init`/`ca_crl_generate`/`ca_cross_sign`, not through
+  `pkg/acme/audit`'s `EventType` enum. A `*ca.Params`/`*ca.MultiIdentityParams`
+  caller that wants CA lifecycle events sets `AuditLogger`; `pkg/server`
+  wires the server's own audit logger in, and the `xkmsd init` ceremony's
+  one-shot, fully in-memory bootstrap CA (`cmd/xkmsd/init_ceremony.go`
+  `newCeremonyCA`) deliberately leaves it nil — the ceremony runs before the
+  server's audit pipeline exists and nothing that CA does survives the
+  process.
+- ACME challenge verification — `TPM_ATTESTATION` (a successful `enroll-01`
+  challenge) and `ENDORSEMENT_VERIFIED` (a successful `endorse-01`
+  challenge), gated in `ChallengeHandler` itself rather than in the
+  `sdk/go/acme.ACMEAttestationVerifiers` challenge-verifier closures: the
+  closures have no request-scoped identity/correlation context, and
+  `ChallengeHandler` already holds the account, challenge and `s.auditLog`
+  the sibling `CHALLENGE_FAILED` gate uses. `EventDeviceAttestation` stays
+  unemitted: the `device-attest-01` ACME challenge type it would describe
+  (distinct from the TCG `enroll-01`/`endorse-01` pair) has no verifier
+  registered in any `ChallengeMap` built anywhere in this codebase
+  (`cmd/xkmsd/acme.go`'s `buildChallengeMap`, the only production builder,
+  wires `http-01`, `dns-01`, and `sdk/go/acme.ACMEAttestationVerifiers`'s
+  `enroll-01`/`endorse-01` — nothing registers `device-attest-01`) — there is
+  no operation to audit yet.
+- `xkey/pkg/authenticator` — `OpFIDO2CredentialCreated`
+  (`storeCredentialWithPolicy`, the single persist path both `MakeCredential`
+  call sites share) and `OpPINSeeded` (`establishPINLocked`, the single path
+  both the CTAP `setPIN` wire ceremony and the in-process `SetInitialPIN`
+  share). The `Authenticator` takes its audit logger via `SetAuditLogger`
+  (nil disables it, like `SetPINVerifier`); `xkey/pkg/gui/app.go`'s
+  `PostBarrierUnseal` wires it alongside every other service's
+  `SetAuditLogger(auditStore)` call. Other, narrower production callers that
+  construct their own `*Authenticator` directly (`cmd/xkey/cmd/fido2.go` and
+  siblings, `pkg/virtualdevice`) do not wire an audit logger and so audit
+  nothing for those processes' credentials — filed as a gap, not fixed here.
 
 ## Configuration
 
@@ -156,6 +199,20 @@ records after N days would be worse than one that grows.
   shape as the server); per-service tests alongside each emitter, e.g.
   `xkey/pkg/gui/services/staticpw_service_audit_test.go`,
   `autofill_service_test.go`, `tpm_service_reset_audit_test.go`.
+- **#766's newly wired events**, each with a success test (fields), an
+  audit-write-failure test (the operation fails and its state is asserted
+  absent from the store), and an operation-failure test (the audit gate is
+  never reached when the operation is refused before it):
+  `pkg/ca/audit_test.go` (`CA_INITIALIZED`/`CA_CRL_GENERATED`/`CA_CROSS_SIGN`,
+  asserting on `certStore`/`revocationStore`/`objectStore` directly);
+  `pkg/acme/server/handlers/challenge_attestation_audit_test.go`
+  (`TPM_ATTESTATION`/`ENDORSEMENT_VERIFIED`, through the real
+  `ChallengeHandler`, plus `TestChallengeHandler_HTTP01_NoAttestationEvent`
+  pinning the gate's scope to the two TCG challenge types);
+  `pkg/api/rest/handlers_auth_audit_test.go` (`auth.login.piv` allow and deny
+  outcomes, `auth.logout`); `xkey/pkg/authenticator/cmd_clientpin_audit_test.go`
+  (`OpPINSeeded`) and `cmd_makecredential_audit_test.go`
+  (`OpFIDO2CredentialCreated`).
 
 `handlers_transport_audit_test.go` and its gRPC counterpart are the ones that
 matter most: they assert that operations reaching the service through a

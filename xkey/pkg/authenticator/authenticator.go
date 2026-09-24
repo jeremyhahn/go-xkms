@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -185,6 +186,14 @@ type Authenticator struct {
 
 	// logger is the structured logger for CTAP2 command diagnostics.
 	logger *slog.Logger
+
+	// auditLog records security-relevant CTAP2 events (credential creation,
+	// PIN seeding). May be nil, which disables audit logging for the
+	// authenticator; set post-construction via SetAuditLogger like
+	// pinVerifier, since the concrete Logger (xkey/pkg/audit.BackendStore or
+	// DAOAuditStore) is typically wired after the Authenticator is
+	// constructed. Guarded by mu.
+	auditLog audit.Logger
 
 	// TamperDetected indicates that policy HMAC verification failed on startup.
 	//
@@ -379,6 +388,15 @@ func (a *Authenticator) SetPINVerifier(v PINVerifier) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.pinVerifier = v
+}
+
+// SetAuditLogger sets the audit logger used to record security-relevant
+// CTAP2 events (FIDO2 credential creation, PIN seeding). A nil logger
+// disables audit logging for the authenticator.
+func (a *Authenticator) SetAuditLogger(logger audit.Logger) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.auditLog = logger
 }
 
 // SetFIDO2PINHash sets the authenticator's FIDO2 PIN hash directly.

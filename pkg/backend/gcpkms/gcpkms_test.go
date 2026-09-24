@@ -26,6 +26,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestNewBackend(t *testing.T) {
@@ -476,11 +478,24 @@ func TestBackend_Get(t *testing.T) {
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetPublicKeyFunc = func(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...interface{}) (*kmspb.PublicKey, error) {
-					return nil, errors.New("not found")
+					return nil, status.Error(codes.NotFound, "crypto key version not found")
 				}
 			},
 			wantErr: true,
 			errType: backend.ErrKeyNotFound,
+		},
+		{
+			name: "key retrieval error",
+			attrs: &types.KeyAttributes{
+				CN: "unreachable-key",
+			},
+			mockFunc: func(m *MockKMSClient) {
+				m.GetPublicKeyFunc = func(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...interface{}) (*kmspb.PublicKey, error) {
+					return nil, status.Error(codes.Unavailable, "transport is closing")
+				}
+			},
+			wantErr: true,
+			errType: ErrKeyRetrievalFailed,
 		},
 	}
 
@@ -875,11 +890,24 @@ func TestBackend_Signer(t *testing.T) {
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetPublicKeyFunc = func(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...interface{}) (*kmspb.PublicKey, error) {
-					return nil, errors.New("not found")
+					return nil, status.Error(codes.NotFound, "crypto key version not found")
 				}
 			},
 			wantErr: true,
 			errType: backend.ErrKeyNotFound,
+		},
+		{
+			name: "key retrieval error",
+			attrs: &types.KeyAttributes{
+				CN: "unreachable-key",
+			},
+			mockFunc: func(m *MockKMSClient) {
+				m.GetPublicKeyFunc = func(ctx context.Context, req *kmspb.GetPublicKeyRequest, opts ...interface{}) (*kmspb.PublicKey, error) {
+					return nil, status.Error(codes.Unavailable, "transport is closing")
+				}
+			},
+			wantErr: true,
+			errType: ErrKeyRetrievalFailed,
 		},
 	}
 

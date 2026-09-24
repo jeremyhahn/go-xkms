@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -597,8 +598,19 @@ func TestPIVAlgorithmForKey(t *testing.T) {
 	require.NoError(t, err)
 	_, ed, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	rsa1024, err := rsa.GenerateKey(rand.Reader, 1024)
-	require.NoError(t, err)
+	// A 1024-bit RSA key is refused outright by crypto/rsa.GenerateKey under
+	// GODEBUG=fips140=only, so there is no way to build this deliberately
+	// undersized fixture in that mode; the "too small" case below is simply
+	// omitted rather than asserted, since pivAlgorithmForKey never sees a
+	// key like this to reject.
+	var rsa1024 *rsa.PrivateKey
+	rsa1024, err = rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		if !fips140.Enforced() {
+			require.NoError(t, err)
+		}
+		rsa1024 = nil
+	}
 
 	supported := []struct {
 		name string
@@ -622,9 +634,14 @@ func TestPIVAlgorithmForKey(t *testing.T) {
 		name string
 		key  crypto.PrivateKey
 	}{
-		{"rsa1024_too_small", rsa1024},
 		{"ecdsap521_no_piv_name", ec521},
 		{"not_a_key", []byte("bytes")},
+	}
+	if rsa1024 != nil {
+		unsupported = append(unsupported, struct {
+			name string
+			key  crypto.PrivateKey
+		}{"rsa1024_too_small", rsa1024})
 	}
 	for _, tc := range unsupported {
 		t.Run(tc.name, func(t *testing.T) {

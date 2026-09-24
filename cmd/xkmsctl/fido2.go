@@ -23,10 +23,7 @@ import (
 	"os"
 	"time"
 
-	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 	"github.com/spf13/cobra"
 )
 
@@ -35,75 +32,18 @@ import (
 type FIDO2HandlerFactory func(config *fido2.Config) (fido2.Handler, error)
 
 // fido2HandlerFactory is the package-level factory for creating FIDO2 handlers.
-// Can be overridden in tests for mocking.
+// Integration tests that need a software authenticator override this variable
+// from a //go:build integration && fido2 file; it is never overridden in the
+// release binary.
 var fido2HandlerFactory FIDO2HandlerFactory = defaultFIDO2HandlerFactory
 
-// defaultFIDO2HandlerFactory is the default implementation that creates real FIDO2 handlers.
-// If FIDO2_USE_VIRTUAL=true environment variable is set, it uses a virtual FIDO2 device
-// instead of requiring physical hardware.
-//
-// When FIDO2_VIRTUAL_STATE_DIR is also set, credential state is persisted to the filesystem
-// so that credentials survive across CLI invocations. Without it, credentials are stored
-// in memory and lost when the process exits.
+// defaultFIDO2HandlerFactory is the only FIDO2 handler factory shipped in the
+// release binary. It always enumerates physical hardware authenticators; it
+// has no environment-variable switch to a software authenticator, so no
+// process environment can redirect xkmsctl's FIDO2 operations away from real
+// hardware.
 func defaultFIDO2HandlerFactory(config *fido2.Config) (fido2.Handler, error) {
-	var enumerator fido2.HIDDeviceEnumerator
-
-	// Check if virtual device mode is enabled
-	if os.Getenv("FIDO2_USE_VIRTUAL") == "true" {
-		// Build virtual device configuration
-		deviceConfig := &virtualdevice.NativeVirtualDeviceConfig{
-			SerialNumber:               "XKMSCTL-VFIDO",
-			Manufacturer:               "go-xkms",
-			Product:                    "xKey Virtual",
-			EnablePIN:                  true,
-			EnableHMACSecret:           true,
-			EnableResidentKey:          true,
-			EnableCredentialManagement: true,
-		}
-
-		// Use file-based credential storage when a state directory is configured.
-		// This allows credentials registered in one CLI invocation to persist
-		// and be available for authentication in subsequent invocations.
-		if stateDir := os.Getenv("FIDO2_VIRTUAL_STATE_DIR"); stateDir != "" {
-			storage, err := newFileCredentialStorage(stateDir)
-			if err != nil {
-				return nil, err
-			}
-			deviceConfig.Storage = storage
-		}
-
-		device, err := virtualdevice.NewNativeVirtualDevice(deviceConfig)
-		if err != nil {
-			return nil, &WrappedError{Sentinel: ErrCreateVirtualDeviceFailed, Err: err}
-		}
-
-		virtualEnumerator := virtualdevice.NewNativeVirtualDeviceEnumerator()
-		if err := virtualEnumerator.RegisterDevice(device); err != nil {
-			return nil, &WrappedError{Sentinel: ErrRegisterVirtualDeviceFailed, Err: err}
-		}
-		enumerator = virtualEnumerator
-	} else {
-		enumerator = fido2.NewDefaultEnumerator()
-	}
-
-	return fido2.NewHandler(config, enumerator)
-}
-
-// newFileCredentialStorage creates a file-backed StatefulCredentialStorage using
-// the given directory as the root for file storage. This adapts the go-xkms
-// file storage backend into the authenticator's credential storage interface.
-func newFileCredentialStorage(stateDir string) (authenticator.StatefulCredentialStorage, error) {
-	backend, err := client.NewFileStorageBackend(stateDir)
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrVirtualStorageInit, Err: err}
-	}
-
-	storage, err := authenticator.NewBackendStorage(backend, "fido2/virtual/")
-	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrVirtualCredentialStorageInit, Err: err}
-	}
-
-	return storage, nil
+	return fido2.NewHandler(config, fido2.NewDefaultEnumerator())
 }
 
 // fido2Cmd represents the fido2 command

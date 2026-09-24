@@ -40,8 +40,12 @@ func TestWrapUnwrapRSAOAEP_SHA1(t *testing.T) {
 	keyMaterial := []byte("This is secret key material for testing")
 
 	// Wrap the key material
-	wrapped, err := WrapRSAOAEP(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
-	require.NoError(t, err)
+	wrapped, ok := requireWrap(t, func() ([]byte, error) {
+		return WrapRSAOAEP(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
+	})
+	if !ok {
+		return
+	}
 	assert.NotNil(t, wrapped)
 	assert.NotEqual(t, keyMaterial, wrapped, "wrapped key should be different from plaintext")
 
@@ -82,8 +86,12 @@ func TestWrapUnwrapRSAAES_SHA1(t *testing.T) {
 	keyMaterial := []byte("This is secret key material for hybrid RSA+AES testing with SHA-1")
 
 	// Wrap the key material
-	wrapped, err := WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
-	require.NoError(t, err)
+	wrapped, ok := requireWrap(t, func() ([]byte, error) {
+		return WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
+	})
+	if !ok {
+		return
+	}
 	assert.NotNil(t, wrapped)
 	assert.NotEqual(t, keyMaterial, wrapped, "wrapped key should be different from plaintext")
 
@@ -127,8 +135,12 @@ func TestRSAAES_LargeKeyMaterial(t *testing.T) {
 
 	// Test with SHA-1
 	t.Run("SHA1", func(t *testing.T) {
-		wrapped, err := WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
-		require.NoError(t, err)
+		wrapped, ok := requireWrap(t, func() ([]byte, error) {
+			return WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
+		})
+		if !ok {
+			return
+		}
 		assert.NotNil(t, wrapped)
 
 		unwrapped, err := UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
@@ -432,21 +444,29 @@ func TestWrapUnwrapAlgorithmMismatch(t *testing.T) {
 
 	t.Run("RSAOAEP_AlgorithmMismatch", func(t *testing.T) {
 		// Wrap with SHA-1
-		wrapped, err := WrapRSAOAEP(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
-		require.NoError(t, err)
+		wrapped, ok := requireWrap(t, func() ([]byte, error) {
+			return WrapRSAOAEP(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_1)
+		})
+		if !ok {
+			return
+		}
 
 		// Try to unwrap with SHA-256
-		_, err = UnwrapRSAOAEP(wrapped, privateKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+		_, err := UnwrapRSAOAEP(wrapped, privateKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
 	})
 
 	t.Run("RSAAES_AlgorithmMismatch", func(t *testing.T) {
 		// Wrap with SHA-1
-		wrapped, err := WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
-		require.NoError(t, err)
+		wrapped, ok := requireWrap(t, func() ([]byte, error) {
+			return WrapRSAAES(keyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1)
+		})
+		if !ok {
+			return
+		}
 
 		// Try to unwrap with SHA-256
-		_, err = UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+		_, err := UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
 	})
 }

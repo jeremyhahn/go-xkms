@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -2251,11 +2252,12 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 	t.Run("decrypts data", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-sym-decrypt-key",
-			Backend:    "software",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-sym-decrypt-key",
+			Backend:      "software",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -2296,6 +2298,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			Nonce:          encResultAAD.Nonce,
 			Tag:            encResultAAD.Tag,
 			AdditionalData: []byte("aad"),
+			GCMNonceMode:   encResultAAD.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -2348,10 +2351,11 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 	t.Run("decrypts without specifying backend", func(t *testing.T) {
 		params := DecryptParams{
-			KeyID:      "test-sym-decrypt-key",
-			Ciphertext: encResult.Ciphertext,
-			Nonce:      encResult.Nonce,
-			Tag:        encResult.Tag,
+			KeyID:        "test-sym-decrypt-key",
+			Ciphertext:   encResult.Ciphertext,
+			Nonce:        encResult.Nonce,
+			Tag:          encResult.Tag,
+			GCMNonceMode: encResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -3605,7 +3609,18 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 		}
 
 		result, err := server.handleEncrypt(context.Background(), req)
-		require.NoError(t, err)
+		if err != nil {
+			// This RPC's asymmetric fallback deliberately mirrors
+			// PKCS#11's CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5
+			// encryption, no OAEP digest involved -- for the
+			// local-fallback KEK-wrap path (see
+			// pkg/xkms/servicer_crypto.go's Encrypt). crypto/rsa refuses
+			// that construction outright under GODEBUG=fips140=only.
+			if fips140.Enforced() {
+				return
+			}
+			require.NoError(t, err)
+		}
 
 		encryptResult, ok := result.(EncryptResult)
 		require.True(t, ok)
@@ -3779,6 +3794,17 @@ func TestHandler_SHA1Hash(t *testing.T) {
 	t.Run("SHA-1 round-trips under the weak-hash policy", func(t *testing.T) {
 		types.SetAllowWeakHashes(true)
 		defer types.SetAllowWeakHashes(false)
+
+		// SetAllowWeakHashes(true) is a deliberate no-op under FIPSMode():
+		// the Go Cryptographic Module's approved-algorithm boundary is the
+		// ceiling this repository's own policy switch must never be able
+		// to re-open (see pkg/types/hashpolicy.go), so SHA-1 signing stays
+		// refused under GODEBUG=fips140=only regardless of the policy.
+		if types.FIPSMode() {
+			_, signErr := server.handleSign(context.Background(), signReq)
+			require.ErrorIs(t, signErr, xkms.ErrInvalidHashFunction)
+			return
+		}
 
 		signResult, signErr := server.handleSign(context.Background(), signReq)
 		require.NoError(t, signErr)
@@ -5587,9 +5613,10 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 		params := DecryptParams{
 			KeyID: "test-decrypt-search",
 			// No backend - will search
-			Ciphertext: encryptResult.Ciphertext,
-			Nonce:      encryptResult.Nonce,
-			Tag:        encryptResult.Tag,
+			Ciphertext:   encryptResult.Ciphertext,
+			Nonce:        encryptResult.Nonce,
+			Tag:          encryptResult.Tag,
+			GCMNonceMode: encryptResult.GCMNonceMode,
 		}
 		paramsJSON, _ := json.Marshal(params)
 
