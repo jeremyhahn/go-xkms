@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -829,9 +830,13 @@ func TestBackend_CloseWithNilTPM(t *testing.T) {
 	}
 }
 
+// TestBackend_GetKey_KeyNotFound verifies that a genuine "no such blob"
+// result from the key store (storage.ErrNotFound) is reported as
+// ErrKeyNotFound, which satisfies errors.Is(err, backend.ErrKeyNotFound)
+// since ErrKeyNotFound is an alias of it.
 func TestBackend_GetKey_KeyNotFound(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: errors.New("key not found")}}
+	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: storage.ErrNotFound}}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.GetKey(context.Background(), attrs)
 	if err == nil {
@@ -839,6 +844,32 @@ func TestBackend_GetKey_KeyNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Errorf("Expected ErrKeyNotFound, got %v", err)
+	}
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("Expected err to satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	}
+}
+
+// TestBackend_GetKey_RetrievalError verifies that a key-store failure other
+// than "not found" -- a transient I/O error, a permission failure, a
+// corrupt blob -- is reported as ErrKeyRetrievalFailed and does NOT satisfy
+// errors.Is(err, backend.ErrKeyNotFound). Callers such as
+// pkg/ca.getOrGenerateCAKey rely on this distinction to avoid generating a
+// replacement key when the backend merely failed to answer.
+func TestBackend_GetKey_RetrievalError(t *testing.T) {
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	transientErr := errors.New("i/o timeout reading key blob")
+	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: &mockKeyBackend{getError: transientErr}}
+	attrs := &types.KeyAttributes{CN: "some-key"}
+	_, err := b.GetKey(context.Background(), attrs)
+	if err == nil {
+		t.Fatal("Expected error for a transient key-store failure")
+	}
+	if errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("Transient retrieval error must not satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	}
+	if !errors.Is(err, ErrKeyRetrievalFailed) {
+		t.Errorf("Expected ErrKeyRetrievalFailed, got %v", err)
 	}
 }
 
@@ -1085,6 +1116,10 @@ func TestBackend_GetKey_Success(t *testing.T) {
 	}
 }
 
+// TestBackend_GetKey_PublicBlobError covers a corrupt-state read: the
+// private blob is present (so it does not classify as not-found) but the
+// public blob read fails with a generic error. That must surface as
+// ErrKeyRetrievalFailed, not ErrKeyNotFound: the key plainly exists.
 func TestBackend_GetKey_PublicBlobError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
 	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: errors.New("public blob error")}
@@ -1094,8 +1129,28 @@ func TestBackend_GetKey_PublicBlobError(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when public blob retrieval fails")
 	}
-	if !errors.Is(err, ErrKeyNotFound) {
-		t.Errorf("Expected ErrKeyNotFound, got %v", err)
+	if errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("A corrupt-state public blob failure must not satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	}
+	if !errors.Is(err, ErrKeyRetrievalFailed) {
+		t.Errorf("Expected ErrKeyRetrievalFailed, got %v", err)
+	}
+}
+
+// TestBackend_GetKey_PublicBlobNotFound covers the genuine not-found case
+// for the public blob specifically: the private blob is present but the
+// public blob was never written (or was already deleted).
+func TestBackend_GetKey_PublicBlobNotFound(t *testing.T) {
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	mockKb := &mockKeyBackend{getData: []byte("mock-private-blob"), publicBlobError: storage.ErrNotFound}
+	b := &Backend{closed: false, tpm: &mockTPM{}, keyBackend: mockKb, srkAttrs: srkAttrs}
+	attrs := &types.KeyAttributes{CN: "test-key"}
+	_, err := b.GetKey(context.Background(), attrs)
+	if err == nil {
+		t.Error("Expected error when public blob is missing")
+	}
+	if !errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("Expected errors.Is(err, backend.ErrKeyNotFound), got %v", err)
 	}
 }
 
@@ -1373,7 +1428,7 @@ func TestBackend_ECDSA_WithExistingCurve(t *testing.T) {
 
 func TestBackend_Signer_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
+	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.Signer(context.Background(), attrs)
@@ -1387,7 +1442,7 @@ func TestBackend_Signer_GetKeyError(t *testing.T) {
 
 func TestBackend_Decrypter_GetKeyError(t *testing.T) {
 	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
-	mockKb := &mockKeyBackend{getError: errors.New("key not found")}
+	mockKb := &mockKeyBackend{getError: storage.ErrNotFound}
 	b := &Backend{closed: false, srkAttrs: srkAttrs, keyBackend: mockKb}
 	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
 	_, err := b.Decrypter(context.Background(), attrs)

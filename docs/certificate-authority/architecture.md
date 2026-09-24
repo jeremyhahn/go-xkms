@@ -161,6 +161,28 @@ that has no trust yet cannot authenticate to get it. It is safe because the
 bundle is public information and the client verifies it out of band — DANE,
 SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.md).
 
+### CA reload across restarts: `Load` before `Init` (go-xkms#793)
+
+`pkg/server`'s `initializeCA` never assumes a data directory is new: it
+always calls `TrustedCA.Load` first and falls through to `Init` only when
+`Load` reports `errors.Is(err, ca.ErrCertificateNotFound)` — the certificate
+record genuinely does not exist under this CN. Any other `Load` failure
+(a corrupt or unreadable persisted certificate, an unavailable keystore
+backend) fails server startup closed rather than treating damaged existing
+state as "never initialized" and silently forging a new root over it. This
+is the boot-time complement to the CRL/revocation replication design above:
+just as a stale CRL is repaired by regenerating from the persisted
+revocation state rather than assumed absent, a CA that fails to `Load` is
+assumed damaged, not absent, unless the specific evidence (no certificate
+record at all) says otherwise.
+
+The design puts one obligation on `Load` itself: it must resolve an
+identity's key attributes exactly the way `Init` did when it wrote that
+identity's key, or the two can disagree over the identical persisted state.
+`Init` and `Load` share `getCAKeyAttributes` for this reason — see
+[`engineering.md`](engineering.md) for the persistence contract this
+enforces.
+
 ## Trust boundaries
 
 - **The CA signing key is a keystore key.** Its protection is the backend's

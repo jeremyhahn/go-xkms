@@ -11,6 +11,8 @@ import (
 	"errors"
 	"testing"
 
+	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
+
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,25 +89,30 @@ func TestHealthy_Connected_Success(t *testing.T) {
 	assert.True(t, ok)
 }
 
-// TestRpcCall_ToolError_KeywordMapping exercises newToolError's best-effort
-// classification of a tool-error message that carries no legacy JSON-RPC
-// code (the real unified qrdb MCP server's tool errors are plain text, not
-// a structured error object): toolErrorCode's keyword table must recover
-// the same codes the xkms MCP server's own mapKeyOpError would have used
-// server-side (see pkg/api/mcp/errors_keyops.go).
-func TestRpcCall_ToolError_KeywordMapping(t *testing.T) {
+// TestRpcCall_ToolError_ClassifiedByCode proves classifyToolError branches on
+// the wire.Code carried in a failing result's StructuredContent, mapping
+// every code the server's keyOpCodeToWire table can produce (plus
+// wire.CodeNotFound, go-qrdb#438's addition) onto the JSON-RPC error code
+// this SDK has always exposed as *RPCError.Code — never by matching the
+// message text, which the server is free to phrase however it likes.
+func TestRpcCall_ToolError_ClassifiedByCode(t *testing.T) {
 	tests := []struct {
 		name     string
+		code     wire.Code
 		message  string
 		wantCode int
 	}{
-		{"not found", "key k1 not found", xkmsmcp.ErrCodeInvalidParams},
-		{"validation", "validation failed: weak hash refused", xkmsmcp.ErrCodeInvalidParams},
-		{"not supported", "operation not supported by this backend", xkmsmcp.ErrCodeMethodNotFound},
-		{"unauthorized", "unauthorized: missing credential", xkmsmcp.ErrCodeUnauthorized},
-		{"forbidden", "forbidden: role required", xkmsmcp.ErrCodeForbidden},
-		{"unavailable", "backend unavailable", xkmsmcp.ErrCodeServiceUnavailable},
-		{"opaque", "boom", xkmsmcp.ErrCodeInternalError},
+		{"unauthenticated", wire.CodeUnauthenticated, "missing credential", xkmsmcp.ErrCodeUnauthorized},
+		{"permission denied", wire.CodePermissionDenied, "role required", xkmsmcp.ErrCodeForbidden},
+		{"not found", wire.CodeNotFound, "key k1 not found", xkmsmcp.ErrCodeInvalidParams},
+		{"unavailable", wire.CodeUnavailable, "backend unavailable", xkmsmcp.ErrCodeServiceUnavailable},
+		{"invalid argument", wire.CodeInvalidArgument, "validation failed: weak hash refused", xkmsmcp.ErrCodeInvalidParams},
+		{"unimplemented", wire.CodeUnimplemented, "operation not supported by this backend", xkmsmcp.ErrCodeMethodNotFound},
+		{"internal", wire.CodeInternal, "xkms: internal error", xkmsmcp.ErrCodeInternalError},
+		// A code with no JSON-RPC counterpart degrades to ErrCodeInternalError
+		// rather than being dropped or panicking.
+		{"unmapped code degrades to internal", wire.CodeResourceExhausted, "quota exceeded", xkmsmcp.ErrCodeInternalError},
+		{"unrecognized future code degrades to internal", wire.Code(-32098), "from a later server", xkmsmcp.ErrCodeInternalError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,7 +121,7 @@ func TestRpcCall_ToolError_KeywordMapping(t *testing.T) {
 					data, _ := json.Marshal(map[string]string{"status": "ok"})
 					return jsonrpcResponse{Result: data}
 				}
-				return jsonrpcResponse{ErrorText: tt.message}
+				return jsonrpcResponse{ErrorText: tt.message, Envelope: tt.code}
 			})
 			defer cleanup()
 
@@ -131,9 +138,69 @@ func TestRpcCall_ToolError_KeywordMapping(t *testing.T) {
 	}
 }
 
-// TestNewToolError_NoContent exercises newToolError's fallback message when
-// the server reports a tool error with no text content at all.
-func TestNewToolError_NoContent(t *testing.T) {
+// TestRpcCall_ToolError_TriggerWordWithDifferentCode is the regression the
+// deleted keyword matcher could not pass: a message containing a word the
+// old toolErrorCode would have matched ("not found") but carrying an
+// UNRELATED wire code must classify by the code, not the word.
+func TestRpcCall_ToolError_TriggerWordWithDifferentCode(t *testing.T) {
+	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
+		if req.Method == "health" {
+			data, _ := json.Marshal(map[string]string{"status": "ok"})
+			return jsonrpcResponse{Result: data}
+		}
+		// The message says "not found" and "forbidden", words the deleted
+		// keyword matcher would have read as InvalidParams or Forbidden. The
+		// envelope says Internal, and Internal is what must reach the caller.
+		return jsonrpcResponse{
+			ErrorText: "raft apply failed: key not found while forbidden path was retried",
+			Envelope:  wire.CodeInternal,
+		}
+	})
+	defer cleanup()
+
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, nil)
+	require.Error(t, err)
+	var rpcErr *RPCError
+	require.True(t, errors.As(err, &rpcErr))
+	assert.Equal(t, xkmsmcp.ErrCodeInternalError, rpcErr.Code,
+		"a fault whose prose happened to contain classifier trigger words was misclassified by text")
+}
+
+// TestRpcCall_ToolError_NoEnvelope proves a failing result with no
+// go-qrdb wire envelope is reported as a protocol error, per the project's
+// no-backward-compatibility rule: there is no text-based fallback
+// classification any more (go-xkms#797).
+func TestRpcCall_ToolError_NoEnvelope(t *testing.T) {
+	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
+		if req.Method == "health" {
+			data, _ := json.Marshal(map[string]string{"status": "ok"})
+			return jsonrpcResponse{Result: data}
+		}
+		// ErrorText with no Envelope: an uncoded tool failure.
+		return jsonrpcResponse{ErrorText: "boom, no envelope"}
+	})
+	defer cleanup()
+
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, nil)
+	require.Error(t, err)
+	var envErr *EnvelopeMissingError
+	require.True(t, errors.As(err, &envErr))
+	assert.Equal(t, "boom, no envelope", envErr.Message)
+
+	var rpcErr *RPCError
+	assert.False(t, errors.As(err, &rpcErr), "an uncoded failure must not be reported as a classified *RPCError")
+}
+
+// TestRpcCall_ToolError_NoContent exercises classifyToolError's fallback
+// message when the server reports a tool error with no content and no
+// envelope at all; it is still a protocol error, not an internal *RPCError.
+func TestRpcCall_ToolError_NoContent(t *testing.T) {
 	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
 		if req.Method == "health" {
 			data, _ := json.Marshal(map[string]string{"status": "ok"})
@@ -148,7 +215,7 @@ func TestNewToolError_NoContent(t *testing.T) {
 
 	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, nil)
 	require.Error(t, err)
-	var rpcErr *RPCError
-	require.True(t, errors.As(err, &rpcErr))
-	assert.Equal(t, xkmsmcp.ErrCodeInternalError, rpcErr.Code)
+	var envErr *EnvelopeMissingError
+	require.True(t, errors.As(err, &envErr))
+	assert.Equal(t, "tool call failed", envErr.Message)
 }

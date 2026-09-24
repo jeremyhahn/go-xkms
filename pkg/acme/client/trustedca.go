@@ -403,13 +403,10 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	acmeRouter.HandleFunc("/orders/{id}", restService.OrdersListHandler).Methods("POST", "GET")
 	acmeRouter.HandleFunc("/ca-bundle", restService.CABundleHandler).Methods("GET")
 
-	// Health and metrics endpoints
-	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("healthy")); err != nil {
-			tca.logger.Error("failed to write health check response", slog.String("error", err.Error()))
-		}
-	}).Methods("GET")
+	// Health and metrics endpoints. HealthHandler reports circuit breaker and
+	// degradation status (empty/healthy here: this standalone TrustedCA path
+	// does not yet opt into Params.Breakers).
+	router.HandleFunc("/health", restService.HealthHandler).Methods("GET")
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write([]byte("ready")); err != nil {

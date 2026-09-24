@@ -13,7 +13,11 @@
 
 package phone
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
 	// ErrInvalidConfig indicates the phone backend configuration is invalid.
@@ -44,7 +48,10 @@ var (
 	ErrConnectionLost = errors.New("phone backend: connection lost")
 
 	// ErrKeyNotFound indicates the requested key does not exist on the phone.
-	ErrKeyNotFound = errors.New("phone backend: key not found")
+	// It is backend.ErrKeyNotFound itself, so errors.Is(err,
+	// backend.ErrKeyNotFound) holds for a genuine not-found result as the
+	// GetKey contract requires (go-xkms#801).
+	ErrKeyNotFound = backend.ErrKeyNotFound
 
 	// ErrKeyExists indicates a key with the given identifier already exists.
 	ErrKeyExists = errors.New("phone backend: key already exists")

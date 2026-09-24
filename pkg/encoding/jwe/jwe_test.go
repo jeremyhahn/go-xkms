@@ -38,9 +38,9 @@ func TestRSAOAEP_Encryption(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		if jweString == "" {
@@ -66,9 +66,9 @@ func TestRSAOAEP_Encryption(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -89,9 +89,9 @@ func TestRSAOAEP_Encryption(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -122,9 +122,9 @@ func TestECDHES_Encryption(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -144,9 +144,9 @@ func TestECDHES_Encryption(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -166,9 +166,9 @@ func TestECDHES_Encryption(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -203,9 +203,9 @@ func TestEncryptWithHeader(t *testing.T) {
 		"typ": "JWT",
 	}
 
-	jweString, err := encrypter.EncryptWithHeader(plaintext, header)
-	if err != nil {
-		t.Fatalf("Encryption with header failed: %v", err)
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithHeader(plaintext, header) })
+	if !ok {
+		return
 	}
 
 	// Extract and verify kid
@@ -247,9 +247,9 @@ func TestExtractKID(t *testing.T) {
 	// Test with kid
 	t.Run("WithKID", func(t *testing.T) {
 		header := map[string]interface{}{"kid": "my-key-id"}
-		jweString, err := encrypter.EncryptWithHeader(plaintext, header)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithHeader(plaintext, header) })
+		if !ok {
+			return
 		}
 
 		kid, err := ExtractKID(jweString)
@@ -264,9 +264,9 @@ func TestExtractKID(t *testing.T) {
 
 	// Test without kid
 	t.Run("WithoutKID", func(t *testing.T) {
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		kid, err := ExtractKID(jweString)
@@ -404,9 +404,9 @@ func TestDirectKeyAgreement(t *testing.T) {
 		t.Fatalf("Failed to create encrypter: %v", err)
 	}
 
-	jweString, err := encrypter.Encrypt(plaintext)
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
+	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+	if !ok {
+		return
 	}
 
 	decrypter := NewDecrypter()
@@ -437,9 +437,9 @@ func TestAESKeyWrap(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -462,9 +462,9 @@ func TestAESKeyWrap(t *testing.T) {
 			t.Fatalf("Failed to create encrypter: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -497,9 +497,9 @@ func TestAESCBCHMAC(t *testing.T) {
 				t.Fatalf("Failed to create encrypter: %v", err)
 			}
 
-			jweString, err := encrypter.Encrypt(plaintext)
-			if err != nil {
-				t.Fatalf("Encryption failed: %v", err)
+			jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+			if !ok {
+				return
 			}
 
 			decrypter := NewDecrypter()
@@ -601,9 +601,9 @@ func TestAllAlgorithms(t *testing.T) {
 				t.Fatalf("Failed to create encrypter: %v", err)
 			}
 
-			jweString, err := encrypter.Encrypt(plaintext)
-			if err != nil {
-				t.Fatalf("Encryption failed: %v", err)
+			jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+			if !ok {
+				return
 			}
 
 			// Decrypt
@@ -669,9 +669,9 @@ func TestEncryptWithHeader_AllOptions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			encrypter, _ := NewEncrypter("RSA-OAEP", "A256GCM", &privateKey.PublicKey)
 
-			jweString, err := encrypter.EncryptWithHeader(plaintext, tt.header)
-			if err != nil {
-				t.Fatalf("Encryption failed: %v", err)
+			jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithHeader(plaintext, tt.header) })
+			if !ok {
+				return
 			}
 
 			// Verify headers are present
@@ -709,9 +709,9 @@ func TestAutoDetection_AEADAlgorithm(t *testing.T) {
 			t.Fatalf("Failed to create encrypter with auto-detection: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Encryption with auto-detection failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		// Decryption should work regardless of which algorithm was selected
@@ -735,9 +735,9 @@ func TestAutoDetection_AEADAlgorithm(t *testing.T) {
 			t.Fatalf("Failed to create ECDH-ES encrypter with auto-detection: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("ECDH-ES encryption with auto-detection failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()
@@ -761,9 +761,9 @@ func TestAutoDetection_AEADAlgorithm(t *testing.T) {
 			t.Fatalf("Failed to create direct encrypter with auto-detection: %v", err)
 		}
 
-		jweString, err := encrypter.Encrypt(plaintext)
-		if err != nil {
-			t.Fatalf("Direct encryption with auto-detection failed: %v", err)
+		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
+		if !ok {
+			return
 		}
 
 		decrypter := NewDecrypter()

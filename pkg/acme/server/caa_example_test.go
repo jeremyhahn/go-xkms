@@ -41,13 +41,13 @@ func ExampleCAAValidator() {
 	ctx := context.Background()
 
 	// Validate a regular domain
-	if err := validator.Validate(ctx, "example.com", false); err != nil {
+	if err := validator.Validate(ctx, "example.com", false, "", ""); err != nil {
 		// CAA validation failed - certificate issuance should be denied
 		return
 	}
 
 	// Validate a wildcard domain
-	if err := validator.Validate(ctx, "example.com", true); err != nil {
+	if err := validator.Validate(ctx, "example.com", true, "", ""); err != nil {
 		// CAA validation failed for wildcard
 		return
 	}

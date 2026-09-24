@@ -1,6 +1,6 @@
 # Certificate Authority — API
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes are described once in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -9,34 +9,39 @@ are shaped".
 Every `/api/v1/ca/*` route is registered only when a CA is configured — the
 `hasCA` predicate in `pkg/api/rest/routes.go`. When none is, a single fallback
 `GET /api/v1/ca/bundle` (`noCA`) is registered instead, so trust distribution
-never disappears. All CA routes are `RouteAuthSession`: an authenticated
-identity, no specific RBAC permission.
+never disappears. Every CA route with a gRPC counterpart is
+`RouteAuthPermission` and demands the `certs:*` pair gRPC and MCP enforce for
+the same operation (the **Auth / permission** column); both variants of
+`GET /api/v1/ca/bundle` carry `certs:read`. Admin and Owner hold every one of
+them by default. `GET /api/v1/ca/crl` is the one CA route still served to any
+authenticated session (`RouteAuthSession`): it has no counterpart on any other
+transport (#275), so there is no canonical permission for it to adopt yet.
 
 `GET /v1/ca/bootstrap` is the exception — `GroupRoot`, `RouteAuthPublic`,
 unauthenticated by design.
 
 ## Capability matrix
 
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded (`CAService.`) | Auth |
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded (`CAService.`) | Auth / permission |
 |---|---|---|---|---|---|---|
-| CA bundle | `GET /api/v1/ca/bundle` | `GetCABundle` | same as REST | `xkms.ca.bundle` | `GetCABundle` | session |
+| CA bundle | `GET /api/v1/ca/bundle` | `GetCABundle` | same as REST | `xkms.ca.bundle` | `GetCABundle` | `certs:read` |
 | CA bundle (bootstrap) | `GET /v1/ca/bootstrap` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | **public** |
-| CA certificate | `GET /api/v1/ca/certificate` | `GetCACertificate` | same as REST | `xkms.ca.certificate` | `GetCACertificate` | session |
-| Sign CSR | `POST /api/v1/ca/sign-csr` | `SignCSR` | same as REST | **MISSING — docs/13** | `SignCSR` | session |
-| Issue certificate | `POST /api/v1/ca/issue` | `IssueCertificate` | same as REST | `xkms.ca.issue` | `IssueCertificate` | session |
-| Revoke | `POST /api/v1/ca/revoke` | `RevokeCertificate` | same as REST | `xkms.ca.revoke` | `RevokeCertificate` | session |
-| Generate CRL (force-regenerate) | `POST /api/v1/ca/crl` | `GenerateCRL` | same as REST | `xkms.ca.crl` | `GenerateCRL` | session |
+| CA certificate | `GET /api/v1/ca/certificate` | `GetCACertificate` | same as REST | `xkms.ca.certificate` | `GetCACertificate` | `certs:read` |
+| Sign CSR | `POST /api/v1/ca/sign-csr` | `SignCSR` | same as REST | **MISSING — docs/13** | `SignCSR` | `certs:generate` |
+| Issue certificate | `POST /api/v1/ca/issue` | `IssueCertificate` | same as REST | `xkms.ca.issue` | `IssueCertificate` | `certs:generate` |
+| Revoke | `POST /api/v1/ca/revoke` | `RevokeCertificate` | same as REST | `xkms.ca.revoke` | `RevokeCertificate` | `certs:revoke` |
+| Generate CRL (force-regenerate) | `POST /api/v1/ca/crl` | `GenerateCRL` | same as REST | `xkms.ca.crl` | `GenerateCRL` | `certs:read` |
 | Get CRL (read, regenerates only if stale/missing) | `GET /api/v1/ca/crl` | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | **MISSING — #275** | session |
-| Revocation status | `GET /api/v1/ca/revoked/{serial}` | `IsRevoked` | same as REST | **MISSING — docs/13** | `IsRevoked` | session |
+| Revocation status | `GET /api/v1/ca/revoked/{serial}` | `IsRevoked` | same as REST | **MISSING — docs/13** | `IsRevoked` | `certs:read` |
 
 ### TCG enrollment (`TCGCAService`)
 
-| Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth |
+| Capability | REST | gRPC / Unix | QUIC | MCP | Embedded | Auth / permission |
 |---|---|---|---|---|---|---|
-| Issue EK certificate | `POST /api/v1/ca/tcg/ek` | `IssueEKCertificate` | same as REST | **MISSING — docs/13** | `IssueEKCertificate` | session |
-| Issue AK certificate | `POST /api/v1/ca/tcg/ak` | `IssueAKCertificate` | same as REST | **MISSING — docs/13** | `IssueAKCertificate` | session |
-| Sign TCG CSR | `POST /api/v1/ca/tcg/sign-csr` | `SignTCGCSR` | same as REST | **MISSING — docs/13** | `SignTCGCSR` | session |
-| Enroll device | `POST /api/v1/ca/tcg/enroll` | `EnrollDevice` | same as REST | `xkms.ca.tcg.enroll` | `EnrollDevice` | session |
+| Issue EK certificate | `POST /api/v1/ca/tcg/ek` | `IssueEKCertificate` | same as REST | **MISSING — docs/13** | `IssueEKCertificate` | `certs:generate` |
+| Issue AK certificate | `POST /api/v1/ca/tcg/ak` | `IssueAKCertificate` | same as REST | **MISSING — docs/13** | `IssueAKCertificate` | `certs:generate` |
+| Sign TCG CSR | `POST /api/v1/ca/tcg/sign-csr` | `SignTCGCSR` | same as REST | **MISSING — docs/13** | `SignTCGCSR` | `certs:generate` |
+| Enroll device | `POST /api/v1/ca/tcg/enroll` | `EnrollDevice` | same as REST | `xkms.ca.tcg.enroll` | `EnrollDevice` | `certs:generate` |
 
 ### Certificate storage (`CertService`)
 
@@ -96,6 +101,7 @@ CA-specific cases:
 
 | Condition | REST | gRPC / Unix | MCP |
 |---|---|---|---|
+| caller lacks the route's `certs:*` permission | 403 | `PermissionDenied` | error object |
 | CA not configured | 501 | `Unimplemented` | error object |
 | CA not initialized | 409 | `FailedPrecondition` | error object |
 | CSR fails policy | 400 | `InvalidArgument` | JSON-RPC `-32602` |

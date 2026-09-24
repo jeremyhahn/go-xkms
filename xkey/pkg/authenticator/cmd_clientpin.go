@@ -29,6 +29,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -441,6 +442,20 @@ func (a *Authenticator) establishPINLocked(newPIN []byte) error {
 	// the authenticator already considers set. Every refusal returned above,
 	// so a failed establishment never discards the token.
 	a.stopUsingPinUvAuthTokenLocked()
+
+	// OpPINSeeded is SeveritySecurity (xkey/pkg/audit/severity.go): the
+	// audit record is written before the new PIN state is persisted, so a
+	// failed write refuses the establishment rather than leave an unaudited
+	// PIN in storage. LogPINOperation already applies the write-failure
+	// policy (informational operations log-and-continue and return nil;
+	// SeveritySecurity operations, which this is, return
+	// *audit.ErrAuditWriteFailed on a failed write) — the same call
+	// pkg/gui/services/pin_service.go makes for OpPINChanged/OpSOPINChanged.
+	if a.auditLog != nil {
+		if err := a.auditLog.LogPINOperation(audit.OpPINSeeded, "fido2", true, nil, nil); err != nil {
+			return err
+		}
+	}
 
 	// Save state.
 	if err := a.storage.SaveState(a.state); err != nil {

@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -244,6 +245,14 @@ func TestProvider_SSHSignVerifyAllAlgorithms(t *testing.T) {
 			msg := []byte("ssh session identifier payload")
 			sig, err := sshSigner.Sign(rand.Reader, msg)
 			if err != nil {
+				// "ssh-rsa" is RFC 4253's original RSA signature format,
+				// which signs with SHA-1; x/crypto/ssh's default Sign (as
+				// opposed to SignWithAlgorithm requesting rsa-sha2-256/512)
+				// refuses it outright under GODEBUG=fips140=only with its
+				// own typed error, not a panic.
+				if tc.algo == keys.AlgorithmRSA && fips140.Enforced() {
+					return
+				}
 				t.Fatalf("Sign: %v", err)
 			}
 			if sig.Format != tc.wantSigFm {

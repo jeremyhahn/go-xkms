@@ -1,6 +1,6 @@
 # Headless WebAuthn — Architecture
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -12,21 +12,28 @@ stronger than a token in a file.
 no browser and no human — using xkey's own virtual authenticator as the
 credential holder.
 
-## Shape chosen: the headless client plus xkey's authenticator
+## Shape chosen: the single ceremony driver's hardware adapter, plus xkey's own SDK-transport glue
 
-Two pieces that already exist, joined:
-
-- **`go-xkms/pkg/webauthn/client`** — the headless "browser": it talks to the
-  relying party, drives an `AuthenticatorAdapter`, and completes both ceremonies
-  programmatically. Documented in
+- **`go-xkms/pkg/webauthn/client`**, re-exported at `sdk/go/webauthnclient` —
+  the single canonical headless WebAuthn ceremony driver in the stack
+  (go-xkms#721). xkey drives the authenticator half of both ceremonies
+  through its `HardwareAdapter` (`webauthnclient.NewHardwareAdapter`), backed
+  by `pkg/fido2` — the same adapter `xkmsctl` uses, and the same driver whose
+  `RelyingParty` seam (`TransportRelyingParty`) speaks the SDK transport
+  routes this feature runs over. Documented in
   [`../../../docs/webauthn/engineering.md`](../../../docs/webauthn/engineering.md)
   §"The headless client".
 - **[`../virtual-authenticator/`](../virtual-authenticator/architecture.md)** —
-  xkey's own CTAP2 authenticator, which is what the adapter drives.
+  xkey's own CTAP2 authenticator (its uhid device), which the hardware
+  adapter drives like any other attached security key: HID enumeration does
+  not distinguish it from real hardware.
 
-xkey supplies the glue and the credential storage. Nothing about the relying
-party changes: from the server's side this is an ordinary WebAuthn registration
-and an ordinary login.
+xkey's own code (`xkey/cmd/xkey/cmd/auth.go`) supplies the server-side
+ceremony glue directly over its SDK transport connection — `BeginRegistration`
+/ `FinishRegistration` / `BeginAuthentication` / `FinishAuthentication` — plus
+the credential storage. Nothing about the relying party changes: from the
+server's side this is an ordinary WebAuthn registration and an ordinary
+login, just over the SDK ceremony routes rather than the browser ones.
 
 Rejected alternatives:
 
@@ -43,12 +50,12 @@ Rejected alternatives:
 
 | Piece | Where |
 |---|---|
-| Ceremony driver | `go-xkms/pkg/webauthn/client` |
+| Authenticator adapter | `go-xkms/pkg/webauthn/client.HardwareAdapter`, re-exported at `sdk/go/webauthnclient` |
 | Authenticator | `xkey/pkg/authenticator`, `xkey/pkg/uhid` |
-| CLI | `xkey/cmd/xkey/cmd/auth.go` |
+| CLI and server-side ceremony glue | `xkey/cmd/xkey/cmd/auth.go`, `xkey/cmd/xkey/cmd/webauthn_ceremony.go` |
 | Session and token storage | `xkey/pkg/tokenstore`, `xkey/pkg/serverregistry` |
 | PIV login alternative | `xkey/cmd/xkey/cmd/auth_piv.go`, `pkg/pivcert` |
-| Relying party | `go-xkms/pkg/webauthn` |
+| Relying party | `go-xkms/pkg/webauthn`, served over the SDK ceremony routes (`pkg/api/rest`'s `/api/v1/webauthn/sdk/...`) |
 
 Capability row: **"Headless WebAuthn registration/login (no browser)"** under the
 xkey product surface.
@@ -57,13 +64,13 @@ xkey product surface.
 
 ```
 xkey auth register --server https://kms.example.com:8443 --spki-pin … --setup-token …
-   → headless client: POST /api/v1/webauthn/registration/begin
-     → xkey authenticator: MakeCredential  (presence satisfied locally)
-   → POST /api/v1/webauthn/registration/finish
+   → SDK transport: BeginRegistration (/api/v1/webauthn/sdk/registration/begin)
+     → HardwareAdapter.MakeCredential  (presence satisfied locally)
+   → SDK transport: FinishRegistration (/api/v1/webauthn/sdk/registration/finish)
    ← credential stored, token returned
 
 xkey auth login --server … --email …
-   → POST /api/v1/webauthn/login/begin → GetAssertion → /login/finish
+   → BeginAuthentication → HardwareAdapter.GetAssertion → FinishAuthentication
    ← session token, kept by the token store
 ```
 
