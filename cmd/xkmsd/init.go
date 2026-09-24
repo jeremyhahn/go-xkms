@@ -436,6 +436,8 @@ func runInit(args []string) {
 		passkeyPIN:       passkeyPIN,
 		relyingPartyID:   rpID,
 		relyingPartyName: rpName,
+		nodeCfg:          resolveInitNodeConfig(cfg, flags, dataDir),
+		soPin:            []byte(flags.soPin),
 	}
 
 	// Open the authenticator only when a passkey is actually planned, so a

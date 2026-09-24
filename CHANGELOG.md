@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0-alpha] - 2026-09-23
+
+### Security
+
+- **`device-attest-01` bound a DICE attestation to the ACME key authorization
+  and never to the CSR public key.** `pkg/attestation`'s profile table already
+  declared `bindLeafSPKI: true` for the format, but `VerifyInvariants` was
+  never called from the ACME route, so a genuine device's attestation — which
+  is public and travels with every enrollment — could be presented beside a CSR
+  for a key generated in software, and the certificate issued would read as
+  hardware-backed to every relying party. An ACME order is two requests and
+  nothing in the protocol ties the key in the second to the device in the
+  first; `VerifiedAttestation.BindCSRKey`
+  (`pkg/acme/challenges/device-attest-01/binding.go`) is now that tie, applied
+  at finalization where the CSR exists, through the same `VerifyInvariants`
+  gate the TCG and SignCSR carriers use. `Verify`, the one-shot challenge
+  verifier, refuses `FormatDICE` outright with `ErrKeyBindingRequired` rather
+  than reporting a success that is only half of one.
+
+  **The same gap remains open for `FormatTPM2` (#789).** Its binding mechanism
+  (`bindTPMCertify`, over `tpm2.VerifyCertifyRaw`) is implemented in
+  `pkg/attestation` and is not reached from the ACME route either;
+  `AttestationStatement.PubArea` is written by two producer sites and read by
+  no verifier. Closing it requires a `TPM2_Certify` of the CSR key, which the
+  statement has no field for — a wire change, and therefore a decision rather
+  than a fix.
+
+### Added
+
+- **TCG DICE device identity** (`pkg/attestation/dice/`): `DiceTcbInfo`,
+  `FWIDLIST`, `OperationalFlags`, `TcgUeid` and the `tcg-dice-UCCS-evidence`
+  extension at `2.23.133.5.4.6` — the mechanism DICE Attestation Architecture
+  §6.1.4 defines, so a device's nonce is echoed where another DICE verifier
+  expects to find it rather than in a repurposed `vendorInfo`. A DICE device
+  has no clock, so freshness is a nonce and nothing reads a device timestamp.
+- **The AVR backend** (`pkg/backend/avr/`): `types.KeyProvider` and
+  `AttestingKeyProvider` over `arduino-generic/sdk/go`, a Layer 0 module with
+  zero in-house dependencies.
+- **SDK surface** for both (`sdk/go/attestation_dice.go`,
+  `sdk/go/backends_avr.go`), including the error sentinels, so a consumer can
+  `errors.Is` across the boundary.
+
+### Fixed
+
+- `web/desktop` replaces `github.com/jeremyhahn/go-xkms` with the repository
+  root, so `pkg/backend/avr`'s import of the AVR SDK is reachable from that
+  module too. Its `go.mod` and `go.sum` did not name the dependency and `vet`
+  in readonly mode refused the module. The other three lint modules already
+  carried it, which is why only the Lint job saw it.
+
+### Note on review
+
+This release merged on green CI alone. The standing rule is a clean Codex
+review **and** green CI; Codex was unavailable and the owner ruled on
+2026-09-23 to merge on CI alone for now. The review that did run on this branch
+found eight defects, six of them P1, including the bypass above — a class CI
+cannot see. Two changes landed after that review.
+
 ## [0.22.0-alpha] - 2026-09-23
 
 ### Security

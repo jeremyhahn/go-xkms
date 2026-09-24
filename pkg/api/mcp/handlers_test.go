@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -4979,12 +4980,17 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	})
 }
 
-// TestHandler_ListKeys_InvalidParams tests list keys with invalid params
+// TestHandler_ListKeys_InvalidParams tests list keys with invalid params.
+//
+// Malformed JSON used to be silently discarded and the request processed as
+// if no params had been sent at all (#701): a caller with a typo in their
+// params object got a confusingly successful, unfiltered response instead of
+// a rejection. It must now be reported as Invalid params.
 func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
-	t.Run("handles invalid JSON params gracefully", func(t *testing.T) {
+	t.Run("rejects malformed JSON params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
 			Method:  "xkms.listKeys",
@@ -4992,7 +4998,20 @@ func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 			ID:      1,
 		}
 
-		// Should not error - listKeys can work without params
+		_, err := server.handleListKeys(context.Background(), req)
+		require.Error(t, err)
+		var keyOp *KeyOpError
+		require.True(t, errors.As(err, &keyOp))
+		assert.Equal(t, ErrCodeInvalidParams, keyOp.Code)
+	})
+
+	t.Run("omitted params still work", func(t *testing.T) {
+		req := &JSONRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "xkms.listKeys",
+			ID:      1,
+		}
+
 		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 
