@@ -192,6 +192,57 @@ func TestWriteError_SetsErrorField(t *testing.T) {
 	}
 }
 
+// failingResponseWriter is an http.ResponseWriter whose Write always fails,
+// simulating a client that disconnects mid-response so json.Encoder.Encode
+// cannot finish writing the body.
+type failingResponseWriter struct {
+	header http.Header
+}
+
+func (w *failingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
+
+func (w *failingResponseWriter) WriteHeader(int) {}
+
+// TestWriteJSON_LogsEncodeFailure verifies that a failure to write the
+// response body — which can no longer be reported to the client because
+// headers are already sent — is logged rather than silently dropped.
+func TestWriteJSON_LogsEncodeFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(prev)
+
+	writeJSON(&failingResponseWriter{}, http.StatusOK, map[string]string{"k": "v"})
+
+	if !strings.Contains(logBuf.String(), "failed to write JSON response") {
+		t.Errorf("expected write failure to be logged, got: %s", logBuf.String())
+	}
+}
+
+// TestWriteError_LogsEncodeFailure is TestWriteJSON_LogsEncodeFailure for
+// the error-response encoder.
+func TestWriteError_LogsEncodeFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(prev)
+
+	writeError(&failingResponseWriter{}, http.StatusBadRequest, "bad input")
+
+	if !strings.Contains(logBuf.String(), "failed to write JSON error response") {
+		t.Errorf("expected write failure to be logged, got: %s", logBuf.String())
+	}
+}
+
 // =============================================================================
 // guard middleware, router built without options (browser deployment)
 // =============================================================================

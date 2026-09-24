@@ -129,13 +129,15 @@ func (c *Client) GetRenewalInfo(ctx context.Context, certID string) (*RenewalInf
 
 	// Handle error responses
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Error("renewal info request failed",
-			slog.Int("status", resp.StatusCode),
-			slog.String("body", string(body)))
+		body, readErr := io.ReadAll(resp.Body)
+		attrs := []any{slog.Int("status", resp.StatusCode), slog.String("body", string(body))}
+		if readErr != nil {
+			attrs = append(attrs, slog.String("bodyReadError", readErr.Error()))
+		}
+		c.logger.Error("renewal info request failed", attrs...)
 
-		// Parse ACME error if present
-		if resp.StatusCode >= 400 {
+		// Parse ACME error if present and the body was actually read.
+		if resp.StatusCode >= 400 && readErr == nil {
 			acmeErr, parseErr := ParseACMEErrorFromBytes(body, resp.StatusCode)
 			if parseErr == nil && acmeErr != nil {
 				return nil, acmeErr

@@ -137,7 +137,11 @@ func (a *Adapter) call(ctx context.Context, method string, params interface{}, r
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return caerrors.ConnectionFailureError(
+				"request failed with status %d; response body could not be read: %v", resp.StatusCode, readErr)
+		}
 		return caerrors.ConnectionFailureError("request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 

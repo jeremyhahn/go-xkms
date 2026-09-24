@@ -16,6 +16,7 @@ package handlers
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -76,6 +77,8 @@ func OCSPHandler(responder OCSPResponderInterface) http.HandlerFunc {
 
 		// Write OCSP response
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(responseBytes)
+		if _, err := w.Write(responseBytes); err != nil {
+			slog.Error("failed to write OCSP response", slog.String("error", err.Error()))
+		}
 	}
 }

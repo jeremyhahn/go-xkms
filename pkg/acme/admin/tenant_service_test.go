@@ -16,6 +16,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -63,6 +64,33 @@ func TestNewTenantAwareAdminService(t *testing.T) {
 	require.NotNil(t, service)
 	assert.Equal(t, logger, service.logger)
 	assert.NotNil(t, service.AdminService)
+}
+
+// TestNewTenantAwareAdminService_TenantDAOFailureIsLoggedAndDegrades verifies
+// that when a storageFactory implements storage.TenantAwareFactory but its
+// TenantDAO() call fails, NewTenantAwareAdminService logs the failure
+// (instead of silently discarding it) and still returns a usable service in
+// the same nil-tenantDAO degraded mode every other tenantDAO-unavailable
+// path in this file already handles.
+func TestNewTenantAwareAdminService_TenantDAOFailureIsLoggedAndDegrades(t *testing.T) {
+	tenantDAOErr := errors.New("tenant store unavailable")
+	factory := &storageTenantAwareWrapper{
+		factory:      newMockTenantAwareStorageFactory(),
+		tenantDAOErr: tenantDAOErr,
+	}
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	service := NewTenantAwareAdminService(nil, factory, nil, logger, "1.0.0")
+
+	require.NotNil(t, service)
+	// Degraded mode: no local tenant DAO, exactly like a factory that never
+	// implemented storage.TenantAwareFactory in the first place.
+	assert.Nil(t, service.tenantDAO)
+	// ...but unlike that case, the failure was reported.
+	assert.Contains(t, logBuf.String(), "failed to initialize tenant DAO")
+	assert.Contains(t, logBuf.String(), tenantDAOErr.Error())
 }
 
 func TestTenantAwareAdminService_CreateTenant_EmptyID(t *testing.T) {
@@ -1583,6 +1611,10 @@ func (d *mockEABDAO) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.Ext
 // storageTenantAwareWrapper wraps our mock factory to implement storage.Factory and TenantAwareFactory
 type storageTenantAwareWrapper struct {
 	factory *mockTenantAwareStorageFactory
+	// tenantDAOErr, when set, is returned by TenantDAO so tests can exercise
+	// NewTenantAwareAdminService's handling of a tenant-aware factory that
+	// fails to produce its tenant DAO.
+	tenantDAOErr error
 }
 
 // Implement storage.Factory interface
@@ -1616,6 +1648,9 @@ func (w *storageTenantAwareWrapper) ExternalAccountBindingDAO() (qrdbsdk.Generic
 
 // Implement storage.TenantAwareFactory interface
 func (w *storageTenantAwareWrapper) TenantDAO() (qrdbsdk.GenericDAO[*entities.Tenant], error) {
+	if w.tenantDAOErr != nil {
+		return nil, w.tenantDAOErr
+	}
 	return nil, nil
 }
 

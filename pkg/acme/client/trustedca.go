@@ -409,7 +409,9 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	router.HandleFunc("/health", restService.HealthHandler).Methods("GET")
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
+		if _, err := w.Write([]byte("ready")); err != nil {
+			tca.logger.Error("failed to write readiness check response", slog.String("error", err.Error()))
+		}
 	}).Methods("GET")
 	router.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{})).Methods("GET")
 

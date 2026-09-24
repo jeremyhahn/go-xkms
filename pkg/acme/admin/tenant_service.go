@@ -103,7 +103,39 @@ func (s *TenantAwareAdminService) SetTenantService(svc qrdbsdk.ServiceTenantServ
 	s.tenantSvc = svc
 }
 
+// TenantDAOInitError reports a failure to obtain the tenant-aware storage
+// factory's DAO for entities.Tenant while constructing a tenant-aware admin
+// service. Unlike a storage.TenantAwareFactory type assertion failing (which
+// legitimately means "this deployment has no local tenant DAO" and leaves
+// tenantDAO nil), this means the factory claims tenant-aware support but
+// could not produce the DAO — a real, actionable failure, distinct from the
+// ordinary degraded mode that every tenantDAO-nil check throughout this file
+// already handles.
+type TenantDAOInitError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *TenantDAOInitError) Error() string {
+	return fmt.Sprintf("admin: failed to initialize tenant DAO: %v", e.Err)
+}
+
+// Unwrap returns the underlying cause.
+func (e *TenantDAOInitError) Unwrap() error {
+	return e.Err
+}
+
 // NewTenantAwareAdminService creates a new tenant-aware admin service.
+//
+// A storageFactory that does not implement storage.TenantAwareFactory
+// leaves the service's local tenant DAO nil, which every method on this
+// service already treats as an ordinary degraded mode (see the tenantDAO
+// != nil checks throughout this file). A storageFactory that does implement
+// it but fails to produce the DAO is different: that failure is logged
+// (NewTenantAwareAdminService has no error return to propagate it through,
+// and the tenant service remains usable in the same degraded mode either
+// way), so the operator can tell "no local tenant DAO by design" apart from
+// "the tenant DAO failed to initialize."
 func NewTenantAwareAdminService(
 	certificateAuthority ca.TCGCA,
 	storageFactory storage.Factory,
@@ -114,7 +146,13 @@ func NewTenantAwareAdminService(
 	// Get TenantDAO from the storage factory if it supports tenant-aware operations
 	var tenantDAO qrdbsdk.GenericDAO[*entities.Tenant]
 	if tenantAwareFactory, ok := storageFactory.(storage.TenantAwareFactory); ok {
-		tenantDAO, _ = tenantAwareFactory.TenantDAO()
+		dao, err := tenantAwareFactory.TenantDAO()
+		if err != nil {
+			logger.Error("failed to initialize tenant DAO; continuing without a local tenant DAO",
+				slog.String("error", (&TenantDAOInitError{Err: err}).Error()))
+		} else {
+			tenantDAO = dao
+		}
 	}
 
 	return &TenantAwareAdminService{

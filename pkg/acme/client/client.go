@@ -658,10 +658,12 @@ func (c *Client) fetchOrdersList(ctx context.Context, ordersURL string) ([]strin
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Error("orders list request failed",
-			slog.Int("status", resp.StatusCode),
-			slog.String("body", string(body)))
+		body, readErr := io.ReadAll(resp.Body)
+		attrs := []any{slog.Int("status", resp.StatusCode), slog.String("body", string(body))}
+		if readErr != nil {
+			attrs = append(attrs, slog.String("bodyReadError", readErr.Error()))
+		}
+		c.logger.Error("orders list request failed", attrs...)
 		return nil, caerrors.ConnectionFailureError("orders list server returned status %d", resp.StatusCode)
 	}
 
