@@ -68,11 +68,11 @@ func (s *Server) handleSSHKeysGenerate(ctx context.Context, req *JSONRPCRequest)
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
-	result, err := s.sshClient.Keys().Generate(ctx, params)
+	key, err := s.sshClient.Keys().Generate(ctx, params)
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	return result, nil
+	return key, nil
 }
 
 // handleSSHKeysImport handles ssh.keys.import. When the Passphrase
@@ -98,11 +98,11 @@ func (s *Server) handleSSHKeysImport(ctx context.Context, req *JSONRPCRequest) (
 	if len(params.Passphrase) > 0 {
 		provider = &sshStaticPassphraseProvider{data: params.Passphrase}
 	}
-	result, err := s.sshClient.Keys().Import(ctx, importReq, provider)
+	key, err := s.sshClient.Keys().Import(ctx, importReq, provider)
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	return result, nil
+	return key, nil
 }
 
 // handleSSHKeysList handles ssh.keys.list.
@@ -130,11 +130,11 @@ func (s *Server) handleSSHKeysGet(ctx context.Context, req *JSONRPCRequest) (int
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
-	result, err := s.sshClient.Keys().Get(ctx, params)
+	key, err := s.sshClient.Keys().Get(ctx, params)
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	return result, nil
+	return key, nil
 }
 
 // handleSSHKeysDelete handles ssh.keys.delete.
@@ -162,11 +162,11 @@ func (s *Server) handleSSHKeysExport(ctx context.Context, req *JSONRPCRequest) (
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
-	result, err := s.sshClient.Keys().ExportPublic(ctx, params)
+	pub, err := s.sshClient.Keys().ExportPublic(ctx, params)
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	return result, nil
+	return pub, nil
 }
 
 // handleSSHKeysSign handles ssh.keys.sign. It acquires an
@@ -307,11 +307,11 @@ func (s *Server) handleSSHAuthorizedKeysGet(ctx context.Context, req *JSONRPCReq
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, mapSSHError(&SSHInvalidParamsError{Err: err})
 	}
-	result, err := s.sshClient.AuthorizedKeys().Get(ctx, params.Scope, params.Owner, params.Name)
+	entry, err := s.sshClient.AuthorizedKeys().Get(ctx, params.Scope, params.Owner, params.Name)
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	return result, nil
+	return entry, nil
 }
 
 // handleSSHAuthorizedKeysList handles ssh.authorizedKeys.list.

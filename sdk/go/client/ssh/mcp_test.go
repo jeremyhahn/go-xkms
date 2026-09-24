@@ -379,6 +379,97 @@ func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 	}
 }
 
+// TestMCP_NotFoundCodeBecomesNotFoundError proves a store NotFound error
+// (issue #769: "keys-store errors fall through to Internal") reconstructs as
+// *NotFoundError instead of the generic *ProtocolError every SSH store error
+// used to collapse into. go-qrdb's wire.ErrorEnvelope carries only Code and
+// Message (no Resource field -- see mcp.go's package doc comment), so
+// Resource stays empty; Message survives intact.
+func TestMCP_NotFoundCodeBecomesNotFoundError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.keys.get", wire.CodeNotFound, "ssh/keys: key not found: ghost")
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var notFound *sdkssh.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *NotFoundError, got %T %v", err, err)
+	}
+	if notFound.Message != "ssh/keys: key not found: ghost" {
+		t.Errorf("Message = %q", notFound.Message)
+	}
+}
+
+// TestMCP_DuplicateCodeBecomesDuplicateError covers the known_hosts/
+// authorized_keys "Add called twice" case, which REST reports as 409.
+func TestMCP_DuplicateCodeBecomesDuplicateError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.knownHosts.add", wire.CodeAlreadyExists, "pin already exists")
+	client := newMCPFixture(t, srv)
+
+	err := client.KnownHosts().Add(context.Background(), sdkssh.AddKnownHostRequest{
+		Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: "ssh-ed25519 AAAA",
+	})
+	var dupErr *sdkssh.DuplicateError
+	if !errors.As(err, &dupErr) {
+		t.Fatalf("expected *DuplicateError, got %T %v", err, err)
+	}
+	if dupErr.Message != "pin already exists" {
+		t.Errorf("Message = %q", dupErr.Message)
+	}
+}
+
+// TestMCP_MismatchCodeBecomesMismatchError proves a known_hosts host-key
+// mismatch (the MITM-indicating case the issue calls out by name) round-trips
+// as *MismatchError, not a bare *ProtocolError a caller cannot branch on.
+// Host and Received come from Verify's own parameters (mcpKnownHostsClient.
+// Verify fills them in locally -- see mcp.go); Expected has no wire source
+// and stays empty, a real, documented gap rather than a fabrication.
+func TestMCP_MismatchCodeBecomesMismatchError(t *testing.T) {
+	_, sshPub := testPublicKeyLine(t)
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.knownHosts.verify", wire.CodeFailedPrecondition, "host key mismatch for git.example.com")
+	client := newMCPFixture(t, srv)
+
+	err := client.KnownHosts().Verify(context.Background(), "user", "alice", "git.example.com", sshPub)
+	var mismatch *sdkssh.MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected *MismatchError, got %T %v", err, err)
+	}
+	if mismatch.Host != "git.example.com" {
+		t.Errorf("Host = %q, want %q", mismatch.Host, "git.example.com")
+	}
+	if mismatch.Received != gossh.FingerprintSHA256(sshPub) {
+		t.Errorf("Received = %q, want the presented key's own fingerprint", mismatch.Received)
+	}
+	if mismatch.Expected != "" {
+		t.Errorf("Expected = %q, want empty (the wire has no field for it)", mismatch.Expected)
+	}
+}
+
+// TestMCP_UnknownCodeStaysProtocolErrorNotLeaked proves a code this SDK does
+// not recognize still surfaces as *ProtocolError (never as one of the typed
+// store errors) and carries only the server's own message -- it must not
+// synthesize additional internal detail the server never sent.
+func TestMCP_UnknownCodeStaysProtocolErrorNotLeaked(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.keys.get", wire.Code(-32099), "opaque failure")
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var protoErr *sdkssh.ProtocolError
+	if !errors.As(err, &protoErr) {
+		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
+	}
+	var notFound *sdkssh.NotFoundError
+	if errors.As(err, &notFound) {
+		t.Fatal("an unrecognized code must never be classified as NotFound")
+	}
+	if !strings.Contains(protoErr.Error(), "opaque failure") {
+		t.Errorf("server message lost: %v", protoErr)
+	}
+}
+
 func TestMCP_MalformedResponseBecomesProtocolError(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	srv.mu.Lock()
@@ -1146,8 +1237,10 @@ func TestMCPConsole_Unsupported(t *testing.T) {
 // mcp_dial_test.go for the genuine end-to-end dial/handshake coverage over a
 // server wired to a real embedded client). Session.Dial resolves the
 // remote-signer proxy through ssh.keys.export before it ever reaches the
-// target host, so an unhandled method must surface to the caller as a typed
-// *ProtocolError.
+// target host. The fake server answers that call with a wire.CodeUnimplemented
+// envelope for the unregistered method, which the client decodes into a
+// typed *NotImplementedError (go-xkms#769) naming ssh.keys.export: the
+// signer lookup failed, not Dial.
 func TestMCPSession_DialPropagatesSignerFailure(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	client := newMCPFixture(t, srv)
@@ -1155,8 +1248,11 @@ func TestMCPSession_DialPropagatesSignerFailure(t *testing.T) {
 	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{
 		KeyScope: "user", KeyOwner: "alice", KeyName: "ssh", Host: "h", User: "u",
 	})
-	var pe *sdkssh.ProtocolError
-	if !errors.As(err, &pe) {
-		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
+	var ni *sdkssh.NotImplementedError
+	if !errors.As(err, &ni) {
+		t.Fatalf("expected *NotImplementedError, got %T %v", err, err)
+	}
+	if !strings.Contains(ni.Error(), "ssh.keys.export") {
+		t.Fatalf("expected the signer lookup to be named, got: %v", ni)
 	}
 }

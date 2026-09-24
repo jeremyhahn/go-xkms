@@ -127,13 +127,14 @@ func TestSSHRoundTrip_RealServer(t *testing.T) {
 // TestSSHRoundTrip_NotFound proves a genuine server-side not-found
 // condition (pkg/ssh/keys.KeyNotFoundError, from the real embedded key
 // store) survives the full round trip -- real handler, real mapSSHError
-// classification, real go-qrdb wire.ErrorEnvelope, real
-// sdk/go/client/ssh MCP client decode -- reaching the caller as
-// *sdkssh.InvalidRequestError with the server's message intact. It is
-// *InvalidRequestError and not a dedicated *sdkssh.NotFoundError because
-// mapSSHError's eight-code JSON-RPC vocabulary has no NotFound member (see
-// that function's doc comment); the message is what still distinguishes
-// the condition.
+// classification (sdkssh.JSONRPCCodeNotFound), real pkg/apimodule.
+// keyOpCodeToWire translation onto wire.CodeNotFound, real go-qrdb
+// wire.ErrorEnvelope, real sdk/go/client/ssh MCP client decode -- reaching
+// the caller as its own *sdkssh.NotFoundError, not the generic
+// *sdkssh.InvalidRequestError an earlier, coarser mapSSHError produced
+// (go-xkms#792). Resource stays empty: go-qrdb's wire.ErrorEnvelope has no
+// field for it (see mcp.go's package doc comment); Message carries the
+// server's detail.
 func TestSSHRoundTrip_NotFound(t *testing.T) {
 	addr := startSSHRoundTripMCPServer(t)
 
@@ -146,18 +147,57 @@ func TestSSHRoundTrip_NotFound(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	var invalidErr *sdkssh.InvalidRequestError
-	require.ErrorAsf(t, err, &invalidErr, "expected *InvalidRequestError, got %T: %v", err, err)
-	assert.Contains(t, invalidErr.Message, "not found")
+	var notFoundErr *sdkssh.NotFoundError
+	require.ErrorAsf(t, err, &notFoundErr, "expected *NotFoundError, got %T: %v", err, err)
+	assert.Contains(t, notFoundErr.Message, "not found")
+}
+
+// TestSSHRoundTrip_Duplicate proves a genuine server-side duplicate
+// condition (pkg/ssh/known_hosts.DuplicateError, from Add called twice on
+// the real embedded known_hosts store without an intervening Remove)
+// survives the same round trip, reaching the caller as its own
+// *sdkssh.DuplicateError -- distinct from both NotFound and Mismatch.
+func TestSSHRoundTrip_Duplicate(t *testing.T) {
+	addr := startSSHRoundTripMCPServer(t)
+
+	client, err := sdkssh.NewMCP(sdkssh.MCPOptions{Addr: addr})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx := context.Background()
+	pinned, err := client.Keys().Generate(ctx, sdkssh.GenerateRequest{
+		Scope: "user", Owner: "alice", Name: "host-key", Algorithm: "ed25519",
+	})
+	require.NoError(t, err)
+	pinnedPub, err := client.Keys().ExportPublic(ctx, sdkssh.ExportRequest{
+		Scope: "user", Owner: "alice", Name: pinned.Name,
+	})
+	require.NoError(t, err)
+
+	addReq := sdkssh.AddKnownHostRequest{
+		Scope: "user", Owner: "alice", Host: "git.example.com",
+		PublicKey: pinnedPub.Line,
+	}
+	require.NoError(t, client.KnownHosts().Add(ctx, addReq))
+
+	err = client.KnownHosts().Add(ctx, addReq)
+	require.Error(t, err)
+
+	var dupErr *sdkssh.DuplicateError
+	require.ErrorAsf(t, err, &dupErr, "expected *DuplicateError, got %T: %v", err, err)
+	assert.Contains(t, dupErr.Message, "already exists")
 }
 
 // TestSSHRoundTrip_Mismatch proves a genuine server-side host-key mismatch
 // (pkg/ssh/known_hosts.MismatchError, from the real embedded known_hosts
 // store comparing an unrelated presented key against a pinned one) survives
-// the same round trip as TestSSHRoundTrip_NotFound, landing on the
-// identical *sdkssh.InvalidRequestError classification -- proving
-// go-xkms#792's documented limitation (no wire.Code distinguishes Duplicate
-// from Mismatch from NotFound today) rather than merely asserting it.
+// the same round trip as TestSSHRoundTrip_NotFound, reaching the caller as
+// its own *sdkssh.MismatchError -- distinct from both NotFound and
+// Duplicate, proving go-xkms#792's keyOpCodeToWire/wireCodeToRPCCode
+// extension actually keeps the three apart end to end rather than merely
+// asserting it should. Host and Received come from Verify's own parameters
+// (mcpKnownHostsClient.Verify fills them in locally); Expected has no wire
+// source and stays empty -- a real, documented limitation, not a bug.
 func TestSSHRoundTrip_Mismatch(t *testing.T) {
 	addr := startSSHRoundTripMCPServer(t)
 
@@ -197,7 +237,9 @@ func TestSSHRoundTrip_Mismatch(t *testing.T) {
 	err = client.KnownHosts().Verify(ctx, "user", "alice", "git.example.com", sshPub)
 	require.Error(t, err)
 
-	var invalidErr *sdkssh.InvalidRequestError
-	require.ErrorAsf(t, err, &invalidErr, "expected *InvalidRequestError, got %T: %v", err, err)
-	assert.Contains(t, invalidErr.Message, "mismatch")
+	var mismatchErr *sdkssh.MismatchError
+	require.ErrorAsf(t, err, &mismatchErr, "expected *MismatchError, got %T: %v", err, err)
+	assert.Equal(t, "git.example.com", mismatchErr.Host)
+	assert.Equal(t, gossh.FingerprintSHA256(sshPub), mismatchErr.Received)
+	assert.Empty(t, mismatchErr.Expected, "Expected has no wire source and must stay empty")
 }

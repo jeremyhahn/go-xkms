@@ -41,19 +41,27 @@
 // *NotImplementedError, *AuthError -- from a failed call's
 // *mcptool.RPCError.WireCode, the raw go-qrdb wire.Code classification,
 // mirroring how the REST transport's decodeErrorResponse reconstructs them
-// from an HTTP status. It is not a full reconstruction: the server's
-// mapSSHError (pkg/api/mcp/errors_ssh.go) classifies every SSH sub-system
-// error onto the eight JSON-RPC codes pkg/api/mcp/types.go already declares,
-// which has no dedicated NotFound or AlreadyExists member, so a stored
-// pin/key/entry not found, a non-idempotent duplicate, and a host-key
-// mismatch all land on the same wire.CodeInvalidArgument as an ordinary
-// validation failure -- go-xkms#792 traced this all the way to the wire
-// rather than assuming it, and documents it here rather than papering over
-// it with a guess parsed from the message text. All four reconstitute as
-// *InvalidRequestError, the closest existing type, with the server's
-// message intact; wire.CodeNotFound and wire.CodeAlreadyExists are still
-// decoded into *NotFoundError/*DuplicateError below, for forward
-// compatibility with a server that later gains a finer-grained mapSSHError.
+// from an HTTP status, and how sdk/go/client/ssh/mcp_status.go's
+// JSONRPCCodeForError classifies the same store errors for the (now
+// retired) raw JSON-RPC framing. The server's mapSSHError
+// (pkg/api/mcp/errors_ssh.go) delegates to that same shared classify()
+// table (rest_status_dispatch.go) via JSONRPCCodeForError, and
+// pkg/apimodule's keyOpCodeToWire carries JSONRPCCodeNotFound/Duplicate/
+// Mismatch onto wire.CodeNotFound/CodeAlreadyExists/CodeFailedPrecondition
+// respectively (go-xkms#792) -- so a not-found, a duplicate, and a host-key
+// mismatch each reach this client as their own distinct WireCode, not one
+// shared bucket.
+//
+// The one real gap: go-qrdb's wire.ErrorEnvelope carries only Code, Status,
+// Message, and Tool (pkg/mcptool, "the accepted wire-contract bridge
+// import" -- this SDK does not own that contract to extend it), where the
+// REST transport's JSON error body also carries Resource/Host/Expected/
+// Received. *NotFoundError/*DuplicateError reconstruct with Message but no
+// Resource; *MismatchError has no Message field at all, so
+// mcpKnownHostsClient.Verify fills in Host and Received from its own
+// parameters (it already has both without the server's help) and Expected
+// has no substitute -- it is the one field MCP genuinely cannot carry
+// today. See classifyMCPError's doc comment for the mechanics.
 //
 // Session.Dial is supported: it resolves the signing and host-key-
 // verification RPCs over MCP, then dials the target SSH host directly from
@@ -176,9 +184,22 @@ func (c *mcpClient) call(ctx context.Context, method string, params, out interfa
 
 // classifyMCPError reconstructs this package's typed errors from a
 // *mcptool.RPCError's WireCode, mirroring decodeErrorResponse's HTTP-status
-// switch (rest.go) for the MCP transport. A non-*RPCError failure (or an
-// *RPCError whose WireCode this switch does not recognize) is returned
-// unchanged.
+// switch (rest.go) for the MCP transport and JSONRPCCodeForError's table
+// (mcp_status.go) in reverse. A non-*RPCError failure (or an *RPCError
+// whose WireCode this switch does not recognize) is returned unchanged.
+//
+// go-qrdb's wire.ErrorEnvelope (pkg/mcptool) carries only Code, Status,
+// Message, and Tool -- there is no room for the Resource/Host/Expected/
+// Received detail the REST transport's richer JSON error body carries, and
+// this SDK does not own that contract to extend it (see pkg/mcptool's doc
+// comment: it is "the accepted wire-contract bridge import"). So
+// *NotFoundError and *DuplicateError here carry Message but not Resource,
+// and *MismatchError -- which has no Message field at all, only Host/
+// Expected/Received -- comes back with none of its fields set; Host and
+// Received are populated by the one call site that can supply them locally
+// (mcpKnownHostsClient.Verify, which already knows both without the
+// server's help), and Expected has no substitute: it is the one piece of
+// this error class MCP genuinely cannot carry today.
 func classifyMCPError(err error) error {
 	var rpcErr *mcptool.RPCError
 	if !errors.As(err, &rpcErr) {
@@ -194,13 +215,14 @@ func classifyMCPError(err error) error {
 	case wire.CodeUnavailable:
 		return &ServerError{StatusCode: 503, Message: rpcErr.Message}
 	case wire.CodeNotFound:
-		// Forward-compatible: mapSSHError does not emit this today (see the
-		// package doc comment), but a server that later distinguishes
-		// not-found must be decoded correctly by an SDK already built.
 		return &NotFoundError{Message: rpcErr.Message}
 	case wire.CodeAlreadyExists:
-		// Same forward-compatibility rationale as CodeNotFound.
 		return &DuplicateError{Message: rpcErr.Message}
+	case wire.CodeFailedPrecondition:
+		// See the doc comment above: Host/Received are filled in by
+		// mcpKnownHostsClient.Verify from its own parameters, not from the
+		// wire; Expected has no source.
+		return &MismatchError{}
 	case wire.CodeInvalidArgument:
 		return &InvalidRequestError{Message: rpcErr.Message}
 	default:
@@ -457,7 +479,16 @@ func (k *mcpKnownHostsClient) Remove(ctx context.Context, req RemoveKnownHostReq
 // format, to ssh.knownHosts.verify. The server parses it and compares
 // it against the stored pin's full public key via the canonical
 // known_hosts.Verify — the fingerprint is never trusted from the wire.
-// A mismatch on the server side is surfaced as a *ProtocolError.
+// A mismatch on the server side is surfaced as a *ProtocolError wrapping a
+// *MismatchError.
+//
+// classifyMCPError cannot populate *MismatchError's Host/Expected/Received
+// fields from the wire (go-qrdb's wire.ErrorEnvelope has no room for them;
+// see mcp.go's package doc comment), so Verify fills in Host and Received
+// itself here -- it already has both from its own parameters, no server
+// round-trip needed. Expected (the pin's actual stored key) has no
+// substitute and stays empty; that is a real, documented gap, not an
+// oversight.
 func (k *mcpKnownHostsClient) Verify(ctx context.Context, scope, owner, host string, received gossh.PublicKey) error {
 	if received == nil {
 		return &NilInputError{Field: "received"}
@@ -468,7 +499,16 @@ func (k *mcpKnownHostsClient) Verify(ctx context.Context, scope, owner, host str
 		Host:      host,
 		PublicKey: strings.TrimRight(string(gossh.MarshalAuthorizedKey(received)), "\n"),
 	}
-	return k.c.call(ctx, "ssh.knownHosts.verify", params, nil)
+	err := k.c.call(ctx, "ssh.knownHosts.verify", params, nil)
+	if err == nil {
+		return nil
+	}
+	var mismatchErr *MismatchError
+	if errors.As(err, &mismatchErr) {
+		mismatchErr.Host = host
+		mismatchErr.Received = gossh.FingerprintSHA256(received)
+	}
+	return err
 }
 
 // Callback returns an ssh.HostKeyCallback that delegates to Verify for

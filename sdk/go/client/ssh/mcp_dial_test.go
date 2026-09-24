@@ -26,6 +26,7 @@ import (
 
 	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
 
+	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -153,7 +154,15 @@ func newMCPSSHFixture(t *testing.T) sdkssh.Client {
 			return nil, perr.Error(), wire.CodeInvalidArgument
 		}
 		if err := embedded.KnownHosts().Verify(ctx, req.Scope, req.Owner, req.Host, pub); err != nil {
-			return nil, err.Error(), wire.CodeInvalidArgument
+			// Mirror pkg/api/mcp's real mapSSHError classification so this
+			// fixture exercises the same wire.Code the production dispatch
+			// sends for each condition: an unpinned host is NotFound, a
+			// pinned-but-different key is FailedPrecondition (Mismatch).
+			var mismatchErr *pkgknownhosts.MismatchError
+			if errors.As(err, &mismatchErr) {
+				return nil, err.Error(), wire.CodeFailedPrecondition
+			}
+			return nil, err.Error(), wire.CodeNotFound
 		}
 		return struct{}{}, "", wire.CodeOK
 	})

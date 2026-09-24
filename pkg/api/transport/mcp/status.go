@@ -26,24 +26,32 @@ import (
 // JSON-RPC error codes RPCError has always carried.
 //
 // It is the reverse of keyOpCodeToWire, not the reverse of nothing: xkms's
-// JSON-RPC vocabulary has no dedicated NotFound member (mapKeyOpError's own
-// doc comment says so, in pkg/api/mcp/errors_keyops.go), so wire.CodeNotFound
-// joins wire.CodeInvalidArgument in ErrCodeInvalidParams here -- the same
+// own JSON-RPC vocabulary (pkg/api/mcp/types.go's eight ErrCode* constants)
+// has no dedicated NotFound, AlreadyExists, or FailedPrecondition member, so
+// wire.CodeNotFound, wire.CodeAlreadyExists, and wire.CodeFailedPrecondition
+// all join wire.CodeInvalidArgument in ErrCodeInvalidParams here -- the same
 // bucket the deleted keyword matcher put a "not found" message in, so the
-// classification a caller observes does not move even though the mechanism
-// producing it did (go-qrdb#438, go-xkms#797).
+// classification this package's own RPCError.Code carries does not move
+// even though the mechanism producing it did (go-qrdb#438, go-xkms#797).
+// This is deliberately coarser than what the SSH-specific path gets: the
+// SSH SDK client (sdk/go/client/ssh/mcp.go) does not go through this table
+// at all -- it classifies from RPCError.WireCode directly, so it keeps
+// NotFound/AlreadyExists/FailedPrecondition distinguishable even though
+// RPCError.Code, populated from this table, does not (go-xkms#792).
 //
 // A map rather than a switch, so a wire code added without a row here is a
 // missing entry a reviewer can see instead of a default branch that silently
 // downgrades it.
 var wireCodeToRPCCode = map[wire.Code]int{
-	wire.CodeUnauthenticated:  xkmsmcp.ErrCodeUnauthorized,
-	wire.CodePermissionDenied: xkmsmcp.ErrCodeForbidden,
-	wire.CodeNotFound:         xkmsmcp.ErrCodeInvalidParams,
-	wire.CodeUnavailable:      xkmsmcp.ErrCodeServiceUnavailable,
-	wire.CodeInvalidArgument:  xkmsmcp.ErrCodeInvalidParams,
-	wire.CodeUnimplemented:    xkmsmcp.ErrCodeMethodNotFound,
-	wire.CodeInternal:         xkmsmcp.ErrCodeInternalError,
+	wire.CodeUnauthenticated:    xkmsmcp.ErrCodeUnauthorized,
+	wire.CodePermissionDenied:   xkmsmcp.ErrCodeForbidden,
+	wire.CodeNotFound:           xkmsmcp.ErrCodeInvalidParams,
+	wire.CodeAlreadyExists:      xkmsmcp.ErrCodeInvalidParams,
+	wire.CodeFailedPrecondition: xkmsmcp.ErrCodeInvalidParams,
+	wire.CodeUnavailable:        xkmsmcp.ErrCodeServiceUnavailable,
+	wire.CodeInvalidArgument:    xkmsmcp.ErrCodeInvalidParams,
+	wire.CodeUnimplemented:      xkmsmcp.ErrCodeMethodNotFound,
+	wire.CodeInternal:           xkmsmcp.ErrCodeInternalError,
 }
 
 // classifyWireCode implements mcptool.ErrorClassifier: it looks up code in
