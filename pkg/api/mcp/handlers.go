@@ -184,6 +184,28 @@ func (s *Server) handleListBackends(ctx context.Context, req *JSONRPCRequest) (i
 	}, nil
 }
 
+// handleGetBackend handles the xkms.getBackend method. It delegates to
+// XKMSService.GetBackend, the same transport.XKMSServicer method the
+// embedded transport calls directly, so the wire shape this handler returns
+// is exactly transport.BackendInfo rather than a second, hand-built
+// projection of it.
+func (s *Server) handleGetBackend(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params GetBackendParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "invalid params", Err: err}}
+	}
+	if params.Backend == "" {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "backend is required"}}
+	}
+
+	info, err := s.xkmsService.GetBackend(ctx, params.Backend)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return info, nil
+}
+
 // symmetricBackendName is the backend this transport has always fallen back to
 // for a symmetric key generated without an explicit backend.
 const symmetricBackendName = "symmetric"
