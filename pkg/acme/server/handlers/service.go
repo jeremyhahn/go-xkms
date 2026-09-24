@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -240,6 +241,17 @@ type Params struct {
 	// and testing; it is a development switch and is off by default
 	// (acme.enrollment.allow_loopback_identifier).
 	AllowLoopbackIdentifier bool
+
+	// Policy configures the ACME identifier issuance policy engine
+	// (pkg/acme/policy): the domain/FQDN/wildcard/CIDR blocklist, public
+	// suffix and reserved-IP enforcement, and per-identifier-type challenge
+	// selection. A nil Policy applies no blocklist and no reserved-IP or
+	// public-suffix restriction beyond RFC 1035/8738 format validation,
+	// which is the permissive configuration test callers get by default.
+	// Identifier types absent from Policy.IdentifierChallengeTypes keep
+	// go-xkms's default challenge candidates (see
+	// xkmsDefaultIdentifierChallengeTypes).
+	Policy *policy.PolicyConfig
 }
 
 // CAAValidatorInterface defines the interface for CAA validation.
@@ -253,10 +265,12 @@ type RestService struct {
 	allowLoopbackIdentifier bool
 	auditLog                audit.AuditLogger
 	baseRESTURI             string
+	blocklist               *policy.Blocklist
 	ca                      ca.TCGCA
 	caaIdentities           []string
 	caaValidator            CAAValidatorInterface
 	challengeMap            map[string]common.ChallengeVerifierFunc
+	challengePolicy         *policy.ChallengePolicy
 	clusterCACN             string
 	endorseEABRequired      bool
 	endorseDeviceIDMetaKey  string
@@ -270,9 +284,86 @@ type RestService struct {
 	params                  *Params
 	preIssuanceHooks        *PreIssuanceHookRegistry
 	preSignHooks            *OrderPreSignHookRegistry
+	rejectReservedIPs       bool
+	requirePublicSuffix     bool
 	storageFactory          storage.Factory
 	termsOfService          string
 	RestServicer
+}
+
+// xkmsDefaultIdentifierChallengeTypes returns go-xkms's default candidate
+// challenge types per identifier type. These preserve the challenge sets the
+// ACME handlers offered before the policy engine (pkg/acme/policy) was
+// wired in: standard web-PKI challenges for DNS identifiers, and TPM/TCG
+// attestation challenges for IP and permanent identifiers. go-xkms overloads
+// the "ip" identifier type for TPM-enrolling devices identified by network
+// address rather than RFC 8738's default HTTP-01/TLS-ALPN-01 domain-control
+// validation, so it is not the policy package's generic default. An operator
+// can restore RFC 8738 semantics, or any other set, via
+// PolicyConfig.IdentifierChallengeTypes.
+func xkmsDefaultIdentifierChallengeTypes() map[string][]string {
+	return map[string][]string{
+		policy.IdentifierTypeDNS: {policy.ChallengeTypeHTTP01, policy.ChallengeTypeDNS01},
+		policy.IdentifierTypeIP: {
+			policy.ChallengeTypeDeviceAttest01,
+			policy.ChallengeTypeEnroll01,
+			policy.ChallengeTypeEndorse01,
+		},
+	}
+}
+
+// defaultPolicyConfig returns the PolicyConfig NewRestService applies when
+// Params.Policy is nil: every identifier type and challenge type enabled,
+// go-xkms's default challenge candidates, no blocklist, and no reserved-IP
+// or public-suffix enforcement beyond RFC 1035/8738 format validation. This
+// is the permissive configuration test callers get by default.
+func defaultPolicyConfig() *policy.PolicyConfig {
+	return &policy.PolicyConfig{
+		EnabledIdentifierTypes: map[string]bool{
+			policy.IdentifierTypeDNS:                 true,
+			policy.IdentifierTypeIP:                  true,
+			policy.IdentifierTypePermanentIdentifier: true,
+		},
+		EnabledChallengeTypes: map[string]bool{
+			policy.ChallengeTypeHTTP01:         true,
+			policy.ChallengeTypeDNS01:          true,
+			policy.ChallengeTypeTLSALPN01:      true,
+			policy.ChallengeTypeDeviceAttest01: true,
+			policy.ChallengeTypeEnroll01:       true,
+			policy.ChallengeTypeEndorse01:      true,
+		},
+		AllowWildcards: true,
+	}
+}
+
+// buildIdentifierPolicy constructs the blocklist and challenge policy engine
+// from params.Policy, defaulting to defaultPolicyConfig() when the caller
+// did not supply one. go-xkms's default challenge candidates
+// (xkmsDefaultIdentifierChallengeTypes) are always layered beneath the
+// supplied configuration's IdentifierChallengeTypes so a caller that does
+// not override a given identifier type keeps today's behavior for it.
+func buildIdentifierPolicy(params *Params) (*policy.Blocklist, *policy.ChallengePolicy, bool, bool, error) {
+	cfg := params.Policy
+	if cfg == nil {
+		cfg = defaultPolicyConfig()
+	}
+
+	merged := xkmsDefaultIdentifierChallengeTypes()
+	for k, v := range cfg.IdentifierChallengeTypes {
+		merged[k] = v
+	}
+	cfgWithDefaults := *cfg
+	cfgWithDefaults.IdentifierChallengeTypes = merged
+
+	challengePolicy := policy.NewChallengePolicyFromConfig(&cfgWithDefaults)
+
+	blocklist := policy.NewBlocklistWithLogger(params.Logger)
+	blocklistCfg := cfg.Blocklist
+	if err := blocklist.LoadFromConfig(&blocklistCfg); err != nil {
+		return nil, nil, false, false, err
+	}
+
+	return blocklist, challengePolicy, cfg.RequirePublicSuffix, cfg.RejectReservedIPs, nil
 }
 
 // NewRestService creates a new ACME REST service with the provided parameters.
@@ -315,14 +406,21 @@ func NewRestService(params *Params) (RestServicer, error) {
 		auditLog = audit.NewNoOpLogger()
 	}
 
+	blocklist, challengePolicy, requirePublicSuffix, rejectReservedIPs, err := buildIdentifierPolicy(params)
+	if err != nil {
+		return nil, caerrors.MalformedError("handlers: failed to build identifier policy: %v", err)
+	}
+
 	return &RestService{
 		allowLoopbackIdentifier: params.AllowLoopbackIdentifier,
 		auditLog:                auditLog,
 		baseRESTURI:             params.BaseRESTURI,
+		blocklist:               blocklist,
 		ca:                      params.CA,
 		caaIdentities:           params.CAAIdentities,
 		caaValidator:            params.CAAValidator,
 		challengeMap:            params.ChallengeMap,
+		challengePolicy:         challengePolicy,
 		clusterCACN:             params.ClusterCACN,
 		endorseEABRequired:      params.EndorseEABRequired,
 		endorseDeviceIDMetaKey:  params.EndorseDeviceIDMetaKey,
@@ -336,6 +434,8 @@ func NewRestService(params *Params) (RestServicer, error) {
 		params:                  params,
 		preIssuanceHooks:        params.PreIssuanceHooks,
 		preSignHooks:            params.OrderPreSignHooks,
+		rejectReservedIPs:       rejectReservedIPs,
+		requirePublicSuffix:     requirePublicSuffix,
 		storageFactory:          params.StorageFactory,
 		termsOfService:          params.TermsOfService,
 	}, nil
@@ -865,49 +965,6 @@ func AccountIDFromPublicKey(pubKey crypto.PublicKey) (uint64, error) {
 	// Use SHA-256 of thumbprint to generate deterministic uint64
 	hash := sha256.Sum256([]byte(thumbprint))
 	return binary.BigEndian.Uint64(hash[:8]), nil
-}
-
-// isValidDomainName validates a domain name per RFC 1035.
-// Domain names must:
-// - Be between 1 and 253 characters total
-// - Consist of labels separated by dots
-// - Each label must be 1-63 characters
-// - Labels can contain lowercase letters, digits, and hyphens
-// - Labels cannot start or end with a hyphen
-// - Labels cannot be all numeric (except for the TLD)
-func isValidDomainName(domain string) bool {
-	if len(domain) == 0 || len(domain) > 253 {
-		return false
-	}
-
-	labels := strings.Split(domain, ".")
-	if len(labels) < 1 {
-		return false
-	}
-
-	for _, label := range labels {
-		if len(label) == 0 || len(label) > 63 {
-			return false
-		}
-
-		// Check for invalid characters and positioning
-		for i, ch := range label {
-			allowed := (ch >= 'a' && ch <= 'z') ||
-				(ch >= 'A' && ch <= 'Z') ||
-				(ch >= '0' && ch <= '9') ||
-				ch == '-'
-			if !allowed {
-				return false
-			}
-
-			// Hyphens cannot be at the start or end
-			if ch == '-' && (i == 0 || i == len(label)-1) {
-				return false
-			}
-		}
-	}
-
-	return true
 }
 
 // GenerateID generates a cryptographically secure random ID.
