@@ -84,6 +84,21 @@ func TestSessionCrypto_CompleteHandshake_InvalidPublicKeySize(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrInvalidPublicKey))
 }
 
+// TestSessionCrypto_CompleteHandshake_LowOrderPeerKey verifies that a known
+// X25519 low-order point (the all-zero public key, one of the classic
+// contributory-behaviour attack values) is rejected with ErrHandshakeFailed
+// rather than silently producing an all-zero shared secret. Go's crypto/ecdh
+// detects this at the ECDH step, after the length check has already passed.
+func TestSessionCrypto_CompleteHandshake_LowOrderPeerKey(t *testing.T) {
+	sc, _, err := NewSessionCrypto()
+	require.NoError(t, err)
+
+	lowOrder := make([]byte, X25519KeySize) // all-zero
+	err = sc.CompleteHandshake(lowOrder)
+	assert.True(t, errors.Is(err, ErrHandshakeFailed), "got %v", err)
+	assert.False(t, sc.Ready())
+}
+
 func TestSessionCrypto_CompleteHandshake_DoubleHandshake(t *testing.T) {
 	host, _, err := NewSessionCrypto()
 	require.NoError(t, err)

@@ -64,6 +64,42 @@ func findBrowser(name string) knownBrowser {
 	panic("browser not found: " + name)
 }
 
+// --- BrowserFamily tests ---
+
+// TestBrowserFamily_KnownBrowsers verifies every known browser name maps to
+// its family's Browser constant, case-insensitively.
+func TestBrowserFamily_KnownBrowsers(t *testing.T) {
+	tests := []struct {
+		name string
+		want Browser
+	}{
+		{"Chrome", BrowserChrome},
+		{"chrome", BrowserChrome},
+		{"CHROME", BrowserChrome},
+		{"Brave", BrowserChrome},
+		{"Chromium", BrowserChrome},
+		{"Edge", BrowserChrome},
+		{"Opera", BrowserChrome},
+		{"Vivaldi", BrowserChrome},
+		{"Firefox", BrowserFirefox},
+		{"firefox", BrowserFirefox},
+		{"LibreWolf", BrowserFirefox},
+		{"Waterfox", BrowserFirefox},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, BrowserFamily(tt.name))
+		})
+	}
+}
+
+// TestBrowserFamily_Unknown verifies an unrecognized browser name returns
+// the empty Browser value rather than a default family.
+func TestBrowserFamily_Unknown(t *testing.T) {
+	assert.Equal(t, Browser(""), BrowserFamily("Internet Explorer"))
+	assert.Equal(t, Browser(""), BrowserFamily(""))
+}
+
 // --- GenerateManifest tests ---
 
 func TestGenerateManifest_Chrome(t *testing.T) {
@@ -958,6 +994,80 @@ func TestInstallManifest_HomeDirError_Firefox(t *testing.T) {
 
 func TestUninstallManifest_HomeDirError(t *testing.T) {
 	overrideHomeDirError(t)
+
+	err := UninstallManifest(BrowserChrome)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrManifestInstall))
+}
+
+// TestInstallManifest_WriteFails_DetectedBrowser proves a write failure to a
+// detected browser's manifest directory is reported as a typed error rather
+// than silently skipped like an undetected browser.
+func TestInstallManifest_WriteFails_DetectedBrowser(t *testing.T) {
+	tmpDir := t.TempDir()
+	overrideHomeDir(t, tmpDir)
+
+	chrome := findBrowser("Chrome")
+	simulateBrowserInstalled(t, chrome, tmpDir)
+
+	nmhDir := browserDir(chrome, tmpDir)
+	require.NoError(t, os.MkdirAll(nmhDir, 0755))
+	require.NoError(t, os.Chmod(nmhDir, 0500))
+	t.Cleanup(func() { _ = os.Chmod(nmhDir, 0755) })
+
+	err := InstallManifest(BrowserChrome, "/usr/bin/xkey")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrManifestInstall))
+}
+
+// TestInstallManifest_MkdirFails_DetectedBrowser proves a directory-creation
+// failure for a detected browser is reported as a typed error. A regular
+// file occupies the path the NativeMessagingHosts directory needs.
+func TestInstallManifest_MkdirFails_DetectedBrowser(t *testing.T) {
+	tmpDir := t.TempDir()
+	overrideHomeDir(t, tmpDir)
+
+	chrome := findBrowser("Chrome")
+	simulateBrowserInstalled(t, chrome, tmpDir)
+
+	nmhDir := browserDir(chrome, tmpDir)
+	require.NoError(t, os.WriteFile(nmhDir, []byte("blocker"), 0600))
+
+	err := InstallManifest(BrowserChrome, "/usr/bin/xkey")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrManifestInstall))
+}
+
+// TestInstallManifest_WriteFails_FallbackPath proves the same for the
+// fallback path taken when no browser in the family was detected.
+func TestInstallManifest_WriteFails_FallbackPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	overrideHomeDir(t, tmpDir)
+
+	chrome := findBrowser("Chrome")
+	nmhDir := browserDir(chrome, tmpDir)
+	require.NoError(t, os.MkdirAll(nmhDir, 0755))
+	require.NoError(t, os.Chmod(nmhDir, 0500))
+	t.Cleanup(func() { _ = os.Chmod(nmhDir, 0755) })
+
+	err := InstallManifest(BrowserChrome, "/usr/bin/xkey")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrManifestInstall))
+}
+
+// TestUninstallManifest_RemoveFails proves a removal failure other than
+// "does not exist" (here, a manifest directory that denies unlink) is
+// reported as a typed error rather than silently treated as absent.
+func TestUninstallManifest_RemoveFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	overrideHomeDir(t, tmpDir)
+
+	require.NoError(t, InstallManifest(BrowserChrome, "/usr/bin/xkey"))
+
+	chrome := findBrowser("Chrome")
+	nmhDir := browserDir(chrome, tmpDir)
+	require.NoError(t, os.Chmod(nmhDir, 0500))
+	t.Cleanup(func() { _ = os.Chmod(nmhDir, 0755) })
 
 	err := UninstallManifest(BrowserChrome)
 	require.Error(t, err)
