@@ -15,6 +15,7 @@ package types
 
 import (
 	"crypto/x509"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -104,11 +105,12 @@ func TestKeyAlgorithmString_ToX509(t *testing.T) {
 		{"RSA_Lower", KeyAlgorithmString("rsa"), x509.RSA},
 		{"ECDSA", AlgorithmECDSA, x509.ECDSA},
 		{"ECDSA_Lower", KeyAlgorithmString("ecdsa"), x509.ECDSA},
-		// Note: AlgorithmEd25519 constant is "Ed25519" but ToX509 uses ToUpper which converts it to "ED25519"
-		// This doesn't match the constant, so it returns Unknown. This is a bug in the implementation
-		// but we test what the code actually does, not what it should do
-		{"Ed25519_Upper", KeyAlgorithmString("ED25519"), x509.UnknownPublicKeyAlgorithm},
-		{"Ed25519_MixedCase", AlgorithmEd25519, x509.UnknownPublicKeyAlgorithm},
+		// Comparison is case-insensitive (KeyAlgorithmString.Equals), so every
+		// spelling of Ed25519 must resolve to x509.Ed25519, not just the
+		// constant's own mixed-case spelling.
+		{"Ed25519_Upper", KeyAlgorithmString("ED25519"), x509.Ed25519},
+		{"Ed25519_MixedCase", AlgorithmEd25519, x509.Ed25519},
+		{"Ed25519_Lower", KeyAlgorithmString("ed25519"), x509.Ed25519},
 		{"DSA", AlgorithmDSA, x509.DSA},
 		{"Unknown", KeyAlgorithmString("unknown"), x509.UnknownPublicKeyAlgorithm},
 		{"Symmetric", AlgorithmSymmetric, x509.UnknownPublicKeyAlgorithm},
@@ -824,6 +826,56 @@ func TestIsValidCLIKeyType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := IsValidCLIKeyType(tt.input)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// =============================================================================
+// ParseKeyTypeString Tests
+// =============================================================================
+
+// TestParseKeyTypeString_KnownValues pins every recognized spelling to its
+// KeyTypeString constant, case-insensitively and with surrounding
+// whitespace trimmed, so a future reordering of the switch cannot silently
+// drop or rename one.
+func TestParseKeyTypeString_KnownValues(t *testing.T) {
+	tests := []struct {
+		input string
+		want  KeyTypeString
+	}{
+		{"attestation", KeyTypeStringAttestation},
+		{"ca", KeyTypeStringCA},
+		{"encryption", KeyTypeStringEncryption},
+		{"endorsement", KeyTypeStringEndorsement},
+		{"hmac", KeyTypeStringHMAC},
+		{"idevid", KeyTypeStringIDevID},
+		{"ldevid", KeyTypeStringLDevID},
+		{"secret", KeyTypeStringSecret},
+		{"signing", KeyTypeStringSigning},
+		{"storage", KeyTypeStringStorage},
+		{"tls", KeyTypeStringTLS},
+		{"tpm", KeyTypeStringTPM},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, ParseKeyTypeString(tt.input),
+				"lowercase %q must parse to %q", tt.input, tt.want)
+			assert.Equal(t, tt.want, ParseKeyTypeString(strings.ToUpper(tt.input)),
+				"uppercase %q must parse the same as lowercase", tt.input)
+			assert.Equal(t, tt.want, ParseKeyTypeString("  "+tt.input+"  "),
+				"surrounding whitespace around %q must be trimmed", tt.input)
+		})
+	}
+}
+
+// TestParseKeyTypeString_UnknownReturnsEmpty verifies that an unrecognized
+// key type string parses to the empty KeyTypeString rather than a
+// fabricated value, so a caller can tell "unrecognized" from any real type.
+func TestParseKeyTypeString_UnknownReturnsEmpty(t *testing.T) {
+	for _, input := range []string{"", "bogus", "not-a-key-type"} {
+		t.Run(input, func(t *testing.T) {
+			assert.Equal(t, KeyTypeString(""), ParseKeyTypeString(input))
 		})
 	}
 }
