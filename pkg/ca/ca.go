@@ -762,6 +762,22 @@ func (ca *CA) Init(ctx context.Context) error {
 	return nil
 }
 
+// wrapCertLookupError classifies a certStore.GetCertificate failure inside
+// Load. A genuine storage.ErrNotFound (no record was ever written under this
+// CN) becomes ErrCertificateNotFound: the one condition callers -- in
+// particular pkg/server's initializeCA -- may treat as "never initialized"
+// and safely retry through Init. Any other cause (a corrupt or unparseable
+// persisted certificate, a backend I/O failure) is returned as a distinct
+// error that does not satisfy errors.Is(_, ErrCertificateNotFound), so
+// damaged existing state can never be mistaken for an empty store and
+// silently papered over by minting a new CA (go-xkms#793).
+func wrapCertLookupError(label string, err error) error {
+	if errors.Is(err, storage.ErrNotFound) {
+		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("%s: %v", label, err)}
+	}
+	return &errs.Wrapped{Msg: fmt.Sprintf("failed to load %s", label), Err: err}
+}
+
 // Load loads an existing Certificate Authority from storage.
 //
 // This retrieves the CA's certificate chain from the certificate store and
@@ -770,7 +786,11 @@ func (ca *CA) Init(ctx context.Context) error {
 //
 // Returns:
 //   - ErrAlreadyInitialized if the CA has already been initialized
-//   - ErrCertificateNotFound if the CA certificate cannot be found
+//   - ErrCertificateNotFound if the CA certificate genuinely does not exist
+//     (the store has no record under this CN)
+//   - A distinct, non-ErrCertificateNotFound error if the certificate
+//     record exists but is corrupt or unreadable, or the store failed for
+//     any other reason -- callers must not treat this as "not initialized"
 //   - ErrKeyStoreRequired if the corresponding private key is missing
 //   - Storage errors if certificate retrieval fails
 //
@@ -791,12 +811,17 @@ func (ca *CA) Load(ctx context.Context) error {
 
 	rootCert, err := ca.certStore.GetCertificate(rootIdentity.Subject.CommonName)
 	if err != nil {
-		return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("root certificate: %v", err)}
+		return wrapCertLookupError("root certificate", err)
 	}
 	ca.rootCert = rootCert
 
-	// Verify root key exists
-	rootAttrs, err := rootIdentity.ToKeyAttributes()
+	// Verify root key exists. getCAKeyAttributes (not the bare
+	// identity.ToKeyAttributes) so a root identity whose KeyConfig leaves
+	// key-type unset resolves to the same KeyTypeCA default Init used when it
+	// generated and stored this same key (go-xkms#793): Load must attempt the
+	// lookup with the identical attributes Init wrote under, or the lookup
+	// fails KeyAttributes.Validate() before it ever reaches the keystore.
+	rootAttrs, err := ca.getCAKeyAttributes(rootIdentity)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to get root key attributes", Err: err}
 	}
@@ -817,12 +842,13 @@ func (ca *CA) Load(ctx context.Context) error {
 
 		intermediateCert, err := ca.certStore.GetCertificate(issuingIdentity.Subject.CommonName)
 		if err != nil {
-			return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("intermediate certificate: %v", err)}
+			return wrapCertLookupError("intermediate certificate", err)
 		}
 		ca.intermediateCert = intermediateCert
 
-		// Verify intermediate key exists
-		intermediateAttrs, err := issuingIdentity.ToKeyAttributes()
+		// Verify intermediate key exists. Same getCAKeyAttributes default-filling
+		// as the root key above (go-xkms#793).
+		intermediateAttrs, err := ca.getCAKeyAttributes(issuingIdentity)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to get intermediate key attributes", Err: err}
 		}
@@ -844,9 +870,10 @@ func (ca *CA) Load(ctx context.Context) error {
 				continue
 			}
 			if _, err := ca.certStore.GetCertificate(cn); err != nil {
-				return &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("intermediate %q certificate: %v", cn, err)}
+				return wrapCertLookupError(fmt.Sprintf("intermediate %q certificate", cn), err)
 			}
-			attrs, err := intermediate.ToKeyAttributes()
+			// Same getCAKeyAttributes default-filling as above (go-xkms#793).
+			attrs, err := ca.getCAKeyAttributes(&intermediate)
 			if err != nil {
 				return &errs.Wrapped{Msg: fmt.Sprintf("failed to get intermediate %q key attributes", cn), Err: err}
 			}
