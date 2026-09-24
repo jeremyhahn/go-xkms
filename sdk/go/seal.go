@@ -42,6 +42,38 @@ var NewPKCS11Strategy = seal.NewPKCS11Strategy
 // strategy ID (StrategyAWSKMS / StrategyGCPKMS / StrategyAzureKV / StrategyVault).
 var NewCloudKMSStrategy = seal.NewCloudKMSStrategy
 
+// BuildCloudKMSStrategy is the ONE cloud-KMS strategy composition path xkmsd
+// (pkg/server/seal_strategies.go) and xkey both call: given an
+// already-constructed, already-configured cloud KMS backend (implementing
+// types.KeyProvider), it provisions the named symmetric wrapping key
+// (creating it on first init, reusing it thereafter) and returns the
+// matching CloudKMSStrategy. id must be one of StrategyAWSKMS / StrategyGCPKMS
+// / StrategyAzureKV / StrategyVault; store is the matching StoreType
+// (StoreAWSKMS, etc). Sharing this path is what lets a barrier initialized
+// by xkmsd unseal under xkey and vice versa (go-xkms#757).
+var BuildCloudKMSStrategy = seal.BuildCloudKMSStrategy
+
+// IsCloudSealStrategy reports whether id is one of the cloud KMS strategies
+// BuildCloudKMSStrategy composes.
+var IsCloudSealStrategy = seal.IsCloudSealStrategy
+
+// SealKeyAttributes builds the KeyAttributes identifying the symmetric
+// wrapping key a hardware/cloud seal strategy seals the barrier root key
+// under, for the given StoreType.
+var SealKeyAttributes = seal.SealKeyAttributes
+
+// SealKeyCN is the canonical common name of that symmetric wrapping key.
+const SealKeyCN = seal.SealKeyCN
+
+// ErrSealBackendUnavailable indicates a hardware/cloud backend does not
+// implement the interface (Sealer / SymmetricKeyProvider) a seal strategy
+// requires.
+type ErrSealBackendUnavailable = seal.ErrSealBackendUnavailable
+
+// ErrNotCloudSealStrategy indicates BuildCloudKMSStrategy was called with a
+// strategy ID that is not a cloud KMS strategy.
+type ErrNotCloudSealStrategy = seal.ErrNotCloudSealStrategy
+
 // --- Hardware/cloud strategy IDs (owned by go-xkms) ---
 
 const (

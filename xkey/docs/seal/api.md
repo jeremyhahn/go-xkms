@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — API
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 No network-transport API surface. The Barrier, barrier auto-unseal, and the
 named PCR policy store are all local-only: reachable through the CLI (see

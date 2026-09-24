@@ -71,6 +71,15 @@ type BarrierService struct {
 	// If nil, TPM2 strategy is unavailable.
 	tpmSealerFn func() xkms.Sealer
 
+	// cloudKMSStrategyFn is called to obtain a cloud KMS sealing strategy
+	// (aws_kms/gcp_kms/azure_kv/vault) when assembleStrategy needs one. If
+	// nil, the four cloud KMS strategies are unavailable: BarrierService has
+	// no cloud backend wiring of its own -- the caller (xkey's headless
+	// `extension serve` or a future GUI flow) builds the backend from its own
+	// configuration and injects the assembled strategy here, the same
+	// pattern SetTPMSealerFunc uses for TPM2 (go-xkms#757).
+	cloudKMSStrategyFn func(strategyID string) (xkms.SealingStrategy, error)
+
 	// postUnsealHook is called after a successful Unseal() to allow the
 	// application to initialize services that depend on the barrier backend
 	// (e.g., FIDO2 storage, OATH, static passwords). Called outside the
@@ -113,6 +122,17 @@ func (s *BarrierService) SetDataDir(dir string) {
 // function returns a non-nil sealer, TPM2 strategy becomes available.
 func (s *BarrierService) SetTPMSealerFunc(fn func() xkms.Sealer) {
 	s.tpmSealerFn = fn
+}
+
+// SetCloudKMSStrategyFunc sets the function used to obtain a cloud KMS
+// sealing strategy (aws_kms, gcp_kms, azure_kv, or vault, identified by
+// strategyID) when Initialize or Unseal is called with one of those strategy
+// IDs. When nil (the default), the four cloud KMS strategies are
+// unavailable and assembleStrategy reports ErrBarrierStrategyUnavailable.
+func (s *BarrierService) SetCloudKMSStrategyFunc(fn func(strategyID string) (xkms.SealingStrategy, error)) {
+	s.mu.Lock()
+	s.cloudKMSStrategyFn = fn
+	s.mu.Unlock()
 }
 
 // SetBaseBackendFactory sets the function used to create the base storage backend.
@@ -645,6 +665,18 @@ func (s *BarrierService) assembleStrategy(strategyID string) (xkms.SealingStrate
 		return xkms.NewTPM2Strategy(sealer, nil), nil
 	case xkms.StrategyPassphrase:
 		return xkms.NewSoftwareSealStrategy(), nil
+	case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
+		if s.cloudKMSStrategyFn == nil {
+			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
+		}
+		strategy, err := s.cloudKMSStrategyFn(strategyID)
+		if err != nil {
+			return nil, err
+		}
+		if strategy == nil {
+			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
+		}
+		return strategy, nil
 	default:
 		return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 	}

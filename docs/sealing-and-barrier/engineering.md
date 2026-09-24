@@ -1,6 +1,6 @@
 # Sealing and Barrier — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `sealing-and-barrier` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface — `pkg/seal`
 
@@ -53,6 +53,41 @@ func BuildBestStrategy(opts AutodetectOptions) *AutodetectResult
 func (r *AutodetectResult) HardwareAvailable() bool
 func (r *AutodetectResult) Close() error
 ```
+
+### Cloud KMS strategy composition (`cloud_provision.go`, go-xkms#757)
+
+The ONE function `xkmsd` (`pkg/server/seal_strategies.go`) and `xkey`
+(`go-xkms/xkey`, which has no backend/provider registry of its own) both
+call to turn an already-constructed cloud KMS backend into a
+`CloudKMSStrategy`:
+
+```go
+const SealKeyCN = "xkms-barrier-seal"
+
+func SealKeyAttributes(store types.StoreType) *types.KeyAttributes
+func IsCloudSealStrategy(id StrategyID) bool
+func EnsureSealKey(ctx context.Context, id StrategyID, provider types.KeyProvider, keyAttrs *types.KeyAttributes) error
+func BuildCloudKMSStrategy(ctx context.Context, id StrategyID, store types.StoreType, provider types.KeyProvider) (SealingStrategy, error)
+
+type SealLoginProvider interface{ Login() error }
+type SealMetadataSaver interface {
+	Save(attrs *types.KeyAttributes, data []byte, extension types.FSExtension, overwrite bool) error
+}
+type ErrSealBackendUnavailable struct{ Strategy, Purpose string }
+type ErrNotCloudSealStrategy struct{ Strategy string }
+```
+
+`BuildCloudKMSStrategy` accepts only `StrategyAWSKMS`/`StrategyGCPKMS`/
+`StrategyAzureKV`/`StrategyVault` (`ErrNotCloudSealStrategy` otherwise); it
+provisions (creates on first use, reuses thereafter, via `EnsureSealKey`)
+the symmetric wrapping key identified by `SealKeyAttributes(store)` — the
+fixed `SealKeyCN`, never an operator-supplied key identifier — and wraps the
+provider's `types.Sealer` in a `CloudKMSStrategy`. `pkg/server`'s own
+`buildHardwareSealStrategy` calls this for its four cloud IDs and continues
+to wrap TPM2/PKCS11 (not shared with xkey) inline; see
+`xkey/docs/seal/architecture.md` for xkey's side of the composition
+(per-provider backend construction gated by that provider's build tag, then
+this same call).
 
 ### Other components
 
@@ -115,7 +150,7 @@ Per-strategy credentials:
 |---|---|
 | `tpm2` | platform/TPM authorization, plus PCR policy where configured |
 | `pkcs11` | SO PIN and/or user PIN |
-| `awskms` / `gcpkms` / `azurekv` / `vault` | the provider's credentials, from the **server's** environment |
+| `awskms` / `gcpkms` / `azurekv` / `vault` | the provider's own ambient credential chain by default, from the **process's** environment — `xkmsd`'s or `xkey`'s, whichever builds the strategy (go-xkms#757); an explicit credential is a `*types.SecretValue` config reference, never a literal |
 | `passphrase` | a passphrase |
 | `shamir` | M-of-N shares |
 | `none` | none — encryption disabled |
@@ -172,6 +207,13 @@ so this is the one compatibility rule in the repo with no workaround.
   `barrier_adapter_test.go`, `platform_sealer_test.go`,
   `platform_store_test.go`, `platform_store_tenant_test.go`,
   `secret_sealer_test.go`, `hardware_encryptor_test.go`, `audit_test.go`.
+- **Cloud KMS composition** — `cloud_provision_test.go` (no build tag: all
+  four strategy IDs against a generic mock `types.KeyProvider` — key-exists,
+  first-init create, idempotent-generate, login/metadata-seed branches,
+  provider-not-sealer/not-symmetric errors); `cloud_provision_awskms_test.go`
+  (`awskms` tag: the same composition against the real `*awskms.Backend` and
+  its own `MockKMSClient`, an init→seal→unseal round trip, and a
+  missing-credentials failure).
 - **Composition** — `hardware_compose_test.go` covers registration into qrdb's
   registry.
 - **Concurrency** — `mock_putifabsent_test.go` covers the CAS init path.

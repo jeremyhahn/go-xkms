@@ -297,7 +297,17 @@ Usage: `xkey barrier init [flags]`
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--strategy` | string |  | sealing strategy: software, tpm2, pkcs11 (default: auto-detect) |
+| `--aws-endpoint` | string |  | Custom AWS KMS endpoint (optional; for testing against an emulator) |
+| `--aws-region` | string |  | AWS region for the aws_kms barrier strategy |
+| `--azure-allow-local-vault-url` | bool | false | Allow a localhost/127.0.0.1 vault URL (development only) |
+| `--azure-vault-url` | string |  | Azure Key Vault URL for the azure_kv barrier strategy |
+| `--gcp-credentials-file` | string |  | Path to a GCP service account JSON key file (optional; Application Default Credentials are used when unset) |
+| `--gcp-key-ring` | string |  | GCP KMS key ring ID |
+| `--gcp-location` | string |  | GCP KMS location (e.g. us-east1) |
+| `--gcp-project-id` | string |  | GCP project ID for the gcp_kms barrier strategy |
+| `--strategy` | string |  | sealing strategy: software, tpm2, pkcs11, aws_kms, gcp_kms, azure_kv, vault (default: auto-detect) |
+| `--vault-address` | string |  | HashiCorp Vault server address for the vault barrier strategy |
+| `--vault-mount-path` | string |  | Vault Transit engine mount path (default: transit) |
 
 ## xkey barrier seal
 
