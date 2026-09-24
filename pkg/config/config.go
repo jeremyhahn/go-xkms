@@ -1354,6 +1354,13 @@ func (c *Config) ComplianceGaps() []string {
 		gaps = append(gaps, "ACME audit trail disabled (acme.audit.enabled=false): certificate issuance, "+
 			"revocation, account creation, and TPM enrollment would go unrecorded")
 	}
+	// A public ACME endpoint with no admission control accepts unlimited
+	// new-account/new-order/challenge requests. The limiter is on by
+	// default, so this only fires when the operator explicitly turned it off.
+	if c.ACME != nil && c.ACME.Enabled && !c.ACME.RateLimit.IsEnabled() {
+		gaps = append(gaps, "ACME rate limiting disabled (acme.rate_limit.enabled=false): the ACME endpoint "+
+			"would accept unlimited new-account, new-order, and challenge requests")
+	}
 	return gaps
 }
 

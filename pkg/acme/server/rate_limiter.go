@@ -170,6 +170,21 @@ func (rl *RateLimiter) SetAuditLogger(logger audit.AuditLogger) {
 	rl.auditLog = logger
 }
 
+// NewClientRateLimiterMiddleware builds the overall per-client ACME
+// admission-control middleware mounted on the whole "/acme" surface: a
+// RateLimiter keyed by ClientID (the JWS KID once an account exists, the
+// client IP before one does), wired to auditLog so a throttled request is
+// recorded via EventRateLimitExceeded. It is the single construction path
+// for that blanket limiter — the standalone TrustedCA
+// (pkg/acme/client/trustedca.go) and xkmsd's embedded ACME listener
+// (cmd/xkmsd/acme.go) both call it instead of hand-rolling their own
+// NewRateLimiter + SetAuditLogger + MiddlewareFunc wiring.
+func NewClientRateLimiterMiddleware(maxRequests int, interval time.Duration, auditLog audit.AuditLogger) func(http.Handler) http.Handler {
+	limiter := NewRateLimiter(maxRequests, interval)
+	limiter.SetAuditLogger(auditLog)
+	return limiter.MiddlewareFunc(ClientID)
+}
+
 // recordRateLimitExceeded logs EventRateLimitExceeded for resourceKey.
 // EventRateLimitExceeded is SeveritySecurity (repeated throttling can signal
 // a credential-stuffing or enumeration attempt), so a failed write is

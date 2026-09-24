@@ -135,8 +135,12 @@ through ACME against an existing node's directory.
   the requesting account's URI and the challenge type that actually
   validated each identifier, so a record's `accounturi`/`validationmethods`
   parameters are enforced against reality, not merely parsed.
-  `pkg/acme/server/rate_limiter.go` and the tenant rate limiter bound
-  per-account and per-tenant issuance.
+  `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
+  mounted on the whole ACME surface by both ACME server compositions
+  (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
+  client by JWS KID or IP; the tenant rate limiter
+  (`tenant_rate_limiter.go`) exists but is not wired into either
+  composition — see [`engineering.md`](engineering.md) §Rate limiting.
 - **Circuit breakers guard individual outbound dependencies, not order
   creation.** `pkg/acme/server/circuitbreaker` wraps five dependencies, each
   with its own breaker: the `http-01` and `dns-01` challenge verifiers
