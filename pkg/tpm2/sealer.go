@@ -24,21 +24,17 @@ func (tpm *TPM2) CanSeal() bool {
 }
 
 // defaultSealKeyAttributes returns sensible default KeyAttributes for sealing
-// when the caller does not provide explicit KeyAttributes. It prefers the
-// Platform Storage Root Key (Platform SRK) as the parent when one is
-// configured, and falls back to the standard SSRK when the Platform SRK is
-// absent (typical of a freshly-provisioned software TPM or a minimal hardware
-// TPM that has not been given a PlatformSRK config). The fallback ensures
-// that external TPM emulators (swtpm) and basic hardware deployments work
-// out of the box without requiring an additional PlatformSRK provisioning step.
+// when the caller does not provide explicit KeyAttributes. It always uses the
+// Platform Storage Root Key (Platform SRK) as the parent: xkms's own sealing
+// operations never use the TCG-standard Shared SRK. A TPM with no Platform
+// SRK enrolled (e.g. a fresh simulator that has not been provisioned through
+// PlatformKeyStore.Initialize/EnrollPlatformSRK, or first-boot provisioning)
+// has nothing this method can seal to, and the caller sees that as a typed
+// error rather than a silent fallback to the SSRK.
 func (tpm *TPM2) defaultSealKeyAttributes() (*types.KeyAttributes, error) {
 	srkAttrs, err := tpm.PlatformSRKAttributes()
 	if err != nil {
-		// Platform SRK unavailable: fall back to the standard SSRK.
-		srkAttrs, err = tpm.SSRKAttributes()
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "tpm2: no usable SRK for sealing", Err: err}
-		}
+		return nil, &errs.Wrapped{Msg: "tpm2: no usable Platform SRK for sealing", Err: err}
 	}
 	return &types.KeyAttributes{
 		CN:     "platform-sealing-key",
@@ -46,17 +42,13 @@ func (tpm *TPM2) defaultSealKeyAttributes() (*types.KeyAttributes, error) {
 	}, nil
 }
 
-// defaultUnsealKeyAttributes returns sensible default KeyAttributes for unsealing
-// when the caller does not provide explicit KeyAttributes. It mirrors the
-// fallback logic of defaultSealKeyAttributes: prefers the Platform SRK and
-// falls back to the SSRK when the Platform SRK is absent.
+// defaultUnsealKeyAttributes returns sensible default KeyAttributes for
+// unsealing when the caller does not provide explicit KeyAttributes. It
+// mirrors defaultSealKeyAttributes: always the Platform SRK, never the SSRK.
 func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes, error) {
 	srkAttrs, err := tpm.PlatformSRKAttributes()
 	if err != nil {
-		srkAttrs, err = tpm.SSRKAttributes()
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "tpm2: no usable SRK for unsealing", Err: err}
-		}
+		return nil, &errs.Wrapped{Msg: "tpm2: no usable Platform SRK for unsealing", Err: err}
 	}
 	return &types.KeyAttributes{
 		CN:     keyID,
@@ -209,10 +201,7 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	if keyAttrs.Parent == nil {
 		srkAttrs, perr := tpm.PlatformSRKAttributes()
 		if perr != nil {
-			srkAttrs, perr = tpm.SSRKAttributes()
-			if perr != nil {
-				return nil, &errs.Wrapped{Msg: "tpm2: no usable SRK for unsealing", Err: perr}
-			}
+			return nil, &errs.Wrapped{Msg: "tpm2: no usable Platform SRK for unsealing", Err: perr}
 		}
 		keyAttrs.Parent = srkAttrs
 	}

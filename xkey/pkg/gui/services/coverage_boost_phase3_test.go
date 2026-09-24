@@ -44,27 +44,36 @@ type phase3AuditLogger struct {
 	entries []audit.Entry
 }
 
-func (m *phase3AuditLogger) Log(e audit.Entry) { m.entries = append(m.entries, e) }
-func (m *phase3AuditLogger) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) {
+func (m *phase3AuditLogger) Log(e audit.Entry) error { m.entries = append(m.entries, e); return nil }
+func (m *phase3AuditLogger) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *phase3AuditLogger) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) {
+func (m *phase3AuditLogger) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *phase3AuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) {
+func (m *phase3AuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) error {
+	return nil
 }
-func (m *phase3AuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]any) {}
-func (m *phase3AuditLogger) LogPINOperation(op audit.OperationType, backend string, success bool, _ error, _ map[string]any) {
+func (m *phase3AuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]any) error {
+	return nil
+}
+func (m *phase3AuditLogger) LogPINOperation(op audit.OperationType, backend string, success bool, _ error, _ map[string]any) error {
 	m.entries = append(m.entries, audit.Entry{Operation: op, Backend: backend, Success: success})
+	return nil
 }
-func (m *phase3AuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) {
+func (m *phase3AuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
-func (m *phase3AuditLogger) LogPasswordStoreOperation(op audit.OperationType, _ string, success bool, err error, _ map[string]any) {
+func (m *phase3AuditLogger) LogPasswordStoreOperation(op audit.OperationType, _ string, success bool, err error, _ map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
 	m.entries = append(m.entries, audit.Entry{Operation: op, Success: success, Error: errStr})
+	return nil
 }
-func (m *phase3AuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) {
+func (m *phase3AuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) error {
+	return nil
 }
 
 var _ audit.Logger = (*phase3AuditLogger)(nil)

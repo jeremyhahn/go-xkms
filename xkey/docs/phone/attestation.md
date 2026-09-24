@@ -13,6 +13,23 @@ Both devices can attest the hardware backing of their keys. This enables mutual 
 
 Uses Android Key Attestation as defined in the Android Keystore specification.
 
+> **Current implementation note.** The wire method and challenge model below
+> describe the original nonce-in-certificate design. The desktop side now
+> uses `local.attestDevice` (protocol version 2, go-xkms#129) everywhere it
+> attests a phone: pairing, reconnect, and the manual "Attest Device" action
+> all call the single decision in `xkey/pkg/attestation`
+> (`AttestOverSession`/`VerifyDeviceAttestation`), never a
+> surface-specific reimplementation. The challenge is no longer just a nonce
+> compared against the certificate's baked-in genesis challenge (fixed for
+> the life of a persistent key, so that comparison alone proved nothing
+> after the first use) — the phone additionally signs a live transcript
+> covering the nonce, a purpose string (`"pair"` or `"reattest"`) and a
+> channel binding derived from the current Noise session, so freshness is
+> proven by a live signature rather than by a value baked into the cert.
+> `local.attestKey` (below) still exists for one-off key-only attestation
+> that carries no purpose/liveness commitment; it is not what device trust
+> decisions are made on.
+
 ### Certificate Chain
 
 The phone returns an X.509 certificate chain:

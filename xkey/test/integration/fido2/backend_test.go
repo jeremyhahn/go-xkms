@@ -254,8 +254,11 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.UseSimulator = true
 	tpmConfig.EK.PlatformPolicy = false
-	tpmConfig.EK.HierarchyAuth = ""
-	tpmConfig.SSRK.HierarchyAuth = ""
+	// EK.HierarchyAuth and SSRK.HierarchyAuth are already unset on
+	// DefaultTPMConfig (types.SecretValue{}, not a bare string); the explicit
+	// assignments this file used to have here were redundant with that
+	// default and no longer compile now that HierarchyAuth is a
+	// types.SecretValue, not a string.
 	tpmConfig.IDevID = nil
 	tpmConfig.IAK = nil
 
@@ -287,6 +290,15 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 			tpm.Close()
 			return nil, &WrappedError{Msg: "failed to create SRK", Err: srkCreateErr}
 		}
+	}
+
+	// The manual provisioning above only creates the TCG-standard EK and
+	// Shared SRK. xkms.NewTPM2BackendWithTPM below resolves its storage
+	// parent exclusively off the Platform SRK -- never the Shared SRK -- so
+	// it must be enrolled here too, whenever it is not already present.
+	if psrkErr := xkms.EnrollSimulatorPlatformSRK(tpm, &tpmConfig); psrkErr != nil {
+		tpm.Close()
+		return nil, &WrappedError{Msg: "failed to enroll Platform SRK", Err: psrkErr}
 	}
 
 	provider, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{

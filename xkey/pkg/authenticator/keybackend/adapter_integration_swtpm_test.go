@@ -126,6 +126,15 @@ func provisionSwtpmOnce() {
 		if err == nil || errors.Is(err, xkms.ErrTPMNotInitialized) {
 			provErr := tpm.Provision(nil)
 			if provErr == nil {
+				// Provision is TCG-only (EK + Shared SRK + IAK).
+				// xkms.NewTPM2BackendWithTPM below resolves its storage
+				// parent exclusively off the Platform SRK -- never the
+				// Shared SRK -- so it must be enrolled here too.
+				if psrkErr := xkms.EnrollSimulatorPlatformSRK(tpm, &cfg); psrkErr != nil {
+					_ = tpm.Close()
+					swtpmErr = &WrappedError{Msg: "swtpm Platform SRK enrollment", Err: psrkErr}
+					return
+				}
 				err = nil
 				break
 			}

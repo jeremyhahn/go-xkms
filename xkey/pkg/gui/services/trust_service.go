@@ -164,13 +164,15 @@ func (s *TrustService) requireManageTrustStore(operation string) error {
 	}
 	err := &PolicyDeniedError{Field: "user_can_manage_trust_store"}
 	if p := s.auditLog.Load(); p != nil {
-		(*p).Log(audit.Entry{
+		if auditErr := (*p).Log(audit.Entry{
 			Timestamp: time.Now(),
 			Operation: audit.OpPolicyDenied,
 			Success:   false,
 			Error:     err.Error(),
 			Details:   map[string]any{"operation": operation},
-		})
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
 	}
 	return err
 }

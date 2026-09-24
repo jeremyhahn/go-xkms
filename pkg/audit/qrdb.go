@@ -27,10 +27,11 @@ import (
 // node's AuditClient (Client().Audit()), which appends it to the tamper-evident
 // chain owned by the node.
 //
-// Emission is best-effort and must never block or fail the request: the
-// underlying qrdb logger absorbs transient write failures, and every xkms emit
-// site already ignores the returned error. QRDBLogger therefore surfaces the
-// AuditClient error for symmetry but expects callers not to act on it.
+// Log's returned error is not discarded: every xkms emit site runs it
+// through HandleWriteFailure (severity.go), which fails the request for a
+// SeveritySecurity action (e.g. "authorize", "seal", "unseal") and logs and
+// counts the failure for a SeverityInformational one. See
+// docs/audit-log/engineering.md.
 type QRDBLogger struct {
 	client qrdbtransport.AuditClient
 }

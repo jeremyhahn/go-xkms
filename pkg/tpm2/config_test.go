@@ -1249,13 +1249,11 @@ func TestIAKConfigStructure_Extended(t *testing.T) {
 func TestPlatformSRKConfigStructure_Extended(t *testing.T) {
 	config := PlatformSRKConfig{
 		CN:             "test-keystore",
-		SRKAuth:        "test-srk-auth",
 		SRKHandle:      0x81000002,
 		PlatformPolicy: true,
 	}
 
 	assert.Equal(t, "test-keystore", config.CN)
-	assert.Equal(t, "test-srk-auth", config.SRKAuth)
 	assert.Equal(t, uint32(0x81000002), config.SRKHandle)
 	assert.True(t, config.PlatformPolicy)
 }

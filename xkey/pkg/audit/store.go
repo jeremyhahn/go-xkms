@@ -95,14 +95,24 @@ func NewBackendStore(backend xkms.StorageBackend, maxSize int, logger *slog.Logg
 }
 
 // Log persists an audit entry to the storage backend and appends it to the
-// in-memory cache. When the cache is full, the oldest entry is evicted.
-// If an slog logger is configured, the entry is also forwarded to it.
-func (s *BackendStore) Log(entry Entry) {
+// in-memory cache regardless of whether the persistent write succeeded, so
+// Query/Count stay consistent with what was audibly logged. When the cache
+// is full, the oldest entry is evicted. If an slog logger is configured,
+// the entry is also forwarded to it.
+//
+// A failed backend write is handled per entry.Operation.Severity() (see
+// severity.go): a SeveritySecurity entry returns *ErrAuditWriteFailed,
+// which the caller must propagate to fail the operation; a
+// SeverityInformational entry is logged and counted, and Log returns nil.
+func (s *BackendStore) Log(entry Entry) error {
 	key := s.entryKey(entry)
 
+	var writeErr error
 	data, err := json.Marshal(entry)
-	if err == nil {
-		_ = s.backend.Put(context.Background(), key, data)
+	if err != nil {
+		writeErr = &WrappedError{Msg: "audit: marshal entry", Err: err}
+	} else {
+		writeErr = s.backend.Put(context.Background(), key, data)
 	}
 
 	s.mu.Lock()
@@ -112,18 +122,22 @@ func (s *BackendStore) Log(entry Entry) {
 	s.cache = append(s.cache, entry)
 	s.mu.Unlock()
 
+	var slogger *slog.Logger
 	if s.slog != nil {
-		s.slog.Log(entry)
+		_ = s.slog.Log(entry)
+		slogger = s.slog.logger
 	}
+
+	return handleWriteFailure(slogger, entry.Operation, writeErr)
 }
 
 // LogKeyOperation logs a key-related operation.
-func (s *BackendStore) LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) {
+func (s *BackendStore) LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		Backend:    backend,
@@ -135,12 +149,12 @@ func (s *BackendStore) LogKeyOperation(op OperationType, backend, keyID string, 
 }
 
 // LogCryptoOperation logs a cryptographic operation.
-func (s *BackendStore) LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) {
+func (s *BackendStore) LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		Backend:    backend,
@@ -154,8 +168,8 @@ func (s *BackendStore) LogCryptoOperation(op OperationType, backend, keyID, devi
 }
 
 // LogConnectionEvent logs a connection-related event.
-func (s *BackendStore) LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) {
-	s.Log(Entry{
+func (s *BackendStore) LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) error {
+	return s.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		DeviceID:   deviceID,
@@ -166,8 +180,8 @@ func (s *BackendStore) LogConnectionEvent(op OperationType, deviceID, deviceName
 }
 
 // LogServiceEvent logs a service lifecycle event.
-func (s *BackendStore) LogServiceEvent(op OperationType, details map[string]any) {
-	s.Log(Entry{
+func (s *BackendStore) LogServiceEvent(op OperationType, details map[string]any) error {
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   true,
@@ -176,12 +190,12 @@ func (s *BackendStore) LogServiceEvent(op OperationType, details map[string]any)
 }
 
 // LogPINOperation logs a PIN-related operation (verify, change, lock).
-func (s *BackendStore) LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) {
+func (s *BackendStore) LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Backend:   backend,
@@ -192,12 +206,12 @@ func (s *BackendStore) LogPINOperation(op OperationType, backend string, success
 }
 
 // LogTPMOperation logs a TPM-related operation (provision, auth, seal).
-func (s *BackendStore) LogTPMOperation(op OperationType, success bool, err error, details map[string]any) {
+func (s *BackendStore) LogTPMOperation(op OperationType, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Backend:   "tpm2",
@@ -208,7 +222,7 @@ func (s *BackendStore) LogTPMOperation(op OperationType, success bool, err error
 }
 
 // LogPasswordStoreOperation logs a password store operation (unlock, access, autofill).
-func (s *BackendStore) LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) {
+func (s *BackendStore) LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
@@ -217,7 +231,7 @@ func (s *BackendStore) LogPasswordStoreOperation(op OperationType, source string
 		details = make(map[string]any)
 	}
 	details["source"] = source
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   success,
@@ -227,12 +241,12 @@ func (s *BackendStore) LogPasswordStoreOperation(op OperationType, source string
 }
 
 // LogUserPresenceEvent logs a user presence/touch event.
-func (s *BackendStore) LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) {
+func (s *BackendStore) LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) error {
 	if details == nil {
 		details = make(map[string]any)
 	}
 	details["source"] = source
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   success,

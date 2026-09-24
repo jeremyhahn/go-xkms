@@ -17,6 +17,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -335,28 +336,38 @@ func (s *AppService) SetPolicy(pol *config.PolicySection) {
 	s.policy.Store(pol)
 }
 
-// denyPolicy logs a policy denial and returns the typed refusal.
+// denyPolicy logs a policy denial and returns the typed refusal. The
+// request is refused either way, but OpPolicyDenied is SeveritySecurity: if
+// the audit write itself fails, that failure is joined onto the denial so
+// the caller sees both — the operation was denied, and that denial may not
+// be durably recorded.
 func (s *AppService) denyPolicy(field, operation string) error {
 	err := &PolicyDeniedError{Field: field}
-	s.logConfigEvent(audit.OpPolicyDenied, false, err, map[string]any{"operation": operation})
+	if auditErr := s.logConfigEvent(audit.OpPolicyDenied, false, err, map[string]any{"operation": operation}); auditErr != nil {
+		return errors.Join(err, auditErr)
+	}
 	return err
 }
 
-// logConfigEvent logs a configuration-related audit event.
-func (s *AppService) logConfigEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logConfigEvent logs a configuration-related audit event. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (s *AppService) logConfigEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }
 
 // SetContext is called by the Wails startup lifecycle hook.
@@ -477,16 +488,17 @@ func (s *AppService) UpdateConfig(cfg *GUIConfigData) error {
 	}
 	if s.configUpdater != nil {
 		if err := s.configUpdater(cfg); err != nil {
-			s.logConfigEvent(audit.OpConfigUpdated, false, err, nil)
+			if auditErr := s.logConfigEvent(audit.OpConfigUpdated, false, err, nil); auditErr != nil {
+				return auditErr
+			}
 			return err
 		}
 	}
 	old := s.config.Load()
 	s.config.Store(cfg)
-	s.logConfigEvent(audit.OpConfigUpdated, true, nil, map[string]any{
+	return s.logConfigEvent(audit.OpConfigUpdated, true, nil, map[string]any{
 		"changed_fields": configChangedFields(old, cfg),
 	})
-	return nil
 }
 
 // configChangedFields compares two config snapshots and returns a list of

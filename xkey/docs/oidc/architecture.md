@@ -1,6 +1,6 @@
 # OIDC — Architecture
 
-Status: current. Last verified: 2026-09-22.
+Status: current. Last verified: 2026-09-23.
 
 ## Scope
 
@@ -18,6 +18,19 @@ The xkey GUI's OIDC service (`pkg/gui/services/oidc_service.go`) is a
 separate consumer of the same `pkg/oidc.TokenStore` interface with its own
 storage wiring (`SetDataDir`/`SetBackend`); this document is about the CLI's
 `xkey oidc login`/`token`/`refresh`/`logout` commands only.
+
+The AWS login *mechanism* itself (not its storage) is shared rather than
+duplicated: `xkey/pkg/oidc/aws.Login` runs the DPoP-bound PKCE authorization
+flow — the callback listener, the browser hand-off, the code exchange — and
+`aws.RefreshCredentials` runs one credential refresh. Both the CLI's `xkey
+oidc aws` command and the GUI's `OIDCService.Login` (for an
+`OIDCProviderTypeAWS` provider) call these; `xkey/pkg/oidc/handlers.NewForMode`
+is the shared output-mode dispatch (`aws-credentials`/`json`/`exec`/`none`)
+both use to turn the resulting credentials into a credentials-file write, a
+JSON print, or an exec invocation. The CLI layers its own session
+persistence, background-refresh process management and terminal output on
+top; the GUI layers its own `OIDCLoginResult`/auto-refresh-goroutine wiring.
+Neither reimplements the OAuth exchange itself.
 
 ## The problem
 

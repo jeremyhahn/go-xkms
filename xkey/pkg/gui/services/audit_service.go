@@ -104,13 +104,15 @@ func (s *AuditService) requireViewAuditLog(operation string) error {
 	}
 	err := &PolicyDeniedError{Field: "user_can_view_audit_log"}
 	if s.store != nil {
-		s.store.Log(audit.Entry{
+		if auditErr := s.store.Log(audit.Entry{
 			Timestamp: time.Now(),
 			Operation: audit.OpPolicyDenied,
 			Success:   false,
 			Error:     err.Error(),
 			Details:   map[string]any{"operation": operation},
-		})
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
 	}
 	return err
 }

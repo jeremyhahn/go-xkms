@@ -48,6 +48,25 @@ The server mounts SSH over every transport when an SSH client is wired
 (`pkg/server` builds one embedded client with a backend provider over the
 `XKMSService` and injects it into all transports).
 
+### `SessionClient.Dial` — non-interactive outbound sessions, every transport
+
+`Client.Session().Dial` (`Run` a command, get stdout/stderr/error back) is
+distinct from `Client.Console` (an interactive PTY byte stream) and is
+supported over **every** transport, including the network ones that refuse
+Console: embedded, REST, QUIC, gRPC, unix, and MCP. The SSH connection to the
+caller-chosen target host is always dialed directly from the calling
+process (`golang.org/x/crypto/ssh`) — the xkms transport itself carries only
+two RPCs, `Keys().Signer` (a forward-signing proxy; the private key never
+leaves xkmsd) and `KnownHosts().Callback` (host-key verification against the
+server's pins), neither of which needs a byte stream. That is why MCP's
+request/response JSON-RPC framing, which cannot carry Console, has no
+trouble with Dial. Host-key verification fails closed on every transport: an
+unrecognized or mismatched host key is a typed error
+(`*sdkssh.NotFoundError` / `*sdkssh.MismatchError` on REST and gRPC; MCP
+collapses server-side verify failures to `*sdkssh.ProtocolError` — still
+typed, never a silent accept) — there is no `InsecureIgnoreHostKey` path
+anywhere in the SDK.
+
 ## CLI
 
 ```bash
