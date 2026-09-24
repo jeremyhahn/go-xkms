@@ -243,3 +243,94 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	// The SoD invariant: the Security Officer role receives nothing from xkms.
 	assert.False(t, qrdbsdk.HasPermissionRoleGrant("so", "keys:sign"))
 }
+
+// stubSSHClient is a minimal, inert sdkssh.Client: SetSSHClient only stores
+// the value, so a non-nil stub is enough to prove the "resolver yielded a
+// real client" branch wires it through without breaking RPC dispatch.
+type stubSSHClient struct{}
+
+func (stubSSHClient) Keys() sdkssh.KeysClient                     { return nil }
+func (stubSSHClient) KnownHosts() sdkssh.KnownHostsClient         { return nil }
+func (stubSSHClient) AuthorizedKeys() sdkssh.AuthorizedKeysClient { return nil }
+func (stubSSHClient) Session() sdkssh.SessionClient               { return nil }
+func (stubSSHClient) Console(context.Context, sdkssh.ConsoleConnectRequest, sdkssh.ConsoleConfig) (sdkssh.ConsoleSession, error) {
+	return nil, errors.New("stubSSHClient: Console not implemented")
+}
+func (stubSSHClient) Close() error { return nil }
+
+var _ sdkssh.Client = stubSSHClient{}
+
+// TestModule_SSHClientResolver_NonNilClientWired proves that when the SSH
+// resolver DOES yield a client (as distinct from
+// TestModule_SSHClientResolver_BoundAtServiceBind's "subsystem unavailable"
+// nil case), the keystore Service binds successfully with it wired in
+// rather than panicking or skipping the resolved service.
+func TestModule_SSHClientResolver_NonNilClientWired(t *testing.T) {
+	m, err := NewModule(
+		func() *xkms.XKMSService { return &xkms.XKMSService{} },
+		WithSSHClient(func() sdkssh.Client { return stubSSHClient{} }),
+	)
+	require.NoError(t, err)
+
+	client := startBufconnModule(t, m)
+	_, err = client.Health(context.Background(), &pb.HealthRequest{})
+	require.NoError(t, err, "binding with a real (non-nil) SSH client must not break RPC dispatch")
+}
+
+// TestModule_PublicGRPCMethods proves the exact, minimal set of RPCs
+// admitted into qrdb's unified-server gRPC interceptor without
+// authentication — Health and Algorithms, the two unannotated RPCs in
+// xkms.proto. Any other method missing its (qrdb.v1.permission) annotation
+// must fail closed (DEFAULT-DENY) rather than silently joining this list.
+func TestModule_PublicGRPCMethods(t *testing.T) {
+	m, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, []string{
+		"/xkms.v1.KeystoreService/Health",
+		"/xkms.v1.KeystoreService/Algorithms",
+	}, m.PublicGRPCMethods())
+}
+
+// TestLazyServiceDesc_WrapsStreamHandlers proves lazyServiceDesc's copy of a
+// ServiceDesc.Streams entry resolves impl() before dispatching, exactly
+// like its unary counterpart — KeystoreService itself defines no streaming
+// RPCs today (module.go's own comment), so this drives the copy directly
+// with a synthetic descriptor rather than waiting for a future regeneration
+// to be the first thing that exercises it.
+func TestLazyServiceDesc_WrapsStreamHandlers(t *testing.T) {
+	var streamCalls int
+	src := &grpc.ServiceDesc{
+		ServiceName: "test.Synthetic",
+		Streams: []grpc.StreamDesc{
+			{
+				StreamName: "Watch",
+				Handler: func(_ any, _ grpc.ServerStream) error {
+					streamCalls++
+					return nil
+				},
+			},
+		},
+	}
+
+	t.Run("resolution failure short-circuits before the real handler", func(t *testing.T) {
+		streamCalls = 0
+		wantErr := errors.New("service not yet composed")
+		desc := lazyServiceDesc(src, func() (pb.KeystoreServiceServer, error) { return nil, wantErr })
+		require.Len(t, desc.Streams, 1)
+
+		err := desc.Streams[0].Handler(nil, nil)
+		assert.ErrorIs(t, err, wantErr)
+		assert.Equal(t, 0, streamCalls, "the real stream handler must not run when resolution fails")
+	})
+
+	t.Run("resolved service reaches the real handler", func(t *testing.T) {
+		streamCalls = 0
+		desc := lazyServiceDesc(src, func() (pb.KeystoreServiceServer, error) { return nil, nil })
+		require.Len(t, desc.Streams, 1)
+
+		err := desc.Streams[0].Handler(nil, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, streamCalls, "the real stream handler must run once resolution succeeds")
+	})
+}

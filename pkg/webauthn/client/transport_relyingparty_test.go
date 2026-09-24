@@ -113,6 +113,59 @@ func TestTransportRelyingParty_BeginRegistration_TransportError(t *testing.T) {
 	}
 }
 
+func TestTransportRelyingParty_FinishRegistration_TransportError(t *testing.T) {
+	rp, err := NewTransportRelyingParty(&stubTransportClient{finishRegErr: errors.New("connection reset")})
+	if err != nil {
+		t.Fatalf("NewTransportRelyingParty() error: %v", err)
+	}
+
+	_, err = rp.FinishRegistration(context.Background(), &BeginResult{SessionID: "s1"}, &RegistrationRequest{Username: "a@b.com"}, []byte("{}"))
+	if !errors.Is(err, ErrRegistrationFailed) {
+		t.Errorf("error = %v, want to wrap %v", err, ErrRegistrationFailed)
+	}
+}
+
+func TestTransportRelyingParty_FinishRegistration_Success(t *testing.T) {
+	rp, err := NewTransportRelyingParty(&stubTransportClient{
+		finishRegResp: &transport.FinishRegistrationResponse{Success: true, CredentialID: "cred-1", Token: "jwt"},
+	})
+	if err != nil {
+		t.Fatalf("NewTransportRelyingParty() error: %v", err)
+	}
+
+	result, err := rp.FinishRegistration(context.Background(), &BeginResult{SessionID: "s1"}, &RegistrationRequest{Username: "a@b.com"}, []byte("{}"))
+	if err != nil {
+		t.Fatalf("FinishRegistration() error: %v", err)
+	}
+	if result.CredentialID != "cred-1" || result.JWT != "jwt" {
+		t.Errorf("result = %+v, want CredentialID=cred-1 JWT=jwt", result)
+	}
+}
+
+func TestTransportRelyingParty_BeginAuthentication_TransportError(t *testing.T) {
+	rp, err := NewTransportRelyingParty(&stubTransportClient{beginAuthErr: errors.New("connection reset")})
+	if err != nil {
+		t.Fatalf("NewTransportRelyingParty() error: %v", err)
+	}
+
+	_, err = rp.BeginAuthentication(context.Background(), &AuthenticationRequest{Username: "a@b.com"})
+	if !errors.Is(err, ErrServerUnavailable) {
+		t.Errorf("error = %v, want to wrap %v", err, ErrServerUnavailable)
+	}
+}
+
+func TestTransportRelyingParty_FinishAuthentication_TransportError(t *testing.T) {
+	rp, err := NewTransportRelyingParty(&stubTransportClient{finishAuthErr: errors.New("connection reset")})
+	if err != nil {
+		t.Fatalf("NewTransportRelyingParty() error: %v", err)
+	}
+
+	_, err = rp.FinishAuthentication(context.Background(), &BeginResult{SessionID: "s1"}, &AuthenticationRequest{Username: "a@b.com"}, []byte("{}"))
+	if !errors.Is(err, ErrAuthenticationFailed) {
+		t.Errorf("error = %v, want to wrap %v", err, ErrAuthenticationFailed)
+	}
+}
+
 func TestTransportRelyingParty_BeginAuthentication_Success(t *testing.T) {
 	rp, err := NewTransportRelyingParty(&stubTransportClient{
 		beginAuthResp: &transport.BeginAuthenticationResponse{SessionID: "sess-1", OptionsJSON: `{"publicKey":{}}`},
