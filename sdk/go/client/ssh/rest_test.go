@@ -384,9 +384,13 @@ func TestRESTAuthorizedKeys_EmitAddListVerify(t *testing.T) {
 	}
 }
 
-// TestRESTSession_DialNotImplemented ensures the REST SessionClient
-// returns NotImplementedError as documented.
-func TestRESTSession_DialNotImplemented(t *testing.T) {
+// TestRESTSession_DialUnknownKeyPropagates asserts Session.Dial resolves the
+// remote-signer proxy before ever reaching the target host: dialing with a
+// key name the server has never seen fails with the server's typed
+// *NotFoundError rather than attempting a TCP connection to "example.com".
+// See rest_dial_test.go for the full success/host-key/signer coverage
+// against a real in-process target SSH server.
+func TestRESTSession_DialUnknownKeyPropagates(t *testing.T) {
 	_, client, cleanup := newRESTFixture(t)
 	defer cleanup()
 
@@ -394,9 +398,9 @@ func TestRESTSession_DialNotImplemented(t *testing.T) {
 		KeyScope: "user", KeyOwner: "alice", KeyName: "x",
 		Host: "example.com", User: "root",
 	})
-	var ni *sdkssh.NotImplementedError
-	if !errors.As(err, &ni) {
-		t.Fatalf("expected NotImplementedError, got %T: %v", err, err)
+	var nf *sdkssh.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected *NotFoundError, got %T: %v", err, err)
 	}
 }
 

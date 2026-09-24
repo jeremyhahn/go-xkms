@@ -1,6 +1,6 @@
 # Init Ceremony — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/init`
 
@@ -114,22 +114,50 @@ this change it silently enrolled software.
   must abort, not proceed with weak material.
 - **Shares are emitted once.** No API returns a share after the ceremony.
 
-## Known gap: the factor persister is nil
+## Admin factors are persisted (single-admin mode)
 
-`cmd/xkmsd/init_ceremony.go:403`:
+On the single-admin path (the ceremony reaches `StateOperational`),
+`executeCeremony` (`cmd/xkmsd/init_ceremony.go`) calls `bootstrapDurableAdmin`,
+which:
 
-```go
-// TODO(P1): supply the factor persister once xkmsd init runs on the
-// durable qrdb-backed store. A nil persister preserves today's
-// behaviour exactly -- factors enroll and are reported but not stored
-// -- rather than silently appearing to persist.
-Persister: nil,
-```
+1. Opens the durable qrdb node via `pkg/server.OpenEmbeddedNode`, resolving an
+   identical storage+seal shape to the one `xkmsd run` will resolve from the
+   same config (`pkg/server.ResolveNodeSeal` / `EmbeddedNodeStorageConfig`).
+2. Completes the node's own barrier when the resolved strategy leaves it
+   sealed (`unsealDurableInitNode`): `none` and a provisioned `tpm2`
+   auto-unseal at construction; `passphrase` is completed directly with
+   `--so-pin`, since `xkmsd init` IS the operator-present ceremony. `shamir`
+   is refused with the typed `ErrNodeShamirUnsupported` — see Known
+   limitations.
+3. Runs qrdb's canonical first-boot against that node
+   (`pkg/server.RunFirstBoot`) — the same sequence
+   `(*server.Server).runFirstBoot` runs, factored out into
+   `BuildFirstBootDependencies` so both callers wire identical dependencies,
+   including a `CertBinder` that pins the issued admin certificate's SPKI
+   thumbprint to the user record.
+4. Resolves the administrator's numeric userID
+   (`Client.Users().GetUserByCertThumbprint`) and builds a persister
+   (`cmd/xkmsd/init_factor_persister.go`) over the SAME node's
+   `Client.UserAuthFactors()`.
+5. Enrolls the planned admin login factors (`EnrollAdminFactors`), which calls
+   the persister once per factor immediately after it enrolls — so a failure
+   partway through leaves the earlier factors both enrolled and persisted,
+   never enrolled and lost.
+6. Closes the node before returning, success or failure, so `xkmsd run` can
+   reopen the same Pebble directory afterward.
 
-Admin factors enrolled during the ceremony are enrolled and reported, and **not
-stored**. The nil is deliberate: a non-nil placeholder would look like it
-persisted. Anyone relying on ceremony-time factor enrollment surviving a restart
-is relying on something that does not happen today.
+`(*server.Server).runFirstBoot` stays idempotent (a node whose administrator
+already exists is a no-op) and remains the safety net for a deployment that
+runs `xkmsd run` directly without `xkmsd init` first.
+
+### Known limitations
+
+- **The qrdb node barrier's own Shamir split is not yet wired.** `xkmsd init`
+  refuses with `ErrNodeShamirUnsupported` rather than attempt an unseal that
+  cannot complete with a single credential. `none`, `passphrase` and `tpm2`
+  are fully supported.
+- **M-of-N mode is unaffected.** There is no single administrator at ceremony
+  time in M-of-N mode, so `bootstrapDurableAdmin` never runs there.
 
 ## Error semantics
 
@@ -164,7 +192,8 @@ Roles accepted by `init sign-csr`: `so`, `admin`, `operator`, `user`,
 
 Ceremony state, officers, pending certificates and shares are persisted by
 **go-qrdb**. go-xkms persists the CA's own material through the keystore and
-certificate store. Admin factors are **not** persisted — see the gap above.
+certificate store. Admin factors are persisted durably on the single-admin
+path — see above.
 
 ## Test strategy
 
@@ -177,7 +206,18 @@ certificate store. Admin factors are **not** persisted — see the gap above.
   `init_public_derivation_test.go`.
 - **Route gating** — `pkg/api/{grpc,unix}/initgate_guard_test.go`,
   `pkg/api/initgate`.
-- **Integration** — `test/integration/bootstrap`, `test/integration/logins`.
+- **Durable admin persistence** — `cmd/xkmsd/init_node_test.go`
+  (`resolveInitNodeConfig`, `openDurableInitNode`, `unsealDurableInitNode`,
+  and `TestExecuteCeremony_SingleAdmin_PersistsAdminFactorAcrossReopen`, which
+  closes and reopens the durable node within the same test to prove a
+  persisted factor survives without a running process),
+  `cmd/xkmsd/init_factor_persister_test.go` (the `Enrollment` →
+  `auth.AuthFactor` conversion per factor type, and the persister's
+  fail-closed contract).
+- **Integration** — `test/integration/bootstrap`, `test/integration/logins`,
+  `test/integration/initceremony` (`integration && initceremony`; builds and
+  runs the real `xkmsd` binary through `init` → `run` → restart → mTLS
+  authentication with no re-enrollment in between).
 
 The public-derivation suites exist on both REST and MCP because the init routes
 are reachable before authentication; they assert the derivation is identical on

@@ -75,6 +75,7 @@ Rejected alternatives:
 | HashiCorp Vault | `pkg/backend/vault` | `vault` | `register_vault.go` |
 | FROST threshold | `pkg/keyprovider/frost` | `frost` | `register_frost.go` |
 | phone (xkey-android as HSM) | `pkg/backend/phone` | — | `pkg/server/backend_phone.go` |
+| AVR device (DICE identity) | `pkg/backend/avr` | — | not yet wired into `initializeBackends`; constructed by the caller around an open link |
 
 Backend construction at server start is `server.go`'s `initializeBackends`,
 which calls one `initXBackend` per backend in `pkg/server/backend_<backend>.go`

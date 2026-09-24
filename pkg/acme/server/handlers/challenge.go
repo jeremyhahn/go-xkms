@@ -23,6 +23,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -309,6 +310,28 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		authz.Status = common.StatusInvalid
 		authz.Expires = ""
+
+		// A failed challenge can signal an attack attempt (domain takeover,
+		// enumeration), not just a misconfigured client, so it is audited
+		// like the other security-relevant failures in this package.
+		errDetail := ""
+		if challenge.Error != nil {
+			errDetail = challenge.Error.Error()
+		}
+		if auditErr := s.recordAudit(audit.EventChallengeFailed, s.auditLog.LogWithContext(auditContext(r),
+			audit.EventChallengeFailed,
+			auditAccountRef(account.ID),
+			"challenge:"+strconv.FormatUint(challenge.ID, 10),
+			"validate",
+			audit.ResultFailure,
+			map[string]interface{}{
+				"challenge_type": challenge.Type,
+				"reason":         errDetail,
+			},
+		)); auditErr != nil {
+			writeError(w, common.ServerInternal("Failed to record audit event"))
+			return
+		}
 	}
 
 	// Apply the updated challenge object to the Authorization

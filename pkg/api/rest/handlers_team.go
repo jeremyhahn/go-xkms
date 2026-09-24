@@ -93,11 +93,14 @@ func (h *TeamHandlers) ListTeamsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	pr := transport.PageRequestFromQuery(r)
+	pr, err := transport.PageRequestFromQuery(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
 	tenantID := r.URL.Query().Get("tenant_id")
 
 	var teams []*staticpw.TeamEntity
-	var err error
 
 	if tenantID != "" {
 		teams, err = h.teamStore.ListByTenant(r.Context(), tenantID)

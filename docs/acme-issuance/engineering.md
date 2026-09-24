@@ -16,7 +16,10 @@
 - `pkg/acme/nonce` — nonce issue and consume.
 - `pkg/acme/issuance` — the bridge to `pkg/ca`.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
-- `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy and CAA.
+- `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
+  public suffix, reserved-IP, per-identifier-type challenge selection) and
+  CAA. `pkg/acme/policy` is wired into `NewOrderHandler` and
+  `createChallenges`; see Identifier policy below.
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go`,
   `circuit_breaker.go`, `server/degradation` — the protective layer.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
@@ -83,6 +86,14 @@ once, to the externally visible base.
 - **`enroll-01` succeeds only if the TPM can activate the credential.** The
   server never accepts a secret it did not itself protect with
   `TPM2_MakeCredential` against the verified EK.
+- **Every identifier is checked against the issuance policy engine before
+  its authorization is created.** `NewOrderHandler`
+  (`pkg/acme/server/handlers/new_order.go`) runs each identifier through
+  `pkg/acme/policy` in two phases, and never creates an authorization for an
+  identifier that fails either: format validation (RFC 1035 for DNS, RFC
+  8738 for IP), which fails `malformed`; then the blocklist, public-suffix,
+  and reserved-IP policy, which fails `rejectedIdentifier`. See Identifier
+  policy below.
 - **CAA (RFC 8659) is checked before issuance**, not after. Order finalize
   (`order_finalize.go`) calls `Params.CAAValidator.Validate` for every DNS
   identifier on the order before the CA signs; a rejection moves the order to
@@ -242,6 +253,27 @@ identifier is still reachable at its real address. Off by default
 (`XKMS_ACME_ENROLLMENT_ALLOW_LOOPBACK_IDENTIFIER`): with the key false, a
 loopback identifier is refused with `ErrLoopbackIdentifierNotAllowed` before
 the challenge verifier runs, rather than being silently substituted (#140).
+
+The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
+`pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;
+`acme.tls.cert_file` and `acme.tls.key_file` are required whenever
+`acme.enabled` is true (`ErrACMEMissingTLS`), enforced by
+`buildACMETLSConfig` in `cmd/xkmsd/acme.go`. There is no option to reuse the
+primary xkmsd TLS material — the xkmsd TLS stack is authenticated against the
+xkmsd REST/gRPC server CN and would generally not match an ACME client's
+expected hostname. The `acme.reuse_tls` key that once gated this (and was
+refused at start-up rather than actually working) is deleted from the schema;
+`pkg/config.Load` rejects a file or environment variable that still sets it
+with a typed `*config.RemovedFieldError{Field, Replacement}` before the
+decoder gets a chance to silently drop it. This reuses the general removed-
+field mechanism go-xkms#653 introduced for `barrier.passphrase`:
+`removedConfigFields` (`pkg/config/load.go`) maps a dotted key to its
+replacement guidance, and `rejectRemovedFields` — run on the merged viper
+instance after the file is read and before `Unmarshal` — binds each key to
+its canonical `XKMS_`-prefixed environment name, so a stale
+`XKMS_ACME_REUSE_TLS` is rejected exactly like a stale file key, and fails
+with `*RemovedFieldError` if either source still sets it. Adding a future
+field deletion is one entry in that table (go-xkms#694).
 
 The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`) is a
 separate configuration surface — not built from `pkg/config` and not read

@@ -18,10 +18,11 @@
 // newline-delimited JSON framing — the same wire format used by the
 // existing pkg/api/transport/mcp Transport.
 //
-// Session.Dial is not supported over this transport. Interactive SSH
-// sessions require a stateful bidirectional stream that JSON-RPC 2.0
-// over TCP does not model. Use the embedded transport for local
-// sessions.
+// Session.Dial is supported: it dials the target SSH host directly from
+// this process and uses MCP only for the signing and host-key-verification
+// RPCs, neither of which needs a stream. Console is not supported over this
+// transport — an interactive console needs a stateful bidirectional byte
+// stream that JSON-RPC 2.0 over TCP does not model.
 package ssh
 
 import (
@@ -112,7 +113,7 @@ func (c *mcpClient) KnownHosts() KnownHostsClient { return &mcpKnownHostsClient{
 func (c *mcpClient) AuthorizedKeys() AuthorizedKeysClient {
 	return &mcpAuthorizedKeysClient{c: c}
 }
-func (c *mcpClient) Session() SessionClient { return &mcpSessionClient{} }
+func (c *mcpClient) Session() SessionClient { return &mcpSessionClient{c: c} }
 
 // Console is unsupported over MCP: JSON-RPC request/response cannot carry an
 // interactive byte stream.
@@ -557,20 +558,24 @@ func (a *mcpAuthorizedKeysClient) Verify(ctx context.Context, scope, owner strin
 }
 
 // ----------------------------------------------------------------------------
-// Session sub-client stub.
+// Session sub-client.
 // ----------------------------------------------------------------------------
 
-// mcpSessionClient implements SessionClient over MCP. Dial is not
-// supported — interactive SSH sessions require a stateful bidirectional
-// stream that cannot be modelled over JSON-RPC 2.0 request/response.
-type mcpSessionClient struct{}
+// mcpSessionClient implements SessionClient over MCP. Dial needs no
+// bidirectional stream from the MCP connection: it only uses MCP for the
+// signing and host-key-verification RPCs, then dials the SSH connection
+// directly from this process. Only Console needs a persistent byte stream
+// (see mcpClient.Console), which JSON-RPC 2.0 request/response cannot carry.
+type mcpSessionClient struct {
+	c *mcpClient
+}
 
-// Dial returns *NotImplementedError for the MCP transport.
-func (s *mcpSessionClient) Dial(_ context.Context, _ SessionDialRequest) (Session, error) {
-	return nil, &NotImplementedError{
-		Transport: "mcp",
-		Op:        "Session.Dial (use embedded transport for local sessions)",
-	}
+// Dial resolves the authentication key to a forward-signing proxy and the
+// target host to a wire-verified callback, both over MCP, then dials the
+// SSH connection directly from this process. See dialNetworkSession for the
+// shared implementation and its host-key trust model.
+func (s *mcpSessionClient) Dial(ctx context.Context, req SessionDialRequest) (Session, error) {
+	return dialNetworkSession(ctx, &mcpKeysClient{c: s.c}, &mcpKnownHostsClient{c: s.c}, req)
 }
 
 // ----------------------------------------------------------------------------

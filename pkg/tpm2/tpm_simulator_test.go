@@ -701,7 +701,6 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 			},
 		},
 		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},

@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -40,6 +41,17 @@ type simHarness struct {
 // and so on without duplicating the whole configuration.
 func newSimHarness(t *testing.T, mutate func(*Config)) *simHarness {
 	t.Helper()
+	return newSimHarnessWithHTTPClient(t, mutate, nil)
+}
+
+// newSimHarnessWithHTTPClient is newSimHarness with an additional hook for
+// the HTTP client used by the manufacturer EK certificate service request
+// (see Params.HTTPClient). httpClient is nil in every ordinary caller, which
+// leaves EKCertificate's outbound download on the default client; tests of
+// that download path pass an httptest server's client, or one that fails the
+// test if it is ever invoked.
+func newSimHarnessWithHTTPClient(t *testing.T, mutate func(*Config), httpClient *http.Client) *simHarness {
+	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -69,6 +81,7 @@ func newSimHarness(t *testing.T, mutate func(*Config)) *simHarness {
 		Backend:      storageFactory.KeyBackend(),
 		Transport:    sim.Transport(),
 		FQDN:         "node1.example.com",
+		HTTPClient:   httpClient,
 	}
 
 	tpmIface, err := NewTPM2(params)
@@ -137,7 +150,6 @@ func newSimConfig() *Config {
 			},
 		},
 		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},

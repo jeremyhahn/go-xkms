@@ -113,12 +113,15 @@ func tpmError(cause error) error {
 	return &SentinelCauseError{Sentinel: ErrTPMOperationFailed, Cause: cause}
 }
 
-// logTPM records an enrollment operation to the audit log when one is configured.
-func (b *Bridge) logTPM(op audit.OperationType, method string, success bool, err error) {
+// logTPM records an enrollment operation to the audit log when one is
+// configured. Every TCG enrollment operation is SeveritySecurity, so the
+// caller must propagate a non-nil return and fail the request rather than
+// proceed unaudited.
+func (b *Bridge) logTPM(op audit.OperationType, method string, success bool, err error) error {
 	if b.auditLogger == nil {
-		return
+		return nil
 	}
-	b.auditLogger.LogTPMOperation(op, success, err, map[string]any{
+	return b.auditLogger.LogTPMOperation(op, success, err, map[string]any{
 		"method":     method,
 		"deviceId":   b.config.DeviceID,
 		"deviceName": b.config.DeviceName,
@@ -154,7 +157,9 @@ func (b *Bridge) handleGetTCGCSRIDevID(_ context.Context, params json.RawMessage
 	result, err := buildTCGCSRIDevID(tpm)
 	if err != nil {
 		b.logger.Error("TCG-CSR-IDEVID generation failed", "backend", backend, "error", err)
-		b.logTPM(audit.OpDeviceAttested, MethodRemoteGetTCGCSRIDevID, false, err)
+		if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteGetTCGCSRIDevID, false, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -162,7 +167,9 @@ func (b *Bridge) handleGetTCGCSRIDevID(_ context.Context, params json.RawMessage
 		"backend", backend,
 		"csrLen", len(result.CSR),
 		"platformModel", result.PlatformModel)
-	b.logTPM(audit.OpDeviceAttested, MethodRemoteGetTCGCSRIDevID, true, nil)
+	if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteGetTCGCSRIDevID, true, nil); auditErr != nil {
+		return nil, auditErr
+	}
 
 	return result, nil
 }
@@ -271,14 +278,18 @@ func (b *Bridge) handleActivateCredential(_ context.Context, params json.RawMess
 	secret, err := tpm.ActivateCredential(p.CredentialBlob, p.EncryptedSecret)
 	if err != nil {
 		b.logger.Error("credential activation failed", "backend", backend, "error", err)
-		b.logTPM(audit.OpDeviceAttested, MethodRemoteActivateCredential, false, err)
+		if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteActivateCredential, false, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, tpmError(err)
 	}
 
 	b.logger.Info("credential activated",
 		"backend", backend,
 		"secretLen", len(secret))
-	b.logTPM(audit.OpDeviceAttested, MethodRemoteActivateCredential, true, nil)
+	if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteActivateCredential, true, nil); auditErr != nil {
+		return nil, auditErr
+	}
 
 	return &RemoteActivateCredentialResult{DecryptedSecret: secret}, nil
 }
@@ -342,13 +353,17 @@ func (b *Bridge) handleGetAttestationQuote(_ context.Context, params json.RawMes
 	quote, err := tpm.Quote(pcrs, p.Nonce)
 	if err != nil {
 		b.logger.Error("attestation quote failed", "backend", backend, "error", err)
-		b.logTPM(audit.OpDeviceAttested, MethodRemoteGetAttestationQuote, false, err)
+		if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteGetAttestationQuote, false, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, tpmError(err)
 	}
 
 	values, err := pcrValues(quote.PCRs, signingBank)
 	if err != nil {
-		b.logTPM(audit.OpDeviceAttested, MethodRemoteGetAttestationQuote, false, err)
+		if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteGetAttestationQuote, false, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -356,7 +371,9 @@ func (b *Bridge) handleGetAttestationQuote(_ context.Context, params json.RawMes
 		"backend", backend,
 		"pcrBank", signingBank,
 		"pcrCount", len(values))
-	b.logTPM(audit.OpDeviceAttested, MethodRemoteGetAttestationQuote, true, nil)
+	if auditErr := b.logTPM(audit.OpDeviceAttested, MethodRemoteGetAttestationQuote, true, nil); auditErr != nil {
+		return nil, auditErr
+	}
 
 	return &RemoteGetAttestationQuoteResult{
 		Quoted:    quote.Quoted,
@@ -416,19 +433,25 @@ func (b *Bridge) handleStoreEnrollmentCerts(_ context.Context, params json.RawMe
 
 	if err := tpm.ProvisionIAKCert(iakCert); err != nil {
 		b.logger.Error("IAK certificate provisioning failed", "error", err)
-		b.logTPM(audit.OpTPMProvisioned, MethodRemoteStoreEnrollmentCerts, false, err)
+		if auditErr := b.logTPM(audit.OpTPMProvisioned, MethodRemoteStoreEnrollmentCerts, false, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, tpmError(err)
 	}
 	if err := tpm.ProvisionIDevIDCert(idevidCert); err != nil {
 		b.logger.Error("IDevID certificate provisioning failed", "error", err)
-		b.logTPM(audit.OpTPMProvisioned, MethodRemoteStoreEnrollmentCerts, false, err)
+		if auditErr := b.logTPM(audit.OpTPMProvisioned, MethodRemoteStoreEnrollmentCerts, false, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, tpmError(err)
 	}
 
 	b.logger.Info("enrollment certificates stored",
 		"backend", backend,
 		"chainLen", len(p.Chain))
-	b.logTPM(audit.OpTPMProvisioned, MethodRemoteStoreEnrollmentCerts, true, nil)
+	if auditErr := b.logTPM(audit.OpTPMProvisioned, MethodRemoteStoreEnrollmentCerts, true, nil); auditErr != nil {
+		return nil, auditErr
+	}
 
 	return &RemoteStoreEnrollmentCertsResult{
 		Stored:                true,

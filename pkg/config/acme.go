@@ -36,9 +36,10 @@ var (
 	// no keystore backend has been configured for the ACME CA to use.
 	ErrACMEMissingKeystoreBackend = errors.New("acme: keystore_backend is required when acme.enabled is true")
 
-	// ErrACMEMissingTLS is returned when acme.enabled is true, acme.reuse_tls
-	// is false, and no TLS cert/key pair has been configured.
-	ErrACMEMissingTLS = errors.New("acme: tls.cert_file and tls.key_file are required when acme.reuse_tls is false")
+	// ErrACMEMissingTLS is returned when acme.enabled is true and no TLS
+	// cert/key pair has been configured. The ACME listener always uses its
+	// own dedicated TLS material.
+	ErrACMEMissingTLS = errors.New("acme: tls.cert_file and tls.key_file are required when acme.enabled is true")
 
 	// ErrACMEAuditNegativeRetention is returned when an audit rotation knob is
 	// configured with a negative value. Zero selects the built-in default;
@@ -66,8 +67,8 @@ var (
 //
 // The ACME server is always served on a dedicated HTTPS listener because
 // RFC 8555 clients expect a standalone directory resource. The listener is
-// configured via HTTPSAddr and uses either the inherited xkmsd TLS material
-// (ReuseTLS == true) or its own certificate/key pair.
+// configured via HTTPSAddr and always uses its own certificate/key pair,
+// configured through TLS below.
 type ACMEConfig struct {
 	// Enabled controls whether the ACME server is started. When false the
 	// remainder of this config is ignored.
@@ -127,12 +128,8 @@ type ACMEConfig struct {
 	// "<storage.path>/acme".
 	DataDir string `yaml:"data_dir"`
 
-	// ReuseTLS indicates whether the ACME listener should reuse the xkmsd
-	// TLS configuration (tls.cert_file/tls.key_file or CA-backed TLS). When
-	// false the TLS section below is required.
-	ReuseTLS bool `yaml:"reuse_tls"`
-
-	// TLS configures the ACME listener's TLS settings when ReuseTLS is false.
+	// TLS configures the ACME listener's TLS settings. Required when Enabled
+	// is true.
 	TLS ACMETLSConfig `yaml:"tls"`
 
 	// Audit configures the ACME audit trail: the tamper-evident record of
@@ -145,6 +142,12 @@ type ACMEConfig struct {
 	// challenges (enroll-01/endorse-01/device-attest-01). See
 	// ACMEEnrollmentConfig.
 	Enrollment ACMEEnrollmentConfig `yaml:"enrollment"`
+
+	// Policy configures the ACME identifier issuance policy engine: the
+	// domain/FQDN/wildcard/CIDR blocklist, public-suffix and reserved-IP
+	// enforcement, and per-identifier-type challenge selection. See
+	// ACMEPolicyConfig.
+	Policy ACMEPolicyConfig `yaml:"policy"`
 }
 
 // ACMEEnrollmentConfig configures behavior specific to TPM-attestation
@@ -334,8 +337,7 @@ type ACMEChallengesConfig struct {
 	Endorse01 bool `yaml:"endorse01"`
 }
 
-// ACMETLSConfig configures TLS for the ACME listener. These values are only
-// consulted when ACMEConfig.ReuseTLS is false.
+// ACMETLSConfig configures TLS for the ACME listener.
 type ACMETLSConfig struct {
 	// CertFile is the PEM-encoded server certificate.
 	CertFile string `yaml:"cert_file"`
@@ -377,13 +379,16 @@ func (c *ACMEConfig) Validate() error {
 	if len(c.CAAIdentities) == 0 {
 		return ErrACMEMissingCAAIdentities
 	}
-	if !c.ReuseTLS && (c.TLS.CertFile == "" || c.TLS.KeyFile == "") {
+	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" {
 		return ErrACMEMissingTLS
 	}
 	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 && !c.Challenges.Enroll01 && !c.Challenges.Endorse01 {
 		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
 	}
 	if err := c.Audit.Validate(); err != nil {
+		return err
+	}
+	if err := c.Policy.Validate(); err != nil {
 		return err
 	}
 	return nil
