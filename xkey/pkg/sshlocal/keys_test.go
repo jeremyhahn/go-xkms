@@ -16,6 +16,7 @@ package sshlocal
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -174,6 +175,61 @@ func TestListLocalKeys_AgentDedupeAndAgentOnly(t *testing.T) {
 	}
 	if agentOnly.Source != SourceAgent || agentOnly.Path != "" {
 		t.Fatalf("unexpected agent-only entry: %+v", agentOnly)
+	}
+}
+
+// TestListLocalKeys_ConfigLoadError verifies that a ssh_config which exists
+// but cannot be read is surfaced as a typed ConfigLoadError, not silently
+// treated the same as a missing file. A directory in place of the config
+// file forces the read to fail regardless of the parser's leniency.
+func TestListLocalKeys_ConfigLoadError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sshDir, "config"), 0o700); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+
+	_, err := ListLocalKeys()
+	if err == nil {
+		t.Fatal("expected an error for an unreadable ssh_config")
+	}
+	var configErr *ConfigLoadError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("ListLocalKeys() error = %T, want *ConfigLoadError", err)
+	}
+}
+
+// TestListLocalKeys_IdentityDiscoveryError verifies that an unexpected
+// failure enumerating candidate identity files (here, a self-referential
+// symlink that makes os.Stat fail with ELOOP rather than "not exist") is
+// surfaced as a typed IdentityDiscoveryError.
+func TestListLocalKeys_IdentityDiscoveryError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SSH_AUTH_SOCK", "")
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	selfLink := filepath.Join(sshDir, "id_rsa")
+	if err := os.Symlink(selfLink, selfLink); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	_, err := ListLocalKeys()
+	if err == nil {
+		t.Fatal("expected an error for an unstat-able identity candidate")
+	}
+	var idErr *IdentityDiscoveryError
+	if !errors.As(err, &idErr) {
+		t.Fatalf("ListLocalKeys() error = %T, want *IdentityDiscoveryError", err)
 	}
 }
 
