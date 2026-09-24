@@ -20,6 +20,7 @@ tell.
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
+| [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
 | [seal](seal/) | The Barrier, barrier PCR-policy auto-unseal (shared by the CLI and GUI), the named PCR policy store, and the legacy sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
