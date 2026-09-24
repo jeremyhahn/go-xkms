@@ -62,10 +62,37 @@ server's pins), neither of which needs a byte stream. That is why MCP's
 request/response JSON-RPC framing, which cannot carry Console, has no
 trouble with Dial. Host-key verification fails closed on every transport: an
 unrecognized or mismatched host key is a typed error
-(`*sdkssh.NotFoundError` / `*sdkssh.MismatchError` on REST and gRPC; MCP
-collapses server-side verify failures to `*sdkssh.ProtocolError` — still
-typed, never a silent accept) — there is no `InsecureIgnoreHostKey` path
+(`*sdkssh.NotFoundError` / `*sdkssh.MismatchError` on every transport; see
+Errors below) — there is no `InsecureIgnoreHostKey` path
 anywhere in the SDK.
+
+## Errors
+
+A missing key, a re-pinned host or authorized entry, and a known_hosts
+host-key mismatch (a MITM indicator) report the same class of failure on
+every transport, driven by one shared table in
+`sdk/go/client/ssh` (`classify`, consumed by `HTTPStatusForError`,
+`GRPCCodeForError`, and `JSONRPCCodeForError`) so REST, gRPC, and MCP never
+drift from each other:
+
+| Store error | REST | gRPC | MCP (JSON-RPC) |
+|---|---|---|---|
+| `*pkgkeys.KeyNotFoundError`, `*pkgknownhosts.NotFoundError`, `*pkgauthorized.NotFoundError` | 404 | `NotFound` | -32001 |
+| `*pkgknownhosts.DuplicateError`, `*pkgauthorized.DuplicateError` (Add called twice without a Remove) | 409 | `AlreadyExists` | -32005 |
+| `*pkgknownhosts.MismatchError` (presented host key does not match the pin) | 409 | `FailedPrecondition` | -32006 |
+| validation errors (`*InvalidScopeError`, `*InvalidAlgorithmError`, `*pkgkeys.InvalidKeySizeError`, …) | 400 | `InvalidArgument` | -32602 (Invalid params) |
+| `*NotImplementedError` (a method the server does not serve) | 501 | `Unimplemented` | -32601 (Method not found) |
+| `*BackendUnavailableError` (no `BackendProvider` wired for the requested backend) | — (falls to 500) | `FailedPrecondition` | — (falls to Internal) |
+| anything else | 500 | `Internal` | -32603 (Internal error) |
+
+REST and MCP report `DuplicateError` and `MismatchError` as the same status
+(409 / -32005 and -32006 are still distinct on MCP, since JSON-RPC's
+implementation-defined range has room to keep them apart even though HTTP's
+409 does not). An unrecognized error is never echoed onto the gRPC status
+message verbatim — only the table above's recognized classes carry their own
+message; everything else answers a fixed `"ssh: internal error"` so a
+storage-backend detail (a filesystem path, a driver error) never reaches an
+RPC caller.
 
 ## CLI
 

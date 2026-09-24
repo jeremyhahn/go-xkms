@@ -340,21 +340,28 @@ func sshKeyToProto(k *sdkssh.Key) *pb.SSHKeyInfo {
 	}
 }
 
-// sshStatus maps an SDK SSH error to a gRPC status. Not-found errors map to
-// codes.NotFound; everything else is codes.Internal with the message
-// preserved.
+// sshStatus maps an SDK SSH error to a gRPC status, reusing
+// sdkssh.GRPCCodeForError -- the single table shared with the REST transport
+// (sdkssh.HTTPStatusForError) and the MCP transport (sdkssh.
+// JSONRPCCodeForError) -- so a *pkgkeys.KeyNotFoundError, a
+// *pkgknownhosts.NotFoundError/DuplicateError/MismatchError, and their
+// authorized_keys siblings report the same NotFound/AlreadyExists/
+// FailedPrecondition semantics here that REST already reports as 404/409,
+// instead of every embedded-store error short of *sdkssh.NotFoundError
+// falling through to codes.Internal (#769).
+//
+// A code this table cannot classify (codes.Internal) does not echo err's
+// message: an error this table does not vouch for may wrap storage-backend
+// detail (a filesystem path, a driver error) that should not reach an RPC
+// caller. Every recognized class carries its own caller-facing typed
+// message instead.
 func sshStatus(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch err.(type) {
-	case *sdkssh.NotFoundError:
-		return status.Error(codes.NotFound, err.Error())
-	case *sdkssh.InvalidScopeError, *sdkssh.InvalidAlgorithmError, *sdkssh.InvalidRequestError:
-		return status.Error(codes.InvalidArgument, err.Error())
-	case *sdkssh.BackendUnavailableError:
-		return status.Error(codes.FailedPrecondition, err.Error())
-	default:
-		return status.Error(codes.Internal, err.Error())
+	code := sdkssh.GRPCCodeForError(err)
+	if code == codes.Internal {
+		return status.Error(code, "ssh: internal error")
 	}
+	return status.Error(code, err.Error())
 }
