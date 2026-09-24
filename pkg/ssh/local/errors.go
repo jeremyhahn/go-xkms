@@ -13,6 +13,14 @@
 
 package local
 
+import "errors"
+
+// ErrNoAgentSocket is returned (wrapped in *AgentUnavailableError) by
+// DialAgent when sockPath is empty — there is no ssh-agent socket
+// configured to dial, as distinct from a configured socket that could not
+// be reached.
+var ErrNoAgentSocket = errors.New("ssh/local: no agent socket configured")
+
 // NilInputError is returned when a required argument is nil or empty.
 // Field names the offending argument so callers can surface precise
 // diagnostics.
