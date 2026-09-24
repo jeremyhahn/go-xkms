@@ -176,9 +176,11 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 
 	// Save public blob
 	if err := tpm.backend.Save(attrs, publicBlob, ".pub", false); err != nil {
-		// Cleanup private blob on failure
-		_ = tpm.backend.Delete(attrs)
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to save public blob", Err: err}
+		// Cleanup private blob on failure. A failed cleanup is joined onto the
+		// save error rather than discarded, since it leaves an orphaned
+		// private blob behind with no public half.
+		deleteErr := tpm.backend.Delete(attrs)
+		return nil, errors.Join(&errs.Wrapped{Msg: "tpm2: failed to save public blob", Err: err}, deleteErr)
 	}
 
 	// Initialize AEAD tracking options for this key
@@ -580,7 +582,9 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to load sealed key", Err: err}
 	}
-	defer func() { _, _ = tpm2.FlushContext{FlushHandle: loadResp.ObjectHandle}.Execute(e.tpm.transport) }()
+	// Flush logs its own failure (tpm.Flush); a discarded FlushContext error
+	// here would otherwise leave a leaked transient handle unreported.
+	defer e.tpm.Flush(loadResp.ObjectHandle)
 
 	// Unseal the key material using TPM2_Unseal
 	unsealResp, err := tpm2.Unseal{
