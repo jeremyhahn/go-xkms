@@ -227,10 +227,12 @@ func (t *EmbeddedTransport) Encrypt(ctx context.Context, req *transport.EncryptR
 		return nil, &DetailError{Err: ErrEncryptionFailed, Detail: ": backend does not support symmetric encryption"}
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(ctx, &xkms.KeyAttributes{
-		CN:        req.KeyID,
-		StoreType: xkms.StoreType(req.Backend),
-	})
+	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
+	if err != nil {
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
+	}
+
+	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
 	}
@@ -311,10 +313,12 @@ func (t *EmbeddedTransport) Decrypt(ctx context.Context, req *transport.DecryptR
 		return nil, &DetailError{Err: ErrDecryptionFailed, Detail: ": backend does not support symmetric decryption"}
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(ctx, &xkms.KeyAttributes{
-		CN:        req.KeyID,
-		StoreType: xkms.StoreType(req.Backend),
-	})
+	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
+	if err != nil {
+		return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
+	}
+
+	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
@@ -429,11 +433,18 @@ func (t *EmbeddedTransport) WrapKeyByID(ctx context.Context, req *transport.Wrap
 	}
 
 	// Export the target key material (unwrapped) for wrapping.
+	//
+	// xkms.ExportKey's kid accepts exactly two shapes: a bare name with no
+	// colon at all, or the full "backend:type:algo:keyname" with all three
+	// colons present (validation.ValidateKeyReference). "backend:keyname"
+	// (one colon) is neither and is rejected outright, so the separator is
+	// the three-colon backend-only shorthand ":::keyname" documented there,
+	// not a single ":".
 	targetBackend := req.TargetKeyBackend
 	if targetBackend == "" {
 		targetBackend = req.WrappingKeyBackend
 	}
-	targetKID := targetBackend + ":" + req.TargetKeyID
+	targetKID := targetBackend + ":::" + req.TargetKeyID
 
 	exported, err := xkms.ExportKey(ctx, targetKID, xkms.WrappingAlgorithm(""))
 	if err != nil {
@@ -776,22 +787,27 @@ func parseHashAlgorithm(name string) crypto.Hash {
 	return crypto.SHA256
 }
 
+// signerPublicKey is satisfied by every crypto.PrivateKey this function
+// receives in practice: the stdlib *rsa.PrivateKey, *ecdsa.PrivateKey and
+// ed25519.PrivateKey all implement it directly, and so does *opaque.Opaque,
+// the wrapper xkms.ServiceBackend.GenerateRSA/GenerateECDSA/GenerateEd25519
+// actually return so hardware-backed key material never has to leave the
+// backend. A type switch on the three stdlib concrete types alone rejected
+// every key GenerateKey's own callers hand it, with "unsupported key type:
+// *opaque.Opaque" -- the extraction step failed for every backend, not a
+// specific one.
+type signerPublicKey interface {
+	Public() crypto.PublicKey
+}
+
 // extractPublicKeyPEM extracts the public key from a private key and returns it as PEM.
 func extractPublicKeyPEM(privKey crypto.PrivateKey) (string, error) {
-	var pubKey crypto.PublicKey
-
-	switch k := privKey.(type) {
-	case *rsa.PrivateKey:
-		pubKey = &k.PublicKey
-	case *ecdsa.PrivateKey:
-		pubKey = &k.PublicKey
-	case ed25519.PrivateKey:
-		pubKey = k.Public()
-	default:
+	signer, ok := privKey.(signerPublicKey)
+	if !ok {
 		return "", &MessageError{Msg: fmt.Sprintf("unsupported key type: %T", privKey)}
 	}
 
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(signer.Public())
 	if err != nil {
 		return "", &WrappedError{Msg: "failed to marshal public key", Err: err}
 	}
