@@ -145,6 +145,14 @@ type ACMEConfig struct {
 	// challenges (enroll-01/endorse-01/device-attest-01). See
 	// ACMEEnrollmentConfig.
 	Enrollment ACMEEnrollmentConfig `yaml:"enrollment"`
+
+	// Resilience configures the circuit breakers guarding the ACME server's
+	// outbound dependencies (the http-01 and dns-01 challenge verifiers, CT
+	// log submission, the tenant KMS signer, and CA-bundle storage access)
+	// and the degradation cache the directory and CA-bundle endpoints serve
+	// from while CA-bundle storage access is unavailable. See
+	// ACMEResilienceConfig.
+	Resilience ACMEResilienceConfig `yaml:"resilience"`
 }
 
 // ACMEEnrollmentConfig configures behavior specific to TPM-attestation
@@ -384,6 +392,9 @@ func (c *ACMEConfig) Validate() error {
 		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
 	}
 	if err := c.Audit.Validate(); err != nil {
+		return err
+	}
+	if err := c.Resilience.Validate(); err != nil {
 		return err
 	}
 	return nil

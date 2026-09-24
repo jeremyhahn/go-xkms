@@ -38,6 +38,7 @@ import (
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
@@ -216,8 +217,15 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		return nil, &acmeInitError{Stage: "create storage factory", Err: err}
 	}
 
+	// The shared circuit breaker manager backs every wrapped ACME outbound
+	// dependency: the challenge verifiers wrapped below, and the storage
+	// breaker RestService creates for its own CA-bundle access. Threading one
+	// Manager through both means HealthHandler reports every breaker from a
+	// single registry.
+	breakers := circuitbreaker.NewManager()
+
 	// Build the challenge verifier map based on configured challenge types.
-	challengeMap := buildChallengeMap(acmeCfg.Challenges)
+	challengeMap := buildChallengeMap(acmeCfg.Challenges, acmeCfg.Resilience, breakers)
 
 	// When cluster ACME enrollment is active, register the pre-sign hook that
 	// stamps the SPIFFE node identity (spiffe://<trust-domain>/node/<raft-addr>)
@@ -271,6 +279,12 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		OrderPreSignHooks:       preSignHooks,
 		StorageFactory:          storageFactory,
 		TermsOfService:          acmeCfg.TermsOfService,
+		Breakers:                breakers,
+		StorageBreaker:          acmeCfg.Resilience.Storage.CircuitBreakerConfig("storage"),
+		KMSBreaker:              acmeCfg.Resilience.KMS.CircuitBreakerConfig("kms"),
+		DegradationCacheTTL:     acmeCfg.Resilience.Degradation.ResolveCacheTTL(),
+		DegradationStaleTTL:     acmeCfg.Resilience.Degradation.ResolveStaleTTL(),
+		DegradationMaxCacheSize: acmeCfg.Resilience.Degradation.ResolveMaxCacheSize(),
 	})
 	if err != nil {
 		return nil, &acmeInitError{Stage: "create REST service", Sentinel: ErrACMERestService, Err: err}
@@ -395,23 +409,43 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 // buildChallengeMap builds the map of challenge type -> verifier function
 // based on the supplied configuration. At least one challenge type must be
 // enabled; this is enforced by config.ACMEConfig.Validate.
-func buildChallengeMap(cfg config.ACMEChallengesConfig) map[string]common.ChallengeVerifierFunc {
+//
+// The http-01 and dns-01 verifiers are wrapped with a breaker from breakers,
+// configured from resilience, so a target that stops responding trips its
+// own breaker instead of holding up every challenge validation sharing the
+// same worker (circuitbreaker.WrapChallengeVerifier). A nil breakers leaves
+// both verifiers unwrapped.
+func buildChallengeMap(
+	cfg config.ACMEChallengesConfig,
+	resilience config.ACMEResilienceConfig,
+	breakers *circuitbreaker.Manager,
+) map[string]common.ChallengeVerifierFunc {
 	m := make(map[string]common.ChallengeVerifierFunc, 2)
 	if cfg.HTTP01 {
-		m[common.ChallengeTypeHTTP01] = func(
+		verifier := common.ChallengeVerifierFunc(func(
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return http01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
+		})
+		if breakers != nil {
+			cb := breakers.GetOrCreate(resilience.HTTP01.CircuitBreakerConfig("http01"))
+			verifier = circuitbreaker.WrapChallengeVerifier(cb, verifier)
 		}
+		m[common.ChallengeTypeHTTP01] = verifier
 	}
 	if cfg.DNS01 {
-		m[common.ChallengeTypeDNS01] = func(
+		verifier := common.ChallengeVerifierFunc(func(
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return dns01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
+		})
+		if breakers != nil {
+			cb := breakers.GetOrCreate(resilience.DNS01.CircuitBreakerConfig("dns01"))
+			verifier = circuitbreaker.WrapChallengeVerifier(cb, verifier)
 		}
+		m[common.ChallengeTypeDNS01] = verifier
 	}
 	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK
 	// wiring so every ACME server in the stack (xkmsd, quicbaas) enables them
@@ -479,6 +513,7 @@ func buildACMERouter(svc handlers.RestServicer, directoryPath string) http.Handl
 	r.HandleFunc(directoryPath+"/revoke-cert", svc.RevokeCertHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/key-change", svc.KeyChangeHandler).Methods(http.MethodPost)
 	r.HandleFunc(directoryPath+"/ca-bundle", svc.CABundleHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(directoryPath+"/health", svc.HealthHandler).Methods(http.MethodGet)
 	return r
 }
 

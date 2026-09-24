@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -17,8 +17,14 @@
 - `pkg/acme/issuance` — the bridge to `pkg/ca`.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy and CAA.
-- `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go`,
-  `circuit_breaker.go`, `server/degradation` — the protective layer.
+- `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go` — request-rate
+  enforcement.
+- `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
+  (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
+  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators) and
+  `pkg/acme/server/degradation` (the cache-backed graceful-degradation
+  primitives) — the protective layer. See "Circuit breakers and degradation"
+  below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -98,8 +104,9 @@ once, to the externally visible base.
   issuance rather than "proceeding with caution".
 - **Rate limits are per account and per tenant.** Exceeding either refuses the
   order; it does not queue it.
-- **Under pressure the circuit breaker refuses new orders.** Degradation never
-  means "issue without validating".
+- **A breaker guards the one dependency it wraps, not order creation, and
+  degradation never means "issue without validating".** See "Circuit
+  breakers and degradation" below for exactly what is and is not covered.
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -168,6 +175,81 @@ once, to the externally visible base.
   a window in which two concurrent finish requests can both validate the same
   challenge and both succeed.
 
+## Circuit breakers and degradation
+
+`pkg/acme/server/circuitbreaker` is the one circuit breaker implementation
+(go-xkms#735 folded the previously-duplicated HTTP middleware into it). Five
+dependencies each get their own breaker from a shared `circuitbreaker.Manager`:
+
+| Breaker name | Guards | Wired by |
+|---|---|---|
+| `http01` | the `http-01` challenge verifier | `cmd/xkmsd/acme.go:buildChallengeMap`, via `circuitbreaker.WrapChallengeVerifier` |
+| `dns01` | the `dns-01` challenge verifier | same, `circuitbreaker.WrapChallengeVerifier` |
+| `ct` | CT log submission (`ct.LogSubmitter`) | `circuitbreaker.WrapLogSubmitter` — no production call site yet; see architecture.md |
+| `kms` | `Params.KMSService` (the tenant KMS signer) | `handlers.NewRestService`, automatically, when both `Params.Breakers` and `Params.KMSService` are set |
+| `storage` | CA/keystore-backed certificate storage (`CA.CABundleFiltered`, `GET /acme/ca-bundle`'s dependency) | `handlers.NewRestService`, from `Params.StorageBreaker` |
+
+`storage` here is **not** the go-qrdb-backed ACME protocol state
+(`pkg/acme/storage` → `go-qrdb/sdk/go`, accounts/orders/authorizations/
+challenges/nonces). That storage is not wrapped in a circuit breaker: its
+consistency and retry semantics are go-qrdb's, "lower layers win", and a
+breaker's `Execute`/`ExecuteContext` abandon their goroutine on a
+breaker-imposed timeout without waiting for it — safe for an idempotent read
+or a third-party network call, wrong for a durable write whose caller must
+not believe it failed while it is still committing. The candidate wrapping
+point on the ACME side — `storage.Factory`'s `AccountDAO`/`OrderDAO`/etc.
+constructors — does no I/O and never fails for a reason a breaker should
+react to, only on malformed input (e.g. a zero account ID), so wrapping it
+would trip the breaker on bad requests rather than backend health. Both are
+deliberate omissions, not gaps.
+
+An open breaker fails only the one call it guards:
+
+- A `http-01`/`dns-01` breaker open makes `ChallengeHandler`'s validation
+  attempt fail immediately with `incorrectResponse` instead of hanging on a
+  dead verifier target for its own timeout.
+- A `kms` breaker open makes `OrderFinalizeHandler`'s tenant-CA signing path
+  fail (`getTenantCASigner`/`tenantIssuerCertificate` in
+  `order_finalize.go`).
+- A `storage` breaker open falls back to `pkg/acme/server/degradation`'s
+  cache for `GET /acme/directory` and `GET /acme/ca-bundle` (see below)
+  rather than failing those two GET endpoints outright.
+
+None of these intercepts `POST /acme/new-order`: creating an order writes
+only to the (unwrapped) ACME protocol state and calls none of the five
+guarded dependencies. An operator reading "the circuit breaker" as a gate in
+front of order creation is reading a claim this feature does not make; a
+previous revision of this document did make that claim and was wrong (see
+git history on this section, go-xkms#735).
+
+**Degradation.** `RestService.serveOrDegrade` (CABundleHandler) runs its
+compute through the `storage` breaker and, on any failure — the breaker
+open, too many half-open probes, or a genuine `CA.CABundleFiltered` error —
+falls back to `pkg/acme/server/degradation.Cache`'s last entry: still-fresh
+(within `Resilience.Degradation.CacheTTLSeconds`) is served as a normal
+response, stale-but-within-`StaleTTLSeconds` is served with a
+`Warning: 110 - "Response is stale"` header, and no usable entry propagates
+the failure. `RestService.serveCachedWhenOpen` (DirectoryHandler) only peeks
+at the `storage` breaker's state — it never calls `Execute` — because
+building the directory has no fallible call of its own; running it through
+the same breaker as CABundleHandler would let cheap, always-succeeding
+directory requests consume the breaker's half-open probe budget instead of
+CABundleHandler's real recovery test. Both endpoints share one cache entry
+each (`Resilience.Degradation.MaxCacheSize`, default 8, is generous for a
+one-entry-per-endpoint cache).
+
+`GET /acme/health` (`RestService.HealthHandler`, `HealthStatus`) reports
+every breaker registered on `Params.Breakers` by name — state, failure
+count, success count — and whether `storage` is open (`Degradation.Active`).
+It returns 503 when any breaker is not closed, 200 otherwise. A
+`RestService` built without `Params.Breakers` reports healthy with no
+breakers listed rather than omitting the endpoint. `cmd/xkmsd/acme.go` opts
+in (`Params.Breakers`, `StorageBreaker`, `KMSBreaker`, all sourced from
+`acme.resilience` — see "Configuration"); the standalone `TrustedCA` path
+(`pkg/acme/client/trustedca.go`) mounts `HealthHandler` at `/health` too but
+does not yet set `Params.Breakers`, so it always reports healthy with no
+breakers — a known gap, not a design choice.
+
 ## Error semantics
 
 ACME errors are RFC 8555 problem documents with URN types (`urn:ietf:params:acme:error:*`).
@@ -192,8 +274,12 @@ The mapping an implementer needs:
 | permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
 
 **Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
-RRset (DNS failure), failed attestation, exceeded rate limit, open circuit
-breaker. Every one of them refuses to issue.
+RRset (DNS failure), failed attestation, exceeded rate limit, an open circuit
+breaker on a dependency the order's path needs (a challenge verifier during
+validation, the KMS signer during finalize). Every one of them refuses to
+issue for that order. None of them refuses `POST /acme/new-order` itself —
+creating an order calls no breaker-guarded dependency; see "Circuit breakers
+and degradation".
 
 ## Configuration
 
@@ -290,6 +376,30 @@ Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
 which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 [`../key-management/api.md`](../key-management/api.md) §Port conflicts.
 
+**Resilience configuration (`ACMEResilienceConfig`, `acme.resilience`,
+`pkg/config/acme_resilience.go`).** Five typed sections —
+`http01`/`dns01`/`ct_submitter`/`kms`/`storage`, each an
+`ACMECircuitBreakerConfig` — configure the breaker of the matching name (see
+"Circuit breakers and degradation"): `max_failures`,
+`reset_timeout_seconds`, `half_open_max_requests`, `success_threshold`,
+`timeout_seconds`. Every field's zero value selects
+`circuitbreaker.DefaultConfig`'s default (`DefaultACMEBreaker*` constants:
+5 failures, 30s reset, 1 half-open probe, 2 successes to close, 10s call
+timeout) through `ACMECircuitBreakerConfig.CircuitBreakerConfig(name)`, the
+one mapping between this YAML and `circuitbreaker.Config` — mirroring
+`ACMEAuditConfig.AuditConfig`. A negative `reset_timeout_seconds` or
+`timeout_seconds` is `ErrACMEResilienceNegativeValue`; the unsigned counter
+fields cannot go negative in YAML without a parse error first. A `degradation`
+subsection (`ACMEDegradationConfig`) configures the directory/CA-bundle
+cache: `cache_ttl_seconds` (default 60), `stale_ttl_seconds` (default 300),
+`max_cache_size` (default 32, generous headroom over the one entry each
+endpoint actually uses). `cmd/xkmsd/acme.go` is the one place these are
+mapped into `handlers.Params` (`Breakers`, `StorageBreaker`, `KMSBreaker`,
+`DegradationCacheTTL`, `DegradationStaleTTL`, `DegradationMaxCacheSize`); the
+`http01`/`dns01` sections are consumed directly by `buildChallengeMap`, and
+`ct_submitter` has no consumer yet (see "What this feature deliberately does
+not do" in architecture.md).
+
 ## Persistence
 
 Accounts, orders, authorizations, challenges, nonces and issued certificates
@@ -308,7 +418,23 @@ storage. Changing the storage layout requires a data migration step.
   explicit 90%+ coverage push (`coverage_90_*_test.go`) plus per-object suites
   (`account_test.go`, `authorization_test.go`, `challenge_test.go`,
   `certificate_test.go`, `directory_test.go`, `caa_test.go`,
-  `rate_limiter_test.go`, `circuit_breaker_test.go`).
+  `rate_limiter_test.go`).
+  `pkg/acme/server/circuitbreaker` covers closed/open/half-open transitions
+  for the breaker itself (`circuitbreaker_test.go`, `admission_test.go`),
+  the folded HTTP middleware (`middleware_test.go`), and each of the three
+  dependency decorators (`decorators_test.go`:
+  `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService`, each exercised
+  closed, open-fails-fast-without-calling-the-inner-dependency, and
+  half-open-probe-closes). `pkg/acme/server/handlers/resilience_test.go`
+  covers the degradation-cache path end to end against the real
+  `CABundleHandler`/`DirectoryHandler` code (fresh-serves-live,
+  breaker-trips-on-failure, open-serves-stale-cache-degraded,
+  open-with-still-fresh-cache-serves-non-degraded,
+  open-with-nothing-cached-fails) and `HealthHandler` (no breakers
+  configured, and a tripped breaker reported open with 503 and
+  `Degradation.Active`). `pkg/config/acme_resilience_test.go` covers
+  `ACMEResilienceConfig`/`ACMECircuitBreakerConfig`/`ACMEDegradationConfig`
+  validation and default-substitution.
   `pkg/acme/server/caa_test.go` covers the validator against a mock DNS
   server: tree climbing, CNAME following, wildcard `issuewild`, exact
   (non-prefix) issuer matching, a critical unrecognized property tag, and
@@ -336,10 +462,18 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Observability
 
-`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics;
-`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records for
-account, order and issuance events. Correlation IDs propagate from the
-transport middleware.
+`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics,
+plus the circuit breaker and degradation-cache counters `pkg/acme/server/
+circuitbreaker` and `pkg/acme/server/degradation` record against (failure/
+success/trip per breaker; hit/miss/size per cache) — not yet wired to a
+Prometheus exporter, see "Known gap" below. `GET /acme/health`
+(`RestService.HealthHandler`) is the synchronous, poll-driven view of the
+same state: every breaker's name, state and counters, and whether
+`storage` being open is currently degrading the directory/CA-bundle
+responses (see "Circuit breakers and degradation"). `pkg/acme/audit` and
+`pkg/acme/server/handlers/audit.go` write audit records for account, order
+and issuance events. Correlation IDs propagate from the transport
+middleware.
 
 **Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
 stapling, CRL distribution-point automation, CT log submission automation and
