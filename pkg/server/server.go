@@ -1036,6 +1036,14 @@ func (s *Server) initializeBackends() error {
 		return &ErrBackendInit{Backend: "phone", Err: err}
 	}
 
+	// FROST initializes last: backends.frost.secret_backend names one of the
+	// backends initialized above, and that types.KeyProvider must already be
+	// registered in s.keyProviders for the FrostBackend to hold each
+	// participant's secret share through it.
+	if err := s.initFrostBackend(); err != nil {
+		return &ErrBackendInit{Backend: "FROST", Err: err}
+	}
+
 	if len(s.keyProviders) == 0 {
 		return ErrNoBackendsInitialized
 	}

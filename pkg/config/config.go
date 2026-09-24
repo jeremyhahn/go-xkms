@@ -1016,6 +1016,7 @@ type BackendsConfig struct {
 	AzureKV  *AzureKVConfig  `yaml:"azurekv,omitempty"`
 	Vault    *VaultConfig    `yaml:"vault,omitempty"`
 	Phone    *PhoneConfig    `yaml:"phone,omitempty"`
+	Frost    *FrostConfig    `yaml:"frost,omitempty"`
 }
 
 // SoftwareConfig contains software backend settings (uses PKCS#8 internally)
@@ -1559,6 +1560,24 @@ func (c *Config) Validate() error {
 		}
 		if !validTransports[strings.ToLower(c.Backends.Phone.Transport)] {
 			return &errs.Message{Msg: fmt.Sprintf("invalid phone backend transport: %s (must be ble or tcp)", c.Backends.Phone.Transport)}
+		}
+	}
+
+	if c.Backends.Frost != nil && c.Backends.Frost.Enabled {
+		hasEnabledBackend = true
+		if err := c.Backends.Frost.Validate(); err != nil {
+			return err
+		}
+		// The named secret backend is a reference to a sibling backend
+		// section, so only Config.Validate (which holds the full
+		// BackendsConfig) can check it; FrostConfig.Validate cannot see
+		// beyond its own fields. Fail closed rather than let a FROST backend
+		// come up pointing at a backend that was never configured.
+		if !c.Backends.enabledBackendNamed(c.Backends.Frost.SecretBackend) {
+			return &FrostConfigError{
+				Field:   "secret_backend",
+				Message: fmt.Sprintf("backend %q is not configured and enabled under backends", c.Backends.Frost.SecretBackend),
+			}
 		}
 	}
 
