@@ -39,6 +39,7 @@ the folder in the same commit that changes the behavior.
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
 | [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
+| [web-console](web-console/) | The Svelte SPA console served by `xkmsd` at `/ui/` and by the `xkms-console` Wails desktop shell (remote and standalone loopback modes) — distinct from the xkey GUI |
 | [webauthn](webauthn/) | The canonical WebAuthn relying party |
 | [xkmsd-configuration](xkmsd-configuration/) | How the daemon resolves its configuration: defaults, file, `XKMS_*` environment, flags, and the listeners that consume the result |
 
@@ -89,19 +90,19 @@ by five and reports unconverted folders as converted.
 
 | Feature folder | Legacy paths it supersedes |
 |---|---|
-| [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md`, `key-agreement.md`, `crypto/kdf.md` |
+| [key-management](key-management/) | `architecture/unified-keyid-jwk-integration.md`, `key-agreement.md` |
 | [crypto-backends](crypto-backends/) | `backends/` |
-| [tpm2](tpm2/) | `attestation/`, `configuration/tpm2-session-encryption.md` |
+| [tpm2](tpm2/) | `configuration/tpm2-session-encryption.md` |
 | [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
-| [certificate-authority](certificate-authority/) | `ca/`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
-| [acme-issuance](acme-issuance/) | `acme/` (excluding `acme/ROADMAP.md`) |
-| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md`, `cli/trust-platform.md` |
+| [certificate-authority](certificate-authority/) | `ca/api-reference.md`, `ca/architecture.md`, `ca/certificate-types.md`, `ca/configuration.md`, `ca/multi-keystore.md`, `ca/protocol-parity.md`, `ca/README.md`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
+| [acme-issuance](acme-issuance/) | `acme/architecture.md`, `acme/client.md`, `acme/configuration.md`, `acme/challenges.md`, `acme/challenge-resolver.md`, `acme/cli/cactl.md` (retired) |
+| [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` |
 | [webauthn](webauthn/) | `webauthn/README.md`, `webauthn/client.md` — **absorbed and deleted** |
 | [fido2-ctap2](fido2-ctap2/) | `fido2/README.md` |
 | [piv-smartcard](piv-smartcard/) | `piv/` |
 | [auth-factors](auth-factors/) | `auth/factors.md`, `auth/layering.md` |
 | [pin-management](pin-management/) | `pin/`, `seal/pin.md`, `architecture/pin-architecture.md` |
-| [sealing-and-barrier](sealing-and-barrier/) | `seal/` (except `seal/tenant-barriers.md`), `sealed-storage/`, `architecture/barrier-integration.md`, `cli/barrier.md` |
+| [sealing-and-barrier](sealing-and-barrier/) | `seal/` (except `seal/tenant-barriers.md` and `seal/barrier.md` — the latter is the LUKS `storage.Backend`, `pkg/storage/luks`, undocumented anywhere post-conversion), `sealed-storage/`, `architecture/barrier-integration.md` |
 | [init-ceremony](init-ceremony/) | `init/`, `auth/bootstrap.md` |
 | [share-custody](share-custody/) | `custodian/`, `sharestore/` |
 | [multi-tenancy](multi-tenancy/) | `architecture/multi-tenant.md`, `seal/tenant-barriers.md`, `acme/multi-tenancy.md` |
@@ -111,8 +112,9 @@ by five and reports unconverted folders as converted.
 | [audit-log](audit-log/) | — |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
+| [web-console](web-console/) | `web/` |
 
-Two of these need a note rather than a row:
+Several of these need a note rather than a row:
 
 - **`architecture/pin-architecture.md`** and `fido2/authenticator/architecture.md`
   describe a `PINCoordinator` and a `pkg/pin` package. **Neither exists in this
@@ -123,6 +125,69 @@ Two of these need a note rather than a row:
 - **`acme/cli/cactl.md`** documents a binary that was never in this repository
   and whose project has been retired. See
   [`acme-issuance/cli.md`](acme-issuance/cli.md).
+- **`acme/` is mostly still legacy, not superseded.** The table above lists
+  only the specific root files `acme-issuance/` actually absorbed. The bulk
+  of the tree — `acme/gui/` (15 files: the dual-mode admin+client SPA,
+  `pkg/acme/gui/{admin,client,guard,webui}`), `acme/admin/` (5 files: the
+  Admin REST plane, `pkg/acme/admin` — handlers, RBAC, tenant and barrier
+  ceremony endpoints), `acme/protocols/` (5 files: the six-transport
+  wiring), `acme/dns-01/` (6 files: per-provider DNS-01 configuration),
+  `acme/qrdb/` (3 files), `acme/sdk/README.md`, `acme/api-reference.md`,
+  `acme/audit/`, `acme/auth/`, `acme/docker.md`, `acme/quickstart.md`,
+  `acme/implementation-plan.md`, `acme/multi-tenancy.md` (superseded by
+  [`multi-tenancy/`](multi-tenancy/), see the table above), and
+  `acme/deployment/` (already covered by the "Operator checklists" note
+  below) remain unconverted. `acme/boulder-comparison-enhancements.md` is
+  deliberately retained as a reference, not absorbed
+  ([`acme-issuance/architecture.md`](acme-issuance/architecture.md) cites
+  it directly). A previous pass over this README claimed `acme-issuance/`
+  superseded all of `acme/` except `ROADMAP.md`; that claim did not hold up
+  against the code and has been narrowed here.
+- **`ca/dane.md`, `ca/bootstrap.md` and `ca/bootstrap-integration.md` are not
+  superseded** by `certificate-authority/` or by `trust-bootstrap/`. Their
+  DANE/TLSA field-semantics tables, DNSSEC walkthrough and per-project
+  bootstrap integration recipes are not duplicated in either folder's five
+  files (`trust-bootstrap/` covers the `dane generate-tlsa` CLI verb and the
+  mode's place in the DANE/Noise/SPKI/Direct dispatch, nothing deeper).
+  `ca/dane.md`'s own "Using the Go API" section is additionally **stale**:
+  it imports `github.com/jeremyhahn/go-xkms/pkg/ca/dane`, a package that no
+  longer exists — the DANE resolver now lives upstream, in
+  `github.com/jeremyhahn/go-truststrap/pkg/dane`, consumed by
+  `pkg/trust/bootstrap/tlsconfig.go`. `ca/bootstrap.md`'s "API Reference"
+  section (`Bootstrapper`, `CABundleRequest`, `CABundleResponse`) describes
+  the same pre-truststrap-composition shape and is stale the same way.
+- **`cli/barrier.md` is not superseded** by `sealing-and-barrier/`. Its
+  xkms-specific sections — the PIN-dispatch-through-separate-RPCs pattern
+  (`applyInitialPINPair`, `verifySOPINIfSupplied` in `cmd/xkmsctl/barrier.go`),
+  the `barrier rekey` `--threshold`/`--total`-required rationale, and the
+  strategy+PIN validation matrix (`BarrierSecretNotAllowedError`,
+  `PINsNotAllowedError`, `PINPairError`, `BarrierShamirOnInitError`, all
+  verified still present in `cmd/xkmsctl/barrier.go`) — are not in
+  [`sealing-and-barrier/cli.md`](sealing-and-barrier/cli.md), which lists
+  the verbs and flags but not why the PIN flags work despite the wire
+  types carrying no PIN fields.
+- **`cli/trust-platform.md` is not superseded by anything in this repo's
+  `docs/`.** Its `xkey trust bootstrap|fetch|add|import-platform|list`
+  content is covered instead by `xkey/docs/platform-trust/cli.md` (a
+  different module's feature folder — that README's own index does not
+  currently point at this legacy path either). Its `xkey browser launch`
+  section (NSS `cert9.db` via `xkey/pkg/nssdb`, Firefox `policies.json`
+  overlay) is not covered anywhere; it belongs to the still-owed "Browser
+  trust injection" row below.
+- **`attestation/README.md` is not superseded** by `tpm2/`, which documents
+  TPM 2.0 attestation only; this legacy file also covers PKCS#11 HSM
+  attestation and a generic cross-backend attestation API, neither of which
+  appears in `tpm2/`. Its own Go code samples are additionally stale
+  (`tpm2.NewTPM2KeyStore` and `types.AttestingBackend` were not found
+  anywhere in the tree; the real method is `(*Backend).AttestKey` in
+  `pkg/backend/tpm2/attestation.go`, with a different signature).
+- **`crypto/kdf.md` is not superseded** by `key-management/`, which
+  mentions the KDF algorithm names as CLI flag values and error types but
+  not the approved-hash-per-algorithm table, the SP 800-108 fixed-input and
+  counter-placement construction, parameter-applicability enforcement, the
+  wire-to-KDF-parameter mapping, or the SP 800-108/HKDF breaking-change
+  migration note — all verified still current against `pkg/crypto/kdf` and
+  `pkg/types/kdf.go`.
 
 ### Still owed a feature folder
 
@@ -135,7 +200,6 @@ Ordered "under active development first, then most often read":
 | PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
 | Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
 | Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
-| Web console | [`web/`](web/) | 5 files |
 | Clustering | [`cluster/`](cluster/) | includes CA key custody |
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
