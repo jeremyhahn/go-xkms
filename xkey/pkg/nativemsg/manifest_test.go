@@ -1003,6 +1003,11 @@ func TestUninstallManifest_HomeDirError(t *testing.T) {
 // TestInstallManifest_WriteFails_DetectedBrowser proves a write failure to a
 // detected browser's manifest directory is reported as a typed error rather
 // than silently skipped like an undetected browser.
+//
+// The manifest path is pre-occupied by a directory rather than protected by
+// a permission bit: os.WriteFile opens O_WRONLY, which the kernel refuses
+// for a directory (EISDIR) regardless of the caller's privilege level, so
+// the case still holds when tests run as root.
 func TestInstallManifest_WriteFails_DetectedBrowser(t *testing.T) {
 	tmpDir := t.TempDir()
 	overrideHomeDir(t, tmpDir)
@@ -1012,8 +1017,7 @@ func TestInstallManifest_WriteFails_DetectedBrowser(t *testing.T) {
 
 	nmhDir := browserDir(chrome, tmpDir)
 	require.NoError(t, os.MkdirAll(nmhDir, 0755))
-	require.NoError(t, os.Chmod(nmhDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(nmhDir, 0755) })
+	require.NoError(t, os.Mkdir(filepath.Join(nmhDir, manifestFileName), 0700))
 
 	err := InstallManifest(BrowserChrome, "/usr/bin/xkey")
 	require.Error(t, err)
@@ -1039,7 +1043,8 @@ func TestInstallManifest_MkdirFails_DetectedBrowser(t *testing.T) {
 }
 
 // TestInstallManifest_WriteFails_FallbackPath proves the same for the
-// fallback path taken when no browser in the family was detected.
+// fallback path taken when no browser in the family was detected, again via
+// a directory pre-occupying the manifest path rather than a permission bit.
 func TestInstallManifest_WriteFails_FallbackPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	overrideHomeDir(t, tmpDir)
@@ -1047,8 +1052,7 @@ func TestInstallManifest_WriteFails_FallbackPath(t *testing.T) {
 	chrome := findBrowser("Chrome")
 	nmhDir := browserDir(chrome, tmpDir)
 	require.NoError(t, os.MkdirAll(nmhDir, 0755))
-	require.NoError(t, os.Chmod(nmhDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(nmhDir, 0755) })
+	require.NoError(t, os.Mkdir(filepath.Join(nmhDir, manifestFileName), 0700))
 
 	err := InstallManifest(BrowserChrome, "/usr/bin/xkey")
 	require.Error(t, err)
@@ -1056,8 +1060,14 @@ func TestInstallManifest_WriteFails_FallbackPath(t *testing.T) {
 }
 
 // TestUninstallManifest_RemoveFails proves a removal failure other than
-// "does not exist" (here, a manifest directory that denies unlink) is
-// reported as a typed error rather than silently treated as absent.
+// "does not exist" is reported as a typed error rather than silently
+// treated as absent.
+//
+// The installed manifest file is replaced with a non-empty directory rather
+// than protected by a permission bit: os.Remove's rmdir fallback fails with
+// ENOTEMPTY for a directory that still has an entry in it, independent of
+// the caller's privilege level, unlike a chmod-based denial on the parent
+// directory which root bypasses.
 func TestUninstallManifest_RemoveFails(t *testing.T) {
 	tmpDir := t.TempDir()
 	overrideHomeDir(t, tmpDir)
@@ -1065,9 +1075,10 @@ func TestUninstallManifest_RemoveFails(t *testing.T) {
 	require.NoError(t, InstallManifest(BrowserChrome, "/usr/bin/xkey"))
 
 	chrome := findBrowser("Chrome")
-	nmhDir := browserDir(chrome, tmpDir)
-	require.NoError(t, os.Chmod(nmhDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(nmhDir, 0755) })
+	manifestPath := filepath.Join(browserDir(chrome, tmpDir), manifestFileName)
+	require.NoError(t, os.Remove(manifestPath))
+	require.NoError(t, os.Mkdir(manifestPath, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(manifestPath, "occupied"), []byte("x"), 0600))
 
 	err := UninstallManifest(BrowserChrome)
 	require.Error(t, err)

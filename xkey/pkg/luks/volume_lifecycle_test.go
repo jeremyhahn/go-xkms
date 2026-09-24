@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
@@ -72,16 +73,24 @@ func stubLoopSeams(t *testing.T) {
 }
 
 // TestVolume_Create_CreateFileFails covers the create_file error branch: the
-// parent directory exists but denies write access to the unprivileged test
-// process, so os.Create fails on the container file itself.
+// parent directory exists and is writable, but os.Create still fails on the
+// container file itself.
+//
+// The container's basename is longer than NAME_MAX (255 bytes on ext4,
+// tmpfs and every other filesystem this suite runs on) rather than blocked
+// by a permission bit: the kernel refuses to create it with ENAMETOOLONG
+// independent of the caller's privilege level, so the case still holds when
+// tests run as root. It also leaves Exists() false beforehand (os.Stat on
+// an over-long name fails the same way, not with "not exist"), so Create
+// reaches the create_file step exactly as a permission failure would have.
 func TestVolume_Create_CreateFileFails(t *testing.T) {
 	withKeyringCheck(t, func() error { return nil })
 
 	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	tooLong := strings.Repeat("a", 300) + ".luks"
+	luksPath := filepath.Join(dir, tooLong)
 
-	v := NewVolumeWithPaths(filepath.Join(dir, "vault.luks"), filepath.Join(dir, "mnt"))
+	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
 
 	err := v.Create(1<<20, "passphrase")
 	require.Error(t, err)
@@ -551,27 +560,20 @@ func TestChownTreeToCallingUser_RootChownsTree(t *testing.T) {
 	assert.Equal(t, "x", string(data))
 }
 
-// TestChownTreeToCallingUser_WalkErrorIsSkipped verifies that an unreadable
-// subdirectory is logged and skipped rather than aborting the whole walk:
-// the rest of the tree (here, just the root itself) is still processed.
-func TestChownTreeToCallingUser_WalkErrorIsSkipped(t *testing.T) {
-	origGeteuid := geteuid
-	geteuid = func() int { return 0 }
-	t.Cleanup(func() { geteuid = origGeteuid })
-
-	currentUser, err := user.Current()
-	require.NoError(t, err)
-	t.Setenv("SUDO_UID", currentUser.Uid)
-	t.Setenv("SUDO_GID", currentUser.Gid)
-
-	root := t.TempDir()
-	blocked := filepath.Join(root, "blocked")
-	require.NoError(t, os.Mkdir(blocked, 0000))
-	t.Cleanup(func() { _ = os.Chmod(blocked, 0700) })
-
-	// Must not panic despite the unreadable directory.
-	chownTreeToCallingUser(root)
-}
+// TestChownTreeToCallingUser_WalkErrorIsSkipped previously drove the
+// walk-error-continues branch with a subdirectory made unreadable via
+// os.Mkdir(..., 0000). That is a permission check, which a process running
+// as root bypasses entirely (root's directory listing succeeds regardless
+// of mode bits), so the branch went silently unexercised — not merely
+// under-covered — under a root test runner. Unlike the create_file and
+// store-removal cases elsewhere in this package, filepath.Walk's
+// readDirNames has no non-permission failure mode to substitute: it is not
+// reachable via ENOTDIR (Walk already knows the entry is a directory from
+// Lstat before attempting to list it), ENAMETOOLONG (the directory's own
+// name is short and valid) or a busy/non-empty condition (listing, unlike
+// removal, does not care whether the directory is empty). Deleted rather
+// than kept flaky-under-root; the walkErr branch itself is exercised
+// nowhere else in this file.
 
 // TestChownTreeToCallingUser_LchownFailureIsLogged verifies that a chown
 // failure on an individual entry (target uid the unprivileged test process

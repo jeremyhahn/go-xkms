@@ -69,9 +69,15 @@ func TestSaveLocked_RenameFails(t *testing.T) {
 }
 
 // TestRemoveStateLocked_PermissionDenied proves a removal failure other than
-// "does not exist" (here, a parent directory that denies unlink) is reported
-// as a typed error via UnpairAll rather than silently treated like a
-// missing file.
+// "does not exist" is reported as a typed error via UnpairAll rather than
+// silently treated like a missing file.
+//
+// The state path is replaced with a non-empty directory rather than
+// protected by a permission bit: os.Remove's rmdir fallback fails with
+// ENOTEMPTY for a directory that still has an entry in it, and no caller —
+// root included — can rmdir a non-empty directory. A chmod-based denial on
+// the parent would not hold under a root test runner, which bypasses
+// directory write permission entirely.
 func TestRemoveStateLocked_PermissionDenied(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
@@ -82,10 +88,11 @@ func TestRemoveStateLocked_PermissionDenied(t *testing.T) {
 	pub, _ := generateTestIdentity(t)
 	completePairingCeremony(t, v, pub, testOrigin)
 
-	// The state file now exists; deny write on its parent directory so
-	// os.Remove cannot unlink it, without touching the file's own mode.
-	require.NoError(t, os.Chmod(tmpDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(tmpDir, 0700) })
+	// Replace the state file saveLocked wrote with a non-empty directory at
+	// the same path.
+	require.NoError(t, os.Remove(statePath))
+	require.NoError(t, os.Mkdir(statePath, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(statePath, "occupied"), []byte("x"), 0600))
 
 	err = v.UnpairAll()
 	require.Error(t, err)
