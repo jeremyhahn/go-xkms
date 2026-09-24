@@ -642,24 +642,36 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
+	// OpIPCMessageFailed/OpIPCMessageDispatched are SeverityInformational:
+	// logIPCEvent returns nil for them today. auditLogFailure below is
+	// defensive in case that classification ever changes; handleConnection
+	// has no caller to propagate a failure to (it runs per accepted
+	// connection in its own goroutine), so the strongest response available
+	// here is to log loudly rather than silently drop the failure.
+	auditLogFailure := func(auditErr error) {
+		if auditErr != nil {
+			s.logger.Error("audit log failed", "error", auditErr)
+		}
+	}
+
 	var msg Message
 	decoder := json.NewDecoder(conn)
 	if err := decoder.Decode(&msg); err != nil {
 		s.logger.Debug("decode failed", "error", err)
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, err, nil)
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, nil))
 		s.writeResponse(conn, ErrorResponse(fmt.Sprintf("%v: %v", ErrProtocolError, err)))
 		return
 	}
 
 	if err := msg.Validate(); err != nil {
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type})
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
 		s.writeResponse(conn, ErrorResponse(err.Error()))
 		return
 	}
 
 	fn, ok := handlers[msg.Type]
 	if !ok {
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, ErrInvalidMessage, map[string]any{"message_type": msg.Type})
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, ErrInvalidMessage, map[string]any{"message_type": msg.Type}))
 		s.writeResponse(conn, ErrorResponse(
 			fmt.Sprintf("%v: unknown message type %q", ErrInvalidMessage, msg.Type)))
 		return
@@ -668,13 +680,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 	resp, err := fn(s.handler, &msg)
 	if err != nil {
 		s.logger.Error("handler failed", "type", msg.Type, "error", err)
-		s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type})
+		auditLogFailure(s.logIPCEvent(audit.OpIPCMessageFailed, false, err, map[string]any{"message_type": msg.Type}))
 		s.writeResponse(conn, ErrorResponse(
 			fmt.Sprintf("%v: %v", ErrHandlerFailed, err)))
 		return
 	}
 
-	s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type})
+	auditLogFailure(s.logIPCEvent(audit.OpIPCMessageDispatched, true, nil, map[string]any{"message_type": msg.Type}))
 	s.writeResponse(conn, resp)
 }
 
@@ -691,19 +703,23 @@ func (s *Server) SetAuditLogger(l audit.Logger) {
 	s.auditLog.Store(&l)
 }
 
-// logIPCEvent logs an audit event for IPC message processing.
-func (s *Server) logIPCEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := s.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// logIPCEvent logs an audit event for IPC message processing. Callers must
+// propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (s *Server) logIPCEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := s.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }

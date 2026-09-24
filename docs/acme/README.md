@@ -165,7 +165,7 @@ tenants/{tenant_id}/counters/{entity_type}
 
 #### DAO Layer
 
-The `pkg/qrdb/dao/` package provides Data Access Objects for each ACME entity:
+The `pkg/acme/storage/objstore/` package provides Data Access Objects for each ACME entity:
 
 | DAO | Entity | Description |
 |-----|--------|-------------|
@@ -184,12 +184,11 @@ The storage factory implements the `TenantAwareFactory` interface, enabling tena
 
 ```go
 import (
-    "github.com/jeremyhahn/go-xkms/pkg/acme/qrdb/dao"
-    "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 )
 
-// Create factory from QRDB service
-factory, err := dao.NewFactoryFromService(qrdbService)
+// Create factory from a go-qrdb KVStore
+factory, err := objstore.NewTenantAwareFactoryFromKVStore(kvStore)
 
 // Get tenant-scoped factory
 tenantFactory, err := factory.ForTenant("tenant-123")

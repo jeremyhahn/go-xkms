@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 )
 
@@ -70,6 +71,17 @@ func (s *RestService) AccountHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			account.Status = common.StatusDeactivated
 			s.logger.Info("Account deactivated", "id", account.ID)
+			if auditErr := s.recordAudit(audit.EventAccountDeactivated, s.auditLog.LogWithContext(auditContext(r),
+				audit.EventAccountDeactivated,
+				auditAccountRef(account.ID),
+				auditAccountRef(account.ID),
+				"deactivate",
+				audit.ResultSuccess,
+				nil,
+			)); auditErr != nil {
+				writeError(w, common.ServerInternal("Failed to record audit event"))
+				return
+			}
 		} else {
 			writeError(w, common.MalformedError("Invalid status value", nil))
 			return

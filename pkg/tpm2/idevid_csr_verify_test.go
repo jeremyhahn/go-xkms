@@ -96,7 +96,6 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 			},
 		},
 		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: false,
 		},

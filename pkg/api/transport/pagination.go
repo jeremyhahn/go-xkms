@@ -183,26 +183,63 @@ func ApplyPagination[T any](items []T, pr PageRequest) ([]T, PageResponse) {
 	}
 }
 
-// PageRequestFromQuery extracts pagination parameters from HTTP query strings.
-// This is used by QUIC and other HTTP-based transports that receive pagination
-// via URL query parameters.
-func PageRequestFromQuery(r *http.Request) PageRequest {
+// InvalidPaginationParamError reports an HTTP query pagination parameter
+// that could not be parsed as an integer. Silently treating it as absent
+// used to turn a caller's typo into an unpaginated "return everything"
+// request instead of a rejection.
+type InvalidPaginationParamError struct {
+	// Param is the query parameter name.
+	Param string
+
+	// Value is the unparsable value that was supplied.
+	Value string
+
+	// Err is the underlying strconv error.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *InvalidPaginationParamError) Error() string {
+	return fmt.Sprintf("transport: invalid %s query parameter %q: %v", e.Param, e.Value, e.Err)
+}
+
+// Unwrap returns the underlying strconv error.
+func (e *InvalidPaginationParamError) Unwrap() error { return e.Err }
+
+// PageRequestFromQuery extracts pagination parameters from HTTP query
+// strings. This is used by QUIC and other HTTP-based transports that
+// receive pagination via URL query parameters. A parameter that is present
+// but not a valid integer is reported as an *InvalidPaginationParamError
+// rather than silently defaulting to zero.
+func PageRequestFromQuery(r *http.Request) (PageRequest, error) {
 	var pr PageRequest
 
 	if v := r.URL.Query().Get("page"); v != "" {
-		pr.Page, _ = strconv.Atoi(v)
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return PageRequest{}, &InvalidPaginationParamError{Param: "page", Value: v, Err: err}
+		}
+		pr.Page = n
 	}
 	if v := r.URL.Query().Get("page_size"); v != "" {
-		pr.PageSize, _ = strconv.Atoi(v)
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return PageRequest{}, &InvalidPaginationParamError{Param: "page_size", Value: v, Err: err}
+		}
+		pr.PageSize = n
 	}
 	if v := r.URL.Query().Get("sort_field"); v != "" {
 		pr.SortField = v
 	}
 	if v := r.URL.Query().Get("sort_order"); v != "" {
-		pr.SortOrder, _ = strconv.Atoi(v)
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return PageRequest{}, &InvalidPaginationParamError{Param: "sort_order", Value: v, Err: err}
+		}
+		pr.SortOrder = n
 	}
 
-	return pr
+	return pr, nil
 }
 
 // AppendPaginationQuery appends pagination parameters to a URL path as query

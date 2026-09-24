@@ -21,10 +21,12 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -611,6 +613,124 @@ func TestHandlePasswordGenerate(t *testing.T) {
 		_, err := server.handlePasswordGenerate(ctx, req)
 		require.Error(t, err)
 	})
+}
+
+// TestHandlePasswordSetAccessMode exercises the password.setAccessMode
+// handler added for go-xkms#753: it must delegate to
+// XKMSService.PasswordStoreSetAccessMode and translate the servicer's
+// sentinels onto the JSON-RPC codes pkg/api/rest/password_handlers.go's
+// SetAccessModeHandler already reports for the same conditions.
+func TestHandlePasswordSetAccessMode(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	t.Run("fails when xkms service not configured", func(t *testing.T) {
+		bare := &Server{}
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := bare.handlePasswordSetAccessMode(context.Background(), req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrPasswordStoreNotConfigured)
+	})
+
+	t.Run("fails with invalid JSON params as InvalidParams", func(t *testing.T) {
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: json.RawMessage(`{bad`), ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(context.Background(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+	})
+
+	t.Run("fails with empty mode as InvalidParams", func(t *testing.T) {
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(context.Background(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrInvalidAccessMode)
+	})
+
+	t.Run("fails with an out-of-vocabulary mode as InvalidParams", func(t *testing.T) {
+		manager := unlockTestManager(t)
+		server.xkmsService.SetPasswordStoreManager(manager)
+
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "bogus"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(tenantCtx(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrInvalidAccessMode)
+	})
+
+	t.Run("fails switching to an unsupported mode as MethodNotFound", func(t *testing.T) {
+		manager := unlockTestManager(t)
+		server.xkmsService.SetPasswordStoreManager(manager)
+
+		// tenantCtx's store is session based; requesting the other valid mode
+		// asks the wired store to change its enforced strategy, which
+		// PasswordStoreSetAccessMode refuses.
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "pin_per_operation"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		_, err := server.handlePasswordSetAccessMode(tenantCtx(), req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeMethodNotFound, keyOpErr.Code)
+		assert.ErrorIs(t, err, xkms.ErrOperationNotSupported)
+	})
+
+	t.Run("succeeds requesting the mode already in force", func(t *testing.T) {
+		manager := unlockTestManager(t)
+		server.xkmsService.SetPasswordStoreManager(manager)
+
+		paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.setAccessMode", Params: paramsJSON, ID: 1}
+
+		result, err := server.handlePasswordSetAccessMode(tenantCtx(), req)
+		require.NoError(t, err)
+
+		modeResult, ok := result.(PasswordAccessModeResult)
+		require.True(t, ok)
+		assert.Equal(t, "session_based", modeResult.Mode)
+		assert.NotEmpty(t, modeResult.Message)
+	})
+}
+
+// TestHandlePasswordSetAccessMode_RBACDenied is the explicit RBAC-deny
+// regression for go-xkms#753: an authenticated caller without passwords:write
+// must be denied before the handler ever runs, exactly like every other
+// password.* method (see TestAuthorizeMethod_EveryPrivilegedMethod, which
+// also walks this method generically).
+func TestHandlePasswordSetAccessMode_RBACDenied(t *testing.T) {
+	svc := setupTestXKMS(t)
+	defer cleanupXKMS()
+
+	rbac := newFakeRBAC() // no grants
+	server := newRBACServer(t, svc, rbac)
+
+	paramsJSON, _ := json.Marshal(transport.PasswordStoreSetAccessModeRequest{Mode: "session_based"})
+	resp := invokeRequest(server, authedCtx(), &JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "password.setAccessMode",
+		Params:  paramsJSON,
+		ID:      1,
+	})
+
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error, "caller without passwords:write must be denied")
+	assert.Equal(t, ErrCodeForbidden, resp.Error.Code)
+	assert.Equal(t, "passwords:write", rbac.lastCall())
+	assert.Nil(t, resp.Result)
 }
 
 func TestMapPasswordError(t *testing.T) {

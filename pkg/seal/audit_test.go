@@ -89,14 +89,16 @@ func TestAuditLoggerAdapter_CloseError(t *testing.T) {
 }
 
 func TestEmitAudit_NilLoggerIsNoOp(t *testing.T) {
-	// Should not panic with nil logger.
-	emitAudit(nil, "seal", "resource", "id", "allow", nil)
+	// Should not panic with nil logger, and reports no error.
+	err := emitAudit(nil, nil, "seal", "resource", "id", "allow", nil)
+	require.NoError(t, err)
 }
 
 func TestEmitAudit_WithLogger(t *testing.T) {
 	recorder := &recordingAuditLogger{}
-	emitAudit(recorder, "seal", "platform_sealer", "software", "allow",
+	err := emitAudit(recorder, nil, "seal", "platform_sealer", "software", "allow",
 		map[string]string{"detail": "value"})
+	require.NoError(t, err)
 
 	require.Len(t, recorder.events, 1)
 	assert.Equal(t, "seal", recorder.events[0].Subject)
@@ -106,8 +108,19 @@ func TestEmitAudit_WithLogger(t *testing.T) {
 	assert.Equal(t, "allow", recorder.events[0].Outcome)
 }
 
-func TestEmitAudit_LogErrorSilentlyIgnored(t *testing.T) {
-	inner := &failingAuditLogger{logErr: errors.New("log failed")}
-	// Should not panic even with a failing logger.
-	emitAudit(inner, "seal", "resource", "id", "deny", nil)
+// TestEmitAudit_LogErrorFailsSecurityOperation verifies the issue #688
+// policy: seal/unseal is a SeveritySecurity action, so a failed audit
+// write must be surfaced as *audit.ErrAuditWriteFailed rather than
+// swallowed, so the caller fails the seal/unseal request.
+func TestEmitAudit_LogErrorFailsSecurityOperation(t *testing.T) {
+	logErr := errors.New("log failed")
+	inner := &failingAuditLogger{logErr: logErr}
+
+	err := emitAudit(inner, nil, "seal", "resource", "id", "deny", nil)
+
+	require.Error(t, err)
+	var writeErr *audit.ErrAuditWriteFailed
+	require.ErrorAs(t, err, &writeErr)
+	assert.Equal(t, "seal", writeErr.Action)
+	assert.ErrorIs(t, err, logErr)
 }

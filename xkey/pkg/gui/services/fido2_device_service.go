@@ -352,10 +352,12 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 		slog.String("serial", "XKEY001"))
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogServiceEvent(audit.OpServiceStarted, map[string]any{
+		if err := s.auditLogger.LogServiceEvent(audit.OpServiceStarted, map[string]any{
 			"service": "fido2_virtual_device",
 			"device":  uhid.AuthenticatorDeviceName,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -402,9 +404,11 @@ func (s *FIDO2DeviceService) Stop() error {
 	s.log.Info("FIDO2 virtual device stopped")
 
 	if s.auditLogger != nil {
-		s.auditLogger.LogServiceEvent(audit.OpServiceStopped, map[string]any{
+		if err := s.auditLogger.LogServiceEvent(audit.OpServiceStopped, map[string]any{
 			"service": "fido2_virtual_device",
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
 	return nil

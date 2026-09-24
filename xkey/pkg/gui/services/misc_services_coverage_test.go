@@ -44,24 +44,35 @@ type miscCoverageAuditLogger struct {
 	entries []audit.Entry
 }
 
-func (l *miscCoverageAuditLogger) Log(e audit.Entry) { l.entries = append(l.entries, e) }
-func (l *miscCoverageAuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, err error, durationMs int64) {
+func (l *miscCoverageAuditLogger) Log(e audit.Entry) error {
+	l.entries = append(l.entries, e)
+	return nil
+}
+func (l *miscCoverageAuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, err error, durationMs int64) error {
 	l.Log(audit.Entry{Operation: op, Backend: backend, KeyID: keyID, Success: success})
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (l *miscCoverageAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {
+func (l *miscCoverageAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogServiceEvent(op audit.OperationType, details map[string]any) {
+func (l *miscCoverageAuditLogger) LogServiceEvent(op audit.OperationType, details map[string]any) error {
 	l.Log(audit.Entry{Operation: op, Details: details, Success: true})
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *miscCoverageAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {
+func (l *miscCoverageAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *miscCoverageAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *miscCoverageAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {
+func (l *miscCoverageAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
 }
 
 // ===========================================================================

@@ -146,9 +146,13 @@ func RateLimited(detail string) *entities.Error {
 	return entities.NewError(ErrTypeRateLimited, detail, http.StatusTooManyRequests, nil)
 }
 
-// RejectedIdentifier creates an ACME error for rejected domain identifiers.
+// RejectedIdentifier creates an ACME error for identifiers the server's
+// issuance policy refuses: blocklisted domains/FQDNs/wildcards/IPs,
+// non-public-suffix domains, and reserved-range IPs. HTTP 403 per the
+// documented error mapping (docs/acme-issuance/engineering.md): the
+// identifier is well-formed but the server will not issue for it.
 func RejectedIdentifier(detail string) *entities.Error {
-	return entities.NewError(ErrTypeRejectedIdentifier, detail, http.StatusUnauthorized, nil)
+	return entities.NewError(ErrTypeRejectedIdentifier, detail, http.StatusForbidden, nil)
 }
 
 // ServerInternal creates an ACME error for internal server errors.
