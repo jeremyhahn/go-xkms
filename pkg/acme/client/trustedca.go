@@ -174,13 +174,17 @@ func (tca *TrustedCA) initialize() error {
 	// Set up admin service
 	if tca.multiTenant && tca.qrdbService != nil {
 		// Multi-tenant mode with QRDB
-		tca.adminService = admin.NewTenantAwareAdminService(
+		tenantAwareAdminSvc, err := admin.NewTenantAwareAdminService(
 			tca.ca,
 			tca.storageFactory,
 			tca.qrdbService,
 			tca.logger,
 			tca.version,
 		)
+		if err != nil {
+			return caerrors.Wrap(caerrors.StorageFailure, err, "trustedca: failed to construct tenant-aware admin service: %s", err)
+		}
+		tca.adminService = tenantAwareAdminSvc
 	} else {
 		// Single-tenant mode
 		tca.adminService = admin.NewAdminService(

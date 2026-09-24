@@ -218,7 +218,7 @@ func TestCoverageBoost_ParsePEMCertificate_InvalidCertBytes(t *testing.T) {
 func TestCoverageBoost_GenerateKeyPair_RSA(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	priv, pub, err := service.generateKeyPair(x509.RSA)
 	require.NoError(t, err)
@@ -229,7 +229,7 @@ func TestCoverageBoost_GenerateKeyPair_RSA(t *testing.T) {
 func TestCoverageBoost_GenerateKeyPair_ECDSA(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	priv, pub, err := service.generateKeyPair(x509.ECDSA)
 	require.NoError(t, err)
@@ -240,7 +240,7 @@ func TestCoverageBoost_GenerateKeyPair_ECDSA(t *testing.T) {
 func TestCoverageBoost_GenerateKeyPair_Ed25519(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	priv, pub, err := service.generateKeyPair(x509.Ed25519)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestCoverageBoost_GenerateKeyPair_Ed25519(t *testing.T) {
 func TestCoverageBoost_GenerateKeyPair_Unsupported(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, _, err := service.generateKeyPair(x509.DSA)
 	require.Error(t, err)
@@ -303,7 +303,7 @@ func TestCoverageBoost_ParseKeyAlgorithm(t *testing.T) {
 func TestCoverageBoost_GetTenantSigningCA_NoEntry(t *testing.T) {
 	logger := slog.Default()
 	// No global CA either
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, _, err := service.GetTenantSigningCA(context.Background(), "nonexistent")
 	require.Error(t, err)
@@ -313,7 +313,7 @@ func TestCoverageBoost_GetTenantSigningCA_NoEntry(t *testing.T) {
 func TestCoverageBoost_GetTenantSigningCA_WithDefaultIntCA(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	// Create a test key pair for the intermediate CA
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -340,7 +340,7 @@ func TestCoverageBoost_GetTenantSigningCA_WithDefaultIntCA(t *testing.T) {
 func TestCoverageBoost_GetTenantSigningCA_FallbackToRootCA(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -364,7 +364,7 @@ func TestCoverageBoost_GetTenantSigningCA_FallbackToRootCA(t *testing.T) {
 func TestCoverageBoost_GetTenantSigningCA_FallbackFirstAvailableIntCA(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -388,7 +388,7 @@ func TestCoverageBoost_GetTenantSigningCA_FallbackFirstAvailableIntCA(t *testing
 
 func TestCoverageBoost_GetTenantSigningCA_NoAvailableSigners(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	// Entry exists but no signers available and no global CA
 	service.mu.Lock()
@@ -434,7 +434,7 @@ func TestCoverageBoost_GetTenant_NoTenantService(t *testing.T) {
 	// Service with no qrdb TenantServicer wired: GetTenant must fail closed
 	// with ErrTenantServiceUnavailable rather than fall back to a local model.
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.GetTenant(context.Background(), "nonexistent")
 	require.Error(t, err)
@@ -448,7 +448,7 @@ func TestCoverageBoost_GetTenant_NoTenantService(t *testing.T) {
 func TestCoverageBoost_StoreKeyAndCert_NoKeystore(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -462,7 +462,7 @@ func TestCoverageBoost_StoreKeyAndCert_NoKeystore(t *testing.T) {
 func TestCoverageBoost_StoreKeyAndCert_NoQRDB(t *testing.T) {
 	logger := slog.Default()
 	// No qrdb service at all
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -480,7 +480,7 @@ func TestCoverageBoost_StoreKeyAndCert_NoQRDB(t *testing.T) {
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Validation(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	tests := []struct {
 		name     string
@@ -506,7 +506,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Validation(t *testing.T)
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_NoEntry(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	err := service.UpdateTenantIntermediateCAStatus(context.Background(), "nonexistent", "ca-1", "active")
 	require.Error(t, err)
@@ -516,7 +516,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_NoEntry(t *testing.T) {
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_IntCANotFound(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	service.mu.Lock()
 	service.tenantCAs["tenant-1"] = &tenantCAEntry{
@@ -532,7 +532,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_IntCANotFound(t *testing
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Suspend(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 	service.SetTenantService(newFakeTenantServicer())
 
 	// Create tenant first so tenantDAO can find it
@@ -568,7 +568,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Suspend(t *testing.T) {
 func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Revoke(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -592,7 +592,7 @@ func TestCoverageBoost_UpdateTenantIntermediateCAStatus_Revoke(t *testing.T) {
 
 func TestCoverageBoost_GetTenantCAStatus_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.GetTenantCAStatus(context.Background(), "")
 	require.Error(t, err)
@@ -601,7 +601,7 @@ func TestCoverageBoost_GetTenantCAStatus_EmptyTenantID(t *testing.T) {
 
 func TestCoverageBoost_GetTenantCAStatus_NoEntry_NoGlobalCA(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	result, err := service.GetTenantCAStatus(context.Background(), "nonexistent")
 	require.NoError(t, err)
@@ -613,7 +613,7 @@ func TestCoverageBoost_GetTenantCAStatus_NoEntry_NoGlobalCA(t *testing.T) {
 func TestCoverageBoost_GetTenantCAStatus_WithRootAndIntermediateCAs(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -645,7 +645,7 @@ func TestCoverageBoost_GetTenantCAStatus_WithRootAndIntermediateCAs(t *testing.T
 
 func TestCoverageBoost_GetTenantCAStatus_SuspendedIntCA(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	intCert := makeTestCert(t, "Suspended Int CA")
 
@@ -667,7 +667,7 @@ func TestCoverageBoost_GetTenantCAStatus_SuspendedIntCA(t *testing.T) {
 
 func TestCoverageBoost_GetTenantCAStatus_ExpiredRootCA(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	expiredCert := makeTestCertWithExpiry(t, "Expired Root", time.Now().Add(-48*time.Hour), time.Now().Add(-24*time.Hour))
 
