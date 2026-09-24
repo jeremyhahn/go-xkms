@@ -17,6 +17,7 @@ package qrdb
 
 import (
 	"context"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"testing"
 
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -200,7 +201,7 @@ func TestMemoryUserClient_CreateUser_Success(t *testing.T) {
 	assert.Equal(t, "alice", user.Username)
 	assert.Equal(t, "tenant-1", user.TenantID)
 	assert.Equal(t, []string{"role-1", "role-2"}, user.RoleIDs)
-	assert.True(t, user.Enabled)
+	assert.True(t, (user.Lifecycle == string(qrdbsdk.LifecycleActive)))
 	assert.NotEmpty(t, user.CreatedAt)
 	assert.NotEmpty(t, user.UpdatedAt)
 }
@@ -327,14 +328,14 @@ func TestMemoryUserClient_EnableUser_Success(t *testing.T) {
 
 	got, err := c.GetUser(ctx, created.ID)
 	require.NoError(t, err)
-	assert.False(t, got.Enabled)
+	assert.False(t, (got.Lifecycle == string(qrdbsdk.LifecycleActive)))
 
 	err = c.EnableUser(ctx, created.ID)
 	require.NoError(t, err)
 
 	got, err = c.GetUser(ctx, created.ID)
 	require.NoError(t, err)
-	assert.True(t, got.Enabled)
+	assert.True(t, (got.Lifecycle == string(qrdbsdk.LifecycleActive)))
 }
 
 func TestMemoryUserClient_DisableUser_Success(t *testing.T) {
@@ -343,12 +344,12 @@ func TestMemoryUserClient_DisableUser_Success(t *testing.T) {
 
 	created, err := c.CreateUser(ctx, &db.CreateUserRequest{Username: "alice"})
 	require.NoError(t, err)
-	assert.True(t, created.Enabled)
+	assert.True(t, (created.Lifecycle == string(qrdbsdk.LifecycleActive)))
 
 	err = c.DisableUser(ctx, created.ID)
 	require.NoError(t, err)
 
 	got, err := c.GetUser(ctx, created.ID)
 	require.NoError(t, err)
-	assert.False(t, got.Enabled)
+	assert.False(t, (got.Lifecycle == string(qrdbsdk.LifecycleActive)))
 }
