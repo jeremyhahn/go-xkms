@@ -173,9 +173,7 @@ func (c *mcpClient) call(ctx context.Context, method string, params, out interfa
 	}
 
 	if resp.Error != nil {
-		return &ProtocolError{
-			Message: fmt.Sprintf("server error %d: %s", resp.Error.Code, resp.Error.Message),
-		}
+		return mcpErrorFromResponse(resp.Error)
 	}
 
 	if out != nil && len(resp.Result) > 0 {
@@ -206,9 +204,53 @@ type mcpResponse struct {
 	ID      int64           `json:"id,omitempty"`
 }
 
+// mcpRPCError is the JSON-RPC 2.0 error object. Data, when present, carries
+// the same envelope fields as the REST transport's errorEnvelope (Resource,
+// Host, Expected, Received) so a NotFound/Duplicate/Mismatch reported over
+// MCP reconstructs with the same fidelity as its REST equivalent instead of
+// only a bare message.
 type mcpRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// mcpErrorFromResponse converts a JSON-RPC 2.0 error object into the typed
+// SDK error its Code identifies, using classify()'s JSON-RPC-side table
+// (JSONRPCCodeForError) in reverse. env.Data is decoded into the shared
+// errorEnvelope struct (defined in rest.go) when present so the
+// reconstructed error carries the same Resource/Host/Expected/Received
+// detail a REST client would get for the identical failure; a server that
+// omits Data still round-trips the bare message. Any code this table does
+// not recognize becomes a *ProtocolError carrying the raw code and message,
+// matching the pre-existing behavior for a server error this SDK cannot
+// classify.
+func mcpErrorFromResponse(rpcErr *mcpRPCError) error {
+	var env errorEnvelope
+	if len(rpcErr.Data) > 0 {
+		_ = json.Unmarshal(rpcErr.Data, &env) // best-effort; missing/malformed Data stays empty.
+	}
+	msg := env.Message
+	if msg == "" {
+		msg = rpcErr.Message
+	}
+
+	switch rpcErr.Code {
+	case JSONRPCCodeNotFound:
+		return &NotFoundError{Resource: env.Resource, Message: msg}
+	case JSONRPCCodeDuplicate:
+		return &DuplicateError{Resource: env.Resource, Message: msg}
+	case JSONRPCCodeMismatch:
+		return &MismatchError{Host: env.Host, Expected: env.Expected, Received: env.Received}
+	case jsonrpcCodeInvalidParams:
+		return &InvalidRequestError{Message: msg}
+	case jsonrpcCodeMethodNotFound:
+		return &NotImplementedError{Transport: "mcp", Op: msg}
+	default:
+		return &ProtocolError{
+			Message: fmt.Sprintf("server error %d: %s", rpcErr.Code, rpcErr.Message),
+		}
+	}
 }
 
 // ----------------------------------------------------------------------------

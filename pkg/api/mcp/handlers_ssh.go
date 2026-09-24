@@ -62,7 +62,11 @@ func (s *Server) handleSSHKeysGenerate(ctx context.Context, req *JSONRPCRequest)
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
-	return s.sshClient.Keys().Generate(ctx, params)
+	key, err := s.sshClient.Keys().Generate(ctx, params)
+	if err != nil {
+		return nil, mapSSHError(err)
+	}
+	return key, nil
 }
 
 // handleSSHKeysImport handles ssh.keys.import. When the Passphrase
@@ -88,7 +92,11 @@ func (s *Server) handleSSHKeysImport(ctx context.Context, req *JSONRPCRequest) (
 	if len(params.Passphrase) > 0 {
 		provider = &sshStaticPassphraseProvider{data: params.Passphrase}
 	}
-	return s.sshClient.Keys().Import(ctx, importReq, provider)
+	key, err := s.sshClient.Keys().Import(ctx, importReq, provider)
+	if err != nil {
+		return nil, mapSSHError(err)
+	}
+	return key, nil
 }
 
 // handleSSHKeysList handles ssh.keys.list.
@@ -102,7 +110,7 @@ func (s *Server) handleSSHKeysList(ctx context.Context, req *JSONRPCRequest) (in
 	}
 	keys, err := s.sshClient.Keys().List(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHKeyListResult{Items: keys}, nil
 }
@@ -116,7 +124,11 @@ func (s *Server) handleSSHKeysGet(ctx context.Context, req *JSONRPCRequest) (int
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
-	return s.sshClient.Keys().Get(ctx, params)
+	key, err := s.sshClient.Keys().Get(ctx, params)
+	if err != nil {
+		return nil, mapSSHError(err)
+	}
+	return key, nil
 }
 
 // handleSSHKeysDelete handles ssh.keys.delete.
@@ -129,7 +141,7 @@ func (s *Server) handleSSHKeysDelete(ctx context.Context, req *JSONRPCRequest) (
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
 	if err := s.sshClient.Keys().Delete(ctx, params); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSuccessResult{Success: true}, nil
 }
@@ -144,7 +156,11 @@ func (s *Server) handleSSHKeysExport(ctx context.Context, req *JSONRPCRequest) (
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
-	return s.sshClient.Keys().ExportPublic(ctx, params)
+	pub, err := s.sshClient.Keys().ExportPublic(ctx, params)
+	if err != nil {
+		return nil, mapSSHError(err)
+	}
+	return pub, nil
 }
 
 // handleSSHKeysSign handles ssh.keys.sign. It acquires an
@@ -168,11 +184,11 @@ func (s *Server) handleSSHKeysSign(ctx context.Context, req *JSONRPCRequest) (in
 		Name:  params.Name,
 	})
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	sig, err := signer.Sign(rand.Reader, params.Digest)
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSignResult{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}, nil
 }
@@ -191,7 +207,7 @@ func (s *Server) handleSSHKnownHostsAdd(ctx context.Context, req *JSONRPCRequest
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
 	if err := s.sshClient.KnownHosts().Add(ctx, params); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSuccessResult{Success: true}, nil
 }
@@ -207,7 +223,7 @@ func (s *Server) handleSSHKnownHostsList(ctx context.Context, req *JSONRPCReques
 	}
 	pins, err := s.sshClient.KnownHosts().List(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHPinListResult{Items: pins}, nil
 }
@@ -222,7 +238,7 @@ func (s *Server) handleSSHKnownHostsRemove(ctx context.Context, req *JSONRPCRequ
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
 	if err := s.sshClient.KnownHosts().Remove(ctx, params); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSuccessResult{Success: true}, nil
 }
@@ -249,10 +265,10 @@ func (s *Server) handleSSHKnownHostsVerify(ctx context.Context, req *JSONRPCRequ
 	}
 	pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(params.PublicKey))
 	if perr != nil {
-		return nil, &sdkssh.InvalidPublicKeyError{Host: params.Host, Err: perr}
+		return nil, mapSSHError(&sdkssh.InvalidPublicKeyError{Host: params.Host, Err: perr})
 	}
 	if err := s.sshClient.KnownHosts().Verify(ctx, params.Scope, params.Owner, params.Host, pub); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSuccessResult{Success: true}, nil
 }
@@ -271,7 +287,7 @@ func (s *Server) handleSSHAuthorizedKeysAdd(ctx context.Context, req *JSONRPCReq
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
 	if err := s.sshClient.AuthorizedKeys().Add(ctx, params); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSuccessResult{Success: true}, nil
 }
@@ -285,7 +301,11 @@ func (s *Server) handleSSHAuthorizedKeysGet(ctx context.Context, req *JSONRPCReq
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
-	return s.sshClient.AuthorizedKeys().Get(ctx, params.Scope, params.Owner, params.Name)
+	entry, err := s.sshClient.AuthorizedKeys().Get(ctx, params.Scope, params.Owner, params.Name)
+	if err != nil {
+		return nil, mapSSHError(err)
+	}
+	return entry, nil
 }
 
 // handleSSHAuthorizedKeysList handles ssh.authorizedKeys.list.
@@ -299,7 +319,7 @@ func (s *Server) handleSSHAuthorizedKeysList(ctx context.Context, req *JSONRPCRe
 	}
 	entries, err := s.sshClient.AuthorizedKeys().List(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHAuthorizedListResult{Items: entries}, nil
 }
@@ -314,7 +334,7 @@ func (s *Server) handleSSHAuthorizedKeysRemove(ctx context.Context, req *JSONRPC
 		return nil, &SSHInvalidParamsError{Err: err}
 	}
 	if err := s.sshClient.AuthorizedKeys().Remove(ctx, params.Scope, params.Owner, params.Name); err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHSuccessResult{Success: true}, nil
 }
@@ -330,7 +350,7 @@ func (s *Server) handleSSHAuthorizedKeysEmit(ctx context.Context, req *JSONRPCRe
 	}
 	line, err := s.sshClient.AuthorizedKeys().Emit(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	return SSHEmitResult{Line: line}, nil
 }
@@ -354,7 +374,7 @@ func (s *Server) handleSSHAuthorizedKeysVerify(ctx context.Context, req *JSONRPC
 		Owner: params.Owner,
 	})
 	if err != nil {
-		return nil, err
+		return nil, mapSSHError(err)
 	}
 	for _, entry := range entries {
 		pub, _, _, _, perr := gossh.ParseAuthorizedKey([]byte(entry.Line))
@@ -365,7 +385,7 @@ func (s *Server) handleSSHAuthorizedKeysVerify(ctx context.Context, req *JSONRPC
 			return entry, nil
 		}
 	}
-	return nil, &SSHNotFoundError{Resource: "authorized_key"}
+	return nil, mapSSHError(&SSHNotFoundError{Resource: "authorized_key"})
 }
 
 // ------------------------------------------------------------------

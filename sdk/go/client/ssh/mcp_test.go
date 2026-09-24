@@ -54,6 +54,11 @@ type fakeMCPServer struct {
 	// well-formed envelope — used to exercise hostile/broken servers.
 	rawResponse map[string]string
 
+	// dataFailure, when set for a method, answers with a JSON-RPC error
+	// object carrying a "data" envelope (Resource/Host/Expected/Received),
+	// exercising mcpErrorFromResponse's envelope decode.
+	dataFailure map[string]dataFailureSpec
+
 	// closeOn names a method that makes the server hang up without replying.
 	closeOn string
 
@@ -73,6 +78,7 @@ func newFakeMCPServer(t *testing.T) *fakeMCPServer {
 		ln:          ln,
 		handlers:    map[string]mcpHandler{},
 		rawResponse: map[string]string{},
+		dataFailure: map[string]dataFailureSpec{},
 	}
 	// Health always succeeds unless a test overrides it.
 	s.handlers["health"] = func(json.RawMessage) (interface{}, int, string) {
@@ -115,6 +121,7 @@ func (s *fakeMCPServer) serve(conn net.Conn) {
 		s.calls = append(s.calls, call)
 		closeOn := s.closeOn
 		raw, hasRaw := s.rawResponse[call.Method]
+		dataFail, hasDataFail := s.dataFailure[call.Method]
 		handler, hasHandler := s.handlers[call.Method]
 		s.mu.Unlock()
 
@@ -123,6 +130,10 @@ func (s *fakeMCPServer) serve(conn net.Conn) {
 		}
 		if hasRaw {
 			_, _ = conn.Write([]byte(raw + "\n"))
+			continue
+		}
+		if hasDataFail {
+			s.writeErrorData(conn, call.ID, dataFail.Code, dataFail.Message, dataFail.Data)
 			continue
 		}
 		if !hasHandler {
@@ -159,6 +170,27 @@ func (s *fakeMCPServer) writeError(conn net.Conn, id int64, code int, message st
 	_, _ = conn.Write(append(line, '\n'))
 }
 
+// errData is the "data" object rpcErrData attaches to a JSON-RPC error --
+// wire-compatible with the REST transport's errorEnvelope, exercising
+// mcpErrorFromResponse's envelope decode.
+type errData struct {
+	Resource string `json:"resource,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Expected string `json:"expected,omitempty"`
+	Received string `json:"received,omitempty"`
+}
+
+func (s *fakeMCPServer) writeErrorData(conn net.Conn, id int64, code int, message string, data errData) {
+	resp := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]interface{}{"code": code, "message": message, "data": data},
+	}
+	line, _ := json.Marshal(resp)
+	_, _ = conn.Write(append(line, '\n'))
+}
+
 func (s *fakeMCPServer) addr() string { return s.ln.Addr().String() }
 
 func (s *fakeMCPServer) handle(method string, fn mcpHandler) {
@@ -173,6 +205,21 @@ func (s *fakeMCPServer) ok(method string, result interface{}) {
 
 func (s *fakeMCPServer) fail(method string, code int, message string) {
 	s.handle(method, func(json.RawMessage) (interface{}, int, string) { return nil, code, message })
+}
+
+// dataFailureSpec is a JSON-RPC error answer carrying a "data" envelope.
+type dataFailureSpec struct {
+	Code    int
+	Message string
+	Data    errData
+}
+
+// failData registers method to answer with a JSON-RPC error carrying a
+// "data" envelope, exercising mcpErrorFromResponse's envelope decode path.
+func (s *fakeMCPServer) failData(method string, code int, message string, data errData) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dataFailure[method] = dataFailureSpec{Code: code, Message: message, Data: data}
 }
 
 // lastCall returns the most recent recorded call for method.
@@ -361,6 +408,90 @@ func TestMCP_ServerErrorBecomesProtocolError(t *testing.T) {
 	// Both the code and the operator-facing message must survive.
 	if !strings.Contains(protoErr.Message, "-32004") || !strings.Contains(protoErr.Message, "key not found") {
 		t.Errorf("server error detail lost: %q", protoErr.Message)
+	}
+}
+
+// TestMCP_NotFoundCodeBecomesNotFoundError proves a store NotFound error
+// (issue #769: "keys-store errors fall through to Internal") reconstructs as
+// *NotFoundError instead of the generic *ProtocolError every SSH store error
+// used to collapse into.
+func TestMCP_NotFoundCodeBecomesNotFoundError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.failData("ssh.keys.get", sdkssh.JSONRPCCodeNotFound, "ssh/keys: key not found: ghost",
+		errData{Resource: "key", Message: "ssh/keys: key not found: ghost"})
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var notFound *sdkssh.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *NotFoundError, got %T %v", err, err)
+	}
+	if notFound.Resource != "key" {
+		t.Errorf("Resource = %q, want %q", notFound.Resource, "key")
+	}
+}
+
+// TestMCP_DuplicateCodeBecomesDuplicateError covers the known_hosts/
+// authorized_keys "Add called twice" case, which REST reports as 409.
+func TestMCP_DuplicateCodeBecomesDuplicateError(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.failData("ssh.knownHosts.add", sdkssh.JSONRPCCodeDuplicate, "pin already exists",
+		errData{Resource: "known_hosts", Message: "pin already exists"})
+	client := newMCPFixture(t, srv)
+
+	err := client.KnownHosts().Add(context.Background(), sdkssh.AddKnownHostRequest{
+		Scope: "user", Owner: "alice", Host: "git.example.com", PublicKey: "ssh-ed25519 AAAA",
+	})
+	var dupErr *sdkssh.DuplicateError
+	if !errors.As(err, &dupErr) {
+		t.Fatalf("expected *DuplicateError, got %T %v", err, err)
+	}
+	if dupErr.Resource != "known_hosts" {
+		t.Errorf("Resource = %q, want %q", dupErr.Resource, "known_hosts")
+	}
+}
+
+// TestMCP_MismatchCodeBecomesMismatchError proves a known_hosts host-key
+// mismatch (the MITM-indicating case the issue calls out by name) round-trips
+// as *MismatchError with its Host/Expected/Received fields intact, not a
+// bare *ProtocolError a caller cannot branch on.
+func TestMCP_MismatchCodeBecomesMismatchError(t *testing.T) {
+	_, sshPub := testPublicKeyLine(t)
+	srv := newFakeMCPServer(t)
+	srv.failData("ssh.knownHosts.verify", sdkssh.JSONRPCCodeMismatch, "host key mismatch for git.example.com",
+		errData{Host: "git.example.com", Expected: "SHA256:aaa", Received: "SHA256:bbb"})
+	client := newMCPFixture(t, srv)
+
+	err := client.KnownHosts().Verify(context.Background(), "user", "alice", "git.example.com", sshPub)
+	var mismatch *sdkssh.MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected *MismatchError, got %T %v", err, err)
+	}
+	if mismatch.Host != "git.example.com" || mismatch.Expected != "SHA256:aaa" || mismatch.Received != "SHA256:bbb" {
+		t.Errorf("mismatch = %+v", mismatch)
+	}
+}
+
+// TestMCP_UnknownCodeStaysProtocolErrorNotLeaked proves a code this SDK does
+// not recognize still surfaces as *ProtocolError (never as one of the typed
+// store errors) and carries only the server's own message -- it must not
+// synthesize additional internal detail the server never sent.
+func TestMCP_UnknownCodeStaysProtocolErrorNotLeaked(t *testing.T) {
+	srv := newFakeMCPServer(t)
+	srv.fail("ssh.keys.get", -32099, "opaque failure")
+	client := newMCPFixture(t, srv)
+
+	_, err := client.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Name: "ghost"})
+	var protoErr *sdkssh.ProtocolError
+	if !errors.As(err, &protoErr) {
+		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
+	}
+	var notFound *sdkssh.NotFoundError
+	if errors.As(err, &notFound) {
+		t.Fatal("an unrecognized code must never be classified as NotFound")
+	}
+	if !strings.Contains(protoErr.Message, "opaque failure") {
+		t.Errorf("server message lost: %q", protoErr.Message)
 	}
 }
 
@@ -1035,8 +1166,9 @@ func TestMCPConsole_Unsupported(t *testing.T) {
 // mcp_dial_test.go for the genuine end-to-end dial/handshake coverage over a
 // server wired to a real embedded client). Session.Dial resolves the
 // remote-signer proxy through ssh.keys.export before it ever reaches the
-// target host, so an unhandled method — not a *NotImplementedError, now that
-// MCP dials directly — must surface to the caller as a typed *ProtocolError.
+// target host. The fake server answers that call with JSON-RPC "method not
+// found", which the client decodes into a typed *NotImplementedError
+// (go-xkms#769) naming ssh.keys.export: the signer lookup failed, not Dial.
 func TestMCPSession_DialPropagatesSignerFailure(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	client := newMCPFixture(t, srv)
@@ -1044,8 +1176,11 @@ func TestMCPSession_DialPropagatesSignerFailure(t *testing.T) {
 	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{
 		KeyScope: "user", KeyOwner: "alice", KeyName: "ssh", Host: "h", User: "u",
 	})
-	var pe *sdkssh.ProtocolError
-	if !errors.As(err, &pe) {
-		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
+	var ni *sdkssh.NotImplementedError
+	if !errors.As(err, &ni) {
+		t.Fatalf("expected *NotImplementedError, got %T %v", err, err)
+	}
+	if !strings.Contains(ni.Error(), "ssh.keys.export") {
+		t.Fatalf("expected the signer lookup to be named, got: %v", ni)
 	}
 }
