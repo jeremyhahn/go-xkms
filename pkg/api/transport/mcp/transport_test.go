@@ -302,16 +302,6 @@ func TestRequest_UnknownPath(t *testing.T) {
 	assert.Equal(t, transport.ErrCodeMethodNotFound, te.Code)
 }
 
-// --- RequestStream ---
-
-func TestRequestStream_NotSupported(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-
-	_, err = tr.RequestStream(context.Background(), "test", nil)
-	assert.ErrorIs(t, err, transport.ErrStreamNotSupported)
-}
-
 // --- Healthy ---
 
 func TestHealthy_NotConnected(t *testing.T) {

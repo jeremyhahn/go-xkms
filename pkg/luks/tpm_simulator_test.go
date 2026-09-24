@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -192,5 +194,101 @@ func TestTPMSealer_Seal_PolicyBindsPCRState(t *testing.T) {
 
 	if _, err = h.UnsealPassphrase(context.Background(), res.TokenJSON); !errors.Is(err, ErrTPMUnsealFailed) {
 		t.Fatalf("expected ErrTPMUnsealFailed after PCR extend, got %v", err)
+	}
+}
+
+// errSimulatedCloseFailure is the TPMCloser.Close error
+// failingCloseTPMCloser reports, letting the test assert on it without
+// depending on transport.TPMCloser's undocumented Close error shapes.
+var errSimulatedCloseFailure = errors.New("luks_test: simulated tpm transport close failure")
+
+// failingCloseOpener hands out a TPMCloser whose Send delegates to a real
+// (simulator-backed) TPM but whose Close always fails, exercising
+// TPMSealer.closeTPM's non-nil-error branch (go-xkms#876): the seal result
+// is already decided by the time closeTPM runs, so a Close failure must be
+// logged, never surfaced through SealPassphrase's return.
+type failingCloseOpener struct {
+	tpm transport.TPM
+}
+
+func (f *failingCloseOpener) Open(context.Context) (transport.TPMCloser, error) {
+	return failingCloseTPMCloser{tpm: f.tpm}, nil
+}
+
+type failingCloseTPMCloser struct{ tpm transport.TPM }
+
+func (f failingCloseTPMCloser) Send(cmd []byte) ([]byte, error) { return f.tpm.Send(cmd) }
+func (f failingCloseTPMCloser) Close() error                    { return errSimulatedCloseFailure }
+
+// recordingHandler is a minimal slog.Handler that records every record
+// passed to Handle, so a test can assert a specific message/level/attr
+// combination was logged without parsing formatted output.
+type recordingHandler struct {
+	mu      *sync.Mutex
+	records *[]slog.Record
+}
+
+func newRecordingHandler() *recordingHandler {
+	return &recordingHandler{mu: &sync.Mutex{}, records: &[]slog.Record{}}
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	*h.records = append(*h.records, r)
+	return nil
+}
+
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *recordingHandler) hasRecordContaining(level slog.Level, substr string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range *h.records {
+		if r.Level == level && strings.Contains(r.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTPMSealer_CloseFailure_LoggedNotSurfaced proves closeTPM's contract
+// from go-xkms#876: SealPassphrase's own result is unaffected by a TPM
+// transport Close failure, and the failure is logged at debug through the
+// sealer's logger instead of being silently discarded.
+func TestTPMSealer_CloseFailure_LoggedNotSurfaced(t *testing.T) {
+	simLock.Lock()
+	sim, err := simulator.Get()
+	if err != nil {
+		simLock.Unlock()
+		t.Fatalf("simulator.Get: %v", err)
+	}
+	defer func() {
+		sim.Close()
+		simLock.Unlock()
+	}()
+
+	sharedTPM := transport.FromReadWriter(sim)
+	provisionPersistentSRK(t, sharedTPM, libtpm2.TPMHandle(0x81000001))
+
+	handler := newRecordingHandler()
+	logger := slog.New(handler)
+
+	h, err := NewTPMSealer(logger, &failingCloseOpener{tpm: sharedTPM})
+	if err != nil {
+		t.Fatalf("construct sealer: %v", err)
+	}
+
+	res, err := h.SealPassphrase(context.Background(), "", []int32{7})
+	if err != nil {
+		t.Fatalf("SealPassphrase must succeed despite a Close failure, got: %v", err)
+	}
+	defer res.Passphrase.Destroy()
+
+	if !handler.hasRecordContaining(slog.LevelDebug, "tpm transport close failed") {
+		t.Fatal("expected a debug log recording the TPM transport close failure")
 	}
 }

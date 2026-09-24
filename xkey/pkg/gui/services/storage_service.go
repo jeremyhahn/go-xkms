@@ -18,6 +18,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
@@ -69,6 +72,16 @@ type StorageService struct {
 	ctx      context.Context
 	log      *slog.Logger
 	elevator Elevator
+
+	// luksMu guards luksBackend construction and access.
+	luksMu sync.Mutex
+	// luksBackend is the process-lifetime LUKSStorageBackend used by
+	// CreateVolume, UnlockVolume, LockVolume, and RequireUnlocked. Its lock
+	// state reflects only what this process itself has done — see
+	// RequireUnlocked and Backend.Attach for how a second process's
+	// mount (for example an elevated `xkey luks2 unseal` child process) is
+	// reconciled.
+	luksBackend *xkms.LUKSStorageBackend
 }
 
 // NewStorageService creates a new StorageService.
@@ -87,6 +100,66 @@ func (s *StorageService) SetContext(ctx context.Context) {
 // that require root when the process is not running as root.
 func (s *StorageService) SetElevator(e Elevator) {
 	s.elevator = e
+}
+
+// luksStorageBackend returns the process-lifetime LUKSStorageBackend,
+// constructing it against the default xhome-resolved volume on first use.
+// The same instance is reused for the life of the service so its lock
+// state accumulates across CreateVolume/UnlockVolume/LockVolume/
+// RequireUnlocked calls within this process.
+func (s *StorageService) luksStorageBackend() (*xkms.LUKSStorageBackend, error) {
+	s.luksMu.Lock()
+	defer s.luksMu.Unlock()
+
+	if s.luksBackend != nil {
+		return s.luksBackend, nil
+	}
+
+	vol, err := luks.NewVolume()
+	if err != nil {
+		return nil, err
+	}
+	s.luksBackend = xkms.NewLUKSStorageBackend(vol)
+	return s.luksBackend, nil
+}
+
+// RequireUnlocked fails closed against a locked LUKS volume: it returns
+// xkms.ErrLUKSVolumeLocked when a LUKS volume is configured for this xkey
+// home but not currently mounted, so that data-directory initialization can
+// refuse to open any store rather than silently writing to the plain,
+// unencrypted directory beneath an unmounted mount point.
+//
+// It returns nil when no LUKS volume is configured for this home (Exists is
+// false — the no-LUKS data directory is unaffected) and when the volume is
+// already usable. "Already usable" includes attaching this process's
+// LUKSStorageBackend to a volume mounted by someone else — for example an
+// elevated `xkey luks2 unseal` child process this StorageService itself
+// spawned when not running as root, or a separate CLI invocation that
+// shares the same on-disk container — via Backend.Attach, since in that case
+// this process never called Unlock itself.
+func (s *StorageService) RequireUnlocked() error {
+	vol, err := luks.NewVolume()
+	if err != nil {
+		// xhome could not be resolved; the data directory open that follows
+		// will surface the same failure with more context, so do not block
+		// here on a LUKS-specific error the volume can't actually explain.
+		return nil
+	}
+	if !vol.Exists() {
+		return nil
+	}
+
+	backend, err := s.luksStorageBackend()
+	if err != nil {
+		return nil
+	}
+	if backend.IsUnlocked() {
+		return nil
+	}
+	if !vol.IsMounted() {
+		return xkms.ErrLUKSVolumeLocked
+	}
+	return backend.Attach()
 }
 
 // GetStatus returns the current state of the encrypted storage volume.
@@ -130,16 +203,14 @@ func (s *StorageService) CreateVolume(params CreateVolumeParams) error {
 	}
 
 	if geteuid() == 0 {
-		vol, err := luks.NewVolume()
+		backend, err := s.luksStorageBackend()
 		if err != nil {
 			return err
 		}
 		sizeBytes := int64(params.SizeGB) * bytesPerGB
-		if err := vol.Create(sizeBytes, params.Passphrase); err != nil {
-			return err
-		}
-		// Auto-unlock the volume so it's immediately usable.
-		return vol.Unlock(params.Passphrase)
+		// Initialize creates the volume and auto-unlocks it so it's
+		// immediately usable.
+		return backend.Initialize(sizeBytes, params.Passphrase)
 	}
 
 	// Build: xkey luks2 seal --size <N>G --skip-migrate --unseal --path <path> --mount-point <mount>
@@ -158,11 +229,11 @@ func (s *StorageService) UnlockVolume(passphrase string) error {
 	}
 
 	if geteuid() == 0 {
-		vol, err := luks.NewVolume()
+		backend, err := s.luksStorageBackend()
 		if err != nil {
 			return err
 		}
-		return vol.Unlock(passphrase)
+		return backend.Unlock(passphrase)
 	}
 
 	// Build: xkey luks2 unseal --path <path> --mount-point <mount>
@@ -176,11 +247,11 @@ func (s *StorageService) UnlockVolume(passphrase string) error {
 // LockVolume unmounts and locks the encrypted volume.
 func (s *StorageService) LockVolume() error {
 	if geteuid() == 0 {
-		vol, err := luks.NewVolume()
+		backend, err := s.luksStorageBackend()
 		if err != nil {
 			return err
 		}
-		return vol.Lock()
+		return backend.Lock()
 	}
 
 	// Build: xkey luks2 lock --path <path> --mount-point <mount>

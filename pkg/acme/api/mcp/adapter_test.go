@@ -348,6 +348,36 @@ func TestAdapterJSONRPCCall(t *testing.T) {
 		}
 	})
 
+	t.Run("call with HTTP error status and unreadable body", func(t *testing.T) {
+		// Declaring a larger Content-Length than actually written causes
+		// the client's io.ReadAll(resp.Body) to fail with an unexpected
+		// EOF once the server closes the connection, without any
+		// permission tricks.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "1000")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("short"))
+		}))
+		defer server.Close()
+
+		addr := strings.TrimPrefix(server.URL, "http://")
+		adapter, err := NewAdapter(&api.AdapterConfig{MCPAddr: addr})
+		if err != nil {
+			t.Fatalf("NewAdapter() failed: %v", err)
+		}
+		defer adapter.Close()
+
+		ctx := context.Background()
+		var result interface{}
+		err = adapter.call(ctx, "test.method", nil, &result)
+		if err == nil {
+			t.Fatal("expected error for unreadable response body")
+		}
+		if !strings.Contains(err.Error(), "response body could not be read") {
+			t.Errorf("expected body-read failure message, got: %v", err)
+		}
+	})
+
 	t.Run("call with JSON-RPC error", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.errors["test.method"] = &JSONRPCError{

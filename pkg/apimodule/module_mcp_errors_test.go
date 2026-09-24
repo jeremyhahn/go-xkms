@@ -135,6 +135,26 @@ func decodeToolErrorCode(t *testing.T, res *mcpgo.CallToolResult) *wire.ErrorPay
 	return payload
 }
 
+// TestWireCodeForKeyOp_MapsEveryDeclaredRowAndFallsBackOnUnknown is the
+// direct unit test for keyOpCodeToWire's lookup, including the three
+// sdkssh.JSONRPCCode* rows (NotFound, Duplicate, Mismatch) the end-to-end
+// MCP error-code test above does not reach — those three are produced only
+// by SSH tool dispatch (mapSSHError), not by the xkms.* methods that test
+// drives. It also pins the documented fallback: a code the table does not
+// declare renders as wire.CodeInternal rather than panicking or losing its
+// classification.
+func TestWireCodeForKeyOp_MapsEveryDeclaredRowAndFallsBackOnUnknown(t *testing.T) {
+	for code, want := range keyOpCodeToWire {
+		assert.Equal(t, want, wireCodeForKeyOp(code), "code %d", code)
+	}
+
+	const undeclaredCode = -999999
+	_, declared := keyOpCodeToWire[undeclaredCode]
+	require.False(t, declared, "test fixture assumption: this code must not collide with a real table entry")
+	assert.Equal(t, wire.CodeInternal, wireCodeForKeyOp(undeclaredCode),
+		"a code with no table entry must fall back to CodeInternal rather than panicking or losing its classification")
+}
+
 // TestMCPToolHandler_ErrorCodesReachCaller proves, through the real
 // unified-server MCP path (a genuine mcp-go server and in-process client,
 // exactly as go-qrdb's own SDK client exercises it), that mcpToolHandler
@@ -212,4 +232,16 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 		// The detail behind an unclassified fault is not the caller's to see.
 		assert.Equal(t, "xkms: internal error", payload.Message)
 	})
+}
+
+// TestWireCodeForKeyOp_UnknownCodeFallsBackToInternal proves the defensive
+// floor wireCodeForKeyOp's doc comment describes: a *KeyOpError code this
+// package's table does not declare — none exist today, which is exactly why
+// this has to be exercised directly rather than through a live tool call —
+// answers wire.CodeInternal instead of a zero value or a panic, so a future
+// xkms code added to pkg/api/mcp without a matching row here still reaches
+// callers as a classified fault.
+func TestWireCodeForKeyOp_UnknownCodeFallsBackToInternal(t *testing.T) {
+	const noSuchCode = -999999
+	assert.Equal(t, wire.CodeInternal, wireCodeForKeyOp(noSuchCode))
 }

@@ -199,9 +199,10 @@ func TestSealUnseal_Success(t *testing.T) {
 		"algorithm": string(types.SymmetricAES256GCM),
 	}
 	metadataBytes, _ := json.Marshal(metadata)
-	b.metadata[attrs.CN] = metadataBytes
-
 	ctx := context.Background()
+	if err := storage.SaveKey(ctx, config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		t.Fatalf("failed to seed metadata: %v", err)
+	}
 
 	// Seal
 	sealed, err := b.Seal(ctx, plaintext, &types.SealOptions{
@@ -447,9 +448,10 @@ func TestSealUnseal_WithAAD(t *testing.T) {
 		"algorithm": string(types.SymmetricAES256GCM),
 	}
 	metadataBytes, _ := json.Marshal(metadata)
-	b.metadata[attrs.CN] = metadataBytes
-
 	ctx := context.Background()
+	if err := storage.SaveKey(ctx, config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		t.Fatalf("failed to seed metadata: %v", err)
+	}
 
 	// Seal with AAD
 	sealed, err := b.Seal(ctx, plaintext, &types.SealOptions{

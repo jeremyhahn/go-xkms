@@ -53,6 +53,25 @@ func TestPKCS11Service_SetContext(t *testing.T) {
 	assert.Equal(t, ctx, svc.ctx)
 }
 
+// TestPKCS11Service_GetSlotOccupancy_NoManager and
+// TestPKCS11Service_HasSlotModel_NoManager pin the guard on a
+// zero-value PKCS11Service{}: neither reads slot state through a nil
+// manager.
+func TestPKCS11Service_GetSlotOccupancy_NoManager(t *testing.T) {
+	var svc PKCS11Service
+
+	occupancy, err := svc.GetSlotOccupancy("module-1", 0)
+
+	assert.ErrorIs(t, err, ErrPKCS11ServiceNotInitialized)
+	assert.Nil(t, occupancy)
+}
+
+func TestPKCS11Service_HasSlotModel_NoManager(t *testing.T) {
+	var svc PKCS11Service
+
+	assert.False(t, svc.HasSlotModel("module-1", 0))
+}
+
 func TestPKCS11Service_SetManager(t *testing.T) {
 	svc := NewPKCS11Service()
 	originalManager := svc.manager

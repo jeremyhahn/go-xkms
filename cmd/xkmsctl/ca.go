@@ -66,7 +66,7 @@ func getCABundle(cfg *Config) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -107,7 +107,7 @@ func getCACertificate(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -183,7 +183,7 @@ func signCSR(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -274,7 +274,7 @@ func issueCACertificate(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -397,7 +397,7 @@ func revokeCACertificate(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -452,7 +452,7 @@ func generateCRL(cfg *Config) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -507,7 +507,7 @@ func checkRevocationStatus(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -568,14 +568,14 @@ func init() {
 
 	// ca sign-csr flags
 	caSignCSRCmd.Flags().StringVar(&caCSRFile, "csr", "", "path to CSR PEM file (required)")
-	_ = caSignCSRCmd.MarkFlagRequired("csr")
+	markFlagRequired(caSignCSRCmd, "csr")
 	caSignCSRCmd.Flags().StringVar(&caProfile, "profile", "", "certificate profile (server, client, etc.)")
 	caSignCSRCmd.Flags().IntVar(&caValidity, "validity", 0, "validity period in days (0 for CA default)")
 	caSignCSRCmd.Flags().StringVar(&caOutputFile, "output", "", "output file for signed certificate (PEM)")
 
 	// ca issue flags
 	caIssueCmd.Flags().StringVar(&caCommonName, "cn", "", "common name for the certificate (required)")
-	_ = caIssueCmd.MarkFlagRequired("cn")
+	markFlagRequired(caIssueCmd, "cn")
 	caIssueCmd.Flags().StringVar(&caProfile, "profile", "", "certificate profile (server, client, etc.)")
 	caIssueCmd.Flags().StringVar(&caOrg, "org", "", "organization name")
 	caIssueCmd.Flags().StringVar(&caSANs, "sans", "", "subject alternative names (comma-separated, e.g., DNS:example.com,IP:1.2.3.4)")
@@ -585,7 +585,7 @@ func init() {
 
 	// ca revoke flags
 	caRevokeCmd.Flags().StringVar(&caSerial, "serial", "", "certificate serial number in hex (required)")
-	_ = caRevokeCmd.MarkFlagRequired("serial")
+	markFlagRequired(caRevokeCmd, "serial")
 	caRevokeCmd.Flags().IntVar(&caRevokeReason, "reason", 0, "RFC 5280 revocation reason code (default: 0 unspecified)")
 
 	// ca crl flags
@@ -593,7 +593,7 @@ func init() {
 
 	// ca status flags
 	caStatusCmd.Flags().StringVar(&caSerial, "serial", "", "certificate serial number in hex (required)")
-	_ = caStatusCmd.MarkFlagRequired("serial")
+	markFlagRequired(caStatusCmd, "serial")
 
 	// Add subcommands
 	caCmd.AddCommand(caBundleCmd)

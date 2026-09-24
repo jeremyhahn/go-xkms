@@ -141,19 +141,17 @@ func (s *XKMSService) verifyAndroidCSRAttestation(req *transport.SignCSRRequest)
 	}
 	if len(policy.AllowedPackages) == 0 {
 		slog.Warn("android CSR refused: the application allow-list is empty")
-		return fmt.Errorf("%w: the allow-list is empty", ErrAndroidAttestationAppDenied)
+		return &ErrOperationWrap{Sentinel: ErrAndroidAttestationAppDenied, Detail: "the allow-list is empty"}
 	}
 
 	leaf, err := x509.ParseCertificate(req.AttestationChain[0])
 	if err != nil {
-		return fmt.Errorf("%w: attestation leaf does not parse: %v",
-			ErrAttestationVerificationFailed, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationVerificationFailed, Detail: "attestation leaf does not parse", Err: err}
 	}
 
 	desc, err := android.ParseKeyAttestation(leaf)
 	if err != nil {
-		return fmt.Errorf("%w: attestation extension does not parse: %v",
-			ErrAttestationVerificationFailed, err)
+		return &ErrOperationWrap{Sentinel: ErrAttestationVerificationFailed, Detail: "attestation extension does not parse", Err: err}
 	}
 
 	// Freshness and key binding are invariants enforced for every format by
@@ -166,16 +164,16 @@ func (s *XKMSService) verifyAndroidCSRAttestation(req *transport.SignCSRRequest)
 	}
 	if policy.RequireVerifiedBoot {
 		if rot == nil {
-			return fmt.Errorf("%w: no root of trust was attested",
-				ErrAndroidAttestationBootState)
+			return &ErrOperationWrap{Sentinel: ErrAndroidAttestationBootState, Detail: "no root of trust was attested"}
 		}
 		if !rot.DeviceLocked {
-			return fmt.Errorf("%w: the bootloader is unlocked",
-				ErrAndroidAttestationBootState)
+			return &ErrOperationWrap{Sentinel: ErrAndroidAttestationBootState, Detail: "the bootloader is unlocked"}
 		}
 		if rot.VerifiedBootState != android.VerifiedBootVerified {
-			return fmt.Errorf("%w: verified boot is %s",
-				ErrAndroidAttestationBootState, rot.VerifiedBootState)
+			return &ErrOperationWrap{
+				Sentinel: ErrAndroidAttestationBootState,
+				Detail:   fmt.Sprintf("verified boot is %s", rot.VerifiedBootState),
+			}
 		}
 	}
 
@@ -191,8 +189,10 @@ func (s *XKMSService) verifyAndroidCSRAttestation(req *transport.SignCSRRequest)
 		minLevel = "trusted_environment"
 	}
 	if androidSecurityRank(level) < androidSecurityRank(minLevel) {
-		return fmt.Errorf("%w: key is %s, policy requires at least %s",
-			ErrAttestationVerificationFailed, level, minLevel)
+		return &ErrOperationWrap{
+			Sentinel: ErrAttestationVerificationFailed,
+			Detail:   fmt.Sprintf("key is %s, policy requires at least %s", level, minLevel),
+		}
 	}
 
 	appID := desc.SoftwareEnforced.AttestationApplicationID
@@ -217,8 +217,7 @@ func (p *AndroidEnrollmentPolicy) matchApplication(
 	appID *android.AttestationApplicationID,
 ) (string, string, error) {
 	if appID == nil || len(appID.Packages) == 0 {
-		return "", "", fmt.Errorf("%w: the attestation names no application",
-			ErrAndroidAttestationAppDenied)
+		return "", "", &ErrOperationWrap{Sentinel: ErrAndroidAttestationAppDenied, Detail: "the attestation names no application"}
 	}
 
 	digests := make([]string, 0, len(appID.SignatureDigests))
@@ -234,9 +233,10 @@ func (p *AndroidEnrollmentPolicy) matchApplication(
 
 		if len(allowed) == 0 {
 			if !p.AllowUnpinnedSignatures {
-				return "", "", fmt.Errorf(
-					"%w: %s is listed without a signing digest and unpinned "+
-						"signatures are disabled", ErrAndroidAttestationAppDenied, pkg.Name)
+				return "", "", &ErrOperationWrap{
+					Sentinel: ErrAndroidAttestationAppDenied,
+					Detail:   fmt.Sprintf("%s is listed without a signing digest and unpinned signatures are disabled", pkg.Name),
+				}
 			}
 			if len(digests) == 0 {
 				return pkg.Name, "", nil
@@ -252,15 +252,17 @@ func (p *AndroidEnrollmentPolicy) matchApplication(
 			}
 		}
 
-		return "", "", fmt.Errorf("%w: %s is listed but its signing digest %v is not",
-			ErrAndroidAttestationAppDenied, pkg.Name, digests)
+		return "", "", &ErrOperationWrap{
+			Sentinel: ErrAndroidAttestationAppDenied,
+			Detail:   fmt.Sprintf("%s is listed but its signing digest %v is not", pkg.Name, digests),
+		}
 	}
 
 	names := make([]string, 0, len(appID.Packages))
 	for _, pkg := range appID.Packages {
 		names = append(names, pkg.Name)
 	}
-	return "", "", fmt.Errorf("%w: %v", ErrAndroidAttestationAppDenied, names)
+	return "", "", &ErrOperationWrap{Sentinel: ErrAndroidAttestationAppDenied, Detail: fmt.Sprintf("%v", names)}
 }
 
 // lookup resolves a package name case-insensitively.

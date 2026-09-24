@@ -13,7 +13,10 @@
   `ca_bundle.go`, `endorse_eab.go`, `audit.go`, `compliance_attestation.go`,
   `service.go`.
 - `pkg/acme/entities` — the protocol objects themselves.
-- `pkg/acme/nonce` — nonce issue and consume.
+- `pkg/acme/nonce` — encrypted-counter nonce issue and redemption
+  (`Service`), plus prefix-routed multi-node dispatch (`MultiService`).
+  `RestService` wires it as described under Configuration and Persistence
+  below.
 - `pkg/acme/issuance` — the bridge to `pkg/ca`.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
@@ -130,11 +133,40 @@ once, to the externally visible base.
   parameter model. A DNS failure that prevents determining the RRset
   (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
   Section 5.1: it denies issuance rather than "proceeding with caution".
-- **Rate limits are per account and per tenant.** Exceeding either refuses the
-  order; it does not queue it.
-- **A breaker guards the one dependency it wraps, not order creation, and
-  degradation never means "issue without validating".** See "Circuit
-  breakers and degradation" below for exactly what is and is not covered.
+- **Rate limiting is a per-client cap, enforced before RFC 8555 processing
+  begins.** `acmeserver.NewClientRateLimiterMiddleware`
+  (`pkg/acme/server/rate_limiter.go`) is mounted on the whole ACME surface —
+  by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) and by
+  xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`) — and
+  keys each client by JWS KID once an account exists, falling back to the
+  client IP before one does (`server.ClientID`). Exceeding the cap refuses
+  the request with `rateLimited`; it does not queue it. **Per-tenant and
+  per-endpoint-category (new-account/new-order/certificate/
+  failed-validation) limits are not wired to anything** —
+  `pkg/acme/server/tenant_rate_limiter.go`'s `TenantRateLimiter` and
+  `rate_limiter.go`'s `NewAccountRateLimiter`/`NewOrderRateLimiter`/
+  `CertificateRateLimiter`/`FailedValidationRateLimiter` constructors and
+  `DefaultRateLimitConfig` exist and are unit-tested but have no caller
+  outside their own package's tests (go-xkms#882). xkmsd resolves an ACME
+  account's tenant only as a side effect of business logic already deep
+  inside a handler — `NewAccountHandler` sets `entities.Account.TenantID`
+  from the verified External Account Binding
+  (`pkg/acme/server/handlers/new_account.go`), and `order_finalize.go` reads
+  it back to select a signing CA — never from a cheap, pre-dispatch,
+  authenticated request attribute a middleware could key on. The
+  `handlers.TenantMiddleware` header/subdomain/path extractor
+  (`pkg/acme/server/handlers/middleware.go`) is also unwired anywhere in the
+  tree; even if wired, it trusts a client-supplied `X-Tenant-ID` header (or
+  host/path) with no authentication, so using it to key admission control
+  would let a client opt out of its own tenant quota by omitting or
+  spoofing the header — the opposite of what rate limiting is for. A
+  per-tenant cap that means something requires resolving tenant from an
+  authenticated source (e.g. an account lookup keyed by JWS KID) before
+  dispatch, which is new work, not a rewiring of the existing
+  `TenantRateLimiter`; it is filed as a follow-up rather than forced into
+  this cap.
+- **Under pressure the circuit breaker refuses new orders.** Degradation never
+  means "issue without validating".
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -345,6 +377,22 @@ cluster:
 `RaftACMEConfigError` (`Field`, `Reason`) renders as
 `cluster: raft_enrollment.acme.<field>: <reason>`.
 
+`acme.nonce` (`ACMENonceConfig`, `pkg/config/acme.go`) configures the
+Replay-Nonce service, `pkg/acme/nonce`:
+
+```yaml
+acme:
+  nonce:
+    lifetime: 10m   # ACMENonceConfig.ResolveLifetime; 0 selects DefaultACMENonceLifetime
+    max_used: 65536 # ACMENonceConfig.ResolveMaxUsed; 0 selects nonce.DefaultMaxUsed
+```
+
+Both are optional with the documented defaults, and both are also
+`handlers.Params` fields (`NonceLifetime`, `NonceMaxUsed`) for an embedder
+that does not go through `pkg/config`. See Persistence below for how they
+bound the service's memory, and #733 for the multi-node gap
+(`handlers.Params.NonceKey`) neither field closes.
+
 `acme.enrollment.allow_loopback_identifier` (`ACMEEnrollmentConfig`,
 `pkg/config/acme.go`) gates a development-only substitution in
 `ChallengeHandler` (`pkg/acme/server/handlers/challenge.go`): when an
@@ -421,6 +469,32 @@ desktop binding `GetApiBaseUrl`. `pkg/webui` renders the value into
 `index.html` as a JSON-encoded JavaScript string literal, so it cannot
 terminate the injected script.
 
+**Rate-limit configuration (`ACMERateLimitConfig`, `pkg/config/acme.go`).**
+`acme.rate_limit` configures the per-client admission-control cap described
+under Invariants above. It follows the same secure-by-default, tri-state
+pattern as `acme.audit`: `enabled` is a `*bool`, so an omitted key leaves the
+limiter on — only an explicit `enabled: false` turns it off, and doing so is
+reported by `Config.ComplianceGaps` ("ACME rate limiting disabled"), which
+`cmd/xkmsd` refuses to start on; there is no override. `max_requests` and
+`interval` default to `DefaultACMERateLimitMaxRequests` (20) and
+`DefaultACMERateLimitInterval` (`1s`) when zero/unset, matching the
+standalone `TrustedCA`'s long-standing built-in default
+(`pkg/acme/client/trustedca.go`'s zero-value `rateLimitRequests`/
+`rateLimitInterval`, settable via `client.WithRateLimit`), so xkmsd and the
+standalone CA throttle identically out of the box:
+
+```yaml
+acme:
+  rate_limit:
+    enabled: true      # default; omit the key entirely for the same effect
+    max_requests: 20    # per client, per interval
+    interval: 1s
+```
+
+A negative `max_requests` or `interval` is refused by `Validate`
+(`ErrACMERateLimitNegativeMaxRequests`/`ErrACMERateLimitNegativeInterval`)
+rather than silently coerced to the default.
+
 Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
 which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 [`../key-management/api.md`](../key-management/api.md) §Port conflicts.
@@ -451,12 +525,30 @@ not do" in architecture.md).
 
 ## Persistence
 
-Accounts, orders, authorizations, challenges, nonces and issued certificates
-persist through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
+Accounts, orders, authorizations, challenges and issued certificates persist
+through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
 Certificate blobs land in the certificate store like any other certificate.
 
-Nonces are short-lived and single-use; their store is deliberately separate so
-expiry is cheap.
+Nonces do not persist anywhere, by design. `pkg/acme/nonce.Service` validates
+a nonce by decrypting it (AES-GCM, RFC 8555 Section 6.5), not by looking it up,
+so there is no durable table to write or expire out of — the whole point of
+the encrypted-counter scheme is that "was this ever issued, and is it still
+in the valid window" is answered from the ciphertext itself plus a small,
+`NonceMaxUsed`-bounded in-memory redeemed-set. `RestService` rotates to a
+fresh counter window every `NonceLifetime` (`nonceEpochPrefix`,
+`pkg/acme/server/handlers/service.go`), retiring every nonce still
+outstanding from the previous window; that is the wall-clock lifetime
+substitute for a scheme with no per-nonce timestamp to expire.
+
+Multi-node caveat: nonces from different xkmsd processes only validate on
+each other when every node is configured with the same
+`handlers.Params.NonceKey` (there is no `pkg/config` field for it yet — see
+#733). Absent a shared key, each process mints from its own random key, which
+is correct for a single-node deployment but means a load-balanced deployment
+without sticky routing sees `badNonce` on any request that lands on a
+different node than the one that issued the nonce. RFC 8555 clients already
+handle `badNonce` by retrying with a fresh nonce, so this degrades
+availability, not correctness.
 
 Migration: the ACME object model is RFC-defined on the wire and internal in
 storage. Changing the storage layout requires a data migration step.
@@ -524,7 +616,9 @@ responses (see "Circuit breakers and degradation"). `pkg/acme/audit` and
 and issuance events. Correlation IDs propagate from the transport
 middleware.
 
-**Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
-stapling, CRL distribution-point automation, CT log submission automation and
-cross-signing automation are roadmap items, not implemented. They are tracked in
-`docs/acme/ROADMAP.md` and deliberately not documented here as if they existed.
+**Known gap:** Prometheus exporters, per-tenant rate-limit *enforcement*
+(`TenantRateLimiter` is unwired — see Rate limiting under Invariants) and
+dashboards, OCSP stapling, CRL distribution-point automation, CT log
+submission automation and cross-signing automation are roadmap items, not
+implemented. They are tracked in `docs/acme/ROADMAP.md` and deliberately not
+documented here as if they existed.

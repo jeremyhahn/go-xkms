@@ -1233,3 +1233,18 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 		})
 	}
 }
+
+// TestAutoFillService_HandleAutofillFocus pins the current contract: an
+// empty, non-error result. It exists so a change to this placeholder (the
+// browser extension does not yet drive a focus event through it) shows up
+// as a deliberate behavior change here rather than a silent drift the
+// extension side discovers on its own.
+func TestAutoFillService_HandleAutofillFocus(t *testing.T) {
+	svc, _ := newTestAutoFillService(t)
+
+	result, err := svc.HandleAutofillFocus()
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, &ipc.AutofillResult{}, result)
+}

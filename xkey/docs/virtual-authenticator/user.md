@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — User Guide
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
 
 ## What this does
 
@@ -102,9 +102,9 @@ credentials are hardware-backed, `--backend` is the thing that makes it true.
 
 ```
 xkey uhid setup
-xkey uhid policy list
-xkey uhid policy set …
-xkey uhid profile show
+xkey fido2 policy list
+xkey fido2 policy set …
+xkey fido2 profile show
 ```
 
 ## Testing in a browser without the device

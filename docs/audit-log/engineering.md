@@ -1,6 +1,6 @@
 # Audit Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23 (#804)
 
 ## Exported surface — `pkg/audit`
 
@@ -151,10 +151,35 @@ unaudited (`pkg/ca/audit.go`'s `CA.emitAudit`; the attestation gate in
   share). The `Authenticator` takes its audit logger via `SetAuditLogger`
   (nil disables it, like `SetPINVerifier`); `xkey/pkg/gui/app.go`'s
   `PostBarrierUnseal` wires it alongside every other service's
-  `SetAuditLogger(auditStore)` call. Other, narrower production callers that
-  construct their own `*Authenticator` directly (`cmd/xkey/cmd/fido2.go` and
-  siblings, `pkg/virtualdevice`) do not wire an audit logger and so audit
-  nothing for those processes' credentials — filed as a gap, not fixed here.
+  `SetAuditLogger(auditStore)` call.
+
+The authenticator itself never constructs a logger; every production
+entry point that can create a FIDO2 credential or seed a PIN wires one in
+explicitly after constructing the `Authenticator` (#804):
+
+- the xKey GUI (`xkey/pkg/gui/app.go`, `PostBarrierUnseal` →
+  `initializeAuthenticator`) — the shared `audit.BackendStore`, barrier
+  encrypted and used by every other GUI service (#803);
+- the `xkey fido2` virtual USB device daemon
+  (`xkey/cmd/xkey/cmd/fido2.go`, `newFIDO2Device`) — `audit.NewSlogLogger`,
+  the same slog-backed logger the headless extension-serve daemon already
+  used for `AutoFillService`; this daemon has no durable, queryable audit
+  store of its own, so its security events land in the structured log stream
+  it already writes;
+- the headless browser-extension daemon
+  (`xkey/cmd/xkey/cmd/extension_serve.go`, `initHeadlessAuthenticator` →
+  `runExtensionServe`) — the same `audit.NewSlogLogger` instance already
+  wired to `AutoFillService`, so both share one audit trail.
+
+The offline token/attestation operator verbs
+(`xkey/cmd/xkey/cmd/fido2_offline_device.go`'s `newOfflineAuthenticator`,
+used by `fido2 init-token`, `fido2 change-so-pin`, and
+`fido2 provision-attestation`) construct an authenticator only to drive
+`InitializeToken`/`ChangeSOPIN`/attestation provisioning — none of which
+reach `establishPINLocked` or `storeCredentialWithPolicy` — so they carry no
+audit wiring for these two events; the Security Officer PIN lifecycle they
+drive is a separate, already-covered surface (`OpSOPINChanged` etc. in
+`pkg/gui/services/pin_service.go`).
 
 ## Configuration
 
@@ -213,6 +238,12 @@ records after N days would be worse than one that grows.
   outcomes, `auth.logout`); `xkey/pkg/authenticator/cmd_clientpin_audit_test.go`
   (`OpPINSeeded`) and `cmd_makecredential_audit_test.go`
   (`OpFIDO2CredentialCreated`).
+- **#804's non-GUI entry points** — one `*_audit_test.go` per production
+  entry point that wires `SetAuditLogger`:
+  `xkey/cmd/xkey/cmd/fido2_audit_test.go` (the `xkey fido2` daemon) and
+  `extension_serve_audit_test.go` (the headless extension-serve daemon),
+  proving both that the wired logger receives the record and that a failing
+  logger refuses the operation, end to end from that entry point.
 
 `handlers_transport_audit_test.go` and its gRPC counterpart are the ones that
 matter most: they assert that operations reaching the service through a

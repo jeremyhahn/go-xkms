@@ -139,8 +139,22 @@ func TestResolveReloadConfig_ReappliesFlags(t *testing.T) {
 	t.Run("unreadable file is ErrConfigLoad", func(t *testing.T) {
 		fs := flag.NewFlagSet("xkmsd", flag.ContinueOnError)
 		flags := registerServerFlags(fs)
-		if _, err := resolveReloadConfig(filepath.Join(t.TempDir(), "missing.yaml"), flags, fs); !errors.Is(err, ErrConfigLoad) {
+		missing := filepath.Join(t.TempDir(), "missing.yaml")
+		_, err := resolveReloadConfig(missing, flags, fs)
+		if !errors.Is(err, ErrConfigLoad) {
 			t.Fatalf("expected ErrConfigLoad, got %v", err)
+		}
+		// The rendered message is what ends up in the daemon's log line
+		// (main.go's run() logs this error via slog.Any): it must name both
+		// the sentinel and the underlying os.Open failure, not just satisfy
+		// errors.Is.
+		var wrapped *WrappedError
+		if !errors.As(err, &wrapped) {
+			t.Fatalf("expected *WrappedError, got %T", err)
+		}
+		if got := wrapped.Error(); !strings.Contains(got, ErrConfigLoad.Error()) || !strings.Contains(got, missing) {
+			t.Errorf("WrappedError.Error() = %q, want it to name both %q and the missing path %q",
+				got, ErrConfigLoad.Error(), missing)
 		}
 	})
 }

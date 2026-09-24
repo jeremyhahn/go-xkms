@@ -15,6 +15,7 @@ package secretservice
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -28,15 +29,38 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
+// aliasStore is implemented by store backends that can persist a Secret
+// Service alias name -> folder-path mapping (xkms.StaticPasswordBackendStore
+// does; see pkg/staticpw/store.go SetAlias/GetAlias). It is not part of the
+// narrower xkms.StaticPasswordStore interface, so Daemon probes for it with
+// a type assertion: a store that lacks it still answers ReadAlias/SetAlias
+// via the built-in default/login/CollectionFolderMap heuristics in
+// PathMapper, it just cannot remember a caller-defined alias across a
+// restart.
+type aliasStore interface {
+	SetAlias(name string, folderPath string) error
+	GetAlias(name string) (string, bool, error)
+}
+
 // Daemon is the D-Bus Secret Service daemon that exposes go-xkms password
-// storage via the org.freedesktop.secrets interface.
+// storage via the org.freedesktop.secrets interface. Every collection is a
+// go-xkms static-password folder and every item is a password entry; lock
+// state is not tracked per object because there is exactly one lock in this
+// storage model, the barrier: Collection/Item Locked properties, and every
+// method that would otherwise touch a secret, read it directly from
+// barrier.IsSealed().
 type Daemon struct {
-	mu     sync.RWMutex
-	config *ServiceConfig
-	store  xkms.StaticPasswordStore
-	conn   *dbus.Conn
-	mapper *PathMapper
-	logger *slog.Logger
+	mu      sync.RWMutex
+	config  *ServiceConfig
+	store   xkms.StaticPasswordStore
+	barrier *xkms.Barrier
+	conn    *dbus.Conn
+	mapper  *PathMapper
+	logger  *slog.Logger
+
+	// unlockFn collects credentials for a Prompt-driven Unlock. See
+	// UnlockFunc's doc comment.
+	unlockFn atomic.Pointer[UnlockFunc]
 
 	// sessions tracks active encryption sessions.
 	sessions     map[dbus.ObjectPath]*SessionInfo
@@ -44,7 +68,9 @@ type Daemon struct {
 	sessionCount atomic.Uint64
 
 	// prompts tracks pending prompts.
-	prompts map[dbus.ObjectPath]*PromptInfo
+	prompts     map[dbus.ObjectPath]*PromptInfo
+	promptsMu   sync.Mutex
+	promptCount atomic.Uint64
 
 	// running indicates whether the service is running.
 	running atomic.Bool
@@ -57,10 +83,15 @@ type Daemon struct {
 	auditLog atomic.Pointer[audit.Logger]
 }
 
-// NewDaemon creates a new Secret Service daemon.
-func NewDaemon(store xkms.StaticPasswordStore, config *ServiceConfig, logger *slog.Logger) (*Daemon, error) {
+// NewDaemon creates a new Secret Service daemon. store and barrier must be
+// non-nil: barrier is this process's lock (see Daemon's doc comment), so a
+// daemon without one could not honor Lock/Unlock/the Locked property at all.
+func NewDaemon(store xkms.StaticPasswordStore, barrier *xkms.Barrier, config *ServiceConfig, logger *slog.Logger) (*Daemon, error) {
 	if store == nil {
 		return nil, ErrNilPasswordStore
+	}
+	if barrier == nil {
+		return nil, ErrNilBarrier
 	}
 	if config == nil {
 		config = DefaultConfig()
@@ -74,6 +105,7 @@ func NewDaemon(store xkms.StaticPasswordStore, config *ServiceConfig, logger *sl
 	return &Daemon{
 		config:   config,
 		store:    store,
+		barrier:  barrier,
 		mapper:   NewPathMapper(config),
 		logger:   logger,
 		sessions: make(map[dbus.ObjectPath]*SessionInfo),
@@ -81,6 +113,53 @@ func NewDaemon(store xkms.StaticPasswordStore, config *ServiceConfig, logger *sl
 		ctx:      ctx,
 		cancel:   cancel,
 	}, nil
+}
+
+// SetUnlockFunc registers the callback Unlock's Prompt uses to collect
+// credentials. See UnlockFunc's doc comment; passing nil disables
+// interactive unlock (every Prompt then resolves dismissed).
+func (d *Daemon) SetUnlockFunc(fn UnlockFunc) {
+	d.unlockFn.Store(&fn)
+}
+
+// dialBus opens the underlying D-Bus connection for busKind ("session" or
+// "system"). It is a seam -- swapped only in tests, the same pattern as
+// fipsMode (fips.go) and barrierInputIsTerminal (xkey/cmd/xkey/cmd/barrier.go)
+// -- so Start's post-connect steps (claiming the bus name, exportObjects,
+// exporting the default and existing collections, flipping the running
+// flag) are unit-testable against a fake, already-connected *dbus.Conn
+// without a real D-Bus daemon to dial.
+var dialBus = func(busKind string) (*dbus.Conn, error) {
+	if busKind == "system" {
+		return dbus.ConnectSystemBus()
+	}
+	return dbus.ConnectSessionBus()
+}
+
+// requestBusName claims BusName on conn and translates the outcome into the
+// daemon's own startup error. It is a seam for the same reason as dialBus:
+// a real RequestName call blocks awaiting a reply from an actual bus
+// daemon, which a fake loopback connection (as used by the busDaemon test
+// helper) never sends, so isolating it lets tests exercise everything
+// downstream of "the bus name was claimed" without one.
+var requestBusName = func(conn *dbus.Conn) error {
+	reply, err := conn.RequestName(BusName, dbus.NameFlagDoNotQueue)
+	if err != nil {
+		return err
+	}
+	return classifyRequestNameReply(reply)
+}
+
+// classifyRequestNameReply turns a raw RequestName reply into the daemon's
+// startup outcome: nil when this process became the primary owner of
+// BusName, ErrServiceAlreadyRunning for every other reply (already owned,
+// queued, or already owned by this same connection -- none of which leave
+// this process able to receive method calls for the name).
+func classifyRequestNameReply(reply dbus.RequestNameReply) error {
+	if reply != dbus.RequestNameReplyPrimaryOwner {
+		return ErrServiceAlreadyRunning
+	}
+	return nil
 }
 
 // Start connects to D-Bus and registers the Secret Service.
@@ -92,15 +171,7 @@ func (d *Daemon) Start() error {
 		return ErrServiceAlreadyRunning
 	}
 
-	// Connect to D-Bus
-	var conn *dbus.Conn
-	var err error
-
-	if d.config.Bus == "system" {
-		conn, err = dbus.ConnectSystemBus()
-	} else {
-		conn, err = dbus.ConnectSessionBus()
-	}
+	conn, err := dialBus(d.config.Bus)
 	if err != nil {
 		d.logger.Error("failed to connect to D-Bus",
 			slog.String("bus", d.config.Bus),
@@ -110,28 +181,36 @@ func (d *Daemon) Start() error {
 
 	d.conn = conn
 
-	// Request the well-known name
-	reply, err := conn.RequestName(BusName, dbus.NameFlagDoNotQueue)
-	if err != nil {
+	if err := requestBusName(conn); err != nil {
+		_ = conn.Close()
+		if errors.Is(err, ErrServiceAlreadyRunning) {
+			d.logger.Error("failed to become primary owner of D-Bus name",
+				slog.String("name", BusName))
+			return ErrServiceAlreadyRunning
+		}
 		d.logger.Error("failed to request D-Bus name",
 			slog.String("name", BusName),
 			slog.String("error", err.Error()))
-		_ = conn.Close()
 		return ErrDBusUnavailable
-	}
-
-	if reply != dbus.RequestNameReplyPrimaryOwner {
-		d.logger.Error("failed to become primary owner of D-Bus name",
-			slog.String("name", BusName),
-			slog.Int("reply", int(reply)))
-		_ = conn.Close()
-		return ErrServiceAlreadyRunning
 	}
 
 	// Export the service object
 	if err := d.exportObjects(); err != nil {
 		_ = conn.Close()
 		return err
+	}
+
+	// The default collection is always addressable, even while sealed (its
+	// Locked property then reads true and every method on it fails closed
+	// with IsLocked): a client needs a collection object to call Unlock on
+	// before anything else in the store can be enumerated.
+	if _, err := d.exportCollection(""); err != nil {
+		d.logger.Warn("failed to export default collection", slog.String("error", err.Error()))
+	}
+	if !d.barrier.IsSealed() {
+		if err := d.exportExistingCollections(); err != nil {
+			d.logger.Warn("failed to export existing collections", slog.String("error", err.Error()))
+		}
 	}
 
 	d.running.Store(true)
@@ -158,6 +237,13 @@ func (d *Daemon) Stop() error {
 	d.sessionsMu.Lock()
 	d.sessions = make(map[dbus.ObjectPath]*SessionInfo)
 	d.sessionsMu.Unlock()
+
+	// Drop all pending prompts; their done channels are never closed, but
+	// nothing can still be waiting on them once the bus connection below
+	// goes away with them.
+	d.promptsMu.Lock()
+	d.prompts = make(map[dbus.ObjectPath]*PromptInfo)
+	d.promptsMu.Unlock()
 
 	// Close D-Bus connection
 	if d.conn != nil {
@@ -313,6 +399,14 @@ func (d *Daemon) OpenSession(sender dbus.Sender, algorithm string, input dbus.Va
 		slog.String("algorithm", algorithm),
 		slog.String("client", client))
 
+	if algorithm == AlgorithmDH && fipsMode() {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, false, ErrAlgorithmNotFIPSApproved,
+			map[string]any{"algorithm": algorithm, "client": client}); auditErr != nil {
+			return dbus.Variant{}, "/", dbus.MakeFailedError(auditErr)
+		}
+		return dbus.Variant{}, "/", dbus.MakeFailedError(ErrAlgorithmNotFIPSApproved)
+	}
+
 	sessionID := strconv.FormatUint(d.sessionCount.Add(1), 10)
 	sessionPath := d.mapper.SessionPath(sessionID)
 
@@ -366,6 +460,10 @@ func (d *Daemon) OpenSession(sender dbus.Sender, algorithm string, input dbus.Va
 	d.sessions[sessionPath] = session
 	d.sessionsMu.Unlock()
 
+	if err := d.exportSession(sessionPath); err != nil {
+		d.logger.Warn("failed to export session object", slog.String("error", err.Error()))
+	}
+
 	d.logger.Debug("session opened",
 		slog.String("path", string(sessionPath)),
 		slog.String("algorithm", algorithm),
@@ -378,10 +476,21 @@ func (d *Daemon) OpenSession(sender dbus.Sender, algorithm string, input dbus.Va
 	return output, sessionPath, nil
 }
 
-// CreateCollection creates a new collection with the given properties.
+// CreateCollection creates a new collection, persisting it as a go-xkms
+// static-password folder so it survives a restart (the previous revision of
+// this daemon minted a D-Bus path but never called store.CreateFolder,
+// silently discarding the collection).
 func (d *Daemon) CreateCollection(properties map[string]dbus.Variant, alias string) (dbus.ObjectPath, dbus.ObjectPath, *dbus.Error) {
 	d.logger.Debug("CreateCollection called",
 		slog.String("alias", alias))
+
+	if d.barrier.IsSealed() {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceCollectionCreated, false, ErrCollectionLocked,
+			map[string]any{"alias": alias}); auditErr != nil {
+			return "/", "/", dbus.MakeFailedError(auditErr)
+		}
+		return "/", "/", dbusIsLockedError(ErrCollectionLocked)
+	}
 
 	// Extract label from properties
 	label := ""
@@ -399,8 +508,29 @@ func (d *Daemon) CreateCollection(properties map[string]dbus.Variant, alias stri
 		folderPath = label
 	}
 
-	// Generate collection path
-	collectionPath := d.mapper.CollectionPathFromFolder(folderPath)
+	if folderPath != "" {
+		if err := d.store.CreateFolder(folderPath); err != nil {
+			if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceCollectionCreated, false, err,
+				map[string]any{"folder": folderPath}); auditErr != nil {
+				return "/", "/", dbus.MakeFailedError(auditErr)
+			}
+			return "/", "/", dbus.MakeFailedError(err)
+		}
+	}
+
+	collectionPath, exportErr := d.exportCollection(folderPath)
+	if exportErr != nil {
+		return "/", "/", dbus.MakeFailedError(exportErr)
+	}
+
+	if alias != "" {
+		if as, ok := d.store.(aliasStore); ok {
+			if err := as.SetAlias(alias, folderPath); err != nil {
+				d.logger.Warn("failed to persist collection alias",
+					slog.String("alias", alias), slog.String("error", err.Error()))
+			}
+		}
+	}
 
 	// Emit CollectionCreated signal
 	if err := d.conn.Emit(ServicePath, ServiceInterface+".CollectionCreated", collectionPath); err != nil {
@@ -408,16 +538,29 @@ func (d *Daemon) CreateCollection(properties map[string]dbus.Variant, alias stri
 			slog.String("error", err.Error()))
 	}
 
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceCollectionCreated, true, nil,
+		map[string]any{"folder": folderPath}); auditErr != nil {
+		return "/", "/", dbus.MakeFailedError(auditErr)
+	}
+
 	// No prompt needed
 	return collectionPath, "/", nil
 }
 
-// SearchItems searches for items matching the given attributes.
+// SearchItems searches for items matching the given attributes across every
+// collection. It fails closed while the barrier is sealed: the underlying
+// store cannot be listed at all in that state (see Daemon's doc comment),
+// so there is no partial answer to give -- only IsLocked.
 func (d *Daemon) SearchItems(attributes map[string]string) ([]dbus.ObjectPath, []dbus.ObjectPath, *dbus.Error) {
 	d.logger.Debug("SearchItems called",
 		slog.Any("attributes", attributes))
 
-	searchCriteria := AttributesToSearchCriteria(attributes)
+	if d.barrier.IsSealed() {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSearch, false, ErrCollectionLocked, nil); auditErr != nil {
+			return nil, nil, dbus.MakeFailedError(auditErr)
+		}
+		return nil, nil, dbusIsLockedError(ErrCollectionLocked)
+	}
 
 	// Get all passwords
 	passwords, err := d.store.List()
@@ -428,60 +571,86 @@ func (d *Daemon) SearchItems(attributes map[string]string) ([]dbus.ObjectPath, [
 		return nil, nil, dbus.MakeFailedError(err)
 	}
 
+	search := ItemAttributes(attributes)
 	var unlocked []dbus.ObjectPath
-	var locked []dbus.ObjectPath
 
 	for _, pw := range passwords {
-		// Build item attributes
-		itemAttrs := PasswordToItemAttributes(pw.Name, pw.Username, pw.URL)
-
-		// Check if attributes match
-		if MatchAttributes(itemAttrs, searchCriteria) {
+		if MatchAttributes(ItemAttributesFromPassword(pw), search) {
 			collectionPath := d.mapper.CollectionPathFromFolder(pw.FolderPath)
-			itemPath := d.mapper.ItemPathFromPassword(collectionPath, pw.ID)
-
-			// Items are always "unlocked" since go-xkms handles encryption
-			unlocked = append(unlocked, itemPath)
+			unlocked = append(unlocked, d.mapper.ItemPathFromPassword(collectionPath, pw.ID))
 		}
 	}
 
-	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSearch, true, nil, map[string]any{"result_count": len(unlocked) + len(locked)}); auditErr != nil {
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSearch, true, nil, map[string]any{"result_count": len(unlocked)}); auditErr != nil {
 		return nil, nil, dbus.MakeFailedError(auditErr)
 	}
-	return unlocked, locked, nil
+	return unlocked, nil, nil
 }
 
-// Unlock unlocks the specified objects (collections or items).
-// Since go-xkms handles encryption internally, this is mostly a no-op.
+// Unlock unlocks the barrier on behalf of the given objects. Objects are
+// returned immediately only when the barrier is already unsealed; otherwise
+// a Prompt is created (see resolveUnlockPrompt) and the caller must invoke
+// Prompt on it and wait for Completed.
 func (d *Daemon) Unlock(objects []dbus.ObjectPath) ([]dbus.ObjectPath, dbus.ObjectPath, *dbus.Error) {
 	d.logger.Debug("Unlock called",
 		slog.Int("count", len(objects)))
 
-	// All objects are considered unlocked
-	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceUnlock, true, nil, nil); auditErr != nil {
+	if !d.barrier.IsSealed() {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceUnlock, true, nil,
+			map[string]any{"already_unlocked": true, "object_count": len(objects)}); auditErr != nil {
+			return nil, "/", dbus.MakeFailedError(auditErr)
+		}
+		return objects, "/", nil
+	}
+
+	promptPath, err := d.createPrompt(PromptTypeUnlock, objects)
+	if err != nil {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceUnlock, false, err, nil); auditErr != nil {
+			return nil, "/", dbus.MakeFailedError(auditErr)
+		}
+		return nil, "/", dbus.MakeFailedError(err)
+	}
+
+	return nil, promptPath, nil
+}
+
+// Lock seals the barrier. Because there is exactly one barrier behind every
+// collection and item (see Daemon's doc comment), Lock always locks
+// everything regardless of which objects were named, matching the fail-safe
+// direction: a caller that asked to lock one thing and got everything locked
+// has lost nothing it was relying on staying unlocked.
+func (d *Daemon) Lock(objects []dbus.ObjectPath) ([]dbus.ObjectPath, dbus.ObjectPath, *dbus.Error) {
+	d.logger.Debug("Lock called",
+		slog.Int("count", len(objects)))
+
+	if err := d.barrier.Seal(); err != nil {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceLock, false, err, nil); auditErr != nil {
+			return nil, "/", dbus.MakeFailedError(auditErr)
+		}
+		return nil, "/", dbus.MakeFailedError(err)
+	}
+
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceLock, true, nil,
+		map[string]any{"object_count": len(objects)}); auditErr != nil {
 		return nil, "/", dbus.MakeFailedError(auditErr)
 	}
 	return objects, "/", nil
 }
 
-// Lock locks the specified objects.
-// Since go-xkms handles encryption internally, this is mostly a no-op.
-func (d *Daemon) Lock(objects []dbus.ObjectPath) ([]dbus.ObjectPath, dbus.ObjectPath, *dbus.Error) {
-	d.logger.Debug("Lock called",
-		slog.Int("count", len(objects)))
-
-	// We don't actually lock individual items
-	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceLock, true, nil, nil); auditErr != nil {
-		return nil, "/", dbus.MakeFailedError(auditErr)
-	}
-	return nil, "/", nil
-}
-
-// GetSecrets retrieves the secrets for the specified items.
+// GetSecrets retrieves the secrets for the specified items. Fails closed
+// with IsLocked while the barrier is sealed; never returns a secret in that
+// state.
 func (d *Daemon) GetSecrets(items []dbus.ObjectPath, session dbus.ObjectPath) (map[dbus.ObjectPath]SecretStruct, *dbus.Error) {
 	d.logger.Debug("GetSecrets called",
 		slog.Int("items", len(items)),
 		slog.String("session", string(session)))
+
+	if d.barrier.IsSealed() {
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSecretAccessed, false, ErrCollectionLocked, nil); auditErr != nil {
+			return nil, dbus.MakeFailedError(auditErr)
+		}
+		return nil, dbusIsLockedError(ErrCollectionLocked)
+	}
 
 	// Get session
 	d.sessionsMu.RLock()
@@ -489,7 +658,7 @@ func (d *Daemon) GetSecrets(items []dbus.ObjectPath, session dbus.ObjectPath) (m
 	d.sessionsMu.RUnlock()
 
 	if !exists {
-		return nil, dbus.MakeFailedError(ErrSessionNotFound)
+		return nil, dbusNoSuchObjectError(ErrSessionNotFound)
 	}
 
 	result := make(map[dbus.ObjectPath]SecretStruct, len(items))
@@ -546,29 +715,58 @@ func (d *Daemon) GetSecrets(items []dbus.ObjectPath, session dbus.ObjectPath) (m
 	return result, nil
 }
 
-// ReadAlias returns the collection for the given alias.
+// ReadAlias returns the collection for the given alias, preferring a
+// persisted mapping (see aliasStore) over the built-in
+// default/login/CollectionFolderMap heuristics in PathMapper.
 func (d *Daemon) ReadAlias(name string) (dbus.ObjectPath, *dbus.Error) {
 	d.logger.Debug("ReadAlias called",
 		slog.String("alias", name))
+
+	if as, ok := d.store.(aliasStore); ok && !d.barrier.IsSealed() {
+		if folder, found, err := as.GetAlias(name); err == nil && found {
+			return d.mapper.CollectionPathFromFolder(folder), nil
+		}
+	}
 
 	folderPath := d.mapper.FolderFromAlias(name)
 	return d.mapper.CollectionPathFromFolder(folderPath), nil
 }
 
-// SetAlias sets an alias for a collection.
+// SetAlias sets an alias for a collection, persisting it when the store
+// supports it (see aliasStore).
 func (d *Daemon) SetAlias(name string, collection dbus.ObjectPath) *dbus.Error {
 	d.logger.Debug("SetAlias called",
 		slog.String("alias", name),
 		slog.String("collection", string(collection)))
 
-	// Aliases are managed through config, this is a no-op for now
+	if d.barrier.IsSealed() {
+		return dbusIsLockedError(ErrCollectionLocked)
+	}
+
+	as, ok := d.store.(aliasStore)
+	if !ok {
+		return nil
+	}
+
+	folder := d.mapper.FolderFromCollectionPath(collection)
+	if err := as.SetAlias(name, folder); err != nil {
+		return dbus.MakeFailedError(err)
+	}
 	return nil
 }
 
 // Collections returns the list of available collections.
-// This is a D-Bus property getter.
+// This is a D-Bus property getter. While sealed, only the default
+// collection is reported: the store cannot be listed at all in that state
+// (see Daemon's doc comment).
 func (d *Daemon) Collections() ([]dbus.ObjectPath, *dbus.Error) {
 	d.logger.Debug("Collections property accessed")
+
+	collections := []dbus.ObjectPath{d.mapper.CollectionPathFromFolder("")}
+
+	if d.barrier.IsSealed() {
+		return collections, nil
+	}
 
 	// Get all folders
 	folders, err := d.store.ListFolders()
@@ -576,15 +774,9 @@ func (d *Daemon) Collections() ([]dbus.ObjectPath, *dbus.Error) {
 		return nil, dbus.MakeFailedError(err)
 	}
 
-	// Always include default collection
-	collections := []dbus.ObjectPath{
-		d.mapper.CollectionPathFromFolder(""),
-	}
-
 	// Add a collection for each folder
 	for _, folder := range folders {
-		path := d.mapper.CollectionPathFromFolder(folder)
-		collections = append(collections, path)
+		collections = append(collections, d.mapper.CollectionPathFromFolder(folder))
 	}
 
 	return collections, nil
@@ -596,7 +788,7 @@ func (d *Daemon) CloseSession(sessionPath dbus.ObjectPath) *dbus.Error {
 	defer d.sessionsMu.Unlock()
 
 	if _, exists := d.sessions[sessionPath]; !exists {
-		return dbus.MakeFailedError(ErrSessionNotFound)
+		return dbusNoSuchObjectError(ErrSessionNotFound)
 	}
 
 	delete(d.sessions, sessionPath)
@@ -615,6 +807,29 @@ func (d *Daemon) getSession(path dbus.ObjectPath) (*SessionInfo, bool) {
 	defer d.sessionsMu.RUnlock()
 	sess, ok := d.sessions[path]
 	return sess, ok
+}
+
+// decryptSecret extracts the plaintext value from secret, using the session
+// it names to decrypt it when that session negotiated the DH algorithm.
+func (d *Daemon) decryptSecret(secret SecretStruct) ([]byte, error) {
+	sess, exists := d.getSession(secret.Session)
+	if !exists {
+		return nil, ErrSessionNotFound
+	}
+	if sess.Algorithm == AlgorithmDH && len(sess.AESKey) > 0 {
+		crypto := NewSessionCryptoFromKey(sess.AESKey)
+		return crypto.Decrypt(secret.Parameters, secret.Value)
+	}
+	return secret.Value, nil
+}
+
+// mapSecretError maps an error from decryptSecret onto the matching D-Bus
+// Secret.Error name.
+func mapSecretError(err error) *dbus.Error {
+	if errors.Is(err, ErrSessionNotFound) {
+		return dbusNoSuchObjectError(err)
+	}
+	return dbus.MakeFailedError(err)
 }
 
 // SetAuditLogger sets the audit logger for the Secret Service daemon.

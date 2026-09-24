@@ -82,6 +82,7 @@ Rejected alternatives:
 | `SealingStrategy`, `StrategyRegistry`, barrier, `SealedRootKey`, Shamir | `go-qrdb/sdk/go` | **go-qrdb** |
 | `none`, `passphrase`, `EpochBarrier`, the Shamir GF(256) primitive | go-quicraft | **go-quicraft** |
 | Hardware and cloud strategies | `pkg/seal/strategy_{tpm2,pkcs11,cloud,software}.go` | go-xkms |
+| Cloud KMS strategy composition (shared by `xkmsd` and `xkey`, go-xkms#757) | `pkg/seal/cloud_provision.go` | go-xkms |
 | Barrier adapter and CAS put | `pkg/seal/barrier_adapter.go`, `barrier_putifabsent.go` | go-xkms |
 | Hardware encryptor | `pkg/seal/hardware_encryptor.go` | go-xkms |
 | Platform secret store | `pkg/seal/platform_store.go`, `platform_sealer.go`, `platform_store_tenant.go` | go-xkms |

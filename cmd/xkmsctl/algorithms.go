@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -50,7 +49,7 @@ func listAlgorithms(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -77,27 +76,27 @@ func listAlgorithms(cfg *Config, printer *Printer) {
 
 // printAlgorithmGroup renders one purpose-grouped section of the inventory.
 func printAlgorithmGroup(printer *Printer, title string, algorithms []client.AlgorithmInfo) {
-	_, _ = fmt.Fprintf(printer.writer, "%s:\n", title)
+	printer.printf("%s:\n", title)
 	if len(algorithms) == 0 {
-		_, _ = fmt.Fprintf(printer.writer, "  (none)\n")
+		printer.printf("  (none)\n")
 		return
 	}
 	for _, a := range algorithms {
-		_, _ = fmt.Fprintf(printer.writer, "  %s", a.Algorithm)
+		printer.printf("  %s", a.Algorithm)
 		if a.PostQuantum {
-			_, _ = fmt.Fprintf(printer.writer, " [post-quantum]")
+			printer.printf(" [post-quantum]")
 		}
 		if len(a.Curves) > 0 {
-			_, _ = fmt.Fprintf(printer.writer, " curves=%s", strings.Join(a.Curves, ","))
+			printer.printf(" curves=%s", strings.Join(a.Curves, ","))
 		}
 		if len(a.KeySizes) > 0 {
 			sizes := make([]string, len(a.KeySizes))
 			for i, s := range a.KeySizes {
 				sizes[i] = strconv.Itoa(s)
 			}
-			_, _ = fmt.Fprintf(printer.writer, " sizes=%s", strings.Join(sizes, ","))
+			printer.printf(" sizes=%s", strings.Join(sizes, ","))
 		}
-		_, _ = fmt.Fprintf(printer.writer, " backends=%s\n", strings.Join(a.Backends, ","))
+		printer.printf(" backends=%s\n", strings.Join(a.Backends, ","))
 	}
 }
 

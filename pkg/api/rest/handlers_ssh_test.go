@@ -227,6 +227,26 @@ func TestSSHBadBodyError(t *testing.T) {
 	})
 }
 
+// TestSSHMissingFieldSentinels proves the two request-validation sentinels
+// (ErrSSHMissingDigest, ErrSSHMissingPublicKey) stay reachable through
+// errors.Is once wrapped in *SSHBadBodyError, and that classifySSHError maps
+// both to 400 the same way it maps every other malformed-body condition.
+func TestSSHMissingFieldSentinels(t *testing.T) {
+	t.Run("digest sentinel", func(t *testing.T) {
+		err := &SSHBadBodyError{Err: ErrSSHMissingDigest}
+		assert.ErrorIs(t, err, ErrSSHMissingDigest)
+		assert.Equal(t, http.StatusBadRequest, classifySSHError(err))
+	})
+	t.Run("public key sentinel", func(t *testing.T) {
+		err := &SSHBadBodyError{Err: ErrSSHMissingPublicKey}
+		assert.ErrorIs(t, err, ErrSSHMissingPublicKey)
+		assert.Equal(t, http.StatusBadRequest, classifySSHError(err))
+	})
+	t.Run("sentinels are distinct", func(t *testing.T) {
+		assert.NotErrorIs(t, &SSHBadBodyError{Err: ErrSSHMissingDigest}, ErrSSHMissingPublicKey)
+	})
+}
+
 // -----------------------------------------------------------------------------
 // Keys
 // -----------------------------------------------------------------------------
@@ -422,6 +442,9 @@ func TestSSHHandleSign(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		var env sshErrorEnvelope
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&env))
+		assert.Contains(t, env.Error, ErrSSHMissingDigest.Error())
 	})
 
 	t.Run("signer open error", func(t *testing.T) {
@@ -536,6 +559,9 @@ func TestSSHVerifyKnownHost(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		var env sshErrorEnvelope
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&env))
+		assert.Contains(t, env.Error, ErrSSHMissingPublicKey.Error())
 	})
 
 	// A malformed key gets a typed error, mapped to 400.

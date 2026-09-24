@@ -13,14 +13,21 @@
 
 // Package trustedca provides the official Go SDK for the Trusted CA ACME server.
 //
-// The SDK supports multiple transport protocols (gRPC, REST, QUIC, MCP) and provides
-// a unified client interface for interacting with the RFC-8555 compliant ACME server.
+// The SDK supports the REST, QUIC, Unix, MCP, and Embedded transport
+// protocols and provides a unified client interface for interacting with the
+// RFC-8555 compliant ACME server. gRPC is not one of them: RFC 8555 defines
+// ACME as HTTP+JWS, so there is no gRPC binding for the protocol, and
+// NewClient refuses TransportGRPC (the zero value) with a typed error at
+// construction rather than handing back a client whose ACME calls would each
+// fail individually on their first Request (go-xkms#727). The gRPC transport
+// package still exists for the Admin API and can be driven directly with
+// admin.NewClient, bypassing this combined client.
 //
 // # Quick Start
 //
 // Create a unified client to access all Trusted CA services:
 //
-//	client, err := trustedca.NewClient("/var/run/trusted-ca.sock")
+//	client, err := trustedca.NewClient("/var/run/trusted-ca.sock", trustedca.WithUnix("/var/run/trusted-ca.sock"))
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -40,10 +47,11 @@
 // The SDK supports various connection methods:
 //
 //	// Unix socket (recommended for local)
-//	client, _ := trustedca.NewClient("/var/run/trusted-ca.sock")
+//	client, _ := trustedca.NewClient("/var/run/trusted-ca.sock", trustedca.WithUnix("/var/run/trusted-ca.sock"))
 //
-//	// TCP with mTLS
-//	client, _ := trustedca.NewClient("localhost:9443",
+//	// REST transport with mTLS
+//	client, _ := trustedca.NewClient("https://localhost:9443",
+//	    trustedca.WithREST(),
 //	    trustedca.WithTLS(trustedca.TLSConfig{
 //	        CertFile: "client.crt",
 //	        KeyFile:  "client.key",
@@ -96,7 +104,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport/embedded"
-	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport/grpc"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport/mcp"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport/quic"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport/rest"
@@ -112,7 +119,10 @@ import (
 type TransportType int
 
 const (
-	// TransportGRPC uses gRPC protocol (default).
+	// TransportGRPC is the zero value of TransportType. NewClient refuses it
+	// with a typed error: ACME (RFC 8555) is HTTP+JWS and has no gRPC
+	// binding, so a caller must select a supported transport explicitly
+	// (WithREST, WithQUIC, WithUnix, WithMCP, or WithEmbedded).
 	TransportGRPC TransportType = iota
 	// TransportREST uses REST/HTTP protocol.
 	TransportREST
@@ -470,9 +480,6 @@ type Client interface {
 // Transport is an alias for transport.Transport interface.
 type Transport = transport.Transport
 
-// Stream is an alias for transport.Stream interface.
-type Stream = transport.Stream
-
 // =============================================================================
 // Service Client Type Aliases
 // =============================================================================
@@ -751,7 +758,13 @@ func NewClient(address string, opts ...Option) (Client, error) {
 func createTransport(address string, opts *clientOptions) (Transport, error) {
 	switch opts.transportType {
 	case TransportGRPC:
-		return createGRPCTransport(address, opts)
+		// ACME is RFC 8555 HTTP+JWS by design; there is no gRPC binding for
+		// the protocol. Refuse here, at construction, instead of handing back
+		// a client whose ACME calls (Account, Order, Directory, Nonce,
+		// Challenge, Authorization, Certificate) would each fail individually
+		// the first time they perform a Request (go-xkms#727).
+		return nil, errors.NewUnimplemented("createTransport",
+			"gRPC transport does not support the ACME protocol (RFC 8555 is HTTP+JWS); use WithREST, WithQUIC, WithUnix, WithMCP, or WithEmbedded")
 	case TransportREST:
 		return createRESTTransport(address, opts)
 	case TransportQUIC:
@@ -765,13 +778,6 @@ func createTransport(address string, opts *clientOptions) (Transport, error) {
 	default:
 		return nil, errors.NewInvalidInput("createTransport", "unsupported transport type")
 	}
-}
-
-func createGRPCTransport(address string, opts *clientOptions) (Transport, error) {
-	cfg := buildTransportConfig(address, opts)
-	parsed := transport.ParseAddress(address)
-	cfg.AddressType = parsed.Type
-	return grpc.NewTransport(cfg)
 }
 
 func createRESTTransport(address string, opts *clientOptions) (Transport, error) {

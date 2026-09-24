@@ -401,3 +401,82 @@ func TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore(t *testing.T) {
 		t.Fatalf("the agent socket outlived shutdown: %v", serr)
 	}
 }
+
+// --- SetKnownHostsPolicy / SetStrictHostKeyChecking ---
+
+// TestSSHConnectService_SetKnownHostsPolicy_ValidatesInput pins the
+// validating switch: only "system" and "both" are accepted verbatim.
+func TestSSHConnectService_SetKnownHostsPolicy_ValidatesInput(t *testing.T) {
+	svc := NewSSHConnectService()
+
+	svc.SetKnownHostsPolicy("both")
+	if svc.knownHostsPolicy != "both" {
+		t.Fatalf("knownHostsPolicy = %q, want %q", svc.knownHostsPolicy, "both")
+	}
+
+	svc.SetKnownHostsPolicy("system")
+	if svc.knownHostsPolicy != "system" {
+		t.Fatalf("knownHostsPolicy = %q, want %q", svc.knownHostsPolicy, "system")
+	}
+}
+
+// TestSSHConnectService_SetKnownHostsPolicy_UnknownValueFailsClosed pins the
+// default branch: a value that isn't one of the recognized policies resets
+// to "barrier" (the strictest option) rather than silently accepting
+// garbage or leaving a stale value in place.
+func TestSSHConnectService_SetKnownHostsPolicy_UnknownValueFailsClosed(t *testing.T) {
+	svc := NewSSHConnectService()
+	svc.SetKnownHostsPolicy("system")
+
+	svc.SetKnownHostsPolicy("not-a-real-policy")
+
+	if svc.knownHostsPolicy != "barrier" {
+		t.Fatalf("knownHostsPolicy = %q, want %q (an unrecognized policy must fail closed)", svc.knownHostsPolicy, "barrier")
+	}
+}
+
+// TestSSHConnectService_SetStrictHostKeyChecking_EmptyResetsToAsk pins the
+// normalization: an empty policy is not stored as-is, it resets to the
+// documented default "ask".
+func TestSSHConnectService_SetStrictHostKeyChecking_EmptyResetsToAsk(t *testing.T) {
+	svc := NewSSHConnectService()
+	svc.SetStrictHostKeyChecking("yes")
+
+	svc.SetStrictHostKeyChecking("")
+
+	if svc.strictPolicy != "ask" {
+		t.Fatalf("strictPolicy = %q, want %q", svc.strictPolicy, "ask")
+	}
+}
+
+// --- envPrefix / shellJoin ---
+
+func TestEnvPrefix(t *testing.T) {
+	if got := envPrefix(nil); got != "" {
+		t.Fatalf("envPrefix(nil) = %q, want empty", got)
+	}
+	if got := envPrefix([]string{}); got != "" {
+		t.Fatalf("envPrefix([]) = %q, want empty", got)
+	}
+	if got := envPrefix([]string{"FOO=bar"}); got != "FOO=bar " {
+		t.Fatalf("envPrefix single = %q, want %q", got, "FOO=bar ")
+	}
+	if got := envPrefix([]string{"FOO=bar", "BAZ=qux"}); got != "FOO=bar BAZ=qux " {
+		t.Fatalf("envPrefix multiple = %q, want %q", got, "FOO=bar BAZ=qux ")
+	}
+}
+
+func TestShellJoin(t *testing.T) {
+	if got := shellJoin([]string{"ssh", "-p", "22", "host"}); got != "ssh -p 22 host" {
+		t.Fatalf("shellJoin plain = %q", got)
+	}
+	if got := shellJoin([]string{"echo", "hello world"}); got != `echo 'hello world'` {
+		t.Fatalf("shellJoin with space = %q, want %q", got, `echo 'hello world'`)
+	}
+	if got := shellJoin([]string{"echo", "it's a test"}); got != `echo 'it'\''s a test'` {
+		t.Fatalf("shellJoin with embedded quote = %q, want %q", got, `echo 'it'\''s a test'`)
+	}
+	if got := shellJoin(nil); got != "" {
+		t.Fatalf("shellJoin(nil) = %q, want empty", got)
+	}
+}

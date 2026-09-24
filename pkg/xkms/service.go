@@ -320,6 +320,17 @@ func (s *XKMSService) SetClusterClient(c ClusterClient, shardID, nodeID uint64) 
 	s.clusterNodeID = nodeID
 }
 
+// Clustered reports whether this node runs as part of a Raft cluster
+// (go-qrdb's NewClusteredNode with clustering enabled) rather than the
+// standalone single-node engine. Transports use it to decide whether cluster
+// membership mutation is possible at all (ClusterAddReplica/
+// ClusterRemoveReplica fail closed on a standalone node) and whether to
+// advertise the capability to callers; ClusterStatus and ClusterMembers
+// themselves stay callable either way, degrading to the standalone view.
+func (s *XKMSService) Clustered() bool {
+	return s.cluster != nil
+}
+
 // SetTenantService injects go-qrdb's TenantService so the tenant servicer
 // delegates lifecycle (entitlement-gated isolation, system-managed auto-unseal,
 // quotas, per-tenant hardware barrier sealing) to the canonical implementation.

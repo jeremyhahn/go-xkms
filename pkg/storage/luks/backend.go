@@ -102,6 +102,46 @@ func (b *Backend) Unlock(passphrase string) error {
 	return nil
 }
 
+// Attach makes the backend usable against a volume that is already mounted
+// by another process, without performing a LUKS unlock of its own. It exists
+// for a second process that shares the same on-disk container with the
+// process that actually unlocked it — for example a long-running GUI
+// attaching to a volume a short-lived CLI invocation already opened and
+// mounted — and so must not attempt a second cryptsetup open against the
+// same container; a second open fails because the container is already open
+// elsewhere. Attach never opens or mounts anything itself and never accepts
+// a passphrase: it only recognizes state that already exists.
+//
+// Returns ErrVolumeAlreadyUnlocked if this backend is already unlocked,
+// ErrVolumeNotInitialized if the container does not exist, and
+// ErrVolumeNotMounted if the volume exists but is not currently mounted by
+// anyone — the caller must obtain the passphrase and call Unlock instead.
+func (b *Backend) Attach() error {
+	if b.state.Load() == stateUnlocked {
+		return ErrVolumeAlreadyUnlocked
+	}
+
+	if !b.volume.Exists() {
+		return ErrVolumeNotInitialized
+	}
+
+	if !b.volume.IsMounted() {
+		return ErrVolumeNotMounted
+	}
+
+	delegate, err := filestorage.New(b.volume.GetMountPoint())
+	if err != nil {
+		return ErrDelegateCreateFailed
+	}
+
+	b.mu.Lock()
+	b.delegate = delegate
+	b.mu.Unlock()
+
+	b.state.Store(stateUnlocked)
+	return nil
+}
+
 // Lock closes the delegate backend and locks the LUKS volume.
 // Returns ErrVolumeLocked if the backend is already locked.
 func (b *Backend) Lock() error {

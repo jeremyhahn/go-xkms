@@ -89,9 +89,8 @@ func generateTestECDSAKey(t *testing.T, curve elliptic.Curve) *TestKey {
 // createKeyChangeRequest creates a properly formatted key-change request with inner JWS
 func createKeyChangeRequest(t *testing.T, service *RestService, oldKey, newKey *TestKey, accountID uint64) *http.Request {
 	// Get a nonce for the inner JWS
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	// Get account URL
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, accountID)
@@ -158,9 +157,8 @@ func createKeyChangeRequest(t *testing.T, service *RestService, oldKey, newKey *
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Now create outer JWS with old key
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	// Determine the JOSE algorithm for the old key
 	var oldAlgo jose.SignatureAlgorithm
@@ -346,9 +344,8 @@ func TestKeyChangeHandler_InvalidInnerJWS(t *testing.T) {
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
 
 	// Create outer JWS with invalid inner payload (not a valid JWS)
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -426,9 +423,8 @@ func TestKeyChangeHandler_InvalidPayloadFormat(t *testing.T) {
 	account := createTestAccount(t, service, oldKey)
 
 	// Get nonces
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	keyChangeURL := service.baseRESTURI + "/acme/key-change"
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
@@ -461,9 +457,8 @@ func TestKeyChangeHandler_InvalidPayloadFormat(t *testing.T) {
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Create outer JWS
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -502,9 +497,8 @@ func TestKeyChangeHandler_MissingInnerJWK(t *testing.T) {
 	newKey := generateTestKey(t)
 	account := createTestAccount(t, service, oldKey)
 
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	keyChangeURL := service.baseRESTURI + "/acme/key-change"
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
@@ -547,9 +541,8 @@ func TestKeyChangeHandler_MissingInnerJWK(t *testing.T) {
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Create outer JWS
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -588,9 +581,8 @@ func TestKeyChangeHandler_AccountURLMismatch(t *testing.T) {
 	newKey := generateTestKey(t)
 	account := createTestAccount(t, service, oldKey)
 
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	keyChangeURL := service.baseRESTURI + "/acme/key-change"
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
@@ -634,9 +626,8 @@ func TestKeyChangeHandler_AccountURLMismatch(t *testing.T) {
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Create outer JWS
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -676,9 +667,8 @@ func TestKeyChangeHandler_OldKeyMismatch(t *testing.T) {
 	wrongOldKey := generateTestKey(t)
 	account := createTestAccount(t, service, oldKey)
 
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	keyChangeURL := service.baseRESTURI + "/acme/key-change"
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
@@ -720,9 +710,8 @@ func TestKeyChangeHandler_OldKeyMismatch(t *testing.T) {
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Create outer JWS with correct old key
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -787,9 +776,8 @@ func TestKeyChangeHandler_URLMismatch(t *testing.T) {
 	newKey := generateTestKey(t)
 	account := createTestAccount(t, service, oldKey)
 
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	keyChangeURL := service.baseRESTURI + "/acme/key-change"
 	wrongURL := service.baseRESTURI + "/acme/wrong-url"
@@ -833,9 +821,8 @@ func TestKeyChangeHandler_URLMismatch(t *testing.T) {
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Create outer JWS with correct URL
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},
@@ -1153,9 +1140,8 @@ func TestKeyChangeHandler_NoInnerSignatures(t *testing.T) {
 	innerJWS := `{"payload":"eyJ0ZXN0IjoidGVzdCJ9","protected":"eyJ0ZXN0IjoidGVzdCJ9"}`
 
 	// Create outer JWS with the malformed inner JWS
-	nonce, err := common.GenerateNonce(nonceSize)
+	nonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(nonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: nonce},
@@ -1192,9 +1178,8 @@ func TestKeyChangeHandler_InvalidAccountURL(t *testing.T) {
 	newKey := generateTestKey(t)
 	account := createTestAccount(t, service, oldKey)
 
-	innerNonce, err := common.GenerateNonce(nonceSize)
+	innerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(innerNonce)
 
 	keyChangeURL := service.baseRESTURI + "/acme/key-change"
 	accountURL := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
@@ -1239,9 +1224,8 @@ func TestKeyChangeHandler_InvalidAccountURL(t *testing.T) {
 	innerJWSString := innerJWS.FullSerialize()
 
 	// Create outer JWS
-	outerNonce, err := common.GenerateNonce(nonceSize)
+	outerNonce, err := service.GetNonceService().Generate()
 	require.NoError(t, err)
-	service.nonceStore.Add(outerNonce)
 
 	outerSignerOpts := &jose.SignerOptions{
 		NonceSource: &staticNonceSource{nonce: outerNonce},

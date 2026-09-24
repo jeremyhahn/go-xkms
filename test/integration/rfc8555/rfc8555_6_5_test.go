@@ -14,22 +14,28 @@
 package rfc8555
 
 import (
+	"crypto/rand"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	acmeerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestNonceGeneration tests secure nonce generation
+// TestNonceGeneration tests secure nonce generation via pkg/acme/nonce, the
+// canonical ACME nonce implementation (RFC 8555 Section 6.5).
 func TestNonceGeneration(t *testing.T) {
-	nonce1, err := common.GenerateNonce(16)
+	svc, err := nonce.NewService()
+	require.NoError(t, err)
+
+	nonce1, err := svc.Generate()
 	require.NoError(t, err)
 	assert.NotEmpty(t, nonce1)
 
-	nonce2, err := common.GenerateNonce(16)
+	nonce2, err := svc.Generate()
 	require.NoError(t, err)
 	assert.NotEmpty(t, nonce2)
 
@@ -37,97 +43,137 @@ func TestNonceGeneration(t *testing.T) {
 	assert.NotEqual(t, nonce1, nonce2)
 }
 
-// TestNonceGeneration_DifferentLengths tests nonce generation with various lengths
-func TestNonceGeneration_DifferentLengths(t *testing.T) {
-	lengths := []int{8, 16, 32, 64}
+// TestNonce_ValidRedeemedOnce verifies a freshly minted nonce validates
+// exactly once, RFC 8555 Section 6.5's single-use requirement.
+func TestNonce_ValidRedeemedOnce(t *testing.T) {
+	svc, err := nonce.NewService()
+	require.NoError(t, err)
 
-	for _, length := range lengths {
-		t.Run(string(rune(length+'0'))+"bytes", func(t *testing.T) {
-			nonce, err := common.GenerateNonce(length)
-			require.NoError(t, err)
-			assert.NotEmpty(t, nonce)
+	n, err := svc.Generate()
+	require.NoError(t, err)
 
-			// Base64 URL encoding increases size, but we verify it's not empty
-			assert.Greater(t, len(nonce), 0)
-		})
+	require.NoError(t, svc.Redeem(n))
+}
+
+// TestNonce_ReplayRejected verifies a redeemed nonce cannot be redeemed a
+// second time: the server MUST reject a replayed nonce with badNonce.
+func TestNonce_ReplayRejected(t *testing.T) {
+	svc, err := nonce.NewService()
+	require.NoError(t, err)
+
+	n, err := svc.Generate()
+	require.NoError(t, err)
+	require.NoError(t, svc.Redeem(n))
+
+	err = svc.Redeem(n)
+	require.Error(t, err)
+	var nonceErr *acmeerrors.NonceError
+	require.ErrorAs(t, err, &nonceErr)
+	assert.ErrorIs(t, nonceErr.Cause, acmeerrors.ErrNonceAlreadyUsed)
+}
+
+// TestNonce_ExpiredRejected verifies a nonce retired from the redeemed-set
+// window is rejected. pkg/acme/nonce tracks validity by a bounded, monotonic
+// counter window (WithMaxUsed) rather than a per-nonce wall-clock TTL, so
+// "expired" here means evicted past the earliest still-valid counter.
+func TestNonce_ExpiredRejected(t *testing.T) {
+	svc, err := nonce.NewService(nonce.WithMaxUsed(1))
+	require.NoError(t, err)
+
+	first, err := svc.Generate()
+	require.NoError(t, err)
+	second, err := svc.Generate()
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Redeem(first))
+	// maxUsed=1: redeeming a second nonce evicts "first" from the window and
+	// advances earliest past it.
+	require.NoError(t, svc.Redeem(second))
+
+	err = svc.Redeem(first)
+	require.Error(t, err)
+	var nonceErr *acmeerrors.NonceError
+	require.ErrorAs(t, err, &nonceErr)
+	assert.ErrorIs(t, nonceErr.Cause, acmeerrors.ErrNonceTooLow)
+}
+
+// TestNonce_MalformedRejected verifies a syntactically invalid nonce is
+// rejected rather than causing a panic or an ambiguous result.
+func TestNonce_MalformedRejected(t *testing.T) {
+	svc, err := nonce.NewService()
+	require.NoError(t, err)
+
+	for _, malformed := range []string{
+		"not-base64url!!!",
+		"",
+		"AAAA",
+	} {
+		err := svc.Redeem(malformed)
+		assert.Error(t, err, "malformed nonce %q should be rejected", malformed)
 	}
 }
 
-// TestNonceStore_AddAndExists tests basic nonce storage and validation
-func TestNonceStore_AddAndExists(t *testing.T) {
-	store := common.NewNonceStore(5 * time.Minute)
+// TestNonce_ForeignPrefixFallsBackToLocal verifies pkg/acme/nonce.MultiService
+// routing semantics: a nonce whose prefix identifies a node that has not been
+// registered falls back to the local service, whose own prefix check then
+// rejects it. This is the load-balanced deployment case where a request
+// lands on a node that does not (yet) know about the issuing node.
+func TestNonce_ForeignPrefixFallsBackToLocal(t *testing.T) {
+	key := make([]byte, 16)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
 
-	nonce := "test-nonce-12345"
-	store.Add(nonce)
+	local, err := nonce.NewService(nonce.WithKey(key), nonce.WithPrefix("AAAAAAAA"))
+	require.NoError(t, err)
+	remote, err := nonce.NewService(nonce.WithKey(key), nonce.WithPrefix("BBBBBBBB"))
+	require.NoError(t, err)
 
-	// First use should succeed
-	exists := store.Exists(nonce)
-	assert.True(t, exists)
+	multi := nonce.NewMultiService(local)
 
-	// Second use should fail (single-use requirement)
-	exists = store.Exists(nonce)
-	assert.False(t, exists)
+	foreignNonce, err := remote.Generate()
+	require.NoError(t, err)
+
+	err = multi.Redeem(foreignNonce)
+	require.Error(t, err)
 }
 
-// TestNonceStore_Expiration tests nonce expiration
-func TestNonceStore_Expiration(t *testing.T) {
-	// Use very short TTL for testing
-	store := common.NewNonceStore(100 * time.Millisecond)
+// TestNonce_ForeignPrefixRoutedWhenRegistered verifies that once a remote
+// node's service is registered, MultiService routes redemption of its
+// nonces to it instead of falling back to local.
+func TestNonce_ForeignPrefixRoutedWhenRegistered(t *testing.T) {
+	key := make([]byte, 16)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
 
-	nonce := "test-nonce-expiring"
-	store.Add(nonce)
+	local, err := nonce.NewService(nonce.WithKey(key), nonce.WithPrefix("AAAAAAAA"))
+	require.NoError(t, err)
+	remote, err := nonce.NewService(nonce.WithKey(key), nonce.WithPrefix("BBBBBBBB"))
+	require.NoError(t, err)
 
-	// Should exist immediately
-	time.Sleep(50 * time.Millisecond)
-	exists := store.Exists(nonce)
-	assert.True(t, exists)
+	multi := nonce.NewMultiService(local)
+	multi.Register(remote)
 
-	// Add another nonce that will expire
-	nonce2 := "test-nonce-expiring-2"
-	store.Add(nonce2)
+	remoteNonce, err := remote.Generate()
+	require.NoError(t, err)
 
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
-
-	// Should not exist after expiration
-	exists = store.Exists(nonce2)
-	assert.False(t, exists)
+	assert.NoError(t, multi.Redeem(remoteNonce))
 }
 
-// TestNonceStore_NonExistent tests checking for non-existent nonce
-func TestNonceStore_NonExistent(t *testing.T) {
-	store := common.NewNonceStore(5 * time.Minute)
+// TestNonce_BoundedMemoryUnderFlood verifies the redeemed-set stays capped
+// at WithMaxUsed regardless of how many nonces are minted and redeemed, the
+// defense a flood of new-nonce requests needs against an unbounded store.
+func TestNonce_BoundedMemoryUnderFlood(t *testing.T) {
+	const maxUsed = 100
+	svc, err := nonce.NewService(nonce.WithMaxUsed(maxUsed))
+	require.NoError(t, err)
 
-	// Check for nonce that was never added
-	exists := store.Exists("non-existent-nonce")
-	assert.False(t, exists)
-}
-
-// TestNonceStore_ConcurrentAccess tests thread-safe nonce operations
-func TestNonceStore_ConcurrentAccess(t *testing.T) {
-	store := common.NewNonceStore(5 * time.Minute)
-
-	// Add multiple nonces concurrently
-	done := make(chan bool)
-	numGoroutines := 10
-
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			nonce, err := common.GenerateNonce(16)
-			require.NoError(t, err)
-
-			store.Add(nonce)
-			exists := store.Exists(nonce)
-			assert.True(t, exists)
-
-			done <- true
-		}(i)
+	for i := 0; i < maxUsed*10; i++ {
+		n, err := svc.Generate()
+		require.NoError(t, err)
+		require.NoError(t, svc.Redeem(n))
 	}
 
-	// Wait for all goroutines
-	for i := 0; i < numGoroutines; i++ {
-		<-done
-	}
+	assert.LessOrEqual(t, svc.UsedCount(), maxUsed)
 }
 
 // TestRateLimiter_AllowsWithinLimit tests rate limiting allows requests within limit
@@ -228,26 +274,6 @@ func TestRateLimiter_MaxTokensCap(t *testing.T) {
 
 	// Should be capped at max
 	assert.Equal(t, maxRequests, newTokens)
-}
-
-// TestReplayProtection tests that nonces can only be used once
-func TestReplayProtection(t *testing.T) {
-	store := common.NewNonceStore(5 * time.Minute)
-
-	nonce := "replay-test-nonce"
-	store.Add(nonce)
-
-	// First use - should succeed
-	valid1 := store.Exists(nonce)
-	assert.True(t, valid1, "First use should be valid")
-
-	// Replay attempt - should fail
-	valid2 := store.Exists(nonce)
-	assert.False(t, valid2, "Replay should be rejected")
-
-	// Third attempt - should still fail
-	valid3 := store.Exists(nonce)
-	assert.False(t, valid3, "Multiple replays should be rejected")
 }
 
 // Helper function for min comparison
