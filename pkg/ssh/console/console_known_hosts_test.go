@@ -18,8 +18,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -234,5 +236,96 @@ func TestDial_KnownHostsSkipStore_NeverConsultsOrWritesStore(t *testing.T) {
 	}
 	if pin.Fingerprint != ssh.FingerprintSHA256(otherSigner.PublicKey()) {
 		t.Fatal("KnownHostsSkipStore must never write to the real store")
+	}
+}
+
+// captureHandler is a minimal slog.Handler test double that records every
+// Handle call, so a test can assert a specific best-effort log line was (or
+// was not) emitted without depending on text/JSON formatting.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *captureHandler) hasMessage(msg string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range h.records {
+		if r.Message == msg {
+			return true
+		}
+	}
+	return false
+}
+
+// badMarshalKey wraps a real ssh.PublicKey but reports an empty wire-format
+// encoding, forcing known_hosts.Emit to fail with *NoPublicKeyError. It
+// exists purely as a test seam for the Emit-failure branch below — nothing
+// else in this package can make Emit fail on a key that just came off a real
+// SSH handshake.
+type badMarshalKey struct {
+	ssh.PublicKey
+}
+
+func (badMarshalKey) Marshal() []byte { return nil }
+
+// TestFirstContactConfirmer_EmitFailureIsLoggedNotFatal covers the branch
+// where known_hosts.Emit cannot render the accepted key: the confirmer still
+// accepts the connection (the trust decision was already made by
+// HostKeyConfirm), skips the KnownHostsExtraFiles mirror entirely, and logs
+// the Emit failure with slog.Warn — the same best-effort convention already
+// used for an AppendMissing failure.
+func TestFirstContactConfirmer_EmitFailureIsLoggedNotFatal(t *testing.T) {
+	handler := &captureHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+	badKey := badMarshalKey{signer.PublicKey()}
+
+	extFile := filepath.Join(t.TempDir(), "known_hosts") // must stay untouched
+
+	confirmer := firstContactConfirmer(DialRequest{
+		HostKeyScope:         scope.User,
+		HostKeyOwner:         "tester",
+		KnownHostsExtraFiles: []string{extFile},
+		HostKeyConfirm: func(context.Context, string, ssh.PublicKey) (bool, error) {
+			return true, nil
+		},
+	})
+
+	accept, cerr := confirmer(context.Background(), "badhost.example.com", badKey)
+	if cerr != nil {
+		t.Fatalf("confirmer: %v", cerr)
+	}
+	if !accept {
+		t.Fatal("expected the confirmer to accept — HostKeyConfirm already approved the key")
+	}
+
+	if !handler.hasMessage("ssh/console: failed to render an accepted host key for known_hosts mirroring") {
+		t.Fatal("expected the Emit failure to be logged")
+	}
+	if _, statErr := os.Stat(extFile); !os.IsNotExist(statErr) {
+		t.Fatal("expected no known_hosts mirror file to be created when Emit fails")
 	}
 }
