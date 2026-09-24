@@ -32,6 +32,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -393,16 +394,29 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Set store type
 	attrs.StoreType = types.StoreTPM2
 
-	// Try to load the key from the backend to verify it exists
+	// Try to load the key from the backend to verify it exists. Only a
+	// genuine "no such object" result from the underlying store (which
+	// surfaces as storage.ErrNotFound through keyBackend.Get) is reported
+	// as ErrKeyNotFound. Any other failure -- a permission error, a
+	// transient I/O fault, a corrupt or partially written blob -- must not
+	// be conflated with "key does not exist yet", since callers such as
+	// getOrGenerateCAKey use that distinction to decide whether it is safe
+	// to generate a replacement key.
 	_, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Get the public blob to determine key type
 	pubData, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Parse the public key to determine algorithm

@@ -15,7 +15,11 @@
 
 package azurekv
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+)
 
 var (
 	// ErrNotInitialized is returned when the Azure Key Vault client is not initialized.
@@ -25,7 +29,18 @@ var (
 	ErrInvalidConfig = errors.New("azurekv: invalid configuration")
 
 	// ErrKeyNotFound is returned when a key is not found in Azure Key Vault.
-	ErrKeyNotFound = errors.New("azurekv: key not found")
+	// It is an alias of backend.ErrKeyNotFound so
+	// errors.Is(err, backend.ErrKeyNotFound) recognizes it without any
+	// wrapping, matching every other backend.
+	ErrKeyNotFound = backend.ErrKeyNotFound
+
+	// ErrKeyRetrievalFailed is returned when the Key Vault client's GetKey
+	// call fails for a reason other than the key genuinely not existing --
+	// a transport fault, throttling, or an RBAC/authorization denial. It
+	// must not satisfy errors.Is(err, backend.ErrKeyNotFound): callers use
+	// that distinction to decide whether generating a replacement key is
+	// safe.
+	ErrKeyRetrievalFailed = errors.New("azurekv: key retrieval failed")
 
 	// ErrUnsupportedKeyType is returned when an unsupported key type is requested.
 	ErrUnsupportedKeyType = errors.New("azurekv: unsupported key type")
