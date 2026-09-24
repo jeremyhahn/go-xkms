@@ -255,6 +255,50 @@ shared type set.
 The mapping is implemented once per transport in `errors_keyops.go`
 (`pkg/api/rest`, `pkg/api/grpc`, `pkg/api/mcp`, `pkg/xkms`).
 
+### The real MCP tool surface carries go-qrdb's wire classification (#791)
+
+The MCP column above is the JSON-RPC dispatch core, `pkg/api/mcp.Server`. The
+unified API server never speaks that JSON-RPC-over-the-wire shape directly:
+`pkg/apimodule.RegisterMCP` registers one real mcp-go tool per JSON-RPC
+method, and `mcpToolHandler` calls `Server.InvokeMethod` and adapts its
+answer. Per the Model Context Protocol specification, a failure *inside* a
+tool is an ordinary tool result (`isError: true`), never a JSON-RPC protocol
+error, so the code has nowhere to ride except that result.
+
+Before #791, `mcpToolHandler` rendered every `InvokeMethod` failure as prose
+only (`err.Error()`) — none of the codes `pkg/api/mcp`'s handlers and gates
+compute (`*KeyOpError.Code`; see `errors_keyops.go`, `authz.go`, `tenant.go`)
+reached the caller. `mcpToolHandler` now unwraps a `*KeyOpError` (`errors.As`)
+and renders it as go-qrdb's own MCP wire contract instead of inventing a
+parallel one: the tool result's `structuredContent` carries a
+`wire.ErrorEnvelope` (`code`, `status`, `message`, `tool`) — the exact shape
+go-qrdb's own MCP server produces for its own tools
+(`go-qrdb/pkg/api/mcp/status.go`'s `toolErrorResult`) and the shape go-qrdb's
+own SDK client (`sdk/go/transport/mcp`) already decodes. An `InvokeMethod`
+failure that is not a `*KeyOpError` renders as a generic, undetailed internal
+fault (`wire.CodeInternal`, message `"xkms: internal error"`) rather than
+leaking its text to the caller.
+
+| `KeyOpError.Code` (`pkg/api/mcp`, JSON-RPC numbering) | go-qrdb `wire.Code` |
+|---|---|
+| `ErrCodeParseError` (-32700) | `CodeInvalidArgument` (-32012) |
+| `ErrCodeInvalidRequest` (-32600) | `CodeInvalidArgument` (-32012) |
+| `ErrCodeMethodNotFound` (-32601) | `CodeUnimplemented` (-32014) |
+| `ErrCodeInvalidParams` (-32602) | `CodeInvalidArgument` (-32012) |
+| `ErrCodeInternalError` (-32603) | `CodeInternal` (-32603) |
+| `ErrCodeUnauthorized` (-32002) | `CodeUnauthenticated` (-32001) |
+| `ErrCodeForbidden` (-32003) | `CodePermissionDenied` (-32003) |
+| `ErrCodeServiceUnavailable` (-32004) | `CodeUnavailable` (-32006) |
+
+**Known gap, out of scope for #791**: xkms's own SDK client for this surface
+(`pkg/api/transport/mcp.Transport`) does not read `structuredContent` yet; its
+`newToolError`/`toolErrorCode` still classify a tool failure by matching
+keywords in the error text — the fail-open pattern go-qrdb's own SDK client
+replaced with this same wire envelope (go-qrdb#438). The server now sends a
+classified envelope this client could read; teaching it to prefer
+`structuredContent` over keyword matching is a follow-up, not folded into
+#791's server-side fix.
+
 ## Pagination
 
 `ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values and
