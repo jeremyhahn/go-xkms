@@ -33,6 +33,7 @@ import (
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/api/swagger"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/webui"
@@ -656,6 +657,18 @@ func (s *MultiProtocolServer) buildRouter() {
 		mcpRouter.Use(s.authMiddleware.Authenticate)
 	}
 	mcpRouter.HandleFunc("", s.handleMCP).Methods("POST")
+
+	// Swagger UI (/docs) and the OpenAPI specs it renders (/openapi/{spec}).
+	// Gated behind the same admin authentication and admin:capabilities
+	// grant as GET /admin/algorithms: the specs describe every admin route,
+	// parameter and permission this deployment exposes, so they carry the
+	// same fail-closed registration the rest of the admin surface uses
+	// rather than being served publicly.
+	swagger.NewHandler(&swagger.Config{
+		Title:       "go-xkms Admin API Documentation",
+		DefaultSpec: "admin-api",
+		Logger:      s.logger,
+	}).RegisterRoutes(s.router, s.authMiddleware, s.gate)
 
 	// Admin web UI (SPA) - registered last so API routes take priority
 	if err := webui.RegisterRoutes(s.router, webui.AdminAssets, s.logger); err != nil {

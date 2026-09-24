@@ -138,6 +138,33 @@ absence — ACME is a network enrollment protocol and a local socket has no
 identifiers to validate — but it is written as a gap rather than omitted so the
 decision is visible.
 
+### Interactive documentation (Swagger UI)
+
+`pkg/acme/api/swagger` embeds both OpenAPI specs (`acme-api.yaml`,
+`admin-api.yaml`) and a vendored copy of `swagger-ui-dist` — no CDN, no
+external fetch at runtime — and mounts them on the same gorilla mux router
+`pkg/acme/api/server` builds for the Admin API:
+
+| Path | Serves |
+|---|---|
+| `GET /docs` | Swagger UI; `?spec=acme-api` (default) or `?spec=admin-api` selects which spec renders |
+| `GET /openapi/acme-api.yaml` | the RFC 8555 surface documented above |
+| `GET /openapi/admin-api.yaml` | the `pkg/acme/admin` control-plane surface |
+
+Both `/docs` and `/openapi/*` require the same admin authentication (Bearer
+JWT or mTLS) and the `admin:capabilities` qrdb grant as `GET /admin/algorithms`
+— they are **not public**. The specs and the UI enumerate every admin route,
+parameter and permission this deployment exposes; publishing that attack
+surface map to unauthenticated callers would hand out a target list for free.
+The RFC 8555 endpoints in the table above remain public regardless — ACME's
+own directory (`GET /acme/directory`) already discovers them for standard
+clients, which is what ACME clients actually use, not the Swagger UI.
+
+The Swagger UI page sets a strict `Content-Security-Policy` (`script-src
+'self'`, no `unsafe-eval`, no `unsafe-inline` scripts): every script it loads
+is same-origin and vendored at build time, so there is nothing for a relaxed
+CSP to protect against.
+
 ## The xkms control-plane view of ACME
 
 Separately from the RFC surface, the ACME server's **administration** is
