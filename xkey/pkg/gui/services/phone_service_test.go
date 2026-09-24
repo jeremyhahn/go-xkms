@@ -1376,25 +1376,6 @@ func TestEmitAttestationEvent_Failure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildAttestationTrustPool
-// ---------------------------------------------------------------------------
-
-func TestBuildAttestationTrustPool_NoTrustStore(t *testing.T) {
-	svc := NewPhoneService()
-	cert := generateTestCert(t)
-	pool, err := svc.buildAttestationTrustPool([]*x509.Certificate{cert})
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-func TestBuildAttestationTrustPool_EmptyRoots(t *testing.T) {
-	svc := NewPhoneService()
-	pool, err := svc.buildAttestationTrustPool(nil)
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-// ---------------------------------------------------------------------------
 // saveAttestationResult
 // ---------------------------------------------------------------------------
 
@@ -1991,7 +1972,6 @@ func TestPhoneService_AllErrorSentinels(t *testing.T) {
 		{ErrPhoneInvalidTimeout, "invalid timeout"},
 		{ErrPhoneBLEUnavailable, "bluetooth unavailable"},
 		{ErrPhoneAlreadyPaired, "already paired"},
-		{ErrPhoneAttestNotImplemented, "attestation requires"},
 		{ErrPhoneConnectFailed, "BLE connection failed"},
 		{ErrPhoneHandshakeFailed, "Noise handshake failed"},
 		{ErrPhoneMissingKeys, "missing Noise keys"},

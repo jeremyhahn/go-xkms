@@ -231,6 +231,10 @@ var (
 	// ErrOIDCLoginFailed indicates the login operation failed.
 	ErrOIDCLoginFailed = errors.New("oidc_service: login failed")
 
+	// ErrOIDCAWSRegionRequired indicates an AWS provider is missing its
+	// required region.
+	ErrOIDCAWSRegionRequired = errors.New("oidc_service: aws_region is required")
+
 	// ErrOIDCCallbackFailed indicates the OAuth2 callback failed.
 	ErrOIDCCallbackFailed = errors.New("oidc_service: callback failed")
 
@@ -272,9 +276,6 @@ var (
 
 	// ErrOIDCExecFailed indicates script execution failed.
 	ErrOIDCExecFailed = errors.New("oidc_service: script execution failed")
-
-	// ErrOIDCUnsupportedAWSLogin indicates AWS login is not yet supported in the GUI.
-	ErrOIDCUnsupportedAWSLogin = errors.New("oidc_service: AWS login not supported in GUI")
 
 	// ErrOIDCTemplateNotFound indicates the requested provider template was not found.
 	ErrOIDCTemplateNotFound = errors.New("oidc_service: template not found")
