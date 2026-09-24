@@ -41,8 +41,11 @@ import (
 // (covers line 485-487: ECCConfig with unrecognized curve name)
 // =============================================================================
 
-// TestGetSignatureAlgorithm_UnknownCurveName_B13 exercises the parsedCurve == nil
-// branch by using an ECDSA identity with an unrecognized ECCConfig.Curve string.
+// TestGetSignatureAlgorithm_UnknownCurveName_B13 exercises an ECDSA identity
+// with an unrecognized ECCConfig.Curve string. GetSignatureAlgorithm used to
+// swallow types.ParseCurve's error and silently default to ECDSAWithSHA256
+// (#701); a misconfigured curve name is a real configuration error and must
+// be reported, not papered over with a default signature algorithm.
 func TestGetSignatureAlgorithm_UnknownCurveName_B13(t *testing.T) {
 	t.Parallel()
 	id := &Identity{
@@ -51,16 +54,13 @@ func TestGetSignatureAlgorithm_UnknownCurveName_B13(t *testing.T) {
 			{
 				KeyAlgorithm: types.AlgorithmECDSA,
 				KeyType:      "CA",
-				// Non-empty but unrecognized curve name → ParseCurve returns nil, err
-				// Error is ignored (parsedCurve, _ = ...) so parsedCurve == nil.
-				ECCConfig: &types.ECCConfig{Curve: "CURVE_UNKNOWN_B13"},
+				ECCConfig:    &types.ECCConfig{Curve: "CURVE_UNKNOWN_B13"},
 			},
 		},
 	}
 	algo, err := id.GetSignatureAlgorithm()
-	require.NoError(t, err)
-	// parsedCurve == nil → returns ECDSAWithSHA256, nil (the default)
-	assert.Equal(t, x509.ECDSAWithSHA256, algo)
+	require.ErrorIs(t, err, types.ErrUnknownCurve)
+	assert.Equal(t, x509.UnknownSignatureAlgorithm, algo)
 }
 
 // =============================================================================

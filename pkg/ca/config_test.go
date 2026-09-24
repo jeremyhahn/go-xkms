@@ -519,6 +519,17 @@ func TestIdentity_GetSignatureAlgorithm_Error(t *testing.T) {
 				Keys:    []*types.KeyConfig{},
 			},
 		},
+		{
+			name: "unrecognized ECDSA curve name",
+			identity: Identity{
+				Subject: Subject{CommonName: "Test CA"},
+				Valid:   10,
+				Keys: []*types.KeyConfig{{
+					KeyAlgorithm: types.AlgorithmECDSA,
+					ECCConfig:    &types.ECCConfig{Curve: "P-9000"},
+				}},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -605,6 +616,7 @@ func TestIdentity_GetCurve(t *testing.T) {
 		name        string
 		keys        []*types.KeyConfig
 		expectCurve bool
+		expectErr   error
 	}{
 		{
 			name:        "P-256 curve",
@@ -626,18 +638,30 @@ func TestIdentity_GetCurve(t *testing.T) {
 			keys:        []*types.KeyConfig{{}},
 			expectCurve: false,
 		},
+		{
+			name:        "unrecognized curve name",
+			keys:        []*types.KeyConfig{{ECCConfig: &types.ECCConfig{Curve: "P-9000"}}},
+			expectCurve: false,
+			expectErr:   types.ErrUnknownCurve,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			identity := Identity{Keys: tt.keys}
-			curve := identity.GetCurve()
+			curve, err := identity.GetCurve()
 			if tt.expectCurve && curve == nil {
 				t.Error("GetCurve() expected curve, got nil")
 			}
 			if !tt.expectCurve && curve != nil {
 				t.Errorf("GetCurve() expected nil, got %v", curve)
+			}
+			if tt.expectErr != nil && !errors.Is(err, tt.expectErr) {
+				t.Errorf("GetCurve() err = %v, expected %v", err, tt.expectErr)
+			}
+			if tt.expectErr == nil && err != nil {
+				t.Errorf("GetCurve() unexpected err = %v", err)
 			}
 		})
 	}
