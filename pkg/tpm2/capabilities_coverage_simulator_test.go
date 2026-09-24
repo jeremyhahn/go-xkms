@@ -335,18 +335,20 @@ func TestIsFIPS140_2_MatchesRawModesBit(t *testing.T) {
 		"IsFIPS140_2 must report bit 0 of TPM_PT_MODES and nothing else")
 }
 
-// modesRewritingTransport simulates a TPM that does not implement
-// TPM_PT_MODES. Per TCG, such a TPM answers a GetCapability for an
+// propertyRewritingTransport simulates a TPM that does not implement the
+// queried property. Per TCG, such a TPM answers a GetCapability for an
 // unimplemented property with the NEXT implemented property rather than an
 // error. This transport reproduces that by rewriting the requested property
-// from TPM_PT_MODES to TPM_PT_FAMILY_INDICATOR before the command reaches the
-// simulator, so the response legitimately carries a different property.
+// from fromProp to toProp before the command reaches the simulator, so the
+// response legitimately carries a different property.
 //
 // GetCapability takes no handles and no auth, so its parameter area starts
 // immediately after the 10-byte header: tag(2) + commandSize(4) + commandCode(4),
 // then capability(4), property(4), propertyCount(4).
-type modesRewritingTransport struct {
+type propertyRewritingTransport struct {
 	inner    transport.TPM
+	fromProp tpm2.TPMPT
+	toProp   tpm2.TPMPT
 	rewrites int
 }
 
@@ -355,7 +357,7 @@ const (
 	getCapPropertyOffset   = 14
 )
 
-func (m *modesRewritingTransport) Send(input []byte) ([]byte, error) {
+func (m *propertyRewritingTransport) Send(input []byte) ([]byte, error) {
 	if len(input) >= getCapPropertyOffset+4 {
 		cc := tpm2.TPMCC(binary.BigEndian.Uint32(input[tpmCCOffset : tpmCCOffset+4]))
 		capability := binary.BigEndian.Uint32(input[getCapCapabilityOffset : getCapCapabilityOffset+4])
@@ -363,13 +365,13 @@ func (m *modesRewritingTransport) Send(input []byte) ([]byte, error) {
 
 		if cc == tpm2.TPMCCGetCapability &&
 			capability == uint32(tpm2.TPMCapTPMProperties) &&
-			property == uint32(tpm2.TPMPTModes) {
+			property == uint32(m.fromProp) {
 
 			rewritten := make([]byte, len(input))
 			copy(rewritten, input)
 			binary.BigEndian.PutUint32(
 				rewritten[getCapPropertyOffset:getCapPropertyOffset+4],
-				uint32(tpm2.TPMPTFamilyIndicator))
+				uint32(m.toProp))
 			m.rewrites++
 			return m.inner.Send(rewritten)
 		}
@@ -390,7 +392,11 @@ func (m *modesRewritingTransport) Send(input []byte) ([]byte, error) {
 func TestIsFIPS140_2_TPMWithoutModesProperty_ReportsFalse(t *testing.T) {
 	h := newSimHarness(t, nil)
 
-	rewriter := &modesRewritingTransport{inner: h.TPM.transport}
+	rewriter := &propertyRewritingTransport{
+		inner:    h.TPM.transport,
+		fromProp: tpm2.TPMPTModes,
+		toProp:   tpm2.TPMPTFamilyIndicator,
+	}
 	original := h.TPM.transport
 	h.TPM.transport = rewriter
 	t.Cleanup(func() { h.TPM.transport = original })

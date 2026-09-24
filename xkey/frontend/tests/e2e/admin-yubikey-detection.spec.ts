@@ -93,15 +93,15 @@ test.describe('YubiKey FIDO2 capability suppression', () => {
     expect(adminService).toMatch(/FIDO2:\s*fido2Capable/);
   });
 
-  test('pkcs11mgr registerSlotBackends never sets CapFIDO2 for slot backends', async () => {
+  test('PKCS11Service registerSlotBackends never sets CapFIDO2 for slot backends', async () => {
     const fs = await import('fs');
     const mgr = fs.readFileSync(
-      `${REPO_ROOT}/xkey/pkg/pkcs11mgr/manager_pkcs11.go`,
+      `${REPO_ROOT}/xkey/pkg/gui/services/pkcs11_service.go`,
       'utf8'
     );
     // Extract the registerSlotBackends function body and assert CapFIDO2 is
     // not present in its registered Capabilities map.
-    const fnStart = mgr.indexOf('func (m *MemoryManager) registerSlotBackends');
+    const fnStart = mgr.indexOf('func (s *PKCS11Service) registerSlotBackends');
     expect(fnStart).toBeGreaterThan(-1);
     const fnEnd = mgr.indexOf('\nfunc ', fnStart + 1);
     const body = mgr.slice(fnStart, fnEnd);

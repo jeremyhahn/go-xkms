@@ -228,6 +228,76 @@ func TestMultiService(t *testing.T) {
 	})
 }
 
+func TestMultiService_SetLocal(t *testing.T) {
+	t.Run("Generate mints from the new local service", func(t *testing.T) {
+		key := make([]byte, 16)
+		rand.Read(key)
+
+		first, _ := NewService(WithPrefix("AAAAAAAA"), WithKey(key))
+		multi := NewMultiService(first)
+
+		second, _ := NewService(WithPrefix("AAAAAAAA"), WithKey(key))
+		multi.SetLocal(second)
+
+		n, err := multi.Generate()
+		require.NoError(t, err)
+		assert.NoError(t, second.Redeem(n))
+	})
+
+	t.Run("replaces the same prefix's registration rather than accumulating it", func(t *testing.T) {
+		key := make([]byte, 16)
+		rand.Read(key)
+
+		first, _ := NewService(WithPrefix("AAAAAAAA"), WithKey(key))
+		multi := NewMultiService(first)
+		require.Equal(t, 1, len(multi.services))
+
+		second, _ := NewService(WithPrefix("AAAAAAAA"), WithKey(key))
+		multi.SetLocal(second)
+
+		assert.Equal(t, 1, len(multi.services))
+		assert.Same(t, second, multi.services["AAAAAAAA"])
+	})
+
+	t.Run("retires nonces minted by the previous local service", func(t *testing.T) {
+		key := make([]byte, 16)
+		rand.Read(key)
+
+		first, _ := NewService(WithPrefix("AAAAAAAA"), WithKey(key))
+		multi := NewMultiService(first)
+
+		stale, err := first.Generate()
+		require.NoError(t, err)
+
+		second, _ := NewService(WithPrefix("AAAAAAAA"), WithKey(key))
+		multi.SetLocal(second)
+
+		// "stale" was minted by the retired epoch; the fresh epoch's counter
+		// starts over, so the old counter reads as not yet issued.
+		err = multi.Redeem(stale)
+		assert.Error(t, err)
+	})
+
+	t.Run("handles a nil previous local service", func(t *testing.T) {
+		multi := &MultiService{services: make(map[string]NonceService)}
+
+		local, _ := NewService(WithPrefix("AAAAAAAA"))
+		assert.NotPanics(t, func() { multi.SetLocal(local) })
+		assert.Equal(t, local, multi.local)
+	})
+
+	t.Run("unprefixed local service is not registered", func(t *testing.T) {
+		local, _ := NewService(WithPrefix("AAAAAAAA"))
+		multi := NewMultiService(local)
+
+		unprefixed, _ := NewService()
+		multi.SetLocal(unprefixed)
+
+		assert.Equal(t, 0, len(multi.services))
+		assert.Equal(t, "", multi.Prefix())
+	})
+}
+
 func TestNonceServiceInterface(t *testing.T) {
 	t.Run("Service implements NonceService", func(t *testing.T) {
 		svc, _ := NewService()

@@ -40,6 +40,11 @@ var (
 	// to decide whether generating a replacement key is safe.
 	ErrKeyRetrievalFailed = errors.New("awskms: key retrieval failed")
 
+	// ErrMalformedResponse indicates AWS KMS returned a success response
+	// missing a field the backend depends on (e.g. CreateKey without
+	// KeyMetadata.KeyId).
+	ErrMalformedResponse = errors.New("awskms: malformed AWS KMS response")
+
 	// ErrUnsupportedKeyType is returned when an unsupported key type is requested.
 	ErrUnsupportedKeyType = errors.New("awskms: unsupported key type")
 

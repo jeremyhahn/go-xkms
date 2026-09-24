@@ -360,59 +360,6 @@ func TestTransport_Request_UnknownEndpoint(t *testing.T) {
 	}
 }
 
-// TestTransport_RequestStream_Unsupported tests that streaming is not supported.
-func TestTransport_RequestStream_Unsupported(t *testing.T) {
-	t.Parallel()
-
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
-
-	cfg := &transport.Config{
-		Address: socketPath,
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-	defer tr.Close()
-
-	_, err = tr.RequestStream(context.Background(), "directory", "get", nil)
-	if err == nil {
-		t.Fatal("RequestStream should return error")
-	}
-
-	if !caerrors.IsUnimplemented(err) {
-		t.Errorf("expected Unimplemented error, got %v", err)
-	}
-}
-
-// TestTransport_RequestStream_ClosedTransport tests RequestStream on closed transport.
-func TestTransport_RequestStream_ClosedTransport(t *testing.T) {
-	t.Parallel()
-
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
-
-	cfg := &transport.Config{
-		Address: socketPath,
-	}
-
-	tr, err := NewTransport(cfg)
-	if err != nil {
-		t.Fatalf("NewTransport() error = %v", err)
-	}
-
-	tr.Close()
-
-	_, err = tr.RequestStream(context.Background(), "directory", "get", nil)
-	if err == nil {
-		t.Fatal("RequestStream on closed transport should return error")
-	}
-
-	if !caerrors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
 // TestFactory_Create tests the Factory.Create method.
 func TestFactory_Create(t *testing.T) {
 	t.Parallel()

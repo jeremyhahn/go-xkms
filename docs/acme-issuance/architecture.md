@@ -112,7 +112,15 @@ through ACME against an existing node's directory.
 - **Account keys are the client's identity.** Every POST is JWS-signed by the
   account key; the server binds orders to the account, not to a session.
 - **Nonces are single-use and server-issued.** Replay protection is the nonce
-  service, `pkg/acme/nonce`.
+  service, `pkg/acme/nonce`: an AES-GCM-encrypted, monotonic counter validated
+  by decryption rather than by a lookup table, with a `NonceMaxUsed`-bounded
+  redeemed-set and a `NonceLifetime`-bounded signing epoch — see
+  [`engineering.md`](engineering.md) Configuration and Persistence. Nonce
+  validity across nodes in a load-balanced deployment requires every node to
+  share the same encryption key (`handlers.Params.NonceKey`); absent that,
+  each node mints from its own key and a request that lands on a different
+  node than the one that issued the nonce gets `badNonce`, which RFC 8555
+  clients already retry.
 - **Challenge validation happens server-side, out of band.** Nothing the client
   asserts about itself is trusted; the server fetches, resolves, or activates.
 - **`enroll-01` trusts the TPM manufacturer chain**, not the requester. If the
@@ -134,15 +142,13 @@ through ACME against an existing node's directory.
   requesting account's URI and the challenge type that actually validated
   each identifier, so a record's `accounturi`/`validationmethods` parameters
   are enforced against reality, not merely parsed.
-- **Rate limits are not enforced in xkmsd today.** `pkg/acme/server/rate_limiter.go`
-  exists and is wired as request middleware in the standalone `TrustedCA`
-  (`pkg/acme/client/trustedca.go:381-383`, per-client-ID only), but xkmsd's
-  production ACME router (`buildACMERouter`, `cmd/xkmsd/acme.go:500-518`)
-  never applies it — no rate-limit middleware is registered there. The tenant
-  rate limiter (`pkg/acme/server/tenant_rate_limiter.go`) is unwired
-  everywhere: nothing outside its own file constructs one. A production
-  xkmsd ACME listener currently accepts orders at whatever rate a client
-  sends them. Wiring is tracked in go-xkms#882.
+- **Rate limits are enforcement, not advice, per client.**
+  `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
+  mounted on the whole ACME surface by both ACME server compositions
+  (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
+  client by JWS KID or IP; the tenant rate limiter
+  (`tenant_rate_limiter.go`) exists but is not wired into either
+  composition — see [`engineering.md`](engineering.md) §Rate limiting.
 - **Circuit breakers guard individual outbound dependencies, not order
   creation, and run only on xkmsd today.** `pkg/acme/server/circuitbreaker`
   wraps five dependencies, each with its own breaker, wired by

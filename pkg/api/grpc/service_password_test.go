@@ -161,12 +161,6 @@ func TestMapPasswordError(t *testing.T) {
 			expectedMsg:  "password store not initialized",
 		},
 		{
-			name:         "nil encrypter",
-			inputErr:     staticpw.ErrNilEncrypter,
-			expectedCode: codes.Internal,
-			expectedMsg:  "encrypter not configured",
-		},
-		{
 			name:         "nil barrier registry",
 			inputErr:     staticpw.ErrNilBarrierRegistry,
 			expectedCode: codes.Internal,

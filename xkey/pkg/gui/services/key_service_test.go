@@ -2102,3 +2102,37 @@ func TestConvertRegistryCapabilities_UnknownCapability(t *testing.T) {
 	// Unknown capabilities should be silently ignored.
 	assert.Equal(t, transport.BackendCapabilities{}, result)
 }
+
+// --- KeyCountForBackend ---
+
+// TestKeyService_KeyCountForBackend_NoLocalClient pins the fail-quiet
+// contract: KeyCountForBackend is used to annotate a backend list, so a
+// missing local client must report zero rather than propagate an error
+// that would fail the whole list.
+func TestKeyService_KeyCountForBackend_NoLocalClient(t *testing.T) {
+	svc := NewKeyService()
+	svc.SetContext(context.Background())
+
+	assert.Equal(t, 0, svc.KeyCountForBackend("software"))
+}
+
+// TestKeyService_KeyCountForBackend_Success pins that the count reflects
+// exactly what the local client reports for that backend.
+func TestKeyService_KeyCountForBackend_Success(t *testing.T) {
+	mc := &mockClient{
+		listKeysFn: func(ctx context.Context, backend string) (*transport.ListKeysResponse, error) {
+			return &transport.ListKeysResponse{
+				Keys: []transport.KeyInfo{
+					{KeyID: "k1", KeyType: "ECDSA", Algorithm: "ES256", Backend: backend},
+					{KeyID: "k2", KeyType: "RSA", Algorithm: "RS256", Backend: backend},
+					{KeyID: "k3", KeyType: "RSA", Algorithm: "RS256", Backend: backend},
+				},
+			}, nil
+		},
+	}
+	svc := NewKeyService()
+	svc.SetContext(context.Background())
+	svc.SetLocalClient(mc)
+
+	assert.Equal(t, 3, svc.KeyCountForBackend("software"))
+}

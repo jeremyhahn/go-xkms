@@ -1243,6 +1243,52 @@ func TestWriteMCPError(t *testing.T) {
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 }
 
+// failingResponseWriter is an http.ResponseWriter whose Write always fails,
+// simulating a client that disconnects mid-response so json.Encoder.Encode
+// cannot finish writing the body.
+type failingResponseWriter struct {
+	header http.Header
+}
+
+func (w *failingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failingResponseWriter) Write([]byte) (int, error) {
+	return 0, errors.New("simulated write failure")
+}
+
+func (w *failingResponseWriter) WriteHeader(int) {}
+
+// TestWriteMCPResponse_LogsEncodeFailure verifies that a failure to write
+// the MCP response body — which can no longer be reported to the client
+// because headers are already sent — is logged rather than silently
+// dropped.
+func TestWriteMCPResponse_LogsEncodeFailure(t *testing.T) {
+	server := newTestServer(&mockAdminService{}, nil)
+	var logBuf bytes.Buffer
+	server.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	server.writeMCPResponse(&failingResponseWriter{}, "test-id", map[string]string{"key": "value"})
+
+	assert.Contains(t, logBuf.String(), "failed to write MCP response")
+}
+
+// TestWriteMCPError_LogsEncodeFailure is TestWriteMCPResponse_LogsEncodeFailure
+// for the MCP error-response encoder.
+func TestWriteMCPError_LogsEncodeFailure(t *testing.T) {
+	server := newTestServer(&mockAdminService{}, nil)
+	var logBuf bytes.Buffer
+	server.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	server.writeMCPError(&failingResponseWriter{}, "test-id", -32600, "Test error", "Additional data")
+
+	assert.Contains(t, logBuf.String(), "failed to write MCP error response")
+}
+
 // --- Health Check Test ---
 
 func TestHealthCheckEndpoint(t *testing.T) {
@@ -1255,6 +1301,21 @@ func TestHealthCheckEndpoint(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "healthy")
+}
+
+// TestHealthCheckEndpoint_LogsWriteFailure verifies that a failure to write
+// the health check response body — which can no longer be reported to the
+// client because headers are already sent — is logged rather than silently
+// dropped.
+func TestHealthCheckEndpoint_LogsWriteFailure(t *testing.T) {
+	server := newTestServer(&mockAdminService{}, nil)
+	var logBuf bytes.Buffer
+	server.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	server.router.ServeHTTP(&failingResponseWriter{}, req)
+
+	assert.Contains(t, logBuf.String(), "failed to write health check response")
 }
 
 // --- gRPC Service Tests ---

@@ -23,7 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // pipeStdin replaces os.Stdin with a pipe carrying content for the duration
@@ -321,6 +324,44 @@ func TestRunWipe_RequiresRootForValidStandard(t *testing.T) {
 
 	_, err := runLUKSCmd(t, runWipe)
 	assert.ErrorIs(t, err, luks.ErrPermissionDenied)
+}
+
+// --- checkLUKSVolume gate ---
+
+// TestCheckLUKSVolume_LockedNotRoot_ReturnsErrLUKSVolumeLocked verifies that
+// a configured-but-unmounted LUKS volume causes the PersistentPreRunE gate
+// to fail closed with the canonical xkmssdk.ErrLUKSVolumeLocked sentinel
+// (the same one the GUI's StorageService.RequireUnlocked surfaces), so a
+// caller can recognize a locked volume identically from either front end.
+// The specific reason (missing root) remains reachable as the cause.
+func TestCheckLUKSVolume_LockedNotRoot_ReturnsErrLUKSVolumeLocked(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Fatal("this test suite must not be run as root")
+	}
+
+	previousHome := resolvedHome
+	t.Cleanup(func() { resolvedHome = previousHome })
+
+	h := &xhome.Home{Root: t.TempDir()}
+	require.NoError(t, os.WriteFile(h.LUKSPath(), []byte("fake luks container"), 0600))
+	resolvedHome = h
+
+	err := checkLUKSVolume()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, xkmssdk.ErrLUKSVolumeLocked)
+	assert.ErrorIs(t, err, luks.ErrPermissionDenied)
+}
+
+// TestCheckLUKSVolume_NoVolume_ReturnsNil verifies the gate is a no-op — the
+// existing plain data directory is unaffected — when no LUKS container has
+// been created for the resolved home.
+func TestCheckLUKSVolume_NoVolume_ReturnsNil(t *testing.T) {
+	previousHome := resolvedHome
+	t.Cleanup(func() { resolvedHome = previousHome })
+
+	resolvedHome = &xhome.Home{Root: t.TempDir()}
+
+	assert.NoError(t, checkLUKSVolume())
 }
 
 // --- privilege gates ---

@@ -212,47 +212,7 @@ func Dial(ctx context.Context, req DialRequest, cfg Config) (Console, error) {
 func buildHostKeyCallback(ctx context.Context, req DialRequest) ssh.HostKeyCallback {
 	var confirm known_hosts.Confirmer
 	if len(req.KnownHostsExtraFiles) > 0 || req.HostKeyConfirm != nil {
-		confirm = func(cctx context.Context, host string, key ssh.PublicKey) (bool, error) {
-			for _, f := range req.KnownHostsExtraFiles {
-				pub, found, lerr := known_hosts.LookupFile(f, host)
-				if lerr != nil {
-					return false, lerr
-				}
-				if !found {
-					continue
-				}
-				if keys.Fingerprint(pub) != keys.Fingerprint(key) {
-					return false, &known_hosts.MismatchError{
-						Host:     host,
-						Expected: keys.Fingerprint(pub),
-						Received: keys.Fingerprint(key),
-					}
-				}
-				return true, nil // known via an external known_hosts file
-			}
-
-			if req.HostKeyConfirm == nil {
-				return false, nil
-			}
-			accept, cerr := req.HostKeyConfirm(cctx, host, key)
-			if cerr != nil || !accept {
-				return accept, cerr
-			}
-
-			// Fresh first contact: mirror into every external file.
-			// Best-effort — a write failure on an external file must not
-			// fail the session, matching pkg/ssh/connect's Sync()/
-			// mirrorKnownHosts treatment of the same class of failure.
-			pin := known_hosts.PinFromPublicKey(host, req.HostKeyScope, req.HostKeyOwner, key, known_hosts.SourceFirstContact)
-			if line, eerr := known_hosts.Emit(pin); eerr == nil {
-				for _, f := range req.KnownHostsExtraFiles {
-					if aerr := known_hosts.AppendMissing([]byte(line+"\n"), f); aerr != nil {
-						slog.Warn("ssh/console: failed to mirror an accepted host key into an external known_hosts file", "host", host, "file", f, "error", aerr)
-					}
-				}
-			}
-			return true, nil
-		}
+		confirm = firstContactConfirmer(req)
 	}
 
 	store := req.KnownHosts
@@ -260,6 +220,61 @@ func buildHostKeyCallback(ctx context.Context, req DialRequest) ssh.HostKeyCallb
 		store = noopHostKeyStore{}
 	}
 	return known_hosts.CallbackWithConfirm(ctx, store, req.HostKeyScope, req.HostKeyOwner, confirm)
+}
+
+// firstContactConfirmer builds the known_hosts.Confirmer buildHostKeyCallback
+// layers on top of the store: an external-file lookup first, then req's
+// HostKeyConfirm TOFU policy. It is a separate function (rather than an
+// inline closure) so its Emit/mirror best-effort path is directly testable
+// without a live SSH handshake.
+func firstContactConfirmer(req DialRequest) known_hosts.Confirmer {
+	return func(cctx context.Context, host string, key ssh.PublicKey) (bool, error) {
+		for _, f := range req.KnownHostsExtraFiles {
+			pub, found, lerr := known_hosts.LookupFile(f, host)
+			if lerr != nil {
+				return false, lerr
+			}
+			if !found {
+				continue
+			}
+			if keys.Fingerprint(pub) != keys.Fingerprint(key) {
+				return false, &known_hosts.MismatchError{
+					Host:     host,
+					Expected: keys.Fingerprint(pub),
+					Received: keys.Fingerprint(key),
+				}
+			}
+			return true, nil // known via an external known_hosts file
+		}
+
+		if req.HostKeyConfirm == nil {
+			return false, nil
+		}
+		accept, cerr := req.HostKeyConfirm(cctx, host, key)
+		if cerr != nil || !accept {
+			return accept, cerr
+		}
+
+		// Fresh first contact: mirror into every external file. Both the
+		// rendering (Emit) and the write (AppendMissing) are best-effort —
+		// a failure here must not fail the session, matching
+		// pkg/ssh/connect's Sync()/mirrorKnownHosts treatment of the same
+		// class of failure. The trust decision was already made above by
+		// HostKeyConfirm; this is purely a convenience mirror for external
+		// tools (e.g. the system ssh client) reading KnownHostsExtraFiles.
+		pin := known_hosts.PinFromPublicKey(host, req.HostKeyScope, req.HostKeyOwner, key, known_hosts.SourceFirstContact)
+		line, eerr := known_hosts.Emit(pin)
+		if eerr != nil {
+			slog.Warn("ssh/console: failed to render an accepted host key for known_hosts mirroring", "host", host, "error", eerr)
+			return true, nil
+		}
+		for _, f := range req.KnownHostsExtraFiles {
+			if aerr := known_hosts.AppendMissing([]byte(line+"\n"), f); aerr != nil {
+				slog.Warn("ssh/console: failed to mirror an accepted host key into an external known_hosts file", "host", host, "file", f, "error", aerr)
+			}
+		}
+		return true, nil
+	}
 }
 
 // noopHostKeyStore discards all writes and reports every lookup as absent.

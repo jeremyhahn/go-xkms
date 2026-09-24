@@ -39,6 +39,43 @@ func TestBackendStore_Add_Success(t *testing.T) {
 	assert.False(t, pw.UpdatedAt.IsZero())
 }
 
+// TestBackendStore_Add_PersistsAttributes proves the generic Attributes bag
+// (added for xkey/pkg/secretservice's Secret Service item model) survives a
+// round trip through JSON marshal/unmarshal in Add and Get, the same as
+// every other field.
+func TestBackendStore_Add_PersistsAttributes(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	pw := &StaticPassword{
+		Name:       "github",
+		Password:   "secret123",
+		Attributes: map[string]string{"host": "github.com", "protocol": "https"},
+	}
+	require.NoError(t, s.Add(pw))
+
+	got, err := s.Get(pw.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "github.com", got.Attributes["host"])
+	assert.Equal(t, "https", got.Attributes["protocol"])
+}
+
+// TestBackendStore_Add_NilAttributesRoundTrips proves an entry with no
+// Attributes at all (the common case for anything not created through the
+// Secret Service object model) round-trips cleanly rather than gaining an
+// empty map.
+func TestBackendStore_Add_NilAttributesRoundTrips(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	pw := &StaticPassword{Name: "gmail", Password: "secret123"}
+	require.NoError(t, s.Add(pw))
+
+	got, err := s.Get(pw.ID)
+	require.NoError(t, err)
+	assert.Empty(t, got.Attributes)
+}
+
 func TestBackendStore_Add_MissingName(t *testing.T) {
 	s := newTestStore()
 	defer func() { _ = s.Close() }()
@@ -944,6 +981,81 @@ func TestBackendStore_RemoveFolder_Closed(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	assert.ErrorIs(t, s.RemoveFolder("work"), ErrStoreClosed)
+}
+
+func TestBackendStore_SetAlias(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	require.NoError(t, s.SetAlias("custom", "Work"))
+
+	folder, found, err := s.GetAlias("custom")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "Work", folder)
+}
+
+func TestBackendStore_SetAlias_EmptyNameRefused(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	assert.ErrorIs(t, s.SetAlias("", "Work"), ErrAliasNameEmpty)
+
+	_, _, err := s.GetAlias("")
+	assert.ErrorIs(t, err, ErrAliasNameEmpty)
+}
+
+func TestBackendStore_SetAlias_EmptyFolderRemovesAlias(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	require.NoError(t, s.SetAlias("custom", "Work"))
+	require.NoError(t, s.SetAlias("custom", ""))
+
+	_, found, err := s.GetAlias("custom")
+	require.NoError(t, err)
+	assert.False(t, found)
+}
+
+func TestBackendStore_GetAlias_Unset(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	folder, found, err := s.GetAlias("never-set")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, folder)
+}
+
+func TestBackendStore_SetAlias_Closed(t *testing.T) {
+	s := newTestStore()
+	require.NoError(t, s.Close())
+
+	assert.ErrorIs(t, s.SetAlias("custom", "Work"), ErrStoreClosed)
+}
+
+func TestBackendStore_GetAlias_Closed(t *testing.T) {
+	s := newTestStore()
+	require.NoError(t, s.Close())
+
+	_, _, err := s.GetAlias("custom")
+	assert.ErrorIs(t, err, ErrStoreClosed)
+}
+
+// TestBackendStore_AliasMarkersExcludedFromList proves an alias marker
+// never shows up as a password entry via List/ListByFolder*, the same
+// invariant folder markers already have.
+func TestBackendStore_AliasMarkersExcludedFromList(t *testing.T) {
+	s := newTestStore()
+	defer func() { _ = s.Close() }()
+
+	require.NoError(t, s.SetAlias("custom", "Work"))
+	require.NoError(t, s.Add(&StaticPassword{Name: "a", Password: "p"}))
+
+	passwords, err := s.List()
+	require.NoError(t, err)
+	require.Len(t, passwords, 1)
+	assert.Equal(t, "a", passwords[0].Name)
 }
 
 func TestBackendStore_ListFolders_MergesImplicitAndExplicit(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"math/big"
+	"runtime"
 
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -126,7 +127,9 @@ func zeroizeParsedPrivateKey(key crypto.PrivateKey) {
 // word of the backing array holding the secret. Bits() is the one exported
 // route to that array -- it is documented to alias v's storage, which is
 // exactly the property wanted here -- so the words are cleared through it and
-// v is then normalized to a genuine zero.
+// v is then normalized to a genuine zero. runtime.KeepAlive keeps the stores
+// from being eliminated as dead (golang/go#33325), the same technique
+// go-enclave's Wipe uses; Wipe itself takes []byte, not []big.Word.
 func zeroizeBigInt(v *big.Int) {
 	if v == nil {
 		return
@@ -135,5 +138,6 @@ func zeroizeBigInt(v *big.Int) {
 	for i := range words {
 		words[i] = 0
 	}
+	runtime.KeepAlive(words)
 	v.SetInt64(0)
 }

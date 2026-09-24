@@ -38,7 +38,7 @@ var (
 	ErrUnlockDaemonNotRunning = errors.New("unlock: daemon is not running")
 
 	// ErrUnlockMissingPIN indicates no PIN was supplied.
-	ErrUnlockMissingPIN = errors.New("unlock: a PIN is required (--pin, --pin-stdin, or XKEY_PIN)")
+	ErrUnlockMissingPIN = errors.New("unlock: a PIN is required (--pin-stdin or XKEY_PIN)")
 
 	// ErrUnlockFailed indicates the daemon rejected the unlock.
 	ErrUnlockFailed = errors.New("unlock: failed")

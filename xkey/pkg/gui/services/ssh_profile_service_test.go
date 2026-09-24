@@ -108,6 +108,59 @@ func TestSSHProfileService_StoreNotSet(t *testing.T) {
 	}
 }
 
+// TestSSHProfileService_CreateFolder covers both branches: refused without
+// a store, and delegated to the store when one is wired.
+func TestSSHProfileService_CreateFolder(t *testing.T) {
+	nostore := NewSSHProfileService(nil)
+	if err := nostore.CreateFolder("work"); err == nil {
+		t.Fatal("expected ErrSSHProfileStoreNotSet")
+	}
+
+	svc := newProfileService(t)
+	if err := svc.CreateFolder("work/prod"); err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+
+	folders, err := svc.ListFolders()
+	if err != nil {
+		t.Fatalf("ListFolders: %v", err)
+	}
+	found := false
+	for _, f := range folders {
+		if f == "work/prod" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ListFolders = %v, want it to include the created folder", folders)
+	}
+}
+
+// TestSSHProfileService_SearchProfiles covers both branches: refused
+// without a store, and delegated to the store's search when one is wired.
+func TestSSHProfileService_SearchProfiles(t *testing.T) {
+	nostore := NewSSHProfileService(nil)
+	if _, err := nostore.SearchProfiles("prod"); err == nil {
+		t.Fatal("expected ErrSSHProfileStoreNotSet")
+	}
+
+	svc := newProfileService(t)
+	if _, err := svc.AddProfile(SSHProfileParams{Name: "prod-web", Host: "web1.example.com", User: "deploy"}); err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+	if _, err := svc.AddProfile(SSHProfileParams{Name: "home-nas", Host: "nas.local", User: "pi"}); err != nil {
+		t.Fatalf("AddProfile 2: %v", err)
+	}
+
+	results, err := svc.SearchProfiles("prod")
+	if err != nil {
+		t.Fatalf("SearchProfiles: %v", err)
+	}
+	if len(results) != 1 || results[0].Name != "prod-web" {
+		t.Fatalf("SearchProfiles(\"prod\") = %+v, want exactly the prod-web profile", results)
+	}
+}
+
 // TestSSHProfileService_LocalKeySourceRoundTrip verifies KeySource and
 // SSHConfigAlias survive an AddProfile/GetProfile/UpdateProfile round trip
 // through the SDK Profile mapping, so a "local" (ssh-agent/~/.ssh) profile

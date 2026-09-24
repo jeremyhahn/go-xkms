@@ -21,6 +21,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/luks"
 )
 
 func TestNewStorageService(t *testing.T) {
@@ -95,6 +99,50 @@ func TestStorageService_GetStatus_ElevatorSetButUnavailable(t *testing.T) {
 	status, err := svc.GetStatus()
 	require.NoError(t, err)
 	assert.False(t, status.ElevationAvailable)
+}
+
+// --- RequireUnlocked gate tests ---
+
+// TestStorageService_RequireUnlocked_NoVolume_ReturnsNil verifies that the
+// gate is a no-op when no LUKS volume has been configured for this xkey
+// home: the existing plain data directory must be unaffected.
+func TestStorageService_RequireUnlocked_NoVolume_ReturnsNil(t *testing.T) {
+	isolateHome(t)
+	svc := NewStorageService()
+
+	assert.NoError(t, svc.RequireUnlocked())
+}
+
+// TestStorageService_RequireUnlocked_LockedVolume_ReturnsErrLUKSVolumeLocked
+// verifies that a configured-but-unmounted LUKS volume fails closed with the
+// canonical xkms.ErrLUKSVolumeLocked sentinel rather than allowing the
+// caller to proceed and write to the plain, unencrypted directory beneath
+// the unmounted mount point.
+func TestStorageService_RequireUnlocked_LockedVolume_ReturnsErrLUKSVolumeLocked(t *testing.T) {
+	isolateHome(t)
+	svc := NewStorageService()
+
+	vol, err := luks.NewVolume()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(vol.LUKSPath, []byte("fake luks container"), 0600))
+
+	err = svc.RequireUnlocked()
+	assert.ErrorIs(t, err, xkms.ErrLUKSVolumeLocked)
+}
+
+// TestStorageService_RequireUnlocked_Idempotent verifies repeated calls
+// against a locked volume keep returning the same sentinel rather than
+// caching a stale "unlocked" result from the first call.
+func TestStorageService_RequireUnlocked_Idempotent(t *testing.T) {
+	isolateHome(t)
+	svc := NewStorageService()
+
+	vol, err := luks.NewVolume()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(vol.LUKSPath, []byte("fake luks container"), 0600))
+
+	assert.ErrorIs(t, svc.RequireUnlocked(), xkms.ErrLUKSVolumeLocked)
+	assert.ErrorIs(t, svc.RequireUnlocked(), xkms.ErrLUKSVolumeLocked)
 }
 
 // --- CreateVolume validation tests ---

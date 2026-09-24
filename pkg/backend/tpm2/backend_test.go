@@ -134,6 +134,12 @@ type mockTPM struct {
 func (m *mockTPM) ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error) {
 	return nil, nil
 }
+func (m *mockTPM) AnswerCredentialChallenge(key *pkgtpm2.ActivationKey, challenge *pkgtpm2.CredentialChallenge) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockTPM) ClearForReprovision() (bool, error)                   { return false, nil }
+func (m *mockTPM) CreateActivationKey() (*pkgtpm2.ActivationKey, error) { return nil, nil }
+func (m *mockTPM) State() (*pkgtpm2.ProvisioningState, error)           { return nil, nil }
 func (m *mockTPM) AKProfile() (pkgtpm2.AKProfile, error)                { return pkgtpm2.AKProfile{}, nil }
 func (m *mockTPM) AlgID() tpm2.TPMAlgID                                 { return tpm2.TPMAlgSHA256 }
 func (m *mockTPM) CalculateName(algID tpm2.TPMAlgID, publicArea []byte) {}

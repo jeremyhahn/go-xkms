@@ -14,6 +14,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -96,8 +97,13 @@ func pkcs11PINSecret(s string) *secure.Secret {
 	return secret
 }
 
-// Execute runs the root command
+// Execute runs the root command. It fails fast on a broken command tree
+// (see initErrors in flags.go) rather than letting cobra dispatch into a
+// command whose required-flag enforcement did not take effect.
 func Execute() error {
+	if len(initErrors) > 0 {
+		return errors.Join(initErrors...)
+	}
 	return rootCmd.Execute()
 }
 
@@ -192,7 +198,13 @@ func getConfig() *Config {
 // The exit behavior can be overridden in tests by setting exitFunc.
 func handleError(err error) {
 	printer := NewPrinter(globalConfig.OutputFormat, os.Stderr)
-	_ = printer.PrintError(err) // Error printing to stderr is best-effort
+	// Printing to stderr is best-effort: err is already the reason the
+	// process is about to exit non-zero, and there is no more-authoritative
+	// channel left to report a print failure on, so it is logged rather
+	// than escalated.
+	if perr := printer.PrintError(err); perr != nil {
+		slog.Default().Debug("xkmsctl: failed to print error to stderr", "error", perr)
+	}
 	exitFunc(1)
 }
 

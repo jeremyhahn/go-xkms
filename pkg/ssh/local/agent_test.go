@@ -129,6 +129,9 @@ func TestDialAgent_EmptyPath(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("expected *AgentUnavailableError, got %T: %v", err, err)
 	}
+	if !errors.Is(err, local.ErrNoAgentSocket) {
+		t.Fatalf("expected err to wrap ErrNoAgentSocket, got %v", err)
+	}
 }
 
 // TestDialAgent_BadPath covers the dial-failure AgentUnavailableError

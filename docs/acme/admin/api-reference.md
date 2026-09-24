@@ -1,6 +1,6 @@
 # Admin API Reference
 
-Complete REST API reference for the go-xkms Admin API. For the full OpenAPI specification, see [openapi.yaml](../api/openapi.yaml).
+Complete REST API reference for the go-xkms Admin API. For the full, authoritative OpenAPI specification, fetch it live from a running deployment at `GET /openapi/admin-api.yaml` (gated behind admin authentication, see [Interactive documentation](../../acme-issuance/api.md#interactive-documentation-swagger-ui)), or read the source at `pkg/acme/api/swagger/openapi/admin-api.yaml`.
 
 ## Overview
 

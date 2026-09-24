@@ -295,7 +295,13 @@ func ValidateIPWithReservedCheck(ip string) error {
 		return err
 	}
 
-	parsedIP, _ := netip.ParseAddr(ip)
+	// ValidateIP above already parsed ip successfully, so this cannot fail;
+	// the error is still checked (never discarded) for defensive
+	// correctness against a future refactor of ValidateIP.
+	parsedIP, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ErrIPInvalid
+	}
 
 	// Check for reserved/special ranges
 	if isReservedIP(parsedIP) {

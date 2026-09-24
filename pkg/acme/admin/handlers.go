@@ -518,19 +518,26 @@ func (h *Handlers) GetAlgorithms(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// Headers and status are already written; there is no way to
+		// report this to the client, so it's only logged.
+		slog.Error("failed to write JSON response", slog.String("error", err.Error()))
+	}
 }
 
 // writeProblem writes an RFC 7807 Problem Details error response.
 func writeProblem(w http.ResponseWriter, statusCode int, problemType, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(ProblemDetail{
+	err := json.NewEncoder(w).Encode(ProblemDetail{
 		Type:   problemType,
 		Title:  http.StatusText(statusCode),
 		Detail: detail,
 		Status: statusCode,
 	})
+	if err != nil {
+		slog.Error("failed to write problem detail response", slog.String("error", err.Error()))
+	}
 }
 
 func parseInt(s string, defaultValue int) int {

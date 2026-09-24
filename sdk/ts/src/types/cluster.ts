@@ -11,7 +11,17 @@
 //  2. Commercial License
 //     Contact licensing@automatethethings.com for commercial licensing options.
 
-/** Cluster DTOs. Mirrors pkg/api/transport/types_cluster.go. */
+/**
+ * Cluster DTOs — read-only. Mirrors pkg/api/transport/types_cluster.go
+ * exactly: the shard-scoped fields (shard_id, leader_id, has_leader,
+ * replica_id, address, api_endpoints, is_leader) are go-qrdb's own
+ * ClusterClient/Member vocabulary passed through unchanged; node_id and
+ * clustered are the servicer's own facts about the responding node.
+ *
+ * There are deliberately no membership-mutation DTOs: REST never mutates
+ * Raft membership, so there is no request/response shape to model — see
+ * ClusterClient in clients/cluster.ts.
+ */
 
 export interface ClusterStatusInfo {
   shard_id: number;
@@ -26,7 +36,7 @@ export interface ClusterStatusResponse {
 }
 
 export interface ClusterMemberInfo {
-  node_id: number;
+  replica_id: number;
   address: string;
   api_endpoints?: Record<string, string>;
   is_leader: boolean;
@@ -34,14 +44,4 @@ export interface ClusterMemberInfo {
 
 export interface ListClusterMembersResponse {
   members: ClusterMemberInfo[];
-}
-
-export interface AddClusterReplicaRequest {
-  replica_id: number;
-  raft_address: string;
-}
-
-export interface ClusterReplicaResponse {
-  shard_id: number;
-  replica_id: number;
 }

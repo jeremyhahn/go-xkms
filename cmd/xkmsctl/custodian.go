@@ -58,12 +58,17 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		name, _ := cmd.Flags().GetString("name")
-		purpose, _ := cmd.Flags().GetString("purpose")
-		threshold, _ := cmd.Flags().GetInt("threshold")
-		total, _ := cmd.Flags().GetInt("total")
-		tenantID, _ := cmd.Flags().GetString("tenant-id")
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		name := fr.String("name")
+		purpose := fr.String("purpose")
+		threshold := fr.Int("threshold")
+		total := fr.Int("total")
+		tenantID := fr.String("tenant-id")
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if name == "" {
 			handleError(ErrCustodianNameRequired)
@@ -111,7 +116,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrCustodianIDRequired)
 			return
@@ -134,7 +144,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		id, _ := cmd.Flags().GetString("id")
+		fr := newFlagReader(cmd)
+		id := fr.String("id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if id == "" {
 			handleError(ErrCustodianIDRequired)
 			return
@@ -158,10 +173,15 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		groupID, _ := cmd.Flags().GetString("group-id")
-		userID, _ := cmd.Flags().GetString("user-id")
-		username, _ := cmd.Flags().GetString("username")
-		method, _ := cmd.Flags().GetString("method")
+		fr := newFlagReader(cmd)
+		groupID := fr.String("group-id")
+		userID := fr.String("user-id")
+		username := fr.String("username")
+		method := fr.String("method")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if groupID == "" {
 			handleError(ErrCustodianGroupIDRequired)
@@ -190,8 +210,13 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		groupID, _ := cmd.Flags().GetString("group-id")
-		userID, _ := cmd.Flags().GetString("user-id")
+		fr := newFlagReader(cmd)
+		groupID := fr.String("group-id")
+		userID := fr.String("user-id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if groupID == "" {
 			handleError(ErrCustodianGroupIDRequired)
@@ -221,7 +246,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		groupID, _ := cmd.Flags().GetString("group-id")
+		fr := newFlagReader(cmd)
+		groupID := fr.String("group-id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if groupID == "" {
 			handleError(ErrCustodianGroupIDRequired)
 			return
@@ -241,11 +271,11 @@ func createCustodianClient(cfg *Config) (client.Client, func(), error) {
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	cleanup := func() { _ = cl.Close() }
+	cleanup := func() { closeQuietly(cl) }
 	return cl, cleanup, nil
 }
 
@@ -426,15 +456,18 @@ func printCustodianGroup(printer *Printer, group *transport.CustodianGroupInfo) 
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Custodian Group Created:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  ID:        %s\n", group.ID)
-		_, _ = fmt.Fprintf(printer.writer, "  Name:      %s\n", group.Name)
-		_, _ = fmt.Fprintf(printer.writer, "  Purpose:   %s\n", group.Purpose)
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d of %d\n", group.Threshold, group.Total)
+		printer.printf("Custodian Group Created:\n")
+		printer.printf("  ID:        %s\n", group.ID)
+		printer.printf("  Name:      %s\n", group.Name)
+		printer.printf("  Purpose:   %s\n", group.Purpose)
+		printer.printf("  Threshold: %d of %d\n", group.Threshold, group.Total)
 		if group.TenantID != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Tenant:    %s\n", group.TenantID)
+			printer.printf("  Tenant:    %s\n", group.TenantID)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "  Created:   %s\n", group.CreatedAt.Format(time.RFC3339))
+		printer.printf("  Created:   %s\n", group.CreatedAt.Format(time.RFC3339))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -451,31 +484,34 @@ func printCustodianGroupList(printer *Printer, groups []transport.CustodianGroup
 		}
 	case OutputFormatTable:
 		if len(groups) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No custodian groups found")
+			printer.println("No custodian groups found")
 			return
 		}
-		_, _ = fmt.Fprintf(printer.writer, "%-20s %-25s %-10s %-8s %-20s\n",
+		printer.printf("%-20s %-25s %-10s %-8s %-20s\n",
 			"ID", "NAME", "THRESHOLD", "MEMBERS", "CREATED")
-		_, _ = fmt.Fprintln(printer.writer, strings.Repeat("-", 85))
+		printer.println(strings.Repeat("-", 85))
 		for _, g := range groups {
-			_, _ = fmt.Fprintf(printer.writer, "%-20s %-25s %d/%-7d %-8d %-20s\n",
+			printer.printf("%-20s %-25s %d/%-7d %-8d %-20s\n",
 				truncateString(g.ID, 20),
 				truncateString(g.Name, 25),
 				g.Threshold, g.Total,
 				len(g.Members),
 				g.CreatedAt.Format("2006-01-02 15:04"))
 		}
-		_, _ = fmt.Fprintf(printer.writer, "\nTotal: %d group(s)\n", len(groups))
+		printer.printf("\nTotal: %d group(s)\n", len(groups))
 	case OutputFormatText:
 		if len(groups) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No custodian groups found")
+			printer.println("No custodian groups found")
 			return
 		}
-		_, _ = fmt.Fprintln(printer.writer, "Custodian Groups:")
+		printer.println("Custodian Groups:")
 		for _, g := range groups {
-			_, _ = fmt.Fprintf(printer.writer, "  - %s (%s, threshold %d/%d, %d members)\n",
+			printer.printf("  - %s (%s, threshold %d/%d, %d members)\n",
 				g.Name, g.ID, g.Threshold, g.Total, len(g.Members))
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -487,35 +523,38 @@ func printCustodianGroupDetail(printer *Printer, group *transport.CustodianGroup
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Custodian Group Details:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  ID:        %s\n", group.ID)
-		_, _ = fmt.Fprintf(printer.writer, "  Name:      %s\n", group.Name)
-		_, _ = fmt.Fprintf(printer.writer, "  Purpose:   %s\n", group.Purpose)
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d of %d\n", group.Threshold, group.Total)
+		printer.printf("Custodian Group Details:\n")
+		printer.printf("  ID:        %s\n", group.ID)
+		printer.printf("  Name:      %s\n", group.Name)
+		printer.printf("  Purpose:   %s\n", group.Purpose)
+		printer.printf("  Threshold: %d of %d\n", group.Threshold, group.Total)
 		if group.TenantID != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Tenant:    %s\n", group.TenantID)
+			printer.printf("  Tenant:    %s\n", group.TenantID)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "  Created:   %s\n", group.CreatedAt.Format(time.RFC3339))
-		_, _ = fmt.Fprintf(printer.writer, "  Updated:   %s\n", group.UpdatedAt.Format(time.RFC3339))
+		printer.printf("  Created:   %s\n", group.CreatedAt.Format(time.RFC3339))
+		printer.printf("  Updated:   %s\n", group.UpdatedAt.Format(time.RFC3339))
 
 		if len(group.Members) == 0 {
-			_, _ = fmt.Fprintf(printer.writer, "\n  Members: none\n")
+			printer.printf("\n  Members: none\n")
 		} else {
-			_, _ = fmt.Fprintf(printer.writer, "\n  Members (%d):\n", len(group.Members))
+			printer.printf("\n  Members (%d):\n", len(group.Members))
 			for i, m := range group.Members {
 				label := m.UserID
 				if m.Username != "" {
 					label = fmt.Sprintf("%s (%s)", m.Username, m.UserID)
 				}
-				_, _ = fmt.Fprintf(printer.writer, "    %d. %s\n", i+1, label)
-				_, _ = fmt.Fprintf(printer.writer, "       Share Index: %d\n", m.ShareIndex)
-				_, _ = fmt.Fprintf(printer.writer, "       Method:      %s\n", m.Method)
-				_, _ = fmt.Fprintf(printer.writer, "       Assigned:    %s\n", m.AssignedAt.Format(time.RFC3339))
+				printer.printf("    %d. %s\n", i+1, label)
+				printer.printf("       Share Index: %d\n", m.ShareIndex)
+				printer.printf("       Method:      %s\n", m.Method)
+				printer.printf("       Assigned:    %s\n", m.AssignedAt.Format(time.RFC3339))
 				if m.ReceivedAt != nil {
-					_, _ = fmt.Fprintf(printer.writer, "       Received:    %s\n", m.ReceivedAt.Format(time.RFC3339))
+					printer.printf("       Received:    %s\n", m.ReceivedAt.Format(time.RFC3339))
 				}
 			}
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -527,14 +566,17 @@ func printCustodianMember(printer *Printer, member *transport.CustodianMemberInf
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Member Added:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  User ID:     %s\n", member.UserID)
+		printer.printf("Member Added:\n")
+		printer.printf("  User ID:     %s\n", member.UserID)
 		if member.Username != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Username:    %s\n", member.Username)
+			printer.printf("  Username:    %s\n", member.Username)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "  Share Index: %d\n", member.ShareIndex)
-		_, _ = fmt.Fprintf(printer.writer, "  Method:      %s\n", member.Method)
-		_, _ = fmt.Fprintf(printer.writer, "  Assigned:    %s\n", member.AssignedAt.Format(time.RFC3339))
+		printer.printf("  Share Index: %d\n", member.ShareIndex)
+		printer.printf("  Method:      %s\n", member.Method)
+		printer.printf("  Assigned:    %s\n", member.AssignedAt.Format(time.RFC3339))
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -550,9 +592,12 @@ func printDistributeResult(printer *Printer, groupID string, resp *transport.Dis
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Shares distributed successfully\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Group:       %s\n", groupID)
-		_, _ = fmt.Fprintf(printer.writer, "  Distributed: %d share(s)\n", resp.Distributed)
+		printer.printf("Shares distributed successfully\n")
+		printer.printf("  Group:       %s\n", groupID)
+		printer.printf("  Distributed: %d share(s)\n", resp.Distributed)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

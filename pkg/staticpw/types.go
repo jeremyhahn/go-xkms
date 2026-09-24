@@ -77,6 +77,15 @@ type StaticPassword struct {
 	// all users in the tenant. When false (default), the password is
 	// personal and scoped to the owning user.
 	Shared bool `json:"shared,omitempty"`
+
+	// Attributes holds arbitrary caller-defined key/value metadata. It
+	// exists primarily so callers that need a generic attribute bag (for
+	// example the freedesktop Secret Service object model in
+	// xkey/pkg/secretservice, which searches and labels items by
+	// arbitrary attributes such as "xdg:schema" or "protocol"/"host" for
+	// git-credential-libsecret) can attach it to an entry without a
+	// second, parallel store. It is not interpreted by staticpw itself.
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // Validate checks that the static password entry contains all required fields.

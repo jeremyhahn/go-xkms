@@ -18,9 +18,8 @@ Read this once; every feature folder's `api.md` uses the same convention.
 A seventh, product-specific transport — **usb** (`pkg/api/transport/usb`) — carries
 the phone/CTAP path. It is a Noise-XX-encrypted JSON-RPC channel over USB AOA
 and deliberately implements only `Connect`/`Close`/`Healthy`/`Request`; every
-service method on it returns `ErrNotSupported` and `RequestStream` returns
-`ErrStreamNotSupported`. The "all six transports" completeness rule does not
-apply to it.
+unsupported service method on it returns `ErrNotSupported`. The "all six
+transports" completeness rule does not apply to it.
 
 gRPC, QUIC, Unix and MCP each assert conformance to the full client contract at
 compile time (`var _ transport.Client = (*Transport)(nil)`). MCP's `FIDO2Service`

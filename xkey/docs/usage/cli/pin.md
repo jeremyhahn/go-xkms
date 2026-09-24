@@ -351,7 +351,7 @@ commands. It does not synchronize a "PINCoordinator" across FIDO2, PKCS#11
 and file PIN systems — no such coordinator exists. It propagates the *xkey*
 host PIN service's user PIN to the virtual FIDO2 authenticator's own CTAP2
 PIN hash; see
-[`../../fido2/daemon-configuration.md`](../../fido2/daemon-configuration.md)
+[`../../virtual-authenticator/cli.md`](../../virtual-authenticator/cli.md)
 and go-xkms#307 for what actually governs a PIN across `xkey`'s subsystems.
 
 ## See Also

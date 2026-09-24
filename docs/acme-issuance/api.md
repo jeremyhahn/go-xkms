@@ -174,6 +174,22 @@ and is not documented as if it were; it follows the repo's normal
 authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
 the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
+### Admin API response contract
+
+Every admin operation — tenants, tenant CA hierarchy, EAB, roles, users,
+certificates, accounts, orders, status/stats, audit, algorithms, barrier —
+follows one contract, with no success/error envelope: a single-resource
+operation's success body is the resource itself; a paginated list operation's
+success body is `{items, total, page, per_page}`; a mutation with nothing
+else to report succeeds with `{message}`. Every error, on every operation and
+at every layer (handler validation, service errors, and `PermissionGate`'s
+own 401/403), is an RFC 7807 `application/problem+json` body
+(`{type, title, detail, status}`). `admin-api.yaml`
+(`pkg/acme/api/swagger/openapi/admin-api.yaml`, served live at
+`GET /openapi/admin-api.yaml`) documents exactly this for every operation —
+there is no second copy of this document anywhere in the tree to drift from
+it.
+
 ## Response schemas
 
 RFC 8555 defines every protocol object; the Go types are `pkg/acme/entities`.

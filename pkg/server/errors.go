@@ -642,3 +642,19 @@ func (e *ErrConfigSecretResolution) Error() string {
 func (e *ErrConfigSecretResolution) Unwrap() error {
 	return e.Err
 }
+
+// ErrFrostSecretBackendUnavailable indicates backends.frost.secret_backend
+// names a backend that is not present in s.keyProviders at the point FROST
+// initializes. config.Config.Validate already refuses a secret_backend
+// naming a section that is absent or disabled, so reaching this at runtime
+// means the named backend's own initialization failed earlier in
+// initializeBackends, or it requires a build tag this binary was not built
+// with (e.g. pkcs11 without -tags pkcs11) — not a plain config mistake.
+type ErrFrostSecretBackendUnavailable struct {
+	Backend string
+}
+
+// Error returns the error message.
+func (e *ErrFrostSecretBackendUnavailable) Error() string {
+	return fmt.Sprintf("FROST backends.frost.secret_backend %q is not an initialized backend", e.Backend)
+}

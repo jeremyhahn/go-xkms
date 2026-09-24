@@ -28,6 +28,11 @@ var (
 	// that has not been created yet.
 	ErrVolumeNotInitialized = errors.New("luks storage: volume does not exist")
 
+	// ErrVolumeNotMounted is returned by Attach when the volume exists but
+	// is not currently mounted by any process, so there is nothing to
+	// attach to; the caller must obtain the passphrase and call Unlock.
+	ErrVolumeNotMounted = errors.New("luks storage: volume is not mounted")
+
 	// ErrInitializeRequiresPassphrase is returned when Initialize is
 	// called with an empty passphrase.
 	ErrInitializeRequiresPassphrase = errors.New("luks storage: passphrase is required for initialization")

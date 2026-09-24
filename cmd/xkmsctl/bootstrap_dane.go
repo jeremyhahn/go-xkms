@@ -162,13 +162,18 @@ var daneGenerateTLSACmd = &cobra.Command{
 By default, generates a single TLSA record using the specified usage, selector, and matching type.
 Use --all to generate all common TLSA record combinations.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		certFile, _ := cmd.Flags().GetString("cert-file")
-		hostname, _ := cmd.Flags().GetString("hostname")
-		port, _ := cmd.Flags().GetInt("port")
-		usage, _ := cmd.Flags().GetInt("usage")
-		selector, _ := cmd.Flags().GetInt("selector")
-		matchingType, _ := cmd.Flags().GetInt("matching-type")
-		all, _ := cmd.Flags().GetBool("all")
+		fr := newFlagReader(cmd)
+		certFile := fr.String("cert-file")
+		hostname := fr.String("hostname")
+		port := fr.Int("port")
+		usage := fr.Int("usage")
+		selector := fr.Int("selector")
+		matchingType := fr.Int("matching-type")
+		all := fr.Bool("all")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		generateTLSA(certFile, hostname, port, usage, selector, matchingType, all)
 	},
@@ -183,10 +188,15 @@ var daneVerifyTLSACmd = &cobra.Command{
 Reads the certificate from --cert-file and verifies it would match
 TLSA records for the specified hostname and port.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		certFile, _ := cmd.Flags().GetString("cert-file")
-		hostname, _ := cmd.Flags().GetString("hostname")
-		port, _ := cmd.Flags().GetInt("port")
-		dnsServer, _ := cmd.Flags().GetString("dns-server")
+		fr := newFlagReader(cmd)
+		certFile := fr.String("cert-file")
+		hostname := fr.String("hostname")
+		port := fr.Int("port")
+		dnsServer := fr.String("dns-server")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		verifyTLSA(certFile, hostname, port, dnsServer)
 	},
@@ -201,9 +211,14 @@ var daneShowTLSACmd = &cobra.Command{
 This queries DNS for _<port>._tcp.<hostname> TLSA records and displays
 them in a human-readable format.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		hostname, _ := cmd.Flags().GetString("hostname")
-		port, _ := cmd.Flags().GetInt("port")
-		dnsServer, _ := cmd.Flags().GetString("dns-server")
+		fr := newFlagReader(cmd)
+		hostname := fr.String("hostname")
+		port := fr.Int("port")
+		dnsServer := fr.String("dns-server")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		showTLSA(hostname, port, dnsServer)
 	},

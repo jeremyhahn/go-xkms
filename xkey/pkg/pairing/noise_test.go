@@ -831,3 +831,17 @@ func TestMapNoiseError_UnknownError(t *testing.T) {
 	result := mapNoiseError(unknownErr)
 	assert.ErrorIs(t, result, ErrNoiseHandshakeFailed)
 }
+
+// TestWipeBytes verifies the buffer is zeroed in place after decoding a
+// stored key, and that a nil/empty slice is a safe no-op.
+func TestWipeBytes(t *testing.T) {
+	t.Parallel()
+
+	buf := []byte{0x01, 0x02, 0x03, 0xFF, 0xAB}
+	WipeBytes(buf)
+	assert.Equal(t, []byte{0, 0, 0, 0, 0}, buf)
+
+	// Must not panic on nil or empty input.
+	WipeBytes(nil)
+	WipeBytes([]byte{})
+}

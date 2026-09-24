@@ -36,7 +36,7 @@ func newNilQRDBTenantService(t *testing.T) *TenantAwareAdminService {
 	require.NoError(t, err)
 	factory, err := acmeobjstore.NewTenantAwareFactoryFromKVStore(kv)
 	require.NoError(t, err)
-	return NewTenantAwareAdminService(nil, factory, nil, slog.Default(), "1.0.0")
+	return mustTenantAwareAdminService(t, nil, factory, nil, slog.Default(), "1.0.0")
 }
 
 // ==========================================================================
