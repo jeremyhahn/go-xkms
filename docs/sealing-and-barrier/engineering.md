@@ -145,9 +145,10 @@ reuses the node-seal backend's `store.KeyBackend` (`shared.KeyBackend()`)
 instead of constructing a second file store over the identical
 `<Storage.Path>/tpm2-keys` directory, so both the barrier and every key the
 general backend creates read and write through the one on-disk key store and
-are parented to the one SRK the shared TPM connection resolved
-(`SSRKAttributes()`, whose authorization comes only from
-`Backends.TPM2`/`KeyConfig`, never hardcoded). Before go-xkms#795,
+are parented to the one Platform SRK the shared TPM connection resolved
+(`resolveSRKAttributes`, whose authorization comes only from
+`Backends.TPM2`/`KeyConfig`, never hardcoded; the TCG Shared SRK is never
+used). Before go-xkms#795,
 `ExternalTPMConfig.KeyBackend` was left unset on this path, so
 `NewBackendWithTPM` failed closed with a typed `*ErrInvalidConfig` ("KeyBackend
 is nil") wrapped in `*ErrBackendCreate`, and a deployment enabling both
