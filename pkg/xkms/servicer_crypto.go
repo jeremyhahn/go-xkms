@@ -25,12 +25,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -298,7 +300,14 @@ func wrapOperationError(fallback error, detail string, err error) error {
 // which case the caller-supplied bytes are signed directly (PKCS#11's raw
 // CKM_RSA_PKCS and CKM_RSA_PKCS_PSS contracts respectively).
 // Implements the CryptoServicer interface.
-func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (*transport.SignResponse, error) {
+func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (resp *transport.SignResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpSign, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil sign request"}
 	}
@@ -470,7 +479,14 @@ func verifyEd25519Variant(pub ed25519.PublicKey, message, signature []byte, preH
 // which case the caller-supplied bytes are verified directly (PKCS#11's raw
 // CKM_RSA_PKCS and CKM_RSA_PKCS_PSS contracts respectively).
 // Implements the CryptoServicer interface.
-func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) (*transport.VerifyResponse, error) {
+func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) (resp *transport.VerifyResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpVerify, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil verify request"}
 	}
@@ -594,7 +610,14 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 // EncryptAsym RPC instead, since EncryptRequest carries no padding/digest
 // field for OAEP's hash algorithm to travel in on.
 // Implements the CryptoServicer interface.
-func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error) {
+func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest) (resp *transport.EncryptResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpEncrypt, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt request"}
 	}
@@ -685,7 +708,14 @@ func asymEncrypterKey(ctx context.Context, b Backend, attrs *types.KeyAttributes
 // For symmetric keys, uses the SymmetricKeyProvider interface.
 // For asymmetric keys, uses the crypto.Decrypter interface.
 // Implements the CryptoServicer interface.
-func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
+func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest) (resp *transport.DecryptResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpDecrypt, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil decrypt request"}
 	}
@@ -796,7 +826,14 @@ func asymDecrypterOpts(req *transport.DecryptRequest) (crypto.DecrypterOpts, err
 
 // EncryptAsym encrypts plaintext using an RSA public key with OAEP padding.
 // The key must be an RSA key. Implements the CryptoServicer interface.
-func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error) {
+func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (resp *transport.EncryptAsymResponse, err error) {
+	start := time.Now()
+	metricsBackend := ""
+	if req != nil {
+		metricsBackend = s.metricsBackendName(req.Backend)
+	}
+	defer func() { recordServiceOp(metrics.OpEncrypt, metricsBackend, start, err) }()
+
 	if req == nil {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt-asym request"}
 	}

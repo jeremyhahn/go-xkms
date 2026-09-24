@@ -40,22 +40,28 @@ const (
 	StatusSuccess = "success"
 	StatusError   = "error"
 
-	// Operation names
-	OpGenerate    = "generate"
-	OpStore       = "store"
-	OpGet         = "get"
-	OpDelete      = "delete"
-	OpList        = "list"
-	OpSign        = "sign"
-	OpVerify      = "verify"
-	OpEncrypt     = "encrypt"
-	OpDecrypt     = "decrypt"
-	OpExport      = "export"
-	OpImport      = "import"
-	OpRotate      = "rotate"
-	OpBackup      = "backup"
-	OpRestore     = "restore"
-	OpHealthCheck = "health_check"
+	// Operation names.
+	//
+	// Every name here has at least one real caller at the XKMSService
+	// boundary (pkg/xkms) — see docs/observability/engineering.md for the
+	// operation-to-servicer-method mapping. A name with no caller is
+	// deleted rather than kept for future use (go-xkms#720).
+	OpGenerate    = "generate"     // key generate
+	OpStore       = "store"        // certificate save
+	OpGet         = "get"          // key/certificate/CA read
+	OpDelete      = "delete"       // key/certificate delete
+	OpList        = "list"         // key/certificate list
+	OpSign        = "sign"         // crypto sign, CA CSR signing
+	OpVerify      = "verify"       // crypto verify
+	OpEncrypt     = "encrypt"      // crypto encrypt (symmetric and asymmetric)
+	OpDecrypt     = "decrypt"      // crypto decrypt
+	OpExport      = "export"       // key export (BYOK wrapped export)
+	OpImport      = "import"       // key import (BYOK wrapped import)
+	OpRotate      = "rotate"       // key rotate
+	OpHealthCheck = "health_check" // per-backend health probe
+	OpIssueCert   = "issue_cert"   // CA certificate issuance
+	OpRevokeCert  = "revoke_cert"  // CA certificate revocation
+	OpGenerateCRL = "generate_crl" // CA CRL generation
 )
 
 var (
@@ -343,7 +349,10 @@ func DecrementActiveConnections(protocol string) {
 	ActiveConnections.WithLabelValues(protocol).Dec()
 }
 
-// SetKeysTotal sets the total number of keys for a backend.
+// SetKeysTotal sets the total number of keys for a backend. Used by the
+// periodic reconciliation sweep (pkg/server's updateBackendMetrics), which
+// recounts by listing -- the absolute-value counterpart to
+// IncrementKeysTotal/DecrementKeysTotal below.
 func SetKeysTotal(backend string, count float64) {
 	if !enabled.Load() {
 		return
@@ -351,12 +360,54 @@ func SetKeysTotal(backend string, count float64) {
 	KeysTotal.WithLabelValues(backend).Set(count)
 }
 
-// SetCertsTotal sets the total number of certificates for a backend.
+// IncrementKeysTotal increments the keys-total gauge for a backend by one.
+// Call on a successful key create/import: unlike SetKeysTotal, this does not
+// require listing the backend's keys, so it is safe to call on the request
+// path of every key create/import without turning an O(1) operation into an
+// O(n) one (or, for a remote backend such as a cloud KMS, an extra network
+// round trip per request). The periodic reconciliation sweep corrects any
+// drift this running counter accumulates against reality.
+func IncrementKeysTotal(backend string) {
+	if !enabled.Load() {
+		return
+	}
+	KeysTotal.WithLabelValues(backend).Inc()
+}
+
+// DecrementKeysTotal decrements the keys-total gauge for a backend by one.
+// Call on a successful key delete; see IncrementKeysTotal.
+func DecrementKeysTotal(backend string) {
+	if !enabled.Load() {
+		return
+	}
+	KeysTotal.WithLabelValues(backend).Dec()
+}
+
+// SetCertsTotal sets the total number of certificates for a backend. See
+// SetKeysTotal.
 func SetCertsTotal(backend string, count float64) {
 	if !enabled.Load() {
 		return
 	}
 	CertsTotal.WithLabelValues(backend).Set(count)
+}
+
+// IncrementCertsTotal increments the certs-total gauge for a backend by one.
+// Call on a successful certificate save; see IncrementKeysTotal.
+func IncrementCertsTotal(backend string) {
+	if !enabled.Load() {
+		return
+	}
+	CertsTotal.WithLabelValues(backend).Inc()
+}
+
+// DecrementCertsTotal decrements the certs-total gauge for a backend by one.
+// Call on a successful certificate delete; see IncrementKeysTotal.
+func DecrementCertsTotal(backend string) {
+	if !enabled.Load() {
+		return
+	}
+	CertsTotal.WithLabelValues(backend).Dec()
 }
 
 // SetBackendHealth sets the health status of a backend.
