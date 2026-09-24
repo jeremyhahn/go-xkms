@@ -299,7 +299,7 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		}
 		return nil, caerrors.Wrap(err, caerrors.CodeConnection, op, "failed to execute request")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer transport.CloseResponseBody(resp)
 
 	// Mark as healthy on successful connection
 	t.healthy.Store(true)

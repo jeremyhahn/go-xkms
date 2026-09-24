@@ -344,7 +344,7 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		t.healthy.Store(false)
 		return nil, errors.Wrap(err, errors.CodeConnection, op, "HTTP/3 request failed")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer transport.CloseResponseBody(resp)
 
 	t.healthy.Store(true)
 

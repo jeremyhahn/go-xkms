@@ -496,8 +496,11 @@ func (t *Transport) discardPhoneUSB() {
 	t.phoneUSB = nil
 	t.busMu.Unlock()
 
-	if usb != nil {
-		_ = usb.Close()
+	if usb == nil {
+		return
+	}
+	if err := usb.Close(); err != nil {
+		t.log.Debug("failed to close the discarded USB bus transport", "error", err)
 	}
 }
 

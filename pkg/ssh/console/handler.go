@@ -191,7 +191,11 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // Upgrade already wrote the response
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			slog.Debug("ssh/console: failed to close the WebSocket connection", "error", cerr)
+		}
+	}()
 
 	// One write mutex serializes the hostkey-confirm frame (below, during
 	// Dial) with the post-Dial error frame. bridge() owns its own write
@@ -219,7 +223,11 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeControl(conn, &writeMu, controlMessage{Type: "error", Message: derr.Error()})
 		return
 	}
-	defer func() { _ = cons.Close() }()
+	defer func() {
+		if cerr := cons.Close(); cerr != nil {
+			slog.Debug("ssh/console: failed to close the bridged session", "error", cerr)
+		}
+	}()
 
 	bridge(conn, cons)
 }

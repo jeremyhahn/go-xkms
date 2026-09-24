@@ -165,7 +165,9 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	started := false
 	defer func() {
 		if !started {
-			_ = auditLogger.Close()
+			if cerr := auditLogger.Close(); cerr != nil {
+				logger.Warn("acme: failed to close the audit trail after a failed start-up", "error", cerr)
+			}
 		}
 	}()
 	if auditLogger.Enabled() {

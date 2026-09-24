@@ -563,7 +563,7 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		}
 		return nil, errors.Wrap(err, errors.CodeConnection, op, "failed to send request")
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer transport.CloseResponseBody(resp)
 
 	// Handle HTTP-level errors
 	if resp.StatusCode >= 400 {

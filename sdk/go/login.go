@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -167,7 +168,11 @@ func (c *LoginClient) tokenRequest(ctx context.Context, method, path string, bod
 	if err != nil {
 		return nil, &LoginClientError{Op: path, Reason: "request failed", Err: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Debug("xkms: failed to close login HTTP response body", "error", cerr)
+		}
+	}()
 
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

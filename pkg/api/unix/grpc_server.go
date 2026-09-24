@@ -16,6 +16,7 @@ package unix
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -169,8 +170,8 @@ func (s *GRPCServer) Start() error {
 
 	// Set socket permissions
 	if err := os.Chmod(s.config.SocketPath, s.config.SocketMode); err != nil {
-		_ = s.listener.Close()
-		return &errs.Wrapped{Msg: "failed to set socket permissions", Err: err}
+		closeErr := s.listener.Close()
+		return errors.Join(&errs.Wrapped{Msg: "failed to set socket permissions", Err: err}, closeErr)
 	}
 
 	s.logger.Info("gRPC Unix socket created", slog.String("path", s.config.SocketPath))
@@ -196,7 +197,9 @@ func (s *GRPCServer) Start() error {
 		// Stop already ran; do not start serving a listener nothing can
 		// stop. Release the socket and return as a clean shutdown.
 		s.mu.Unlock()
-		_ = listener.Close()
+		if err := listener.Close(); err != nil {
+			s.logger.Warn("Failed to close listener during shutdown race", slog.String("error", err.Error()))
+		}
 		if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
 			s.logger.Warn("Failed to remove socket file", slog.String("error", err.Error()))
 		}

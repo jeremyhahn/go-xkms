@@ -44,6 +44,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -237,7 +238,11 @@ func (a *KMIPAgent) getClient(ctx context.Context) (*kmipclient.Client, error) {
 	}
 
 	if !a.client.CompareAndSwap(nil, c) {
-		_ = c.Close()
+		// Lost the race to dial: another goroutine's connection is now
+		// a.client. Close this redundant one and adopt the winner's.
+		if cerr := c.Close(); cerr != nil {
+			slog.Debug("escrow/kmip: failed to close a redundant KMIP connection", "error", cerr)
+		}
 		return a.client.Load(), nil
 	}
 	return c, nil

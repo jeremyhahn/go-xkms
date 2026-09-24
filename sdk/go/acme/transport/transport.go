@@ -17,8 +17,21 @@ package transport
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
+	"net/http"
 	"time"
 )
+
+// CloseResponseBody closes resp.Body and logs a failure at debug level.
+// Shared by every HTTP-based transport (rest, quic, mcp, unix): each calls
+// this from a defer after it has already read (or decided not to read) the
+// body and computed its result, so a close failure changes nothing about
+// the caller's outcome.
+func CloseResponseBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		slog.Debug("acme/transport: failed to close HTTP response body", "error", err)
+	}
+}
 
 // Transport is the interface for protocol-specific communication with the ACME CA.
 type Transport interface {

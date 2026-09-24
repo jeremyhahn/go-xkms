@@ -33,7 +33,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if cerr := client.Close(); cerr != nil {
+			log.Printf("failed to close client: %v", cerr)
+		}
+	}()
 
 	ctx := context.Background()
 
