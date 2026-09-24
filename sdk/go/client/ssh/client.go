@@ -128,19 +128,24 @@ type AuthorizedKeysClient interface {
 	Verify(ctx context.Context, scope, owner string, received gossh.PublicKey) (*AuthorizedEntry, error)
 }
 
-// SessionClient opens outbound SSH sessions using keys + known_hosts
-// the Client owns.
+// SessionClient opens outbound SSH sessions to a caller-chosen target host
+// using keys + known_hosts the Client owns. Every transport dials that
+// target directly from the caller's own process (golang.org/x/crypto/ssh);
+// the transport itself carries only the Keys().Signer and
+// KnownHosts().Callback RPCs, never the SSH byte stream.
 type SessionClient interface {
-	// Dial establishes a session. The returned Session owns the
-	// underlying key enclave — Session.Close destroys it.
+	// Dial establishes a session. For the embedded transport the returned
+	// Session owns the key's local enclave and Session.Close destroys it;
+	// remote transports authenticate through a forward-signing proxy that
+	// holds no local key material, so Close only tears down the SSH
+	// connection.
 	Dial(ctx context.Context, req SessionDialRequest) (Session, error)
 }
 
 // Session is the transport-neutral view of an established SSH
 // connection. It intentionally mirrors the pkg/ssh/session.Session
-// contract so the embedded transport can return its internal type
-// directly; remote transports implement a thin proxy that marshals
-// commands over the wire and returns byte buffers.
+// contract so every transport can return that same concrete type
+// directly.
 type Session interface {
 	// Run executes a command and returns stdout, stderr, and a
 	// *session.CommandError on non-zero exit.

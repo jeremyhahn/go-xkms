@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -476,7 +477,10 @@ func (s *AdminService) GetStatus(ctx context.Context) (*CAStatus, error) {
 		return nil, caerrors.InternalServerError("failed to get root CA: %s", err)
 	}
 
-	intermediateCert, _ := s.ca.TrustedIntermediate()
+	intermediateCert, err := s.ca.TrustedIntermediate()
+	if err != nil && !errors.Is(err, ca.ErrIntermediateNotFound) {
+		return nil, caerrors.InternalServerError("failed to get intermediate CA: %s", err)
+	}
 
 	status := &CAStatus{
 		Identity:      s.ca.Identity(),
@@ -572,10 +576,12 @@ func (s *AdminService) GetStats(ctx context.Context) (*CAStats, error) {
 		}
 
 		var orders []*entities.ACMEOrder
-		_ = orderDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
+		if err := orderDAO.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMEOrder]) error {
 			orders = append(orders, page.Entities...)
 			return nil
-		})
+		}); err != nil {
+			return nil, caerrors.StorageFailureError("failed to list orders for account %d: %s", account.ID, err)
+		}
 
 		stats.TotalOrders += len(orders)
 		for _, order := range orders {

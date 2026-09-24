@@ -580,3 +580,129 @@ func TestPhoneConfigAllowsUnattestablePairingReadsOnlyAnExplicitYes(t *testing.T
 	require.False(t, (&phoneConfig{AttestationPolicy: &devicesAttestationPolicy{}}).allowsUnattestablePairing())
 	require.True(t, (&phoneConfig{AttestationPolicy: &devicesAttestationPolicy{AllowUnattestableDevices: true}}).allowsUnattestablePairing())
 }
+
+// ---------------------------------------------------------------------------
+// attestOverTransport: the manual "Attest Device" RPC (AttestDevice ->
+// performAttestation -> attestOverTransport), driven end to end against the
+// same in-memory phone fake the pairing tests use.
+//
+// Before this, AttestDevice sent local.attestKey -- an older, weaker method
+// with no channel binding and no live signature -- while pairing and
+// reconnect both already judged a device through
+// xkeyAttestation.VerifyDeviceAttestation over local.attestDevice. These
+// tests prove AttestDevice now goes through the same decision, so a device
+// pairing accepts is a device the "Attest Device" button accepts too.
+// ---------------------------------------------------------------------------
+
+// attestReadyHarness pairs device over an in-memory link and returns the
+// still-open transport and session, plus the record attestOverTransport
+// needs, so a test can drive one more exchange on the SAME connection
+// exactly as a user clicking "Attest Device" after connecting would.
+func (h *pairingHarness) attestReadyHarness(device *attesttest.Phone, extraExchanges int, address string) (
+	transport pairing.Transport, session *pairing.NoiseSession, cfgDevice *phoneConfigDevice, done <-chan error, cancel context.CancelFunc,
+) {
+	h.t.Helper()
+
+	ctx, cancelFn := context.WithTimeout(context.Background(), 30*time.Second)
+
+	initiator, responder := attesttest.NewMemTransportPair()
+	doneCh := make(chan error, 1)
+	// Pairing itself uses 2 exchanges (pairing.confirm, then the
+	// attestForPairing local.attestDevice); extraExchanges are additional
+	// manual attestations the test will drive afterward.
+	device.Serve(ctx, h.t, responder, false, 2+extraExchanges, doneCh)
+
+	localKey, err := pairing.GenerateStaticKey()
+	require.NoError(h.t, err)
+	h.t.Cleanup(localKey.Destroy)
+
+	pairSession, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{
+		LocalStaticKey: localKey,
+		IsInitiator:    true,
+	})
+	require.NoError(h.t, err)
+
+	paired, err := h.svc.pairOverTransport(ctx, initiator, pairSession, localKey, address)
+	require.NoError(h.t, err, "the harness device must pair cleanly before the attestation test runs")
+
+	return initiator, pairSession, &phoneConfigDevice{Name: paired.Name, Address: paired.Address}, doneCh, cancelFn
+}
+
+// TestAttestOverTransport_Success proves the manual attestation path accepts
+// a contract-faithful device and populates the display-rich AttestationResult
+// the frontend depends on, entirely from the canonical local.attestDevice
+// exchange and decision.
+func TestAttestOverTransport_Success(t *testing.T) {
+	h := newPairingHarness(t)
+	ca := attesttest.NewCA(t, "Trusted Attestation Root")
+	h.trust(ca)
+	dak := healthyDAK(t, ca)
+	device := attesttest.NewPhone(t, dak)
+	device.Name = "Pixel 9"
+
+	transport, session, cfgDevice, done, cancel := h.attestReadyHarness(device, 1, testPairAddress)
+	defer cancel()
+
+	ctx, exchangeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer exchangeCancel()
+
+	result, err := h.svc.attestOverTransport(ctx, transport, session, cfgDevice)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Verified, "attestation error: %s", result.ErrorMessage)
+	require.Equal(t, "Pixel 9", result.DeviceName)
+	require.Equal(t, "strongbox", result.SecurityLevel)
+	require.Greater(t, result.ChainLength, 0)
+	require.NotEmpty(t, result.Certificates)
+	require.True(t, result.DeviceLocked)
+	require.NotEmpty(t, result.BootHash)
+
+	cancel()
+	select {
+	case phoneErr := <-done:
+		if !errors.Is(phoneErr, context.Canceled) {
+			require.NoError(t, phoneErr, "the phone refused something the desktop sent")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("phone responder did not stop")
+	}
+}
+
+// TestAttestOverTransport_RefusesAMalformedSignature proves the manual
+// attestation path refuses a device that answers with a genuine, trusted
+// chain but a signature that does not prove possession of it -- the same
+// relay case TestPairRefusesAMalformedAttestationByDefault covers for
+// pairing, now covered for the "Attest Device" RPC.
+func TestAttestOverTransport_RefusesAMalformedSignature(t *testing.T) {
+	h := newPairingHarness(t)
+	ca := attesttest.NewCA(t, "Trusted Attestation Root")
+	h.trust(ca)
+	dak := healthyDAK(t, ca)
+	device := attesttest.NewPhone(t, dak)
+
+	transport, session, cfgDevice, done, cancel := h.attestReadyHarness(device, 1, testPairAddress)
+	defer cancel()
+
+	// Damage only the MANUAL exchange's answer; pairing above must still
+	// have succeeded honestly.
+	device.Mutate = func(r *pairing.LocalAttestDeviceResult) { r.Signature[0] ^= 0xff }
+
+	ctx, exchangeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer exchangeCancel()
+
+	result, err := h.svc.attestOverTransport(ctx, transport, session, cfgDevice)
+	require.NoError(t, err, "a failed attestation is reported in the result, not as an error")
+	require.NotNil(t, result)
+	require.False(t, result.Verified)
+	require.NotEmpty(t, result.ErrorMessage)
+
+	cancel()
+	select {
+	case phoneErr := <-done:
+		if !errors.Is(phoneErr, context.Canceled) {
+			require.NoError(t, phoneErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("phone responder did not stop")
+	}
+}

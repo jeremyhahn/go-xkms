@@ -48,22 +48,23 @@ func sealedKeyAttrs(t *testing.T, h *simHarness, cn string, platformPolicy bool,
 }
 
 // platformPolicySRKConfig puts the harness's PLATFORM SRK into the shape a real
-// deployment uses: platform-srk.platform-policy enabled, with the platform key
-// store installing the user PIN as the SRK's auth value
-// (PlatformKeyStore.Initialize). The platform SRK's own PolicyOR therefore
-// governs TPM2_Load of every object beneath it.
+// deployment uses: platform-srk.platform-policy enabled. The user PIN itself
+// is installed as the SRK's auth value later, by PlatformKeyStore.Initialize
+// or directly by the test through platformPolicySRKAttrs/createPlatformPolicySRK
+// -- PlatformSRKConfig carries no auth field of its own for a caller to set
+// here. The platform SRK's own PolicyOR therefore governs TPM2_Load of every
+// object beneath it.
 //
 // The shared SRK is deliberately left alone: it cannot be given a platform
 // policy at all, so it is not the key these recovery journeys are about.
-func platformPolicySRKConfig(srkPIN string) func(*Config) {
+func platformPolicySRKConfig() func(*Config) {
 	return func(config *Config) {
 		config.PlatformSRK.PlatformPolicy = true
-		config.PlatformSRK.SRKAuth = srkPIN
 	}
 }
 
 // platformPolicySRKAttrs builds the platform SRK attributes exactly the way the
-// platform key store builds them (buildSRKAttrsFromConfig): SSRK algorithm and
+// platform key store builds them (PlatformSRKAttributesFromConfig): SSRK algorithm and
 // key parameters, at the platform SRK's own handle, carrying the platform
 // policy taken from PlatformSRKConfig.
 //
@@ -74,7 +75,7 @@ func platformPolicySRKConfig(srkPIN string) func(*Config) {
 func platformPolicySRKAttrs(t *testing.T, h *simHarness, password types.Password) *types.KeyAttributes {
 	t.Helper()
 
-	attrs, err := buildSRKAttrsFromConfig(h.TPM.config)
+	attrs, err := PlatformSRKAttributesFromConfig(h.TPM.config)
 	require.NoError(t, err)
 	require.Equal(t, tpm2.TPMHandle(h.TPM.config.PlatformSRK.SRKHandle),
 		attrs.TPMAttributes.Handle)
@@ -146,7 +147,7 @@ func sealedKeyAttrsUnder(
 // Both policies are exercised here: the SRK's, at TPM2_Load, and the object's,
 // at TPM2_Unseal.
 func TestSealUnseal_PINRecoveryThroughPlatformPolicySRK(t *testing.T) {
-	h := newSimHarness(t, platformPolicySRKConfig("srk-recovery-pin"))
+	h := newSimHarness(t, platformPolicySRKConfig())
 
 	srk := createPlatformPolicySRK(t, h, mustPassword([]byte("srk-recovery-pin")))
 
@@ -176,7 +177,7 @@ func TestSealUnseal_PINRecoveryThroughPlatformPolicySRK(t *testing.T) {
 // pin-stable must not make its PCR branch pin-stable: an unattended boot, which
 // has no PIN to offer, must still be refused on a changed platform.
 func TestSealUnseal_PlatformPolicySRK_PCRBranchesStillFailAfterExtend(t *testing.T) {
-	h := newSimHarness(t, platformPolicySRKConfig("srk-recovery-pin"))
+	h := newSimHarness(t, platformPolicySRKConfig())
 
 	srkPIN := mustPassword([]byte("srk-recovery-pin"))
 	srk := createPlatformPolicySRK(t, h, srkPIN)
@@ -222,7 +223,7 @@ func TestSealUnseal_PlatformPolicySRK_PCRBranchesStillFailAfterExtend(t *testing
 // of the OR digest; it does not remove the PIN requirement, which the TPM
 // enforces through the session HMAC (TPM 2.0 Part 1, Section 19.6).
 func TestSealUnseal_WrongSRKPINAfterExtend_Rejected(t *testing.T) {
-	h := newSimHarness(t, platformPolicySRKConfig("srk-recovery-pin"))
+	h := newSimHarness(t, platformPolicySRKConfig())
 
 	secret := []byte("guarded-by-the-srk-pin")
 	correct := mustPassword([]byte("srk-recovery-pin"))
@@ -263,7 +264,7 @@ func TestSealUnseal_WrongSRKPINAfterExtend_Rejected(t *testing.T) {
 // that the recovery above comes from the record rather than from some general
 // weakening of the SRK's policy.
 func TestSealUnseal_SRKWithoutPolicyPin_BehavesAsBefore(t *testing.T) {
-	h := newSimHarness(t, platformPolicySRKConfig("srk-recovery-pin"))
+	h := newSimHarness(t, platformPolicySRKConfig())
 
 	srkPIN := mustPassword([]byte("srk-recovery-pin"))
 	srk := createPlatformPolicySRK(t, h, srkPIN)
@@ -309,7 +310,7 @@ func TestSealUnseal_SRKWithoutPolicyPin_BehavesAsBefore(t *testing.T) {
 // one of them: it carries no platform policy and therefore records no pin at
 // all — which TestProvision_SSRKRecordsNoPolicyPin asserts directly.
 func TestCreateSRK_RecordsPinPerHandle(t *testing.T) {
-	h := newSimHarness(t, platformPolicySRKConfig("srk-recovery-pin"))
+	h := newSimHarness(t, platformPolicySRKConfig())
 
 	first := createPlatformPolicySRK(t, h, mustPassword([]byte("first-srk-pin")))
 

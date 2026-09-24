@@ -51,14 +51,19 @@ func auditContext(r *http.Request) context.Context {
 	return audit.RequestContext(r.Context(), r)
 }
 
-// recordAudit reports a failure to write an audit event without failing the
-// operation the event describes. The event is already durable or already lost
-// by the time this is called, so the request outcome must not change; an
-// operator watching the server log sees that the trail is degraded.
-func (s *RestService) recordAudit(err error) {
-	if err != nil {
-		s.logger.Error("Failed to record ACME audit event", "error", err)
-	}
+// recordAudit applies the go-xkms audit write-failure policy
+// (docs/audit-log/engineering.md) to the error an audit.Log* helper
+// returned for eventType. For a SeveritySecurity event type (certificate
+// issuance/revocation, authentication failure, TPM enrollment, account key
+// change, and any other event nobody has explicitly reviewed and
+// classified informational), a write failure is returned as
+// *audit.ErrAuditWriteFailed and the caller must fail the request rather
+// than let a security-relevant ACME operation complete unaudited. For a
+// SeverityInformational event type (account/order/authorization/challenge
+// protocol progress), the failure is logged and counted, and recordAudit
+// returns nil so the caller proceeds.
+func (s *RestService) recordAudit(eventType audit.EventType, err error) error {
+	return audit.HandleWriteFailure(s.logger, eventType, err)
 }
 
 // auditAccountID renders an ACME account ID for the audit.Log* helpers, which

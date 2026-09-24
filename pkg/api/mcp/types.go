@@ -104,6 +104,11 @@ type ListBackendsResult struct {
 	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
+// GetBackendParams represents parameters for looking up a single backend.
+type GetBackendParams struct {
+	Backend string `json:"backend"`
+}
+
 // GenerateKeyParams represents parameters for key generation. Algorithm is
 // required (rsa, ecdsa, ed25519, aes128-gcm, aes192-gcm, aes256-gcm, ...);
 // KeyType is the key's purpose (signing, encryption, ca, tls, ...) and is no

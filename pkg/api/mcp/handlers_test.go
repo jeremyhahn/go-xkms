@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -133,6 +134,62 @@ func TestHandler_ListBackends(t *testing.T) {
 			}
 		}
 		assert.True(t, foundSoftware, "Should contain software backend")
+	})
+}
+
+// TestHandler_GetBackend tests the xkms.getBackend handler added for
+// go-xkms#762: docs/crypto-backends/api.md already documented this method as
+// the MCP equivalent of REST's GET /api/v1/backends/{id}, but no handler
+// existed to serve it.
+func TestHandler_GetBackend(t *testing.T) {
+	server := createTestServer(t)
+	defer cleanupXKMS()
+
+	ctx := context.Background()
+
+	t.Run("returns the named backend", func(t *testing.T) {
+		params := GetBackendParams{Backend: "software"}
+		paramsJSON, _ := json.Marshal(params)
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: paramsJSON, ID: 1}
+
+		result, err := server.handleGetBackend(ctx, req)
+		require.NoError(t, err)
+
+		info, ok := result.(*transport.BackendInfo)
+		require.True(t, ok)
+		assert.Equal(t, "software", info.ID)
+		assert.NotEmpty(t, info.Type)
+	})
+
+	t.Run("fails for an unknown backend", func(t *testing.T) {
+		params := GetBackendParams{Backend: "does-not-exist"}
+		paramsJSON, _ := json.Marshal(params)
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: paramsJSON, ID: 1}
+
+		_, err := server.handleGetBackend(ctx, req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, xkms.ErrBackendNotFound)
+	})
+
+	t.Run("fails with an empty backend name as InvalidParams", func(t *testing.T) {
+		paramsJSON, _ := json.Marshal(GetBackendParams{})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: paramsJSON, ID: 1}
+
+		_, err := server.handleGetBackend(ctx, req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
+	})
+
+	t.Run("fails with malformed JSON params as InvalidParams", func(t *testing.T) {
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getBackend", Params: json.RawMessage(`{bad`), ID: 1}
+
+		_, err := server.handleGetBackend(ctx, req)
+		require.Error(t, err)
+		var keyOpErr *KeyOpError
+		require.ErrorAs(t, err, &keyOpErr)
+		assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
 	})
 }
 
@@ -4949,12 +5006,17 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	})
 }
 
-// TestHandler_ListKeys_InvalidParams tests list keys with invalid params
+// TestHandler_ListKeys_InvalidParams tests list keys with invalid params.
+//
+// Malformed JSON used to be silently discarded and the request processed as
+// if no params had been sent at all (#701): a caller with a typo in their
+// params object got a confusingly successful, unfiltered response instead of
+// a rejection. It must now be reported as Invalid params.
 func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
-	t.Run("handles invalid JSON params gracefully", func(t *testing.T) {
+	t.Run("rejects malformed JSON params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
 			Method:  "xkms.listKeys",
@@ -4962,7 +5024,20 @@ func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 			ID:      1,
 		}
 
-		// Should not error - listKeys can work without params
+		_, err := server.handleListKeys(context.Background(), req)
+		require.Error(t, err)
+		var keyOp *KeyOpError
+		require.True(t, errors.As(err, &keyOp))
+		assert.Equal(t, ErrCodeInvalidParams, keyOp.Code)
+	})
+
+	t.Run("omitted params still work", func(t *testing.T) {
+		req := &JSONRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "xkms.listKeys",
+			ID:      1,
+		}
+
 		result, err := server.handleListKeys(context.Background(), req)
 		require.NoError(t, err)
 

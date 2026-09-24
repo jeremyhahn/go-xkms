@@ -1985,7 +1985,6 @@ func TestPlatformSRKAttributes_DefaultConfigApplied(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrInvalidPlatformSRKConfiguration)
 
 	// Verify the default PlatformSRK config values were applied
-	assert.Equal(t, "platform", config.PlatformSRK.SRKAuth)
 	assert.Equal(t, uint32(0x81000002), config.PlatformSRK.SRKHandle)
 	assert.True(t, config.PlatformSRK.PlatformPolicy)
 }
@@ -2010,7 +2009,6 @@ func TestNewTPM2_DefaultsPlatformSRK(t *testing.T) {
 
 	// After defaulting, PlatformSRK should match DefaultConfig
 	require.NotNil(t, params.Config.PlatformSRK)
-	assert.Equal(t, DefaultConfig.PlatformSRK.SRKAuth, params.Config.PlatformSRK.SRKAuth)
 	assert.Equal(t, DefaultConfig.PlatformSRK.SRKHandle, params.Config.PlatformSRK.SRKHandle)
 	assert.Equal(t, DefaultConfig.PlatformSRK.PlatformPolicy, params.Config.PlatformSRK.PlatformPolicy)
 }

@@ -1500,31 +1500,6 @@ func TestP5C_ParseDERChain_MultipleValidCerts(t *testing.T) {
 }
 
 // ===========================================================================
-// buildAttestationTrustPool: fallback with no roots
-// ===========================================================================
-
-// TestP5C_BuildAttestationTrustPool_EmptyRoots verifies that
-// buildAttestationTrustPool returns a valid (empty) pool when no roots
-// are provided and no trust store is set.
-func TestP5C_BuildAttestationTrustPool_EmptyRoots(t *testing.T) {
-	svc := NewPhoneService()
-	pool, err := svc.buildAttestationTrustPool(nil)
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-// TestP5C_BuildAttestationTrustPool_WithMultipleRoots verifies that
-// buildAttestationTrustPool adds multiple roots to the pool.
-func TestP5C_BuildAttestationTrustPool_WithMultipleRoots(t *testing.T) {
-	svc := NewPhoneService()
-	root1 := p5cGenerateTestCert(t, "Root 1", true)
-	root2 := p5cGenerateTestCert(t, "Root 2", true)
-	pool, err := svc.buildAttestationTrustPool([]*x509.Certificate{root1, root2})
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-// ===========================================================================
 // findMatchingTrustRoot: chain with matching root
 // ===========================================================================
 

@@ -15,7 +15,6 @@ package server
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -51,77 +50,16 @@ import (
 //   - Storage.Path  -> Raft.DataDir (Pebble root)
 //   - embedded      -> Databases[0] = {default, mvcc, pebble|memory}
 func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
-	qcfg := &qrdbsdk.DaemonConfig{}
-
-	// Authentication and authorization on the embedded node follow xkmsd's
-	// own auth posture: the node's middleware guards every qrdb-native
-	// plane (admin, users, credentials, barrier) and provides the upstream
-	// identity for module routes. Stated EXPLICITLY even though the qrdb
-	// zero value is now fail-safe (nil ⇒ enabled): the embedder's posture
-	// should be legible here, not inherited silently. A SPIFFE trust
-	// domain is pinned only when the operator configured one — the
-	// first-boot default domain stays on the CN/OU identity path.
-	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(s.config.Auth.Enabled)
-	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
-		qcfg.Auth.SPIFFETrustDomain = td
-	}
-
-	// Data directory: the qrdb node reads Raft.DataDir for the Pebble root,
-	// both for standalone and single-node clusters.
-	qcfg.Raft.DataDir = s.config.Storage.Path
-
-	// Inner storage engine for the embedded node. xkms's Storage.Backend value
-	// ("qrdb") selects qrdb hosting; the node's own data-plane engine is Pebble
-	// when a data directory is configured, otherwise in-memory.
-	innerBackend := "pebble"
-	if qcfg.Raft.DataDir == "" {
-		innerBackend = "memory"
-	}
-	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: innerBackend},
-	}
-
-	// Barrier: when the flip is engaged (resolveNodeSeal set nodeSealEnabled —
-	// Storage.Backend=="qrdb" + Barrier.Enabled + BarrierConfig.NodeFlipWired),
-	// the node's OWN barrier encrypts the data-plane KV (encfs). "none" and a
-	// provisioned tpm2 auto-unseal unattended at construction; "passphrase"
-	// and "shamir" leave the node sealed until initEmbeddedQRDBNode's
-	// serveSealedWindow completes the operator-driven ceremony. Either way
-	// node.Client() and every backend key store are encrypted at rest once
-	// New returns. Otherwise Seal stays disabled and xkms's own
-	// StorageBarrier (initializeBarrier) is the barrier — identical to the
-	// prior behavior.
-	if s.nodeSealEnabled {
-		qcfg.Seal.Enabled = true
-		// go-qrdb's own node seal subsystem (sdk/go/node's
-		// buildNodeSealSubsystem) switches on this exact string:
-		// "none"/"passphrase"/"shamir" are its own native cases, built from
-		// DaemonConfig.Seal alone with no Go strategy object from xkms; any
-		// other string falls to its default (hardware/cloud) branch, which is
-		// what actually consults the SealingStrategy resolveNodeSeal injects
-		// via qrdbnode.WithSealStrategy below (tpm2 today). Naming the real
-		// strategy ID here — never a placeholder — is what makes the right
-		// branch reachable for every strategy NodeFlipWired allows.
-		qcfg.Seal.Strategy = s.config.Barrier.SealStrategy()
-		if qcfg.Seal.Strategy == "shamir" {
-			qcfg.Seal.ShamirThreshold = s.config.Barrier.ShamirThreshold
-			qcfg.Seal.ShamirTotal = s.config.Barrier.ShamirTotal
-		}
-		if s.config.Barrier.RootKeyPath != "" {
-			qcfg.Seal.RootKeyPath = s.config.Barrier.RootKeyPath
-		}
-		// Provision a default volume pool so dedicated-isolation tenants draw
-		// per-tenant Pebble storage from the node's own registry (replacing
-		// xkms's buildVolumePool).
-		if s.config.Storage.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
-			qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{
-				Name:  "default",
-				Paths: []string{filepath.Join(s.config.Storage.Path, "tenant-volumes")},
-			}}
-		}
-	} else {
-		qcfg.Seal.Enabled = false
-	}
+	// The storage+seal shape (Auth, Raft.DataDir, Databases, Seal.*,
+	// Storage.VolumePools) comes from the shared, Server-independent builder
+	// so this deployment's config resolves the SAME shape xkmsd init resolves
+	// from the same *config.Config -- see embedded_node.go.
+	qcfg := EmbeddedNodeStorageConfig(s.config, ResolvedNodeSeal{
+		Enabled:  s.nodeSealEnabled,
+		Strategy: s.nodeSealStrategy,
+		TPM:      s.nodeSealTPM,
+		Close:    s.nodeSealClose,
+	})
 
 	// Unified API server: network serving runs exclusively on the node's
 	// own multi-protocol server, which takes xkmsd's REST/gRPC/Unix/MCP
@@ -165,29 +103,12 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	return qcfg
 }
 
-// defaultQRDBAuditRingCapacity is the in-memory audit ring size used when
-// file audit is disabled. The node always receives a queryable logger so audit
-// emission and querying function even without persistent file audit.
-const defaultQRDBAuditRingCapacity = 1024
-
 // newQRDBAuditSink builds the compliance-grade audit sink injected into the
-// embedded qrdb node. When file audit is configured (Auth.Audit.Enabled with a
-// Path) it returns the HMAC-chained file logger; otherwise it returns an
-// in-memory ring buffer so Client().Audit() always emits and queries
-// successfully. The returned sink is retained on s.qrdbAuditSink and closed
-// during Shutdown.
+// embedded qrdb node, via the shared, Server-independent NewEmbeddedAuditSink
+// (embedded_node.go). The returned sink is retained on s.qrdbAuditSink and
+// closed during Shutdown.
 func (s *Server) newQRDBAuditSink() (qrdbsdk.NodeAuditLogger, error) {
-	if a := s.config.Auth.Audit; a != nil && a.Enabled && a.Path != "" {
-		sink, err := qrdbsdk.NewAuditFileLogger(a.Path)
-		if err != nil {
-			return nil, err
-		}
-		s.logger.Info("qrdb node audit sink: HMAC-chained file logger", "path", a.Path)
-		return sink, nil
-	}
-	s.logger.Info("qrdb node audit sink: in-memory ring buffer",
-		"capacity", defaultQRDBAuditRingCapacity)
-	return qrdbsdk.NewAuditRingBuffer(defaultQRDBAuditRingCapacity), nil
+	return NewEmbeddedAuditSink(s.config, s.logger)
 }
 
 // initEmbeddedQRDBNode constructs the in-process qrdb standalone node that is

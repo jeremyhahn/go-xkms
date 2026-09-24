@@ -338,7 +338,7 @@ func TestRunAWSLogin_BindsTheConfiguredCallbackHostAndPort(t *testing.T) {
 			oidc.Callback{Host: "127.0.0.1", Port: port})
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to start callback server")
+	assert.Contains(t, err.Error(), "aws: login failed")
 	assert.Contains(t, err.Error(), "127.0.0.1:"+strconv.Itoa(port))
 }
 

@@ -1030,16 +1030,22 @@ func TestMCPConsole_Unsupported(t *testing.T) {
 	}
 }
 
-func TestMCPSession_DialUnsupported(t *testing.T) {
+// TestMCPSession_DialPropagatesSignerFailure exercises Session.Dial against
+// the bare fakeMCPServer (no ssh.keys.* handlers registered — see
+// mcp_dial_test.go for the genuine end-to-end dial/handshake coverage over a
+// server wired to a real embedded client). Session.Dial resolves the
+// remote-signer proxy through ssh.keys.export before it ever reaches the
+// target host, so an unhandled method — not a *NotImplementedError, now that
+// MCP dials directly — must surface to the caller as a typed *ProtocolError.
+func TestMCPSession_DialPropagatesSignerFailure(t *testing.T) {
 	srv := newFakeMCPServer(t)
 	client := newMCPFixture(t, srv)
 
-	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{Host: "h", User: "u"})
-	var ni *sdkssh.NotImplementedError
-	if !errors.As(err, &ni) {
-		t.Fatalf("expected *NotImplementedError, got %T %v", err, err)
-	}
-	if ni.Transport != "mcp" {
-		t.Errorf("Transport = %q", ni.Transport)
+	_, err := client.Session().Dial(context.Background(), sdkssh.SessionDialRequest{
+		KeyScope: "user", KeyOwner: "alice", KeyName: "ssh", Host: "h", User: "u",
+	})
+	var pe *sdkssh.ProtocolError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *ProtocolError, got %T %v", err, err)
 	}
 }
