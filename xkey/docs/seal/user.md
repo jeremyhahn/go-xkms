@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — User Guide
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 ## Set up the barrier
 
@@ -8,11 +8,30 @@
 xkey barrier init                    # auto-detects TPM 2.0, else asks for a password
 xkey barrier init --strategy tpm2    # force TPM hardware sealing
 xkey barrier init --strategy software
+
+# Or seal to a cloud KMS instead of local hardware:
+xkey barrier init --strategy aws_kms --aws-region us-east-1
+xkey barrier init --strategy gcp_kms --gcp-project-id my-project \
+  --gcp-location us-east1 --gcp-key-ring xkey-barrier
+xkey barrier init --strategy azure_kv --azure-vault-url https://my-vault.vault.azure.net/
+xkey barrier init --strategy vault --vault-address https://vault.example.com:8200
 ```
 
 Once initialized, every barrier-aware command (`xkey oath`, `xkey backup`,
 `xkey fido2 --storage barrier`, the OIDC token store, `xkey extension
 serve`) encrypts its data at rest automatically.
+
+A cloud KMS strategy authenticates with the provider's own ambient
+credentials by default (the AWS SDK's default credential chain, GCP
+Application Default Credentials, Azure `DefaultAzureCredential`, or Vault's
+`VAULT_TOKEN` environment variable) — nothing further to set up if the
+machine already has those. `xkey barrier init` remembers the strategy's
+connection settings (region, project, vault URL, etc.) in the config file,
+so `xkey barrier unseal` and `xkey extension serve` need no flags to find
+the same key again. This binary must have been built with the matching Go
+build tag (`awskms`, `gcpkms`, `azurekv`, or `vault`) for the strategy to be
+available at all; a build without it reports which tag is missing rather
+than silently falling back to another strategy.
 
 ## Let an agent (or a headless daemon) unseal without a password
 
@@ -57,6 +76,11 @@ xkey barrier unseal                              # interactive password prompt
 echo "$BARRIER_PASSWORD" | xkey barrier unseal   # piped, for scripts
 xkey barrier unseal --auto                       # TPM policy only, no password ever
 ```
+
+A barrier sealed with a cloud KMS strategy needs no password at all —
+`xkey barrier unseal` (and `xkey extension serve`) rebuild the strategy from
+the connection settings `xkey barrier init` persisted and authenticate with
+the same ambient (or configured) credentials.
 
 ## Recover from a PCR mismatch
 
