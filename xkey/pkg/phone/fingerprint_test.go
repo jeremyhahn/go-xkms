@@ -221,6 +221,27 @@ func TestInvalidDeviceFingerprintError_FormattingIsNilSafe(t *testing.T) {
 	}
 }
 
+// TestInvalidDeviceFingerprintError_HandBuiltOversizedValueIsBoundedAtFormat
+// covers the truncation Error() itself performs, which newInvalidDeviceFingerprintError's
+// own truncation can mask: the type and Value field are exported, so a
+// caller that builds one directly (skipping the constructor) can still hand
+// Error() a Value longer than maxReportedFingerprint. Error() must bound its
+// OWN output rather than trust that every caller went through the
+// constructor.
+func TestInvalidDeviceFingerprintError_HandBuiltOversizedValueIsBoundedAtFormat(t *testing.T) {
+	oversized := strings.Repeat("f", maxReportedFingerprint*3)
+	err := &InvalidDeviceFingerprintError{Value: oversized}
+
+	msg := err.Error()
+
+	if strings.Contains(msg, oversized) {
+		t.Fatal("Error() included the full hand-built Value instead of bounding it")
+	}
+	if !strings.HasPrefix(msg, ErrInvalidDeviceFingerprint.Error()+": "+oversized[:maxReportedFingerprint]) {
+		t.Fatalf("Error() = %q, want it to lead with the first %d characters of Value", msg, maxReportedFingerprint)
+	}
+}
+
 // Bounded RETENTION, not merely bounded display. An error that formats to
 // something short while holding a megabyte of corrupted config keeps that
 // megabyte alive for as long as any caller holds the error, which is what the
