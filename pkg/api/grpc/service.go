@@ -93,6 +93,16 @@ type Service struct {
 	xkmsService *xkms.XKMSService
 	sshClient   sdkssh.Client
 
+	// ca is the CA servicer wired via SetCA, delegated to by the CA RPC
+	// handlers in service_ca.go and service_ca_tcg.go. Nil (the default)
+	// causes those RPCs to return codes.Unavailable.
+	ca any
+
+	// caBundler is the CA bundle source wired via SetCABundler, consulted by
+	// GetCABundle before it falls back to ca's own GetCABundle method. Nil
+	// (the default) causes GetCABundle to rely on ca alone.
+	caBundler CABundler
+
 	// localTrust marks this Service as constructed for a local IPC listener
 	// (the Unix domain socket) rather than a network listener. It exists to
 	// resolve the ambiguity of a nil authorizer for privileged RPCs: only a

@@ -18,7 +18,6 @@ import (
 	"errors"
 	"math/big"
 	"strings"
-	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -42,35 +41,20 @@ var (
 	ErrInvalidSerialNumber = errors.New("grpc: invalid serial number format")
 )
 
-// Package-level CA instance, set via SetCA and protected by a read-write mutex.
-var (
-	caInstanceMu sync.RWMutex
-	caInstance   any
-)
-
-// SetCA configures the CA servicer for the gRPC service. The composition
-// root passes the *xkms.XKMSService, which exposes the transport-shaped CA
+// SetCA configures the CA servicer for this Service. The composition root
+// passes the *xkms.XKMSService, which exposes the transport-shaped CA
 // methods (GetCACertificate, SignCSR, IssueCertificate, etc.) that the
-// handlers in this file and service_ca_tcg.go delegate to.
-// This must be called before any CA RPCs can be used.
-func SetCA(ca any) {
-	caInstanceMu.Lock()
-	defer caInstanceMu.Unlock()
-	caInstance = ca
+// handlers in this file and service_ca_tcg.go delegate to. It is optional,
+// auxiliary wiring performed by the composition root after NewService,
+// mirroring SetSSHClient. A nil ca (the default) causes CA RPCs to return
+// codes.Unavailable.
+func (s *Service) SetCA(ca any) {
+	s.ca = ca
 }
 
-// GetCA returns the configured CA instance, or nil if not set.
-func GetCA() any {
-	caInstanceMu.RLock()
-	defer caInstanceMu.RUnlock()
-	return caInstance
-}
-
-// getCAInstance returns the CA instance or nil. Caller must handle nil.
-func getCAInstance() any {
-	caInstanceMu.RLock()
-	defer caInstanceMu.RUnlock()
-	return caInstance
+// CA returns the configured CA instance, or nil if not set.
+func (s *Service) CA() any {
+	return s.ca
 }
 
 // Local duck-typed interfaces for CA operations.
@@ -112,7 +96,7 @@ type grpcCAMethodIsRevoked interface {
 
 // GetCACertificate retrieves the CA certificate with metadata.
 func (s *Service) GetCACertificate(ctx context.Context, req *pb.GetCACertificateRequest) (*pb.GetCACertificateResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -144,7 +128,7 @@ func (s *Service) GetCACertificate(ctx context.Context, req *pb.GetCACertificate
 
 // SignCSR signs a certificate signing request and returns the signed certificate.
 func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.SignCSRResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -180,7 +164,7 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 
 // IssueCertificate issues a new certificate with the specified parameters.
 func (s *Service) IssueCertificate(ctx context.Context, req *pb.IssueCertificateRequest) (*pb.IssueCertificateResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -220,7 +204,7 @@ func (s *Service) IssueCertificate(ctx context.Context, req *pb.IssueCertificate
 
 // RevokeCertificate revokes a certificate by its serial number.
 func (s *Service) RevokeCertificate(ctx context.Context, req *pb.RevokeCertificateRequest) (*pb.RevokeCertificateResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -258,7 +242,7 @@ func (s *Service) RevokeCertificate(ctx context.Context, req *pb.RevokeCertifica
 
 // GenerateCRL generates a certificate revocation list.
 func (s *Service) GenerateCRL(ctx context.Context, req *pb.GenerateCRLRequest) (*pb.GenerateCRLResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
@@ -284,7 +268,7 @@ func (s *Service) GenerateCRL(ctx context.Context, req *pb.GenerateCRLRequest) (
 
 // IsRevoked checks if a certificate has been revoked by its serial number.
 func (s *Service) IsRevoked(ctx context.Context, req *pb.IsRevokedRequest) (*pb.IsRevokedResponse, error) {
-	ca := getCAInstance()
+	ca := s.ca
 	if ca == nil {
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}

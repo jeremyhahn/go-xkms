@@ -112,6 +112,20 @@ type GRPCConfig struct {
 	// the SSH RPCs return codes.Unavailable.
 	SSHClient sdkssh.Client
 
+	// CA is the CA servicer forwarded to the keystore gRPC service (via
+	// grpcinternal.Service.SetCA) so CA RPCs (GetCACertificate, SignCSR,
+	// IssueCertificate, the TCG EK/AK/enroll variants, ...) are served over
+	// the unix socket. Optional; when nil those RPCs return
+	// codes.Unavailable, mirroring the REST transport's Config.CA gate
+	// (go-xkms#951).
+	CA any
+
+	// CABundler optionally overrides how the keystore gRPC service's
+	// GetCABundle resolves its response (via
+	// grpcinternal.Service.SetCABundler). When nil, GetCABundle falls back
+	// to the CA servicer's own GetCABundle method (see CA above).
+	CABundler grpcinternal.CABundler
+
 	// BarrierRegistry gates per-request tenant access the same way the
 	// network gRPC, REST, QUIC, and MCP transports do (see
 	// pkg/api/tenantgate). Unlike the network gRPC server -- which resolves
@@ -261,6 +275,8 @@ func (s *GRPCServer) Start() error {
 	// file mode and directory permissions, not RBAC.
 	service := grpcinternal.NewService(nil, nil, s.config.XKMSService, grpcinternal.WithLocalTrust())
 	service.SetSSHClient(s.config.SSHClient)
+	service.SetCA(s.config.CA)
+	service.SetCABundler(s.config.CABundler)
 	pb.RegisterKeystoreServiceServer(s.server, service)
 
 	// Composition-root service registrations (e.g. the embedded qrdb node's
