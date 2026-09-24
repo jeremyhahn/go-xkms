@@ -27,8 +27,11 @@ import (
 // --- Error type tests ---
 
 func TestRPCError_Error(t *testing.T) {
-	e := &RPCError{Code: -32600, Message: "invalid request"}
-	assert.Equal(t, "rpc error -32600: invalid request", e.Error())
+	e := &RPCError{Code: -32600, WireCode: wire.CodeInvalidArgument, Message: "invalid request"}
+	got := e.Error()
+	assert.Contains(t, got, "-32600")
+	assert.Contains(t, got, "invalid request")
+	assert.Contains(t, got, "INVALID_ARGUMENT")
 }
 
 func TestMarshalError_Error(t *testing.T) {
@@ -232,7 +235,6 @@ func TestConnect_HealthCheck(t *testing.T) {
 	tr := connectToMockServer(t, addr)
 	defer tr.Close()
 
-	assert.True(t, tr.connected)
 	assert.True(t, tr.IsConnected())
 }
 

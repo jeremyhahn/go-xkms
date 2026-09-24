@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 )
 
 // MethodSpec describes one JSON-RPC method of the xkms MCP surface for the
@@ -80,13 +82,12 @@ func ModuleMethods() []MethodSpec {
 
 // ToolName maps a JSON-RPC method name onto its MCP tool name: dots become
 // underscores and the name is prefixed with "xkms_" unless the method
-// already carries the xkms namespace.
+// already carries the xkms namespace. It delegates to pkg/mcptool.ToolName,
+// the single canonical implementation shared with every MCP client in this
+// module (see that package's doc comment for why the naming convention
+// lives there rather than here).
 func ToolName(method string) string {
-	name := strings.ReplaceAll(method, ".", "_")
-	if !strings.HasPrefix(name, "xkms_") {
-		name = "xkms_" + name
-	}
-	return name
+	return mcptool.ToolName(method)
 }
 
 // UnknownMethodError reports an InvokeMethod call for a method the

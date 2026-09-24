@@ -42,11 +42,36 @@ Backend-backed generation is enabled by passing a `BackendProvider`
 | `grpc(s)://` | gRPC (`grpcs` = TLS) |
 | `unix://<path>` | gRPC over a Unix domain socket |
 | `quic://` | HTTP/3 (dials the REST port -- there is no separate QUIC port) |
-| `mcp(s)://` | MCP JSON-RPC (`mcps` = TLS) |
+| `mcp(s)://` | MCP Streamable HTTP tool calls against the unified qrdb MCP server (`mcps` = TLS), on `mcp_port` |
 
 The server mounts SSH over every transport when an SSH client is wired
 (`pkg/server` builds one embedded client with a backend provider over the
 `XKMSService` and injects it into all transports).
+
+`mcp(s)://` dials the same unified MCP surface the rest of the SDK reaches
+through `pkg/api/transport/mcp` — `NewMCP` (`sdk/go/client/ssh/mcp.go`)
+issues `ssh.keys.*`/`ssh.knownHosts.*`/`ssh.authorizedKeys.*` as MCP
+`tools/call` requests via `pkg/mcptool`, the connection and tool-call
+machinery both clients share. There is no separate raw-socket MCP listener:
+an earlier, line-framed JSON-RPC-over-TCP plane in `pkg/api/mcp` was retired
+when the unified server replaced it (see that package's doc comment), and
+this client now reaches that one remaining MCP surface (go-xkms#792).
+Server-side SSH failures are classified onto go-qrdb's `wire.ErrorEnvelope`
+by `mapSSHError` (`pkg/api/mcp/errors_ssh.go`), the same envelope-only
+contract every other MCP method uses (go-xkms#797) — there is no
+keyword/text-based classification anywhere in this path. `mapSSHError`
+delegates to the same shared `classify()` table (see Errors below) that
+drives the REST and gRPC transports, and `pkg/apimodule`'s `keyOpCodeToWire`
+carries its NotFound/Duplicate/Mismatch codes onto their own distinct
+`wire.Code`s, so all three transports reconstruct the same typed error for
+the same store condition. The one place MCP falls short of REST's detail:
+go-qrdb's `wire.ErrorEnvelope` carries only a code and a message, not REST's
+richer JSON body, so a reconstructed `*sdkssh.NotFoundError`/
+`*sdkssh.DuplicateError` carries no `Resource`, and `*sdkssh.MismatchError`
+carries `Host`/`Received` (filled in locally by
+`KnownHostsClient.Verify`, which already has both) but never `Expected` —
+the pin's actual stored key is only known server-side and the wire has no
+field for it.
 
 ### `SessionClient.Dial` — non-interactive outbound sessions, every transport
 
@@ -59,12 +84,13 @@ process (`golang.org/x/crypto/ssh`) — the xkms transport itself carries only
 two RPCs, `Keys().Signer` (a forward-signing proxy; the private key never
 leaves xkmsd) and `KnownHosts().Callback` (host-key verification against the
 server's pins), neither of which needs a byte stream. That is why MCP's
-request/response JSON-RPC framing, which cannot carry Console, has no
+request/response tool-call framing, which cannot carry Console, has no
 trouble with Dial. Host-key verification fails closed on every transport: an
 unrecognized or mismatched host key is a typed error
-(`*sdkssh.NotFoundError` / `*sdkssh.MismatchError` on every transport; see
-Errors below) — there is no `InsecureIgnoreHostKey` path
-anywhere in the SDK.
+(`*sdkssh.NotFoundError` / `*sdkssh.MismatchError` on every transport,
+including MCP — wrapped in `*sdkssh.ProtocolError` there, still typed and
+never a silent accept; see Errors below) — there is no
+`InsecureIgnoreHostKey` path anywhere in the SDK.
 
 ## Errors
 
@@ -75,24 +101,34 @@ every transport, driven by one shared table in
 `GRPCCodeForError`, and `JSONRPCCodeForError`) so REST, gRPC, and MCP never
 drift from each other:
 
-| Store error | REST | gRPC | MCP (JSON-RPC) |
-|---|---|---|---|
-| `*pkgkeys.KeyNotFoundError`, `*pkgknownhosts.NotFoundError`, `*pkgauthorized.NotFoundError` | 404 | `NotFound` | -32001 |
-| `*pkgknownhosts.DuplicateError`, `*pkgauthorized.DuplicateError` (Add called twice without a Remove) | 409 | `AlreadyExists` | -32005 |
-| `*pkgknownhosts.MismatchError` (presented host key does not match the pin) | 409 | `FailedPrecondition` | -32006 |
-| validation errors (`*InvalidScopeError`, `*InvalidAlgorithmError`, `*pkgkeys.InvalidKeySizeError`, …) | 400 | `InvalidArgument` | -32602 (Invalid params) |
-| `*NotImplementedError` (a method the server does not serve) | 501 | `Unimplemented` | -32601 (Method not found) |
-| `*BackendUnavailableError` (no `BackendProvider` wired for the requested backend) | — (falls to 500) | `FailedPrecondition` | — (falls to Internal) |
-| anything else | 500 | `Internal` | -32603 (Internal error) |
+| Store error | REST | gRPC | MCP: JSON-RPC code | MCP: wire.Code on the wire |
+|---|---|---|---|---|
+| `*pkgkeys.KeyNotFoundError`, `*pkgknownhosts.NotFoundError`, `*pkgauthorized.NotFoundError` | 404 | `NotFound` | -32001 | `wire.CodeNotFound` |
+| `*pkgknownhosts.DuplicateError`, `*pkgauthorized.DuplicateError` (Add called twice without a Remove) | 409 | `AlreadyExists` | -32005 | `wire.CodeAlreadyExists` |
+| `*pkgknownhosts.MismatchError` (presented host key does not match the pin) | 409 | `FailedPrecondition` | -32006 | `wire.CodeFailedPrecondition` |
+| validation errors (`*InvalidScopeError`, `*InvalidAlgorithmError`, `*pkgkeys.InvalidKeySizeError`, …) | 400 | `InvalidArgument` | -32602 (Invalid params) | `wire.CodeInvalidArgument` |
+| `*NotImplementedError` (a method the server does not serve) | 501 | `Unimplemented` | -32601 (Method not found) | `wire.CodeUnimplemented` |
+| `*BackendUnavailableError` (no `BackendProvider` wired for the requested backend) | — (falls to 500) | `FailedPrecondition` | — (falls to Internal) | `wire.CodeInternal` |
+| anything else | 500 | `Internal` | -32603 (Internal error) | `wire.CodeInternal` |
 
-REST and MCP report `DuplicateError` and `MismatchError` as the same status
-(409 / -32005 and -32006 are still distinct on MCP, since JSON-RPC's
-implementation-defined range has room to keep them apart even though HTTP's
-409 does not). An unrecognized error is never echoed onto the gRPC status
-message verbatim — only the table above's recognized classes carry their own
-message; everything else answers a fixed `"ssh: internal error"` so a
-storage-backend detail (a filesystem path, a driver error) never reaches an
-RPC caller.
+REST and gRPC report `DuplicateError` and `MismatchError` as the same status
+(409 / `AlreadyExists` and `FailedPrecondition` are already distinct on
+gRPC); MCP keeps all three of NotFound/Duplicate/Mismatch on their own
+`wire.Code` across two hops: `mapSSHError` (`pkg/api/mcp/errors_ssh.go`)
+produces the JSON-RPC code in the third column via the same shared
+`classify()` table, and `pkg/apimodule`'s `keyOpCodeToWire` carries it onto
+the `wire.Code` in the fourth column, which `pkg/mcptool` decodes from the
+tool result's `wire.ErrorEnvelope` and `sdk/go/client/ssh/mcp.go`'s
+`classifyMCPError` turns back into the same typed error REST and gRPC
+construct (go-xkms#792) — with one caveat: the envelope carries only a code
+and a message, so a reconstructed error over MCP never gets `Resource`
+(`*NotFoundError`/`*DuplicateError`) or `Expected`
+(`*MismatchError`); `*MismatchError`'s `Host`/`Received` are filled in
+locally by `KnownHostsClient.Verify`, not from the wire. An unrecognized
+error is never echoed onto the gRPC status message verbatim — only the
+table above's recognized classes carry their own message; everything else
+answers a fixed `"ssh: internal error"` so a storage-backend detail (a
+filesystem path, a driver error) never reaches an RPC caller.
 
 ## CLI
 
