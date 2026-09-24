@@ -80,8 +80,8 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 		return &ErrCertOperation{Operation: "parse certificate PEM", Err: err}
 	}
 
-	if err = b.SaveCert(ctx, req.KeyID, cert); err != nil {
-		return err
+	if saveErr := b.SaveCert(ctx, req.KeyID, cert); saveErr != nil {
+		return saveErr
 	}
 
 	incrementCertsTotal(metricsBackend)
@@ -105,8 +105,8 @@ func (s *XKMSService) DeleteCertificate(ctx context.Context, backendName, keyID 
 		return &ErrKeyIDParse{Err: err}
 	}
 
-	if err = b.DeleteCert(ctx, keyID); err != nil {
-		return err
+	if delErr := b.DeleteCert(ctx, keyID); delErr != nil {
+		return delErr
 	}
 
 	decrementCertsTotal(metricsBackend)
