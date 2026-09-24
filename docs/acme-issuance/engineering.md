@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -124,8 +124,38 @@ once, to the externally visible base.
   parameter model. A DNS failure that prevents determining the RRset
   (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
   Section 5.1: it denies issuance rather than "proceeding with caution".
-- **Rate limits are per account and per tenant.** Exceeding either refuses the
-  order; it does not queue it.
+- **Rate limiting is a per-client cap, enforced before RFC 8555 processing
+  begins.** `acmeserver.NewClientRateLimiterMiddleware`
+  (`pkg/acme/server/rate_limiter.go`) is mounted on the whole ACME surface —
+  by the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) and by
+  xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`) — and
+  keys each client by JWS KID once an account exists, falling back to the
+  client IP before one does (`server.ClientID`). Exceeding the cap refuses
+  the request with `rateLimited`; it does not queue it. **Per-tenant and
+  per-endpoint-category (new-account/new-order/certificate/
+  failed-validation) limits are not wired to anything** —
+  `pkg/acme/server/tenant_rate_limiter.go`'s `TenantRateLimiter` and
+  `rate_limiter.go`'s `NewAccountRateLimiter`/`NewOrderRateLimiter`/
+  `CertificateRateLimiter`/`FailedValidationRateLimiter` constructors and
+  `DefaultRateLimitConfig` exist and are unit-tested but have no caller
+  outside their own package's tests (go-xkms#882). xkmsd resolves an ACME
+  account's tenant only as a side effect of business logic already deep
+  inside a handler — `NewAccountHandler` sets `entities.Account.TenantID`
+  from the verified External Account Binding
+  (`pkg/acme/server/handlers/new_account.go`), and `order_finalize.go` reads
+  it back to select a signing CA — never from a cheap, pre-dispatch,
+  authenticated request attribute a middleware could key on. The
+  `handlers.TenantMiddleware` header/subdomain/path extractor
+  (`pkg/acme/server/handlers/middleware.go`) is also unwired anywhere in the
+  tree; even if wired, it trusts a client-supplied `X-Tenant-ID` header (or
+  host/path) with no authentication, so using it to key admission control
+  would let a client opt out of its own tenant quota by omitting or
+  spoofing the header — the opposite of what rate limiting is for. A
+  per-tenant cap that means something requires resolving tenant from an
+  authenticated source (e.g. an account lookup keyed by JWS KID) before
+  dispatch, which is new work, not a rewiring of the existing
+  `TenantRateLimiter`; it is filed as a follow-up rather than forced into
+  this cap.
 - **Under pressure the circuit breaker refuses new orders.** Degradation never
   means "issue without validating".
 - **An advertised URL is configured or derived, never glued to a bind
@@ -335,6 +365,32 @@ desktop binding `GetApiBaseUrl`. `pkg/webui` renders the value into
 `index.html` as a JSON-encoded JavaScript string literal, so it cannot
 terminate the injected script.
 
+**Rate-limit configuration (`ACMERateLimitConfig`, `pkg/config/acme.go`).**
+`acme.rate_limit` configures the per-client admission-control cap described
+under Invariants above. It follows the same secure-by-default, tri-state
+pattern as `acme.audit`: `enabled` is a `*bool`, so an omitted key leaves the
+limiter on — only an explicit `enabled: false` turns it off, and doing so is
+reported by `Config.ComplianceGaps` ("ACME rate limiting disabled"), which
+`cmd/xkmsd` refuses to start on; there is no override. `max_requests` and
+`interval` default to `DefaultACMERateLimitMaxRequests` (20) and
+`DefaultACMERateLimitInterval` (`1s`) when zero/unset, matching the
+standalone `TrustedCA`'s long-standing built-in default
+(`pkg/acme/client/trustedca.go`'s zero-value `rateLimitRequests`/
+`rateLimitInterval`, settable via `client.WithRateLimit`), so xkmsd and the
+standalone CA throttle identically out of the box:
+
+```yaml
+acme:
+  rate_limit:
+    enabled: true      # default; omit the key entirely for the same effect
+    max_requests: 20    # per client, per interval
+    interval: 1s
+```
+
+A negative `max_requests` or `interval` is refused by `Validate`
+(`ErrACMERateLimitNegativeMaxRequests`/`ErrACMERateLimitNegativeInterval`)
+rather than silently coerced to the default.
+
 Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
 which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 [`../key-management/api.md`](../key-management/api.md) §Port conflicts.
@@ -390,7 +446,9 @@ storage. Changing the storage layout requires a data migration step.
 account, order and issuance events. Correlation IDs propagate from the
 transport middleware.
 
-**Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
-stapling, CRL distribution-point automation, CT log submission automation and
-cross-signing automation are roadmap items, not implemented. They are tracked in
-`docs/acme/ROADMAP.md` and deliberately not documented here as if they existed.
+**Known gap:** Prometheus exporters, per-tenant rate-limit *enforcement*
+(`TenantRateLimiter` is unwired — see Rate limiting under Invariants) and
+dashboards, OCSP stapling, CRL distribution-point automation, CT log
+submission automation and cross-signing automation are roadmap items, not
+implemented. They are tracked in `docs/acme/ROADMAP.md` and deliberately not
+documented here as if they existed.

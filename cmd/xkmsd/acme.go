@@ -277,8 +277,30 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		return nil, &acmeInitError{Stage: "create REST service", Sentinel: ErrACMERestService, Err: err}
 	}
 
+	// Build the per-client admission-control middleware. acmeserver.
+	// NewClientRateLimiterMiddleware is the single construction path shared
+	// with the standalone TrustedCA (pkg/acme/client/trustedca.go) so
+	// neither composition hand-rolls its own limiter wiring. Disabling it is
+	// an explicit, logged act: Config.ComplianceGaps reports it and xkmsd
+	// refuses to start, so there is no silent way to run the ACME listener
+	// unthrottled.
+	var rateLimitMiddleware mux.MiddlewareFunc
+	if acmeCfg.RateLimit.IsEnabled() {
+		rateLimitMiddleware = acmeserver.NewClientRateLimiterMiddleware(
+			acmeCfg.RateLimit.ResolveMaxRequests(),
+			acmeCfg.RateLimit.ResolveInterval(),
+			auditLogger,
+		)
+		logger.Info("ACME rate limiting enabled",
+			slog.Int("max_requests", acmeCfg.RateLimit.ResolveMaxRequests()),
+			slog.Duration("interval", acmeCfg.RateLimit.ResolveInterval()))
+	} else {
+		logger.Warn("ACME rate limiting disabled: the ACME endpoint accepts unlimited " +
+			"new-account, new-order, and challenge requests")
+	}
+
 	// Build the HTTP router and mount the ACME routes.
-	router := buildACMERouter(service, directoryPath)
+	router := buildACMERouter(service, directoryPath, rateLimitMiddleware)
 
 	// When the cluster CA key strategy delivers post-enrollment material (the
 	// tpm-kek cluster seed), mount its secret-delivery endpoint on the same
@@ -463,8 +485,19 @@ const defaultClusterTrustDomain = "xkms.cluster"
 // buildACMERouter mounts the ACME REST handlers on a gorilla/mux router
 // under the given directory path prefix. The route layout follows
 // RFC 8555 Section 7.1.
-func buildACMERouter(svc handlers.RestServicer, directoryPath string) http.Handler {
+//
+// rateLimitMiddleware, when non-nil, is applied to every route on the
+// returned router (including any handler a caller mounts on it afterward,
+// e.g. the cluster secret-delivery endpoint in startACMEServer) via
+// mux.Router.Use, which every ACME server composition in the stack builds
+// through acmeserver.NewClientRateLimiterMiddleware. A nil value mounts the
+// router unthrottled — callers pass nil only when acme.rate_limit.enabled
+// is false, which Config.ComplianceGaps reports.
+func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitMiddleware mux.MiddlewareFunc) http.Handler {
 	r := mux.NewRouter()
+	if rateLimitMiddleware != nil {
+		r.Use(rateLimitMiddleware)
+	}
 	r.HandleFunc(directoryPath+"/directory", svc.DirectoryHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(directoryPath+"/new-nonce", svc.NewNonceHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(directoryPath+"/new-account", svc.NewAccountHandler).Methods(http.MethodPost)

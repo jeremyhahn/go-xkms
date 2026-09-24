@@ -37,6 +37,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
@@ -276,7 +278,7 @@ var _ handlers.RestServicer = (*stubRestService)(nil)
 // exercises the route wiring without requiring a full CA/storage bootstrap.
 func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 	svc := &stubRestService{}
-	router := buildACMERouter(svc, "/acme")
+	router := buildACMERouter(svc, "/acme", nil)
 
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
@@ -311,7 +313,7 @@ func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 // succeed while GET /acme/new-order should be rejected (POST-only).
 func TestBuildACMERouter_RouteMethods(t *testing.T) {
 	svc := &stubRestService{}
-	router := buildACMERouter(svc, "/acme")
+	router := buildACMERouter(svc, "/acme", nil)
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
 
@@ -352,6 +354,83 @@ func TestBuildACMERouter_RouteMethods(t *testing.T) {
 	}
 	if !svc.newOrderCalled.Load() {
 		t.Fatalf("NewOrderHandler was not invoked on POST")
+	}
+}
+
+// TestBuildACMERouter_RateLimit verifies that buildACMERouter enforces the
+// rate-limit middleware it is given (go-xkms#882): requests from a single
+// client up to the configured cap reach the handler, and the request that
+// exceeds the cap is refused with the RFC 8555 Section 6.6 rateLimited
+// problem document (HTTP 429, Retry-After, urn:ietf:params:acme:error:
+// rateLimited) instead of reaching NewOrderHandler.
+func TestBuildACMERouter_RateLimit(t *testing.T) {
+	svc := &stubRestService{}
+	rateLimitMiddleware := acmeserver.NewClientRateLimiterMiddleware(1, time.Minute, nil)
+	router := buildACMERouter(svc, "/acme", rateLimitMiddleware)
+	ts := httptest.NewServer(router)
+	t.Cleanup(ts.Close)
+
+	// First request from this client is within the cap and reaches the handler.
+	resp, err := http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order (1st): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 on the 1st POST new-order, got %d", resp.StatusCode)
+	}
+	if !svc.newOrderCalled.Load() {
+		t.Fatalf("NewOrderHandler was not invoked for the request within the cap")
+	}
+	svc.newOrderCalled.Store(false)
+
+	// Second request from the same client exceeds the cap.
+	resp, err = http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order (2nd): %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on the 2nd POST new-order, got %d", resp.StatusCode)
+	}
+	if svc.newOrderCalled.Load() {
+		t.Fatalf("NewOrderHandler must not be invoked once the client is rate limited")
+	}
+	if got := resp.Header.Get("Retry-After"); got != "60" {
+		t.Fatalf("expected Retry-After: 60, got %q", got)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("expected Content-Type: application/problem+json, got %q", got)
+	}
+	var acmeErr entities.Error
+	if err := json.NewDecoder(resp.Body).Decode(&acmeErr); err != nil {
+		t.Fatalf("decode rate-limited body: %v", err)
+	}
+	if acmeErr.Type != "urn:ietf:params:acme:error:rateLimited" {
+		t.Fatalf("expected type urn:ietf:params:acme:error:rateLimited, got %q", acmeErr.Type)
+	}
+}
+
+// TestBuildACMERouter_RateLimit_Disabled verifies the error/edge path: a nil
+// rate-limit middleware (acme.rate_limit.enabled=false) mounts the router
+// unthrottled, so buildACMERouter itself never silently drops requests when
+// no limiter is configured — the enable/disable decision lives entirely in
+// startACMEServer, which logs the disabled case loudly.
+func TestBuildACMERouter_RateLimit_Disabled(t *testing.T) {
+	svc := &stubRestService{}
+	router := buildACMERouter(svc, "/acme", nil)
+	ts := httptest.NewServer(router)
+	t.Cleanup(ts.Close)
+
+	for i := 0; i < 5; i++ {
+		resp, err := http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatalf("POST /acme/new-order (%d): %v", i, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("expected 204 on request %d with no rate limiter mounted, got %d", i, resp.StatusCode)
+		}
 	}
 }
 

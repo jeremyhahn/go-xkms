@@ -377,10 +377,11 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// Initialize Prometheus metrics
 	metrics.Init()
 
-	// Set up rate limiter
-	rateLimiter := server.NewRateLimiter(tca.rateLimitRequests, tca.rateLimitInterval)
-	rateLimiter.SetAuditLogger(auditLog)
-	rateLimitMiddleware := rateLimiter.MiddlewareFunc(server.ClientID)
+	// Set up rate limiter. server.NewClientRateLimiterMiddleware is the single
+	// construction path shared with xkmsd's embedded ACME listener
+	// (cmd/xkmsd/acme.go) so neither composition hand-rolls its own limiter
+	// wiring.
+	rateLimitMiddleware := server.NewClientRateLimiterMiddleware(tca.rateLimitRequests, tca.rateLimitInterval, auditLog)
 
 	// Set up ACME router
 	router := mux.NewRouter()
