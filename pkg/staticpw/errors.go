@@ -55,12 +55,6 @@ var (
 	// ErrUnmarshalFailed is returned when JSON unmarshaling fails.
 	ErrUnmarshalFailed = errors.New("staticpw: JSON unmarshal failed")
 
-	// ErrCryptoEncryptFailed is returned when encryption fails.
-	ErrCryptoEncryptFailed = errors.New("staticpw: encryption failed")
-
-	// ErrCryptoDecryptFailed is returned when decryption fails.
-	ErrCryptoDecryptFailed = errors.New("staticpw: decryption failed")
-
 	// ErrFolderEmpty is returned when the folder path is empty where one is required.
 	ErrFolderEmpty = errors.New("staticpw: folder path is empty")
 
@@ -75,39 +69,14 @@ var (
 	// invalid characters.
 	ErrInvalidTenantID = errors.New("staticpw: invalid tenant ID")
 
-	// ErrNilEncrypter is returned when a nil SymmetricEncrypter is provided.
-	ErrNilEncrypter = errors.New("staticpw: encrypter is nil")
-
 	// ErrNilStore is returned when a nil Store is provided.
 	ErrNilStore = errors.New("staticpw: store is nil")
-
-	// ErrNilInnerStore is returned when a nil inner Store is provided to a wrapper.
-	ErrNilInnerStore = errors.New("staticpw: inner store is nil")
-
-	// ErrNilPINManager is returned when a nil PINManager is provided.
-	ErrNilPINManager = errors.New("staticpw: PIN manager is nil")
-
-	// ErrPINRequired is returned when a PIN is required but not provided.
-	ErrPINRequired = errors.New("staticpw: PIN is required")
 
 	// ErrStoreNotLocked is returned when Unlock is called on an already-unlocked store.
 	ErrStoreNotLocked = errors.New("staticpw: store is not locked")
 
 	// ErrStoreAlreadyLocked is returned when Lock is called on an already-locked store.
 	ErrStoreAlreadyLocked = errors.New("staticpw: store is already locked")
-
-	// ErrEncryptFailed is returned when password encryption fails.
-	ErrEncryptFailed = errors.New("staticpw: encrypt failed")
-
-	// ErrDecryptFailed is returned when password decryption fails.
-	ErrDecryptFailed = errors.New("staticpw: decrypt failed")
-
-	// ErrPasswordNotEncrypted is returned when EncryptedStore reads a stored
-	// password value with no "ENC:" prefix. Every password EncryptedStore
-	// writes carries the prefix; a record without one predates encryption
-	// and cannot be read through this store (BREAKING, go-xkms compat
-	// cleanup PR5, removing the plaintext pass-through).
-	ErrPasswordNotEncrypted = errors.New("staticpw: stored password is not encrypted")
 
 	// ErrNilBarrierRegistry is returned when a nil BarrierRegistry is provided
 	// to the TenantPasswordStoreManager constructor.
