@@ -151,9 +151,8 @@ func TestBackend_NonceReuse(t *testing.T) {
 		Nonce: fixedNonce,
 	}
 
-	_, err = encrypter.Encrypt(plaintext, opts)
-	if err != nil {
-		t.Fatalf("First encryption with fixed nonce failed: %v", err)
+	if _, ok := requireEncrypt(t, encrypter, plaintext, opts); !ok {
+		return
 	}
 
 	// Second encryption with same nonce - should fail
@@ -282,9 +281,8 @@ func TestBackend_TrackingDisabled(t *testing.T) {
 	plaintext := []byte("Test message")
 
 	// First encryption
-	_, err = encrypter.Encrypt(plaintext, opts)
-	if err != nil {
-		t.Fatalf("First encryption failed: %v", err)
+	if _, ok := requireEncrypt(t, encrypter, plaintext, opts); !ok {
+		return
 	}
 
 	// Second encryption with same nonce - should succeed when tracking disabled

@@ -158,6 +158,14 @@ func TestSign_Ed25519ctx_RoundTrip(t *testing.T) {
 		Data:    data,
 		Context: sigContext,
 	})
+	if types.FIPSMode() {
+		// Ed25519ctx (RFC 8032's context-string variant) is refused
+		// outright under GODEBUG=fips140=only: FIPS 186-5 approves only
+		// "pure" Ed25519 with no context or pre-hash. crypto/ed25519
+		// reports this as a clean error, not a panic.
+		require.Error(t, err)
+		return
+	}
 	require.NoError(t, err)
 	assert.NotEmpty(t, signResp.Signature)
 
@@ -235,6 +243,12 @@ func TestVerify_Ed25519ctx_WrongContextFails(t *testing.T) {
 		Data:    data,
 		Context: []byte("context-a"),
 	})
+	if types.FIPSMode() {
+		// Ed25519ctx is refused outright under GODEBUG=fips140=only; see
+		// TestSign_Ed25519ctx_RoundTrip.
+		require.Error(t, err)
+		return
+	}
 	require.NoError(t, err)
 
 	verifyResp, err := svc.Verify(ctx, &transport.VerifyRequest{
@@ -657,7 +671,17 @@ func TestDecrypt_OAEPRejectsSHA1(t *testing.T) {
 	plaintext := []byte("the message under oaep")
 
 	ciphertext, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, plaintext, nil) //nolint:gosec // G505: the point of the test is that SHA-1 OAEP is refused
-	require.NoError(t, err)
+	if err != nil {
+		// crypto/rsa itself refuses to run SHA-1 through OAEP under
+		// GODEBUG=fips140=only, so there is no ciphertext this fixture can
+		// build to exercise this package's own ErrWeakOAEPHash refusal in
+		// that mode; the stdlib enforces the identical policy at the
+		// point this test targets one layer up from.
+		if types.FIPSMode() {
+			return
+		}
+		require.NoError(t, err)
+	}
 
 	for _, name := range []string{"SHA-1", "sha1", "1"} {
 		_, err := svc.Decrypt(context.Background(), &transport.DecryptRequest{
@@ -1320,6 +1344,15 @@ func TestEncrypt_RSA_PKCS1v15_RoundTrip(t *testing.T) {
 		KeyID:     "encrypt-rsa-pkcs1v15",
 		Plaintext: plaintext,
 	})
+	if types.FIPSMode() {
+		// This RPC's asymmetric fallback deliberately mirrors PKCS#11's
+		// CKM_RSA_PKCS mechanism -- raw PKCS#1 v1.5 encryption, no OAEP
+		// digest involved -- for the local-fallback KEK-wrap path (see
+		// servicer_crypto.go's Encrypt). crypto/rsa refuses that
+		// construction outright under GODEBUG=fips140=only.
+		require.Error(t, err)
+		return
+	}
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.Ciphertext)
 
@@ -1623,6 +1656,15 @@ func TestDecryptAsym_RSA_OAEPMismatch(t *testing.T) {
 		KeyID:      "decrypt-oaep-mismatch",
 		Ciphertext: rawEncrypt(valid),
 	})
+	if types.FIPSMode() {
+		// The counterweight itself needs PKCS#1 v1.5 decryption to
+		// succeed, which crypto/rsa refuses outright under
+		// GODEBUG=fips140=only (see TestEncrypt_RSA_PKCS1v15_RoundTrip);
+		// there is no valid v1.5 block this fixture can decrypt in that
+		// mode.
+		require.Error(t, err)
+		return
+	}
 	require.NoError(t, err)
 	assert.Equal(t, message, decResp.Plaintext)
 }

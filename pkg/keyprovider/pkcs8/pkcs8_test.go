@@ -2582,9 +2582,9 @@ func TestGenerateKey_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	key, ok := requireX25519Key(t, be, attrs)
+	if !ok {
+		return
 	}
 
 	if key == nil {
@@ -2624,14 +2624,14 @@ func TestDeriveSharedSecret_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key1, err := be.GenerateKey(context.Background(), attrs1)
-	if err != nil {
-		t.Fatalf("GenerateKey 1 failed: %v", err)
+	key1, ok := requireX25519Key(t, be, attrs1)
+	if !ok {
+		return
 	}
 
-	key2, err := be.GenerateKey(context.Background(), attrs2)
-	if err != nil {
-		t.Fatalf("GenerateKey 2 failed: %v", err)
+	key2, ok := requireX25519Key(t, be, attrs2)
+	if !ok {
+		return
 	}
 
 	// Get public keys
@@ -2943,9 +2943,8 @@ func TestPublic_X25519(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	pub, err := be.Public(context.Background(), attrs)
@@ -2972,9 +2971,8 @@ func TestDecodeKey_X25519Wrapping(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	// Retrieve the key, which should trigger decodeKey with X25519 wrapping
@@ -3003,9 +3001,9 @@ func TestStoreKey_X25519Unwrapping(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	key, err := be.GenerateKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	key, ok := requireX25519Key(t, be, attrs)
+	if !ok {
+		return
 	}
 
 	if key == nil {
@@ -3037,14 +3035,13 @@ func TestDeriveSharedSecret_X25519_WrongPublicKeyType(t *testing.T) {
 		Hash:             crypto.SHA256,
 	}
 
-	_, err := be.GenerateKey(context.Background(), x25519Attrs)
-	if err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, x25519Attrs); !ok {
+		return
 	}
 
 	// Generate RSA key to get wrong public key type
 	rsaAttrs := createRSAAttrs("test-rsa-wrong.com", 2048)
-	_, err = be.GenerateKey(context.Background(), rsaAttrs)
+	_, err := be.GenerateKey(context.Background(), rsaAttrs)
 	if err != nil {
 		t.Fatalf("GenerateKey RSA failed: %v", err)
 	}

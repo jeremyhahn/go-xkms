@@ -1254,6 +1254,12 @@ message EncryptResponse {
   // when the request's mode was "cbc" or "cbc-pad"; empty for the default
   // AEAD modes, which populate nonce instead.
   bytes iv = 4;
+  // gcm_nonce_mode mirrors transport.EncryptResponse.GCMNonceMode: "" for a
+  // caller- or RNG-supplied nonce, "random" when GODEBUG=fips140=only
+  // forced this encryption through cipher.NewGCMWithRandomNonce. Echo it
+  // back unchanged on the matching DecryptRequest; Decrypt cannot infer it
+  // from the ciphertext bytes alone.
+  string gcm_nonce_mode = 5;
 }
 
 // DecryptRequest requests decryption of data
@@ -1283,6 +1289,10 @@ message DecryptRequest {
   // carries; 0 selects the cipher's full-length tag. It must equal the
   // tag_size used to encrypt.
   int32 tag_size = 12;
+  // gcm_nonce_mode is the value the matching EncryptResponse.gcm_nonce_mode
+  // reported. Required, unchanged, to decrypt an AES-GCM ciphertext
+  // produced under GODEBUG=fips140=only.
+  string gcm_nonce_mode = 13;
 }
 
 // DecryptResponse contains the decrypted data

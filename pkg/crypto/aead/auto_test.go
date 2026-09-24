@@ -112,8 +112,34 @@ func TestSelectAESGCM_FIPSNeverSelectsChaCha(t *testing.T) {
 // pkg/quantum/mlkem512.TestNewAndCreate_RefuseUnderFIPS.
 func TestFIPSRequiresAES(t *testing.T) {
 	t.Run("no GODEBUG", func(t *testing.T) {
-		if fipsRequiresAES() {
-			t.Error("fipsRequiresAES() = true with no GODEBUG set and a non-FIPS test build, want false")
+		// crypto/fips140.Enabled is fixed when the process starts, so this
+		// cannot simply check the parent's state inline: the whole suite
+		// may itself have been invoked under GODEBUG=fips140=only (as
+		// go-xkms#23 requires), which would make this assertion fail for a
+		// reason that has nothing to do with fipsRequiresAES. Re-exec with
+		// GODEBUG explicitly cleared, mirroring the on/only cases below.
+		if os.Getenv("XKMS_FIPS_SUBPROCESS") == "1" {
+			if fipsRequiresAES() {
+				t.Fatal("fipsRequiresAES() = true with no GODEBUG set, want false")
+			}
+			return
+		}
+
+		env := make([]string, 0, len(os.Environ()))
+		for _, kv := range os.Environ() {
+			if strings.HasPrefix(kv, "GODEBUG=") {
+				continue
+			}
+			env = append(env, kv)
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestFIPSRequiresAES/no_GODEBUG", "-test.v")
+		cmd.Env = append(env, "XKMS_FIPS_SUBPROCESS=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("no-GODEBUG subprocess failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), "PASS") {
+			t.Errorf("no-GODEBUG subprocess did not pass:\n%s", out)
 		}
 	})
 

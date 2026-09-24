@@ -68,8 +68,10 @@ func TestDeriveECDHWithX25519_LowOrderPoint(t *testing.T) {
 	sb := newGapsBackend(t)
 	defer func() { _ = sb.Close() }()
 
-	rawPriv, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	rawPriv, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 	wrapped, err := x25519.NewPrivateKeyStorage(rawPriv)
 	require.NoError(t, err)
 
