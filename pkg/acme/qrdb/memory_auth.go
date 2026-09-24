@@ -142,7 +142,7 @@ func (c *memoryUserClient) CreateUser(_ context.Context, req *db.CreateUserReque
 		Name:      req.Name,
 		TenantID:  req.TenantID,
 		RoleIDs:   req.RoleIDs,
-		Enabled:   true,
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -257,7 +257,7 @@ func (c *memoryUserClient) EnableUser(_ context.Context, id uint64) error {
 	if !ok {
 		return errUserNotFound
 	}
-	user.Enabled = true
+	user.Lifecycle = string(qrdbsdk.LifecycleActive)
 	return nil
 }
 
@@ -268,7 +268,7 @@ func (c *memoryUserClient) DisableUser(_ context.Context, id uint64) error {
 	if !ok {
 		return errUserNotFound
 	}
-	user.Enabled = false
+	user.Lifecycle = string(qrdbsdk.LifecycleDisabled)
 	return nil
 }
 

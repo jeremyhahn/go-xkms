@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -312,7 +313,7 @@ func TestGRPC_CreateTenantUser_Success(t *testing.T) {
 			Username:  "alice",
 			TenantID:  "tenant-1",
 			RoleIDs:   []string{"role-1", "role-2"},
-			Enabled:   true,
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 			System:    false,
 			CreatedAt: "2025-01-01T00:00:00Z",
 			UpdatedAt: "2025-01-01T00:00:00Z",
@@ -369,12 +370,12 @@ func TestGRPC_CreateTenantUser_Error(t *testing.T) {
 func TestGRPC_GetTenantUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:       1,
-			Username: "alice",
-			TenantID: "tenant-1",
-			RoleIDs:  []string{"role-1"},
-			Enabled:  true,
-			System:   true,
+			ID:        1,
+			Username:  "alice",
+			TenantID:  "tenant-1",
+			RoleIDs:   []string{"role-1"},
+			Lifecycle: string(qrdbsdk.LifecycleActive),
+			System:    true,
 		},
 	}
 	srv := NewAdminServiceServer(&mockAdminService{}, mockTenant, newTestLogger())
@@ -428,7 +429,7 @@ func TestGRPC_UpdateTenantUser_Success(t *testing.T) {
 			Username:  "alice-updated",
 			TenantID:  "tenant-1",
 			RoleIDs:   []string{"role-1", "role-3"},
-			Enabled:   true,
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 			UpdatedAt: "2025-06-01T00:00:00Z",
 		},
 	}
@@ -525,8 +526,8 @@ func TestGRPC_ListTenantUsers_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		users: &db.ListUsersResponse{
 			Users: []*db.User{
-				{ID: 1, Username: "alice", TenantID: "tenant-1", Enabled: true},
-				{ID: 2, Username: "bob", TenantID: "tenant-1", Enabled: false},
+				{ID: 1, Username: "alice", TenantID: "tenant-1", Lifecycle: string(qrdbsdk.LifecycleActive)},
+				{ID: 2, Username: "bob", TenantID: "tenant-1", Lifecycle: string(qrdbsdk.LifecycleDisabled)},
 			},
 			Total:   2,
 			HasMore: true,
@@ -615,7 +616,7 @@ func TestConvertDBUserToProto_Success(t *testing.T) {
 		Username:  "alice",
 		TenantID:  "tenant-1",
 		RoleIDs:   []string{"role-1", "role-2"},
-		Enabled:   true,
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 		System:    false,
 		CreatedAt: "2025-01-01T00:00:00Z",
 		UpdatedAt: "2025-06-01T00:00:00Z",
@@ -1104,11 +1105,11 @@ func TestMCP_ListRoles_ServiceError(t *testing.T) {
 func TestMCP_CreateUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:       1,
-			Username: "alice",
-			TenantID: "tenant-1",
-			RoleIDs:  []string{"role-1"},
-			Enabled:  true,
+			ID:        1,
+			Username:  "alice",
+			TenantID:  "tenant-1",
+			RoleIDs:   []string{"role-1"},
+			Lifecycle: string(qrdbsdk.LifecycleActive),
 		},
 	}
 	srv := newTestServer(&mockAdminService{}, mockTenant)

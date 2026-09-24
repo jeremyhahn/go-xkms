@@ -388,7 +388,7 @@ func TestMemoryUserClient_CreateAndGetUser(t *testing.T) {
 			require.NotNil(t, user)
 			assert.Equal(t, tt.wantUser, user.Username)
 			assert.Equal(t, tt.wantTID, user.TenantID)
-			assert.True(t, user.Enabled)
+			assert.True(t, (user.Lifecycle == string(qrdbsdk.LifecycleActive)))
 			assert.NotEmpty(t, user.CreatedAt)
 
 			got, err := c.GetUser(ctx, user.ID)
@@ -535,14 +535,14 @@ func TestMemoryUserClient_EnableUser(t *testing.T) {
 
 	got, err := c.GetUser(ctx, user.ID)
 	require.NoError(t, err)
-	assert.False(t, got.Enabled)
+	assert.False(t, (got.Lifecycle == string(qrdbsdk.LifecycleActive)))
 
 	err = c.EnableUser(ctx, user.ID)
 	require.NoError(t, err)
 
 	got, err = c.GetUser(ctx, user.ID)
 	require.NoError(t, err)
-	assert.True(t, got.Enabled)
+	assert.True(t, (got.Lifecycle == string(qrdbsdk.LifecycleActive)))
 }
 
 func TestMemoryUserClient_EnableUser_NotFound(t *testing.T) {

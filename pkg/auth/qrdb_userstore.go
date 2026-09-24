@@ -16,6 +16,7 @@ package auth
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -62,6 +63,7 @@ func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint st
 		Email:    u.Email,
 		Role:     role,
 		TenantID: u.TenantID,
-		Enabled:  u.Enabled,
+		// Lifecycle is qrdb's only account state; only active authenticates.
+		Enabled: u.Lifecycle == string(qrdbsdk.LifecycleActive),
 	}, nil
 }
