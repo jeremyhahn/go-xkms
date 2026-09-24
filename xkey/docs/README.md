@@ -20,7 +20,10 @@ tell.
 | [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | [`../../docs/browser/README.md`](../../docs/browser/README.md) — stale on the Firefox mechanism; see `architecture.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
+| [autofill](autofill/) | Browser extension credential/TOTP autofill: native messaging, extension pairing, CTAP2 assertion verification, policy | `autofill/README.md`, `autofill/compliance.md`, `autofill/extension.md`, `autofill/policy.md` |
+| [oath](oath/) | TOTP/HOTP credential management, QR scanning, barrier-backed storage | `oath/README.md` |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
+| [password](password/) | Static password storage, folders, browser-autofill metadata, xkmsd-backed session access modes | `password/README.md` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
 | [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
@@ -47,6 +50,8 @@ path is not; where they disagree, the feature folder wins.
 
 Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `oath/`,
 `password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
+Still owed a folder: `ble/`, `device/`, `fido2/`, `gui/`, `luks/`,
+`phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
 
@@ -238,13 +243,21 @@ xkey fido2 --cdp --cdp-port 9222
 - [Overview](ssh/README.md) -- SSH agent with standalone and server modes
 
 ### [OATH](oath/)
-- [Overview](oath/README.md) -- TOTP/HOTP with QR scanning
+- [Architecture](oath/architecture.md) -- credential model, stores, QR scanning
+- [Engineering](oath/engineering.md) -- exported surface, invariants, errors, tests
+- [CLI](oath/cli.md) -- `xkey oath` verbs
+- [API](oath/api.md) -- GUI/SDK surface (no network transport)
+- [User Guide](oath/user.md) -- add, generate, list, migrate credentials
 
 ### [OIDC](oidc/)
 - [Overview](oidc/README.md) -- OpenID Connect authentication flows
 
 ### [Password](password/)
-- [Overview](password/README.md) -- Static password management with encryption and access modes
+- [Architecture](password/architecture.md) -- store hierarchy, access modes, xkmsd session split
+- [Engineering](password/engineering.md) -- exported surface, invariants, errors, tests
+- [CLI](password/cli.md) -- `xkey password`/`xkey touch` verbs
+- [API](password/api.md) -- local IPC and the xkmsd session transport
+- [User Guide](password/user.md) -- store, retrieve, type, and manage sessions
 
 ### [PIV](piv/)
 - [Overview](piv/README.md) -- Smart card certificate management
@@ -300,9 +313,11 @@ xkey fido2 --cdp --cdp-port 9222
 - [CLI Reference](usage/cli/README.md) -- Complete CLI command reference
 
 ### [AutoFill](autofill/)
-- [Overview](autofill/README.md) -- Browser extension architecture
-- [Extension](autofill/extension.md) -- Extension implementation
-- [Policy](autofill/policy.md) -- AutoFill policy management
+- [Architecture](autofill/architecture.md) -- native messaging, pairing, CTAP2 verification, IPC dispatch
+- [Engineering](autofill/engineering.md) -- exported surface, invariants, errors, tests
+- [CLI](autofill/cli.md) -- `xkey extension` verbs
+- [API](autofill/api.md) -- native messaging, IPC, and GUI-binding transports
+- [User Guide](autofill/user.md) -- install, pair, fill, and configure
 
 ### [xKeySigner](xkeysigner/)
 - [Overview](xkeysigner/README.md) -- crypto.Signer via IPC
