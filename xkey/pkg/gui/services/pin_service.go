@@ -259,16 +259,17 @@ func (s *PINService) SetSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 
 	if err := svc.SetSOPIN(currentSOPIN, newSOPIN); err != nil {
 		err = mapSOPINUnsupportedErr(err, svc.Strategy())
-		s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
 			"operation": "set",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
-	s.logPINOperation(audit.OpSOPINChanged, true, nil, map[string]any{
+	return s.logPINOperation(audit.OpSOPINChanged, true, nil, map[string]any{
 		"operation": "set",
 	})
-	return nil
 }
 
 // SetUserPIN sets the user PIN. Requires SO PIN authorization.
@@ -288,17 +289,21 @@ func (s *PINService) SetUserPIN(soPIN, newUserPIN string) (retErr error) {
 	}
 
 	if err := svc.SetUserPIN(soPIN, newUserPIN); err != nil {
-		s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 			"operation": "set",
 			"type":      "user_pin",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
-	s.logPINOperation(audit.OpPINChanged, true, nil, map[string]any{
+	if auditErr := s.logPINOperation(audit.OpPINChanged, true, nil, map[string]any{
 		"operation": "set",
 		"type":      "user_pin",
-	})
+	}); auditErr != nil {
+		return auditErr
+	}
 
 	// Setting the user PIN requires and just verified the SO PIN, so this
 	// carries the same authority as an explicit lockout reset (#272): an
@@ -324,16 +329,17 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 
 	if err := svc.ChangeSOPIN(currentSOPIN, newSOPIN); err != nil {
 		err = mapSOPINUnsupportedErr(err, svc.Strategy())
-		s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
 			"operation": "change",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
-	s.logPINOperation(audit.OpSOPINChanged, true, nil, map[string]any{
+	return s.logPINOperation(audit.OpSOPINChanged, true, nil, map[string]any{
 		"operation": "change",
 	})
-	return nil
 }
 
 // ChangeUserPIN changes the user PIN. The FIDO2 PIN hash is updated
@@ -353,10 +359,12 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 
 	if pol := s.policy.Load(); pol != nil && !pol.UserCanChangeOwnPIN {
 		err := &PolicyDeniedError{Field: "user_can_change_own_pin"}
-		s.logPINOperation(audit.OpPolicyDenied, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpPolicyDenied, false, err, map[string]any{
 			"operation": "change",
 			"type":      "user_pin",
-		})
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
 		return err
 	}
 
@@ -369,28 +377,34 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 
 	if err := svc.ChangeUserPIN(currentUserPIN, newUserPIN); err != nil {
 		s.log.Warn("ChangeUserPIN: failed", "strategy", svc.Strategy(), "error", err)
-		s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 			"operation": "change",
 			"type":      "user_pin",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
 	s.log.Info("ChangeUserPIN: PIN changed successfully", "strategy", svc.Strategy())
-	s.logPINOperation(audit.OpPINChanged, true, nil, map[string]any{
+	if auditErr := s.logPINOperation(audit.OpPINChanged, true, nil, map[string]any{
 		"operation": "change",
 		"type":      "user_pin",
-	})
+	}); auditErr != nil {
+		return auditErr
+	}
 
 	// Re-seal the barrier root key with the new password so that
 	// the next unseal after restart uses the updated credential.
 	if bsvc := s.barrierSvc.Load(); bsvc != nil {
 		if err := bsvc.ChangePassword(newUserPIN); err != nil {
 			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
-			s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 				"operation": "barrier_reseal",
 				"type":      "user_pin",
-			})
+			}); auditErr != nil {
+				return auditErr
+			}
 			return ErrBarrierResealFailed
 		}
 		s.log.Info("ChangeUserPIN: barrier re-sealed with new PIN")
@@ -410,7 +424,9 @@ func (s *PINService) VerifyUserPIN(userPIN string) (retErr error) {
 	svc, err := s.getPINService()
 	if err != nil {
 		s.log.Warn("VerifyUserPIN: no PIN service configured", "error", err)
-		s.logPINOperation(audit.OpPINFailed, false, err, nil)
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, nil); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
@@ -422,24 +438,27 @@ func (s *PINService) VerifyUserPIN(userPIN string) (retErr error) {
 		s.log.Warn("VerifyUserPIN: verification failed",
 			"error", err,
 			"strategy", svc.Strategy())
-		s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 			"type": "user_pin",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		// Check if this verification failure resulted in lockout.
 		if status := svc.GetLockoutStatus(); status != nil && status.IsLocked {
-			s.logPINOperation(audit.OpPINLocked, false, nil, map[string]any{
+			if auditErr := s.logPINOperation(audit.OpPINLocked, false, nil, map[string]any{
 				"type":            "user_pin",
 				"failed_attempts": status.FailedAttempts,
-			})
+			}); auditErr != nil {
+				return auditErr
+			}
 		}
 		return err
 	}
 
 	s.log.Debug("VerifyUserPIN: verification succeeded")
-	s.logPINOperation(audit.OpPINVerified, true, nil, map[string]any{
+	return s.logPINOperation(audit.OpPINVerified, true, nil, map[string]any{
 		"type": "user_pin",
 	})
-	return nil
 }
 
 // VerifySOPIN verifies the provided SO PIN.
@@ -453,22 +472,25 @@ func (s *PINService) VerifySOPIN(soPIN string) (retErr error) {
 
 	svc, err := s.getPINService()
 	if err != nil {
-		s.logPINOperation(audit.OpSOPINFailed, false, err, nil)
+		if auditErr := s.logPINOperation(audit.OpSOPINFailed, false, err, nil); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
 	if err := svc.VerifySOPIN(soPIN); err != nil {
 		err = mapSOPINUnsupportedErr(err, svc.Strategy())
-		s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
+		if auditErr := s.logPINOperation(audit.OpSOPINFailed, false, err, map[string]any{
 			"type": "so_pin",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
-	s.logPINOperation(audit.OpSOPINVerified, true, nil, map[string]any{
+	return s.logPINOperation(audit.OpSOPINVerified, true, nil, map[string]any{
 		"type": "so_pin",
 	})
-	return nil
 }
 
 // GetLockoutStatus returns the current lockout status from the backend.
@@ -541,15 +563,17 @@ func (s *PINService) VerifyFIDO2Hash(hash []byte) bool {
 	return svc.VerifyFIDO2Hash(hash)
 }
 
-// logPINOperation logs a PIN operation to the audit log.
-func (s *PINService) logPINOperation(op audit.OperationType, success bool, err error, details map[string]any) {
+// logPINOperation logs a PIN operation to the audit log. Every PIN
+// operation is SeveritySecurity, so the caller must propagate a non-nil
+// return and fail the request rather than proceed unaudited.
+func (s *PINService) logPINOperation(op audit.OperationType, success bool, err error, details map[string]any) error {
 	logger := s.getAuditLogger()
 	if logger == nil {
-		return
+		return nil
 	}
 	backend := "unknown"
 	if svc := s.pinSvc.Load(); svc != nil {
 		backend = string(svc.Strategy())
 	}
-	logger.LogPINOperation(op, backend, success, err, details)
+	return logger.LogPINOperation(op, backend, success, err, details)
 }

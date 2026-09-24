@@ -104,21 +104,30 @@ type sealTestAuditLogger struct {
 	entries []audit.Entry
 }
 
-func (l *sealTestAuditLogger) Log(e audit.Entry) {
+func (l *sealTestAuditLogger) Log(e audit.Entry) error {
 	e.Timestamp = time.Now()
 	l.entries = append(l.entries, e)
+	return nil
 }
-func (l *sealTestAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) {
+func (l *sealTestAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *sealTestAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (l *sealTestAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *sealTestAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {
+func (l *sealTestAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (l *sealTestAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) {}
-func (l *sealTestAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *sealTestAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) error { return nil }
+func (l *sealTestAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *sealTestAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {}
-func (l *sealTestAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *sealTestAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
 }
-func (l *sealTestAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {
+func (l *sealTestAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
+}
+func (l *sealTestAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
 }
