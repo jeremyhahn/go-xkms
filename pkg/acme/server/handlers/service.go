@@ -256,8 +256,14 @@ type Params struct {
 
 // CAAValidatorInterface defines the interface for CAA validation.
 // This allows for dependency injection and testing with mock validators.
+//
+// accountURI is the requesting ACME account's URI and validationMethod is
+// the RFC 8657 method-label of the challenge that validated the
+// identifier's authorization (e.g. "http-01"); both are enforced against a
+// matching issue/issuewild record's accounturi and validationmethods
+// parameters (RFC 8657).
 type CAAValidatorInterface interface {
-	Validate(ctx context.Context, domain string, isWildcard bool) error
+	Validate(ctx context.Context, domain string, isWildcard bool, accountURI string, validationMethod string) error
 }
 
 // RestService implements the ACME REST service handlers.
