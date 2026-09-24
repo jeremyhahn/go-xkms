@@ -41,8 +41,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
-	"strconv"
 	"strings"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -73,11 +71,11 @@ var (
 	ErrIdentityCeremonyExcluded = errors.New("mcp: WebAuthn registration and authentication are excluded from the MCP transport by design; use the REST or gRPC transport")
 )
 
-// RPCError is a typed error for a failed MCP tool call: either a tool-level
-// failure (a CallToolResult with IsError=true, whose text content becomes
-// Message) or a legacy-formatted server error text that still embeds a
-// JSON-RPC 2.0 code. See newToolError for how Code is recovered from the
-// tool's text content.
+// RPCError is a typed error for a failed MCP tool call whose result carried
+// go-qrdb's wire.ErrorEnvelope in its StructuredContent: Code is the
+// envelope's wire.Code translated onto xkms's JSON-RPC error vocabulary by
+// classifyToolError (status.go), and Message is the envelope's message,
+// never a guess parsed out of prose.
 type RPCError struct {
 	Code    int
 	Message string
@@ -86,6 +84,23 @@ type RPCError struct {
 // Error implements the error interface.
 func (e *RPCError) Error() string {
 	return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message)
+}
+
+// EnvelopeMissingError is returned when an MCP tool call fails but its
+// result carries no go-qrdb wire.ErrorEnvelope in StructuredContent. The
+// unified server always stamps one onto a failing xkms tool result (see
+// pkg/apimodule/module_mcp.go's mcpToolHandler and codedToolResult), so a
+// missing envelope is not a condition this SDK degrades into a guess parsed
+// from text — it means the response did not come from that contract, and is
+// reported as a protocol error instead (go-qrdb#438, go-xkms#797).
+type EnvelopeMissingError struct {
+	Tool    string
+	Message string
+}
+
+// Error implements the error interface.
+func (e *EnvelopeMissingError) Error() string {
+	return fmt.Sprintf("mcp: tool %s failed with no error envelope: %s", e.Tool, e.Message)
 }
 
 // MarshalError is a typed error for JSON marshaling failures.
@@ -628,67 +643,14 @@ func (t *Transport) RequestStream(ctx context.Context, _ string, _ interface{}) 
 	return nil, transport.ErrStreamNotSupported
 }
 
-// rpcErrorPattern recovers a JSON-RPC-style error code from a tool-error
-// message, for a server that still embeds the legacy "<label> error <code>:
-// <message>" text (e.g. the format the previous TCP transport's RPCError
-// and jsonrpcError types rendered) inside the MCP tool result.
-var rpcErrorPattern = regexp.MustCompile(`^(?:JSON-RPC|rpc) error (-?\d+): (.*)$`)
-
-// toolErrorCode classifies a tool-error message into a JSON-RPC 2.0 error
-// code by best-effort keyword matching. It mirrors the sentinel-to-code
-// mapping the xkms MCP server applies server-side when it turns a service
-// error into wire text (see pkg/api/mcp/errors_keyops.go mapKeyOpError):
-// not-found and validation failures read back as Invalid params, capability
-// gaps and unsupported operations read back as Method not found, and
-// authorization failures read back as their dedicated xkms extension codes.
-// Anything unrecognized is an Internal error, the same default the old
-// transport used for opaque server failures.
-func toolErrorCode(message string) int {
-	lower := strings.ToLower(message)
-	switch {
-	case strings.Contains(lower, "not supported"), strings.Contains(lower, "unimplemented"), strings.Contains(lower, "method not found"):
-		return xkmsmcp.ErrCodeMethodNotFound
-	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "unauthenticated"):
-		return xkmsmcp.ErrCodeUnauthorized
-	case strings.Contains(lower, "forbidden"), strings.Contains(lower, "permission denied"):
-		return xkmsmcp.ErrCodeForbidden
-	case strings.Contains(lower, "unavailable"):
-		return xkmsmcp.ErrCodeServiceUnavailable
-	case strings.Contains(lower, "not found"), strings.Contains(lower, "invalid"), strings.Contains(lower, "validation"):
-		return xkmsmcp.ErrCodeInvalidParams
-	default:
-		return xkmsmcp.ErrCodeInternalError
-	}
-}
-
-// newToolError converts a tool-level MCP error result (IsError=true) into an
-// *RPCError. The MCP tool surface carries the failure as a text message
-// rather than a structured JSON-RPC error object, so the code is recovered
-// two ways: rpcErrorPattern first, in case the server still embeds a
-// legacy-formatted code; otherwise toolErrorCode classifies the message by
-// keyword, matching xkms's own sentinel-to-code table.
-func newToolError(result *mcp.CallToolResult) error {
-	message := "tool call failed"
-	if len(result.Content) > 0 {
-		if text, ok := mcp.AsTextContent(result.Content[0]); ok && text.Text != "" {
-			message = text.Text
-		}
-	}
-	if m := rpcErrorPattern.FindStringSubmatch(message); m != nil {
-		if code, err := strconv.Atoi(m[1]); err == nil {
-			return &RPCError{Code: code, Message: m[2]}
-		}
-	}
-	return &RPCError{Code: toolErrorCode(message), Message: message}
-}
-
 // rpcCall invokes method as an MCP tool call. params, when non-nil, is
 // marshaled to JSON and passed as the tool's single "params_json" string
 // argument, exactly as the legacy JSON-RPC request carried it. On success,
 // the tool's first text content item is unmarshaled into result (when
-// result is non-nil); a tool-level failure (IsError=true) becomes an
-// *RPCError, and any failure to complete the tool call at all becomes a
-// *ReceiveError.
+// result is non-nil); a tool-level failure (IsError=true) is classified by
+// classifyToolError (status.go) into an *RPCError, or into an
+// *EnvelopeMissingError when the result carries no go-qrdb wire envelope,
+// and any failure to complete the tool call at all becomes a *ReceiveError.
 func (t *Transport) rpcCall(ctx context.Context, method string, params interface{}, result interface{}) error {
 	if !t.connected {
 		return ErrNotConnected
@@ -703,9 +665,10 @@ func (t *Transport) rpcCall(ctx context.Context, method string, params interface
 		args["params_json"] = string(data)
 	}
 
+	toolName := xkmsmcp.ToolName(method)
 	toolResult, err := t.client.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      xkmsmcp.ToolName(method),
+			Name:      toolName,
 			Arguments: args,
 		},
 	})
@@ -714,7 +677,7 @@ func (t *Transport) rpcCall(ctx context.Context, method string, params interface
 	}
 
 	if toolResult.IsError {
-		return newToolError(toolResult)
+		return classifyToolError(toolName, toolResult)
 	}
 
 	if result == nil || len(toolResult.Content) == 0 {
