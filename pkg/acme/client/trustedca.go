@@ -379,6 +379,7 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 
 	// Set up rate limiter
 	rateLimiter := server.NewRateLimiter(tca.rateLimitRequests, tca.rateLimitInterval)
+	rateLimiter.SetAuditLogger(auditLog)
 	rateLimitMiddleware := rateLimiter.MiddlewareFunc(server.ClientID)
 
 	// Set up ACME router

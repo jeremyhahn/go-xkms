@@ -515,7 +515,6 @@ func TestOperationType_Constants(t *testing.T) {
 		OpUserPresenceConfirmed,
 		OpUserPresenceTimedOut,
 		OpUserPresenceCancelled,
-		OpTouchEventReceived,
 
 		// Browser extension / native messaging operations.
 		OpExtensionHandshake,
@@ -536,12 +535,8 @@ func TestOperationType_Constants(t *testing.T) {
 
 		// OATH operations.
 		OpOATHCredentialCreated,
-		OpOATHCredentialAccessed,
-		OpOATHCredentialUpdated,
 		OpOATHCredentialDeleted,
 		OpOATHCodeGenerated,
-		OpOATHCodeValidated,
-		OpOATHCodeInvalid,
 
 		// IPC operations.
 		OpIPCMessageDispatched,

@@ -18,6 +18,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 )
 
 // ---------------------------------------------------------------------------
@@ -525,6 +526,11 @@ var OpenDeviceTransport = tpm2.OpenDeviceTransport
 
 // OpenSimulator opens a TPM simulator for testing.
 var OpenSimulator = tpm2.OpenSimulator
+
+// EnrollSimulatorPlatformSRK enrolls the Platform SRK on a freshly
+// provisioned simulator or swtpm, for tests. Provision creates only the
+// TCG-standard keys, and xkms seals under the Platform SRK.
+var EnrollSimulatorPlatformSRK = tpm2test.EnrollPlatformSRK
 
 // NewPlatformKeyStore creates a new PlatformKeyStore with integrated TPM PIN management.
 var NewPlatformKeyStore = tpm2.NewPlatformKeyStore

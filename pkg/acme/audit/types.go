@@ -70,8 +70,14 @@ const (
 	EventCertificateSigned  EventType = "CERTIFICATE_SIGNED"
 
 	// CA Lifecycle Events
+	//
+	// EventCAKeyRotated was removed (issue #688): go-xkms has no CA signing
+	// key rotation operation anywhere in the codebase (pkg/ca/ca.go issues
+	// and signs certificates and generates CRLs, but never rotates its own
+	// key), so there was no call site to emit it from. If CA key rotation is
+	// added later, add the event back alongside it rather than reserving it
+	// unused.
 	EventCAInitialized  EventType = "CA_INITIALIZED"
-	EventCAKeyRotated   EventType = "CA_KEY_ROTATED"
 	EventCACRLGenerated EventType = "CA_CRL_GENERATED"
 	EventCACrossSign    EventType = "CA_CROSS_SIGN"
 

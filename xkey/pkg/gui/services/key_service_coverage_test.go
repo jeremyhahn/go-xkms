@@ -37,23 +37,34 @@ type keyCoverageAuditLogger struct {
 	entries []audit.Entry
 }
 
-func (l *keyCoverageAuditLogger) Log(e audit.Entry) { l.entries = append(l.entries, e) }
-func (l *keyCoverageAuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, err error, durationMs int64) {
+func (l *keyCoverageAuditLogger) Log(e audit.Entry) error {
+	l.entries = append(l.entries, e)
+	return nil
+}
+func (l *keyCoverageAuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, err error, durationMs int64) error {
 	l.Log(audit.Entry{Operation: op, Backend: backend, KeyID: keyID, Success: success})
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (l *keyCoverageAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {
+func (l *keyCoverageAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) {
+func (l *keyCoverageAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) error {
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *keyCoverageAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {
+func (l *keyCoverageAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *keyCoverageAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *keyCoverageAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {
+func (l *keyCoverageAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
 }
 
 // ---------------------------------------------------------------------------

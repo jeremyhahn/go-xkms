@@ -118,23 +118,48 @@ func stripTCGEKQuirks(cert *x509.Certificate) {
 	cert.UnhandledCriticalExtensions = filtered
 }
 
-// requireTCGEKCertificateEKU enforces that cert carries the
+// hasTCGEKCertificateEKU reports whether cert carries the
 // tcg-kp-EKCertificate extended key usage (2.23.133.8.1) -- the marker the
 // TCG EK Credential Profile defines to identify a certificate as a genuine
 // TPM endorsement key credential -- or the anyExtendedKeyUsage purpose that
-// subsumes it. A chain to a trusted root is not, by itself, evidence that
-// the leaf is an EK certificate rather than some other certificate the same
-// root happened to issue.
-func requireTCGEKCertificateEKU(cert *x509.Certificate) error {
+// subsumes it.
+//
+// The OID belongs inside the certificate's standard ExtKeyUsage extension
+// (RFC 5280 section 4.2.1.12), which is where a conformant manufacturer EK
+// certificate and this CA's own EK issuance (IssueEKCertificate, via the
+// tcg-ek profile's UnknownExtKeyUsage) both put it. The fallback to
+// cert.Extensions recognises a standalone extension under the OID's own Id
+// too, the non-standard encoding some manufacturer certificates use and
+// ImportEndorsementKeyCertificate has always tolerated.
+func hasTCGEKCertificateEKU(cert *x509.Certificate) bool {
+	if cert == nil {
+		return false
+	}
 	for _, ku := range cert.ExtKeyUsage {
 		if ku == x509.ExtKeyUsageAny {
-			return nil
+			return true
 		}
 	}
 	for _, oid := range cert.UnknownExtKeyUsage {
 		if oid.Equal(OIDTCGKpEKCertificate) {
-			return nil
+			return true
 		}
+	}
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(OIDTCGKpEKCertificate) {
+			return true
+		}
+	}
+	return false
+}
+
+// requireTCGEKCertificateEKU enforces that cert carries the
+// tcg-kp-EKCertificate extended key usage. A chain to a trusted root is not,
+// by itself, evidence that the leaf is an EK certificate rather than some
+// other certificate the same root happened to issue.
+func requireTCGEKCertificateEKU(cert *x509.Certificate) error {
+	if hasTCGEKCertificateEKU(cert) {
+		return nil
 	}
 	return &errs.Detail{
 		Err:    ErrTCGEKCertUntrusted,

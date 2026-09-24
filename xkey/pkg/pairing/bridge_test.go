@@ -1966,29 +1966,36 @@ type mockAuditLogger struct {
 	keyOps    []string
 }
 
-func (m *mockAuditLogger) Log(_ audit.Entry) {}
-func (m *mockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) {
+func (m *mockAuditLogger) Log(_ audit.Entry) error { return nil }
+func (m *mockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) error {
+	return nil
 }
-func (m *mockAuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]any) {}
+func (m *mockAuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]any) error { return nil }
 
-func (m *mockAuditLogger) LogKeyOperation(op audit.OperationType, _, _ string, _ bool, _ error, _ int64) {
+func (m *mockAuditLogger) LogKeyOperation(op audit.OperationType, _, _ string, _ bool, _ error, _ int64) error {
 	m.keyOps = append(m.keyOps, string(op))
+	return nil
 }
 
-func (m *mockAuditLogger) LogCryptoOperation(op audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) {
+func (m *mockAuditLogger) LogCryptoOperation(op audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) error {
 	m.cryptoOps = append(m.cryptoOps, string(op))
+	return nil
 }
 
-func (m *mockAuditLogger) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) {
+func (m *mockAuditLogger) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
 
-func (m *mockAuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) {
+func (m *mockAuditLogger) LogTPMOperation(_ audit.OperationType, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
 
-func (m *mockAuditLogger) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) {
+func (m *mockAuditLogger) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
 
-func (m *mockAuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) {
+func (m *mockAuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) error {
+	return nil
 }
 
 func TestBridge_Sign_WithAuditLogger(t *testing.T) {

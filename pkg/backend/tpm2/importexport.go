@@ -59,11 +59,22 @@ type duplicationBlob struct {
 // (labeled encapsulation under the parent storage key), not an RSA family.
 const importExportAlgorithm = backend.WrappingAlgorithm("TPM2_DUPLICATE")
 
-// srkPublicContents reads the Storage Root Key public area and returns its
+// srkPublicContents reads the public area of this backend's own storage
+// parent (b.srkAttrs -- the Platform SRK, see NewBackend) and returns its
 // TPMTPublic together with its Name, used to build the labeled-encapsulation
 // key for duplication and to authorize Import.
+//
+// This deliberately reads b.srkAttrs.TPMAttributes.Handle via ReadHandle
+// rather than calling b.tpm.SRKPublic(), which is pinned to the TCG-standard
+// Shared SRK (TPM2.SSRKPublic) regardless of which key this backend actually
+// uses as its parent. Reading the wrong key here would encapsulate WrapKey's
+// duplication seed to a public key different from the parent ImportKey and
+// UnwrapKey authorize against, and the TPM rejects the resulting mismatch.
 func (b *Backend) srkPublicContents() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
-	name, pub, err := b.tpm.SRKPublic()
+	if b.srkAttrs == nil || b.srkAttrs.TPMAttributes == nil {
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, &errs.Detail{Err: ErrUnsupportedOperation, Detail: "backend has no storage parent attributes"}
+	}
+	name, pub, err := b.tpm.ReadHandle(b.srkAttrs.TPMAttributes.Handle)
 	if err != nil {
 		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to read SRK public: %v", err)}
 	}

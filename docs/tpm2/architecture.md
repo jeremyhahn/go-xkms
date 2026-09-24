@@ -195,6 +195,60 @@ configuration shape, configured independently
   after a few hours".
 - **Hierarchy passwords are the platform's**, not the KMS's — which is why the
   TPM2 PIN backend has no SO PIN.
+- **The Owner hierarchy auth is never stored in configuration, for either
+  SRK — it is an operator input supplied at the moment of the operation.**
+  No Security Officer PIN means the Owner hierarchy carries empty auth, the
+  TCG factory-default state; `SRKConfig` (the Shared SRK) and
+  `PlatformSRKConfig` (the Platform SRK, this library's own storage parent,
+  handle `0x81000002`) both carry no hierarchy-auth field for this reason.
+  When an operator has set an SO PIN, it reaches `TPM2_CreatePrimary`,
+  `TPM2_EvictControl` and `TPM2_HierarchyChangeAuth` only as an explicit
+  function argument at the moment of the call — `soPIN` on
+  `Install`/`Provision`/`ProvisionOwner` for the Shared SRK, and the same
+  `soPIN` argument threaded through
+  `PlatformKeyStore.Initialize`/`EnrollPlatformSRK`/`ensureSRKAuth` for the
+  Platform SRK — never a config literal, and never persisted between calls.
+  `PlatformSRKAttributesFromConfig` reflects this: it always returns empty
+  `TPMAttributes.HierarchyAuth`, even when the SSRK config it borrows
+  algorithm and key parameters from carries a (runtime-supplied) value of its
+  own — the two keys' owner-hierarchy authorizations are never the same Go
+  value, only, at any moment, potentially the same TPM-level secret if the
+  caller happens to pass it to both calls.
+  `pkg/backend/tpm2`, which uses the Platform SRK as its own working key
+  precisely because that key does not need to follow the TCG-standard SSRK
+  workflow, never carries a hierarchy-auth field of its own for the same
+  reason and never falls back to the Shared SRK when the Platform SRK is
+  unavailable — construction fails instead.
+- **The Platform SRK's own authorization value (its `Password`, not its
+  owner-hierarchy auth) is the user PIN**, supplied the same way — as an
+  argument to `Initialize`/`EnrollPlatformSRK`/`ChangeAuth`/`VerifyAuth` —
+  never a config literal or a compiled-in default.
+- **Configuration is the source of truth for whether the Platform SRK is
+  platform-policy bound, on every path that resolves it.**
+  `TPM2.PlatformSRKAttributes` has two paths to the same answer: when a
+  `PlatformKeyStore` is attached (`TPM2.SetPlatformKeyStore`) it syncs
+  `PlatformPolicy` from the key store's own attrs; when none is attached —
+  the state an unattended daemon boot is in, since nothing in `pkg/server` or
+  `pkg/seal` calls `SetPlatformKeyStore` (only the interactive `xkey` GUI
+  does) — it calls `PlatformSRKAttributesFromConfig` itself, the same
+  function `PlatformKeyStore` uses, rather than leaving `PlatformPolicy` at
+  the Go zero value the way a bare `TPM2.KeyAttributes` read would (that read
+  has no configuration in scope, and deliberately does not infer the policy
+  from the object's read-back `AuthPolicy` either — that would let an
+  unrelated object's coincidentally-matching `AuthPolicy` silently select the
+  PCR branch). `defaultSealKeyAttributes`/`defaultUnsealKeyAttributes` — what
+  `TPM2.Seal`/`Unseal` apply when the caller passes no `KeyAttributes`, which
+  is what the barrier's `TPM2Strategy` and `PlatformSealer` do — inherit
+  whichever attrs `PlatformSRKAttributes` returns, so both paths agreeing is
+  what lets `CreateSession`/`PlatformPolicySession` choose the `PolicyPCR`
+  branch instead of a plain password session with empty auth bytes (which
+  the TPM would correctly refuse with `TPM_RC_AUTH_FAIL` against an enrolled
+  SRK's real, non-empty PIN) on an unattended boot with no `PlatformKeyStore`
+  attached yet. Both branches — unattended `PolicyPCR` and interactive
+  `PolicyAuthValue` — are exercised against the simulator in
+  `pkg/tpm2/platform_keystore_enroll_simulator_test.go`
+  (`TestEnrollPlatformSRK_DefaultSealUnseal_PCRBranchUnattended`,
+  `TestEnrollPlatformSRK_DefaultSealUnseal_PINBranchViaPlatformKeyStore`).
 
 ## What this feature deliberately does not do
 
