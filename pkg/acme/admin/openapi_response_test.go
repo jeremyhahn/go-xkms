@@ -31,6 +31,7 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 )
@@ -793,7 +794,7 @@ func TestOpenAPIResponses_Users(t *testing.T) {
 	_, router := loadAdminAPISpecRouter(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	user := &db.User{ID: 123456789012345, Username: "jdoe", Email: "jdoe@example.com", TenantID: "acme-corp", Enabled: true,
+	user := &db.User{ID: 123456789012345, Username: "jdoe", Email: "jdoe@example.com", TenantID: "acme-corp", Lifecycle: string(qrdbsdk.LifecycleActive),
 		CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z"}
 
 	t.Run("create_success", func(t *testing.T) {
