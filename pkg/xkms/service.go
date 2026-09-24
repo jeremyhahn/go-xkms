@@ -19,6 +19,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -840,6 +841,29 @@ func getBackendForKID(kid string) (Backend, *types.KeyAttributes, error) {
 	return b, attrs, nil
 }
 
+// loadStoredKeyAttrs resolves cn's PERSISTED key attributes from b's own
+// record, rather than the ones ParseKeyIDToAttributes reconstructs from a kid
+// string alone.
+//
+// The kid format "backend:type:algo:keyname" cannot encode Exportable -- or
+// any other field the identifier does not carry -- so a caller that only
+// parsed the kid always got the zero value for those fields back. That is
+// why ExportKey by kid could never succeed even for a key created with
+// Exportable: true, and why RotateKey by kid silently downgraded a rotated
+// key to Exportable: false regardless of what the original key had (#925).
+//
+// It reuses findKeyAttrs (servicer_helpers.go), the servicer's CN lookup
+// over ListKeys, and translates its miss to backend.ErrKeyNotFound, the
+// not-found sentinel every other Simplified API function in this file
+// surfaces for an unknown kid.
+func loadStoredKeyAttrs(ctx context.Context, b Backend, cn string) (*types.KeyAttributes, error) {
+	attrs, err := findKeyAttrs(ctx, b, cn)
+	if errors.Is(err, ErrKeyNotFound) {
+		return nil, backend.ErrKeyNotFound
+	}
+	return attrs, err
+}
+
 // Simplified API - applications use these functions directly
 
 // stampKeyOrigin sets the key's provenance from the code path that is running,
@@ -1514,7 +1538,16 @@ func RotateKey(ctx context.Context, kid string) (crypto.PrivateKey, error) {
 		return nil, err
 	}
 
-	return b.RotateKey(ctx, attrs)
+	// RotateKey's contract is "replace with a newly generated key that has
+	// the same attributes" -- attrs reconstructed from kid alone never has
+	// the real Exportable (or Hash), so honouring that contract requires the
+	// stored record, not the parse (#925).
+	storedAttrs, err := loadStoredKeyAttrs(ctx, b, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.RotateKey(ctx, storedAttrs)
 }
 
 // ========================================================================
@@ -1863,7 +1896,16 @@ func ExportKey(ctx context.Context, kid string, algorithm backend.WrappingAlgori
 		return nil, &ErrBackendUnsupported{Sentinel: ErrImportExportNotSupported}
 	}
 
-	return importExportBackend.ExportKey(ctx, attrs, algorithm)
+	// attrs is reconstructed purely from the kid string, so its Exportable is
+	// always the zero value; the backend's ExportKey refuses on exactly that
+	// field. Load the stored record so a key generated with Exportable: true
+	// exports (#925).
+	storedAttrs, err := loadStoredKeyAttrs(ctx, b, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+
+	return importExportBackend.ExportKey(ctx, storedAttrs, algorithm)
 }
 
 // ========================================================================
@@ -1886,6 +1928,15 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 	}
 
 	sourceB, sourceAttrs, err := getBackendForKID(sourceKID)
+	if err != nil {
+		return &ErrCopyKeyBackend{Role: "source", Err: err}
+	}
+
+	// sourceAttrs is reconstructed purely from sourceKID, so its Exportable is
+	// always the zero value; ExportKeyTo below refuses on exactly that field.
+	// Load the source backend's own record so a key generated with
+	// Exportable: true copies (#925).
+	sourceAttrs, err = loadStoredKeyAttrs(ctx, sourceB, sourceAttrs.CN)
 	if err != nil {
 		return &ErrCopyKeyBackend{Role: "source", Err: err}
 	}
