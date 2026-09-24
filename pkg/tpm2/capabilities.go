@@ -798,9 +798,9 @@ func formatPermanentFlags(value uint32) string {
 		name string
 	}
 	flags := []flagDef{
-		{0x00000001, "ownerAuthSet"},
-		{0x00000002, "endorsementAuthSet"},
-		{0x00000004, "lockoutAuthSet"},
+		{permanentOwnerAuthSet, "ownerAuthSet"},
+		{permanentEndorsementAuthSet, "endorsementAuthSet"},
+		{permanentLockoutAuthSet, "lockoutAuthSet"},
 		{0x00000100, "disableClear"},
 		{0x00000200, "inLockout"},
 		{0x00000400, "tpmGeneratedEPS"},

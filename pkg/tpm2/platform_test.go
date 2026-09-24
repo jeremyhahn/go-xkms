@@ -266,6 +266,14 @@ func (m *mockTPMForPKS) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 func (m *mockTPMForPKS) ActivateCredential(_, _ []byte) ([]byte, error) {
 	return nil, nil
 }
+func (m *mockTPMForPKS) AnswerCredentialChallenge(_ *ActivationKey, _ *CredentialChallenge) ([]byte, error) {
+	return nil, nil
+}
+func (m *mockTPMForPKS) ClearForReprovision() (bool, error) { return false, nil }
+func (m *mockTPMForPKS) CreateActivationKey() (*ActivationKey, error) {
+	return nil, nil
+}
+func (m *mockTPMForPKS) State() (*ProvisioningState, error)      { return nil, nil }
 func (m *mockTPMForPKS) AKProfile() (AKProfile, error)           { return AKProfile{}, nil }
 func (m *mockTPMForPKS) AlgID() tpm2.TPMAlgID                    { return tpm2.TPMAlgSHA256 }
 func (m *mockTPMForPKS) CalculateName(_ tpm2.TPMAlgID, _ []byte) {}
