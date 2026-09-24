@@ -32,6 +32,15 @@ the capability, it does not turn clustering on.
 Exactly one node bootstraps (`join: false`, with the complete peer list);
 the rest join (`join: true`) after it is healthy.
 
+Each `XKMS_CLUSTER_*` variable below is an instance of the generic
+`XKMS_<SECTION>_<KEY>` environment binding (`pkg/config/load.go:175-182`,
+`SetEnvPrefix("XKMS")` + `AutomaticEnv`) applied to `ClusterConfig`'s
+`cluster.*` keys (`pkg/config/config.go:680-726`) — `XKMS_CLUSTER_ENABLED`
+reads `cluster.enabled`, `XKMS_CLUSTER_NODE_ID` reads `cluster.node_id`, and
+so on. Environment variables take precedence over the config file; see
+[`../xkmsd-configuration/architecture.md`](../xkmsd-configuration/architecture.md)
+for the full precedence order.
+
 Node 1 (bootstrapper):
 
 ```bash

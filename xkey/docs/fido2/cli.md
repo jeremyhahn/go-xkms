@@ -40,8 +40,10 @@ names no lock at all — `unlock` is what to reach for when an enrollment or
 ceremony is denied by a daemon that is otherwise running.
 
 The PIN is supplied the same two ways as every PIN-accepting command in
-xkey, in precedence order — there is no `--pin` value flag, because a value
-on the command line is visible to every other process on the host via `ps`:
+xkey, resolved by `resolvePINInput`
+(`xkey/cmd/xkey/cmd/pin_input.go:159-161,181`), in precedence order — there
+is no `--pin` value flag, because a value on the command line is visible to
+every other process on the host via `ps` (go-xkms#272):
 
 | Source | Notes |
 |---|---|

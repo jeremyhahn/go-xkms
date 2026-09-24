@@ -315,17 +315,25 @@ Certificates are stored as PKCS#11 certificate objects on a hardware token.
 
 ## Configuration
 
-All flags can be set via configuration file or environment variables through Viper:
+`xkey piv` binds each flag below to a Viper key (`piv.*`) with
+`viper.BindPFlag` (`xkey/cmd/xkey/cmd/piv.go:463-470`). That call is on the
+global Viper singleton, which this command tree never points at a config
+file (`ReadInConfig`) and never enables for the environment
+(`AutomaticEnv`/`SetEnvPrefix`), so no `PIV_*` environment variable and no
+`~/.config/xkey/xkey.yaml` value reaches these settings today — only the
+flag does. Env-var and config-file support for `piv.*` is tracked in #871;
+until it lands, set these via flags:
 
-| Config Key | Flag | Environment Variable |
-|------------|------|---------------------|
-| `piv.backend` | `--backend` | `PIV_BACKEND` |
-| `piv.storage` | `--piv-storage` | `PIV_STORAGE` |
-| `piv.storage_path` | `--storage-path` | `PIV_STORAGE_PATH` |
-| `piv.tpm_device` | `--tpm-device` | `PIV_TPM_DEVICE` |
-| `piv.pkcs11_library` | `--pkcs11-library` | `PIV_PKCS11_LIBRARY` |
-| `piv.pkcs11_token` | `--pkcs11-token` | `PIV_PKCS11_TOKEN` |
-| `piv.pkcs11_pin` | `--pkcs11-pin` | `PIV_PKCS11_PIN` |
+| Config Key | Flag |
+|------------|------|
+| `piv.backend` | `--backend` |
+| `piv.storage` | `--piv-storage` |
+| `piv.storage_path` | `--storage-path` |
+| `piv.tpm_device` | `--tpm-device` |
+| `piv.pkcs11_library` | `--pkcs11-library` |
+| `piv.pkcs11_token` | `--pkcs11-token` |
+| `piv.pkcs11_pin` | `--pkcs11-pin` |
+| `piv.pkcs11_so_pin` | `--pkcs11-so-pin` |
 
 ## Example Workflows
 

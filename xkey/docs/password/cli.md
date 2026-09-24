@@ -156,12 +156,19 @@ xkey touch --socket /tmp/xkey.sock
 ## `xkey fido2` password/touch flags
 
 `xkey fido2` accepts these flags for password-typing and touch support
-while the daemon runs:
+while the daemon runs. Each is bound to a Viper key (`fido2.*`) with
+`viper.BindPFlag` (`xkey/cmd/xkey/cmd/fido2.go:436-440`), but that call is on
+the global Viper singleton, which the `xkey` command tree never points at a
+config file (`ReadInConfig`) and never enables for the environment
+(`AutomaticEnv`/`SetEnvPrefix`). No `XKEY_FIDO2_*` environment variable
+reaches these settings today, whatever the command's own `--help` text
+says — only the flag does. Env-var and config-file support for `fido2.*` is
+tracked in #871; until it lands, set these via flags:
 
-| Flag | Env var | Default | Description |
-|---|---|---|---|
-| `--password-store` | `XKEY_FIDO2_PASSWORD_STORE` | `~/.xkey/data/staticpw` | Path to the static password store |
-| `--socket` | `XKEY_FIDO2_SOCKET` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket path |
-| `--default-password` | `XKEY_FIDO2_DEFAULT_PASSWORD` | (none) | Password name typed on a bare `xkey touch` |
-| `--notify-command` | `XKEY_FIDO2_NOTIFY_COMMAND` | (none) | Custom notification command; template vars `%o` `%r` `%n` `%u` |
-| `--notify` | `XKEY_FIDO2_NOTIFY` | `dialog` | `dialog`, `passive`, `log`, or `none` |
+| Flag | Default | Description |
+|---|---|---|
+| `--password-store` | `~/.xkey/data/staticpw` | Path to the static password store |
+| `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket path |
+| `--default-password` | (none) | Password name typed on a bare `xkey touch` |
+| `--notify-command` | (none) | Custom notification command; template vars `%o` `%r` `%n` `%u` |
+| `--notify` | `dialog` | `dialog`, `passive`, `log`, or `none` |

@@ -1,6 +1,6 @@
 # Agent Automation — CLI
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 Binary: `xkey`. This feature is a set of flags and two verbs rather than a
 command group of its own.
@@ -29,7 +29,8 @@ because it checked it.
 ## The PIN on the ceremony
 
 `xkey auth register` and `xkey auth login` take the authenticator's CTAP2 PIN
-two ways, in precedence order:
+two ways, resolved by `resolvePINInput`
+(`xkey/cmd/xkey/cmd/pin_input.go:159-161,181`), in precedence order:
 
 | Source | Notes |
 |---|---|

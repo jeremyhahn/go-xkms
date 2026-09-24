@@ -309,9 +309,13 @@ docker-compose logs -f xkms-server
 
 ### Enable Debug Logging
 ```bash
-export XKMS_SERVER_LOG_LEVEL=debug
+export XKMS_LOGGING_LEVEL=debug
 ./bin/xkmsd
 ```
+`XKMS_LOGGING_LEVEL` maps to the `logging.level` config key via the generic
+`XKMS_<SECTION>_<KEY>` binding (`pkg/config/load.go:175-182`); see
+[`../xkmsd-configuration/user.md`](../xkmsd-configuration/user.md). There is
+no `XKMS_SERVER_LOG_LEVEL` variable.
 
 ### Test Individual Endpoints
 
