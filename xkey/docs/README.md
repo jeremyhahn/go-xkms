@@ -18,6 +18,7 @@ tell.
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
+| [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
@@ -41,7 +42,7 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
+Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `oath/`,
 `password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
