@@ -9,12 +9,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
+
+	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -336,31 +337,20 @@ type jsonrpcRequest struct {
 }
 
 // jsonrpcResponse is what a mock tool handler returns: exactly one of
-// Result (success), Error (a legacy-formatted error, to exercise the
-// rpcErrorPattern fallback in newToolError), or ErrorText (a raw tool-error
-// message, to exercise toolErrorCode's keyword classification) should be
-// set.
+// Result (success) or ErrorText (a failing tool result's text content)
+// should be set. When ErrorText is set alongside a non-zero Envelope, the
+// result also carries go-qrdb's wire.ErrorEnvelope in StructuredContent,
+// exercising classifyToolError's coded path; ErrorText alone (Envelope left
+// at its zero value, wire.CodeOK) produces an UNCODED tool failure, exercising
+// the *EnvelopeMissingError protocol-error path go-xkms#797 added.
 type jsonrpcResponse struct {
 	Result    json.RawMessage
-	Error     *jsonrpcError
 	ErrorText string
-	// EmptyError forces a tool error result with no content at all,
-	// exercising newToolError's fallback message.
+	Envelope  wire.Code
+	// EmptyError forces a tool error result with no content and no envelope
+	// at all, exercising classifyToolError's *EnvelopeMissingError fallback
+	// message.
 	EmptyError bool
-}
-
-// jsonrpcError renders in the legacy "JSON-RPC error <code>: <message>"
-// shape the previous TCP transport's wire error used, so tests can confirm
-// newToolError still recovers a numeric code from a server that happens to
-// emit it.
-type jsonrpcError struct {
-	Code    int
-	Message string
-}
-
-// Error implements the error interface.
-func (e *jsonrpcError) Error() string {
-	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
 }
 
 // mockToolMethods is every JSON-RPC method name transport.go's rpcCall
@@ -529,8 +519,10 @@ func startMockServer(t *testing.T, handler func(req jsonrpcRequest) jsonrpcRespo
 			switch {
 			case resp.EmptyError:
 				return &mcp.CallToolResult{IsError: true}, nil
-			case resp.Error != nil:
-				return mcp.NewToolResultError(resp.Error.Error()), nil
+			case resp.ErrorText != "" && resp.Envelope != wire.CodeOK:
+				res := mcp.NewToolResultError(resp.ErrorText)
+				res.StructuredContent = wire.NewErrorEnvelope(xkmsmcp.ToolName(method), resp.Envelope, resp.ErrorText)
+				return res, nil
 			case resp.ErrorText != "":
 				return mcp.NewToolResultError(resp.ErrorText), nil
 			default:
@@ -582,7 +574,8 @@ func TestRpcCall_RPCError(t *testing.T) {
 			return jsonrpcResponse{Result: data}
 		}
 		return jsonrpcResponse{
-			Error: &jsonrpcError{Code: -32600, Message: "invalid request"},
+			ErrorText: "invalid request",
+			Envelope:  wire.CodeInvalidArgument,
 		}
 	})
 	defer cleanup()
@@ -594,7 +587,7 @@ func TestRpcCall_RPCError(t *testing.T) {
 	require.Error(t, err)
 	var rpcErr *RPCError
 	require.True(t, errors.As(err, &rpcErr))
-	assert.Equal(t, -32600, rpcErr.Code)
+	assert.Equal(t, xkmsmcp.ErrCodeInvalidParams, rpcErr.Code)
 	assert.Equal(t, "invalid request", rpcErr.Message)
 }
 

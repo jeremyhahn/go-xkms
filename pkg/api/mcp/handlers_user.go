@@ -78,9 +78,18 @@ type UserListCredentialsResult struct {
 var ErrUsernameRequired = errors.New("username is required")
 
 // unmarshalUserParams decodes req.Params into dst, wrapping a decode failure
-// so it reads back to the caller as Invalid params (-32602) rather than an
-// opaque internal error: toolErrorCode (pkg/api/transport/mcp) classifies
-// any message containing "invalid" as ErrCodeInvalidParams.
+// in *errs.Wrapped so its message names the fault as invalid params.
+//
+// Unlike the key/crypto handlers' *xkms.ErrValidation (see
+// errors_keyops.go's mapKeyOpError), a plain *errs.Wrapped is not itself a
+// *KeyOpError, so pkg/apimodule's mcpToolHandler does not classify it and it
+// reaches the caller as wire.CodeInternal rather than
+// wire.CodeInvalidArgument. Before go-xkms#797 the SDK client's now-deleted
+// keyword matcher independently read "invalid" out of the message text and
+// reported ErrCodeInvalidParams anyway, which is the fail-open classification
+// that change removed; this handler was never updated to carry a real code
+// once that text-based safety net went away. Tracked as a follow-up, not
+// fixed here.
 func unmarshalUserParams(req *JSONRPCRequest, dst interface{}) error {
 	if err := json.Unmarshal(req.Params, dst); err != nil {
 		return &errs.Wrapped{Msg: "invalid params", Err: err}
