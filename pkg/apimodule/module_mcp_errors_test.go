@@ -213,3 +213,15 @@ func TestMCPToolHandler_ErrorCodesReachCaller(t *testing.T) {
 		assert.Equal(t, "xkms: internal error", payload.Message)
 	})
 }
+
+// TestWireCodeForKeyOp_UnknownCodeFallsBackToInternal proves the defensive
+// floor wireCodeForKeyOp's doc comment describes: a *KeyOpError code this
+// package's table does not declare — none exist today, which is exactly why
+// this has to be exercised directly rather than through a live tool call —
+// answers wire.CodeInternal instead of a zero value or a panic, so a future
+// xkms code added to pkg/api/mcp without a matching row here still reaches
+// callers as a classified fault.
+func TestWireCodeForKeyOp_UnknownCodeFallsBackToInternal(t *testing.T) {
+	const noSuchCode = -999999
+	assert.Equal(t, wire.CodeInternal, wireCodeForKeyOp(noSuchCode))
+}
