@@ -16,6 +16,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -256,8 +257,11 @@ func (h *wsHandler) buildHostKeyConfirm(target *Target, conn *websocket.Conn, wr
 				Mode:        "notify",
 			}
 			// Fire-and-forget: a notify write failure must not block or
-			// fail the accept-new policy.
-			_ = writeJSON(conn, writeMu, msg)
+			// fail the accept-new policy. Still worth knowing about, so it
+			// is logged rather than dropped.
+			if werr := writeJSON(conn, writeMu, msg); werr != nil {
+				slog.Warn("ssh/console: failed to send the accept-new hostkey notify frame", "host", host, "error", werr)
+			}
 			return true, nil
 		}
 	default: // "", "yes": strict — no prompt, no confirmer.
@@ -371,7 +375,12 @@ func bridge(conn *websocket.Conn, cons Console) {
 		case websocket.TextMessage:
 			var msg controlMessage
 			if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
-				_ = cons.Resize(msg.Rows, msg.Cols)
+				// Best-effort: a rejected resize just leaves the remote PTY
+				// at its previous size. Still worth knowing about, so it is
+				// logged rather than dropped.
+				if rerr := cons.Resize(msg.Rows, msg.Cols); rerr != nil {
+					slog.Debug("ssh/console: remote rejected a PTY resize", "rows", msg.Rows, "cols", msg.Cols, "error", rerr)
+				}
 			}
 		}
 	}
@@ -384,15 +393,24 @@ stop:
 	// remote-side semantics are unchanged.
 	//
 	// Best-effort: this runs on the way out with the WebSocket already gone,
-	// so there is nobody left to report a failure to, and Close still
-	// terminates the session unconditionally.
-	_ = cons.CloseWrite()
+	// so there is nobody left to report a failure to over the wire, and
+	// Close still terminates the session unconditionally either way. Still
+	// worth knowing about, so it is logged rather than dropped.
+	if cerr := cons.CloseWrite(); cerr != nil {
+		slog.Debug("ssh/console: CloseWrite failed while tearing down a bridged session", "error", cerr)
+	}
 	closeDone()
 }
 
 // writeControl sends a JSON control frame as a WebSocket TEXT message.
+// Best-effort: every caller is itself reporting connection state (an error
+// or an exit notice) to a peer that may already be gone, so there is no
+// further action to take on a failed send here. Still worth knowing about,
+// so it is logged rather than dropped.
 func writeControl(conn *websocket.Conn, mu *sync.Mutex, msg controlMessage) {
-	_ = writeJSON(conn, mu, msg)
+	if err := writeJSON(conn, mu, msg); err != nil {
+		slog.Debug("ssh/console: failed to send a control frame", "type", msg.Type, "error", err)
+	}
 }
 
 // writeJSON marshals v and sends it as a WebSocket TEXT message, serialized

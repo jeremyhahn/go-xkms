@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,43 +50,53 @@ func (ca *CA) ImportDistributionCRLs(cert *x509.Certificate) error {
 		return ErrObjectStoreRequired
 	}
 
+	// closeErrs collects reader/response-body Close failures. None of them
+	// aborts the import — the CRL itself was already read or was never
+	// needed — but a Close failure on a store handle can mean a leaked
+	// descriptor, so it is joined into the return rather than dropped.
+	var closeErrs []error
+
 	for _, url := range cert.CRLDistributionPoints {
 		key := fmt.Sprintf("crls/distribution/%s.crl", hashCRLURL(url))
 
 		// Skip if already imported.
 		if reader, err := ca.objectStore.Get(key); err == nil {
-			_ = reader.Close()
+			if cerr := reader.Close(); cerr != nil {
+				closeErrs = append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close CRL reader for %s: %v", url, cerr)})
+			}
 			continue
 		}
 
 		// #nosec G107 - URL is from X.509 certificate CRLDP extension (issuer-controlled)
 		resp, err := http.Get(url)
 		if err != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download CRL from %s: %v", url, err)}
+			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to download CRL from %s: %v", url, err)})...)
 		}
 		body, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		if cerr := resp.Body.Close(); cerr != nil {
+			closeErrs = append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close CRL response body for %s: %v", url, cerr)})
+		}
 		if readErr != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read CRL from %s: %v", url, readErr)}
+			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read CRL from %s: %v", url, readErr)})...)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("CRL download %s returned status %d", url, resp.StatusCode)}
+			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("CRL download %s returned status %d", url, resp.StatusCode)})...)
 		}
 
 		// Validate the CRL parses and has an issuer.
 		crl, err := x509.ParseRevocationList(body)
 		if err != nil {
-			return &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("invalid CRL from %s: %v", url, err)}
+			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("invalid CRL from %s: %v", url, err)})...)
 		}
 		if crl.Issuer.String() == "" {
-			return &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("CRL from %s has empty issuer", url)}
+			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrCRLGenerationFailed, Detail: fmt.Sprintf("CRL from %s has empty issuer", url)})...)
 		}
 
 		if err := ca.objectStore.Put(key, bytes.NewReader(body)); err != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store CRL: %v", err)}
+			return errors.Join(append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store CRL: %v", err)})...)
 		}
 	}
-	return nil
+	return errors.Join(closeErrs...)
 }
 
 // hashCRLURL returns the SHA-256 hex digest of url, used to build stable

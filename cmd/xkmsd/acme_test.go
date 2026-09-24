@@ -39,6 +39,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
@@ -156,7 +157,7 @@ func TestACMEConfig_Validate(t *testing.T) {
 // TestBuildChallengeMap_Selection verifies that buildChallengeMap registers
 // verifiers only for challenge types that have been enabled.
 func TestBuildChallengeMap_Selection(t *testing.T) {
-	m := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, DNS01: false})
+	m := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, DNS01: false}, config.ACMEResilienceConfig{}, nil)
 	if _, ok := m[common.ChallengeTypeHTTP01]; !ok {
 		t.Fatalf("expected http-01 verifier to be registered")
 	}
@@ -164,7 +165,7 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 		t.Fatalf("expected dns-01 verifier to be absent when disabled")
 	}
 
-	m = buildChallengeMap(config.ACMEChallengesConfig{HTTP01: false, DNS01: true})
+	m = buildChallengeMap(config.ACMEChallengesConfig{HTTP01: false, DNS01: true}, config.ACMEResilienceConfig{}, nil)
 	if _, ok := m[common.ChallengeTypeHTTP01]; ok {
 		t.Fatalf("expected http-01 verifier to be absent when disabled")
 	}
@@ -173,7 +174,7 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 	}
 
 	// enroll-01 / endorse-01 TPM attestation challenges.
-	m = buildChallengeMap(config.ACMEChallengesConfig{Enroll01: true, Endorse01: true})
+	m = buildChallengeMap(config.ACMEChallengesConfig{Enroll01: true, Endorse01: true}, config.ACMEResilienceConfig{}, nil)
 	if _, ok := m[common.ChallengeTypeEnroll01]; !ok {
 		t.Fatalf("expected enroll-01 verifier to be registered")
 	}
@@ -192,6 +193,43 @@ func TestBuildChallengeMap_Selection(t *testing.T) {
 	}
 }
 
+// TestBuildChallengeMap_WrapsVerifiersWithBreaker verifies that, given a
+// non-nil circuit breaker Manager, buildChallengeMap wraps the http-01 and
+// dns-01 verifiers with breakers registered on that Manager under "http01"
+// and "dns01". It pre-trips each breaker rather than driving a real network
+// failure through http01.Verify/dns01.Verify, so the assertion is that the
+// wrapped verifier fails fast on an already-open breaker without making any
+// network call at all.
+func TestBuildChallengeMap_WrapsVerifiersWithBreaker(t *testing.T) {
+	breakers := circuitbreaker.NewManager()
+	httpCB := breakers.GetOrCreate(&circuitbreaker.Config{Name: "http01", MaxFailures: 1, ResetTimeout: time.Hour})
+	dnsCB := breakers.GetOrCreate(&circuitbreaker.Config{Name: "dns01", MaxFailures: 1, ResetTimeout: time.Hour})
+	httpCB.Trip()
+	dnsCB.Trip()
+
+	m := buildChallengeMap(
+		config.ACMEChallengesConfig{HTTP01: true, DNS01: true},
+		config.ACMEResilienceConfig{},
+		breakers,
+	)
+
+	httpVerify, ok := m[common.ChallengeTypeHTTP01]
+	if !ok {
+		t.Fatalf("expected http-01 verifier to be registered")
+	}
+	if err := httpVerify(nil, nil, "example.com", "80", "tok", "ka"); !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
+		t.Fatalf("http-01 verifier with open breaker = %v, want ErrCircuitOpen", err)
+	}
+
+	dnsVerify, ok := m[common.ChallengeTypeDNS01]
+	if !ok {
+		t.Fatalf("expected dns-01 verifier to be registered")
+	}
+	if err := dnsVerify(nil, nil, "example.com", "80", "tok", "ka"); !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
+		t.Fatalf("dns-01 verifier with open breaker = %v, want ErrCircuitOpen", err)
+	}
+}
+
 // stubRestService implements handlers.RestServicer for router-wiring tests.
 // Each handler records whether it was invoked so tests can assert that the
 // mux routes requests to the expected endpoint.
@@ -199,6 +237,7 @@ type stubRestService struct {
 	directoryCalled atomic.Bool
 	newNonceCalled  atomic.Bool
 	newOrderCalled  atomic.Bool
+	healthCalled    atomic.Bool
 }
 
 func (s *stubRestService) AccountHandler(w http.ResponseWriter, _ *http.Request) {
@@ -219,6 +258,11 @@ func (s *stubRestService) CertificateHandler(w http.ResponseWriter, _ *http.Requ
 
 func (s *stubRestService) ChallengeHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) HealthHandler(w http.ResponseWriter, _ *http.Request) {
+	s.healthCalled.Store(true)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *stubRestService) DirectoryHandler(w http.ResponseWriter, _ *http.Request) {
@@ -312,6 +356,30 @@ func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 		if _, ok := directory[field]; !ok {
 			t.Fatalf("expected %q in directory, got %+v", field, directory)
 		}
+	}
+}
+
+// TestBuildACMERouter_HealthEndpoint verifies that GET /acme/health routes
+// to HealthHandler, the resilience status endpoint added for #735.
+func TestBuildACMERouter_HealthEndpoint(t *testing.T) {
+	svc := &stubRestService{}
+	router := buildACMERouter(svc, "/acme", nil, nil)
+
+	ts := httptest.NewServer(router)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/acme/health")
+	if err != nil {
+		t.Fatalf("GET /acme/health: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected HTTP 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if !svc.healthCalled.Load() {
+		t.Fatalf("HealthHandler was not invoked")
 	}
 }
 

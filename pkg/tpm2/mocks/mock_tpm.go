@@ -150,8 +150,13 @@ func (m *MockTPM) SetupCreateRSA(keySize int, err error) {
 		return
 	}
 
-	// Create an RSA public key for testing
-	privateKey, _ := rsa.GenerateKey(rand.Reader, keySize)
+	// Create an RSA public key for testing. A failure here is a broken test
+	// environment (entropy source), not a condition callers can act on, and
+	// this constructor has no error return to report it through.
+	privateKey, keyErr := rsa.GenerateKey(rand.Reader, keySize)
+	if keyErr != nil {
+		panic(keyErr)
+	}
 	modulus := privateKey.N.Bytes()
 
 	m.createResponse = &tpm2.CreateResponse{
@@ -215,8 +220,12 @@ func (m *MockTPM) SetupCreateECDSA(curve elliptic.Curve, err error) {
 		tpmCurve = tpm2.TPMECCNistP521
 	}
 
-	// Generate a test ECDSA key
-	privKey, _ := ecdsa.GenerateKey(curve, rand.Reader)
+	// Generate a test ECDSA key. See SetupCreateRSA above for why an
+	// unexpected failure here panics rather than being discarded.
+	privKey, keyErr := ecdsa.GenerateKey(curve, rand.Reader)
+	if keyErr != nil {
+		panic(keyErr)
+	}
 
 	m.createResponse = &tpm2.CreateResponse{
 		OutPrivate: tpm2.TPM2BPrivate{

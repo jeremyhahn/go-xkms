@@ -22,6 +22,7 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -151,7 +152,7 @@ func (b *Backend) DeriveKeyECDH(
 	privateKeyAttrs *types.KeyAttributes,
 	peerPublicKey []byte,
 	kdfParams *types.KDFParams,
-) ([]byte, error) {
+) (derivedKeyOut []byte, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -202,7 +203,11 @@ func (b *Backend) DeriveKeyECDH(
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to open session", Err: err}
 	}
-	defer b.p11ctx.CloseSession(session)
+	defer func() {
+		if closeErr := b.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login if required
 	if b.config.PIN != nil {
@@ -261,7 +266,7 @@ func (b *Backend) ensureP11Context() error {
 }
 
 // findPrivateKeyHandle finds a private key object by its attributes.
-func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *types.KeyAttributes) (pkcs11.ObjectHandle, error) {
+func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *types.KeyAttributes) (handle pkcs11.ObjectHandle, err error) {
 	label := createKeyID(attrs)
 
 	template := []*pkcs11.Attribute{
@@ -272,11 +277,15 @@ func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *type
 	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
 		return 0, &errs.Wrapped{Msg: "failed to init find objects", Err: err}
 	}
-	defer b.p11ctx.FindObjectsFinal(session)
+	defer func() {
+		if finalErr := b.p11ctx.FindObjectsFinal(session); finalErr != nil {
+			err = errors.Join(err, finalErr)
+		}
+	}()
 
-	handles, _, err := b.p11ctx.FindObjects(session, 1)
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to find objects", Err: err}
+	handles, _, findErr := b.p11ctx.FindObjects(session, 1)
+	if findErr != nil {
+		return 0, &errs.Wrapped{Msg: "failed to find objects", Err: findErr}
 	}
 
 	if len(handles) == 0 {

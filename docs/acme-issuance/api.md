@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -31,6 +31,17 @@ clients only ever hard-code the directory URL.
 | Certificate | `POST /acme/cert/{id}` | JWS, account key |
 | Revoke certificate | `POST /acme/revoke-cert` | JWS, account or certificate key |
 | CA bundle | `GET /acme/ca-bundle` | public |
+| Health | `GET /acme/health` | public |
+
+`GET /acme/health` (non-RFC 8555) reports circuit breaker and
+graceful-degradation status: every breaker registered on the server's
+`circuitbreaker.Manager` (name, state, failure/success counts) and whether
+`GET /acme/directory`/`GET /acme/ca-bundle` are currently serving cached
+responses because CA-bundle storage access is unavailable. 200 when every
+breaker is closed, 503 otherwise. See
+[`../acme-issuance/engineering.md`](engineering.md)#circuit-breakers-and-degradation
+for what each breaker guards. A degraded `GET /acme/directory` or `GET
+/acme/ca-bundle` response carries `Warning: 110 - "Response is stale"`.
 
 The directory document is built in
 `pkg/acme/server/handlers/directory.go` from the configured `baseRESTURI`. When
@@ -127,12 +138,41 @@ absence — ACME is a network enrollment protocol and a local socket has no
 identifiers to validate — but it is written as a gap rather than omitted so the
 decision is visible.
 
+### Interactive documentation (Swagger UI)
+
+`pkg/acme/api/swagger` embeds both OpenAPI specs (`acme-api.yaml`,
+`admin-api.yaml`) and a vendored copy of `swagger-ui-dist` — no CDN, no
+external fetch at runtime — and mounts them on the same gorilla mux router
+`pkg/acme/api/server` builds for the Admin API:
+
+| Path | Serves |
+|---|---|
+| `GET /docs` | Swagger UI; `?spec=acme-api` (default) or `?spec=admin-api` selects which spec renders |
+| `GET /openapi/acme-api.yaml` | the RFC 8555 surface documented above |
+| `GET /openapi/admin-api.yaml` | the `pkg/acme/admin` control-plane surface |
+
+Both `/docs` and `/openapi/*` require the same admin authentication (Bearer
+JWT or mTLS) and the `admin:capabilities` qrdb grant as `GET /admin/algorithms`
+— they are **not public**. The specs and the UI enumerate every admin route,
+parameter and permission this deployment exposes; publishing that attack
+surface map to unauthenticated callers would hand out a target list for free.
+The RFC 8555 endpoints in the table above remain public regardless — ACME's
+own directory (`GET /acme/directory`) already discovers them for standard
+clients, which is what ACME clients actually use, not the Swagger UI.
+
+The Swagger UI page sets a strict `Content-Security-Policy` (`script-src
+'self'`, no `unsafe-eval`, no `unsafe-inline` scripts): every script it loads
+is same-origin and vendored at build time, so there is nothing for a relaxed
+CSP to protect against.
+
 ## The xkms control-plane view of ACME
 
 Separately from the RFC surface, the ACME server's **administration** is
-reachable through `pkg/acme/admin` (accounts, policy, barrier). That plane is
-not RFC 8555 and is not documented as if it were; it follows the repo's normal
-authenticated-API conventions.
+reachable through `pkg/acme/admin` (accounts, certificates, EAB, tenants,
+roles, users, CA status/stats, policy, barrier). That plane is not RFC 8555
+and is not documented as if it were; it follows the repo's normal
+authenticated-API conventions. The SDK surface is `sdk/go/acme/client/admin`;
+the CLI surface is `xkmsctl acme` ([`cli.md`](cli.md#xkmsctl-acme-admin)).
 
 ## Response schemas
 

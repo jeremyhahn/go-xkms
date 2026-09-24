@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"testing"
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
@@ -235,6 +236,11 @@ func TestImportKey(t *testing.T) {
 	}
 }
 
+// TestExportKey verifies that ExportKey always refuses with
+// backend.ErrExportNotSupported: GCP KMS's Capabilities().Export is
+// unconditionally false, since the service exposes no API to release
+// private key material for any protection level, so this refusal never
+// reaches a live GetCryptoKey call (#816).
 func TestExportKey(t *testing.T) {
 	config := &Config{
 		ProjectID:   "test-project",
@@ -244,21 +250,7 @@ func TestExportKey(t *testing.T) {
 		CertStorage: storage.New(),
 	}
 
-	mockClient := &MockKMSClient{
-		GetCryptoKeyFunc: func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
-			return &kmspb.CryptoKey{
-				Name:    req.Name,
-				Purpose: kmspb.CryptoKey_ASYMMETRIC_SIGN,
-				Primary: &kmspb.CryptoKeyVersion{
-					Name:      req.Name + "/cryptoKeyVersions/1",
-					State:     kmspb.CryptoKeyVersion_ENABLED,
-					Algorithm: kmspb.CryptoKeyVersion_RSA_SIGN_PKCS1_2048_SHA256,
-				},
-			}, nil
-		},
-	}
-
-	b, err := NewBackendWithClient(config, mockClient)
+	b, err := NewBackendWithClient(config, &MockKMSClient{})
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -269,7 +261,29 @@ func TestExportKey(t *testing.T) {
 	}
 
 	_, err = b.ExportKey(context.Background(), attrs, backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256)
-	if err == nil {
-		t.Error("ExportKey() expected error, got nil")
+	if !errors.Is(err, backend.ErrExportNotSupported) {
+		t.Errorf("ExportKey() error = %v, want ErrExportNotSupported", err)
+	}
+}
+
+// TestExportKey_NilAttrs verifies that ExportKey rejects nil attributes
+// with backend.ErrInvalidAttributes instead of panicking.
+func TestExportKey_NilAttrs(t *testing.T) {
+	config := &Config{
+		ProjectID:   "test-project",
+		LocationID:  "us-central1",
+		KeyRingID:   "test-keyring",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	b, err := NewBackendWithClient(config, &MockKMSClient{})
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+
+	_, err = b.ExportKey(context.Background(), nil, backend.WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256)
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("ExportKey() error = %v, want ErrInvalidAttributes", err)
 	}
 }

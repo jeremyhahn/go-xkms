@@ -19,6 +19,7 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // keyOpCodeToWire maps pkg/api/mcp's JSON-RPC error codes (the numbering
@@ -28,6 +29,17 @@ import (
 // This is the same contract, adopted rather than re-invented: go-qrdb's own
 // SDK client (sdk/go/transport/mcp) reads a tool failure's classification
 // from exactly this envelope, and never from the tool result's text.
+//
+// The three sdkssh.JSONRPCCode* rows are SSH-specific (sdk/go/client/ssh/
+// mcp_status.go): mapSSHError (pkg/api/mcp/errors_ssh.go) is the only
+// producer of these particular *KeyOpError codes, and they exist precisely
+// so a not-found, a duplicate, and a host-key mismatch reach the wire on
+// their own distinct wire.Code instead of sharing ErrCodeInvalidParams the
+// way the xkms.* method family's coarser eight-code vocabulary still does
+// (go-xkms#792). wire.CodeFailedPrecondition is the closest go-qrdb code
+// for Mismatch: it renders codes.FailedPrecondition, and
+// sdk/go/client/ssh/grpc_status.go's GRPCCodeForError already uses that
+// same gRPC code for the identical condition, so MCP and gRPC agree.
 //
 // A map rather than a switch, so an xkms code added without a row here is a
 // missing entry a reviewer can see instead of a default branch that
@@ -41,6 +53,9 @@ var keyOpCodeToWire = map[int]wire.Code{
 	xkmsmcp.ErrCodeUnauthorized:       wire.CodeUnauthenticated,
 	xkmsmcp.ErrCodeForbidden:          wire.CodePermissionDenied,
 	xkmsmcp.ErrCodeServiceUnavailable: wire.CodeUnavailable,
+	sdkssh.JSONRPCCodeNotFound:        wire.CodeNotFound,
+	sdkssh.JSONRPCCodeDuplicate:       wire.CodeAlreadyExists,
+	sdkssh.JSONRPCCodeMismatch:        wire.CodeFailedPrecondition,
 }
 
 // wireCodeForKeyOp renders a *KeyOpError's local code as go-qrdb's wire.Code.

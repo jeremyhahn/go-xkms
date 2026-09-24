@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
@@ -50,6 +51,11 @@ type fakeCeremony struct {
 	opts   pkgfido2.WebAuthnRegistrationOptions
 	called bool
 	err    error
+
+	// attestation, when set, is returned verbatim instead of the default
+	// placeholder — used to drive Enroll's post-parse success path with a
+	// real, server-parseable document (see ctap2_success_test.go).
+	attestation *pkgfido2.WebAuthnAttestation
 }
 
 func (f *fakeCeremony) RegisterWebAuthn(opts pkgfido2.WebAuthnRegistrationOptions) (*pkgfido2.WebAuthnAttestation, error) {
@@ -57,6 +63,9 @@ func (f *fakeCeremony) RegisterWebAuthn(opts pkgfido2.WebAuthnRegistrationOption
 	f.opts = opts
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.attestation != nil {
+		return f.attestation, nil
 	}
 	return &pkgfido2.WebAuthnAttestation{CredentialID: []byte("cred")}, nil
 }
@@ -91,6 +100,38 @@ func assertStubParseFailure(t *testing.T, err error) {
 	var ceremonyErr *LocalCeremonyError
 	if !errors.As(err, &ceremonyErr) || ceremonyErr.Stage != "parse" {
 		t.Fatalf("Enroll = %v, want nil or a parse-stage stub failure", err)
+	}
+}
+
+// zeroDeviceEnumerator implements pkgfido2.HIDDeviceEnumerator, reporting no
+// attached HID devices — the deterministic, hardware-free case a build
+// without an attached authenticator (e.g. this test host) always hits.
+type zeroDeviceEnumerator struct{}
+
+func (zeroDeviceEnumerator) Enumerate(uint16, uint16) ([]pkgfido2.HIDDevice, error) {
+	return nil, nil
+}
+
+func (zeroDeviceEnumerator) Open(string) (pkgfido2.HIDDevice, error) {
+	return nil, errors.New("no device at path")
+}
+
+// TestNewLocalCeremony_WiresARealHandler pins the production constructor:
+// given a real *pkgfido2.FIDO2Handler (not the test seam), it must build a
+// LocalCeremony whose Available() reflects the handler's device list, and a
+// non-positive timeout must fall back to the 60s default.
+func TestNewLocalCeremony_WiresARealHandler(t *testing.T) {
+	handler, err := pkgfido2.NewHandler(nil, zeroDeviceEnumerator{})
+	if err != nil {
+		t.Fatalf("pkgfido2.NewHandler: %v", err)
+	}
+
+	c := NewLocalCeremony(handler, 0)
+	if c.timeout != 60*time.Second {
+		t.Fatalf("timeout = %v, want the 60s default", c.timeout)
+	}
+	if ok, reason := c.Available(context.Background()); ok {
+		t.Fatalf("Available() = true (%s), want false with zero attached devices", reason)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"io"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -226,6 +227,45 @@ func TestBackendSigner_Errors(t *testing.T) {
 	p.signErr = errors.New("device locked")
 	if _, err := key.BackendSigner(ctx, p); err == nil {
 		t.Fatal("expected error when backend signer resolution fails")
+	}
+}
+
+// TestBackendSigner_NilKey verifies the nil-receiver guard: BackendSigner
+// must report *NilInputError rather than dereferencing a nil *Key.
+func TestBackendSigner_NilKey(t *testing.T) {
+	var k *Key
+	_, err := k.BackendSigner(context.Background(), newFakeProvider())
+	var nie *NilInputError
+	if !errors.As(err, &nie) {
+		t.Fatalf("expected *NilInputError for a nil key, got %T: %v", err, err)
+	}
+}
+
+// unsupportedPublicKeySigner is a crypto.Signer whose Public() type
+// ssh.NewSignerFromSigner does not recognize, exercising BackendSigner's
+// "ssh.NewSignerFromSigner" error-wrapping branch -- a backend that resolves
+// successfully but hands back key material in an algorithm this package
+// cannot wrap for SSH.
+type unsupportedPublicKeySigner struct{}
+
+func (unsupportedPublicKeySigner) Public() crypto.PublicKey { return "not-a-real-public-key" }
+
+func (unsupportedPublicKeySigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	return nil, errors.New("unsupportedPublicKeySigner: Sign must not be called")
+}
+
+// TestBackendSigner_UnsupportedPublicKeyType verifies that a backend signer
+// resolving successfully but carrying a public key type ssh.NewSignerFromSigner
+// cannot wrap surfaces as *KeyMaterialError, not a raw ssh package error.
+func TestBackendSigner_UnsupportedPublicKeyType(t *testing.T) {
+	p := newFakeProvider()
+	p.keys["tpm2/bad-key"] = unsupportedPublicKeySigner{}
+	key := &Key{BackendID: "tpm2", BackendKeyID: "bad-key", Algorithm: AlgorithmEd25519}
+
+	_, err := key.BackendSigner(context.Background(), p)
+	var kme *KeyMaterialError
+	if !errors.As(err, &kme) {
+		t.Fatalf("expected *KeyMaterialError for an unsupported public key type, got %T: %v", err, err)
 	}
 }
 

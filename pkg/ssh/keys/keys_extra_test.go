@@ -752,6 +752,186 @@ func TestEnclaveSigner_Sign_CorruptMaterial(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SignerWithClose: ssh.ParsePrivateKey failure → PEMParseError, and the
+// opened Buffer must be destroyed rather than leaked on that failure path.
+// ---------------------------------------------------------------------------
+
+func TestSignerWithClose_CorruptMaterial(t *testing.T) {
+	garbage := []byte("this-is-not-a-pem-key-at-all")
+	mat, err := secure.NewSecret(append([]byte(nil), garbage...))
+	if err != nil {
+		t.Fatalf("NewSecret: %v", err)
+	}
+	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	k.Material.Destroy()
+	k.Material = mat
+
+	signer, closer, err := k.SignerWithClose()
+	var pe *keys.PEMParseError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PEMParseError for corrupt material, got %T: %v", err, err)
+	}
+	if signer != nil {
+		t.Error("expected nil signer on parse failure")
+	}
+	if closer != nil {
+		t.Error("expected nil closer on parse failure; nothing was left open to close")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// enclaveSigner.SignWithAlgorithm: covers both the algorithm-aware dispatch
+// (RSA, which x/crypto/ssh's parsed signer implements ssh.AlgorithmSigner
+// for) and the plain-Sign fallback (Ed25519, which does not), plus the
+// Material.Open() and ssh.ParsePrivateKey error paths it shares with Sign.
+// ---------------------------------------------------------------------------
+
+func TestEnclaveSigner_SignWithAlgorithm_RSAUsesRequestedAlgorithm(t *testing.T) {
+	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	defer k.Destroy()
+
+	signer, err := k.Signer()
+	if err != nil {
+		t.Fatalf("Signer: %v", err)
+	}
+	algSigner, ok := signer.(ssh.AlgorithmSigner)
+	if !ok {
+		t.Fatal("expected the RSA enclave signer to implement ssh.AlgorithmSigner")
+	}
+	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoRSASHA256)
+	if err != nil {
+		t.Fatalf("SignWithAlgorithm: %v", err)
+	}
+	if sig.Format != ssh.KeyAlgoRSASHA256 {
+		t.Errorf("signature format = %q, want %q", sig.Format, ssh.KeyAlgoRSASHA256)
+	}
+}
+
+func TestEnclaveSigner_SignWithAlgorithm_Ed25519(t *testing.T) {
+	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	defer k.Destroy()
+
+	signer, err := k.Signer()
+	if err != nil {
+		t.Fatalf("Signer: %v", err)
+	}
+	algSigner, ok := signer.(ssh.AlgorithmSigner)
+	if !ok {
+		t.Fatal("expected the enclave signer to implement ssh.AlgorithmSigner regardless of key type")
+	}
+	// Ed25519 has exactly one signature format; requesting it by name must
+	// take the same path as an empty/default algorithm request.
+	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoED25519)
+	if err != nil {
+		t.Fatalf("SignWithAlgorithm: %v", err)
+	}
+	if sig.Format != ssh.KeyAlgoED25519 {
+		t.Errorf("signature format = %q, want %q", sig.Format, ssh.KeyAlgoED25519)
+	}
+}
+
+func TestEnclaveSigner_SignWithAlgorithm_MaterialOpenError(t *testing.T) {
+	k := destroyedMaterialKey(t)
+	signer, err := k.Signer()
+	if err != nil {
+		t.Fatalf("Signer: %v", err)
+	}
+	algSigner := signer.(ssh.AlgorithmSigner)
+	_, err = algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), "")
+	var kme *keys.KeyMaterialError
+	if !errors.As(err, &kme) {
+		t.Fatalf("expected KeyMaterialError on Material.Open() failure, got %T: %v", err, err)
+	}
+}
+
+func TestEnclaveSigner_SignWithAlgorithm_CorruptMaterial(t *testing.T) {
+	garbage := []byte("this-is-not-a-pem-key-at-all")
+	mat, err := secure.NewSecret(append([]byte(nil), garbage...))
+	if err != nil {
+		t.Fatalf("NewSecret: %v", err)
+	}
+	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmEd25519})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	k.Material.Destroy()
+	k.Material = mat
+
+	signer, err := k.Signer()
+	if err != nil {
+		t.Fatalf("Signer: %v", err)
+	}
+	algSigner := signer.(ssh.AlgorithmSigner)
+	_, err = algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), "")
+	var pe *keys.PEMParseError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PEMParseError for corrupt material, got %T: %v", err, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// persistentSigner.SignWithAlgorithm: the long-lived-signer counterpart of
+// enclaveSigner.SignWithAlgorithm, plus the closed-signer guard both
+// persistentSigner methods share.
+// ---------------------------------------------------------------------------
+
+func TestPersistentSigner_SignWithAlgorithm(t *testing.T) {
+	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	defer k.Destroy()
+
+	signer, closer, err := k.SignerWithClose()
+	if err != nil {
+		t.Fatalf("SignerWithClose: %v", err)
+	}
+	defer closer()
+
+	algSigner, ok := signer.(ssh.AlgorithmSigner)
+	if !ok {
+		t.Fatal("expected the persistent RSA signer to implement ssh.AlgorithmSigner")
+	}
+	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoRSASHA256)
+	if err != nil {
+		t.Fatalf("SignWithAlgorithm: %v", err)
+	}
+	if sig.Format != ssh.KeyAlgoRSASHA256 {
+		t.Errorf("signature format = %q, want %q", sig.Format, ssh.KeyAlgoRSASHA256)
+	}
+}
+
+func TestPersistentSigner_SignWithAlgorithm_AfterCloseReturnsClosedSignerError(t *testing.T) {
+	k, err := keys.Generate(keys.GenerateOptions{Algorithm: keys.AlgorithmRSA, RSABits: 2048})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	defer k.Destroy()
+
+	signer, closer, err := k.SignerWithClose()
+	if err != nil {
+		t.Fatalf("SignerWithClose: %v", err)
+	}
+	closer()
+
+	algSigner := signer.(ssh.AlgorithmSigner)
+	_, err = algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoRSASHA256)
+	var cse *keys.ClosedSignerError
+	if !errors.As(err, &cse) {
+		t.Fatalf("expected ClosedSignerError after close, got %T: %v", err, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // parseWithPassphrase: provider returns error
 // ---------------------------------------------------------------------------
 
