@@ -28,6 +28,7 @@ the folder in the same commit that changes the behavior.
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
+| [observability](observability/) | Prometheus instrumentation — operation counters/histograms, backend health, keys/certs totals, connection tracking |
 | [password-vault](password-vault/) | Stored password credentials and their access modes |
 | [pin-management](pin-management/) | The PIN service and its TPM 2.0 backend |
 | [piv-smartcard](piv-smartcard/) | PIV slot operations as a factor and as a CLI/SDK verb |
