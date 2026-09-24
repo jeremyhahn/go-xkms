@@ -17,6 +17,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -921,10 +922,11 @@ type recordingPairingAudit struct {
 	entries []audit.Entry
 }
 
-func (l *recordingPairingAudit) Log(e audit.Entry) {
+func (l *recordingPairingAudit) Log(e audit.Entry) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.entries = append(l.entries, e)
+	return nil
 }
 
 func (l *recordingPairingAudit) recorded() []audit.Entry {
@@ -981,4 +983,46 @@ func TestPairingVerifier_LegacyMigrationSaveFailureIsAuditLoggedNotFatal(t *test
 		}
 	}
 	assert.True(t, found, "expected an OpPairingStateMigrated audit entry for the discarded save failure")
+}
+
+// failingPairingAudit refuses every audit write, simulating a broken audit sink.
+type failingPairingAudit struct {
+	audit.Logger
+}
+
+var errPairingAuditSink = errors.New("audit sink unavailable")
+
+func (failingPairingAudit) Log(audit.Entry) error {
+	return errPairingAuditSink
+}
+
+// TestPairingVerifier_LegacyMigrationSaveAndAuditFailureFailsLoad covers the
+// case where the migration save fails and the audit record of that failure
+// cannot be written either. OpPairingStateMigrated is a security event
+// (#688), so the load fails closed rather than leave the failure unrecorded.
+func TestPairingVerifier_LegacyMigrationSaveAndAuditFailureFailsLoad(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "pairing_state.json")
+
+	pub, _ := generateTestIdentity(t)
+	legacy := legacyPairingState{
+		ExtensionOrigin: testOrigin,
+		IdentityKey:     pub,
+		PairedAt:        time.Now().UTC(),
+	}
+	data, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(statePath, data, 0o600))
+
+	require.NoError(t, os.Chmod(dir, 0o500))
+	defer func() { _ = os.Chmod(dir, 0o700) }()
+
+	v, err := NewPairingVerifier(statePath)
+	require.NoError(t, err)
+
+	v.SetAuditLogger(failingPairingAudit{})
+
+	err = v.load()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errPairingAuditSink)
 }

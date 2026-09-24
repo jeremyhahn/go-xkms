@@ -60,6 +60,21 @@ type PolicyConfig struct {
 
 	// AllowWildcards controls whether wildcard certificates are allowed.
 	AllowWildcards bool `yaml:"allowWildcards" json:"allowWildcards"`
+
+	// RejectReservedIPs rejects IP identifiers in reserved/special-purpose
+	// ranges (loopback, private, link-local, multicast, documentation,
+	// unspecified) per RFC 6890. See ValidateIPWithReservedCheck.
+	RejectReservedIPs bool `yaml:"rejectReservedIPs" json:"rejectReservedIPs"`
+
+	// IdentifierChallengeTypes overrides the default candidate challenge
+	// types considered for an identifier type ("dns", "ip",
+	// "permanent-identifier") before the enabled-challenge-type filter is
+	// applied. An identifier type absent from this map keeps the package's
+	// built-in default candidates. Wildcard DNS identifiers are exempt: per
+	// RFC 8555 Section 7.1.4 and the CA/Browser Forum Baseline
+	// Requirements, a wildcard MUST only use dns-01, and that restriction is
+	// not configurable.
+	IdentifierChallengeTypes map[string][]string `yaml:"identifierChallengeTypes" json:"identifierChallengeTypes"`
 }
 
 // DefaultBlocklistConfig returns a BlocklistConfig with sensible defaults.
@@ -205,6 +220,7 @@ func (c *PolicyConfig) Clone() *PolicyConfig {
 		Blocklist:           *c.Blocklist.Clone(),
 		RequirePublicSuffix: c.RequirePublicSuffix,
 		AllowWildcards:      c.AllowWildcards,
+		RejectReservedIPs:   c.RejectReservedIPs,
 	}
 	if c.EnabledIdentifierTypes != nil {
 		clone.EnabledIdentifierTypes = make(map[string]bool)
@@ -216,6 +232,12 @@ func (c *PolicyConfig) Clone() *PolicyConfig {
 		clone.EnabledChallengeTypes = make(map[string]bool)
 		for k, v := range c.EnabledChallengeTypes {
 			clone.EnabledChallengeTypes[k] = v
+		}
+	}
+	if c.IdentifierChallengeTypes != nil {
+		clone.IdentifierChallengeTypes = make(map[string][]string, len(c.IdentifierChallengeTypes))
+		for k, v := range c.IdentifierChallengeTypes {
+			clone.IdentifierChallengeTypes[k] = append([]string(nil), v...)
 		}
 	}
 	return clone
