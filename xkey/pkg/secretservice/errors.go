@@ -16,7 +16,31 @@
 // git-credential-libsecret, and other Secret Service consumers.
 package secretservice
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/godbus/dbus/v5"
+)
+
+// D-Bus error names from the org.freedesktop.Secret.Error interface. libsecret
+// and secret-tool inspect these specific names -- not just the generic
+// org.freedesktop.DBus.Error.Failed -- to decide whether to retry after a
+// prompt (IsLocked) or report a hard miss (NoSuchObject), so mapping our
+// sentinel errors onto them is required for real client interop, not cosmetic.
+const (
+	dbusErrIsLocked     = "org.freedesktop.Secret.Error.IsLocked"
+	dbusErrNoSuchObject = "org.freedesktop.Secret.Error.NoSuchObject"
+)
+
+// dbusIsLockedError reports err as org.freedesktop.Secret.Error.IsLocked.
+func dbusIsLockedError(err error) *dbus.Error {
+	return dbus.NewError(dbusErrIsLocked, []any{err.Error()})
+}
+
+// dbusNoSuchObjectError reports err as org.freedesktop.Secret.Error.NoSuchObject.
+func dbusNoSuchObjectError(err error) *dbus.Error {
+	return dbus.NewError(dbusErrNoSuchObject, []any{err.Error()})
+}
 
 var (
 	// ErrDBusUnavailable is returned when the D-Bus session bus cannot be reached.
@@ -63,6 +87,47 @@ var (
 
 	// ErrNameConflict is returned when an item with the same attributes already exists.
 	ErrNameConflict = errors.New("secretservice: item with same attributes exists")
+
+	// ErrPromptNotFound is returned when a prompt path does not exist.
+	ErrPromptNotFound = errors.New("secretservice: prompt not found")
+
+	// ErrPromptAlreadyResolved is returned when Prompt or Dismiss is called
+	// on a prompt that has already completed.
+	ErrPromptAlreadyResolved = errors.New("secretservice: prompt already resolved")
+
+	// ErrNilBarrier is returned when the barrier is nil.
+	ErrNilBarrier = errors.New("secretservice: barrier is nil")
+
+	// ErrSecretValueEmpty is returned when a secret's value is empty.
+	ErrSecretValueEmpty = errors.New("secretservice: secret value is empty")
+
+	// ErrLabelRequired is returned when CreateItem is called without a label.
+	ErrLabelRequired = errors.New("secretservice: item label is required")
+
+	// ErrAlgorithmNotFIPSApproved is returned when a client requests the
+	// dh-ietf1024-sha256-aes128-cbc-pkcs7 session algorithm while this
+	// process is running under FIPS 140 enforcement (crypto/fips140.Enabled).
+	// Only the plain algorithm, safe because the Secret Service bus is a
+	// local, kernel-mediated channel rather than a network one, is offered
+	// in that mode.
+	ErrAlgorithmNotFIPSApproved = errors.New("secretservice: dh-ietf1024-sha256-aes128-cbc-pkcs7 is not FIPS-approved; use the plain algorithm")
+
+	// ErrInterfaceNotFound is returned by the Properties Get/GetAll/Set
+	// methods when the requested D-Bus interface is not the one the object
+	// implements.
+	ErrInterfaceNotFound = errors.New("secretservice: unknown interface")
+
+	// ErrPropertyNotFound is returned when the requested property name is
+	// not defined on the object.
+	ErrPropertyNotFound = errors.New("secretservice: unknown property")
+
+	// ErrPropertyReadOnly is returned when Properties.Set targets a
+	// property this daemon does not allow a client to change.
+	ErrPropertyReadOnly = errors.New("secretservice: property is read-only")
+
+	// ErrPropertyInvalidValue is returned when Properties.Set is given a
+	// value whose D-Bus type does not match the property being set.
+	ErrPropertyInvalidValue = errors.New("secretservice: property value has the wrong type")
 )
 
 // WrappedError wraps an underlying cause with a contextual message while
