@@ -33,10 +33,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// assertAuditUnavailableErr is the sentinel used by failingAuthAuditLogger in
+// errAssertAuditUnavailable is the sentinel used by failingAuthAuditLogger in
 // every test in this file, so the assertion on writeErr wrapping stays
 // identical across success/deny/logout scenarios.
-var assertAuditUnavailableErr = errors.New("audit backend unavailable")
+var errAssertAuditUnavailable = errors.New("audit backend unavailable")
 
 // mockAuthAuditLogger records every audit event it receives.
 type mockAuthAuditLogger struct {
@@ -106,7 +106,7 @@ func TestPIVLogin_EmitsAuditEvent_OnSuccess(t *testing.T) {
 }
 
 func TestPIVLogin_AuditWriteFailure_FailsLoginAndReturnsNoToken(t *testing.T) {
-	auditErr := assertAuditUnavailableErr
+	auditErr := errAssertAuditUnavailable
 	server := newAuthTestServer(t, func(c *Config) {
 		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{
@@ -154,7 +154,7 @@ func TestPIVLogin_DenyOutcome_AuditWriteFailure_Returns500(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
 		c.PIVLogin = &PIVLoginOptions{Enabled: true, AllowUnattested: true}
 		c.AuthUserStore = &fakeAuthUserStore{user: auth.MTLSUser{Username: "alice", Enabled: false}}
-		c.AuditLogger = &failingAuthAuditLogger{err: assertAuditUnavailableErr}
+		c.AuditLogger = &failingAuthAuditLogger{err: errAssertAuditUnavailable}
 	})
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -197,7 +197,7 @@ func TestAuthLogout_EmitsAuditEvent_OnSuccess(t *testing.T) {
 
 func TestAuthLogout_AuditWriteFailure_FailsLogout(t *testing.T) {
 	server := newAuthTestServer(t, func(c *Config) {
-		c.AuditLogger = &failingAuthAuditLogger{err: assertAuditUnavailableErr}
+		c.AuditLogger = &failingAuthAuditLogger{err: errAssertAuditUnavailable}
 	})
 
 	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
