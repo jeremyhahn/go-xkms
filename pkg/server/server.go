@@ -301,6 +301,21 @@ type Server struct {
 	// Platform store
 	platformStore seal.PlatformStore
 
+	// platformStoreTPM is the raw TPM2 backend the platform store's tpm2
+	// credential strategy seals through -- either s.nodeSealTPM reused, or a
+	// standalone open. Nil unless the tpm2 strategy was built. Retained
+	// (rather than only the wrapped types.Sealer buried inside the platform
+	// store's PlatformSealer) so the underlying TPM is reachable for
+	// diagnostics and tests without unwrapping the seal chain.
+	platformStoreTPM types.Sealer
+
+	// platformStoreTPMClose releases a TPM open made standalone for the
+	// platform store's tpm2 credential seal strategy, when the node-seal
+	// flip (s.nodeSealTPM) did not already open one to share. Nil when the
+	// platform store reused the flip's open, used a non-tpm2 strategy, or
+	// was never built.
+	platformStoreTPMClose func() error
+
 	// Policy manager
 	policyManager *policy.Manager
 
@@ -584,14 +599,18 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// one returned.
 	abortAfterStorage := func(step string) {
 		cancel()
+		s.closePlatformStoreTPM()
 		if closeErr := s.closeQRDBStorage(); closeErr != nil {
 			s.logger.Error("failed to close qrdb storage after start-up failure", "step", step, "error", closeErr)
 		}
 	}
 
-	// Initialize platform store. Requires s.barrier, which for the node-flip
-	// case (see above) is already unsealed and adopted; for every other case
-	// it is nil here exactly as before, and initializePlatformStore skips.
+	// Initialize platform store. Runs after unseal (the node-flip case above
+	// is already unsealed and adopted by this point; a non-flip barrier, if
+	// any, unseals later in initializeBarrier and the platform store does not
+	// depend on it). Builds a sealer from credentials.seal_strategy and skips
+	// only for "manual" (nothing stored) and "barrier" (the credential
+	// service stores directly in s.barrier instead) -- see initializePlatformStore.
 	if err := s.initializePlatformStore(); err != nil {
 		abortAfterStorage("platform store")
 		return nil, &ErrServiceInit{Service: "platform store", Err: err}
@@ -1763,18 +1782,6 @@ func (s *Server) initializePKCS11StateStore() error {
 	}
 	s.pkcs11StateStore = store
 	s.logger.Info("PKCS#11 remote-state store initialized")
-	return nil
-}
-
-// initializePlatformStore initializes the platform sealed credential store.
-func (s *Server) initializePlatformStore() error {
-	// Platform store requires barrier to be initialized for sealing
-	if s.barrier == nil {
-		s.logger.Info("Platform store skipped: barrier not configured")
-		return nil
-	}
-
-	s.logger.Info("Platform store initialized")
 	return nil
 }
 
@@ -3604,8 +3611,25 @@ func (s *Server) closeBackends() {
 			s.logger.Error("Error closing backend", slog.Any("error", err), "backend", name)
 		}
 	}
+	s.closePlatformStoreTPM()
 	if err := s.closeQRDBStorage(); err != nil {
 		s.logger.Error("Error closing qrdb storage", slog.Any("error", err))
+	}
+}
+
+// closePlatformStoreTPM releases a TPM open made standalone for the platform
+// store's tpm2 seal strategy (see buildTPM2PlatformSealer), when one was
+// opened. It is a no-op when the platform store reused the node-seal flip's
+// TPM open (that open is released by closeQRDBNode instead) or used a
+// non-tpm2 strategy. Idempotent and safe on every shutdown/abort path.
+func (s *Server) closePlatformStoreTPM() {
+	if s.platformStoreTPMClose == nil {
+		return
+	}
+	closeFn := s.platformStoreTPMClose
+	s.platformStoreTPMClose = nil
+	if err := closeFn(); err != nil {
+		s.logger.Warn("platform store: failed to close the standalone TPM open", "error", err)
 	}
 }
 

@@ -74,6 +74,27 @@ type ExternalTPMConfig struct {
 	Tracker types.AEADSafetyTracker
 }
 
+// NewFileKeyBackend builds the file-backed store.KeyBackend NewBackend
+// constructs internally from Config.KeyDir, for callers of
+// NewBackendWithTPM: a caller sharing an already-open TPM connection (e.g.
+// pkg/server reusing the node-seal flip's or the platform store's single
+// open) still needs a real KeyBackend for the wrapper it builds over that
+// connection, and this is the one NewBackend itself uses, not a second
+// implementation of the same three steps.
+func NewFileKeyBackend(logger *slog.Logger, keyDir string) (store.KeyBackend, error) {
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
+	}
+	fsBackend, err := file.New(keyDir)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return store.NewFileBackend(logger, fsBackend), nil
+}
+
 // NewBackendWithTPM creates a new TPM2 backend using an existing TPM instance.
 // This is useful when the TPM has already been initialized and provisioned by
 // another component (e.g., go-trusted-platform's app.TPM).
@@ -142,17 +163,11 @@ func NewBackend(config *Config) (*Backend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Ensure key directory exists
-	if err := os.MkdirAll(config.KeyDir, 0700); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
-	}
-
 	// Create file-based key backend for storing TPM key blobs
-	fsBackend, err := file.New(config.KeyDir)
+	keyBackend, err := NewFileKeyBackend(log, config.KeyDir)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
+		return nil, err
 	}
-	keyBackend := store.NewFileBackend(log, fsBackend)
 
 	// Create TPM2 configuration
 	tpmConfig := config.ToTPMConfig()
