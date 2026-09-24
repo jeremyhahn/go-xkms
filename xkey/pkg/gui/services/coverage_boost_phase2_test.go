@@ -104,23 +104,32 @@ type phase2AuditLogger struct {
 	entries []audit.Entry
 }
 
-func (l *phase2AuditLogger) Log(e audit.Entry) { l.entries = append(l.entries, e) }
-func (l *phase2AuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, _ error, _ int64) {
+func (l *phase2AuditLogger) Log(e audit.Entry) error { l.entries = append(l.entries, e); return nil }
+func (l *phase2AuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, _ error, _ int64) error {
 	l.Log(audit.Entry{Operation: op, Backend: backend, KeyID: keyID, Success: success})
+	return nil
 }
-func (l *phase2AuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (l *phase2AuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *phase2AuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {
+func (l *phase2AuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (l *phase2AuditLogger) LogServiceEvent(op audit.OperationType, details map[string]any) {
+func (l *phase2AuditLogger) LogServiceEvent(op audit.OperationType, details map[string]any) error {
 	l.Log(audit.Entry{Operation: op, Success: true, Details: details})
+	return nil
 }
-func (l *phase2AuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *phase2AuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *phase2AuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {}
-func (l *phase2AuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *phase2AuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
 }
-func (l *phase2AuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {
+func (l *phase2AuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
+}
+func (l *phase2AuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
 }
 
 // ===========================================================================

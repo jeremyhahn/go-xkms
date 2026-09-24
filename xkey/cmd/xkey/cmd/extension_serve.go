@@ -64,6 +64,34 @@ var (
 	// been edited; the cause (config.ErrPolicyUnverifiable joined with the
 	// HMAC error) is reachable with errors.Is.
 	ErrServePolicyRefused = errors.New("extension serve: sealed enterprise policy could not be verified")
+
+	// ErrServePKCS11StrategyUnavailable indicates the barrier's root key was
+	// sealed with the pkcs11 strategy. Unsealing it headlessly needs the
+	// token PIN from somewhere a human is not present to type it; the
+	// intended source is a PIN sealed to the TPM under the platform PCR
+	// policy and auto-unsealed the same way barrier TPM2 auto-unseal works
+	// (go-xkms#677), but that pre-barrier secret store does not exist yet.
+	// The strategy is refused here rather than left to fail deep inside a
+	// PKCS#11 login attempt with no PIN.
+	ErrServePKCS11StrategyUnavailable = errors.New("extension serve: pkcs11 barrier strategy needs a TPM-sealed PIN store that does not exist yet; unseal interactively with 'xkey barrier unseal'")
+
+	// ErrServeShamirStrategyUnavailable indicates the barrier's root key was
+	// sealed with the shamir strategy, which reassembles the root key from
+	// an M-of-N quorum of operator-held shares. A headless process has no
+	// way to collect that quorum, so it is refused rather than left to hang
+	// waiting for shares that will never arrive.
+	ErrServeShamirStrategyUnavailable = errors.New("extension serve: shamir barrier strategy needs an operator quorum a headless process cannot collect; unseal interactively with 'xkey barrier unseal'")
+
+	// ErrServeCloudKMSStrategyUnavailable indicates the barrier's root key
+	// was sealed with a cloud KMS strategy (AWS KMS, GCP KMS, Azure Key
+	// Vault, or Vault). Unlike the TPM2 and passphrase strategies, no xkey
+	// entry point -- headless or interactive -- can currently assemble a
+	// cloud KMS sealing strategy: BarrierService has no backend wiring, key
+	// configuration, or credential resolution for any cloud provider. Adding
+	// that is a scoped design decision (new config surface plus backend
+	// wiring), not a headless-mode gap, so it is refused here rather than
+	// papered over with an incomplete client construction.
+	ErrServeCloudKMSStrategyUnavailable = errors.New("extension serve: cloud KMS barrier strategies are not yet supported by xkey")
 )
 
 // extensionServeCmd starts the headless autofill IPC server.
@@ -254,8 +282,16 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 					}
 				}
 
+			case xkms.StrategyPKCS11:
+				return ErrServePKCS11StrategyUnavailable
+
+			case xkms.StrategyShamir:
+				return ErrServeShamirStrategyUnavailable
+
+			case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
+				return ErrServeCloudKMSStrategyUnavailable
+
 			default:
-				// Cloud KMS, PKCS#11, Shamir, etc. -- not yet supported in headless mode.
 				return &DetailError{Err: ErrServeStrategyUnsupported, Detail: fmt.Sprintf(": %s", strategy)}
 			}
 		}

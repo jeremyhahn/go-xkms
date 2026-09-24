@@ -354,8 +354,10 @@ func (d *Daemon) OpenSession(sender dbus.Sender, algorithm string, input dbus.Va
 		output = dbus.MakeVariant(PublicKeyToBytes(keyPair.Public))
 
 	default:
-		d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, false, ErrInvalidAlgorithm,
-			map[string]any{"algorithm": algorithm, "client": client})
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, false, ErrInvalidAlgorithm,
+			map[string]any{"algorithm": algorithm, "client": client}); auditErr != nil {
+			return dbus.Variant{}, "/", dbus.MakeFailedError(auditErr)
+		}
 		return dbus.Variant{}, "/", dbus.MakeFailedError(ErrInvalidAlgorithm)
 	}
 
@@ -369,8 +371,10 @@ func (d *Daemon) OpenSession(sender dbus.Sender, algorithm string, input dbus.Va
 		slog.String("algorithm", algorithm),
 		slog.String("client", client))
 
-	d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, true, nil,
-		map[string]any{"algorithm": algorithm, "client": client})
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, true, nil,
+		map[string]any{"algorithm": algorithm, "client": client}); auditErr != nil {
+		return dbus.Variant{}, "/", dbus.MakeFailedError(auditErr)
+	}
 	return output, sessionPath, nil
 }
 
@@ -418,7 +422,9 @@ func (d *Daemon) SearchItems(attributes map[string]string) ([]dbus.ObjectPath, [
 	// Get all passwords
 	passwords, err := d.store.List()
 	if err != nil {
-		d.logSecretServiceEvent(audit.OpSecretServiceSearch, false, err, nil)
+		if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSearch, false, err, nil); auditErr != nil {
+			return nil, nil, dbus.MakeFailedError(auditErr)
+		}
 		return nil, nil, dbus.MakeFailedError(err)
 	}
 
@@ -439,7 +445,9 @@ func (d *Daemon) SearchItems(attributes map[string]string) ([]dbus.ObjectPath, [
 		}
 	}
 
-	d.logSecretServiceEvent(audit.OpSecretServiceSearch, true, nil, map[string]any{"result_count": len(unlocked) + len(locked)})
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSearch, true, nil, map[string]any{"result_count": len(unlocked) + len(locked)}); auditErr != nil {
+		return nil, nil, dbus.MakeFailedError(auditErr)
+	}
 	return unlocked, locked, nil
 }
 
@@ -450,7 +458,9 @@ func (d *Daemon) Unlock(objects []dbus.ObjectPath) ([]dbus.ObjectPath, dbus.Obje
 		slog.Int("count", len(objects)))
 
 	// All objects are considered unlocked
-	d.logSecretServiceEvent(audit.OpSecretServiceUnlock, true, nil, nil)
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceUnlock, true, nil, nil); auditErr != nil {
+		return nil, "/", dbus.MakeFailedError(auditErr)
+	}
 	return objects, "/", nil
 }
 
@@ -461,7 +471,9 @@ func (d *Daemon) Lock(objects []dbus.ObjectPath) ([]dbus.ObjectPath, dbus.Object
 		slog.Int("count", len(objects)))
 
 	// We don't actually lock individual items
-	d.logSecretServiceEvent(audit.OpSecretServiceLock, true, nil, nil)
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceLock, true, nil, nil); auditErr != nil {
+		return nil, "/", dbus.MakeFailedError(auditErr)
+	}
 	return nil, "/", nil
 }
 
@@ -528,7 +540,9 @@ func (d *Daemon) GetSecrets(items []dbus.ObjectPath, session dbus.ObjectPath) (m
 		result[itemPath] = secret
 	}
 
-	d.logSecretServiceEvent(audit.OpSecretServiceSecretAccessed, true, nil, map[string]any{"item_count": len(items)})
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSecretAccessed, true, nil, map[string]any{"item_count": len(items)}); auditErr != nil {
+		return nil, dbus.MakeFailedError(auditErr)
+	}
 	return result, nil
 }
 
@@ -588,7 +602,9 @@ func (d *Daemon) CloseSession(sessionPath dbus.ObjectPath) *dbus.Error {
 	delete(d.sessions, sessionPath)
 	d.logger.Debug("session closed",
 		slog.String("path", string(sessionPath)))
-	d.logSecretServiceEvent(audit.OpSecretServiceSessionClosed, true, nil, nil)
+	if auditErr := d.logSecretServiceEvent(audit.OpSecretServiceSessionClosed, true, nil, nil); auditErr != nil {
+		return dbus.MakeFailedError(auditErr)
+	}
 
 	return nil
 }
@@ -607,18 +623,24 @@ func (d *Daemon) SetAuditLogger(l audit.Logger) {
 }
 
 // logSecretServiceEvent logs an audit event for Secret Service operations.
-func (d *Daemon) logSecretServiceEvent(op audit.OperationType, success bool, err error, details map[string]any) {
-	if p := d.auditLog.Load(); p != nil {
-		errStr := ""
-		if err != nil {
-			errStr = err.Error()
-		}
-		(*p).Log(audit.Entry{
-			Timestamp: time.Now(),
-			Operation: op,
-			Success:   success,
-			Error:     errStr,
-			Details:   details,
-		})
+// Callers must propagate a non-nil return (typically via
+// dbus.MakeFailedError, since every D-Bus method here returns *dbus.Error):
+// op.Severity() (audit package) decides whether that failure is required
+// to fail the caller.
+func (d *Daemon) logSecretServiceEvent(op audit.OperationType, success bool, err error, details map[string]any) error {
+	p := d.auditLog.Load()
+	if p == nil {
+		return nil
 	}
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	return (*p).Log(audit.Entry{
+		Timestamp: time.Now(),
+		Operation: op,
+		Success:   success,
+		Error:     errStr,
+		Details:   details,
+	})
 }

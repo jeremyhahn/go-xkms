@@ -829,12 +829,15 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// it is audited now rather than after delivery. A finalization hook or a
 	// storage failure below may still abort the response, but it cannot unsign
 	// the certificate, and an audit trail that omitted it would be wrong.
-	s.recordAudit(audit.LogCertificateIssued(auditContext(r), s.auditLog,
+	if auditErr := s.recordAudit(audit.EventCertificateIssued, audit.LogCertificateIssued(auditContext(r), s.auditLog,
 		auditAccountID(account.ID),
 		strconv.FormatUint(order.ID, 10),
 		cert.Subject.CommonName,
 		auditValidityDays(cert),
-		cert.SerialNumber.String()))
+		cert.SerialNumber.String())); auditErr != nil {
+		s.failOrder(ctx, orderDAO, order, w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
 
 	// Execute order finalization hooks if registered
 	if s.params != nil && s.params.OrderFinalizeHooks != nil {
@@ -1465,15 +1468,19 @@ func (s *RestService) finalizeTCGCSR(
 	// enroll-01 binds a device identity to a TPM, so the trail records both the
 	// enrollment decision and the IDevID certificate it produced.
 	auditCtx := auditContext(r)
-	s.recordAudit(audit.LogTPMEnrollment(auditCtx, s.auditLog,
+	if auditErr := s.recordAudit(audit.EventTPMEnrollment, audit.LogTPMEnrollment(auditCtx, s.auditLog,
 		auditAccountID(account.ID), idevidCN,
-		ekcert.Subject.CommonName, idevidCert.Subject.CommonName))
-	s.recordAudit(audit.LogCertificateIssued(auditCtx, s.auditLog,
+		ekcert.Subject.CommonName, idevidCert.Subject.CommonName)); auditErr != nil {
+		return 0, nil, common.ServerInternal("Failed to record audit event")
+	}
+	if auditErr := s.recordAudit(audit.EventCertificateIssued, audit.LogCertificateIssued(auditCtx, s.auditLog,
 		auditAccountID(account.ID),
 		strconv.FormatUint(order.ID, 10),
 		idevidCert.Subject.CommonName,
 		auditValidityDays(idevidCert),
-		idevidCert.SerialNumber.String()))
+		idevidCert.SerialNumber.String())); auditErr != nil {
+		return 0, nil, common.ServerInternal("Failed to record audit event")
+	}
 
 	// Execute order finalization hooks if registered
 	if s.params != nil && s.params.OrderFinalizeHooks != nil {

@@ -150,7 +150,7 @@ node pinned to one interface serves the exchange on that interface only.
 |---|---|---|
 | `badNonce` on every request | the client is not reading the `Replay-Nonce` header | use a compliant client; nonces are single-use |
 | doubled path in the directory, `/api/v1/api/v1/acme/...` | the server's base URI is misconfigured | fix the server's `baseRESTURI`; the client is fine |
-| `rejectedIdentifier` | policy will not issue for that name | check the CA's issuance policy |
+| `rejectedIdentifier` | the identifier is blocklisted, is not under a public suffix, or (for an IP) is in a reserved/loopback range | check `acme.policy` in the server config, or request an identifier the policy allows |
 | `caa` error | a CAA record forbids this CA outright, restricts issuance to a different ACME account (`accounturi`) or challenge type (`validationmethods`, RFC 8657) than this request used, has a malformed `accounturi`/`validationmethods` value, or the server could not determine the CAA RRset at all (DNS failure fails closed, RFC 8659 §5.1) | fix the CAA record — issuer domain, `accounturi`, or `validationmethods` — to allow this CA, this account, and the challenge type you're using; or retry once DNS is reachable |
 | `rateLimited` | per-account or per-tenant limit hit | back off; the response carries `Retry-After` |
 | `orderNotReady` on finalize | an authorization is still pending | complete the challenge first |

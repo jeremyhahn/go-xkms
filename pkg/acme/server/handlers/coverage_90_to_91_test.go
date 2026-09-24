@@ -458,44 +458,6 @@ func TestParseJWS_NoSignatures(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestIsValidDomainName_MoreEdgeCases tests isValidDomainName with additional edge cases
-func TestIsValidDomainName_MoreEdgeCases(t *testing.T) {
-	testCases := []struct {
-		name     string
-		domain   string
-		expected bool
-	}{
-		{"valid simple", "example.com", true},
-		{"valid subdomain", "sub.example.com", true},
-		{"valid with hyphen", "my-domain.com", true},
-		{"starts with hyphen", "-example.com", false},
-		{"ends with hyphen", "example-.com", false},
-		{"label starts with hyphen", "sub.-example.com", false},
-		{"label ends with hyphen", "sub.example-.com", false},
-		{"too long label", strings.Repeat("a", 64) + ".com", false},
-		{"empty label", "example..com", false},
-		{"empty string", "", false},
-		{"just dots", "...", false},
-		{"trailing dot invalid", "example.com.", false},
-		{"leading dot", ".example.com", false},
-		{"numeric only", "123.456", true},
-		{"single letter labels", "a.b.c", true},
-		// NEW: Domain too long - over 253 chars
-		{"domain over 253 chars", strings.Repeat("a", 50) + "." + strings.Repeat("b", 50) + "." + strings.Repeat("c", 50) + "." + strings.Repeat("d", 50) + "." + strings.Repeat("e", 50) + "." + strings.Repeat("f", 50), false},
-		// NEW: Invalid characters
-		{"invalid character underscore", "test_domain.com", false},
-		{"invalid character space", "test domain.com", false},
-		{"invalid character at symbol", "test@domain.com", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := isValidDomainName(tc.domain)
-			assert.Equal(t, tc.expected, result, "domain: %s", tc.domain)
-		})
-	}
-}
-
 // generateTestKeyP521ForCoverage creates a P-521 ECDSA test key pair and its
 // JWK representation.
 func generateTestKeyP521ForCoverage(t *testing.T) *TestKey {

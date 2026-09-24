@@ -202,8 +202,12 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 	if role != "" {
 		auditEvent.Details["role"] = role
 	}
-	// Best-effort audit logging; do not disrupt the request pipeline.
-	_ = s.auditLogger.Log(ctx, auditEvent)
+	// authorize is a SeveritySecurity action (docs/audit-log/engineering.md):
+	// a failed audit write fails the request rather than let an
+	// authorization decision proceed unaudited.
+	if auditErr := audit.HandleWriteFailure(nil, auditEvent.Action, s.auditLogger.Log(ctx, auditEvent)); auditErr != nil {
+		return status.Error(codes.Internal, auditErr.Error())
+	}
 
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthenticated) {

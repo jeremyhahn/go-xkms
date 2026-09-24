@@ -52,26 +52,34 @@ type mockTPMOp struct {
 	details map[string]any
 }
 
-func (m *mockAuditLogger) Log(_ audit.Entry) {}
-func (m *mockAuditLogger) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) {
+func (m *mockAuditLogger) Log(_ audit.Entry) error { return nil }
+func (m *mockAuditLogger) LogKeyOperation(_ audit.OperationType, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *mockAuditLogger) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) {
+func (m *mockAuditLogger) LogCryptoOperation(_ audit.OperationType, _, _, _, _ string, _ bool, _ error, _ int64) error {
+	return nil
 }
-func (m *mockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) {}
-func (m *mockAuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]any)                 {}
-func (m *mockAuditLogger) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) {
+func (m *mockAuditLogger) LogConnectionEvent(_ audit.OperationType, _, _ string, _ map[string]any) error {
+	return nil
 }
-func (m *mockAuditLogger) LogTPMOperation(op audit.OperationType, success bool, err error, details map[string]any) {
+func (m *mockAuditLogger) LogServiceEvent(_ audit.OperationType, _ map[string]any) error { return nil }
+func (m *mockAuditLogger) LogPINOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
+	return nil
+}
+func (m *mockAuditLogger) LogTPMOperation(op audit.OperationType, success bool, err error, details map[string]any) error {
 	m.tpmOps = append(m.tpmOps, mockTPMOp{
 		op:      op,
 		success: success,
 		err:     err,
 		details: details,
 	})
+	return nil
 }
-func (m *mockAuditLogger) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) {
+func (m *mockAuditLogger) LogPasswordStoreOperation(_ audit.OperationType, _ string, _ bool, _ error, _ map[string]any) error {
+	return nil
 }
-func (m *mockAuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) {
+func (m *mockAuditLogger) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) error {
+	return nil
 }
 
 var _ audit.Logger = (*mockAuditLogger)(nil)

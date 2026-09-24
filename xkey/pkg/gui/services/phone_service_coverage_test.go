@@ -1366,7 +1366,6 @@ func TestPhoneService_Coverage_ErrorSentinels_NotEqual(t *testing.T) {
 		ErrPhoneInvalidTimeout,
 		ErrPhoneBLEUnavailable,
 		ErrPhoneAlreadyPaired,
-		ErrPhoneAttestNotImplemented,
 		ErrPhoneConnectFailed,
 		ErrPhoneHandshakeFailed,
 		ErrPhoneMissingKeys,

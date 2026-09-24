@@ -19,14 +19,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -38,6 +36,18 @@ import (
 )
 
 // AWS OIDC command errors.
+//
+// The interactive login dance's own failure modes -- authorization timeout,
+// a state mismatch, a response with no credentials, a callback with no
+// authorization code -- are NOT re-declared here. aws.Login already returns
+// its own typed sentinels for them (aws.ErrLoginTimeout, aws.ErrStateMismatch,
+// aws.ErrMissingCredentials, aws.ErrNoAuthorizationCode) and runAWSLogin
+// propagates that error as-is, so errors.Is against the aws package's
+// sentinel already works end to end; a second, cmd-level sentinel for the
+// same concept would just be a duplicate identity to keep in sync. The same
+// is true of the "--exec is required" check: handlers.NewForMode already
+// returns handlers.ErrExecModeRequiresCommand, and handleAWSOutput
+// propagates it unchanged.
 var (
 	ErrAWSMissingRegion          = errors.New("aws: --region is required")
 	ErrAWSLoginFailed            = errors.New("aws: login failed")
@@ -46,11 +56,6 @@ var (
 	ErrAWSCredentialsWriteFailed = errors.New("aws: failed to write credentials")
 	ErrAWSSessionLoadFailed      = errors.New("aws: failed to load session")
 	ErrAWSNoRefreshToken         = errors.New("aws: no refresh token in session")
-	ErrAWSAuthorizationTimeout   = errors.New("aws: authorization timed out")
-	ErrAWSStateMismatch          = errors.New("aws: state mismatch")
-	ErrAWSNoCredentials          = errors.New("aws: no AWS credentials in response")
-	ErrAWSNoAuthCode             = errors.New("aws: no authorization code received")
-	ErrAWSExecRequired           = errors.New("aws: --exec is required when using --output exec")
 )
 
 // AWSStoredSession represents a stored AWS session with DPoP key.
@@ -136,105 +141,34 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 }
 
 // runAWSLogin is the core AWS login implementation that can be called from both
-// the aws subcommand and from provider-based login.
+// the aws subcommand and from provider-based login. The interactive OIDC
+// dance itself (DPoP key, PKCE, callback listener, code exchange) lives in
+// the shared aws.Login; this function is a thin caller that adds the CLI's
+// presentation, output-mode dispatch, session persistence and background
+// refresh.
 func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string, callback oidc.Callback) error {
 	if region == "" {
 		return ErrAWSMissingRegion
 	}
 	if profile == "" {
-		profile = "default"
+		profile = handlers.DefaultAWSProfile
 	}
 	if credentialsFile == "" {
-		credentialsFile = "~/.aws/credentials"
+		credentialsFile = handlers.DefaultAWSCredentialsPath
 	}
 
-	// Generate DPoP key
-	dpopKey, err := oidc.GenerateDPoPKey()
-	if err != nil {
-		return &WrappedError{Msg: "failed to generate DPoP key", Err: err}
-	}
-
-	// Create AWS client
-	// AWS signin requires 127.0.0.1 (not localhost) and /oauth/callback path;
-	// the port is oidc.callback_port.
-	clientConfig := &aws.ClientConfig{
-		Region:      region,
-		CrossDevice: crossDevice,
-		RedirectURL: callback.AWSRedirectURL(),
-	}
-
-	client, err := aws.NewClient(clientConfig, dpopKey)
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrAWSLoginFailed, Cause: err}
-	}
-
-	// Generate PKCE and state
-	codeVerifier, err := oidc.GenerateCodeVerifier()
-	if err != nil {
-		return &WrappedError{Msg: "failed to generate code verifier", Err: err}
-	}
-
-	state, err := oidc.GenerateState()
-	if err != nil {
-		return &WrappedError{Msg: "failed to generate state", Err: err}
-	}
-
-	// Build authorization URL
-	authURL, err := client.AuthCodeURL(&aws.AuthCodeOptions{
-		State:        state,
-		CodeVerifier: codeVerifier,
-	})
-	if err != nil {
-		return &WrappedError{Msg: "failed to build auth URL", Err: err}
-	}
-
-	// AWS sends the browser to 127.0.0.1, so the listener serves 127.0.0.1
-	// on the callback port; a configured host that cannot serve it is
-	// refused here, before any browser opens.
-	listener, err := callback.AWSListenAddrs()
-	if err != nil {
-		return err
-	}
-
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	// Channel for callback
-	codeChan := make(chan string, 1)
-	errChan := make(chan error, 1)
-	receivedState := new(atomic.Value)
-
-	// Start callback server
-	mux := http.NewServeMux()
-	mux.Handle("/", oidc.ExactPathHandler(listener.Path, func(w http.ResponseWriter, r *http.Request) {
-		handleAWSCallback(w, r, codeChan, errChan, receivedState)
-	}))
-
-	listeners, err := oidc.BindCallback(ctx, nil, listener.Addrs)
-	if err != nil {
-		return &WrappedError{Msg: "failed to start callback server", Err: err}
-	}
-
-	server := &http.Server{Handler: mux}
-	oidc.ServeCallback(server, listeners, errChan)
-	defer func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-
-	// Open browser or print URL
-	if noBrowser || crossDevice {
-		_, _ = fmt.Fprintln(out, "Open the following URL in your browser:")
-		_, _ = fmt.Fprintln(out)
-		_, _ = fmt.Fprintln(out, authURL)
-		_, _ = fmt.Fprintln(out)
-		if crossDevice {
-			_, _ = fmt.Fprintln(out, "(Cross-device mode: you can open this on a different device)")
+	onAuthURL := func(authURL string) {
+		if noBrowser || crossDevice {
+			_, _ = fmt.Fprintln(out, "Open the following URL in your browser:")
+			_, _ = fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out, authURL)
+			_, _ = fmt.Fprintln(out)
+			if crossDevice {
+				_, _ = fmt.Fprintln(out, "(Cross-device mode: you can open this on a different device)")
+			}
+			_, _ = fmt.Fprintln(out, "Waiting for authorization...")
+			return
 		}
-		_, _ = fmt.Fprintln(out, "Waiting for authorization...")
-	} else {
 		_, _ = fmt.Fprintln(out, "Opening browser for AWS authentication...")
 		if err := browser.OpenURL(authURL); err != nil {
 			_, _ = fmt.Fprintf(out, "Failed to open browser: %v\n", err)
@@ -245,35 +179,26 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 		_, _ = fmt.Fprintln(out, "Waiting for authorization...")
 	}
 
-	// Wait for callback
-	var code string
-	select {
-	case code = <-codeChan:
-		// Success
-	case err := <-errChan:
-		return &SentinelCauseError{Sentinel: ErrAWSCallbackFailed, Cause: err}
-	case <-ctx.Done():
-		return ErrAWSAuthorizationTimeout
-	}
-
-	// Verify state
-	if receivedState.Load() != state {
-		return ErrAWSStateMismatch
-	}
-
-	// Exchange code for tokens
-	tokenResp, err := client.Exchange(ctx, code, &aws.AuthCodeOptions{
-		State:        state,
-		CodeVerifier: codeVerifier,
-	})
+	result, err := aws.Login(context.Background(), aws.LoginOptions{
+		Region:      region,
+		CrossDevice: crossDevice,
+		Callback:    callback,
+	}, onAuthURL)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrAWSTokenExchangeFailed, Cause: err}
+		switch {
+		case errors.Is(err, aws.ErrCallbackFailed):
+			return &SentinelCauseError{Sentinel: ErrAWSCallbackFailed, Cause: err}
+		case errors.Is(err, aws.ErrTokenExchangeFailed):
+			return &SentinelCauseError{Sentinel: ErrAWSTokenExchangeFailed, Cause: err}
+		default:
+			// aws.Login already returns a fully typed, wrapped error
+			// (including ErrLoginTimeout and ErrStateMismatch); it is
+			// propagated as-is rather than re-wrapped.
+			return err
+		}
 	}
-
-	// Check for credentials
-	if !tokenResp.HasCredentials() {
-		return ErrAWSNoCredentials
-	}
+	tokenResp := result.TokenResponse
+	dpopKey := result.DPoPKey
 
 	// Convert to token data
 	tokenData, err := tokenResp.ToTokenData(region)
@@ -338,63 +263,29 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 		_, _ = fmt.Fprintln(out, "Press Ctrl+C to stop...")
 		_, _ = fmt.Fprintln(out)
 
+		client, err := aws.NewClient(&aws.ClientConfig{
+			Region:      region,
+			CrossDevice: crossDevice,
+			RedirectURL: callback.AWSRedirectURL(),
+		}, dpopKey)
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrAWSLoginFailed, Cause: err}
+		}
+
 		return runAWSAutoRefresh(client, tokenResp.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second)
 	}
 
 	return nil
 }
 
-// handleAWSCallback handles the OAuth2 callback for AWS.
-func handleAWSCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- string, errChan chan<- error, state *atomic.Value) {
-	query := r.URL.Query()
-
-	if errParam := query.Get("error"); errParam != "" {
-		errDesc := query.Get("error_description")
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = fmt.Fprintf(w, "<html><body><h1>AWS Authentication Failed</h1><p>%s: %s</p></body></html>", errParam, errDesc)
-
-		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
-		return
-	}
-
-	code := query.Get("code")
-	if code == "" {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html><body><h1>AWS Authentication Failed</h1><p>No authorization code received</p></body></html>"))
-		errChan <- ErrAWSNoAuthCode
-		return
-	}
-
-	state.Store(query.Get("state"))
-
-	w.Header().Set("Content-Type", "text/html")
-	_, _ = w.Write([]byte("<html><body><h1>AWS Authentication Successful</h1><p>You may close this window.</p></body></html>"))
-
-	codeChan <- code
-}
-
 // handleAWSOutput processes the token data according to the output mode.
+// It is a thin wrapper over handlers.NewForMode, the output-mode dispatch
+// shared with the xKey GUI's OIDC service.
 func handleAWSOutput(outputMode string, data *handlers.TokenData, profile, credentialsFile, execCmd string) error {
-	var handler handlers.OutputHandler
-
-	switch outputMode {
-	case "aws-credentials", "":
-		handler = handlers.NewAWSCredentialsHandler(profile).
-			WithPath(credentialsFile)
-	case "json":
-		handler = handlers.NewJSONHandler().
-			WithAWSOnly()
-	case "exec":
-		if execCmd == "" {
-			return ErrAWSExecRequired
-		}
-		handler = handlers.NewExecHandler(execCmd)
-	case "none":
-		handler = handlers.NewNoopHandler()
-	default:
-		return &MessageError{Msg: fmt.Sprintf("unknown output mode: %s", outputMode)}
+	handler, err := handlers.NewForMode(outputMode, profile, credentialsFile, execCmd)
+	if err != nil {
+		return err
 	}
-
 	return handler.Handle(context.Background(), data)
 }
 
@@ -453,24 +344,14 @@ func runAWSAutoRefreshWithWriter(client *aws.Client, refreshToken, region, profi
 			refreshCount++
 			log("[%s] Refreshing AWS credentials (#%d)...\n", time.Now().Format("2006-01-02 15:04:05"), refreshCount)
 
-			// Refresh tokens
-			tokenResp, err := client.Refresh(context.Background(), refreshToken)
+			// Refresh credentials through the shared refresh step.
+			tokenResp, nextRefreshToken, err := aws.RefreshCredentials(context.Background(), client, refreshToken)
 			if err != nil {
 				log("  Error refreshing: %v\n", err)
 				updateStatus("error", fmt.Sprintf("refresh failed: %v", err))
 				continue
 			}
-
-			// Update refresh token if new one provided
-			if tokenResp.RefreshToken != "" {
-				refreshToken = tokenResp.RefreshToken
-			}
-
-			if !tokenResp.HasCredentials() {
-				log("  Error: No credentials in refresh response\n")
-				updateStatus("error", "no credentials in response")
-				continue
-			}
+			refreshToken = nextRefreshToken
 
 			// Convert and output
 			tokenData, err := tokenResp.ToTokenData(region)

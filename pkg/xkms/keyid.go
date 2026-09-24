@@ -395,6 +395,8 @@ func keyIDToBackendType(backendStr string) (types.BackendType, error) {
 		return types.BackendTypeQuantum, nil
 	case "frost":
 		return types.BackendTypeFrost, nil
+	case "avr":
+		return types.BackendTypeAVR, nil
 	default:
 		return "", &ErrValidation{Sentinel: ErrInvalidBackendType, Detail: backendStr}
 	}
@@ -506,6 +508,10 @@ func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 		return types.StoreQuantum
 	case types.BackendTypeFrost:
 		return types.StoreFrost
+	case types.BackendTypePhone:
+		return types.StorePhone
+	case types.BackendTypeAVR:
+		return types.StoreAVR
 	default:
 		return types.StoreSoftware
 	}

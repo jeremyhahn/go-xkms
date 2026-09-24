@@ -441,6 +441,8 @@ func storeTypeForBackend(bt xkms.BackendType) xkms.StoreType {
 		return xkms.StoreVault
 	case xkms.BackendTypePhone:
 		return xkms.StorePhone
+	case xkms.BackendTypeAVR:
+		return xkms.StoreAVR
 	default:
 		// Handle module-ID-style backend types like "pkcs11-libykcs11"
 		// by matching the prefix to known backend types.
