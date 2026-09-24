@@ -16,9 +16,11 @@ package enroll01
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -247,7 +249,13 @@ func Verify(
 		return err
 	}
 
-	if !bytes.Equal(body, secret) {
+	// subtle.ConstantTimeCompare rather than bytes.Equal: this is the
+	// verifier's proof-of-possession check, so the comparison must not leak
+	// through timing how many leading bytes of a forged secret matched.
+	// ConstantTimeCompare returns 0 immediately when the lengths differ,
+	// which is acceptable here because the secret's length is not itself
+	// secret.
+	if subtle.ConstantTimeCompare(body, secret) != 1 {
 		return caerrors.VerificationFailureError("enroll-01: invalid credential activation")
 	}
 
@@ -391,18 +399,27 @@ func activateCredentialHandlerWithShutdown(
 			return
 		}
 
+		// Limit the size of the request body to prevent abuse. This must run
+		// before any read of r.Body: reading first and wrapping afterward
+		// never applies the limit, since the unbounded read has already
+		// buffered the whole body in memory.
+		const maxBodySize = 1048576 // 1MB
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+		defer func() { _ = r.Body.Close() }()
+
 		// Read the request body
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				log.Printf("Request body exceeded %d bytes", maxBodySize)
+				return
+			}
 			http.Error(w, "Error reading request body", http.StatusBadRequest)
 			log.Printf("Error reading request body: %v", err)
 			return
 		}
-		defer func() { _ = r.Body.Close() }()
-
-		// Limit the size of the request body to prevent abuse
-		const maxBodySize = 1048576 // 1MB
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 		// Unmarshal the JSON into the request struct
 		var activationRequest activateCredentialRequest
