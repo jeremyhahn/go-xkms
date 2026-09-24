@@ -127,6 +127,8 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 		r.Get("/{tenantID}/barrier/status", handlers.TenantBarrierStatusHandler)
 		r.Post("/{tenantID}/barrier/init", handlers.TenantBarrierInitHandler)
 		r.Post("/{tenantID}/barrier/unseal", handlers.TenantBarrierUnsealHandler)
+		r.Put("/{tenantID}/entitlements", handlers.UpdateTenantEntitlementsHandler)
+		r.Put("/{tenantID}/quotas", handlers.UpdateTenantQuotasHandler)
 	})
 
 	server := httptest.NewServer(r)
