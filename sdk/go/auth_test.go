@@ -14,9 +14,12 @@
 package xkms
 
 import (
+	"context"
 	"crypto/x509"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth_factors"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -86,6 +89,37 @@ func TestWithXKMSFactorVerifiers_Both(t *testing.T) {
 
 	// Compile-time assertion that opts type-matches embedded.Option.
 	_ = opts
+}
+
+// TestVerifierAdapter_PKCS11Dispatch pins that a PKCS#11-only
+// verifierAdapter (the "none configured" case WithXKMSFactorVerifiers
+// always registers) routes Type/Verify/BeginChallenge to the wrapped
+// PKCS11FactorVerifier rather than panicking on the nil webauthn/piv
+// fields.
+func TestVerifierAdapter_PKCS11Dispatch(t *testing.T) {
+	pkcs11v := auth_factors.NewPKCS11FactorVerifier()
+	adapter := verifierAdapter{pkcs11: pkcs11v}
+
+	if got := adapter.Type(); got != pkcs11v.Type() {
+		t.Fatalf("Type() = %v, want %v", got, pkcs11v.Type())
+	}
+
+	// PIV/PKCS#11 use the generic server nonce: BeginChallenge must return
+	// a nil challenge without error.
+	challenge, meta, exp, err := adapter.BeginChallenge(context.Background(), "tenant", qrdbtransport.FactorTypePKCS11, "")
+	if err != nil {
+		t.Fatalf("BeginChallenge: %v", err)
+	}
+	if challenge != nil || meta != nil || !exp.IsZero() {
+		t.Fatalf("expected a zero-value generic-nonce challenge, got (%v, %v, %v)", challenge, meta, exp)
+	}
+
+	// A nil factor is a deterministic, non-crypto error path — it proves
+	// Verify dispatches to the wrapped verifier rather than short-circuiting.
+	err = adapter.Verify(context.Background(), nil, qrdbtransport.VerifyChallenge{})
+	if err == nil {
+		t.Fatal("expected an error verifying a nil factor")
+	}
 }
 
 // newTestWebAuthnService constructs a minimal but configured xkms

@@ -296,6 +296,47 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// enroll-01 and endorse-01 verification is a trust decision (proving TPM
+	// residency of an identity key, or authorizing an EK-endorsement
+	// request), so the audit write is part of the decision: it happens
+	// before the challenge is allowed to transition to valid, and a failed
+	// write refuses the challenge rather than let an unaudited attestation
+	// decision stand. This mirrors the EventChallengeFailed gate below but
+	// applies only to the two TPM attestation challenge families; a plain
+	// http-01/dns-01 success stays covered by the existing (informational)
+	// EventChallengeValidated / EventAuthorizationValidated events elsewhere
+	// in the flow.
+	if validationSuccessful {
+		// baseType, not the broader isEnrollXChallenge/IsEndorseChallengeType
+		// family checks: those both match "endorse-01" (isEnrollXChallenge
+		// matches every enrollment-family type, including endorse-01 and the
+		// unwired device-attest-01), so an exact match is required to tell
+		// enroll-01 and endorse-01 apart here.
+		var eventType audit.EventType
+		switch baseType {
+		case "enroll-01":
+			eventType = audit.EventTPMAttestation
+		case "endorse-01":
+			eventType = audit.EventEndorsementVerified
+		}
+		if eventType != "" {
+			if auditErr := s.recordAudit(eventType, s.auditLog.LogWithContext(auditContext(r),
+				eventType,
+				auditAccountRef(account.ID),
+				"challenge:"+strconv.FormatUint(challenge.ID, 10),
+				"validate",
+				audit.ResultSuccess,
+				map[string]interface{}{
+					"challenge_type": challenge.Type,
+				},
+			)); auditErr != nil {
+				validationSuccessful = false
+				challenge.Status = common.StatusInvalid
+				challenge.Error = common.ServerInternal("Failed to record audit event")
+			}
+		}
+	}
+
 	if validationSuccessful {
 		// Validation succeeded
 		challenge.Status = common.StatusValid

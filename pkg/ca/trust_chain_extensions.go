@@ -23,8 +23,10 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -99,8 +101,16 @@ func (ca *CA) TrustedRootCertPoolWithXSigner(cert *x509.Certificate, xsigner cry
 		return pool, nil
 	}
 
+	// A non-nil error alongside a non-empty result means some entries were
+	// read and parsed fine and only cleanup (closing a reader) failed;
+	// those entries are still good and are used below, so gate on the
+	// result, not the error. The error is worth knowing about, so it is
+	// logged rather than dropped.
 	xsigned, err := ca.getXSignedCertificates(root.Subject.CommonName)
-	if err != nil || len(xsigned) == 0 {
+	if err != nil {
+		slog.Warn("ca: cross-signed root certificate lookup encountered an error", "cn", root.Subject.CommonName, "error", err)
+	}
+	if len(xsigned) == 0 {
 		return pool, nil
 	}
 
@@ -136,7 +146,10 @@ func (ca *CA) TrustedIntermediateCertPoolWithXSigner(cert *x509.Certificate, xsi
 	}
 
 	xsigned, err := ca.getXSignedCertificates(intermediate.Subject.CommonName)
-	if err != nil || len(xsigned) == 0 {
+	if err != nil {
+		slog.Warn("ca: cross-signed intermediate certificate lookup encountered an error", "cn", intermediate.Subject.CommonName, "error", err)
+	}
+	if len(xsigned) == 0 {
 		return pool, nil
 	}
 
@@ -279,12 +292,15 @@ func (ca *CA) ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) erro
 		}
 
 		body, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
+		closeErr := resp.Body.Close()
 		if readErr != nil {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read %s: %v", issuerURL, readErr)}
+			return errors.Join(&errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to read %s: %v", issuerURL, readErr)}, closeErr)
 		}
 		if resp.StatusCode != http.StatusOK {
-			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("AIA download %s returned status %d", issuerURL, resp.StatusCode)}
+			return errors.Join(&errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("AIA download %s returned status %d", issuerURL, resp.StatusCode)}, closeErr)
+		}
+		if closeErr != nil {
+			return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close AIA response body for %s: %v", issuerURL, closeErr)}
 		}
 
 		issuerCert, err := parseAIACertificate(body)
@@ -346,8 +362,10 @@ func appendPEM(pool *x509.CertPool, cert *x509.Certificate) {
 // known byte slice in a single statement.
 //
 //nolint:unused // retained for consumers that reuse this helper
-func bufferBytes(r io.Reader) []byte {
+func bufferBytes(r io.Reader) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	_, _ = io.Copy(buf, r)
-	return buf.Bytes()
+	if _, err := io.Copy(buf, r); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

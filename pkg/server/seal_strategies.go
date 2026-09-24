@@ -15,35 +15,27 @@ package server
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/json"
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// sealKeyCN is the canonical common name of the symmetric wrapping key that the
-// barrier root key is sealed under by a hardware/cloud backend. The PKCS#11 and
-// cloud KMS backends resolve their HSM/KMS-resident wrapping key by this CN, so
-// a fixed, deterministic value keeps seal/unseal idempotent across restarts:
-// the same key is resolved (or created on first init) on every boot.
-const sealKeyCN = "xkms-barrier-seal"
+// sealKeyCN mirrors seal.SealKeyCN, the canonical common name of the
+// symmetric wrapping key that the barrier root key is sealed under by a
+// hardware/cloud backend. Kept as a local alias so existing callers in this
+// package need no changes; the value itself, and the key-attribute and
+// provisioning logic below, are owned by pkg/seal -- the ONE composition
+// path xkmsd and xkey both build cloud-KMS seal strategies through
+// (go-xkms#757).
+const sealKeyCN = seal.SealKeyCN
 
 // sealKeyAttributesFor builds the types.KeyAttributes that identify the
 // symmetric wrapping key used to seal and unseal the barrier root key for the
-// given store. SymmetricAlgorithm being non-empty is what makes the backend
-// treat the request as a symmetric seal (the asymmetric path is rejected);
-// KeyTypeEncryption marks the key's purpose.
+// given store. It delegates to seal.SealKeyAttributes; see that function's
+// doc for the field semantics.
 func sealKeyAttributesFor(store types.StoreType) *types.KeyAttributes {
-	return &types.KeyAttributes{
-		CN:                 sealKeyCN,
-		StoreType:          store,
-		KeyType:            types.KeyTypeEncryption,
-		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
+	return seal.SealKeyAttributes(store)
 }
 
 // sealStoreType maps a barrier strategy ID to the backend store type whose
@@ -66,19 +58,6 @@ func sealStoreType(id seal.StrategyID) (types.StoreType, bool) {
 	default:
 		return "", false
 	}
-}
-
-// sealLoginProvider is implemented by backends (PKCS#11) that require an
-// explicit token login before symmetric-key operations succeed.
-type sealLoginProvider interface {
-	Login() error
-}
-
-// sealMetadataSaver is implemented by cloud-KMS backends (AWS KMS) whose
-// in-process metadata store must be seeded with the operator's pre-provisioned
-// key identifier before GetSymmetricKey can resolve it.
-type sealMetadataSaver interface {
-	Save(attrs *types.KeyAttributes, data []byte, extension types.FSExtension, overwrite bool) error
 }
 
 // buildHardwareSealStrategies builds the ordered set of sealing strategies the
@@ -160,78 +139,47 @@ func (s *Server) buildHardwareSealStrategy(
 		return seal.NewTPM2Strategy(sealer, nil), nil
 	}
 
-	// PKCS#11 and the cloud KMS backends seal under a named symmetric wrapping
-	// key. Ensure that key is resolvable (creating it on first init) before
-	// wrapping the sealer.
-	keyAttrs := sealKeyAttributesFor(store)
-	if err := s.ensureSealKey(id, provider, keyAttrs); err != nil {
-		return nil, &ErrSealStrategyBuild{Strategy: string(id), Err: err}
-	}
-
+	// PKCS#11 seals under a named symmetric wrapping key it provisions
+	// itself; unlike the cloud KMS strategies below, PKCS#11 is not shared
+	// with xkey (go-xkms#757 only wires the cloud KMS strategies through).
 	if id == seal.StrategyPKCS11 {
+		keyAttrs := sealKeyAttributesFor(store)
+		if err := s.ensureSealKey(id, provider, keyAttrs); err != nil {
+			return nil, &ErrSealStrategyBuild{Strategy: string(id), Err: err}
+		}
 		return seal.NewPKCS11Strategy(sealer, keyAttrs, nil), nil
 	}
-	return seal.NewCloudKMSStrategy(id, sealer, keyAttrs, nil), nil
+
+	// AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault: seal.BuildCloudKMSStrategy
+	// is the ONE cloud-KMS strategy composition path xkmsd and xkey both call
+	// (go-xkms#757), so seal-key provisioning (idempotent create-or-reuse)
+	// never diverges between the two entry points.
+	strategy, err := seal.BuildCloudKMSStrategy(context.Background(), id, store, provider)
+	if err != nil {
+		return nil, &ErrSealStrategyBuild{Strategy: string(id), Err: err}
+	}
+	return strategy, nil
 }
 
 // ensureSealKey guarantees the symmetric wrapping key identified by keyAttrs is
-// resolvable by the backend so the sealer's SymmetricEncrypter can find it.
-//
-// It mirrors the provisioning recipe used elsewhere in the stack:
-//
-//   - PKCS#11 opens no session until Login(); the factory logs in first.
-//   - AWS KMS resolves its operator-provisioned CMK through an in-process
-//     metadata store keyed on CN, which starts empty each boot; the factory
-//     seeds it (upsert) so GetSymmetricKey can read the key id.
-//   - All backends then check-and-skip: GetSymmetricKey reuses an existing key,
-//     and only a genuine not-found triggers GenerateSymmetricKey (first init).
-//
-// The operation is idempotent: an existing key is detected and reused unchanged,
-// so previously-sealed data unseals after a restart.
+// resolvable by the backend so the sealer's SymmetricEncrypter can find it. It
+// delegates the provisioning recipe (PKCS#11 login, AWS KMS metadata seeding,
+// then the idempotent GetSymmetricKey/GenerateSymmetricKey check-and-skip) to
+// seal.EnsureSealKey, translating a backend-unavailable failure into this
+// package's own ErrBackendNotAvailable so existing callers observe the same
+// error type as before the logic moved to pkg/seal (go-xkms#757).
 func (s *Server) ensureSealKey(
 	id seal.StrategyID,
 	provider types.KeyProvider,
 	keyAttrs *types.KeyAttributes,
 ) error {
-	symProvider, ok := provider.(types.SymmetricKeyProvider)
-	if !ok {
-		return &ErrBackendNotAvailable{Backend: string(id), Purpose: "symmetric sealing key"}
-	}
-
-	if loginProvider, ok := provider.(sealLoginProvider); ok {
-		if err := loginProvider.Login(); err != nil {
-			return err
-		}
-	}
-
-	// AWS KMS keeps its key identifier in an in-process metadata store that must
-	// be seeded before GetSymmetricKey can resolve the operator-managed CMK.
-	if id == seal.StrategyAWSKMS {
-		if saver, ok := provider.(sealMetadataSaver); ok {
-			metadata, err := json.Marshal(map[string]string{"key_id": keyAttrs.CN})
-			if err != nil {
-				return err
-			}
-			if err := saver.Save(keyAttrs, metadata, types.FSExtPrivateBlob, true); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Seal-key provisioning runs at server startup, outside any request, so it
-	// is bounded by a background context rather than a request-scoped one.
-	ctx := context.Background()
-
-	if _, err := symProvider.GetSymmetricKey(ctx, keyAttrs); err == nil {
+	err := seal.EnsureSealKey(context.Background(), id, provider, keyAttrs)
+	if err == nil {
 		return nil
-	} else if !errors.Is(err, backend.ErrKeyNotFound) &&
-		!errors.Is(err, backend.ErrKeyAlreadyExists) {
-		return err
 	}
-
-	if _, err := symProvider.GenerateSymmetricKey(ctx, keyAttrs); err != nil &&
-		!errors.Is(err, backend.ErrKeyAlreadyExists) {
-		return err
+	var notAvail *seal.ErrSealBackendUnavailable
+	if errors.As(err, &notAvail) {
+		return &ErrBackendNotAvailable{Backend: notAvail.Strategy, Purpose: notAvail.Purpose}
 	}
-	return nil
+	return err
 }

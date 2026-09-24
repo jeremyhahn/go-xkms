@@ -50,8 +50,8 @@ func TestSeal_UnsupportedKeyTypeForSealing(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := x25519SealAttrs("seal-x25519-unsupported.com")
-	if _, err := be.GenerateKey(context.Background(), attrs); err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	_, err := be.Seal(context.Background(), []byte("secret data"), &types.SealOptions{KeyAttributes: attrs})
@@ -97,8 +97,8 @@ func TestUnseal_UnsupportedKeyTypeForSealing(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	attrs := x25519SealAttrs("unseal-x25519-unsupported.com")
-	if _, err := be.GenerateKey(context.Background(), attrs); err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	sealed := &types.SealedData{

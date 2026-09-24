@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/godbus/dbus/v5"
+
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // PathMapper handles conversion between D-Bus object paths and go-xkms identifiers.
@@ -150,41 +152,31 @@ func (m *PathMapper) IsDefaultCollection(path dbus.ObjectPath) bool {
 	return name == DefaultCollection || name == LoginCollection
 }
 
-// AttributesToSearchCriteria converts D-Bus item attributes to search criteria
-// that can be used with the password store.
-func AttributesToSearchCriteria(attrs ItemAttributes) map[string]string {
-	// Copy attributes, normalizing common variations
-	result := make(map[string]string, len(attrs))
-	for k, v := range attrs {
-		// Normalize common attribute names
-		switch strings.ToLower(k) {
-		case "service", "application":
-			result["service"] = v
-		case "username", "user", "account":
-			result["username"] = v
-		case "url", "uri", "server", "host":
-			result["url"] = v
-		default:
-			result[k] = v
-		}
+// ItemAttributesFromPassword returns the searchable Secret Service
+// attributes for pw. It starts from legacy derived attributes ("service",
+// "username", "url", "xdg:schema") so entries created through the xkey
+// password-manager GUI -- which predates this package and has no concept of
+// Secret Service attributes -- stay discoverable by secret-tool and browser
+// extensions without a migration. pw.Attributes, the attributes a Secret
+// Service client stored verbatim via Collection.CreateItem or
+// Item.SetSecret's sibling property Set, are then overlaid on top and win on
+// key collision, since that is the exact dictionary the writing client
+// expects a later SearchItems from itself to match against.
+func ItemAttributesFromPassword(pw *xkms.StaticPassword) ItemAttributes {
+	attrs := make(ItemAttributes, len(pw.Attributes)+4)
+	if pw.Name != "" {
+		attrs["service"] = pw.Name
 	}
-	return result
-}
-
-// PasswordToItemAttributes converts a password entry to D-Bus item attributes.
-func PasswordToItemAttributes(name, username, url string) ItemAttributes {
-	attrs := make(ItemAttributes)
-	if name != "" {
-		attrs["service"] = name
+	if pw.Username != "" {
+		attrs["username"] = pw.Username
 	}
-	if username != "" {
-		attrs["username"] = username
+	if pw.URL != "" {
+		attrs["url"] = pw.URL
 	}
-	if url != "" {
-		attrs["url"] = url
-	}
-	// Add schema identifier
 	attrs["xdg:schema"] = "org.freedesktop.Secret.Generic"
+	for k, v := range pw.Attributes {
+		attrs[k] = v
+	}
 	return attrs
 }
 

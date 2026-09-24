@@ -14,8 +14,11 @@
 package phone
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 )
 
 func TestErrors_AllDefined(t *testing.T) {
@@ -129,7 +132,8 @@ func TestErrors_PrefixConvention(t *testing.T) {
 		{"ErrNotConnected", ErrNotConnected},
 		{"ErrBackendClosed", ErrBackendClosed},
 		{"ErrConnectionLost", ErrConnectionLost},
-		{"ErrKeyNotFound", ErrKeyNotFound},
+		// ErrKeyNotFound is the shared backend.ErrKeyNotFound sentinel (#801), so
+		// it carries the "backend:" prefix, not this package's.
 		{"ErrKeyExists", ErrKeyExists},
 		{"ErrUnsupportedAlgorithm", ErrUnsupportedAlgorithm},
 		{"ErrOperationTimeout", ErrOperationTimeout},
@@ -180,5 +184,17 @@ func TestErrors_ErrorInterface(t *testing.T) {
 		if err.Error() == "" {
 			t.Errorf("error message should not be empty for %v", err)
 		}
+	}
+}
+
+// TestErrKeyNotFound_IsBackendSentinel pins the #801 GetKey contract: the
+// phone backend's not-found result must satisfy errors.Is against the shared
+// backend sentinel, like every other backend.
+func TestErrKeyNotFound_IsBackendSentinel(t *testing.T) {
+	if !errors.Is(ErrKeyNotFound, backend.ErrKeyNotFound) {
+		t.Fatal("phone.ErrKeyNotFound must be backend.ErrKeyNotFound")
+	}
+	if errors.Is(ErrConnectionLost, backend.ErrKeyNotFound) {
+		t.Fatal("a lost connection must not be classified as not-found")
 	}
 }

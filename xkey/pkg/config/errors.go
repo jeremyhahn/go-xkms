@@ -61,6 +61,12 @@ var (
 	// the HMAC does not match. The cause is joined and reachable with
 	// errors.Is. A consumer that receives it must not read the section.
 	ErrPolicyUnverifiable = errors.New("config: sealed policy cannot be verified")
+
+	// ErrBarrierCloudKMSConfigInvalid is returned when a cloud KMS barrier
+	// strategy (aws_kms, gcp_kms, azure_kv, vault) is missing required
+	// configuration or combines fields inconsistently (e.g. a partial
+	// explicit-credential set). See DetailError for the specific field.
+	ErrBarrierCloudKMSConfigInvalid = errors.New("config: cloud KMS barrier strategy configuration is invalid")
 )
 
 // DetailError appends detail text directly after a wrapped error while

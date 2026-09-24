@@ -311,8 +311,8 @@ func TestListKeys_ReportsX25519AsX25519(t *testing.T) {
 		X25519Attributes: &types.X25519Attributes{},
 		Hash:             crypto.SHA256,
 	}
-	if _, err := be.GenerateKey(ctx, attrs); err != nil {
-		t.Fatalf("GenerateKey failed: %v", err)
+	if _, ok := requireX25519Key(t, be, attrs); !ok {
+		return
 	}
 
 	keys, err := be.ListKeys(ctx)

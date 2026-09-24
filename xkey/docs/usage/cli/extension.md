@@ -156,11 +156,10 @@ xkey extension serve --socket /tmp/xkey.sock --log-level debug --log-file /var/l
 
 The headless server auto-detects the barrier strategy from the stored root key (`~/.xkey/data/barrier/root_key`). For software-sealed barriers, a password is required. For TPM2-sealed barriers, the hardware unseals automatically.
 
-Only the `passphrase` and `tpm2` strategies unseal headlessly today. A barrier sealed with any other strategy is refused with a typed, named error rather than hanging or attempting a login it cannot complete:
+The `passphrase`, `tpm2`, `aws_kms`, `gcp_kms`, `azure_kv`, and `vault` strategies all unseal headlessly. A cloud KMS strategy needs no password: the server rebuilds the backend from the connection settings `xkey barrier init` persisted to the config file and authenticates with the provider's ambient credentials (or an explicit `*SecretValue` reference set by hand in the config), exactly like `xkey barrier unseal` does interactively -- see [seal/cli.md](../../seal/cli.md). A barrier sealed with `pkcs11` or `shamir` is refused with a typed, named error rather than hanging or attempting a login it cannot complete:
 
 - **`pkcs11`** -- the PKCS#11 token PIN would need to come from a source a headless process can reach without a human typing it (the intended source is a PIN sealed to the TPM under the platform PCR policy, auto-unsealed the same way the barrier's own TPM2 auto-unseal works). That pre-barrier secret store does not exist yet (go-xkms#677); until it does, unseal interactively with `xkey barrier unseal`.
 - **`shamir`** -- reassembling the root key needs an M-of-N quorum of operator-held shares, which a headless process has no way to collect. Unseal interactively with `xkey barrier unseal`.
-- **AWS KMS / GCP KMS / Azure Key Vault / Vault** -- xkey has no backend wiring, key configuration, or credential resolution for any cloud KMS provider yet, in headless mode or interactively. Adding it is a separate, scoped change (a new configuration surface plus backend wiring), not a headless-mode gap.
 
 **Barrier password resolution order:**
 

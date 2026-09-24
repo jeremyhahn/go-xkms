@@ -1,6 +1,6 @@
 # Init Ceremony — API
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -39,9 +39,20 @@ transports, so it is recorded as tracked debt rather than left implicit.
 
 | Capability | REST | gRPC / Unix | QUIC | MCP | Embedded (`CredentialManagementService.`) | Auth |
 |---|---|---|---|---|---|---|
-| Submit credential | `POST /api/v1/credentials/submit` | **MISSING — docs/13** | same as REST | `credentials.submit` | `SubmitCredential` | session |
-| Credential strategy | `GET /api/v1/credentials/strategy` | **MISSING — docs/13** | same as REST | `credentials.strategy` | `GetCredentialStrategy` | session |
+| Submit credential | `POST /api/v1/credentials/submit` | **MISSING — docs/13** | same as REST | `credentials.submit` | `SubmitCredential` | `credentials:submit` |
+| Credential strategy | `GET /api/v1/credentials/strategy` | **MISSING — docs/13** | same as REST | `credentials.strategy` | `GetCredentialStrategy` | `credentials:strategy` |
 | List credentials | `GET /api/v1/credentials/` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | session |
+
+Submit and strategy demand the `credentials:*` pair the MCP methods are gated
+with; neither is on the pre-operational `initgate` allowlist, so the gate never
+blocks an account-less officer. Admin and Owner hold both by default. Listing
+credentials has no counterpart on any other transport, so it has no canonical
+permission to adopt and stays session-authenticated.
+
+The ceremony status and claim routes above stay `RouteAuthSession` rather than
+carrying MCP's `ceremony:*` pairs: the REST permission decorator has no
+pre-operational exemption, so gating them would refuse the credential-less
+officer that `initgate` exists for.
 
 ## The two-phase claim protocol
 

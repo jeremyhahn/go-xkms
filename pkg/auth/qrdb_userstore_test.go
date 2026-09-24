@@ -16,6 +16,7 @@ package auth
 import (
 	"context"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -180,11 +181,11 @@ func TestNewQRDBUserStore(t *testing.T) {
 func TestQRDBUserStore_GetByCertFingerprint_Success(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-1"] = &qrdbtransport.User{
-		Username: "alice",
-		Email:    "alice@example.com",
-		TenantID: "tenant-a",
-		RoleIDs:  []string{"role-1"},
-		Enabled:  true,
+		Username:  "alice",
+		Email:     "alice@example.com",
+		TenantID:  "tenant-a",
+		RoleIDs:   []string{"role-1"},
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
 	roles := newFakeQRDBRoleClient()
 	roles.byID["role-1"] = &qrdbtransport.Role{ID: "role-1", Name: "admin"}
@@ -211,10 +212,10 @@ func TestQRDBUserStore_GetByCertFingerprint_UserNotFound(t *testing.T) {
 func TestQRDBUserStore_GetByCertFingerprint_NoRoleIDs(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-2"] = &qrdbtransport.User{
-		Username: "bob",
-		TenantID: "tenant-b",
-		RoleIDs:  nil,
-		Enabled:  true,
+		Username:  "bob",
+		TenantID:  "tenant-b",
+		RoleIDs:   nil,
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
 	roles := newFakeQRDBRoleClient()
 	store := NewQRDBUserStore(users, roles)
@@ -232,9 +233,9 @@ func TestQRDBUserStore_GetByCertFingerprint_NoRoleIDs(t *testing.T) {
 func TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-svc"] = &qrdbtransport.User{
-		Username: "svc-backup",
-		TenantID: "system",
-		Enabled:  true,
+		Username:  "svc-backup",
+		TenantID:  "system",
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
 	store := NewQRDBUserStore(users, newFakeQRDBRoleClient())
 
@@ -251,10 +252,10 @@ func TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey(t *testing.T) {
 func TestQRDBUserStore_GetByCertFingerprint_RoleResolutionFails(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-3"] = &qrdbtransport.User{
-		Username: "carol",
-		TenantID: "tenant-c",
-		RoleIDs:  []string{"role-missing"},
-		Enabled:  false,
+		Username:  "carol",
+		TenantID:  "tenant-c",
+		RoleIDs:   []string{"role-missing"},
+		Lifecycle: string(qrdbsdk.LifecycleDisabled),
 	}
 	roles := newFakeQRDBRoleClient()
 	roles.err = errors.New("role service unavailable")

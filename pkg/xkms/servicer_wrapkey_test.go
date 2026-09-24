@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -81,11 +82,20 @@ func rawKeyBytes(t *testing.T, store *mockKeyStore, attrs *types.KeyAttributes) 
 // policy is process-wide, which is safe here because no test in this package
 // calls t.Parallel; the saved-and-restored previous value keeps a test from
 // leaking the setting into the next one either way.
-func allowLegacyWrap(t *testing.T) {
+//
+// The bool return reports whether the policy actually took effect: under
+// GODEBUG=fips140=only, SetAllowLegacyKeyWrap(true) is a deliberate no-op
+// (see pkg/types/wrappolicy.go) -- the Go Cryptographic Module's
+// approved-mechanism boundary is the ceiling this repository's own policy
+// switch must never be able to re-open -- so a caller whose whole premise
+// is "the legacy mechanism is now enabled" cannot be exercised in that
+// mode and must return immediately when this reports false.
+func allowLegacyWrap(t *testing.T) bool {
 	t.Helper()
 	previous := types.AllowLegacyKeyWrap()
 	types.SetAllowLegacyKeyWrap(true)
 	t.Cleanup(func() { types.SetAllowLegacyKeyWrap(previous) })
+	return types.AllowLegacyKeyWrap()
 }
 
 // --- wrapAESKeyWrap / unwrapAESKeyWrap ---
@@ -225,19 +235,27 @@ func TestWrapUnwrapAESGCM_RoundTrip(t *testing.T) {
 
 	wrapped, err := wrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESGCM), wrapParams{}, target)
 	require.NoError(t, err)
-	require.Len(t, wrapped, aesGCMNonceSize+len(target)+aesGCMTagSize)
+	require.Len(t, wrapped, 1+aesGCMNonceSize+len(target)+aesGCMTagSize)
 
-	kek := rawKeyBytes(t, store, attrs)
-	block, err := aes.NewCipher(kek)
-	require.NoError(t, err)
-	gcm, err := cipher.NewGCM(block)
-	require.NoError(t, err)
+	// The independent crypto/cipher oracle below can only check a blob built
+	// over the arbitrary-IV construction, which GODEBUG=fips140=only
+	// refuses outright: this wrap used cipher.NewGCMWithRandomNonce instead
+	// (see docs/fips/README.md "AEAD construction"). The production round
+	// trip through unwrapKeyMaterial below still stands as the real
+	// assertion in that mode.
+	if !fips140.Enforced() {
+		kek := rawKeyBytes(t, store, attrs)
+		block, err := aes.NewCipher(kek)
+		require.NoError(t, err)
+		gcm, err := cipher.NewGCM(block)
+		require.NoError(t, err)
 
-	nonce := wrapped[:aesGCMNonceSize]
-	sealed := wrapped[aesGCMNonceSize:] // ciphertext||tag, exactly gcm.Seal's own output shape
-	oracleRecovered, err := gcm.Open(nil, nonce, sealed, nil)
-	require.NoError(t, err)
-	assert.Equal(t, target, oracleRecovered)
+		nonce := wrapped[1 : 1+aesGCMNonceSize]
+		sealed := wrapped[1+aesGCMNonceSize:] // ciphertext||tag, exactly gcm.Seal's own output shape
+		oracleRecovered, err := gcm.Open(nil, nonce, sealed, nil)
+		require.NoError(t, err)
+		assert.Equal(t, target, oracleRecovered)
+	}
 
 	recovered, err := unwrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESGCM), wrapParams{}, wrapped)
 	require.NoError(t, err)
@@ -250,7 +268,7 @@ func TestWrapUnwrapAESGCM_RoundTrip(t *testing.T) {
 func TestUnwrapAESGCM_TooShort(t *testing.T) {
 	store, attrs := newAESWrappingBackend(t)
 
-	_, err := unwrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESGCM), wrapParams{}, make([]byte, aesGCMNonceSize+aesGCMTagSize-1))
+	_, err := unwrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESGCM), wrapParams{}, make([]byte, 1+aesGCMNonceSize+aesGCMTagSize-1))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
 }
@@ -282,7 +300,9 @@ func oracleDecryptCBC(t *testing.T, kek, wrapped []byte) []byte {
 // The oracle is crypto/cipher's own CBC decrypter over the raw KEK, so the blob
 // is checked against the standard construction and not against this package.
 func TestWrapUnwrapAESCBC_RoundTrip(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 	target := []byte("0123456789ABCDEF0123456789ABCDEF") // 32 bytes: block aligned
 
@@ -307,7 +327,9 @@ func TestWrapUnwrapAESCBC_RoundTrip(t *testing.T) {
 // so the padding is checked to be real RFC 5652 §6.3 padding rather than
 // whatever this package's unpad accepts.
 func TestWrapUnwrapAESCBCPad_RoundTrip(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 	target := []byte("twenty-byte-key-mat!") // 20 bytes: not block aligned
 
@@ -337,7 +359,9 @@ func TestWrapUnwrapAESCBCPad_RoundTrip(t *testing.T) {
 // from a pad byte, so the key would come back a different length than it went
 // in. A typed refusal is the only honest answer.
 func TestWrapAESCBC_RefusesUnalignedKeyMaterial(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 
 	_, err := wrapKeyMaterial(context.Background(), store, attrs, string(types.WrapAESCBC), wrapParams{}, []byte("twenty-byte-key-mat!"))
@@ -349,7 +373,9 @@ func TestWrapAESCBC_RefusesUnalignedKeyMaterial(t *testing.T) {
 // least one ciphertext block is rejected before the slice is taken, rather than
 // yielding an empty "key".
 func TestUnwrapAESCBC_TooShort(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store, attrs := newAESWrappingBackend(t)
 
 	for _, mode := range []types.KeyWrapAlgorithm{types.WrapAESCBC, types.WrapAESCBCPad} {
@@ -363,7 +389,9 @@ func TestUnwrapAESCBC_TooShort(t *testing.T) {
 // a symmetric provider is refused with a typed error rather than panicking on
 // the type assertion.
 func TestWrapAESCBC_BackendNotSymmetric(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store := newMockKeyStore("plain-be") // .backend left nil: no SymmetricKeyProvider
 	attrs := &types.KeyAttributes{CN: "kek"}
 
@@ -383,7 +411,9 @@ func TestWrapAESCBC_BackendNotSymmetric(t *testing.T) {
 // is rsa.DecryptPKCS1v15 called directly with the same private key used to
 // register the wrapping key, independent of unwrapKeyMaterial.
 func TestWrapUnwrapRSAPKCS1v15_RoundTrip(t *testing.T) {
-	allowLegacyWrap(t)
+	if !allowLegacyWrap(t) {
+		return
+	}
 	store := newMockKeyStore("kek-be")
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)

@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -37,7 +39,7 @@ func (m *mockStorageBackend) Get(_ context.Context, key string) ([]byte, error) 
 	if v, ok := m.data[key]; ok {
 		return v, nil
 	}
-	return nil, errors.New("not found")
+	return nil, storage.ErrNotFound
 }
 
 func (m *mockStorageBackend) Delete(_ context.Context, key string) error {
@@ -79,9 +81,15 @@ func (m *mockStorageBackend) Close() error {
 // test double never exercises.
 var errMockUnimplemented = errors.New("mock: not implemented")
 
-// mockSecretBackend implements types.KeyProvider for testing
+// mockSecretBackend implements types.KeyProvider for testing.
+//
+// deleteErr, when set, is returned by DeleteKey unconditionally, and the
+// keyed entry is left untouched — this stands in for a secret backend whose
+// delete failed, letting tests confirm a retried KeyStore.DeleteKey resumes
+// correctly.
 type mockSecretBackend struct {
-	data map[string][]byte
+	data      map[string][]byte
+	deleteErr error
 }
 
 func newMockSecretBackend() *mockSecretBackend {
@@ -107,10 +115,16 @@ func (m *mockSecretBackend) GetKey(ctx context.Context, attrs *types.KeyAttribut
 	if v, ok := m.data[attrs.CN]; ok {
 		return v, nil
 	}
-	return nil, errors.New("not found")
+	return nil, backend.ErrKeyNotFound
 }
 
 func (m *mockSecretBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	if _, ok := m.data[attrs.CN]; !ok {
+		return backend.ErrKeyNotFound
+	}
 	delete(m.data, attrs.CN)
 	return nil
 }
