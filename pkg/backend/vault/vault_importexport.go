@@ -265,12 +265,15 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	metadata := map[string]interface{}{
 		"cn":                  attrs.CN,
 		"symmetric_algorithm": string(attrs.SymmetricAlgorithm),
-		"key_type":            string(attrs.KeyType),
-		"store_type":          backend.STORE_VAULT,
-		"vault_name":          keyName,
-		"key_size":            256,
-		"symmetric":           true,
-		"exportable":          attrs.Exportable,
+		// uint8: see the matching comment in vault_symmetric.go's
+		// GenerateSymmetricKey for why string(attrs.KeyType) is wrong here.
+		"key_type":   uint8(attrs.KeyType),
+		"store_type": backend.STORE_VAULT,
+		"vault_name": keyName,
+		"key_size":   256,
+		"symmetric":  true,
+		"exportable": attrs.Exportable,
+		"sensitive":  attrs.Sensitive,
 	}
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {

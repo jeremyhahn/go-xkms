@@ -897,6 +897,17 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		// Set store type
 		attrs.StoreType = backend.STORE_AZUREKV
 
+		// Exportable is unconditionally false and Sensitive is unconditionally
+		// true for every key this backend enumerates (go-xkms#932).
+		// Capabilities().Export is false unconditionally, and
+		// ExportKey/ExportKeyMaterial (azurekv_importexport.go) both refuse
+		// every key with backend.ErrNotSupported regardless of policy: Azure
+		// Key Vault exposes no API to release private key material for any
+		// key this backend manages, generated or imported, so Exportable=true
+		// would be a promise this backend cannot keep.
+		attrs.Exportable = false
+		attrs.Sensitive = true
+
 		allKeys = append(allKeys, attrs)
 	}
 

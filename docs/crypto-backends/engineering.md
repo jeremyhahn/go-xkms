@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -87,6 +87,44 @@ Never assume a capability from this table at a call site — read
 `Capabilities` from the backend, because a deployment's token or provider policy
 can be stricter than the backend's ceiling.
 
+### `Exportable`/`Sensitive` round-tripping (go-xkms#932)
+
+`xkms.ExportKey`, `RotateKey` and `CopyKey` resolve a key's *persisted*
+policy — not the caller's current request — through `findKeyAttrs`
+(`pkg/xkms/servicer_helpers.go:140`) and `loadStoredKeyAttrs`
+(`pkg/xkms/service.go:859`), both of which read `Backend.ListKeys` and use
+whatever it reports for `types.KeyAttributes.Exportable` and `.Sensitive`
+as-is. A backend whose `ListKeys` does not populate these two fields
+truthfully therefore misreports every key it enumerates, independent of what
+policy the key was actually created with. The table below is each backend's
+source of truth for both fields, as of the fix for #932.
+
+| Backend | `Exportable` source of truth | `Sensitive` source of truth | Citation |
+|---|---|---|---|
+| software / pkcs8 / symmetric | Per-key metadata record (`keyMetadata.Exportable`/`.Sensitive`), written once at creation and never widened | Same record, `keyMetadata.Sensitive` | `pkg/keyprovider/symmetric/metadata.go:47` (`newKeyMetadata`), `pkg/backend/software/software.go:1014` (`SaveKeyMetadata` for the C_UnwrapKey path) |
+| pkcs11 | The token's own `CKA_EXTRACTABLE`, read per-key by `ListKeys` — never a parallel copy. A generated key pair is always `CKA_EXTRACTABLE=CK_FALSE` (`generatedKeyExtractable`), regardless of the caller's `Exportable` request; only `ImportKey`'s `buildImportKeyTemplate` honours the caller's policy, writing it straight to `CKA_EXTRACTABLE` | The token's own `CKA_SENSITIVE`, read the same way. Every private key this backend creates, generated or imported, is `CKA_SENSITIVE=CK_TRUE` | `pkg/backend/pkcs11/pkcs11.go` `ListKeys` (reads both via `readBoolAttribute`); `pkg/backend/pkcs11/signer_rsa.go:317` (`generatedKeySensitive`/`generatedKeyExtractable`); `pkg/backend/pkcs11/pkcs11_importexport.go:701` (`buildImportKeyTemplate` doc comment) |
+| tpm2 | Unconditionally `false` for every key `ListKeys` enumerates. `KeyTemplateSpec.Template` sets `FixedTPM=true`/`FixedParent=true` on every generated key (TCG TPM 2.0 Library Part 2 §12.2.3.5's "may never leave this TPM/parent"), and `ExportKey` refuses every key — generated or `ImportKey`'s duplicable sealed-keyedhash objects alike — unconditionally with `ErrExportNotSupported` | Unconditionally `true`: `ExportKeyMaterial` refuses every key unconditionally too, so plaintext is never released for any key this backend manages | `pkg/tpm2/template.go:165` (`FixedTPM`/`FixedParent` in `KeyTemplateSpec.Template`); `pkg/backend/tpm2/importexport.go:255` (`ExportKey` doc comment); `pkg/backend/tpm2/backend.go` `ListKeys` |
+| awskms | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally, and `ExportKey`/`ExportKeyMaterial` refuse every key regardless of policy — AWS KMS never releases key material outside the service boundary | Unconditionally `true`, for the same reason | `pkg/backend/awskms/awskms.go:563` (`Capabilities`), `:1198` (`ExportKey`), `:1246` (`ExportKeyMaterial`), `ListKeys` |
+| gcpkms | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; GCP KMS exposes no API to release private key material for any protection level or import method | Unconditionally `true`, for the same reason | `pkg/backend/gcpkms/gcpkms.go:246` (`Capabilities`); `pkg/backend/gcpkms/gcpkms_importexport.go:264` (`ExportKey` doc comment), `:299` (`ExportKeyMaterial`); `ListKeys` |
+| azurekv | Unconditionally `false`. `Capabilities().Export` is `false` unconditionally; Azure Key Vault exposes no API to release private key material | Unconditionally `true`, for the same reason | `pkg/backend/azurekv/azurekv.go:290` (`Capabilities`); `pkg/backend/azurekv/azurekv_importexport.go:466` (`ExportKey`), `:502` (`ExportKeyMaterial`); `ListKeys` |
+| vault | Per-key metadata record (`"exportable"`), written by `GenerateKey` (unconditionally `false` — H8, an asymmetric private key's public half is already available through the ordinary read-key endpoint), `GenerateSymmetricKey` and `ImportKey` (both carry the caller's `Exportable`). `ExportKeyMaterial` is genuine for a symmetric key created exportable, via Transit's own `transit/export` endpoint; `ExportKey` (the wrapped-for-a-third-party form) has no Vault-native equivalent and always refuses | Per-key metadata record (`"sensitive"`), mirroring the caller's own `Sensitive`, consulted by the service layer the same way every backend's is | `pkg/backend/vault/vault.go:192` (`GenerateKey`, H8), `ListKeys`; `pkg/backend/vault/vault_symmetric.go:99` (`GenerateSymmetricKey`); `pkg/backend/vault/vault_importexport.go:296` (`ExportKey` doc comment), `:333` (`ExportKeyMaterial`) |
+
+Two consequences follow directly from this table:
+
+- On tpm2, awskms, gcpkms and azurekv, `Exportable: true` at key creation is
+  accepted but can never be honoured by any code path in that backend —
+  `ExportKey`/`ExportKeyMaterial` refuse unconditionally regardless of the
+  flag. `ListKeys` reports `Exportable: false` truthfully rather than
+  echoing the request, and the refusal error is the backend's own
+  capability error (`ErrExportNotSupported`/`ErrNotSupported`), not
+  `ErrKeyNotExportable` — the distinction a caller needs to tell "this
+  backend never does this" from "this specific key wasn't marked for it".
+- On pkcs11 and vault, `Exportable` is a real per-key policy that
+  round-trips and is genuinely enforced: pkcs11 via `CKA_EXTRACTABLE` on
+  import (never on generate — a generated key pair is always sealed in the
+  token, `generatedKeyExtractable`), vault via Transit's `exportable` flag
+  on a symmetric key (never on an asymmetric one — H8).
+
 ## Invariants
 
 - **Capabilities are declared before use.** A caller that acts without checking
@@ -135,11 +173,14 @@ can be stricter than the backend's ceiling.
   requires on re-import), and an algorithm the backend does not produce is
   listed with `KeyAlgorithm` unset. It used to default both to RSA-2048
   (#154).
-- **Vault keys are non-exportable,** and the versioned ciphertext envelope is
-  preserved across operations; Vault key names use an injective (one-to-one)
-  escape to avoid name collision. Wrapped export is not supported; callers
-  requiring material export must use `ExportKeyMaterial` on keys stored in a
-  backend that declares `Export` capability.
+- **Vault asymmetric keys are non-exportable** (H8: the public half is
+  already available through the ordinary read-key endpoint); a **symmetric**
+  key created with `Exportable: true` is genuinely exportable through
+  `ExportKeyMaterial`, Transit's own `transit/export` endpoint (#932). The
+  versioned ciphertext envelope is preserved across operations; Vault key
+  names use an injective (one-to-one) escape to avoid name collision.
+  Wrapped export (`ExportKey`) has no Vault-native equivalent and is not
+  supported for any key.
 - **GCP resolves the live primary key version** at backend initialization, and
   Azure, Vault and GCP signers **pin the resolved version** at construction time
   so version rotations do not cause unexpected signing key changes mid-request.

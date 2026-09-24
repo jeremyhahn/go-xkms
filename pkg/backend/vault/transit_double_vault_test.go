@@ -113,6 +113,21 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LIST /v1/transit/keys has no name segment, unlike every other keys
+	// operation this double serves -- it must be routed before the
+	// len(parts) < 3 guard below, which every named operation relies on.
+	//
+	// The vault/api client's Logical.list rewrites the wire method to GET
+	// with ?list=true (see logical.go's comment: "Set this for broader
+	// compatibility") rather than sending the literal LIST verb its own
+	// ListWithContext constructs, so the method to match here is GET, not
+	// LIST; the path shape (no name segment) is what disambiguates this from
+	// an ordinary single-key read.
+	if parts[1] == "keys" && len(parts) == 2 && r.Method == http.MethodGet {
+		d.listKeys(w)
+		return
+	}
+
 	if len(parts) < 3 {
 		writeVaultError(w, http.StatusNotFound, "unsupported path")
 		return
@@ -138,6 +153,27 @@ func (d *transitDouble) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeVaultError(w, http.StatusNotFound, "unsupported operation "+operation)
 	}
+}
+
+// listKeys implements LIST /v1/transit/keys, returning every key name this
+// double currently holds under the same {"data":{"keys":[...]}} envelope
+// real Vault Transit uses, which is the shape (*Backend).ListKeys parses.
+func (d *transitDouble) listKeys(w http.ResponseWriter) {
+	d.mu.Lock()
+	names := make([]string, 0, len(d.keys))
+	for name := range d.keys {
+		names = append(names, name)
+	}
+	d.mu.Unlock()
+
+	keys := make([]interface{}, len(names))
+	for i, name := range names {
+		keys[i] = name
+	}
+
+	writeVaultData(w, map[string]interface{}{
+		"keys": keys,
+	})
 }
 
 // handleKey implements create (POST/PUT), read (GET) and delete (DELETE).

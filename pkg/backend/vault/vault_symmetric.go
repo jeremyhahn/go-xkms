@@ -119,16 +119,24 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to create symmetric key in vault", Err: err}
 	}
 
-	// Store metadata
+	// Store metadata. exportable and sensitive both mirror the caller's own
+	// KeyAttributes so ListKeys can round-trip them truthfully (go-xkms#932).
 	metadata := map[string]interface{}{
 		"cn":                  attrs.CN,
 		"symmetric_algorithm": string(attrs.SymmetricAlgorithm),
-		"key_type":            string(attrs.KeyType),
-		"store_type":          backend.STORE_VAULT,
-		"vault_name":          keyName,
-		"key_size":            256,
-		"symmetric":           true,
-		"exportable":          attrs.Exportable,
+		// uint8, matching GenerateKey's asymmetric metadata (vault.go) and
+		// the float64 ListKeys parses back: string(attrs.KeyType) converts
+		// the numeric KeyType as a Unicode code point, not a decimal string
+		// (KeyType is uint8), which round-tripped through JSON as an
+		// unparseable single-rune string and left every symmetric key's
+		// KeyType at its zero value once ListKeys tried to read it back.
+		"key_type":   uint8(attrs.KeyType),
+		"store_type": backend.STORE_VAULT,
+		"vault_name": keyName,
+		"key_size":   256,
+		"symmetric":  true,
+		"exportable": attrs.Exportable,
+		"sensitive":  attrs.Sensitive,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
