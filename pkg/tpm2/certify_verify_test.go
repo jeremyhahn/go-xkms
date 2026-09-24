@@ -560,7 +560,7 @@ func TestVerifyCertifySignature_RSASSA(t *testing.T) {
 	require.NoError(t, err)
 	rsaPub, ok := pub.(*rsa.PublicKey)
 	require.True(t, ok)
-	assert.Equal(t, key.PublicKey.N, rsaPub.N)
+	assert.Equal(t, key.N, rsaPub.N)
 }
 
 // TestVerifyCertifySignature_RSASSA_WrongSignatureRejected verifies a
@@ -616,7 +616,7 @@ func TestVerifyCertifySignature_RSAPSS(t *testing.T) {
 	require.NoError(t, err)
 	rsaPub, ok := pub.(*rsa.PublicKey)
 	require.True(t, ok)
-	assert.Equal(t, key.PublicKey.N, rsaPub.N)
+	assert.Equal(t, key.N, rsaPub.N)
 }
 
 // TestVerifyCertifySignature_UnsupportedAlgorithmRejected verifies a
