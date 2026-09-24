@@ -449,7 +449,7 @@ func TestParseMACAddress_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseMACAddress() error = %v", err)
 	}
-	if addr.MAC.String() == "" {
+	if addr.String() == "" {
 		t.Fatal("parsed MAC address stringifies to empty")
 	}
 }
