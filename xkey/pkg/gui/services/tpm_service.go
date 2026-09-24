@@ -593,13 +593,15 @@ func (s *TPMService) SetAuditLogger(logger audit.Logger) {
 	s.auditLog.Store(&logger)
 }
 
-// logTPMOperation logs a TPM operation to the audit log.
-func (s *TPMService) logTPMOperation(op audit.OperationType, success bool, err error, details map[string]any) {
+// logTPMOperation logs a TPM operation to the audit log. Every TPM
+// operation is SeveritySecurity, so the caller must propagate a non-nil
+// return and fail the request rather than proceed unaudited.
+func (s *TPMService) logTPMOperation(op audit.OperationType, success bool, err error, details map[string]any) error {
 	ptr := s.auditLog.Load()
 	if ptr == nil {
-		return
+		return nil
 	}
-	(*ptr).LogTPMOperation(op, success, err, details)
+	return (*ptr).LogTPMOperation(op, success, err, details)
 }
 
 // SetTPMAccessor sets the shared TPMAccessor used for serialized TPM access.
@@ -1454,22 +1456,25 @@ func (s *TPMService) Provision(opts *ProvisionOptions) (retErr error) {
 	}
 	if opErr != nil {
 		if isTPMAuthError(opErr) {
-			s.logTPMOperation(audit.OpTPMAuthFailed, false, opErr, map[string]any{
+			if auditErr := s.logTPMOperation(audit.OpTPMAuthFailed, false, opErr, map[string]any{
 				"operation": "provision",
 				"mode":      opts.Mode,
-			})
+			}); auditErr != nil {
+				return auditErr
+			}
 			return ErrTPMAuthRequired
 		}
-		s.logTPMOperation(audit.OpTPMProvisioned, false, opErr, map[string]any{
+		if auditErr := s.logTPMOperation(audit.OpTPMProvisioned, false, opErr, map[string]any{
 			"mode": opts.Mode,
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return opErr
 	}
 
-	s.logTPMOperation(audit.OpTPMProvisioned, true, nil, map[string]any{
+	return s.logTPMOperation(audit.OpTPMProvisioned, true, nil, map[string]any{
 		"mode": opts.Mode,
 	})
-	return nil
 }
 
 // Install performs a safe TPM installation using pre-existing keys when available.
@@ -1498,21 +1503,24 @@ func (s *TPMService) Install(ownerAuth string) (retErr error) {
 	}
 	if err := tpm.Install(auth, nil); err != nil {
 		if isTPMAuthError(err) {
-			s.logTPMOperation(audit.OpTPMAuthFailed, false, err, map[string]any{
+			if auditErr := s.logTPMOperation(audit.OpTPMAuthFailed, false, err, map[string]any{
 				"operation": "install",
-			})
+			}); auditErr != nil {
+				return auditErr
+			}
 			return ErrTPMAuthRequired
 		}
-		s.logTPMOperation(audit.OpTPMProvisioned, false, err, map[string]any{
+		if auditErr := s.logTPMOperation(audit.OpTPMProvisioned, false, err, map[string]any{
 			"mode": "install",
-		})
+		}); auditErr != nil {
+			return auditErr
+		}
 		return err
 	}
 
-	s.logTPMOperation(audit.OpTPMProvisioned, true, nil, map[string]any{
+	return s.logTPMOperation(audit.OpTPMProvisioned, true, nil, map[string]any{
 		"mode": "install",
 	})
-	return nil
 }
 
 // InitializePlatformKeyStore initializes the Platform Key Store by setting up
@@ -2525,23 +2533,26 @@ func (s *TPMService) changeHierarchyAuth(oldAuth, newAuth string, hierarchy tpm2
 	h := hierarchy
 	hierarchyName := s.hierarchyHandleToName(hierarchy)
 	if err := tpm.SetHierarchyAuth(oldPwd, newPwd, &h); err != nil {
+		var auditErr error
 		if isTPMAuthError(err) {
-			s.logTPMOperation(audit.OpTPMAuthFailed, false, err, map[string]any{
+			auditErr = s.logTPMOperation(audit.OpTPMAuthFailed, false, err, map[string]any{
 				"operation": "change_hierarchy_auth",
 				"hierarchy": hierarchyName,
 			})
 		} else {
-			s.logTPMOperation(audit.OpTPMHierarchyChanged, false, err, map[string]any{
+			auditErr = s.logTPMOperation(audit.OpTPMHierarchyChanged, false, err, map[string]any{
 				"hierarchy": hierarchyName,
 			})
+		}
+		if auditErr != nil {
+			return auditErr
 		}
 		return err
 	}
 
-	s.logTPMOperation(audit.OpTPMHierarchyChanged, true, nil, map[string]any{
+	return s.logTPMOperation(audit.OpTPMHierarchyChanged, true, nil, map[string]any{
 		"hierarchy": hierarchyName,
 	})
-	return nil
 }
 
 // hierarchyHandleToName converts a TPM handle to a human-readable hierarchy name.
@@ -5365,6 +5376,10 @@ func (s *TPMService) ClearTPM(req *TPMClearRequest) (*TPMClearResult, error) {
 	if err := tpm.Clear(lockoutAuth); err != nil {
 		s.log.Error("TPM clear failed", "error", err)
 
+		if auditErr := s.logTPMOperation(audit.OpTPMReset, false, err, map[string]any{"method": "standard"}); auditErr != nil {
+			return nil, auditErr
+		}
+
 		// Provide helpful error message
 		if isTPMAuthError(err) {
 			return &TPMClearResult{
@@ -5382,6 +5397,9 @@ func (s *TPMService) ClearTPM(req *TPMClearRequest) (*TPMClearResult, error) {
 	}
 
 	s.log.Info("TPM cleared successfully")
+	if auditErr := s.logTPMOperation(audit.OpTPMReset, true, nil, map[string]any{"method": "standard"}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &TPMClearResult{
 		Success: true,
 		Message: "TPM cleared successfully. You may need to re-provision the TPM.",
@@ -5420,6 +5438,10 @@ func (s *TPMService) ForceClearTPM(req *TPMClearRequest) (*TPMClearResult, error
 	if err != nil {
 		s.log.Error("TPM force clear failed", "error", err)
 
+		if auditErr := s.logTPMOperation(audit.OpTPMReset, false, err, map[string]any{"method": "force"}); auditErr != nil {
+			return nil, auditErr
+		}
+
 		// Check for specific error types
 		if errors.Is(err, ErrElevationDenied) {
 			return &TPMClearResult{
@@ -5435,6 +5457,9 @@ func (s *TPMService) ForceClearTPM(req *TPMClearRequest) (*TPMClearResult, error
 	}
 
 	s.log.Info("TPM force clear scheduled, reboot required")
+	if auditErr := s.logTPMOperation(audit.OpTPMReset, true, nil, map[string]any{"method": "force", "reboot_required": true}); auditErr != nil {
+		return nil, auditErr
+	}
 	return &TPMClearResult{
 		Success:        true,
 		Message:        "TPM clear scheduled via UEFI firmware. Please reboot to complete the operation.",

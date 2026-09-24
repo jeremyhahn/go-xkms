@@ -46,14 +46,33 @@ The server selects the Logger after the qrdb node is up:
 	    s.auditLogger = &audit.NoOpLogger{}
 	}
 
-Transports then emit best-effort, ignoring the returned error:
+# Write-failure policy
 
-	_ = s.auditLogger.Log(ctx, &audit.Event{
+Log's returned error is never discarded. ClassifyAction (severity.go)
+classifies every Event.Action as SeveritySecurity or SeverityInformational;
+HandleWriteFailure applies the resulting policy to the error Log returned:
+
+  - SeveritySecurity (e.g. "authorize", "seal", "unseal"): a failed write
+    returns *ErrAuditWriteFailed, which the caller must propagate and use to
+    fail the request. A security-relevant action must not complete
+    unaudited.
+  - SeverityInformational: a failed write is logged via slog and counted in
+    metrics.AuditWriteFailuresTotal; HandleWriteFailure returns nil so the
+    caller proceeds.
+
+Transports call HandleWriteFailure around every Log:
+
+	if auditErr := audit.HandleWriteFailure(logger, "unseal", s.auditLogger.Log(ctx, &audit.Event{
 	    Subject:  identity.Subject,
 	    Action:   "unseal",
 	    Resource: "barrier",
 	    Outcome:  audit.OutcomeAllow,
 	    Details:  map[string]string{"transport": "grpc"},
-	})
+	})); auditErr != nil {
+	    return auditErr
+	}
+
+See docs/audit-log/engineering.md for the full policy and classification
+table.
 */
 package audit

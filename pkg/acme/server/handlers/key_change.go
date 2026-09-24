@@ -224,10 +224,13 @@ func (s *RestService) KeyChangeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.recordAudit(audit.LogKeyChange(auditContext(r), s.auditLog,
+	if auditErr := s.recordAudit(audit.EventAccountKeyChanged, audit.LogKeyChange(auditContext(r), s.auditLog,
 		auditAccountID(persistedAccount.ID),
 		auditKeyFingerprint(oldPublicKey),
-		auditKeyFingerprint(publicKey)))
+		auditKeyFingerprint(publicKey))); auditErr != nil {
+		writeError(w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
 
 	// Respond with success
 	response := KeyChangeResponse{Message: "Key-change completed successfully"}

@@ -226,7 +226,7 @@ func TestFM_OIDCService_Login_AWSProviderType(t *testing.T) {
 
 	result, err := svc.Login("aws-test")
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 	assert.NotNil(t, result)
 	assert.False(t, result.Success)
 }

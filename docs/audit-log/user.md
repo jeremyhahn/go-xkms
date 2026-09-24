@@ -1,6 +1,33 @@
 # Audit Log — User Guide
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23
+
+## If the audit backend degrades
+
+A degraded audit backend (disk full, qrdb unreachable, etc.) behaves
+differently depending on what you were doing:
+
+- **Security-sensitive requests fail.** PIN operations, seal/unseal, key
+  create/delete/use, CA issuance and revocation, authentication and
+  authorization, and the equivalent operations in the desktop app (TPM
+  seal/unseal/reset, password store, FIDO2/OATH credentials) return an
+  error instead of completing, so the server never reports success for an
+  action it could not prove happened. The underlying action may already be
+  committed (a key generated, a certificate revoked with the CA) — the
+  error tells you the trail is missing, not that nothing happened; check the
+  resource directly if that distinction matters to you.
+- **Everything else keeps working.** Protocol/lifecycle progress that is
+  not itself a security decision (ACME order/challenge progress, a phone
+  connecting, a service starting) is not held hostage by a degraded trail.
+  The failure is logged to the server log and counted in the
+  `xkms_audit_write_failures_total` Prometheus metric (labeled by
+  operation) — alert on that metric rising, since it is the signal that the
+  trail is silently losing informational records even though requests keep
+  succeeding.
+
+If you see security requests failing with an audit-related error, treat it
+as an audit-backend incident, not a request-specific one: fix the backend
+(disk space, qrdb connectivity) and the requests resume normally.
 
 ## What is recorded
 

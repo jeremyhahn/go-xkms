@@ -267,6 +267,7 @@ var rpcMethodHandlers = map[string]rpcHandler{
 
 	// XKMS key operations
 	"xkms.listBackends":        (*Server).handleListBackends,
+	"xkms.getBackend":          (*Server).handleGetBackend,
 	"xkms.generateKey":         (*Server).handleGenerateKey,
 	"xkms.getKey":              (*Server).handleGetKey,
 	"xkms.deleteKey":           (*Server).handleDeleteKey,
@@ -427,15 +428,16 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"user.listCredentials": (*Server).handleListUserCredentials,
 
 	// Password store operations
-	"password.add":      (*Server).handlePasswordAdd,
-	"password.get":      (*Server).handlePasswordGet,
-	"password.list":     (*Server).handlePasswordList,
-	"password.update":   (*Server).handlePasswordUpdate,
-	"password.delete":   (*Server).handlePasswordDelete,
-	"password.unlock":   (*Server).handlePasswordUnlock,
-	"password.lock":     (*Server).handlePasswordLock,
-	"password.status":   (*Server).handlePasswordStatus,
-	"password.generate": (*Server).handlePasswordGenerate,
+	"password.add":           (*Server).handlePasswordAdd,
+	"password.get":           (*Server).handlePasswordGet,
+	"password.list":          (*Server).handlePasswordList,
+	"password.update":        (*Server).handlePasswordUpdate,
+	"password.delete":        (*Server).handlePasswordDelete,
+	"password.unlock":        (*Server).handlePasswordUnlock,
+	"password.lock":          (*Server).handlePasswordLock,
+	"password.status":        (*Server).handlePasswordStatus,
+	"password.generate":      (*Server).handlePasswordGenerate,
+	"password.setAccessMode": (*Server).handlePasswordSetAccessMode,
 
 	// Platform-sealed store (machine-local sealed credential store)
 	"sealStore.put":    (*Server).handleSealStorePut,

@@ -421,7 +421,9 @@ func (s *KeyService) GenerateKey(source string, req *GenerateKeyParams) (*Genera
 		Exportable: req.Exportable,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyCreated, req.Backend, req.KeyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyCreated, req.Backend, req.KeyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -443,7 +445,9 @@ func (s *KeyService) DeleteKey(source, backend, keyID string) error {
 	}
 	_, err = client.DeleteKey(s.ctx, backend, keyID)
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyDeleted, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyDeleted, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return auditErr
+		}
 	}
 	return err
 }
@@ -466,7 +470,9 @@ func (s *KeyService) SignData(source, backend, keyID, algorithm, data string) (s
 		Data:    rawData,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpSignRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpSignRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return "", auditErr
+		}
 	}
 	if err != nil {
 		return "", err
@@ -497,7 +503,9 @@ func (s *KeyService) VerifySignature(source, backend, keyID, algorithm, data, si
 		Signature: rawSig,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpVerifyRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpVerifyRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return false, auditErr
+		}
 	}
 	if err != nil {
 		return false, err
@@ -522,7 +530,9 @@ func (s *KeyService) EncryptData(source, backend, keyID, algorithm, plaintext st
 		Plaintext: rawPlaintext,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpEncryptRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpEncryptRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return "", auditErr
+		}
 	}
 	if err != nil {
 		return "", err
@@ -547,7 +557,9 @@ func (s *KeyService) DecryptData(source, backend, keyID, algorithm, ciphertext s
 		Ciphertext: rawCiphertext,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpDecryptRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpDecryptRequest, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return "", auditErr
+		}
 	}
 	if err != nil {
 		return "", err
@@ -577,7 +589,9 @@ func (s *KeyService) ImportKey(source string, req *ImportKeyParams) (*RemoteKeyI
 		Algorithm:          req.Format,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyImported, req.Backend, req.KeyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyImported, req.Backend, req.KeyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -602,7 +616,9 @@ func (s *KeyService) ExportKey(source, backend, keyID, format string) (string, e
 		Algorithm: format,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyExported, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyExported, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return "", auditErr
+		}
 	}
 	if err != nil {
 		return "", err
@@ -622,7 +638,9 @@ func (s *KeyService) RotateKey(source, backend, keyID string) (*RemoteKeyInfo, e
 		KeyID:   keyID,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyRotated, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyRotated, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -654,7 +672,9 @@ func (s *KeyService) AttestKey(source, backend, keyID, nonce string) (*AttestKey
 		Nonce:   nonceBytes,
 	})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyAttested, backend, keyID, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyAttested, backend, keyID, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 	if err != nil {
 		return nil, err

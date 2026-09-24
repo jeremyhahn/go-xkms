@@ -274,6 +274,7 @@ const (
 	BackendTypeQuantum   = types.BackendTypeQuantum
 	BackendTypeSymmetric = types.BackendTypeSymmetric
 	BackendTypePhone     = types.BackendTypePhone
+	BackendTypeAVR       = types.BackendTypeAVR
 )
 
 // Key type constants.
@@ -331,6 +332,7 @@ const (
 	StoreQuantum  = types.StoreQuantum
 	StoreFrost    = types.StoreFrost
 	StorePhone    = types.StorePhone
+	StoreAVR      = types.StoreAVR
 )
 
 // File system extension constants (FSExtension values used by the

@@ -7,6 +7,651 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0-alpha] - 2026-09-23
+
+### Security
+
+- **`device-attest-01` bound a DICE attestation to the ACME key authorization
+  and never to the CSR public key.** `pkg/attestation`'s profile table already
+  declared `bindLeafSPKI: true` for the format, but `VerifyInvariants` was
+  never called from the ACME route, so a genuine device's attestation — which
+  is public and travels with every enrollment — could be presented beside a CSR
+  for a key generated in software, and the certificate issued would read as
+  hardware-backed to every relying party. An ACME order is two requests and
+  nothing in the protocol ties the key in the second to the device in the
+  first; `VerifiedAttestation.BindCSRKey`
+  (`pkg/acme/challenges/device-attest-01/binding.go`) is now that tie, applied
+  at finalization where the CSR exists, through the same `VerifyInvariants`
+  gate the TCG and SignCSR carriers use. `Verify`, the one-shot challenge
+  verifier, refuses `FormatDICE` outright with `ErrKeyBindingRequired` rather
+  than reporting a success that is only half of one.
+
+  **The same gap remains open for `FormatTPM2` (#789).** Its binding mechanism
+  (`bindTPMCertify`, over `tpm2.VerifyCertifyRaw`) is implemented in
+  `pkg/attestation` and is not reached from the ACME route either;
+  `AttestationStatement.PubArea` is written by two producer sites and read by
+  no verifier. Closing it requires a `TPM2_Certify` of the CSR key, which the
+  statement has no field for — a wire change, and therefore a decision rather
+  than a fix.
+
+### Added
+
+- **TCG DICE device identity** (`pkg/attestation/dice/`): `DiceTcbInfo`,
+  `FWIDLIST`, `OperationalFlags`, `TcgUeid` and the `tcg-dice-UCCS-evidence`
+  extension at `2.23.133.5.4.6` — the mechanism DICE Attestation Architecture
+  §6.1.4 defines, so a device's nonce is echoed where another DICE verifier
+  expects to find it rather than in a repurposed `vendorInfo`. A DICE device
+  has no clock, so freshness is a nonce and nothing reads a device timestamp.
+- **The AVR backend** (`pkg/backend/avr/`): `types.KeyProvider` and
+  `AttestingKeyProvider` over `arduino-generic/sdk/go`, a Layer 0 module with
+  zero in-house dependencies.
+- **SDK surface** for both (`sdk/go/attestation_dice.go`,
+  `sdk/go/backends_avr.go`), including the error sentinels, so a consumer can
+  `errors.Is` across the boundary.
+
+### Fixed
+
+- `web/desktop` replaces `github.com/jeremyhahn/go-xkms` with the repository
+  root, so `pkg/backend/avr`'s import of the AVR SDK is reachable from that
+  module too. Its `go.mod` and `go.sum` did not name the dependency and `vet`
+  in readonly mode refused the module. The other three lint modules already
+  carried it, which is why only the Lint job saw it.
+
+### Note on review
+
+This release merged on green CI alone. The standing rule is a clean Codex
+review **and** green CI; Codex was unavailable and the owner ruled on
+2026-09-23 to merge on CI alone for now. The review that did run on this branch
+found eight defects, six of them P1, including the bypass above — a class CI
+cannot see. Two changes landed after that review.
+
+## [0.22.0-alpha] - 2026-09-23
+
+### Security
+
+- **RFC 8659 CAA is now enforced at ACME finalize — BREAKING.** The seam
+  (`Params.CAAValidator`, `pkg/acme/server/handlers/service.go`) already
+  existed and `order_finalize.go` already consulted it, but nothing ever
+  constructed a validator: `NewCAAValidator` had no caller, so every ACME
+  issuance path (xkmsd, and the standalone `TrustedCA` merged from
+  go-trusted-ca) skipped CAA checking regardless of what a domain's CAA
+  records said, despite the directory advertising `caa_identities`.
+  `cmd/xkmsd/acme.go` and `pkg/acme/client/trustedca.go` now each build a
+  `*server.CAAValidator` via `server.NewCAAValidator` (the one construction
+  path; also re-exported as `sdk/go/acme.NewACMECAAValidator` for SDK
+  consumers composing their own `RestService`) and set it on
+  `handlers.Params.CAAValidator` before constructing the REST service.
+  `ACMEConfig.CAAIdentities` (`acme.caa_identities`, already present for
+  directory advertisement) is now **required whenever `acme.enabled` is
+  true** — `Validate` returns `ErrACMEMissingCAAIdentities` otherwise, so a
+  deployment can no longer silently advertise CAA support it never enforced.
+  The standalone `TrustedCA`'s `TCAACMEConfig.CAIdentifiers` gets the same
+  `Validate` rule, though `TrustedCA.Serve` only warns (not required, to
+  avoid changing that library's start-up contract) since the validator
+  itself now fails closed for any domain that actually publishes a CAA
+  record. Both composition paths also gained `caa_dns_server` /
+  `CAADNSServer` to optionally pin the resolver; unset reuses the same
+  default the `dns-01` challenge tooling already uses
+  (`pkg/acme/challenges/dns-01/providers.DefaultNameservers[0]`) instead of
+  a second hardcoded literal.
+
+  `pkg/acme/server/caa.go` itself had several RFC 8659 gaps, all fixed with
+  tests (`pkg/acme/server/caa_test.go`,
+  `pkg/acme/server/handlers/caa_finalize_test.go`): (1) a DNS lookup failure
+  (SERVFAIL, timeout, any non-NXDOMAIN error) used to "proceed with
+  caution" and allow issuance — RFC 8659 Section 5.1 requires the opposite,
+  fail closed, since the CA cannot determine the relevant CAA RRset; (2)
+  `isAuthorized` compared a CAA record's issuer-domain-name with
+  `strings.HasPrefix`, so an identity `ca.example.com` incorrectly
+  authorized a record naming `ca.example.com.attacker.example` — issuer
+  matching is now an exact, case-insensitive full-domain comparison, with
+  RFC 8657 `accounturi`/`validationmethods` parameters correctly parsed out
+  of the value first rather than accidentally tolerated by the prefix bug;
+  (3) an unrecognized property tag carrying the critical flag (RFC 8659
+  Section 4) was ignored instead of blocking issuance; (4) a validator with
+  no configured identities silently allowed issuance in the presence of an
+  actual CAA record instead of failing closed. go-xkms#732.
+- **Every secret-bearing config field is `*types.SecretValue`, and a literal
+  secret in one is now refused at start-up — BREAKING.** go-xkms#654
+  originally declared these fields as the bare `types.SecretValue` value and
+  had `Server.resolveConfigSecrets` swallow the resulting
+  `*secret.UnresolvableTargetError` as tolerable, which diverged from
+  go-qrdb's own protected-target contract
+  (`go-qrdb/pkg/secret.ConfigProcessor`): a value-typed target is always
+  required (an empty one fails the walk), the only way to spell an optional
+  secret is a `nil *SecretValue`, and a protected target must reference a
+  secret held elsewhere — an inline `literal://` secret or a bare value is
+  refused, never honoured. This change brings xkms back into line: every
+  field in `pkg/config` (`ca_key_passphrase`, `rng.pkcs11.pin`,
+  `backends.pkcs11.pin`, `backends.awskms.secret_key`,
+  `backends.azurekv.client_secret`, `backends.vault.token`,
+  `backends.phone.noise_static_key`), `pkg/tpm2/config.go` (`lockout-auth`
+  and every `ek`/`ssrk`/`idevid`/`iak`/`ldevid`/`lak` `hierarchy-auth`/
+  `password`), `pkg/backend/tpm2`, `pkg/backend/azurekv`,
+  `pkg/backend/pkcs11` (`pin`/`so-pin`), `pkg/ca/config.go`
+  (`keys[*].password`, `keystores.*.password`/`pin`), and `pkg/types.KeyConfig.Password`
+  (`ca.identity[*].keys[*].password`) is now `*types.SecretValue`; nil means
+  unconfigured. `Server.resolveConfigSecrets` (`pkg/server/secret_wiring.go`)
+  no longer filters `*secret.UnresolvableTargetError` out of the walk's
+  result — every error `secret.ConfigProcessor` reports now fails
+  `Server.New` with the typed, unmodified qrdb error joined into
+  `*ErrConfigSecretResolution`. `types.SecretValueBytes` no longer falls
+  back to an unresolved `Raw` as plaintext; it refuses a configured-but-
+  unresolved value (including a bare literal) with
+  `*types.SecretReferenceUnresolvedError` instead of trusting it. The
+  presence-check helper `types.SecretValueSet` is deleted: with every field
+  now a pointer, "is this configured" is answered by the field itself
+  (`field != nil`), and every former caller (`pkg/backend/pkcs11`,
+  `pkg/backend/azurekv`) now compares directly. `types.NewLiteralSecretValue`
+  (and its `sdk/go` re-export) now returns `*types.SecretValue` to match —
+  it remains the correct, qrdb-sanctioned way to build a `SecretValue` from
+  a runtime value (a CLI flag, a Go-code default) that a
+  `secret.ConfigProcessor` walk never reaches, such as `xkey`'s
+  `--hierarchy-auth` flag or `pkg/tpm2.DefaultConfig`'s well-known EK auth —
+  but it must never be assigned into a field the walker does reach, since a
+  literal there is refused regardless of how it was constructed.
+  The PKCS#11, RNG-PKCS#11, AWS KMS, Azure Key Vault and Vault backend
+  credentials are unaffected in practice: go-xkms#653's companion change
+  (see that entry) moves `Server.resolveConfigSecrets` before
+  `initializeBackends`, so a `credential://` reference for all five now
+  resolves in the same pass as everything else; only a bare literal for
+  them is refused, exactly like every other protected field. Files:
+  `pkg/config/config.go`, `pkg/tpm2/config.go`,
+  `pkg/tpm2/key.go`, `pkg/tpm2/provision.go`, `pkg/backend/tpm2/config.go`,
+  `pkg/backend/azurekv/config.go`, `pkg/backend/azurekv/azurekv.go`,
+  `pkg/backend/pkcs11/config.go`, `pkg/backend/pkcs11/pkcs11.go`,
+  `pkg/backend/pkcs11/pkcs11_ecdh.go`,
+  `pkg/backend/pkcs11/pkcs11_importexport.go`, `pkg/ca/config.go`,
+  `pkg/types/types.go`, `pkg/types/types_secret.go`,
+  `pkg/server/secret_wiring.go`, `pkg/server/backend_awskms.go`,
+  `pkg/server/backend_vault.go`, `pkg/server/backend_phone.go`,
+  `pkg/server/cluster_ca_strategy.go`, `xkey/pkg/gui/app.go`,
+  `docs/xkmsd-configuration/engineering.md`.
+- **Every operation that changes or persists security state now propagates
+  its own write/persist error instead of discarding it with `_ =`.**
+  `pkg/pkcs11/localseal.Controller.Rekey` no longer discards the reseal
+  triggered on a `ChangePassword`/credential failure: it joins the reseal's
+  error (`errors.Join`) onto the failure that triggered it. qrdb's
+  `StorageBarrier.Seal` transitions to sealed state unconditionally before
+  returning, so the barrier's observable state is never ambiguous — the
+  join surfaces the reseal's error for visibility, not because the barrier
+  might still be unsealed. `pkg/server/unified_tls.go`'s bootstrap
+  TLS cert/key `os.WriteFile` failures are now logged (`slog.Warn`,
+  `errors.Join` of both writes) instead of silently discarded; the
+  documented degrade-to-ephemeral-certificate behavior is unchanged.
+  `pkg/ca.CA.ImportCertificate`/`ImportCertificatePEM` now return the
+  keystore `SaveCert` failure (joined with any certStore failure) instead
+  of discarding it, while still attempting the authoritative certStore
+  write regardless. `CA.RevokeCert`'s certStore `DeleteCertificate` failure
+  during `DeleteKeys` cleanup now propagates; its keystore `DeleteKey`/
+  `DeleteCert` calls remain intentionally best-effort and are documented as
+  such — the `KeyAttributes` reconstructed from the revoked certificate
+  alone cannot satisfy `KeyAttributes.Validate`'s `StoreType` requirement,
+  so those two calls fail on every invocation today, a separate pre-existing
+  gap called out for its own issue rather than papered over here. `CA.Init`
+  no longer discards `initSecondaryKeys`' error: it is retained on
+  `CA.secondaryKeyErr`, readable via the new `CA.SecondaryKeyInitError()`,
+  while `Init` still succeeds off the primary key per its documented
+  contract. `pkg/acme/admin.TenantAwareAdminService.DeleteTenant` now logs
+  (rather than discards) a failed RBAC role deletion and default-CA KV
+  deletion during tenant teardown; `CreateTenantIntermediateCA`'s global-CA
+  parent-type path now fails the request instead of silently signing an
+  intermediate CA certificate with a nil parent (missing chain data) when
+  `TrustedRoot()` errors. In xkey: `TrustService.ExportBrowserTrustBundle`
+  now returns the manifest sidecar's write/marshal failure (joined with the
+  already-exported bundle count) instead of discarding it;
+  `SecureBrowserService.syncIfChanged` now logs a genuine (non-`ErrNotExist`)
+  trust-hash read failure while keeping the existing force-resync fallback;
+  `TPMHandleAllocator.NextHandle` and `NVIndexAllocator.NextIndex` no longer
+  hand out a handle/index whose counter update failed to persist — the
+  in-memory counter has already advanced past it (from the CAS), so the
+  withheld value is never reissued, at the cost of one skipped handle/index
+  per persist failure; `PairingVerifier.loadLocked`'s legacy-format
+  migration save failure is now audit-logged (`audit.OpPairingStateMigrated`)
+  instead of discarded, while `load` still succeeds off the migrated
+  in-memory state per its documented best-effort contract. go-xkms#687.
+- **The CA now verifies a TCG endorsement key certificate's chain and its tcg-kp-EKCertificate extended key usage against a configured TPM-manufacturer trust anchor before issuing an IAK or IDevID — BREAKING.** TPM 2.0 Keys for Device Identity and Attestation v1.10r9 §6.1.2 step 5b and §6.2.2 step 4b make this a SHALL, and no code path in the repository performed it: `TPM2_ActivateCredential` proves a requester holds the EK private key, not that the EK belongs to a genuine TPM, so a device supplying its own self-issued EK certificate could enroll exactly as a manufacturer-issued one could. `(*ca.CA).verifyEKCertificateChain` (`pkg/ca/tcg_ek_trust.go`) closes the gap and is called from all three CA entry points that see a raw endorsement key certificate — `SignTCGCSRIDevID`, `EnrollDevice`, and `VerifyTCG_CSR_IDevIDBytes` — before any of them does anything else with it, including generating the `TPM2_MakeCredential` challenge. Trust anchors are configured under the new `MultiIdentityCAConfig.TCGConfig.TrustAnchors` (`ca.tcg-config.trust-anchors` in YAML; also on the flat `CAConfig.TCGConfig`), which reuses `pkg/attestation/truststore.Config` — the same trust-anchor shape `pkg/config.AttestationConfig` already uses for the "tpm2" attestation format — rather than inventing a second one; `NewFromMultiIdentityConfig`, `NewHierarchicalCA`, `NewParentCA` and `NewIntermediateCA` all carry it through automatically. **A CA with no anchors configured now refuses every EK certificate with the new typed error `ErrTCGEKCertUntrusted`, wrapping the underlying cause, instead of silently accepting an unanchored one — any deployment that enrolls TCG-CSR-IDEVID devices must configure `ca.tcg-config.trust-anchors` (`ExternalRootPaths` naming the manufacturer's root, and its intermediate if it has one, concatenated into the same PEM file) before enrollment will succeed again.** `requireTCGEKCertificateEKU` additionally requires the leaf carry the tcg-kp-EKCertificate OID (2.23.133.8.1) or anyExtendedKeyUsage; `parseEKCertificateChain` accepts intermediates a device concatenated after the leaf in a PEM-encoded `EkCert` field; `stripTCGEKQuirks` accepts the TCG EK Credential Profile's critical-subjectAltName-with-only-a-directoryName encoding (which Go's `x509.Certificate.Verify` would otherwise reject as an unhandled critical extension for any EK certificate with an empty subject) without weakening any other check `Verify` performs. The two device-side `pkg/tpm2` doc comments that flagged this as unimplemented (`VerifyTCG_CSR_IAK`, `VerifyTCG_CSR_IDevID`) now point at the CA-side check instead of describing a gap. Files: `pkg/ca/tcg_ek_trust.go` (new), `pkg/ca/errors.go`, `pkg/ca/config.go`, `pkg/ca/types.go`, `pkg/ca/ca.go`, `pkg/ca/constructors.go`, `pkg/ca/tcg.go`, `pkg/ca/tcg_enrollment.go`, `pkg/ca/tcg_enrollment_verify.go`, `pkg/tpm2/idevid_csr.go`. Verified by `pkg/ca/tcg_ek_trust_test.go` (new: a trusted root, a trusted configured intermediate, a request-supplied intermediate, an unknown root, a missing EKU, an expired leaf, no anchors configured, the directory-name-only-SAN quirk, all against real generated certificates) and updated `pkg/ca/tcg_iak_certstore_test.go` / `tcg_conformance_test.go` fixtures, which now configure a trust anchor for the software-built EK certificate they already exercised `SignTCGCSRIDevID` with. go-xkms#685.
+
+### Added
+
+- **Implemented the ACME device enrollment and attestation path end to end
+  — BREAKING.** `pkg/acme/client/service` gains a `DeviceManager`
+  (`Enroll`/`Attest`/`List`/`Show`) alongside `AccountManager` and
+  `CertificateManager`, keyed by a new `Config.Devices` map of named
+  `DeviceSpec`s (account, common name, ACME permanent identifier, PCR
+  selection, local challenge server bind, and a `DeviceTPMConfig` that
+  reuses go-xkms's own `TPMConfig` wholesale so device identity keys are
+  always TCG-provisioned, never invented locally). The manager opens and,
+  for the in-process simulator only, provisions the TPM (EK, SSRK, IAK, and
+  a throwaway EK certificate when none exists) before driving the existing
+  `client.EnrollDevice`/`client.DeviceAttest` over enroll-01 /
+  device-attest-01 — real hardware is never auto-provisioned. The GUI's
+  `POST /api/v1/device/{enroll,attest}` handlers (previously 501) and
+  `trusted-acme-client device {enroll,attest} <name>` (previously a
+  flag-based no-op) now resolve a device spec by name through this service,
+  matching the certificate verbs' shape; the old `--account`/`--device-id`
+  free-form CLI flags are gone. `pkg/testutil` gains `FakeACMEDirectory`, a
+  reusable in-process ACME v2 directory for exercising
+  `golang.org/x/crypto/acme.Client`-based flows without a live CA. Fixes
+  go-xkms#738.
+- **The USB transport now proxies nine Password and all six SealStore
+  methods to the phone's embedded xkmsd, and the MCP transport now
+  implements all eight User management methods.** Both groups previously
+  returned typed `ErrNotSupported` stubs. USB's `PasswordAdd`, `PasswordGet`,
+  `PasswordList`, `PasswordUpdate`, `PasswordDelete`, `PasswordStoreUnlock`,
+  `PasswordStoreLock`, `PasswordStoreStatus`, `PasswordGenerate`,
+  `SealStorePut`, `SealStoreGet`, `SealStoreDelete`, `SealStoreList`,
+  `SealStoreReseal`, and `SealStoreStatus` now round-trip through the
+  existing Noise-encrypted `Request` envelope, using the servicer's own
+  method names verbatim on the wire; `PasswordStoreSetAccessMode` is left
+  for go-xkms#691. MCP's `user.create`, `user.list`, `user.get`,
+  `user.delete`, `user.enable`, `user.disable`, `user.bindCert`, and
+  `user.listCredentials` dispatch through new handlers in
+  `pkg/api/mcp/handlers_user.go`, gated by the same `users:*` RBAC actions
+  REST already enforces; a malformed `params_json` reports Invalid params
+  (-32602) rather than an internal error. WebAuthn/FIDO2 enrollment stays
+  excluded from MCP (go-xkms#193) — unaffected by this change. Files:
+  `pkg/api/transport/usb/transport.go`, `pkg/api/transport/mcp/transport.go`,
+  `pkg/api/mcp/handlers_user.go`, `pkg/api/mcp/server.go`,
+  `pkg/api/mcp/authz.go`, plus their tests. Fixes go-xkms#692.
+
+### Changed
+
+- **External key escrow's four methods are no longer part of
+  `transport.XKMSServicer` or `transport.Client` — BREAKING.** Escrow's RBAC
+  model is undecided (no `escrow` resource exists yet in go-qrdb's
+  permission registry), so every network transport could only ever answer
+  `EscrowKey`/`RecoverKey`/`ListEscrowed`/`RevokeEscrow` with
+  `ErrNotSupported`, while the umbrella interfaces every transport must
+  satisfy still forced each one to carry the four methods as dead stubs.
+  `transport.EscrowServicer` (`pkg/api/transport/servicer.go`) and
+  `transport.EscrowService` (`pkg/api/transport/client.go`) are now standalone
+  interfaces outside that composition; REST, gRPC, QUIC, Unix, MCP, and USB no
+  longer declare the four methods at all. `embedded.XKMSServicer`
+  (`pkg/api/transport/embedded/servicer.go`) composes `EscrowServicer` back in
+  for the one transport that still reaches escrow — the embedded transport,
+  delegating to whichever `*xkms.XKMSService` backs it — and its `sdk/go`
+  re-export (`sdk/go/transport/embedded/servicer.go`) follows it so
+  `sdk/go.NewEmbedded` keeps compiling. A caller holding a generic
+  `transport.Client` that needs escrow now type-asserts it to
+  `transport.EscrowService`. No production caller reached escrow through
+  `Client`/`XKMSServicer` before this change (confirmed across
+  `cmd/xkmsctl`, `sdk/go`, `xkey`, and `pkg/server`), and no downstream
+  consumer (`go-quicbaas`, `go-trusted-platform`) references the escrow
+  methods through the SDK, so the practical migration is nil; the change
+  closes the interface-shape gap for anyone who does. The service layer
+  (`pkg/xkms/servicer_escrow.go`, `pkg/escrow/*`) is unchanged. Files:
+  `pkg/api/transport/servicer.go`, `pkg/api/transport/client.go`,
+  `pkg/api/transport/embedded/servicer.go`,
+  `sdk/go/transport/embedded/servicer.go`,
+  `pkg/api/transport/{rest,grpc,quic,unix,mcp,usb}/transport.go`,
+  `pkg/api/transport/escrow_interface_split_test.go`, `docs/escrow/api.md`.
+  Fixes go-xkms#692.
+
+### Removed
+
+- **The barrier no longer accepts a boot-time unseal secret from
+  configuration, a flag, or the environment, and backends now initialize
+  after unseal — BREAKING.** `pkg/config`'s `BarrierConfig.Passphrase` field
+  is deleted, matching go-qrdb's own `SealConfig`, which carries no such
+  field either: an operator supplies the passphrase or Shamir quorum at
+  Initialize/Unseal time, via `xkmsctl barrier unseal` (or `unseal-shares`)
+  or the equivalent API call, on every restart. `cmd/xkmsd`'s
+  `--seal-passphrase` flag and the `XKMS_BARRIER_PASSPHRASE` environment
+  variable are removed with it. `pkg/config.Load` now rejects a config file
+  or environment variable that still sets `barrier.passphrase` with a typed
+  `*config.RemovedFieldError` naming the field and the replacement, instead
+  of silently dropping the now-unmapped key.
+  **The qrdb node's own barrier ("the flip") now engages for every software
+  strategy too, not just `none`/`tpm2`.** New `config.BarrierConfig.NodeFlipWired`
+  reports true for `none`, `passphrase`, `shamir`, and `tpm2` — go-qrdb's own
+  node-embedded seal subsystem (`go-qrdb/sdk/go/node`) natively builds
+  `none`/`passphrase`(deferred)/`shamir` from `DaemonConfig.Seal` alone;
+  xkms additionally injects a pre-built `tpm2` `SealingStrategy` constructed
+  directly from `Backends.TPM2` config, never from an already-initialized
+  backend. `passphrase`/`shamir` leave the node sealed at construction, and
+  `Server.New` blocks inside `initializeQRDBStorage` on the qrdb node's own
+  sealed-window listener — the identical two-phase boot `cmd/qrdbd` drives
+  via `initSealSubsystem` -> `awaitUnseal`, reached here entirely through
+  `go-qrdb/sdk/go`, no parallel implementation — until an operator completes
+  `xkmsctl barrier unseal`/`unseal-shares` or the equivalent API call, or the
+  configured `barrier.sealed_window_timeout` elapses.
+  **`Server.New` now initializes the credential service and resolves every
+  `credential://` config reference BEFORE `initializeBackends`**, so the
+  five backend-credential fields that used to be read too early to benefit —
+  `backends.pkcs11.pin`, `rng.pkcs11.pin`, `backends.awskms.secret_key`,
+  `backends.azurekv.client_secret`, `backends.vault.token` — now resolve a
+  `credential://` reference exactly like a CA password already did; see
+  `pkg/server/secret_wiring_test.go`'s
+  `TestBackendCredentials_ResolveViaCredentialReference`. This reorder does
+  not create the cycle a full move of `initializeBarrier` would: xkms's own
+  (non-node) barrier hardware strategies — built from already-initialized
+  backends via `buildHardwareSealStrategies` — are now reached only for a
+  strategy `NodeFlipWired` excludes (`pkcs11`, the cloud-KMS strategies).
+  `Config.ComplianceGaps()` now reports a gap exactly when
+  `BarrierConfig.NodeFlipWired` is false for the configured strategy: a
+  `qrdb` + `passphrase`/`shamir` deployment is no longer flagged, because
+  the node's own barrier genuinely encrypts the data plane for it — the
+  ceremony gates *access*, it does not leave data in plaintext.
+  `configs/xkmsd-local.yaml` and `configs/xkmsd-integration.yaml` pass
+  `TestShippedDaemonConfigsAreCompliant` unchanged (still `passphrase`
+  strategy) as a direct result.
+  **Not approved, not implemented (go-xkms#653 item 3):** a `pkcs11` (or
+  cloud-KMS) barrier strategy remains impossible to wire to the node flip —
+  it would need the same already-initialized PKCS#11 backend
+  `buildHardwareSealStrategies` reads from `s.keyProviders`, which
+  `initializeBackends` now builds strictly after unseal and credential
+  resolution. Deferring the PKCS#11 seal strategy's PIN to unseal time
+  (matching the software strategy's own per-call credential shape) would
+  need a `pkg/seal`/`types.Sealer` interface change; `types.Sealer` and the
+  PKCS#11 strategy are unchanged in this pass.
+  Files: `pkg/config/config.go`, `pkg/config/load.go`,
+  `pkg/server/node_seal.go`, `pkg/server/qrdb_node.go`,
+  `pkg/server/server.go`, `pkg/server/secret_wiring.go`,
+  `cmd/xkmsd/main.go`, `configs/xkmsd*.yaml`,
+  `test/integration/cluster/config.node.yaml`,
+  `test/integration/api/config.test.yaml`,
+  `test/integration/web/config.yaml`,
+  `test/integration/bootstrap/docker-compose.yml`, `README.md`,
+  `docs/seal/README.md`, `docs/xkmsd-configuration/cli.md`,
+  `docs/xkmsd-configuration/engineering.md`.
+
+### Fixed
+
+- **Every remaining bare `errors.New`/`fmt.Errorf` return in production code
+  is now a typed error.** 42 call sites across `xkey/cmd/xkey/cmd` (oidc.go,
+  oidc_aws.go, ssh_connect.go, extension_serve.go, pin_tpm.go), `pkg/tpm2`
+  (password.go, provision.go, tpm.go), `pkg/backend/pkcs11` (cert_config.go),
+  `pkg/backup` (file.go), `pkg/trust/clusterca` (cache.go,
+  keystrategy_tpmkek.go), `pkg/xkms` (piv_manager.go),
+  `xkey/pkg/gui/services` (tpm_service.go), `cmd/xkmsctl` (ssh.go),
+  `pkg/seal` (secret_sealer.go), `pkg/tpm2/store` (helpers.go) and
+  `sdk/go/client/ssh` (mcp.go) now return package sentinels (`var
+  ErrXxx = errors.New(...)`) or the shared `pkg/errs.Message`/`errs.Wrapped`
+  typed values instead of constructing an error inline, so every caller can
+  match them with `errors.Is`/`errors.As` (go-xkms#700). `cmd/xkmsd/acme.go`
+  gained one more sentinel (`ErrACMENoClientCAPEM`) discovered while
+  evaluating the guard below, and `acmeInitError.Unwrap` now returns both
+  its `Sentinel` and `Err` (`Unwrap() []error`) so a cause stored in `Err`
+  is reachable even when `Sentinel` is also set — previously `Unwrap`
+  returned only one of the two. `cmd/xkmsd/acme.go`'s `acme.reuse_tls`
+  placeholder error is deliberately left inline: go-xkms#694 deletes that
+  config key outright. Every new site has an `errors.Is`/`errors.As`
+  regression test. `.golangci.yml` documents, but does not yet enable,
+  `err113` as the guard against regressions: golangci-lint v2.13.2's
+  `err113` correctly ignores sentinel `var Err... = errors.New(...)`
+  declarations and would report 0 issues against every file this change
+  touched, but reports 107 pre-existing findings (inline dynamic errors and
+  direct `==`/`!=` error comparisons) across 41 files this change did not
+  touch — several under other open PRs (`pkg/tpm2/key.go`,
+  `platform_keystore.go`) — so enabling it now would fail `make lint`
+  outside this change's scope; a follow-up issue should clear that backlog
+  before `err113` is turned on.
+
+## [0.21.0-alpha] - 2026-09-23
+
+### Security
+
+- **ACME finalize no longer issues a `device-attest-01`/`enroll-01` certificate for a DNS or IP name, or a permanent identifier, the order never authorized, and the permanent identifier is never read from the CSR's Subject Common Name** (#684). `matchesIdentifier`'s permanent-identifier branch (`pkg/acme/server/handlers/order_finalize.go`) previously called `parseCertificateRequestPermanentIdentifier`, a stub that located the `subjectAltName` extension, did nothing with it, and fell back to the Common Name; the branch then returned as soon as it found the *first* `permanent-identifier` order identifier, without ever checking the CSR's `DNSNames`/`IPAddresses` or any of the order's other identifiers. A CSR whose Common Name matched the authorized permanent identifier could carry an arbitrary, unauthorized DNS or IP SAN straight into the certificate `ca.SignCSR` issues, since SAN copying is unconditional there. The permanent identifier is now read exclusively from the CSR's RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`) inside its `subjectAltName`, decoded by the new `ca.ParseOtherNames` (`pkg/ca/san.go`) — the one otherName decoder in the package, reused by the existing TCG DevID conformance tests in place of their own hand-rolled copy. The new `matchesPermanentIdentifierOrder` (`pkg/acme/server/handlers/order_finalize.go`) requires every identifier the order authorizes, permanent and `dns`/`ip` alike, to be satisfied — not just the first one found — and rejects a CSR missing the otherName, carrying more than one, or carrying any other otherName as `badCSR` (RFC 8555 §7.4), and a CSR whose otherName or DNS/IP SANs name something the order did not authorize as `rejectedIdentifier`. The `endorse-01` flow (`matchesEndorse01Identifier`), where the permanent identifier is the EK public key being certified rather than a CSR-carried name, was already correct and is unchanged. `enroll-01`'s TCG-CSR-IDEVID path (`finalizeTCGCSR`) was checked and is unaffected by this bug class: its certificate identity is synthesized server-side from the TPM-attested EK certificate, never copied from client-supplied CSR SANs. Files: `pkg/ca/san.go`, `pkg/ca/errors.go`, `pkg/acme/server/handlers/order_finalize.go`; docs in `docs/acme-issuance/engineering.md`, `docs/acme-issuance/api.md`, `docs/acme-issuance/user.md`. Verified by new tests covering a CN-plus-unauthorized-DNS-SAN CSR, an unauthorized IP SAN, a missing otherName, a wrong-value otherName, a wrong-type otherName, a malformed `subjectAltName`, a multi-identifier order whose second (`dns`) identifier is not satisfied, and the corresponding positive cases, plus a full-HTTP-handler regression pinning the exact pre-fix request (matching Common Name, unauthorized `device.local` DNS SAN) to now fail closed with `rejectedIdentifier` and leave the order in `ready` rather than issuing.
+- **The xkey CTAP2 authenticator now spends and durably persists a PIN
+  retry before comparing the guess, and fails closed if it cannot.**
+  `changePIN`, `getPinToken`, and
+  `getPinUvAuthTokenUsingPinWithPermissions` used to decrement the retry
+  counter and call `storage.SaveState` *after* verifying the PIN hash, and
+  discarded `SaveState`'s error with `_ =`; a storage failure on that trailing
+  save let the brute-force retry limit reset on the next restart, and the
+  decrement itself happened only once the answer was already known, not
+  before. All three now funnel through one helper,
+  `verifyPinHashAndConsumeRetryLocked`, that implements CTAP 2.1 §6.5.5.5's
+  order exactly: decrement, persist, *then* compare; a decryption failure on
+  `pinHashEnc` is treated as an automatic mismatch (still spends a retry)
+  rather than a free-retry protocol error; and a correct guess resets the
+  budget to its configured maximum and persists that too before returning. A
+  failure to persist the spent retry now fails the whole operation closed
+  with the typed `ErrStorageError` (mapped to `CTAP2_ERR_OTHER`) rather than
+  silently letting the comparison proceed on unrecorded state —
+  `xkey/pkg/authenticator/cmd_clientpin.go`. Separately,
+  `KeyManager.UnlockWithSOPIN`'s deferred user-PIN sync (wiring a FIDO2 PIN
+  set before the SO PIN existed onto CMK) called `InitializeUserPIN` /
+  `ResetUserPIN` and discarded their errors too, while also unconditionally
+  clearing the pending flag; a sync failure now clears the key material,
+  propagates the error, and leaves the pending flag set so the next SO
+  unlock retries the sync instead of silently leaving CMK never wired to the
+  user PIN. This also fixes a latent deadlock: those two methods re-locked
+  `KeyManager`'s non-reentrant `sync.RWMutex` that `UnlockWithSOPIN` was
+  already holding when the sync path was reached (never exercised by any
+  existing test); the locking logic now lives in unexported `*Locked`
+  variants the exported methods and the sync path both call —
+  `xkey/pkg/authenticator/key_manager.go`. go-xkms#686.
+- **`GODEBUG=fips140=only` no longer crashes go-xkms processes; the FIPS-only
+  gate is measurably closer to viable.** Continuing #613/#633: several
+  production call sites reached Go 1.24+ crypto APIs that refuse a
+  non-approved operation by **panicking** rather than returning an error
+  under strict FIPS enforcement, which crashed the whole process instead of
+  failing one request. Fixed to return typed errors instead:
+  `pkg/crypto/kdf`, `pkg/crypto/ecdh`, `pkg/crypto/x25519`, `pkg/seal`,
+  `pkg/trust/clusterca`, and `pkg/keyprovider/pkcs8` now call the stdlib
+  `crypto/hkdf.Key` instead of the legacy `golang.org/x/crypto/hkdf.New`
+  Reader, whose `Extract` step turns the stdlib's FIPS refusal into a panic.
+  `pkg/ca`'s X.509 signature verifier (`verifyRSASignature`,
+  `verifyECDSASignature`) and `pkg/acme/server/handlers`'s TPM event-log PCR
+  extender (`extendPCR`) and EAB MAC verifier (`verifyMAC`) recover a
+  same-cause panic from `crypto/sha1`/`crypto/hmac` at the point they call
+  it and return the existing verification-failure error type instead —
+  `pkg/ca.IsSelfSigned`'s RFC 5280 self-signed-anchor exemption now fails
+  closed (does not grant the exemption) for a SHA-1-signed anchor it cannot
+  verify under FIPS-only, rather than crashing. **A remote, ordinary,
+  spec-compliant SHA-1 OCSP request (RFC 6960's original default) or a
+  merely-short EAB HMAC key from ACME's External Account Binding (RFC 8555
+  §7.3.4) could crash an xkms OCSP responder or ACME server process running
+  under FIPS-only; both are now refused with a clean error instead
+  (`pkg/ca/ocsp.go`, `pkg/acme/server/handlers/external_account_binding.go`).**
+  `pkg/encoding.EncodePKCS8` and `pkg/keyprovider/pkcs8.PKCS8Backend`
+  encrypt with an explicit 16-byte PBKDF2 salt instead of
+  `github.com/youmark/pkcs8`'s 8-byte default, which crypto/pbkdf2 refuses
+  under FIPS-only. `pkg/acme/client`'s OCSP client now requests SHA-256
+  explicitly instead of relying on `golang.org/x/crypto/ocsp`'s SHA-1
+  default. Deliberately non-approved algorithm coverage (X25519,
+  ChaCha20-Poly1305, ML-KEM-512 via CIRCL) in `pkg/crypto/x25519`,
+  `pkg/crypto/chacha20poly1305` and `pkg/quantum/mlkem512` now asserts the
+  FIPS-only refusal instead of running the operation, closing a
+  process-crashing gap an `Example` function and several ordinary tests left
+  in `pkg/crypto/x25519` (go-xkms#23). The `fips` CI job stays withheld
+  (go-xkms#23 remains open): `pkg/pkcs11/module`, `pkg/encoding/jwe`,
+  `pkg/keyprovider/symmetric` and several more packages still need the same
+  treatment, and TPM 2.0 session HMAC authorization and parameter encryption
+  in `github.com/google/go-tpm` v0.9.8 panic under FIPS-only on ordinary,
+  spec-compliant session use (`crypto/hmac`, `crypto/cipher` CFB) — an
+  upstream dependency defect out of scope for this repository, tracked
+  separately for go-tpm.
+- **Every hand-rolled secret-wiping loop found across the tree moves to
+  go-enclave's `enclave.Wipe`, closing the gap #623 left open.** A hand-rolled
+  `for i := range b { b[i] = 0 }` has no `runtime.KeepAlive`, so the Go
+  compiler is free to prove the store is dead (nothing reads `b` afterward)
+  and eliminate the whole loop — the same class of silent-no-op risk #623
+  retired `GuardedBuffer` over. `zeroizeOperation` in
+  `pkg/pkcs11/module/session.go` (PKCS#11 v3.2 §5.2 terminal-result caching)
+  now calls `enclave.Wipe(op.Result)`; a repo-wide grep for the same pattern
+  found it duplicated in `pkg/pkcs11/module/module.go` (`releaseResult` and
+  `restoreMessageOperation`), `pkg/pkcs11/module/token.go`
+  (`Token.ClearUserPin`), and `pkg/pkcs11/module/object.go`
+  (`Object.Zeroize`), all converted the same way. Outside pkcs11:
+  `pkg/keyprovider/quantum/signer.go`'s four ML-KEM shared-secret defers,
+  `pkg/keyprovider/frost/keygen.go`'s `SecretKeyShare.Zeroize`,
+  `pkg/keyprovider/frost/nonce.go`'s `SigningNonces.Zeroize` (hiding and
+  binding nonces), `pkg/types/types.go`'s `sealData.Clear`,
+  `pkg/trust/clusterca/backends.go`'s keystore-password defer,
+  `pkg/quantum/{mldsa65,dilithium2,mldsa87}`'s `Clean` (fixed-size seed
+  arrays, wiped via `m.seed[:]`), `pkg/tpm2/symmetric.go`'s three
+  key-material clears, and `pkg/tpm2/password.go`'s `PlatformPassword.Clear`
+  and cache-refresh path. In the `xkey` module:
+  `xkey/pkg/gui/services/elevation_sudo.go`'s shared `zeroBytes` helper,
+  `xkey/pkg/oidc/store.go`'s `Store.Close` encryption-key clear,
+  `xkey/pkg/authenticator/pin_protocol_v1.go`'s `ResetSharedSecret`/`Reset`,
+  `xkey/pkg/authenticator/pin_protocol_v2.go`'s `hmacKey`/`aesKey` clears in
+  both `ResetSharedSecret` and `Reset`, and
+  `xkey/pkg/authenticator/cmd_clientpin.go`'s
+  `stopUsingPinUvAuthTokenLocked`. `enclave.Wipe` is a no-op on a nil or
+  empty slice, so every callsite's existing `!= nil` guard was dropped along
+  with the loop rather than kept as dead code. Left unconverted, with reasons
+  recorded at each site rather than silently skipped:
+  `pkg/backend/software/zeroize.go`'s `zeroizeBigInt` wipes a `[]big.Word`
+  (not `[]byte`), which `enclave.Wipe` cannot take without an unsafe
+  reinterpret cast — out of scope for this change; the two test-only
+  fixtures `xkey/pkg/oath/secret_protected_test.go` and
+  `pkg/keyprovider/symmetric/backend_test.go`'s `mockPassword.Clear`, which
+  zero scratch/mock buffers rather than production secret state; and
+  `xkey/pkg/pairing/message_loop.go`'s `clear(r.retired)`, a bookkeeping map
+  of retired request IDs with no secret material. Added
+  `TestZeroizeOperation` / `TestZeroizeOperation_NilAndEmpty` to
+  `pkg/pkcs11/module/session_test.go`, asserting the Result buffer is
+  actually overwritten (not just dropped) and that a nil `OperationState`,
+  nil `Result`, and empty `Result` are all handled without panicking.
+  go-xkms#674.
+- **Every `PolicySection` capability flag and startup precondition now does what it says, or has been deleted — BREAKING** (#668, deferred from #313). Of `PolicySection`'s 41 fields, 20 were parsed and signed into the sealed enterprise policy and read by nothing: an administrator setting `UserCanViewAuditLog: false` (for example) got no enforcement. 16 are now enforced at a single service-layer call each, refusing with a typed `*PolicyDeniedError` (deny switches: `UserCanConfigureTheme` → `AppService.SetTheme`; `UserCanToggleDevTools`/`DeveloperToolsEnabled` → `AppService.SetDeveloperTools`; `UserCanConfigureAutoUnseal`/`AllowAutoUnseal` → `AppService.ToggleBarrierAutoUnseal`; `UserCanChangeOwnPIN` → `PINService.ChangeUserPIN`; `UserCanConfigureExtension` → `AutoFillService.SetEnabled`/`SetRequireAuthentication`/`SetPolicy`; `UserCanManageTrustStore` → every mutating `TrustService` call; `UserCanViewAuditLog` → `AuditService.GetEntries`/`ExportEntries`; `UserCanManageSealedData` → `SealService.SealData`/`DeleteBlob`; `APIExplorerEnabled` → `APIExplorerService.Execute`) or a typed `*PolicyPreconditionError` (the `RequireSOPIN`/`RequireUserPIN`/`RequireEncryptedStorage`/`RequireTPM` startup preconditions, checked once in `pkg/gui/enterprise_policy.go` `checkStartupPreconditions` right after the SO PIN verifies the sealed policy: if the host does not meet a requirement the policy declares, the verified section is not applied — the secure defaults already in effect for every other consumer stay in effect rather than refusing the SO's own login, which would lock out the one person who could fix the deployment). `FIDO2AlwaysUV` gained a real setter (`Authenticator.SetAlwaysUV`) mirroring its already-enforced siblings `FIDO2RequireUserPresence`/`FIDO2UserIntentCheck`. Every denial logs an `audit.OpPolicyDenied` event. The remaining 4 fields — `PlatformPCRs`, `RequirePasswordProtection`, `PasswordProtectionMode`, `FIDO2RequireResidentKey` — had no clear single enforcement point without a design decision (an ambiguous overlap with the existing TPM `GoldenPCRs`/`PlatformPCR` config, a password store that is unconditionally barrier-protected with no "off" mode implemented, and a global "require every credential resident" rule with no defined CTAP2 refusal shape) and are deleted from the Go struct, `DefaultPolicy`, `PolicyCanonicalJSON`'s output, and the setup wizard's policy-writing path. Nothing in the GUI frontend or generated Wails TypeScript bindings referenced any of the four, confirming they were never wired past the Go layer. The sealed-policy HMAC changes as a result (the struct's field set is part of its canonical-JSON HMAC input); every enterprise deployment must re-seal its policy (`ComputePolicyHMAC`) after upgrading, and an enterprise config file that still sets one of the four removed keys is now rejected as an unrecognized key. Files: `pkg/config/policy.go`, `pkg/gui/enterprise_policy.go`, `pkg/gui/services/{app_service,pin_service,autofill_service,trust_service,audit_service,seal_service,api_explorer_service,auth_service,errors,setup_wizard_service}.go`, `pkg/authenticator/authenticator.go`, `pkg/gui/app.go`. Docs: `docs/configuration/enterprise-mode.md`, `docs/configuration/enterprise-setup.md`. Verified by a table test per enforced field (policy set → refused and audited; policy unset → allowed) in each service's test file, `pkg/gui/enterprise_policy_test.go`'s `TestCheckStartupPreconditions*` and `TestApp_ApplyVerifiedEnterprisePolicy_PreconditionsUnmet_KeepsDefaults`, and `pkg/config/policy_test.go`'s `TestPolicySection_EveryFieldHasAKnownReader`, a reflection-driven completeness guard that fails if a future `PolicySection` field is added without a registered reader.
+
+### Added
+
+- **The xkey-agent skill covers every xkey capability and is checked against
+  the real command tree.** `xkey/skills/xkey-agent/SKILL.md` is organized by
+  purpose, and permissions are left to the server, so it labels no command
+  human-only. `xkey/tools/skillgen` generates
+  `skills/xkey-agent/reference/cli.md` (every command, flag, type and
+  default) from the cobra tree. `make -C xkey check-skill-reference` fails
+  when that reference is stale or when SKILL.md cites a command or flag xkey
+  does not have, and the CI Lint job runs it (#669).
+- **Headless commands try TPM PCR-policy auto-unseal before falling back to a
+  password.** `xkey extension serve`, `xkey fido2` (`fido2 start`), and the
+  barrier-backed stores `xkey oath`/`xkey backup`/`xkey device oath-sync` use
+  (via `openBarrierBackend`, `xkey/cmd/xkey/cmd/barrier_store.go`) now drive
+  the same `services.BarrierAutoUnsealService` the xKey GUI uses at startup:
+  when the barrier is sealed with the `tpm2` strategy, they first try the
+  auto-unseal policy designated with `xkey policy set-auto-unseal <name>`
+  (no password read anywhere), and only fall back to a direct TPM unseal or a
+  password when no policy is configured. A policy that exists but no longer
+  matches the current PCR values is a logged, typed refusal
+  (`services.ErrBarrierAutoUnsealPCRMismatch`), never a silent fall-through.
+  Added `xkey barrier unseal --auto`, which runs the auto-unseal once and
+  never prompts for or reads a password — the explicit verb for unattended
+  startup scripts. New shared helper `tryBarrierPolicyAutoUnseal`
+  (`xkey/cmd/xkey/cmd/barrier_auto_unseal.go`) opens the TPM, reads the
+  designated policy, and drives the unseal; `probeTPMModule` is factored out
+  of the existing `probeTPMSealer` so both share one TPM-opening path.
+  **BREAKING**: the default PCR policy store location for `xkey policy ...`
+  changes from the CWD-relative `./data/policies` to `<data dir>/pcr_policies`
+  (`xkey/cmd/xkey/cmd/policy.go`), matching the location the xKey GUI already
+  uses (`pkg/gui/app.go`) — the CLI and GUI now share the same policies by
+  default instead of writing to two unrelated locations, and `--store` still
+  overrides it. Rewrote `xkey/skills/xkey-agent/SKILL.md`: every command and
+  flag re-verified against `xkey --help` output, documents the TPM
+  auto-unseal default and agent-safe alternatives (`auth login --piv`,
+  `auth register --setup-token`, `oidc login --no-browser`, `device enroll`),
+  and is referenced from `xkey/AGENTS.md`/`xkey/CLAUDE.md`. Tests (tag
+  `tpm_simulator`): `TestTryBarrierPolicyAutoUnseal_Success` (real simulator
+  seal + unseal, no password), `_NoPolicyConfigured` (silent fallback),
+  `_PCRMismatch` (typed error), `_PolicyStoreOpenFailedIsTyped`. Files:
+  `xkey/cmd/xkey/cmd/barrier_auto_unseal.go`,
+  `xkey/cmd/xkey/cmd/barrier_auto_unseal_test.go`,
+  `xkey/cmd/xkey/cmd/extension_serve.go`, `xkey/cmd/xkey/cmd/barrier_store.go`,
+  `xkey/cmd/xkey/cmd/barrier_unseal.go`, `xkey/cmd/xkey/cmd/policy.go`,
+  `xkey/cmd/xkey/cmd/fido2.go`, `xkey/skills/xkey-agent/SKILL.md`,
+  `xkey/CLAUDE.md` (`xkey/AGENTS.md` is a symlink to it).
+
+### Removed
+
+- **`CA.QuantumSafeTLSConfig` deleted — BREAKING.** The method cleared
+  `tls.Config.CurvePreferences` behind a stale TODO that predated Go's
+  built-in support for hybrid post-quantum key exchange, and stood next to
+  `TLSConfig`, `ServerTLSConfig`, `ClientTLSConfig`, and `MutualTLSConfig`,
+  none of which ever pin `CurvePreferences`. With `CurvePreferences` nil, Go's
+  `crypto/tls` already negotiates `X25519MLKEM768` by default, so the
+  dedicated method added an API surface without adding behavior. Deleted the
+  method, its `TrustedCA` interface entry (`sdk/go`'s public re-export), the
+  `MockCertificateAuthority` mock, and every test and doc mention. Callers use
+  `TLSConfig`/`ServerTLSConfig`/`ClientTLSConfig` and get the same curve
+  negotiation. Files: `pkg/ca/tls.go`, `pkg/ca/interface.go`,
+  `pkg/ca/interface_contract_test.go`, `pkg/ca/coverage_gap_test.go`,
+  `pkg/ca/coverage_boost2_test.go`, `pkg/ca/coverage_boost3_test.go`,
+  `test/mocks/ca_mock.go`, `pkg/init/ceremony_test.go`,
+  `pkg/api/rest/handlers_init_test.go`, `pkg/server/server_init_test.go`,
+  `pkg/acme/server/handlers/test_helpers_test.go`,
+  `xkey/pkg/ca/embedded_service_test.go`, `docs/ca/api-reference.md`,
+  `docs/ca/README.md`. go-xkms#689.
+
+### Fixed
+
+- **`make lint`/`make vet` now cover every file the root module's and
+  `sdk/go`'s own tests build, closing a gap where `golangci-lint` and `go
+  vet` ran untagged and never saw code behind `tpm_simulator`, `codec_cbor`,
+  `codec_json` or `codec_msgpack`.** The root module went from 0 findings
+  untagged to 107 under `TEST_TAGS`, all in `*_simulator_test.go` and other
+  tag-gated test files `unused`/`ineffassign`/`staticcheck` had never
+  reached (go-xkms#682). `LINT_MODULES`'s root and `sdk/go` entries now lint
+  under `LINT_TAGS_root`, `TEST_TAGS` comma-joined for golangci-lint/go
+  vet's `-tags` flag -- the same tags `test-sdk-go` already builds its
+  tests with -- while `xkey` keeps `LINT_TAGS_xkey` and `web/desktop`, which
+  has no test target, stays untagged; `SECURE_ANALYZER_RUNGS`'s root rung
+  now reuses `LINT_TAGS_root` instead of recomputing the same comma-join.
+  Every finding is fixed, not suppressed: the deprecated
+  `(*ecdsa.PublicKey).X`/`.Y` field reads and `elliptic.Curve.IsOnCurve`
+  calls in `pkg/tpm2`'s simulator tests are replaced with the existing
+  `pkg/crypto/ecpoint` helper (`ecpoint.PublicKey`, already used by
+  production code in `pkg/tpm2/eccpub.go`) or `(*ecdsa.PublicKey).ECDH()`,
+  both of which still reject an off-curve point -- the on-curve assertions
+  keep checking what they checked before. `QF1008` embedded-selector,
+  `SA4006`/`ineffassign` unchecked-error and `unused` dead-helper findings
+  in `pkg/acme/server/handlers`, `pkg/acme/admin` and
+  `pkg/acme/storage/objstore` are fixed at the source: unchecked
+  `crypto.GenerateKey`/`Sign` errors now go through `require.NoError`, and
+  test helpers nothing called are deleted rather than kept. No `nolint`
+  suppressions were added. Files: `Makefile`, `pkg/tpm2/crypto_ops_simulator_test.go`,
+  `pkg/tpm2/algorithm_agility_simulator_test.go`,
+  `pkg/tpm2/sign_none_hash_simulator_test.go`,
+  `pkg/tpm2/attestation_certify_simulator_test.go`,
+  `pkg/acme/server/handlers/tpm_coverage_test.go`,
+  `pkg/acme/server/handlers/coverage_90_final_test.go`,
+  `pkg/acme/server/handlers/coverage_90_target_test.go`,
+  `pkg/acme/server/handlers/coverage_boost_simple_test.go`,
+  `pkg/acme/server/handlers/compliance_attestation_test.go`,
+  `pkg/acme/server/handlers/tpm_test_helpers_test.go`,
+  `pkg/acme/admin/tenant_handlers_coverage_test.go`,
+  `pkg/acme/admin/test_helpers_test.go`,
+  `pkg/acme/storage/objstore/tenant_aware_factory_test.go`.
+- **xkey's `tpm` FIDO2 attestation statement is now WebAuthn L2 §8.3 compliant,
+  so a relying party no longer rejects it.** The TPM2 key backend now
+  implements `keybackend.FIDO2AttestingKeyBackend` directly
+  (`keybackend.TPM2AttestingBackend`), certifying each credential key with a
+  real `TPM2_Certify` under the device's Initial Attestation Key (IAK) instead
+  of leaving `certInfo` as the only populated field. The emitted `attStmt` now
+  carries the full required set: `ver` ("2.0"), `alg` (the IAK signature's COSE
+  algorithm — including the RSA/RSA-PSS families `EncodeCOSEPublicKey` did not
+  previously encode), `x5c` (the IAK certificate), `sig` (the IAK's ordinary
+  signature over `certInfo`), `certInfo` (the TPMS_ATTEST TPM2_Certify
+  produced, with `extraData` set to the hash of `authData‖clientDataHash`
+  using the IAK's own hash algorithm) and `pubArea` (the credential key's
+  TPMT_PUBLIC, whose Name TPM2_Certify's `certInfo` attests to). A statement
+  missing any required field now degrades to `"none"` rather than being sent
+  incomplete. `keybackend.FIDO2AttestationStatement.TPMData` is removed —
+  BREAKING for any direct caller — replaced by structured `Ver`, `CertInfo`
+  and `PubArea` fields. Verified end to end against go-webauthn's own `tpm`
+  format verifier (the library `pkg/webauthn`'s RP already embeds) using the
+  TPM simulator: a real IAK-issued statement verifies, a tampered `pubArea`
+  fails the Name binding check, and a `clientDataHash` the authenticator never
+  signed for fails the `extraData` check. Files:
+  `xkey/pkg/authenticator/keybackend/tpm_attestation.go`,
+  `xkey/pkg/authenticator/keybackend/keybackend.go`,
+  `xkey/pkg/authenticator/keybackend/cose.go`,
+  `xkey/pkg/authenticator/keybackend/tpm_attestation_simulator_test.go`,
+  `xkey/pkg/authenticator/cmd_makecredential.go`,
+  `xkey/pkg/authenticator/cmd_makecredential_test.go`,
+  `xkey/cmd/xkey/cmd/fido2.go`. Follow-up filed: xkms's IAK certificate
+  issuance path (`xkey tpm iak csr` + CA countersign) does not yet emit a
+  certificate conformant to WebAuthn L2 §8.3.1 / the TCG EK-Profile AIK
+  requirements (empty Subject, TCG-manufacturer SAN, `tcg-kp-AIKCertificate`
+  EKU) — until it does, a real device's `tpm` attestation is structurally
+  correct but its AIK certificate will fail a strict relying party's
+  certificate-profile check. Issue #695.
+
 ## [0.20.0-alpha] - 2026-09-23
 
 ### Security

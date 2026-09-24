@@ -110,16 +110,25 @@ func NewDAOAuditStore(kvStore qrdbsdk.KVStore, opts ...Option) (*DAOAuditStore, 
 }
 
 // Log persists an audit entry to the DAO and appends it to the in-memory
-// cache. When the cache is full, the oldest entry is evicted. If an slog
-// logger is configured, the entry is also forwarded to it.
-func (s *DAOAuditStore) Log(entry Entry) {
+// cache regardless of whether the persistent write succeeded, so
+// Query/Count stay consistent with what was audibly logged. When the cache
+// is full, the oldest entry is evicted. If an slog logger is configured,
+// the entry is also forwarded to it. A closed store silently drops the
+// entry (Close is an explicit shutdown, not a write failure) and returns
+// nil.
+//
+// A failed DAO write is handled per entry.Operation.Severity() (see
+// severity.go): a SeveritySecurity entry returns *ErrAuditWriteFailed,
+// which the caller must propagate to fail the operation; a
+// SeverityInformational entry is logged and counted, and Log returns nil.
+func (s *DAOAuditStore) Log(entry Entry) error {
 	if s.closed.Load() {
-		return
+		return nil
 	}
 
 	entity := entryToEntity(entry)
 	ctx := context.Background()
-	_ = s.dao.Save(ctx, entity)
+	writeErr := s.dao.Save(ctx, entity)
 
 	s.mu.Lock()
 	if len(s.cache) >= s.maxSize {
@@ -128,18 +137,22 @@ func (s *DAOAuditStore) Log(entry Entry) {
 	s.cache = append(s.cache, entry)
 	s.mu.Unlock()
 
+	var slogger *slog.Logger
 	if s.slog != nil {
-		s.slog.Log(entry)
+		_ = s.slog.Log(entry)
+		slogger = s.slog.logger
 	}
+
+	return handleWriteFailure(slogger, entry.Operation, writeErr)
 }
 
 // LogKeyOperation logs a key-related operation.
-func (s *DAOAuditStore) LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) {
+func (s *DAOAuditStore) LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		Backend:    backend,
@@ -151,12 +164,12 @@ func (s *DAOAuditStore) LogKeyOperation(op OperationType, backend, keyID string,
 }
 
 // LogCryptoOperation logs a cryptographic operation.
-func (s *DAOAuditStore) LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) {
+func (s *DAOAuditStore) LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		Backend:    backend,
@@ -170,8 +183,8 @@ func (s *DAOAuditStore) LogCryptoOperation(op OperationType, backend, keyID, dev
 }
 
 // LogConnectionEvent logs a connection-related event.
-func (s *DAOAuditStore) LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) {
-	s.Log(Entry{
+func (s *DAOAuditStore) LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) error {
+	return s.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		DeviceID:   deviceID,
@@ -182,8 +195,8 @@ func (s *DAOAuditStore) LogConnectionEvent(op OperationType, deviceID, deviceNam
 }
 
 // LogServiceEvent logs a service lifecycle event.
-func (s *DAOAuditStore) LogServiceEvent(op OperationType, details map[string]any) {
-	s.Log(Entry{
+func (s *DAOAuditStore) LogServiceEvent(op OperationType, details map[string]any) error {
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   true,
@@ -192,12 +205,12 @@ func (s *DAOAuditStore) LogServiceEvent(op OperationType, details map[string]any
 }
 
 // LogPINOperation logs a PIN-related operation (verify, change, lock).
-func (s *DAOAuditStore) LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) {
+func (s *DAOAuditStore) LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Backend:   backend,
@@ -208,12 +221,12 @@ func (s *DAOAuditStore) LogPINOperation(op OperationType, backend string, succes
 }
 
 // LogTPMOperation logs a TPM-related operation (provision, auth, seal).
-func (s *DAOAuditStore) LogTPMOperation(op OperationType, success bool, err error, details map[string]any) {
+func (s *DAOAuditStore) LogTPMOperation(op OperationType, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Backend:   "tpm2",
@@ -224,7 +237,7 @@ func (s *DAOAuditStore) LogTPMOperation(op OperationType, success bool, err erro
 }
 
 // LogPasswordStoreOperation logs a password store operation (unlock, access, autofill).
-func (s *DAOAuditStore) LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) {
+func (s *DAOAuditStore) LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
@@ -233,7 +246,7 @@ func (s *DAOAuditStore) LogPasswordStoreOperation(op OperationType, source strin
 		details = make(map[string]any)
 	}
 	details["source"] = source
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   success,
@@ -243,12 +256,12 @@ func (s *DAOAuditStore) LogPasswordStoreOperation(op OperationType, source strin
 }
 
 // LogUserPresenceEvent logs a user presence/touch event.
-func (s *DAOAuditStore) LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) {
+func (s *DAOAuditStore) LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) error {
 	if details == nil {
 		details = make(map[string]any)
 	}
 	details["source"] = source
-	s.Log(Entry{
+	return s.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   success,

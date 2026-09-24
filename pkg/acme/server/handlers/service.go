@@ -634,6 +634,16 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 	}
 
 	if !s.nonceStore.Exists(protectedHeader.Nonce) {
+		if auditErr := s.recordAudit(audit.EventInvalidNonce, s.auditLog.LogWithContext(auditContext(r),
+			audit.EventInvalidNonce,
+			"unknown",
+			"acme:nonce",
+			"validate",
+			audit.ResultFailure,
+			map[string]interface{}{"reason": "invalid or missing replay-nonce"},
+		)); auditErr != nil {
+			return nil, nil, auditErr
+		}
 		return nil, nil, common.BadNonce("Invalid or missing Replay-Nonce")
 	}
 
@@ -683,6 +693,16 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 
 	payload, err := jws.Verify(publicKey)
 	if err != nil {
+		if auditErr := s.recordAudit(audit.EventInvalidSignature, s.auditLog.LogWithContext(auditContext(r),
+			audit.EventInvalidSignature,
+			auditAccountRef(account.ID),
+			"acme:jws",
+			"verify",
+			audit.ResultFailure,
+			map[string]interface{}{"reason": err.Error()},
+		)); auditErr != nil {
+			return nil, nil, auditErr
+		}
 		return nil, nil, ErrInvalidJWSSignature
 	}
 
@@ -715,6 +735,16 @@ func (s *RestService) parseJWS(r *http.Request) (*jose.JSONWebKey, []byte, error
 	}
 
 	if !s.nonceStore.Exists(protectedHeader.Nonce) {
+		if auditErr := s.recordAudit(audit.EventInvalidNonce, s.auditLog.LogWithContext(auditContext(r),
+			audit.EventInvalidNonce,
+			"unknown",
+			"acme:nonce",
+			"validate",
+			audit.ResultFailure,
+			map[string]interface{}{"reason": "invalid or missing replay-nonce"},
+		)); auditErr != nil {
+			return nil, nil, auditErr
+		}
 		return nil, nil, common.BadNonce("Invalid or missing Replay-Nonce")
 	}
 
@@ -733,6 +763,16 @@ func (s *RestService) parseJWS(r *http.Request) (*jose.JSONWebKey, []byte, error
 	jwk := protectedHeader.JSONWebKey
 	payload, err := jws.Verify(jwk)
 	if err != nil {
+		if auditErr := s.recordAudit(audit.EventInvalidSignature, s.auditLog.LogWithContext(auditContext(r),
+			audit.EventInvalidSignature,
+			"unknown",
+			"acme:jws",
+			"verify",
+			audit.ResultFailure,
+			map[string]interface{}{"reason": err.Error()},
+		)); auditErr != nil {
+			return nil, nil, auditErr
+		}
 		return nil, nil, ErrInvalidJWSSignature
 	}
 
