@@ -25,6 +25,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -71,7 +72,17 @@ func (ca *CA) ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) 
 		return &errs.Detail{Err: ErrStorageError, Detail: "failed to encode cross-signed certificate"}
 	}
 
+	// CA_CROSS_SIGN is SeveritySecurity (docs/audit-log/engineering.md): the
+	// audit record is written before the cross-signed certificate is
+	// persisted, so a failed write refuses the import rather than accept an
+	// unaudited cross-sign relationship. ImportXSignedCertificate takes no
+	// context; a CA lifecycle event has no caller-scoped deadline to inherit,
+	// matching pkg/seal's emitAudit precedent for the same shape of call site.
 	key := crossSignedStoreKey(issuerCN, cert.Subject.CommonName)
+	if auditErr := ca.emitAudit(context.Background(), auditActionCACrossSign, auditResourceCrossSigned, key); auditErr != nil {
+		return auditErr
+	}
+
 	if err := ca.objectStore.Put(key, bytes.NewReader(pemData)); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store cross-signed certificate: %v", err)}
 	}

@@ -199,6 +199,14 @@ func (ca *CA) generateAndPersistCRL(ctx context.Context) ([]byte, error) {
 		ThisUpdate: template.ThisUpdate,
 		NextUpdate: template.NextUpdate,
 	}
+
+	// CA_CRL_GENERATED is SeveritySecurity (docs/audit-log/engineering.md):
+	// the audit record is written before the CRL artifact is persisted, so a
+	// failed write refuses the refresh rather than publish an unaudited CRL.
+	if auditErr := ca.emitAudit(ctx, auditActionCACRLGenerate, auditResourceCRL, issuingCert.Subject.CommonName); auditErr != nil {
+		return nil, auditErr
+	}
+
 	if err := ca.putCRLBlob(ctx, issuingCert.SubjectKeyId, rec); err != nil {
 		return nil, err
 	}

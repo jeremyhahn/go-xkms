@@ -2214,6 +2214,7 @@ func (s *Server) initializeCA() error {
 		SerialGen:       ca.NewSerialGenerator(ca.NewBackendStorage(serialStore)),
 		RevocationStore: revocationStore,
 		BackendForStore: backendForStore,
+		AuditLogger:     s.auditLogger,
 	})
 	if err != nil {
 		return &ErrCAInit{Operation: "create CA", Err: err}
