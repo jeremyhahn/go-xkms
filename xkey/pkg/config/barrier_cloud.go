@@ -120,7 +120,7 @@ func (c *BarrierAzureKVConfig) Validate() error {
 	hasClientID := c.ClientID != ""
 	hasClientSecret := c.ClientSecret != nil
 	hasTenantID := c.TenantID != ""
-	if (hasClientID || hasClientSecret || hasTenantID) && !(hasClientID && hasClientSecret && hasTenantID) {
+	if (hasClientID || hasClientSecret || hasTenantID) && (!hasClientID || !hasClientSecret || !hasTenantID) {
 		return &DetailError{Err: ErrBarrierCloudKMSConfigInvalid, Detail: ": azure_kv: tenant_id, client_id, and client_secret must all be provided together"}
 	}
 	return nil
