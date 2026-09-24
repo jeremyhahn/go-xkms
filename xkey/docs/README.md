@@ -17,6 +17,7 @@ tell.
 |---------|----------------|------------------------|
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
+| [ble](ble/) | The Bluetooth Low Energy transport for the phone-as-HSM pairing protocol: GATT wire shape, central and peripheral roles, BlueZ integration | `ble/README.md`, `ble/architecture.md`, `ble/protocol.md`, `ble/android-app.md`, `ble/testing.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
@@ -27,7 +28,9 @@ tell.
 | [secret-service](secret-service/) | The `org.freedesktop.secrets` D-Bus daemon exposing the static-password store to secret-tool, git-credential-libsecret and browsers, with Lock/Unlock tied to the barrier | — |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
+| [usb](usb/) | The virtual USB CCID smartcard device (UHID or ConfigFS/FunctionFS gadget) and portable USB disk images | `usb/ccid.md`, `usb/images.md` |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
+| [xkeysigner](xkeysigner/) | `crypto.Signer` over IPC to the xKey GUI's PIV slot, used by the go-xkms SDK's `WithXKeyAuth` mTLS option | `xkeysigner/README.md` |
 
 The core capabilities these build on live in the root module — the
 [password vault](../../docs/password-vault/), the
@@ -44,10 +47,10 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `oath/`,
-`password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
-`xkeysigner/`. Not features and staying as they are: `architecture/`,
-`configuration/`, `roadmap/`, `testing/`, `usage/`.
+Still owed a folder: `autofill/`, `device/`, `fido2/`, `gui/`, `oath/`,
+`password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`. Not features and staying
+as they are: `architecture/`, `configuration/`, `roadmap/`, `testing/`,
+`usage/`.
 
 ## Documentation Structure
 
