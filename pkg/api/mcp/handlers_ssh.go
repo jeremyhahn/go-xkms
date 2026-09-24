@@ -106,7 +106,9 @@ func (s *Server) handleSSHKeysList(ctx context.Context, req *JSONRPCRequest) (in
 	}
 	var params sdkssh.ListKeysRequest
 	if len(req.Params) > 0 {
-		_ = json.Unmarshal(req.Params, &params)
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &SSHInvalidParamsError{Err: err}}
+		}
 	}
 	keys, err := s.sshClient.Keys().List(ctx, params)
 	if err != nil {
@@ -219,7 +221,9 @@ func (s *Server) handleSSHKnownHostsList(ctx context.Context, req *JSONRPCReques
 	}
 	var params sdkssh.ListKnownHostsRequest
 	if len(req.Params) > 0 {
-		_ = json.Unmarshal(req.Params, &params)
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &SSHInvalidParamsError{Err: err}}
+		}
 	}
 	pins, err := s.sshClient.KnownHosts().List(ctx, params)
 	if err != nil {
@@ -315,7 +319,9 @@ func (s *Server) handleSSHAuthorizedKeysList(ctx context.Context, req *JSONRPCRe
 	}
 	var params sdkssh.ListAuthorizedKeysRequest
 	if len(req.Params) > 0 {
-		_ = json.Unmarshal(req.Params, &params)
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &SSHInvalidParamsError{Err: err}}
+		}
 	}
 	entries, err := s.sshClient.AuthorizedKeys().List(ctx, params)
 	if err != nil {

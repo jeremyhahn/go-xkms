@@ -174,7 +174,9 @@ func (s *AutoFillService) SetEnabled(enabled bool) error {
 	if ep := s.enterprisePolicy.Load(); ep != nil {
 		if !ep.UserCanConfigure {
 			err := &PolicyDeniedError{Field: "user_can_configure_extension"}
-			s.auditPreconditionFailure(audit.OpPolicyDenied, "set_enabled", err)
+			if auditErr := s.auditPreconditionFailure(audit.OpPolicyDenied, "set_enabled", err); auditErr != nil {
+				return errors.Join(err, auditErr)
+			}
 			return err
 		}
 		if enabled && !ep.Enabled {
@@ -237,7 +239,9 @@ func (s *AutoFillService) GetEnterprisePolicy() *EnterpriseExtensionPolicy {
 func (s *AutoFillService) SetPolicy(policy *xkms.AutoFillPolicy) error {
 	if ep := s.enterprisePolicy.Load(); ep != nil && !ep.UserCanConfigure {
 		err := &PolicyDeniedError{Field: "user_can_configure_extension"}
-		s.auditPreconditionFailure(audit.OpPolicyDenied, "set_policy", err)
+		if auditErr := s.auditPreconditionFailure(audit.OpPolicyDenied, "set_policy", err); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
 		return err
 	}
 	if policy == nil {
@@ -271,7 +275,9 @@ func (s *AutoFillService) SetRequireAuthentication(required bool) error {
 	if ep := s.enterprisePolicy.Load(); ep != nil {
 		if !ep.UserCanConfigure {
 			err := &PolicyDeniedError{Field: "user_can_configure_extension"}
-			s.auditPreconditionFailure(audit.OpPolicyDenied, "set_require_authentication", err)
+			if auditErr := s.auditPreconditionFailure(audit.OpPolicyDenied, "set_require_authentication", err); auditErr != nil {
+				return errors.Join(err, auditErr)
+			}
 			return err
 		}
 		if !required && ep.RequireAuthentication {
@@ -293,8 +299,16 @@ func (s *AutoFillService) SetRequireAuthentication(required bool) error {
 // matches the given domain, and cross-references OATH accounts to indicate
 // TOTP availability on each result.
 func (s *AutoFillService) SearchCredentials(domain string) ([]ipc.AutofillCredential, error) {
+	if s.auditStore != nil {
+		if auditErr := s.auditStore.LogServiceEvent(audit.OpAutofillRequested, map[string]any{"domain": domain}); auditErr != nil {
+			return nil, auditErr
+		}
+	}
+
 	if err := s.checkPreconditions(); err != nil {
-		s.auditPreconditionFailure(opAutoFillSearch, domain, err)
+		if auditErr := s.auditPreconditionFailure(opAutoFillSearch, domain, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -349,10 +363,12 @@ func (s *AutoFillService) SearchCredentials(domain string) ([]ipc.AutofillCreden
 		auditEnabled = true
 	}
 	if s.auditStore != nil && auditEnabled {
-		s.auditStore.LogServiceEvent(opAutoFillSearch, map[string]any{
+		if auditErr := s.auditStore.LogServiceEvent(opAutoFillSearch, map[string]any{
 			"domain":  domain,
 			"matches": len(results),
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return results, nil
@@ -365,7 +381,9 @@ func (s *AutoFillService) SearchCredentials(domain string) ([]ipc.AutofillCreden
 // assertion is verified server-side before credentials are released.
 func (s *AutoFillService) GetCredential(id, challenge string) (*ipc.AutofillFillResult, error) {
 	if err := s.checkPreconditions(); err != nil {
-		s.auditPreconditionFailure(opAutoFillCredentialAccess, id, err)
+		if auditErr := s.auditPreconditionFailure(opAutoFillCredentialAccess, id, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 	if id == "" {
@@ -409,10 +427,12 @@ func (s *AutoFillService) GetCredential(id, challenge string) (*ipc.AutofillFill
 		auditEnabled = true
 	}
 	if s.auditStore != nil && auditEnabled {
-		s.auditStore.LogServiceEvent(opAutoFillCredentialAccess, map[string]any{
+		if auditErr := s.auditStore.LogServiceEvent(opAutoFillCredentialAccess, map[string]any{
 			"credential_id":      id,
 			"assertion_verified": assertion != nil,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return &ipc.AutofillFillResult{
@@ -427,7 +447,9 @@ func (s *AutoFillService) GetCredential(id, challenge string) (*ipc.AutofillFill
 // entries by domain + username, and creates the entry via the password store.
 func (s *AutoFillService) SaveCredential(domain, username, password, title string) (*ipc.AutofillResult, error) {
 	if err := s.checkPreconditions(); err != nil {
-		s.auditPreconditionFailure(opAutoFillSave, domain, err)
+		if auditErr := s.auditPreconditionFailure(opAutoFillSave, domain, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -486,10 +508,12 @@ func (s *AutoFillService) SaveCredential(domain, username, password, title strin
 		auditEnabled = true
 	}
 	if s.auditStore != nil && auditEnabled {
-		s.auditStore.LogServiceEvent(opAutoFillSave, map[string]any{
+		if auditErr := s.auditStore.LogServiceEvent(opAutoFillSave, map[string]any{
 			"domain":   domain,
 			"username": username,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	s.log.Info("credential saved from browser extension",
@@ -503,7 +527,9 @@ func (s *AutoFillService) SaveCredential(domain, username, password, title strin
 // prompt to save credentials for it. The list is stored in-memory.
 func (s *AutoFillService) IgnoreDomain(domain string) (*ipc.AutofillResult, error) {
 	if err := s.checkPreconditions(); err != nil {
-		s.auditPreconditionFailure(opAutoFillIgnoreDomain, domain, err)
+		if auditErr := s.auditPreconditionFailure(opAutoFillIgnoreDomain, domain, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 
@@ -520,9 +546,11 @@ func (s *AutoFillService) IgnoreDomain(domain string) (*ipc.AutofillResult, erro
 		auditEnabled = true
 	}
 	if s.auditStore != nil && auditEnabled {
-		s.auditStore.LogServiceEvent(opAutoFillIgnoreDomain, map[string]any{
+		if auditErr := s.auditStore.LogServiceEvent(opAutoFillIgnoreDomain, map[string]any{
 			"domain": domain,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	s.log.Info("domain added to ignore list", "domain", domain)
@@ -540,7 +568,9 @@ func (s *AutoFillService) IsIgnoredDomain(domain string) bool {
 // the given domain, generates a TOTP code, and returns it.
 func (s *AutoFillService) GetTOTPForDomain(domain string) (*ipc.AutofillTOTP, error) {
 	if err := s.checkPreconditions(); err != nil {
-		s.auditPreconditionFailure(opAutoFillTOTPAccess, domain, err)
+		if auditErr := s.auditPreconditionFailure(opAutoFillTOTPAccess, domain, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 	if s.oathSvc == nil {
@@ -563,7 +593,9 @@ func (s *AutoFillService) GetTOTPForDomain(domain string) (*ipc.AutofillTOTP, er
 // GetTOTPByID generates a TOTP code for the given OATH account ID.
 func (s *AutoFillService) GetTOTPByID(id string) (*ipc.AutofillTOTP, error) {
 	if err := s.checkPreconditions(); err != nil {
-		s.auditPreconditionFailure(opAutoFillTOTPAccess, id, err)
+		if auditErr := s.auditPreconditionFailure(opAutoFillTOTPAccess, id, err); auditErr != nil {
+			return nil, auditErr
+		}
 		return nil, err
 	}
 	if s.oathSvc == nil {
@@ -729,9 +761,11 @@ func (s *AutoFillService) authenticateWithCTAP2(challenge string) (*ipc.Autofill
 	}
 
 	if s.auditStore != nil {
-		s.auditStore.LogServiceEvent(opAutoFillAuthentication, map[string]any{
+		if auditErr := s.auditStore.LogServiceEvent(opAutoFillAuthentication, map[string]any{
 			"assertion_verified": true,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	return &ipc.AutofillAssertion{
@@ -941,18 +975,25 @@ func (s *AutoFillService) checkPreconditions() error {
 	return nil
 }
 
-// auditPreconditionFailure logs a security-relevant audit entry when an
-// autofill operation is denied due to the extension being disabled, the
-// app being locked, or a policy enforcement. These events are always
-// logged regardless of the user's audit-enabled setting.
-func (s *AutoFillService) auditPreconditionFailure(op audit.OperationType, detail string, err error) {
+// auditPreconditionFailure logs audit.OpAutofillDenied when an autofill
+// operation is denied due to the extension being disabled, the app being
+// locked, or a policy enforcement. requestedOp records which autofill
+// feature was denied (search, save, TOTP access, etc.) in the entry's
+// details; the Operation itself is always OpAutofillDenied so every denial
+// — regardless of which feature triggered it — is queryable as one
+// category. These events are always logged regardless of the user's
+// audit-enabled setting. The caller must propagate a non-nil return:
+// OpAutofillDenied is SeveritySecurity, so a failed write must fail the
+// denied request rather than let it proceed unaudited.
+func (s *AutoFillService) auditPreconditionFailure(requestedOp audit.OperationType, detail string, err error) error {
 	if s.auditStore == nil {
-		return
+		return nil
 	}
-	s.auditStore.LogServiceEvent(op, map[string]any{
-		"denied": true,
-		"reason": err.Error(),
-		"detail": detail,
+	return s.auditStore.LogServiceEvent(audit.OpAutofillDenied, map[string]any{
+		"denied":       true,
+		"reason":       err.Error(),
+		"detail":       detail,
+		"requested_op": string(requestedOp),
 	})
 }
 
@@ -1036,9 +1077,11 @@ func (s *AutoFillService) generateAndAuditTOTP(id string) (*ipc.AutofillTOTP, er
 
 	policy := s.policy.Load()
 	if s.auditStore != nil && policy.AuditEnabled {
-		s.auditStore.LogServiceEvent(opAutoFillTOTPAccess, map[string]any{
+		if auditErr := s.auditStore.LogServiceEvent(opAutoFillTOTPAccess, map[string]any{
 			"account_id": id,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	// Resolve the issuer for the response.

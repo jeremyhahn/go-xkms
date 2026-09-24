@@ -20,16 +20,18 @@ Routes are `RouteAuthSession` under `/api/v1/passwords`, registered on the
 | Unlock store | `POST /api/v1/passwords/unlock` | `PasswordStoreUnlock` | same as REST | `password.unlock` | `PasswordStoreUnlock` |
 | Lock store | `POST /api/v1/passwords/lock` | `PasswordStoreLock` | same as REST | `password.lock` | `PasswordStoreLock` |
 | Store status | `GET /api/v1/passwords/status` | `PasswordStoreStatus` | same as REST | `password.status` | `PasswordStoreStatus` |
-| Set access mode | `POST /api/v1/passwords/access-mode` | — | same as REST | — | `PasswordStoreSetAccessMode` |
+| Set access mode | `POST /api/v1/passwords/access-mode` | — | same as REST | `password.setAccessMode` | `PasswordStoreSetAccessMode` |
 | Generate password | `POST /api/v1/passwords/generate` | `PasswordGenerate` | same as REST | `password.generate` | `PasswordGenerate` |
 
 **This is one of only three features with complete MCP coverage** (the others
-are the barrier and SSH). Nine `password.*` methods.
+are the barrier and SSH). Ten `password.*` methods.
 
-The one asymmetry: `PasswordStoreSetAccessMode` has a REST route and an embedded
-method but no gRPC RPC and no MCP method. Given that the access mode is a
-security policy rather than an operation, restricting where it can be changed is
-defensible — but it is an inconsistency, not a stated decision.
+The one asymmetry: `PasswordStoreSetAccessMode` has a REST route, an MCP
+method, and an embedded method, but no gRPC RPC and no Unix-socket RPC
+(`pkg/api/transport/{grpc,unix}/transport.go` both return `ErrNotSupported`
+for it). Given that the access mode is a security policy rather than an
+operation, restricting where it can be changed is defensible — but it is an
+inconsistency, not a stated decision.
 
 The seventh, product-specific **USB** transport (`pkg/api/transport/usb/transport.go`)
 proxies nine of the ten `PasswordService` methods to the phone's embedded

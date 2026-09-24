@@ -26,30 +26,41 @@ type recordingAuditLogger struct {
 	entries []audit.Entry
 }
 
-func (r *recordingAuditLogger) Log(e audit.Entry) { r.entries = append(r.entries, e) }
-func (r *recordingAuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, err error, durationMs int64) {
+func (r *recordingAuditLogger) Log(e audit.Entry) error {
+	r.entries = append(r.entries, e)
+	return nil
+}
+func (r *recordingAuditLogger) LogKeyOperation(op audit.OperationType, backend, keyID string, success bool, err error, durationMs int64) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Backend: backend, KeyID: keyID, Success: success})
+	return nil
 }
-func (r *recordingAuditLogger) LogCryptoOperation(op audit.OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) {
+func (r *recordingAuditLogger) LogCryptoOperation(op audit.OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Backend: backend, KeyID: keyID, DeviceID: deviceID, DeviceName: deviceName, Success: success})
+	return nil
 }
-func (r *recordingAuditLogger) LogConnectionEvent(op audit.OperationType, deviceID, deviceName string, details map[string]any) {
+func (r *recordingAuditLogger) LogConnectionEvent(op audit.OperationType, deviceID, deviceName string, details map[string]any) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, DeviceID: deviceID, DeviceName: deviceName, Details: details})
+	return nil
 }
-func (r *recordingAuditLogger) LogServiceEvent(op audit.OperationType, details map[string]any) {
+func (r *recordingAuditLogger) LogServiceEvent(op audit.OperationType, details map[string]any) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Details: details})
+	return nil
 }
-func (r *recordingAuditLogger) LogPINOperation(op audit.OperationType, backend string, success bool, err error, details map[string]any) {
+func (r *recordingAuditLogger) LogPINOperation(op audit.OperationType, backend string, success bool, err error, details map[string]any) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Backend: backend, Success: success, Details: details})
+	return nil
 }
-func (r *recordingAuditLogger) LogTPMOperation(op audit.OperationType, success bool, err error, details map[string]any) {
+func (r *recordingAuditLogger) LogTPMOperation(op audit.OperationType, success bool, err error, details map[string]any) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Success: success, Details: details})
+	return nil
 }
-func (r *recordingAuditLogger) LogPasswordStoreOperation(op audit.OperationType, source string, success bool, err error, details map[string]any) {
+func (r *recordingAuditLogger) LogPasswordStoreOperation(op audit.OperationType, source string, success bool, err error, details map[string]any) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Backend: source, Success: success, Details: details})
+	return nil
 }
-func (r *recordingAuditLogger) LogUserPresenceEvent(op audit.OperationType, source string, success bool, details map[string]any) {
+func (r *recordingAuditLogger) LogUserPresenceEvent(op audit.OperationType, source string, success bool, details map[string]any) error {
 	r.entries = append(r.entries, audit.Entry{Operation: op, Backend: source, Success: success, Details: details})
+	return nil
 }
 
 var _ audit.Logger = (*recordingAuditLogger)(nil)

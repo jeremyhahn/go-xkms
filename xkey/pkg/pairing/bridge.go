@@ -267,7 +267,7 @@ func (b *Bridge) checkBackendAccess(backend string) error {
 		b.logger.Warn("backend access denied", "backend", backend)
 		// Log policy denial if audit logger is configured
 		if b.auditLogger != nil {
-			b.auditLogger.LogCryptoOperation(
+			if auditErr := b.auditLogger.LogCryptoOperation(
 				audit.OpPolicyDenied,
 				backend,
 				"",
@@ -276,7 +276,9 @@ func (b *Bridge) checkBackendAccess(backend string) error {
 				false,
 				ErrBridgeBackendDenied,
 				0,
-			)
+			); auditErr != nil {
+				return auditErr
+			}
 		}
 		return ErrBridgeBackendDenied
 	}
@@ -386,7 +388,7 @@ func (b *Bridge) handleSign(ctx context.Context, params json.RawMessage) (interf
 
 	// Audit log the sign operation
 	if b.auditLogger != nil {
-		b.auditLogger.LogCryptoOperation(
+		if auditErr := b.auditLogger.LogCryptoOperation(
 			audit.OpSignRequest,
 			p.Backend,
 			p.KeyID,
@@ -395,7 +397,9 @@ func (b *Bridge) handleSign(ctx context.Context, params json.RawMessage) (interf
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -432,7 +436,7 @@ func (b *Bridge) handleVerify(ctx context.Context, params json.RawMessage) (inte
 
 	// Audit log the verify operation
 	if b.auditLogger != nil {
-		b.auditLogger.LogCryptoOperation(
+		if auditErr := b.auditLogger.LogCryptoOperation(
 			audit.OpVerifyRequest,
 			p.Backend,
 			p.KeyID,
@@ -441,7 +445,9 @@ func (b *Bridge) handleVerify(ctx context.Context, params json.RawMessage) (inte
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -474,7 +480,7 @@ func (b *Bridge) handleEncrypt(ctx context.Context, params json.RawMessage) (int
 
 	// Audit log the encrypt operation
 	if b.auditLogger != nil {
-		b.auditLogger.LogCryptoOperation(
+		if auditErr := b.auditLogger.LogCryptoOperation(
 			audit.OpEncryptRequest,
 			p.Backend,
 			p.KeyID,
@@ -483,7 +489,9 @@ func (b *Bridge) handleEncrypt(ctx context.Context, params json.RawMessage) (int
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -516,7 +524,7 @@ func (b *Bridge) handleDecrypt(ctx context.Context, params json.RawMessage) (int
 
 	// Audit log the decrypt operation
 	if b.auditLogger != nil {
-		b.auditLogger.LogCryptoOperation(
+		if auditErr := b.auditLogger.LogCryptoOperation(
 			audit.OpDecryptRequest,
 			p.Backend,
 			p.KeyID,
@@ -525,7 +533,9 @@ func (b *Bridge) handleDecrypt(ctx context.Context, params json.RawMessage) (int
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -557,7 +567,7 @@ func (b *Bridge) handleDeriveKey(ctx context.Context, params json.RawMessage) (i
 
 	// Audit log the derive key operation
 	if b.auditLogger != nil {
-		b.auditLogger.LogCryptoOperation(
+		if auditErr := b.auditLogger.LogCryptoOperation(
 			audit.OpDeriveKey,
 			p.Backend,
 			p.KeyID,
@@ -566,7 +576,9 @@ func (b *Bridge) handleDeriveKey(ctx context.Context, params json.RawMessage) (i
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -603,14 +615,16 @@ func (b *Bridge) handleGenerateKey(ctx context.Context, params json.RawMessage) 
 		if err == nil && resp != nil {
 			keyID = resp.KeyID
 		}
-		b.auditLogger.LogKeyOperation(
+		if auditErr := b.auditLogger.LogKeyOperation(
 			audit.OpKeyCreated,
 			p.Backend,
 			keyID,
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -684,14 +698,16 @@ func (b *Bridge) handleDeleteKey(ctx context.Context, params json.RawMessage) (i
 
 	// Audit log the key deletion
 	if b.auditLogger != nil {
-		b.auditLogger.LogKeyOperation(
+		if auditErr := b.auditLogger.LogKeyOperation(
 			audit.OpKeyDeleted,
 			p.Backend,
 			p.KeyID,
 			err == nil && resp != nil && resp.Success,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -724,14 +740,16 @@ func (b *Bridge) handleAttestKey(ctx context.Context, params json.RawMessage) (i
 
 	// Audit log the key attestation
 	if b.auditLogger != nil {
-		b.auditLogger.LogKeyOperation(
+		if auditErr := b.auditLogger.LogKeyOperation(
 			audit.OpKeyAttested,
 			p.Backend,
 			p.KeyID,
 			err == nil,
 			err,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	if err != nil {
@@ -792,7 +810,7 @@ func (b *Bridge) handleAttestDevice(ctx context.Context, params json.RawMessage)
 
 	// Audit log the device attestation
 	if b.auditLogger != nil {
-		b.auditLogger.LogCryptoOperation(
+		if auditErr := b.auditLogger.LogCryptoOperation(
 			audit.OpDeviceAttested,
 			"",
 			"",
@@ -801,7 +819,9 @@ func (b *Bridge) handleAttestDevice(ctx context.Context, params json.RawMessage)
 			true,
 			nil,
 			durationMs,
-		)
+		); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 
 	b.logger.Info("device attestation completed",

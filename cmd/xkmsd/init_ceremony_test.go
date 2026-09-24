@@ -29,11 +29,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
+
+// testNodeConfig returns the *config.Config executeCeremony's single-admin
+// path opens the durable qrdb node with: qrdb-backed storage rooted at
+// dataDir, and the node's own barrier engaged with the "none" strategy so
+// the node auto-unseals unattended and the test needs no SO-pin credential
+// plumbing.
+func testNodeConfig(dataDir string) *config.Config {
+	return &config.Config{
+		Storage: config.StorageConfig{Backend: "qrdb", Path: dataDir},
+		Barrier: config.BarrierConfig{Enabled: true, Strategy: "none"},
+	}
+}
 
 // silentLogger returns a slog.Logger that discards all output. Suitable for
 // helpers under test that emit log lines we don't want polluting test output.
@@ -159,6 +172,7 @@ func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 		logger:   silentLogger(),
 		hostname: "test.example.com",
 		dataDir:  dataDir,
+		nodeCfg:  testNodeConfig(dataDir),
 	}
 	cs := buildCeremonyService(t, nil)
 
@@ -246,6 +260,7 @@ func TestExecuteCeremony_AlreadyInitialized(t *testing.T) {
 		logger:   silentLogger(),
 		hostname: "localhost",
 		dataDir:  dataDir,
+		nodeCfg:  testNodeConfig(dataDir),
 	}
 	cs := buildCeremonyService(t, nil)
 

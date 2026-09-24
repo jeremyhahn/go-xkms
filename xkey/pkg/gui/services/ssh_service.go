@@ -176,7 +176,9 @@ func (s *SSHService) GenerateKey(params SSHGenerateParams) (*SSHKeyInfo, error) 
 
 	key, err := client.Keys().Generate(s.ctxOrBackground(), req)
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyCreated, backendID, params.Name, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyCreated, backendID, params.Name, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return nil, auditErr
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -245,7 +247,9 @@ func (s *SSHService) DeleteKey(name string) error {
 	}
 	err = client.Keys().Delete(s.ctxOrBackground(), sshclient.DeleteKeyRequest{Scope: sshDefaultScope, Owner: sshDefaultOwner, Name: name})
 	if s.auditLogger != nil {
-		s.auditLogger.LogKeyOperation(audit.OpKeyDeleted, "", name, err == nil, err, time.Since(start).Milliseconds())
+		if auditErr := s.auditLogger.LogKeyOperation(audit.OpKeyDeleted, "", name, err == nil, err, time.Since(start).Milliseconds()); auditErr != nil {
+			return auditErr
+		}
 	}
 	return err
 }

@@ -110,6 +110,8 @@ type mockTPM struct {
 	parsePublicKeyValue        crypto.PublicKey
 	ssrkAttrsErr               error
 	ssrkAttrsValue             *types.KeyAttributes
+	platformSRKAttrsErr        error
+	platformSRKAttrsValue      *types.KeyAttributes
 	rsaPublicKey               *rsa.PublicKey
 	ecdsaPublicKey             *ecdsa.PublicKey
 	signatureValue             []byte
@@ -311,6 +313,12 @@ func (m *mockTPM) SSRKAttributes() (*types.KeyAttributes, error) {
 	return &types.KeyAttributes{CN: "ssrk"}, nil
 }
 func (m *mockTPM) PlatformSRKAttributes() (*types.KeyAttributes, error) {
+	if m.platformSRKAttrsErr != nil {
+		return nil, m.platformSRKAttrsErr
+	}
+	if m.platformSRKAttrsValue != nil {
+		return m.platformSRKAttrsValue, nil
+	}
 	return &types.KeyAttributes{CN: "platform-srk"}, nil
 }
 func (m *mockTPM) Transport() transport.TPM {
@@ -866,7 +874,7 @@ func TestBackend_PreservesExistingParent(t *testing.T) {
 }
 
 func TestNewBackendWithTPM_Success(t *testing.T) {
-	mockTpm := &mockTPM{ssrkAttrsValue: &types.KeyAttributes{CN: "test-ssrk"}}
+	mockTpm := &mockTPM{platformSRKAttrsValue: &types.KeyAttributes{CN: "test-platform-srk"}}
 	mockKb := &mockKeyBackend{}
 	logger := slog.Default()
 	tracker := backend.NewMemoryAEADTracker()
@@ -893,13 +901,13 @@ func TestNewBackendWithTPM_Success(t *testing.T) {
 	if !b.externalTPM {
 		t.Error("Expected externalTPM flag to be true")
 	}
-	if b.srkAttrs.CN != "test-ssrk" {
-		t.Errorf("Expected SRK CN to be test-ssrk, got %s", b.srkAttrs.CN)
+	if b.srkAttrs.CN != "test-platform-srk" {
+		t.Errorf("Expected SRK CN to be test-platform-srk, got %s", b.srkAttrs.CN)
 	}
 }
 
 func TestNewBackendWithTPM_DefaultLogger(t *testing.T) {
-	mockTpm := &mockTPM{ssrkAttrsValue: &types.KeyAttributes{CN: "test-ssrk"}}
+	mockTpm := &mockTPM{platformSRKAttrsValue: &types.KeyAttributes{CN: "test-platform-srk"}}
 	mockKb := &mockKeyBackend{}
 	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb, Logger: nil, Tracker: nil}
 	b, err := NewBackendWithTPM(cfg)
@@ -914,17 +922,43 @@ func TestNewBackendWithTPM_DefaultLogger(t *testing.T) {
 	}
 }
 
-func TestNewBackendWithTPM_SSRKAttributesError(t *testing.T) {
-	expectedErr := errors.New("ssrk error")
-	mockTpm := &mockTPM{ssrkAttrsErr: expectedErr}
+// TestNewBackendWithTPM_PlatformSRKUnavailable_ReturnsError proves
+// resolveSRKAttributes never falls back to the Shared SRK when no Platform
+// SRK is available -- the case of a TPM opened by another component that
+// provisioned the SSRK but was never enrolled through
+// PlatformKeyStore.Initialize/EnrollPlatformSRK. This backend must not use
+// the SSRK for anything of its own; construction fails with a typed, wrapped
+// error instead of silently borrowing it.
+func TestNewBackendWithTPM_PlatformSRKUnavailable_ReturnsError(t *testing.T) {
+	platformErr := errors.New("platform srk not provisioned")
+	mockTpm := &mockTPM{
+		platformSRKAttrsErr: platformErr,
+		ssrkAttrsValue:      &types.KeyAttributes{CN: "ssrk"},
+	}
 	mockKb := &mockKeyBackend{}
 	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb}
 	_, err := NewBackendWithTPM(cfg)
 	if err == nil {
-		t.Error("Expected error when SSRKAttributes fails")
+		t.Fatal("Expected error when the Platform SRK is unavailable, even though the SSRK is")
 	}
-	if !errors.Is(err, expectedErr) {
-		t.Errorf("Expected error to wrap ssrk error, got %v", err)
+	if !errors.Is(err, platformErr) {
+		t.Errorf("Expected error to wrap platform srk error, got %v", err)
+	}
+}
+
+// TestNewBackendWithTPM_NoSRKAvailable_ReturnsError proves construction fails
+// with a typed, wrapped error when the Platform SRK is not available.
+func TestNewBackendWithTPM_NoSRKAvailable_ReturnsError(t *testing.T) {
+	platformErr := errors.New("platform srk error")
+	mockTpm := &mockTPM{platformSRKAttrsErr: platformErr}
+	mockKb := &mockKeyBackend{}
+	cfg := &ExternalTPMConfig{TPM: mockTpm, KeyBackend: mockKb}
+	_, err := NewBackendWithTPM(cfg)
+	if err == nil {
+		t.Fatal("Expected error when the Platform SRK is not available")
+	}
+	if !errors.Is(err, platformErr) {
+		t.Errorf("Expected error to wrap platform srk error, got %v", err)
 	}
 }
 

@@ -132,6 +132,38 @@ func TestSSHKeys_ListWithoutParams(t *testing.T) {
 	assert.Len(t, result.(SSHKeyListResult).Items, 1)
 }
 
+// TestSSHList_MalformedParamsRejected proves that malformed JSON params on
+// the SSH list handlers are reported as Invalid params rather than silently
+// treated as an omitted (list-everything) request (#701).
+func TestSSHList_MalformedParamsRejected(t *testing.T) {
+	server := newSSHServer(t)
+	ctx := context.Background()
+
+	handlers := map[string]func(context.Context, *JSONRPCRequest) (interface{}, error){
+		"ssh.keys.list":           server.handleSSHKeysList,
+		"ssh.knownHosts.list":     server.handleSSHKnownHostsList,
+		"ssh.authorizedKeys.list": server.handleSSHAuthorizedKeysList,
+	}
+
+	for method, handler := range handlers {
+		t.Run(method, func(t *testing.T) {
+			_, err := handler(ctx, &JSONRPCRequest{
+				JSONRPC: "2.0",
+				Method:  method,
+				Params:  json.RawMessage(`{"scope": 123}`),
+				ID:      1,
+			})
+
+			require.Error(t, err)
+			var keyOp *KeyOpError
+			require.True(t, errors.As(err, &keyOp), "%s: %T is not a KeyOpError", method, err)
+			assert.Equal(t, ErrCodeInvalidParams, keyOp.Code)
+			var invalid *SSHInvalidParamsError
+			assert.ErrorAs(t, err, &invalid, "%s must report a typed invalid-params error", method)
+		})
+	}
+}
+
 // TestSSHKeys_Sign proves ssh.keys.sign produces a signature that verifies
 // against the key's public half.
 func TestSSHKeys_Sign(t *testing.T) {

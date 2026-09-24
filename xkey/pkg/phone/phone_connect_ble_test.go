@@ -150,10 +150,11 @@ type recordingAuditLogger struct {
 	events []recordedConnectionEvent
 }
 
-func (l *recordingAuditLogger) LogConnectionEvent(op audit.OperationType, deviceID, deviceName string, details map[string]any) {
+func (l *recordingAuditLogger) LogConnectionEvent(op audit.OperationType, deviceID, deviceName string, details map[string]any) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.events = append(l.events, recordedConnectionEvent{op: op, deviceID: deviceID, deviceName: deviceName, details: details})
+	return nil
 }
 
 func (l *recordingAuditLogger) recorded() []recordedConnectionEvent {

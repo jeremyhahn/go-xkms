@@ -29,6 +29,20 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
+// decodeParams decodes req.Params into dst, reporting a decode failure as a
+// *KeyOpError carrying ErrCodeInvalidParams (-32602) rather than silently
+// treating malformed JSON as an absent, all-zero-value request. Handlers
+// that treat params as optional -- pagination and filter params are
+// commonly omitted -- still call this rather than discarding the error, so
+// a caller who sent unparsable JSON is told so instead of having it
+// processed as an empty request.
+func decodeParams(req *JSONRPCRequest, dst interface{}) error {
+	if err := json.Unmarshal(req.Params, dst); err != nil {
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "invalid params", Err: err}}
+	}
+	return nil
+}
+
 // callerTenantID returns the tenant the authenticated caller belongs to, or
 // the empty string when the request carries no identity. Every crypto handler
 // forwards it to the service layer so a tenant-scoped key resolves against
