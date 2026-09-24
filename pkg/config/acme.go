@@ -347,6 +347,53 @@ const (
 	// DefaultACMERateLimitInterval is the sliding window
 	// DefaultACMERateLimitMaxRequests is measured over.
 	DefaultACMERateLimitInterval = time.Second
+
+	// DefaultACMETenantRateLimitMaxRequests is the number of requests every
+	// account belonging to the same tenant may make, combined, within
+	// DefaultACMETenantRateLimitInterval. It matches the per-client overall
+	// default so a single-tenant deployment throttles identically to today.
+	DefaultACMETenantRateLimitMaxRequests = 20
+
+	// DefaultACMETenantRateLimitInterval is the sliding window
+	// DefaultACMETenantRateLimitMaxRequests is measured over.
+	DefaultACMETenantRateLimitInterval = time.Second
+
+	// DefaultACMENewAccountRateLimitMaxRequests is the number of accounts a
+	// single client IP may create within DefaultACMENewAccountRateLimitInterval.
+	// Matches the standalone TrustedCA's and Let's Encrypt's long-standing
+	// convention.
+	DefaultACMENewAccountRateLimitMaxRequests = 10
+
+	// DefaultACMENewAccountRateLimitInterval is the sliding window
+	// DefaultACMENewAccountRateLimitMaxRequests is measured over.
+	DefaultACMENewAccountRateLimitInterval = time.Hour
+
+	// DefaultACMENewOrderRateLimitMaxRequests is the number of orders a
+	// single account may create within DefaultACMENewOrderRateLimitInterval.
+	DefaultACMENewOrderRateLimitMaxRequests = 300
+
+	// DefaultACMENewOrderRateLimitInterval is the sliding window
+	// DefaultACMENewOrderRateLimitMaxRequests is measured over.
+	DefaultACMENewOrderRateLimitInterval = 3 * time.Hour
+
+	// DefaultACMECertificateRateLimitMaxRequests is the number of
+	// certificates a single account may have issued within
+	// DefaultACMECertificateRateLimitInterval.
+	DefaultACMECertificateRateLimitMaxRequests = 50
+
+	// DefaultACMECertificateRateLimitInterval is the sliding window
+	// DefaultACMECertificateRateLimitMaxRequests is measured over.
+	DefaultACMECertificateRateLimitInterval = 3 * time.Hour
+
+	// DefaultACMEFailedValidationRateLimitMaxRequests is the number of failed
+	// challenge validations a single account may accrue within
+	// DefaultACMEFailedValidationRateLimitInterval before further validation
+	// attempts are refused.
+	DefaultACMEFailedValidationRateLimitMaxRequests = 5
+
+	// DefaultACMEFailedValidationRateLimitInterval is the sliding window
+	// DefaultACMEFailedValidationRateLimitMaxRequests is measured over.
+	DefaultACMEFailedValidationRateLimitInterval = time.Hour
 )
 
 // ACMERateLimitConfig configures the per-client (JWS KID once an ACME
@@ -377,6 +424,44 @@ type ACMERateLimitConfig struct {
 	// Interval is the sliding window MaxRequests is measured over. Zero
 	// selects DefaultACMERateLimitInterval.
 	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// Tenant configures the per-tenant OVERALL admission-control quota,
+	// shared across every account belonging to the same tenant, applied on
+	// top of (never instead of) the per-client limiter above. The tenant
+	// bucket is keyed exclusively from an authenticated JWS "kid" resolved
+	// and verified by handlers.RestService.TenantAuthMiddleware — never from
+	// a client-asserted header, host, or path — so it cannot be spoofed or
+	// used to escape another tenant's quota. Meaningful only for a
+	// multi-tenant deployment (accounts created with an External Account
+	// Binding that names a TenantID); a request whose account has no tenant
+	// is bucketed under the empty tenant ID, which behaves as one shared
+	// bucket for every non-tenant account. See ACMECategoryRateLimitConfig.
+	Tenant ACMECategoryRateLimitConfig `yaml:"tenant,omitempty"`
+
+	// NewAccount configures the RFC 8555 Section 6.6 new-account category:
+	// how many accounts a single client IP may create in a window. The
+	// tenant is never known at this point (no account exists yet), so this
+	// category is always keyed by client IP, never by tenant. See
+	// ACMECategoryRateLimitConfig.
+	NewAccount ACMECategoryRateLimitConfig `yaml:"new_account,omitempty"`
+
+	// NewOrder configures the RFC 8555 Section 6.6 new-order category: how
+	// many orders a single account may create in a window, scoped within its
+	// tenant when the account has one. See ACMECategoryRateLimitConfig.
+	NewOrder ACMECategoryRateLimitConfig `yaml:"new_order,omitempty"`
+
+	// Certificate configures the RFC 8555 Section 6.6 certificate-issuance
+	// category, enforced at order finalize: how many certificates a single
+	// account may have issued in a window, scoped within its tenant when the
+	// account has one. See ACMECategoryRateLimitConfig.
+	Certificate ACMECategoryRateLimitConfig `yaml:"certificate,omitempty"`
+
+	// FailedValidation configures the RFC 8555 Section 6.6 failed-validation
+	// category: how many failed challenge validations a single account may
+	// accrue in a window, scoped within its tenant when the account has one,
+	// before further validation attempts are refused. See
+	// ACMECategoryRateLimitConfig.
+	FailedValidation ACMECategoryRateLimitConfig `yaml:"failed_validation,omitempty"`
 }
 
 // IsEnabled reports whether the ACME listener should enforce a request-rate
@@ -404,17 +489,162 @@ func (r ACMERateLimitConfig) ResolveInterval() time.Duration {
 	return DefaultACMERateLimitInterval
 }
 
-// Validate checks the rate-limit section. It is only meaningful when the
-// limiter is enabled; a disabled limiter is reported by
-// Config.ComplianceGaps instead.
+// TenantIsEnabled reports whether the per-tenant overall quota is enforced.
+func (r ACMERateLimitConfig) TenantIsEnabled() bool { return r.Tenant.IsEnabled() }
+
+// TenantResolveMaxRequests returns the configured per-tenant request cap,
+// defaulting to DefaultACMETenantRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) TenantResolveMaxRequests() int {
+	return r.Tenant.resolveMaxRequests(DefaultACMETenantRateLimitMaxRequests)
+}
+
+// TenantResolveInterval returns the configured per-tenant rate-limit window,
+// defaulting to DefaultACMETenantRateLimitInterval when unset.
+func (r ACMERateLimitConfig) TenantResolveInterval() time.Duration {
+	return r.Tenant.resolveInterval(DefaultACMETenantRateLimitInterval)
+}
+
+// NewAccountIsEnabled reports whether the new-account category is enforced.
+func (r ACMERateLimitConfig) NewAccountIsEnabled() bool { return r.NewAccount.IsEnabled() }
+
+// NewAccountResolveMaxRequests returns the configured new-account request
+// cap, defaulting to DefaultACMENewAccountRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) NewAccountResolveMaxRequests() int {
+	return r.NewAccount.resolveMaxRequests(DefaultACMENewAccountRateLimitMaxRequests)
+}
+
+// NewAccountResolveInterval returns the configured new-account rate-limit
+// window, defaulting to DefaultACMENewAccountRateLimitInterval when unset.
+func (r ACMERateLimitConfig) NewAccountResolveInterval() time.Duration {
+	return r.NewAccount.resolveInterval(DefaultACMENewAccountRateLimitInterval)
+}
+
+// NewOrderIsEnabled reports whether the new-order category is enforced.
+func (r ACMERateLimitConfig) NewOrderIsEnabled() bool { return r.NewOrder.IsEnabled() }
+
+// NewOrderResolveMaxRequests returns the configured new-order request cap,
+// defaulting to DefaultACMENewOrderRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) NewOrderResolveMaxRequests() int {
+	return r.NewOrder.resolveMaxRequests(DefaultACMENewOrderRateLimitMaxRequests)
+}
+
+// NewOrderResolveInterval returns the configured new-order rate-limit
+// window, defaulting to DefaultACMENewOrderRateLimitInterval when unset.
+func (r ACMERateLimitConfig) NewOrderResolveInterval() time.Duration {
+	return r.NewOrder.resolveInterval(DefaultACMENewOrderRateLimitInterval)
+}
+
+// CertificateIsEnabled reports whether the certificate category is enforced.
+func (r ACMERateLimitConfig) CertificateIsEnabled() bool { return r.Certificate.IsEnabled() }
+
+// CertificateResolveMaxRequests returns the configured certificate request
+// cap, defaulting to DefaultACMECertificateRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) CertificateResolveMaxRequests() int {
+	return r.Certificate.resolveMaxRequests(DefaultACMECertificateRateLimitMaxRequests)
+}
+
+// CertificateResolveInterval returns the configured certificate rate-limit
+// window, defaulting to DefaultACMECertificateRateLimitInterval when unset.
+func (r ACMERateLimitConfig) CertificateResolveInterval() time.Duration {
+	return r.Certificate.resolveInterval(DefaultACMECertificateRateLimitInterval)
+}
+
+// FailedValidationIsEnabled reports whether the failed-validation category
+// is enforced.
+func (r ACMERateLimitConfig) FailedValidationIsEnabled() bool {
+	return r.FailedValidation.IsEnabled()
+}
+
+// FailedValidationResolveMaxRequests returns the configured
+// failed-validation request cap, defaulting to
+// DefaultACMEFailedValidationRateLimitMaxRequests when unset.
+func (r ACMERateLimitConfig) FailedValidationResolveMaxRequests() int {
+	return r.FailedValidation.resolveMaxRequests(DefaultACMEFailedValidationRateLimitMaxRequests)
+}
+
+// FailedValidationResolveInterval returns the configured failed-validation
+// rate-limit window, defaulting to
+// DefaultACMEFailedValidationRateLimitInterval when unset.
+func (r ACMERateLimitConfig) FailedValidationResolveInterval() time.Duration {
+	return r.FailedValidation.resolveInterval(DefaultACMEFailedValidationRateLimitInterval)
+}
+
+// Validate checks the rate-limit section, including every per-tenant and
+// per-category sub-section. It is only meaningful for a sub-section that is
+// enabled; a disabled one is reported by Config.ComplianceGaps instead.
 func (r ACMERateLimitConfig) Validate() error {
-	if !r.IsEnabled() {
+	if r.IsEnabled() {
+		if r.MaxRequests < 0 {
+			return ErrACMERateLimitNegativeMaxRequests
+		}
+		if r.Interval < 0 {
+			return ErrACMERateLimitNegativeInterval
+		}
+	}
+	for _, category := range []ACMECategoryRateLimitConfig{
+		r.Tenant, r.NewAccount, r.NewOrder, r.Certificate, r.FailedValidation,
+	} {
+		if err := category.validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ACMECategoryRateLimitConfig configures one RFC 8555 Section 6.6 rate-limit
+// category, or the per-tenant overall quota. It follows the same tri-state,
+// secure-by-default pattern as ACMERateLimitConfig: an explicit
+// enabled=false is the only way to turn it off, and Config.ComplianceGaps
+// reports it.
+type ACMECategoryRateLimitConfig struct {
+	// Enabled controls whether this category is enforced. It is a pointer so
+	// an omitted "enabled" key can be told apart from an explicit "false":
+	// omitting it leaves the category on. Use IsEnabled to read it.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// MaxRequests is the number of requests allowed within Interval before
+	// receiving HTTP 429. Zero selects this category's own default.
+	MaxRequests int `yaml:"max_requests,omitempty"`
+
+	// Interval is the sliding window MaxRequests is measured over. Zero
+	// selects this category's own default.
+	Interval time.Duration `yaml:"interval,omitempty"`
+}
+
+// IsEnabled reports whether this category is enforced. An omitted "enabled"
+// key leaves it on, so only an explicit false disables it.
+func (c ACMECategoryRateLimitConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// resolveMaxRequests returns the configured request cap, defaulting to def
+// when unset.
+func (c ACMECategoryRateLimitConfig) resolveMaxRequests(def int) int {
+	if c.MaxRequests > 0 {
+		return c.MaxRequests
+	}
+	return def
+}
+
+// resolveInterval returns the configured rate-limit window, defaulting to
+// def when unset.
+func (c ACMECategoryRateLimitConfig) resolveInterval(def time.Duration) time.Duration {
+	if c.Interval > 0 {
+		return c.Interval
+	}
+	return def
+}
+
+// validate checks the category. It is only meaningful when the category is
+// enabled; a disabled category is reported by Config.ComplianceGaps instead.
+func (c ACMECategoryRateLimitConfig) validate() error {
+	if !c.IsEnabled() {
 		return nil
 	}
-	if r.MaxRequests < 0 {
+	if c.MaxRequests < 0 {
 		return ErrACMERateLimitNegativeMaxRequests
 	}
-	if r.Interval < 0 {
+	if c.Interval < 0 {
 		return ErrACMERateLimitNegativeInterval
 	}
 	return nil

@@ -102,6 +102,13 @@ type RestServicer interface {
 	// AccountHandler retrieves account information
 	AccountHandler(w http.ResponseWriter, r *http.Request)
 
+	// TenantAuthMiddleware resolves the ACME tenant for admission control
+	// from a fully verified JWS "kid" and publishes it via
+	// server.WithTenantID for any TenantRateLimiter mounted after it in the
+	// middleware chain. It never consults a client-asserted header, host, or
+	// path. See tenant_auth.go for the full contract.
+	TenantAuthMiddleware(next http.Handler) http.Handler
+
 	// AuthorizationHandler retrieves authorization status
 	AuthorizationHandler(w http.ResponseWriter, r *http.Request)
 
@@ -252,6 +259,15 @@ type Params struct {
 	// go-xkms's default challenge candidates (see
 	// xkmsDefaultIdentifierChallengeTypes).
 	Policy *policy.PolicyConfig
+
+	// FailedValidationRateLimiter enforces the RFC 8555 Section 6.6
+	// failed-validation category (pkg/acme/server/tenant_rate_limiter.go).
+	// Unlike the other per-category limiters this cannot be mounted as
+	// blanket route middleware — it must only count actual validation
+	// failures — so ChallengeHandler calls its Allow method directly once a
+	// challenge has failed. A nil value (the caller's explicit choice to
+	// disable it; Config.ComplianceGaps reports that) disables the check.
+	FailedValidationRateLimiter *server.TenantRateLimiter
 }
 
 // CAAValidatorInterface defines the interface for CAA validation.
@@ -281,6 +297,7 @@ type RestService struct {
 	endorseEABRequired      bool
 	endorseDeviceIDMetaKey  string
 	externalAccountRequired bool
+	failedValidationLimiter *server.TenantRateLimiter
 	globalComplianceConfig  *GlobalComplianceConfig
 	kmsService              kms.KMSService
 	logger                  *slog.Logger
@@ -431,6 +448,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		endorseEABRequired:      params.EndorseEABRequired,
 		endorseDeviceIDMetaKey:  params.EndorseDeviceIDMetaKey,
 		externalAccountRequired: params.ExternalAccountRequired,
+		failedValidationLimiter: params.FailedValidationRateLimiter,
 		globalComplianceConfig:  params.GlobalComplianceConfig,
 		kmsService:              params.KMSService,
 		logger:                  params.Logger,
@@ -712,7 +730,18 @@ func (s *RestService) requestURL(r *http.Request) (string, error) {
 
 // parseKID parses a JWS request with a KID (Key ID) in the protected header.
 // It validates the JWS signature, nonce, and retrieves the associated account.
+//
+// If TenantAuthMiddleware already performed this exact verification for the
+// request (it must, to resolve the tenant before dispatch), ctx carries the
+// cached result and it is returned unchanged instead of re-verifying: the
+// JWS replay-nonce is single-use (common.NonceStore.Exists deletes it on
+// first check), so a second live verification would spuriously fail with
+// badNonce.
 func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.ACMEAccount, []byte, error) {
+	if cached, ok := authenticatedJWSFromContext(ctx); ok {
+		return cached.account, cached.payload, cached.err
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)

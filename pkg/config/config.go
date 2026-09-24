@@ -1318,6 +1318,37 @@ func (c *Config) ComplianceGaps() []string {
 		gaps = append(gaps, "ACME rate limiting disabled (acme.rate_limit.enabled=false): the ACME endpoint "+
 			"would accept unlimited new-account, new-order, and challenge requests")
 	}
+	// The per-tenant overall quota is the only thing standing between one
+	// tenant's traffic and every other tenant's share of the ACME endpoint
+	// in a multi-tenant deployment. It is on by default, so this only fires
+	// when the operator explicitly turned it off.
+	if c.ACME != nil && c.ACME.Enabled && !c.ACME.RateLimit.TenantIsEnabled() {
+		gaps = append(gaps, "ACME tenant rate limiting disabled (acme.rate_limit.tenant.enabled=false): a "+
+			"multi-tenant deployment's accounts would share no per-tenant quota, so one tenant's traffic is "+
+			"unbounded by any other tenant's")
+	}
+	// RFC 8555 Section 6.6 names four rate-limit categories (new-account,
+	// new-order, certificate, failed-validation); each is on by default, so
+	// this only fires for a category the operator explicitly turned off.
+	if c.ACME != nil && c.ACME.Enabled {
+		var disabledCategories []string
+		if !c.ACME.RateLimit.NewAccountIsEnabled() {
+			disabledCategories = append(disabledCategories, "new_account")
+		}
+		if !c.ACME.RateLimit.NewOrderIsEnabled() {
+			disabledCategories = append(disabledCategories, "new_order")
+		}
+		if !c.ACME.RateLimit.CertificateIsEnabled() {
+			disabledCategories = append(disabledCategories, "certificate")
+		}
+		if !c.ACME.RateLimit.FailedValidationIsEnabled() {
+			disabledCategories = append(disabledCategories, "failed_validation")
+		}
+		if len(disabledCategories) > 0 {
+			gaps = append(gaps, "ACME per-category rate limiting disabled ("+strings.Join(disabledCategories, ", ")+
+				"): the RFC 8555 Section 6.6 quota for the listed categories would not be enforced")
+		}
+	}
 	return gaps
 }
 
