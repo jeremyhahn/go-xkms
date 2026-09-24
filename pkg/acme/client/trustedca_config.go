@@ -233,8 +233,13 @@ func DefaultTrustedCAConfig() *TrustedCAConfig {
 }
 
 // Validate validates the entire TrustedCA configuration by delegating
-// to each sub-config's Validate method.
+// to each sub-config's Validate method. A nil receiver is rejected rather
+// than dereferenced: WithConfig(nil) is a caller error New must fail
+// closed on, not a panic (go-xkms#938).
 func (c *TrustedCAConfig) Validate() error {
+	if c == nil {
+		return errors.MalformedError("config is required")
+	}
 	if err := c.ACME.Validate(); err != nil {
 		return err
 	}
@@ -275,7 +280,16 @@ func (c *TrustedCAConfig) resolveAuditLogPath() error {
 }
 
 // Validate validates the ACME server configuration.
-// HTTPSAddr and ExternalURL are required. ExternalURL must be a valid HTTPS URL.
+// HTTPSAddr is required.
+//
+// ExternalURL is optional: TrustedCA.Serve derives an origin from the
+// listen address (AdvertisedURL) when neither the WithExternalURL option nor
+// this field is set, so a bind-address-only deployment is a config Validate
+// must accept (go-xkms#140). When ExternalURL is set, it must be a valid
+// HTTPS URL with a host: Validate cannot see whether WithExternalURL will
+// supply a value at construction time, so it only enforces the format of
+// what the operator actually wrote here.
+//
 // CAIdentifiers is required: RFC 8555 Section 8.1 requires this CA to check
 // CAA (RFC 8659) records before issuing, and without at least one identity
 // the CA has nothing to compare a domain's issue/issuewild record against.
@@ -283,18 +297,17 @@ func (a *TCAACMEConfig) Validate() error {
 	if a.HTTPSAddr == "" {
 		return errors.MalformedError("acme.https_addr is required")
 	}
-	if a.ExternalURL == "" {
-		return errors.MalformedError("acme.external_url is required")
-	}
-	parsed, err := url.Parse(a.ExternalURL)
-	if err != nil {
-		return errors.MalformedError("acme.external_url is not a valid URL: %s", a.ExternalURL)
-	}
-	if !strings.EqualFold(parsed.Scheme, "https") {
-		return errors.MalformedError("acme.external_url must use https scheme, got %q", parsed.Scheme)
-	}
-	if parsed.Host == "" {
-		return errors.MalformedError("acme.external_url must include a host")
+	if a.ExternalURL != "" {
+		parsed, err := url.Parse(a.ExternalURL)
+		if err != nil {
+			return errors.MalformedError("acme.external_url is not a valid URL: %s", a.ExternalURL)
+		}
+		if !strings.EqualFold(parsed.Scheme, "https") {
+			return errors.MalformedError("acme.external_url must use https scheme, got %q", parsed.Scheme)
+		}
+		if parsed.Host == "" {
+			return errors.MalformedError("acme.external_url must include a host")
+		}
 	}
 	if len(a.CAIdentifiers) == 0 {
 		return errors.MalformedError("acme.ca_identifiers is required")

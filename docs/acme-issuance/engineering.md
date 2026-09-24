@@ -387,23 +387,49 @@ off by default, threaded into `handlers.Params.AllowLoopbackIdentifier` in
 than through xkmsd) sets this field itself; there is no `XKMS_`-prefixed
 environment name for it (#140).
 
+**`TrustedCAConfig.Validate` runs once, at construction, and fails closed
+(`trustedca.go` `New`, `trustedca_config.go` `TrustedCAConfig.Validate`,
+go-xkms#938).** `client.New` calls `tca.config.Validate()` after applying
+every `Option` and before `initialize()`; an invalid standalone `TrustedCA`
+config no longer constructs (previously `Validate` existed but neither `New`
+nor `Serve` called it, so a config missing `acme.ca_identifiers` or a
+malformed `acme.external_url` would construct and run — go-xkms#938). A nil
+config (`WithConfig(nil)`) fails the same way rather than panicking on a nil
+receiver. `Serve` never calls `Validate` again: it reads the fields `New`
+already validated and resolved. Every rule returns a typed
+`*errors.TrustedCAError` (`errors.MalformedError`, `caerrors.Malformed`),
+checkable with `errors.Is`/`errors.As`.
+
 The standalone `TrustedCA` also carries its own advertised URL,
-`acme.external_url`; `Validate` requires it, and a caller that skips
-validation gets the derived default described under Invariants.
+`acme.external_url`. Unlike `acme.https_addr` and `acme.ca_identifiers`,
+`Validate` does **not** require it: `TrustedCA.Serve` derives an origin from
+the listen address (`AdvertisedURL`, see Invariants) when neither
+`WithExternalURL` nor `acme.external_url` is set, and `Validate` has no
+visibility into whether a caller will supply the option — requiring the
+config field unconditionally would refuse that supported,
+`New`-constructible derivation path (proven by
+`TestTrustedCA_Serve_DerivesExternalURLFromListenAddress`,
+go-xkms#140/go-xkms#938). When `acme.external_url` **is** set, `Validate`
+still requires it to parse as an absolute URL with an `https` scheme and a
+host.
 
 **Audit log path (`TrustedCAConfig.DataDir`, `trustedca_config.go`,
-go-xkms#929).** `DefaultTrustedCAConfig` enables the audit trail but leaves
-`Audit.LogPath` empty; `TrustedCAConfig.Validate` (called by `TrustedCA.Serve`
-just before opening the trail) derives it from `DataDir` as
+go-xkms#929, go-xkms#938).** `DefaultTrustedCAConfig` enables the audit trail
+but leaves `Audit.LogPath` empty; `TrustedCAConfig.Validate` — now called
+once by `client.New`, not by `Serve` — derives it from `DataDir` as
 `DataDir/trusted-ca-audit.log` (`DefaultAuditLogFileName`) when the operator
 did not set `Audit.LogPath` explicitly — the same `DataDir`-relative pattern
 `ACMEAuditConfig.AuditConfig` uses for xkmsd's embedded ACME audit trail
 above, so neither surface ever falls back to a path relative to the
 process's working directory. An enabled trail with neither `Audit.LogPath`
-nor `DataDir` set fails `Validate` with a typed `*errors.TrustedCAError`
-(`errors.MalformedError`) rather than silently writing beside wherever the
-process happens to run; a disabled trail (`Audit.Enabled = false`) needs
-neither field.
+nor `DataDir` set fails `Validate` (and therefore `New`) with a typed
+`*errors.TrustedCAError` (`errors.MalformedError`) rather than silently
+writing beside wherever the process happens to run; a disabled trail
+(`Audit.Enabled = false`) needs neither field. `Serve` opens the audit
+logger from the already-resolved `Audit.LogPath` — it does not call
+`resolveAuditLogPath` itself, so the path `New` validated is the path the
+trail is written to, never a second, divergent resolution
+(`TestNew_ResolvesAuditLogPathOnce`).
 
 **CAA configuration (`ACMEConfig`, `pkg/config/acme.go`).**
 `acme.caa_identities` is the list of issuer domain names this CA is known by
@@ -419,13 +445,15 @@ composition (`cmd/xkmsd/acme.go`) builds the validator with
 constructing the REST service — this is the one construction path for a CAA
 validator. The standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) builds
 one from the same constructor and its own `TCAACMEConfig.CAIdentifiers` /
-`CAADNSServer`; unlike xkmsd it only warns (does not refuse to start) when
-`ca_identifiers` is empty, because `CAAValidator.Validate` itself already
-fails closed for any domain that actually publishes a CAA record — an
-embedder that never expects one to is not blocked from starting. SDK
-consumers composing their own `ACMERestServiceParams` construct the same
-validator through `acmesdk.NewACMECAAValidator` (`sdk/go/acme`) rather than
-implementing `ACMECAAValidatorInterface` themselves.
+`CAADNSServer`; `TCAACMEConfig.Validate` requires at least one CA identifier
+(RFC 8555 §8.1: CAA must be checked before issuance, and an empty
+`ca_identifiers` gives the check nothing to compare a domain's
+`issue`/`issuewild` record against), enforced once by `client.New`
+(go-xkms#938) — there is no warn-and-continue path here, matching xkmsd's
+own `ErrACMEMissingCAAIdentities` requirement. SDK consumers composing their
+own `ACMERestServiceParams` construct the same validator through
+`acmesdk.NewACMECAAValidator` (`sdk/go/acme`) rather than implementing
+`ACMECAAValidatorInterface` themselves.
 The standalone client's browser UI is told the origin the API is reachable at
 by `serve.api_base_url` (`--api-base-url`, `ACME_CLIENT_SERVE_API_BASE_URL`),
 derived from `serve.addr` when empty. The UI appends `/api/v1` and the

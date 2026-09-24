@@ -140,6 +140,15 @@ func New(opts ...Option) (*TrustedCA, error) {
 		return nil, err
 	}
 
+	// Validate the TrustedCA configuration and fail closed with its typed
+	// errors. This also resolves Audit.LogPath against DataDir when the
+	// audit trail is enabled and no explicit path was given, exactly once:
+	// Serve reads the already-resolved path rather than repeating this call
+	// (go-xkms#938, go-xkms#929).
+	if err := tca.config.Validate(); err != nil {
+		return nil, err
+	}
+
 	// Initialize components
 	if err := tca.initialize(); err != nil {
 		return nil, caerrors.InternalServerError("failed to initialize: %v", err)
@@ -310,12 +319,9 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	tlsConfig.MinVersion = tls.VersionTLS13
 	tlsConfig.MaxVersion = tls.VersionTLS13
 
-	// Resolve Audit.LogPath against config.DataDir when the operator did not
-	// set one explicitly (go-xkms#929): a TrustedCA never falls back to a
-	// cwd-relative audit log.
-	if err := tca.config.resolveAuditLogPath(); err != nil {
-		return caerrors.InternalServerError("failed to resolve audit log path: %v", err)
-	}
+	// Audit.LogPath was already resolved against config.DataDir by
+	// TrustedCAConfig.Validate() in New() (go-xkms#938, go-xkms#929): Serve
+	// never repeats or diverges from that resolution.
 
 	// Open the audit trail before the CA can sign anything. A disabled trail
 	// yields the no-op logger; an enabled trail whose file cannot be created
@@ -342,15 +348,9 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// Build the CAA (RFC 8659) validator that order finalize consults before
 	// signing. RFC 8555 Section 8.1 requires this check. This is the same
 	// server.NewCAAValidator constructor cmd/xkmsd's ACME composition uses —
-	// the one construction path for a CAA validator. An operator who has not
-	// named any identity cannot be issued for a domain that publishes a
-	// restrictive CAA record: CAAValidator.Validate fails closed for that
-	// domain (pkg/acme/server/caa.go), so this only warns rather than
-	// refusing to start, matching TCAACMEConfig.CAIdentifiers' non-fatal
-	// treatment elsewhere in this config.
-	if len(tca.config.ACME.CAIdentifiers) == 0 {
-		tca.logger.Warn("acme.ca_identifiers is not configured: any domain publishing a CAA record will fail closed at finalize")
-	}
+	// the one construction path for a CAA validator. TCAACMEConfig.Validate
+	// (run by New, go-xkms#938) requires at least one CA identifier, so
+	// CAIdentifiers is never empty here: there is no warn-and-continue path.
 	caaValidator, err := server.NewCAAValidator(&server.CAAValidatorParams{
 		CAAIdentities: tca.config.ACME.CAIdentifiers,
 		Logger:        tca.logger,

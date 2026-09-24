@@ -14,8 +14,10 @@
 package client
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestDefaultTrustedCAConfig_AuditEnabled verifies that an embedded TrustedCA
@@ -85,5 +87,55 @@ func TestTrustedCAConfig_ValidateRejectsUnwritableAuditSection(t *testing.T) {
 	cfg.Audit.Enabled = false
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("a disabled audit trail must validate: %v", err)
+	}
+}
+
+// TestNew_ResolvesAuditLogPathOnce proves New resolves Audit.LogPath exactly
+// once, through TrustedCAConfig.Validate, and that Serve reads that same
+// resolved path rather than repeating or diverging from the resolution
+// (go-xkms#938, go-xkms#929).
+func TestNew_ResolvesAuditLogPathOnce(t *testing.T) {
+	dataDir := t.TempDir()
+
+	cfg := validConfig()
+	cfg.DataDir = dataDir
+	cfg.Audit.Enabled = true
+
+	tca, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(cfg),
+	)
+	if err != nil {
+		t.Fatalf("New with a complete config must succeed: %v", err)
+	}
+
+	want := filepath.Join(dataDir, DefaultAuditLogFileName)
+	if got := tca.Config().Audit.LogPath; got != want {
+		t.Fatalf("Audit.LogPath after New = %q, want %q (New must resolve it)", got, want)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- tca.Serve(ctx)
+	}()
+
+	waitFor(t, "rest service ready", func() bool {
+		return tca.RestService() != nil
+	})
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve returned an error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return after context cancellation")
+	}
+
+	if got := tca.Config().Audit.LogPath; got != want {
+		t.Fatalf("Audit.LogPath after Serve = %q, want %q (Serve must not diverge from Validate's resolution)", got, want)
 	}
 }
