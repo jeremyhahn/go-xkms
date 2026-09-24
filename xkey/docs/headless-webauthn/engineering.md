@@ -1,18 +1,32 @@
 # Headless WebAuthn — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
 
 ## Exported surface
 
-The ceremony driver is `go-xkms/pkg/webauthn/client` — `NewClient(config)`,
-`Register(ctx, req)`, `Login(ctx, req)`, `Available(ctx)`, over an
-`AuthenticatorAdapter`. Full contract:
+The authenticator half of both ceremonies runs through
+`go-xkms/pkg/webauthn/client.HardwareAdapter`, re-exported at
+`sdk/go/webauthnclient` — the single canonical WebAuthn ceremony driver's
+CTAP2 adapter (go-xkms#721). `xkey/cmd/xkey/cmd/webauthn_ceremony.go`'s
+`fido2Ceremony` type is a thin wrapper over it: `newFIDO2Ceremony` opens a
+`webauthnclient.HardwareAdapter` (failing closed via
+`ErrWebAuthnAuthenticatorUnavailable` when no authenticator can be
+enumerated), and `Register`/`Assert` call its `MakeCredential`/`GetAssertion`.
+Full driver contract:
 [`../../../docs/webauthn/engineering.md`](../../../docs/webauthn/engineering.md)
 §"The headless client".
 
-xkey supplies the adapter (its own authenticator), the CLI
-(`xkey/cmd/xkey/cmd/auth.go`, `auth_piv.go`, `auth_session.go`), and storage
-(`xkey/pkg/tokenstore`, `xkey/pkg/serverregistry`).
+The server-side ceremony calls (`BeginRegistration` / `FinishRegistration` /
+`BeginAuthentication` / `FinishAuthentication`) are made directly by
+`xkey/cmd/xkey/cmd/auth.go` over its SDK transport connection (`AuthClientService`)
+— xkey does not (yet) drive them through the driver's `Client`/`RelyingParty`
+seam; only the authenticator side is unified. `xkmsctl` follows the same
+shape: its own SDK-transport calls plus the same `HardwareAdapter`.
+
+xkey supplies the adapter's authenticator (its own virtual/hardware CTAP2
+device), the CLI (`xkey/cmd/xkey/cmd/auth.go`, `auth_piv.go`,
+`auth_session.go`), and storage (`xkey/pkg/tokenstore`,
+`xkey/pkg/serverregistry`).
 
 ## CLI contract
 
@@ -63,24 +77,26 @@ Invariants:
 - **The PIN is never logged, printed, or placed in a documented command line.**
   Examples use `--pin-stdin`.
 
-The PIN reaches the authenticator through `CeremonyRequest{OptionsJSON, Origin,
-PIN}` (`webauthn_ceremony.go`), which carries it by name: a positional
+The PIN reaches the authenticator through xkey's own `CeremonyRequest{OptionsJSON,
+Origin, PIN}` (`webauthn_ceremony.go`), which carries it by name: a positional
 signature holding `Origin` and `PIN` adjacent would let a transposition send
-the PIN to the relying party as an origin.
+the PIN to the relying party as an origin. `fido2Ceremony.Register`/`Assert`
+copy it field-for-field into `webauthnclient.CeremonyOptions{OptionsJSON,
+Origin, PIN}` for the driver's `HardwareAdapter.MakeCredential`/`GetAssertion`,
+which in turn set `fido2.WebAuthnRegistrationOptions.PIN` /
+`fido2.WebAuthnAssertionRequest.PIN` for `pkg/fido2`.
 
-**`CeremonyRequest.PIN`, `fido2.WebAuthnRegistrationOptions.PIN`,
-`fido2.WebAuthnAssertionRequest.PIN` and `fido2.WebAuthnAuthenticationOptions.PIN`
-are all `*secure.Secret`** (`go-xkms/sdk/go/secure`), not plain strings: the
-resolved PIN is sealed into protected memory by `sealCeremonyPIN` immediately
-after `resolvePINInput` returns it, and is never held as plaintext in a
-struct. `Authenticator.AuthorizeWithPIN` and the `GetPINToken` step beneath it
-open the secret only for the instant the CTAP 2.1 6.5.5.7 pinHashEnc
-computation needs its bytes, then destroy the buffer. A nil `*secure.Secret`
-is the zero value for "no PIN configured", replacing the empty string.
+**Every hop is `*secure.Secret`** (`go-xkms/sdk/go/secure`), not a plain
+string: the resolved PIN is sealed into protected memory by
+`sealCeremonyPIN` immediately after `resolvePINInput` returns it, and is
+never held as plaintext in a struct. `Authenticator.AuthorizeWithPIN` and the
+`GetPINToken` step beneath it open the secret only for the instant the CTAP
+2.1 6.5.5.7 pinHashEnc computation needs its bytes, then destroy the buffer.
+A nil `*secure.Secret` is the zero value for "no PIN configured", replacing
+the empty string.
 
-Registration sets `fido2.WebAuthnRegistrationOptions.PIN`; assertion sets
-`fido2.WebAuthnAssertionRequest.PIN`. Both authorize through the one
-`Authenticator.AuthorizeWithPIN` path — there is no second authorization route.
+Both ceremonies authorize through the one `Authenticator.AuthorizeWithPIN`
+path inside `pkg/fido2` — there is no second authorization route.
 
 ## PIN failure reporting
 
@@ -137,11 +153,20 @@ says so. `errors.Is(err, fido2.ErrInvalidPIN)` still matches.
 
 ## Error semantics
 
-Failures surface as the CLI's typed errors over the client's:
-`ErrServerURLRequired`, `ErrAuthEmailRequired`, `ErrAuthLoginKeyNotEmail`,
-`ErrRegistrationFailed`, `ErrAuthenticationFailed`, `ErrServerUnavailable`,
-`ErrAuthenticatorNotFound`, `ErrCTAPOperationFailed`,
-`ErrInvalidServerResponse`, `ErrInvalidChallenge`.
+Failures surface as xkey's own typed errors (`xkey/cmd/xkey/cmd/auth.go`,
+`webauthn_ceremony.go`): `ErrAuthServerRequired`, `ErrAuthEmailRequired`,
+`ErrAuthLoginKeyNotEmail`, `ErrAuthConnectFailed`,
+`ErrAuthBeginRegistrationFailed`, `ErrAuthFinishRegistrationFailed`,
+`ErrAuthRegistrationRejected`, `ErrAuthBeginAuthenticationFailed`,
+`ErrAuthFinishAuthenticationFailed`, `ErrAuthLoginRejected`,
+`ErrAuthNoToken`, `ErrWebAuthnAuthenticatorUnavailable`,
+`ErrWebAuthnRegistrationFailed`, `ErrWebAuthnAssertionFailed`,
+`ErrWebAuthnPINRequired`. The authenticator-adapter layer beneath
+`fido2Ceremony` reports through the driver's own sentinels
+(`webauthnclient.ErrAuthenticatorNotFound`, `ErrCTAPOperationFailed`,
+`ErrPINRequired`, `ErrInvalidServerResponse`), which `ceremonyFailure` and
+`newFIDO2Ceremony` wrap into the xkey-specific ones above so the operator sees
+the flags that resolve each failure.
 
 **Fail closed:** an SPKI mismatch, an unavailable authenticator, an expired or
 invalid setup token, an origin or RP-id mismatch, or an expired ceremony session

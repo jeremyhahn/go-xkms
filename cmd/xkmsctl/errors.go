@@ -428,8 +428,10 @@ var (
 	// ErrDecodeTagFailed is the sentinel error "failed to decode tag".
 	ErrDecodeTagFailed = errors.New("failed to decode tag")
 
-	// ErrDecodeUserHandleFailed is the sentinel error "failed to decode user handle".
-	ErrDecodeUserHandleFailed = errors.New("failed to decode user handle")
+	// ErrDecodeCredentialIDFailed is the sentinel error "failed to decode
+	// credential ID" - returned when the credential ID cannot be recovered
+	// from the authenticator's attestation JSON.
+	ErrDecodeCredentialIDFailed = errors.New("failed to decode credential ID")
 
 	// ErrDecryptDataFailed is the sentinel error "failed to decrypt data".
 	ErrDecryptDataFailed = errors.New("failed to decrypt data")
@@ -774,9 +776,6 @@ var (
 	// ErrPINRequired is the sentinel error "--pin is required".
 	ErrPINRequired = errors.New("--pin is required")
 
-	// ErrParseAuthenticationOptionsFailed is the sentinel error "failed to parse authentication options".
-	ErrParseAuthenticationOptionsFailed = errors.New("failed to parse authentication options")
-
 	// ErrParseCACertificateFailed is the sentinel error "failed to parse CA certificate".
 	ErrParseCACertificateFailed = errors.New("failed to parse CA certificate")
 
@@ -794,9 +793,6 @@ var (
 
 	// ErrParsePackageFileFailed is the sentinel error "failed to parse package file".
 	ErrParsePackageFileFailed = errors.New("failed to parse package file")
-
-	// ErrParseRegistrationOptionsFailed is the sentinel error "failed to parse registration options".
-	ErrParseRegistrationOptionsFailed = errors.New("failed to parse registration options")
 
 	// ErrQueryAuditFailed is the sentinel error "failed to query audit log".
 	ErrQueryAuditFailed = errors.New("failed to query audit log")
@@ -1595,18 +1591,6 @@ type ParticipantPackageNotFoundError struct {
 // Error returns a human-readable description.
 func (e *ParticipantPackageNotFoundError) Error() string {
 	return fmt.Sprintf("package for participant %d not found", e.ID)
-}
-
-// UserHandleTypeError is returned when a WebAuthn user handle has an
-// unexpected dynamic type.
-type UserHandleTypeError struct {
-	// Handle is the value with the unexpected type.
-	Handle any
-}
-
-// Error returns a human-readable description.
-func (e *UserHandleTypeError) Error() string {
-	return fmt.Sprintf("unexpected user handle type %T", e.Handle)
 }
 
 // UserNoCredentialsError is returned when a user has no registered credentials.
