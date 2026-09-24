@@ -374,15 +374,22 @@ func ecCurveFromOID(der []byte) string {
 	return ""
 }
 
-// decodeCKKeyType decodes a CKA_KEY_TYPE attribute value (big-endian uint)
-// into a PKCS#11 CKK_* constant.
+// decodeCKKeyType decodes a CKA_KEY_TYPE attribute value into a PKCS#11
+// CKK_* constant. PKCS#11 returns CK_ULONG attributes as the raw
+// little-endian bytes of the platform's CK_ULONG (see the identical
+// ckULong helper and its comment in pkg/backend/pkcs11/pkcs11.go), not
+// big-endian: decoding big-endian left every non-zero CKK_* value (EC,
+// Ed25519, ...) reassembled as the wrong number, so keyTypeString's type
+// switch never matched them and every non-RSA PIV key reported "Unknown"
+// (CKK_RSA is 0, byte-order-independent, which is why RSA keys were
+// unaffected and this went unnoticed) (go-xkms#705).
 func decodeCKKeyType(b []byte) uint {
 	if len(b) == 0 {
 		return ^uint(0)
 	}
 	var v uint
-	for _, byt := range b {
-		v = (v << 8) | uint(byt)
+	for i, byt := range b {
+		v |= uint(byt) << (8 * i)
 	}
 	return v
 }

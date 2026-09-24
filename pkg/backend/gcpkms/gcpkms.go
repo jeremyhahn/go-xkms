@@ -467,7 +467,7 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 		"algorithm":     algorithm.String(),
 		"purpose":       cryptoKey.Purpose.String(),
 		"cn":            attrs.CN,
-		"key_type":      attrs.KeyType,
+		"key_type":      attrs.KeyType.String(), // see ListKeys: read back via types.ParseKeyType (go-xkms#705)
 		"key_algorithm": attrs.KeyAlgorithm,
 		"store_type":    backend.STORE_GCPKMS,
 	}
@@ -479,7 +479,7 @@ func (b *Backend) GenerateRSA(ctx context.Context, attrs *types.KeyAttributes) (
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 			b.mu.Unlock()
 			return nil, &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
@@ -558,7 +558,7 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 		"algorithm":     algorithm.String(),
 		"purpose":       cryptoKey.Purpose.String(),
 		"cn":            attrs.CN,
-		"key_type":      attrs.KeyType,
+		"key_type":      attrs.KeyType.String(), // see ListKeys: read back via types.ParseKeyType (go-xkms#705)
 		"key_algorithm": attrs.KeyAlgorithm,
 		"store_type":    backend.STORE_GCPKMS,
 		"curve":         curve,
@@ -571,7 +571,7 @@ func (b *Backend) GenerateECDSA(ctx context.Context, attrs *types.KeyAttributes)
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 			b.mu.Unlock()
 			return nil, &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
@@ -655,7 +655,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		"algorithm":     cryptoKey.Primary.Algorithm.String(),
 		"purpose":       cryptoKey.Purpose.String(),
 		"cn":            attrs.CN,
-		"key_type":      attrs.KeyType,
+		"key_type":      attrs.KeyType.String(), // see ListKeys: read back via types.ParseKeyType (go-xkms#705)
 		"key_algorithm": attrs.KeyAlgorithm,
 		"store_type":    backend.STORE_GCPKMS,
 	}
@@ -666,7 +666,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to save metadata", Err: err}
 		}
 	}
@@ -947,12 +947,20 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, ErrNotInitialized
 	}
 
-	// Check if metadata exists. Only a genuine storage.ErrNotFound is
-	// reported as ErrKeyNotFound; any other failure from the metadata store
-	// (I/O error, unavailable backend) must not be conflated with "no key
-	// yet".
+	// Check if metadata exists. Keyed by CN alone, not attrs.ID() (which
+	// also folds in KeyType and KeyAlgorithm): GetSignerByID, GetDecrypterByID
+	// and ListKeys all reach this path with a KeyAttributes that has only CN
+	// (and sometimes KeyType) set -- ListKeys in particular is reading this
+	// same metadata specifically to learn KeyAlgorithm, so an ID() keyed on
+	// KeyAlgorithm can never be computed by the reader in the first place.
+	// Every write site in this package (GenerateRSA, GenerateECDSA,
+	// GenerateSymmetricKey, ImportKey) persists under attrs.CN for the same
+	// reason (go-xkms#705).
+	// Only a genuine storage.ErrNotFound is reported as ErrKeyNotFound; any
+	// other failure from the metadata store (I/O error, unavailable backend)
+	// must not be conflated with "no key yet".
 	if b.config.KeyStorage != nil {
-		_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.ID())
+		_, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
@@ -1028,7 +1036,7 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 
 	// Remove metadata
 	if b.config.KeyStorage != nil {
-		if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.ID()); err != nil {
+		if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil {
 			// Continue even if metadata deletion fails
 			// The key may not have metadata stored
 		}
@@ -1076,7 +1084,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 		// Try to load metadata to get additional attributes
 		if b.config.KeyStorage != nil {
-			metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.ID())
+			metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 			if err == nil {
 				var metadata map[string]interface{}
 				if err := json.Unmarshal(metadataBytes, &metadata); err == nil {

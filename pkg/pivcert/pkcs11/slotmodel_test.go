@@ -222,7 +222,12 @@ func TestDecodeCKKeyType(t *testing.T) {
 		{"CKK_RSA single byte", []byte{0x00}, p11.CKK_RSA},
 		{"CKK_EC single byte", []byte{0x03}, p11.CKK_EC},
 		{"CKK_RSA multi-byte", []byte{0x00, 0x00, 0x00, 0x00}, p11.CKK_RSA},
-		{"CKK_EC multi-byte", []byte{0x00, 0x00, 0x00, 0x03}, p11.CKK_EC},
+		// PKCS#11 CK_ULONG attributes arrive as the platform's raw
+		// little-endian bytes (see decodeCKKeyType's doc comment and the
+		// identical ckULong helper in pkg/backend/pkcs11), so CKK_EC (3) as
+		// a 4-byte CK_ULONG is 0x03 in the low-order byte, not the high one.
+		{"CKK_EC multi-byte", []byte{0x03, 0x00, 0x00, 0x00}, p11.CKK_EC},
+		{"CKK_EC 8-byte CK_ULONG", []byte{0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, p11.CKK_EC},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
