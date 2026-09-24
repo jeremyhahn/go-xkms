@@ -319,7 +319,7 @@ sudo xkey fido2 --backend phone --phone-device "John's Pixel"
 |------|---------|-------------|
 | `--phone-device` | (default paired phone) | Phone name or address to use |
 
-The phone must be paired first — see [device pairing](../device/qr-pairing.md).
+The phone must be paired first — see [device pairing](../device/user.md).
 `software`, `tpm2` and `phone` are the only values `--backend` accepts; anything
 else fails with "fido2: invalid backend type".
 

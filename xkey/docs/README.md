@@ -17,9 +17,12 @@ tell.
 |---------|----------------|------------------------|
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
+| [device](device/) | The `xkey device` CLI namespace: client-side agent enrollment (`enroll`/`connect`) and QR-code pairing | `device/README.md`, `device/pairing.md`, `device/qr-pairing.md`, `device/tcp-relay.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
+| [luks](luks/) | The `xkey luks2` volume lifecycle: seal, unseal, lock, migrate, wipe, import-data | `luks/README.md` |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
+| [piv](piv/) | The `xkey piv` CLI/GUI surface over the SDK's PIV certificate manager | `piv/README.md` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
 | [seal](seal/) | The Barrier, barrier PCR-policy auto-unseal (shared by the CLI and GUI), the named PCR policy store, and the legacy sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
@@ -41,8 +44,8 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
-`password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
+Still owed a folder: `autofill/`, `ble/`, `fido2/`, `gui/`, `oath/`,
+`password/`, `phone/`, `pkcs11/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
 
@@ -242,10 +245,18 @@ xkey fido2 --cdp --cdp-port 9222
 - [Overview](password/README.md) -- Static password management with encryption and access modes
 
 ### [PIV](piv/)
-- [Overview](piv/README.md) -- Smart card certificate management
+- [Architecture](piv/architecture.md) -- the CLI/GUI layer over the SDK's PIV certificate manager
+- [Engineering](piv/engineering.md) -- exported surface, invariants, configuration, tests
+- [CLI](piv/cli.md) -- every `xkey piv` verb and flag
+- [API](piv/api.md) -- CLI/GUI capability mapping
+- [User Guide](piv/user.md) -- task-oriented usage
 
 ### [LUKS](luks/)
-- [Overview](luks/README.md) -- LUKS2 encrypted storage management
+- [Architecture](luks/architecture.md) -- the volume lifecycle layer over go-luks2
+- [Engineering](luks/engineering.md) -- exported surface, invariants, tests
+- [CLI](luks/cli.md) -- every `xkey luks2` verb and flag
+- [API](luks/api.md) -- CLI-only; no GUI/SDK surface
+- [User Guide](luks/user.md) -- task-oriented usage
 
 ### [USB](usb/)
 - [CCID](usb/ccid.md) -- USB CCID smart card interface
@@ -255,10 +266,11 @@ xkey fido2 --cdp --cdp-port 9222
 - [IPC Transport](pkcs11/ipc.md) -- Unix socket transport for PKCS#11 module and crypto.Signer
 
 ### [Device](device/)
-- [Overview](device/README.md) -- Device management and pairing
-- [Pairing](device/pairing.md) -- Device pairing flows
-- [QR Pairing](device/qr-pairing.md) -- QR code pairing protocol
-- [TCP Relay](device/tcp-relay.md) -- TCP relay for remote devices
+- [Architecture](device/architecture.md) -- the `xkey device` namespace, the phone-hsm/agent boundary, QR pairing
+- [Engineering](device/engineering.md) -- exported surface, invariants, configuration, tests
+- [CLI](device/cli.md) -- `device` verbs this folder owns (agent enrollment, QR relay); phone-pairing verbs point to [phone-hsm](phone-hsm/)
+- [API](device/api.md) -- CLI-only; no GUI/SDK surface
+- [User Guide](device/user.md) -- task-oriented usage
 
 ### [Agent](agent/)
 - [Architecture](agent/architecture.md) -- connection-time revocation and enrollment checks
