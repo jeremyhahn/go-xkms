@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-09
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## Exported surface — `pkg/tpm2`
 
@@ -274,7 +274,29 @@ CA on this release still enrolls a device on the previous one.
   `CommandAddress` and clears the device path. The integration config
   (`configs/xkmsd-integration.yaml`) documents this at length because it has
   cost time before.
-- **Hierarchy authorizations** — endorsement, lockout, owner. Platform-held.
+- **Hierarchy authorizations** — endorsement, lockout, owner. Platform-held,
+  never stored in configuration and never defaulted to a fixed password.
+  `EKConfig` and `SRKConfig` carry a `HierarchyAuth types.SecretValue` field
+  used only as the *current* auth `Install` transitions away from (never as
+  a substitute for the live `soPIN` argument); `PlatformSRKConfig` carries no
+  hierarchy-auth field at all. When no SO PIN has been set the Owner
+  hierarchy carries empty auth — the TCG factory-default state. When one has
+  been set, it reaches `TPM2_CreatePrimary`/`TPM2_EvictControl` only as the
+  `soPIN` argument threaded through `Install`/`Provision`/`ProvisionOwner`
+  (Shared SRK) or through
+  `PlatformKeyStore.Initialize`/`EnrollPlatformSRK`/`ensureSRKAuth` (Platform
+  SRK) at the moment of the call — see [`architecture.md`](architecture.md)
+  §"Trust boundaries" for why the two keys' calls are never conflated.
+  `PlatformSRKAttributesFromConfig` builds the Platform SRK from the SSRK
+  config's algorithm and key parameters only, and always leaves
+  `TPMAttributes.HierarchyAuth` empty. The Platform SRK's own authorization
+  value — its `Password`, distinct from the owner-hierarchy auth — is the
+  user PIN, supplied the same way, never a config literal.
+  `pkg/backend/tpm2`, which uses the Platform SRK as its own working key, has
+  no hierarchy-auth field of its own and routes through the `pkgtpm2.Config`
+  it builds (or a caller-supplied one via `Config.TPMConfig`) instead of
+  duplicating one, and never falls back to the Shared SRK when the Platform
+  SRK is unavailable.
 - **`idevid.platform-policy` / `iak.platform-policy`** — provisions the key's
   Policy NV Index with the platform Delegation Policy (see Invariants). The
   default configuration sets it on the IDevID. It does not alter the key.
