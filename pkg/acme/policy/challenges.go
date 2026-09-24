@@ -30,6 +30,12 @@ type ChallengePolicy struct {
 	// enableDNSAccount01 controls whether dns-account-01 is enabled.
 	enableDNSAccount01 bool
 
+	// identifierOverrides replaces the built-in candidate challenge types for
+	// an identifier type when set (see PolicyConfig.IdentifierChallengeTypes).
+	// A nil or absent entry keeps the built-in default for that identifier
+	// type. Never consulted for wildcard DNS identifiers.
+	identifierOverrides map[string][]string
+
 	// mu protects the enabled maps.
 	mu sync.RWMutex
 }
@@ -78,6 +84,14 @@ func NewChallengePolicyFromConfig(config *PolicyConfig) *ChallengePolicy {
 	// Check for dns-account-01
 	cp.enableDNSAccount01 = config.EnabledChallengeTypes[ChallengeTypeDNSAccount01]
 
+	// Copy per-identifier-type candidate overrides
+	if len(config.IdentifierChallengeTypes) > 0 {
+		cp.identifierOverrides = make(map[string][]string, len(config.IdentifierChallengeTypes))
+		for k, v := range config.IdentifierChallengeTypes {
+			cp.identifierOverrides[k] = append([]string(nil), v...)
+		}
+	}
+
 	return cp
 }
 
@@ -97,13 +111,16 @@ func (cp *ChallengePolicy) AllowedChallenges(identifierType, value string) []str
 
 	switch identifierType {
 	case IdentifierTypeDNS:
-		// Check if this is a wildcard
+		// Check if this is a wildcard. Per RFC 8555 Section 7.1.4 and the
+		// CA/Browser Forum Baseline Requirements, a wildcard MUST only use
+		// dns-01; this is never subject to identifierOverrides.
 		if strings.HasPrefix(value, "*.") {
-			// Wildcards can only use DNS-based challenges per BRs
 			candidates = []string{ChallengeTypeDNS01}
 			if cp.enableDNSAccount01 {
 				candidates = append(candidates, ChallengeTypeDNSAccount01)
 			}
+		} else if override, ok := cp.identifierOverrides[IdentifierTypeDNS]; ok {
+			candidates = append([]string(nil), override...)
 		} else {
 			// Non-wildcard DNS identifiers can use all standard web PKI challenges
 			candidates = []string{
@@ -119,18 +136,26 @@ func (cp *ChallengePolicy) AllowedChallenges(identifierType, value string) []str
 		}
 
 	case IdentifierTypeIP:
-		// IP identifiers only support HTTP-01 and TLS-ALPN-01 per RFC 8738
-		candidates = []string{
-			ChallengeTypeHTTP01,
-			ChallengeTypeTLSALPN01,
+		if override, ok := cp.identifierOverrides[IdentifierTypeIP]; ok {
+			candidates = append([]string(nil), override...)
+		} else {
+			// IP identifiers only support HTTP-01 and TLS-ALPN-01 per RFC 8738
+			candidates = []string{
+				ChallengeTypeHTTP01,
+				ChallengeTypeTLSALPN01,
+			}
 		}
 
 	case IdentifierTypePermanentIdentifier:
-		// Permanent identifiers use device/TPM-specific challenges
-		candidates = []string{
-			ChallengeTypeDeviceAttest01,
-			ChallengeTypeEnroll01,
-			ChallengeTypeEndorse01,
+		if override, ok := cp.identifierOverrides[IdentifierTypePermanentIdentifier]; ok {
+			candidates = append([]string(nil), override...)
+		} else {
+			// Permanent identifiers use device/TPM-specific challenges
+			candidates = []string{
+				ChallengeTypeDeviceAttest01,
+				ChallengeTypeEnroll01,
+				ChallengeTypeEndorse01,
+			}
 		}
 
 	default:
@@ -224,6 +249,12 @@ func (cp *ChallengePolicy) Clone() *ChallengePolicy {
 	}
 	for k, v := range cp.enabledIdentifiers {
 		clone.enabledIdentifiers[k] = v
+	}
+	if cp.identifierOverrides != nil {
+		clone.identifierOverrides = make(map[string][]string, len(cp.identifierOverrides))
+		for k, v := range cp.identifierOverrides {
+			clone.identifierOverrides[k] = append([]string(nil), v...)
+		}
 	}
 
 	return clone

@@ -41,12 +41,6 @@ const (
 	// verificationSharesDir is the directory for verification shares
 	verificationSharesDir = "verification_shares"
 
-	// secretShareFile is the filename for the secret key share
-	secretShareFile = "secret_share.bin"
-
-	// sessionsPrefix is the base prefix for signing sessions
-	sessionsPrefix = "frost/sessions"
-
 	// noncesPrefix is the base prefix for used nonce tracking
 	noncesPrefix = "frost/nonces"
 )

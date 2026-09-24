@@ -1171,6 +1171,46 @@ test-verification:
 	@echo "$(CYAN)→ Testing verification package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/verification/...
 
+.PHONY: test-attestation
+## test-attestation: Run attestation package unit tests (invariants, android, dice)
+test-attestation:
+	@echo "$(CYAN)→ Testing attestation packages...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/...
+
+.PHONY: test-dice
+## test-dice: Run TCG DICE attestation package unit tests
+test-dice:
+	@echo "$(CYAN)→ Testing DICE attestation package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/dice/...
+
+.PHONY: bench-dice
+## bench-dice: Run TCG DICE attestation package benchmarks
+bench-dice:
+	@echo "$(CYAN)→ Benchmarking DICE attestation package...$(RESET)"
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/dice/... -bench=. -benchmem -run=^$$
+
+.PHONY: coverage-dice
+## coverage-dice: Generate coverage report for the TCG DICE attestation package
+coverage-dice:
+	@echo "$(CYAN)→ Generating DICE attestation coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/dice/... -coverprofile=$(COVERAGE_DIR)/dice.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/dice.out -o $(COVERAGE_DIR)/dice-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/dice.out > $(COVERAGE_DIR)/dice.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/dice.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)dice coverage: $${TOTAL}$(RESET)"
+
+.PHONY: coverage-attestation
+## coverage-attestation: Generate coverage report for the attestation packages
+coverage-attestation:
+	@echo "$(CYAN)→ Generating attestation coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/... -coverprofile=$(COVERAGE_DIR)/attestation.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/attestation.out -o $(COVERAGE_DIR)/attestation-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/attestation.out > $(COVERAGE_DIR)/attestation.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/attestation.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)attestation coverage: $${TOTAL}$(RESET)"
+
 .PHONY: test-certstore
 ## test-certstore: Run certstore package unit tests
 test-certstore:
@@ -1236,6 +1276,29 @@ test-x25519:
 test-chacha20poly1305:
 	@echo "$(CYAN)→ Testing ChaCha20-Poly1305 package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/chacha20poly1305/...
+
+.PHONY: test-avr
+## test-avr: Run AVR device backend unit tests
+test-avr:
+	@echo "$(CYAN)→ Testing AVR device backend...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/avr/...
+
+.PHONY: bench-avr
+## bench-avr: Run AVR device backend benchmarks
+bench-avr:
+	@echo "$(CYAN)→ Benchmarking AVR device backend...$(RESET)"
+	@$(GO) test $(TAG_FLAGS) ./pkg/backend/avr/... -bench=. -benchmem -run=^$$
+
+.PHONY: coverage-avr
+## coverage-avr: Generate coverage report for the AVR device backend
+coverage-avr:
+	@echo "$(CYAN)→ Generating AVR device backend coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/backend/avr/... -coverprofile=$(COVERAGE_DIR)/avr.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/avr.out -o $(COVERAGE_DIR)/avr-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/avr.out > $(COVERAGE_DIR)/avr.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/avr.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)avr coverage: $${TOTAL}$(RESET)"
 
 .PHONY: test-software
 ## test-software: Run unified software backend unit tests
@@ -1613,7 +1676,7 @@ coverage-xkmsctl:
 # lane used to be represented here by integration-test-pkcs11-conformance alone,
 # which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
 # default run -- the exact surface real callers reach the module through.
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-bootstrap
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-run-images
@@ -4235,6 +4298,13 @@ integration-test-sshagent:
 	@echo "$(CYAN)$(BOLD)→ Running agent-only SSH session integration tests...$(RESET)"
 	$(call run_in_devcontainer,$(GO) test -v -tags='integration' ./test/integration/sshagent/... -timeout 5m,integration-test-sshagent)
 	@echo "$(GREEN)✓ Agent-only SSH session integration tests complete$(RESET)"
+
+.PHONY: integration-test-initceremony
+## integration-test-initceremony: xkmsd init persists admin factors across a restart (builds and runs its own xkmsd)
+integration-test-initceremony:
+	@echo "$(CYAN)$(BOLD)→ Running init-ceremony integration tests...$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration initceremony codec_cbor codec_json codec_msgpack tpm_simulator' ./test/integration/initceremony/... -timeout 10m,integration-test-initceremony)
+	@echo "$(GREEN)✓ Init-ceremony integration tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go-remote
 ## integration-test-sdk-go-remote: Run Go SDK remote protocol integration tests against docker-compose server
