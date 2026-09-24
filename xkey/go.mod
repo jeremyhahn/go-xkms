@@ -22,18 +22,20 @@ require (
 	github.com/flynn/noise v1.1.0
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-viper/mapstructure/v2 v2.5.0
+	github.com/go-webauthn/webauthn v0.17.4
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-tpm v0.9.8
 	github.com/google/gousb v1.1.3
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
-	github.com/jeremyhahn/go-enclave v0.5.0-alpha
-	github.com/jeremyhahn/go-luks2 v0.1.10-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
+	github.com/jeremyhahn/go-enclave v0.6.0-alpha
+	github.com/jeremyhahn/go-luks2 v0.2.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.2-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms v0.22.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.22.0-alpha
+	github.com/jeremyhahn/go-xkms v0.24.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.24.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mdp/qrterminal/v3 v3.2.1
@@ -45,9 +47,9 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tobischo/gokeepasslib/v3 v3.6.2
 	github.com/wailsapp/wails/v2 v2.12.0
-	golang.org/x/crypto v0.56.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
+	golang.org/x/crypto v0.57.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
 	google.golang.org/grpc v1.83.2
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.51.0
@@ -141,8 +143,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/go-webauthn/webauthn v0.17.4 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
@@ -172,9 +172,9 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.19.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.20.2-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
@@ -218,7 +218,7 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.62.0 // indirect
+	github.com/quic-go/quic-go v0.63.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -271,12 +271,12 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect

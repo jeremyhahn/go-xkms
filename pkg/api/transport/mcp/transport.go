@@ -16,12 +16,20 @@
 // HTTP (github.com/mark3labs/mcp-go): every xkms operation is invoked as an
 // MCP tool call against the unified qrdb MCP server, mTLS-authenticated and
 // TLS-only. The tool name is "xkms_" plus the legacy JSON-RPC method name
-// with its dots replaced by underscores (see xkmsmcp.ToolName), and each
+// with its dots replaced by underscores (see mcptool.ToolName), and each
 // tool takes one optional string argument, "params_json", carrying the
 // method's params encoded exactly as the legacy JSON-RPC request carried
 // them. The tool's result is a single JSON text content item; tool-level
 // failures come back as an MCP tool error (IsError=true with a text
 // message).
+//
+// The connection, handshake, and tool-call machinery -- including decoding a
+// failing call's go-qrdb wire.ErrorEnvelope -- lives in pkg/mcptool, not
+// here: sdk/go/client/ssh's MCP client builds on the identical code (see
+// that package's doc comment for why it is not this package's Transport
+// directly). This package layers xkms's REST-path-to-JSON-RPC-method
+// mapping, its typed request/response DTOs, and its JSON-RPC-style
+// error-code classification (status.go's classifyWireCode) on top.
 //
 // WebAuthn registration and authentication are a named exclusion from this
 // transport, not a gap awaiting an MCP tool: an agent tool-call surface must
@@ -33,134 +41,54 @@ package mcp
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"net/http"
-	"os"
-	"regexp"
-	"strconv"
 	"strings"
-
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	mcptransport "github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 )
 
-var (
-	// ErrNotConnected is returned when the client is not connected.
-	ErrNotConnected = errors.New("client not connected")
-	// ErrNotSupported is returned when an operation is not supported.
-	ErrNotSupported = errors.New("operation not supported by this protocol")
-	// ErrConnectionFailed is returned when a connection fails.
-	ErrConnectionFailed = errors.New("connection failed")
-	// ErrIdentityCeremonyExcluded is returned by BeginRegistration,
-	// FinishRegistration, BeginAuthentication, and FinishAuthentication.
-	// It is a deliberate, permanent exclusion (issue #193), not a
-	// transitional stub: an agent tool-call surface must not mint sessions
-	// or enrol credentials, and MCP holds no identity-ceremony state to
-	// correlate a Begin call with its matching Finish call. Session minting
-	// and credential enrolment stay on operator-facing transports.
-	ErrIdentityCeremonyExcluded = errors.New("mcp: WebAuthn registration and authentication are excluded from the MCP transport by design; use the REST or gRPC transport")
+// ErrNotSupported is returned when an operation is not supported.
+var ErrNotSupported = errors.New("operation not supported by this protocol")
+
+// ErrIdentityCeremonyExcluded is returned by BeginRegistration,
+// FinishRegistration, BeginAuthentication, and FinishAuthentication. It is a
+// deliberate, permanent exclusion (issue #193), not a transitional stub: an
+// agent tool-call surface must not mint sessions or enrol credentials, and
+// MCP holds no identity-ceremony state to correlate a Begin call with its
+// matching Finish call. Session minting and credential enrolment stay on
+// operator-facing transports.
+var ErrIdentityCeremonyExcluded = errors.New("mcp: WebAuthn registration and authentication are excluded from the MCP transport by design; use the REST or gRPC transport")
+
+// ErrNotConnected is returned when the client is not connected. It is the
+// pkg/mcptool sentinel, re-exported here for callers that only imported this
+// package.
+var ErrNotConnected = mcptool.ErrNotConnected
+
+// ErrConnectionFailed is returned when a connection fails. It is the
+// pkg/mcptool sentinel, re-exported here for callers that only imported this
+// package.
+var ErrConnectionFailed = mcptool.ErrConnectionFailed
+
+// RPCError, EnvelopeMissingError, MarshalError, UnmarshalError, ReceiveError,
+// and TLSSetupError are pkg/mcptool's typed errors for a failed MCP tool
+// call, aliased here so existing callers of this package keep the same
+// types. See pkg/mcptool for their definitions; RPCError's WireCode field
+// carries go-qrdb's raw classification, and Code carries that classification
+// translated onto xkms's JSON-RPC vocabulary by status.go's classifyWireCode.
+type (
+	RPCError             = mcptool.RPCError
+	EnvelopeMissingError = mcptool.EnvelopeMissingError
+	MarshalError         = mcptool.MarshalError
+	UnmarshalError       = mcptool.UnmarshalError
+	ReceiveError         = mcptool.ReceiveError
+	TLSSetupError        = mcptool.TLSSetupError
 )
-
-// RPCError is a typed error for a failed MCP tool call: either a tool-level
-// failure (a CallToolResult with IsError=true, whose text content becomes
-// Message) or a legacy-formatted server error text that still embeds a
-// JSON-RPC 2.0 code. See newToolError for how Code is recovered from the
-// tool's text content.
-type RPCError struct {
-	Code    int
-	Message string
-}
-
-// Error implements the error interface.
-func (e *RPCError) Error() string {
-	return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message)
-}
-
-// MarshalError is a typed error for JSON marshaling failures.
-type MarshalError struct {
-	Operation string
-	Err       error
-}
-
-// Error implements the error interface.
-func (e *MarshalError) Error() string {
-	return fmt.Sprintf("failed to marshal %s: %v", e.Operation, e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *MarshalError) Unwrap() error {
-	return e.Err
-}
-
-// UnmarshalError is a typed error for JSON unmarshaling failures.
-type UnmarshalError struct {
-	Operation string
-	Err       error
-}
-
-// Error implements the error interface.
-func (e *UnmarshalError) Error() string {
-	return fmt.Sprintf("failed to unmarshal %s: %v", e.Operation, e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *UnmarshalError) Unwrap() error {
-	return e.Err
-}
-
-// ReceiveError is a typed error for MCP tool-call failures that never
-// produced a usable result: a transport/network failure, a protocol-level
-// JSON-RPC error on the "tools/call" request itself (e.g. an unknown tool
-// name), or any other failure CallTool reports before a CallToolResult is
-// available. It is the Streamable HTTP analogue of the previous transport's
-// TCP read failure: the previous implementation could distinguish a failed
-// write from a failed read because it owned the socket directly; the MCP
-// client library performs the request and reads the response as one
-// operation, so both failure modes collapse into ReceiveError here.
-type ReceiveError struct {
-	Err error
-}
-
-// Error implements the error interface.
-func (e *ReceiveError) Error() string {
-	return fmt.Sprintf("failed to receive response: %v", e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *ReceiveError) Unwrap() error {
-	return e.Err
-}
-
-// TLSSetupError is a typed error for TLS configuration failures.
-type TLSSetupError struct {
-	Detail string
-	Err    error
-}
-
-// Error implements the error interface.
-func (e *TLSSetupError) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("TLS setup: %s: %v", e.Detail, e.Err)
-	}
-	return fmt.Sprintf("TLS setup: %s", e.Detail)
-}
-
-// Unwrap returns the underlying error.
-func (e *TLSSetupError) Unwrap() error {
-	return e.Err
-}
 
 // methodMapping maps REST-style SDK paths to JSON-RPC method names.
 // The SDK client calls Request with REST paths; this table translates them
@@ -410,24 +338,21 @@ func resolveMethod(path string) (string, bool) {
 }
 
 // mcpEndpointPath is the Streamable HTTP path the unified qrdb MCP server
-// mounts the xkms tool surface under.
+// mounts the xkms tool surface under. It must match pkg/mcptool's own
+// (unexported) endpointPath constant, which Connect uses via the Client it
+// constructs below.
 const mcpEndpointPath = "/mcp"
-
-// clientName and clientVersion identify this SDK to the MCP server during
-// the "initialize" handshake.
-const (
-	clientName    = "go-xkms-sdk"
-	clientVersion = "1.0.0"
-)
 
 // Transport implements the transport.Client interface over the Model
 // Context Protocol's Streamable HTTP transport. Every xkms operation is
 // invoked as a "tools/call" request against the unified qrdb MCP server;
-// see the package doc for the tool-naming and argument convention.
+// see the package doc for the tool-naming and argument convention. The
+// connection and tool-call mechanics belong to the embedded *mcptool.Client;
+// this type adds the REST-path mapping, typed DTOs, and xkms error-code
+// classification (status.go's classifyWireCode).
 type Transport struct {
-	config    *transport.Config
-	client    *mcpclient.Client
-	connected bool
+	config *transport.Config
+	core   *mcptool.Client
 }
 
 // New creates a new MCP transport with the given options.
@@ -448,6 +373,7 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 
 	return &Transport{
 		config: cfg,
+		core:   mcptool.NewClient(cfg, mcptool.WithErrorClassifier(classifyWireCode)),
 	}, nil
 }
 
@@ -456,60 +382,12 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 // negotiates the MCP protocol version with Initialize, and confirms the
 // session is usable with an "xkms_health" tool call before returning.
 func (t *Transport) Connect(ctx context.Context) error {
-	addr := t.config.Address
-	// Strip any http/https scheme prefix if present; the scheme is derived
-	// from TLSEnabled below instead.
-	addr = strings.TrimPrefix(addr, "https://")
-	addr = strings.TrimPrefix(addr, "http://")
-	addr = strings.TrimSuffix(addr, "/")
-
-	var tlsConfig *tls.Config
-	scheme := "http://"
-	if t.config.TLSEnabled {
-		cfg, err := t.buildTLSConfig()
-		if err != nil {
-			return err
-		}
-		tlsConfig = cfg
-		scheme = "https://"
+	if err := t.core.Connect(ctx); err != nil {
+		return err
 	}
-	baseURL := scheme + addr + mcpEndpointPath
-
-	httpClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
-	}
-
-	mcpClient, err := mcpclient.NewStreamableHttpClient(baseURL, mcptransport.WithHTTPBasicClient(httpClient))
-	if err != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	if startErr := mcpClient.Start(ctx); startErr != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", startErr)}
-	}
-
-	initReq := mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			ClientInfo:      mcp.Implementation{Name: clientName, Version: clientVersion},
-			Capabilities:    mcp.ClientCapabilities{},
-		},
-	}
-	if _, initErr := mcpClient.Initialize(ctx, initReq); initErr != nil {
-		if closeErr := mcpClient.Close(); closeErr != nil {
-			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v (close error: %v)", initErr, closeErr)}
-		}
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v", initErr)}
-	}
-
-	t.client = mcpClient
-	// Mark connected before the health check so rpcCall doesn't reject the
-	// request with ErrNotConnected.
-	t.connected = true
 
 	if _, healthErr := t.Health(ctx); healthErr != nil {
-		t.connected = false
-		if closeErr := mcpClient.Close(); closeErr != nil {
+		if closeErr := t.core.Close(); closeErr != nil {
 			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("health check failed: %v (close error: %v)", healthErr, closeErr)}
 		}
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("health check failed: %v", healthErr)}
@@ -517,79 +395,28 @@ func (t *Transport) Connect(ctx context.Context) error {
 	return nil
 }
 
-// buildTLSConfig constructs the TLS configuration from transport options.
-func (t *Transport) buildTLSConfig() (*tls.Config, error) {
-	if t.config.TLSConfig != nil {
-		return t.config.TLSConfig, nil
-	}
-
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS13,
-	}
-
-	// Load CA certificate if specified
-	if t.config.TLSCAFile != "" {
-		caCert, err := os.ReadFile(t.config.TLSCAFile)
-		if err != nil {
-			return nil, &TLSSetupError{Detail: "failed to read CA certificate", Err: err}
-		}
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, &TLSSetupError{Detail: "failed to parse CA certificate"}
-		}
-		tlsConfig.RootCAs = caCertPool
-	}
-
-	// Load client certificate if specified (mTLS)
-	if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
-		if err != nil {
-			return nil, &TLSSetupError{Detail: "failed to load client certificate", Err: err}
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-	}
-
-	// SPKI pin verification
-	if t.config.SPKIPin != "" {
-		if t.config.TLSCAFile == "" && tlsConfig.RootCAs == nil {
-			// Trust bootstrap: no CA cert available, SPKI pin IS the trust anchor
-			tlsConfig = spki.NewPinnedTLSConfig(t.config.SPKIPin)
-		} else {
-			// Additive: CA chain validated first, pin adds extra verification
-			tlsConfig.VerifyConnection = spki.VerifyConnection(t.config.SPKIPin)
-		}
-	}
-
-	return tlsConfig, nil
-}
-
 // Close closes the MCP session.
 func (t *Transport) Close() error {
-	t.connected = false
-	if t.client != nil {
-		return t.client.Close()
-	}
-	return nil
+	return t.core.Close()
 }
 
 // Healthy checks if the transport can communicate with the server.
 func (t *Transport) Healthy(ctx context.Context) bool {
-	if t.client == nil {
-		return false
-	}
-
 	_, err := t.Health(ctx)
 	return err == nil
 }
 
 // Conn returns the underlying MCP client.
 func (t *Transport) Conn() interface{} {
-	return t.client
+	return t.core.Conn()
 }
 
-// IsConnected returns whether the transport is connected.
+// IsConnected returns whether the transport is connected. This is safe to
+// call on a Transport constructed as a bare zero value (core == nil), as
+// the coverage tests for every guarded method's not-connected path do:
+// *mcptool.Client's accessors tolerate a nil receiver.
 func (t *Transport) IsConnected() bool {
-	return t.connected
+	return t.core.IsConnected()
 }
 
 // Config returns the transport configuration.
@@ -601,10 +428,6 @@ func (t *Transport) Config() *transport.Config {
 // The method parameter is a REST-style path that gets mapped to a JSON-RPC
 // method name, which in turn addresses an MCP tool.
 func (t *Transport) Request(ctx context.Context, method string, req, resp interface{}) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
 	rpcMethod, ok := resolveMethod(method)
 	if !ok {
 		return &transport.TransportError{
@@ -621,111 +444,19 @@ func (t *Transport) RequestStream(ctx context.Context, _ string, _ interface{}) 
 	return nil, transport.ErrStreamNotSupported
 }
 
-// rpcErrorPattern recovers a JSON-RPC-style error code from a tool-error
-// message, for a server that still embeds the legacy "<label> error <code>:
-// <message>" text (e.g. the format the previous TCP transport's RPCError
-// and jsonrpcError types rendered) inside the MCP tool result.
-var rpcErrorPattern = regexp.MustCompile(`^(?:JSON-RPC|rpc) error (-?\d+): (.*)$`)
-
-// toolErrorCode classifies a tool-error message into a JSON-RPC 2.0 error
-// code by best-effort keyword matching. It mirrors the sentinel-to-code
-// mapping the xkms MCP server applies server-side when it turns a service
-// error into wire text (see pkg/api/mcp/errors_keyops.go mapKeyOpError):
-// not-found and validation failures read back as Invalid params, capability
-// gaps and unsupported operations read back as Method not found, and
-// authorization failures read back as their dedicated xkms extension codes.
-// Anything unrecognized is an Internal error, the same default the old
-// transport used for opaque server failures.
-func toolErrorCode(message string) int {
-	lower := strings.ToLower(message)
-	switch {
-	case strings.Contains(lower, "not supported"), strings.Contains(lower, "unimplemented"), strings.Contains(lower, "method not found"):
-		return xkmsmcp.ErrCodeMethodNotFound
-	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "unauthenticated"):
-		return xkmsmcp.ErrCodeUnauthorized
-	case strings.Contains(lower, "forbidden"), strings.Contains(lower, "permission denied"):
-		return xkmsmcp.ErrCodeForbidden
-	case strings.Contains(lower, "unavailable"):
-		return xkmsmcp.ErrCodeServiceUnavailable
-	case strings.Contains(lower, "not found"), strings.Contains(lower, "invalid"), strings.Contains(lower, "validation"):
-		return xkmsmcp.ErrCodeInvalidParams
-	default:
-		return xkmsmcp.ErrCodeInternalError
-	}
-}
-
-// newToolError converts a tool-level MCP error result (IsError=true) into an
-// *RPCError. The MCP tool surface carries the failure as a text message
-// rather than a structured JSON-RPC error object, so the code is recovered
-// two ways: rpcErrorPattern first, in case the server still embeds a
-// legacy-formatted code; otherwise toolErrorCode classifies the message by
-// keyword, matching xkms's own sentinel-to-code table.
-func newToolError(result *mcp.CallToolResult) error {
-	message := "tool call failed"
-	if len(result.Content) > 0 {
-		if text, ok := mcp.AsTextContent(result.Content[0]); ok && text.Text != "" {
-			message = text.Text
-		}
-	}
-	if m := rpcErrorPattern.FindStringSubmatch(message); m != nil {
-		if code, err := strconv.Atoi(m[1]); err == nil {
-			return &RPCError{Code: code, Message: m[2]}
-		}
-	}
-	return &RPCError{Code: toolErrorCode(message), Message: message}
-}
-
 // rpcCall invokes method as an MCP tool call. params, when non-nil, is
 // marshaled to JSON and passed as the tool's single "params_json" string
-// argument, exactly as the legacy JSON-RPC request carried it. On success,
-// the tool's first text content item is unmarshaled into result (when
-// result is non-nil); a tool-level failure (IsError=true) becomes an
-// *RPCError, and any failure to complete the tool call at all becomes a
-// *ReceiveError.
+// argument. On success, the tool's first text content item is unmarshaled
+// into result (when result is non-nil); a tool-level failure (IsError=true)
+// is classified from its go-qrdb wire.ErrorEnvelope into an *RPCError (its
+// Code translated by classifyWireCode, status.go), or into an
+// *EnvelopeMissingError when the result carries no envelope, and any
+// failure to complete the tool call at all becomes a *ReceiveError. The
+// framing and envelope decoding belong to the embedded *mcptool.Client; this
+// method only supplies the classifier passed to mcptool.NewClient in
+// NewWithConfig.
 func (t *Transport) rpcCall(ctx context.Context, method string, params interface{}, result interface{}) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	args := map[string]any{}
-	if params != nil {
-		data, err := json.Marshal(params)
-		if err != nil {
-			return &MarshalError{Operation: "request params", Err: err}
-		}
-		args["params_json"] = string(data)
-	}
-
-	toolResult, err := t.client.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      xkmsmcp.ToolName(method),
-			Arguments: args,
-		},
-	})
-	if err != nil {
-		return &ReceiveError{Err: err}
-	}
-
-	if toolResult.IsError {
-		return newToolError(toolResult)
-	}
-
-	if result == nil || len(toolResult.Content) == 0 {
-		return nil
-	}
-
-	text, ok := mcp.AsTextContent(toolResult.Content[0])
-	if !ok {
-		return &UnmarshalError{Operation: "result", Err: errors.New("tool result content is not text")}
-	}
-	if text.Text == "" {
-		return nil
-	}
-	if err := json.Unmarshal([]byte(text.Text), result); err != nil {
-		return &UnmarshalError{Operation: "result", Err: err}
-	}
-
-	return nil
+	return t.core.Call(ctx, method, params, result)
 }
 
 // Health checks the health of the server.
@@ -869,7 +600,7 @@ func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyE
 
 // AttestKey requests key attestation from a backend.
 func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.AttestKeyResponse
@@ -1240,7 +971,7 @@ func (t *Transport) GetTLSCertificate(ctx context.Context, backend, keyID string
 
 // Seal seals data using the backend's sealing mechanism.
 func (t *Transport) Seal(ctx context.Context, req *transport.SealRequest) (*transport.SealResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.SealResponse
@@ -1252,7 +983,7 @@ func (t *Transport) Seal(ctx context.Context, req *transport.SealRequest) (*tran
 
 // Unseal unseals previously sealed data.
 func (t *Transport) Unseal(ctx context.Context, req *transport.UnsealRequest) (*transport.UnsealResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.UnsealResponse
@@ -1264,7 +995,7 @@ func (t *Transport) Unseal(ctx context.Context, req *transport.UnsealRequest) (*
 
 // CanSeal checks if the backend supports sealing operations.
 func (t *Transport) CanSeal(ctx context.Context, backend string) (*transport.CanSealResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	params := map[string]string{"backend": backend}
@@ -1415,7 +1146,7 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 
 // ListPIVSlots returns the list of PIV slots and their status.
 func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.ListPIVSlotsResponse
@@ -1427,7 +1158,7 @@ func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlot
 
 // GetPIVCertificate retrieves the certificate from a PIV slot.
 func (t *Transport) GetPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.GetPIVCertificateResponse
@@ -1439,7 +1170,7 @@ func (t *Transport) GetPIVCertificate(ctx context.Context, req *transport.GetPIV
 
 // StorePIVCertificate stores a certificate into a PIV slot.
 func (t *Transport) StorePIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.storePIVCertificate", req, nil)
@@ -1447,7 +1178,7 @@ func (t *Transport) StorePIVCertificate(ctx context.Context, req *transport.Stor
 
 // DeletePIVCertificate removes the certificate from a PIV slot.
 func (t *Transport) DeletePIVCertificate(ctx context.Context, req *transport.DeletePIVCertificateRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.deletePIVCertificate", req, nil)
@@ -1455,7 +1186,7 @@ func (t *Transport) DeletePIVCertificate(ctx context.Context, req *transport.Del
 
 // GeneratePIVKey generates a new key pair in a PIV slot.
 func (t *Transport) GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.GeneratePIVKeyResponse
@@ -1467,7 +1198,7 @@ func (t *Transport) GeneratePIVKey(ctx context.Context, req *transport.GenerateP
 
 // ImportPIVCertificate imports a certificate into a PIV slot.
 func (t *Transport) ImportPIVCertificate(ctx context.Context, req *transport.StorePIVCertificateRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.importPIVCertificate", req, nil)
@@ -1475,7 +1206,7 @@ func (t *Transport) ImportPIVCertificate(ctx context.Context, req *transport.Sto
 
 // ExportPIVCertificate exports the certificate from a PIV slot.
 func (t *Transport) ExportPIVCertificate(ctx context.Context, req *transport.GetPIVCertificateRequest) (*transport.GetPIVCertificateResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.GetPIVCertificateResponse
@@ -1487,7 +1218,7 @@ func (t *Transport) ExportPIVCertificate(ctx context.Context, req *transport.Get
 
 // GeneratePIVCSR generates a Certificate Signing Request for a PIV slot key.
 func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GeneratePIVCSRRequest) (*transport.GeneratePIVCSRResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.GeneratePIVCSRResponse
@@ -1501,7 +1232,7 @@ func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GenerateP
 
 // BarrierInitialize initializes the barrier by generating a root key and sealing it.
 func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "barrier.initialize", req, nil)
@@ -1509,7 +1240,7 @@ func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.Barrie
 
 // BarrierUnseal unseals the barrier by loading and decrypting the root key.
 func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "barrier.unseal", req, nil)
@@ -1517,7 +1248,7 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUns
 
 // BarrierSeal transitions the barrier to sealed state, zeroing the DEK.
 func (t *Transport) BarrierSeal(ctx context.Context) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "barrier.seal", nil, nil)
@@ -1525,7 +1256,7 @@ func (t *Transport) BarrierSeal(ctx context.Context) error {
 
 // BarrierStatus returns the current barrier status.
 func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierStatusResponse
@@ -1538,7 +1269,7 @@ func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatus
 // BootstrapListenerKeys returns the running trust-bootstrap listener's
 // public static keys.
 func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.BootstrapListenerKeysResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BootstrapListenerKeysResponse
@@ -1550,7 +1281,7 @@ func (t *Transport) BootstrapListenerKeys(ctx context.Context) (*transport.Boots
 
 // BarrierInitializeShamir initializes the barrier using Shamir secret sharing.
 func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierInitializeShamirResponse
@@ -1562,7 +1293,7 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.
 
 // BarrierUnsealWithShare submits a single Shamir share toward the quorum.
 func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierUnsealShareResponse
@@ -1574,7 +1305,7 @@ func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.B
 
 // BarrierUnsealWithShares submits all Shamir shares at once.
 func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "barrier.unsealShares", req, nil)
@@ -1582,7 +1313,7 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 
 // BarrierRekey rotates Shamir shares while keeping the same root key.
 func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierRekeyResponse
@@ -1594,7 +1325,7 @@ func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierReke
 
 // BarrierGenerateRecoveryKeys generates recovery keys for disaster recovery.
 func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierRecoveryKeysResponse
@@ -1607,7 +1338,7 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transp
 // BarrierEnableEncryption migrates a previously-unencrypted barrier to a keyed
 // strategy in place.
 func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierEnableEncryptionResponse
@@ -1619,7 +1350,7 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.
 
 // BarrierRecoverWithKeys unseals the barrier using recovery keys.
 func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "barrier.recoverWithKeys", req, nil)
@@ -1627,7 +1358,7 @@ func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.B
 
 // BarrierDeleteRecoveryKeys deletes stored recovery key metadata.
 func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "barrier.deleteRecoveryKeys", nil, nil)
@@ -1635,7 +1366,7 @@ func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
 
 // BarrierHasRecoveryKeys checks if recovery keys exist.
 func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.BarrierHasRecoveryKeysResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierHasRecoveryKeysResponse
@@ -1647,7 +1378,7 @@ func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.Barr
 
 // BarrierGenerateRootToken generates a one-time root token.
 func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.BarrierRootTokenResponse
@@ -1661,7 +1392,7 @@ func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport
 
 // SetSOPIN sets the Security Officer PIN.
 func (t *Transport) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.setSOPIN", req, nil)
@@ -1669,7 +1400,7 @@ func (t *Transport) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest
 
 // SetUserPIN sets the user PIN.
 func (t *Transport) SetUserPIN(ctx context.Context, req *transport.SetUserPINRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.setUserPIN", req, nil)
@@ -1677,7 +1408,7 @@ func (t *Transport) SetUserPIN(ctx context.Context, req *transport.SetUserPINReq
 
 // ChangeSOPIN changes the Security Officer PIN.
 func (t *Transport) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.changeSOPIN", req, nil)
@@ -1685,7 +1416,7 @@ func (t *Transport) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINR
 
 // ChangeUserPIN changes the user PIN.
 func (t *Transport) ChangeUserPIN(ctx context.Context, req *transport.ChangeUserPINRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.changeUserPIN", req, nil)
@@ -1693,7 +1424,7 @@ func (t *Transport) ChangeUserPIN(ctx context.Context, req *transport.ChangeUser
 
 // VerifySOPIN verifies the Security Officer PIN.
 func (t *Transport) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.verifySOPIN", req, nil)
@@ -1701,7 +1432,7 @@ func (t *Transport) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINR
 
 // VerifyUserPIN verifies the user PIN.
 func (t *Transport) VerifyUserPIN(ctx context.Context, req *transport.VerifyUserPINRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.verifyUserPIN", req, nil)
@@ -1709,7 +1440,7 @@ func (t *Transport) VerifyUserPIN(ctx context.Context, req *transport.VerifyUser
 
 // GetLockoutStatus returns the current PIN lockout status.
 func (t *Transport) GetLockoutStatus(ctx context.Context) (*transport.LockoutStatusResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.LockoutStatusResponse
@@ -1721,7 +1452,7 @@ func (t *Transport) GetLockoutStatus(ctx context.Context) (*transport.LockoutSta
 
 // ResetLockout resets the PIN lockout counter.
 func (t *Transport) ResetLockout(ctx context.Context, req *transport.ResetLockoutRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "xkms.resetLockout", req, nil)
@@ -1731,7 +1462,7 @@ func (t *Transport) ResetLockout(ctx context.Context, req *transport.ResetLockou
 
 // PasswordAdd adds a new static password.
 func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordAddResponse
@@ -1743,7 +1474,7 @@ func (t *Transport) PasswordAdd(ctx context.Context, req *transport.PasswordAddR
 
 // PasswordGet retrieves a password entry.
 func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetRequest) (*transport.PasswordGetResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordGetResponse
@@ -1755,7 +1486,7 @@ func (t *Transport) PasswordGet(ctx context.Context, req *transport.PasswordGetR
 
 // PasswordList lists password entries.
 func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordListRequest) (*transport.PasswordListResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordListResponse
@@ -1767,7 +1498,7 @@ func (t *Transport) PasswordList(ctx context.Context, req *transport.PasswordLis
 
 // PasswordUpdate updates a password entry.
 func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordUpdateRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "password.update", req, nil)
@@ -1775,7 +1506,7 @@ func (t *Transport) PasswordUpdate(ctx context.Context, req *transport.PasswordU
 
 // PasswordDelete deletes a password entry.
 func (t *Transport) PasswordDelete(ctx context.Context, req *transport.PasswordDeleteRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "password.delete", req, nil)
@@ -1783,7 +1514,7 @@ func (t *Transport) PasswordDelete(ctx context.Context, req *transport.PasswordD
 
 // PasswordStoreUnlock unlocks the password store.
 func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "password.unlock", req, nil)
@@ -1791,7 +1522,7 @@ func (t *Transport) PasswordStoreUnlock(ctx context.Context, req *transport.Pass
 
 // PasswordStoreLock locks the password store.
 func (t *Transport) PasswordStoreLock(ctx context.Context) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "password.lock", nil, nil)
@@ -1799,7 +1530,7 @@ func (t *Transport) PasswordStoreLock(ctx context.Context) error {
 
 // PasswordStoreStatus returns the password store status.
 func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.PasswordStoreStatusResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordStoreStatusResponse
@@ -1811,7 +1542,7 @@ func (t *Transport) PasswordStoreStatus(ctx context.Context) (*transport.Passwor
 
 // PasswordStoreSetAccessMode sets the password store access mode.
 func (t *Transport) PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "password.setAccessMode", req, nil)
@@ -1819,7 +1550,7 @@ func (t *Transport) PasswordStoreSetAccessMode(ctx context.Context, req *transpo
 
 // PasswordGenerate generates a random password.
 func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.PasswordGenerateRequest) (*transport.PasswordGenerateResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PasswordGenerateResponse
@@ -1833,7 +1564,7 @@ func (t *Transport) PasswordGenerate(ctx context.Context, req *transport.Passwor
 
 // SealStorePut stores a secret in the platform-sealed store.
 func (t *Transport) SealStorePut(ctx context.Context, req *transport.SealStorePutRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "sealStore.put", req, nil)
@@ -1841,7 +1572,7 @@ func (t *Transport) SealStorePut(ctx context.Context, req *transport.SealStorePu
 
 // SealStoreGet retrieves a secret from the platform-sealed store.
 func (t *Transport) SealStoreGet(ctx context.Context, req *transport.SealStoreGetRequest) (*transport.SealStoreGetResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.SealStoreGetResponse
@@ -1853,7 +1584,7 @@ func (t *Transport) SealStoreGet(ctx context.Context, req *transport.SealStoreGe
 
 // SealStoreDelete deletes a secret from the platform-sealed store.
 func (t *Transport) SealStoreDelete(ctx context.Context, req *transport.SealStoreDeleteRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "sealStore.delete", req, nil)
@@ -1861,7 +1592,7 @@ func (t *Transport) SealStoreDelete(ctx context.Context, req *transport.SealStor
 
 // SealStoreList lists all stored secret names in the platform-sealed store.
 func (t *Transport) SealStoreList(ctx context.Context) (*transport.SealStoreListResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.SealStoreListResponse
@@ -1873,7 +1604,7 @@ func (t *Transport) SealStoreList(ctx context.Context) (*transport.SealStoreList
 
 // SealStoreReseal reseals a secret with the current platform sealing key.
 func (t *Transport) SealStoreReseal(ctx context.Context, req *transport.SealStoreResealRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "sealStore.reseal", req, nil)
@@ -1881,7 +1612,7 @@ func (t *Transport) SealStoreReseal(ctx context.Context, req *transport.SealStor
 
 // SealStoreStatus returns the platform-sealed store status.
 func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.SealStoreStatusResponse

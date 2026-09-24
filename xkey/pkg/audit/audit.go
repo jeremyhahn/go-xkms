@@ -145,12 +145,16 @@ const (
 	OpIPCMessageFailed     OperationType = "ipc_message_failed"
 
 	// SecretService (D-Bus) operations.
-	OpSecretServiceSessionOpened  OperationType = "secretservice_session_opened"
-	OpSecretServiceSessionClosed  OperationType = "secretservice_session_closed"
-	OpSecretServiceSearch         OperationType = "secretservice_search"
-	OpSecretServiceSecretAccessed OperationType = "secretservice_secret_accessed"
-	OpSecretServiceUnlock         OperationType = "secretservice_unlock"
-	OpSecretServiceLock           OperationType = "secretservice_lock"
+	OpSecretServiceSessionOpened     OperationType = "secretservice_session_opened"
+	OpSecretServiceSessionClosed     OperationType = "secretservice_session_closed"
+	OpSecretServiceSearch            OperationType = "secretservice_search"
+	OpSecretServiceSecretAccessed    OperationType = "secretservice_secret_accessed"
+	OpSecretServiceUnlock            OperationType = "secretservice_unlock"
+	OpSecretServiceLock              OperationType = "secretservice_lock"
+	OpSecretServiceItemCreated       OperationType = "secretservice_item_created"
+	OpSecretServiceItemDeleted       OperationType = "secretservice_item_deleted"
+	OpSecretServiceCollectionCreated OperationType = "secretservice_collection_created"
+	OpSecretServiceCollectionDeleted OperationType = "secretservice_collection_deleted"
 
 	// Barrier operations.
 	OpBarrierInitialized     OperationType = "barrier_initialized"

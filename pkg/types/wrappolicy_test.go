@@ -40,8 +40,14 @@ func TestLegacyKeyWrapPolicy_DefaultsToRefused(t *testing.T) {
 	}
 
 	SetAllowLegacyKeyWrap(true)
-	if !AllowLegacyKeyWrap() {
-		t.Fatal("SetAllowLegacyKeyWrap(true) did not take effect")
+	// SetAllowLegacyKeyWrap(true) is a deliberate no-op under FIPSMode(): the
+	// Go Cryptographic Module's approved-algorithm boundary is the ceiling
+	// this repository's own policy switch must never be able to re-open
+	// (see wrappolicy.go). Under GODEBUG=fips140=only the enable call above
+	// stays refused, not "did not take effect".
+	if want := !FIPSMode(); AllowLegacyKeyWrap() != want {
+		t.Fatalf("SetAllowLegacyKeyWrap(true) = %v, want %v (FIPSMode=%v)",
+			AllowLegacyKeyWrap(), want, FIPSMode())
 	}
 
 	SetAllowLegacyKeyWrap(false)

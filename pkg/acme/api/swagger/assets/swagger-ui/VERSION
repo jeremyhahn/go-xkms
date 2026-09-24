@@ -1,0 +1,16 @@
+swagger-ui-dist 5.33.0
+
+Vendored files (embedded at build time, served with no CDN or external
+network fetch at runtime):
+  swagger-ui.css
+  swagger-ui-bundle.js
+  swagger-ui-standalone-preset.js
+  favicon-32x32.png
+
+Source: https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.33.0.tgz
+Tarball SHA-256: 434c69385aa02154348e6dcce0076df3a25ed88f673ac16cf4fed3fcf62c3b1b
+License: Apache License 2.0 (see LICENSE and NOTICE in this directory)
+
+To update: download the new swagger-ui-dist release tarball, verify its
+checksum, copy the four files above over these, update this file's version,
+source URL and checksum, and update the NOTICE entry at the repository root.

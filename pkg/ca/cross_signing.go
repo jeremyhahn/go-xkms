@@ -25,8 +25,10 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -71,7 +73,17 @@ func (ca *CA) ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) 
 		return &errs.Detail{Err: ErrStorageError, Detail: "failed to encode cross-signed certificate"}
 	}
 
+	// CA_CROSS_SIGN is SeveritySecurity (docs/audit-log/engineering.md): the
+	// audit record is written before the cross-signed certificate is
+	// persisted, so a failed write refuses the import rather than accept an
+	// unaudited cross-sign relationship. ImportXSignedCertificate takes no
+	// context; a CA lifecycle event has no caller-scoped deadline to inherit,
+	// matching pkg/seal's emitAudit precedent for the same shape of call site.
 	key := crossSignedStoreKey(issuerCN, cert.Subject.CommonName)
+	if auditErr := ca.emitAudit(context.Background(), auditActionCACrossSign, auditResourceCrossSigned, key); auditErr != nil {
+		return auditErr
+	}
+
 	if err := ca.objectStore.Put(key, bytes.NewReader(pemData)); err != nil {
 		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to store cross-signed certificate: %v", err)}
 	}
@@ -180,6 +192,11 @@ func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
 	}
 
 	var bundle strings.Builder
+	// closeErrs collects reader-Close failures from an otherwise
+	// best-effort aggregation loop: a store item that cannot be listed,
+	// fetched, read or parsed is silently skipped by design (documented on
+	// getXSignedCertificates below), but a Close failure is never dropped.
+	var closeErrs []error
 	suffix := fmt.Sprintf("/%s.pem", attrs.CN)
 	for _, item := range items {
 		if !strings.HasSuffix(item, suffix) {
@@ -190,7 +207,9 @@ func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
 			continue
 		}
 		data, err := io.ReadAll(reader)
-		_ = reader.Close()
+		if cerr := reader.Close(); cerr != nil {
+			closeErrs = append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close cross-signed certificate reader for %s: %v", item, cerr)})
+		}
 		if err != nil {
 			continue
 		}
@@ -198,21 +217,25 @@ func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
 	}
 
 	if bundle.Len() == 0 {
-		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("no cross-signed certificates for %s", attrs.CN)}
+		return nil, errors.Join(append(closeErrs, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("no cross-signed certificates for %s", attrs.CN)})...)
 	}
-	return []byte(bundle.String()), nil
+	return []byte(bundle.String()), errors.Join(closeErrs...)
 }
 
 // readCrossSignedCertificate is the shared helper that reads a single
 // cross-signed entry from the object store and parses it into a
 // *x509.Certificate.
-func (ca *CA) readCrossSignedCertificate(issuerCN, subjectCN string) (*x509.Certificate, error) {
+func (ca *CA) readCrossSignedCertificate(issuerCN, subjectCN string) (cert *x509.Certificate, err error) {
 	key := crossSignedStoreKey(issuerCN, subjectCN)
 	reader, err := ca.objectStore.Get(key)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: fmt.Sprintf("cross-signed certificate %s (issuer %s): %v", subjectCN, issuerCN, err)}
 	}
-	defer func() { _ = reader.Close() }()
+	defer func() {
+		if cerr := reader.Close(); cerr != nil {
+			err = errors.Join(err, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close cross-signed certificate reader: %v", cerr)})
+		}
+	}()
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -223,7 +246,7 @@ func (ca *CA) readCrossSignedCertificate(issuerCN, subjectCN string) (*x509.Cert
 	if block == nil {
 		return nil, &errs.Detail{Err: ErrInvalidPEM, Detail: fmt.Sprintf("invalid PEM for cross-signed certificate %s", subjectCN)}
 	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("failed to parse cross-signed certificate %s: %v", subjectCN, err)}
 	}
@@ -248,6 +271,10 @@ func (ca *CA) getXSignedCertificates(cn string) ([]*x509.Certificate, error) {
 
 	suffix := fmt.Sprintf("/%s.pem", cn)
 	certs := make([]*x509.Certificate, 0)
+	// closeErrs collects reader-Close failures. Get/Read/Parse failures on
+	// an individual item are silently skipped by design (see the doc
+	// comment above), but a Close failure is never dropped.
+	var closeErrs []error
 	for _, item := range items {
 		if !strings.HasSuffix(item, suffix) {
 			continue
@@ -257,7 +284,9 @@ func (ca *CA) getXSignedCertificates(cn string) ([]*x509.Certificate, error) {
 			continue
 		}
 		data, err := io.ReadAll(reader)
-		_ = reader.Close()
+		if cerr := reader.Close(); cerr != nil {
+			closeErrs = append(closeErrs, &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("failed to close cross-signed certificate reader for %s: %v", item, cerr)})
+		}
 		if err != nil {
 			continue
 		}
@@ -271,5 +300,5 @@ func (ca *CA) getXSignedCertificates(cn string) ([]*x509.Certificate, error) {
 		}
 		certs = append(certs, cert)
 	}
-	return certs, nil
+	return certs, errors.Join(closeErrs...)
 }

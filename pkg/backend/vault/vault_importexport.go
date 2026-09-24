@@ -40,6 +40,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -344,9 +345,15 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	// Only a genuine storage.ErrNotFound is reported as ErrKeyNotFound; any
+	// other failure from the metadata store must not be conflated with "no
+	// key yet" (matches GetKey's classification).
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 	var metadata map[string]interface{}
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {

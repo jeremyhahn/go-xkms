@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -177,10 +178,15 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
-	// Load metadata
+	// Load metadata. Only a genuine storage.ErrNotFound is reported as
+	// ErrKeyNotFound; any other failure from the metadata store must not be
+	// conflated with "no key yet" (matches GetKey's classification).
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 
 	var metadata map[string]interface{}
@@ -199,12 +205,19 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "missing vault_name"}
 	}
 
-	// Verify key exists in Vault
+	// Verify key exists in Vault. A nil secret with no error is Vault's
+	// convention for a Transit path that does not exist, so only that
+	// combination is reported as ErrKeyNotFound; a non-nil error is a
+	// transport, auth, or ACL failure and must not be conflated with "no
+	// key yet" (matches getPublicKeyVersion's classification).
 	path := fmt.Sprintf("%s/keys/%s", b.config.TransitPath, keyName)
 	logical := b.client.Logical()
 	secret, err := logical.ReadWithContext(ctx, path)
-	if err != nil || secret == nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to read key from vault: %v", err)}
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to read key from vault: %v", err)}
+	}
+	if secret == nil {
+		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyName}
 	}
 
 	return &vaultSymmetricKey{
@@ -228,13 +241,19 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 		return nil, &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("attributes specify asymmetric algorithm: %s", attrs.KeyAlgorithm)}
 	}
 
-	// Load metadata to verify key exists
+	// Load metadata to verify key exists. Only a genuine storage.ErrNotFound
+	// is reported as ErrKeyNotFound; any other failure from the metadata
+	// store must not be conflated with "no key yet" (matches GetKey's
+	// classification).
 	b.mu.RLock()
 	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
 	b.mu.RUnlock()
 
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("metadata lookup for %s: %v", attrs.CN, err)}
 	}
 
 	var metadata map[string]interface{}

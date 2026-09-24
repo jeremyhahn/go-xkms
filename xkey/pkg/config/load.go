@@ -21,8 +21,10 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -248,13 +250,63 @@ func configKeyName(field reflect.StructField) string {
 // zero, still wins.
 func unmarshalAndValidate(v *viper.Viper) (*Config, error) {
 	cfg := DefaultConfig()
-	if err := v.Unmarshal(cfg); err != nil {
+	if err := v.Unmarshal(cfg, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
+		mapstructure.StringToTimeDurationHookFunc(),
+		stringToWeakSliceHookFunc(","),
+		secretValueDecodeHookFunc,
+	))); err != nil {
 		return nil, errors.Join(ErrConfigLoadFailed, err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, errors.Join(ErrConfigInvalid, err)
 	}
 	return cfg, nil
+}
+
+// stringToWeakSliceHookFunc splits a string into a []string on sep for ANY
+// slice target type (not just []string -- see mapstructure.StringToSliceHookFunc,
+// which only fires when the target is exactly []string, leaving a []int
+// field like AutoUnsealConfig.PCRs to WeaklyTypedInput's scalar-to-single-
+// element-slice path instead, which fails to parse a multi-value string as
+// one int). This is viper's own DecodeHook default
+// (stringToWeakSliceHookFunc, viper.go) reproduced here because passing
+// viper.DecodeHook at all replaces that default outright rather than
+// extending it, and it is unexported so it cannot be composed directly.
+func stringToWeakSliceHookFunc(sep string) mapstructure.DecodeHookFunc {
+	return func(f reflect.Type, t reflect.Type, data any) (any, error) {
+		if f.Kind() != reflect.String || t.Kind() != reflect.Slice {
+			return data, nil
+		}
+		raw, _ := data.(string)
+		if raw == "" {
+			return []string{}, nil
+		}
+		return strings.Split(raw, sep), nil
+	}
+}
+
+// secretValueDecodeHookFunc teaches viper's mapstructure-based Unmarshal to
+// decode a *xkms.SecretValue (go-qrdb's SecretValue, secret_config.go) from
+// the plain reference string it appears as in YAML/JSON -- exactly what
+// SecretValue's own yaml.Unmarshaler/json.Unmarshaler do
+// (secret_value_codec.go in go-qrdb), which mapstructure never consults: viper
+// parses YAML into a generic map/string tree via yaml.v3 first and decodes
+// that tree with mapstructure second, so a type's custom UnmarshalYAML is
+// never invoked on this path. Without this hook, a Config with ANY
+// *SecretValue field fails Unmarshal outright ("expected a map or struct,
+// got string") for every load, whether or not that field is ever set,
+// because DefaultConfig's empty placeholder (see its doc) already puts the
+// type in the tree mapstructure walks.
+//
+// A source that already decoded to a map (an operator who wrote out the
+// struct form) is left alone -- mapstructure's own struct decoding handles
+// it -- as is any target type other than SecretValue.
+func secretValueDecodeHookFunc(from reflect.Type, to reflect.Type, data any) (any, error) {
+	if to != reflect.TypeOf(xkms.SecretValue{}) || from.Kind() != reflect.String {
+		return data, nil
+	}
+	raw, _ := data.(string)
+	return xkms.SecretValue{Raw: raw}, nil
 }
 
 // isConfigNotFoundError returns true when the error indicates the config file

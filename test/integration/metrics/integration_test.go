@@ -542,9 +542,10 @@ func TestMetricsConstantsIntegration(t *testing.T) {
 	assert.Equal(t, "export", metrics.OpExport)
 	assert.Equal(t, "import", metrics.OpImport)
 	assert.Equal(t, "rotate", metrics.OpRotate)
-	assert.Equal(t, "backup", metrics.OpBackup)
-	assert.Equal(t, "restore", metrics.OpRestore)
 	assert.Equal(t, "health_check", metrics.OpHealthCheck)
+	assert.Equal(t, "issue_cert", metrics.OpIssueCert)
+	assert.Equal(t, "revoke_cert", metrics.OpRevokeCert)
+	assert.Equal(t, "generate_crl", metrics.OpGenerateCRL)
 }
 
 // TestMetricsRealWorldScenarioIntegration simulates a real-world metrics scenario

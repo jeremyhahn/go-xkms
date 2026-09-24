@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -35,17 +36,24 @@ import (
 	awstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Backend implements the types.KeyProvider interface for AWS KMS.
-// It provides secure key management operations using AWS Key Management Service.
+// It provides secure key management operations using AWS Key Management
+// Service. Key metadata (the CN -> AWS-assigned key ID mapping) is
+// persisted through Config.KeyStorage, never cached in process memory: a
+// process that lost that mapping on restart would either recreate a key it
+// already has (orphaning the old one) or address AWS KMS with an identifier
+// that was never its own (go-xkms#839). storage.Backend implementations are
+// required to be thread-safe (see pkg/storage.Backend), so no additional
+// locking wraps metadata reads/writes here.
 type Backend struct {
-	config   *Config
-	client   KMSClient
-	metadata map[string][]byte       // In-memory metadata storage keyed by CN
-	tracker  types.AEADSafetyTracker // AEAD safety tracker for nonce/bytes tracking
-	mu       sync.RWMutex
+	config  *Config
+	client  KMSClient
+	tracker types.AEADSafetyTracker // AEAD safety tracker for nonce/bytes tracking
+	mu      sync.RWMutex            // guards client initialization only
 }
 
 // kmsSigner implements the crypto.Signer interface using AWS KMS.
@@ -78,9 +86,8 @@ func NewBackend(config *Config) (*Backend, error) {
 	}
 
 	b := &Backend{
-		config:   config,
-		metadata: make(map[string][]byte),
-		tracker:  tracker,
+		config:  config,
+		tracker: tracker,
 	}
 
 	return b, nil
@@ -100,10 +107,9 @@ func NewBackendWithClient(config *Config, client KMSClient) (*Backend, error) {
 	}
 
 	b := &Backend{
-		config:   config,
-		client:   client,
-		metadata: make(map[string][]byte),
-		tracker:  tracker,
+		config:  config,
+		client:  client,
+		tracker: tracker,
 	}
 
 	return b, nil
@@ -174,13 +180,10 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 		return nil, err
 	}
 
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	// For metadata/blob extensions, return stored metadata
 	if extension == backend.FSEXT_PRIVATE_BLOB || extension == backend.FSEXT_PUBLIC_BLOB {
-		data, ok := b.metadata[attrs.CN]
-		if !ok {
+		data, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
+		if err != nil {
 			return nil, &errs.Detail{Err: backend.ErrFileNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 		return data, nil
@@ -188,7 +191,10 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 
 	// For public key extensions, retrieve from KMS
 	if extension == backend.FSEXT_PUBLIC_PKCS1 || extension == backend.FSEXT_PUBLIC_PEM {
-		keyID := b.getKeyID(attrs.CN)
+		keyID, err := b.getKeyID(ctx, attrs.CN)
+		if err != nil {
+			return nil, err
+		}
 		output, err := b.client.GetPublicKey(ctx, &kms.GetPublicKeyInput{
 			KeyId: aws.String(keyID),
 		})
@@ -213,18 +219,21 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 		return err
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	// Check if metadata already exists
 	if !overwrite {
-		if _, exists := b.metadata[attrs.CN]; exists {
+		exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+		if err != nil {
+			return &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+		}
+		if exists {
 			return &errs.Detail{Err: backend.ErrFileAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 		}
 	}
 
 	// Store metadata
-	b.metadata[attrs.CN] = data
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, data); err != nil {
+		return &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	return nil
 }
@@ -241,18 +250,22 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	// Get key ID before acquiring lock to avoid deadlock
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return err
+	}
 
-	b.mu.Lock()
-	// Remove metadata
-	delete(b.metadata, attrs.CN)
-	b.mu.Unlock()
+	// Remove metadata. A missing entry is not an error here (Delete is
+	// idempotent): storage.DeleteKey's ErrNotFound is swallowed exactly
+	// like ScheduleKeyDeletion's below.
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
+	}
 
 	// Schedule key deletion in KMS (7 day minimum waiting period)
 	pendingWindowInDays := int32(7)
 
-	_, err := b.client.ScheduleKeyDeletion(ctx, &kms.ScheduleKeyDeletionInput{
+	_, err = b.client.ScheduleKeyDeletion(ctx, &kms.ScheduleKeyDeletionInput{
 		KeyId:               aws.String(keyID),
 		PendingWindowInDays: &pendingWindowInDays,
 	})
@@ -265,12 +278,14 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 	return nil
 }
 
-// Close releases any resources held by the backend.
+// Close releases any resources held by the backend. Config.KeyStorage's
+// lifecycle belongs to the caller that constructed it (it may be shared, or
+// outlive this backend across a restart), so Close never closes it -- only
+// the AWS client handle is released here.
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.metadata = make(map[string][]byte)
 	b.client = nil
 
 	return nil
@@ -306,6 +321,9 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 		return "", &errs.Wrapped{Msg: "failed to create KMS key", Err: err}
 	}
 
+	if output == nil || output.KeyMetadata == nil || output.KeyMetadata.KeyId == nil {
+		return "", &errs.Detail{Err: ErrMalformedResponse, Detail: "CreateKey returned no key metadata"}
+	}
 	keyID := aws.ToString(output.KeyMetadata.KeyId)
 
 	// Create an alias for easier reference
@@ -334,9 +352,9 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 		return keyID, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.mu.Lock()
-	b.metadata[attrs.CN] = metadataBytes
-	b.mu.Unlock()
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return keyID, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	return keyID, nil
 }
@@ -352,7 +370,10 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte) ([]byte, error
 		return nil, err
 	}
 
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 	signingAlgorithm, err := b.getSigningAlgorithm(attrs)
 	if err != nil {
 		return nil, err
@@ -382,7 +403,10 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 		return err
 	}
 
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return err
+	}
 	signingAlgorithm, err := b.getSigningAlgorithm(attrs)
 	if err != nil {
 		return err
@@ -406,24 +430,54 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 	return nil
 }
 
-// getKeyID returns the key ID or alias for a given CN.
-func (b *Backend) getKeyID(cn string) string {
-	// First check if we have metadata with a key ID
-	b.mu.RLock()
-	metadataBytes, ok := b.metadata[cn]
-	b.mu.RUnlock()
+// OperatorSealKeyID returns the operator-configured KMS key identifier
+// (Config.KeyID: a key ID, ARN, or alias) that pkg/seal's EnsureSealKey
+// should resolve the barrier's seal key from instead of creating a new CMK,
+// or "" when the operator configured none. It satisfies
+// pkg/seal.SealOperatorKeyProvider via structural typing (pkg/backend/awskms
+// does not import pkg/seal).
+func (b *Backend) OperatorSealKeyID() string {
+	return b.config.KeyID
+}
 
-	if ok {
-		var metadata map[string]interface{}
-		if err := json.Unmarshal(metadataBytes, &metadata); err == nil {
-			if keyID, ok := metadata["key_id"].(string); ok {
-				return keyID
-			}
+// getKeyID resolves the AWS KMS key ID for cn from persisted metadata.
+//
+// Config.KeyStorage is this backend's sole source of truth for which AWS
+// key a CN maps to (go-xkms#839), so only ONE failure mode falls back
+// silently: storage.ErrNotFound, meaning no metadata record was ever
+// written for cn. That is safe to resolve as the "alias/{cn}" alias because
+// every key-creation path in this backend -- CreateKey (asymmetric) and
+// GenerateSymmetricKey -- attempts to create that exact alias alongside the
+// key (best-effort in AWS terms: a failed CreateAlias does not fail key
+// creation, but it is always attempted). A key that was never created has
+// no alias either, so AWS KMS itself reports "alias not found" on the
+// caller's next API call -- an honest failure, not a masked one.
+//
+// Every OTHER failure -- a storage.Backend error that is not "not found", a
+// corrupt (non-JSON) record, or a record missing key_id -- returns a typed
+// error instead of falling back. Silently addressing "alias/{cn}" on a
+// transient storage failure would risk every caller talking to a different
+// KMS key than the one actually recorded, with nothing surfaced to say so.
+func (b *Backend) getKeyID(ctx context.Context, cn string) (string, error) {
+	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, cn)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return fmt.Sprintf("alias/%s", cn), nil
 		}
+		return "", &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("failed to read key metadata for %s", cn), Cause: err}
 	}
 
-	// Fall back to alias
-	return fmt.Sprintf("alias/%s", cn)
+	var metadata map[string]interface{}
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		return "", &errs.Joined{Lead: ErrMetadataStorage, Detail: fmt.Sprintf("corrupt metadata record for %s", cn), Cause: err}
+	}
+
+	keyID, ok := metadata["key_id"].(string)
+	if !ok {
+		return "", &errs.Detail{Err: ErrMetadataStorage, Detail: fmt.Sprintf("metadata record for %s is missing key_id", cn)}
+	}
+
+	return keyID, nil
 }
 
 // getKeySpec converts types.KeyAttributes to AWS KMS KeySpec.
@@ -550,21 +604,33 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	}
 
 	// Check if metadata exists
-	b.mu.RLock()
-	_, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
-
+	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+	}
 	if !exists {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
-	// Verify key exists in KMS
-	keyID := b.getKeyID(attrs.CN)
-	_, err := b.client.DescribeKey(ctx, &kms.DescribeKeyInput{
+	// Verify key exists in KMS. Only a genuine NotFoundException -- KMS's
+	// signal that the key ID/ARN names no key it has ever heard of -- is
+	// reported as ErrKeyNotFound. Any other failure (throttling, a network
+	// fault, an IAM/authorization denial) must not be conflated with "no
+	// key yet": getOrGenerateCAKey relies on that distinction to decide
+	// whether generating a replacement key is safe.
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
+	_, err = b.client.DescribeKey(ctx, &kms.DescribeKeyInput{
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to describe key: %v", err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to describe key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from KMS
@@ -621,16 +687,19 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 	var allKeys []*types.KeyAttributes
 
-	// List all keys from metadata
-	b.mu.RLock()
-	metadataCopy := make(map[string][]byte, len(b.metadata))
-	for k, v := range b.metadata {
-		metadataCopy[k] = v
+	// List all key CNs from persisted metadata.
+	cns, err := storage.ListKeys(ctx, b.config.KeyStorage)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
-	b.mu.RUnlock()
 
-	// Reconstruct KeyAttributes from metadata
-	for cn, metadataBytes := range metadataCopy {
+	// Reconstruct KeyAttributes from each key's metadata.
+	for _, cn := range cns {
+		metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, cn)
+		if err != nil {
+			continue // Skip a CN whose metadata disappeared between List and Get
+		}
+
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 			continue // Skip invalid metadata
@@ -683,7 +752,10 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, err
 	}
 
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get the public key
 	pubKeyOutput, err := b.client.GetPublicKey(ctx, &kms.GetPublicKeyInput{
@@ -726,7 +798,10 @@ func (b *Backend) Decrypter(ctx context.Context, attrs *types.KeyAttributes) (cr
 		return nil, err
 	}
 
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get the public key
 	pubKeyOutput, err := b.client.GetPublicKey(ctx, &kms.GetPublicKeyInput{
@@ -761,10 +836,13 @@ func (b *Backend) RotateKey(ctx context.Context, attrs *types.KeyAttributes) err
 		return err
 	}
 
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return err
+	}
 
 	// Rotate the key using on-demand rotation
-	_, err := b.client.RotateKeyOnDemand(ctx, &kms.RotateKeyOnDemandInput{
+	_, err = b.client.RotateKeyOnDemand(ctx, &kms.RotateKeyOnDemandInput{
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
@@ -936,7 +1014,10 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 	}
 
 	// Get the key ID
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call AWS KMS GetParametersForImport
 	output, err := b.client.GetParametersForImport(ctx, &kms.GetParametersForImportInput{
@@ -1073,13 +1154,16 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 
 	// Get the key ID
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return err
+	}
 
 	// Call AWS KMS ImportKeyMaterial
 	// Note: The wrapping algorithm was already specified in GetParametersForImport,
 	// so we don't need to specify it again here. AWS KMS uses the algorithm from
 	// the import token to determine how to unwrap the key material.
-	_, err := b.client.ImportKeyMaterial(ctx, &kms.ImportKeyMaterialInput{
+	_, err = b.client.ImportKeyMaterial(ctx, &kms.ImportKeyMaterialInput{
 		KeyId:                aws.String(keyID),
 		ImportToken:          wrapped.ImportToken,
 		EncryptedKeyMaterial: wrapped.WrappedKey,

@@ -16,6 +16,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -139,6 +140,59 @@ func TestAgent_ServeRoundTrip(t *testing.T) {
 	select {
 	case err := <-srvErr:
 		require.NoError(t, err, "graceful shutdown should return nil")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return after context cancellation")
+	}
+}
+
+// TestAgent_ServeReturnsHandlerProtocolError verifies that a genuine
+// per-connection protocol error is joined into Serve's returned error rather
+// than being silently discarded (#701): the tracker records it, and Serve
+// joins tracker.err() with its own listener-level result before returning.
+func TestAgent_ServeReturnsHandlerProtocolError(t *testing.T) {
+	sock := SocketPath(privateDir(t))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	srvErr := make(chan error, 1)
+	go func() { srvErr <- Serve(ctx, sock, New(newEd25519Signer(t))) }()
+
+	var conn net.Conn
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c, err := net.Dial("unix", sock)
+		if err == nil {
+			conn = c
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("agent socket never became available: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// A length-prefixed frame claiming 10 bytes, only 1 of which follows
+	// before close: the server's io.ReadFull of the body reports
+	// io.ErrUnexpectedEOF, a real error rather than an ordinary disconnect.
+	_, err := conn.Write([]byte{0, 0, 0, 10, 0xff})
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	// A second, well-behaved round trip only completes once the accept
+	// loop has moved past accepting the connection above, giving its
+	// handler a head start on reading (and erroring on) the partial frame
+	// before shutdown begins.
+	confirm, err := net.Dial("unix", sock)
+	require.NoError(t, err)
+	_, err = sshagent.NewClient(confirm).List()
+	require.NoError(t, err)
+	require.NoError(t, confirm.Close())
+
+	cancel()
+	select {
+	case err := <-srvErr:
+		require.Error(t, err, "a genuine protocol error on a served connection must not vanish")
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve did not return after context cancellation")
 	}

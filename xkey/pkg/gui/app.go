@@ -715,6 +715,22 @@ func (a *App) initializeDataDir() error {
 		return ErrDataDirAlreadyInit
 	}
 
+	// Fail closed on a configured-but-locked LUKS volume: refuse to open any
+	// store rather than silently writing to the plain, unencrypted directory
+	// beneath an unmounted mount point. This is a defense-in-depth backstop
+	// behind startupReturningUser's own LUKS check (which normally keeps
+	// initializeDataDir from being called at all while locked, instead
+	// emitting EventStorageLUKSLocked for the frontend's unlock dialog) —
+	// it also covers callers added later, and the setup wizard and
+	// PostUnlockInitialize paths that call initializeDataDir directly once
+	// they believe the volume is mounted. No-LUKS configurations are
+	// unaffected: RequireUnlocked returns nil immediately.
+	if a.storageService != nil {
+		if err := a.storageService.RequireUnlocked(); err != nil {
+			return err
+		}
+	}
+
 	dir := a.dataDir
 	if dir == "" {
 		var err error
@@ -1932,6 +1948,11 @@ func NewApp(cfg *GUIConfig) *App {
 	// service.
 	authSvc.SetVerifiedPolicyHandler(a.applyVerifiedEnterprisePolicy)
 
+	// Wire the backend registry into the PKCS#11 service before restoring
+	// modules below, so slots discovered during restore are registered as
+	// backends immediately instead of only after the later wiring pass.
+	a.pkcs11Service.SetRegistry(a.backendRegistry)
+
 	// Populate backend registry from the unified config's Backends section
 	// (pre-populated by config.DefaultConfig() for a fresh config).
 	a.populateBackendRegistry()
@@ -2064,6 +2085,9 @@ func NewApp(cfg *GUIConfig) *App {
 	if apiExplorerSvc != nil {
 		apiExplorerSvc.SetAuditLogger(auditStore)
 	}
+	if a.authenticatorInstance != nil {
+		a.authenticatorInstance.SetAuditLogger(auditStore)
+	}
 
 	// SSH services are wired in initializeDataDir() (via
 	// initializeSSHServices) once the data directory and barrier decision
@@ -2080,7 +2104,6 @@ func NewApp(cfg *GUIConfig) *App {
 	adminSvc.SetPhoneStatusProvider(a.phoneService)
 	adminSvc.SetPKCS11Tester(a.pkcs11Service)
 	adminSvc.SetBackendKeyLister(a.keyService)
-	a.pkcs11Service.SetRegistry(a.backendRegistry)
 	a.pkcs11Service.SetConnectHook(func(moduleID, libraryPath string, slotID uint, userPIN, soPin, tokenLabel string) {
 		// Dynamically register the connected PKCS#11 token as an xkms backend
 		// so PIV key generation and other operations can use it.

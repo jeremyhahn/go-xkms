@@ -518,8 +518,12 @@ func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error (no real FIDO2 device present)")
 		}
-		if !strings.Contains(err.Error(), "failed to register credential") {
-			t.Errorf("error %q does not mention register credential", err.Error())
+		// The hardware CTAP2 authenticator adapter is opened lazily, after
+		// CreateUser and BeginRegistration have already succeeded against the
+		// mock client, and fails closed here because this test environment has
+		// no attached FIDO2 device.
+		if !strings.Contains(err.Error(), "failed to create FIDO2 handler") {
+			t.Errorf("error %q does not mention the authenticator step", err.Error())
 		}
 	})
 	_ = out

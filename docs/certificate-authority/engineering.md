@@ -123,8 +123,31 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
 
 - **`Init` is once.** A second `Init` returns `ErrAlreadyInitialized` rather
   than replacing the root. `Load` is the idempotent startup path.
+- **`Load` resolves every identity's key attributes through the same
+  `getCAKeyAttributes` default-filling `Init` uses**, never the bare
+  `Identity.ToKeyAttributes`. An identity's `KeyConfig` that leaves key-type
+  unset still stores and loads under the same `KeyTypeCA`-defaulted
+  attributes on every call; the two paths must never diverge (go-xkms#793).
+  See "CA reload / restart persistence" under Persistence.
+- **Only a genuine `storage.ErrNotFound` behind a certificate lookup becomes
+  `ErrCertificateNotFound`.** A `certStore.GetCertificate` failure for any
+  other reason (a corrupt or unparseable persisted certificate, a backend
+  I/O failure) is returned as a distinct error that does not satisfy
+  `errors.Is(_, ErrCertificateNotFound)`, so a caller — in particular
+  `pkg/server`'s `initializeCA` — can never mistake damaged existing state
+  for an empty store (`wrapCertLookupError`, go-xkms#793).
 - **Every operation requires `IsInitialized()`.** Issuance against an
   uninitialized CA fails closed.
+- **`getOrGenerateCAKey` (`pkg/ca/ca.go`) generates a key only when the
+  backend's `GetKey` reports it does not exist yet** —
+  `errors.Is(err, backend.ErrKeyNotFound)`, per the contract in
+  [`../crypto-backends/engineering.md`](../crypto-backends/engineering.md#error-semantics).
+  Any other `GetKey` failure (a TPM transient fault, a PKCS#11 login
+  failure, cloud KMS throttling, an I/O error against the metadata store)
+  returns `ErrKeyRetrievalFailed` and generates nothing (#801). Treating
+  "the backend could not answer" the same as "no key yet" would silently
+  replace a hardware-backed CA signing key the first time its backend had a
+  bad moment.
 - **Serial numbers are unique and never reused**, including across revocation.
 - **`Verify` returns chains, not a boolean**, so callers can inspect which path
   validated. An empty result with a nil error is not success.
@@ -213,6 +236,9 @@ The lifecycle and validation errors named in the interface contract are
 `ErrAlreadyInitialized` and `ErrInvalidConfig`; key-layer failures surface as
 the keystore errors from `pkg/xkms/errors.go`
 (see [`../key-management/engineering.md`](../key-management/engineering.md)).
+`ErrKeyRetrievalFailed` is `getOrGenerateCAKey`'s fail-closed error for a
+backend `GetKey` failure that is not a genuine not-found result (#801, see
+the invariant above).
 
 Transport mapping is in `pkg/api/rest/handlers_ca.go` /
 `handlers_ca_bundle.go` / `handlers_ca_tcg.go`, `pkg/api/grpc/service_ca_bundle.go`,
@@ -297,6 +323,39 @@ row → regenerate via `generateAndPersistCRL` when neither has a
 not-yet-stale entry. `GenerateCRL` always calls `generateAndPersistCRL`
 directly, skipping both freshness checks.
 
+### CA reload / restart persistence (go-xkms#793)
+
+`pkg/server`'s `initializeCA` calls `trustedCA.Load` on every start and falls
+through to `trustedCA.Init` only when `errors.Is(loadErr, ca.ErrCertificateNotFound)`
+— the one condition that legitimately means "this data directory has never
+held a CA": the root (or the selected intermediate's) certificate record is
+genuinely absent from `certStore`. Any other `Load` failure — a corrupt or
+unreadable persisted certificate (`wrapCertLookupError` classifies this),
+an unavailable keystore backend, a `KeyAttributes` validation defect — is
+returned to the caller as `*server.ErrCAInit{Operation: "load existing CA"}`
+and fails server startup closed. `Init` is never called over existing,
+merely-damaged state.
+
+Before this fix, `initializeCA` treated *any* `Load` error identically to
+"never initialized", and `Load` itself resolved a root or intermediate
+identity's key attributes via the bare `Identity.ToKeyAttributes` — which,
+unlike `Init`'s `getCAKeyAttributes`, never defaults `KeyType` to
+`KeyTypeCA`. An identity whose `KeyConfig` left `key-type` unset (or set it
+under the YAML field `key_type`, which the struct tag does not bind) failed
+`Load` with a `KeyAttributes.Validate` error — never a not-found — on every
+restart, and `initializeCA` silently re-ran `Init`, minting a new
+self-signed root certificate (new serial, new validity window; the key
+itself was often reused because `getOrGenerateCAKey` is get-or-generate) on
+every `xkmsd run` over the same data directory. This invalidated every
+certificate issued from the previous root and every client's pin to it.
+
+**The contract going forward:** an identity's key attributes must resolve
+identically across `Init` and `Load` (`getCAKeyAttributes`, not
+`ToKeyAttributes`, in both), and only `ErrCertificateNotFound` -- itself
+gated on the underlying cause being `storage.ErrNotFound`, not any
+`certStore.GetCertificate` failure -- authorizes `initializeCA` to
+(re-)initialize.
+
 ### Issued-key persistence (#751)
 
 `pkg/ca/ca_extensions.go`. A third sibling of `revocations/` and `crl/` in
@@ -361,10 +420,24 @@ up.
   critical-directory-name-only-SAN quirk; `tcg_iak_certstore_test.go`'s
   `enrollSoftwareDevice` fixture configures a trust anchor per test so the
   full `SignTCGCSRIDevID` path exercises the real check rather than a mock.
+  CA reload persistence (go-xkms#793): `ca_reload_793_test.go` — `Load`
+  succeeds over the same durable state `Init` wrote when the identity's
+  `KeyConfig` never set `key-type`, an uninitialized store fails `Load` with
+  `ErrCertificateNotFound`, and a corrupt persisted root certificate fails
+  `Load` with a distinct error that does not satisfy
+  `errors.Is(_, ErrCertificateNotFound)`.
 - **End to end** — `pkg/ca/issuance_e2e_test.go`,
   `pkg/api/rest/init_ceremony_e2e_test.go`.
 - **Integration** — `test/integration/certstore`, `test/integration/acme-tpm`,
-  `test/integration/cluster` (CA key custody across nodes).
+  `test/integration/cluster` (CA key custody across nodes). `pkg/server`
+  carries the `initializeCA` end of the go-xkms#793 contract over the
+  embedded qrdb storage backend: `server_ca_reload_793_test.go` —
+  `TestInitializeCA_QRDB_ReloadsPersistedCAAcrossRestarts` (a second `New()`
+  over the same data directory loads the persisted CA -- same serial, same
+  SPKI -- instead of re-initializing) and
+  `TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed` (a damaged
+  persisted certificate fails startup with `*server.ErrCAInit` instead of
+  being silently replaced).
 - **Parity** — `CommandDefinition` entries exist for `ca-bundle`,
   `ca-certificate`, `ca-crl`, `ca-issue`, `ca-revoke`, `ca-sign-csr`,
   `ca-status`, `cert-info`, `cert-list`, `tls-cert`.

@@ -774,3 +774,47 @@ func TestErrorChaining(t *testing.T) {
 		}
 	})
 }
+
+// TestUnsupportedProtocolError pins the message format and sentinel
+// matching for a client that was asked to speak a scheme it does not
+// support.
+func TestUnsupportedProtocolError(t *testing.T) {
+	err := &UnsupportedProtocolError{Detail: "gopher://"}
+
+	want := ErrUnsupportedProtocol.Error() + ": gopher://"
+	if err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, ErrUnsupportedProtocol) {
+		t.Fatal("errors.Is did not match ErrUnsupportedProtocol")
+	}
+}
+
+// TestIncompleteTLSMaterialError pins the message format and sentinel
+// matching for a client configured with only one half of a TLS keypair.
+func TestIncompleteTLSMaterialError(t *testing.T) {
+	err := &IncompleteTLSMaterialError{Missing: "TLSKeyFile"}
+
+	want := ErrIncompleteTLSMaterial.Error() + ": TLSKeyFile is required"
+	if err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, ErrIncompleteTLSMaterial) {
+		t.Fatal("errors.Is did not match ErrIncompleteTLSMaterial")
+	}
+}
+
+// TestInvalidURLError pins the message format and Unwrap contract for a
+// client URL that failed to parse.
+func TestInvalidURLError(t *testing.T) {
+	underlying := errors.New("missing scheme")
+	err := &InvalidURLError{Err: underlying}
+
+	want := "invalid URL: missing scheme"
+	if err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, underlying) {
+		t.Fatal("errors.Is did not find the wrapped error")
+	}
+}

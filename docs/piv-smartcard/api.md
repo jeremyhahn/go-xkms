@@ -1,25 +1,29 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
 
-PIV routes are registered under `/api/v1/piv` with `RouteAuthSession` — an
-authenticated identity, no specific RBAC permission.
+PIV routes are registered under `/api/v1/piv` with `RouteAuthPermission`: an
+authenticated identity that also holds the route's `piv:*` permission when RBAC
+is enabled — the pair gRPC and MCP enforce for the same operation. Reads are
+`piv:read`, certificate and key provisioning `piv:write`, deletion
+`piv:delete`, and CSR generation — a signature by a slot key that never leaves
+the card — `piv:use`. Admin and Owner hold all four by default.
 
 ## Capability matrix
 
-| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded (`PIVService.`) | Auth |
+| Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC (HTTP/3) | MCP | Embedded (`PIVService.`) | Auth / permission |
 |---|---|---|---|---|---|---|
-| List slots | `GET /api/v1/piv/slots` | `ListPIVSlots` | same as REST | `xkms.listPIVSlots` | `ListPIVSlots` | session |
-| Get certificate | `GET /api/v1/piv/slots/{slot}/certificate` | `GetPIVCertificate` | same as REST | `xkms.getPIVCertificate` | `GetPIVCertificate` | session |
-| Store certificate | `POST /api/v1/piv/slots/{slot}/certificate` | `StorePIVCertificate` | same as REST | `xkms.storePIVCertificate` | `StorePIVCertificate` | session |
-| Delete certificate | `DELETE /api/v1/piv/slots/{slot}/certificate` | `DeletePIVCertificate` | same as REST | `xkms.deletePIVCertificate` | `DeletePIVCertificate` | session |
-| Generate key | `POST /api/v1/piv/slots/{slot}/generate` | `GeneratePIVKey` | same as REST | `xkms.generatePIVKey` | `GeneratePIVKey` | session |
-| Import certificate | `POST /api/v1/piv/slots/{slot}/import` | `ImportPIVCertificate` | same as REST | `xkms.importPIVCertificate` | `ImportPIVCertificate` | session |
-| Export certificate | `GET /api/v1/piv/slots/{slot}/export` | `ExportPIVCertificate` | same as REST | `xkms.exportPIVCertificate` | `ExportPIVCertificate` | session |
-| Generate CSR | `POST /api/v1/piv/slots/{slot}/csr` | `GeneratePIVCSR` | same as REST | `xkms.generatePIVCSR` | `GeneratePIVCSR` | session |
+| List slots | `GET /api/v1/piv/slots` | `ListPIVSlots` | same as REST | `xkms.listPIVSlots` | `ListPIVSlots` | `piv:read` |
+| Get certificate | `GET /api/v1/piv/slots/{slot}/certificate` | `GetPIVCertificate` | same as REST | `xkms.getPIVCertificate` | `GetPIVCertificate` | `piv:read` |
+| Store certificate | `POST /api/v1/piv/slots/{slot}/certificate` | `StorePIVCertificate` | same as REST | `xkms.storePIVCertificate` | `StorePIVCertificate` | `piv:write` |
+| Delete certificate | `DELETE /api/v1/piv/slots/{slot}/certificate` | `DeletePIVCertificate` | same as REST | `xkms.deletePIVCertificate` | `DeletePIVCertificate` | `piv:delete` |
+| Generate key | `POST /api/v1/piv/slots/{slot}/generate` | `GeneratePIVKey` | same as REST | `xkms.generatePIVKey` | `GeneratePIVKey` | `piv:write` |
+| Import certificate | `POST /api/v1/piv/slots/{slot}/import` | `ImportPIVCertificate` | same as REST | `xkms.importPIVCertificate` | `ImportPIVCertificate` | `piv:write` |
+| Export certificate | `GET /api/v1/piv/slots/{slot}/export` | `ExportPIVCertificate` | same as REST | `xkms.exportPIVCertificate` | `ExportPIVCertificate` | `piv:read` |
+| Generate CSR | `POST /api/v1/piv/slots/{slot}/csr` | `GeneratePIVCSR` | same as REST | `xkms.generatePIVCSR` | `GeneratePIVCSR` | `piv:use` |
 | Import **private key** | — | — | — | — | — (SDK only: `xkms.ImportPIVKey`) | session |
 | **Verify** an attestation | — | — | — | — | — (SDK only: `xkms.VerifyPIVAttestation` / `ParsePIVAttestation`) | n/a |
 | PIV login | `POST /api/v1/auth/login/piv` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | **public** |
@@ -124,6 +128,7 @@ types share no index.
 | Condition | REST | gRPC / Unix | MCP |
 |---|---|---|---|
 | success | 200 | `OK` | `result` |
+| caller lacks the route's `piv:*` permission | 403 | `PermissionDenied` | error object |
 | invalid slot identifier | 400 | `InvalidArgument` | JSON-RPC `-32602` |
 | slot empty | 404 | `NotFound` | error object |
 | slot occupied on generate | 409 | `AlreadyExists` | error object |

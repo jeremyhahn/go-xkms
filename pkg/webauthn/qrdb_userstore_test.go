@@ -76,12 +76,12 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 		}
 	}
 	u := &qrdbtransport.User{
-		ID:       f.nextID,
-		Username: req.Username,
-		Email:    email,
-		Name:     req.Name,
-		TenantID: req.TenantID,
-		Enabled:  true,
+		ID:        f.nextID,
+		Username:  req.Username,
+		Email:     email,
+		Name:      req.Name,
+		TenantID:  req.TenantID,
+		Lifecycle: string(qrdbsdk.LifecycleActive),
 	}
 	f.nextID++
 	f.byID[u.ID] = u

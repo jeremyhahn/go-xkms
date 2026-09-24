@@ -81,17 +81,6 @@ var (
 	// way to collect that quorum, so it is refused rather than left to hang
 	// waiting for shares that will never arrive.
 	ErrServeShamirStrategyUnavailable = errors.New("extension serve: shamir barrier strategy needs an operator quorum a headless process cannot collect; unseal interactively with 'xkey barrier unseal'")
-
-	// ErrServeCloudKMSStrategyUnavailable indicates the barrier's root key
-	// was sealed with a cloud KMS strategy (AWS KMS, GCP KMS, Azure Key
-	// Vault, or Vault). Unlike the TPM2 and passphrase strategies, no xkey
-	// entry point -- headless or interactive -- can currently assemble a
-	// cloud KMS sealing strategy: BarrierService has no backend wiring, key
-	// configuration, or credential resolution for any cloud provider. Adding
-	// that is a scoped design decision (new config surface plus backend
-	// wiring), not a headless-mode gap, so it is refused here rather than
-	// papered over with an incomplete client construction.
-	ErrServeCloudKMSStrategyUnavailable = errors.New("extension serve: cloud KMS barrier strategies are not yet supported by xkey")
 )
 
 // extensionServeCmd starts the headless autofill IPC server.
@@ -201,8 +190,9 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	noBarrier, _ := cmd.Flags().GetBool("no-barrier")
 
-	// Track TPM closer for deferred cleanup.
+	// Track TPM and cloud KMS backend closers for deferred cleanup.
 	var tpmCloser io.Closer
+	var cloudKMSCloser io.Closer
 
 	// 5. Initialize stores: barrier-encrypted or plain.
 	if noBarrier {
@@ -289,7 +279,26 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				return ErrServeShamirStrategyUnavailable
 
 			case xkms.StrategyAWSKMS, xkms.StrategyGCPKMS, xkms.StrategyAzureKV, xkms.StrategyVault:
-				return ErrServeCloudKMSStrategyUnavailable
+				// Cloud KMS strategies need no password and no per-request
+				// secret: the backend (built from the xkey config persisted
+				// by `xkey barrier init`) is the same one that sealed the
+				// root key, and BuildCloudKMSStrategy resolves its wrapping
+				// key deterministically by CN (go-xkms#757). Build it once
+				// and inject it so assembleStrategy does not need its own
+				// cloud backend wiring, mirroring how the tpm2 case above
+				// injects a sealer via SetTPMSealerFunc.
+				cloudStrategy, cloudCloser, buildErr := buildCloudKMSBarrierStrategy(context.Background(), strategy, dataDir)
+				if buildErr != nil {
+					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: buildErr}
+				}
+				cloudKMSCloser = cloudCloser
+				barrierSvc.SetCloudKMSStrategyFunc(func(_ string) (xkms.SealingStrategy, error) {
+					return cloudStrategy, nil
+				})
+
+				if err := barrierSvc.Unseal("", string(strategy)); err != nil {
+					return &SentinelCauseError{Sentinel: ErrServeBarrierUnsealFailed, Cause: err}
+				}
 
 			default:
 				return &DetailError{Err: ErrServeStrategyUnsupported, Detail: fmt.Sprintf(": %s", strategy)}
@@ -299,9 +308,12 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		logger.Info("barrier unsealed successfully")
 	}
 
-	// Ensure TPM resources are released on exit.
+	// Ensure TPM and cloud KMS backend resources are released on exit.
 	if tpmCloser != nil {
 		defer func() { _ = tpmCloser.Close() }()
+	}
+	if cloudKMSCloser != nil {
+		defer func() { _ = cloudKMSCloser.Close() }()
 	}
 
 	// 6. Initialize PIN manager.

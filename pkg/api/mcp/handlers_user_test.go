@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -172,7 +173,7 @@ func TestHandleCreateUser(t *testing.T) {
 			createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 				assert.Equal(t, "alice", req.Username)
 				assert.Equal(t, "alice@example.com", req.Email)
-				return &qrdbtransport.User{ID: 1, Username: "alice", Email: "alice@example.com", Enabled: true}, nil
+				return &qrdbtransport.User{ID: 1, Username: "alice", Email: "alice@example.com", Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 			},
 		}
 		server := newUserTestServer(t, users)
@@ -211,8 +212,8 @@ func TestHandleListUsers(t *testing.T) {
 		users := &mcpMockUserClient{
 			listUsers: func(_ context.Context, _ *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
 				return &qrdbtransport.ListUsersResponse{Users: []*qrdbtransport.User{
-					{ID: 1, Username: "alice", Enabled: true},
-					{ID: 2, Username: "bob", Enabled: false},
+					{ID: 1, Username: "alice", Lifecycle: string(qrdbsdk.LifecycleActive)},
+					{ID: 2, Username: "bob", Lifecycle: string(qrdbsdk.LifecycleDisabled)},
 				}}, nil
 			},
 		}
@@ -247,7 +248,7 @@ func TestHandleGetUser(t *testing.T) {
 		users := &mcpMockUserClient{
 			getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
 				assert.Equal(t, "alice", username)
-				return &qrdbtransport.User{ID: 1, Username: "alice", Enabled: true}, nil
+				return &qrdbtransport.User{ID: 1, Username: "alice", Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 			},
 		}
 		server := newUserTestServer(t, users)
@@ -319,7 +320,7 @@ func TestHandleEnableUser(t *testing.T) {
 		enabled := false
 		users := &mcpMockUserClient{
 			getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
-				return &qrdbtransport.User{ID: 1, Username: username, Enabled: enabled}, nil
+				return &qrdbtransport.User{ID: 1, Username: username, Lifecycle: lifecycleOf(enabled)}, nil
 			},
 			enableUser: func(_ context.Context, id uint64) error {
 				enabled = true
@@ -357,7 +358,7 @@ func TestHandleDisableUser(t *testing.T) {
 		enabled := true
 		users := &mcpMockUserClient{
 			getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
-				return &qrdbtransport.User{ID: 1, Username: username, Enabled: enabled}, nil
+				return &qrdbtransport.User{ID: 1, Username: username, Lifecycle: lifecycleOf(enabled)}, nil
 			},
 			disableUser: func(_ context.Context, id uint64) error {
 				enabled = false
@@ -466,7 +467,7 @@ func TestHandleListUserCredentials(t *testing.T) {
 func TestInvokeMethod_UserCreate_RealDispatchCore(t *testing.T) {
 	users := &mcpMockUserClient{
 		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
-			return &qrdbtransport.User{ID: 1, Username: req.Username, Email: req.Email, Enabled: true}, nil
+			return &qrdbtransport.User{ID: 1, Username: req.Username, Email: req.Email, Lifecycle: string(qrdbsdk.LifecycleActive)}, nil
 		},
 	}
 	server := newUserTestServer(t, users)
@@ -489,4 +490,13 @@ func TestInvokeMethod_UnknownUserMethod(t *testing.T) {
 	require.Error(t, err)
 	var unknown *UnknownMethodError
 	require.ErrorAs(t, err, &unknown)
+}
+
+// lifecycleOf maps a test's enabled flag to qrdb's account lifecycle, the only
+// account state since qrdb v0.20.
+func lifecycleOf(enabled bool) string {
+	if enabled {
+		return string(qrdbsdk.LifecycleActive)
+	}
+	return string(qrdbsdk.LifecycleDisabled)
 }

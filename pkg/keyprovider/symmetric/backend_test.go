@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
@@ -383,11 +384,11 @@ func TestSymmetricEncrypter_CustomNonce(t *testing.T) {
 	plaintext := []byte("Test message")
 
 	// Encrypt with custom nonce
-	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+	encrypted, ok := requireEncrypt(t, encrypter, plaintext, &types.EncryptOptions{
 		Nonce: customNonce,
 	})
-	if err != nil {
-		t.Fatalf("Encrypt() with custom nonce failed: %v", err)
+	if !ok {
+		return
 	}
 
 	// Verify nonce matches
@@ -1774,6 +1775,14 @@ func TestEncrypt_InvalidNonceSize(t *testing.T) {
 		t.Fatalf("SymmetricEncrypter() failed: %v", err)
 	}
 
+	// Under GODEBUG=fips140=only, any caller-supplied nonce is refused before
+	// this package's own nonce-length validation runs -- see requireEncrypt's
+	// doc comment on the arbitrary-IV GCM restriction.
+	wantErr := "invalid nonce size"
+	if fips140.Enforced() {
+		wantErr = "caller-supplied nonce"
+	}
+
 	// Test with nonce too short
 	shortNonce := make([]byte, 8)
 	_, err = encrypter.Encrypt([]byte("test"), &types.EncryptOptions{
@@ -1782,8 +1791,8 @@ func TestEncrypt_InvalidNonceSize(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for short nonce")
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("invalid nonce size")) {
-		t.Errorf("Expected 'invalid nonce size' error, got: %v", err)
+	if !bytes.Contains([]byte(err.Error()), []byte(wantErr)) {
+		t.Errorf("Expected %q error, got: %v", wantErr, err)
 	}
 
 	// Test with nonce too long
@@ -1794,8 +1803,8 @@ func TestEncrypt_InvalidNonceSize(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for long nonce")
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("invalid nonce size")) {
-		t.Errorf("Expected 'invalid nonce size' error, got: %v", err)
+	if !bytes.Contains([]byte(err.Error()), []byte(wantErr)) {
+		t.Errorf("Expected %q error, got: %v", wantErr, err)
 	}
 }
 
@@ -2757,9 +2766,9 @@ func TestSymmetricEncrypter_ChaCha20Poly1305(t *testing.T) {
 
 			// Encrypt
 			plaintext := []byte(tt.plaintext)
-			encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{})
-			if err != nil {
-				t.Fatalf("Encrypt() failed: %v", err)
+			encrypted, ok := requireEncrypt(t, encrypter, plaintext, &types.EncryptOptions{})
+			if !ok {
+				return
 			}
 
 			if encrypted == nil {
@@ -2830,9 +2839,9 @@ func TestSymmetricEncrypter_ChaCha20_TamperingDetection(t *testing.T) {
 	}
 
 	plaintext := []byte("secret message")
-	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{})
-	if err != nil {
-		t.Fatalf("Encrypt() failed: %v", err)
+	encrypted, ok := requireEncrypt(t, encrypter, plaintext, &types.EncryptOptions{})
+	if !ok {
+		return
 	}
 
 	// Tamper with ciphertext
@@ -2884,11 +2893,11 @@ func TestSymmetricEncrypter_ChaCha20_WithAdditionalData(t *testing.T) {
 	additionalData := []byte("additional context")
 
 	// Encrypt with additional data
-	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+	encrypted, ok := requireEncrypt(t, encrypter, plaintext, &types.EncryptOptions{
 		AdditionalData: additionalData,
 	})
-	if err != nil {
-		t.Fatalf("Encrypt() failed: %v", err)
+	if !ok {
+		return
 	}
 
 	// Decrypt with same additional data
@@ -2947,6 +2956,13 @@ func TestXChaCha20Poly1305_InvalidNonceSize(t *testing.T) {
 	_, err = encrypter.Encrypt([]byte("test"), opts)
 	if err == nil {
 		t.Fatal("Expected error with invalid nonce size")
+	}
+	// Under GODEBUG=fips140=only, XChaCha20-Poly1305 itself is refused
+	// (golang.org/x/crypto/chacha20poly1305 is outside the Go Cryptographic
+	// Module boundary -- see requireEncrypt's doc comment) before this
+	// package's own nonce-size check ever runs.
+	if fips140.Enforced() {
+		return
 	}
 	if !strings.Contains(err.Error(), "invalid nonce size") {
 		t.Errorf("Expected 'invalid nonce size' in error, got: %v", err)
@@ -3077,9 +3093,9 @@ func TestEncrypt_ChaCha20_ErrorPaths(t *testing.T) {
 
 	// Test encryption and decryption work normally
 	plaintext := []byte("test data for chacha20")
-	encrypted, err := encrypter.Encrypt(plaintext, nil)
-	if err != nil {
-		t.Fatalf("Encrypt failed: %v", err)
+	encrypted, ok := requireEncrypt(t, encrypter, plaintext, nil)
+	if !ok {
+		return
 	}
 
 	decrypted, err := encrypter.Decrypt(encrypted, nil)
@@ -3228,6 +3244,15 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 
 			wrapped, err := symmetricBackend.WrapKey(context.Background(), keyMaterial, params)
 			if err != nil {
+				// RSAES_OAEP_SHA_1 and RSA_AES_KEY_WRAP_SHA_1 use SHA-1 as
+				// the RSA-OAEP hash (RFC 8017 -- their names say so), which
+				// crypto/rsa refuses under GODEBUG=fips140=only. Both are
+				// deliberately retained for legacy PKCS#11 wrap interop; see
+				// docs/fips/README.md.
+				if fips140.Enforced() &&
+					(alg == backend.WrappingAlgorithmRSAES_OAEP_SHA_1 || alg == backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1) {
+					return
+				}
 				t.Fatalf("Failed to wrap key: %v", err)
 			}
 
@@ -3299,9 +3324,9 @@ func TestEncryptDecrypt_AllCipherModes(t *testing.T) {
 				plaintext := make([]byte, size)
 				_, _ = rand.Read(plaintext)
 
-				encrypted, err := encrypter.Encrypt(plaintext, nil)
-				if err != nil {
-					t.Fatalf("Encrypt failed for size %d: %v", size, err)
+				encrypted, ok := requireEncrypt(t, encrypter, plaintext, nil)
+				if !ok {
+					return
 				}
 
 				decrypted, err := encrypter.Decrypt(encrypted, nil)
@@ -3774,9 +3799,9 @@ func TestDecrypt_ChaCha20CipherError(t *testing.T) {
 
 	// Normal encryption
 	plaintext := []byte("test data")
-	encrypted, err := encrypter.Encrypt(plaintext, nil)
-	if err != nil {
-		t.Fatalf("Encrypt failed: %v", err)
+	encrypted, ok := requireEncrypt(t, encrypter, plaintext, nil)
+	if !ok {
+		return
 	}
 
 	// Normal decryption should work
@@ -3901,9 +3926,9 @@ func TestEncrypt_ChaCha20CipherError(t *testing.T) {
 
 	// Normal encryption should work
 	plaintext := []byte("test data for xchacha20")
-	encrypted, err := encrypter.Encrypt(plaintext, nil)
-	if err != nil {
-		t.Fatalf("Encrypt failed: %v", err)
+	encrypted, ok := requireEncrypt(t, encrypter, plaintext, nil)
+	if !ok {
+		return
 	}
 
 	if encrypted == nil || encrypted.Ciphertext == nil {
@@ -4109,9 +4134,8 @@ func TestEncrypt_NonceReuse(t *testing.T) {
 	plaintext := []byte("test")
 
 	// First encryption with this nonce
-	_, err = encrypter.Encrypt(plaintext, &types.EncryptOptions{Nonce: nonce})
-	if err != nil {
-		t.Fatalf("First encrypt failed: %v", err)
+	if _, ok := requireEncrypt(t, encrypter, plaintext, &types.EncryptOptions{Nonce: nonce}); !ok {
+		return
 	}
 
 	// Second encryption with same nonce should fail
@@ -4445,9 +4469,9 @@ func TestDecrypt_AllAlgorithms(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			plaintext := []byte(fmt.Sprintf("test message %d for %s", i, test.alg))
 
-			encrypted, err := encrypter.Encrypt(plaintext, nil)
-			if err != nil {
-				t.Fatalf("%s round %d: Encrypt failed: %v", test.alg, i, err)
+			encrypted, ok := requireEncrypt(t, encrypter, plaintext, nil)
+			if !ok {
+				return
 			}
 
 			decrypted, err := encrypter.Decrypt(encrypted, nil)

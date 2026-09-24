@@ -48,8 +48,8 @@ func TestWSHandler_BridgeEchoAndResize(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http")
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("ws dial: %v", err)
+	if !requireWSUpgrade(t, err) {
+		return
 	}
 	defer conn.Close()
 

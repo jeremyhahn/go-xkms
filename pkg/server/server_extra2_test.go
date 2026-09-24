@@ -681,16 +681,28 @@ func TestInitializeBarrierRegistry_NilBarrier(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — initializePlatformStore (with / without barrier)
+// Tests — initializePlatformStore no longer depends on s.barrier (go-xkms#718)
 // ============================================================================
 
-func TestInitializePlatformStore_NilBarrier(t *testing.T) {
+// TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier is the
+// regression test for go-xkms#718: initializePlatformStore used to gate on
+// s.barrier being non-nil (and never assigned s.platformStore even then).
+// The platform store now seals independently of s.barrier -- it is
+// s.config.Credentials.SealStrategy that decides whether it is built at
+// all. A default/manual strategy still skips it (nothing to store), with or
+// without a barrier.
+func TestInitializePlatformStore_ManualStrategySkipsRegardlessOfBarrier(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	s.barrier = nil
 	err := s.initializePlatformStore()
 	require.NoError(t, err)
 	assert.Nil(t, s.platformStore)
 }
+
+// TestInitializePlatformStore_BuildsWithoutBarrier (a non-skip strategy
+// building a working platform store with s.barrier nil) lives in
+// platform_store_simulator_test.go: it needs the tpm2 Platform SRK
+// enrollment harness, which needs the tpm_simulator build tag.
 
 // ============================================================================
 // Tests — initializePolicyManager (always logs + returns nil)
@@ -2910,12 +2922,19 @@ func TestBuildHardwareSealStrategies_DuplicateHardwareSkipped(t *testing.T) {
 // ============================================================================
 
 // awsKMSProvider implements SymmetricKeyProvider + sealMetadataSaver so the
-// AWS KMS metadata-seeding branch in ensureSealKey is exercised.
+// AWS KMS metadata-seeding branch in ensureSealKey is exercised. It also
+// implements OperatorSealKeyID (go-xkms#839) so tests can simulate an
+// operator-configured CMK (awskms.Config.KeyID); when operatorKeyID is "",
+// no metadata is pre-seeded and generateCalled/getKeyErr drive the natural
+// GetSymmetricKey/GenerateSymmetricKey check-and-skip instead.
 type awsKMSProvider struct {
 	nonSealerProvider
-	saveErr    error
-	saveCalled bool
-	getKeyErr  error
+	saveErr        error
+	saveCalled     bool
+	savedData      []byte
+	getKeyErr      error
+	generateCalled bool
+	operatorKeyID  string
 }
 
 func (p *awsKMSProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttributes) (types.SymmetricKey, error) {
@@ -2926,6 +2945,7 @@ func (p *awsKMSProvider) GetSymmetricKey(_ context.Context, _ *types.KeyAttribut
 }
 
 func (p *awsKMSProvider) GenerateSymmetricKey(_ context.Context, _ *types.KeyAttributes) (types.SymmetricKey, error) {
+	p.generateCalled = true
 	return nil, nil
 }
 
@@ -2933,34 +2953,61 @@ func (p *awsKMSProvider) SymmetricEncrypter(_ context.Context, _ *types.KeyAttri
 	return nil, nil
 }
 
-func (p *awsKMSProvider) Save(_ *types.KeyAttributes, _ []byte, _ types.FSExtension, _ bool) error {
+func (p *awsKMSProvider) Save(_ *types.KeyAttributes, data []byte, _ types.FSExtension, _ bool) error {
 	p.saveCalled = true
+	p.savedData = data
 	return p.saveErr
+}
+
+func (p *awsKMSProvider) OperatorSealKeyID() string {
+	return p.operatorKeyID
 }
 
 var _ types.SymmetricKeyProvider = (*awsKMSProvider)(nil)
 
-// TestEnsureSealKey_AWSKMSMetadataSaved verifies that when the strategy is
-// StrategyAWSKMS and the provider implements sealMetadataSaver, Save is called
-// to seed the in-process metadata store.
-func TestEnsureSealKey_AWSKMSMetadataSaved(t *testing.T) {
+// TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaved verifies that when the
+// strategy is StrategyAWSKMS and the provider reports an operator-configured
+// CMK (OperatorSealKeyID), Save is called to seed the in-process metadata
+// store with that real key identifier.
+func TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaved(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	prov := &awsKMSProvider{operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/operator-cmk"}
+	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
+	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
+	require.NoError(t, err)
+	assert.True(t, prov.saveCalled, "Save should have been called to seed the operator-configured CMK")
+	assert.Contains(t, string(prov.savedData), prov.operatorKeyID)
+	assert.NotContains(t, string(prov.savedData), keyAttrs.CN,
+		"the seal key's CN must never be persisted as a KMS key identifier")
+}
+
+// TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaveError verifies that when
+// Save returns an error while seeding an operator-configured CMK,
+// ensureSealKey propagates it.
+func TestEnsureSealKey_AWSKMSOperatorKeyMetadataSaveError(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{})
+	prov := &awsKMSProvider{
+		operatorKeyID: "arn:aws:kms:us-east-1:123456789012:key/operator-cmk",
+		saveErr:       errors.New("save failed"),
+	}
+	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
+	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "save failed")
+}
+
+// TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne verifies that without an
+// operator-configured CMK, ensureSealKey seeds no metadata (go-xkms#839: the
+// previous behavior seeded the seal key's CN itself, which skipped real key
+// creation) and instead lets GenerateSymmetricKey run.
+func TestEnsureSealKey_AWSKMSNoOperatorKeyCreatesOne(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{})
 	prov := &awsKMSProvider{}
 	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
 	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
 	require.NoError(t, err)
-	assert.True(t, prov.saveCalled, "Save should have been called for AWS KMS metadata seeding")
-}
-
-// TestEnsureSealKey_AWSKMSMetadataSaveError verifies that when Save returns an
-// error, ensureSealKey propagates it.
-func TestEnsureSealKey_AWSKMSMetadataSaveError(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	prov := &awsKMSProvider{saveErr: errors.New("save failed")}
-	keyAttrs := sealKeyAttributesFor(types.StoreAWSKMS)
-	err := s.ensureSealKey(seal.StrategyAWSKMS, prov, keyAttrs)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "save failed")
+	assert.False(t, prov.saveCalled, "no metadata should be pre-seeded without an operator-configured key")
+	assert.True(t, prov.generateCalled, "GenerateSymmetricKey must run to create the seal key")
 }
 
 // ============================================================================

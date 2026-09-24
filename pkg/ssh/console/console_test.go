@@ -171,8 +171,8 @@ func TestConsole_DialEchoResizeClose(t *testing.T) {
 		HostKeyScope: scope.User,
 		HostKeyOwner: "tester",
 	}, Config{Term: "xterm-256color", Rows: 30, Cols: 100})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
+	if !requireHandshake(t, err) {
+		return
 	}
 	defer c.Close()
 

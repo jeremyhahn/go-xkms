@@ -1674,53 +1674,6 @@ func TestReadSharesFile_Stdin(t *testing.T) {
 }
 
 // =============================================================================
-// user.go — decodeWebAuthnUserID (0%)
-// =============================================================================
-
-// TestDecodeWebAuthnUserID exercises all three switch cases: string (base64url),
-// []byte pass-through, nil, and an unknown type.
-func TestDecodeWebAuthnUserID(t *testing.T) {
-	t.Run("string base64url", func(t *testing.T) {
-		// "aGVsbG8=" is base64url for "hello"
-		got, err := decodeWebAuthnUserID("aGVsbG8")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if string(got) != "hello" {
-			t.Errorf("got %q, want hello", got)
-		}
-	})
-	t.Run("bytes pass-through", func(t *testing.T) {
-		in := []byte{0x01, 0x02}
-		got, err := decodeWebAuthnUserID(in)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if string(got) != string(in) {
-			t.Error("bytes not passed through unchanged")
-		}
-	})
-	t.Run("nil", func(t *testing.T) {
-		got, err := decodeWebAuthnUserID(nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != nil {
-			t.Errorf("expected nil, got %v", got)
-		}
-	})
-	t.Run("unknown type returns error", func(t *testing.T) {
-		_, err := decodeWebAuthnUserID(42)
-		if err == nil {
-			t.Fatal("expected error for unknown type")
-		}
-		if !strings.Contains(err.Error(), "int") {
-			t.Errorf("error %q does not mention type", err.Error())
-		}
-	})
-}
-
-// =============================================================================
 // admin.go — enrollMTLSAdmin additional paths (40%)
 // =============================================================================
 
