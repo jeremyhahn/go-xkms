@@ -51,31 +51,8 @@ import (
 // password.setAccessMode / xkms.getBackend) is proof this list shrinks over
 // time rather than growing to hide new mismatches.
 var knownServerGaps = map[string]string{
-	"xkms.setSOPIN":                 "docs/pin-management/api.md",
-	"xkms.changeSOPIN":              "docs/pin-management/api.md",
-	"xkms.verifySOPIN":              "docs/pin-management/api.md",
-	"xkms.setUserPIN":               "docs/pin-management/api.md",
-	"xkms.changeUserPIN":            "docs/pin-management/api.md",
-	"xkms.verifyUserPIN":            "docs/pin-management/api.md",
-	"xkms.getLockoutStatus":         "docs/pin-management/api.md",
-	"xkms.resetLockout":             "docs/pin-management/api.md",
-	"xkms.createCustodianGroup":     "docs/share-custody/api.md",
-	"xkms.listCustodianGroups":      "docs/share-custody/api.md",
-	"xkms.getCustodianGroup":        "docs/share-custody/api.md",
-	"xkms.deleteCustodianGroup":     "docs/share-custody/api.md",
-	"xkms.addCustodianMember":       "docs/share-custody/api.md",
-	"xkms.removeCustodianMember":    "docs/share-custody/api.md",
-	"xkms.distributeShares":         "docs/share-custody/api.md",
-	"xkms.createTenant":             "docs/multi-tenancy/api.md",
-	"xkms.getTenant":                "docs/multi-tenancy/api.md",
-	"xkms.deleteTenant":             "docs/multi-tenancy/api.md",
-	"xkms.tenantBarrierStatus":      "docs/multi-tenancy/api.md",
-	"xkms.tenantBarrierInit":        "docs/multi-tenancy/api.md",
-	"xkms.updateTenantEntitlements": "docs/multi-tenancy/api.md",
-	"xkms.updateTenantQuotas":       "docs/multi-tenancy/api.md",
-	"xkms.deriveKey":                "docs/key-management/api.md",
-	"xkms.getUser":                  "go-xkms#758 (user.* family, not yet merged)",
-	"xkms.listUsers":                "go-xkms#758 (user.* family, not yet merged)",
+	"xkms.getUser":   "go-xkms#758 (user.* family, not yet merged)",
+	"xkms.listUsers": "go-xkms#758 (user.* family, not yet merged)",
 }
 
 // literalMethodNames parses filename (a source file in this package) and
