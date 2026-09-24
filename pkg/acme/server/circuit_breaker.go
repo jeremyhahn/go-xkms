@@ -16,6 +16,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -515,5 +516,7 @@ func writeCircuitBreakerError(w http.ResponseWriter, cb *CircuitBreaker) {
 
 	// Simple JSON response
 	response := `{"error":"service_unavailable","message":"Service temporarily unavailable. Circuit breaker is open.","retry_after":` + formatInt(retryAfterSeconds) + `}`
-	_, _ = w.Write([]byte(response))
+	if _, err := w.Write([]byte(response)); err != nil {
+		slog.Error("failed to write circuit breaker error response", slog.String("error", err.Error()))
+	}
 }

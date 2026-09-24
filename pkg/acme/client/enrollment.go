@@ -382,7 +382,9 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 		// Return base64url-encoded CSR
 		encodedCSR := base64.RawURLEncoding.EncodeToString(idevidCSR.CSR)
 		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte(encodedCSR))
+		if _, err := w.Write([]byte(encodedCSR)); err != nil {
+			c.logger.Error("failed to write enroll-01 challenge response", "error", err)
+		}
 	})
 
 	// Activation endpoint - handles credential activation
@@ -433,7 +435,9 @@ func (c *Client) startEnrollServer(config *EnrollmentConfig, idevidCSR *IDevIDCS
 
 		// Return the decrypted secret
 		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(secret)
+		if _, err := w.Write(secret); err != nil {
+			c.logger.Error("failed to write enroll-01 activation response", "error", err)
+		}
 	})
 
 	addr := config.listenAddr()
@@ -667,7 +671,9 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jsonData)
+		if _, err := w.Write(jsonData); err != nil {
+			c.logger.Error("failed to write endorse-01 challenge response", "error", err)
+		}
 	})
 
 	// Activation endpoint - handles credential activation
@@ -718,7 +724,9 @@ func (c *Client) startEndorseServer(config *EnrollmentConfig, req ekRequest, tok
 
 		// Return the decrypted secret
 		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(secret)
+		if _, err := w.Write(secret); err != nil {
+			c.logger.Error("failed to write endorse-01 activation response", "error", err)
+		}
 	})
 
 	addr := config.listenAddr()
@@ -956,7 +964,9 @@ func (c *Client) startAttestServer(config *EnrollmentConfig, attestStmt []byte, 
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jsonData)
+		if _, err := w.Write(jsonData); err != nil {
+			c.logger.Error("failed to write device-attest-01 challenge response", "error", err)
+		}
 	})
 
 	addr := config.listenAddr()

@@ -645,7 +645,9 @@ func (s *MultiProtocolServer) buildRouter() {
 	// Health check endpoint (no auth required)
 	s.router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+		if _, err := w.Write([]byte(`{"status":"healthy"}`)); err != nil {
+			s.logger.Error("failed to write health check response", slog.String("error", err.Error()))
+		}
 	}).Methods("GET")
 
 	// MCP endpoint for JSON-RPC over HTTP. It carries the same authentication
@@ -867,8 +869,9 @@ func (s *MultiProtocolServer) startGRPC(_ context.Context) error {
 
 		// Set socket file permissions
 		if err := os.Chmod(s.config.GRPCUnixPath, s.config.GRPCUnixMode); err != nil {
-			_ = unixListener.Close()
-			return caerrors.StorageFailureError("failed to set gRPC Unix socket permissions: %v", err)
+			return errors.Join(
+				caerrors.StorageFailureError("failed to set gRPC Unix socket permissions: %v", err),
+				unixListener.Close())
 		}
 
 		s.mu.Lock()
@@ -909,8 +912,9 @@ func (s *MultiProtocolServer) startHTTPUnix(_ context.Context) error {
 
 	// Set socket file permissions
 	if err := os.Chmod(s.config.HTTPUnixPath, s.config.HTTPUnixMode); err != nil {
-		_ = listener.Close()
-		return caerrors.StorageFailureError("failed to set HTTP Unix socket permissions: %v", err)
+		return errors.Join(
+			caerrors.StorageFailureError("failed to set HTTP Unix socket permissions: %v", err),
+			listener.Close())
 	}
 
 	s.mu.Lock()
@@ -1142,7 +1146,11 @@ func (s *MultiProtocolServer) writeMCPResponse(w http.ResponseWriter, id interfa
 		ID:      id,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Headers are already written; there is no way to report this to
+		// the client, so it's only logged.
+		s.logger.Error("failed to write MCP response", slog.String("error", err.Error()))
+	}
 }
 
 // writeMCPError writes an MCP error response.
@@ -1157,7 +1165,9 @@ func (s *MultiProtocolServer) writeMCPError(w http.ResponseWriter, id interface{
 		ID: id,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Error("failed to write MCP error response", slog.String("error", err.Error()))
+	}
 }
 
 // Running returns true if the server is running.

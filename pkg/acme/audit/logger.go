@@ -16,6 +16,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -146,7 +147,9 @@ func NewFileAuditLogger(config *Config) (AuditLogger, error) {
 	if err != nil {
 		return nil, caerrors.StorageFailureError("failed to create audit log file: %v", err)
 	}
-	_ = f.Close()
+	if err := f.Close(); err != nil {
+		return nil, caerrors.StorageFailureError("failed to close audit log file after creation: %v", err)
+	}
 
 	// Configure lumberjack for log rotation
 	writer := &lumberjack.Logger{
@@ -276,19 +279,32 @@ func (l *FileAuditLogger) Flush() error {
 }
 
 // syncWriterLocked syncs the writer to disk (caller must hold mutex)
-func (l *FileAuditLogger) syncWriterLocked() error {
+func (l *FileAuditLogger) syncWriterLocked() (err error) {
 	// Try to open the file directly and sync it to ensure OS buffers are flushed
 	// This addresses potential race conditions in tests where file reads happen
 	// immediately after flush
-	if l.logPath != "" {
-		f, err := os.OpenFile(l.logPath, os.O_RDWR, 0600)
-		if err == nil {
-			defer func() { _ = f.Close() }()
-			_ = f.Sync()
-		}
+	if l.logPath == "" {
+		return nil
 	}
 
-	return nil
+	f, openErr := os.OpenFile(l.logPath, os.O_RDWR, 0600)
+	if openErr != nil {
+		// The audit log file is expected to exist (NewFileAuditLogger
+		// creates it); failing to reopen it for the sync is a real,
+		// actionable failure, not a degraded mode to fall silent on.
+		return caerrors.StorageFailureError("failed to reopen audit log file for sync: %v", openErr)
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, caerrors.StorageFailureError("failed to close audit log file after sync: %v", closeErr))
+		}
+	}()
+
+	if syncErr := f.Sync(); syncErr != nil {
+		err = caerrors.StorageFailureError("failed to sync audit log file: %v", syncErr)
+	}
+
+	return err
 }
 
 // drainBufferSync drains the buffer synchronously (used as fallback)
