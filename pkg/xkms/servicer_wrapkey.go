@@ -266,6 +266,19 @@ const (
 	aesGCMTagSize   = 16
 )
 
+// aesGCMWrapModeExplicit and aesGCMWrapModeRandom are the one-byte prefix
+// wrapAESGCM/unwrapAESGCM add ahead of the nonce, mirroring
+// types.GCMNonceMode: explicit for a caller- or RNG-supplied nonce Seal took
+// as a parameter, random when GODEBUG=fips140=only forced the wrap through
+// cipher.NewGCMWithRandomNonce (see docs/fips/README.md "AEAD construction").
+// unwrapAESGCM cannot otherwise tell which construction to rebuild -- the
+// process unwrapping a blob is not necessarily the one that wrapped it, so
+// its own current FIPS posture says nothing about how the blob was made.
+const (
+	aesGCMWrapModeExplicit byte = 0x00
+	aesGCMWrapModeRandom   byte = 0x01
+)
+
 // unwrapOperationNames gives the ErrKeyOperation.Operation label each mechanism
 // reports when an unwrap fails.
 //
@@ -628,7 +641,13 @@ func wrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, para
 		}
 	}
 
-	out := make([]byte, 0, len(encrypted.Nonce)+len(encrypted.Ciphertext)+len(encrypted.Tag))
+	modeByte := aesGCMWrapModeExplicit
+	if encrypted.GCMNonceMode == types.GCMNonceModeRandom {
+		modeByte = aesGCMWrapModeRandom
+	}
+
+	out := make([]byte, 0, 1+len(encrypted.Nonce)+len(encrypted.Ciphertext)+len(encrypted.Tag))
+	out = append(out, modeByte)
 	out = append(out, encrypted.Nonce...)
 	out = append(out, encrypted.Ciphertext...)
 	out = append(out, encrypted.Tag...)
@@ -641,12 +660,23 @@ func unwrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, pa
 	if err != nil {
 		return nil, err
 	}
-	if len(wrapped) < aesGCMNonceSize+tagSize {
+	if len(wrapped) < 1+aesGCMNonceSize+tagSize {
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "aes-gcm wrapped key material is too short"}
 	}
-	nonce := wrapped[:aesGCMNonceSize]
-	tag := wrapped[len(wrapped)-tagSize:]
-	ciphertext := wrapped[aesGCMNonceSize : len(wrapped)-tagSize]
+	modeByte := wrapped[0]
+	body := wrapped[1:]
+	var nonceMode types.GCMNonceMode
+	switch modeByte {
+	case aesGCMWrapModeExplicit:
+		nonceMode = types.GCMNonceModeExplicit
+	case aesGCMWrapModeRandom:
+		nonceMode = types.GCMNonceModeRandom
+	default:
+		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "aes-gcm wrapped key material has an unrecognized nonce-mode byte"}
+	}
+	nonce := body[:aesGCMNonceSize]
+	tag := body[len(body)-tagSize:]
+	ciphertext := body[aesGCMNonceSize : len(body)-tagSize]
 
 	if err := checkFramedIV(params.iv, nonce, "aes-gcm"); err != nil {
 		return nil, err
@@ -667,9 +697,10 @@ func unwrapAESGCM(ctx context.Context, b Backend, attrs *types.KeyAttributes, pa
 	}
 
 	plaintext, err := encrypter.Decrypt(&types.EncryptedData{
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
-		Tag:        tag,
+		Ciphertext:   ciphertext,
+		Nonce:        nonce,
+		Tag:          tag,
+		GCMNonceMode: nonceMode,
 	}, decryptOpts)
 	if err != nil {
 		return nil, &ErrKeyOperation{Operation: unwrapOperationNames[kindAESGCM], KeyID: attrs.CN, Err: err}

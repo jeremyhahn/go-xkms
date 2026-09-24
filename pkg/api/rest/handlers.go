@@ -820,10 +820,11 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, EncryptResponse{
-		Ciphertext: resp.Ciphertext,
-		Nonce:      resp.Nonce,
-		Tag:        resp.Tag,
-		IV:         resp.IV,
+		Ciphertext:   resp.Ciphertext,
+		Nonce:        resp.Nonce,
+		Tag:          resp.Tag,
+		IV:           resp.IV,
+		GCMNonceMode: resp.GCMNonceMode,
 	}, http.StatusOK)
 }
 
@@ -888,6 +889,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		Nonce:          req.Nonce,
 		Tag:            req.Tag,
 		AdditionalData: req.AdditionalData,
+		GCMNonceMode:   req.GCMNonceMode,
 		Mode:           req.Mode,
 		IV:             req.IV,
 		TagSize:        req.TagSize,

@@ -17,17 +17,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/go-webauthn/webauthn/protocol"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	webauthnclient "github.com/jeremyhahn/go-xkms/sdk/go/webauthnclient"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 )
@@ -46,11 +44,11 @@ const (
 	testRPID     = "xkms.example.com"
 )
 
-// newVirtualPINHandler builds a FIDO2 handler over a virtual authenticator.
-// A non-empty pin is installed on the authenticator as CTAP2 requires
-// (SHA-256(PIN)[:16]), modelling a security key whose owner has set a PIN;
-// an empty pin models a key with none configured.
-func newVirtualPINHandler(t *testing.T, pin string) *fido2.FIDO2Handler {
+// newVirtualPINAdapter builds a hardware CTAP2 authenticator adapter over a
+// virtual authenticator. A non-empty pin is installed on the authenticator as
+// CTAP2 requires (SHA-256(PIN)[:16]), modelling a security key whose owner
+// has set a PIN; an empty pin models a key with none configured.
+func newVirtualPINAdapter(t *testing.T, pin string) webauthnclient.AuthenticatorAdapter {
 	t.Helper()
 
 	authCfg := authenticator.DefaultConfig()
@@ -82,13 +80,13 @@ func newVirtualPINHandler(t *testing.T, pin string) *fido2.FIDO2Handler {
 	}
 
 	fidoCfg := fido2.DefaultConfig
-	handler, err := fido2.NewHandler(&fidoCfg, enumerator)
+	adapter, err := webauthnclient.NewHardwareAdapter(&fidoCfg, enumerator)
 	if err != nil {
-		t.Fatalf("build fido2 handler: %v", err)
+		t.Fatalf("build hardware adapter: %v", err)
 	}
-	t.Cleanup(func() { _ = handler.Close() })
+	t.Cleanup(func() { _ = adapter.Close() })
 
-	return handler
+	return adapter
 }
 
 // pinDirectoryClient answers a full registration ceremony so the local
@@ -128,17 +126,17 @@ func testPINSecret(t *testing.T, pin string) *secure.Secret {
 	return secret
 }
 
-// registerPINCeremony runs webAuthnRegistration with the given handler and PIN.
-func registerPINCeremony(t *testing.T, handler *fido2.FIDO2Handler, pin string) (*fido2.WebAuthnAttestation, error) {
+// registerPINCeremony runs webAuthnRegistration with the given adapter and PIN.
+func registerPINCeremony(t *testing.T, adapter webauthnclient.AuthenticatorAdapter, pin string) ([]byte, error) {
 	t.Helper()
 
 	return webAuthnRegistration(
 		context.Background(),
 		&pinDirectoryClient{},
-		handler,
+		func() (webauthnclient.AuthenticatorAdapter, error) { return adapter, nil },
 		NewPrinter("text", io.Discard),
 		"admin", "admin@example.com", "Admin", string(RoleAdmin), "",
-		false, 5*time.Second, testPINSecret(t, pin),
+		testPINSecret(t, pin),
 	)
 }
 
@@ -148,14 +146,15 @@ func registerPINCeremony(t *testing.T, handler *fido2.FIDO2Handler, pin string) 
 // completing IS the assertion — the virtual authenticator verified a real
 // pinUvAuthParam computed from this PIN.
 func TestWebAuthnRegistration_CarriesPINToTheAuthenticator(t *testing.T) {
-	handler := newVirtualPINHandler(t, testPIN)
+	adapter := newVirtualPINAdapter(t, testPIN)
 
-	att, err := registerPINCeremony(t, handler, testPIN)
+	att, err := registerPINCeremony(t, adapter, testPIN)
 	if err != nil {
 		t.Fatalf("registration against a PIN-protected authenticator must succeed with the PIN: %v", err)
 	}
-	if att == nil || len(att.CredentialID) == 0 {
-		t.Fatal("want an attestation carrying the authenticator-assigned credential ID")
+	credentialID, err := extractWebAuthnCredentialID(att)
+	if err != nil || len(credentialID) == 0 {
+		t.Fatalf("want an attestation carrying the authenticator-assigned credential ID: %v", err)
 	}
 }
 
@@ -163,9 +162,9 @@ func TestWebAuthnRegistration_CarriesPINToTheAuthenticator(t *testing.T) {
 // CTAP2_ERR_PIN_REQUIRED does not reach the operator: the failure names the
 // missing PIN and the sources that supply it.
 func TestWebAuthnRegistration_MissingPINIsNamed(t *testing.T) {
-	handler := newVirtualPINHandler(t, testPIN)
+	adapter := newVirtualPINAdapter(t, testPIN)
 
-	_, err := registerPINCeremony(t, handler, "")
+	_, err := registerPINCeremony(t, adapter, "")
 	if err == nil {
 		t.Fatal("a PIN-protected authenticator must refuse the ceremony without a PIN")
 	}
@@ -183,58 +182,62 @@ func TestWebAuthnRegistration_MissingPINIsNamed(t *testing.T) {
 // TestWebAuthnRegistration_NoPINAuthenticatorNeedsNone is the regression
 // guard: against an authenticator with no PIN set, an empty PIN still works.
 func TestWebAuthnRegistration_NoPINAuthenticatorNeedsNone(t *testing.T) {
-	handler := newVirtualPINHandler(t, "")
+	adapter := newVirtualPINAdapter(t, "")
 
-	att, err := registerPINCeremony(t, handler, "")
+	att, err := registerPINCeremony(t, adapter, "")
 	if err != nil {
 		t.Fatalf("an authenticator with no PIN configured needs none: %v", err)
 	}
-	if att == nil || len(att.CredentialID) == 0 {
-		t.Fatal("want an attestation carrying the authenticator-assigned credential ID")
+	credentialID, err := extractWebAuthnCredentialID(att)
+	if err != nil || len(credentialID) == 0 {
+		t.Fatalf("want an attestation carrying the authenticator-assigned credential ID: %v", err)
 	}
 }
 
-// loginAssertionOptions builds the server's CredentialAssertion for a
-// credential previously registered on the virtual authenticator.
-func loginAssertionOptions(t *testing.T, credentialID []byte) protocol.CredentialAssertion {
-	t.Helper()
-
-	optionsJSON := `{"publicKey":{"challenge":"` + b64url("login-challenge") + `",` +
+// loginAssertionOptionsJSON builds the server's PublicKeyCredentialRequestOptions
+// JSON for a credential previously registered on the virtual authenticator.
+// requireUV models the relying party requesting user verification, which is
+// what makes a PIN-protected authenticator require pinUvAuthParam on
+// authenticatorGetAssertion in the first place.
+func loginAssertionOptionsJSON(credentialID []byte, requireUV bool) []byte {
+	uv := ""
+	if requireUV {
+		uv = `,"userVerification":"required"`
+	}
+	return []byte(`{"publicKey":{"challenge":"` + b64url("login-challenge") + `",` +
 		`"rpId":"` + testRPID + `",` +
 		`"allowCredentials":[{"type":"public-key","id":"` +
-		base64.RawURLEncoding.EncodeToString(credentialID) + `"}]}}`
-
-	var assertionOpts protocol.CredentialAssertion
-	if err := json.Unmarshal([]byte(optionsJSON), &assertionOpts); err != nil {
-		t.Fatalf("build assertion options: %v", err)
-	}
-	return assertionOpts
+		base64.RawURLEncoding.EncodeToString(credentialID) + `"}]` + uv + `}}`)
 }
 
-// registerCredentialForLogin enrolls a credential on the handler's virtual
+// registerCredentialForLogin enrolls a credential on the adapter's virtual
 // authenticator so a login ceremony has something to assert with.
-func registerCredentialForLogin(t *testing.T, handler *fido2.FIDO2Handler, pin string) []byte {
+func registerCredentialForLogin(t *testing.T, adapter webauthnclient.AuthenticatorAdapter, pin string) []byte {
 	t.Helper()
 
-	att, err := registerPINCeremony(t, handler, pin)
+	att, err := registerPINCeremony(t, adapter, pin)
 	if err != nil {
 		t.Fatalf("register the login credential: %v", err)
 	}
-	return att.CredentialID
+	credentialID, err := extractWebAuthnCredentialID(att)
+	if err != nil {
+		t.Fatalf("extract credential ID: %v", err)
+	}
+	return credentialID
 }
 
 // TestLoginAssertion_CarriesPINToTheAuthenticator is the login half of the
 // fix — the exact gap of cmd/xkmsctl/user.go:403: the assertion options never
 // carried a PIN, so login could not complete against a PIN-protected key.
 func TestLoginAssertion_CarriesPINToTheAuthenticator(t *testing.T) {
-	handler := newVirtualPINHandler(t, testPIN)
-	credentialID := registerCredentialForLogin(t, handler, testPIN)
+	adapter := newVirtualPINAdapter(t, testPIN)
+	credentialID := registerCredentialForLogin(t, adapter, testPIN)
 
-	assertion, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPINSecret(t, testPIN))
+	assertion, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "", testPINSecret(t, testPIN))
 	if err != nil {
 		t.Fatalf("login against a PIN-protected authenticator must succeed with the PIN: %v", err)
 	}
-	if assertion == nil || len(assertion.PublicKeyCredentialJSON) == 0 {
+	if len(assertion) == 0 {
 		t.Fatal("want a signed assertion document")
 	}
 }
@@ -242,10 +245,10 @@ func TestLoginAssertion_CarriesPINToTheAuthenticator(t *testing.T) {
 // TestLoginAssertion_MissingPINIsNamed mirrors the register-side diagnosis on
 // the login path.
 func TestLoginAssertion_MissingPINIsNamed(t *testing.T) {
-	handler := newVirtualPINHandler(t, testPIN)
-	credentialID := registerCredentialForLogin(t, handler, testPIN)
+	adapter := newVirtualPINAdapter(t, testPIN)
+	credentialID := registerCredentialForLogin(t, adapter, testPIN)
 
-	_, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPINSecret(t, ""))
+	_, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "", testPINSecret(t, ""))
 	if err == nil {
 		t.Fatal("a PIN-protected authenticator must refuse the assertion without a PIN")
 	}
@@ -261,10 +264,10 @@ func TestLoginAssertion_MissingPINIsNamed(t *testing.T) {
 // reported as a PIN failure carrying the authenticator's own retry counter —
 // a lockout must never read as anything else.
 func TestLoginAssertion_WrongPINReportsRemainingAttempts(t *testing.T) {
-	handler := newVirtualPINHandler(t, testPIN)
-	credentialID := registerCredentialForLogin(t, handler, testPIN)
+	adapter := newVirtualPINAdapter(t, testPIN)
+	credentialID := registerCredentialForLogin(t, adapter, testPIN)
 
-	_, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), true, 5*time.Second, testPINSecret(t, testWrongPIN))
+	_, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, true), "", testPINSecret(t, testWrongPIN))
 	if err == nil {
 		t.Fatal("a wrong PIN must fail the assertion")
 	}
@@ -282,14 +285,14 @@ func TestLoginAssertion_WrongPINReportsRemainingAttempts(t *testing.T) {
 // TestLoginAssertion_NoPINAuthenticatorNeedsNone is the login regression
 // guard: against an authenticator with no PIN set, an empty PIN still works.
 func TestLoginAssertion_NoPINAuthenticatorNeedsNone(t *testing.T) {
-	handler := newVirtualPINHandler(t, "")
-	credentialID := registerCredentialForLogin(t, handler, "")
+	adapter := newVirtualPINAdapter(t, "")
+	credentialID := registerCredentialForLogin(t, adapter, "")
 
-	assertion, err := loginAssertion(handler, loginAssertionOptions(t, credentialID), false, 5*time.Second, testPINSecret(t, ""))
+	assertion, err := loginAssertion(context.Background(), adapter, loginAssertionOptionsJSON(credentialID, false), "", testPINSecret(t, ""))
 	if err != nil {
 		t.Fatalf("an authenticator with no PIN configured needs none: %v", err)
 	}
-	if assertion == nil || len(assertion.PublicKeyCredentialJSON) == 0 {
+	if len(assertion) == 0 {
 		t.Fatal("want a signed assertion document")
 	}
 }

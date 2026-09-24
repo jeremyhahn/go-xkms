@@ -272,7 +272,9 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		s.auditAuthEvent(r.Context(), "", "auth.login.piv", audit.OutcomeDeny, "no client certificate")
+		if s.auditAuthDenyOrFail(w, r, "", "auth.login.piv", "no client certificate") {
+			return
+		}
 		writeErrorWithMessage(w, ErrUnauthorized, "client certificate required", http.StatusUnauthorized)
 		return
 	}
@@ -288,7 +290,9 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !trusted {
-			s.auditAuthEvent(r.Context(), cert.Subject.CommonName, "auth.login.piv", audit.OutcomeDeny, "untrusted issuer")
+			if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "untrusted issuer") {
+				return
+			}
 			writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
 			return
 		}
@@ -300,13 +304,17 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	// on the wire.
 	attestLevel, refusal := s.pivLogin.attestationLevel(r.TLS.PeerCertificates)
 	if refusal != "" {
-		s.auditAuthEvent(r.Context(), cert.Subject.CommonName, "auth.login.piv", audit.OutcomeDeny, "attestation: "+refusal)
+		if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "attestation: "+refusal) {
+			return
+		}
 		writeErrorWithMessage(w, ErrUnauthorized, "client certificate is not hardware-attested", http.StatusUnauthorized)
 		return
 	}
 
 	if s.authUsers == nil {
-		s.auditAuthEvent(r.Context(), cert.Subject.CommonName, "auth.login.piv", audit.OutcomeDeny, "no user store")
+		if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "no user store") {
+			return
+		}
 		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
 		return
 	}
@@ -316,12 +324,16 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	user, err := s.authUsers.GetByCertFingerprint(r.Context(), thumbprint)
 	if err != nil {
-		s.auditAuthEvent(r.Context(), cert.Subject.CommonName, "auth.login.piv", audit.OutcomeDeny, "no user binding")
+		if s.auditAuthDenyOrFail(w, r, cert.Subject.CommonName, "auth.login.piv", "no user binding") {
+			return
+		}
 		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 	if !user.Enabled {
-		s.auditAuthEvent(r.Context(), user.Username, "auth.login.piv", audit.OutcomeDeny, "user disabled")
+		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "user disabled") {
+			return
+		}
 		writeErrorWithMessage(w, ErrUnauthorized, "authentication failed", http.StatusUnauthorized)
 		return
 	}
@@ -345,12 +357,21 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := s.tokenIssuer.Mint(r.Context(), identity)
 	if err != nil {
-		s.auditAuthEvent(r.Context(), user.Username, "auth.login.piv", audit.OutcomeDeny, "token mint failed")
+		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "token mint failed") {
+			return
+		}
 		writeErrorWithMessage(w, ErrInternalError, "authentication failed", http.StatusInternalServerError)
 		return
 	}
 
-	s.auditAuthEvent(r.Context(), user.Username, "auth.login.piv", audit.OutcomeAllow, "attest_level="+attestLevel)
+	// The token has been minted but not yet handed to the caller: the audit
+	// write is part of the login decision (owner ruling, go-xkms#688), so a
+	// failed write here must refuse the login rather than hand back an
+	// unaudited session grant.
+	if auditErr := s.auditAuthEvent(r.Context(), user.Username, "auth.login.piv", audit.OutcomeAllow, "attest_level="+attestLevel); auditErr != nil {
+		writeErrorWithMessage(w, ErrInternalError, "authentication failed", http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, authTokenResponse{
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
@@ -377,7 +398,9 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		var reuse *token.RefreshReuseError
 		if errors.As(err, &reuse) {
 			// Token theft signature: someone replayed a rotated token.
-			s.auditAuthEvent(r.Context(), "", "auth.refresh.reuse", audit.OutcomeDeny, "refresh token reuse; family revoked")
+			if s.auditAuthDenyOrFail(w, r, "", "auth.refresh.reuse", "refresh token reuse; family revoked") {
+				return
+			}
 		}
 		writeErrorWithMessage(w, ErrUnauthorized, "invalid refresh token", http.StatusUnauthorized)
 		return
@@ -456,7 +479,10 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if identity := auth.GetIdentity(r.Context()); identity != nil {
-		s.auditAuthEvent(r.Context(), identity.Subject, "auth.logout", audit.OutcomeAllow, "")
+		if auditErr := s.auditAuthEvent(r.Context(), identity.Subject, "auth.logout", audit.OutcomeAllow, ""); auditErr != nil {
+			writeErrorWithMessage(w, ErrInternalError, "logout failed", http.StatusInternalServerError)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -484,11 +510,18 @@ func (s *Server) capabilityFlags() map[string]bool {
 	}
 }
 
-// auditAuthEvent records an authentication-plane audit event; a nil audit
-// logger drops it.
-func (s *Server) auditAuthEvent(ctx context.Context, subject, action, outcome, detail string) {
+// auditAuthEvent records an authentication-plane audit event and applies the
+// go-xkms audit write-failure policy (docs/audit-log/engineering.md,
+// pkg/audit.ClassifyAction): every "auth.*" action classifies
+// SeveritySecurity (the default for an action not explicitly reviewed as
+// informational), so a failed write returns *audit.ErrAuditWriteFailed and
+// the caller must fail the login/logout request rather than let an
+// authentication decision — grant or refusal — stand unaudited. A nil audit
+// logger drops the event and returns nil: audit logging is opt-in wiring,
+// not itself a failure.
+func (s *Server) auditAuthEvent(ctx context.Context, subject, action, outcome, detail string) error {
 	if s.auditor == nil {
-		return
+		return nil
 	}
 	event := &audit.Event{
 		Timestamp: time.Now().UTC(),
@@ -500,7 +533,18 @@ func (s *Server) auditAuthEvent(ctx context.Context, subject, action, outcome, d
 	if detail != "" {
 		event.Details = map[string]string{"reason": detail}
 	}
-	if err := s.auditor.Log(ctx, event); err != nil {
-		s.logger.Warn("audit log write failed", "action", action, "error", err)
+	return audit.HandleWriteFailure(s.logger, action, s.auditor.Log(ctx, event))
+}
+
+// auditAuthDenyOrFail records a deny outcome for action and reports whether
+// the caller should stop: it writes the 500 response and returns true when
+// the audit write itself failed (an unaudited refusal is still a
+// security-relevant decision that must not proceed silently), or returns
+// false so the caller writes its own, more specific deny response.
+func (s *Server) auditAuthDenyOrFail(w http.ResponseWriter, r *http.Request, subject, action, detail string) bool {
+	if auditErr := s.auditAuthEvent(r.Context(), subject, action, audit.OutcomeDeny, detail); auditErr != nil {
+		writeErrorWithMessage(w, ErrInternalError, "authentication failed", http.StatusInternalServerError)
+		return true
 	}
+	return false
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"testing"
@@ -202,6 +203,11 @@ func importAESWrappingKey(t *testing.T, store, cn string, material []byte) (*moc
 // second wrap, and requires the first blob to equal the standard library's own
 // output so the guard cannot pass by emitting something nobody can decrypt.
 func TestWrapAESGCMRefusesAReusedIVUnderOneKey(t *testing.T) {
+	if fips140.Enforced() {
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	store, attrs := newUntrackedAESWrappingBackend(t, "reuse-be", "reuse-kek")
 	kek := rawKeyBytes(t, store, attrs)
 	iv := uniqueWrapIV(t)
@@ -218,7 +224,7 @@ func TestWrapAESGCMRefusesAReusedIVUnderOneKey(t *testing.T) {
 	ctx := context.Background()
 	blobA, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), targetA)
 	require.NoError(t, err, "the first use of an IV under a key is legitimate")
-	require.Equal(t, append(append([]byte{}, iv...), oracleA...), blobA,
+	require.Equal(t, append([]byte{aesGCMWrapModeExplicit}, append(append([]byte{}, iv...), oracleA...)...), blobA,
 		"the wrap must agree with the standard library for the same key, IV and plaintext")
 
 	blobB, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), targetB)
@@ -237,6 +243,11 @@ func TestWrapAESGCMRefusesAReusedIVUnderOneKey(t *testing.T) {
 // this is exactly the alias a guard keyed by key id, backend name or manager
 // instance lets through.
 func TestWrapAESGCMRefusesAReusedIVAcrossBackendsAndNames(t *testing.T) {
+	if fips140.Enforced() {
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	first, firstAttrs := newUntrackedAESWrappingBackend(t, "alias-be-one", "alias-kek-one")
 	material := rawKeyBytes(t, first, firstAttrs)
 	second, secondAttrs := importAESWrappingKey(t, "alias-be-two", "alias-kek-two", material)
@@ -258,6 +269,11 @@ func TestWrapAESGCMRefusesAReusedIVAcrossBackendsAndNames(t *testing.T) {
 // it must refuse repeats, not refuse everything. A guard that refused every
 // wrap would satisfy the two tests above and make CKM_AES_GCM wrapping useless.
 func TestWrapAESGCMAcceptsAFreshIVUnderTheSameKey(t *testing.T) {
+	if fips140.Enforced() {
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	store, attrs := newUntrackedAESWrappingBackend(t, "fresh-be", "fresh-kek")
 	kek := rawKeyBytes(t, store, attrs)
 	target := []byte("fresh-iv-target-32-bytes-of-key!")
@@ -273,11 +289,11 @@ func TestWrapAESGCMAcceptsAFreshIVUnderTheSameKey(t *testing.T) {
 	require.NoError(t, err, "a different IV under the same key is exactly what the caller is told to do")
 	assert.NotEqual(t, blobFirst, blobSecond, "different IVs must produce different blobs")
 
-	plainFirst, err := gcmOpenOracle(t, kek, firstIV, blobFirst[aesGCMNonceSize:], nil)
+	plainFirst, err := gcmOpenOracle(t, kek, firstIV, blobFirst[1+aesGCMNonceSize:], nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, plainFirst)
 
-	plainSecond, err := gcmOpenOracle(t, kek, secondIV, blobSecond[aesGCMNonceSize:], nil)
+	plainSecond, err := gcmOpenOracle(t, kek, secondIV, blobSecond[1+aesGCMNonceSize:], nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, plainSecond)
 }
@@ -287,6 +303,11 @@ func TestWrapAESGCMAcceptsAFreshIVUnderTheSameKey(t *testing.T) {
 // so one IV under two distinct keys is two distinct pairs and is safe; refusing
 // it would turn the guard into a global ban on IVs.
 func TestWrapAESGCMAcceptsOneIVUnderTwoDifferentKeys(t *testing.T) {
+	if fips140.Enforced() {
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	first, firstAttrs := newUntrackedAESWrappingBackend(t, "twokek-be-one", "twokek-kek-one")
 	second, secondAttrs := newUntrackedAESWrappingBackend(t, "twokek-be-two", "twokek-kek-two")
 
@@ -326,11 +347,20 @@ func TestWrapAESGCMDoesNotConsumeTheIVOfARefusedWrap(t *testing.T) {
 	require.True(t, errors.Is(err, ErrInvalidKeyAttributes),
 		"the premise of this test is a refusal on the tag length, not on the IV: got %v", err)
 
+	if fips140.Enforced() {
+		// The "corrected retry" still supplies a caller nonce, which
+		// requires the arbitrary-IV construction GODEBUG=fips140=only
+		// refuses outright; see requireGCMWrapRefusedForCallerNonce.
+		_, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), target)
+		require.Error(t, err)
+		return
+	}
+
 	blob, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), target)
 	require.NoError(t, err,
 		"the refused wrap must not have claimed the IV: the caller's corrected retry has nothing else to change")
 
-	plaintext, err := gcmOpenOracle(t, kek, iv, blob[aesGCMNonceSize:], nil)
+	plaintext, err := gcmOpenOracle(t, kek, iv, blob[1+aesGCMNonceSize:], nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, plaintext)
 }
@@ -347,10 +377,10 @@ func TestWrapAESGCMClaimsAProviderGeneratedNonce(t *testing.T) {
 
 	blob, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), wrapParams{}, target)
 	require.NoError(t, err)
-	require.Len(t, blob, aesGCMNonceSize+len(target)+aesGCMTagSize,
+	require.Len(t, blob, 1+aesGCMNonceSize+len(target)+aesGCMTagSize,
 		"the blob carries the nonce the provider generated")
 
-	generated := blob[:aesGCMNonceSize]
+	generated := blob[1 : 1+aesGCMNonceSize]
 	_, err = wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(generated), target)
 	require.Error(t, err, "the nonce the provider generated is consumed exactly like one the caller supplied")
 	assert.True(t, errors.Is(err, aead.ErrNonceReuse), "got %v", err)
@@ -474,6 +504,17 @@ func newSealedWrappingBackend(t *testing.T, store, cn string, rawErr error) (*mo
 // these wraps outright instead would take CKM_AES_GCM wrapping away from every
 // HSM, TPM and cloud-KMS backend.
 func TestWrapAESGCMGuardsAKeyWhoseMaterialIsSealed(t *testing.T) {
+	if fips140.Enforced() {
+		// sealedSymmetricEncrypter (above) builds its AES-GCM AEAD with
+		// cipher.NewGCM directly -- the arbitrary-IV constructor -- rather
+		// than routing through pkg/crypto/aead.NewGCMForFreshEncrypt the
+		// way the real symmetric backend does, so it cannot wrap at all
+		// under GODEBUG=fips140=only. This is a fidelity gap in the mock,
+		// not in wrapAESGCM.
+		requireGCMWrapRefusedForCallerNonce(t)
+		return
+	}
+
 	store, attrs, key := newSealedWrappingBackend(t, "sealed-be", "sealed-kek", backend.ErrNotSupported)
 	iv := uniqueWrapIV(t)
 	target := []byte("sealed-target-32-bytes-of-key!!!")
@@ -481,7 +522,7 @@ func TestWrapAESGCMGuardsAKeyWhoseMaterialIsSealed(t *testing.T) {
 
 	blob, err := wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), target)
 	require.NoError(t, err, "a sealed wrapping key must still be able to wrap")
-	require.Equal(t, append(append([]byte{}, iv...), gcmSealOracle(t, key, iv, target, nil)...), blob,
+	require.Equal(t, append([]byte{aesGCMWrapModeExplicit}, append(append([]byte{}, iv...), gcmSealOracle(t, key, iv, target, nil)...)...), blob,
 		"the blob must be a real AES-GCM wrap under the caller's IV")
 
 	_, err = wrapKeyMaterial(ctx, store, attrs, string(types.WrapAESGCM), gcmParams(iv), target)

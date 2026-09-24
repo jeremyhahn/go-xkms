@@ -169,16 +169,26 @@ func NewCAAValidator(params *CAAValidatorParams) (*CAAValidator, error) {
 //   - ctx: Context for cancellation
 //   - domain: The domain name to validate
 //   - isWildcard: Whether this is for a wildcard certificate
+//   - accountURI: the requesting ACME account's URI. A matching
+//     issue/issuewild record carrying an RFC 8657 accounturi parameter
+//     authorizes issuance only when this matches exactly.
+//   - validationMethod: the RFC 8657 method-label (e.g. "http-01",
+//     "dns-01") of the challenge that validated the identifier's
+//     authorization. A matching record carrying an RFC 8657
+//     validationmethods parameter authorizes issuance only when this
+//     method is in its list.
 //
 // Returns:
 //   - nil if validation succeeds
 //   - *ErrCAAValidationFailed if CAA records prevent issuance
 //   - *ErrCAADNSError if the CAA RRset could not be determined (DNS failure)
-func (v *CAAValidator) Validate(ctx context.Context, domain string, isWildcard bool) error {
+func (v *CAAValidator) Validate(ctx context.Context, domain string, isWildcard bool, accountURI string, validationMethod string) error {
 	v.logger.Debug("CAA validation starting",
 		"domain", domain,
 		"wildcard", isWildcard,
-		"identities", v.caaIdentities)
+		"identities", v.caaIdentities,
+		"account_uri", accountURI,
+		"validation_method", validationMethod)
 
 	// Normalize domain to lowercase
 	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
@@ -186,7 +196,7 @@ func (v *CAAValidator) Validate(ctx context.Context, domain string, isWildcard b
 	// Check cache first
 	if records := v.getCached(domain); records != nil {
 		v.logger.Debug("CAA records found in cache", "domain", domain)
-		return v.validateRecords(domain, records, isWildcard)
+		return v.validateRecords(domain, records, isWildcard, accountURI, validationMethod)
 	}
 
 	// Perform CAA lookup with tree climbing
@@ -207,7 +217,7 @@ func (v *CAAValidator) Validate(ctx context.Context, domain string, isWildcard b
 	v.setCached(domain, records)
 
 	// Validate the records
-	return v.validateRecords(domain, records, isWildcard)
+	return v.validateRecords(domain, records, isWildcard, accountURI, validationMethod)
 }
 
 // lookupCAA performs CAA record lookup with tree climbing per RFC 8659.
@@ -329,7 +339,7 @@ func (v *CAAValidator) queryCAARecords(ctx context.Context, domain string) ([]*C
 }
 
 // validateRecords checks if the CAA records allow issuance.
-func (v *CAAValidator) validateRecords(domain string, records []*CAARecord, isWildcard bool) error {
+func (v *CAAValidator) validateRecords(domain string, records []*CAARecord, isWildcard bool, accountURI string, validationMethod string) error {
 	// If no CAA records exist, issuance is allowed
 	if len(records) == 0 {
 		v.logger.Debug("No CAA records, allowing issuance", "domain", domain)
@@ -377,7 +387,7 @@ func (v *CAAValidator) validateRecords(domain string, records []*CAARecord, isWi
 		// Check issuewild tag for wildcard certificates
 		if isWildcard && record.Tag == "issuewild" {
 			foundIssuewild = true
-			if v.isAuthorized(record.Value) {
+			if v.isAuthorized(domain, record.Value, accountURI, validationMethod) {
 				v.logger.Debug("Authorized by issuewild CAA record",
 					"domain", domain,
 					"value", record.Value)
@@ -388,7 +398,7 @@ func (v *CAAValidator) validateRecords(domain string, records []*CAARecord, isWi
 		// Check issue tag for all certificates
 		if record.Tag == "issue" {
 			foundIssue = true
-			if v.isAuthorized(record.Value) {
+			if v.isAuthorized(domain, record.Value, accountURI, validationMethod) {
 				v.logger.Debug("Authorized by issue CAA record",
 					"domain", domain,
 					"value", record.Value)
@@ -433,8 +443,16 @@ func (v *CAAValidator) validateRecords(domain string, records []*CAARecord, isWi
 	return nil
 }
 
+// caaParamAccountURI and caaParamValidationMethods are the RFC 8657
+// parameter tags this validator enforces on issue/issuewild records.
+const (
+	caaParamAccountURI        = "accounturi"
+	caaParamValidationMethods = "validationmethods"
+)
+
 // isAuthorized checks if a CAA issue/issuewild record value authorizes this
-// CA per RFC 8659 Section 4.2 / RFC 8657 Section 3. The value grammar is:
+// CA per RFC 8659 Section 4.2, RFC 8657 Section 3 (accounturi), and RFC 8657
+// Section 4 (validationmethods). The value grammar is:
 //
 //	issue-value = issuer-domain-name *(";" parameter)
 //	parameter   = tag "=" *VCHAR
@@ -445,7 +463,16 @@ func (v *CAAValidator) validateRecords(domain string, records []*CAARecord, isWi
 // domain merely beginning with an authorized identity) impersonate an
 // authorized issuer, which is the bug RFC 8659's exact-match rule exists to
 // prevent.
-func (v *CAAValidator) isAuthorized(value string) bool {
+//
+// A present accounturi parameter restricts the record to the ACME account
+// whose URI matches exactly (byte-for-byte); any other account is refused
+// even if the issuer domain matches. A present validationmethods parameter
+// restricts the record to the listed RFC 8657 method-labels; a
+// validationMethod not in that list is refused. A malformed accounturi or
+// validationmethods parameter value makes the whole record non-authorizing
+// per RFC 8657, rather than silently skipping the restriction it was meant
+// to express.
+func (v *CAAValidator) isAuthorized(domain, value, accountURI, validationMethod string) bool {
 	trimmed := strings.TrimSpace(value)
 
 	// Empty value, or a bare ";", means "no CA is authorized to issue".
@@ -453,18 +480,39 @@ func (v *CAAValidator) isAuthorized(value string) bool {
 		return false
 	}
 
-	issuer, params := parseCAAIssueValue(trimmed)
+	issuer, params, malformed := parseCAAIssueValue(trimmed)
 	if issuer == "" {
 		return false
 	}
 
-	if accountURI, ok := params["accounturi"]; ok {
-		v.logger.Info("CAA record specifies accounturi parameter (RFC 8657); not enforced",
-			"issuer", issuer, "accounturi", accountURI)
+	if malformed[caaParamAccountURI] {
+		v.logger.Warn("CAA record has malformed accounturi parameter; treating as non-authorizing",
+			"domain", domain, "issuer", issuer)
+		return false
 	}
-	if methods, ok := params["validationmethods"]; ok {
-		v.logger.Info("CAA record specifies validationmethods parameter (RFC 8657); not enforced",
-			"issuer", issuer, "validationmethods", methods)
+	if recordAccountURI, ok := params[caaParamAccountURI]; ok && recordAccountURI != accountURI {
+		v.logger.Debug("CAA record accounturi parameter does not match requesting account",
+			"domain", domain, "issuer", issuer)
+		return false
+	}
+
+	if malformed[caaParamValidationMethods] {
+		v.logger.Warn("CAA record has malformed validationmethods parameter; treating as non-authorizing",
+			"domain", domain, "issuer", issuer)
+		return false
+	}
+	if rawMethods, ok := params[caaParamValidationMethods]; ok {
+		methods, ok := parseCAAValidationMethods(rawMethods)
+		if !ok {
+			v.logger.Warn("CAA record has malformed validationmethods method-label list; treating as non-authorizing",
+				"domain", domain, "issuer", issuer, "validationmethods", rawMethods)
+			return false
+		}
+		if !caaMethodsContain(methods, validationMethod) {
+			v.logger.Debug("CAA record validationmethods parameter excludes the method that validated this identifier",
+				"domain", domain, "issuer", issuer, "validation_method", validationMethod, "validationmethods", methods)
+			return false
+		}
 	}
 
 	for _, identity := range v.caaIdentities {
@@ -477,33 +525,151 @@ func (v *CAAValidator) isAuthorized(value string) bool {
 	return false
 }
 
+// caaMethodsContain reports whether methods contains method, compared
+// case-insensitively per RFC 8657 method-label matching.
+func caaMethodsContain(methods []string, method string) bool {
+	method = strings.ToLower(method)
+	for _, m := range methods {
+		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
+// parseCAAValidationMethods parses an RFC 8657 Section 4 validationmethods
+// value into its comma-separated method-labels. It returns ok=false if the
+// value is empty or contains an entry that is not a well-formed
+// method-label ("method-label = 1*(ALPHA / DIGIT / '-')"), per RFC 8657's
+// requirement that a malformed validationmethods value not authorize
+// issuance.
+func parseCAAValidationMethods(value string) (methods []string, ok bool) {
+	labels := strings.Split(value, ",")
+	methods = make([]string, 0, len(labels))
+	for _, label := range labels {
+		if !isCAAMethodLabel(label) {
+			return nil, false
+		}
+		methods = append(methods, strings.ToLower(label))
+	}
+	return methods, true
+}
+
+// isCAAMethodLabel reports whether s is a syntactically valid RFC 8657
+// Section 4 method-label: one or more ASCII letters, digits, or hyphens.
+func isCAAMethodLabel(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isCAAParamTagByte reports whether b is a valid byte in an RFC 8659
+// Section 4.2 parameter tag: "tag = 1*(ALPHA / DIGIT)".
+func isCAAParamTagByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+}
+
+// isCAAParamValueByte reports whether b is a valid byte in an RFC 8659
+// Section 4.2 parameter value: "value = *(%x21-3A / %x3C-7E)" — printable
+// ASCII excluding whitespace (0x20, 0x09) and ";" (0x3B), which the field
+// splitter already strips out.
+func isCAAParamValueByte(b byte) bool {
+	return (b >= 0x21 && b <= 0x3A) || (b >= 0x3C && b <= 0x7E)
+}
+
 // parseCAAIssueValue splits a CAA issue/issuewild property value into its
 // issuer-domain-name and any trailing ";"-separated "tag=value" parameters
 // (RFC 8657 accounturi / validationmethods), per the RFC 8659 Section 4.2
-// grammar. The issuer domain is lowercased with any trailing root dot
-// stripped; parameter tags are lowercased, values are left as-is.
-func parseCAAIssueValue(value string) (issuer string, params map[string]string) {
+// grammar:
+//
+//	issue-value = issuer-domain-name *WSP *(";" *WSP parameter *WSP)
+//	parameter   = tag *WSP "=" *WSP value
+//	tag         = 1*(ALPHA / DIGIT)
+//	value       = *(%x21-3A / %x3C-7E)
+//
+// The issuer domain is lowercased with any trailing root dot stripped.
+// Parameter tags are lowercased. A field that does not parse as "tag=value"
+// at all (no "=", or a tag containing characters other than ALPHA/DIGIT) is
+// silently dropped, consistent with ignoring unrecognized extensions. A
+// field with a well-formed tag but a value containing whitespace or other
+// bytes outside the RFC 8659 value grammar is reported via malformed so
+// callers that act on that specific tag can refuse to treat the record as
+// authorizing, per RFC 8657's fail-closed handling of malformed parameters
+// they DO recognize.
+func parseCAAIssueValue(value string) (issuer string, params map[string]string, malformed map[string]bool) {
 	fields := strings.Split(value, ";")
 
 	issuer = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(fields[0])), ".")
 
-	if len(fields) > 1 {
-		params = make(map[string]string, len(fields)-1)
-		for _, field := range fields[1:] {
-			field = strings.TrimSpace(field)
-			if field == "" {
-				continue
-			}
-			tag, val, found := strings.Cut(field, "=")
-			tag = strings.ToLower(strings.TrimSpace(tag))
-			if found {
-				val = strings.TrimSpace(val)
-			}
-			params[tag] = val
+	for _, field := range fields[1:] {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
 		}
+
+		tagRaw, valRaw, found := strings.Cut(field, "=")
+		if !found {
+			// No "=" - does not match the "tag=value" grammar at all, and
+			// the tag can't be reliably identified, so ignore it as an
+			// unrecognized extension.
+			continue
+		}
+
+		tag := strings.ToLower(strings.TrimSpace(tagRaw))
+		if tag == "" || !isCAAParamTag(tag) {
+			// Malformed or unidentifiable tag - can't be attributed to a
+			// known parameter, so ignore it as an unrecognized extension.
+			continue
+		}
+
+		val := strings.TrimSpace(valRaw)
+		if !isCAAParamValue(val) {
+			if malformed == nil {
+				malformed = make(map[string]bool)
+			}
+			malformed[tag] = true
+			continue
+		}
+
+		if params == nil {
+			params = make(map[string]string)
+		}
+		params[tag] = val
 	}
 
-	return issuer, params
+	return issuer, params, malformed
+}
+
+// isCAAParamTag reports whether tag is a syntactically valid RFC 8659
+// Section 4.2 parameter tag.
+func isCAAParamTag(tag string) bool {
+	for i := 0; i < len(tag); i++ {
+		if !isCAAParamTagByte(tag[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCAAParamValue reports whether val is a syntactically valid RFC 8659
+// Section 4.2 parameter value. An empty value is valid (the grammar's
+// "value" is zero-or-more).
+func isCAAParamValue(val string) bool {
+	for i := 0; i < len(val); i++ {
+		if !isCAAParamValueByte(val[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // getCached retrieves CAA records from cache if not expired.

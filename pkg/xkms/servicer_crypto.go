@@ -628,10 +628,11 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 				return nil, wrapOperationError(ErrEncryptionFailed, "", err)
 			}
 			return &transport.EncryptResponse{
-				Ciphertext: encrypted.Ciphertext,
-				Nonce:      encrypted.Nonce,
-				Tag:        encrypted.Tag,
-				IV:         encrypted.IV,
+				Ciphertext:   encrypted.Ciphertext,
+				Nonce:        encrypted.Nonce,
+				Tag:          encrypted.Tag,
+				IV:           encrypted.IV,
+				GCMNonceMode: string(encrypted.GCMNonceMode),
 			}, nil
 		}
 	}
@@ -710,10 +711,11 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 		encrypter, symErr := symBackend.SymmetricEncrypter(ctx, attrs)
 		if symErr == nil {
 			plaintext, decErr := encrypter.Decrypt(&types.EncryptedData{
-				Ciphertext: req.Ciphertext,
-				Nonce:      req.Nonce,
-				Tag:        req.Tag,
-				IV:         req.IV,
+				Ciphertext:   req.Ciphertext,
+				Nonce:        req.Nonce,
+				Tag:          req.Tag,
+				IV:           req.IV,
+				GCMNonceMode: types.GCMNonceMode(req.GCMNonceMode),
 			}, &types.DecryptOptions{
 				AdditionalData: req.AdditionalData,
 				Mode:           types.CipherMode(strings.ToLower(req.Mode)),

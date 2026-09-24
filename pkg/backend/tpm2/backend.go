@@ -32,6 +32,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -72,6 +73,27 @@ type ExternalTPMConfig struct {
 
 	// Tracker is the AEAD safety tracker (optional)
 	Tracker types.AEADSafetyTracker
+}
+
+// NewFileKeyBackend builds the file-backed store.KeyBackend NewBackend
+// constructs internally from Config.KeyDir, for callers of
+// NewBackendWithTPM: a caller sharing an already-open TPM connection (e.g.
+// pkg/server reusing the node-seal flip's or the platform store's single
+// open) still needs a real KeyBackend for the wrapper it builds over that
+// connection, and this is the one NewBackend itself uses, not a second
+// implementation of the same three steps.
+func NewFileKeyBackend(logger *slog.Logger, keyDir string) (store.KeyBackend, error) {
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
+	}
+	fsBackend, err := file.New(keyDir)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return store.NewFileBackend(logger, fsBackend), nil
 }
 
 // NewBackendWithTPM creates a new TPM2 backend using an existing TPM instance.
@@ -142,17 +164,11 @@ func NewBackend(config *Config) (*Backend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Ensure key directory exists
-	if err := os.MkdirAll(config.KeyDir, 0700); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create key directory", Err: err}
-	}
-
 	// Create file-based key backend for storing TPM key blobs
-	fsBackend, err := file.New(config.KeyDir)
+	keyBackend, err := NewFileKeyBackend(log, config.KeyDir)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create storage backend", Err: err}
+		return nil, err
 	}
-	keyBackend := store.NewFileBackend(log, fsBackend)
 
 	// Create TPM2 configuration
 	tpmConfig := config.ToTPMConfig()
@@ -378,16 +394,29 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 	// Set store type
 	attrs.StoreType = types.StoreTPM2
 
-	// Try to load the key from the backend to verify it exists
+	// Try to load the key from the backend to verify it exists. Only a
+	// genuine "no such object" result from the underlying store (which
+	// surfaces as storage.ErrNotFound through keyBackend.Get) is reported
+	// as ErrKeyNotFound. Any other failure -- a permission error, a
+	// transient I/O fault, a corrupt or partially written blob -- must not
+	// be conflated with "key does not exist yet", since callers such as
+	// getOrGenerateCAKey use that distinction to decide whether it is safe
+	// to generate a replacement key.
 	_, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Get the public blob to determine key type
 	pubData, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Parse the public key to determine algorithm

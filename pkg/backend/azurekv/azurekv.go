@@ -25,14 +25,17 @@ import (
 	"encoding/asn1"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
@@ -788,10 +791,19 @@ func (b *Backend) GetKey(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
-	// Verify key exists in Azure Key Vault
+	// Verify key exists in Azure Key Vault. Only an HTTP 404 -- Key Vault's
+	// signal that the key genuinely does not exist -- is reported as
+	// ErrKeyNotFound. Any other failure (throttling, a transport fault, an
+	// RBAC/authorization denial) must not be conflated with "no key yet":
+	// getOrGenerateCAKey relies on that distinction to decide whether
+	// generating a replacement key is safe.
 	_, err := b.client.GetKey(ctx, attrs.CN, "", nil)
 	if err != nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		var respErr *azcore.ResponseError
+		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get key: %v", err)}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("failed to get key: %v", err)}
 	}
 
 	// Return nil for private key since it's not extractable from Azure Key Vault

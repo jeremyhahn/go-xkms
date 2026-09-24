@@ -186,6 +186,13 @@ type EncryptResponse struct {
 	// IV is the AES-CBC initialization vector used for encryption. Populated
 	// only when the request's Mode was "cbc" or "cbc-pad".
 	IV []byte `json:"iv,omitempty"`
+	// GCMNonceMode mirrors transport.EncryptResponse.GCMNonceMode: "" for a
+	// caller- or RNG-supplied nonce, "random" when GODEBUG=fips140=only
+	// forced this encryption through cipher.NewGCMWithRandomNonce (see
+	// docs/fips/README.md "AEAD construction"). Echo it back unchanged on
+	// the matching DecryptRequest; Decrypt cannot infer it from the
+	// ciphertext bytes alone.
+	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
 }
 
 // DecryptRequest represents a decryption request.
@@ -195,6 +202,10 @@ type DecryptRequest struct {
 	AdditionalData []byte `json:"additional_data,omitempty"` // Optional AAD for symmetric decryption
 	Nonce          []byte `json:"nonce,omitempty"`           // Required for symmetric decryption
 	Tag            []byte `json:"tag,omitempty"`             // Required for symmetric decryption (GCM)
+	// GCMNonceMode is the value the matching EncryptResponse.GCMNonceMode
+	// reported; see its doc comment. Required, unchanged, to decrypt an
+	// AES-GCM ciphertext produced under GODEBUG=fips140=only.
+	GCMNonceMode string `json:"gcm_nonce_mode,omitempty"`
 	// Mode selects the cipher mode of operation. See EncryptRequest.Mode;
 	// must match the Mode used to produce Ciphertext.
 	Mode string `json:"mode,omitempty"`

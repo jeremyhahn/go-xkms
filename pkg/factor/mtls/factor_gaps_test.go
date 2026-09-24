@@ -18,6 +18,7 @@ import (
 	"crypto/dsa" //nolint:staticcheck // deprecated package used only to build an
 	// "unsupported public key type" certificate for negative-path testing.
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -73,14 +74,22 @@ var (
 	oidSignatureSHA256WithRSA = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
 )
 
-// dsaCertPEM hand-builds a PEM CERTIFICATE block whose SubjectPublicKeyInfo
-// carries a DSA public key — a type parseCertPEM/x509.ParseCertificate will
-// happily parse, but that the mtls Factor does not support for signing.
-func dsaCertPEM(t *testing.T, notAfter time.Time) string {
+// generateDSAKey generates a DSA key pair for a test that needs one to
+// exercise the mtls Factor's rejection of an unsupported public key type,
+// and reports whether the caller can continue using it. DSA is refused
+// outright under GODEBUG=fips140=only (crypto/dsa is not part of the Go
+// Cryptographic Module), so this asserts that refusal and reports ok=false
+// instead of letting the caller dereference a zero-value key -- the
+// rejection this package's own tests exist to prove happens one layer up,
+// inside crypto/dsa, in that mode.
+func generateDSAKey(t *testing.T) (dsa.PrivateKey, bool) {
 	t.Helper()
-
 	var params dsa.Parameters
-	if err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160); err != nil {
+	err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160)
+	if err != nil {
+		if fips140.Enforced() {
+			return dsa.PrivateKey{}, false
+		}
 		t.Fatalf("dsa.GenerateParameters: %v", err)
 	}
 	var priv dsa.PrivateKey
@@ -88,6 +97,23 @@ func dsaCertPEM(t *testing.T, notAfter time.Time) string {
 	if err := dsa.GenerateKey(&priv, rand.Reader); err != nil {
 		t.Fatalf("dsa.GenerateKey: %v", err)
 	}
+	return priv, true
+}
+
+// dsaCertPEM hand-builds a PEM CERTIFICATE block whose SubjectPublicKeyInfo
+// carries a DSA public key — a type parseCertPEM/x509.ParseCertificate will
+// happily parse, but that the mtls Factor does not support for signing. The
+// bool return is false when DSA key generation was refused for the expected
+// GODEBUG=fips140=only reason (see generateDSAKey); the caller must return
+// immediately in that case.
+func dsaCertPEM(t *testing.T, notAfter time.Time) (string, bool) {
+	t.Helper()
+
+	priv, ok := generateDSAKey(t)
+	if !ok {
+		return "", false
+	}
+	params := priv.Parameters
 
 	dsaParamsDER, err := asn1.Marshal(struct{ P, Q, G *big.Int }{params.P, params.Q, params.G})
 	if err != nil {
@@ -136,7 +162,7 @@ func dsaCertPEM(t *testing.T, notAfter time.Time) string {
 		t.Fatalf("marshal certificate: %v", err)
 	}
 
-	return string(pemEncodeCertificate(certDER))
+	return string(pemEncodeCertificate(certDER)), true
 }
 
 // pemEncodeCertificate wraps raw DER bytes in a PEM CERTIFICATE block.
@@ -152,7 +178,10 @@ func pemEncodeCertificate(der []byte) []byte {
 // rejects a structurally valid certificate whose public key is not one of
 // ECDSA/RSA/Ed25519 (validatePublicKeyType's default branch).
 func TestMTLSFactor_Enroll_RejectsUnsupportedPublicKeyType(t *testing.T) {
-	certPEM := dsaCertPEM(t, time.Now().Add(24*time.Hour))
+	certPEM, ok := dsaCertPEM(t, time.Now().Add(24*time.Hour))
+	if !ok {
+		return
+	}
 
 	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
 	_, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
@@ -171,14 +200,9 @@ func TestMTLSFactor_Enroll_RejectsUnsupportedPublicKeyType(t *testing.T) {
 // TestValidatePublicKeyType_RejectsDSA verifies validatePublicKeyType directly
 // rejects a DSA public key, independent of the Enroll call path.
 func TestValidatePublicKeyType_RejectsDSA(t *testing.T) {
-	var params dsa.Parameters
-	if err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160); err != nil {
-		t.Fatalf("dsa.GenerateParameters: %v", err)
-	}
-	var priv dsa.PrivateKey
-	priv.Parameters = params
-	if err := dsa.GenerateKey(&priv, rand.Reader); err != nil {
-		t.Fatalf("dsa.GenerateKey: %v", err)
+	priv, ok := generateDSAKey(t)
+	if !ok {
+		return
 	}
 
 	if err := validatePublicKeyType(&priv.PublicKey); err == nil {
@@ -216,7 +240,10 @@ func TestValidatePublicKeyType_AcceptsSupportedTypes(t *testing.T) {
 func TestMTLSFactor_Verify_RejectsUnsupportedPublicKeyType(t *testing.T) {
 	ctx := context.Background()
 	f := New(Config{})
-	certPEM := dsaCertPEM(t, time.Now().Add(24*time.Hour))
+	certPEM, ok := dsaCertPEM(t, time.Now().Add(24*time.Hour))
+	if !ok {
+		return
+	}
 
 	challenge := &qrdbsdk.AuthFactorChallenge{
 		ChallengeID: "chal-1",
