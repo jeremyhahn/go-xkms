@@ -88,26 +88,36 @@ var (
 	debugPCR     = uint(16)      //nolint:unused // used in tests
 	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
-	ErrPlatformPasswordUnavailable     = errors.New("tpm: failed to retrieve platform password")
-	ErrCertStoreNotInitialized         = errors.New("tpm: certificate store not initialized")
-	ErrInvalidAKAttributes             = errors.New("tpm: invalid AK attributes")
-	ErrInvalidEKCertFormat             = errors.New("tpm: invalid endorsement certificate format")
-	ErrInvalidEKAttributes             = errors.New("tpm: invalid EK attributes")
-	ErrInvalidEKCert                   = errors.New("tpm: failed to verify endorsement key certificate")
-	ErrDeviceAlreadyOpen               = errors.New("tpm: device already open")
-	ErrOpeningDevice                   = errors.New("tpm: error opening device")
-	ErrInvalidSessionType              = errors.New("tpm: invalid session type")
-	ErrInvalidSRKAuth                  = errors.New("tpm: invalid storage root key auth")
-	ErrInvalidActivationCredential     = errors.New("tpm: invalid activation credential")
-	ErrHashAlgorithmNotSupported       = errors.New("tpm: hash algorithm not supported")
-	ErrInvalidKeyAttributes            = errors.New("tpm: invalid key attributes")
-	ErrInvalidPolicyDigest             = errors.New("tpm: invalid policy digest")
-	ErrInvalidHandle                   = errors.New("tpm: invalid entity handle")
-	ErrUnexpectedRandomBytes           = errors.New("tpm: unexpected number of random bytes read")
-	ErrInvalidRandomBytesLength        = errors.New("tpm: invalid random bytes length")
-	ErrInvalidPCRIndex                 = errors.New("tpm: invalid PCR index")
-	ErrInvalidNonce                    = errors.New("tpm: invalid nonce")
-	ErrNotInitialized                  = errors.New("tpm: not initialized")
+	ErrPlatformPasswordUnavailable = errors.New("tpm: failed to retrieve platform password")
+	ErrCertStoreNotInitialized     = errors.New("tpm: certificate store not initialized")
+	ErrInvalidAKAttributes         = errors.New("tpm: invalid AK attributes")
+	ErrInvalidEKCertFormat         = errors.New("tpm: invalid endorsement certificate format")
+	ErrInvalidEKAttributes         = errors.New("tpm: invalid EK attributes")
+	ErrInvalidEKCert               = errors.New("tpm: failed to verify endorsement key certificate")
+	ErrDeviceAlreadyOpen           = errors.New("tpm: device already open")
+	ErrOpeningDevice               = errors.New("tpm: error opening device")
+	ErrInvalidSessionType          = errors.New("tpm: invalid session type")
+	ErrInvalidSRKAuth              = errors.New("tpm: invalid storage root key auth")
+	ErrInvalidActivationCredential = errors.New("tpm: invalid activation credential")
+	ErrHashAlgorithmNotSupported   = errors.New("tpm: hash algorithm not supported")
+	ErrInvalidKeyAttributes        = errors.New("tpm: invalid key attributes")
+	ErrInvalidPolicyDigest         = errors.New("tpm: invalid policy digest")
+	ErrInvalidHandle               = errors.New("tpm: invalid entity handle")
+	ErrUnexpectedRandomBytes       = errors.New("tpm: unexpected number of random bytes read")
+	ErrInvalidRandomBytesLength    = errors.New("tpm: invalid random bytes length")
+	ErrInvalidPCRIndex             = errors.New("tpm: invalid PCR index")
+	ErrInvalidNonce                = errors.New("tpm: invalid nonce")
+	ErrNotInitialized              = errors.New("tpm: not initialized")
+
+	// ErrKeyRetrievalFailed indicates GetSymmetricKey could not determine
+	// whether a symmetric key exists because the underlying key store
+	// (store.KeyBackend) returned an error other than "not found" -- a
+	// transient I/O failure, permission error, or corrupt blob. Callers
+	// must not treat this as backend.ErrKeyNotFound: doing so risks
+	// silently generating a replacement for a key that merely failed to
+	// read. Mirrors pkg/backend/tpm2.ErrKeyRetrievalFailed.
+	ErrKeyRetrievalFailed = errors.New("tpm: symmetric key retrieval failed")
+
 	ErrNotConfigured                   = errors.New("tpm: IDevID not configured")
 	ErrEndorsementCertNotFound         = errors.New("tpm: endorsement certificate not found")
 	ErrInvalidPlatformSRKConfiguration = errors.New("tpm: invalid platform SRK configuration")
