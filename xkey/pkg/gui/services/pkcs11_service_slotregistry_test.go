@@ -87,7 +87,7 @@ func TestPKCS11Service_RegisterModule_SyncsSlotBackends(t *testing.T) {
 // equivalent of a slot that fails to open, surfaced through the same
 // registry.Register error path -- does not abort registration of the
 // module's other slots, and does not fail the overall RegisterModule call.
-// This mirrors pkcs11mgr's original behavior of logging and continuing.
+// A registry failure is logged and slot registration continues.
 func TestPKCS11Service_SyncSlotBackends_OneSlotFailsToRegister(t *testing.T) {
 	mod := mockModuleInfo("mod-1",
 		xkms.PKCS11SlotInfo{SlotID: 0, TokenPresent: true, Label: "Good Slot"},
