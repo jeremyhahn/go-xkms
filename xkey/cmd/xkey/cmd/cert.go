@@ -46,6 +46,10 @@ var (
 	// ErrCertClientCreationFailed indicates the SDK client could not be created.
 	ErrCertClientCreationFailed = errors.New("cert: SDK client creation failed")
 
+	// ErrCertConnectFailed indicates the SDK client could not connect to the
+	// server's CA.
+	ErrCertConnectFailed = errors.New("cert: failed to connect to server")
+
 	// ErrCertStorageFailed indicates the certificate could not be stored.
 	ErrCertStorageFailed = errors.New("cert: certificate storage failed")
 
@@ -282,6 +286,10 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrCertClientCreationFailed, err)
 	}
 	defer func() { _ = client.Close() }()
+
+	if err := client.Connect(ctx); err != nil {
+		return errors.Join(ErrCertConnectFailed, err)
+	}
 
 	// Step 4: Submit CSR to server CA for signing
 	resp, err := client.SignCSR(ctx, &transport.SignCSRRequest{
