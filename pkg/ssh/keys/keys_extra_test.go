@@ -804,12 +804,12 @@ func TestEnclaveSigner_SignWithAlgorithm_RSAUsesRequestedAlgorithm(t *testing.T)
 	if !ok {
 		t.Fatal("expected the RSA enclave signer to implement ssh.AlgorithmSigner")
 	}
-	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.SigAlgoRSASHA2256)
+	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoRSASHA256)
 	if err != nil {
 		t.Fatalf("SignWithAlgorithm: %v", err)
 	}
-	if sig.Format != ssh.SigAlgoRSASHA2256 {
-		t.Errorf("signature format = %q, want %q", sig.Format, ssh.SigAlgoRSASHA2256)
+	if sig.Format != ssh.KeyAlgoRSASHA256 {
+		t.Errorf("signature format = %q, want %q", sig.Format, ssh.KeyAlgoRSASHA256)
 	}
 }
 
@@ -901,12 +901,12 @@ func TestPersistentSigner_SignWithAlgorithm(t *testing.T) {
 	if !ok {
 		t.Fatal("expected the persistent RSA signer to implement ssh.AlgorithmSigner")
 	}
-	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.SigAlgoRSASHA2256)
+	sig, err := algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoRSASHA256)
 	if err != nil {
 		t.Fatalf("SignWithAlgorithm: %v", err)
 	}
-	if sig.Format != ssh.SigAlgoRSASHA2256 {
-		t.Errorf("signature format = %q, want %q", sig.Format, ssh.SigAlgoRSASHA2256)
+	if sig.Format != ssh.KeyAlgoRSASHA256 {
+		t.Errorf("signature format = %q, want %q", sig.Format, ssh.KeyAlgoRSASHA256)
 	}
 }
 
@@ -924,7 +924,7 @@ func TestPersistentSigner_SignWithAlgorithm_AfterCloseReturnsClosedSignerError(t
 	closer()
 
 	algSigner := signer.(ssh.AlgorithmSigner)
-	_, err = algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.SigAlgoRSASHA2256)
+	_, err = algSigner.SignWithAlgorithm(rand.Reader, []byte("data"), ssh.KeyAlgoRSASHA256)
 	var cse *keys.ClosedSignerError
 	if !errors.As(err, &cse) {
 		t.Fatalf("expected ClosedSignerError after close, got %T: %v", err, err)
