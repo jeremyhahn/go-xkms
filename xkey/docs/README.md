@@ -26,11 +26,13 @@ tell.
 | [password](password/) | Static password storage, folders, browser-autofill metadata, xkmsd-backed session access modes | `password/README.md` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
 | [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
+| [pkcs11](pkcs11/) | xkey's PKCS#11 side: GUI module/slot/token management, the embedded and IPC `PKCS11Transport` implementations, and the `--backend pkcs11` surface across other commands | `pkcs11/ipc.md` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
 | [seal](seal/) | The Barrier, barrier PCR-policy auto-unseal (shared by the CLI and GUI), the named PCR policy store, and the legacy sealed-blob store | `seal/README.md`, `seal/platform-policy.md`, `configuration/auto-unseal.md` (now a pointer) |
 | [secret-service](secret-service/) | The `org.freedesktop.secrets` D-Bus daemon exposing the static-password store to secret-tool, git-credential-libsecret and browsers, with Lock/Unlock tied to the barrier | — |
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
+| [ssh](ssh/) | xkey's SSH key/profile/host-key management, connect/console, local `ssh_config`/agent discovery, and the GUI SSH services | `ssh/README.md` |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
 
 The core capabilities these build on live in the root module — the
@@ -52,6 +54,8 @@ Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `oath/`,
 `password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
 Still owed a folder: `ble/`, `device/`, `fido2/`, `gui/`, `luks/`,
 `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
+Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
+`password/`, `phone/`, `piv/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
 
@@ -72,11 +76,12 @@ Still owed a folder: `ble/`, `device/`, `fido2/`, `gui/`, `luks/`,
 | [password/](password/) | Static password management with encryption and access modes |
 | [phone/](phone/) | Phone backend, bidirectional key sharing, and attestation |
 | [piv/](piv/) | PIV smart card certificate management |
-| [pkcs11/](pkcs11/) | PKCS#11 IPC transport for Unix socket crypto operations |
+| [pkcs11/](pkcs11/) | xkey's PKCS#11 module/slot/token management, transports, and `--backend pkcs11` surface (five-file feature folder) |
 | [roadmap/](roadmap/) | Feature roadmaps for media, PIV, and web |
 | [seal/](seal/) | The Barrier, TPM PCR-policy auto-unseal, named PCR policies, and the legacy sealed-blob store |
 | [secret-service/](secret-service/) | The `org.freedesktop.secrets` D-Bus Secret Service daemon |
 | [ssh/](ssh/) | SSH agent with standalone and server modes |
+| [ssh/](ssh/) | xkey's SSH key/profile/host-key/console management (five-file feature folder) |
 | [testing/](testing/) | Testing guides and end-to-end test documentation |
 | [usage/](usage/) | CLI usage guides, tutorials, and command reference |
 | [usb/](usb/) | USB CCID smart card interface and disk image creation |
@@ -240,7 +245,11 @@ xkey fido2 --cdp --cdp-port 9222
 - [Roadmap](gui/ROADMAP.md) -- Planned GUI features
 
 ### [SSH](ssh/)
-- [Overview](ssh/README.md) -- SSH agent with standalone and server modes
+- [Architecture](ssh/architecture.md) -- the shared store, transport selection, and key-source resolution
+- [Engineering](ssh/engineering.md) -- exported surface, invariants, errors
+- [CLI](ssh/cli.md) -- every `xkey ssh` verb and flag
+- [API](ssh/api.md) -- GUI bindings and the shared local-discovery package
+- [User Guide](ssh/user.md) -- task-oriented usage
 
 ### [OATH](oath/)
 - [Architecture](oath/architecture.md) -- credential model, stores, QR scanning
@@ -270,7 +279,11 @@ xkey fido2 --cdp --cdp-port 9222
 - [Disk Images](usb/images.md) -- Portable USB disk image creation
 
 ### [PKCS#11](pkcs11/)
-- [IPC Transport](pkcs11/ipc.md) -- Unix socket transport for PKCS#11 module and crypto.Signer
+- [Architecture](pkcs11/architecture.md) -- why there are two transports and a separate GUI manager
+- [Engineering](pkcs11/engineering.md) -- exported surface, invariants, errors
+- [CLI](pkcs11/cli.md) -- `--backend pkcs11` / `--pkcs11-*` flags, by command
+- [API](pkcs11/api.md) -- GUI bindings and the IPC wire protocol
+- [User Guide](pkcs11/user.md) -- task-oriented usage
 
 ### [Device](device/)
 - [Overview](device/README.md) -- Device management and pairing
