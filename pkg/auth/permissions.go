@@ -132,9 +132,17 @@ const (
 	// acme_accounts:disable).
 	ActionDisable = "disable"
 
-	// Admin service actions.
+	// Admin service actions. ActionPeers mirrors go-qrdb's AdminPeers
+	// permission (pkg/permission/constants.go) exactly: the REST cluster
+	// routes (admin:status, admin:peers) drive the same AdminService the
+	// embedded qrdb node registers on the control-plane gRPC surface
+	// (pkg/server/qrdb_control_plane.go), so the grant must match verbatim.
+	// There are no xkms actions for AdminAddMember/AdminRemoveMember: Raft
+	// membership mutation is never exposed over REST (docs/cluster/api.md),
+	// only through go-qrdb's own control plane directly.
 	ActionStatus       = "status"
 	ActionCapabilities = "capabilities"
+	ActionPeers        = "peers"
 
 	// Barrier / seal lifecycle actions.
 	ActionBootstrap        = "bootstrap"

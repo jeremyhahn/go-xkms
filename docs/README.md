@@ -22,6 +22,7 @@ the folder in the same commit that changes the behavior.
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
 | [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, and the `xkmsctl cluster`/`rebalance` control plane |
+| [cluster](cluster/) | Raft clustering — status/membership (CLI over qrdb's control plane, REST for the web console), leader redirect, cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
 | [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions, their verification, and the `dice-idevid` issuance profile |
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
@@ -125,6 +126,7 @@ by five and reports unconverted folders as converted.
 | [post-quantum](post-quantum/) | `architecture/post-quantum-cryptography.md`, `backends/quantum.md` |
 | [symmetric-aead](symmetric-aead/) | `architecture/symmetric-encryption.md`, `configuration/aead-auto-selection.md`, `configuration/symmetric-encryption.md` |
 | [audit-log](audit-log/) | — |
+| [cluster](cluster/) | `cluster/README.md` — **absorbed and deleted**; `cluster/ca-key-custody.md` retained as a companion deep-dive, linked from [`cluster/architecture.md`](cluster/architecture.md) |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — the legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions describe a proxy plane that was since deleted; the feature folder documents the current `xkmsctl cluster`/`rebalance` → qrdb control-plane design instead |
@@ -222,6 +224,7 @@ Ordered "under active development first, then most often read":
 | Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
 | Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
 | Clustering | [`cluster/`](cluster/) | includes CA key custody |
+| Web console | [`web/`](web/) | 5 files |
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
