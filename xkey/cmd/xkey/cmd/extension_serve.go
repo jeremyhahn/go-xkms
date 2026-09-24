@@ -457,6 +457,12 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				logger.Warn("failed to initialize authenticator, autofill will operate without CTAP2 auth",
 					"error", authErr)
 			} else {
+				// Wire the same audit logger the autofill service uses, so
+				// the authenticator's security events (OpPINSeeded,
+				// OpFIDO2CredentialCreated) reach the same audit trail as
+				// every other headless-daemon security event (#688).
+				auth.SetAuditLogger(auditLogger)
+
 				// Wire FIDO2 hash setter so PIN changes propagate to the authenticator.
 				pinBackendSvc.SetFIDO2HashSetter(func(hash []byte) {
 					auth.SetFIDO2PINHash(hash)

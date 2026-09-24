@@ -1,6 +1,6 @@
 # Audit Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `audit-log` · Repo: `go-xkms` · Last verified: 2026-09-23 (#804)
 
 ## Exported surface — `pkg/audit`
 
@@ -106,12 +106,42 @@ operation does not exist in this codebase (e.g. `xkey`'s
 remain because wiring them touches an area with no audit hook today and an
 architecture decision the owner has not made yet — `pkg/ca` (CA
 initialization, CRL generation, cross-signing: `EventCAInitialized`,
-`EventCACRLGenerated`, `EventCACrossSign`), the shared ACME challenge
+`EventCACRLGenerated`, `EventCACrossSign`) and the shared ACME challenge
 verifier signature (`EventTPMAttestation`, `EventDeviceAttestation`,
-`EventEndorsementVerified`), and `pkg/authenticator`'s core CTAP2 path
-(`OpFIDO2CredentialCreated`, `OpPINSeeded`). These are tracked, not silently
-dropped — see the issue #688 delivery report for the specific reasoning per
-event.
+`EventEndorsementVerified`). These are tracked, not silently dropped — see
+the issue #688 delivery report for the specific reasoning per event.
+
+`xkey/pkg/authenticator`'s core CTAP2 path now emits both
+`OpFIDO2CredentialCreated` (before the credential is stored, in
+`storeCredentialWithPolicy`) and `OpPINSeeded` (before the PIN state is
+persisted, in `establishPINLocked`) — see `Authenticator.SetAuditLogger`
+(#766). The authenticator itself never constructs a logger; every production
+entry point that can create a FIDO2 credential or seed a PIN wires one in
+explicitly after constructing the `Authenticator` (#804):
+
+- the xKey GUI (`xkey/pkg/gui/app.go`, `PostBarrierUnseal` →
+  `initializeAuthenticator`) — the shared `audit.BackendStore`, barrier
+  encrypted and used by every other GUI service (#803);
+- the `xkey fido2` virtual USB device daemon
+  (`xkey/cmd/xkey/cmd/fido2.go`, `newFIDO2Device`) — `audit.NewSlogLogger`,
+  the same slog-backed logger the headless extension-serve daemon already
+  used for `AutoFillService`; this daemon has no durable, queryable audit
+  store of its own, so its security events land in the structured log stream
+  it already writes;
+- the headless browser-extension daemon
+  (`xkey/cmd/xkey/cmd/extension_serve.go`, `initHeadlessAuthenticator` →
+  `runExtensionServe`) — the same `audit.NewSlogLogger` instance already
+  wired to `AutoFillService`, so both share one audit trail.
+
+The offline token/attestation operator verbs
+(`xkey/cmd/xkey/cmd/fido2_offline_device.go`'s `newOfflineAuthenticator`,
+used by `fido2 init-token`, `fido2 change-so-pin`, and
+`fido2 provision-attestation`) construct an authenticator only to drive
+`InitializeToken`/`ChangeSOPIN`/attestation provisioning — none of which
+reach `establishPINLocked` or `storeCredentialWithPolicy` — so they carry no
+audit wiring for these two events; the Security Officer PIN lifecycle they
+drive is a separate, already-covered surface (`OpSOPINChanged` etc. in
+`pkg/gui/services/pin_service.go`).
 
 ## Configuration
 
@@ -155,7 +185,16 @@ records after N days would be worse than one that grows.
 - **xkey** — `xkey/pkg/audit/severity_test.go` (same write-failure policy
   shape as the server); per-service tests alongside each emitter, e.g.
   `xkey/pkg/gui/services/staticpw_service_audit_test.go`,
-  `autofill_service_test.go`, `tpm_service_reset_audit_test.go`.
+  `autofill_service_test.go`, `tpm_service_reset_audit_test.go`;
+  `xkey/pkg/authenticator/cmd_clientpin_audit_test.go` and
+  `cmd_makecredential_audit_test.go` (`OpPINSeeded`/`OpFIDO2CredentialCreated`
+  emission and write-failure refusal at the authenticator itself); one
+  `*_audit_test.go` per non-GUI production entry point that wires
+  `SetAuditLogger` —
+  `xkey/cmd/xkey/cmd/fido2_audit_test.go` (the `xkey fido2` daemon) and
+  `extension_serve_audit_test.go` (the headless extension-serve daemon) —
+  proving both that the wired logger receives the record and that a failing
+  logger refuses the operation, end to end from that entry point (#804).
 
 `handlers_transport_audit_test.go` and its gRPC counterpart are the ones that
 matter most: they assert that operations reaching the service through a
