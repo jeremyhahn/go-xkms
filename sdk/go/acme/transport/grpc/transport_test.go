@@ -33,8 +33,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// testCtxKey is a typed context key used by tests to avoid collisions.
-type testCtxKey string
 
 // insecureTestTLSConfig returns the explicit TLS configuration that the
 // hardened transport contract requires alongside Insecure=true
