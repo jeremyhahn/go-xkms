@@ -33,6 +33,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // initTestOATHBarrier initializes a real passphrase barrier at the data
@@ -84,7 +85,10 @@ func newDetachedOATHCmd(t *testing.T, template *cobra.Command) (*cobra.Command, 
 }
 
 func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
-	isolatedBackupHome(t)
+	home := isolatedBackupHome(t)
+	// Changing the working directory must have no effect on where the store
+	// lands: resolution goes through resolveDataDir (HOME-based), never the
+	// process's cwd (go-xkms#929).
 	t.Chdir(t.TempDir())
 	logBuf := captureDefaultLog(t)
 
@@ -101,9 +105,11 @@ func TestRunOATHAdd_NoBarrier_WarnsAndUsesFileStore(t *testing.T) {
 	assert.Contains(t, logged, "store=OATH")
 	assert.Contains(t, logged, "xkey barrier init")
 
-	// The credential lands in the historical plain file, readable without a
-	// barrier -- the no-barrier default is unchanged.
-	fs, err := oath.NewFileStore(defaultOATHStorePath)
+	// The credential lands in the historical plain file under the resolved
+	// xkey data directory, readable without a barrier -- the no-barrier
+	// default is unchanged, but it is no longer cwd-relative (go-xkms#929).
+	storePath := filepath.Join(backupTestDataDir(home), oathStoreFilename)
+	fs, err := oath.NewFileStore(storePath)
 	require.NoError(t, err)
 	defer func() { _ = fs.Close() }()
 	cred, err := fs.Get("slack")
@@ -206,4 +212,55 @@ func TestRunOATHAdd_ExplicitStoreFlagBypassesBarrier(t *testing.T) {
 	cred, err := fs.Get("explicit")
 	require.NoError(t, err)
 	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString())
+}
+
+// --- openOATHStore default resolution (go-xkms#929) ---
+
+// TestOpenOATHStore_DefaultsUnderXKEYHome verifies that, with no --store
+// override and no barrier, openOATHStore's plain-file fallback resolves to
+// an absolute path under the resolved xkey data directory
+// (<home>/.xkey/data/oath.json), never a path relative to the process's
+// working directory.
+func TestOpenOATHStore_DefaultsUnderXKEYHome(t *testing.T) {
+	home := isolatedBackupHome(t)
+	t.Chdir(t.TempDir())
+
+	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
+
+	store, err := openOATHStore(cmd, "")
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	want := filepath.Join(backupTestDataDir(home), oathStoreFilename)
+	if !filepath.IsAbs(want) {
+		t.Fatalf("want %q to be absolute", want)
+	}
+
+	// The store file itself is created lazily on first write (oath.FileStore);
+	// prove the resolved path really is where writes land.
+	cred := &oath.Credential{ID: "github", Name: "GitHub", Type: oath.TypeTOTP, Algorithm: "SHA1", Digits: 6, Period: 30}
+	require.NoError(t, cred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, store.Add(cred))
+
+	_, statErr := os.Stat(want)
+	assert.NoError(t, statErr, "expected the OATH store file under the resolved xkey data directory")
+}
+
+// TestOpenOATHStore_ErrorWhenHomeUnresolvable verifies that openOATHStore
+// fails with a typed error, instead of falling back to a cwd-relative
+// path, when the xkey home cannot be resolved or created.
+func TestOpenOATHStore_ErrorWhenHomeUnresolvable(t *testing.T) {
+	isolatedBackupHome(t)
+
+	// A regular file, not a directory: XKEY_HOME can neither be used nor
+	// created as a directory, and it takes precedence over $HOME.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+	t.Setenv(xhome.EnvHome, blocker)
+
+	cmd, _ := newDetachedOATHCmd(t, oathAddCmd)
+
+	_, err := openOATHStore(cmd, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrOATHStoreOpenFailed)
 }

@@ -1,6 +1,6 @@
 # Static Passwords — Engineering
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 See [architecture.md](architecture.md) for the store hierarchy and the
 "store location vs. session state" split before reading this document.
@@ -188,11 +188,11 @@ type constants shared with the extension protocol.
 
 | Setting | Resolution | Notes |
 |---|---|---|
-| Store path | `--store` flag (`./data/staticpw` default) | Same flag name across `add`/`list`/`get`/`remove`/`status` |
+| Store path | `--store` flag (unset default resolves to `~/.xkey/data/staticpw` via `featureDataDir`, `datadir.go`, go-xkms#929) | Same flag name across `add`/`list`/`get`/`remove`/`status` |
 | `--source` (`list`) | `auto`→ daemon, then disk | `daemon`/`disk` force one |
 | `--source` (`status`) | `auto`→ daemon, then disk; `xkmsd` reads the session server | The only verb that accepts `xkmsd` |
 | `xkmsd` endpoint | `--xkmsd-url` / `XKMSD_URL` / config, resolved by `newXKMSdClient` (shared helper, `xkmsd_client.go`) | Required for `unlock`/`lock`/`access-mode`, and `status --source xkmsd` |
-| `fido2` daemon's password store | `--password-store` flag (`./data/staticpw` default) / `XKEY_FIDO2_PASSWORD_STORE` | `xkey fido2` opens this store for `touch`/`password type` requests |
+| `fido2` daemon's password store | `--password-store` flag (unset default resolves to the same `~/.xkey/data/staticpw`, go-xkms#929) / `XKEY_FIDO2_PASSWORD_STORE` | `xkey fido2` opens this store for `touch`/`password type` requests |
 
 ## Tests
 

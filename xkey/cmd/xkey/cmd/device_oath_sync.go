@@ -102,19 +102,19 @@ func init() {
 	// Sync flags
 	oathSyncPhoneCmd.Flags().String("device", "", "Paired device name")
 	oathSyncPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	oathSyncPhoneCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathSyncPhoneCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	addBarrierPasswordFlags(oathSyncPhoneCmd)
 
 	// Push flags
 	oathPushPhoneCmd.Flags().String("device", "", "Paired device name")
 	oathPushPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	oathPushPhoneCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathPushPhoneCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	addBarrierPasswordFlags(oathPushPhoneCmd)
 
 	// Pull flags
 	oathPullPhoneCmd.Flags().String("device", "", "Paired device name")
 	oathPullPhoneCmd.Flags().Duration("timeout", 60*time.Second, "Operation timeout")
-	oathPullPhoneCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathPullPhoneCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	addBarrierPasswordFlags(oathPullPhoneCmd)
 
 	// Bind flags to viper

@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -219,7 +219,7 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--storage` | `memory` | `memory`, `file`, or `barrier` |
-| `--storage-path` | `./data` | path for file storage |
+| `--storage-path` | `~/.xkey/data/fido2` | path for file storage and the authenticator profile, resolved through the shared xkey data-directory chain (`resolveFIDO2StoragePath`, `fido2.go`; honors `XKEY_HOME`/`XKEY_DATA_DIR`) rather than the process's working directory (go-xkms#929) |
 | `--barrier-password` | `""` | barrier password for encrypted storage |
 | `--barrier-password-file` | `""` | read it from a file's first line |
 | `--name` | `xKey (go-xkms)` | device name the OS sees |
@@ -233,7 +233,7 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | `--tpm-device` | `/dev/tpmrm0` | TPM device path |
 | `--attestation` | `none` | `none`, `packed`, or `tpm` |
 | `--phone-device` | `""` | specific paired phone; default is the default phone |
-| `--password-store` | `./data/staticpw` | static password store path |
+| `--password-store` | `~/.xkey/data/staticpw` | static password store path — the same store `xkey password` uses (`passwordStoreFeature`, `password.go`); resolved through the shared xkey data-directory chain, never the working directory (go-xkms#929) |
 | `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket |
 | `--default-password` | `""` | password name typed on a bare touch |
 | `--notify-command` | `""` | custom notification command |
@@ -376,9 +376,10 @@ backend that cannot reach its TPM does not silently become `software`.
 ## Persistence
 
 - **`memory`** — nothing survives the process. `storage_memory.go`.
-- **`file`** — under `--storage-path` (default `./data`). `BackendStorage`
-  over a plain `xkms.StorageBackend`; plaintext at rest (see the at-rest
-  invariant above).
+- **`file`** — under `--storage-path` (default `~/.xkey/data/fido2`,
+  resolved through the shared xkey data-directory chain, go-xkms#929).
+  `BackendStorage` over a plain `xkms.StorageBackend`; plaintext at rest
+  (see the at-rest invariant above).
 - **`barrier`** — the same `BackendStorage` over the barrier's
   `xkms.StorageBackend` instead; encrypted, keyed by the barrier password.
 
