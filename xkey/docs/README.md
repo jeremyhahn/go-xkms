@@ -17,6 +17,7 @@ tell.
 |---------|----------------|------------------------|
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
+| [fido2](fido2/) | The `xkey fido2` daemon process, IPC-facing verbs (`touch`, `unlock`, `status`, `provision-attestation`), the GUI's FIDO2 device/service host, and a PIN/hmac-secret/SO-token protocol reference for `xkey/pkg/authenticator` | `fido2/README.md`, `fido2/overview.md`, `fido2/authenticator-*.md`, `fido2/daemon-*.md` (with `virtual-authenticator`) |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
@@ -41,7 +42,7 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, `oath/`,
+Still owed a folder: `autofill/`, `ble/`, `device/`, `gui/`, `luks/`, `oath/`,
 `password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`, `usb/`,
 `xkeysigner/`. Not features and staying as they are: `architecture/`,
 `configuration/`, `roadmap/`, `testing/`, `usage/`.
@@ -55,7 +56,7 @@ Still owed a folder: `autofill/`, `ble/`, `device/`, `fido2/`, `gui/`, `luks/`, 
 | [ble/](ble/) | Bluetooth Low Energy transport and Android pairing |
 | [configuration/](configuration/) | Application configuration and enterprise setup (see [seal/](seal/) for auto-unseal) |
 | [device/](device/) | Device pairing, QR pairing, and TCP relay |
-| [fido2/](fido2/) | FIDO2/WebAuthn daemon and CTAP2 authenticator library |
+| [fido2/](fido2/) | The `xkey fido2` daemon process and GUI device host (converted; see [Feature documentation](#feature-documentation) above) |
 | [gui/](gui/) | Desktop GUI application, design system, and setup wizard |
 | [luks/](luks/) | LUKS2 encrypted storage management |
 | [oath/](oath/) | OATH TOTP/HOTP credential management with QR scanning |
@@ -196,16 +197,13 @@ xkey fido2 --cdp --cdp-port 9222
 ## Component Documentation
 
 ### [FIDO2](fido2/)
-- [Overview](fido2/README.md) -- FIDO2 daemon with all backend options
-- [Daemon Overview](fido2/overview.md) -- what `xkey fido2` is and what it owns
-- [Daemon Architecture](fido2/daemon-architecture.md) -- UHID device, IPC socket, keyboard, CDP bridge
-- [Daemon Configuration](fido2/daemon-configuration.md) -- flags, environment variables, config file
-- [Authenticator Overview](fido2/authenticator-overview.md) -- CTAP2 virtual authenticator implementation
-- [Authenticator API](fido2/authenticator-api.md) -- Complete API documentation
-- [Authenticator Architecture](fido2/authenticator-architecture.md) -- Component design and data flows
-- [Authenticator Configuration](fido2/authenticator-config.md) -- Library configuration reference
-- [Authenticator Security](fido2/authenticator-security.md) -- Security model and threat analysis
-- [Authenticator Examples](fido2/authenticator-examples.md) -- Usage examples and code samples
+
+See the [Feature documentation](#feature-documentation) table above for the
+five-file folder: [architecture](fido2/architecture.md),
+[engineering](fido2/engineering.md), [cli](fido2/cli.md), [api](fido2/api.md),
+[user](fido2/user.md). The CTAP2 authenticator itself — commands, PIN
+establishment, credential storage, and the `xkey fido2`/`xkey uhid` flag
+reference — is [virtual-authenticator](virtual-authenticator/).
 
 ### [Architecture](architecture/)
 - [Overview](architecture/README.md) -- System architecture and component design

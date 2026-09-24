@@ -113,7 +113,7 @@ first run and the wrong one for daily use.
   wrap of one protected key under another goes through `wrapFromProtected`,
   which releases the key borrow before the plaintext borrow is taken. The
   invariants and the deadlock rule are spelled out in
-  [`fido2/authenticator-security.md`](../fido2/authenticator-security.md).
+  [`fido2/engineering.md`](../fido2/engineering.md#key-material-handling-in-memory).
 - **`--storage memory` loses credentials on exit.** No warning is emitted; it is
   the documented default.
 - **go-qrdb's seal barrier is the only at-rest encryption in this stack; xkey
