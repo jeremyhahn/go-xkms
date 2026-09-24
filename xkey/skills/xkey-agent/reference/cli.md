@@ -1931,6 +1931,22 @@ Verify current PCR values against policy
 
 Usage: `xkey policy verify <name>`
 
+## xkey secret-service
+
+Run the freedesktop Secret Service daemon (org.freedesktop.secrets)
+
+Usage: `xkey secret-service [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--barrier-password` | string |  | barrier password used to unlock on demand (or XKEY_BARRIER_PASSWORD) |
+| `--barrier-password-file` | string |  | path to a file containing the barrier password |
+| `--bus` | string | session | D-Bus bus to own org.freedesktop.secrets on (session or system) |
+| `--data-dir` | string |  | data directory for barrier storage (default: ~/.xkey/data) |
+| `--strategy` | string |  | barrier seal strategy override (default: the strategy the barrier was initialized with) |
+| `--tpm-device` | string |  | TPM device path for the tpm2 strategy (default: $TPM_DEVICE_PATH or /dev/tpmrm0) |
+| `--tpm-simulator` | bool | false | use the in-process TPM simulator instead of a hardware device (requires a simulator build) |
+
 ## xkey share
 
 Manage Shamir secret shares
