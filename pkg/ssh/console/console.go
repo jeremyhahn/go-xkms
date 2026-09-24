@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -179,8 +180,7 @@ func Dial(ctx context.Context, req DialRequest, cfg Config) (Console, error) {
 	}
 	c, err := open(client, cfg, true)
 	if err != nil {
-		_ = client.Close()
-		return nil, err
+		return nil, errors.Join(err, client.Close())
 	}
 	return c, nil
 }
@@ -246,7 +246,9 @@ func buildHostKeyCallback(ctx context.Context, req DialRequest) ssh.HostKeyCallb
 			pin := known_hosts.PinFromPublicKey(host, req.HostKeyScope, req.HostKeyOwner, key, known_hosts.SourceFirstContact)
 			if line, eerr := known_hosts.Emit(pin); eerr == nil {
 				for _, f := range req.KnownHostsExtraFiles {
-					_ = known_hosts.AppendMissing([]byte(line+"\n"), f)
+					if aerr := known_hosts.AppendMissing([]byte(line+"\n"), f); aerr != nil {
+						slog.Warn("ssh/console: failed to mirror an accepted host key into an external known_hosts file", "host", host, "file", f, "error", aerr)
+					}
 				}
 			}
 			return true, nil
@@ -293,6 +295,19 @@ func Open(client *ssh.Client, cfg Config) (Console, error) {
 	return open(client, cfg, false)
 }
 
+// closeSessionOnError closes sess after a setup failure (RequestPty, Shell,
+// or one of the pipe openers) and joins the close result into cause, the
+// error already being returned. The same filtering (*sshConsole).Close
+// applies on the success path: x/crypto/ssh reports "already closed" as
+// io.EOF, which means nothing more than the session never having gotten off
+// the ground and is not itself worth reporting.
+func closeSessionOnError(sess *ssh.Session, cause error) error {
+	if cerr := sess.Close(); cerr != nil && !errors.Is(cerr, io.EOF) {
+		return errors.Join(cause, cerr)
+	}
+	return cause
+}
+
 // open is the shared implementation. ownClient controls whether Close also
 // closes the *ssh.Client.
 func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
@@ -302,25 +317,28 @@ func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
 	}
 
 	for k, v := range cfg.Env {
-		_ = sess.Setenv(k, v)
+		// Best-effort: RFC 4254 6.4 lets a server silently accept only a
+		// subset of requested variables, so a rejection here is routine
+		// server policy, not a session-ending failure. Still worth knowing
+		// about, so it is logged rather than dropped.
+		if serr := sess.Setenv(k, v); serr != nil {
+			slog.Debug("ssh/console: remote rejected an environment variable", "key", k, "error", serr)
+		}
 	}
 
 	// For a terminal we want stderr merged into the single output stream the
 	// PTY presents, so wire stdin/stdout pipes and merge stderr to stdout.
 	stdin, err := sess.StdinPipe()
 	if err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 	stdout, err := sess.StdoutPipe()
 	if err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 	stderr, err := sess.StderrPipe()
 	if err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 
 	if err := sess.RequestPty(cfg.term(), cfg.rows(), cfg.cols(), ssh.TerminalModes{
@@ -328,12 +346,10 @@ func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}); err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 	if err := sess.Shell(); err != nil {
-		_ = sess.Close()
-		return nil, &SessionError{Err: err}
+		return nil, closeSessionOnError(sess, &SessionError{Err: err})
 	}
 
 	c := &sshConsole{

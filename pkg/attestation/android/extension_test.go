@@ -1964,3 +1964,161 @@ func makeCertWithExtension(t *testing.T, extBytes []byte) *x509.Certificate {
 	}
 	return cert
 }
+
+// marshalAppIDElement DER-encodes an EXPLICIT context-specific tag-709
+// element whose content is an OCTET STRING wrapping the DER of appID,
+// matching how findAttestationApplicationID reads it back: two decodes,
+// the outer tagged element then the OCTET STRING's own contents.
+func marshalAppIDElement(t *testing.T, appID attestationApplicationIDASN1) []byte {
+	t.Helper()
+
+	wrapped, err := asn1.Marshal(appID)
+	if err != nil {
+		t.Fatalf("marshal attestationApplicationIDASN1: %v", err)
+	}
+	octetDER, err := asn1.Marshal(wrapped)
+	if err != nil {
+		t.Fatalf("marshal OCTET STRING: %v", err)
+	}
+	elem, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tagAttestationApplicationID,
+		IsCompound: true,
+		Bytes:      octetDER,
+	})
+	if err != nil {
+		t.Fatalf("marshal tag-709 element: %v", err)
+	}
+	return elem
+}
+
+// TestFindAttestationApplicationID_ValidAppID verifies that a tag-709
+// element is located and both the package list and signature digests are
+// decoded from the doubly-wrapped OCTET STRING/SEQUENCE it carries.
+func TestFindAttestationApplicationID_ValidAppID(t *testing.T) {
+	elem := marshalAppIDElement(t, attestationApplicationIDASN1{
+		PackageInfos: []attestationPackageInfoASN1{
+			{PackageName: []byte("com.example.app"), Version: 5},
+		},
+		SignatureDigests: [][]byte{{0x01, 0x02, 0x03}},
+	})
+	outer := wrapAuthorizationListElements(t, elem)
+
+	got := findAttestationApplicationID(outer)
+	if got == nil {
+		t.Fatal("expected a decoded AttestationApplicationID, got nil")
+	}
+	if len(got.Packages) != 1 || got.Packages[0].Name != "com.example.app" || got.Packages[0].Version != 5 {
+		t.Errorf("Packages = %+v, want [{com.example.app 5}]", got.Packages)
+	}
+	if len(got.SignatureDigests) != 1 || !bytes.Equal(got.SignatureDigests[0], []byte{0x01, 0x02, 0x03}) {
+		t.Errorf("SignatureDigests = %v, want [[1 2 3]]", got.SignatureDigests)
+	}
+}
+
+// TestFindAttestationApplicationID_AbsentTagReturnsNil verifies that an
+// AuthorizationList with no tag-709 element reports nil rather than a zero
+// value AttestationApplicationID.
+func TestFindAttestationApplicationID_AbsentTagReturnsNil(t *testing.T) {
+	tagged, err := marshalExplicitInt(tagOrigin, OriginGenerated)
+	if err != nil {
+		t.Fatalf("marshal tagged origin: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, tagged)
+
+	if got := findAttestationApplicationID(outer); got != nil {
+		t.Errorf("got %+v, want nil when no tag-709 element is present", got)
+	}
+}
+
+// TestFindAttestationApplicationID_InvalidOuterData verifies that malformed
+// or absent input returns nil rather than panicking.
+func TestFindAttestationApplicationID_InvalidOuterData(t *testing.T) {
+	if got := findAttestationApplicationID([]byte{0xFF, 0xFF}); got != nil {
+		t.Errorf("got %+v, want nil for malformed data", got)
+	}
+	if got := findAttestationApplicationID(nil); got != nil {
+		t.Errorf("got %+v, want nil for nil data", got)
+	}
+}
+
+// TestFindAttestationApplicationID_TrailingDataOnOuterSequence verifies that
+// trailing bytes after the outer SEQUENCE cause findAttestationApplicationID
+// to return nil rather than ignoring the excess data.
+func TestFindAttestationApplicationID_TrailingDataOnOuterSequence(t *testing.T) {
+	elem := marshalAppIDElement(t, attestationApplicationIDASN1{})
+	outer := wrapAuthorizationListElements(t, elem)
+	outer = append(outer, 0x00, 0x01)
+
+	if got := findAttestationApplicationID(outer); got != nil {
+		t.Errorf("got %+v, want nil for trailing data", got)
+	}
+}
+
+// TestFindAttestationApplicationID_MalformedElementBreaksLoop verifies that
+// an element inside the outer SEQUENCE that fails to decode stops the walk
+// and returns nil, rather than panicking on the unparsed remainder.
+func TestFindAttestationApplicationID_MalformedElementBreaksLoop(t *testing.T) {
+	outerSeq, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassUniversal,
+		Tag:        asn1.TagSequence,
+		IsCompound: true,
+		Bytes:      []byte{0xFF, 0xFF},
+	})
+	if err != nil {
+		t.Fatalf("marshal outer SEQUENCE: %v", err)
+	}
+
+	if got := findAttestationApplicationID(outerSeq); got != nil {
+		t.Errorf("got %+v, want nil when an element fails to decode", got)
+	}
+}
+
+// TestFindAttestationApplicationID_WrappedNotOctetString verifies that a
+// tag-709 element whose content is not an OCTET STRING -- an INTEGER here --
+// returns nil at the first decode rather than misreading the tag mismatch.
+func TestFindAttestationApplicationID_WrappedNotOctetString(t *testing.T) {
+	intDER, err := asn1.Marshal(5)
+	if err != nil {
+		t.Fatalf("marshal INTEGER: %v", err)
+	}
+	elem, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tagAttestationApplicationID,
+		IsCompound: true,
+		Bytes:      intDER,
+	})
+	if err != nil {
+		t.Fatalf("marshal tag-709 element: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, elem)
+
+	if got := findAttestationApplicationID(outer); got != nil {
+		t.Errorf("got %+v, want nil when the tag-709 content is not an OCTET STRING", got)
+	}
+}
+
+// TestFindAttestationApplicationID_ParsedInvalidContent verifies that an
+// OCTET STRING whose content does not decode as attestationApplicationIDASN1
+// returns nil at the second decode.
+func TestFindAttestationApplicationID_ParsedInvalidContent(t *testing.T) {
+	octetDER, err := asn1.Marshal([]byte{0x01, 0x02, 0x03})
+	if err != nil {
+		t.Fatalf("marshal OCTET STRING: %v", err)
+	}
+	elem, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tagAttestationApplicationID,
+		IsCompound: true,
+		Bytes:      octetDER,
+	})
+	if err != nil {
+		t.Fatalf("marshal tag-709 element: %v", err)
+	}
+	outer := wrapAuthorizationListElements(t, elem)
+
+	if got := findAttestationApplicationID(outer); got != nil {
+		t.Errorf("got %+v, want nil when the OCTET STRING content is not a valid "+
+			"attestationApplicationIDASN1 SEQUENCE", got)
+	}
+}

@@ -45,6 +45,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/degradation"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -140,6 +142,12 @@ type RestServicer interface {
 
 	// CABundleHandler returns the CA bundle (non-RFC 8555 compliant)
 	CABundleHandler(w http.ResponseWriter, r *http.Request)
+
+	// HealthHandler reports the ACME server's health, including the state of
+	// every circuit breaker registered on Params.Breakers and whether the
+	// directory and CA-bundle endpoints are currently serving degraded
+	// (cached) responses. Non-RFC 8555.
+	HealthHandler(w http.ResponseWriter, r *http.Request)
 }
 
 const (
@@ -242,6 +250,51 @@ type Params struct {
 	// (acme.enrollment.allow_loopback_identifier).
 	AllowLoopbackIdentifier bool
 
+	// Breakers is the shared circuit breaker manager backing the ACME
+	// server's resilience layer. NewRestService uses it to create the
+	// storage breaker (see StorageBreaker) and, when KMSService is set, to
+	// wrap KMSService with the KMS breaker (see KMSBreaker) -- so
+	// HealthHandler can report both from one place. A caller that wraps its
+	// own ChallengeMap entries or a CT submitter
+	// (circuitbreaker.WrapChallengeVerifier, WrapLogSubmitter) should use
+	// this same Manager so those breakers are reported too.
+	//
+	// A nil Manager disables circuit breaking and degradation entirely:
+	// CABundleHandler and DirectoryHandler always compute fresh, KMSService
+	// is used unwrapped, and HealthHandler reports no breakers. This is the
+	// default for a RestService built without opting in.
+	Breakers *circuitbreaker.Manager
+
+	// StorageBreaker configures the circuit breaker RestService creates from
+	// Breakers to guard its own CA/keystore-backed certificate storage
+	// access (CABundleHandler's call to CA.CABundleFiltered). Nil selects
+	// circuitbreaker.DefaultConfig("storage"). Ignored when Breakers is nil.
+	StorageBreaker *circuitbreaker.Config
+
+	// KMSBreaker configures the circuit breaker NewRestService creates from
+	// Breakers to wrap KMSService with, guarding every tenant KMS signing
+	// operation RestService performs. Nil selects
+	// circuitbreaker.DefaultConfig("kms"). Ignored when Breakers or
+	// KMSService is nil.
+	KMSBreaker *circuitbreaker.Config
+
+	// DegradationCacheTTL is how long the directory and CA-bundle
+	// degradation caches serve a cached response as fresh before it is
+	// considered stale. Zero selects degradation.DefaultConfig's CacheTTL
+	// (one minute). Ignored when Breakers is nil.
+	DegradationCacheTTL time.Duration
+
+	// DegradationStaleTTL is how much longer, past DegradationCacheTTL, a
+	// cached response may still be served -- as stale -- while the storage
+	// breaker is open. Zero selects degradation.DefaultConfig's StaleTTL
+	// (five minutes). Ignored when Breakers is nil.
+	DegradationStaleTTL time.Duration
+
+	// DegradationMaxCacheSize caps the number of entries each degradation
+	// cache holds. Zero selects a size of 8 -- the directory and CA-bundle
+	// caches hold one entry each in practice. Ignored when Breakers is nil.
+	DegradationMaxCacheSize int
+
 	// Policy configures the ACME identifier issuance policy engine
 	// (pkg/acme/policy): the domain/FQDN/wildcard/CIDR blocklist, public
 	// suffix and reserved-IP enforcement, and per-identifier-type challenge
@@ -294,6 +347,17 @@ type RestService struct {
 	requirePublicSuffix     bool
 	storageFactory          storage.Factory
 	termsOfService          string
+
+	// Resilience: nil breakers and caches when Params.Breakers is nil, which
+	// is the default. See serveOrDegrade and serveCachedWhenOpen in
+	// resilience.go.
+	breakers            *circuitbreaker.Manager
+	storageBreaker      *circuitbreaker.CircuitBreaker
+	directoryCache      *degradation.Cache
+	caBundleCache       *degradation.Cache
+	degradationCacheTTL time.Duration
+	degradationStaleTTL time.Duration
+
 	RestServicer
 }
 
@@ -412,6 +476,49 @@ func NewRestService(params *Params) (RestServicer, error) {
 		auditLog = audit.NewNoOpLogger()
 	}
 
+	// Resilience is opt-in: a nil Manager leaves storageBreaker and the
+	// degradation caches nil, and CABundleHandler/DirectoryHandler compute
+	// fresh on every request exactly as they did before this existed.
+	var storageBreaker *circuitbreaker.CircuitBreaker
+	var directoryCache, caBundleCache *degradation.Cache
+	if params.Breakers != nil {
+		storageBreakerCfg := params.StorageBreaker
+		if storageBreakerCfg == nil {
+			storageBreakerCfg = circuitbreaker.DefaultConfig("storage")
+		}
+		storageBreaker = params.Breakers.GetOrCreate(storageBreakerCfg)
+
+		maxCacheSize := params.DegradationMaxCacheSize
+		if maxCacheSize <= 0 {
+			maxCacheSize = 8
+		}
+		directoryCache = degradation.NewCache("acme-directory", maxCacheSize)
+		caBundleCache = degradation.NewCache("acme-ca-bundle", maxCacheSize)
+	}
+
+	// Wrap the KMS signer with its own breaker, guarding every tenant KMS
+	// signing operation this service performs (getTenantCASigner,
+	// tenantIssuerCertificate in order_finalize.go). Left unwrapped when
+	// either Breakers or KMSService is nil.
+	kmsService := params.KMSService
+	if params.Breakers != nil && kmsService != nil {
+		kmsBreakerCfg := params.KMSBreaker
+		if kmsBreakerCfg == nil {
+			kmsBreakerCfg = circuitbreaker.DefaultConfig("kms")
+		}
+		kmsService = circuitbreaker.WrapKMSService(params.Breakers.GetOrCreate(kmsBreakerCfg), kmsService)
+	}
+
+	degradationDefaults := degradation.DefaultConfig()
+	degradationCacheTTL := params.DegradationCacheTTL
+	if degradationCacheTTL <= 0 {
+		degradationCacheTTL = degradationDefaults.CacheTTL
+	}
+	degradationStaleTTL := params.DegradationStaleTTL
+	if degradationStaleTTL <= 0 {
+		degradationStaleTTL = degradationDefaults.StaleTTL
+	}
+
 	blocklist, challengePolicy, requirePublicSuffix, rejectReservedIPs, err := buildIdentifierPolicy(params)
 	if err != nil {
 		return nil, caerrors.MalformedError("handlers: failed to build identifier policy: %v", err)
@@ -432,7 +539,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		endorseDeviceIDMetaKey:  params.EndorseDeviceIDMetaKey,
 		externalAccountRequired: params.ExternalAccountRequired,
 		globalComplianceConfig:  params.GlobalComplianceConfig,
-		kmsService:              params.KMSService,
+		kmsService:              kmsService,
 		logger:                  params.Logger,
 		nonceGenerator:          nonceGen,
 		nonceStore:              common.NewNonceStore(time.Minute * 10),
@@ -444,6 +551,12 @@ func NewRestService(params *Params) (RestServicer, error) {
 		requirePublicSuffix:     requirePublicSuffix,
 		storageFactory:          params.StorageFactory,
 		termsOfService:          params.TermsOfService,
+		breakers:                params.Breakers,
+		storageBreaker:          storageBreaker,
+		directoryCache:          directoryCache,
+		caBundleCache:           caBundleCache,
+		degradationCacheTTL:     degradationCacheTTL,
+		degradationStaleTTL:     degradationStaleTTL,
 	}, nil
 }
 

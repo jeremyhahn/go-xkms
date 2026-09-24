@@ -53,6 +53,13 @@ Copyright (c) HashiCorp, Inc.
 License: MPL 2.0
 https://github.com/hashicorp/vault
 
+## swagger-ui-dist
+Copyright 2020-2021 SmartBear Software Inc.
+License: Apache License 2.0
+https://github.com/swagger-api/swagger-ui
+Vendored at pkg/acme/api/swagger/assets/swagger-ui/ (version 5.33.0); see
+VERSION in that directory for provenance and update instructions.
+
 ---
 
 TRADEMARKS

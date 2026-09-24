@@ -16,12 +16,33 @@ package localseal
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// errBackendOutage is the sentinel a existsFailingBackend returns from
+// Exists, so tests can distinguish "the transport is down" from "the key is
+// absent" in assertions.
+var errBackendOutage = errors.New("localseal test: backend outage")
+
+// existsFailingBackend wraps a storage.Backend and fails every Exists with
+// errBackendOutage instead of delegating — the seam this package's own
+// production code already relies on (storage.Backend is an interface
+// embedded by value throughout). qrdb's StorageBarrier.Initialize probes
+// the root-key path with Exists (not Get) before creating it, so this is
+// the call that must fail to force Initialize's non-already-initialized
+// error branch.
+type existsFailingBackend struct {
+	storage.Backend
+}
+
+func (existsFailingBackend) Exists(context.Context, string) (bool, error) {
+	return false, errBackendOutage
+}
 
 const testRootKeyPath = "pkcs11/token/root-key"
 
@@ -219,4 +240,32 @@ func TestController_SealIsIdempotent(t *testing.T) {
 	require.NoError(t, ctrl.Unseal([]byte("pin")))
 	require.NoError(t, ctrl.Seal())
 	require.NoError(t, ctrl.Seal(), "sealing an already-sealed barrier is a no-op")
+}
+
+// TestController_Unseal_BackendOutageDuringInitializeSurfacesError proves a
+// storage failure distinct from "no root key yet" (ErrNotFound) is reported
+// to the caller rather than folded into the benign already-initialized case.
+func TestController_Unseal_BackendOutageDuringInitializeSurfacesError(t *testing.T) {
+	ctrl, _, err := New(existsFailingBackend{Backend: storage.NewMemory()}, testRootKeyPath, nil)
+	require.NoError(t, err)
+
+	err = ctrl.Unseal([]byte("pin"))
+	require.Error(t, err, "a backend outage during Initialize must not be swallowed")
+	assert.NotErrorIs(t, err, storage.ErrNotFound, "the outage must not be mistaken for an absent root key")
+}
+
+// TestController_Rekey_WrongOldPINWhileSealedSurfacesError proves the
+// barrier.Unseal failure inside Rekey (distinct from Controller.Unseal's own
+// call) is returned rather than silently treated as a no-op.
+func TestController_Rekey_WrongOldPINWhileSealedSurfacesError(t *testing.T) {
+	base := storage.NewMemory()
+	ctrl, sealed, err := New(base, testRootKeyPath, nil)
+	require.NoError(t, err)
+	require.NoError(t, ctrl.Unseal([]byte("correct-pin")))
+	require.NoError(t, sealed.Put(context.Background(), "keys/priv", []byte("material")))
+	require.NoError(t, ctrl.Seal())
+
+	err = ctrl.Rekey([]byte("wrong-pin"), []byte("new-pin"))
+	assert.Error(t, err, "rekeying a sealed barrier with the wrong old PIN must fail")
+	assert.True(t, ctrl.barrier.IsSealed(), "a failed rekey must leave the barrier sealed")
 }

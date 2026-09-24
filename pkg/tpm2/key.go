@@ -632,7 +632,10 @@ func (tpm *TPM2) CreateEK(
 		return err
 	}
 
-	hierName, _ := HierarchyName(hierarchy)
+	hierName, hierErr := HierarchyName(hierarchy)
+	if hierErr != nil {
+		hierName = fmt.Sprintf("0x%08x", uint32(hierarchy))
+	}
 	tpm.logger.Debug("tpm: EK Hierarchy", slog.String("hierarchy", hierName))
 	tpm.logger.Debug("tpm: EK Name", slog.String("name", fmt.Sprintf("0x%x", Encode(primaryKey.Name.Buffer))))
 
@@ -686,7 +689,10 @@ func (tpm *TPM2) CreateSRK(
 	// the owner-hierarchy and object secrets this package protects
 	// everywhere else (types.SecretValue, memguard enclaves); logging them
 	// here would undo that.
-	hierName, _ := HierarchyName(hierarchy)
+	hierName, hierErr := HierarchyName(hierarchy)
+	if hierErr != nil {
+		hierName = fmt.Sprintf("0x%08x", uint32(hierarchy))
+	}
 	tpm.logger.Debug("CreateSRK",
 		slog.String("hierarchy", hierName),
 		slog.String("hierarchy_handle", fmt.Sprintf("0x%08x", uint32(hierarchy))),
@@ -834,7 +840,10 @@ func (tpm *TPM2) CreateSRK(
 		}
 	}
 
-	srkHierName, _ := HierarchyName(hierarchy)
+	srkHierName, srkHierErr := HierarchyName(hierarchy)
+	if srkHierErr != nil {
+		srkHierName = fmt.Sprintf("0x%08x", uint32(hierarchy))
+	}
 	tpm.logger.Debug("tpm: SRK Hierarchy", slog.String("hierarchy", srkHierName))
 	tpm.logger.Debug("tpm: SRK Name", slog.String("name", fmt.Sprintf("0x%s", Encode(primaryKey.Name.Buffer))))
 

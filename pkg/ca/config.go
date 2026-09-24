@@ -645,9 +645,9 @@ func (id *Identity) GetSignatureAlgorithm() (x509.SignatureAlgorithm, error) {
 		if keyConf.ECCConfig != nil && keyConf.ECCConfig.Curve != "" {
 			curveName = string(keyConf.ECCConfig.Curve)
 		}
-		parsedCurve, _ := types.ParseCurve(curveName)
-		if parsedCurve == nil {
-			return x509.ECDSAWithSHA256, nil
+		parsedCurve, err := types.ParseCurve(curveName)
+		if err != nil {
+			return x509.UnknownSignatureAlgorithm, err
 		}
 		switch parsedCurve.Params().BitSize {
 		case 224, 256:
@@ -676,17 +676,17 @@ func (id *Identity) GetKeyAlgorithm() (x509.PublicKeyAlgorithm, error) {
 }
 
 // GetCurve returns the elliptic curve for ECDSA keys.
-// Returns nil for non-ECDSA keys.
-func (id *Identity) GetCurve() elliptic.Curve {
+// Returns nil for non-ECDSA keys, and a *errs.Detail wrapping
+// types.ErrUnknownCurve if the configured curve name is not recognized.
+func (id *Identity) GetCurve() (elliptic.Curve, error) {
 	if len(id.Keys) == 0 {
-		return nil
+		return nil, nil
 	}
 	keyConf := id.Keys[0]
 	if keyConf.ECCConfig == nil || keyConf.ECCConfig.Curve == "" {
-		return nil
+		return nil, nil
 	}
-	curve, _ := types.ParseCurve(string(keyConf.ECCConfig.Curve))
-	return curve
+	return types.ParseCurve(string(keyConf.ECCConfig.Curve))
 }
 
 // GetKeySize returns the RSA key size.

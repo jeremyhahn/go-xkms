@@ -121,8 +121,18 @@ var (
 	ErrInvalidPCRIndex             = errors.New("tpm: invalid PCR index")
 	ErrInvalidNonce                = errors.New("tpm: invalid nonce")
 	ErrNotInitialized              = errors.New("tpm: not initialized")
-	ErrNotConfigured               = errors.New("tpm: IDevID not configured")
-	ErrEndorsementCertNotFound     = errors.New("tpm: endorsement certificate not found")
+
+	// ErrKeyRetrievalFailed indicates GetSymmetricKey could not determine
+	// whether a symmetric key exists because the underlying key store
+	// (store.KeyBackend) returned an error other than "not found" -- a
+	// transient I/O failure, permission error, or corrupt blob. Callers
+	// must not treat this as backend.ErrKeyNotFound: doing so risks
+	// silently generating a replacement for a key that merely failed to
+	// read. Mirrors pkg/backend/tpm2.ErrKeyRetrievalFailed.
+	ErrKeyRetrievalFailed = errors.New("tpm: symmetric key retrieval failed")
+
+	ErrNotConfigured           = errors.New("tpm: IDevID not configured")
+	ErrEndorsementCertNotFound = errors.New("tpm: endorsement certificate not found")
 
 	// ErrEKCertServiceUnreachable reports that the manufacturer EK
 	// certificate service could not be reached within the configured bound

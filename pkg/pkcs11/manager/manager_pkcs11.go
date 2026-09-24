@@ -16,6 +16,7 @@
 package manager
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -104,9 +105,9 @@ func (m *memoryManager) RegisterModule(libraryPath, displayName string) (string,
 
 	slots, err := m.enumerateSlots(p11ctx)
 	if err != nil {
-		_ = p11ctx.Finalize()
+		finalizeErr := p11ctx.Finalize()
 		p11ctx.Destroy()
-		return "", err
+		return "", errors.Join(err, finalizeErr)
 	}
 
 	mod := &loadedModule{
@@ -274,7 +275,7 @@ func (m *memoryManager) ListTokens() []TokenInfo {
 }
 
 // InitializeToken initializes a new token with SO PIN and User PIN.
-func (m *memoryManager) InitializeToken(moduleID string, slotID uint, label, soPin, userPin string) error {
+func (m *memoryManager) InitializeToken(moduleID string, slotID uint, label, soPin, userPin string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -320,13 +321,21 @@ func (m *memoryManager) InitializeToken(moduleID string, slotID uint, label, soP
 	if err != nil {
 		return &errs.Detail{Err: ErrSessionOpenFailed, Detail: fmt.Sprintf("%v", err)}
 	}
-	defer func() { _ = mod.p11ctx.CloseSession(session) }()
+	defer func() {
+		if closeErr := mod.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as SO
 	if err := mod.p11ctx.Login(session, pkcs11.CKU_SO, soPin); err != nil {
 		return &errs.Detail{Err: ErrLoginFailed, Detail: fmt.Sprintf("%v", err)}
 	}
-	defer func() { _ = mod.p11ctx.Logout(session) }()
+	defer func() {
+		if logoutErr := mod.p11ctx.Logout(session); logoutErr != nil {
+			err = errors.Join(err, logoutErr)
+		}
+	}()
 
 	// Initialize user PIN
 	if err := mod.p11ctx.InitPIN(session, userPin); err != nil {
@@ -350,7 +359,7 @@ func (m *memoryManager) InitializeToken(moduleID string, slotID uint, label, soP
 // TestLogin verifies that login to a token works without creating a full backend.
 // This is useful for connection testing in UI flows where we just need to verify
 // the PIN is correct without setting up the full backend infrastructure.
-func (m *memoryManager) TestLogin(moduleID string, slotID uint, userPin string) error {
+func (m *memoryManager) TestLogin(moduleID string, slotID uint, userPin string) (err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -386,7 +395,11 @@ func (m *memoryManager) TestLogin(moduleID string, slotID uint, userPin string) 
 	if err != nil {
 		return &errs.Detail{Err: ErrSessionOpenFailed, Detail: fmt.Sprintf("%v", err)}
 	}
-	defer func() { _ = mod.p11ctx.CloseSession(session) }()
+	defer func() {
+		if closeErr := mod.p11ctx.CloseSession(session); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Login as user
 	if userPin != "" {
@@ -396,7 +409,9 @@ func (m *memoryManager) TestLogin(moduleID string, slotID uint, userPin string) 
 			}
 		}
 		// Logout after successful login test
-		_ = mod.p11ctx.Logout(session)
+		if logoutErr := mod.p11ctx.Logout(session); logoutErr != nil {
+			err = errors.Join(err, logoutErr)
+		}
 	}
 
 	m.log.Info("pkcs11 manager: login test successful",
@@ -454,8 +469,8 @@ func (m *memoryManager) Connect(moduleID string, slotID uint, userPin, soPin str
 	if userPin != "" {
 		if loginErr := mod.p11ctx.Login(session, pkcs11.CKU_USER, userPin); loginErr != nil {
 			if !isAlreadyLoggedIn(loginErr) {
-				_ = mod.p11ctx.CloseSession(session)
-				return nil, &errs.Detail{Err: ErrLoginFailed, Detail: fmt.Sprintf("%v", loginErr)}
+				closeErr := mod.p11ctx.CloseSession(session)
+				return nil, errors.Join(&errs.Detail{Err: ErrLoginFailed, Detail: fmt.Sprintf("%v", loginErr)}, closeErr)
 			}
 		}
 	}
@@ -463,13 +478,13 @@ func (m *memoryManager) Connect(moduleID string, slotID uint, userPin, soPin str
 	// Create memory storage for key and cert metadata
 	keyStorage, err := storage.NewMemoryBackend()
 	if err != nil {
-		_ = mod.p11ctx.CloseSession(session)
-		return nil, &errs.Wrapped{Msg: "failed to create key storage", Err: err}
+		closeErr := mod.p11ctx.CloseSession(session)
+		return nil, errors.Join(&errs.Wrapped{Msg: "failed to create key storage", Err: err}, closeErr)
 	}
 	certStorage, err := storage.NewMemoryBackend()
 	if err != nil {
-		_ = mod.p11ctx.CloseSession(session)
-		return nil, &errs.Wrapped{Msg: "failed to create cert storage", Err: err}
+		closeErr := mod.p11ctx.CloseSession(session)
+		return nil, errors.Join(&errs.Wrapped{Msg: "failed to create cert storage", Err: err}, closeErr)
 	}
 
 	// Create PKCS#11 backend
@@ -486,8 +501,8 @@ func (m *memoryManager) Connect(moduleID string, slotID uint, userPin, soPin str
 
 	backend, err := pkcs11backend.NewBackend(config)
 	if err != nil {
-		_ = mod.p11ctx.CloseSession(session)
-		return nil, err
+		closeErr := mod.p11ctx.CloseSession(session)
+		return nil, errors.Join(err, closeErr)
 	}
 
 	conn := &Connection{
