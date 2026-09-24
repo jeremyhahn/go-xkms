@@ -265,6 +265,23 @@ func (m *Module) LastStorageError() error {
 	return nil
 }
 
+// finalizeOperationType clears opType on the session, mirroring C_Finalize's
+// tolerance of cleanup that cannot itself be retried: every call site has
+// already determined the CK_RV or signature/ciphertext this Cryptoki call
+// returns, and cannot fail the call over a session-state teardown step
+// without contradicting a result it already committed to. sm.mu (held for
+// the whole exported call this runs inside of) rules out a concurrent
+// clear, so a failure here means opType was not active when the caller
+// believed it was -- an internal state-tracking bug worth recording rather
+// than a routine outcome -- and is kept via logStorageError rather than
+// discarded, the same as every other best-effort cleanup in this file (see
+// sealPrivateStore, generateQuantumKeyPair).
+func (m *Module) finalizeOperationType(sm *SessionManager, handle SessionHandle, opType OperationType) {
+	if err := sm.FinalizeOperationType(handle, opType); err != nil {
+		m.logStorageError("finalize "+opType.String()+" operation", err)
+	}
+}
+
 // Global module instance and initialization synchronization.
 var (
 	globalModule   *Module
@@ -3394,7 +3411,7 @@ func (m *Module) SignInit(sessionHandle SessionHandle, mechanism *Mechanism, key
 	// transport. See holdsOwnQuantumSignatureMaterial for why.
 	if handled, rv := m.quantumSignInit(session, mechanism, keyHandle, obj); handled {
 		if rv != CKR_OK {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+			m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		}
 		return rv
 	}
@@ -3402,7 +3419,7 @@ func (m *Module) SignInit(sessionHandle SessionHandle, mechanism *Mechanism, key
 	// Create crypto operation and store in session state
 	signOp, cryptoErr := m.cryptoManager.SignInit(mechanism, keyHandle, obj.KeyID, obj.BackendName)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return FromError(cryptoErr)
 	}
 	// The raw ECDSA signature is sized from the key's curve, not from the
@@ -3460,14 +3477,14 @@ func (m *Module) Sign(sessionHandle SessionHandle, data []byte) ([]byte, CK_RV) 
 	// Data holds AEAD associated data, not buffered parts, so MultiPart is
 	// the only reliable marker that an *Update call has occurred.
 	if opState.MultiPart {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, CKR_OPERATION_ACTIVE
 	}
 
 	// Get key for signing
 	obj, objErr := m.objectManager.GetObjectFor(NewAccessContext(sessionHandle, session), opState.KeyHandle)
 	if objErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, terminalKeyGoneRV
 	}
 
@@ -3482,7 +3499,7 @@ func (m *Module) Sign(sessionHandle SessionHandle, data []byte) ([]byte, CK_RV) 
 	// C_SignInit stored, and produces its signature without a transport call.
 	if signature, handled, rv := m.quantumSign(session, opState, data); handled {
 		if rv != CKR_OK {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+			m.finalizeOperationType(sm, sessionHandle, OperationSign)
 			return nil, rv
 		}
 		return signature, CKR_OK
@@ -3499,13 +3516,13 @@ func (m *Module) Sign(sessionHandle SessionHandle, data []byte) ([]byte, CK_RV) 
 	// enough to notice rather than silently signing under the wrong salt.
 	signOp, ok := opState.CryptoOp.(*SignOperation)
 	if !ok || signOp == nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, CKR_OPERATION_NOT_INITIALIZED
 	}
 
 	signature, signErr := m.cryptoManager.Sign(ctx, signOp, data)
 	if signErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, FromError(signErr)
 	}
 
@@ -3560,7 +3577,7 @@ func (m *Module) SignUpdate(sessionHandle SessionHandle, data []byte) CK_RV {
 	// everything at C_SignFinal, because ML-DSA signs the message itself.
 	if handled, rv := m.quantumSignUpdate(session, opState, data); handled {
 		if rv != CKR_OK {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+			m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		}
 		return rv
 	}
@@ -3573,7 +3590,7 @@ func (m *Module) SignUpdate(sessionHandle SessionHandle, data []byte) CK_RV {
 
 	// Update with data
 	if err := m.cryptoManager.SignUpdate(signOp, data); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return FromError(err)
 	}
 
@@ -3657,7 +3674,7 @@ func (m *Module) SignFinal(sessionHandle SessionHandle) ([]byte, CK_RV) {
 	// An in-process ML-DSA operation signs everything C_SignUpdate accumulated.
 	if signature, handled, rv := m.quantumSignFinal(session, opState); handled {
 		if rv != CKR_OK {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+			m.finalizeOperationType(sm, sessionHandle, OperationSign)
 			return nil, rv
 		}
 		return signature, CKR_OK
@@ -3673,7 +3690,7 @@ func (m *Module) SignFinal(sessionHandle SessionHandle) ([]byte, CK_RV) {
 
 	signature, signErr := m.cryptoManager.SignFinal(ctx, signOp)
 	if signErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, FromError(signErr)
 	}
 
@@ -3741,7 +3758,7 @@ func (m *Module) SignRecoverInit(sessionHandle SessionHandle, mechanism *Mechani
 
 	signOp, cryptoErr := m.cryptoManager.SignInit(mechanism, keyHandle, keyObj.KeyID, keyObj.BackendName)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return FromError(cryptoErr)
 	}
 	signOp.SetECFieldLen(ecFieldLenForParams(keyObj.GetAttribute(CKA_EC_PARAMS)))
@@ -3815,7 +3832,7 @@ func (m *Module) SignRecover(sessionHandle SessionHandle, data []byte) ([]byte, 
 	// through C_SignRecover instead.
 	keyObj, keyErr := m.objectManager.GetObjectFor(NewAccessContext(sessionHandle, session), opState.KeyHandle)
 	if keyErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, terminalKeyGoneRV
 	}
 	if rv := requireContextAuthentication(session, OperationSign, keyObj); rv != CKR_OK {
@@ -3829,7 +3846,7 @@ func (m *Module) SignRecover(sessionHandle SessionHandle, data []byte) ([]byte, 
 	// The signature contains the original data that can be decrypted with public key
 	signature, signErr := m.cryptoManager.Sign(ctx, signOp, data)
 	if signErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationSign)
+		m.finalizeOperationType(sm, sessionHandle, OperationSign)
 		return nil, FromError(signErr)
 	}
 
@@ -3884,7 +3901,7 @@ func (m *Module) VerifyInit(sessionHandle SessionHandle, mechanism *Mechanism, k
 	// token generated carries its own material and is verified in process.
 	if handled, rv := m.quantumVerifyInit(session, mechanism, keyHandle, obj); handled {
 		if rv != CKR_OK {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+			m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		}
 		return rv
 	}
@@ -3895,14 +3912,14 @@ func (m *Module) VerifyInit(sessionHandle SessionHandle, mechanism *Mechanism, k
 	// CKM_RSA_X_509 would be accepted here and then verified under the wrong
 	// scheme (v3.2 §5.15.1).
 	if desc := GetMechanismDescriptor(mechanism.Type); desc == nil || desc.Flags&CKF_VERIFY == 0 {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return CKR_MECHANISM_INVALID
 	}
 
 	verifyOp, cryptoErr := m.cryptoManager.VerifyInit(mechanism, keyHandle, obj.KeyID, obj.BackendName)
 	verifyOp.SetECFieldLen(ecFieldLenForParams(obj.GetAttribute(CKA_EC_PARAMS)))
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return FromError(cryptoErr)
 	}
 
@@ -3956,7 +3973,7 @@ func (m *Module) Verify(sessionHandle SessionHandle, data, signature []byte) CK_
 	// starts a fresh verification below, so buffered parts would be dropped and
 	// a signature over the whole message would be reported invalid.
 	if opState.MultiPart {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return CKR_OPERATION_ACTIVE
 	}
 
@@ -3967,7 +3984,7 @@ func (m *Module) Verify(sessionHandle SessionHandle, data, signature []byte) CK_
 	// The key is resolved through the session's access context so a session
 	// that may no longer see the key cannot complete a verification it started.
 	if _, objErr := m.objectManager.GetObjectFor(NewAccessContext(sessionHandle, session), opState.KeyHandle); objErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return terminalKeyGoneRV
 	}
 
@@ -3977,7 +3994,7 @@ func (m *Module) Verify(sessionHandle SessionHandle, data, signature []byte) CK_
 	// An in-process ML-DSA operation terminates here exactly as the transport
 	// path does: C_Verify's whole answer is its return value.
 	if handled, rv := m.quantumVerify(opState, data, signature); handled {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return rv
 	}
 
@@ -3987,12 +4004,12 @@ func (m *Module) Verify(sessionHandle SessionHandle, data, signature []byte) CK_
 	// under a different scheme than the one it named.
 	verifyOp, ok := opState.CryptoOp.(*VerifyOperation)
 	if !ok || verifyOp == nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return CKR_OPERATION_NOT_INITIALIZED
 	}
 
 	verifyErr := m.cryptoManager.Verify(ctx, verifyOp, data, signature)
-	_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+	m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 
 	if verifyErr != nil {
 		return FromError(verifyErr)
@@ -4045,7 +4062,7 @@ func (m *Module) VerifyUpdate(sessionHandle SessionHandle, data []byte) CK_RV {
 	// everything at C_VerifyFinal.
 	if handled, rv := m.quantumVerifyUpdate(session, opState, data); handled {
 		if rv != CKR_OK {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+			m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		}
 		return rv
 	}
@@ -4056,7 +4073,7 @@ func (m *Module) VerifyUpdate(sessionHandle SessionHandle, data []byte) CK_RV {
 	}
 
 	if err := m.cryptoManager.VerifyUpdate(verifyOp, data); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return FromError(err)
 	}
 
@@ -4110,7 +4127,7 @@ func (m *Module) VerifyFinal(sessionHandle SessionHandle, signature []byte) CK_R
 	// An in-process ML-DSA operation verifies the signature against everything
 	// C_VerifyUpdate accumulated, and terminates as the transport path does.
 	if handled, rv := m.quantumVerifyFinal(opState, signature); handled {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return rv
 	}
 
@@ -4123,7 +4140,7 @@ func (m *Module) VerifyFinal(sessionHandle SessionHandle, signature []byte) CK_R
 	defer cancel()
 
 	verifyErr := m.cryptoManager.VerifyFinal(ctx, verifyOp, signature)
-	_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+	m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 
 	if verifyErr != nil {
 		return FromError(verifyErr)
@@ -4187,14 +4204,14 @@ func (m *Module) VerifyRecoverInit(sessionHandle SessionHandle, mechanism *Mecha
 	// C_VerifyRecoverInit needs the recover capability specifically (v3.2
 	// §5.15.5), for the reason C_VerifyInit gives about the shared constructor.
 	if desc := GetMechanismDescriptor(mechanism.Type); desc == nil || desc.Flags&CKF_VERIFY_RECOVER == 0 {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return CKR_MECHANISM_INVALID
 	}
 
 	verifyOp, cryptoErr := m.cryptoManager.VerifyInit(mechanism, keyHandle, keyObj.KeyID, keyObj.BackendName)
 	verifyOp.SetECFieldLen(ecFieldLenForParams(keyObj.GetAttribute(CKA_EC_PARAMS)))
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return FromError(cryptoErr)
 	}
 
@@ -4278,7 +4295,7 @@ func (m *Module) VerifyRecover(sessionHandle SessionHandle, signature []byte) ([
 	// to recover the original data that was signed
 	recoveredData, verifyErr := m.cryptoManager.VerifyRecover(ctx, verifyOp, signature)
 	if verifyErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationVerify)
+		m.finalizeOperationType(sm, sessionHandle, OperationVerify)
 		return nil, FromError(verifyErr)
 	}
 
@@ -4332,7 +4349,7 @@ func (m *Module) EncryptInit(sessionHandle SessionHandle, mechanism *Mechanism, 
 
 	encOp, cryptoErr := m.cryptoManager.EncryptInit(mechanism, keyHandle, obj.KeyID, obj.BackendName)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return FromError(cryptoErr)
 	}
 
@@ -4387,12 +4404,12 @@ func (m *Module) Encrypt(sessionHandle SessionHandle, plaintext []byte) ([]byte,
 	// Data holds AEAD associated data, not buffered parts, so MultiPart is
 	// the only reliable marker that an *Update call has occurred.
 	if opState.MultiPart {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, CKR_OPERATION_ACTIVE
 	}
 
 	if _, objErr := m.objectManager.GetObjectFor(NewAccessContext(sessionHandle, session), opState.KeyHandle); objErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, terminalKeyGoneRV
 	}
 
@@ -4402,7 +4419,7 @@ func (m *Module) Encrypt(sessionHandle SessionHandle, plaintext []byte) ([]byte,
 	// under different ones.
 	encOp, ok := opState.CryptoOp.(*EncryptOperation)
 	if !ok || encOp == nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, CKR_OPERATION_NOT_INITIALIZED
 	}
 
@@ -4411,7 +4428,7 @@ func (m *Module) Encrypt(sessionHandle SessionHandle, plaintext []byte) ([]byte,
 
 	ciphertext, encErr := m.cryptoManager.Encrypt(ctx, encOp, plaintext)
 	if encErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, FromError(encErr)
 	}
 
@@ -4466,7 +4483,7 @@ func (m *Module) EncryptUpdate(sessionHandle SessionHandle, plaintext []byte) ([
 	}
 
 	if err := m.cryptoManager.EncryptUpdate(encOp, plaintext); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, FromError(err)
 	}
 
@@ -4536,7 +4553,7 @@ func (m *Module) EncryptFinal(sessionHandle SessionHandle) ([]byte, CK_RV) {
 
 	ciphertext, encErr := m.cryptoManager.EncryptFinal(ctx, encOp)
 	if encErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, FromError(encErr)
 	}
 
@@ -4646,7 +4663,7 @@ func (m *Module) EncryptMessage(sessionHandle SessionHandle, params *AESGCMMessa
 
 	ciphertext, encErr := m.cryptoManager.Encrypt(ctx, encOp, plaintext)
 	if encErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, FromError(encErr)
 	}
 
@@ -4896,7 +4913,7 @@ func (m *Module) EncryptMessageNext(sessionHandle SessionHandle, params *AESGCMM
 
 	// Update with plaintext
 	if err := m.cryptoManager.EncryptUpdate(encOp, plaintext); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 		return nil, FromError(err)
 	}
 
@@ -4906,7 +4923,7 @@ func (m *Module) EncryptMessageNext(sessionHandle SessionHandle, params *AESGCMM
 
 		ciphertext, encErr := m.cryptoManager.EncryptFinal(ctx, encOp)
 		if encErr != nil {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationEncrypt)
+			m.finalizeOperationType(sm, sessionHandle, OperationEncrypt)
 			return nil, FromError(encErr)
 		}
 
@@ -5047,7 +5064,7 @@ func (m *Module) DecryptMessage(sessionHandle SessionHandle, params *AESGCMMessa
 
 	plaintext, decErr := m.cryptoManager.Decrypt(ctx, decOp, ciphertext)
 	if decErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, FromError(decErr)
 	}
 
@@ -5226,7 +5243,7 @@ func (m *Module) DecryptMessageNext(sessionHandle SessionHandle, params *AESGCMM
 
 	// Update with ciphertext
 	if err := m.cryptoManager.DecryptUpdate(decOp, ciphertext); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, FromError(err)
 	}
 
@@ -5236,7 +5253,7 @@ func (m *Module) DecryptMessageNext(sessionHandle SessionHandle, params *AESGCMM
 
 		plaintext, decErr := m.cryptoManager.DecryptFinal(ctx, decOp)
 		if decErr != nil {
-			_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+			m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 			return nil, FromError(decErr)
 		}
 
@@ -5612,7 +5629,7 @@ func (m *Module) decryptInitInternal(sessionHandle SessionHandle, mechanism *Mec
 
 	decOp, cryptoErr := decryptInit(mechanism, keyHandle, obj.KeyID, obj.BackendName)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return FromError(cryptoErr)
 	}
 
@@ -5667,13 +5684,13 @@ func (m *Module) Decrypt(sessionHandle SessionHandle, ciphertext []byte) ([]byte
 	// Data holds AEAD associated data, not buffered parts, so MultiPart is
 	// the only reliable marker that an *Update call has occurred.
 	if opState.MultiPart {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, CKR_OPERATION_ACTIVE
 	}
 
 	obj, objErr := m.objectManager.GetObjectFor(NewAccessContext(sessionHandle, session), opState.KeyHandle)
 	if objErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, terminalKeyGoneRV
 	}
 
@@ -5685,7 +5702,7 @@ func (m *Module) Decrypt(sessionHandle SessionHandle, ciphertext []byte) ([]byte
 	// caller supplied (GCM tag length, CBC IV) are not discarded.
 	decOp, ok := opState.CryptoOp.(*DecryptOperation)
 	if !ok || decOp == nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, CKR_OPERATION_NOT_INITIALIZED
 	}
 
@@ -5694,7 +5711,7 @@ func (m *Module) Decrypt(sessionHandle SessionHandle, ciphertext []byte) ([]byte
 
 	plaintext, decErr := m.cryptoManager.Decrypt(ctx, decOp, ciphertext)
 	if decErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, FromError(decErr)
 	}
 
@@ -5749,7 +5766,7 @@ func (m *Module) DecryptUpdate(sessionHandle SessionHandle, ciphertext []byte) (
 	}
 
 	if err := m.cryptoManager.DecryptUpdate(decOp, ciphertext); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, FromError(err)
 	}
 
@@ -5830,7 +5847,7 @@ func (m *Module) DecryptFinal(sessionHandle SessionHandle) ([]byte, CK_RV) {
 
 	plaintext, decErr := m.cryptoManager.DecryptFinal(ctx, decOp)
 	if decErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDecrypt)
+		m.finalizeOperationType(sm, sessionHandle, OperationDecrypt)
 		return nil, FromError(decErr)
 	}
 
@@ -6177,7 +6194,7 @@ func (m *Module) DigestInit(sessionHandle SessionHandle, mechanism *Mechanism) C
 
 	digestOp, cryptoErr := m.cryptoManager.DigestInit(mechanism)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDigest)
+		m.finalizeOperationType(sm, sessionHandle, OperationDigest)
 		return FromError(cryptoErr)
 	}
 
@@ -6239,20 +6256,20 @@ func (m *Module) Digest(sessionHandle SessionHandle, data []byte) ([]byte, CK_RV
 	// buffered parts would be discarded and the caller would receive a
 	// well-formed digest of the wrong message.
 	if opState.MultiPart {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDigest)
+		m.finalizeOperationType(sm, sessionHandle, OperationDigest)
 		return nil, CKR_OPERATION_ACTIVE
 	}
 
 	mech := &Mechanism{Type: opState.Mechanism}
 	digestOp, digestErr := m.cryptoManager.DigestInit(mech)
 	if digestErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDigest)
+		m.finalizeOperationType(sm, sessionHandle, OperationDigest)
 		return nil, FromError(digestErr)
 	}
 
 	hash, digestErr := m.cryptoManager.Digest(digestOp, data)
 	if digestErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDigest)
+		m.finalizeOperationType(sm, sessionHandle, OperationDigest)
 		return nil, FromError(digestErr)
 	}
 
@@ -6305,7 +6322,7 @@ func (m *Module) DigestUpdate(sessionHandle SessionHandle, data []byte) CK_RV {
 	}
 
 	if err := m.cryptoManager.DigestUpdate(digestOp, data); err != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDigest)
+		m.finalizeOperationType(sm, sessionHandle, OperationDigest)
 		return FromError(err)
 	}
 
@@ -6365,7 +6382,7 @@ func (m *Module) DigestFinal(sessionHandle SessionHandle) ([]byte, CK_RV) {
 
 	hash, digestErr := m.cryptoManager.DigestFinal(digestOp)
 	if digestErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDigest)
+		m.finalizeOperationType(sm, sessionHandle, OperationDigest)
 		return nil, FromError(digestErr)
 	}
 
@@ -6627,7 +6644,9 @@ func (m *Module) GenerateKey(sessionHandle SessionHandle, mechanism *Mechanism, 
 	// Set the backend-specific key information on the object
 	obj, getErr := m.objectManager.getObjectUnchecked(handle)
 	if getErr != nil {
-		_ = m.objectManager.DestroyObject(access, handle)
+		if destroyErr := m.objectManager.DestroyObject(access, handle); destroyErr != nil {
+			m.logStorageError("destroy secret key after failed post-create lookup", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), FromError(getErr)
 	}
 	obj.KeyID = resp.KeyID
@@ -6816,7 +6835,9 @@ func (m *Module) GenerateKeyPair(sessionHandle SessionHandle, mechanism *Mechani
 	// Set the backend-specific key information on the public key
 	pubObj, pubGetErr := m.objectManager.getObjectUnchecked(pubHandle)
 	if pubGetErr != nil {
-		_ = m.objectManager.DestroyObject(access, pubHandle)
+		if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+			m.logStorageError("destroy public key after failed post-create lookup", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(pubGetErr)
 	}
 	pubObj.KeyID = resp.KeyID
@@ -6843,7 +6864,9 @@ func (m *Module) GenerateKeyPair(sessionHandle SessionHandle, mechanism *Mechani
 	if resp.PublicKeyPEM != "" {
 		modulus, pubExponent, ecPoint, componentErr := extractPublicKeyComponentsFromPEM(resp.PublicKeyPEM)
 		if componentErr != nil {
-			_ = m.objectManager.DestroyObject(access, pubHandle)
+			if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+				m.logStorageError("destroy public key after failed component extraction", destroyErr)
+			}
 			return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(componentErr)
 		}
 		if len(modulus) > 0 {
@@ -6861,15 +6884,21 @@ func (m *Module) GenerateKeyPair(sessionHandle SessionHandle, mechanism *Mechani
 	privHandle, privErr := m.objectManager.CreateGeneratedObject(
 		access, CKO_PRIVATE_KEY, keyType, privateKeyTemplate)
 	if privErr != nil {
-		_ = m.objectManager.DestroyObject(access, pubHandle)
+		if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+			m.logStorageError("destroy public key after failed private key creation", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(privErr)
 	}
 
 	// Set the backend-specific key information on the private key
 	privObj, privGetErr := m.objectManager.getObjectUnchecked(privHandle)
 	if privGetErr != nil {
-		_ = m.objectManager.DestroyObject(access, pubHandle)
-		_ = m.objectManager.DestroyObject(access, privHandle)
+		if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+			m.logStorageError("destroy public key after failed private key post-create lookup", destroyErr)
+		}
+		if destroyErr := m.objectManager.DestroyObject(access, privHandle); destroyErr != nil {
+			m.logStorageError("destroy private key after failed post-create lookup", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(privGetErr)
 	}
 	privObj.KeyID = resp.KeyID
@@ -7335,7 +7364,9 @@ func (m *Module) UnwrapKey(sessionHandle SessionHandle, mechanism *Mechanism, un
 
 	obj, getErr := m.objectManager.getObjectUnchecked(handle)
 	if getErr != nil {
-		_ = m.objectManager.DestroyObject(access, handle)
+		if destroyErr := m.objectManager.DestroyObject(access, handle); destroyErr != nil {
+			m.logStorageError("destroy unwrapped key after failed post-create lookup", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), FromError(getErr)
 	}
 	obj.KeyID = newKeyID
@@ -7478,7 +7509,7 @@ func (m *Module) DeriveKey(sessionHandle SessionHandle, mechanism *Mechanism, ba
 	// Create derive operation via CryptoManager
 	deriveOp, cryptoErr := m.cryptoManager.DeriveKeyInit(mechanism, baseKey, baseKeyObj.KeyID, baseKeyObj.BackendName)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDerive)
+		m.finalizeOperationType(sm, sessionHandle, OperationDerive)
 		return ObjectHandle(InvalidHandle), FromError(cryptoErr)
 	}
 
@@ -7517,7 +7548,7 @@ func (m *Module) DeriveKey(sessionHandle SessionHandle, mechanism *Mechanism, ba
 	// an error, never a fallback.
 	ikm := baseKeyObj.GetAttribute(CKA_VALUE)
 	if len(ikm) == 0 && baseKeyObj.KeyID == "" {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDerive)
+		m.finalizeOperationType(sm, sessionHandle, OperationDerive)
 		return ObjectHandle(InvalidHandle), CKR_KEY_HANDLE_INVALID
 	}
 
@@ -7538,12 +7569,12 @@ func (m *Module) DeriveKey(sessionHandle SessionHandle, mechanism *Mechanism, ba
 	defer cancel()
 	derivedKeyMaterial, cryptoErr := m.cryptoManager.DeriveKey(ctx, deriveOp, ikm, keyLength)
 	if cryptoErr != nil {
-		_ = sm.FinalizeOperationType(sessionHandle, OperationDerive)
+		m.finalizeOperationType(sm, sessionHandle, OperationDerive)
 		return ObjectHandle(InvalidHandle), FromError(cryptoErr)
 	}
 
 	// Finalize the operation
-	_ = sm.FinalizeOperationType(sessionHandle, OperationDerive)
+	m.finalizeOperationType(sm, sessionHandle, OperationDerive)
 
 	// Build the derived key template
 	derivedKeyTemplate := derivedKeyAttributes(template, derivedKeyMaterial)

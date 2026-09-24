@@ -654,6 +654,87 @@ func TestWalkYAMLKeys_SecretValueTreatedAsLeaf(t *testing.T) {
 	}
 }
 
+// TestLoad_ACMEReuseTLSInFile_Rejected proves Load rejects a configuration
+// file that still sets the removed acme.reuse_tls field with a typed
+// *RemovedFieldError, rather than silently dropping the deleted key
+// (go-xkms#694): the field was never functional (buildACMETLSConfig refused
+// it at start-up with "not yet supported"), so an operator's file setting it
+// must fail loudly at load time instead of appearing to take effect.
+func TestLoad_ACMEReuseTLSInFile_Rejected(t *testing.T) {
+	path := writeConfigBody(t, "", "")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture config: %v", err)
+	}
+	data = append(data, []byte("\nacme:\n  reuse_tls: true\n")...)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("append acme.reuse_tls: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil, want *RemovedFieldError for acme.reuse_tls")
+	}
+	if cfg != nil {
+		t.Fatalf("Load() = %+v, want nil on error", cfg)
+	}
+	var removed *RemovedFieldError
+	if !errors.As(err, &removed) {
+		t.Fatalf("Load() error = %v (%T), want it to unwrap to *RemovedFieldError", err, err)
+	}
+	if removed.Field != "acme.reuse_tls" {
+		t.Fatalf("RemovedFieldError.Field = %q, want %q", removed.Field, "acme.reuse_tls")
+	}
+	if removed.Replacement == "" {
+		t.Fatal("RemovedFieldError.Replacement is empty, want it to name what to use instead")
+	}
+}
+
+// TestLoad_ACMEReuseTLSViaEnv_Rejected proves the same rejection holds for
+// the environment variable a stale deployment might still set
+// (XKMS_ACME_REUSE_TLS), not only the file, mirroring the barrier.passphrase
+// coverage below for the field go-xkms#694 removed.
+func TestLoad_ACMEReuseTLSViaEnv_Rejected(t *testing.T) {
+	t.Setenv("XKMS_ACME_REUSE_TLS", "true")
+
+	cfg, err := Load(writeConfigBody(t, "", ""))
+	if err == nil {
+		t.Fatal("Load() error = nil, want *RemovedFieldError for XKMS_ACME_REUSE_TLS")
+	}
+	if cfg != nil {
+		t.Fatalf("Load() = %+v, want nil on error", cfg)
+	}
+	var removed *RemovedFieldError
+	if !errors.As(err, &removed) {
+		t.Fatalf("Load() error = %v, want it to unwrap to *RemovedFieldError", err)
+	}
+	if removed.Field != "acme.reuse_tls" {
+		t.Fatalf("RemovedFieldError.Field = %q, want %q", removed.Field, "acme.reuse_tls")
+	}
+}
+
+// TestLoad_ACMEReuseTLSAbsent_Succeeds proves a configuration file that never
+// mentions the removed acme.reuse_tls key loads normally: rejectRemovedFields
+// must not flag a key that is simply absent.
+func TestLoad_ACMEReuseTLSAbsent_Succeeds(t *testing.T) {
+	cfg, err := Load(writeConfigBody(t, "", ""))
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil when acme.reuse_tls is not set", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load() = nil, want a config")
+	}
+}
+
+// TestRemovedFieldError_Error pins the rendered message shape.
+func TestRemovedFieldError_Error(t *testing.T) {
+	err := &RemovedFieldError{Field: "acme.reuse_tls", Replacement: "see docs"}
+	want := `config: "acme.reuse_tls" was removed: see docs`
+	if got := err.Error(); got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+}
+
 // TestLoad_BarrierPassphraseInFile_Rejected proves go-xkms#653: an old
 // config file that still sets the removed barrier.passphrase field fails
 // Load with a typed *RemovedFieldError naming the field and the

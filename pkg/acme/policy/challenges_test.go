@@ -493,3 +493,83 @@ func TestChallengePolicy_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+func TestChallengePolicy_IdentifierChallengeTypesOverride(t *testing.T) {
+	config := &PolicyConfig{
+		EnabledChallengeTypes: map[string]bool{
+			ChallengeTypeHTTP01:    true,
+			ChallengeTypeDNS01:     true,
+			ChallengeTypeTLSALPN01: true,
+		},
+		EnabledIdentifierTypes: map[string]bool{
+			IdentifierTypeIP: true,
+		},
+		IdentifierChallengeTypes: map[string][]string{
+			IdentifierTypeIP: {ChallengeTypeHTTP01, ChallengeTypeTLSALPN01},
+		},
+	}
+
+	cp := NewChallengePolicyFromConfig(config)
+
+	allowed := cp.AllowedChallenges(IdentifierTypeIP, "192.0.2.1")
+	if !slices.Contains(allowed, ChallengeTypeHTTP01) || !slices.Contains(allowed, ChallengeTypeTLSALPN01) {
+		t.Errorf("AllowedChallenges(ip, ...) = %v, want the configured override [http-01 tls-alpn-01]", allowed)
+	}
+	if slices.Contains(allowed, ChallengeTypeDNS01) {
+		t.Error("AllowedChallenges(ip, ...) should not include dns-01: it is not in the override")
+	}
+}
+
+func TestChallengePolicy_IdentifierChallengeTypesOverride_UnnamedTypeKeepsDefault(t *testing.T) {
+	config := &PolicyConfig{
+		EnabledChallengeTypes: map[string]bool{
+			ChallengeTypeHTTP01:         true,
+			ChallengeTypeDNS01:          true,
+			ChallengeTypeTLSALPN01:      true,
+			ChallengeTypeDeviceAttest01: true,
+		},
+		EnabledIdentifierTypes: map[string]bool{
+			IdentifierTypeDNS: true,
+			IdentifierTypeIP:  true,
+		},
+		IdentifierChallengeTypes: map[string][]string{
+			IdentifierTypeIP: {ChallengeTypeHTTP01},
+		},
+	}
+
+	cp := NewChallengePolicyFromConfig(config)
+
+	// DNS was not named in the override: it keeps the package's built-in
+	// default candidates.
+	allowed := cp.AllowedChallenges(IdentifierTypeDNS, "example.com")
+	for _, want := range []string{ChallengeTypeHTTP01, ChallengeTypeDNS01, ChallengeTypeTLSALPN01, ChallengeTypeDeviceAttest01} {
+		if !slices.Contains(allowed, want) {
+			t.Errorf("AllowedChallenges(dns, example.com) = %v, want it to include %q (default, not overridden)", allowed, want)
+		}
+	}
+}
+
+func TestChallengePolicy_IdentifierChallengeTypesOverride_WildcardNotOverridable(t *testing.T) {
+	config := &PolicyConfig{
+		EnabledChallengeTypes: map[string]bool{
+			ChallengeTypeHTTP01: true,
+			ChallengeTypeDNS01:  true,
+		},
+		EnabledIdentifierTypes: map[string]bool{
+			IdentifierTypeDNS: true,
+		},
+		IdentifierChallengeTypes: map[string][]string{
+			// Even though the non-wildcard override includes http-01, the
+			// wildcard restriction to dns-01 (RFC 8555 Section 7.1.4) is
+			// never subject to this override.
+			IdentifierTypeDNS: {ChallengeTypeHTTP01, ChallengeTypeDNS01},
+		},
+	}
+
+	cp := NewChallengePolicyFromConfig(config)
+
+	allowed := cp.AllowedChallenges(IdentifierTypeDNS, "*.example.com")
+	if len(allowed) != 1 || allowed[0] != ChallengeTypeDNS01 {
+		t.Errorf("AllowedChallenges(dns, *.example.com) = %v, want [dns-01]", allowed)
+	}
+}

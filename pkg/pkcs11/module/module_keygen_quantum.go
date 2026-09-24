@@ -343,7 +343,9 @@ func (m *Module) generateQuantumKeyPair(
 	}
 	pubObj, pubGetErr := m.objectManager.getObjectUnchecked(pubHandle)
 	if pubGetErr != nil {
-		_ = m.objectManager.DestroyObject(access, pubHandle)
+		if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+			m.logStorageError("destroy public key after failed post-create lookup", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(pubGetErr)
 	}
 	pubObj.SetAttribute(CKA_ID, ckaID)
@@ -353,13 +355,19 @@ func (m *Module) generateQuantumKeyPair(
 	privHandle, privErr := m.objectManager.CreateGeneratedObject(
 		access, CKO_PRIVATE_KEY, spec.keyType, privateKeyTemplate)
 	if privErr != nil {
-		_ = m.objectManager.DestroyObject(access, pubHandle)
+		if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+			m.logStorageError("destroy public key after failed private key creation", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(privErr)
 	}
 	privObj, privGetErr := m.objectManager.getObjectUnchecked(privHandle)
 	if privGetErr != nil {
-		_ = m.objectManager.DestroyObject(access, pubHandle)
-		_ = m.objectManager.DestroyObject(access, privHandle)
+		if destroyErr := m.objectManager.DestroyObject(access, pubHandle); destroyErr != nil {
+			m.logStorageError("destroy public key after failed private key post-create lookup", destroyErr)
+		}
+		if destroyErr := m.objectManager.DestroyObject(access, privHandle); destroyErr != nil {
+			m.logStorageError("destroy private key after failed post-create lookup", destroyErr)
+		}
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), FromError(privGetErr)
 	}
 	privObj.SetAttribute(CKA_ID, ckaID)

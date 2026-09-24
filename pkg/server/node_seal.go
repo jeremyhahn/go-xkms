@@ -13,12 +13,6 @@
 
 package server
 
-import (
-	"strings"
-
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-)
-
 // NodeSealError is returned when the node barrier is configured to encrypt the
 // data plane but the required auto-unseal material cannot be resolved.
 type NodeSealError struct {
@@ -104,63 +98,13 @@ func (s *Server) allowNodeLocalPlaintextKeys() bool {
 // documented on NodeFlipWired. Non-qrdb-storage deployments are unaffected
 // either way: the flip only ever applies to Storage.Backend=="qrdb".
 func (s *Server) resolveNodeSeal() error {
-	if !strings.EqualFold(s.config.Storage.Backend, "qrdb") || !s.config.Barrier.Enabled {
-		return nil
+	res, err := ResolveNodeSeal(s.config, s.logger)
+	if err != nil {
+		return err
 	}
-
-	strategy := s.config.Barrier.SealStrategy()
-
-	if !s.config.Barrier.NodeFlipWired() {
-		s.logger.Warn("node barrier: strategy not yet wired for the node barrier; using xkms barrier "+
-			"(the qrdb node's own data plane will NOT be encrypted)",
-			"strategy", strategy)
-		return nil
-	}
-
-	if strategy == "tpm2" {
-		tpmCfg := s.config.Backends.TPM2
-		keyDir, err := s.resolveTPM2KeyDir()
-		if err != nil {
-			return &NodeSealError{Reason: "resolving TPM2 key directory", Err: err}
-		}
-		res := seal.BuildBestStrategy(seal.AutodetectOptions{
-			TPM2: &seal.TPM2ProbeConfig{
-				Device:          tpmCfg.DevicePath,
-				KeyDir:          keyDir,
-				UseSimulator:    tpmCfg.UseSimulator,
-				SimulatorHost:   tpmCfg.SimulatorHost,
-				SimulatorPort:   tpmCfg.SimulatorPort,
-				SRKHandle:       tpmCfg.SRKHandle,
-				PlatformPolicy:  tpmCfg.PlatformPolicy,
-				PlatformPCR:     tpmCfg.PlatformPCR,
-				PlatformPCRBank: tpmCfg.PlatformPCRBank,
-			},
-			Logger: s.logger,
-		})
-		if !res.HardwareAvailable() {
-			return &NodeSealError{Reason: "strategy tpm2 configured but no usable, provisioned TPM was found"}
-		}
-		s.nodeSealStrategy = res.Strategy
-		s.nodeSealTPM = res.Sealer
-		s.nodeSealClose = res.Close
-		s.nodeSealEnabled = true
-		s.logger.Info("node barrier: TPM-sealed data plane (single TPM open shared with the tpm2 backend)")
-		return nil
-	}
-
-	// "none", "passphrase", "shamir": go-qrdb's own node seal subsystem
-	// builds the strategy from DaemonConfig.Seal.Strategy (and, for shamir,
-	// Seal.ShamirThreshold/ShamirTotal — see buildXKMSQRDBConfig); xkms
-	// injects nothing here. Auto-unseal is unattended only for "none";
-	// "passphrase"/"shamir" leave the node sealed until the operator-driven
-	// ceremony below completes.
-	s.nodeSealEnabled = true
-	switch strategy {
-	case "none":
-		s.logger.Warn("node barrier: strategy 'none' — data plane is NOT encrypted (development/insecure)")
-	default:
-		s.logger.Info("node barrier: strategy requires operator-driven unseal via the sealed-window listener",
-			"strategy", strategy)
-	}
+	s.nodeSealEnabled = res.Enabled
+	s.nodeSealStrategy = res.Strategy
+	s.nodeSealTPM = res.TPM
+	s.nodeSealClose = res.Close
 	return nil
 }
