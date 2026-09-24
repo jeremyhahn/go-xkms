@@ -16,9 +16,11 @@ package swagger
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -328,6 +330,29 @@ func TestInitializerHandler_RendersSelectedSpec(t *testing.T) {
 				t.Error("expected body to configure SwaggerUIBundle")
 			}
 		})
+	}
+}
+
+func TestInitializerHandler_UnknownSpecNotFound(t *testing.T) {
+	h := NewHandler(&Config{DefaultSpec: "acme-api"})
+
+	for _, spec := range []string{"missing", `x";alert(1);//`, "../acme-api"} {
+		req := httptest.NewRequest(http.MethodGet, "/docs/swagger-initializer.js?spec="+url.QueryEscape(spec), nil)
+		rec := httptest.NewRecorder()
+
+		h.InitializerHandler(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("spec %q: expected status 404, got %d", spec, rec.Code)
+		}
+	}
+}
+
+func TestSpecURLs_MatchEmbeddedSpecs(t *testing.T) {
+	for name, specURL := range specURLs {
+		if _, err := fs.ReadFile(openAPISpecs, "openapi/"+name+".yaml"); err != nil {
+			t.Errorf("spec %q (%s) is not embedded: %v", name, specURL, err)
+		}
 	}
 }
 
