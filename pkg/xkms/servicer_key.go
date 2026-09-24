@@ -250,8 +250,8 @@ func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) 
 		return err
 	}
 
-	if err = b.DeleteKey(ctx, keyAttrs); err != nil {
-		return err
+	if delErr := b.DeleteKey(ctx, keyAttrs); delErr != nil {
+		return delErr
 	}
 
 	decrementKeysTotal(resolvedName)
