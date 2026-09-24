@@ -15,6 +15,7 @@ package tpm2
 
 import (
 	"crypto/aes"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -26,6 +27,7 @@ import (
 
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -211,7 +213,9 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 //
 // Returns:
 //   - SymmetricKey for the requested key
-//   - Error if key doesn't exist or load fails
+//   - backend.ErrKeyNotFound if the key blob genuinely does not exist;
+//     ErrKeyRetrievalFailed if the store returned some other error and
+//     existence could not be determined
 func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if err := validateSymmetricKeyAttributes(attrs); err != nil {
 		return nil, err
@@ -221,10 +225,20 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 		return nil, ErrNotInitialized
 	}
 
-	// Load public blob to verify key exists
+	// Load public blob to verify key exists. Only a genuine "no such
+	// object" result from the underlying store (surfaced as
+	// storage.ErrNotFound through tpm.backend.Get) is reported as
+	// backend.ErrKeyNotFound. Any other failure -- a permission error, a
+	// transient I/O fault, a corrupt or partially written blob -- becomes
+	// ErrKeyRetrievalFailed instead, so callers such as getOrGenerateCAKey
+	// never mistake "could not read the key" for "the key does not exist
+	// yet" and silently generate a replacement.
 	publicBlob, err := tpm.backend.Get(attrs, ".pub")
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "tpm2: failed to load public blob", Err: err}
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, &errs.Detail{Err: kbackend.ErrKeyNotFound, Detail: attrs.CN}
+		}
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("%s: %v", attrs.CN, err)}
 	}
 
 	// Unmarshal public structure to verify it's valid
@@ -266,7 +280,9 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 //
 // Returns:
 //   - types.SymmetricEncrypter for the key
-//   - Error if key doesn't exist or doesn't support symmetric operations
+//   - backend.ErrKeyNotFound if the key genuinely does not exist, or
+//     ErrKeyRetrievalFailed if GetSymmetricKey could not determine that
+//     (both propagated from GetSymmetricKey, which does the classification)
 func (tpm *TPM2) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	// Verify the key exists
 	_, err := tpm.GetSymmetricKey(attrs)
