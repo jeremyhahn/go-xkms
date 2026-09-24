@@ -48,6 +48,16 @@ var (
 	// ErrACMEAuditUnsupportedFormat is returned when acme.audit.format names a
 	// serialization the audit trail cannot be written or queried in.
 	ErrACMEAuditUnsupportedFormat = errors.New("acme: audit.format must be \"json\" (the only queryable audit trail format)")
+
+	// ErrACMEMissingCAAIdentities is returned when acme.enabled is true but
+	// no CAA identities have been configured. RFC 8555 Section 8.1 requires
+	// ACME servers to check CAA (RFC 8659) records before issuing; without
+	// at least one identity the CA has nothing to compare an issue/issuewild
+	// record's value against, so a domain that publishes a restrictive CAA
+	// record could never be distinguished from one that permits this CA.
+	// There is no silent default: an operator names the identity or
+	// identities their CA issues CAA records under.
+	ErrACMEMissingCAAIdentities = errors.New("acme: caa_identities is required when acme.enabled is true")
 )
 
 // ACMEConfig configures the optional ACME (RFC 8555) server that xkmsd may
@@ -79,9 +89,18 @@ type ACMEConfig struct {
 	// TermsOfService is the URL advertised in the directory meta object.
 	TermsOfService string `yaml:"terms_of_service"`
 
-	// CAAIdentities is the list of CAA identities advertised in the directory
-	// meta object. Empty disables CAA advertisement.
+	// CAAIdentities is the list of issuer domain names this CA is known by
+	// in CAA (RFC 8659) issue/issuewild records — the identities finalize
+	// checks a domain's CAA RRset against before issuing, and the same
+	// list advertised in the directory meta object per RFC 8555 Section
+	// 9.7.6. Required whenever ACME is enabled: see Validate.
 	CAAIdentities []string `yaml:"caa_identities"`
+
+	// CAADNSServer optionally pins the recursive resolver (host:port, e.g.
+	// "8.8.8.8:53") used for the CAA lookups performed at order finalize.
+	// Empty uses the same default resolver the dns-01 challenge tooling
+	// uses (pkg/acme/challenges/dns-01/providers.DefaultNameservers).
+	CAADNSServer string `yaml:"caa_dns_server"`
 
 	// ExternalAccountRequired indicates that newAccount requests MUST include
 	// an externalAccountBinding per RFC 8555 Section 7.3.4.
@@ -354,6 +373,9 @@ func (c *ACMEConfig) Validate() error {
 	}
 	if c.KeystoreBackend == "" {
 		return ErrACMEMissingKeystoreBackend
+	}
+	if len(c.CAAIdentities) == 0 {
+		return ErrACMEMissingCAAIdentities
 	}
 	if !c.ReuseTLS && (c.TLS.CertFile == "" || c.TLS.KeyFile == "") {
 		return ErrACMEMissingTLS

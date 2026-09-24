@@ -87,11 +87,15 @@ var (
 		Hash:                         "SHA-256",
 		IdentityProvisioningStrategy: string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS),
 		EK: &EKConfig{
-			CertHandle:    0x01C00002,
-			Debug:         true,
-			Handle:        0x81010001,
-			HierarchyAuth: types.NewLiteralSecretValue([]byte(types.DEFAULT_PASSWORD)),
-			KeyAlgorithm:  x509.RSA.String(),
+			CertHandle: 0x01C00002,
+			Debug:      true,
+			Handle:     0x81010001,
+			// HierarchyAuth is intentionally left unset: the Endorsement
+			// hierarchy auth comes only from an operator's KeyConfig or the
+			// soPIN threaded through Install/Provision, never from a
+			// hardcoded default password (see SRKConfig's identical
+			// convention below).
+			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
@@ -128,7 +132,6 @@ var (
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
 		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "platform",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},
@@ -202,9 +205,26 @@ type Config struct {
 	UseSimulator    bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
 }
 
+// PlatformSRKConfig configures the Platform SRK, xkms's own storage parent
+// (handle 0x81000002 by default). It deliberately carries no hierarchy-auth
+// field: the Owner hierarchy authorization needed to create or evict this
+// persistent object -- the Security Officer PIN, when an operator has set
+// one -- is never stored in configuration. It is supplied only at the
+// moment of the operation, as the soPIN argument to
+// Initialize/EnrollPlatformSRK/ensureSRKAuth, exactly as TPM2.ProvisionOwner
+// takes it for the Shared SRK. No SO PIN means the owner hierarchy carries
+// empty auth (the TCG factory state), and PlatformSRKAttributesFromConfig
+// reflects that by leaving TPMAttributes.HierarchyAuth unset.
+//
+// The Platform SRK's own object authValue -- what protects and authorizes
+// use of the key once created -- is the user PIN, supplied the same way at
+// Initialize/EnrollPlatformSRK/ChangeAuth, never a config literal. There is
+// deliberately no field here to hold one: an earlier "srk-auth" string field
+// was never read into that authValue by any production code path and is
+// deleted rather than left as a config literal that looked authoritative but
+// was not.
 type PlatformSRKConfig struct {
 	CN             string `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	SRKAuth        string `yaml:"srk-auth,omitempty" json:"srk_auth" mapstructure:"srk-auth"`
 	SRKHandle      uint32 `yaml:"srk-handle" json:"srk-handle" mapstructure:"srk-handle"`
 	PlatformPolicy bool   `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
 }
@@ -480,7 +500,7 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 // The attributes never carry a platform policy: SRKConfig cannot express one
 // (see its documentation), so no AuthPolicy is baked into the template here.
 // The Platform SRK, which is built from the same shape by
-// buildSRKAttrsFromConfig, has its PlatformPolicy set from
+// PlatformSRKAttributesFromConfig, has its PlatformPolicy set from
 // PlatformSRKConfig.PlatformPolicy and its AuthPolicy computed by CreateSRK
 // from the platform state that is live at creation time.
 func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {

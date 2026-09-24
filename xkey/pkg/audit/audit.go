@@ -96,11 +96,17 @@ const (
 	OpAutofillDenied        OperationType = "autofill_denied"
 
 	// User presence operations.
+	//
+	// OpTouchEventReceived was removed (issue #688): SocketHandler
+	// (pkg/authenticator/user_presence_socket.go) reports a touch gesture
+	// through the Requested/Confirmed/TimedOut/Cancelled lifecycle below,
+	// never as a separate raw "touch received" signal, so there was no call
+	// site to emit it from anywhere in the codebase. If a lower-level touch
+	// sensor signal is audited later, add the event back alongside it.
 	OpUserPresenceRequested OperationType = "user_presence_requested"
 	OpUserPresenceConfirmed OperationType = "user_presence_confirmed"
 	OpUserPresenceTimedOut  OperationType = "user_presence_timed_out"
 	OpUserPresenceCancelled OperationType = "user_presence_cancelled"
-	OpTouchEventReceived    OperationType = "touch_event_received"
 
 	// Browser extension / native messaging operations.
 	OpExtensionHandshake    OperationType = "extension_handshake"
@@ -110,23 +116,29 @@ const (
 	OpExtensionDisconnected OperationType = "extension_disconnected"
 
 	// Pairing verification operations.
-	OpPairingStarted      OperationType = "pairing_started"
-	OpPairingCompleted    OperationType = "pairing_completed"
-	OpPairingFailed       OperationType = "pairing_failed"
-	OpPairingUnpaired     OperationType = "pairing_unpaired"
-	OpPairingIdentityOK   OperationType = "pairing_identity_ok"
-	OpPairingIdentityFail OperationType = "pairing_identity_fail"
-	OpPairingRateLimited  OperationType = "pairing_rate_limited"
-	OpPairingManifest     OperationType = "pairing_manifest"
+	OpPairingStarted       OperationType = "pairing_started"
+	OpPairingCompleted     OperationType = "pairing_completed"
+	OpPairingFailed        OperationType = "pairing_failed"
+	OpPairingUnpaired      OperationType = "pairing_unpaired"
+	OpPairingIdentityOK    OperationType = "pairing_identity_ok"
+	OpPairingIdentityFail  OperationType = "pairing_identity_fail"
+	OpPairingRateLimited   OperationType = "pairing_rate_limited"
+	OpPairingManifest      OperationType = "pairing_manifest"
+	OpPairingStateMigrated OperationType = "pairing_state_migrated"
 
 	// OATH operations.
-	OpOATHCredentialCreated  OperationType = "oath_credential_created"
-	OpOATHCredentialAccessed OperationType = "oath_credential_accessed"
-	OpOATHCredentialUpdated  OperationType = "oath_credential_updated"
-	OpOATHCredentialDeleted  OperationType = "oath_credential_deleted"
-	OpOATHCodeGenerated      OperationType = "oath_code_generated"
-	OpOATHCodeValidated      OperationType = "oath_code_validated"
-	OpOATHCodeInvalid        OperationType = "oath_code_invalid"
+	//
+	// OpOATHCredentialAccessed, OpOATHCredentialUpdated, OpOATHCodeValidated
+	// and OpOATHCodeInvalid were removed (issue #688): OATHService exposes
+	// list/add/delete and TOTP/HOTP code generation (which read a credential
+	// as a side effect, audited under OpOATHCodeGenerated) — there is no
+	// standalone "view/export a credential", "edit a credential", or
+	// "validate a submitted code" operation anywhere in the codebase for
+	// them to describe. Add the event back alongside the operation if one
+	// is added later.
+	OpOATHCredentialCreated OperationType = "oath_credential_created"
+	OpOATHCredentialDeleted OperationType = "oath_credential_deleted"
+	OpOATHCodeGenerated     OperationType = "oath_code_generated"
 
 	// IPC operations.
 	OpIPCMessageDispatched OperationType = "ipc_message_dispatched"
@@ -169,17 +181,23 @@ type Entry struct {
 	Details    map[string]any
 }
 
-// Logger is the audit logger interface.
+// Logger is the audit logger interface. Every method returns an error per
+// the go-xkms audit write-failure policy (docs/audit-log/engineering.md):
+// for a SeveritySecurity operation (see OperationType.Severity), a failed
+// underlying write is returned as *ErrAuditWriteFailed and the caller must
+// propagate it to fail the operation that produced the event; for a
+// SeverityInformational operation, the failure is logged and counted in a
+// metric, and the method returns nil so the caller proceeds.
 type Logger interface {
-	Log(entry Entry)
-	LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64)
-	LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64)
-	LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any)
-	LogServiceEvent(op OperationType, details map[string]any)
-	LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any)
-	LogTPMOperation(op OperationType, success bool, err error, details map[string]any)
-	LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any)
-	LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any)
+	Log(entry Entry) error
+	LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) error
+	LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) error
+	LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) error
+	LogServiceEvent(op OperationType, details map[string]any) error
+	LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) error
+	LogTPMOperation(op OperationType, success bool, err error, details map[string]any) error
+	LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) error
+	LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) error
 }
 
 // SlogLogger wraps slog for audit logging.
@@ -194,8 +212,10 @@ func NewSlogLogger(logger *slog.Logger) *SlogLogger {
 	}
 }
 
-// Log writes an audit entry.
-func (l *SlogLogger) Log(e Entry) {
+// Log writes an audit entry. SlogLogger has no persistent backing store to
+// fail, so Log always returns nil; it satisfies the Logger contract so
+// SlogLogger is interchangeable with BackendStore and DAOAuditStore.
+func (l *SlogLogger) Log(e Entry) error {
 	attrs := []any{
 		"operation", string(e.Operation),
 		"success", e.Success,
@@ -228,15 +248,16 @@ func (l *SlogLogger) Log(e Entry) {
 	} else {
 		l.logger.Warn("audit", attrs...)
 	}
+	return nil
 }
 
 // LogKeyOperation logs a key-related operation.
-func (l *SlogLogger) LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) {
+func (l *SlogLogger) LogKeyOperation(op OperationType, backend, keyID string, success bool, err error, durationMs int64) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	l.Log(Entry{
+	return l.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		Backend:    backend,
@@ -248,12 +269,12 @@ func (l *SlogLogger) LogKeyOperation(op OperationType, backend, keyID string, su
 }
 
 // LogCryptoOperation logs a cryptographic operation.
-func (l *SlogLogger) LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) {
+func (l *SlogLogger) LogCryptoOperation(op OperationType, backend, keyID, deviceID, deviceName string, success bool, err error, durationMs int64) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	l.Log(Entry{
+	return l.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		Backend:    backend,
@@ -267,8 +288,8 @@ func (l *SlogLogger) LogCryptoOperation(op OperationType, backend, keyID, device
 }
 
 // LogConnectionEvent logs a connection-related event.
-func (l *SlogLogger) LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) {
-	l.Log(Entry{
+func (l *SlogLogger) LogConnectionEvent(op OperationType, deviceID, deviceName string, details map[string]any) error {
+	return l.Log(Entry{
 		Timestamp:  time.Now(),
 		Operation:  op,
 		DeviceID:   deviceID,
@@ -279,8 +300,8 @@ func (l *SlogLogger) LogConnectionEvent(op OperationType, deviceID, deviceName s
 }
 
 // LogServiceEvent logs a service lifecycle event.
-func (l *SlogLogger) LogServiceEvent(op OperationType, details map[string]any) {
-	l.Log(Entry{
+func (l *SlogLogger) LogServiceEvent(op OperationType, details map[string]any) error {
+	return l.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   true,
@@ -289,12 +310,12 @@ func (l *SlogLogger) LogServiceEvent(op OperationType, details map[string]any) {
 }
 
 // LogPINOperation logs a PIN-related operation (verify, change, lock).
-func (l *SlogLogger) LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) {
+func (l *SlogLogger) LogPINOperation(op OperationType, backend string, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	l.Log(Entry{
+	return l.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Backend:   backend,
@@ -305,12 +326,12 @@ func (l *SlogLogger) LogPINOperation(op OperationType, backend string, success b
 }
 
 // LogTPMOperation logs a TPM-related operation (provision, auth, seal).
-func (l *SlogLogger) LogTPMOperation(op OperationType, success bool, err error, details map[string]any) {
+func (l *SlogLogger) LogTPMOperation(op OperationType, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
-	l.Log(Entry{
+	return l.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Backend:   "tpm2",
@@ -321,7 +342,7 @@ func (l *SlogLogger) LogTPMOperation(op OperationType, success bool, err error, 
 }
 
 // LogPasswordStoreOperation logs a password store operation (unlock, access, autofill).
-func (l *SlogLogger) LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) {
+func (l *SlogLogger) LogPasswordStoreOperation(op OperationType, source string, success bool, err error, details map[string]any) error {
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
@@ -330,7 +351,7 @@ func (l *SlogLogger) LogPasswordStoreOperation(op OperationType, source string, 
 		details = make(map[string]any)
 	}
 	details["source"] = source
-	l.Log(Entry{
+	return l.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   success,
@@ -340,12 +361,12 @@ func (l *SlogLogger) LogPasswordStoreOperation(op OperationType, source string, 
 }
 
 // LogUserPresenceEvent logs a user presence/touch event.
-func (l *SlogLogger) LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) {
+func (l *SlogLogger) LogUserPresenceEvent(op OperationType, source string, success bool, details map[string]any) error {
 	if details == nil {
 		details = make(map[string]any)
 	}
 	details["source"] = source
-	l.Log(Entry{
+	return l.Log(Entry{
 		Timestamp: time.Now(),
 		Operation: op,
 		Success:   success,

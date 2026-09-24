@@ -146,7 +146,7 @@ func NewPlatformKeyStore(
 	}
 
 	// Build SRK attributes from platform SRK config
-	srkAttrs, err := buildSRKAttrsFromConfig(config)
+	srkAttrs, err := PlatformSRKAttributesFromConfig(config)
 	if err != nil {
 		return nil, errors.Join(ErrPlatformKeyStoreSRKConfig, err)
 	}
@@ -195,7 +195,8 @@ func NewPlatformKeyStore(
 // stale one -- requires that auth whenever ProvisionOwner installed one. It is
 // NOT a PKCS#11-style security-officer PIN: the TPM2 PIN backend has no such
 // concept and ignores the value. When soPIN is empty the hierarchy auth
-// configured for the SRK (config.SSRK.HierarchyAuth) is used unchanged.
+// configured for the Platform SRK (config.PlatformSRK.HierarchyAuth) is used
+// unchanged; the Shared SRK's own hierarchy auth is never consulted here.
 //
 // If the SRK already exists (from a prior session or auto-initialization),
 // Initialize ensures its auth value matches userPIN. This handles the case
@@ -592,19 +593,18 @@ func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 	pks.authReady.Store(ready)
 }
 
-// PlatformSRKAttributesFromConfig builds the Platform SRK's key attributes
-// from Config -- the exported entry point for callers outside this package
-// (test harnesses that enroll a Platform SRK against the in-process
-// simulator; production callers use CreateSRK plus this in the same
-// enrollment sequence PlatformKeyStore.EnrollPlatformSRK drives) that need
-// the same construction NewPlatformKeyStore uses, without duplicating it.
-func PlatformSRKAttributesFromConfig(config *Config) (*types.KeyAttributes, error) {
-	return buildSRKAttrsFromConfig(config)
-}
-
-// buildSRKAttrsFromConfig creates SRK key attributes from the TPM Config.
-// It uses the PlatformSRKConfig.SRKHandle if set, otherwise falls back to the
-// default tpSRKIndex (0x81000002).
+// PlatformSRKAttributesFromConfig creates Platform SRK key attributes from
+// the TPM Config. It uses the PlatformSRKConfig.SRKHandle if set, otherwise
+// falls back to the default tpSRKIndex (0x81000002).
+//
+// TPMAttributes.HierarchyAuth is always left unset (empty), matching the TCG
+// factory-default owner-hierarchy state. PlatformSRKConfig carries no
+// hierarchy-auth field on purpose: the Security Officer PIN needed to
+// authorize TPM2_CreatePrimary/EvictControl when an operator has set one is
+// never stored in configuration. A caller that knows the live owner
+// hierarchy auth supplies it at the moment of the operation -- the soPIN
+// argument to Initialize/EnrollPlatformSRK/ensureSRKAuth -- overwriting the
+// zero value this function returns.
 //
 // The Platform SRK is the object whose authorization value IS the user PIN.
 // For failed PIN guesses to trip the TPM's dictionary-attack (DA) protection,
@@ -616,11 +616,12 @@ func PlatformSRKAttributesFromConfig(config *Config) (*types.KeyAttributes, erro
 // increment the DA counter toward hardware lockout while a correct PIN still
 // authorizes normally.
 //
-// The SSRK configuration supplies nothing but algorithm and key parameters.
-// Whether the Platform SRK is platform-bound is decided by
-// PlatformSRKConfig.PlatformPolicy and nowhere else — the SSRK cannot express
-// a platform policy at all, and could not lend one to a key it is not.
-func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
+// The SSRK configuration supplies nothing but algorithm and key parameters --
+// never its own HierarchyAuth. Whether the Platform SRK is platform-bound is
+// decided by PlatformSRKConfig.PlatformPolicy and nowhere else — the SSRK
+// cannot express a platform policy at all, and could not lend one to a key
+// it is not.
+func PlatformSRKAttributesFromConfig(config *Config) (*types.KeyAttributes, error) {
 	var srkHandle uint32
 
 	if config.PlatformSRK != nil && config.PlatformSRK.SRKHandle != 0 {
@@ -631,10 +632,14 @@ func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
 
 	platformPolicy := platformPolicyEnabled(config)
 
-	// Use SSRK config if available for algorithm/key parameters
+	// Use SSRK config if available for algorithm/key parameters only. Its own
+	// HierarchyAuth is cleared before use so SRKAttributesFromConfig cannot
+	// carry it into the Platform SRK's attributes: HierarchyAuth is always
+	// left at its empty zero value here, per the TCG factory default.
 	if config.SSRK != nil {
 		cfg := *config.SSRK
 		cfg.Handle = srkHandle
+		cfg.HierarchyAuth = nil
 		attrs, err := SRKAttributesFromConfig(cfg)
 		if err != nil {
 			return nil, err

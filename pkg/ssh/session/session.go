@@ -84,6 +84,21 @@ type session struct {
 	closed bool
 }
 
+// NewSession wraps an already-dialed, host-key-verified *ssh.Client in a
+// Session. Closers run in LIFO order when the Session is closed, exactly as
+// Dial's do; pass none when the caller owns no local enclave for the
+// authentication key (e.g. a remote-signing proxy whose Sign calls forward
+// to a server that never releases the private key). Host and user are
+// carried through for error messages only.
+func NewSession(host, user string, client *ssh.Client, closers ...func()) Session {
+	return &session{
+		host:    host,
+		user:    user,
+		client:  client,
+		closers: closers,
+	}
+}
+
 // Run implements Session.Run.
 func (s *session) Run(ctx context.Context, cmd string) ([]byte, []byte, error) {
 	s.mu.Lock()

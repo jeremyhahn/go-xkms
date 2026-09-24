@@ -166,8 +166,11 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 	for _, identifier := range order.Identifiers {
 		orderIdentifiers = append(orderIdentifiers, identifier.Value)
 	}
-	s.recordAudit(audit.LogOrderCreated(auditContext(r), s.auditLog,
-		auditAccountID(account.ID), strconv.FormatUint(order.ID, 10), orderIdentifiers))
+	if auditErr := s.recordAudit(audit.EventOrderCreated, audit.LogOrderCreated(auditContext(r), s.auditLog,
+		auditAccountID(account.ID), strconv.FormatUint(order.ID, 10), orderIdentifiers)); auditErr != nil {
+		writeError(w, common.ServerInternal("Failed to record audit event"))
+		return
+	}
 
 	// Respond with the order object
 	w.Header().Set("Location", orderURL)

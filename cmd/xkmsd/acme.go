@@ -37,6 +37,7 @@ import (
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
+	acmeserver "github.com/jeremyhahn/go-xkms/pkg/acme/server"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
@@ -88,6 +89,10 @@ var (
 	// The ACME CA does not start without it: a CA that issues and revokes
 	// certificates it cannot record is not a CA any compliance regime accepts.
 	ErrACMEAuditLogger = errors.New("acme: failed to open audit trail")
+
+	// ErrACMECAAValidator is returned when the CAA validator cannot be
+	// constructed from the supplied configuration.
+	ErrACMECAAValidator = errors.New("acme: failed to create CAA validator")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -229,6 +234,23 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 	directoryPath = "/" + strings.Trim(directoryPath, "/")
 
+	// Build the CAA (RFC 8659) validator that order finalize consults before
+	// signing (pkg/acme/server/handlers/order_finalize.go), per the RFC 8555
+	// Section 8.1 requirement to check CAA before issuance. This is the one
+	// construction path for a CAA validator; pkg/acme/client/trustedca.go's
+	// standalone TrustedCA composition builds its own from the same
+	// server.NewCAAValidator constructor. pkg/config/acme.go's Validate
+	// requires CAAIdentities whenever ACME is enabled, so acmeCfg.CAAIdentities
+	// is never empty here in a validated configuration.
+	caaValidator, err := acmeserver.NewCAAValidator(&acmeserver.CAAValidatorParams{
+		CAAIdentities: acmeCfg.CAAIdentities,
+		Logger:        logger,
+		Resolver:      acmeCfg.CAADNSServer,
+	})
+	if err != nil {
+		return nil, &acmeInitError{Stage: "create CAA validator", Sentinel: ErrACMECAAValidator, Err: err}
+	}
+
 	// Construct the REST service that implements all ACME HTTP handlers.
 	// tcgCA is the primary xkmsd TrustedCA asserted to TCGCA above; the
 	// ACME handlers rely on the TCG extensions (IssueEKCertificate,
@@ -239,6 +261,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		BaseRESTURI:             acmeCfg.ExternalURL,
 		CA:                      tcgCA,
 		CAAIdentities:           acmeCfg.CAAIdentities,
+		CAAValidator:            caaValidator,
 		ChallengeMap:            challengeMap,
 		ClusterCACN:             clusterACMEIssuerCN(cfg),
 		EndorseEABRequired:      acmeCfg.EndorseEABRequired,

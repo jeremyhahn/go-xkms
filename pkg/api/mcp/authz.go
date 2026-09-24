@@ -100,6 +100,7 @@ var publicMethods = map[string]struct{}{
 var methodPermissions = map[string]permission{
 	// Backends.
 	"xkms.listBackends": {auth.ResourceBackends, auth.ActionList},
+	"xkms.getBackend":   {auth.ResourceBackends, auth.ActionRead},
 
 	// Key lifecycle and crypto operations.
 	"xkms.generateKey":         {auth.ResourceKeys, auth.ActionCreate},
@@ -210,16 +211,30 @@ var methodPermissions = map[string]permission{
 	"credentials.submit":   {auth.ResourceCredentials, auth.ActionSubmit},
 	"credentials.strategy": {auth.ResourceCredentials, auth.ActionStrategy},
 
+	// User management. Mirrors pkg/api/rest/routes.go's /api/v1/users
+	// decorators exactly: create/list/read/delete carry their ordinary CRUD
+	// actions, enable/disable/bindCert all carry update since each mutates an
+	// existing user's state rather than replacing it.
+	"user.create":          {auth.ResourceUsers, auth.ActionCreate},
+	"user.list":            {auth.ResourceUsers, auth.ActionList},
+	"user.get":             {auth.ResourceUsers, auth.ActionRead},
+	"user.delete":          {auth.ResourceUsers, auth.ActionDelete},
+	"user.enable":          {auth.ResourceUsers, auth.ActionUpdate},
+	"user.disable":         {auth.ResourceUsers, auth.ActionUpdate},
+	"user.bindCert":        {auth.ResourceUsers, auth.ActionUpdate},
+	"user.listCredentials": {auth.ResourceUsers, auth.ActionRead},
+
 	// Password store.
-	"password.add":      {auth.ResourcePasswords, auth.ActionWrite},
-	"password.get":      {auth.ResourcePasswords, auth.ActionRead},
-	"password.list":     {auth.ResourcePasswords, auth.ActionRead},
-	"password.update":   {auth.ResourcePasswords, auth.ActionWrite},
-	"password.delete":   {auth.ResourcePasswords, auth.ActionDelete},
-	"password.unlock":   {auth.ResourcePasswords, auth.ActionUnlock},
-	"password.lock":     {auth.ResourcePasswords, auth.ActionLock},
-	"password.status":   {auth.ResourcePasswords, auth.ActionRead},
-	"password.generate": {auth.ResourcePasswords, auth.ActionGenerate},
+	"password.add":           {auth.ResourcePasswords, auth.ActionWrite},
+	"password.get":           {auth.ResourcePasswords, auth.ActionRead},
+	"password.list":          {auth.ResourcePasswords, auth.ActionRead},
+	"password.update":        {auth.ResourcePasswords, auth.ActionWrite},
+	"password.delete":        {auth.ResourcePasswords, auth.ActionDelete},
+	"password.unlock":        {auth.ResourcePasswords, auth.ActionUnlock},
+	"password.lock":          {auth.ResourcePasswords, auth.ActionLock},
+	"password.status":        {auth.ResourcePasswords, auth.ActionRead},
+	"password.generate":      {auth.ResourcePasswords, auth.ActionGenerate},
+	"password.setAccessMode": {auth.ResourcePasswords, auth.ActionWrite},
 
 	// Platform-sealed store. Secrets sealed here are key-protection
 	// material, so the actions mirror the keys:* pairs used by every other

@@ -115,7 +115,7 @@ func enrollPlatformSRKForTest(t *testing.T, platformPCR uint) *tpm2backend.Backe
 
 	// PlatformSRKAttributesFromConfig is the exported entry point to the
 	// same construction NewPlatformKeyStore/EnrollPlatformSRK use internally
-	// (pkg/tpm2/platform_keystore.go's buildSRKAttrsFromConfig). Neither
+	// (pkg/tpm2/platform_keystore.go's PlatformSRKAttributesFromConfig). Neither
 	// config.SSRK nor config.PlatformSRK above set a Password/HierarchyAuth,
 	// so the resulting attrs already carry none -- matching production,
 	// which never presents a PIN either.

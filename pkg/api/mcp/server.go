@@ -267,6 +267,7 @@ var rpcMethodHandlers = map[string]rpcHandler{
 
 	// XKMS key operations
 	"xkms.listBackends":        (*Server).handleListBackends,
+	"xkms.getBackend":          (*Server).handleGetBackend,
 	"xkms.generateKey":         (*Server).handleGenerateKey,
 	"xkms.getKey":              (*Server).handleGetKey,
 	"xkms.deleteKey":           (*Server).handleDeleteKey,
@@ -379,16 +380,28 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"credentials.submit":   (*Server).handleCredentialSubmit,
 	"credentials.strategy": (*Server).handleCredentialStrategy,
 
+	// User management operations. xkms presents its own user model; the
+	// backing store is the embedded qrdb node (see pkg/xkms/servicer_user.go).
+	"user.create":          (*Server).handleCreateUser,
+	"user.list":            (*Server).handleListUsers,
+	"user.get":             (*Server).handleGetUser,
+	"user.delete":          (*Server).handleDeleteUser,
+	"user.enable":          (*Server).handleEnableUser,
+	"user.disable":         (*Server).handleDisableUser,
+	"user.bindCert":        (*Server).handleBindUserCert,
+	"user.listCredentials": (*Server).handleListUserCredentials,
+
 	// Password store operations
-	"password.add":      (*Server).handlePasswordAdd,
-	"password.get":      (*Server).handlePasswordGet,
-	"password.list":     (*Server).handlePasswordList,
-	"password.update":   (*Server).handlePasswordUpdate,
-	"password.delete":   (*Server).handlePasswordDelete,
-	"password.unlock":   (*Server).handlePasswordUnlock,
-	"password.lock":     (*Server).handlePasswordLock,
-	"password.status":   (*Server).handlePasswordStatus,
-	"password.generate": (*Server).handlePasswordGenerate,
+	"password.add":           (*Server).handlePasswordAdd,
+	"password.get":           (*Server).handlePasswordGet,
+	"password.list":          (*Server).handlePasswordList,
+	"password.update":        (*Server).handlePasswordUpdate,
+	"password.delete":        (*Server).handlePasswordDelete,
+	"password.unlock":        (*Server).handlePasswordUnlock,
+	"password.lock":          (*Server).handlePasswordLock,
+	"password.status":        (*Server).handlePasswordStatus,
+	"password.generate":      (*Server).handlePasswordGenerate,
+	"password.setAccessMode": (*Server).handlePasswordSetAccessMode,
 
 	// Platform-sealed store (machine-local sealed credential store)
 	"sealStore.put":    (*Server).handleSealStorePut,

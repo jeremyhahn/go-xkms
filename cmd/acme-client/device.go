@@ -17,79 +17,79 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// deviceEnrollCmd represents the device enroll subcommand for TPM enrollment.
+// deviceEnrollCmd enrolls a TPM device for a named device spec via the
+// enroll-01 ACME challenge.
 var deviceEnrollCmd = &cobra.Command{
-	Use:   "enroll",
+	Use:   "enroll <name>",
 	Short: "Enroll a TPM device",
 	Long: `Enroll a TPM device using the ACME enroll-01 challenge type.
 
-This initiates the IEEE 802.1AR device identity enrollment workflow.
-Requires a configured TPM module via go-xkms.
+This initiates the IEEE 802.1AR / TCG device identity enrollment workflow
+for the named device spec defined in the configuration, opening the TPM the
+spec configures (a real device, or the in-process simulator when the spec
+leaves TPM unset) and issuing the device's IAK and IDevID certificates.
 
 Examples:
-  trusted-acme-client device enroll --account trusted-ca --device-id 192.168.1.100`,
+  trusted-acme-client device enroll edge-gateway-01`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		account, _ := cmd.Flags().GetString("account")
-		deviceID, _ := cmd.Flags().GetString("device-id")
-
-		if account == "" {
-			return ErrAccountFlagRequired
-		}
-		if deviceID == "" {
-			return ErrDeviceIDFlagRequired
+		svc, err := createService()
+		if err != nil {
+			return err
 		}
 
-		cmd.Printf("TPM device enrollment requires programmatic TPM setup.\n")
-		cmd.Printf("Account: %s, Device ID: %s\n", account, deviceID)
-		cmd.Printf("See documentation at docs/acme/README.md for examples.\n")
+		name := args[0]
+		result, err := svc.Devices().Enroll(cmd.Context(), name)
+		if err != nil {
+			return err
+		}
+
+		cmd.Printf("Device %q enrolled successfully\n", name)
+		cmd.Printf("  IAK Subject: %s\n", result.IAKCertificate.Subject.CommonName)
+		cmd.Printf("  IAK Expires: %s\n", result.IAKCertificate.NotAfter.Format("2006-01-02"))
+		cmd.Printf("  IDevID Subject: %s\n", result.IDevIDCertificate.Subject.CommonName)
+		cmd.Printf("  IDevID Expires: %s\n", result.IDevIDCertificate.NotAfter.Format("2006-01-02"))
+		if len(result.Chain) > 0 {
+			cmd.Printf("  Issuing chain: %d certificate(s)\n", len(result.Chain))
+		}
 		return nil
 	},
 }
 
-// deviceAttestCmd represents the device attest subcommand for TPM attestation.
+// deviceAttestCmd attests a TPM device for a named device spec via the
+// device-attest-01 ACME challenge.
 var deviceAttestCmd = &cobra.Command{
-	Use:   "attest",
+	Use:   "attest <name>",
 	Short: "Attest a TPM device",
 	Long: `Attest a TPM device using the ACME device-attest-01 challenge type.
 
 This performs TPM-based device attestation with platform configuration
-register (PCR) measurements.
+register (PCR) measurements for the named device spec defined in the
+configuration, using the PCR selection configured on that spec.
 
 Examples:
-  trusted-acme-client device attest --account trusted-ca --device-id 192.168.1.100 --pcrs "0,1,2,3,7"`,
+  trusted-acme-client device attest edge-gateway-01`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		account, _ := cmd.Flags().GetString("account")
-		deviceID, _ := cmd.Flags().GetString("device-id")
-
-		if account == "" {
-			return ErrAccountFlagRequired
-		}
-		if deviceID == "" {
-			return ErrDeviceIDFlagRequired
+		svc, err := createService()
+		if err != nil {
+			return err
 		}
 
-		cmd.Printf("TPM device attestation requires programmatic TPM setup.\n")
-		cmd.Printf("Account: %s, Device ID: %s\n", account, deviceID)
-		cmd.Printf("See documentation at docs/acme/README.md for examples.\n")
+		name := args[0]
+		result, err := svc.Devices().Attest(cmd.Context(), name)
+		if err != nil {
+			return err
+		}
+
+		cmd.Printf("Device %q attested successfully\n", name)
+		cmd.Printf("  Subject: %s\n", result.Certificate.Subject.CommonName)
+		cmd.Printf("  Expires: %s\n", result.Certificate.NotAfter.Format("2006-01-02"))
 		return nil
 	},
 }
 
 func init() {
-	// Enroll flags
-	deviceEnrollCmd.Flags().String("account", "", "ACME account name (required)")
-	deviceEnrollCmd.Flags().String("device-id", "", "device identifier (required)")
-	deviceEnrollCmd.Flags().String("cn", "", "common name for the certificate")
-	deviceEnrollCmd.Flags().String("output-cert", "", "output certificate file")
-	deviceEnrollCmd.Flags().String("output-iak", "", "output IAK certificate file")
-
-	// Attest flags
-	deviceAttestCmd.Flags().String("account", "", "ACME account name (required)")
-	deviceAttestCmd.Flags().String("device-id", "", "device identifier (required)")
-	deviceAttestCmd.Flags().String("cn", "", "common name for the certificate")
-	deviceAttestCmd.Flags().String("pcrs", "0,1,2,3,4,5,6,7", "comma-separated PCR indices")
-	deviceAttestCmd.Flags().String("output-cert", "", "output certificate file")
-
 	deviceCmd.AddCommand(deviceEnrollCmd)
 	deviceCmd.AddCommand(deviceAttestCmd)
 }

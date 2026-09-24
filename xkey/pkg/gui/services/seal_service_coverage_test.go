@@ -40,21 +40,33 @@ type sealCoverageAuditLogger struct {
 	entries []audit.Entry
 }
 
-func (l *sealCoverageAuditLogger) Log(e audit.Entry) { l.entries = append(l.entries, e) }
-func (l *sealCoverageAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) {
+func (l *sealCoverageAuditLogger) Log(e audit.Entry) error {
+	l.entries = append(l.entries, e)
+	return nil
 }
-func (l *sealCoverageAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) {
+func (l *sealCoverageAuditLogger) LogKeyOperation(audit.OperationType, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *sealCoverageAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) {
+func (l *sealCoverageAuditLogger) LogCryptoOperation(audit.OperationType, string, string, string, string, bool, error, int64) error {
+	return nil
 }
-func (l *sealCoverageAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) {}
-func (l *sealCoverageAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *sealCoverageAuditLogger) LogConnectionEvent(audit.OperationType, string, string, map[string]any) error {
+	return nil
 }
-func (l *sealCoverageAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) {
+func (l *sealCoverageAuditLogger) LogServiceEvent(audit.OperationType, map[string]any) error {
+	return nil
 }
-func (l *sealCoverageAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) {
+func (l *sealCoverageAuditLogger) LogPINOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
 }
-func (l *sealCoverageAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) {
+func (l *sealCoverageAuditLogger) LogTPMOperation(audit.OperationType, bool, error, map[string]any) error {
+	return nil
+}
+func (l *sealCoverageAuditLogger) LogPasswordStoreOperation(audit.OperationType, string, bool, error, map[string]any) error {
+	return nil
+}
+func (l *sealCoverageAuditLogger) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
+	return nil
 }
 
 // ---------------------------------------------------------------------------

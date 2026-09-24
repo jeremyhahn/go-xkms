@@ -785,20 +785,6 @@ func TestTPMPhoneCoverageBoost_PhonePair_EmptyAddress(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Phone: buildAttestationTrustPool -- nil trust store fallback
-// ---------------------------------------------------------------------------
-
-func TestTPMPhoneCoverageBoost_BuildAttestationTrustPool_NilTrustStore(t *testing.T) {
-	svc := NewPhoneService()
-	svc.SetContext(context.Background())
-	// trustStore is nil by default
-
-	pool, err := svc.buildAttestationTrustPool(nil)
-	require.NoError(t, err)
-	require.NotNil(t, pool)
-}
-
-// ---------------------------------------------------------------------------
 // Phone: saveAttestationResult -- device not found in config
 // ---------------------------------------------------------------------------
 

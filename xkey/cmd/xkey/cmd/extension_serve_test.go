@@ -680,6 +680,9 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 		ErrServeStrategyUnsupported,
 		ErrServeTPMOpenFailed,
 		ErrServeAuthenticatorInitFailed,
+		ErrServePKCS11StrategyUnavailable,
+		ErrServeShamirStrategyUnavailable,
+		ErrServeCloudKMSStrategyUnavailable,
 	}
 	seen := make(map[string]bool, len(errs))
 	for _, e := range errs {
@@ -688,6 +691,114 @@ func TestServeErrors_AreDistinct(t *testing.T) {
 			t.Fatalf("duplicate error message: %s", msg)
 		}
 		seen[msg] = true
+	}
+}
+
+// writeSealedRootKey creates a minimal sealed root-key blob under dataDir
+// naming strategy, the same shape readBarrierStrategy parses, so
+// runExtensionServe's strategy dispatch is reached without a real seal.
+func writeSealedRootKey(t *testing.T, dataDir, strategy string) {
+	t.Helper()
+	barrierDir := filepath.Join(dataDir, "barrier")
+	if err := os.MkdirAll(barrierDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rootKey := `{"version":1,"strategy":"` + strategy + `","sealed_data":{},"created_at":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestExtensionServe_PKCS11Strategy_Refused proves headless mode refuses a
+// barrier sealed with the pkcs11 strategy with a typed error rather than
+// hanging or failing deep inside an HSM login with no PIN.
+func TestExtensionServe_PKCS11Strategy_Refused(t *testing.T) {
+	tmpDir := t.TempDir()
+	xhome.SetRoot(tmpDir)
+	defer xhome.ResetRoot()
+
+	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "pkcs11")
+
+	cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
+	cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+	cmd.Flags().String("log-level", "error", "")
+	cmd.Flags().String("log-file", "", "")
+	cmd.Flags().String("barrier-password", "", "")
+	cmd.Flags().String("barrier-password-file", "", "")
+	cmd.Flags().Bool("no-barrier", false, "")
+	cmd.Flags().Int("auto-lock-minutes", 0, "")
+	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
+	cmd.Flags().Bool("no-auth", false, "")
+	cmd.Flags().Bool("no-pairing", false, "")
+
+	err := cmd.Execute()
+	if !errors.Is(err, ErrServePKCS11StrategyUnavailable) {
+		t.Fatalf("expected ErrServePKCS11StrategyUnavailable, got %v", err)
+	}
+}
+
+// TestExtensionServe_ShamirStrategy_Refused proves headless mode refuses a
+// barrier sealed with the shamir strategy with a typed error naming the
+// interactive alternative, rather than hanging waiting for shares no
+// headless process can collect.
+func TestExtensionServe_ShamirStrategy_Refused(t *testing.T) {
+	tmpDir := t.TempDir()
+	xhome.SetRoot(tmpDir)
+	defer xhome.ResetRoot()
+
+	writeSealedRootKey(t, filepath.Join(tmpDir, "data"), "shamir")
+
+	cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
+	cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+	cmd.Flags().String("log-level", "error", "")
+	cmd.Flags().String("log-file", "", "")
+	cmd.Flags().String("barrier-password", "", "")
+	cmd.Flags().String("barrier-password-file", "", "")
+	cmd.Flags().Bool("no-barrier", false, "")
+	cmd.Flags().Int("auto-lock-minutes", 0, "")
+	cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
+	cmd.Flags().Bool("no-auth", false, "")
+	cmd.Flags().Bool("no-pairing", false, "")
+
+	err := cmd.Execute()
+	if !errors.Is(err, ErrServeShamirStrategyUnavailable) {
+		t.Fatalf("expected ErrServeShamirStrategyUnavailable, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "xkey barrier unseal") {
+		t.Fatalf("expected the refusal to name the interactive command, got %q", err.Error())
+	}
+}
+
+// TestExtensionServe_CloudKMSStrategy_Refused proves headless mode refuses
+// every cloud KMS strategy (AWS KMS, GCP KMS, Azure Key Vault, Vault) with
+// a typed error: xkey has no backend wiring for any of them yet, headless
+// or interactive, so none can be silently attempted.
+func TestExtensionServe_CloudKMSStrategy_Refused(t *testing.T) {
+	for _, strategy := range []string{"awskms", "gcpkms", "azurekv", "vault"} {
+		t.Run(strategy, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			xhome.SetRoot(tmpDir)
+			defer xhome.ResetRoot()
+
+			writeSealedRootKey(t, filepath.Join(tmpDir, "data"), strategy)
+
+			cmd := &cobra.Command{Use: "serve", RunE: runExtensionServe}
+			cmd.Flags().String("socket", filepath.Join(tmpDir, "test.sock"), "")
+			cmd.Flags().String("log-level", "error", "")
+			cmd.Flags().String("log-file", "", "")
+			cmd.Flags().String("barrier-password", "", "")
+			cmd.Flags().String("barrier-password-file", "", "")
+			cmd.Flags().Bool("no-barrier", false, "")
+			cmd.Flags().Int("auto-lock-minutes", 0, "")
+			cmd.Flags().String("pin-state", filepath.Join(tmpDir, "pin.json"), "")
+			cmd.Flags().Bool("no-auth", false, "")
+			cmd.Flags().Bool("no-pairing", false, "")
+
+			err := cmd.Execute()
+			if !errors.Is(err, ErrServeCloudKMSStrategyUnavailable) {
+				t.Fatalf("expected ErrServeCloudKMSStrategyUnavailable, got %v", err)
+			}
+		})
 	}
 }
 

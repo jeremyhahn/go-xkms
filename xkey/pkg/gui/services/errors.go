@@ -231,6 +231,10 @@ var (
 	// ErrOIDCLoginFailed indicates the login operation failed.
 	ErrOIDCLoginFailed = errors.New("oidc_service: login failed")
 
+	// ErrOIDCAWSRegionRequired indicates an AWS provider is missing its
+	// required region.
+	ErrOIDCAWSRegionRequired = errors.New("oidc_service: aws_region is required")
+
 	// ErrOIDCCallbackFailed indicates the OAuth2 callback failed.
 	ErrOIDCCallbackFailed = errors.New("oidc_service: callback failed")
 
@@ -272,9 +276,6 @@ var (
 
 	// ErrOIDCExecFailed indicates script execution failed.
 	ErrOIDCExecFailed = errors.New("oidc_service: script execution failed")
-
-	// ErrOIDCUnsupportedAWSLogin indicates AWS login is not yet supported in the GUI.
-	ErrOIDCUnsupportedAWSLogin = errors.New("oidc_service: AWS login not supported in GUI")
 
 	// ErrOIDCTemplateNotFound indicates the requested provider template was not found.
 	ErrOIDCTemplateNotFound = errors.New("oidc_service: template not found")
@@ -601,6 +602,11 @@ var (
 
 	// ErrTPMHandleOutOfRange indicates the provided handle value is outside the valid range.
 	ErrTPMHandleOutOfRange = errors.New("tpm_handle_allocator: handle out of range")
+
+	// ErrTPMHandlePersistFailed indicates the allocator advanced its
+	// in-memory counter but could not persist the new value, so the
+	// allocated handle is withheld rather than handed to the caller.
+	ErrTPMHandlePersistFailed = errors.New("tpm_handle_allocator: failed to persist handle counter")
 )
 
 // NV index allocator errors.
@@ -610,6 +616,11 @@ var (
 
 	// ErrNVIndexOutOfRange indicates the provided NV index value is outside the valid range.
 	ErrNVIndexOutOfRange = errors.New("nv_index_allocator: NV index out of valid range")
+
+	// ErrNVIndexPersistFailed indicates the allocator advanced its
+	// in-memory counter but could not persist the new value, so the
+	// allocated NV index is withheld rather than handed to the caller.
+	ErrNVIndexPersistFailed = errors.New("nv_index_allocator: failed to persist index counter")
 )
 
 // Policy errors.

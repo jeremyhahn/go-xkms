@@ -137,7 +137,6 @@ func newSimConfig() *Config {
 			},
 		},
 		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},

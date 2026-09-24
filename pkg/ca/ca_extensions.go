@@ -205,8 +205,15 @@ func (ca *CA) CertificatePEM(ctx context.Context, cn string) ([]byte, error) {
 }
 
 // ImportCertificate persists a certificate to the CA's stores. Both the
-// keystore (best-effort) and the certStore receive a copy so subsequent
-// lookups via either storage surface succeed.
+// keystore and the certStore receive a copy so subsequent lookups via either
+// storage surface succeed. The certStore write is authoritative and always
+// attempted; the keystore write is attempted first because some backends
+// (e.g. hardware-bound keystores) are read-only for certs and would
+// otherwise short-circuit the authoritative write. Either write's failure
+// is now returned (joined when both fail) rather than discarded: a
+// keystore save failure used to be silently swallowed, leaving the
+// keystore's copy of a newly imported certificate missing with no signal
+// to the caller.
 //
 // Thread-safe: Yes
 func (ca *CA) ImportCertificate(ctx context.Context, cert *x509.Certificate) error {
@@ -218,19 +225,19 @@ func (ca *CA) ImportCertificate(ctx context.Context, cert *x509.Certificate) err
 		return &errs.Detail{Err: ErrInvalidCertificate, Detail: "certificate has empty common name"}
 	}
 
-	// Best-effort keystore save: some backends are read-only for certs and
-	// will surface errors that we can't reliably handle here. In all cases
-	// the authoritative write is to certStore.
+	var keyStoreErr error
 	if ca.keyStore != nil {
-		_ = ca.keyStore.SaveCert(ctx, cn, cert)
+		if err := ca.keyStore.SaveCert(ctx, cn, cert); err != nil {
+			keyStoreErr = &errs.Wrapped{Msg: "ca: keystore save cert failed", Err: err}
+		}
 	}
 	if ca.certStore == nil {
-		return ErrCertStoreRequired
+		return errors.Join(keyStoreErr, ErrCertStoreRequired)
 	}
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
+		return errors.Join(keyStoreErr, &errs.Wrapped{Msg: "ca: certstore store certificate failed", Err: err})
 	}
-	return nil
+	return keyStoreErr
 }
 
 // ImportCertificatePEM parses a PEM-encoded certificate and stores it under
@@ -250,16 +257,19 @@ func (ca *CA) ImportCertificatePEM(ctx context.Context, cn string, pemBytes []by
 		return &errs.Detail{Err: ErrInvalidCertificate, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	var keyStoreErr error
 	if ca.keyStore != nil {
-		_ = ca.keyStore.SaveCert(ctx, cn, cert)
+		if err := ca.keyStore.SaveCert(ctx, cn, cert); err != nil {
+			keyStoreErr = &errs.Wrapped{Msg: "ca: keystore save cert failed", Err: err}
+		}
 	}
 	if ca.certStore == nil {
-		return ErrCertStoreRequired
+		return errors.Join(keyStoreErr, ErrCertStoreRequired)
 	}
 	if err := ca.certStore.StoreCertificate(cert); err != nil {
-		return &errs.Detail{Err: ErrStorageError, Detail: fmt.Sprintf("%v", err)}
+		return errors.Join(keyStoreErr, &errs.Wrapped{Msg: "ca: certstore store certificate failed", Err: err})
 	}
-	return nil
+	return keyStoreErr
 }
 
 // PEM is an alias for CertificatePEM that takes KeyAttributes instead of a
@@ -611,21 +621,59 @@ func (ca *CA) RevokeCert(ctx context.Context, cert *x509.Certificate, opts Revok
 		return err
 	}
 
-	if opts.DeleteKeys {
-		// Build KeyAttributes for the certificate's CN. Deletion is
-		// best-effort — hardware-bound keys may not be deletable and the
-		// primary purpose of revocation is to invalidate the certificate.
-		attrs := &types.KeyAttributes{
-			CN:           cert.Subject.CommonName,
-			KeyAlgorithm: cert.PublicKeyAlgorithm,
+	if !opts.DeleteKeys {
+		return nil
+	}
+
+	// The certificate is already revoked at this point: recordRevocation
+	// above succeeded, and that record -- not the cleanup below -- is what
+	// makes the certificate invalid. Every cleanup target is still
+	// attempted even if an earlier one fails, and their errors are joined
+	// into the return rather than discarded (go-xkms#687), so a real
+	// storage failure is never silently swallowed.
+	var cleanupErrs []error
+
+	// Resolve the exact KeyAttributes the CA generated or resolved for this
+	// certificate's key at issuance (go-xkms#751): the certificate alone
+	// carries only its CN and public key algorithm, which is not enough to
+	// satisfy types.KeyAttributes.Validate (StoreType, KeyType are also
+	// required) or to name the same key ID generation stored it under. A
+	// certificate signed from a caller-supplied CSR (SignCSR) -- or one
+	// issued before this recording existed -- has no such record: the CA
+	// never held that key, so deletion is correctly a no-op rather than a
+	// failure.
+	attrs, err := ca.resolveIssuedKeyAttributes(ctx, cert.SerialNumber)
+	switch {
+	case err != nil:
+		cleanupErrs = append(cleanupErrs, &errs.Wrapped{Msg: "ca: resolve issued key attributes failed", Err: err})
+	case attrs == nil:
+		slog.Info("ca: revoke delete-keys: no CA-held key recorded for certificate; skipping key deletion",
+			"serial", cert.SerialNumber.Text(10), "cn", cert.Subject.CommonName)
+	default:
+		if ca.keyStore == nil {
+			cleanupErrs = append(cleanupErrs, ErrKeyStoreRequired)
+		} else if err := ca.keyStore.DeleteKey(ctx, attrs); err != nil {
+			cleanupErrs = append(cleanupErrs, &errs.Wrapped{Msg: "ca: keystore delete key failed", Err: err})
+		} else if err := ca.deleteIssuedKeyRecord(ctx, cert.SerialNumber); err != nil {
+			cleanupErrs = append(cleanupErrs, &errs.Wrapped{Msg: "ca: delete issued key record failed", Err: err})
 		}
-		if ca.keyStore != nil {
-			_ = ca.keyStore.DeleteKey(ctx, attrs)
-			_ = ca.keyStore.DeleteCert(ctx, cert.Subject.CommonName)
+	}
+
+	// certStore is the authoritative certificate store for every issuance
+	// and import path (both IssueCertificateWithProfile/signCSR and
+	// ImportCertificate/ImportCertificatePEM call StoreCertificate on it).
+	// The keystore's own certificate side, by contrast, is never populated
+	// for issued certificates -- only ImportCertificate/ImportCertificatePEM
+	// call keyStore.SaveCert, and only best-effort -- so there is no
+	// keyStore certificate copy to delete here.
+	if ca.certStore != nil {
+		if err := ca.certStore.DeleteCertificate(cert.Subject.CommonName); err != nil {
+			cleanupErrs = append(cleanupErrs, &errs.Wrapped{Msg: "ca: certstore delete certificate failed", Err: err})
 		}
-		if ca.certStore != nil {
-			_ = ca.certStore.DeleteCertificate(cert.Subject.CommonName)
-		}
+	}
+
+	if len(cleanupErrs) > 0 {
+		return errors.Join(cleanupErrs...)
 	}
 	return nil
 }
@@ -770,6 +818,144 @@ func (ca *CA) loadPersistedRevocations(ctx context.Context) error {
 			}
 		}
 		ca.revocationsMutex.Unlock()
+	}
+	return nil
+}
+
+// =============================================================================
+// Issued-Key Persistence Helpers
+// =============================================================================
+
+// issuedKeyPrefix is the object-store key prefix for persisted issuance-time
+// key attributes, a sibling of revocationKeyPrefix and crlKeyPrefix in the
+// same store (ca.revocationStore): key state lives under
+// "issued-keys/<serial-decimal>.json" instead of
+// "revocations/<serial-decimal>.json" or "crl/<issuer-ski-hex>".
+const issuedKeyPrefix = "issued-keys/"
+
+// persistedIssuedKey is the on-disk form of the KeyAttributes IssueCertificate
+// / IssueCertificateWithProfile captured when the CA itself generated or
+// resolved a certificate's private key through ca.keyStore. It carries only
+// the fields types.KeyAttributes.Validate and KeyAttributes.ID actually need
+// to name and delete the same key later, not the full KeyAttributes type --
+// kept separate so serialisation stays stable regardless of future additions
+// to that type (mirrors persistedRevocation above).
+type persistedIssuedKey struct {
+	Serial       string                  `json:"serial"`
+	CN           string                  `json:"cn"`
+	TenantID     string                  `json:"tenant_id,omitempty"`
+	Partition    string                  `json:"partition,omitempty"`
+	Backend      string                  `json:"backend,omitempty"`
+	StoreType    string                  `json:"store_type"`
+	KeyType      types.KeyType           `json:"key_type"`
+	KeyAlgorithm x509.PublicKeyAlgorithm `json:"key_algorithm"`
+	ECCCurve     string                  `json:"ecc_curve,omitempty"`
+	RSAKeySize   int                     `json:"rsa_key_size,omitempty"`
+}
+
+// issuedKeyStorageKey returns the object-store key for a given serial
+// number's issued-key record.
+func issuedKeyStorageKey(serial *big.Int) string {
+	return issuedKeyPrefix + serial.Text(10) + ".json"
+}
+
+// recordIssuedKey persists the exact KeyAttributes a server-side key
+// generation or resolution used for the certificate identified by serial, so
+// RevokeCert's DeleteKeys option can resolve and delete precisely that key
+// later instead of reconstructing incomplete attributes from the certificate
+// alone (go-xkms#751). Callers must invoke this only when the CA itself holds
+// the key (request.Signer == nil on the originating CertificateRequest); a
+// CSR-signed certificate must never call this, because the CA never held the
+// requester's key.
+//
+// attrs must be non-nil; a nil attrs is a caller error and returns
+// ErrInvalidKeyAttributes rather than silently doing nothing.
+func (ca *CA) recordIssuedKey(ctx context.Context, serial *big.Int, attrs *types.KeyAttributes) error {
+	if attrs == nil {
+		return ErrInvalidKeyAttributes
+	}
+
+	rec := persistedIssuedKey{
+		Serial:       serial.Text(10),
+		CN:           attrs.CN,
+		TenantID:     attrs.TenantID,
+		Partition:    string(attrs.Partition),
+		Backend:      attrs.Backend,
+		StoreType:    string(attrs.StoreType),
+		KeyType:      attrs.KeyType,
+		KeyAlgorithm: attrs.KeyAlgorithm,
+	}
+	if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil {
+		rec.ECCCurve = types.CurveName(attrs.ECCAttributes.Curve)
+	}
+	if attrs.RSAAttributes != nil {
+		rec.RSAKeySize = attrs.RSAAttributes.KeySize
+	}
+
+	buf, err := json.Marshal(rec)
+	if err != nil {
+		return &errs.Wrapped{Msg: "ca: marshal issued key", Err: err}
+	}
+	if err := ca.revocationStore.Put(ctx, issuedKeyStorageKey(serial), buf); err != nil {
+		return &errs.Wrapped{Msg: "ca: persist issued key", Err: err}
+	}
+	return nil
+}
+
+// resolveIssuedKeyAttributes reconstructs the KeyAttributes a server-side key
+// generation or resolution used for the certificate with the given serial,
+// from the record recordIssuedKey wrote at issuance.
+//
+// Returns (nil, nil) -- not an error -- when no record exists: that is the
+// CSR-signed case (or a certificate issued before this recording existed),
+// where the CA never held the requester's key, and RevokeCert's DeleteKeys
+// must treat it as a no-op rather than a failure.
+func (ca *CA) resolveIssuedKeyAttributes(ctx context.Context, serial *big.Int) (*types.KeyAttributes, error) {
+	data, err := ca.revocationStore.Get(ctx, issuedKeyStorageKey(serial))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, &errs.Wrapped{Msg: "ca: get issued key", Err: err}
+	}
+
+	var rec persistedIssuedKey
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, &errs.Wrapped{Msg: "ca: unmarshal issued key", Err: err}
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:           rec.CN,
+		TenantID:     rec.TenantID,
+		Partition:    types.Partition(rec.Partition),
+		Backend:      rec.Backend,
+		StoreType:    types.StoreType(rec.StoreType),
+		KeyType:      rec.KeyType,
+		KeyAlgorithm: rec.KeyAlgorithm,
+	}
+	switch rec.KeyAlgorithm {
+	case x509.RSA:
+		attrs.RSAAttributes = &types.RSAAttributes{KeySize: rec.RSAKeySize}
+	case x509.ECDSA:
+		curve, err := types.ParseCurve(rec.ECCCurve)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "ca: issued key curve", Err: err}
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{Curve: curve}
+	}
+	return attrs, nil
+}
+
+// deleteIssuedKeyRecord removes the issued-key bookkeeping record for serial
+// once RevokeCert has successfully deleted the key itself. A record that is
+// already absent is not an error: it means either the key was already
+// cleaned up by a previous revocation attempt, or none was ever written.
+func (ca *CA) deleteIssuedKeyRecord(ctx context.Context, serial *big.Int) error {
+	if err := ca.revocationStore.Delete(ctx, issuedKeyStorageKey(serial)); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return &errs.Wrapped{Msg: "ca: delete issued key record", Err: err}
 	}
 	return nil
 }

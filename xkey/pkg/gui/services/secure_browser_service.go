@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -333,7 +335,17 @@ func (s *SecureBrowserService) Rebuild() error {
 // platform certificates as untrusted.
 func (s *SecureBrowserService) syncIfChanged(family nativemsg.Browser, certs []*x509.Certificate) error {
 	currentHash := computeTrustHash(certs)
-	storedHash, _ := s.readTrustHash(family)
+	storedHash, hashErr := s.readTrustHash(family)
+	if hashErr != nil && !errors.Is(hashErr, fs.ErrNotExist) {
+		// A missing hash file (first sync) is expected and already handled
+		// below: storedHash stays "" and mismatches currentHash, forcing a
+		// sync. Any other read failure (permissions, a corrupted file) is
+		// not expected, so it is logged rather than silently treated the
+		// same as "never synced" — the effect (force a resync) is
+		// identical either way, but only a genuine failure is worth an
+		// operator's attention.
+		s.log.Warn("failed to read stored trust hash; forcing resync", "family", family, "error", hashErr)
+	}
 
 	if currentHash == storedHash && s.browserStorePresent(family) {
 		return nil

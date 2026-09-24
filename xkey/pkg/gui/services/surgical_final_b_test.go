@@ -633,6 +633,8 @@ func TestSurgB_PhoneService_SetDisconnected_WithEmitter(t *testing.T) {
 // OIDC Service: Additional paths
 // ---------------------------------------------------------------------------
 
+// TestSurgB_OIDCService_Login_AWSProviderRejected proves an AWS provider
+// with no aws_region is refused before any login attempt.
 func TestSurgB_OIDCService_Login_AWSProviderRejected(t *testing.T) {
 	svc := NewOIDCService(nil)
 	svc.providers["aws-test"] = &OIDCProviderEntry{
@@ -642,7 +644,7 @@ func TestSurgB_OIDCService_Login_AWSProviderRejected(t *testing.T) {
 
 	result, err := svc.Login("aws-test")
 	assert.NoError(t, err)
-	assert.Contains(t, result.Error, "AWS")
+	assert.Contains(t, result.Error, "aws_region")
 	require.NotNil(t, result)
 	assert.False(t, result.Success)
 }

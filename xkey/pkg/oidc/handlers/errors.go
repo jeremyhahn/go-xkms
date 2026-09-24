@@ -49,6 +49,14 @@ var (
 
 	// ErrOutputWriteFailed is returned when writing output fails.
 	ErrOutputWriteFailed = errors.New("handlers: output write failed")
+
+	// ErrUnknownOutputMode is returned by NewForMode when mode names no
+	// known output handler.
+	ErrUnknownOutputMode = errors.New("handlers: unknown output mode")
+
+	// ErrExecModeRequiresCommand is returned by NewForMode when mode is
+	// ModeExec but no command was given.
+	ErrExecModeRequiresCommand = errors.New("handlers: exec output mode requires a command")
 )
 
 // SentinelCauseError attaches an underlying cause to a package sentinel
@@ -66,4 +74,22 @@ func (e *SentinelCauseError) Error() string {
 // Unwrap returns the sentinel and the cause for errors.Is / errors.As.
 func (e *SentinelCauseError) Unwrap() []error {
 	return []error{e.Sentinel, e.Cause}
+}
+
+// DetailError appends detail text directly after a wrapped error while
+// preserving errors.Is / errors.As matching of the wrapped error through
+// Unwrap. The detail text carries its own leading separator.
+type DetailError struct {
+	Err    error
+	Detail string
+}
+
+// Error implements the error interface.
+func (e *DetailError) Error() string {
+	return e.Err.Error() + e.Detail
+}
+
+// Unwrap returns the wrapped cause.
+func (e *DetailError) Unwrap() error {
+	return e.Err
 }

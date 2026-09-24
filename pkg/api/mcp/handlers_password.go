@@ -147,6 +147,13 @@ type PasswordGenerateResult struct {
 	Length   int    `json:"length"`
 }
 
+// PasswordAccessModeResult represents the result of setting the password
+// store access mode.
+type PasswordAccessModeResult struct {
+	Mode    string `json:"mode"`
+	Message string `json:"message"`
+}
+
 // --- Typed errors for password MCP handlers ---
 
 var (
@@ -535,6 +542,56 @@ func (s *Server) handlePasswordGenerate(ctx context.Context, req *JSONRPCRequest
 		Password: password,
 		Length:   length,
 	}, nil
+}
+
+// handlePasswordSetAccessMode handles the password.setAccessMode method. It
+// delegates to XKMSService.PasswordStoreSetAccessMode, which owns the rules
+// for which access-control strategy the addressed password store can
+// enforce; this handler only translates its result onto the wire, mirroring
+// pkg/api/rest/password_handlers.go's SetAccessModeHandler.
+func (s *Server) handlePasswordSetAccessMode(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	if s.xkmsService == nil {
+		return nil, ErrPasswordStoreNotConfigured
+	}
+
+	var params transport.PasswordStoreSetAccessModeRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "invalid params", Err: err}}
+	}
+	if params.Mode == "" {
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: xkms.ErrInvalidAccessMode}
+	}
+
+	if err := s.xkmsService.PasswordStoreSetAccessMode(ctx, &params); err != nil {
+		return nil, mapPasswordAccessModeError(err)
+	}
+
+	return PasswordAccessModeResult{
+		Mode:    params.Mode,
+		Message: "Password store access mode set",
+	}, nil
+}
+
+// mapPasswordAccessModeError converts an error returned by
+// XKMSService.PasswordStoreSetAccessMode into a *KeyOpError carrying the
+// JSON-RPC error code InvokeMethod should report, mirroring
+// pkg/api/rest/password_handlers.go's passwordHandleAccessModeError: a
+// malformed request or an out-of-vocabulary mode is Invalid params, an
+// unconfigured store is Service unavailable (matching REST's 503), and an
+// unsupported (but well-formed) mode is a capability boundary of the wired
+// store -- Method not found, MCP's signal for "not implemented here" -- not a
+// caller error.
+func mapPasswordAccessModeError(err error) error {
+	switch {
+	case errors.Is(err, xkms.ErrInvalidAccessMode), errors.Is(err, xkms.ErrNilRequest):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	case errors.Is(err, xkms.ErrNotConfigured):
+		return &KeyOpError{Code: ErrCodeServiceUnavailable, Err: ErrPasswordStoreNotConfigured}
+	case errors.Is(err, xkms.ErrOperationNotSupported):
+		return &KeyOpError{Code: ErrCodeMethodNotFound, Err: err}
+	default:
+		return &KeyOpError{Code: ErrCodeInternalError, Err: err}
+	}
 }
 
 // mapPasswordError maps staticpw errors to appropriate MCP error messages.

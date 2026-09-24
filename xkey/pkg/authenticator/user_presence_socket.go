@@ -58,13 +58,15 @@ func (h *SocketHandler) SetAuditLogger(logger audit.Logger) {
 	h.auditLog.Store(&logger)
 }
 
-// logUserPresence logs a user presence event to the audit log.
-func (h *SocketHandler) logUserPresence(op audit.OperationType, source string, success bool, details map[string]any) {
+// logUserPresence logs a user presence event to the audit log. Callers
+// must propagate a non-nil return: op.Severity() (audit package) decides
+// whether that failure is required to fail the caller.
+func (h *SocketHandler) logUserPresence(op audit.OperationType, source string, success bool, details map[string]any) error {
 	ptr := h.auditLog.Load()
 	if ptr == nil {
-		return
+		return nil
 	}
-	(*ptr).LogUserPresenceEvent(op, source, success, details)
+	return (*ptr).LogUserPresenceEvent(op, source, success, details)
 }
 
 // SetOnResolved registers a callback that is invoked whenever a user presence
@@ -94,12 +96,14 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *UserPresen
 	h.pendingReq.Store(pending)
 
 	// Log user presence request.
-	h.logUserPresence(audit.OpUserPresenceRequested, "fido2", true, map[string]any{
+	if auditErr := h.logUserPresence(audit.OpUserPresenceRequested, "fido2", true, map[string]any{
 		"operation": req.Operation,
 		"rpid":      req.RPID,
 		"rp_name":   req.RPName,
 		"user_name": req.UserName,
-	})
+	}); auditErr != nil {
+		return nil, auditErr
+	}
 
 	// Fire notification; failures are logged but do not abort the UP request.
 	if h.notifier != nil {
@@ -125,19 +129,23 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *UserPresen
 			if h.onResolved != nil {
 				h.onResolved(false)
 			}
-			h.logUserPresence(audit.OpUserPresenceCancelled, "fido2", false, map[string]any{
+			if auditErr := h.logUserPresence(audit.OpUserPresenceCancelled, "fido2", false, map[string]any{
 				"operation": req.Operation,
 				"rpid":      req.RPID,
-			})
+			}); auditErr != nil {
+				return nil, auditErr
+			}
 			return nil, ErrUserPresenceDenied
 		}
 		if h.onResolved != nil {
 			h.onResolved(true)
 		}
-		h.logUserPresence(audit.OpUserPresenceConfirmed, "fido2", true, map[string]any{
+		if auditErr := h.logUserPresence(audit.OpUserPresenceConfirmed, "fido2", true, map[string]any{
 			"operation": req.Operation,
 			"rpid":      req.RPID,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 		return result, nil
 
 	case <-timeoutCtx.Done():
@@ -147,10 +155,12 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *UserPresen
 		if h.onResolved != nil {
 			h.onResolved(false)
 		}
-		h.logUserPresence(audit.OpUserPresenceTimedOut, "fido2", false, map[string]any{
+		if auditErr := h.logUserPresence(audit.OpUserPresenceTimedOut, "fido2", false, map[string]any{
 			"operation": req.Operation,
 			"rpid":      req.RPID,
-		})
+		}); auditErr != nil {
+			return nil, auditErr
+		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

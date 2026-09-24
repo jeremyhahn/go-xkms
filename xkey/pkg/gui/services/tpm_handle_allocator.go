@@ -101,9 +101,20 @@ func (a *TPMHandleAllocator) NextHandle(hierarchy string) (uint32, error) {
 		}
 		next := current + 1
 		if counter.CompareAndSwap(current, next) {
-			// Best-effort persist after successful allocation.
 			if a.dataDir != "" {
-				_ = a.persistCounters()
+				if err := a.persistCounters(); err != nil {
+					// The in-memory counter has already advanced past
+					// current (the CAS above), so current can never be
+					// handed out again by a future call even though it is
+					// withheld here: no caller ever receives a handle whose
+					// counter update did not durably persist, which is what
+					// matters to avoid a colliding persistent TPM object on
+					// a later restart from stale on-disk state. The cost is
+					// one permanently skipped handle number per persist
+					// failure, cheap against the 2^20 handle range per
+					// hierarchy.
+					return 0, &SentinelCauseError{Sentinel: ErrTPMHandlePersistFailed, Cause: err}
+				}
 			}
 			return current, nil
 		}

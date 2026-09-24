@@ -332,6 +332,27 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		tca.logger.Warn("audit trail disabled: certificate issuance and revocation will not be recorded")
 	}
 
+	// Build the CAA (RFC 8659) validator that order finalize consults before
+	// signing. RFC 8555 Section 8.1 requires this check. This is the same
+	// server.NewCAAValidator constructor cmd/xkmsd's ACME composition uses —
+	// the one construction path for a CAA validator. An operator who has not
+	// named any identity cannot be issued for a domain that publishes a
+	// restrictive CAA record: CAAValidator.Validate fails closed for that
+	// domain (pkg/acme/server/caa.go), so this only warns rather than
+	// refusing to start, matching TCAACMEConfig.CAIdentifiers' non-fatal
+	// treatment elsewhere in this config.
+	if len(tca.config.ACME.CAIdentifiers) == 0 {
+		tca.logger.Warn("acme.ca_identifiers is not configured: any domain publishing a CAA record will fail closed at finalize")
+	}
+	caaValidator, err := server.NewCAAValidator(&server.CAAValidatorParams{
+		CAAIdentities: tca.config.ACME.CAIdentifiers,
+		Logger:        tca.logger,
+		Resolver:      tca.config.ACME.CAADNSServer,
+	})
+	if err != nil {
+		return caerrors.InternalServerError("failed to initialize CAA validator: %v", err)
+	}
+
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
@@ -339,6 +360,7 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		BaseRESTURI:             externalURL,
 		CA:                      tca.ca,
 		CAAIdentities:           tca.config.ACME.CAIdentifiers,
+		CAAValidator:            caaValidator,
 		ChallengeMap:            tca.challengeMap,
 		KMSService:              tca.kmsService,
 		Logger:                  tca.logger,
@@ -357,6 +379,7 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 
 	// Set up rate limiter
 	rateLimiter := server.NewRateLimiter(tca.rateLimitRequests, tca.rateLimitInterval)
+	rateLimiter.SetAuditLogger(auditLog)
 	rateLimitMiddleware := rateLimiter.MiddlewareFunc(server.ClientID)
 
 	// Set up ACME router

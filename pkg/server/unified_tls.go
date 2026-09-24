@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"math/big"
 	"net"
@@ -237,11 +238,25 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 
 	// Persist when a storage path exists (memory-backed test nodes skip);
 	// a persistence failure degrades to an ephemeral certificate rather
-	// than refusing to serve.
+	// than refusing to serve, but the failure is no longer silent: it is
+	// logged so an operator can see why the bootstrap identity is not
+	// stable across restarts.
 	if s.config.Storage.Path != "" {
-		if err := os.MkdirAll(dir, 0o700); err == nil {
-			_ = os.WriteFile(certPath, certPEM, 0o600)
-			_ = os.WriteFile(keyPath, keyPEM, 0o600)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			s.logger.Warn("unified API server: failed to create bootstrap TLS certificate directory; serving an ephemeral certificate",
+				slog.Any("error", &ErrTLSCertOp{Operation: "create bootstrap TLS certificate directory", Err: err}))
+		} else {
+			var certErr, keyErr error
+			if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+				certErr = &ErrTLSCertOp{Operation: "persist bootstrap TLS certificate", Err: err}
+			}
+			if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+				keyErr = &ErrTLSCertOp{Operation: "persist bootstrap TLS key", Err: err}
+			}
+			if writeErr := errors.Join(certErr, keyErr); writeErr != nil {
+				s.logger.Warn("unified API server: failed to persist bootstrap TLS certificate; serving an ephemeral certificate until next restart",
+					slog.Any("error", writeErr))
+			}
 		}
 	}
 

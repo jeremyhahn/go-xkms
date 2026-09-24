@@ -14,6 +14,7 @@
 package gui
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -191,13 +192,15 @@ func (a *App) applyVerifiedEnterprisePolicy(pol *config.PolicySection) error {
 		a.log.Warn("verified enterprise policy failed its own startup preconditions; keeping defaults",
 			"error", err)
 		if a.auditStore != nil {
-			a.auditStore.Log(audit.Entry{
+			if auditErr := a.auditStore.Log(audit.Entry{
 				Timestamp: time.Now(),
 				Operation: audit.OpPolicyDenied,
 				Success:   false,
 				Error:     err.Error(),
 				Details:   map[string]any{"operation": "apply_verified_policy"},
-			})
+			}); auditErr != nil {
+				return errors.Join(err, auditErr)
+			}
 		}
 		return err
 	}

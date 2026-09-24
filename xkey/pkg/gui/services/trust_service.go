@@ -164,13 +164,15 @@ func (s *TrustService) requireManageTrustStore(operation string) error {
 	}
 	err := &PolicyDeniedError{Field: "user_can_manage_trust_store"}
 	if p := s.auditLog.Load(); p != nil {
-		(*p).Log(audit.Entry{
+		if auditErr := (*p).Log(audit.Entry{
 			Timestamp: time.Now(),
 			Operation: audit.OpPolicyDenied,
 			Success:   false,
 			Error:     err.Error(),
 			Details:   map[string]any{"operation": operation},
-		})
+		}); auditErr != nil {
+			return errors.Join(err, auditErr)
+		}
 	}
 	return err
 }
@@ -655,16 +657,24 @@ func (s *TrustService) ExportBrowserTrustBundle(bundlePath string) (int, error) 
 		return 0, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleExport, Cause: err}
 	}
 
-	// Write manifest sidecar for staleness detection.
+	// Write manifest sidecar for staleness detection. The bundle itself is
+	// already written and durable at this point; a manifest failure is
+	// reported (not discarded) because it leaves staleness detection
+	// checking a stale or absent manifest against the fresh bundle, but it
+	// does not undo the export, so the count of exported certificates is
+	// still returned alongside the error.
 	manifest := bundleManifest{
 		Fingerprints: s.eligibleFingerprints(),
 		GeneratedAt:  time.Now().UTC(),
 		CertCount:    count,
 	}
 	manifestData, marshalErr := json.MarshalIndent(manifest, "", "  ")
-	if marshalErr == nil {
-		manifestPath := filepath.Join(dir, browserBundleManifestFile)
-		_ = os.WriteFile(manifestPath, manifestData, 0o600)
+	if marshalErr != nil {
+		return count, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleManifestWrite, Cause: marshalErr}
+	}
+	manifestPath := filepath.Join(dir, browserBundleManifestFile)
+	if err := os.WriteFile(manifestPath, manifestData, 0o600); err != nil {
+		return count, &SentinelCauseError{Sentinel: ErrBrowserTrustBundleManifestWrite, Cause: err}
 	}
 
 	s.log.Info("exported browser trust bundle",

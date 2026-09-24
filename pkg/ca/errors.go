@@ -182,6 +182,11 @@ var (
 	// ErrKeyCertMismatch indicates the private key does not match the certificate.
 	ErrKeyCertMismatch = errors.New("ca: private key does not match certificate")
 
+	// ErrInvalidKeyAttributes indicates a caller passed nil or incomplete
+	// KeyAttributes to an operation that requires a fully resolved key
+	// identity, such as recordIssuedKey.
+	ErrInvalidKeyAttributes = errors.New("ca: invalid key attributes")
+
 	// ErrInvalidPEM indicates the PEM data is malformed or invalid.
 	ErrInvalidPEM = errors.New("ca: invalid pem data")
 

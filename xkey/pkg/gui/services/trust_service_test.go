@@ -1232,6 +1232,66 @@ func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
 	}
 }
 
+// TestTrustService_ExportBrowserTrustBundle_ManifestWriteFailurePropagates is
+// the failure-injection test for issue #687: the manifest sidecar write
+// (`_ = os.WriteFile(manifestPath, ...)`) used to be discarded. It proves
+// the failure now surfaces — wrapped in ErrBrowserTrustBundleManifestWrite —
+// while the bundle export itself, which already succeeded and durably wrote
+// the certificate data, is not undone: the returned count still reflects
+// the certificates written, and the bundle file on disk is real.
+func TestTrustService_ExportBrowserTrustBundle_ManifestWriteFailurePropagates(t *testing.T) {
+	store := newTestFileStore(t)
+	defer store.Close()
+	svc := NewTrustService(store)
+
+	cert := generateTestCert(t)
+	require.NoError(t, store.AddCertificate(cert))
+	fp := truststore.Fingerprint(cert)
+	require.NoError(t, store.SetTags(fp, []string{TagBrowserExport}))
+
+	bundleDir := t.TempDir()
+	bundlePath := filepath.Join(bundleDir, "trust-bundle.pem")
+
+	// Pre-create the manifest sidecar path as a directory so the write to
+	// it fails (EISDIR) while the bundle file itself, a different path in
+	// the same directory, writes normally.
+	manifestPath := filepath.Join(bundleDir, browserBundleManifestFile)
+	require.NoError(t, os.MkdirAll(manifestPath, 0o700))
+
+	count, err := svc.ExportBrowserTrustBundle(bundlePath)
+	require.Error(t, err, "a discarded manifest write failure must now surface")
+	assert.ErrorIs(t, err, ErrBrowserTrustBundleManifestWrite)
+	assert.Equal(t, 1, count, "the bundle export itself succeeded and its count is still reported")
+
+	data, readErr := os.ReadFile(bundlePath)
+	require.NoError(t, readErr, "the bundle file must exist despite the manifest failure")
+	assert.NotEmpty(t, data)
+}
+
+// TestTrustService_ExportBrowserTrustBundle_ManifestWriteSuccess proves the
+// happy path writes both the bundle and its manifest without error.
+func TestTrustService_ExportBrowserTrustBundle_ManifestWriteSuccess(t *testing.T) {
+	store := newTestFileStore(t)
+	defer store.Close()
+	svc := NewTrustService(store)
+
+	cert := generateTestCert(t)
+	require.NoError(t, store.AddCertificate(cert))
+	fp := truststore.Fingerprint(cert)
+	require.NoError(t, store.SetTags(fp, []string{TagBrowserExport}))
+
+	bundleDir := t.TempDir()
+	bundlePath := filepath.Join(bundleDir, "trust-bundle.pem")
+
+	count, err := svc.ExportBrowserTrustBundle(bundlePath)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	manifestPath := filepath.Join(bundleDir, browserBundleManifestFile)
+	_, statErr := os.Stat(manifestPath)
+	require.NoError(t, statErr, "the manifest sidecar must be written on success")
+}
+
 // ---------------------------------------------------------------------------
 // UserCanManageTrustStore policy gate (#668).
 // ---------------------------------------------------------------------------

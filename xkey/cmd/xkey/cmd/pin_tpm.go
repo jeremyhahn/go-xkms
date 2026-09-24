@@ -69,8 +69,10 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 	if err != nil {
 		// ErrTPMNotInitialized only means the EK/IDevID provisioning workflow
 		// has not run; the returned tpm still has a live transport and can
-		// serve its PlatformKeyStore (see TPM2.CanSeal and the SSRK fallback
-		// probeTPMSealer already tolerates for the barrier strategy).
+		// serve its PlatformKeyStore (see TPM2.CanSeal). Sealing itself still
+		// requires the Platform SRK to be enrolled -- xkms never falls back
+		// to the Shared SRK -- which is what probeTPMSealer's caller checks
+		// before using this TPM for the barrier strategy.
 		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
 			return tpm, tpm, nil
 		}

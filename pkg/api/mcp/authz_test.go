@@ -577,6 +577,7 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.generateKey":              "keys:create",
 	"xkms.generatePIVCSR":           "piv:use",
 	"xkms.generatePIVKey":           "piv:write",
+	"xkms.getBackend":               "backends:read",
 	"xkms.getCert":                  "certs:read",
 	"xkms.getCertChain":             "certs:read",
 	"xkms.getImportParameters":      "keys:import",
@@ -654,16 +655,27 @@ var goldenMethodPermissions = map[string]string{
 	"credentials.strategy": "credentials:strategy",
 	"credentials.submit":   "credentials:submit",
 
+	// User management — pkg/api/rest/routes.go's /api/v1/users decorators.
+	"user.bindCert":        "users:update",
+	"user.create":          "users:create",
+	"user.delete":          "users:delete",
+	"user.disable":         "users:update",
+	"user.enable":          "users:update",
+	"user.get":             "users:read",
+	"user.list":            "users:list",
+	"user.listCredentials": "users:read",
+
 	// Password vault — pkg/api/quic/handlers_password.go.
-	"password.add":      "passwords:write",
-	"password.delete":   "passwords:delete",
-	"password.generate": "passwords:generate",
-	"password.get":      "passwords:read",
-	"password.list":     "passwords:read",
-	"password.lock":     "passwords:lock",
-	"password.status":   "passwords:read",
-	"password.unlock":   "passwords:unlock",
-	"password.update":   "passwords:write",
+	"password.add":           "passwords:write",
+	"password.delete":        "passwords:delete",
+	"password.generate":      "passwords:generate",
+	"password.get":           "passwords:read",
+	"password.list":          "passwords:read",
+	"password.lock":          "passwords:lock",
+	"password.setAccessMode": "passwords:write",
+	"password.status":        "passwords:read",
+	"password.unlock":        "passwords:unlock",
+	"password.update":        "passwords:write",
 
 	// Platform-sealed store — pkg/api/mcp/handlers_seal_store.go. Same
 	// keys:* pairs as the PKCS#11 remote-state RPCs on every other
@@ -739,6 +751,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
+		auth.ResourceUsers: {},
 	}
 
 	for method, perm := range methodPermissions {

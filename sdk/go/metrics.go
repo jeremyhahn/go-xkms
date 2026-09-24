@@ -11,15 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package main
+package xkms
 
-import "errors"
+import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
-// Sentinel errors for acme-client flag validation.
-var (
-	// ErrAccountFlagRequired is returned when --account is not provided.
-	ErrAccountFlagRequired = errors.New("--account is required")
-
-	// ErrDeviceIDFlagRequired is returned when --device-id is not provided.
-	ErrDeviceIDFlagRequired = errors.New("--device-id is required")
-)
+// AuditWriteFailuresTotal counts informational audit events whose write
+// failed, by operation. xkmsd and xkey record into the same counter, so
+// both processes report under one metric name.
+var AuditWriteFailuresTotal = metrics.AuditWriteFailuresTotal

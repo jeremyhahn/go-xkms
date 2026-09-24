@@ -215,10 +215,21 @@ func provisionSwtpm(sockPath string) error {
 		// always safe to run here.
 		if err == nil || errors.Is(err, xkms.ErrTPMNotInitialized) {
 			provErr := tpm.Provision(nil)
-			_ = tpm.Close()
 			if provErr == nil {
+				// Provision is TCG-only (EK + Shared SRK + IAK). The "xkey
+				// barrier ... --tpm-simulator" subprocess this swtpm serves
+				// seals through the default TPM2Strategy, which resolves its
+				// storage parent exclusively off the Platform SRK -- never
+				// the Shared SRK -- so it must be enrolled here too, on this
+				// same one-shot provisioning connection.
+				psrkErr := xkms.EnrollSimulatorPlatformSRK(tpm, &cfg)
+				_ = tpm.Close()
+				if psrkErr != nil {
+					return &SentinelCauseError{Sentinel: ErrSwtpmProvisionFailed, Cause: psrkErr}
+				}
 				return nil
 			}
+			_ = tpm.Close()
 			if isTransientSwtpmError(provErr) {
 				lastErr = provErr
 				time.Sleep(500 * time.Millisecond)

@@ -31,6 +31,7 @@ func enabledACME() *ACMEConfig {
 		HTTPSAddr:       ":8443",
 		ExternalURL:     "https://acme.example.com",
 		KeystoreBackend: "software",
+		CAAIdentities:   []string{"ca.example.com"},
 		Challenges:      ACMEChallengesConfig{HTTP01: true},
 		TLS:             ACMETLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"},
 	}
