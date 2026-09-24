@@ -262,8 +262,8 @@ func TestOperationConstants(t *testing.T) {
 	operations := []string{
 		OpGenerate, OpStore, OpGet, OpDelete, OpList,
 		OpSign, OpVerify, OpEncrypt, OpDecrypt,
-		OpExport, OpImport, OpRotate, OpBackup, OpRestore,
-		OpHealthCheck,
+		OpExport, OpImport, OpRotate, OpHealthCheck,
+		OpIssueCert, OpRevokeCert, OpGenerateCRL,
 	}
 
 	for _, op := range operations {

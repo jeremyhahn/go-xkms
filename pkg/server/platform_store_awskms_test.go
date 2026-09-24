@@ -79,6 +79,11 @@ func TestBuildAWSKMSPlatformSealer_RoundTripViaMockClient(t *testing.T) {
 		DescribeKeyFunc: func(_ context.Context, _ *kms.DescribeKeyInput, _ ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
 			return &kms.DescribeKeyOutput{KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String("test-key-id")}}, nil
 		},
+		// ensureSealKey provisions a real CMK on first use (go-xkms#839), so
+		// the mock must answer CreateKey with the key ID it then addresses.
+		CreateKeyFunc: func(_ context.Context, _ *kms.CreateKeyInput, _ ...func(*kms.Options)) (*kms.CreateKeyOutput, error) {
+			return &kms.CreateKeyOutput{KeyMetadata: &kmstypes.KeyMetadata{KeyId: aws.String("test-key-id")}}, nil
+		},
 	}
 
 	backend, err := awskms.NewBackendWithClient(&awskms.Config{

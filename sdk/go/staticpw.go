@@ -87,6 +87,8 @@ var (
 	ErrStaticPasswordEmpty = staticpw.ErrEmptyPassword
 	// ErrStaticPasswordFolderEmpty is returned for an empty folder.
 	ErrStaticPasswordFolderEmpty = staticpw.ErrFolderEmpty
+	// ErrStaticPasswordAliasNameEmpty is returned for an empty alias name.
+	ErrStaticPasswordAliasNameEmpty = staticpw.ErrAliasNameEmpty
 	// ErrStaticPasswordGenerateFailed is returned when generation fails.
 	ErrStaticPasswordGenerateFailed = staticpw.ErrGenerateFailed
 	// ErrStaticPasswordInvalidCharset is returned for an invalid charset.

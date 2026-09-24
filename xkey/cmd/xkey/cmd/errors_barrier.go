@@ -54,4 +54,5 @@ var (
 	ErrBarrierStorageFailed   = &BarrierError{Operation: "storage", Message: "failed to create storage backend"}
 	ErrBarrierDataDirResolve  = &BarrierError{Operation: "resolve_data_dir", Message: "failed to resolve data directory"}
 	ErrBarrierInvalidStrategy = &BarrierError{Operation: "strategy", Message: "invalid strategy"}
+	ErrBarrierConfigNotLoaded = &BarrierError{Operation: "save_config", Message: "xkey configuration not loaded"}
 )

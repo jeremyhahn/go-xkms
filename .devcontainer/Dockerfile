@@ -298,6 +298,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     opensc-pkcs11 \
     pcscd \
     libpcsclite1 \
+    # D-Bus and freedesktop Secret Service (xkey secret-service, go-xkms#723):
+    # dbus provides dbus-daemon/dbus-run-session/dbus-send (dbus-run-session
+    # is what integration-test-secretservice wraps `go test` in for a private
+    # session bus); libsecret-tools provides secret-tool; libsecret-1-dev and
+    # libglib2.0-dev are build-only headers used below to compile
+    # git-credential-libsecret from git's own contrib source, which Debian
+    # does not package as a binary (unlike Fedora/RHEL) -- see the RUN step
+    # after this install block.
+    dbus \
+    libsecret-tools \
+    libsecret-1-dev \
+    libglib2.0-dev \
     # OpenSSL pkcs11 ENGINE (libp11) - required by the PKCS#11 module's
     # ENGINE-based OpenSSL interop tests, which now fail rather than skip
     # when it is absent. OpenSSL 4.0 removed ENGINE support entirely (see
@@ -373,6 +385,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Build git-credential-libsecret from git's own contrib source
+# (/usr/share/doc/git/contrib/credential/libsecret, installed by the git
+# package above -- Debian does not ship a compiled binary or a separate
+# package for it, unlike Fedora/RHEL's git-credential-libsecret package).
+# Linked against libsecret-1-dev/libglib2.0-dev installed above; the
+# resulting binary only needs their runtime libraries (libsecret-1-0,
+# libglib2.0-0), both already present transitively, to run. Installed to
+# /usr/local/bin so `git config credential.helper libsecret` resolves it
+# the same way a distro-packaged install would.
+RUN make -C /usr/share/doc/git/contrib/credential/libsecret && \
+    install -m 0755 /usr/share/doc/git/contrib/credential/libsecret/git-credential-libsecret /usr/local/bin/git-credential-libsecret && \
+    make -C /usr/share/doc/git/contrib/credential/libsecret clean
 
 # Remove old libtpms installed by swtpm-libs package
 RUN DPKG_ARCH=$(dpkg --print-architecture) && \

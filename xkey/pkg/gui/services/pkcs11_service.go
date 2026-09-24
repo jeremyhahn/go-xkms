@@ -186,6 +186,11 @@ func (s *PKCS11Service) Close() error {
 	if s.manager == nil {
 		return nil
 	}
+	if s.registry != nil {
+		for _, mod := range s.manager.ListModules() {
+			s.unregisterSlotBackends(mod.ID)
+		}
+	}
 	return s.manager.Close()
 }
 
@@ -309,6 +314,7 @@ func (s *PKCS11Service) RegisterModule(libraryPath, displayName string) (string,
 				s.testedModulesMu.Lock()
 				delete(s.testedModules, libraryPath)
 				s.testedModulesMu.Unlock()
+				s.syncSlotBackends(existingID)
 				return existingID, nil
 			}
 			// Stale cache entry — module no longer registered. Drop it and re-register.
@@ -342,6 +348,11 @@ func (s *PKCS11Service) RegisterModule(libraryPath, displayName string) (string,
 			"library", libraryPath,
 			"slots", len(mod.Slots))
 	}
+
+	// Register each slot that has a token present as its own backend so the
+	// registry (and the GUI/admin surfaces that read it) can show per-slot
+	// token metadata before the user picks which slot to connect.
+	s.syncSlotBackends(moduleID)
 
 	// Persist the PKCS#11 backend to the unified config so it survives restarts.
 	if persistErr := s.persistModule(moduleID, libraryPath, displayName); persistErr != nil {
@@ -419,6 +430,9 @@ func (s *PKCS11Service) RegisterModuleFromConfig(moduleID, libraryPath, displayN
 
 	s.log.Info("PKCS#11 module restored from config",
 		"module_id", id, "library", libraryPath)
+
+	s.syncSlotBackends(id)
+
 	return id, nil
 }
 
@@ -427,10 +441,17 @@ func (s *PKCS11Service) UnregisterModule(moduleID string) error {
 	if s.manager == nil {
 		return ErrPKCS11ServiceNotInitialized
 	}
-	return s.manager.UnregisterModule(moduleID)
+	if err := s.manager.UnregisterModule(moduleID); err != nil {
+		return err
+	}
+	s.unregisterSlotBackends(moduleID)
+	return nil
 }
 
-// RefreshSlots refreshes the slot list for a module.
+// RefreshSlots refreshes the slot list for a module. Slot backends are
+// re-synchronized with the registry so a token inserted or removed since the
+// last refresh is reflected immediately: a newly present token gets a
+// backend entry, and a token that is no longer present loses one.
 func (s *PKCS11Service) RefreshSlots(moduleID string) ([]PKCS11SlotInfo, error) {
 	if s.manager == nil {
 		return nil, ErrPKCS11ServiceNotInitialized
@@ -439,6 +460,7 @@ func (s *PKCS11Service) RefreshSlots(moduleID string) ([]PKCS11SlotInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+	s.syncSlotBackends(moduleID)
 	return convertSlots(slots), nil
 }
 
@@ -548,6 +570,11 @@ func (s *PKCS11Service) InitializeToken(moduleID string, slotID uint, label, soP
 		"module_id", moduleID,
 		"slot_id", slotID,
 		"label", label)
+
+	// The token's label, serial, and initialized state just changed; refresh
+	// its slot backend entry so the registry reflects that without waiting
+	// for a separate RefreshSlots call.
+	s.syncSlotBackends(moduleID)
 
 	return nil
 }
@@ -754,6 +781,121 @@ func (s *PKCS11Service) ListConnections() []PKCS11ConnectionInfo {
 		}
 	}
 	return result
+}
+
+// slotBackendMetadataKey identifies the metadata field that marks a
+// RegisteredBackend as a per-slot entry created by syncSlotBackends, as
+// opposed to the coarse, admin-configured module-level backend entry (see
+// App.populateBackendRegistry / AdminService.ConfigureBackend). Both kinds
+// of entries can coexist in the registry: the module-level entry is what
+// the user configures once via the admin UI, while the per-slot entries
+// let the UI show every token in a module -- including ones the user has
+// not yet chosen to connect -- with its own label, manufacturer, model,
+// and serial number.
+const slotBackendMetadataKey = "slot_id"
+
+// slotBackendID generates a deterministic, per-slot backend ID that cannot
+// collide with a module-level ID (which is the bare module ID with no
+// "-slot-N" suffix).
+func slotBackendID(moduleID string, slotID uint) string {
+	return fmt.Sprintf("%s-slot-%d", moduleID, slotID)
+}
+
+// syncSlotBackends reconciles the registry's per-slot backend entries for a
+// module with the manager's current view of its slots. It is called after
+// every operation that can change slot state (register, refresh, restore
+// from config) so a token inserted since the last sync gains a backend
+// entry and a token removed since the last sync loses one. It is a no-op
+// when no registry is configured.
+func (s *PKCS11Service) syncSlotBackends(moduleID string) {
+	if s.registry == nil || s.manager == nil {
+		return
+	}
+
+	mod, err := s.manager.GetModule(moduleID)
+	if err != nil {
+		s.log.Warn("pkcs11_service: failed to sync slot backends",
+			"module_id", moduleID, "error", err)
+		return
+	}
+
+	s.unregisterSlotBackends(moduleID)
+	s.registerSlotBackends(mod)
+}
+
+// registerSlotBackends registers each slot that has a token present as its
+// own RegisteredBackend, carrying the token metadata (label, manufacturer,
+// model, serial, hardware/firmware version) the frontend needs to let the
+// user pick a slot before connecting.
+func (s *PKCS11Service) registerSlotBackends(mod *xkms.PKCS11ModuleInfo) {
+	for _, slot := range mod.Slots {
+		if !slot.TokenPresent {
+			continue
+		}
+
+		backendID := slotBackendID(mod.ID, slot.SlotID)
+		displayName := slot.Label
+		if displayName == "" {
+			displayName = fmt.Sprintf("%s slot %d", mod.DisplayName, slot.SlotID)
+		}
+
+		// PKCS#11 slot backends never advertise CapFIDO2. A YubiKey's FIDO2
+		// applet is a separate HID USB interface that browsers talk to
+		// directly -- the PIV applet (libykcs11) cannot proxy FIDO2
+		// credentials -- and generic HSMs don't implement FIDO2 either.
+		backend := &backendregistry.RegisteredBackend{
+			ID:          backendID,
+			Location:    backendregistry.LocationLocal,
+			Category:    backendregistry.CategoryPKCS11,
+			DisplayName: displayName,
+			Capabilities: map[backendregistry.Capability]bool{
+				backendregistry.CapSigning:    true,
+				backendregistry.CapEncryption: true,
+				backendregistry.CapPIV:        true,
+			},
+			Metadata: map[string]string{
+				"module_id":            mod.ID,
+				slotBackendMetadataKey: fmt.Sprintf("%d", slot.SlotID),
+				"library_path":         mod.LibraryPath,
+				"token_label":          slot.Label,
+				"token_serial":         slot.Serial,
+				"token_manufacturer":   slot.Manufacturer,
+				"token_model":          slot.Model,
+				"hardware_version":     slot.HardwareVersion,
+				"firmware_version":     slot.FirmwareVersion,
+			},
+		}
+		backend.SetState(backendregistry.StateReady)
+
+		if err := s.registry.Register(backend); err != nil {
+			s.log.Warn("pkcs11_service: failed to register slot backend",
+				"backend_id", backendID, "error", err)
+		}
+	}
+}
+
+// unregisterSlotBackends removes every per-slot backend entry previously
+// registered for the given module, leaving any module-level entry (e.g. one
+// created through the admin UI) untouched.
+func (s *PKCS11Service) unregisterSlotBackends(moduleID string) {
+	if s.registry == nil {
+		return
+	}
+	for _, rb := range s.registry.List() {
+		if rb.Category != backendregistry.CategoryPKCS11 {
+			continue
+		}
+		if rb.Metadata["module_id"] != moduleID {
+			continue
+		}
+		if _, ok := rb.Metadata[slotBackendMetadataKey]; !ok {
+			continue
+		}
+		if err := s.registry.Unregister(rb.ID); err != nil {
+			s.log.Debug("pkcs11_service: slot backend not in registry",
+				"backend_id", rb.ID, "error", err)
+		}
+	}
 }
 
 // convertModule converts a manager.ModuleInfo to PKCS11ModuleInfo.

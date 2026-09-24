@@ -221,8 +221,12 @@ func TestGet(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	// Save some metadata first
-	testData := []byte("test-metadata")
+	// Save some metadata first. It must be a valid JSON record with key_id,
+	// like CreateKey/GenerateSymmetricKey actually write: getKeyID (used by
+	// the "get public key" subtest below) now returns a typed error for a
+	// record it cannot parse, rather than silently falling back to an alias
+	// (go-xkms#839).
+	testData := []byte(`{"key_id":"mock-public-key-id"}`)
 	_ = b.Save(attrs, testData, backend.FSEXT_PRIVATE_BLOB, false)
 
 	tests := []struct {
@@ -333,8 +337,12 @@ func TestDelete(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	// Save metadata first
-	_ = b.Save(attrs, []byte("test-data"), backend.FSEXT_PRIVATE_BLOB, false)
+	// Save metadata first. Must be a valid JSON record with key_id, like
+	// CreateKey/GenerateSymmetricKey actually write: Delete resolves the key
+	// ID via getKeyID before deleting, which now returns a typed error for
+	// an unparseable record instead of silently falling back to an alias
+	// (go-xkms#839).
+	_ = b.Save(attrs, []byte(`{"key_id":"test-key-id"}`), backend.FSEXT_PRIVATE_BLOB, false)
 
 	err := b.Delete(attrs)
 	if err != nil {
@@ -396,7 +404,11 @@ func TestDeleteKMSError(t *testing.T) {
 	}
 }
 
-// TestClose tests the Close method.
+// TestClose tests the Close method. Close must NOT clear persisted key
+// metadata: Config.KeyStorage's lifecycle belongs to the caller, and a
+// second Backend built over the same storage (a restart) must still resolve
+// keys this one persisted (go-xkms#839) -- only the AWS client handle is
+// backend-owned and reset.
 func TestClose(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
@@ -421,9 +433,14 @@ func TestClose(t *testing.T) {
 		t.Errorf("Close() unexpected error: %v", err)
 	}
 
-	// Verify metadata was cleared
-	if len(b.metadata) != 0 {
-		t.Errorf("Close() did not clear metadata")
+	// Verify metadata was NOT cleared: it is persisted in config.KeyStorage,
+	// which Close does not own.
+	exists, err := storage.KeyExists(context.Background(), config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("failed to check metadata existence: %v", err)
+	}
+	if !exists {
+		t.Errorf("Close() must not clear persisted key metadata")
 	}
 
 	if b.client != nil {
@@ -561,12 +578,9 @@ func TestCreateKey(t *testing.T) {
 				}
 
 				// Verify metadata was stored
-				b.mu.RLock()
-				metadataBytes, ok := b.metadata[tt.attrs.CN]
-				b.mu.RUnlock()
-
-				if !ok {
-					t.Errorf("CreateKey() metadata not stored")
+				metadataBytes, err := storage.GetKey(context.Background(), config.KeyStorage, tt.attrs.CN)
+				if err != nil {
+					t.Errorf("CreateKey() metadata not stored: %v", err)
 				} else {
 					var metadata map[string]interface{}
 					if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
@@ -860,15 +874,27 @@ func TestGetKeyID(t *testing.T) {
 		"alias":  "alias/test-key",
 	}
 	metadataBytes, _ := json.Marshal(metadata)
-	b.metadata["test-key-with-metadata"] = metadataBytes
+	if err := storage.SaveKey(context.Background(), config.KeyStorage, "test-key-with-metadata", metadataBytes); err != nil {
+		t.Fatalf("failed to seed metadata: %v", err)
+	}
 
-	keyID := b.getKeyID("test-key-with-metadata")
+	keyID, err := b.getKeyID(context.Background(), "test-key-with-metadata")
+	if err != nil {
+		t.Fatalf("getKeyID() with metadata: unexpected error: %v", err)
+	}
 	if keyID != "stored-key-id-123" {
 		t.Errorf("getKeyID() with metadata = %v, want stored-key-id-123", keyID)
 	}
 
-	// Test without metadata (should return alias)
-	keyID = b.getKeyID("test-key-no-metadata")
+	// Test without metadata (should return alias): storage.ErrNotFound is
+	// the one failure getKeyID resolves silently, since both CreateKey and
+	// GenerateSymmetricKey attempt to create this exact alias alongside
+	// every key they provision -- see persistence_test.go for the storage
+	// errors and corrupt records that must NOT resolve silently.
+	keyID, err = b.getKeyID(context.Background(), "test-key-no-metadata")
+	if err != nil {
+		t.Fatalf("getKeyID() without metadata: unexpected error: %v", err)
+	}
 	if keyID != "alias/test-key-no-metadata" {
 		t.Errorf("getKeyID() without metadata = %v, want alias/test-key-no-metadata", keyID)
 	}

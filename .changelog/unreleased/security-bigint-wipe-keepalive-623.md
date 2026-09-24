@@ -1,0 +1,1 @@
+- **RSA and ECDSA private scalars are now wiped in a way the compiler cannot drop**: the software backend's `zeroizeBigInt` word-clearing loop gains `runtime.KeepAlive`, so the stores that erase `D`, the primes and the CRT values are no longer eligible for dead-store elimination (golang/go#33325).

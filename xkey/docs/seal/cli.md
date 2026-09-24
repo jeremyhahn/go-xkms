@@ -1,6 +1,6 @@
 # Seal & Auto-Unseal — CLI
 
-> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `seal` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 Every flag below is verified against `xkey <group> <verb> --help` built from
 this checkout. See [architecture.md](architecture.md) for the auto-unseal
@@ -19,7 +19,34 @@ First-time setup: generates a root key and seals it.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--strategy string` | auto-detect (tpm2 if available, else software) | `software`, `tpm2`, or `pkcs11` |
+| `--strategy string` | auto-detect (tpm2 if available, else software) | `software`, `tpm2`, `pkcs11`, `aws_kms`, `gcp_kms`, `azure_kv`, or `vault` |
+| `--aws-region string` | none | AWS region for `--strategy aws_kms` |
+| `--aws-endpoint string` | AWS default | Custom AWS KMS endpoint (testing only) |
+| `--gcp-project-id string` | none | GCP project ID for `--strategy gcp_kms` |
+| `--gcp-location string` | none | GCP KMS location (e.g. `us-east1`) |
+| `--gcp-key-ring string` | none | GCP KMS key ring ID |
+| `--gcp-credentials-file string` | Application Default Credentials | Path to a service account JSON key file |
+| `--azure-vault-url string` | none | Azure Key Vault URL for `--strategy azure_kv` |
+| `--azure-allow-local-vault-url` | `false` | Allow a localhost/127.0.0.1 vault URL (development only) |
+| `--vault-address string` | none | HashiCorp Vault server address for `--strategy vault` |
+| `--vault-mount-path string` | `transit` | Vault Transit engine mount path |
+
+The four cloud KMS strategies need no PIN, HSM slot, or pre-provisioned key
+identifier: the seal key is resolved (or created on first use) automatically
+under a fixed name, the same one `xkmsd` uses, through the ONE composition
+path both share (`sdk/go.BuildCloudKMSStrategy`, go-xkms#757). Only the
+connection settings above are asked for. A credential is never a flag or any
+other literal: leave the credential fields unset for ambient credentials —
+the AWS SDK default chain, GCP Application Default Credentials, Azure
+`DefaultAzureCredential`, or Vault's `VAULT_TOKEN` environment variable,
+depending on the strategy — or set an explicit `*SecretValue` reference by
+hand in the config file (`~/.config/xkey/xkey.yaml`, under
+`barrier.cloud_kms.<provider>`). `xkey barrier init` persists the
+non-secret connection settings there too, so a later `xkey barrier unseal`
+or `xkey extension serve` needs no flags to rebuild the same strategy. A
+binary built without the matching Go build tag (`awskms`, `gcpkms`,
+`azurekv`, `vault`) reports a typed error naming the tag rather than
+silently falling back to another strategy.
 
 ### `xkey barrier unseal [flags]`
 
@@ -69,8 +96,14 @@ architecture.md), `--tpm-device string`, `--tpm-simulator` (same meaning as
 
 `xkey extension serve` and `xkey fido2`/`fido2 start` (with `--storage
 barrier`) both accept the barrier flags below. For a `tpm2`-strategy
-barrier they try policy auto-unseal first, then a direct TPM unseal; for
-any other strategy they need a password.
+barrier they try policy auto-unseal first, then a direct TPM unseal. For a
+cloud KMS strategy (`aws_kms`, `gcp_kms`, `azure_kv`, `vault`) they rebuild
+the backend from the connection settings `xkey barrier init` persisted to
+the config file and unseal with it — no password. For `software` they need
+a password. `pkcs11` and `shamir` are refused with a typed error naming the
+interactive alternative: PKCS#11 needs a token PIN a headless process has
+no source for yet, and Shamir needs an operator quorum no headless process
+can collect.
 
 | Flag | Commands | Meaning |
 |---|---|---|
@@ -105,7 +138,7 @@ Shared by every command that persists barrier, policy, or PIN state
 |---|---|
 | `initialized` | Whether the barrier has a root key on disk |
 | `sealed` | Whether the barrier is currently sealed |
-| `strategy` | Which sealing strategy protects the root key (`software`, `tpm2`, `pkcs11`) |
+| `strategy` | Which sealing strategy protects the root key (`software`, `tpm2`, `pkcs11`, `aws_kms`, `gcp_kms`, `azure_kv`, `vault`) |
 | `hardware_backed` | Whether the strategy uses dedicated cryptographic hardware |
 | `data_dir` | Path to the data directory |
 | `root_key_path` | Full path to the sealed root key blob |

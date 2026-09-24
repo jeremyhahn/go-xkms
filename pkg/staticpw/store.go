@@ -35,6 +35,11 @@ const defaultKeyPrefix = "staticpw/"
 // so they survive across restarts even without entries.
 const folderMarkerSuffix = "__folders__/"
 
+// aliasMarkerSuffix is the sub-prefix used to persist name -> folder-path
+// alias mappings (e.g. the freedesktop Secret Service collection aliases
+// used by xkey/pkg/secretservice) so they survive across restarts.
+const aliasMarkerSuffix = "__aliases__/"
+
 // maxTenantIDLength is the maximum allowed length for a tenant identifier.
 const maxTenantIDLength = 64
 
@@ -535,6 +540,63 @@ func (s *BackendStore) RemoveFolder(path string) error {
 	return err
 }
 
+// SetAlias persists a name -> folder-path mapping so a caller-defined alias
+// (e.g. a freedesktop Secret Service collection alias) can point at an
+// arbitrary folder and survive restarts. An empty folderPath removes the
+// alias instead of storing one, matching the Secret Service SetAlias
+// contract where unsetting an alias is a valid call.
+//
+// This is not part of the Store interface: it is a capability of the
+// canonical barrier-backed BackendStore, probed via a local interface
+// assertion by callers that need it (see xkey/pkg/secretservice), so the
+// narrower Store implementations (DAO, encrypted, scoped) are not forced to
+// carry alias bookkeeping they have no caller for.
+func (s *BackendStore) SetAlias(name string, folderPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrStoreClosed
+	}
+	if name == "" {
+		return ErrAliasNameEmpty
+	}
+	key := s.keyPrefix + aliasMarkerSuffix + name
+	if folderPath == "" {
+		err := s.backend.Delete(context.Background(), key)
+		if err != nil && errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return s.backend.Put(context.Background(), key, []byte(folderPath))
+}
+
+// GetAlias returns the folder path persisted for name, and false if no
+// alias with that name has been set.
+func (s *BackendStore) GetAlias(name string) (string, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return "", false, ErrStoreClosed
+	}
+	if name == "" {
+		return "", false, ErrAliasNameEmpty
+	}
+	key := s.keyPrefix + aliasMarkerSuffix + name
+	exists, err := s.backend.Exists(context.Background(), key)
+	if err != nil {
+		return "", false, err
+	}
+	if !exists {
+		return "", false, nil
+	}
+	data, err := s.backend.Get(context.Background(), key)
+	if err != nil {
+		return "", false, err
+	}
+	return string(data), true, nil
+}
+
 // Close marks the store as closed and closes the underlying backend.
 func (s *BackendStore) Close() error {
 	s.mu.Lock()
@@ -548,10 +610,10 @@ func (s *BackendStore) Close() error {
 	return s.backend.Close()
 }
 
-// isFolderMarkerKey returns true if the key belongs to a folder marker
-// rather than a password entry.
+// isFolderMarkerKey returns true if the key belongs to a folder marker or an
+// alias marker rather than a password entry.
 func (s *BackendStore) isFolderMarkerKey(key string) bool {
-	return strings.Contains(key, folderMarkerSuffix)
+	return strings.Contains(key, folderMarkerSuffix) || strings.Contains(key, aliasMarkerSuffix)
 }
 
 // storageKey returns the backend key for the given password ID,
