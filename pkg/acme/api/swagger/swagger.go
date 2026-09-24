@@ -239,7 +239,16 @@ func (h *Handler) InitializerHandler(w http.ResponseWriter, r *http.Request) {
 	if spec == "" {
 		spec = h.defaultSpec
 	}
-	specURL := "/openapi/" + spec + ".yaml"
+	// Only a spec this package embeds is served, and the URL written into
+	// the script comes from specURLs, never from the request.
+	specURL, ok := specURLs[spec]
+	if !ok {
+		if h.logger != nil {
+			h.logger.Warn("swagger initializer requested unknown spec", slog.String("spec", spec))
+		}
+		http.NotFound(w, r)
+		return
+	}
 
 	// json.Marshal HTML-escapes '<', '>' and '&' by default and produces a
 	// double-quoted string whose escaping is a safe subset of JS
@@ -297,6 +306,12 @@ func (h *Handler) OpenAPISpecHandler(w http.ResponseWriter, r *http.Request) {
 	// content is a build-embedded OpenAPI spec file (embed.FS), not
 	// attacker-controlled, and served as application/yaml, never text/html.
 	_, _ = w.Write(content) // #nosec G705 -- embedded static YAML, non-HTML content-type
+}
+
+// specURLs maps each embedded OpenAPI spec name to the URL it is served at.
+var specURLs = map[string]string{
+	"acme-api":  "/openapi/acme-api.yaml",
+	"admin-api": "/openapi/admin-api.yaml",
 }
 
 // swaggerUITemplate is the HTML template for Swagger UI.
