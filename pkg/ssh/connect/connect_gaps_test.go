@@ -282,18 +282,17 @@ func TestSyncAndStop_WorkDirCleanupFailureSurfacesViaErr(t *testing.T) {
 		t.Fatal("test requires an owned (auto-created) work directory")
 	}
 
-	// Strip write permission on the work directory itself: os.RemoveAll can
-	// no longer unlink the socket / known_hosts files inside it, so the
-	// directory survives teardown instead of being silently "removed".
-	if err := os.Chmod(sess.workDir, 0o500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(sess.workDir, 0o700) }) // let t.TempDir's own cleanup succeed
+	// Fail the work-directory removal through the seam: permission bits
+	// cannot make os.RemoveAll fail when the tests run as root.
+	errCleanup := errors.New("injected cleanup failure")
+	orig := removeAll
+	removeAll = func(string) error { return errCleanup }
+	t.Cleanup(func() { removeAll = orig; _ = os.RemoveAll(sess.workDir) })
 
 	if _, _, err := sess.SyncAndStop(ctx); err == nil {
 		t.Fatal("expected SyncAndStop to surface the work-directory cleanup failure")
 	}
-	if sessErr := sess.Err(); sessErr == nil {
-		t.Fatal("expected Session.Err() to report the cleanup failure")
+	if sessErr := sess.Err(); !errors.Is(sessErr, errCleanup) {
+		t.Fatalf("expected Session.Err() to report the cleanup failure, got %v", sessErr)
 	}
 }

@@ -579,9 +579,13 @@ func target(user, host string) string {
 }
 
 // cleanupDir removes the work dir only when this package created it.
+// removeAll deletes a session-owned work directory. Tests replace it to
+// force a cleanup failure, which file permissions cannot do under root.
+var removeAll = os.RemoveAll
+
 func cleanupDir(owns bool, dir string) error {
 	if owns && dir != "" {
-		return os.RemoveAll(dir)
+		return removeAll(dir)
 	}
 	return nil
 }
