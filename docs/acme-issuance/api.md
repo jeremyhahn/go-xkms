@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -31,6 +31,17 @@ clients only ever hard-code the directory URL.
 | Certificate | `POST /acme/cert/{id}` | JWS, account key |
 | Revoke certificate | `POST /acme/revoke-cert` | JWS, account or certificate key |
 | CA bundle | `GET /acme/ca-bundle` | public |
+| Health | `GET /acme/health` | public |
+
+`GET /acme/health` (non-RFC 8555) reports circuit breaker and
+graceful-degradation status: every breaker registered on the server's
+`circuitbreaker.Manager` (name, state, failure/success counts) and whether
+`GET /acme/directory`/`GET /acme/ca-bundle` are currently serving cached
+responses because CA-bundle storage access is unavailable. 200 when every
+breaker is closed, 503 otherwise. See
+[`../acme-issuance/engineering.md`](engineering.md)#circuit-breakers-and-degradation
+for what each breaker guards. A degraded `GET /acme/directory` or `GET
+/acme/ca-bundle` response carries `Warning: 110 - "Response is stale"`.
 
 The directory document is built in
 `pkg/acme/server/handlers/directory.go` from the configured `baseRESTURI`. When
