@@ -28,6 +28,7 @@ import (
 	awstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -70,9 +71,6 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, err
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if err := attrs.Validate(); err != nil {
 		return nil, &errs.Joined{Lead: backend.ErrInvalidAttributes, Cause: err}
 	}
@@ -87,7 +85,11 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	// Check if key already exists
-	if _, exists := b.metadata[attrs.CN]; exists {
+	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+	}
+	if exists {
 		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
@@ -147,7 +149,9 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
 
-	b.metadata[attrs.CN] = metadataBytes
+	if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	}
 
 	// Initialize AEAD tracking options for this key
 	if b.tracker != nil {
@@ -176,9 +180,6 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, err
 	}
 
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	if err := attrs.Validate(); err != nil {
 		return nil, &errs.Joined{Lead: backend.ErrInvalidAttributes, Cause: err}
 	}
@@ -188,8 +189,8 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	}
 
 	// Check if metadata exists
-	metadataBytes, exists := b.metadata[attrs.CN]
-	if !exists {
+	metadataBytes, err := storage.GetKey(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
@@ -210,7 +211,7 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	// fault, an IAM/authorization denial) must not be conflated with "no
 	// key yet": getOrGenerateCAKey relies on that distinction to decide
 	// whether generating a replacement key is safe.
-	_, err := b.client.DescribeKey(ctx, &kms.DescribeKeyInput{
+	_, err = b.client.DescribeKey(ctx, &kms.DescribeKeyInput{
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
@@ -243,13 +244,16 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 	}
 
 	// Get the key ID
-	keyID := b.getKeyID(attrs.CN)
+	keyID, err := b.getKeyID(ctx, attrs.CN)
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify key exists
-	b.mu.RLock()
-	_, exists := b.metadata[attrs.CN]
-	b.mu.RUnlock()
-
+	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to check key existence", Err: err}
+	}
 	if !exists {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}

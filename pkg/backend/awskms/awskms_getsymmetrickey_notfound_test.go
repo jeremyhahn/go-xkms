@@ -52,7 +52,7 @@ func TestGetSymmetricKey_NotFound(t *testing.T) {
 	metadata := map[string]interface{}{"key_id": "test-key-id"}
 	metadataBytes, marshalErr := json.Marshal(metadata)
 	require.NoError(t, marshalErr)
-	b.metadata[attrs.CN] = metadataBytes
+	require.NoError(t, storage.SaveKey(context.Background(), config.KeyStorage, attrs.CN, metadataBytes))
 
 	_, err = b.GetSymmetricKey(context.Background(), attrs)
 	require.Error(t, err)
@@ -84,7 +84,7 @@ func TestGetSymmetricKey_RetrievalError(t *testing.T) {
 	metadata := map[string]interface{}{"key_id": "test-key-id"}
 	metadataBytes, marshalErr := json.Marshal(metadata)
 	require.NoError(t, marshalErr)
-	b.metadata[attrs.CN] = metadataBytes
+	require.NoError(t, storage.SaveKey(context.Background(), config.KeyStorage, attrs.CN, metadataBytes))
 
 	_, err = b.GetSymmetricKey(context.Background(), attrs)
 	require.Error(t, err)
