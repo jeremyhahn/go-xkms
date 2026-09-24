@@ -68,9 +68,9 @@ var keyOpSentinelCodes = []struct {
 
 // mapKeyOpError converts an error returned by the xkms service layer into a
 // *KeyOpError carrying the JSON-RPC error code InvokeMethod should report.
-// Validation failures and an unresolved role become Invalid params; an
-// unresolved backend or key becomes Not found (sdkssh.JSONRPCCodeNotFound,
-// via keyOpSentinelCodes); a backend that lacks the requested hardware
+// Validation failures become Invalid params; an unresolved role, backend, or
+// key becomes Not found (sdkssh.JSONRPCCodeNotFound, matching gRPC's
+// codes.NotFound for all three); a backend that lacks the requested hardware
 // capability becomes Method not found, MCP's signal for "not implemented by
 // this backend". Anything else is an internal fault.
 func mapKeyOpError(err error) error {
@@ -80,7 +80,16 @@ func mapKeyOpError(err error) error {
 
 	var role *xkms.ErrRoleLookup
 	if errors.As(err, &role) {
-		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+		// Not found, matching pkg/api/grpc/errors_keyops.go's mapKeyOpError
+		// (codes.NotFound) and go-qrdb's own MCP wire contract, which
+		// classifies its own *role.RoleNotFoundError the same way its gRPC
+		// transport does (go-qrdb pkg/api/mcp/status.go's classifyToolError,
+		// status_test.go's "missing role" case). ErrRoleLookup reports
+		// exactly that condition -- a named role, backend, or key that does
+		// not resolve -- so MCP and gRPC now agree (go-xkms#912). This used
+		// to report Invalid params, as if the caller's request were
+		// malformed rather than the name it gave simply not resolving.
+		return &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: err}
 	}
 
 	var validation *xkms.ErrValidation

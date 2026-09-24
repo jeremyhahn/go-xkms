@@ -54,6 +54,20 @@ func TestMapKeyOpError_NotFoundSentinels(t *testing.T) {
 	}
 }
 
+// TestMapKeyOpError_RoleLookupIsNotFound pins go-xkms#912: *xkms.ErrRoleLookup
+// classifies onto sdkssh.JSONRPCCodeNotFound, matching
+// pkg/api/grpc/errors_keyops.go's mapKeyOpError (codes.NotFound) and
+// go-qrdb's own MCP wire contract, which classifies its own
+// *role.RoleNotFoundError identically to its gRPC transport. Before this fix
+// MCP alone reported Invalid params for this condition, diverging from both.
+func TestMapKeyOpError_RoleLookupIsNotFound(t *testing.T) {
+	err := mapKeyOpError(&xkms.ErrRoleLookup{Role: "target key backend", Name: "hsm", Err: xkms.ErrBackendNotFound})
+
+	var keyErr *KeyOpError
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, sdkssh.JSONRPCCodeNotFound, keyErr.Code)
+}
+
 // TestMapKeyOpError_UnclassifiedErrorIsInternal proves mapKeyOpError's
 // floor: an error matching none of keyOpSentinelCodes, *xkms.ErrRoleLookup,
 // or *xkms.ErrValidation still becomes a classified *KeyOpError rather than
