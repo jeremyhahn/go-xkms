@@ -68,6 +68,28 @@ never a key ID, common name, or tenant ID. Two choices enforce this:
   (`metricsAllBackends`) rather than one series per backend visited, so a
   wildcard `ListKeys("")` does not fan out into N series on every call.
 
+## Which backend labels a multi-backend operation (go-xkms#825)
+
+Most operations name exactly one backend, so `backend` is unambiguous. A few
+name two, and the choice of which one labels the series follows the same
+rule in both directions:
+
+- **`CopyKey`** (source and destination backend) is metered under the
+  **destination**: that is where the operation's effect lands (a key is
+  imported there), the same as `GenerateKey`/`ImportKey` are metered under
+  the backend they write to — and it is the same backend `KeysTotal` is
+  incremented for, so one variable feeds both.
+- **`WrapKeyByID`/`UnwrapKeyByID`** (a wrapping/unwrapping key backend and a
+  target key backend) are metered under the **wrapping/unwrapping key's**
+  backend: that backend performs the cryptographic operation (the wrap or
+  the decrypt), symmetric with how `Sign`/`Verify`/`Encrypt`/`Decrypt` are
+  metered under the backend holding the operating key. `UnwrapKeyByID`'s
+  `KeysTotal` increment, in contrast, targets the **target** backend, where
+  the recovered key is imported — deliberately not the same backend the
+  operation is metered under, since the crypto and the storage effect are
+  two different backends here. See `docs/observability/engineering.md`'s
+  operation-to-servicer-method table for the full mapping.
+
 ## Keys/certs totals: increment/decrement on the request path, reconcile on a sweep
 
 `metrics.KeysTotal`/`CertsTotal` are updated two ways, deliberately kept

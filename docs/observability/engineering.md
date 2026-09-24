@@ -10,7 +10,10 @@ const (
 	OpGenerate, OpStore, OpGet, OpDelete, OpList,
 	OpSign, OpVerify, OpEncrypt, OpDecrypt,
 	OpExport, OpImport, OpRotate, OpHealthCheck,
-	OpIssueCert, OpRevokeCert, OpGenerateCRL string
+	OpIssueCert, OpRevokeCert, OpGenerateCRL,
+	OpCopyKey, OpWrapKey, OpUnwrapKey, OpWrapKeyByID, OpUnwrapKeyByID,
+	OpExportKeyMaterial, OpGetImportParameters,
+	OpDeriveKey, OpDeriveKeyECDH, OpAttestKey string
 )
 
 const StatusSuccess, StatusError string
@@ -75,6 +78,48 @@ Every `XKMSService` method in `servicer_key.go`, `servicer_cert.go`,
 constant above calls `recordServiceOp` via `defer` on named returns — see
 [`architecture.md`](architecture.md) for why `defer` on named returns and not
 a manual call before each `return`.
+
+## Operation-to-servicer-method mapping
+
+Every `Op*` constant, the `XKMSService` method(s) that record it, and the
+`backend` label it is metered under (`req.Backend`/`s.metricsBackendName`
+unless noted). A method that changes `KeysTotal`/`CertsTotal` names which
+backend that gauge update targets, when it differs from the metered backend.
+
+| `Op*` | Servicer method(s) | Metered backend | Keys/certs total |
+|---|---|---|---|
+| `OpGenerate` | `GenerateKey` | request backend | `KeysTotal` incremented (written backend) |
+| `OpStore` | `SaveCertificate` | request backend | `CertsTotal` incremented (written backend); `SaveCertificateChain` does **not** record `OpStore` |
+| `OpGet` | `GetKey`, `GetCertificate`, CA reads | request backend | — |
+| `OpDelete` | `DeleteKey`, `DeleteCertificate` | request backend | `KeysTotal`/`CertsTotal` decremented |
+| `OpList` | `ListKeys`, `ListCertificates` | request backend, or `"all"` for a wildcard listing | — |
+| `OpSign` | `Sign`, CA CSR signing | request backend | — |
+| `OpVerify` | `Verify` | request backend | — |
+| `OpEncrypt` | `Encrypt`, `EncryptAsym` | request backend | — |
+| `OpDecrypt` | `Decrypt` | request backend | — |
+| `OpExport` | `ExportKey` (BYOK wrapped export) | request backend | — |
+| `OpImport` | `ImportKey` (BYOK wrapped import) | request backend | `KeysTotal` incremented (written backend) |
+| `OpRotate` | `RotateKey` | request backend | — |
+| `OpHealthCheck` | `pkg/server.updateBackendMetrics` (not `XKMSService`) | probed backend | — |
+| `OpIssueCert`, `OpRevokeCert`, `OpGenerateCRL` | CA issuance/revocation/CRL methods | `caMetricsBackend` (`"ca"`) | — |
+| `OpCopyKey` | `CopyKey` | **destination** backend (`req.DestBackend`) — where the copy's effect lands | `KeysTotal` incremented (destination backend) |
+| `OpWrapKey` | `WrapKey` | request backend | — |
+| `OpUnwrapKey` | `UnwrapKey` | request backend | — |
+| `OpWrapKeyByID` | `WrapKeyByID` | **wrapping key's** backend (`req.WrappingKeyBackend`) — does the cryptographic work, symmetric with `OpSign`/`OpEncrypt` | — |
+| `OpUnwrapKeyByID` | `UnwrapKeyByID` | **unwrapping key's** backend (`req.UnwrappingKeyBackend`) | `KeysTotal` incremented (**target** backend, `req.TargetKeyBackend` — not the metered backend) |
+| `OpExportKeyMaterial` | `ExportKeyMaterial` | request backend | — |
+| `OpGetImportParameters` | `GetImportParameters` | request backend | — |
+| `OpDeriveKey` | `DeriveKey` | request backend (or the default backend for a raw-`input_key_material` derivation) | — |
+| `OpDeriveKeyECDH` | `DeriveKeyECDH` | request backend | — |
+| `OpAttestKey` | `AttestKey` | request backend | — |
+
+`OpUnwrapKeyByID` is the one operation whose metered backend and
+gauge-target backend differ (the unwrapping key's backend versus the target
+backend); every other keys/certs-total update, including `CopyKey`'s, uses
+the same backend for both, mirroring `GenerateKey`/`ImportKey`. See
+[`architecture.md`](architecture.md) for why `CopyKey` is metered at the
+destination and `WrapKeyByID`/`UnwrapKeyByID` at the crypto-performing key's
+backend rather than the target key's backend.
 
 ## Invariants
 
@@ -157,6 +202,19 @@ call so a disabled package is a true no-op, not merely an unscraped one.
   extra listing calls from `GenerateKey`/`SaveCertificate`/
   `DeleteCertificate`, and exactly the one `findKeyAttrs` already makes from
   `DeleteKey`.
+- `pkg/xkms/metrics_instrumentation_remaining_test.go` (go-xkms#825) — the
+  same contract for the operations `#720` left uninstrumented: `CopyKey`,
+  `WrapKey`, `UnwrapKey`, `WrapKeyByID`, `UnwrapKeyByID`,
+  `ExportKeyMaterial`, `GetImportParameters`, `DeriveKey`, `DeriveKeyECDH`,
+  and `AttestKey`. Reuses `setupKeyOpsService`/`keyOpsService` and the
+  capability-provider doubles from `servicer_keyops_test.go`
+  (`boostIEKeyProvider` for a full `backend.ImportExportBackend`,
+  `materialProvider`, `attestingProvider`, `agreementProvider`) rather than
+  duplicating them. Every operation gets a success case (asserts
+  `OperationsTotal`/`OperationDuration`) and a failure case (asserts
+  `ErrorsTotal`); `CopyKey` and `UnwrapKeyByID` additionally assert their
+  `KeysTotal` gauge moves by exactly one and reuse `countingBackend` to
+  assert zero extra `ListKeys` calls on the backend the gauge targets.
 - `pkg/server/backend_metrics_test.go` — `updateBackendMetrics` against a
   healthy backend, a backend whose `ListKeys` probe fails, and a mix of both,
   asserting `BackendHealthy`/`KeysTotal`/`CertsTotal`/`OpHealthCheck`; a
