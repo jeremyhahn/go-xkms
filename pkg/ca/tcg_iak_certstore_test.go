@@ -383,8 +383,8 @@ func TestSignTCGCSRIDevID_IAKRecordSurvivesIDevIDIssuance(t *testing.T) {
 	if string(iakCert.Raw) != string(iakDER) {
 		t.Error("stored IAK record differs from the IAK DER returned to the caller")
 	}
-	if !hasExtensionOID(iakCert, OIDTCGKpAIKCertificate) {
-		t.Error("IAK record lost its TCG AIK certificate extension")
+	if !hasEKUOID(iakCert, OIDTCGKpAIKCertificate) {
+		t.Error("IAK record lost its TCG AIK certificate extended key usage")
 	}
 
 	idevidCert, err := ca.certStore.GetCertificate(request.Subject.CommonName)

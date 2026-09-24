@@ -76,6 +76,8 @@ const (
 	STORE_VAULT   = types.StoreVault
 	STORE_QUANTUM = types.StoreQuantum
 	STORE_FROST   = types.StoreFrost
+	STORE_PHONE   = types.StorePhone
+	STORE_AVR     = types.StoreAVR
 )
 
 // BackendType constant re-exports
@@ -94,6 +96,7 @@ const (
 	BackendTypeSmartCardHSM = types.BackendTypeSmartCardHSM
 	BackendTypeYubiKey      = types.BackendTypeYubiKey
 	BackendTypeSoftHSM      = types.BackendTypeSoftHSM
+	BackendTypeAVR          = types.BackendTypeAVR
 )
 
 // FSExtension constant re-exports

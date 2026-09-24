@@ -14,8 +14,6 @@
 package server
 
 import (
-	"path/filepath"
-
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 )
 
@@ -31,14 +29,7 @@ const tpm2KeyDirSubdir = "tpm2-keys"
 // construction of *config.Config) never run config.Config.Validate, so an
 // empty Storage.Path cannot be assumed to have already been rejected.
 func (s *Server) resolveTPM2KeyDir() (string, error) {
-	if s.config.Storage.Path == "" {
-		return "", &ErrConfigRequired{
-			Field:   "storage.path",
-			Backend: "tpm2",
-			Hint:    "the TPM2 key directory is derived from storage.path and must not resolve relative to the process working directory",
-		}
-	}
-	return filepath.Join(s.config.Storage.Path, tpm2KeyDirSubdir), nil
+	return resolveTPM2KeyDir(s.config)
 }
 
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration
