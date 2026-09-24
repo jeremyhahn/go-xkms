@@ -18,13 +18,13 @@
 // against both the 3-node cluster and the standalone harnesses. It is
 // deliberately distinct from cluster_test.go's coverage of go-qrdb's own
 // "GET /peers" admin-plane endpoint: the two surfaces answer independently
-// (see docs/cluster/architecture.md, "Two distinct surfaces over the same
+// (see docs/clustering/architecture.md, "Two distinct surfaces over the same
 // Raft shard"), so a regression in one must not be masked by the other still
 // passing.
 //
 // There is no POST/DELETE coverage here: the REST cluster surface is
 // read-only by design (no mutation routes exist to test — see
-// docs/cluster/api.md and docs/web/parity.md "Cluster mutations"); Raft
+// docs/clustering/api.md and docs/web/parity.md "Cluster mutations"); Raft
 // membership mutation is exercised entirely through the qrdb control plane
 // by cmd/xkmsctl/cluster_test.go instead.
 package cluster
@@ -148,7 +148,7 @@ func TestCluster_RESTStatusAndMembers(t *testing.T) {
 // REST cluster surface degrades gracefully rather than erroring: a
 // non-clustered node reports clustered:false and an empty member list, never
 // a 4xx/5xx, matching the exact contract the web console's Cluster page
-// relies on (docs/cluster/architecture.md).
+// relies on (docs/clustering/architecture.md).
 func TestStandalone_RESTClusterStatusDegrades(t *testing.T) {
 	url := standaloneURL(t)
 	ctx := context.Background()
