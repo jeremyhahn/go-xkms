@@ -134,6 +134,28 @@ programmatically — an embedded/library use of `pkg/server` that never runs
 `resolveNodeSeal`, in `*ErrBackendCreate` from `initTPM2Backend`) instead of a
 cwd-relative `tpm2-keys` directory (go-xkms#609).
 
+**Running the `tpm2` barrier strategy and `backends.tpm2.enabled: true`
+together.** When both are configured, `resolveNodeSeal` opens the TPM exactly
+once (via `pkg/seal.BuildBestStrategy`) and `initTPM2Backend` builds the
+general-purpose TPM2 backend over that SAME open —
+`tpm2backend.NewBackendWithTPM`, keyed off `Server.nodeSealTPM` — rather than
+opening the device a second time; a swtpm-backed simulator hangs on a second
+open within one process. Sharing the connection means the general backend also
+reuses the node-seal backend's `store.KeyBackend` (`shared.KeyBackend()`)
+instead of constructing a second file store over the identical
+`<Storage.Path>/tpm2-keys` directory, so both the barrier and every key the
+general backend creates read and write through the one on-disk key store and
+are parented to the one SRK the shared TPM connection resolved
+(`SSRKAttributes()`, whose authorization comes only from
+`Backends.TPM2`/`KeyConfig`, never hardcoded). Before go-xkms#795,
+`ExternalTPMConfig.KeyBackend` was left unset on this path, so
+`NewBackendWithTPM` failed closed with a typed `*ErrInvalidConfig` ("KeyBackend
+is nil") wrapped in `*ErrBackendCreate`, and a deployment enabling both
+settings could never start; that error is now reachable only from a genuinely
+missing or invalid key-storage configuration (e.g. `storage.path` unset),
+checked by `resolveTPM2KeyDir` before either code path touches the shared
+backend.
+
 ## Persistence
 
 The `SealedRootKey` blob is persisted by **go-qrdb**; go-xkms produces and

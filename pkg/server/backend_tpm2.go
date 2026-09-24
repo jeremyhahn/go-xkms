@@ -64,11 +64,22 @@ func (s *Server) initTPM2Backend() error {
 	// swtpm emulator; sharing the connection also keeps one PlatformKeyStore /
 	// policy state. The shared TPM is closed once, at node shutdown
 	// (nodeSealClose), not by this backend (externalTPM).
+	//
+	// KeyBackend reuses shared.KeyBackend() — the SAME store.KeyBackend the
+	// node-seal autodetect built (pkg/seal.BuildBestStrategy ->
+	// tpm2backend.NewBackend) over this identical keyDir — rather than
+	// opening a second file.New over the same directory. Key blobs created
+	// under the shared TPM are parented to the exact same SRK the barrier
+	// itself uses: both paths call config.TPM.SSRKAttributes() against this
+	// one open TPM (authValue/authPolicy sourced from Backends.TPM2, never
+	// hardcoded), so both the barrier and this backend read and write the
+	// same on-disk key store and share one parent key.
 	if shared, ok := s.nodeSealTPM.(*tpm2backend.Backend); ok {
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
-			TPM:    shared.TPM(),
-			KeyDir: keyDir,
-			Logger: s.logger,
+			TPM:        shared.TPM(),
+			KeyBackend: shared.KeyBackend(),
+			KeyDir:     keyDir,
+			Logger:     s.logger,
 		})
 		if err != nil {
 			return &ErrBackendCreate{Backend: "TPM2", Err: err}
