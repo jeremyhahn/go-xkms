@@ -68,3 +68,65 @@ func TestProvision_EveryCommandFailurePropagates(t *testing.T) {
 		// returning it, and a defer always runs last.
 		34)
 }
+
+// TestInstall_EveryCommandFailurePropagates sweeps Install's full command
+// sequence against a freshly opened, never-provisioned simulator (SetHierarchyAuth,
+// CreateEK, CreateSRK, CreatePlatformPolicy, installIAK/CreateIAK) proving a
+// failure at any step surfaces as an error -- with the two narrow,
+// independently-documented exceptions in the bestEffort list below -- instead
+// of Install reporting success over a TPM it only partially provisioned.
+//
+// This closes #905: a prior command-by-command sweep found commands 44-47
+// not surfacing as an Install() error and treated all four as "inside the
+// IAK creation" because they immediately follow CreateIAK's own three
+// commands in the flat, 1-indexed command count. Tracing each command's
+// TPM_CC against installIAK/CreateIAK (key.go, provision.go) shows only
+// command 44 is actually part of IAK creation -- CreateIAK's own deferred
+// flush, already covered by TestCreateIAK_EveryCommandFailurePropagates's
+// bestEffort. Commands 45-47 belong to the unrelated step Install runs
+// immediately afterward: the trailing "retrieve the EK certificate" block
+// (below), which is documented and tested here as its own, separate
+// best-effort tail. IAK creation's three effectful commands -- CreatePrimary,
+// EvictControl, CertifyCreation -- were independently confirmed via a manual
+// command-code probe to propagate through Install() exactly as
+// TestCreateIAK_EveryCommandFailurePropagates proves they do called
+// directly; there was no swallowed IAK error.
+func TestInstall_EveryCommandFailurePropagates(t *testing.T) {
+	sweepEachCommandFailure(t, func(t *testing.T) (transport.TPM, func(transport.TPM) error) {
+		h := newUnprovisionedSimHarness(t, func(c *Config) {
+			// A freshly opened simulator's Endorsement hierarchy auth is
+			// still empty: no SetHierarchyAuth has run. Install treats a nil
+			// config.EK.HierarchyAuth as "assume empty auth for fresh TPMs"
+			// (provision.go); the harness's baseline config instead carries
+			// store.DEFAULT_PASSWORD so newSimHarness's auto-provisioning
+			// (which does run SetHierarchyAuth) has a starting auth to
+			// change. Install's own sweep needs the former to match this
+			// TPM's real, still-empty hierarchy auth.
+			c.EK.HierarchyAuth = nil
+		})
+		soPIN := mustPassword([]byte("install-sweep-pin-0123456789"))
+
+		return h.TPM.transport, func(tr transport.TPM) error {
+			h.TPM.transport = tr
+			return h.TPM.Install(soPIN, nil)
+		}
+	},
+		// CreateIAK's own deferred best-effort flush of its primary's
+		// transient handle -- the same single command
+		// TestCreateIAK_EveryCommandFailurePropagates already documents and
+		// tolerates at its position 4 -- reached here at absolute position
+		// 44 because IAK creation runs 41st (CreatePrimary), 42nd
+		// (EvictControl) and 43rd (CertifyCreation) in Install's full
+		// sequence.
+		44,
+		// Install's trailing "Retrieve the EK certificate or log warning if
+		// not available" block (provision.go): PlatformPolicyDigest's PCR
+		// read (45) and EKCertificate's two readEKCertFromNV NV_ReadPublic
+		// probes, RSA then EC index (46, 47). A manufacturer EK certificate
+		// is commonly absent -- this simulator never has one -- and
+		// EKCertificate returning any error here, not only "not found", is
+		// deliberately non-fatal: Install has already fully provisioned the
+		// EK, SSRK, platform policy and IAK by this point, and a device
+		// without a burned-in EK certificate still has a usable identity.
+		45, 46, 47)
+}
