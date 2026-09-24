@@ -37,7 +37,7 @@ var ErrClusterNotConfigured = errors.New("rest: cluster service not configured")
 // standalone view rather than failing, so they are registered
 // unconditionally. There is no membership-mutation handler — Raft
 // membership changes go through go-qrdb's own control plane exclusively via
-// `xkmsctl cluster add`/`remove` (docs/cluster/api.md, docs/web/parity.md
+// `xkmsctl cluster add`/`remove` (docs/clustering/api.md, docs/web/parity.md
 // "Cluster mutations"); a REST route that could only ever answer "not
 // supported" would be a stub, which this codebase does not register.
 type ClusterHandlers struct {

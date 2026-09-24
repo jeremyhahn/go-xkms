@@ -21,8 +21,7 @@ the folder in the same commit that changes the behavior.
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
-| [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, and the `xkmsctl cluster`/`rebalance` control plane |
-| [cluster](cluster/) | Raft clustering — status/membership (CLI over qrdb's control plane, REST for the web console), leader redirect, cluster CA key custody |
+| [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
 | [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions, their verification, and the `dice-idevid` issuance profile |
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
@@ -131,7 +130,7 @@ by five and reports unconverted folders as converted.
 | [luks](luks/) | — |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
-| [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — the legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions describe a proxy plane that was since deleted; the feature folder documents the current `xkmsctl cluster`/`rebalance` → qrdb control-plane design instead |
+| [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |
 | [rbac](rbac/) | `architecture/rbac.md` |
 | [storage-engines](storage-engines/) | `storage/` — the legacy `README.md`'s `objstore` backend example (`storage.backend: objstore` with S3/GCS/Azure options) is not reachable through `xkmsd`'s own `storage.backend`; the feature folder documents where that engine is actually used |
 | [web-console](web-console/) | `web/` |
@@ -223,12 +222,10 @@ Ordered "under active development first, then most often read":
 | SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage. **Agent-only sessions are already converted** — [`ssh-agent-sessions/`](ssh-agent-sessions/) is NORMATIVE for that capability; the rest of `ssh/` is still legacy |
 | PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
 | Web console | [`web/`](web/) | 5 files |
-| Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
-| Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
 | Clustering | [`cluster/`](cluster/) | includes CA key custody |
-| Web console | [`web/`](web/) | 5 files |
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
+| LUKS | — | `pkg/luks`; documented on the xkey side only |
 
 [`frost-threshold-signing/`](frost-threshold-signing/) and
 [`ssh-keys/`](ssh-keys/) are now NORMATIVE folders, but neither fully
