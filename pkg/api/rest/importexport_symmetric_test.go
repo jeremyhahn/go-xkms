@@ -41,6 +41,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	localwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -551,6 +552,10 @@ func (m *mockKeyStoreWithImportExport) KeyProvider() types.KeyProvider {
 }
 
 func (m *mockKeyStoreWithImportExport) CertStorage() certstore.CertificateStorageAdapter {
+	return nil
+}
+
+func (m *mockKeyStoreWithImportExport) SignerStore() store.SignerStorer {
 	return nil
 }
 

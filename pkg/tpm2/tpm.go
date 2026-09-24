@@ -265,7 +265,6 @@ type Params struct {
 	DebugSecrets bool
 	FQDN         string
 	Logger       *slog.Logger
-	SignerStore  store.SignerStorer
 	Tracker      types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
 	Transport    transport.TPM           // Optional: custom transport for testing
 }
@@ -299,7 +298,6 @@ type TPM2 struct {
 	platformKeyStore PlatformKeyStorer
 	platformSRKAttrs *types.KeyAttributes
 	random           io.Reader
-	signerStore      store.SignerStorer
 	simulator        SimulatorInterface
 	ssrkAttrs        *types.KeyAttributes
 	tracker          types.AEADSafetyTracker
@@ -444,7 +442,6 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		backend:      params.Backend,
 		blobStore:    params.BlobStore,
 		certStore:    params.CertStore,
-		signerStore:  params.SignerStore,
 		debugSecrets: params.DebugSecrets,
 		config:       params.Config,
 		device:       device,

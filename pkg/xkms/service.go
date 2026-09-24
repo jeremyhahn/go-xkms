@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -1517,6 +1518,13 @@ type SignOptions struct {
 
 	// PSSOptions for RSA-PSS signatures (optional)
 	PSSOptions *rsa.PSSOptions
+
+	// BlobCN, when set, persists the produced digest and signature through
+	// the backend's SignerStore, keyed by the signing key's CN and this blob
+	// CN. A later Verify call against the same key with the same
+	// VerifyOpts.BlobCN and VerifyOpts.IntegrityCheck set confirms the
+	// digest presented for verification against this persisted record.
+	BlobCN string
 }
 
 // Sign signs data using the specified key.
@@ -1536,29 +1544,46 @@ func Sign(ctx context.Context, kid string, data []byte, opts *SignOptions) ([]by
 		return nil, &ErrCryptoOperation{Operation: "signer", Err: err}
 	}
 
-	// Ed25519 uses pure signing (no prehashing) by default
-	// The signer expects the raw message and crypto.Hash(0) as SignerOpts
-	if attrs.KeyAlgorithm == x509.Ed25519 {
-		return signer.Sign(nil, data, crypto.Hash(0))
-	}
-
 	if opts == nil {
-		opts = &SignOptions{Hash: crypto.SHA256}
-	}
-	if opts.Hash == 0 {
-		opts.Hash = crypto.SHA256
+		opts = &SignOptions{}
 	}
 
-	hasher := opts.Hash.New()
-	hasher.Write(data)
-	digest := hasher.Sum(nil)
+	var digest, signature []byte
 
-	var signerOpts crypto.SignerOpts = opts.Hash
-	if opts.PSSOptions != nil {
-		signerOpts = opts.PSSOptions
+	// Ed25519 uses pure signing (no prehashing) by default. The signer
+	// expects the raw message and crypto.Hash(0) as SignerOpts; the digest
+	// persisted for BlobCN is the raw message itself in this case, matching
+	// how signing.SignerOpts.GetDigest treats a zero Hash.
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		digest = data
+		signature, err = signer.Sign(nil, data, crypto.Hash(0))
+	} else {
+		if opts.Hash == 0 {
+			opts.Hash = crypto.SHA256
+		}
+
+		hasher := opts.Hash.New()
+		hasher.Write(data)
+		digest = hasher.Sum(nil)
+
+		var signerOpts crypto.SignerOpts = opts.Hash
+		if opts.PSSOptions != nil {
+			signerOpts = opts.PSSOptions
+		}
+
+		signature, err = signer.Sign(nil, digest, signerOpts)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return signer.Sign(nil, digest, signerOpts)
+	if opts.BlobCN != "" {
+		if saveErr := b.SignerStore().SaveSignature(&store.SignerOpts{KeyAttributes: attrs, BlobCN: opts.BlobCN}, signature, digest); saveErr != nil {
+			return nil, saveErr
+		}
+	}
+
+	return signature, nil
 }
 
 // Verify verifies a signature against data using the specified key.
@@ -1585,16 +1610,32 @@ func Verify(ctx context.Context, kid string, data, signature []byte, opts *types
 		return ErrKeySigningNotSupported
 	}
 
-	// Ed25519 uses pure verification (no prehashing) by default
-	// Verify against the raw message, not a hash
-	if attrs.KeyAlgorithm == x509.Ed25519 {
-		verifier := types.NewVerifier(&types.VerifyOpts{Hash: crypto.Hash(0)})
-		return verifier.Verify(pubKey, data, signature)
-	}
-
 	if opts == nil {
 		opts = &types.VerifyOpts{Hash: crypto.SHA256}
 	}
+	if opts.IntegrityCheck {
+		// The store's Checksum keys its lookup by KeyAttributes.CN; the
+		// caller names the key through kid, not through opts, so attrs
+		// resolved from kid fills this in when the caller left it unset.
+		if opts.KeyAttributes == nil {
+			opts.KeyAttributes = attrs
+		}
+		if opts.ChecksumProvider == nil {
+			opts.ChecksumProvider = b.SignerStore()
+		}
+	}
+
+	// Ed25519 uses pure verification (no prehashing) by default. Verify
+	// against the raw message, not a hash. A local copy carries BlobCN,
+	// IntegrityCheck and ChecksumProvider through without mutating the
+	// caller's opts.
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		edOpts := *opts
+		edOpts.Hash = crypto.Hash(0)
+		verifier := types.NewVerifier(&edOpts)
+		return verifier.Verify(pubKey, data, signature)
+	}
+
 	if opts.Hash == 0 {
 		opts.Hash = crypto.SHA256
 	}

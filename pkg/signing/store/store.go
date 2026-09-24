@@ -20,13 +20,16 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/cespare/xxhash/v2"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -42,6 +45,15 @@ type SignerStore struct {
 	sigDAO qrdbsdk.GenericDAO[*SignatureEntry]
 	idGen  *signerEntryIDGenerator
 }
+
+// Compile-time interface compliance checks: SignerStore satisfies
+// SignerStorer, and its Checksum method alone satisfies types.ChecksumProvider
+// so it can be handed directly to a types.SimpleVerifier performing
+// IntegrityCheck.
+var (
+	_ SignerStorer           = (*SignerStore)(nil)
+	_ types.ChecksumProvider = (*SignerStore)(nil)
+)
 
 // NewSignerStore creates a new signer store using the storage.Backend interface.
 // The backend can be any implementation of storage.Backend, including custom
@@ -99,6 +111,18 @@ func computeSignerID(cn string) uint64 {
 	return xxhash.Sum64String(cn)
 }
 
+// decodePEM decodes a PEM block. It is a local, minimal copy of
+// pkg/tpm2/store's DecodePEM: duplicated rather than imported, since
+// importing pkg/tpm2/store for one three-line helper would reintroduce the
+// TPM2 package dependency this package exists to avoid.
+func decodePEM(data []byte) (*pem.Block, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, &errs.Message{Msg: "failed to decode PEM block"}
+	}
+	return block, nil
+}
+
 // Get retrieves a crypto.Signer from storage.
 func (s *SignerStore) Get(attrs *types.KeyAttributes) (interface{}, error) {
 	if s.dao == nil {
@@ -115,7 +139,7 @@ func (s *SignerStore) Get(attrs *types.KeyAttributes) (interface{}, error) {
 	}
 
 	// Decode PEM
-	block, pemErr := DecodePEM(entry.KeyPEM)
+	block, pemErr := decodePEM(entry.KeyPEM)
 	if pemErr != nil {
 		return nil, &ErrSignerPEMDecode{CN: attrs.CN, Cause: pemErr}
 	}
@@ -200,6 +224,17 @@ func (s *SignerStore) Delete(attrs *types.KeyAttributes) error {
 	return nil
 }
 
+// signatureKey computes the storage key for a persisted signature record,
+// combining the signing key's CN with the optional blob CN. GetSignature and
+// Checksum must compute this identically to SaveSignature to read back what
+// it wrote.
+func signatureKey(cn, blobCN string) string {
+	if blobCN != "" {
+		return fmt.Sprintf("%s.%s.sig", cn, blobCN)
+	}
+	return fmt.Sprintf("%s.sig", cn)
+}
+
 // SaveSignature stores a signature and digest for auditing/verification purposes.
 func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) error {
 	if opts == nil || opts.KeyAttributes == nil {
@@ -210,13 +245,7 @@ func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) 
 		return ErrSignerStoreNotInitialized
 	}
 
-	// Create a unique key for the signature using CN and blob CN if available.
-	var key string
-	if opts.BlobCN != nil && *opts.BlobCN != "" {
-		key = fmt.Sprintf("%s.%s.sig", opts.KeyAttributes.CN, *opts.BlobCN)
-	} else {
-		key = fmt.Sprintf("%s.sig", opts.KeyAttributes.CN)
-	}
+	key := signatureKey(opts.KeyAttributes.CN, opts.BlobCN)
 
 	// Store signature and digest together.
 	data := fmt.Sprintf("digest=%x\nsignature=%x\n", digest, signature)
@@ -236,6 +265,85 @@ func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) 
 	}
 
 	return nil
+}
+
+// GetSignature retrieves the digest and signature persisted by a prior
+// SaveSignature call for the same key attributes and blob CN.
+func (s *SignerStore) GetSignature(opts *SignerOpts) (digest, signature []byte, err error) {
+	if opts == nil || opts.KeyAttributes == nil {
+		return nil, nil, ErrInvalidSignerOpts
+	}
+
+	if s.sigDAO == nil {
+		return nil, nil, ErrSignerStoreNotInitialized
+	}
+
+	key := signatureKey(opts.KeyAttributes.CN, opts.BlobCN)
+	entryID := computeSignerID(key)
+
+	entry, getErr := s.sigDAO.Get(context.Background(), entryID)
+	if getErr != nil {
+		if qrdbsdk.IsDAONotFound(getErr) {
+			return nil, nil, &ErrSignatureNotFound{Key: key}
+		}
+		return nil, nil, &ErrSignatureGet{Key: key, Cause: getErr}
+	}
+
+	digest, signature, parseErr := parseSignatureData(entry.Data)
+	if parseErr != nil {
+		return nil, nil, &ErrSignatureParse{Key: key, Cause: parseErr}
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("read signature", slog.String("key", key))
+	}
+
+	return digest, signature, nil
+}
+
+// Checksum implements types.ChecksumProvider. It retrieves the digest
+// persisted for opts.KeyAttributes.CN and opts.BlobCN, so a SignerStore can
+// serve as the checksum source for a types.SimpleVerifier performing
+// IntegrityCheck.
+func (s *SignerStore) Checksum(opts *types.VerifyOpts) ([]byte, error) {
+	if opts == nil || opts.KeyAttributes == nil {
+		return nil, ErrInvalidSignerOpts
+	}
+
+	digest, _, err := s.GetSignature(&SignerOpts{
+		KeyAttributes: opts.KeyAttributes,
+		BlobCN:        opts.BlobCN,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return digest, nil
+}
+
+// parseSignatureData decodes the "digest=<hex>\nsignature=<hex>\n" record
+// SaveSignature writes back into its digest and signature components.
+func parseSignatureData(data string) (digest, signature []byte, err error) {
+	for _, line := range strings.Split(strings.TrimRight(data, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "digest="):
+			digest, err = hex.DecodeString(strings.TrimPrefix(line, "digest="))
+			if err != nil {
+				return nil, nil, err
+			}
+		case strings.HasPrefix(line, "signature="):
+			signature, err = hex.DecodeString(strings.TrimPrefix(line, "signature="))
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	if digest == nil || signature == nil {
+		return nil, nil, ErrMalformedSignatureData
+	}
+
+	return digest, signature, nil
 }
 
 // parsePrivateKey parses a PEM-decoded private key block based on the key algorithm.

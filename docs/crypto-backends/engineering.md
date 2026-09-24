@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-22
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -24,6 +24,12 @@ keystore; its `Type()` maps its composed key provider's `types.BackendType`
 through `backendTypeToStoreType` (`pkg/xkms/keyid.go`), so it reports the
 same keyword `ID()` and the Key ID parser expect regardless of the name it
 was registered under.
+
+`SignerStore() store.SignerStorer` (`pkg/signing/store`, go-xkms#724) is
+built once in `New()` from the same `storage.Backend` as `CertStorage`, so
+every backend gets it for free from `compositeBackend`. `TenantScopedBackend`
+does not pass it through unchanged — it wraps it so signature records are
+tenant-scoped too — see [`signing/architecture.md`](../signing/architecture.md).
 
 ### `types.KeyAttributes.Backend` and `.StoreType` — `pkg/types/types.go`
 

@@ -241,9 +241,6 @@ type TPMBlobStorer = store.BlobStorer
 // TPMCertificateStorer provides certificate storage operations for TPM.
 type TPMCertificateStorer = store.CertificateStorer
 
-// TPMSignerStorer provides crypto.Signer storage operations for TPM.
-type TPMSignerStorer = store.SignerStorer
-
 // TPMSignerOpts provides TPM-specific signer options.
 type TPMSignerOpts = store.SignerOpts
 
