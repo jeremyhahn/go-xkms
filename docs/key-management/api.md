@@ -455,6 +455,119 @@ unexported map) names for that `Class` — so a change to either package's
 `Class` → local-code map that drifts from the other's intended outcome fails
 one of the two tests.
 
+### sealStore.\* and the init-ceremony/credentials MCP methods now classify too (#921)
+
+#921 is #912's direct follow-up: it found the `sealStore.*` family
+(`pkg/api/mcp/handlers_seal_store.go`) and the remaining
+`ErrXKMSServiceUnavailable` returns in `handlers_init_credentials.go` still
+returning bare errors, reported as `wire.CodeInternal` by the same
+`mcpToolHandler` floor described above.
+
+**`sealStore.*` shares a table, following #912's `ImportExportSentinelClasses`
+/ `PIVSentinelClasses` / `BarrierSentinelClasses` pattern exactly.** Unlike CA,
+gRPC's own `mapSealStoreError` (`pkg/api/grpc/service_seal_store.go`) *was*
+already a plain sentinel → code table, so #921 promoted it into
+`pkg/api/apierrors/tables.go` as `SealStoreSentinelClasses` and rewrote both
+`pkg/api/grpc/service_seal_store.go`'s `mapSealStoreError` and
+`pkg/api/mcp/handlers_seal_store.go`'s new function of the same name to read
+it through `apierrors.ClassOf`, exactly like the four families above.
+
+| Sentinel | Class | MCP code | gRPC code |
+|---|---|---|---|
+| `xkms.ErrNotConfigured` | `ClassUnavailable` | `ErrCodeServiceUnavailable` | `Unavailable` |
+| `xkms.ErrNilRequest` | `ClassInvalidArgument` | `ErrCodeInvalidParams` | `InvalidArgument` |
+| `seal.ErrSecretNotFound` | `ClassNotFound` | `sdkssh.JSONRPCCodeNotFound` | `NotFound` |
+| `seal.ErrInvalidSecretName` | `ClassInvalidArgument` | `ErrCodeInvalidParams` | `InvalidArgument` |
+| `seal.ErrResealFailed` | `ClassInternal` | `ErrCodeInternalError` | `Internal` |
+
+Each `sealStore.*` handler also used to return the bare
+`ErrSealStoreNotConfigured` sentinel directly when no `xkmsService` is wired
+at all (the check that runs before the platform-store lookup above); it now
+routes through the same `mapSealStoreError`, which classifies
+`xkms.ErrNotConfigured` — `ErrSealStoreNotConfigured`'s underlying value —
+identically either way.
+
+**The init-ceremony and credential-submission methods classify locally, and
+here is why sharing a table would cost more than it returns.** Unlike
+`sealStore.*`, these two families have **no gRPC transport at all**:
+`pkg/api/transport/grpc/transport.go`'s `GetInitStatus`, `ClaimCertBegin`,
+`ClaimCertComplete`, `ClaimShareBegin`, `ClaimShareComplete` and
+`SubmitCredential` each return `ErrNotSupported` unconditionally, with a doc
+comment noting the endpoint is REST/MCP-only. There is no
+`apierrors`-shareable gRPC classification to read, so
+`pkg/api/mcp/handlers_init_credentials.go` carries two new local, ordered
+sentinel tables instead:
+
+- `ceremonySentinelCodes` classifies `pkg/init`'s `initialize.Err*` domain
+  sentinels (reached through `XKMSService.GetInitStatus`, `ClaimCertBegin`,
+  `ClaimCertComplete`, `ClaimShareBegin`, `ClaimShareComplete`,
+  `SignCSRInit`) by carrying REST's `pkg/api/rest/handlers_init.go`'s
+  `initErrorStatusMap` — the actual sibling transport for this domain — onto
+  the JSON-RPC vocabulary: a 404 becomes `sdkssh.JSONRPCCodeNotFound`, a 409
+  "already claimed/initialized" conflict becomes
+  `sdkssh.JSONRPCCodeDuplicate`, a 401 challenge/PIN failure becomes the new
+  `ErrCodeUnauthorized` use in this family, a 400 malformed-request
+  rejection becomes `ErrCodeInvalidParams`, and the 503 "CA not initialized"
+  becomes `ErrCodeServiceUnavailable`. REST's remaining 409 (wrong ceremony
+  state) and 410 (expired challenge) have no JSON-RPC counterpart and floor
+  to `ErrCodeInternalError`, the same floor `errors_keyops.go`'s
+  `keyOpSentinelCodes` already uses for `FailedPrecondition`.
+- `credentialSentinelCodes` classifies `pkg/server/credentials`' sentinels
+  (reached through `XKMSService.SubmitCredential`,
+  `GetCredentialStrategy`) the same way: `ErrEmptyCredentialName` /
+  `ErrEmptyCredentialValue` → `ErrCodeInvalidParams`,
+  `ErrCredentialAlreadySubmitted` → `sdkssh.JSONRPCCodeDuplicate`,
+  `ErrCredentialNotFound` → `sdkssh.JSONRPCCodeNotFound`.
+
+`callerCertThumbprint` (the share-claim methods' mTLS peer-certificate
+precondition, `pkg/api/mcp/handlers_init_credentials.go:callerCertThumbprint`)
+wraps `ErrClientCertRequired` in a `*KeyOpError` with `ErrCodeUnauthorized`
+(`wire.CodeUnauthenticated`), matching REST's `401` for the same refusal
+(`pkg/api/rest/handlers_init.go`).
+
+**The #921 sweep also found, and fixed, three bare returns outside its own
+two named families**, in handlers #912 had already touched or built a
+classifier for and simply missed a call site:
+
+- `pkg/api/mcp/handlers.go`'s `handleSeal` and `handleUnseal` returned
+  `*errs.Message` / `*errs.Wrapped` directly for a missing `data` /
+  `ciphertext` field, an unresolved backend, and an unresolved key — despite
+  `requireKey`/`mapKeyOpError` already existing in the same file for exactly
+  this purpose. Both now classify identically to
+  `pkg/api/grpc/service.go`'s `Seal` / `Unseal`: required-field checks are
+  `ErrCodeInvalidParams`, backend/key lookup failures are
+  `sdkssh.JSONRPCCodeNotFound` (via `mapKeyOpError`), and the terminal
+  `SealWithBackend` / `UnsealWithBackend` failure is `ErrCodeInternalError`,
+  matching gRPC's unconditional `codes.Internal` for that call.
+- `pkg/api/mcp/handlers_password.go`'s `handlePasswordUnlock` and
+  `handlePasswordLock` returned their trailing `TenantStoreStatus` call's
+  error bare, even though the sibling `handlePasswordStatus` handler already
+  routes the identical call through `handlers_password.go`'s own
+  `mapPasswordStoreError` — whose doc comment already named this exact gap.
+  Both now do the same.
+
+A fourth family, `pkg/api/mcp/handlers_frost.go` (built under the `frost`
+build tag, not part of this project's standard tag set), was found to carry
+the same "bare `*errs.Message`/`*errs.Wrapped` for a required-field or
+lookup failure" pattern throughout — pervasively, not as an isolated miss —
+along with several more files (`handlers_share.go`, `handlers_audit.go`,
+`handlers_algorithms.go`, `utils.go`, and most of `handlers.go`'s own
+remaining validation checks). That pattern predates both #912 and #921, is
+far larger in scope than either, and is tracked separately rather than
+folded into this change.
+
+**Verification**: `pkg/api/mcp/handlers_seal_store_test.go` and
+`handlers_init_credentials_test.go` each assert the JSON-RPC code for every
+`sealStore.*` / ceremony / credentials domain condition through the real
+`Server.InvokeMethod` dispatch, including the "no xkms service at all" and
+"subsystem not wired" floors; `handlers_seal_test.go`'s
+`TestInvokeMethod_Seal_WireCodes` / `TestInvokeMethod_Unseal_WireCodes` do
+the same for the `handleSeal` / `handleUnseal` fix.
+`pkg/api/grpc/apierrors_parity_test.go` and
+`pkg/api/mcp/apierrors_parity_test.go` both grew a `"seal store"` subtest
+walking `apierrors.SealStoreSentinelClasses`, mirroring the four existing
+subtests.
+
 ## Pagination
 
 `ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values and

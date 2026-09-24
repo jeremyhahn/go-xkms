@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // tenantBackend returns the named backend viewed through the authenticated
@@ -1696,7 +1697,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	}
 
 	if len(params.Data) == 0 {
-		return nil, &errs.Message{Msg: "data is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "data is required"}}
 	}
 
 	// Build seal options
@@ -1712,21 +1713,23 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		// Get the backend, scoped to the caller's tenant, to look up the key
 		ks, err := s.tenantBackend(ctx, backendName)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "backend not found", Err: err}
+			return nil, &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: &errs.Wrapped{Msg: "backend not found", Err: err}}
 		}
 
 		targetAttr, err := keyByCN(ctx, ks, params.KeyID)
 		if err != nil {
-			return nil, err
+			return nil, mapKeyOpError(err)
 		}
 
 		opts.KeyAttributes = targetAttr
 	}
 
-	// Call the xkms service to seal the data
+	// Call the xkms service to seal the data. Matches
+	// pkg/api/grpc/service.go's Seal, which reports this call's failure as
+	// codes.Internal unconditionally.
 	sealed, err := s.xkmsService.SealWithBackend(ctx, backendName, params.Data, opts)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to seal data", Err: err}
+		return nil, &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: "failed to seal data", Err: err}}
 	}
 
 	// Convert metadata from map[string][]byte to map[string]string for JSON serialization
@@ -1757,7 +1760,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	}
 
 	if len(params.Ciphertext) == 0 {
-		return nil, &errs.Message{Msg: "ciphertext is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "ciphertext is required"}}
 	}
 
 	// Use backend name if provided, otherwise use default
@@ -1767,7 +1770,7 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	// type for the sealed data and to resolve the key below.
 	ks, err := s.tenantBackend(ctx, backendName)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "backend not found", Err: err}
+		return nil, &KeyOpError{Code: sdkssh.JSONRPCCodeNotFound, Err: &errs.Wrapped{Msg: "backend not found", Err: err}}
 	}
 
 	// Build sealed data structure
@@ -1787,17 +1790,19 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	if params.KeyID != "" {
 		targetAttr, err := keyByCN(ctx, ks, params.KeyID)
 		if err != nil {
-			return nil, err
+			return nil, mapKeyOpError(err)
 		}
 
 		opts.KeyAttributes = targetAttr
 		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
-	// Call the xkms service to unseal the data
+	// Call the xkms service to unseal the data. Matches
+	// pkg/api/grpc/service.go's Unseal, which reports this call's failure as
+	// codes.Internal unconditionally.
 	plaintext, err := s.xkmsService.UnsealWithBackend(ctx, backendName, sealed, opts)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to unseal data", Err: err}
+		return nil, &KeyOpError{Code: ErrCodeInternalError, Err: &errs.Wrapped{Msg: "failed to unseal data", Err: err}}
 	}
 
 	return UnsealResult{
