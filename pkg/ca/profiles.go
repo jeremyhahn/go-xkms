@@ -565,6 +565,36 @@ func tcgIdentityExtKeyUsage() []asn1.ObjectIdentifier {
 	return []asn1.ObjectIdentifier{OIDTCGVerifiedTPMFixed}
 }
 
+// tcgEKCertificateExtKeyUsage is the extended key usage marking a certificate
+// as a TCG endorsement key credential: tcg-kp-EKCertificate (2.23.133.8.1).
+//
+// The TCG EK Credential Profile defines this OID as an Extended Key Usage
+// purpose, so it belongs inside the certificate's standard ExtKeyUsage
+// extension (RFC 5280 section 4.2.1.12) alongside the purposes tcgExtKeyUsage
+// already asserts — not as a standalone extension under the OID's own Id,
+// which is where it once lived and which requireTCGEKCertificateEKU (the
+// check this CA runs against an EK certificate chain before IAK/IDevID
+// issuance) does not look, nor where ImportEndorsementKeyCertificate and
+// EndorsementKeyCertificate looked for it.
+func tcgEKCertificateExtKeyUsage() []asn1.ObjectIdentifier {
+	return []asn1.ObjectIdentifier{OIDTCGKpEKCertificate}
+}
+
+// tcgAIKCertificateExtKeyUsage is the extended key usage marking a
+// certificate as a TCG AIK/IAK credential: tcg-kp-AIKCertificate
+// (2.23.133.8.3), combined with the attestation key's own TPM-residency and
+// Restricted assertion (tcgAttestationExtKeyUsage).
+//
+// WebAuthn L2 §8.3.1 "TPM Attestation Statement Certificate Requirements"
+// requires tcg-kp-AIKCertificate inside the certificate's standard
+// ExtKeyUsage extension: go-webauthn's "tpm" attestation format verifier
+// parses the ExtKeyUsage extension (OID 2.5.29.37, RFC 5280 section 4.2.1.12)
+// and looks for this OID among its values, not for a standalone extension
+// whose own Id is tcg-kp-AIKCertificate — an encoding no such verifier reads.
+func tcgAIKCertificateExtKeyUsage() []asn1.ObjectIdentifier {
+	return append([]asn1.ObjectIdentifier{OIDTCGKpAIKCertificate}, tcgAttestationExtKeyUsage()...)
+}
+
 // tcgValidityDays is the validity a TCG credential is issued for. TCG device
 // credentials do not expire in the ordinary sense; the issuance paths encode
 // the "no well-defined expiration" date from RFC 5280 section 4.1.2.5 instead
@@ -579,10 +609,11 @@ const tcgValidityDays = 0
 // signing key.
 func NewTCGEndorsementKeyProfile() ProfileProvider {
 	return &baseProfile{
-		name:            ProfileNameTCGEndorsementKey,
-		keyUsage:        x509.KeyUsageKeyEncipherment,
-		extKeyUsage:     tcgExtKeyUsage(),
-		defaultValidity: tcgValidityDays,
+		name:               ProfileNameTCGEndorsementKey,
+		keyUsage:           x509.KeyUsageKeyEncipherment,
+		extKeyUsage:        tcgExtKeyUsage(),
+		unknownExtKeyUsage: tcgEKCertificateExtKeyUsage(),
+		defaultValidity:    tcgValidityDays,
 	}
 }
 
@@ -591,27 +622,39 @@ func NewTCGEndorsementKeyProfile() ProfileProvider {
 //
 // Key usage is DigitalSignature: an attestation key signs quotes and
 // certification structures.
+//
+// BasicConstraintsValid is asserted with IsCA left false. WebAuthn L2 §8.3.1
+// requirement 5 is "The Basic Constraints extension MUST have the CA
+// component set to false"; the TCG TPM 2.0 Keys for Device Identity and
+// Attestation specification never mentions Basic Constraints for an AK/IAK
+// certificate, so asserting it explicitly satisfies WebAuthn without
+// contradicting TCG.
 func NewTCGAttestationKeyProfile() ProfileProvider {
 	return &baseProfile{
-		name:               ProfileNameTCGAttestationKey,
-		keyUsage:           x509.KeyUsageDigitalSignature,
-		extKeyUsage:        tcgExtKeyUsage(),
-		unknownExtKeyUsage: tcgAttestationExtKeyUsage(),
-		defaultValidity:    tcgValidityDays,
-		policies:           tcgAttestationPolicies(),
+		name:                  ProfileNameTCGAttestationKey,
+		keyUsage:              x509.KeyUsageDigitalSignature,
+		extKeyUsage:           tcgExtKeyUsage(),
+		unknownExtKeyUsage:    tcgAIKCertificateExtKeyUsage(),
+		defaultValidity:       tcgValidityDays,
+		policies:              tcgAttestationPolicies(),
+		basicConstraintsValid: true,
 	}
 }
 
 // NewTCGInitialAttestationKeyProfile creates the profile for the initial
 // attestation key (IAK) certificate issued from a TCG-CSR-IDEVID.
+//
+// BasicConstraintsValid is asserted with IsCA left false; see
+// NewTCGAttestationKeyProfile for why.
 func NewTCGInitialAttestationKeyProfile() ProfileProvider {
 	return &baseProfile{
-		name:               ProfileNameTCGInitialAK,
-		keyUsage:           x509.KeyUsageDigitalSignature,
-		extKeyUsage:        tcgExtKeyUsage(),
-		unknownExtKeyUsage: tcgAttestationExtKeyUsage(),
-		defaultValidity:    tcgValidityDays,
-		policies:           tcgAttestationPolicies(),
+		name:                  ProfileNameTCGInitialAK,
+		keyUsage:              x509.KeyUsageDigitalSignature,
+		extKeyUsage:           tcgExtKeyUsage(),
+		unknownExtKeyUsage:    tcgAIKCertificateExtKeyUsage(),
+		defaultValidity:       tcgValidityDays,
+		policies:              tcgAttestationPolicies(),
+		basicConstraintsValid: true,
 	}
 }
 
