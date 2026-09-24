@@ -58,10 +58,10 @@ func rsaPublicArea(t *testing.T, key *rsa.PrivateKey, scheme tpm2.TPMAlgID) tpm2
 		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgRSA,
 			&tpm2.TPMSRSAParms{
 				Scheme:  rsaScheme,
-				KeyBits: tpm2.TPMKeyBits(key.PublicKey.N.BitLen()),
+				KeyBits: tpm2.TPMKeyBits(key.N.BitLen()),
 			}),
 		Unique: tpm2.NewTPMUPublicID(tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{Buffer: key.PublicKey.N.Bytes()}),
+			&tpm2.TPM2BPublicKeyRSA{Buffer: key.N.Bytes()}),
 	}
 }
 
@@ -183,7 +183,7 @@ func TestSignatureFromScheme_RejectsEveryMalformedInput(t *testing.T) {
 						KeyBits: 2048,
 					}),
 				Unique: tpm2.NewTPMUPublicID(tpm2.TPMAlgRSA,
-					&tpm2.TPM2BPublicKeyRSA{Buffer: rsaKey.PublicKey.N.Bytes()}),
+					&tpm2.TPM2BPublicKeyRSA{Buffer: rsaKey.N.Bytes()}),
 			},
 			raw: []byte("some-signature-bytes"),
 		},
