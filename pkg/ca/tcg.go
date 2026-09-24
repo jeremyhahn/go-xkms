@@ -88,15 +88,15 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	// Build TCG-compliant EK certificate extensions
-	extraExtensions := []pkix.Extension{
-		{
-			// TCG EK Certificate marker (tcg-kp-EKCertificate)
-			Id:       OIDTCGKpEKCertificate,
-			Critical: false,
-			Value:    []byte{},
-		},
-	}
+	// Build TCG-compliant EK certificate extensions. The tcg-kp-EKCertificate
+	// marker is not one of them: it is an Extended Key Usage purpose, and the
+	// tcg-ek profile's UnknownExtKeyUsage (tcgEKCertificateExtKeyUsage) puts it
+	// in the certificate's standard ExtKeyUsage extension, where
+	// requireTCGEKCertificateEKU looks for it. Writing it here as a standalone
+	// extension under the OID's own Id, which this function once did, put the
+	// marker somewhere that check -- and any relying party's own EKU check --
+	// does not look.
+	var extraExtensions []pkix.Extension
 
 	// Add TCG TPM Specification extension
 	specExt, err := CreateTPMSpecificationExtension(TCGTPMSpecification{
@@ -241,19 +241,13 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 		return nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	// Build TCG-compliant AK certificate extensions
-	extraExtensions := []pkix.Extension{
-		{
-			// TCG AIK Certificate marker (TPM 1.2 compatible, required for WebAuthn)
-			Id:       OIDTCGKpAIKCertificate,
-			Critical: false,
-			Value:    []byte{},
-		},
-	}
-
 	// Issue the AK certificate per TCG specifications. The profile owns the
-	// digital-signature key usage an attestation key needs for quotes, and the
-	// TCG policy OIDs asserting TPM residency and fixed attributes.
+	// digital-signature key usage an attestation key needs for quotes, the TCG
+	// policy OIDs asserting TPM residency and fixed attributes, and the
+	// tcg-kp-AIKCertificate Extended Key Usage marker
+	// (tcgAIKCertificateExtKeyUsage) -- it does not appear as an ExtraExtensions
+	// entry here because WebAuthn L2 §8.3.1 requires it inside the standard
+	// ExtKeyUsage extension, not as a standalone extension of its own.
 	//
 	// NotBefore is backdated by 1 minute to handle clock skew.
 	profile, err := ca.Profiles().Get(ProfileNameTCGAttestationKey)
@@ -271,7 +265,6 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 		Profile:            profile,
 		Request:            request,
 		SANS:               request.SANS,
-		ExtraExtensions:    extraExtensions,
 	})
 	if err != nil {
 		return nil, err
@@ -626,24 +619,19 @@ func applyDeviceSerialNumber(subject *pkix.Name, prodSerial []byte) {
 // They were also written as standalone boolean-valued extensions, an encoding
 // §8.2 does not define and no relying party reads.
 //
+// Nor is the tcg-kp-AIKCertificate marker (2.23.133.8.3) here. WebAuthn L2
+// §8.3.1 and go-webauthn's "tpm" attestation format verifier both require it
+// inside the certificate's standard ExtKeyUsage extension, which is what the
+// tcg-iak profile's UnknownExtKeyUsage produces (tcgAIKCertificateExtKeyUsage
+// via NewTCGInitialAttestationKeyProfile). Writing it here as a standalone
+// extension under the OID's own Id, which this function once did, put the
+// marker somewhere no such verifier looks.
+//
 // Every extension below is mandatory for the credential, so a failure to build
 // one refuses issuance rather than issuing a certificate that asserts less than
 // the CA verified.
 func buildIAKExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStoreType string) ([]pkix.Extension, error) {
-	extensions := []pkix.Extension{
-		{
-			// TCG AIK Certificate marker
-			Id:       OIDTCGKpAIKCertificate,
-			Critical: false,
-			Value:    []byte{},
-		},
-	}
-
-	platform, err := buildPlatformExtensions(unpacked, issuerKeyStoreType)
-	if err != nil {
-		return nil, err
-	}
-	return append(extensions, platform...), nil
+	return buildPlatformExtensions(unpacked, issuerKeyStoreType)
 }
 
 // buildIDevIDExtensions builds the extensions for an IDevID certificate.
@@ -789,14 +777,7 @@ func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
 	}
 
 	// Warn when the TCG EK OID is absent; some manufacturer certs omit it.
-	hasEKOID := false
-	for _, ext := range cert.Extensions {
-		if ext.Id.Equal(OIDTCGKpEKCertificate) {
-			hasEKOID = true
-			break
-		}
-	}
-	if !hasEKOID {
+	if !hasTCGEKCertificateEKU(cert) {
 		slog.Warn("ca: importing EK certificate without TCG EK OID extension",
 			"cn", cert.Subject.CommonName)
 	}
@@ -824,14 +805,7 @@ func (ca *CA) EndorsementKeyCertificate(cn string) (*x509.Certificate, error) {
 	}
 
 	// Warn when the TCG EK OID is absent.
-	hasEKOID := false
-	for _, ext := range cert.Extensions {
-		if ext.Id.Equal(OIDTCGKpEKCertificate) {
-			hasEKOID = true
-			break
-		}
-	}
-	if !hasEKOID {
+	if !hasTCGEKCertificateEKU(cert) {
 		slog.Warn("ca: retrieved EK certificate without TCG EK OID extension",
 			"cn", cn)
 	}

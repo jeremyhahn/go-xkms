@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -104,6 +105,34 @@ func TestACMEConfig_Validate(t *testing.T) {
 				KeystoreBackend: "software",
 			},
 			config.ErrACMEMissingCAAIdentities,
+		},
+		{
+			// The ACME listener always uses dedicated TLS material (go-xkms#694:
+			// the reuse_tls option was deleted, never having been functional),
+			// so cert/key files are unconditionally required once the earlier
+			// fields are set.
+			"missing_tls",
+			&config.ACMEConfig{
+				Enabled:         true,
+				HTTPSAddr:       ":8443",
+				ExternalURL:     "https://acme.example.com",
+				KeystoreBackend: "software",
+				CAAIdentities:   []string{"acme.example.com"},
+			},
+			config.ErrACMEMissingTLS,
+		},
+		{
+			"tls_present_and_challenge_enabled_is_ok",
+			&config.ACMEConfig{
+				Enabled:         true,
+				HTTPSAddr:       ":8443",
+				ExternalURL:     "https://acme.example.com",
+				KeystoreBackend: "software",
+				CAAIdentities:   []string{"acme.example.com"},
+				TLS:             config.ACMETLSConfig{CertFile: "cert.pem", KeyFile: "key.pem"},
+				Challenges:      config.ACMEChallengesConfig{HTTP01: true},
+			},
+			nil,
 		},
 	}
 	for _, tc := range cases {
@@ -326,13 +355,90 @@ func TestBuildACMERouter_RouteMethods(t *testing.T) {
 	}
 }
 
-// TestBuildACMETLSConfig_RejectsReuse verifies that the TLS builder rejects
-// the reuse_tls option until that support is implemented in a follow-up.
-func TestBuildACMETLSConfig_RejectsReuse(t *testing.T) {
-	_, err := buildACMETLSConfig(&config.ACMEConfig{ReuseTLS: true})
-	if err == nil {
-		t.Fatalf("expected error when reuse_tls is set")
+// TestBuildACMETLSConfig_Success verifies that the TLS builder loads a valid
+// dedicated cert/key pair and applies the configured minimum TLS version.
+func TestBuildACMETLSConfig_Success(t *testing.T) {
+	certPath, keyPath := writeACMETestCertAndKey(t, t.TempDir())
+
+	tlsCfg, err := buildACMETLSConfig(&config.ACMEConfig{
+		TLS: config.ACMETLSConfig{
+			CertFile:   certPath,
+			KeyFile:    keyPath,
+			MinVersion: "TLS1.2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildACMETLSConfig() error = %v", err)
 	}
+	if len(tlsCfg.Certificates) != 1 {
+		t.Fatalf("tlsCfg.Certificates = %d entries, want 1", len(tlsCfg.Certificates))
+	}
+	if tlsCfg.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("tlsCfg.MinVersion = %#x, want TLS1.2", tlsCfg.MinVersion)
+	}
+}
+
+// TestBuildACMETLSConfig_MissingCertFile verifies that the TLS builder
+// fails when the configured certificate file does not exist, rather than
+// silently starting the listener without TLS material.
+func TestBuildACMETLSConfig_MissingCertFile(t *testing.T) {
+	dir := t.TempDir()
+	_, keyPath := writeACMETestCertAndKey(t, dir)
+
+	_, err := buildACMETLSConfig(&config.ACMEConfig{
+		TLS: config.ACMETLSConfig{
+			CertFile: filepath.Join(dir, "does-not-exist.pem"),
+			KeyFile:  keyPath,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for a missing certificate file")
+	}
+}
+
+// writeACMETestCertAndKey writes a self-signed ECDSA certificate and private
+// key to PEM files inside dir, returning their paths.
+func writeACMETestCertAndKey(t *testing.T, dir string) (certPath, keyPath string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("writeACMETestCertAndKey: ecdsa.GenerateKey: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "acme.example.com"},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"acme.example.com"},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("writeACMETestCertAndKey: CreateCertificate: %v", err)
+	}
+
+	certPath = filepath.Join(dir, "acme-cert.pem")
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("writeACMETestCertAndKey: WriteFile cert: %v", err)
+	}
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("writeACMETestCertAndKey: MarshalECPrivateKey: %v", err)
+	}
+
+	keyPath = filepath.Join(dir, "acme-key.pem")
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("writeACMETestCertAndKey: WriteFile key: %v", err)
+	}
+
+	return certPath, keyPath
 }
 
 // TestBuildACMETLSConfig_RejectsUnparseableClientCA proves that a

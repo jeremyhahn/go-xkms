@@ -1,6 +1,6 @@
 # Init Ceremony — Architecture
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## The problem
 
@@ -89,6 +89,9 @@ at the moment it is issued there is no unsealed tenant to derive from.
 | Threshold registry | `pkg/init/threshold_registry.go` | go-xkms |
 | SPIFFE identity stamping | `pkg/spiffe` | go-xkms |
 | Driver | `cmd/xkmsd/init_ceremony.go` | go-xkms |
+| Durable node open (shared with `xkmsd run`) | `pkg/server` (`ResolveNodeSeal`, `EmbeddedNodeStorageConfig`, `OpenEmbeddedNode`) | go-xkms |
+| First-boot bootstrap (shared with `xkmsd run`) | `pkg/server` (`RunFirstBoot`, `BuildFirstBootDependencies`) | go-xkms wiring, go-qrdb bootstrap |
+| Admin-factor persister | `cmd/xkmsd/init_factor_persister.go` | go-xkms |
 
 Capability row: **"Ceremony CA seam" (tier 2)** — interface go-qrdb, impl
 go-xkms, composed via `WithCeremonyCA`.
@@ -102,8 +105,18 @@ operator:  xkmsd init
   → officers: each submits a CSR
       → CAAdapter.SignCSR → SO/officer certificate, tenant=system, SPIFFE SAN
   → shares: split M-of-N, one per officer
+
+single-admin mode only (ceremony reaches StateOperational):
+  → durable node: OpenEmbeddedNode against the SAME Storage.Path / seal
+      strategy `xkmsd run` will resolve from the same config
+  → first-boot: RunFirstBoot (system tenant, roles, administrator + cert,
+      cert bound to the user record) — idempotent, so `xkmsd run`'s own
+      first-boot is a no-op afterward
   → admin factors: PreflightAdminFactors → EnrollAdminFactors
-      (PIV / PKCS#11 / FIDO2 / mTLS, via pkg/factor)
+      (PIV / PKCS#11 / FIDO2 / mTLS, via pkg/factor), each factor persisted
+      immediately through the durable node's user auth-factor store
+  → node closed before `xkmsd init` exits, so `xkmsd run` can reopen the
+      same Pebble directory
 
 officer, remotely:
   xkmsctl init claim-cert  --username … --key … --spki-pin …
@@ -136,24 +149,40 @@ by pin. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.md).
 - **The role passed to `init sign-csr`** — `so`, `admin`, `operator`, `user`,
   `auditor`, `custodian` — determines the certificate's authority.
 
-## Known gap: enrolled factors are not persisted
+## Admin factors are persisted durably (single-admin mode)
 
-`cmd/xkmsd/init_ceremony.go:403` carries a `TODO(P1)`:
+On the single-admin path (the ceremony reaches `StateOperational`), `xkmsd
+init` opens the SAME durable qrdb node `xkmsd run` will later reopen from the
+same data directory (`pkg/server.OpenEmbeddedNode`, shared with
+`(*server.Server).initEmbeddedQRDBNode` so the two opens can never disagree
+about the database engine or the barrier/seal/encryption-at-rest
+configuration — see `pkg/server.ResolveNodeSeal` /
+`EmbeddedNodeStorageConfig`). It runs qrdb's canonical first-boot
+(`pkg/server.RunFirstBoot`) against that node — system tenant, roles, the
+administrator, and its CA-issued certificate, bound to the user record — and
+then enrolls the planned admin login factors with a persister
+(`cmd/xkmsd/init_factor_persister.go`) that writes each one through the same
+node's user auth-factor store immediately after it enrolls. The node is
+closed before `xkmsd init` exits. `(*server.Server).runFirstBoot` is
+idempotent (a node whose administrator already exists is a no-op), so it
+stays a safety net for a deployment that runs `xkmsd run` directly without
+`xkmsd init` first, rather than a second bootstrap.
 
-> supply the factor persister once `xkmsd init` runs on the durable qrdb-backed
-> store. A nil persister preserves today's behaviour exactly — factors enroll
-> and are reported but not stored — rather than silently appearing to persist.
+M-of-N mode does not reach this path: there is no single administrator at
+ceremony time, only officers, so no admin factors are enrolled and nothing
+about M-of-N durability changes here.
 
-So admin factors enrolled during the ceremony are **enrolled and reported, and
-not saved**. The nil persister is a deliberate, documented choice — the
-alternative would look like it worked. Documented here as shipped reality; the
-fix is tracked work, not a doc change.
+Splitting and distributing the qrdb node's OWN barrier Shamir quorum (as
+opposed to the ceremony's own officer/share distribution, which this feature
+already implements) is not yet wired into `xkmsd init`: it refuses with a
+typed error (`ErrNodeShamirUnsupported`) rather than silently leaving the
+node sealed. `none`, `passphrase` and `tpm2` are fully supported.
 
 ## What this feature deliberately does not do
 
 - **It does not own the ceremony, the barrier, Shamir custody, firstboot or the
   identity model.** All go-qrdb's.
 - **It does not run RBAC orchestration.** Single-tenant KMS, no RBAC user store.
-- **It does not persist admin factors** — see above.
+- **It does not drive the qrdb node barrier's own Shamir split** — see above.
 - **It does not replace ACME.** The ceremony issues the *first* credentials;
   routine issuance is [`../acme-issuance/`](../acme-issuance/architecture.md).
