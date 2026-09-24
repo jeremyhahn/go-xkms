@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -388,6 +389,12 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The challenge just left "pending" (to "valid" or "invalid"), and its
+	// outcome is now persisted, so it is recorded once here rather than at
+	// every possible earlier return above.
+	metrics.DecPendingChallenges()
+	metrics.NewMetricsCollector(account.TenantID).RecordChallenge(challenge.Type, challenge.Status)
+
 	// Look up the order associated with the authorization
 	order, err := orderDAO.Get(ctx, authz.OrderID)
 	if err != nil {
@@ -429,6 +436,12 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 			if err := orderDAO.Save(ctx, order); err != nil {
 				writeError(w, common.ServerInternal("Failed to update order status"))
 				return
+			}
+			// The order reached its terminal "invalid" state because an
+			// authorization failed, not because finalize was attempted.
+			metrics.DecActiveOrders()
+			if account.TenantID != "" {
+				metrics.DecTenantActiveOrders(account.TenantID)
 			}
 			valid = false
 			break

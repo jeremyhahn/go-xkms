@@ -1,0 +1,18 @@
+# Grafana dashboard provisioning for go-xkms's ACME dashboard.
+#
+# Auto-provisions deploy/grafana/dashboard.json when Grafana starts.
+
+apiVersion: 1
+
+providers:
+  - name: 'go-xkms ACME'
+    orgId: 1
+    folder: 'go-xkms ACME'
+    folderUid: 'xkms-acme'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

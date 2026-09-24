@@ -19,9 +19,41 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMount verifies that Mount both instruments every request the router
+// serves and makes the production metric set (circuit breaker, cache,
+// degradation, tenant-aware counters) part of the same Registry the base
+// set registers into - the single call site cmd/xkmsd/acme.go and
+// pkg/acme/client/trustedca.go both use.
+func TestMount(t *testing.T) {
+	router := mux.NewRouter()
+	router.HandleFunc("/acme/new-account", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}).Methods(http.MethodPost)
+
+	Mount(router)
+
+	before := getCounterValue(t, requestsTotal, "new-account", "201")
+
+	req := httptest.NewRequest(http.MethodPost, "/acme/new-account", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	after := getCounterValue(t, requestsTotal, "new-account", "201")
+	assert.Equal(t, before+1, after)
+
+	// InitProduction's metrics (e.g. the circuit breaker gauge) must be part
+	// of the same Registry Mount initializes, not left unregistered.
+	assert.NotNil(t, GetCircuitBreakerState())
+	metricFamilies, err := Registry.Gather()
+	require.NoError(t, err)
+	assert.NotEmpty(t, metricFamilies)
+}
 
 func TestMiddleware(t *testing.T) {
 	Init()

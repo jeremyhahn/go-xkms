@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +31,42 @@ func TestInit(t *testing.T) {
 	metricFamilies, err := Registry.Gather()
 	require.NoError(t, err)
 	assert.NotEmpty(t, metricFamilies)
+}
+
+// TestInitExcludesRuntimeCollectors guards the fix for the duplicate-metric
+// scrape failure this registry caused when merged into xkmsd's own /metrics:
+// prometheus.DefaultGatherer already registers Go/process collectors for the
+// host process, so Init must never add a second copy of them to Registry.
+func TestInitExcludesRuntimeCollectors(t *testing.T) {
+	Init()
+
+	families, err := Registry.Gather()
+	require.NoError(t, err)
+	assert.False(t, hasMetricFamily(families, "go_goroutines"),
+		"Init must not register the Go runtime collector into Registry")
+}
+
+func TestRegisterRuntimeCollectors(t *testing.T) {
+	Init()
+
+	// Idempotent: calling it twice must not panic (MustRegister would panic
+	// on a duplicate registration).
+	RegisterRuntimeCollectors()
+	RegisterRuntimeCollectors()
+
+	families, err := Registry.Gather()
+	require.NoError(t, err)
+	assert.True(t, hasMetricFamily(families, "go_goroutines"),
+		"RegisterRuntimeCollectors must register the Go runtime collector into Registry")
+}
+
+func hasMetricFamily(families []*dto.MetricFamily, name string) bool {
+	for _, f := range families {
+		if f.GetName() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRecordRequest(t *testing.T) {
@@ -88,6 +125,16 @@ func TestRecordCertificateRevoked(t *testing.T) {
 	before := getCounterValueSimple(t, certificatesRevokedTotal)
 	RecordCertificateRevoked()
 	after := getCounterValueSimple(t, certificatesRevokedTotal)
+
+	assert.Equal(t, before+1, after)
+}
+
+func TestRecordAccountCreated(t *testing.T) {
+	Init()
+
+	before := getCounterValueSimple(t, accountsCreatedTotal)
+	RecordAccountCreated()
+	after := getCounterValueSimple(t, accountsCreatedTotal)
 
 	assert.Equal(t, before+1, after)
 }
@@ -159,12 +206,6 @@ func TestRecordError(t *testing.T) {
 func TestActiveOrders(t *testing.T) {
 	Init()
 
-	t.Run("set active orders", func(t *testing.T) {
-		SetActiveOrders(5)
-		value := getGaugeValue(t, activeOrders)
-		assert.Equal(t, 5.0, value)
-	})
-
 	t.Run("increment active orders", func(t *testing.T) {
 		before := getGaugeValue(t, activeOrders)
 		IncActiveOrders()
@@ -183,12 +224,6 @@ func TestActiveOrders(t *testing.T) {
 func TestPendingChallenges(t *testing.T) {
 	Init()
 
-	t.Run("set pending challenges", func(t *testing.T) {
-		SetPendingChallenges(10)
-		value := getGaugeValue(t, pendingChallenges)
-		assert.Equal(t, 10.0, value)
-	})
-
 	t.Run("increment pending challenges", func(t *testing.T) {
 		before := getGaugeValue(t, pendingChallenges)
 		IncPendingChallenges()
@@ -202,14 +237,6 @@ func TestPendingChallenges(t *testing.T) {
 		after := getGaugeValue(t, pendingChallenges)
 		assert.Equal(t, before-1, after)
 	})
-}
-
-func TestSetCertificatesExpiringSoon(t *testing.T) {
-	Init()
-
-	SetCertificatesExpiringSoon(3)
-	value := getGaugeValue(t, certificatesExpiringSoon)
-	assert.Equal(t, 3.0, value)
 }
 
 func TestObserveRequestDuration(t *testing.T) {
@@ -283,6 +310,12 @@ func TestGetters(t *testing.T) {
 		assert.Equal(t, certificatesRevokedTotal, counter)
 	})
 
+	t.Run("get accounts created total", func(t *testing.T) {
+		counter := GetAccountsCreatedTotal()
+		assert.NotNil(t, counter)
+		assert.Equal(t, accountsCreatedTotal, counter)
+	})
+
 	t.Run("get challenges completed total", func(t *testing.T) {
 		counter := GetChallengesCompletedTotal()
 		assert.NotNil(t, counter)
@@ -305,12 +338,6 @@ func TestGetters(t *testing.T) {
 		gauge := GetPendingChallenges()
 		assert.NotNil(t, gauge)
 		assert.Equal(t, pendingChallenges, gauge)
-	})
-
-	t.Run("get certificates expiring soon", func(t *testing.T) {
-		gauge := GetCertificatesExpiringSoon()
-		assert.NotNil(t, gauge)
-		assert.Equal(t, certificatesExpiringSoon, gauge)
 	})
 
 	t.Run("get request duration", func(t *testing.T) {
@@ -367,6 +394,7 @@ func TestMetricsConcurrentOperations(t *testing.T) {
 
 	// Test gauge operations
 	t.Run("concurrent gauge operations", func(t *testing.T) {
+		before := getGaugeValue(t, activeOrders)
 		for i := 0; i < operations; i++ {
 			wg.Add(1)
 			go func() {
@@ -375,14 +403,14 @@ func TestMetricsConcurrentOperations(t *testing.T) {
 				DecActiveOrders()
 				IncPendingChallenges()
 				DecPendingChallenges()
-				SetCertificatesExpiringSoon(5)
 			}()
 		}
 		wg.Wait()
 
-		// Gauge values may vary due to concurrent inc/dec, but should be valid
-		value := getGaugeValue(t, certificatesExpiringSoon)
-		assert.GreaterOrEqual(t, value, float64(0))
+		// Every increment is paired with a decrement, so the net effect is zero,
+		// though concurrent inc/dec pairs may transiently disagree in order.
+		value := getGaugeValue(t, activeOrders)
+		assert.Equal(t, before, value)
 	})
 
 	// Test histogram operations
@@ -407,16 +435,11 @@ func TestMetricsConcurrentOperations(t *testing.T) {
 func TestMetricsWithZeroValues(t *testing.T) {
 	Init()
 
-	t.Run("set gauge to zero", func(t *testing.T) {
-		SetActiveOrders(0)
-		value := getGaugeValue(t, activeOrders)
-		assert.Equal(t, 0.0, value)
-	})
-
-	t.Run("set gauge to negative", func(t *testing.T) {
-		SetPendingChallenges(-5)
+	t.Run("gauge can go negative via decrement", func(t *testing.T) {
+		before := getGaugeValue(t, pendingChallenges)
+		DecPendingChallenges()
 		value := getGaugeValue(t, pendingChallenges)
-		assert.Equal(t, -5.0, value)
+		assert.Equal(t, before-1, value)
 	})
 
 	t.Run("observe zero duration", func(t *testing.T) {
@@ -438,13 +461,6 @@ func TestMetricsWithZeroValues(t *testing.T) {
 // TestMetricsWithLargeValues tests edge cases with very large values
 func TestMetricsWithLargeValues(t *testing.T) {
 	Init()
-
-	t.Run("very large gauge value", func(t *testing.T) {
-		largeValue := float64(1<<53 - 1) // Max safe integer in float64
-		SetActiveOrders(largeValue)
-		value := getGaugeValue(t, activeOrders)
-		assert.Equal(t, largeValue, value)
-	})
 
 	t.Run("very large histogram observation", func(t *testing.T) {
 		before := getHistogramCount(t, requestDuration, "large-test")
@@ -544,8 +560,6 @@ func TestGaugeOperationsSequence(t *testing.T) {
 	Init()
 
 	t.Run("increment sequence", func(t *testing.T) {
-		// Set a known starting point to avoid interference from other tests
-		SetActiveOrders(1000)
 		initial := getGaugeValue(t, activeOrders)
 		for i := 0; i < 10; i++ {
 			IncActiveOrders()
@@ -564,12 +578,12 @@ func TestGaugeOperationsSequence(t *testing.T) {
 	})
 
 	t.Run("mixed operations", func(t *testing.T) {
-		SetActiveOrders(100)
+		initial := getGaugeValue(t, activeOrders)
 		IncActiveOrders()
 		IncActiveOrders()
 		DecActiveOrders()
 		value := getGaugeValue(t, activeOrders)
-		assert.Equal(t, 101.0, value)
+		assert.Equal(t, initial+1, value)
 	})
 }
 
@@ -609,7 +623,6 @@ func TestGettersReturnCorrectTypes(t *testing.T) {
 	t.Run("gauge getters", func(t *testing.T) {
 		assert.NotNil(t, GetActiveOrders())
 		assert.NotNil(t, GetPendingChallenges())
-		assert.NotNil(t, GetCertificatesExpiringSoon())
 	})
 
 	t.Run("histogram getters", func(t *testing.T) {

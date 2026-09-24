@@ -199,6 +199,55 @@ sudo systemctl start pcscd
 sudo usermod -a -G pcscd xkms  # or 'scard' on some systems
 ```
 
+## Monitoring (Prometheus + Grafana)
+
+`deploy/prometheus/rules/acme.yml` and `deploy/grafana/` are the
+Prometheus alerting/recording rules and Grafana dashboard for the ACME
+server's metrics (`pkg/acme/server/metrics`; see
+[`docs/acme-issuance/engineering.md#observability`](../docs/acme-issuance/engineering.md#observability)
+for exactly which handler records which metric).
+
+Both the embedded xkmsd ACME server and the standalone TrustedCA expose
+these metrics on a `/metrics` endpoint - xkmsd's already-configured metrics
+server (`metrics.enabled`/`metrics.port`/`metrics.path` in `config.yaml`)
+gathers the ACME registry alongside its own, so there is one endpoint to
+scrape, not two.
+
+1. Point a Prometheus `scrape_configs` entry at that `/metrics` endpoint,
+   e.g.:
+   ```yaml
+   scrape_configs:
+     - job_name: 'acme'
+       static_configs:
+         - targets: ['<xkmsd-host>:<metrics.port>']
+   ```
+   `job_name` must match the `job` label the alert rules in `acme.yml`
+   filter on (`up{job="acme"}`, `process_resident_memory_bytes{job="acme"}`,
+   `go_goroutines{job="acme"}`) - rename both together if you use a
+   different job name.
+
+2. Load the rules:
+   ```yaml
+   rule_files:
+     - /etc/prometheus/rules/*.yml
+   ```
+   and copy `deploy/prometheus/rules/acme.yml` to that path. Validate with
+   `promtool check rules deploy/prometheus/rules/acme.yml` before deploying.
+
+3. Provision Grafana with `deploy/grafana/provisioning/` (datasource +
+   dashboard auto-load) and copy `deploy/grafana/dashboard.json` to the path
+   `provisioning/dashboards/dashboard.yml` names
+   (`/etc/grafana/dashboards` by default). The dashboard's `$instance`
+   template variable is derived from `label_values(acme_requests_total,
+   instance)`, so it populates once Prometheus has scraped at least once.
+
+The "System Resources" panel row and the `acme.resources` alert group read
+`go_*`/`process_*` series. Those exist on every embedded-xkmsd scrape (they
+come from xkmsd's own default Prometheus registry, gathered into the same
+response); the standalone TrustedCA only exposes them because it registers
+its own copy (`metrics.RegisterRuntimeCollectors`, called once from
+`pkg/acme/client/trustedca.go`).
+
 ## Troubleshooting
 
 ### Service fails to start

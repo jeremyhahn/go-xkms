@@ -511,20 +511,90 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Observability
 
-`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics,
-plus the circuit breaker and degradation-cache counters `pkg/acme/server/
-circuitbreaker` and `pkg/acme/server/degradation` record against (failure/
-success/trip per breaker; hit/miss/size per cache) — not yet wired to a
-Prometheus exporter, see "Known gap" below. `GET /acme/health`
-(`RestService.HealthHandler`) is the synchronous, poll-driven view of the
-same state: every breaker's name, state and counters, and whether
-`storage` being open is currently degrading the directory/CA-bundle
+The circuit breakers (`pkg/acme/server/circuitbreaker`) and the degradation
+cache (`pkg/acme/server/degradation`) record failure/success/trip and
+hit/miss/size counters. `GET /acme/health` (`RestService.HealthHandler`) is the
+synchronous view of that state: every breaker's name, state and counters, and
+whether an open `storage` breaker is degrading the directory/CA-bundle
 responses (see "Circuit breakers and degradation"). `pkg/acme/audit` and
-`pkg/acme/server/handlers/audit.go` write audit records for account, order
-and issuance events. Correlation IDs propagate from the transport
-middleware.
+`pkg/acme/server/handlers/audit.go` write audit records for account, order and
+issuance events.
 
-**Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
-stapling, CRL distribution-point automation, CT log submission automation and
-cross-signing automation are roadmap items, not implemented. They are tracked in
-`docs/acme/ROADMAP.md` and deliberately not documented here as if they existed.
+`pkg/acme/server/metrics` is the Prometheus registry for the ACME protocol
+handlers (`pkg/acme/server/metrics/metrics.go`), production/tenant metrics
+(`production.go`) and the request-instrumentation middleware
+(`middleware.go`). It is wired into the handlers that actually produce the
+events it counts, not left to accumulate unread (#734):
+
+- **Order creation and status transitions** — `NewOrderHandler` increments
+  `acme_active_orders` and, per created challenge,
+  `acme_pending_challenges` on a successful save
+  (`pkg/acme/server/handlers/new_order.go:183`). The order's three terminal
+  transitions each decrement `acme_active_orders`: an authorization failing
+  during challenge validation (`pkg/acme/server/handlers/challenge.go:442`),
+  a successful finalize (`pkg/acme/server/handlers/order_finalize.go:925`),
+  and a finalize failure (`order_finalize.go:1236`). Per-tenant active-order
+  and active-account counts (`acme_tenant_active_orders`,
+  `acme_tenant_active_accounts`) mirror the same Inc/Dec pattern for a
+  tenant-bound account.
+- **Challenge validation** — `ChallengeHandler` decrements
+  `acme_pending_challenges` and records `acme_challenges_completed_total`
+  labelled by challenge type and result (`valid`/`invalid`) once validation
+  resolves (`pkg/acme/server/handlers/challenge.go`, via
+  `metrics.NewMetricsCollector(...).RecordChallenge`).
+- **Finalize and issuance** — `OrderFinalizeHandler`'s single success sink
+  (`sendFinalizeResponse`) records `acme_certificates_issued_total` and
+  `acme_certificate_issuance_duration_seconds`
+  (`order_finalize.go:929`); its single failure sink (`failOrder`) records
+  `acme_errors_total{type="issuance_failed"}` and the same duration
+  histogram, so latency is observed on both outcomes
+  (`order_finalize.go:1240`).
+- **Revocation** — `RevokeCertHandler` records
+  `acme_certificates_revoked_total` (and the tenant-scoped counter) once the
+  CA has revoked the certificate and the record is persisted
+  (`pkg/acme/server/handlers/revoke_cert.go:259`).
+- **Account creation** — `NewAccountHandler` records
+  `acme_accounts_created_total` and increments
+  `acme_tenant_active_accounts` for a tenant-bound account
+  (`pkg/acme/server/handlers/new_account.go:232`); `AccountHandler`
+  decrements the tenant gauge on deactivation
+  (`pkg/acme/server/handlers/account.go`).
+- **Requests** — `metrics.Middleware` (`middleware.go`) records
+  `acme_requests_total`, `acme_request_duration_seconds` and
+  `acme_errors_total{type="client_error"|"server_error"}` for every request,
+  classified by the response status code.
+
+`metrics.Mount` (`middleware.go:31`) is the single call both ACME server
+compositions use to initialize the registry and attach `Middleware`:
+`cmd/xkmsd/acme.go:480` (embedded xkmsd) and
+`pkg/acme/client/trustedca.go` (standalone TrustedCA). xkmsd additionally
+calls `srv.RegisterMetricsGatherer(acmemetrics.Registry)`
+(`cmd/xkmsd/acme.go:287`), so the ACME registry - which is deliberately
+private, not `prometheus.DefaultRegisterer` - becomes part of the same
+`/metrics` response `pkg/server/server.go`'s `startMetrics` already serves,
+gathered fresh on every scrape via `serverGatherer`
+(`pkg/server/server.go:2986`) rather than a second endpoint. The standalone
+TrustedCA serves `metrics.Registry` directly as its only metrics source and
+additionally calls `metrics.RegisterRuntimeCollectors()`
+(`metrics.go:158`) for the Go/process collectors that xkmsd's default
+registry already provides for the embedded case - registering them in both
+places would make `prometheus.Gatherers.Gather` reject the scrape as a
+duplicate metric.
+
+Grafana dashboards and Prometheus alerting/recording rules for these metrics
+are in `deploy/grafana/` and `deploy/prometheus/rules/`; see
+`deploy/README.md`'s Monitoring section for what each panel and rule
+references.
+
+`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records
+for account, order and issuance events, independent of the metrics above.
+Correlation IDs propagate from the transport middleware.
+
+**Known gap:** the ACME server's per-tenant rate limiter
+(`pkg/acme/server/tenant_rate_limiter.go`) tracks its own hit/remaining
+counters in an internal struct, not through `pkg/acme/server/metrics`, so
+they are not part of the Prometheus registry or the dashboards above. OCSP
+stapling, CRL distribution-point automation, CT log submission automation
+and cross-signing automation remain roadmap items, not implemented. They are
+tracked in `docs/acme/ROADMAP.md` and deliberately not documented here as if
+they existed.

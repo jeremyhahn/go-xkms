@@ -374,9 +374,6 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	tca.restService = restService
 	tca.mu.Unlock()
 
-	// Initialize Prometheus metrics
-	metrics.Init()
-
 	// Set up rate limiter
 	rateLimiter := server.NewRateLimiter(tca.rateLimitRequests, tca.rateLimitInterval)
 	rateLimiter.SetAuditLogger(auditLog)
@@ -385,6 +382,16 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// Set up ACME router
 	router := mux.NewRouter()
 	acmeRouter := router.PathPrefix("/acme").Subrouter()
+
+	// metrics.Mount initializes the ACME Prometheus registry (base and
+	// production metric sets) and attaches the request-instrumentation
+	// middleware. It is mounted before the rate limiter so every request -
+	// including one the rate limiter refuses - is counted. The standalone
+	// TrustedCA serves metrics.Registry as its only metrics source (below,
+	// "/metrics"), so unlike the embedded xkmsd ACME server it also needs
+	// the Go/process runtime collectors registered here.
+	metrics.Mount(acmeRouter)
+	metrics.RegisterRuntimeCollectors()
 	acmeRouter.Use(rateLimitMiddleware)
 
 	// Register ACME endpoints

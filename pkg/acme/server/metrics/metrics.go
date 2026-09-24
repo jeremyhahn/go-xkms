@@ -50,6 +50,14 @@ var (
 		},
 	)
 
+	accountsCreatedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "acme",
+			Name:      "accounts_created_total",
+			Help:      "Total number of ACME accounts created",
+		},
+	)
+
 	challengesCompletedTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "acme",
@@ -85,14 +93,6 @@ var (
 		},
 	)
 
-	certificatesExpiringSoon = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "acme",
-			Name:      "certificates_expiring_soon",
-			Help:      "Number of certificates expiring in the next 30 days",
-		},
-	)
-
 	// Histogram metrics
 	requestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -113,30 +113,50 @@ var (
 		},
 	)
 
-	once sync.Once
+	once        sync.Once
+	runtimeOnce sync.Once
 )
 
 // Init initializes the metrics registry and registers all ACME metrics.
 // This function is safe to call multiple times - it will only execute once.
+//
+// It deliberately does not register the Go/process runtime collectors: this
+// registry is merged into the host process's own metrics registry when
+// mounted through Mount inside xkmsd (see pkg/server/server.go's
+// serverGatherer), which already carries process-wide Go/process metrics on
+// prometheus.DefaultGatherer, and prometheus.Gatherers.Gather rejects two
+// gatherers reporting the same collected metric. RegisterRuntimeCollectors
+// adds them explicitly for a composition, such as the standalone TrustedCA,
+// where this registry is the only one served.
 func Init() {
 	once.Do(func() {
 		// Register counter metrics
 		Registry.MustRegister(requestsTotal)
 		Registry.MustRegister(certificatesIssuedTotal)
 		Registry.MustRegister(certificatesRevokedTotal)
+		Registry.MustRegister(accountsCreatedTotal)
 		Registry.MustRegister(challengesCompletedTotal)
 		Registry.MustRegister(errorsTotal)
 
 		// Register gauge metrics
 		Registry.MustRegister(activeOrders)
 		Registry.MustRegister(pendingChallenges)
-		Registry.MustRegister(certificatesExpiringSoon)
 
 		// Register histogram metrics
 		Registry.MustRegister(requestDuration)
 		Registry.MustRegister(certificateIssuanceDuration)
+	})
+}
 
-		// Register Go runtime metrics
+// RegisterRuntimeCollectors adds the Go/process runtime collectors to
+// Registry. Call this only from a composition that serves Registry as its
+// sole (or first) metrics source - the standalone TrustedCA
+// (pkg/acme/client/trustedca.go) - never from a composition whose /metrics
+// already gathers prometheus.DefaultGatherer, which registers its own
+// Go/process collectors: gathering both produces a duplicate-metric error.
+// Safe to call multiple times - it will only execute once.
+func RegisterRuntimeCollectors() {
+	runtimeOnce.Do(func() {
 		Registry.MustRegister(collectors.NewGoCollector())
 		Registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	})
@@ -157,6 +177,11 @@ func RecordCertificateRevoked() {
 	certificatesRevokedTotal.Inc()
 }
 
+// RecordAccountCreated increments the account creation counter.
+func RecordAccountCreated() {
+	accountsCreatedTotal.Inc()
+}
+
 // RecordChallengeCompleted increments the challenge completion counter.
 func RecordChallengeCompleted(challengeType, status string) {
 	challengesCompletedTotal.WithLabelValues(challengeType, status).Inc()
@@ -165,11 +190,6 @@ func RecordChallengeCompleted(challengeType, status string) {
 // RecordError increments the error counter for a given error type.
 func RecordError(errorType string) {
 	errorsTotal.WithLabelValues(errorType).Inc()
-}
-
-// SetActiveOrders sets the current number of active orders.
-func SetActiveOrders(count float64) {
-	activeOrders.Set(count)
 }
 
 // IncActiveOrders increments the active orders counter.
@@ -182,11 +202,6 @@ func DecActiveOrders() {
 	activeOrders.Dec()
 }
 
-// SetPendingChallenges sets the current number of pending challenges.
-func SetPendingChallenges(count float64) {
-	pendingChallenges.Set(count)
-}
-
 // IncPendingChallenges increments the pending challenges counter.
 func IncPendingChallenges() {
 	pendingChallenges.Inc()
@@ -195,11 +210,6 @@ func IncPendingChallenges() {
 // DecPendingChallenges decrements the pending challenges counter.
 func DecPendingChallenges() {
 	pendingChallenges.Dec()
-}
-
-// SetCertificatesExpiringSoon sets the number of certificates expiring soon.
-func SetCertificatesExpiringSoon(count float64) {
-	certificatesExpiringSoon.Set(count)
 }
 
 // ObserveRequestDuration records the duration of a request in seconds.
@@ -227,6 +237,11 @@ func GetCertificatesRevokedTotal() prometheus.Counter {
 	return certificatesRevokedTotal
 }
 
+// GetAccountsCreatedTotal returns the accounts created counter for testing.
+func GetAccountsCreatedTotal() prometheus.Counter {
+	return accountsCreatedTotal
+}
+
 // GetChallengesCompletedTotal returns the challenges completed counter for testing.
 func GetChallengesCompletedTotal() *prometheus.CounterVec {
 	return challengesCompletedTotal
@@ -245,11 +260,6 @@ func GetActiveOrders() prometheus.Gauge {
 // GetPendingChallenges returns the pending challenges gauge for testing.
 func GetPendingChallenges() prometheus.Gauge {
 	return pendingChallenges
-}
-
-// GetCertificatesExpiringSoon returns the certificates expiring soon gauge for testing.
-func GetCertificatesExpiringSoon() prometheus.Gauge {
-	return certificatesExpiringSoon
 }
 
 // GetRequestDuration returns the request duration histogram for testing.

@@ -18,7 +18,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 )
+
+// Mount initializes the ACME metrics registry (base and production metric
+// sets) and attaches Middleware to router so every request it serves is
+// instrumented. It is the single call site both the embedded xkmsd ACME
+// server (cmd/xkmsd/acme.go) and the standalone TrustedCA
+// (pkg/acme/client/trustedca.go) use, so the two ACME server compositions
+// expose identical metrics rather than drifting independently.
+func Mount(router *mux.Router) {
+	Init()
+	InitProduction()
+	router.Use(Middleware)
+}
 
 // responseWriter wraps http.ResponseWriter to capture the status code.
 type responseWriter struct {

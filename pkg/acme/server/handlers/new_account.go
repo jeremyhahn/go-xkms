@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -227,6 +228,10 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 		auditAccountID(accountID), req.Contact, verifiedBinding != nil)); auditErr != nil {
 		writeError(w, common.ServerInternal("Failed to record audit event"))
 		return
+	}
+	metrics.RecordAccountCreated()
+	if newAccount.TenantID != "" {
+		metrics.IncTenantActiveAccounts(newAccount.TenantID)
 	}
 	s.respondWithAccount(w, newAccount, http.StatusCreated)
 }
