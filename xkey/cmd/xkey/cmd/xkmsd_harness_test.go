@@ -45,8 +45,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
-
-	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 )
 
 // testOperatorAuthenticator is a minimal, real implementation of
@@ -139,21 +137,18 @@ func newTestXKMSService(t *testing.T) *pkgxkms.XKMSService {
 // connectXKMSdClient dispatch table expects and a cleanup func that stops the
 // server; cleanup also runs automatically via t.Cleanup.
 //
-// It registers the harness's CA with grpcapi.SetCA before starting the
-// listener. Production never calls that function (see the "CA not
-// configured over gRPC/unix" finding in this change's report); the harness
-// calls it so the RPC handlers this test exercises are reachable at all —
-// every other line of the request path is real, unmodified production code.
+// The CA is supplied through unix.GRPCConfig.CA, the same per-Service
+// wiring pkg/server's startUnix uses in production (go-xkms#951).
 func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 	t.Helper()
 
 	svc := newTestXKMSService(t)
-	grpcapi.SetCA(svc)
 
 	socketPath := filepath.Join(t.TempDir(), "xkmsd.sock")
 	srv, err := unixapi.NewGRPCServer(&unixapi.GRPCConfig{
 		SocketPath:  socketPath,
 		XKMSService: svc,
+		CA:          svc,
 		Logger:      testXKMSdQuietLogger(),
 	})
 	require.NoError(t, err)
@@ -172,7 +167,6 @@ func startTestXKMSd(t *testing.T) (address string, cleanup func()) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Stop(ctx)
-		grpcapi.SetCA(nil)
 		select {
 		case <-serveErr:
 		case <-time.After(5 * time.Second):
