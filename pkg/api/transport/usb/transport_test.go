@@ -611,7 +611,10 @@ func TestPasswordSealStoreOperationsRoundTrip(t *testing.T) {
 					return &pairing.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{}`)}
 				},
 			}
-			tr := newPairedTransport(t, fake)
+			tr, ok := newPairedTransport(t, fake)
+			if !ok {
+				return
+			}
 
 			require.NoError(t, op.call(context.Background(), tr))
 			assert.Equal(t, op.method, seenMethod)
@@ -634,7 +637,10 @@ func TestPasswordSealStoreOperationsPropagateRPCError(t *testing.T) {
 					}
 				},
 			}
-			tr := newPairedTransport(t, fake)
+			tr, ok := newPairedTransport(t, fake)
+			if !ok {
+				return
+			}
 
 			err := op.call(context.Background(), tr)
 			require.Error(t, err)
