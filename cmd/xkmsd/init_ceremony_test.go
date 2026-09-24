@@ -29,6 +29,8 @@ import (
 	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -424,5 +426,56 @@ func TestPrintCeremonyOutcome_MofNMentionsClaim(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q; got:\n%s", want, out)
 		}
+	}
+}
+
+// =============================================================================
+// preflightAdminFactors
+// =============================================================================
+
+// TestPreflightAdminFactors_NilPlanIsANoOp proves the probe-only guarantee
+// documented on preflightAdminFactors: with no --admin-factor plan there is
+// nothing to preflight, so the ceremony proceeds without opening any
+// registry.
+func TestPreflightAdminFactors_NilPlanIsANoOp(t *testing.T) {
+	env := &ceremonyEnv{logger: silentLogger()}
+	if err := preflightAdminFactors(context.Background(), env); err != nil {
+		t.Fatalf("preflightAdminFactors(nil plan) = %v, want nil", err)
+	}
+}
+
+// TestPreflightAdminFactors_RefusesAPlanItCannotEnroll proves the whole point
+// of running preflight before the ceremony changes any state: a planned PIV
+// factor with no PIV hardware handler configured must be refused up front,
+// costing the operator one retry instead of an initialized barrier behind a
+// half-enrolled administrator.
+func TestPreflightAdminFactors_RefusesAPlanItCannotEnroll(t *testing.T) {
+	plan, err := qrdbsdk.NewAdminEnrollmentPlan([]qrdbsdk.AdminFactor{qrdbsdk.FactorPIV})
+	if err != nil {
+		t.Fatalf("NewAdminEnrollmentPlan: %v", err)
+	}
+	env := &ceremonyEnv{logger: silentLogger(), enrollmentPlan: plan}
+
+	if err := preflightAdminFactors(context.Background(), env); err == nil {
+		t.Fatal("preflightAdminFactors accepted a PIV plan with no PIV hardware configured")
+	}
+}
+
+// TestPreflightAdminFactors_AcceptsAPlanItCanEnroll proves the success side:
+// an mTLS-only plan (the baseline, backed by the admin certificate the
+// ceremony already issues) passes preflight with no hardware attached.
+func TestPreflightAdminFactors_AcceptsAPlanItCanEnroll(t *testing.T) {
+	plan, err := qrdbsdk.NewAdminEnrollmentPlan([]qrdbsdk.AdminFactor{qrdbsdk.FactorMTLS})
+	if err != nil {
+		t.Fatalf("NewAdminEnrollmentPlan: %v", err)
+	}
+	env := &ceremonyEnv{
+		logger:         silentLogger(),
+		enrollmentPlan: plan,
+		adminCertPEM:   generateECDSACSR(t, "administrator"),
+	}
+
+	if err := preflightAdminFactors(context.Background(), env); err != nil {
+		t.Fatalf("preflightAdminFactors(mtls plan) = %v, want nil", err)
 	}
 }
