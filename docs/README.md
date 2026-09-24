@@ -38,12 +38,14 @@ the folder in the same commit that changes the behavior.
 | [pkcs11-provider-module](pkcs11-provider-module/) | The `pkcs11-module` cgo provider and its slot/token lifecycle |
 | [platform-secrets](platform-secrets/) | Platform secret storage and resolution |
 | [rbac](rbac/) | The `auth.Authorizer` seam over qrdb's identity plane: the xkms permission vocabulary, transport enforcement, and the built-in role model |
+| [post-quantum](post-quantum/) | ML-KEM / ML-DSA key generation and use — the stdlib vs. CIRCL split, FIPS behavior, and the SLH-DSA/HSS/XMSS mechanisms the PKCS#11 module advertises but does not implement |
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [storage-engines](storage-engines/) | The `storage.Backend` interface and the `storage.backend` config choice: file, PebbleDB, memory, and the embedded/remote qrdb backend |
 | [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |
+| [symmetric-aead](symmetric-aead/) | AES-GCM / ChaCha20-Poly1305 / AES-CBC / AES-ECB, the AEAD safety tracker, GCM nonce modes under FIPS |
 | [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
 | [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
 | [webauthn](webauthn/) | The canonical WebAuthn relying party |
@@ -116,6 +118,8 @@ by five and reports unconverted folders as converted.
 | [escrow](escrow/) | `escrow/README.md` — **absorbed and deleted** |
 | [password-vault](password-vault/) | `staticpw/` |
 | [platform-secrets](platform-secrets/) | `platform-store/` |
+| [post-quantum](post-quantum/) | `architecture/post-quantum-cryptography.md`, `backends/quantum.md` |
+| [symmetric-aead](symmetric-aead/) | `architecture/symmetric-encryption.md`, `configuration/aead-auto-selection.md`, `configuration/symmetric-encryption.md` |
 | [audit-log](audit-log/) | — |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
@@ -143,6 +147,9 @@ Ordered "under active development first, then most often read":
 |---|---|---|
 | Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
 | Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
+| FROST threshold signatures | [`frost/`](frost/) | 8 files; full CLI, REST, gRPC and MCP surface |
+| SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage. **Agent-only sessions are already converted** — [`ssh-agent-sessions/`](ssh-agent-sessions/) is NORMATIVE for that capability; the rest of `ssh/` is still legacy |
+| PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
 | Web console | [`web/`](web/) | 5 files |
 | LUKS | — | `pkg/luks`; documented on the xkey side only |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
@@ -165,6 +172,15 @@ above — the two are recorded here instead:
   agent-only sessions. The remainder of [`ssh/README.md`](ssh/README.md) —
   interactive console sessions, the `xkey` connection-profile manager,
   local system SSH config discovery — is still legacy.
+| Storage engines | [`storage/`](storage/) | File, PebbleDB, memory, and object storage backends |
+
+Browser trust injection is converted, but the code and its folder live in the
+xkey module, not here — see
+[`../xkey/docs/browser-trust-injection/`](../xkey/docs/browser-trust-injection/)
+and the superseded-path row in `xkey/docs/README.md`. The legacy
+[`browser/`](browser/) path in *this* tree is a stale duplicate the xkey
+folder does not track; it is left as-is per this repository's no-deletion
+rule for legacy docs.
 
 ### Cross-cutting, and never getting a folder
 
