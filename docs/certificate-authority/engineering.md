@@ -125,6 +125,16 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   than replacing the root. `Load` is the idempotent startup path.
 - **Every operation requires `IsInitialized()`.** Issuance against an
   uninitialized CA fails closed.
+- **`getOrGenerateCAKey` (`pkg/ca/ca.go`) generates a key only when the
+  backend's `GetKey` reports it does not exist yet** —
+  `errors.Is(err, backend.ErrKeyNotFound)`, per the contract in
+  [`../crypto-backends/engineering.md`](../crypto-backends/engineering.md#error-semantics).
+  Any other `GetKey` failure (a TPM transient fault, a PKCS#11 login
+  failure, cloud KMS throttling, an I/O error against the metadata store)
+  returns `ErrKeyRetrievalFailed` and generates nothing (#801). Treating
+  "the backend could not answer" the same as "no key yet" would silently
+  replace a hardware-backed CA signing key the first time its backend had a
+  bad moment.
 - **Serial numbers are unique and never reused**, including across revocation.
 - **`Verify` returns chains, not a boolean**, so callers can inspect which path
   validated. An empty result with a nil error is not success.
@@ -213,6 +223,9 @@ The lifecycle and validation errors named in the interface contract are
 `ErrAlreadyInitialized` and `ErrInvalidConfig`; key-layer failures surface as
 the keystore errors from `pkg/xkms/errors.go`
 (see [`../key-management/engineering.md`](../key-management/engineering.md)).
+`ErrKeyRetrievalFailed` is `getOrGenerateCAKey`'s fail-closed error for a
+backend `GetKey` failure that is not a genuine not-found result (#801, see
+the invariant above).
 
 Transport mapping is in `pkg/api/rest/handlers_ca.go` /
 `handlers_ca_bundle.go` / `handlers_ca_tcg.go`, `pkg/api/grpc/service_ca_bundle.go`,

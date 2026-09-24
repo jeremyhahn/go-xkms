@@ -1794,7 +1794,11 @@ func (m *mockStorageErrorOnExists) Close() error {
 	return nil
 }
 
-// TestGetKey_StorageError tests GetKey with storage error
+// TestGetKey_StorageError tests GetKey with storage error. go-xkms#801: a
+// storage failure that is not storage.ErrNotFound must not be classified as
+// backend.ErrKeyNotFound, since callers such as pkg/ca's getOrGenerateCAKey
+// use that distinction to decide whether generating a replacement key is
+// safe.
 func TestGetKey_StorageError(t *testing.T) {
 	mockStorage := &mockStorageGetError{
 		Backend: storage.New(),
@@ -1815,6 +1819,9 @@ func TestGetKey_StorageError(t *testing.T) {
 	_, err = be.GetKey(context.Background(), attrs)
 	if err == nil {
 		t.Fatal("GetKey should fail with storage error")
+	}
+	if errors.Is(err, backend.ErrKeyNotFound) {
+		t.Errorf("a generic storage error must not satisfy errors.Is(err, backend.ErrKeyNotFound), got: %v", err)
 	}
 }
 

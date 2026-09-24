@@ -1145,6 +1145,18 @@ func (ca *CA) getOrGenerateCAKey(ctx context.Context, attrs *types.KeyAttributes
 		return privateKey, nil
 	}
 
+	// Only a genuine "key does not exist" result may fall through to
+	// generation. Every backend reports that as errors.Is(err,
+	// backendpkg.ErrKeyNotFound); anything else -- a TPM transient fault, a
+	// PKCS#11 login failure, cloud KMS throttling, an I/O error against the
+	// metadata store -- means the backend could not determine whether a key
+	// already exists, and generating one anyway risks silently replacing a
+	// hardware-backed CA signing key the backend merely failed to reach
+	// right now. Fail closed instead.
+	if !errors.Is(err, backendpkg.ErrKeyNotFound) {
+		return nil, &errs.Detail{Err: ErrKeyRetrievalFailed, Detail: fmt.Sprintf("CA identity %q: %v", attrs.CN, err)}
+	}
+
 	// Enforce the optional password policy before any I/O: when RequireKeyPassword
 	// is true an empty (nil) password is rejected so the key is never written as
 	// plaintext PKCS#8. This check runs only on the generate path; retrieving an
