@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -316,6 +317,24 @@ func TestAdminService_GetAuditLogs(t *testing.T) {
 		_, err := svc.GetAuditLogs(nil)
 		assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 	})
+
+	t.Run("admin delegates to the audit store", func(t *testing.T) {
+		asPrivileged(t)
+
+		store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+		require.NoError(t, storeErr)
+		store.LogKeyOperation(audit.OpKeyCreated, "software", "admin-key", true, nil, 7)
+
+		svc := NewAdminService()
+		svc.SetContext(context.Background())
+		svc.SetAuditStore(store)
+
+		entries, err := svc.GetAuditLogs(nil)
+
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		assert.Equal(t, "key_created", entries[0].Operation)
+	})
 }
 
 func TestAdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
@@ -337,6 +356,47 @@ func TestAdminService_ExportAuditLogs_CSV_NotAuthorized(t *testing.T) {
 	svc := NewAdminService()
 	_, err := svc.ExportAuditLogs("csv")
 	assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
+}
+
+// TestAdminService_ExportAuditLogs_Admin drives ExportAuditLogs end to end
+// as an admin: past the authorization and format-validation guards, into
+// the real AuditService.ExportEntries delegation.
+func TestAdminService_ExportAuditLogs_Admin(t *testing.T) {
+	newSvc := func(t *testing.T) *AdminService {
+		asPrivileged(t)
+		store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+		require.NoError(t, storeErr)
+		store.LogKeyOperation(audit.OpKeyCreated, "software", "admin-key", true, nil, 7)
+
+		svc := NewAdminService()
+		svc.SetContext(context.Background())
+		svc.SetAuditStore(store)
+		return svc
+	}
+
+	t.Run("json", func(t *testing.T) {
+		data, err := newSvc(t).ExportAuditLogs("json")
+		require.NoError(t, err)
+
+		var entries []AuditEntry
+		require.NoError(t, json.Unmarshal(data, &entries))
+		require.Len(t, entries, 1)
+		assert.Equal(t, "key_created", entries[0].Operation)
+	})
+
+	t.Run("csv", func(t *testing.T) {
+		data, err := newSvc(t).ExportAuditLogs("csv")
+		require.NoError(t, err)
+
+		csvStr := string(data)
+		assert.True(t, strings.HasPrefix(csvStr, "timestamp,"))
+		assert.Contains(t, csvStr, "admin-key")
+	})
+
+	t.Run("unsupported format is refused after authorization", func(t *testing.T) {
+		_, err := newSvc(t).ExportAuditLogs("yaml")
+		assert.True(t, errors.Is(err, ErrAdminInvalidFormat))
+	})
 }
 
 func TestAdminService_ExportAuditLogs_WithStore(t *testing.T) {
@@ -950,6 +1010,8 @@ type mockFullRegistry struct {
 	backends      map[string]*backendregistry.RegisteredBackend
 	defaults      map[backendregistry.Capability]string
 	setDefaultErr error
+	registerErr   error
+	registered    []*backendregistry.RegisteredBackend
 }
 
 func newMockFullRegistry() *mockFullRegistry {
@@ -963,8 +1025,14 @@ func (m *mockFullRegistry) addBackend(b *backendregistry.RegisteredBackend) {
 	m.backends[b.ID] = b
 }
 
-func (m *mockFullRegistry) Register(_ *backendregistry.RegisteredBackend) error { return nil }
-func (m *mockFullRegistry) Unregister(_ string) error                           { return nil }
+func (m *mockFullRegistry) Register(b *backendregistry.RegisteredBackend) error {
+	if m.registerErr != nil {
+		return m.registerErr
+	}
+	m.registered = append(m.registered, b)
+	return nil
+}
+func (m *mockFullRegistry) Unregister(_ string) error { return nil }
 
 func (m *mockFullRegistry) Get(id string) (*backendregistry.RegisteredBackend, error) {
 	if b, ok := m.backends[id]; ok {
@@ -1789,6 +1857,45 @@ func TestAdminService_RenameBackend_Success(t *testing.T) {
 	assert.Equal(t, "My Secure HSM", found.DisplayName)
 }
 
+// TestAdminService_RenameBackend_PersistsToConfig drives the branch
+// TestAdminService_RenameBackend_Success cannot reach: that test's backend
+// exists only in the in-memory registry, so RenameBackend's config walk
+// never finds a matching ID and falls through the "registry only" return.
+// Here the backend is ALSO present in the unified config on disk, so the
+// rename must find it, update its Name and persist the change.
+func TestAdminService_RenameBackend_PersistsToConfig(t *testing.T) {
+	isolateHome(t)
+
+	svc := NewAdminService()
+	registry := backendregistry.NewMemoryRegistry()
+	backend := &backendregistry.RegisteredBackend{
+		ID:           "pkcs11-hsm",
+		Category:     backendregistry.CategoryPKCS11,
+		Location:     backendregistry.LocationLocal,
+		DisplayName:  "Old Name",
+		Capabilities: map[backendregistry.Capability]bool{backendregistry.CapSigning: true},
+		Metadata:     map[string]string{},
+	}
+	backend.SetState(backendregistry.StateReady)
+	require.NoError(t, registry.Register(backend))
+	svc.SetBackendRegistry(registry)
+
+	ucfg, err := config.Load()
+	require.NoError(t, err)
+	ucfg.Backends.Local = append(ucfg.Backends.Local, config.LocalBackendConfig{
+		ID: "pkcs11-hsm", Category: "pkcs11", Name: "Old Name",
+	})
+	require.NoError(t, config.Save(ucfg))
+
+	require.NoError(t, svc.RenameBackend("pkcs11-hsm", "My Secure HSM"))
+
+	after, err := config.Load()
+	require.NoError(t, err)
+	saved := findLocalBackend(after, "pkcs11-hsm")
+	require.NotNil(t, saved)
+	assert.Equal(t, "My Secure HSM", saved.Name)
+}
+
 func TestAdminService_RenameBackend_NotFound(t *testing.T) {
 	t.Parallel()
 
@@ -1858,6 +1965,18 @@ func TestAdminService_ConvertRegisteredBackend_FallbackDisplayName(t *testing.T)
 	require.NotNil(t, found)
 	assert.Equal(t, "Software", found.DisplayName,
 		"empty DisplayName should fall back to category name")
+}
+
+// TestAdminService_DefaultDisplayName_UnmappedCategoryFallsBackToID pins the
+// second-level fallback: a category with no entry in categoryDisplayNames
+// (a backend type added to the registry before this map was updated) must
+// fall back to the backend's own ID rather than an empty or wrong name.
+func TestAdminService_DefaultDisplayName_UnmappedCategoryFallsBackToID(t *testing.T) {
+	svc := NewAdminService()
+
+	got := svc.defaultDisplayName(backendregistry.BackendCategory("future-category"), "backend-42")
+
+	assert.Equal(t, "backend-42", got)
 }
 
 func TestAdminService_ListBackends_DisplayNameAlwaysSet(t *testing.T) {

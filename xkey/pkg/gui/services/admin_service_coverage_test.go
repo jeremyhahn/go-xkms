@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -977,6 +978,103 @@ func TestAdminService_Coverage_ConfigureBackend_InvalidBackendType(t *testing.T)
 
 	err := svc.ConfigureBackend("invalidtype", map[string]string{"id": "x"})
 	assert.ErrorIs(t, err, ErrAdminInvalidBackendType)
+}
+
+// findLocalBackend returns the entry with the given ID from cfg's local
+// backends, or nil.
+func findLocalBackend(cfg *config.Config, id string) *config.LocalBackendConfig {
+	for i, b := range cfg.Backends.Local {
+		if b.ID == id {
+			return &cfg.Backends.Local[i]
+		}
+	}
+	return nil
+}
+
+// TestAdminService_Coverage_ConfigureBackend_PersistsAndRegisters drives the
+// whole success path: the backend is written to the unified config on disk
+// AND registered in the in-memory registry, not just one or the other.
+//
+// config.Load() always returns at least the built-in "software" backend, so
+// this asserts the NEW entry is present rather than asserting the list's
+// total length.
+func TestAdminService_Coverage_ConfigureBackend_PersistsAndRegisters(t *testing.T) {
+	isolateHome(t)
+
+	svc := NewAdminService()
+	registry := newMockFullRegistry()
+	svc.SetBackendRegistry(registry)
+
+	err := svc.ConfigureBackend("tpm2", map[string]string{
+		"id":     "tpm-1",
+		"name":   "TPM One",
+		"device": "/dev/tpmrm0",
+	})
+	require.NoError(t, err)
+
+	ucfg, loadErr := config.Load()
+	require.NoError(t, loadErr)
+	saved := findLocalBackend(ucfg, "tpm-1")
+	require.NotNil(t, saved, "the configured backend must be persisted")
+	assert.Equal(t, "TPM One", saved.Name)
+
+	require.Len(t, registry.registered, 1)
+	assert.Equal(t, "tpm-1", registry.registered[0].ID)
+}
+
+// TestAdminService_Coverage_ConfigureBackend_ReplacesExistingID pins the
+// update path: configuring the same ID twice must replace the persisted
+// entry, not append a duplicate.
+func TestAdminService_Coverage_ConfigureBackend_ReplacesExistingID(t *testing.T) {
+	isolateHome(t)
+
+	svc := NewAdminService()
+	svc.SetBackendRegistry(newMockFullRegistry())
+
+	require.NoError(t, svc.ConfigureBackend("tpm2", map[string]string{
+		"id": "tpm-1", "name": "First Name", "device": "/dev/tpmrm0",
+	}))
+	before, err := config.Load()
+	require.NoError(t, err)
+	countBefore := len(before.Backends.Local)
+
+	require.NoError(t, svc.ConfigureBackend("tpm2", map[string]string{
+		"id": "tpm-1", "name": "Renamed", "device": "/dev/tpmrm1",
+	}))
+
+	after, err := config.Load()
+	require.NoError(t, err)
+	assert.Len(t, after.Backends.Local, countBefore, "reconfiguring the same ID must replace, not append")
+
+	saved := findLocalBackend(after, "tpm-1")
+	require.NotNil(t, saved)
+	assert.Equal(t, "Renamed", saved.Name)
+	require.NotNil(t, saved.TPM2)
+	assert.Equal(t, "/dev/tpmrm1", saved.TPM2.Device)
+}
+
+// TestAdminService_Coverage_ConfigureBackend_RegistryFailureIsNonFatal pins
+// that a registration failure in the in-memory registry is logged rather
+// than rolled back or returned: the config is already durably saved, and
+// the backend will load correctly on the next restart even though this
+// process's live registry missed it.
+func TestAdminService_Coverage_ConfigureBackend_RegistryFailureIsNonFatal(t *testing.T) {
+	isolateHome(t)
+
+	svc := NewAdminService()
+	registry := newMockFullRegistry()
+	registry.registerErr = errors.New("registry unavailable")
+	svc.SetBackendRegistry(registry)
+
+	err := svc.ConfigureBackend("tpm2", map[string]string{
+		"id": "tpm-1", "name": "TPM One", "device": "/dev/tpmrm0",
+	})
+
+	require.NoError(t, err, "a saved-but-not-registered backend must not fail the call")
+
+	ucfg, loadErr := config.Load()
+	require.NoError(t, loadErr)
+	assert.NotNil(t, findLocalBackend(ucfg, "tpm-1"), "the config write must still have happened")
 }
 
 // ---------------------------------------------------------------------------
