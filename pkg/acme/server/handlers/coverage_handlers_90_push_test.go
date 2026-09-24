@@ -1007,7 +1007,7 @@ func TestOrderFinalizeHandler_DeviceAttest01Path_RejectsUnauthorizedSAN(t *testi
 	resp := httptest.NewRecorder()
 	service.OrderFinalizeHandler(resp, req)
 
-	assertErrorType(t, resp, common.ErrTypeRejectedIdentifier, http.StatusUnauthorized)
+	assertErrorType(t, resp, common.ErrTypeRejectedIdentifier, http.StatusForbidden)
 
 	updated, err := orderDAO.Get(ctx, order.ID)
 	require.NoError(t, err)

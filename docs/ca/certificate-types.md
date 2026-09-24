@@ -161,17 +161,18 @@ EK certificates certify the TPM's Endorsement Key, which is a non-migratable key
 |-----------|-------|
 | IsCA | false |
 | KeyUsage | KeyEncipherment |
-| ExtKeyUsage | ClientAuth, ServerAuth |
+| ExtKeyUsage | ClientAuth, ServerAuth, tcg-kp-EKCertificate (2.23.133.8.1) |
 | NotAfter | 99991231235959Z (Indefinite) |
-| TCG OID | tcg-kp-EKCertificate (2.23.133.8.1) |
+
+tcg-kp-EKCertificate is an Extended Key Usage purpose (RFC 5280 section
+4.2.1.12): the `tcg-ek` profile carries it in `UnknownExtKeyUsage`, so it is
+encoded inside the certificate's standard ExtKeyUsage extension, not as a
+standalone extension under the OID's own Id.
 
 #### TCG Extensions
 
 ```go
 extraExtensions := []pkix.Extension{
-    // TCG EK Certificate marker
-    {Id: OIDTCGKpEKCertificate, Critical: false},
-
     // TPM Specification (TPM 2.0)
     CreateTPMSpecificationExtension(TPMSpecification{
         Family: "2.0", Level: 0, Revision: 0,
@@ -208,9 +209,31 @@ IAK certificates certify the TPM's attestation key used for platform attestation
 |-----------|-------|
 | IsCA | false |
 | KeyUsage | DigitalSignature |
-| ExtKeyUsage | ClientAuth, ServerAuth |
+| ExtKeyUsage | ClientAuth, ServerAuth, tcg-kp-AIKCertificate (2.23.133.8.3), tcg-cap-verifiedTPMRestricted (2.23.133.11.1.3) |
+| BasicConstraints | Asserted, CA:false |
 | NotAfter | 99991231235959Z (Indefinite) |
-| TCG OID | tcg-kp-AIKCertificate (2.23.133.8.3) |
+
+tcg-kp-AIKCertificate is an Extended Key Usage purpose, carried in the
+`tcg-ak`/`tcg-iak` profiles' `UnknownExtKeyUsage` rather than as a standalone
+extension: WebAuthn L2 §8.3.1 requirement 4 ("TPM Attestation Statement
+Certificate Requirements") and go-webauthn's `"tpm"` attestation format
+verifier both look for the OID inside the standard ExtKeyUsage extension. The
+explicit `BasicConstraints CA:false` satisfies requirement 5; the TCG TPM 2.0
+Keys for Device Identity and Attestation specification never mentions Basic
+Constraints for an AK/IAK certificate, so asserting it does not contradict
+TCG.
+
+**Pending decision (go-xkms#715):** WebAuthn L2 §8.3.1 requirement 2 requires
+this certificate's Subject to be empty. TCG TPM 2.0 Keys for Device Identity
+and Attestation v1.00 r12 §8 requires the opposite -- "the subject field MUST
+contain a unique X.500 Distinguished Name" -- and this CA's certificate store
+(`pkg/certstore.CertStore`) is keyed by `Subject.CommonName`, so an IAK/AK
+certificate with an empty Subject cannot be stored or looked up
+(`IAKCertificate(ctx, model, serial)`) the way it is today. The Subject and
+SAN content described below are therefore unchanged pending an owner decision
+among reconciling options (e.g. issuing a second, WebAuthn-profile-only
+certificate over the same key). Everything else on this page reflects the
+current, shipped behavior.
 
 #### TCG Policy OIDs
 

@@ -600,6 +600,16 @@ func TestErrorTypesFromTypes(t *testing.T) {
 			want: "tpm: endorsement certificate not found",
 		},
 		{
+			name: "ErrEKCertServiceUnreachable",
+			err:  ErrEKCertServiceUnreachable,
+			want: "tpm: ek certificate service unreachable",
+		},
+		{
+			name: "ErrEKCertServiceParseFailed",
+			err:  ErrEKCertServiceParseFailed,
+			want: "tpm: failed to parse ek certificate service response",
+		},
+		{
 			name: "ErrInvalidHashFunction",
 			err:  ErrInvalidHashFunction,
 			want: "tpm: invalid hash function",
@@ -949,6 +959,8 @@ func TestErrorTypesDefinitions(t *testing.T) {
 		{"ErrNotInitialized", ErrNotInitialized, "tpm: not initialized"},
 		{"ErrNotConfigured", ErrNotConfigured, "tpm: IDevID not configured"},
 		{"ErrEndorsementCertNotFound", ErrEndorsementCertNotFound, "tpm: endorsement certificate not found"},
+		{"ErrEKCertServiceUnreachable", ErrEKCertServiceUnreachable, "tpm: ek certificate service unreachable"},
+		{"ErrEKCertServiceParseFailed", ErrEKCertServiceParseFailed, "tpm: failed to parse ek certificate service response"},
 		{"ErrInvalidPlatformSRKConfiguration", ErrInvalidPlatformSRKConfiguration, "tpm: invalid platform SRK configuration"},
 		{"ErrInvalidHashFunction", ErrInvalidHashFunction, "tpm: invalid hash function"},
 		{"ErrInvalidSessionAuthorization", ErrInvalidSessionAuthorization, "tpm: invalid session authorization"},

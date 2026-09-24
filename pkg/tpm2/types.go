@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 )
@@ -70,6 +71,13 @@ const (
 	infoOpeningPlatformAddress = "tpm: opening TPM 2.0 TCP connection"
 	infoClosingConnection      = "tpm: closing TPM 2.0"
 
+	// maxEKCertServiceResponseBytes bounds how much of the manufacturer EK
+	// certificate service response body downloadEKCertFromManufacturer reads,
+	// so a malicious or misbehaving service cannot exhaust memory by streaming
+	// an unbounded body at a client that only ever needs a few KB of
+	// certificate DER/PEM.
+	maxEKCertServiceResponseBytes = 64 * 1024
+
 	EnrollmentStrategyIAK                    = EnrollmentStrategy("IAK")
 	EnrollmentStrategyIAK_IDEVID_SINGLE_PASS = EnrollmentStrategy("IAK_IDEVID_SINGLE_PASS")
 
@@ -83,33 +91,47 @@ const (
 	binaryMeasurementsFileNameTemplate = "/sys/kernel/security/%s/binary_bios_measurements"
 )
 
+// DefaultEKCertDownloadTimeout bounds the manufacturer EK certificate
+// service HTTP request when EKConfig.CertDownloadTimeout is left at its
+// zero value. See EKConfig.CertDownload.
+const DefaultEKCertDownloadTimeout = 10 * time.Second
+
 var (
 	// debugPCR and debugPCRBank are used in test files.
 	debugPCR     = uint(16)      //nolint:unused // used in tests
 	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
-	ErrPlatformPasswordUnavailable     = errors.New("tpm: failed to retrieve platform password")
-	ErrCertStoreNotInitialized         = errors.New("tpm: certificate store not initialized")
-	ErrInvalidAKAttributes             = errors.New("tpm: invalid AK attributes")
-	ErrInvalidEKCertFormat             = errors.New("tpm: invalid endorsement certificate format")
-	ErrInvalidEKAttributes             = errors.New("tpm: invalid EK attributes")
-	ErrInvalidEKCert                   = errors.New("tpm: failed to verify endorsement key certificate")
-	ErrDeviceAlreadyOpen               = errors.New("tpm: device already open")
-	ErrOpeningDevice                   = errors.New("tpm: error opening device")
-	ErrInvalidSessionType              = errors.New("tpm: invalid session type")
-	ErrInvalidSRKAuth                  = errors.New("tpm: invalid storage root key auth")
-	ErrInvalidActivationCredential     = errors.New("tpm: invalid activation credential")
-	ErrHashAlgorithmNotSupported       = errors.New("tpm: hash algorithm not supported")
-	ErrInvalidKeyAttributes            = errors.New("tpm: invalid key attributes")
-	ErrInvalidPolicyDigest             = errors.New("tpm: invalid policy digest")
-	ErrInvalidHandle                   = errors.New("tpm: invalid entity handle")
-	ErrUnexpectedRandomBytes           = errors.New("tpm: unexpected number of random bytes read")
-	ErrInvalidRandomBytesLength        = errors.New("tpm: invalid random bytes length")
-	ErrInvalidPCRIndex                 = errors.New("tpm: invalid PCR index")
-	ErrInvalidNonce                    = errors.New("tpm: invalid nonce")
-	ErrNotInitialized                  = errors.New("tpm: not initialized")
-	ErrNotConfigured                   = errors.New("tpm: IDevID not configured")
-	ErrEndorsementCertNotFound         = errors.New("tpm: endorsement certificate not found")
+	ErrPlatformPasswordUnavailable = errors.New("tpm: failed to retrieve platform password")
+	ErrCertStoreNotInitialized     = errors.New("tpm: certificate store not initialized")
+	ErrInvalidAKAttributes         = errors.New("tpm: invalid AK attributes")
+	ErrInvalidEKCertFormat         = errors.New("tpm: invalid endorsement certificate format")
+	ErrInvalidEKAttributes         = errors.New("tpm: invalid EK attributes")
+	ErrInvalidEKCert               = errors.New("tpm: failed to verify endorsement key certificate")
+	ErrDeviceAlreadyOpen           = errors.New("tpm: device already open")
+	ErrOpeningDevice               = errors.New("tpm: error opening device")
+	ErrInvalidSessionType          = errors.New("tpm: invalid session type")
+	ErrInvalidSRKAuth              = errors.New("tpm: invalid storage root key auth")
+	ErrInvalidActivationCredential = errors.New("tpm: invalid activation credential")
+	ErrHashAlgorithmNotSupported   = errors.New("tpm: hash algorithm not supported")
+	ErrInvalidKeyAttributes        = errors.New("tpm: invalid key attributes")
+	ErrInvalidPolicyDigest         = errors.New("tpm: invalid policy digest")
+	ErrInvalidHandle               = errors.New("tpm: invalid entity handle")
+	ErrUnexpectedRandomBytes       = errors.New("tpm: unexpected number of random bytes read")
+	ErrInvalidRandomBytesLength    = errors.New("tpm: invalid random bytes length")
+	ErrInvalidPCRIndex             = errors.New("tpm: invalid PCR index")
+	ErrInvalidNonce                = errors.New("tpm: invalid nonce")
+	ErrNotInitialized              = errors.New("tpm: not initialized")
+	ErrNotConfigured               = errors.New("tpm: IDevID not configured")
+	ErrEndorsementCertNotFound     = errors.New("tpm: endorsement certificate not found")
+
+	// ErrEKCertServiceUnreachable reports that the manufacturer EK
+	// certificate service could not be reached within the configured bound
+	// (EKConfig.CertDownloadTimeout / DefaultEKCertDownloadTimeout) or
+	// answered with a non-200 status. It wraps the underlying transport
+	// error, including a context-deadline timeout, as detail via errs.Detail
+	// so callers can still match it with errors.Is.
+	ErrEKCertServiceUnreachable = errors.New("tpm: ek certificate service unreachable")
+
 	ErrInvalidPlatformSRKConfiguration = errors.New("tpm: invalid platform SRK configuration")
 	ErrInvalidHashFunction             = errors.New("tpm: invalid hash function")
 	ErrInvalidSessionAuthorization     = errors.New("tpm: invalid session authorization")
@@ -119,8 +141,13 @@ var (
 	ErrSignValidatePublicRequired      = errors.New("tpm: TPMAttributes.Public is required for SignValidate")
 	ErrSignValidateHashAlgRequired     = errors.New("tpm: TPMAttributes.HashAlg is required for SignValidate")
 	ErrECCEKCertUnsupported            = errors.New("tpm: ECC EK certificates unsupported at this time")
-	ErrEKCertServiceParseFailed        = errors.New("tpm: failed to parse certificate from EK certificate service")
-	ErrRSAPSSNotSupported              = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
+
+	// ErrEKCertServiceParseFailed reports that the manufacturer EK
+	// certificate service returned a response that could not be parsed as a
+	// DER or PEM encoded X.509 certificate.
+	ErrEKCertServiceParseFailed = errors.New("tpm: failed to parse ek certificate service response")
+
+	ErrRSAPSSNotSupported = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
 
 	// ErrRawRSASignUnsupported reports that a TPM cannot produce a PKCS#1 v1.5
 	// signature over a caller-supplied DigestInfo -- the operation PKCS#11 calls
