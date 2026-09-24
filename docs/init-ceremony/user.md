@@ -1,6 +1,6 @@
 # Init Ceremony — User Guide
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-23
 
 ## What a ceremony is, and why it is one
 
@@ -53,9 +53,13 @@ Roles are `so`, `admin`, `operator`, `user`, `auditor`, `custodian`. `so` is the
 security officer — a control-plane credential that works before any tenant
 barrier unseals. Hand it out deliberately.
 
-**One thing to know about the current build:** admin factors enrolled during the
-ceremony are enrolled and reported, and **not stored**. Do not plan a process
-that depends on them surviving a restart.
+In single-admin mode, admin factors enrolled during the ceremony (mTLS, FIDO2,
+PIV) are persisted durably: `xkmsd init` writes them into the same store
+`xkmsd run` reads at login, so they survive a restart with no re-enrollment.
+`--barrier-strategy shamir` is not yet supported for the durable node's own
+encryption-at-rest (the ceremony's own M-of-N officer/share distribution,
+above, is unaffected); `xkmsd init` refuses up front rather than leave the
+node half-sealed.
 
 ## Each officer's part
 
@@ -100,7 +104,7 @@ threshold only helps if the shares are actually separated.
 | ceremony in the wrong state | steps are out of order | `init status` shows where things stand |
 | routes return 404 | no ceremony configured on this server | server-side configuration |
 | ceremony aborts on a random-source error | the server could not get good randomness | do not retry until that is fixed; the material would be untrustworthy |
-| enrolled factors gone after a restart | known — factors are not persisted today | re-enrol through the normal factor path |
+| `init: --barrier-strategy shamir is not yet supported for the durable node barrier` | the node barrier's own Shamir split ceremony is not wired yet | use `none`, `passphrase` or `tpm2` for the node barrier strategy; the ceremony's own officer/share distribution is unaffected |
 
 The pin mismatch is the one row in this table that is a security event rather
 than a mistake. Everything else is recoverable by doing the step again.

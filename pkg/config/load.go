@@ -51,6 +51,9 @@ var removedConfigFields = map[string]string{
 		"or Shamir quorum at Initialize/Unseal time via `xkmsctl barrier unseal` (or `unseal-shares`) " +
 		"or the equivalent API call, or configure a hardware seal strategy (barrier.strategy: " +
 		"\"tpm2\"/\"pkcs11\") for unattended auto-unseal",
+	"acme.reuse_tls": "the ACME listener always uses its own dedicated TLS material; " +
+		"tls.cert_file and tls.key_file are required when acme.enabled is true " +
+		"(there is no reuse of the primary xkmsd TLS config)",
 }
 
 // RemovedFieldError is returned by Load when the configuration file or

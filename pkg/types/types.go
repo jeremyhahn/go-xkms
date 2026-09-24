@@ -286,7 +286,12 @@ const (
 	StoreQuantum  StoreType = "quantum"
 	StoreFrost    StoreType = "frost"
 	StorePhone    StoreType = "phone"
-	StoreUnknown  StoreType = "unknown"
+	// StoreAVR labels a key that lives in the secure element of an AVR
+	// device reached over the arduino-generic wire protocol. The private
+	// half never leaves the element; what xkms holds is the public point
+	// and the device's attestation evidence.
+	StoreAVR     StoreType = "avr"
+	StoreUnknown StoreType = "unknown"
 )
 
 // String returns the string representation of the store type.
@@ -297,7 +302,7 @@ func (st StoreType) String() string {
 // IsValid returns true if the store type is recognized.
 func (st StoreType) IsValid() bool {
 	switch st {
-	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreFrost:
+	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreFrost, StorePhone, StoreAVR:
 		return true
 	default:
 		return false
@@ -327,6 +332,10 @@ func ParseStoreType(s string) StoreType {
 		return StoreQuantum
 	case "frost":
 		return StoreFrost
+	case "phone":
+		return StorePhone
+	case "avr":
+		return StoreAVR
 	default:
 		return StoreUnknown
 	}
@@ -354,6 +363,7 @@ const (
 	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM (Nitrokey HSM, CardContact)
 	BackendTypeYubiKey      BackendType = "yubikey"      // YubiKey PIV
 	BackendTypeSoftHSM      BackendType = "softhsm"      // SoftHSM2 (development/testing)
+	BackendTypeAVR          BackendType = "avr"          // AVR device with a DICE-rooted identity, over the arduino-generic wire protocol
 )
 
 // =============================================================================
