@@ -638,7 +638,7 @@ func TestBackupRestore_WithPassword(t *testing.T) {
 	assert.Contains(t, output, "Restore completed successfully")
 
 	// The seeded entries must exist in the target home's stores.
-	passwordStore, err := openPasswordStore(filepath.Join(backupTestDataDir(targetHome), backupPasswordStoreDir))
+	passwordStore, err := openPasswordStore(filepath.Join(backupTestDataDir(targetHome), passwordStoreFeature))
 	require.NoError(t, err)
 	defer func() { _ = passwordStore.Close() }()
 	entries, err := passwordStore.List()

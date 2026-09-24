@@ -777,7 +777,10 @@ func openSyncService(cmd *cobra.Command) (*xkeysync.Service, *backupSources, err
 		return nil, nil, err
 	}
 
-	sources, err := resolveBackupSources(cmd, backupStorePaths{})
+	// Sync merges in both directions, so a local store that has never been
+	// written to is a normal starting point, not a missing source: strict
+	// existence checking is for the read-only backup commands.
+	sources, err := resolveBackupSources(cmd, backupStorePaths{}, false)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -48,13 +48,21 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 
 	// Trust store and password store are not barrier-aware yet (only OATH
 	// is, go-xkms#134/#148), so point them at explicit plain-file locations
-	// to opt out of the barrier-encrypted refusal for those two stores.
+	// to opt out of the barrier-encrypted refusal for those two stores. An
+	// explicit backup source must already exist (go-xkms#936), so create
+	// both directories up front, the same as an operator who has used these
+	// locations before but has nothing in them yet.
+	trustStorePath := filepath.Join(dataDir, trustDataSubdir)
+	passwordStorePath := filepath.Join(dataDir, passwordStoreFeature)
+	require.NoError(t, os.MkdirAll(trustStorePath, 0700))
+	require.NoError(t, os.MkdirAll(passwordStorePath, 0700))
+
 	output := filepath.Join(home, "barrier-backup.xkb")
 	setBackupFlags(t, backupCreateCmd, map[string]string{
 		"output":           output,
 		"password":         "correct-horse-battery-staple",
-		"trust-store":      filepath.Join(dataDir, backupTrustStoreDir),
-		"password-store":   filepath.Join(dataDir, backupPasswordStoreDir),
+		"trust-store":      trustStorePath,
+		"password-store":   passwordStorePath,
 		"barrier-password": barrierPassword,
 	})
 	var createOut bytes.Buffer
@@ -79,7 +87,7 @@ func TestBackupLifecycle_BarrierBackedOATHStore(t *testing.T) {
 	require.NoError(t, runBackupRestore(backupRestoreCmd, []string{output}))
 	assert.Contains(t, restoreOut.String(), "Restore completed successfully.")
 
-	restoredOATH, err := oath.NewFileStore(filepath.Join(backupTestDataDir(restoreHome), backupOATHStoreFile))
+	restoredOATH, err := oath.NewFileStore(filepath.Join(backupTestDataDir(restoreHome), oathStoreFilename))
 	require.NoError(t, err)
 	defer func() { _ = restoredOATH.Close() }()
 	creds, err := restoredOATH.List()
@@ -97,8 +105,9 @@ func TestResolveOATHBackupStore_BarrierInitialized_UsesBackendStore(t *testing.T
 
 	setBackupFlags(t, backupCreateCmd, map[string]string{"barrier-password": password})
 
-	store, displayPath, err := resolveOATHBackupStore(backupCreateCmd, dataDir, "")
+	store, displayPath, missing, err := resolveOATHBackupStore(backupCreateCmd, dataDir, "", true)
 	require.NoError(t, err)
+	require.False(t, missing)
 	defer func() { _ = store.Close() }()
 
 	assert.Equal(t, "barrier:oath/", displayPath)
@@ -122,9 +131,13 @@ func TestResolveOATHBackupStore_ExplicitPathBypassesBarrier(t *testing.T) {
 	dataDir := backupTestDataDir(home)
 	initTestOATHBarrier(t, home, "irrelevant-password")
 
+	// strict=false: this exercises the barrier-bypass wiring, not the
+	// missing-source behavior covered in backup_sources_test.go, so the
+	// explicit file is created on first open as a restore would.
 	explicitPath := filepath.Join(t.TempDir(), "explicit-oath.json")
-	store, displayPath, err := resolveOATHBackupStore(backupCreateCmd, dataDir, explicitPath)
+	store, displayPath, missing, err := resolveOATHBackupStore(backupCreateCmd, dataDir, explicitPath, false)
 	require.NoError(t, err)
+	require.False(t, missing)
 	defer func() { _ = store.Close() }()
 
 	assert.Equal(t, explicitPath, displayPath)
@@ -144,4 +157,41 @@ func TestResolveOATHBackupStore_ExplicitPathBypassesBarrier(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "JBSWY3DPEHPK3PXP",
 		"the plain file store must hold the secret in the historical format")
+}
+
+// TestResolveOATHBackupStore_DefaultMissing_StrictReportsMissing is the
+// go-xkms#936 regression guard for the OATH default: in strict (read) mode,
+// with no barrier initialized and no oath.json ever written, the store must
+// come back reported missing rather than auto-created and silently empty.
+func TestResolveOATHBackupStore_DefaultMissing_StrictReportsMissing(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+
+	store, displayPath, missing, err := resolveOATHBackupStore(backupCreateCmd, dataDir, "", true)
+	require.NoError(t, err)
+	assert.Nil(t, store)
+	assert.True(t, missing)
+	assert.Equal(t, filepath.Join(dataDir, oathStoreFilename), displayPath)
+
+	_, statErr := os.Stat(displayPath)
+	assert.True(t, os.IsNotExist(statErr), "a strict read must never create the default it could not find")
+}
+
+// TestResolveOATHBackupStore_ExplicitPathMissing_StrictErrors is the
+// go-xkms#936 regression guard for an explicit --oath-store: strict mode
+// must refuse to read from a path the operator named that has never existed
+// instead of silently creating it empty.
+func TestResolveOATHBackupStore_ExplicitPathMissing_StrictErrors(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+
+	explicitPath := filepath.Join(t.TempDir(), "never-created.json")
+	store, _, missing, err := resolveOATHBackupStore(backupCreateCmd, dataDir, explicitPath, true)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackupSourceMissing)
+	assert.Nil(t, store)
+	assert.False(t, missing)
+
+	_, statErr := os.Stat(explicitPath)
+	assert.True(t, os.IsNotExist(statErr), "a strict read must never create the path it could not find")
 }
