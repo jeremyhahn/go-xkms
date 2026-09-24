@@ -243,6 +243,27 @@ identifier is still reachable at its real address. Off by default
 loopback identifier is refused with `ErrLoopbackIdentifierNotAllowed` before
 the challenge verifier runs, rather than being silently substituted (#140).
 
+The xkmsd ACME listener (`acme.tls`, `ACMEConfig` / `ACMETLSConfig`,
+`pkg/config/acme.go`) always uses its own dedicated TLS certificate/key pair;
+`acme.tls.cert_file` and `acme.tls.key_file` are required whenever
+`acme.enabled` is true (`ErrACMEMissingTLS`), enforced by
+`buildACMETLSConfig` in `cmd/xkmsd/acme.go`. There is no option to reuse the
+primary xkmsd TLS material — the xkmsd TLS stack is authenticated against the
+xkmsd REST/gRPC server CN and would generally not match an ACME client's
+expected hostname. The `acme.reuse_tls` key that once gated this (and was
+refused at start-up rather than actually working) is deleted from the schema;
+`pkg/config.Load` rejects a file or environment variable that still sets it
+with a typed `*config.RemovedFieldError{Field, Replacement}` before the
+decoder gets a chance to silently drop it. This reuses the general removed-
+field mechanism go-xkms#653 introduced for `barrier.passphrase`:
+`removedConfigFields` (`pkg/config/load.go`) maps a dotted key to its
+replacement guidance, and `rejectRemovedFields` — run on the merged viper
+instance after the file is read and before `Unmarshal` — binds each key to
+its canonical `XKMS_`-prefixed environment name, so a stale
+`XKMS_ACME_REUSE_TLS` is rejected exactly like a stale file key, and fails
+with `*RemovedFieldError` if either source still sets it. Adding a future
+field deletion is one entry in that table (go-xkms#694).
+
 The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`) is a
 separate configuration surface — not built from `pkg/config` and not read
 through viper — so it carries its own copy of the same switch:

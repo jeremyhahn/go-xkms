@@ -8,7 +8,7 @@ require (
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.19.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms v0.21.0-alpha
+	github.com/jeremyhahn/go-xkms v0.22.0-alpha
 	github.com/quic-go/quic-go v0.62.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.56.0
@@ -140,12 +140,13 @@ require (
 	github.com/hashicorp/vault/api v1.23.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
+	github.com/jeremyhahn/arduino-generic/sdk/go v0.3.0-alpha // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-enclave v0.5.0-alpha // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.19.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.11.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.21.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.22.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
