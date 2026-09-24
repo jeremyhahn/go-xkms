@@ -13,7 +13,7 @@ The SO PIN is **never stored** by go-xkms. It is verified against the actual PKC
 | Strategy | Storage | Security Level | Use Case |
 |----------|---------|---------------|----------|
 | `manual` | Not stored | Highest | Operator enters PIN at every startup |
-| `barrier` | Barrier-encrypted blob | High | Auto-start after barrier unseal |
+| `barrier` | Barrier-encrypted blob | High | Auto-start after barrier unseal — **only when the qrdb node hosts the barrier itself; see below** |
 | `tpm2` | TPM2-sealed blob | High | Hardware-bound, auto-start with TPM |
 | `pkcs11` | HSM-wrapped blob | High | HSM-bound, auto-start with HSM |
 | `awskms` | AWS KMS envelope encryption | High | Cloud-native, auto-start with IAM |
@@ -43,7 +43,18 @@ Server started on :8443
 
 The User PIN is encrypted with the barrier's AES-256-GCM root key and stored as a blob in the data directory. The PIN is automatically available after the barrier is unsealed.
 
+**`barrier` only works when this deployment's barrier IS the qrdb node's own** — `storage.backend: qrdb`, hosted with the embedded transport (`storage.qrdb.transport: embedded` or unset), `barrier.enabled: true`, and a `barrier.strategy` of `none`, `passphrase`, `shamir`, or `tpm2`. In every other configuration — non-qrdb storage, a remote/clustered qrdb transport, the barrier disabled, or a `barrier.strategy` of `pkcs11`/`awskms`/`gcpkms`/`azurekv`/`vault` — the credential service has to resolve backend credentials (this PIN included) before the general xkms barrier can exist, because that barrier's own hardware seal strategies are built from the already-initialized backends. A barrier-backed credential store would need the barrier to unseal itself first; that is a structural cycle, not an ordering bug. `xkmsd` refuses `credentials.seal_strategy: barrier` outside the supported shape at config load, with a typed validation error naming the configuration it needs (go-xkms#812).
+
 ```yaml
+storage:
+  backend: qrdb
+  qrdb:
+    transport: embedded    # or omit; embedded is the default
+
+barrier:
+  enabled: true
+  strategy: passphrase     # none | passphrase | shamir | tpm2
+
 credentials:
   seal_strategy: barrier
 ```
@@ -52,8 +63,10 @@ Startup flow:
 
 ```
 1. xkmsd start
-2. Barrier unseal (manual or M-of-N shares)
-3. User PIN auto-decrypted from barrier
+2. The qrdb node's own barrier unseals (unattended for none/tpm2, or the
+   sealed-window ceremony for passphrase/shamir) — this happens before the
+   credential service is constructed at all
+3. User PIN auto-decrypted from the (now unsealed) barrier
 4. PKCS#11 token login with decrypted PIN
 5. Server operational
 ```
@@ -208,6 +221,8 @@ This is useful when the credential seal strategy is `barrier` or another auto-se
 credentials:
   # How to protect the User PIN at rest.
   # Default: manual (operator enters PIN at every startup)
+  # "barrier" requires an embedded qrdb-hosted barrier (see "Opt-In: barrier"
+  # above) and is refused at config load otherwise.
   seal_strategy: manual    # manual | barrier | tpm2 | pkcs11 | awskms | gcpkms | azurekv | vault | passphrase
 
   # Strategy-specific configuration (only the selected strategy is used)
@@ -252,7 +267,9 @@ Do you need unattended restarts?
   |
   +-- No  --> manual (default, most secure)
   |
-  +-- Yes --> Is a barrier always unsealed before token login?
+  +-- Yes --> Is a barrier always unsealed before token login, AND is that
+              barrier the qrdb node's own (embedded qrdb storage, barrier
+              enabled, strategy none/passphrase/shamir/tpm2)?
                 |
                 +-- Yes --> barrier
                 |
