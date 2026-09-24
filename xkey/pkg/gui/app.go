@@ -1932,6 +1932,11 @@ func NewApp(cfg *GUIConfig) *App {
 	// service.
 	authSvc.SetVerifiedPolicyHandler(a.applyVerifiedEnterprisePolicy)
 
+	// Wire the backend registry into the PKCS#11 service before restoring
+	// modules below, so slots discovered during restore are registered as
+	// backends immediately instead of only after the later wiring pass.
+	a.pkcs11Service.SetRegistry(a.backendRegistry)
+
 	// Populate backend registry from the unified config's Backends section
 	// (pre-populated by config.DefaultConfig() for a fresh config).
 	a.populateBackendRegistry()
@@ -2083,7 +2088,6 @@ func NewApp(cfg *GUIConfig) *App {
 	adminSvc.SetPhoneStatusProvider(a.phoneService)
 	adminSvc.SetPKCS11Tester(a.pkcs11Service)
 	adminSvc.SetBackendKeyLister(a.keyService)
-	a.pkcs11Service.SetRegistry(a.backendRegistry)
 	a.pkcs11Service.SetConnectHook(func(moduleID, libraryPath string, slotID uint, userPIN, soPin, tokenLabel string) {
 		// Dynamically register the connected PKCS#11 token as an xkms backend
 		// so PIV key generation and other operations can use it.
