@@ -33,9 +33,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
@@ -545,12 +547,31 @@ func TestAuditTrail_InvalidNonceIsRecorded(t *testing.T) {
 	key := generateTestKey(t)
 	account := createTestAccount(t, service, key)
 
-	req := createJWSRequest(t, service, key,
-		fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID), nil, true, account.ID)
-	// createJWSRequest registers the nonce it signs with; replacing the store
-	// after signing makes that nonce unknown, exactly as a replayed or
-	// forged nonce would be.
-	service.nonceStore = common.NewNonceStore(10 * time.Minute)
+	// A nonce the server never issued is indistinguishable, at redemption
+	// time, from one it issued and already consumed: both fail decryption
+	// or the used-map check in pkg/acme/nonce.Service.Redeem. Sign with a
+	// literal, never-issued nonce rather than a real one later invalidated,
+	// exercising the same "unknown nonce" path a replayed or forged nonce
+	// would take.
+	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
+	signerOpts := &jose.SignerOptions{
+		NonceSource: &staticNonceSource{nonce: "invalid-nonce-not-in-store"},
+		ExtraHeaders: map[jose.HeaderKey]interface{}{
+			"url": url,
+			"kid": url,
+		},
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{
+		Algorithm: jose.ES256,
+		Key:       key.PrivateKey,
+	}, signerOpts)
+	require.NoError(t, err)
+
+	jws, err := signer.Sign([]byte(""))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(jws.FullSerialize()))
+	req.Header.Set("Content-Type", "application/jose+json")
 
 	resp := httptest.NewRecorder()
 	service.AccountHandler(resp, req)
