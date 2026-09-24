@@ -176,7 +176,7 @@ func TestRejectedIdentifier(t *testing.T) {
 	err := RejectedIdentifier("identifier rejected")
 	assert.NotNil(t, err)
 	assert.Contains(t, err.Type, ErrTypeRejectedIdentifier)
-	assert.Equal(t, http.StatusUnauthorized, err.Status)
+	assert.Equal(t, http.StatusForbidden, err.Status)
 }
 
 // TestServerInternal tests ServerInternal error

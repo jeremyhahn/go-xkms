@@ -236,6 +236,8 @@ vocabulary. The categories that need distinguishing:
 | `ErrDevIDProvisionLookup` | reading the IDevID or IAK persistent handle answered something other than TPM_RC_HANDLE. Only that code means "absent, create it"; anything else — a transport fault, a lockout — is a fault and is not treated as a provisioned key |
 | `ErrTCGCSRAttestation` | the TPM refused the quote that fills the CSR's `prodCaData`. Absence — no transport to quote over — is still an absent field (`prodCaDataSz` 0), which §13.1 allows; a refusal is not |
 | `ErrTCGCSRPad` | the TPM's RNG could not supply the §13.1 random pad |
+| `ErrEKCertServiceUnreachable` | `EKConfig.CertDownload` is `true` and the manufacturer EK certificate service request (`downloadEKCertFromManufacturer`) failed to connect, timed out, or answered a non-200 status. The underlying transport error — including a context-deadline timeout — is reachable as detail through `errors.Is` |
+| `ErrEKCertServiceParseFailed` | the manufacturer EK certificate service answered 200 but the body was neither valid DER nor PEM `x509.Certificate` bytes |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.
@@ -304,6 +306,19 @@ CA on this release still enrolls a device on the previous one.
 - **Session encryption** — TPM2 session encryption is configurable; see the
   legacy `docs/configuration/tpm2-session-encryption.md` pending its own
   migration.
+- **`ek.cert-download`** (`EKConfig.CertDownload`, default `false`) — opts in
+  to downloading the EK certificate from the TPM manufacturer's EK
+  certificate service (`https://ekop.intel.com/ekcertservice/` by default)
+  when `EKCertificate` finds no certificate in NV RAM or the certificate
+  store. **Off by default**: with it `false`, `EKCertificate` returns
+  `ErrEndorsementCertNotFound` as soon as the local lookups are exhausted and
+  makes no outbound network call — an air-gapped host never blocks on it
+  (#761). `ek.cert-download-url` overrides the compiled-in endpoint (must be
+  `https://`); `ek.cert-download-timeout` bounds the request
+  (`DefaultEKCertDownloadTimeout`, 10s, when unset). The request is bounded
+  through its context regardless of which `*http.Client` serves it
+  (`Params.HTTPClient` overrides the client for tests; production uses
+  `http.DefaultClient`).
 
 ## Persistence
 
@@ -362,6 +377,14 @@ The suite is unusually large and deliberately structured:
   (`devid_provision_simulator_test.go` — `Install` with an IDevID configured
   and no EK certificate, a transport fault on the lookup, and a fault on
   `TPM2_CreatePrimary`, each of which returned nil before).
+- **EK certificate download** (`ek_cert_download_simulator_test.go`) — proves
+  `EKConfig.CertDownload=false` (the default) makes `EKCertificate` return
+  `ErrEndorsementCertNotFound` without any HTTP call (an injected
+  `RoundTripper` fails the test if invoked); with it `true`, an `httptest`
+  TLS server stands in for the manufacturer service for a successful
+  DER/PEM download, a request that exceeds `CertDownloadTimeout`
+  (`ErrEKCertServiceUnreachable`, bounded rather than blocking), and a
+  malformed response (`ErrEKCertServiceParseFailed`).
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the
   package's hardest rule.

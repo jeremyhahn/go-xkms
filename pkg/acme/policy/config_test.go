@@ -338,4 +338,34 @@ func TestPolicyConfig_Clone_NilMaps(t *testing.T) {
 	if clone.EnabledChallengeTypes != nil {
 		t.Error("EnabledChallengeTypes should be nil")
 	}
+	if clone.IdentifierChallengeTypes != nil {
+		t.Error("IdentifierChallengeTypes should be nil")
+	}
+}
+
+func TestPolicyConfig_Clone_IdentifierChallengeTypesAndRejectReservedIPs(t *testing.T) {
+	original := &PolicyConfig{
+		RejectReservedIPs: true,
+		IdentifierChallengeTypes: map[string][]string{
+			IdentifierTypeIP: {ChallengeTypeHTTP01, ChallengeTypeTLSALPN01},
+		},
+	}
+
+	clone := original.Clone()
+	if clone == nil {
+		t.Fatal("Clone() returned nil")
+	}
+	if !clone.RejectReservedIPs {
+		t.Error("RejectReservedIPs should be true")
+	}
+	if len(clone.IdentifierChallengeTypes[IdentifierTypeIP]) != 2 {
+		t.Fatalf("IdentifierChallengeTypes[ip] = %v, want 2 entries", clone.IdentifierChallengeTypes[IdentifierTypeIP])
+	}
+
+	// Verify independence - modifying the clone's slice must not affect the
+	// original's.
+	clone.IdentifierChallengeTypes[IdentifierTypeIP][0] = ChallengeTypeDNS01
+	if original.IdentifierChallengeTypes[IdentifierTypeIP][0] != ChallengeTypeHTTP01 {
+		t.Error("Modifying clone's IdentifierChallengeTypes affected the original")
+	}
 }

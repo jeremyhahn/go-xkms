@@ -390,4 +390,18 @@ var (
 	// certifying any other would put a claim in the certificate that nobody
 	// vouched for. The accompanying detail names the refused AAGUID.
 	ErrFIDO2AttestationAAGUIDNotPermitted = errors.New("ca: id-fido-gen-ce-aaguid extension names an authenticator model this profile does not certify")
+
+	// ErrDICEEvidenceMissing indicates the request carries no
+	// tcg-dice-TcbInfo extension, so an IDevID issued from it would assert a
+	// device identity while saying nothing about the firmware that identity
+	// was derived from.
+	ErrDICEEvidenceMissing = errors.New("ca: request carries no tcg-dice-TcbInfo extension")
+
+	// ErrDICEEvidenceInvalid indicates a DICE evidence extension on the
+	// request could not be decoded.
+	//
+	// Evidence the issuer cannot read is never signed. A certificate carrying
+	// a DiceTcbInfo the CA could not parse invites a relying party to trust
+	// claims nobody checked.
+	ErrDICEEvidenceInvalid = errors.New("ca: dice evidence extension could not be decoded")
 )
