@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -137,7 +138,11 @@ func (c *restClient) do(ctx context.Context, method, path string, body any) ([]b
 	if err != nil {
 		return nil, &ProtocolError{Message: "round-trip", Err: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Debug("ssh: failed to close HTTP response body", "error", cerr)
+		}
+	}()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

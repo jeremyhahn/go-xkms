@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"sync/atomic"
@@ -33,6 +34,16 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 )
+
+// closeResponseBody closes resp.Body and logs a failure at debug level.
+// Every call site here has already read (or decided not to read) the body
+// and computed its result before this deferred call runs, so a close
+// failure changes nothing about the caller's outcome.
+func closeResponseBody(resp *http.Response) {
+	if err := resp.Body.Close(); err != nil {
+		slog.Debug("escrow/xkms: failed to close HTTP response body", "error", err)
+	}
+}
 
 const (
 	// apiPrefix is the base path for escrow API endpoints.
@@ -137,7 +148,7 @@ func (a *FederationAgent) Available(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 	// Drain body to allow connection reuse.
 	_, _ = io.Copy(io.Discard, resp.Body)
 
@@ -171,7 +182,7 @@ func (a *FederationAgent) EscrowKey(ctx context.Context, req *escrow.EscrowReque
 	if err != nil {
 		return nil, &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -223,7 +234,7 @@ func (a *FederationAgent) RecoverKey(ctx context.Context, req *escrow.RecoverReq
 	if err != nil {
 		return nil, &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -263,7 +274,7 @@ func (a *FederationAgent) ListEscrowed(ctx context.Context) ([]escrow.EscrowReco
 	if err != nil {
 		return nil, &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {
@@ -303,7 +314,7 @@ func (a *FederationAgent) RevokeEscrow(ctx context.Context, escrowID string) err
 	if err != nil {
 		return &errs.Detail{Err: escrow.ErrAgentUnavailable, Detail: fmt.Sprintf("%s", err)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeResponseBody(resp)
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
 	if err != nil {

@@ -22,6 +22,7 @@ require (
 	github.com/flynn/noise v1.1.0
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -33,8 +34,8 @@ require (
 	github.com/jeremyhahn/go-luks2 v0.2.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.20.2-alpha
 	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
-	github.com/jeremyhahn/go-xkms v0.24.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.24.0-alpha
+	github.com/jeremyhahn/go-xkms v0.25.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.25.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mdp/qrterminal/v3 v3.2.1
@@ -142,7 +143,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect

@@ -490,6 +490,64 @@ func TestDecryptBackup_WrongNonceLength(t *testing.T) {
 	}
 }
 
+// TestDecryptBackup_InvalidJSONPayload verifies that a payload which
+// decrypts successfully (correct key and an authentic AEAD tag) but is not
+// valid JSON is reported as an invalid backup rather than panicking on the
+// Unmarshal.
+func TestDecryptBackup_InvalidJSONPayload(t *testing.T) {
+	svc, err := NewService(testConfig())
+	require.NoError(t, err)
+
+	key := testKey()
+	ciphertext, nonce, err := encrypt([]byte("not valid json"), key)
+	require.NoError(t, err)
+
+	eb := &EncryptedBackup{
+		Magic:      BackupMagic,
+		Version:    BackupVersion,
+		Nonce:      nonce,
+		Ciphertext: ciphertext,
+	}
+
+	archive, err := svc.DecryptBackup(eb, key)
+	assert.Nil(t, archive)
+	assert.ErrorIs(t, err, ErrInvalidBackup)
+}
+
+// TestDecryptBackup_ChecksumMismatch verifies that a payload which decrypts
+// and parses successfully but carries a checksum that does not match its own
+// content is reported as corrupted rather than accepted.
+func TestDecryptBackup_ChecksumMismatch(t *testing.T) {
+	svc, err := NewService(testConfig())
+	require.NoError(t, err)
+
+	key := testKey()
+	archive := &Archive{
+		Manifest: Manifest{
+			Version:    BackupVersion,
+			Created:    time.Now().UTC(),
+			DeviceName: "tampered",
+			Checksum:   "0000000000000000000000000000000000000000000000000000000000000000",
+		},
+	}
+	plaintext, err := json.Marshal(archive)
+	require.NoError(t, err)
+
+	ciphertext, nonce, err := encrypt(plaintext, key)
+	require.NoError(t, err)
+
+	eb := &EncryptedBackup{
+		Magic:      BackupMagic,
+		Version:    BackupVersion,
+		Nonce:      nonce,
+		Ciphertext: ciphertext,
+	}
+
+	got, err := svc.DecryptBackup(eb, key)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrCorruptedBackup)
+}
+
 func TestCreateDecryptRoundTrip(t *testing.T) {
 	cert := testCert(t)
 	fp := testCertFingerprint(cert)

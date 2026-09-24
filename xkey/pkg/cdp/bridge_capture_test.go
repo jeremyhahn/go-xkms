@@ -230,6 +230,49 @@ func TestBridge_CredentialAdded_MissingKeySkipped(t *testing.T) {
 	assert.Equal(t, 0, calls, "credential without a private key must be skipped")
 }
 
+// TestBridge_HandleEvent_IgnoresOtherMethods asserts that an event other
+// than WebAuthn.credentialAdded is dropped without touching the sink: the
+// bridge captures exactly one CDP event type, not every unsolicited message.
+func TestBridge_HandleEvent_IgnoresOtherMethods(t *testing.T) {
+	bridge := &Bridge{logger: testLogger()}
+	bridge.SetCredentialSink(func(StoredCredential) error {
+		t.Fatal("the sink must not run for a method the bridge does not capture")
+		return nil
+	})
+
+	bridge.handleEvent("Target.targetCreated", json.RawMessage(`{"targetInfo":{}}`))
+}
+
+// TestBridge_HandleEvent_MalformedParamsLogsAndDrops asserts that a
+// credentialAdded event whose params cannot be decoded is dropped rather
+// than panicking or forwarding a zero-value credential to the sink.
+func TestBridge_HandleEvent_MalformedParamsLogsAndDrops(t *testing.T) {
+	bridge := &Bridge{logger: testLogger()}
+	bridge.SetCredentialSink(func(StoredCredential) error {
+		t.Fatal("the sink must not run for an event whose params failed to decode")
+		return nil
+	})
+
+	bridge.handleEvent("WebAuthn.credentialAdded", json.RawMessage(`not json`))
+}
+
+// TestBridge_PersistCaptured_SinkErrorIsLoggedNotPanicked asserts that a
+// sink failure is swallowed as a logged warning: capture is best-effort, and
+// the caller (the CDP read loop) must keep running afterward.
+func TestBridge_PersistCaptured_SinkErrorIsLoggedNotPanicked(t *testing.T) {
+	bridge := &Bridge{logger: testLogger()}
+	var called bool
+	bridge.SetCredentialSink(func(StoredCredential) error {
+		called = true
+		return fmt.Errorf("storage unavailable")
+	})
+
+	assert.NotPanics(t, func() {
+		bridge.persistCaptured(Credential{CredentialID: "id-1", PrivateKey: "key-1", RpID: "example.com"})
+	})
+	assert.True(t, called, "the sink must still be invoked before its error is swallowed")
+}
+
 // --- shutdown sweep (CaptureAll) ---
 
 // TestBridge_CaptureAll_Sweep asserts getCredentials results are forwarded to

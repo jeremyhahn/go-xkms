@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ import (
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	acmenonce "github.com/jeremyhahn/go-xkms/pkg/acme/nonce"
 	acmesdk "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
 
@@ -166,7 +168,9 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	started := false
 	defer func() {
 		if !started {
-			_ = auditLogger.Close()
+			if cerr := auditLogger.Close(); cerr != nil {
+				logger.Warn("acme: failed to close the audit trail after a failed start-up", "error", cerr)
+			}
 		}
 	}()
 	if auditLogger.Enabled() {
@@ -277,6 +281,9 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		EndorseDeviceIDMetaKey:  acmeCfg.EndorseDeviceIDMetaKey,
 		ExternalAccountRequired: acmeCfg.ExternalAccountRequired,
 		Logger:                  logger,
+		NoncePrefix:             clusterNoncePrefix(cfg),
+		NonceLifetime:           acmeCfg.Nonce.ResolveLifetime(),
+		NonceMaxUsed:            acmeCfg.Nonce.ResolveMaxUsed(),
 		OrderPreSignHooks:       preSignHooks,
 		Policy:                  acmeCfg.Policy.PolicyConfig(),
 		StorageFactory:          storageFactory,
@@ -292,8 +299,30 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		return nil, &acmeInitError{Stage: "create REST service", Sentinel: ErrACMERestService, Err: err}
 	}
 
+	// Build the per-client admission-control middleware. acmeserver.
+	// NewClientRateLimiterMiddleware is the single construction path shared
+	// with the standalone TrustedCA (pkg/acme/client/trustedca.go) so
+	// neither composition hand-rolls its own limiter wiring. Disabling it is
+	// an explicit, logged act: Config.ComplianceGaps reports it and xkmsd
+	// refuses to start, so there is no silent way to run the ACME listener
+	// unthrottled.
+	var rateLimitMiddleware mux.MiddlewareFunc
+	if acmeCfg.RateLimit.IsEnabled() {
+		rateLimitMiddleware = acmeserver.NewClientRateLimiterMiddleware(
+			acmeCfg.RateLimit.ResolveMaxRequests(),
+			acmeCfg.RateLimit.ResolveInterval(),
+			auditLogger,
+		)
+		logger.Info("ACME rate limiting enabled",
+			slog.Int("max_requests", acmeCfg.RateLimit.ResolveMaxRequests()),
+			slog.Duration("interval", acmeCfg.RateLimit.ResolveInterval()))
+	} else {
+		logger.Warn("ACME rate limiting disabled: the ACME endpoint accepts unlimited " +
+			"new-account, new-order, and challenge requests")
+	}
+
 	// Build the HTTP router and mount the ACME routes.
-	router := buildACMERouter(service, directoryPath)
+	router := buildACMERouter(service, directoryPath, rateLimitMiddleware)
 
 	// Make the ACME metrics registry part of the same /metrics response
 	// xkmsd already serves (pkg/server/server.go startMetrics), rather than
@@ -495,6 +524,30 @@ func clusterACMEIssuerCN(cfg *config.Config) string {
 	return cfg.Cluster.RaftEnrollment.ClusterCACN
 }
 
+// noncePrefixSalt is the HMAC key nonce.DerivePrefix uses to turn a node ID
+// into an 8-character ACME nonce prefix. The prefix is a public routing tag
+// embedded in every issued nonce (pkg/acme/nonce.MultiService routes
+// redemption by it), not a value that needs to stay secret, so a fixed salt
+// shared by every deployment is sufficient — it only needs to be stable so
+// the same node ID always derives the same prefix.
+var noncePrefixSalt = []byte("go-xkms/acme/nonce-prefix-v1")
+
+// clusterNoncePrefix derives this node's ACME nonce-service prefix from its
+// Raft NodeID, so pkg/acme/nonce.MultiService can distinguish nonces minted
+// by different nodes in a load-balanced deployment. A standalone node (Raft
+// clustering off) has no peer to disambiguate from and mints unprefixed
+// nonces.
+//
+// The prefix alone does not make nonces portable across nodes: that also
+// requires every node to encrypt with the same key (handlers.Params.NonceKey),
+// which is not wired here — see docs/acme-issuance/engineering.md.
+func clusterNoncePrefix(cfg *config.Config) string {
+	if !cfg.Cluster.Enabled {
+		return ""
+	}
+	return acmenonce.DerivePrefix(strconv.FormatUint(cfg.Cluster.NodeID, 10), noncePrefixSalt)
+}
+
 // defaultClusterTrustDomain mirrors pkg/server's defaultRaftTrustDomain so the
 // ACME server stamps the same SPIFFE trust domain the node provisioner uses
 // when the operator leaves cluster.raft_enrollment.trust_domain unset.
@@ -503,16 +556,28 @@ const defaultClusterTrustDomain = "xkms.cluster"
 // buildACMERouter mounts the ACME REST handlers on a gorilla/mux router
 // under the given directory path prefix. The route layout follows
 // RFC 8555 Section 7.1.
-func buildACMERouter(svc handlers.RestServicer, directoryPath string) http.Handler {
+//
+// rateLimitMiddleware, when non-nil, is applied to every route on the
+// returned router (including any handler a caller mounts on it afterward,
+// e.g. the cluster secret-delivery endpoint in startACMEServer) via
+// mux.Router.Use, which every ACME server composition in the stack builds
+// through acmeserver.NewClientRateLimiterMiddleware. A nil value mounts the
+// router unthrottled — callers pass nil only when acme.rate_limit.enabled
+// is false, which Config.ComplianceGaps reports.
+func buildACMERouter(svc handlers.RestServicer, directoryPath string, rateLimitMiddleware mux.MiddlewareFunc) http.Handler {
 	r := mux.NewRouter()
 
 	// acmemetrics.Mount initializes the ACME Prometheus registry (base and
 	// production metric sets) and attaches the request-instrumentation
 	// middleware, the same shared entry point pkg/acme/client/trustedca.go
 	// uses for the standalone TrustedCA, so both ACME server compositions
-	// expose identical metrics.
+	// expose identical metrics. Mounted before the rate limiter so a
+	// rate-limited (429) request is still recorded.
 	acmemetrics.Mount(r)
 
+	if rateLimitMiddleware != nil {
+		r.Use(rateLimitMiddleware)
+	}
 	r.HandleFunc(directoryPath+"/directory", svc.DirectoryHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(directoryPath+"/new-nonce", svc.NewNonceHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(directoryPath+"/new-account", svc.NewAccountHandler).Methods(http.MethodPost)

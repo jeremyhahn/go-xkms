@@ -79,15 +79,26 @@ type busDaemon struct {
 	closePeer func()
 }
 
-// newBusDaemon builds a daemon with an in-process bus connection attached.
+// newBusDaemon builds a daemon with an in-process bus connection attached
+// and its objects exported, backed by an unsealed test barrier.
 func newBusDaemon(t *testing.T, store xkms.StaticPasswordStore) *busDaemon {
 	t.Helper()
+	return newBusDaemonWithBarrier(t, store, newTestBarrier(t))
+}
 
-	d, err := NewDaemon(store, DefaultConfig(), slog.New(slog.DiscardHandler))
+// newBusDaemonWithBarrier is newBusDaemon with an explicit barrier, for
+// tests that need to seal it.
+func newBusDaemonWithBarrier(t *testing.T, store xkms.StaticPasswordStore, barrier *xkms.Barrier) *busDaemon {
+	t.Helper()
+
+	d, err := NewDaemon(store, barrier, DefaultConfig(), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	conn, closePeer := newLoopbackBus(t)
 	d.conn = conn
+	require.NoError(t, d.exportObjects())
+	_, err = d.exportCollection("")
+	require.NoError(t, err)
 
 	return &busDaemon{Daemon: d, closePeer: closePeer}
 }
@@ -253,6 +264,48 @@ func TestDaemon_CreateCollection_EmitsSignal(t *testing.T) {
 	}
 }
 
+// TestDaemon_CreateCollection_Persists is the regression test for the issue
+// this package was filed to fix: CreateCollection used to mint a D-Bus path
+// without ever calling store.CreateFolder, so the collection vanished on
+// restart. This proves the folder survives in the store itself.
+func TestDaemon_CreateCollection_Persists(t *testing.T) {
+	store := newMemoryStore()
+	d := newBusDaemon(t, store).Daemon
+
+	_, _, dbusErr := d.CreateCollection(map[string]dbus.Variant{
+		"org.freedesktop.Secret.Collection.Label": dbus.MakeVariant("Work"),
+	}, "")
+	require.Nil(t, dbusErr)
+
+	folders, err := store.ListFolders()
+	require.NoError(t, err)
+	assert.Contains(t, folders, "Work")
+}
+
+func TestDaemon_CreateCollection_WhileSealedRefuses(t *testing.T) {
+	barrier := newTestBarrier(t)
+	d := newBusDaemonWithBarrier(t, newMemoryStore(), barrier).Daemon
+	require.NoError(t, barrier.Seal())
+
+	_, _, dbusErr := d.CreateCollection(map[string]dbus.Variant{
+		"org.freedesktop.Secret.Collection.Label": dbus.MakeVariant("Work"),
+	}, "")
+	require.NotNil(t, dbusErr)
+	assert.Contains(t, dbusErr.Error(), ErrCollectionLocked.Error())
+}
+
+// TestDaemon_ExportExistingCollections proves Start's post-unseal export
+// step reaches every persisted folder and every password within it, not
+// just the always-present default collection.
+func TestDaemon_ExportExistingCollections(t *testing.T) {
+	store := newMemoryStore()
+	require.NoError(t, store.Add(&xkms.StaticPassword{Name: "GitHub", FolderPath: "Work", Password: "s3cret"}))
+	require.NoError(t, store.CreateFolder("Work"))
+
+	d := newBusDaemon(t, store).Daemon
+	require.NoError(t, d.exportExistingCollections())
+}
+
 func TestDaemon_SearchItems_StoreFailure(t *testing.T) {
 	d := newBusDaemon(t, &failingStore{})
 
@@ -328,7 +381,7 @@ func TestDaemon_Start_DBusUnavailable(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.Bus = bus
 
-			d, err := NewDaemon(newMemoryStore(), cfg, slog.New(slog.DiscardHandler))
+			d, err := NewDaemon(newMemoryStore(), newTestBarrier(t), cfg, slog.New(slog.DiscardHandler))
 			require.NoError(t, err)
 
 			assert.ErrorIs(t, d.Start(), ErrDBusUnavailable)

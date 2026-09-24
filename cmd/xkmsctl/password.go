@@ -69,14 +69,19 @@ Examples:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		password, _ := cmd.Flags().GetString("password")
-		username, _ := cmd.Flags().GetString("username")
-		url, _ := cmd.Flags().GetString("url")
-		notes, _ := cmd.Flags().GetString("notes")
-		folder, _ := cmd.Flags().GetString("folder")
-		expiresAt, _ := cmd.Flags().GetString("expires-at")
-		tenantID, _ := cmd.Flags().GetString("tenant-id")
-		shared, _ := cmd.Flags().GetBool("shared")
+		fr := newFlagReader(cmd)
+		password := fr.String("password")
+		username := fr.String("username")
+		url := fr.String("url")
+		notes := fr.String("notes")
+		folder := fr.String("folder")
+		expiresAt := fr.String("expires-at")
+		tenantID := fr.String("tenant-id")
+		shared := fr.Bool("shared")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		secret, err := resolveSecret(password, "Password")
 		if err != nil {
@@ -118,9 +123,14 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		decrypt, _ := cmd.Flags().GetBool("decrypt")
-		userPIN, _ := cmd.Flags().GetString("user-pin")
-		tenantID, _ := cmd.Flags().GetString("tenant-id")
+		fr := newFlagReader(cmd)
+		decrypt := fr.Bool("decrypt")
+		userPIN := fr.String("user-pin")
+		tenantID := fr.String("tenant-id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		passwordGet(cfg, printer, &client.PasswordGetRequest{
 			ID:       args[0],
@@ -143,9 +153,14 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		folder, _ := cmd.Flags().GetString("folder")
-		tenantID, _ := cmd.Flags().GetString("tenant-id")
-		scope, _ := cmd.Flags().GetString("scope")
+		fr := newFlagReader(cmd)
+		folder := fr.String("folder")
+		tenantID := fr.String("tenant-id")
+		scope := fr.String("scope")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		passwordList(cfg, printer, &client.PasswordListRequest{
 			FolderPath: folder,
@@ -173,7 +188,8 @@ Example:
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		req := &client.PasswordUpdateRequest{ID: args[0]}
-		req.TenantID, _ = cmd.Flags().GetString("tenant-id")
+		fr := newFlagReader(cmd)
+		req.TenantID = fr.String("tenant-id")
 
 		changed := false
 		for flagName, target := range map[string]**string{
@@ -185,15 +201,23 @@ Example:
 			"expires-at": &req.ExpiresAt,
 		} {
 			if cmd.Flags().Changed(flagName) {
-				v, _ := cmd.Flags().GetString(flagName)
-				value := v
+				value := fr.String(flagName)
 				*target = &value
 				changed = true
 			}
 		}
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		if cmd.Flags().Changed("password") {
-			flagValue, _ := cmd.Flags().GetString("password")
+			fr := newFlagReader(cmd)
+			flagValue := fr.String("password")
+			if err := fr.Err(); err != nil {
+				handleError(err)
+				return
+			}
 			secret, err := resolveSecret(flagValue, "New password")
 			if err != nil {
 				handleError(err)
@@ -229,7 +253,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		tenantID, _ := cmd.Flags().GetString("tenant-id")
+		fr := newFlagReader(cmd)
+		tenantID := fr.String("tenant-id")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		passwordDelete(cfg, printer, &client.PasswordDeleteRequest{
 			ID:       args[0],
@@ -253,7 +282,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		userPIN, _ := cmd.Flags().GetString("user-pin")
+		fr := newFlagReader(cmd)
+		userPIN := fr.String("user-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		pin, err := resolvePIN(userPIN, "User PIN")
 		if err != nil {
 			handleError(err)
@@ -338,11 +372,16 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		length, _ := cmd.Flags().GetInt("length")
-		upper, _ := cmd.Flags().GetBool("upper")
-		lower, _ := cmd.Flags().GetBool("lower")
-		digits, _ := cmd.Flags().GetBool("digits")
-		symbols, _ := cmd.Flags().GetBool("symbols")
+		fr := newFlagReader(cmd)
+		length := fr.Int("length")
+		upper := fr.Bool("upper")
+		lower := fr.Bool("lower")
+		digits := fr.Bool("digits")
+		symbols := fr.Bool("symbols")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		passwordGenerate(cfg, printer, &client.PasswordGenerateRequest{
 			Length:  length,
@@ -363,11 +402,11 @@ func createPasswordClient(cfg *Config) (client.Client, func(), error) {
 	}
 
 	if err := cl.Connect(context.Background()); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	return cl, func() { _ = cl.Close() }, nil
+	return cl, func() { closeQuietly(cl) }, nil
 }
 
 // passwordAdd adds a password entry via the SDK client.
@@ -393,10 +432,13 @@ func passwordAdd(cfg *Config, printer *Printer, req *client.PasswordAddRequest) 
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Password Added:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  ID:      %s\n", resp.ID)
-		_, _ = fmt.Fprintf(printer.writer, "  Name:    %s\n", resp.Name)
-		_, _ = fmt.Fprintf(printer.writer, "  Created: %s\n", resp.CreatedAt)
+		printer.printf("Password Added:\n")
+		printer.printf("  ID:      %s\n", resp.ID)
+		printer.printf("  Name:    %s\n", resp.Name)
+		printer.printf("  Created: %s\n", resp.CreatedAt)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -447,28 +489,31 @@ func passwordList(cfg *Config, printer *Printer, req *client.PasswordListRequest
 		}
 	case OutputFormatTable:
 		if len(resp.Passwords) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No passwords found")
+			printer.println("No passwords found")
 			return
 		}
-		_, _ = fmt.Fprintf(printer.writer, "%-36s %-24s %-20s %-20s\n", "ID", "NAME", "USERNAME", "FOLDER")
-		_, _ = fmt.Fprintln(printer.writer, repeatString("-", 102))
+		printer.printf("%-36s %-24s %-20s %-20s\n", "ID", "NAME", "USERNAME", "FOLDER")
+		printer.println(repeatString("-", 102))
 		for _, p := range resp.Passwords {
-			_, _ = fmt.Fprintf(printer.writer, "%-36s %-24s %-20s %-20s\n",
+			printer.printf("%-36s %-24s %-20s %-20s\n",
 				truncateString(p.ID, 36),
 				truncateString(p.Name, 24),
 				truncateString(p.Username, 20),
 				truncateString(p.FolderPath, 20))
 		}
-		_, _ = fmt.Fprintf(printer.writer, "\nTotal: %d password(s)\n", len(resp.Passwords))
+		printer.printf("\nTotal: %d password(s)\n", len(resp.Passwords))
 	case OutputFormatText:
 		if len(resp.Passwords) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No passwords found")
+			printer.println("No passwords found")
 			return
 		}
-		_, _ = fmt.Fprintln(printer.writer, "Passwords:")
+		printer.println("Passwords:")
 		for _, p := range resp.Passwords {
-			_, _ = fmt.Fprintf(printer.writer, "  - %s (%s)\n", p.Name, p.ID)
+			printer.printf("  - %s (%s)\n", p.Name, p.ID)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -579,12 +624,15 @@ func passwordStatus(cfg *Config, printer *Printer) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Password Store Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Access Mode:    %s\n", resp.AccessMode)
-		_, _ = fmt.Fprintf(printer.writer, "  Locked:         %t\n", resp.IsLocked)
-		_, _ = fmt.Fprintf(printer.writer, "  Barrier Sealed: %t\n", resp.BarrierSealed)
-		_, _ = fmt.Fprintf(printer.writer, "  Auto Unsealed:  %t\n", resp.AutoUnsealed)
-		_, _ = fmt.Fprintf(printer.writer, "  Passwords:      %d\n", resp.PasswordCount)
+		printer.printf("Password Store Status:\n")
+		printer.printf("  Access Mode:    %s\n", resp.AccessMode)
+		printer.printf("  Locked:         %t\n", resp.IsLocked)
+		printer.printf("  Barrier Sealed: %t\n", resp.BarrierSealed)
+		printer.printf("  Auto Unsealed:  %t\n", resp.AutoUnsealed)
+		printer.printf("  Passwords:      %d\n", resp.PasswordCount)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -633,7 +681,10 @@ func passwordGenerate(cfg *Config, printer *Printer, req *client.PasswordGenerat
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintln(printer.writer, resp.Password)
+		printer.println(resp.Password)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 
@@ -645,29 +696,32 @@ func printPasswordEntry(printer *Printer, entry *client.PasswordGetResponse) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Password Entry:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  ID:       %s\n", entry.ID)
-		_, _ = fmt.Fprintf(printer.writer, "  Name:     %s\n", entry.Name)
+		printer.printf("Password Entry:\n")
+		printer.printf("  ID:       %s\n", entry.ID)
+		printer.printf("  Name:     %s\n", entry.Name)
 		if entry.Username != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Username: %s\n", entry.Username)
+			printer.printf("  Username: %s\n", entry.Username)
 		}
 		if entry.Password != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Password: %s\n", entry.Password)
+			printer.printf("  Password: %s\n", entry.Password)
 		}
 		if entry.URL != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  URL:      %s\n", entry.URL)
+			printer.printf("  URL:      %s\n", entry.URL)
 		}
 		if entry.Notes != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Notes:    %s\n", entry.Notes)
+			printer.printf("  Notes:    %s\n", entry.Notes)
 		}
 		if entry.FolderPath != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Folder:   %s\n", entry.FolderPath)
+			printer.printf("  Folder:   %s\n", entry.FolderPath)
 		}
 		if entry.ExpiresAt != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Expires:  %s\n", entry.ExpiresAt)
+			printer.printf("  Expires:  %s\n", entry.ExpiresAt)
 		}
-		_, _ = fmt.Fprintf(printer.writer, "  Created:  %s\n", entry.CreatedAt)
-		_, _ = fmt.Fprintf(printer.writer, "  Updated:  %s\n", entry.UpdatedAt)
+		printer.printf("  Created:  %s\n", entry.CreatedAt)
+		printer.printf("  Updated:  %s\n", entry.UpdatedAt)
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

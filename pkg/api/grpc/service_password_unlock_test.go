@@ -99,7 +99,6 @@ func TestMapPasswordUnlockError(t *testing.T) {
 		// must not be reinterpreted as a failed credential check.
 		for _, sentinel := range []error{
 			staticpw.ErrNilStore,
-			staticpw.ErrNilEncrypter,
 			staticpw.ErrNilBarrierRegistry,
 		} {
 			err := mapPasswordUnlockError(sentinel)
@@ -126,7 +125,6 @@ func TestMapPasswordUnlockError(t *testing.T) {
 // through to its default.
 func TestIsKnownInternalPasswordError(t *testing.T) {
 	assert.True(t, isKnownInternalPasswordError(staticpw.ErrNilStore))
-	assert.True(t, isKnownInternalPasswordError(staticpw.ErrNilEncrypter))
 	assert.True(t, isKnownInternalPasswordError(staticpw.ErrNilBarrierRegistry))
 	assert.False(t, isKnownInternalPasswordError(errors.New("pin: verification failed")))
 }

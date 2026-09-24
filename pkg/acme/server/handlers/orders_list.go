@@ -24,8 +24,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
-const ordersListNonceSize = 16
-
 func (s *RestService) OrdersListHandler(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Debug("OrdersListHandler", "method", r.Method, "url", r.URL)
@@ -77,12 +75,11 @@ func (s *RestService) OrdersListHandler(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Generate nonce for Replay-Nonce header per RFC 8555 Section 6.5
-		nonce, err := common.GenerateNonce(ordersListNonceSize)
+		nonce, err := s.generateNonce()
 		if err != nil {
 			writeError(w, common.ServerInternal("Unable to generate nonce"))
 			return
 		}
-		s.nonceStore.Add(nonce)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", nonce)

@@ -444,7 +444,14 @@ func validateConfig(config BrowserConfig) error {
 
 // knownBrowsers returns browser candidates for the current platform.
 func knownBrowsers() []BrowserInfo {
-	switch runtime.GOOS {
+	return knownBrowsersForGOOS(runtime.GOOS)
+}
+
+// knownBrowsersForGOOS is knownBrowsers with the platform taken as a
+// parameter, so every branch -- including the platforms this build is not
+// running on -- can be exercised by a test without cross-compiling.
+func knownBrowsersForGOOS(goos string) []BrowserInfo {
+	switch goos {
 	case "linux":
 		return []BrowserInfo{
 			{Name: "Firefox", Path: "/usr/bin/firefox"},

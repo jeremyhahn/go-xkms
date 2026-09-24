@@ -559,28 +559,6 @@ func TestTransport_JSONRPCErrors(t *testing.T) {
 	}
 }
 
-// TestTransport_RequestStream tests the RequestStream method.
-func TestTransport_RequestStream(t *testing.T) {
-	t.Run("returns unimplemented error", func(t *testing.T) {
-		cfg := &transport.Config{
-			Address: "localhost:9445",
-		}
-		tr, err := NewTransport(cfg)
-		if err != nil {
-			t.Fatalf("failed to create transport: %v", err)
-		}
-		defer tr.Close()
-
-		_, err = tr.RequestStream(context.Background(), "directory", "get", nil)
-		if err == nil {
-			t.Fatal("expected error for streaming")
-		}
-		if !errors.IsUnimplemented(err) {
-			t.Errorf("expected unimplemented error, got %v", err)
-		}
-	})
-}
-
 // TestTransport_Conn tests the Conn method.
 func TestTransport_Conn(t *testing.T) {
 	t.Run("returns http client", func(t *testing.T) {

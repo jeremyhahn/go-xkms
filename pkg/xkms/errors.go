@@ -996,3 +996,35 @@ func (e *ClusterLeaderEndpointError) Error() string {
 }
 
 func (e *ClusterLeaderEndpointError) Unwrap() error { return e.Err }
+
+// ClusterStatusError is returned when a clustered node's shard leader cannot
+// be queried. It is never constructed for a standalone node; ClusterStatus
+// degrades to a zero-value standalone status there instead.
+type ClusterStatusError struct {
+	ShardID uint64
+	Err     error
+}
+
+// Error returns a human-readable description.
+func (e *ClusterStatusError) Error() string {
+	return fmt.Sprintf("keystore: failed to query cluster status for shard %d: %v", e.ShardID, e.Err)
+}
+
+// Unwrap returns the wrapped cause for errors.Is/As.
+func (e *ClusterStatusError) Unwrap() error { return e.Err }
+
+// ClusterMembersError is returned when a clustered node's shard membership
+// cannot be listed. It is never constructed for a standalone node;
+// ClusterMembers degrades to an empty list there instead.
+type ClusterMembersError struct {
+	ShardID uint64
+	Err     error
+}
+
+// Error returns a human-readable description.
+func (e *ClusterMembersError) Error() string {
+	return fmt.Sprintf("keystore: failed to list cluster members for shard %d: %v", e.ShardID, e.Err)
+}
+
+// Unwrap returns the wrapped cause for errors.Is/As.
+func (e *ClusterMembersError) Unwrap() error { return e.Err }

@@ -47,8 +47,8 @@ describe("ClusterView", () => {
     });
     members.mockResolvedValue({
       members: [
-        { node_id: 1, address: "10.0.0.1:9443", is_leader: false },
-        { node_id: 2, address: "10.0.0.2:9443", is_leader: true },
+        { replica_id: 1, address: "10.0.0.1:9443", is_leader: false },
+        { replica_id: 2, address: "10.0.0.2:9443", is_leader: true },
       ],
     });
 

@@ -30,8 +30,6 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-const challengeNonceSize = 16
-
 // loopbackIdentifier is the permanent-identifier value that, for enrollment
 // challenges, is eligible for substitution with the request's client IP when
 // acme.enrollment.allow_loopback_identifier is enabled.
@@ -460,12 +458,11 @@ func (s *RestService) ChallengeHandler(w http.ResponseWriter, r *http.Request) {
 
 // writeChallengeResponse writes an ACME challenge response with proper RFC 8555 headers.
 func (s *RestService) writeChallengeResponse(w http.ResponseWriter, challenge *entities.ACMEChallenge) {
-	nonce, err := s.generateNonce(challengeNonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	w.Header().Set("Replay-Nonce", nonce)
 	w.Header().Set("Link", fmt.Sprintf("<%s/acme/directory>;rel=\"index\"", s.baseRESTURI))

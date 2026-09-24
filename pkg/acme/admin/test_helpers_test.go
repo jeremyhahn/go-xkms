@@ -307,7 +307,7 @@ func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
 
-	svc := NewTenantAwareAdminService(nil, factory, qrdbSvc, logger, "1.0.0")
+	svc := mustTenantAwareAdminService(t, nil, factory, qrdbSvc, logger, "1.0.0")
 	svc.SetTenantService(newFakeTenantServicer())
 	return svc
 }

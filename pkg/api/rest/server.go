@@ -77,6 +77,7 @@ type Server struct {
 	caHandlers          *CAHandlers
 	sshHandlers         *SSHHandlers
 	sshClient           sdkssh.Client
+	clusterHandlers     *ClusterHandlers
 
 	// cors carries the CORS policy for the router; nil disables CORS
 	// entirely (no headers emitted — correct for the same-origin web UI).
@@ -375,6 +376,11 @@ func NewServer(cfg *Config) (*Server, error) {
 		rbacAuthorizer:  cfg.RBACAuthorizer,
 		authRateLimiter: cfg.AuthRateLimiter,
 		ui:              cfg.UI,
+		// Cluster status/membership reads must work on a standalone node
+		// (degrading gracefully rather than requiring an "enabled" gate), so
+		// unlike the other optional handler groups below, clusterHandlers is
+		// constructed unconditionally, exactly like handlers above.
+		clusterHandlers: NewClusterHandlers(cfg.XKMSService),
 	}
 
 	// Authentication-plane audit events flow through the same logger as the

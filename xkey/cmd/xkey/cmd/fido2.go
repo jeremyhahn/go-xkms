@@ -33,6 +33,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
@@ -737,6 +738,17 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		_ = storage.Close()
 		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
 	}
+
+	// Wire audit logging before any PIN or credential operation can reach
+	// the authenticator (SetInitialPIN below is the first one). This daemon
+	// has no durable audit store of its own, so it uses the same
+	// slog-backed audit.Logger the headless `xkey extension serve` daemon
+	// uses for its own security events (#688): SeveritySecurity events
+	// (OpPINSeeded, OpFIDO2CredentialCreated) are recorded in the structured
+	// log stream this daemon already writes, and SlogLogger has no
+	// persistent store to fail, so it never refuses an operation.
+	auth.SetAuditLogger(audit.NewSlogLogger(logger))
+
 	// Establish the initial PIN if configured. --set-pin is the operator
 	// seeding a first PIN, so it goes through the authenticator's
 	// SetInitialPIN: the same policy, retry-reset and pinUvAuthToken

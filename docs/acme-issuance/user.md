@@ -174,7 +174,7 @@ curl -H "Authorization: Bearer $TOKEN" https://kms.example.com:8443/openapi/admi
 | doubled path in the directory, `/api/v1/api/v1/acme/...` | the server's base URI is misconfigured | fix the server's `baseRESTURI`; the client is fine |
 | `rejectedIdentifier` | the identifier is blocklisted, is not under a public suffix, or (for an IP) is in a reserved/loopback range | check `acme.policy` in the server config, or request an identifier the policy allows |
 | `caa` error | a CAA record forbids this CA outright, restricts issuance to a different ACME account (`accounturi`) or challenge type (`validationmethods`, RFC 8657) than this request used, has a malformed `accounturi`/`validationmethods` value, or the server could not determine the CAA RRset at all (DNS failure fails closed, RFC 8659 §5.1) | fix the CAA record — issuer domain, `accounturi`, or `validationmethods` — to allow this CA, this account, and the challenge type you're using; or retry once DNS is reachable |
-| `rateLimited` | per-account or per-tenant limit hit | back off; the response carries `Retry-After` |
+| `rateLimited` | per-client (account once registered, otherwise IP) request cap hit | back off; the response carries `Retry-After` |
 | `orderNotReady` on finalize | an authorization is still pending | complete the challenge first |
 | `badCSR` | the CSR does not match the order's identifiers | regenerate the CSR from the order |
 | `badCSR` on a `device-attest-01`/`enroll-01` CSR finalize | the CSR has no RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`) in its `subjectAltName` | the identifier is never read from the Common Name; encode it as the otherName |
