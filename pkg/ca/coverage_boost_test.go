@@ -22,10 +22,12 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
 
+	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -649,13 +651,22 @@ func TestCA_GetOrGenerateCAKey_ExistingKey(t *testing.T) {
 	assert.NotNil(t, signer.Public())
 }
 
+// TestCA_GetOrGenerateCAKey_UnsupportedAlgorithm exercises a key whose
+// algorithm the backend itself rejects (KeyAttributes.Validate fails DSA
+// before any "does the key exist" check runs). That is a genuine backend
+// failure, not a not-found result, so getOrGenerateCAKey must fail closed
+// with ErrKeyRetrievalFailed rather than fall through to the generation
+// switch's ErrInvalidKeyAlgorithm branch -- go-xkms#801: only
+// errors.Is(err, backend.ErrKeyNotFound) may fall through to generation.
 func TestCA_GetOrGenerateCAKey_UnsupportedAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
 	attrs := &types.KeyAttributes{
 		CN: "unsupported-algo", KeyAlgorithm: x509.DSA, KeyType: types.KeyTypeCA, StoreType: types.StoreSoftware,
 	}
 	_, err := ca.getOrGenerateCAKey(context.Background(), attrs)
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
+	assert.ErrorIs(t, err, ErrKeyRetrievalFailed)
+	assert.False(t, errors.Is(err, backendpkg.ErrKeyNotFound))
+	assert.Contains(t, err.Error(), "DSA")
 }
 
 // =============================================================================

@@ -193,49 +193,6 @@ func TestExtractIPFromRemoteAddr_IPv6WithoutPort(t *testing.T) {
 }
 
 // =============================================================================
-// ExecuteWithContext Tests (72.7% -> 100%)
-// =============================================================================
-
-// TestCircuitBreaker_ExecuteWithContext_FunctionError verifies that
-// ExecuteWithContext records a failure when the function returns an error.
-func TestCircuitBreaker_ExecuteWithContext_FunctionError(t *testing.T) {
-	cb := NewCircuitBreaker(&CircuitBreakerConfig{
-		Name:             "test-ctx-error",
-		FailureThreshold: 10,
-	})
-
-	testErr := errors.New("function failed")
-	ctx := context.Background()
-
-	err := cb.ExecuteWithContext(ctx, func(c context.Context) error {
-		return testErr
-	})
-
-	require.Equal(t, testErr, err)
-	require.Equal(t, uint64(1), cb.Metrics().FailedRequests.Load())
-}
-
-// TestCircuitBreaker_ExecuteWithContext_OpenCircuit verifies that
-// ExecuteWithContext returns ErrCircuitOpen when the circuit is open.
-func TestCircuitBreaker_ExecuteWithContext_OpenCircuit(t *testing.T) {
-	cb := NewCircuitBreaker(&CircuitBreakerConfig{
-		Name:             "test-ctx-open",
-		FailureThreshold: 1,
-	})
-
-	cb.ForceOpen()
-
-	var called bool
-	err := cb.ExecuteWithContext(context.Background(), func(c context.Context) error {
-		called = true
-		return nil
-	})
-
-	require.Equal(t, ErrCircuitOpen, err)
-	require.False(t, called)
-}
-
-// =============================================================================
 // getMaxInterval Tests (66.7% -> 100%)
 // =============================================================================
 

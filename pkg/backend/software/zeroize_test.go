@@ -14,7 +14,6 @@
 package software
 
 import (
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -121,8 +120,10 @@ func TestZeroizeParsedPrivateKey_Ed25519(t *testing.T) {
 // zeroization route appears upstream, the expectation recorded here is the
 // thing that has to change, and so that passing one never panics.
 func TestZeroizeParsedPrivateKey_ECDHIsNotWipeable(t *testing.T) {
-	key, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	key, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 
 	before := key.Bytes()
 

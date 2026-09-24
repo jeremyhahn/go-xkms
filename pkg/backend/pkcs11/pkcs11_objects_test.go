@@ -1853,7 +1853,15 @@ func staleSessionBackend(t *testing.T, owner *Backend) *Backend {
 
 	pool, err := NewSessionPool(owner.p11ctx, slot, secretValueString(owner.config.PIN), 1)
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() {
+		// The session this helper hands back is deliberately closed out from
+		// under the pool by the caller to simulate a vanished token, so
+		// Close's drain legitimately fails to close it too. That is the
+		// condition under test, not a defect.
+		if closeErr := pool.Close(); closeErr != nil {
+			t.Logf("pool.Close: %v", closeErr)
+		}
+	})
 
 	var stale pkcs11.SessionHandle
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {

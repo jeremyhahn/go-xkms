@@ -44,7 +44,16 @@ func newTestPool(t *testing.T, b *Backend, size int) *SessionPool {
 
 	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), size)
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() {
+		// Some callers (e.g. staleSessionBackend) deliberately invalidate a
+		// session out from under the pool to exercise CKR_SESSION_HANDLE_INVALID
+		// handling; Close's drain then legitimately fails to close that
+		// session. That is the behavior under test, not a defect, so it is
+		// logged rather than asserted away.
+		if closeErr := pool.Close(); closeErr != nil {
+			t.Logf("pool.Close: %v", closeErr)
+		}
+	})
 
 	return pool
 }
@@ -155,7 +164,7 @@ func TestNewSessionPool_EmptyPINSkipsLogin(t *testing.T) {
 
 	pool, err := NewSessionPool(ctx, slot, "", 1)
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
 
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
 		info, err := ctx.GetSessionInfo(session)
@@ -1072,4 +1081,61 @@ func TestSessionPool_WithSearch_InitError(t *testing.T) {
 		// closing its session the same way.
 		return nil
 	}))
+}
+
+// TestSessionPool_WithSearch_FinalErrorJoinsFindError verifies that a
+// C_FindObjectsFinal failure is joined onto find's own error via errors.Is
+// rather than discarded. Before #701, WithSearch's deferred Final call threw
+// its error away entirely -- a search that raced a vanished token reported
+// only find's error (or, if find itself succeeded, nothing at all) even
+// though the teardown of the search it opened had also failed.
+func TestSessionPool_WithSearch_FinalErrorJoinsFindError(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-search-final-error")
+	pool := newTestPool(t, b, 1)
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+	}
+
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		sentinel := errors.New("boom")
+		err := pool.WithSearch(session, template, func() error {
+			// Kill the session mid-search so the deferred FindObjectsFinal
+			// this WithSearch call owns also fails, instead of only find.
+			require.NoError(t, b.p11ctx.CloseSession(session))
+			return sentinel
+		})
+
+		require.ErrorIs(t, err, sentinel, "find's own error must still reach the caller")
+		require.ErrorIs(t, err, pkcs11.Error(pkcs11.CKR_SESSION_HANDLE_INVALID),
+			"FindObjectsFinal's failure on the now-dead session must also reach the caller")
+
+		return nil
+	}))
+}
+
+// TestSessionPool_Close_ReturnsCloseSessionErrors verifies that Close reports
+// a C_CloseSession failure to its caller instead of swallowing it. Before
+// #701, Close had no return value at all: a session already invalidated
+// behind the pool's back (a vanished token, a driver that dropped it) was
+// closed silently, with no way for the caller to learn the drain was
+// incomplete.
+func TestSessionPool_Close_ReturnsCloseSessionErrors(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-close-reports-error")
+
+	slot, err := b.resolveSlot()
+	require.NoError(t, err)
+
+	pool, err := NewSessionPool(b.p11ctx, slot, secretValueString(b.config.PIN), 1)
+	require.NoError(t, err)
+
+	// Kill the pool's one session before Close ever sees it, so Close's own
+	// C_CloseSession call on it fails.
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		return b.p11ctx.CloseSession(session)
+	}))
+
+	err = pool.Close()
+	require.Error(t, err, "Close must report a session it could not close")
+	require.ErrorIs(t, err, pkcs11.Error(pkcs11.CKR_SESSION_HANDLE_INVALID))
 }

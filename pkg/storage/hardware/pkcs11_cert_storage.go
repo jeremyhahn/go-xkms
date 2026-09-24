@@ -17,6 +17,7 @@ package hardware
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -130,7 +131,7 @@ func (p *PKCS11CertStorage) runWrite(fn func(session pkcs11.SessionHandle) error
 // pool of concurrent borrowers to race in that case.
 //
 // find must not call FindObjectsInit or FindObjectsFinal itself.
-func (p *PKCS11CertStorage) doSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) error {
+func (p *PKCS11CertStorage) doSearch(session pkcs11.SessionHandle, template []*pkcs11.Attribute, find func() error) (err error) {
 	if sp, ok := p.pool.(PKCS11SearchProvider); ok {
 		return sp.WithSearch(session, template, find)
 	}
@@ -139,7 +140,13 @@ func (p *PKCS11CertStorage) doSearch(session pkcs11.SessionHandle, template []*p
 		return err
 	}
 	defer func() {
-		_ = p.pool.Ctx().FindObjectsFinal(session)
+		// Joined onto find's error rather than discarded, matching
+		// SessionPool.WithSearch (the path taken when the pool implements
+		// PKCS11SearchProvider, above) so this fallback reports failures the
+		// same way.
+		if finalErr := p.pool.Ctx().FindObjectsFinal(session); finalErr != nil {
+			err = errors.Join(err, finalErr)
+		}
 	}()
 
 	return find()

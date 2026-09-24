@@ -2064,6 +2064,9 @@ func NewApp(cfg *GUIConfig) *App {
 	if apiExplorerSvc != nil {
 		apiExplorerSvc.SetAuditLogger(auditStore)
 	}
+	if a.authenticatorInstance != nil {
+		a.authenticatorInstance.SetAuditLogger(auditStore)
+	}
 
 	// SSH services are wired in initializeDataDir() (via
 	// initializeSSHServices) once the data directory and barrier decision

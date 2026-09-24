@@ -29,7 +29,7 @@ func TestErrorConstants(t *testing.T) {
 	}{
 		{"ErrNotInitialized", ErrNotInitialized, "awskms: client not initialized"},
 		{"ErrInvalidConfig", ErrInvalidConfig, "awskms: invalid configuration"},
-		{"ErrKeyNotFound", ErrKeyNotFound, "awskms: key not found"},
+		{"ErrKeyNotFound", ErrKeyNotFound, "backend: key not found"},
 		{"ErrUnsupportedKeyType", ErrUnsupportedKeyType, "awskms: unsupported key type"},
 		{"ErrInvalidRegion", ErrInvalidRegion, "awskms: invalid region"},
 		{"ErrInvalidKeySpec", ErrInvalidKeySpec, "awskms: invalid key spec"},

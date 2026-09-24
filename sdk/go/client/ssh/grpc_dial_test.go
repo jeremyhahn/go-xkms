@@ -222,20 +222,15 @@ func TestGRPCSessionDial_SignerErrorPropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected dial to fail when the signing key no longer exists")
 	}
-	// The gRPC server maps the embedded pkg/ssh/keys.NotFoundError this
-	// produces to codes.Internal rather than codes.NotFound — sshStatus only
-	// special-cases *sdkssh.NotFoundError, not the internal keys-store error
-	// type the embedded Keys().Get returns verbatim (see service_ssh.go
-	// sshStatus; a pre-existing gap unrelated to Session.Dial, reported
-	// upstream rather than fixed here). The client still surfaces it as a
-	// typed *ProtocolError carrying the original message intact — never
-	// silently swallowed.
-	var protoErr *sdkssh.ProtocolError
-	if !errors.As(err, &protoErr) {
-		t.Fatalf("expected *ProtocolError in the chain, got %T: %v", err, err)
+	// The gRPC server maps the embedded keys-store not-found error to
+	// codes.NotFound (go-xkms#769), and the client decodes that back into a
+	// typed *NotFoundError that still carries the original message.
+	var notFound *sdkssh.NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *NotFoundError in the chain, got %T: %v", err, err)
 	}
-	if !strings.Contains(protoErr.Error(), "key not found") {
-		t.Fatalf("expected the underlying key-not-found failure to propagate, got: %v", protoErr)
+	if !strings.Contains(notFound.Error(), "key not found") {
+		t.Fatalf("expected the underlying key-not-found failure to propagate, got: %v", notFound)
 	}
 }
 

@@ -61,6 +61,26 @@ func TestNewEmbedded_NilBackend(t *testing.T) {
 	}
 }
 
+// TestClient_Close_IsIdempotent pins that closing an already-closed
+// embedded Client is a no-op rather than a double-close panic/error — the
+// backend is only closed once, and repeated Close calls afterward succeed.
+func TestClient_Close_IsIdempotent(t *testing.T) {
+	backend, err := storage.NewMemoryBackend()
+	if err != nil {
+		t.Fatalf("backend: %v", err)
+	}
+	client, err := sdkssh.NewEmbedded(sdkssh.EmbeddedOptions{Backend: backend})
+	if err != nil {
+		t.Fatalf("NewEmbedded: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("second Close (idempotent) returned an error: %v", err)
+	}
+}
+
 // TestKeys_GenerateListGetDelete covers the key-management happy path.
 func TestKeys_GenerateListGetDelete(t *testing.T) {
 	client := newClient(t)
@@ -110,6 +130,29 @@ func TestKeys_GenerateListGetDelete(t *testing.T) {
 
 	if err := keys.Delete(ctx, sdkssh.DeleteKeyRequest{Scope: "user", Owner: "alice", Name: "laptop"}); err != nil {
 		t.Fatalf("Delete: %v", err)
+	}
+}
+
+// TestKeys_GenerateEveryAlgorithm exercises every algorithm string
+// parseAlgorithm recognizes, pinning that Generate accepts the full
+// supported set (not just the ed25519 case the other tests use).
+func TestKeys_GenerateEveryAlgorithm(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	keys := client.Keys()
+
+	for _, algo := range []string{"ed25519", "rsa", "ecdsa-p256", "ecdsa-p384", "ecdsa-p521"} {
+		t.Run(algo, func(t *testing.T) {
+			gen, err := keys.Generate(ctx, sdkssh.GenerateRequest{
+				Scope: "user", Owner: "alice", Name: "algo-" + algo, Algorithm: algo,
+			})
+			if err != nil {
+				t.Fatalf("Generate(%q): %v", algo, err)
+			}
+			if gen.Algorithm != algo {
+				t.Fatalf("Algorithm = %q, want %q", gen.Algorithm, algo)
+			}
+		})
 	}
 }
 

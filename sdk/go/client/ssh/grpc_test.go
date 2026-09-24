@@ -360,6 +360,10 @@ func TestGRPCKeys_GenerateErrorMapping(t *testing.T) {
 			var t *sdkssh.NotFoundError
 			return errors.As(e, &t)
 		}},
+		{"already_exists", codes.AlreadyExists, func(e error) bool {
+			var t *sdkssh.DuplicateError
+			return errors.As(e, &t)
+		}},
 		{"invalid_argument", codes.InvalidArgument, func(e error) bool {
 			var t *sdkssh.InvalidRequestError
 			return errors.As(e, &t)

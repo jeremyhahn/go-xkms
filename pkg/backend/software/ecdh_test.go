@@ -15,9 +15,9 @@ package software
 
 import (
 	"context"
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/x509"
 	"testing"
@@ -197,12 +197,15 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519(t *testing.T) {
 		KeyAlgorithm:     x509.PublicKeyAlgorithm(0), // X25519 doesn't have a standard algorithm
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
-	require.NoError(t, err)
+	if _, ok := requireGeneratedX25519Key(t, sb, aliceAttrs); !ok {
+		return
+	}
 
 	// Generate Bob's X25519 key pair
-	bobPrivate, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	bobPrivate, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 
 	// Use raw 32-byte public key
 	bobPubRaw := bobPrivate.PublicKey().Bytes()
@@ -237,12 +240,15 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_DERFormat(t *testing.T) {
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
-	require.NoError(t, err)
+	if _, ok := requireGeneratedX25519Key(t, sb, aliceAttrs); !ok {
+		return
+	}
 
 	// Generate Bob's X25519 key pair and encode to DER
-	bobPrivate, err := ecdh.X25519().GenerateKey(rand.Reader)
-	require.NoError(t, err)
+	bobPrivate, ok := requireX25519Key(t)
+	if !ok {
+		return
+	}
 
 	bobPubDER, err := x509.MarshalPKIXPublicKey(bobPrivate.PublicKey())
 	require.NoError(t, err)
@@ -609,8 +615,9 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_InvalidPublicKeyLength(t *testing.
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	_, err = sb.GenerateKey(context.Background(), aliceAttrs)
-	require.NoError(t, err)
+	if _, ok := requireGeneratedX25519Key(t, sb, aliceAttrs); !ok {
+		return
+	}
 
 	kdfParams := types.DefaultKDFParams()
 
@@ -750,8 +757,10 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_BidirectionalAgreement(t *testing.
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	aliceKey, err := sb.GenerateKey(context.Background(), aliceAttrs)
-	require.NoError(t, err)
+	aliceKey, ok := requireGeneratedX25519Key(t, sb, aliceAttrs)
+	if !ok {
+		return
+	}
 
 	// Generate Bob's X25519 key pair
 	bobAttrs := &types.KeyAttributes{
@@ -760,8 +769,10 @@ func TestSoftwareBackend_DeriveKeyECDH_X25519_BidirectionalAgreement(t *testing.
 		StoreType:        backend.STORE_SW,
 		X25519Attributes: &types.X25519Attributes{},
 	}
-	bobKey, err := sb.GenerateKey(context.Background(), bobAttrs)
-	require.NoError(t, err)
+	bobKey, ok := requireGeneratedX25519Key(t, sb, bobAttrs)
+	if !ok {
+		return
+	}
 
 	// Get public keys
 	aliceWrapped := aliceKey.(*x25519.PrivateKeyStorage)
@@ -1321,7 +1332,14 @@ func TestParseX25519PublicKey_ValidRaw(t *testing.T) {
 	require.NoError(t, err)
 
 	pubKey, err := parseX25519PublicKey(rawKey)
-	require.NoError(t, err)
+	if err != nil {
+		// parseX25519PublicKey routes through crypto/ecdh.X25519, which is
+		// refused outright under GODEBUG=fips140=only; see requireX25519Key.
+		if fips140.Enforced() {
+			return
+		}
+		require.NoError(t, err)
+	}
 	assert.NotNil(t, pubKey)
 }
 

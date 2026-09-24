@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+//go:build awskms
+
+package awskms
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestBackend_GetKey_NotFound verifies that a genuine KMS NotFoundException
+// from DescribeKey is classified as backend.ErrKeyNotFound (go-xkms#801).
+func TestBackend_GetKey_NotFound(t *testing.T) {
+	mockClient := &MockKMSClient{
+		DescribeKeyFunc: func(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+			return nil, &kmstypes.NotFoundException{Message: nil}
+		},
+	}
+	config := &Config{Region: "us-east-1", KeyStorage: storage.New(), CertStorage: storage.New()}
+	b, err := NewBackendWithClient(config, mockClient)
+	require.NoError(t, err)
+
+	attrs := &types.KeyAttributes{
+		CN:           "not-found-key",
+		KeyAlgorithm: 0,
+		KeyType:      backend.KEY_TYPE_SIGNING,
+		StoreType:    backend.STORE_AWSKMS,
+	}
+	// The backend only calls DescribeKey once local metadata says the CN is
+	// known, so seed it directly: this exercises the DescribeKey
+	// classification path rather than the earlier "no local record" gate.
+	b.mu.Lock()
+	b.metadata[attrs.CN] = []byte(`{}`)
+	b.mu.Unlock()
+
+	_, err = b.GetKey(context.Background(), attrs)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, backend.ErrKeyNotFound), "expected errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+}
+
+// TestBackend_GetKey_RetrievalError verifies that a DescribeKey failure
+// that is NOT a NotFoundException (throttling, access denied, a network
+// fault) is classified as ErrKeyRetrievalFailed and does NOT satisfy
+// errors.Is(err, backend.ErrKeyNotFound) -- go-xkms#801. Collapsing this
+// into "not found" would let getOrGenerateCAKey silently replace a KMS CA
+// signing key the backend merely failed to reach.
+func TestBackend_GetKey_RetrievalError(t *testing.T) {
+	mockClient := &MockKMSClient{
+		DescribeKeyFunc: func(ctx context.Context, params *kms.DescribeKeyInput, optFns ...func(*kms.Options)) (*kms.DescribeKeyOutput, error) {
+			return nil, &kmstypes.KMSInternalException{Message: nil}
+		},
+	}
+	config := &Config{Region: "us-east-1", KeyStorage: storage.New(), CertStorage: storage.New()}
+	b, err := NewBackendWithClient(config, mockClient)
+	require.NoError(t, err)
+
+	attrs := &types.KeyAttributes{
+		CN:           "transient-failure-key",
+		KeyAlgorithm: 0,
+		KeyType:      backend.KEY_TYPE_SIGNING,
+		StoreType:    backend.STORE_AWSKMS,
+	}
+	b.mu.Lock()
+	b.metadata[attrs.CN] = []byte(`{}`)
+	b.mu.Unlock()
+
+	_, err = b.GetKey(context.Background(), attrs)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, backend.ErrKeyNotFound), "a transient DescribeKey failure must not satisfy errors.Is(err, backend.ErrKeyNotFound), got %v", err)
+	assert.True(t, errors.Is(err, ErrKeyRetrievalFailed), "expected errors.Is(err, ErrKeyRetrievalFailed), got %v", err)
+}

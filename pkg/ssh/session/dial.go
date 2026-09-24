@@ -15,6 +15,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -210,24 +211,22 @@ func DialClient(ctx context.Context, p ClientParams) (*ssh.Client, error) {
 		deadline = d
 	}
 	if derr := netConn.SetDeadline(deadline); derr != nil {
-		_ = netConn.Close()
-		return nil, &DialError{Host: p.Host, Err: derr}
+		return nil, errors.Join(&DialError{Host: p.Host, Err: derr}, netConn.Close())
 	}
 
 	sshConn, chans, reqs, hsErr := ssh.NewClientConn(netConn, addr, cfg)
 	if hsErr != nil {
-		_ = netConn.Close()
+		closeErr := netConn.Close()
 		if ctx.Err() != nil {
-			return nil, &TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}
+			return nil, errors.Join(&TimeoutError{Host: p.Host, Duration: timeout, Err: ctx.Err()}, closeErr)
 		}
-		return nil, &HandshakeError{Host: p.Host, User: p.User, Err: hsErr}
+		return nil, errors.Join(&HandshakeError{Host: p.Host, User: p.User, Err: hsErr}, closeErr)
 	}
 
 	// Handshake complete — clear the deadline so long-lived channels are
 	// not affected by it.
 	if derr := netConn.SetDeadline(time.Time{}); derr != nil {
-		_ = sshConn.Close()
-		return nil, &DialError{Host: p.Host, Err: derr}
+		return nil, errors.Join(&DialError{Host: p.Host, Err: derr}, sshConn.Close())
 	}
 
 	return ssh.NewClient(sshConn, chans, reqs), nil

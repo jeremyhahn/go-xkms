@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"testing"
 
@@ -100,6 +101,16 @@ func TestSign_WeakHashUnderPolicy(t *testing.T) {
 		Data:    []byte("payload"),
 		Hash:    "SHA-1",
 	})
+	if types.FIPSMode() {
+		// SetAllowWeakHashes(true) is a deliberate no-op under
+		// FIPSMode(): the Go Cryptographic Module's own boundary is the
+		// ceiling this repository's policy switch must never be able to
+		// re-open (see pkg/types/hashpolicy.go), so the escape hatch this
+		// test targets has nothing to reach in that mode.
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrInvalidHashFunction)
+		return
+	}
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.Signature)
@@ -156,9 +167,18 @@ func TestDeriveKeyECDH_ConcatKDFHashes(t *testing.T) {
 
 	// Canonicalizing the name is not the same as approving it: the KDF layer
 	// still decides per construction.
+	//
+	// X9.63 with SHA-1 derives under normal operation (PKCS#11 CKD_SHA1_KDF)
+	// but is refused under GODEBUG=fips140=only, where Go refuses crypto/sha1
+	// for every use (go-xkms#292; see
+	// pkg/types.TestPRFKDFHashes_ExcludeWeakDigests).
 	x963 := &types.KDFParams{Algorithm: types.KDFAlgorithmX963, Hash: parseKDFHash("SHA1"), KeyLength: 32}
 	_, err := x963.Derive([]byte("shared secret material"))
-	require.NoError(t, err, "X9.63 with SHA-1 must derive (PKCS#11 CKD_SHA1_KDF)")
+	if types.HashUsable(crypto.SHA1) {
+		require.NoError(t, err, "X9.63 with SHA-1 must derive (PKCS#11 CKD_SHA1_KDF)")
+	} else {
+		require.ErrorIs(t, err, types.ErrUnsupportedKDFHash)
+	}
 
 	hkdf := &types.KDFParams{Algorithm: types.KDFAlgorithmHKDF, Hash: parseKDFHash("SHA1"), KeyLength: 32}
 	_, err = hkdf.Derive([]byte("shared secret material"))

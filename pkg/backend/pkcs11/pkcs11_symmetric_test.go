@@ -1055,12 +1055,19 @@ func TestSymmetricEncrypter_CBC_RejectsNonAEADInputMisuse(t *testing.T) {
 		encrypted, err := encrypter.Encrypt([]byte("valid plaintext"), &types.EncryptOptions{Mode: types.CipherModeCBCPad})
 		require.NoError(t, err)
 
-		tampered := append([]byte(nil), encrypted.Ciphertext...)
-		tampered[len(tampered)-1] ^= 0xFF
+		// "valid plaintext" is 15 bytes, so it encrypts to one block whose
+		// PKCS#7 pad byte is 0x01. In CBC the IV is XORed into that block
+		// on decryption, so flipping IV[15] turns the pad byte into 0xFE,
+		// which is always invalid. Tampering the ciphertext block instead
+		// randomizes the whole plaintext block and yields valid padding
+		// about once in 256 runs.
+		require.Len(t, encrypted.Ciphertext, 16)
+		tamperedIV := append([]byte(nil), encrypted.IV...)
+		tamperedIV[len(tamperedIV)-1] ^= 0xFF
 
 		_, err = encrypter.Decrypt(&types.EncryptedData{
-			Ciphertext: tampered,
-			IV:         encrypted.IV,
+			Ciphertext: encrypted.Ciphertext,
+			IV:         tamperedIV,
 		}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
 		assert.ErrorIs(t, err, ErrInvalidPadding)
 	})
