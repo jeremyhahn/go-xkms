@@ -206,6 +206,22 @@ func hasExtensionOID(cert *x509.Certificate, oid asn1.ObjectIdentifier) bool {
 	return false
 }
 
+// hasEKUOID checks whether a certificate's standard ExtKeyUsage extension
+// (RFC 5280 section 4.2.1.12) carries the given OID among its
+// UnknownExtKeyUsage values. tcg-kp-EKCertificate and tcg-kp-AIKCertificate
+// are Extended Key Usage purposes, so a conformant certificate -- and any
+// relying party's EKU check, including go-webauthn's "tpm" attestation format
+// verifier -- looks for them here, not as a standalone extension under the
+// OID's own Id.
+func hasEKUOID(cert *x509.Certificate, oid asn1.ObjectIdentifier) bool {
+	for _, eku := range cert.UnknownExtKeyUsage {
+		if eku.Equal(oid) {
+			return true
+		}
+	}
+	return false
+}
+
 // =============================================================================
 // IssueEKCertificate Tests
 // =============================================================================
@@ -265,9 +281,9 @@ func TestIssueEKCertificate_ExternalSigner_ECDSA(t *testing.T) {
 		t.Errorf("NotAfter = %v, want %v", cert.NotAfter, tcgNotAfter)
 	}
 
-	// Verify TCG EK Certificate extension is present
-	if !hasExtensionOID(cert, OIDTCGKpEKCertificate) {
-		t.Error("certificate missing TCG EK Certificate extension (OIDTCGKpEKCertificate)")
+	// Verify TCG EK Certificate extended key usage is present
+	if !hasEKUOID(cert, OIDTCGKpEKCertificate) {
+		t.Error("certificate missing TCG EK Certificate extended key usage (OIDTCGKpEKCertificate)")
 	}
 
 	// Verify certificate is not a CA
@@ -554,9 +570,9 @@ func TestIssueEKCertificate_NoExtensionFields(t *testing.T) {
 		t.Fatalf("IssueEKCertificate() returned unexpected error: %v", err)
 	}
 
-	// Should still have the core TCG EK certificate extension
-	if !hasExtensionOID(cert, OIDTCGKpEKCertificate) {
-		t.Error("certificate missing TCG EK Certificate extension")
+	// Should still have the core TCG EK certificate extended key usage
+	if !hasEKUOID(cert, OIDTCGKpEKCertificate) {
+		t.Error("certificate missing TCG EK Certificate extended key usage")
 	}
 
 	// Should NOT have model/version/permanentID extensions
@@ -600,9 +616,9 @@ func TestIssueAKCertificate_ExternalSigner_ECDSA(t *testing.T) {
 		t.Errorf("KeyUsage = %v, want KeyUsageDigitalSignature (%v)", cert.KeyUsage, x509.KeyUsageDigitalSignature)
 	}
 
-	// Verify TCG AIK Certificate extension is present
-	if !hasExtensionOID(cert, OIDTCGKpAIKCertificate) {
-		t.Error("certificate missing TCG AIK Certificate extension (OIDTCGKpAIKCertificate)")
+	// Verify TCG AIK Certificate extended key usage is present
+	if !hasEKUOID(cert, OIDTCGKpAIKCertificate) {
+		t.Error("certificate missing TCG AIK Certificate extended key usage (OIDTCGKpAIKCertificate)")
 	}
 
 	// Verify policy OIDs (TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy)
@@ -685,9 +701,9 @@ func TestIssueAKCertificate_ExternalSigner_Ed25519(t *testing.T) {
 		t.Errorf("SignatureAlgorithm = %v, want PureEd25519", cert.SignatureAlgorithm)
 	}
 
-	// Verify AIK extension is present
-	if !hasExtensionOID(cert, OIDTCGKpAIKCertificate) {
-		t.Error("certificate missing TCG AIK Certificate extension")
+	// Verify AIK extended key usage is present
+	if !hasEKUOID(cert, OIDTCGKpAIKCertificate) {
+		t.Error("certificate missing TCG AIK Certificate extended key usage")
 	}
 }
 
@@ -1131,8 +1147,13 @@ func TestBuildIAKExtensions(t *testing.T) {
 		extMap[ext.Id.String()] = ext
 	}
 
-	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; !ok {
-		t.Error("missing AIK Certificate marker extension")
+	// The tcg-kp-AIKCertificate marker is not a standalone extension here: it
+	// is an Extended Key Usage purpose that the tcg-iak profile's
+	// UnknownExtKeyUsage applies at the certificate template level
+	// (NewTCGInitialAttestationKeyProfile / tcgAIKCertificateExtKeyUsage), not
+	// something buildIAKExtensions itself produces.
+	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; ok {
+		t.Error("AIK Certificate marker must not be a standalone extension")
 	}
 	if _, ok := extMap[OIDTCGAttributePlatformModel.String()]; !ok {
 		t.Error("missing platform model extension")
@@ -1178,8 +1199,8 @@ func TestBuildIAKExtensions_EmptyProdFields(t *testing.T) {
 		extMap[ext.Id.String()] = ext
 	}
 
-	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; !ok {
-		t.Error("missing AIK Certificate marker extension with empty prod fields")
+	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; ok {
+		t.Error("AIK Certificate marker must not be a standalone extension, even with empty prod fields")
 	}
 	if _, ok := extMap[OIDTCGAttributePlatformModel.String()]; ok {
 		t.Error("should not have a platform model extension when ProdModel is empty")

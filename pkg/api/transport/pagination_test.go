@@ -14,6 +14,7 @@
 package transport
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
@@ -345,7 +346,10 @@ func TestPageRequestFromQuery_AllParams(t *testing.T) {
 		},
 	}
 
-	pr := PageRequestFromQuery(r)
+	pr, err := PageRequestFromQuery(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.Page != 2 {
 		t.Errorf("expected Page=2, got %d", pr.Page)
@@ -366,7 +370,10 @@ func TestPageRequestFromQuery_NoParams(t *testing.T) {
 		URL: &url.URL{RawQuery: ""},
 	}
 
-	pr := PageRequestFromQuery(r)
+	pr, err := PageRequestFromQuery(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.Page != 0 {
 		t.Errorf("expected Page=0 (unpaginated), got %d", pr.Page)
@@ -376,21 +383,36 @@ func TestPageRequestFromQuery_NoParams(t *testing.T) {
 	}
 }
 
+// TestPageRequestFromQuery_InvalidValues proves an unparsable pagination
+// query parameter is rejected with a typed error instead of silently
+// parsing to zero, which used to turn a caller's typo into an unpaginated
+// "return everything" request (#701).
 func TestPageRequestFromQuery_InvalidValues(t *testing.T) {
-	r := &http.Request{
-		URL: &url.URL{
-			RawQuery: "page=abc&page_size=xyz",
-		},
-	}
+	for _, tc := range []struct {
+		name      string
+		rawQuery  string
+		wantParam string
+	}{
+		{"bad page", "page=abc", "page"},
+		{"bad page_size", "page_size=xyz", "page_size"},
+		{"bad sort_order", "sort_order=nope", "sort_order"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{URL: &url.URL{RawQuery: tc.rawQuery}}
 
-	pr := PageRequestFromQuery(r)
+			_, err := PageRequestFromQuery(r)
+			if err == nil {
+				t.Fatal("expected an error for an unparsable pagination parameter")
+			}
 
-	// Invalid values should parse to zero
-	if pr.Page != 0 {
-		t.Errorf("expected Page=0 for invalid input, got %d", pr.Page)
-	}
-	if pr.PageSize != 0 {
-		t.Errorf("expected PageSize=0 for invalid input, got %d", pr.PageSize)
+			var invalid *InvalidPaginationParamError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("expected *InvalidPaginationParamError, got %T", err)
+			}
+			if invalid.Param != tc.wantParam {
+				t.Errorf("expected Param=%s, got %s", tc.wantParam, invalid.Param)
+			}
+		})
 	}
 }
 
@@ -401,7 +423,10 @@ func TestPageRequestFromQuery_PartialParams(t *testing.T) {
 		},
 	}
 
-	pr := PageRequestFromQuery(r)
+	pr, err := PageRequestFromQuery(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if pr.Page != 3 {
 		t.Errorf("expected Page=3, got %d", pr.Page)
