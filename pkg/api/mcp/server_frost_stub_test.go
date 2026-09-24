@@ -73,3 +73,27 @@ func TestServer_HandleRequest_FrostMethodAsNotification(t *testing.T) {
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
 }
+
+// TestServer_HandleRequest_FrostMethodWithError tests FROST method that returns error
+func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
+	svc := setupTestXKMS(t)
+	defer cleanupXKMS()
+
+	server, err := NewServer(&Config{XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Without the frost build tag, every frost.* method is the stub, which
+	// reports that FROST is not compiled in as an internal error.
+	req := &JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "frost.generateNonces",
+		ID:      1,
+	}
+
+	resp := invokeRequest(server, ctx, req)
+	require.NotNil(t, resp)
+	assert.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+}
