@@ -1,6 +1,6 @@
 # ACME Issuance — API
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-27
 
 ACME is different from every other feature in this repo: **its wire format is
 defined by RFC 8555, not by us.** The six-transport rule applies to go-xkms's
@@ -149,7 +149,7 @@ Errors are RFC 7807 problem documents with `urn:ietf:params:acme:error:*` types
 | nonce issued (`HEAD /acme/new-nonce`) | 200 with `Replay-Nonce` |
 | order still processing | 200 with `Retry-After` |
 | problem document | 4xx/5xx per the error table |
-| rate limited | 429 with `Retry-After` |
+| rate limited (standalone `TrustedCA` only — xkmsd's ACME server does not wire a rate limiter as of this writing; see [engineering.md](engineering.md) §Invariants) | 429 with `Retry-After` |
 
 Every response carries a fresh `Replay-Nonce` header — a client that does not
 read it will fail its next POST with `badNonce`.

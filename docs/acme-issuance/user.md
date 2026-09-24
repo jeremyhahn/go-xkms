@@ -1,6 +1,6 @@
 # ACME Issuance — User Guide
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-27
 
 ## Prerequisites
 
@@ -152,14 +152,14 @@ node pinned to one interface serves the exchange on that interface only.
 | doubled path in the directory, `/api/v1/api/v1/acme/...` | the server's base URI is misconfigured | fix the server's `baseRESTURI`; the client is fine |
 | `rejectedIdentifier` | the identifier is blocklisted, is not under a public suffix, or (for an IP) is in a reserved/loopback range | check `acme.policy` in the server config, or request an identifier the policy allows |
 | `caa` error | a CAA record forbids this CA outright, restricts issuance to a different ACME account (`accounturi`) or challenge type (`validationmethods`, RFC 8657) than this request used, has a malformed `accounturi`/`validationmethods` value, or the server could not determine the CAA RRset at all (DNS failure fails closed, RFC 8659 §5.1) | fix the CAA record — issuer domain, `accounturi`, or `validationmethods` — to allow this CA, this account, and the challenge type you're using; or retry once DNS is reachable |
-| `rateLimited` | per-account or per-tenant limit hit | back off; the response carries `Retry-After` |
+| `rateLimited` | the standalone `trusted-acme-client serve` / `TrustedCA` deployment's per-client-ID limit hit — xkmsd's own production ACME server does not wire a rate limiter as of this writing | back off; the response carries `Retry-After` |
 | `orderNotReady` on finalize | an authorization is still pending | complete the challenge first |
 | `badCSR` | the CSR does not match the order's identifiers | regenerate the CSR from the order |
 | `badCSR` on a `device-attest-01`/`enroll-01` CSR finalize | the CSR has no RFC 4043 `permanentIdentifier` otherName (OID `1.3.6.1.5.5.7.8.3`) in its `subjectAltName` | the identifier is never read from the Common Name; encode it as the otherName |
 | `rejectedIdentifier` on finalize with a correct otherName | the CSR carries a DNS/IP SAN, or a permanent identifier value, the order did not authorize | regenerate the CSR with only the names the order's identifiers list |
 | `enroll-01` never completes | the TPM's EK does not chain to a manufacturer root the CA trusts | import the manufacturer chain server-side |
 | joining node hangs during enrollment | the server cannot reach `challenge_port` on the node | open it, or fix the advertised address |
-| new orders refused under load | the circuit breaker is open | this is deliberate; the server will not issue unvalidated certificates |
+| new orders never get refused for "the circuit breaker is open" | there is no circuit breaker in the request path today — two implementations exist in `pkg/acme/server` but neither is constructed by xkmsd or the standalone `TrustedCA` | do not rely on backpressure here yet; tracked in go-xkms#820 (open, not on `main`) |
 
 ## Where to go next
 

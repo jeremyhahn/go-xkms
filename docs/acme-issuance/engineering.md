@@ -1,6 +1,6 @@
 # ACME Issuance — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-27
 
 ## Exported surface
 
@@ -14,14 +14,24 @@
   `service.go`.
 - `pkg/acme/entities` — the protocol objects themselves.
 - `pkg/acme/nonce` — nonce issue and consume.
-- `pkg/acme/issuance` — the bridge to `pkg/ca`.
+- `pkg/acme/issuance` — **not on any production path.** It exists as a
+  standalone bridge type to `pkg/ca`, but nothing outside its own tests
+  imports it; `OrderFinalizeHandler` calls `s.ca.SignCSR` /
+  `s.ca.IssueEKCertificate` / `s.ca.SignTCGCSRIDevID`
+  (`pkg/acme/server/handlers/order_finalize.go:677,752,1343`) directly.
 - `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
 - `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy (blocklist,
   public suffix, reserved-IP, per-identifier-type challenge selection) and
   CAA. `pkg/acme/policy` is wired into `NewOrderHandler` and
   `createChallenges`; see Identifier policy below.
 - `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go`,
-  `circuit_breaker.go`, `server/degradation` — the protective layer.
+  `circuit_breaker.go`, `server/circuitbreaker`, `server/degradation` — the
+  protective layer as *designed*. Of these, only `rate_limiter.go` is
+  actually wired anywhere, and only into the standalone `TrustedCA`
+  (`pkg/acme/client/trustedca.go:381-383`), not into xkmsd. The tenant rate
+  limiter and both circuit-breaker/degradation implementations are
+  constructed nowhere outside their own packages; see Invariants below and
+  go-xkms#820.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -124,10 +134,25 @@ once, to the externally visible base.
   parameter model. A DNS failure that prevents determining the RRset
   (SERVFAIL, timeout, any non-NXDOMAIN error) fails closed per RFC 8659
   Section 5.1: it denies issuance rather than "proceeding with caution".
-- **Rate limits are per account and per tenant.** Exceeding either refuses the
-  order; it does not queue it.
-- **Under pressure the circuit breaker refuses new orders.** Degradation never
-  means "issue without validating".
+- **Rate limits are designed to be per account and per tenant, but that is not
+  what runs today.** The standalone `TrustedCA` applies a single per-client-ID
+  request limiter (`server.NewRateLimiter`,
+  `pkg/acme/client/trustedca.go:381-383`) to its ACME router; exceeding it
+  refuses the request, it does not queue it. xkmsd's production ACME router
+  (`buildACMERouter`, `cmd/xkmsd/acme.go:466-483`) wires no rate limiter at
+  all, and the tenant-scoped limiter
+  (`pkg/acme/server/tenant_rate_limiter.go`) is constructed nowhere in the
+  tree outside its own file. Wiring xkmsd's rate limiting is tracked in go-xkms#882.
+- **The circuit breaker does not run anywhere today.** Two unwired
+  implementations exist (`pkg/acme/server/circuit_breaker.go`,
+  `pkg/acme/server/circuitbreaker`) plus `pkg/acme/server/degradation`;
+  neither xkmsd nor the standalone `TrustedCA` constructs or mounts any of
+  them. "Under pressure the circuit breaker refuses new orders" is the
+  intended invariant once go-xkms#820 lands (open, not on `main`); a related
+  change, go-xkms#819, is in an open merge train and also not on `main`.
+  Until one of them lands, no degradation or circuit-breaking behavior
+  exists — the server keeps accepting and validating orders regardless of
+  backend health.
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -219,9 +244,10 @@ The mapping an implementer needs:
 | permanent-identifier CSR missing/malformed/extra otherName | `badCSR` | 400 |
 | permanent-identifier or DNS/IP SAN not authorized by the order | `rejectedIdentifier` | 401 |
 
-**Fail closed:** unvalidated authorization, failed CAA, an undetermined CAA
-RRset (DNS failure), failed attestation, exceeded rate limit, open circuit
-breaker. Every one of them refuses to issue.
+**Fail closed today:** unvalidated authorization, failed CAA, an undetermined
+CAA RRset (DNS failure), failed attestation, and (in the standalone
+`TrustedCA` only) an exceeded rate limit. **Not live anywhere yet:** an open
+circuit breaker — see Invariants above and go-xkms#820.
 
 ## Configuration
 
@@ -385,12 +411,23 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Observability
 
-`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics;
-`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records for
-account, order and issuance events. Correlation IDs propagate from the
-transport middleware.
+`pkg/acme/server/metrics` defines a Prometheus registry with issuance,
+challenge and rate-limit counters (`RecordRequest`, `RecordCertificateIssued`,
+...). The standalone `TrustedCA` calls `metrics.Init()` and mounts
+`promhttp.HandlerFor(metrics.Registry, ...)` at `/metrics`
+(`pkg/acme/client/trustedca.go:378,415`), but no handler in
+`pkg/acme/server/handlers` ever calls a `Record*` function, so that endpoint
+always reports zero — the registry is wired to a listener, not to the request
+path. xkmsd never calls `metrics.Init()` or mounts `/metrics` for ACME at all
+(`cmd/xkmsd/acme.go`). `pkg/acme/audit` and
+`pkg/acme/server/handlers/audit.go` write audit records for account, order and
+issuance events, and those are live on both paths — audit, not metrics, is
+where issuance activity is actually observable today. Correlation IDs
+propagate from the transport middleware. Instrumenting the metrics package
+into the request path is tracked in go-xkms#734.
 
-**Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
-stapling, CRL distribution-point automation, CT log submission automation and
-cross-signing automation are roadmap items, not implemented. They are tracked in
-`docs/acme/ROADMAP.md` and deliberately not documented here as if they existed.
+**Known gap:** Prometheus exporters (beyond the unwired registry above),
+per-tenant rate-limit dashboards, OCSP stapling, CRL distribution-point
+automation, CT log submission automation and cross-signing automation are
+roadmap items, not implemented. They are tracked in `docs/acme/ROADMAP.md`
+and deliberately not documented here as if they existed.

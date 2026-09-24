@@ -1,6 +1,6 @@
 # ACME Issuance — Architecture
 
-> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-09-27
 
 ## The problem
 
@@ -61,9 +61,10 @@ Rejected alternatives:
 | Server handlers | `pkg/acme/server/handlers` |
 | Nonce service | `pkg/acme/nonce` |
 | Challenge implementations | `pkg/acme/challenges/{http-01,dns-01,device-attest-01,enroll-01,endorse-01}` |
-| Issuance | `pkg/acme/issuance` → `pkg/ca` |
+| Issuance | `pkg/acme/server/handlers.OrderFinalizeHandler` calls `s.ca` (`pkg/ca`) directly; `pkg/acme/issuance` is not on this path — see Data flow below |
 | Storage | `pkg/acme/storage`, `pkg/acme/qrdb` (through `go-qrdb/sdk/go`) |
-| Policy, CAA, rate limits, circuit breaker, degradation | `pkg/acme/policy`, `pkg/acme/server/caa.go`, `pkg/acme/server/rate_limiter.go`, `pkg/acme/server/{circuitbreaker,degradation}` |
+| Identifier policy, CAA | `pkg/acme/policy`, `pkg/acme/server/caa.go` — both wired, see Trust boundaries |
+| Rate limits, circuit breaker, degradation | `pkg/acme/server/rate_limiter.go`, `tenant_rate_limiter.go`, `pkg/acme/server/{circuitbreaker,degradation}` — not wired into xkmsd; see Trust boundaries |
 | Certificate Transparency | `pkg/acme/ct` |
 | Admin plane | `pkg/acme/admin` |
 | Multi-transport adapters | `pkg/acme/api/{rest,grpc,quic,mcp}` + `pkg/acme/api/adapter.go` |
@@ -85,7 +86,7 @@ client → GET  /acme/directory              (URLs for everything else)
        → POST /acme/challenge/{id}         (client says "ready")
          ← server validates out of band (HTTP fetch / DNS lookup)
        → POST /acme/order/{id}/finalize    (CSR submitted)
-         → pkg/acme/issuance → TrustedCA.SignCSR → keystore signer
+         → OrderFinalizeHandler → s.ca.SignCSR (pkg/ca) → keystore signer
        → GET  /acme/cert/{id}              (certificate chain, PEM)
 ```
 
@@ -116,27 +117,52 @@ through ACME against an existing node's directory.
 - **`enroll-01` trusts the TPM manufacturer chain**, not the requester. If the
   EK certificate does not chain to a trusted manufacturer root, activation
   cannot succeed.
-- **Rate limits and CAA are enforcement, not advice.** `pkg/acme/server/caa.go`
-  checks CAA (RFC 8659, plus RFC 8657's `accounturi`/`validationmethods`
-  parameters) before issuing, wired through `Params.CAAValidator` and
-  constructed from the required `acme.caa_identities` config — an ACME
-  server cannot start enabled without naming the issuer identity a CAA
-  record must list, and a DNS failure that leaves the CAA RRset undetermined
-  denies issuance rather than proceeding regardless. Order finalize supplies
-  the requesting account's URI and the challenge type that actually
-  validated each identifier, so a record's `accounturi`/`validationmethods`
-  parameters are enforced against reality, not merely parsed.
-  `pkg/acme/server/rate_limiter.go` and the tenant rate limiter bound
-  per-account and per-tenant issuance.
-- **The circuit breaker and degradation paths fail closed** — under pressure the
-  server refuses new orders rather than issuing unvalidated ones.
+- **Identifier policy and CAA are enforcement, not advice, and both are live.**
+  `NewOrderHandler` runs every identifier through `pkg/acme/policy` before an
+  authorization is created (`checkIdentifierPolicy`,
+  `pkg/acme/server/handlers/identifier_policy.go:56`, called from
+  `new_order.go:108`; go-xkms#770). `pkg/acme/server/caa.go` checks CAA
+  (RFC 8659, plus RFC 8657's `accounturi`/`validationmethods` parameters)
+  before issuing, wired through `Params.CAAValidator` and
+  constructed from the required `acme.caa_identities` config in both xkmsd
+  (`cmd/xkmsd/acme.go:245`, `order_finalize.go:523,539`) and the standalone
+  `TrustedCA` (`pkg/acme/client/trustedca.go`); go-xkms#788. An ACME server
+  cannot start enabled without naming the issuer identity a CAA record must
+  list, and a DNS failure that leaves the CAA RRset undetermined denies
+  issuance rather than proceeding regardless. Order finalize supplies the
+  requesting account's URI and the challenge type that actually validated
+  each identifier, so a record's `accounturi`/`validationmethods` parameters
+  are enforced against reality, not merely parsed.
+- **Rate limits are not enforced in xkmsd today.** `pkg/acme/server/rate_limiter.go`
+  exists and is wired as request middleware in the standalone `TrustedCA`
+  (`pkg/acme/client/trustedca.go:381-383`, per-client-ID only), but xkmsd's
+  production ACME router (`buildACMERouter`, `cmd/xkmsd/acme.go:466-483`)
+  never applies it — no rate-limit middleware is registered there. The tenant
+  rate limiter (`pkg/acme/server/tenant_rate_limiter.go`) is unwired
+  everywhere: nothing outside its own file constructs one. A production
+  xkmsd ACME listener currently accepts orders at whatever rate a client
+  sends them. Wiring is tracked in go-xkms#882.
+- **The circuit breaker and degradation paths are unwired designs, not live
+  enforcement.** Two independent circuit-breaker implementations exist
+  (`pkg/acme/server/circuit_breaker.go` and the separate
+  `pkg/acme/server/circuitbreaker` package) plus
+  `pkg/acme/server/degradation`, but neither xkmsd (`cmd/xkmsd/acme.go`) nor
+  the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) constructs or
+  mounts either one; nothing outside their own packages and tests references
+  them. Under load today the server issues (or rejects per the checks above)
+  every order it receives — there is no admission-control layer in front of
+  it. Wiring is tracked in go-xkms#820 (open, not on main); a separate
+  circuit-breaker change, go-xkms#819, is in an open merge train and also
+  not on `main` as of this writing.
 
 ## What this feature deliberately does not do
 
 - **It does not run a public web PKI.** OCSP stapling, CRL distribution-point
   automation, CT log submission and cross-signing automation are on the roadmap,
   not in the tree; `pkg/acme/ct` is present but the surrounding automation is
-  not.
+  not — only `pkg/acme/issuance` (itself unwired, see above) references it.
+  CT log submission is tracked with the standalone circuit breaker under
+  go-xkms#820; SCT handling at issuance is go-xkms#745.
 - **It does not own the CA.** Issuance is `TrustedCA`'s; ACME is the protocol in
   front of it.
 - **It does not define identity.** Accounts are ACME accounts. Platform users,
