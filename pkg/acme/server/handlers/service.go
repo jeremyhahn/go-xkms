@@ -1060,6 +1060,9 @@ func (s *RestService) parseKID(ctx context.Context, r *http.Request) (*entities.
 	if err != nil {
 		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)
 	}
+	// The body has already been read in full above, and net/http closes the
+	// server request body itself once the handler returns, so a close error
+	// here is neither actionable nor meaningful (go-xkms#866).
 	defer func() { _ = r.Body.Close() }()
 
 	jwsString := strings.TrimSpace(string(body))
@@ -1165,6 +1168,9 @@ func (s *RestService) parseJWS(r *http.Request) (*jose.JSONWebKey, []byte, error
 	if err != nil {
 		return nil, nil, caerrors.InternalServerError("failed to read request body: %v", err)
 	}
+	// The body has already been read in full above, and net/http closes the
+	// server request body itself once the handler returns, so a close error
+	// here is neither actionable nor meaningful (go-xkms#866).
 	defer func() { _ = r.Body.Close() }()
 
 	jwsString := strings.TrimSpace(string(body))
