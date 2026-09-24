@@ -2901,10 +2901,21 @@ func (s *Server) startREST() {
 
 	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
 	// cancelled) before we got here, do not start — return so this goroutine
-	// releases its wg slot instead of blocking in Start.
+	// releases its wg slot instead of blocking in Start. The pre-bound
+	// loopback listener (already open before this goroutine ran; see
+	// SetRESTListener) is this goroutine's to close in that case: it is only
+	// registered with the stdlib http.Server's listener tracking — which is
+	// what Shutdown closes — once Start below calls Serve/ServeTLS, so
+	// returning here without closing it would leak the open socket for the
+	// life of the process.
 	s.mu.Lock()
 	if s.ctx.Err() != nil {
 		s.mu.Unlock()
+		if s.restListener != nil {
+			if cerr := s.restListener.Close(); cerr != nil {
+				s.logger.Warn("Failed to close pre-bound REST listener during aborted startup", slog.Any("error", cerr))
+			}
+		}
 		return
 	}
 	s.restServer = restSrv
