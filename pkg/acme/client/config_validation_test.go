@@ -26,6 +26,16 @@ func TestValidateConfig_Valid(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestValidateConfig_Nil proves Validate rejects a nil receiver with a typed
+// error instead of panicking: WithConfig(nil) is a caller error New must
+// fail closed on (go-xkms#938).
+func TestValidateConfig_Nil(t *testing.T) {
+	var cfg *TrustedCAConfig
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config is required")
+}
+
 func TestValidateConfig_InvalidACME(t *testing.T) {
 	cfg := validConfig()
 	cfg.ACME.HTTPSAddr = ""
@@ -76,12 +86,16 @@ func TestValidateACMEConfig_MissingHTTPSAddr(t *testing.T) {
 	assert.Contains(t, err.Error(), "acme.https_addr is required")
 }
 
-func TestValidateACMEConfig_MissingExternalURL(t *testing.T) {
+// TestValidateACMEConfig_ExternalURLOptional verifies that Validate accepts a
+// config with no ExternalURL: TrustedCA.Serve derives an origin from the
+// listen address in that case (go-xkms#140), so requiring it unconditionally
+// here would refuse a construction path Serve legitimately supports
+// (go-xkms#938).
+func TestValidateACMEConfig_ExternalURLOptional(t *testing.T) {
 	acme := validACMEConfig()
 	acme.ExternalURL = ""
 	err := acme.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "acme.external_url is required")
+	require.NoError(t, err)
 }
 
 func TestValidateACMEConfig_ExternalURLNotHTTPS(t *testing.T) {

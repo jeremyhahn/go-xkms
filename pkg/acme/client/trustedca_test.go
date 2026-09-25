@@ -238,10 +238,127 @@ func TestNew_MultiTenantWithoutQRDB(t *testing.T) {
 	assert.Equal(t, ErrMissingQRDB, err)
 }
 
+// TestNew_RejectsInvalidConfig proves New calls TrustedCAConfig.Validate and
+// fails closed with its typed error for every rule Validate enforces,
+// instead of constructing a TrustedCA that later fails (or silently runs)
+// with a bad config (go-xkms#938). Each case starts from validConfig() (a
+// config Validate accepts) and violates exactly one rule.
+func TestNew_RejectsInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(cfg *TrustedCAConfig)
+		wantMessage string
+	}{
+		{
+			name:        "missing acme.https_addr",
+			mutate:      func(cfg *TrustedCAConfig) { cfg.ACME.HTTPSAddr = "" },
+			wantMessage: "acme.https_addr is required",
+		},
+		{
+			name:        "acme.external_url not https",
+			mutate:      func(cfg *TrustedCAConfig) { cfg.ACME.ExternalURL = "http://acme.example.com" },
+			wantMessage: "acme.external_url must use https scheme",
+		},
+		{
+			name:        "missing acme.ca_identifiers",
+			mutate:      func(cfg *TrustedCAConfig) { cfg.ACME.CAIdentifiers = nil },
+			wantMessage: "acme.ca_identifiers is required",
+		},
+		{
+			name:        "invalid acme.tls.min_version",
+			mutate:      func(cfg *TrustedCAConfig) { cfg.ACME.TLS.MinVersion = "1.2" },
+			wantMessage: "tls.min_version",
+		},
+		{
+			name:        "invalid ca.default_key_algorithm",
+			mutate:      func(cfg *TrustedCAConfig) { cfg.CA.DefaultKeyAlgorithm = "BLOWFISH-128" },
+			wantMessage: "ca.default_key_algorithm",
+		},
+		{
+			name:        "ca.certificate_validity_days out of range",
+			mutate:      func(cfg *TrustedCAConfig) { cfg.CA.CertificateValidityDays = 0 },
+			wantMessage: "ca.certificate_validity_days",
+		},
+		{
+			name: "admin enabled missing https_addr",
+			mutate: func(cfg *TrustedCAConfig) {
+				cfg.Admin.Enabled = true
+				cfg.Admin.HTTPSAddr = ""
+			},
+			wantMessage: "admin.https_addr is required",
+		},
+		{
+			name: "multi_tenant enabled missing default_tenant_id",
+			mutate: func(cfg *TrustedCAConfig) {
+				cfg.MultiTenant.Enabled = true
+				cfg.MultiTenant.DefaultTenantID = ""
+			},
+			wantMessage: "multi_tenant.default_tenant_id is required",
+		},
+		{
+			name: "audit enabled with no log path and no data_dir",
+			mutate: func(cfg *TrustedCAConfig) {
+				cfg.Audit.Enabled = true
+				cfg.Audit.LogPath = ""
+				cfg.DataDir = ""
+			},
+			wantMessage: "data_dir is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.mutate(cfg)
+
+			tca, err := New(
+				WithCA(newMockCA()),
+				WithStorageFactory(newMockStorageFactory()),
+				WithConfig(cfg),
+			)
+			require.Error(t, err)
+			require.Nil(t, tca)
+
+			var caErr *caerrors.TrustedCAError
+			require.ErrorAs(t, err, &caErr, "New must fail with a typed TrustedCAError")
+			assert.True(t, errors.Is(err, caerrors.Malformed), "err must be errors.Is caerrors.Malformed")
+			assert.Contains(t, err.Error(), tt.wantMessage)
+		})
+	}
+}
+
+// TestNew_RejectsNilConfig proves WithConfig(nil) fails closed with a typed
+// error instead of New (or a later Validate call) panicking on a nil
+// receiver (go-xkms#938).
+func TestNew_RejectsNilConfig(t *testing.T) {
+	tca, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(nil),
+	)
+	require.Error(t, err)
+	require.Nil(t, tca)
+	assert.True(t, errors.Is(err, caerrors.Malformed))
+}
+
+// TestNew_AcceptsCompleteConfig proves a config satisfying every Validate
+// rule constructs successfully (go-xkms#938).
+func TestNew_AcceptsCompleteConfig(t *testing.T) {
+	tca, err := New(
+		WithCA(newMockCA()),
+		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, tca)
+	assert.True(t, tca.IsInitialized())
+}
+
 func TestNew_SingleTenant(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -261,6 +378,7 @@ func TestNew_MultiTenant(t *testing.T) {
 		WithStorageFactory(newMockStorageFactory()),
 		WithQRDB(newMockQRDBService()),
 		WithMultiTenant(),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -279,6 +397,7 @@ func TestNew_WithLogger(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithLogger(logger),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -291,6 +410,7 @@ func TestNew_WithVersion(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithVersion(customVersion),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -298,15 +418,8 @@ func TestNew_WithVersion(t *testing.T) {
 }
 
 func TestNew_WithConfig(t *testing.T) {
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: ":8443",
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: ":9443",
-		},
-	}
+	cfg := validConfig()
+	cfg.Admin.Enabled = true
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
@@ -323,6 +436,7 @@ func TestNew_WithListenAddr(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithListenAddr(":8888"),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -334,6 +448,7 @@ func TestNew_WithAdminListenAddr(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithAdminListenAddr(":9999"),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -354,6 +469,7 @@ func TestTrustedCA_Serve_AlreadyStarted(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -370,9 +486,10 @@ func TestTrustedCA_Serve_ContextCancellation(t *testing.T) {
 	port := getAvailablePort(t)
 	// DefaultTrustedCAConfig leaves Audit.LogPath unresolved (go-xkms#929):
 	// Serve derives it from DataDir, so tests that exercise a real Serve
-	// call need one.
+	// call need one. CAIdentifiers is required by Validate (go-xkms#938).
 	cfg := DefaultTrustedCAConfig()
 	cfg.DataDir = t.TempDir()
+	cfg.ACME.CAIdentifiers = []string{"ca.example.com"}
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
@@ -408,6 +525,7 @@ func TestTrustedCA_Shutdown(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -421,6 +539,7 @@ func TestTrustedCA_Shutdown_WithAuthProvider(t *testing.T) {
 		WithStorageFactory(newMockStorageFactory()),
 		WithQRDB(newMockQRDBService()),
 		WithMultiTenant(),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -432,6 +551,7 @@ func TestTrustedCA_Close(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -489,6 +609,7 @@ func TestTrustedCA_IsInitialized_Concurrent(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -509,11 +630,8 @@ func TestTrustedCA_IsInitialized_Concurrent(t *testing.T) {
 func TestTrustedCA_MultipleOptions(t *testing.T) {
 	logger := slog.Default()
 	db := newMockQRDBService()
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: ":7070",
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = ":7070"
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -541,6 +659,7 @@ func TestTrustedCA_CA_ReturnsInjectedCA(t *testing.T) {
 	tca, err := New(
 		WithCA(mockCA),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -555,6 +674,7 @@ func TestTrustedCA_QRDBService_ReturnsInjectedService(t *testing.T) {
 		WithStorageFactory(newMockStorageFactory()),
 		WithQRDB(db),
 		WithMultiTenant(),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -569,6 +689,7 @@ func TestWithQRDB_WithoutMultiTenant(t *testing.T) {
 		WithStorageFactory(newMockStorageFactory()),
 		WithQRDB(db),
 		// Note: WithMultiTenant() not called
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -771,6 +892,7 @@ func TestTrustedCA_KMSService(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithKMSService(kms),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, kms, tca.KMSService())
@@ -780,6 +902,7 @@ func TestTrustedCA_RestService_BeforeServe(t *testing.T) {
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	// RestService is nil before Serve() is called
@@ -791,15 +914,10 @@ func TestTrustedCA_RestService_BeforeServe(t *testing.T) {
 func TestTrustedCA_Serve_MultiTenantWithAdmin(t *testing.T) {
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", adminPort),
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -836,15 +954,10 @@ func TestTrustedCA_Serve_MultiTenantWithAdmin(t *testing.T) {
 func TestTrustedCA_Serve_SingleTenantAdminPath(t *testing.T) {
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", adminPort),
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -877,14 +990,8 @@ func TestTrustedCA_Serve_SingleTenantAdminPath(t *testing.T) {
 func TestTrustedCA_Serve_AddressFallbackFromConfig(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -919,15 +1026,9 @@ func TestTrustedCA_Serve_AddressFallbackFromConfig(t *testing.T) {
 func TestTrustedCA_Serve_ExternalURLFallback(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr:   fmt.Sprintf("127.0.0.1:%d", acmePort),
-			ExternalURL: "https://custom.example.com",
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.ACME.ExternalURL = "https://custom.example.com"
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -962,15 +1063,10 @@ func TestTrustedCA_Serve_AdminAddressFallback(t *testing.T) {
 	// Use getTwoDifferentPorts to ensure we get unique ports
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", adminPort),
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1007,6 +1103,7 @@ func TestTrustedCA_ExplicitKMSService(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithKMSService(kms),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -1017,14 +1114,8 @@ func TestTrustedCA_ExplicitKMSService(t *testing.T) {
 func TestTrustedCA_Serve_HealthEndpoints(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1093,15 +1184,10 @@ func TestTrustedCA_Serve_HealthEndpoints(t *testing.T) {
 func TestTrustedCA_Shutdown_WithRunningServers(t *testing.T) {
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", adminPort),
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1150,17 +1236,16 @@ func TestTrustedCA_Shutdown_WithRunningServers(t *testing.T) {
 func TestTrustedCA_Serve_WithExplicitAddresses(t *testing.T) {
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
+	cfg := validConfig()
+	cfg.Admin.Enabled = true
+
 	tca, err := New(
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithListenAddr(fmt.Sprintf("127.0.0.1:%d", acmePort)),
 		WithAdminListenAddr(fmt.Sprintf("127.0.0.1:%d", adminPort)),
 		WithExternalURL("https://explicit.example.com"),
-		WithConfig(&TrustedCAConfig{
-			Admin: AdminConfig{
-				Enabled: true,
-			},
-		}),
+		WithConfig(cfg),
 	)
 	require.NoError(t, err)
 
@@ -1191,14 +1276,8 @@ func TestTrustedCA_Serve_WithExplicitAddresses(t *testing.T) {
 func TestTrustedCA_Serve_QRDBWithoutMultiTenant(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1230,7 +1309,11 @@ func TestTrustedCA_Serve_QRDBWithoutMultiTenant(t *testing.T) {
 }
 
 // TestTrustedCA_Serve_DefaultAddresses tests the default address fallbacks
-// when both listenAddr and config.ACME.HTTPSAddr are empty.
+// when both listenAddr and config.ACME.HTTPSAddr are empty. Validate rejects
+// an empty acme.https_addr (go-xkms#938), so this constructs the TrustedCA
+// directly -- bypassing New/Validate, the same white-box pattern
+// TestTrustedCA_Initialize_NilLoggerPath uses -- to reach Serve's own
+// DefaultACMEAddr fallback for coverage.
 func TestTrustedCA_Serve_DefaultAddresses(t *testing.T) {
 	// Create a config with empty listen address to test default fallback
 	cfg := &TrustedCAConfig{
@@ -1242,14 +1325,15 @@ func TestTrustedCA_Serve_DefaultAddresses(t *testing.T) {
 		},
 	}
 
-	tca, err := New(
-		WithCA(newMockCA()),
-		WithStorageFactory(newMockStorageFactory()),
-		WithConfig(cfg),
-	)
-	require.NoError(t, err)
+	tca := &TrustedCA{
+		config:         cfg,
+		version:        Version,
+		ca:             newMockCA(),
+		storageFactory: newMockStorageFactory(),
+	}
+	require.NoError(t, tca.initialize())
 
-	// This will use the default ":8080" address which is likely in use
+	// This will use the default ":8443" address which is likely in use
 	// We test that the code path is executed, not that it succeeds
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -1258,8 +1342,12 @@ func TestTrustedCA_Serve_DefaultAddresses(t *testing.T) {
 	_ = tca.Serve(ctx)
 }
 
-// TestTrustedCA_Serve_AdminDefaultAddress tests the admin default address fallback
-// when both adminHTTPSAddr and config.Admin.HTTPSAddr are empty.
+// TestTrustedCA_Serve_AdminDefaultAddress tests the admin default address
+// fallback when both adminHTTPSAddr and config.Admin.HTTPSAddr are empty.
+// Validate rejects an enabled admin API with an empty admin.https_addr
+// (go-xkms#938), so this constructs the TrustedCA directly -- bypassing
+// New/Validate -- to reach Serve's own DefaultAdminAddr fallback for
+// coverage.
 func TestTrustedCA_Serve_AdminDefaultAddress(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
@@ -1270,18 +1358,19 @@ func TestTrustedCA_Serve_AdminDefaultAddress(t *testing.T) {
 		},
 		Admin: AdminConfig{
 			Enabled:   true,
-			HTTPSAddr: "", // Empty to trigger default :9090
+			HTTPSAddr: "", // Empty to trigger default :9443
 		},
 	}
 
-	tca, err := New(
-		WithCA(newMockCA()),
-		WithStorageFactory(newMockStorageFactory()),
-		WithConfig(cfg),
-	)
-	require.NoError(t, err)
+	tca := &TrustedCA{
+		config:         cfg,
+		version:        Version,
+		ca:             newMockCA(),
+		storageFactory: newMockStorageFactory(),
+	}
+	require.NoError(t, tca.initialize())
 
-	// This will use the default ":9090" admin address
+	// This will use the default ":9443" admin address
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -1325,6 +1414,7 @@ func TestNew_NilLogger(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(newMockStorageFactory()),
 		WithLogger(nil),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, tca)
@@ -1348,6 +1438,7 @@ func TestTrustedCA_Serve_TLSConfigError(t *testing.T) {
 		WithCA(mockCA),
 		WithStorageFactory(newMockStorageFactory()),
 		WithListenAddr("127.0.0.1:0"),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -1363,14 +1454,8 @@ func TestTrustedCA_Serve_ACMEServerError(t *testing.T) {
 	// Use an invalid address to cause server startup failure
 	mockCA := newMockCA()
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: "invalid-address:not-a-port",
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = "invalid-address:not-a-port"
 
 	tca, err := New(
 		WithCA(mockCA),
@@ -1395,15 +1480,10 @@ func TestTrustedCA_Serve_ACMEServerError(t *testing.T) {
 func TestTrustedCA_Serve_AdminServerError(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: "invalid-address:not-a-port",
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = "invalid-address:not-a-port"
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1431,14 +1511,8 @@ func TestTrustedCA_Serve_ErrChError(t *testing.T) {
 
 	// Don't close listener yet - we want it to remain bound
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", usedPort),
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", usedPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1464,15 +1538,10 @@ func TestTrustedCA_Serve_ErrChError(t *testing.T) {
 func TestTrustedCA_Shutdown_WithDeadlineContext(t *testing.T) {
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", adminPort),
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1521,14 +1590,8 @@ func TestTrustedCA_Shutdown_WithDeadlineContext(t *testing.T) {
 func TestTrustedCA_Shutdown_ACMEOnlyError(t *testing.T) {
 	acmePort := getAvailablePort(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled: false, // No admin server
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1565,15 +1628,10 @@ func TestTrustedCA_Shutdown_ACMEOnlyError(t *testing.T) {
 func TestTrustedCA_Shutdown_ErrorJoin(t *testing.T) {
 	acmePort, adminPort := getTwoDifferentPorts(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", acmePort),
-		},
-		Admin: AdminConfig{
-			Enabled:   true,
-			HTTPSAddr: fmt.Sprintf("127.0.0.1:%d", adminPort),
-		},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.Admin.Enabled = true
+	cfg.Admin.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", adminPort)
 
 	tca, err := New(
 		WithCA(newMockCA()),
@@ -1638,6 +1696,7 @@ func TestTrustedCA_Serve_RestServiceError(t *testing.T) {
 		WithCA(newMockCA()),
 		WithStorageFactory(badFactory),
 		WithListenAddr(fmt.Sprintf("127.0.0.1:%d", port)),
+		WithConfig(validConfig()),
 	)
 	require.NoError(t, err)
 
@@ -1680,14 +1739,12 @@ func TestTrustedCA_Serve_DerivesExternalURLFromListenAddress(t *testing.T) {
 	acmePort := getAvailablePort(t)
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", acmePort)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr: listenAddr,
-		},
-		Admin: AdminConfig{
-			Enabled: false,
-		},
-	}
+	// ExternalURL is deliberately left unset: TCAACMEConfig.Validate accepts
+	// that (go-xkms#938) precisely so this derivation path stays reachable
+	// through the public New() constructor.
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = listenAddr
+	cfg.ACME.ExternalURL = ""
 
 	tca, err := New(
 		WithCA(newMockCA()),
