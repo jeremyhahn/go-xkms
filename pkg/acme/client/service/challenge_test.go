@@ -483,6 +483,23 @@ func TestDNS01Challenge_CleanupFails(t *testing.T) {
 
 // TestBuildDNS01ProviderConfig_Route53 verifies that credentials are mapped
 // into the route53 provider's Config struct by field name.
+// TestBuildDNS01Provider_MissingCredentials verifies that a supported
+// provider name with no credentials and no ambient opt-in reaches the real
+// provider constructor and has its validation failure translated into
+// ErrChallengeSetupFailed, rather than buildDNS01Provider silently returning
+// a half-configured provider.
+func TestBuildDNS01Provider_MissingCredentials(t *testing.T) {
+	cfg := DNS01Config{Provider: "route53"}
+
+	provider, err := buildDNS01Provider(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Nil(t, provider)
+
+	var setupErr ErrChallengeSetupFailed
+	require.ErrorAs(t, err, &setupErr)
+	assert.Equal(t, "dns-01", setupErr.ChallengeType)
+}
+
 func TestBuildDNS01ProviderConfig_Route53(t *testing.T) {
 	cfg := DNS01Config{
 		Provider: "route53",

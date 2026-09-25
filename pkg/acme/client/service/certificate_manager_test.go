@@ -31,6 +31,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
 func testCertSpec(accountName string) *CertificateSpec {
@@ -320,6 +322,126 @@ func TestDeploy_MissingSpec_StillReturnsSpecNotFound(t *testing.T) {
 	var target ErrCertSpecNotFound
 	require.True(t, errors.As(err, &target))
 	assert.Equal(t, "unknown", target.Name)
+}
+
+// certTestAccountAndSpec builds a Config wired to directoryURL's fake ACME
+// account "acct" and a single certificate spec "web" naming it, ready for
+// CertificateManager.Request/Renew/Revoke against the fake directory.
+func certTestAccountAndSpec(directoryURL string) *Config {
+	cfg := testConfig()
+	cfg.Accounts["acct"] = &AccountConfig{
+		DirectoryURL: directoryURL,
+		Email:        "cert-test@example.com",
+		Key: &KeyConfig{
+			Algorithm: "ECDSA",
+			Store:     "software",
+			ECC:       &ECCConfig{Curve: "P-256"},
+		},
+	}
+	cfg.Certificates["web"] = &CertificateSpec{
+		Account:   "acct",
+		Subject:   SubjectConfig{CN: "example.com"},
+		Challenge: "http-01",
+		Key: &KeyConfig{
+			Algorithm: "ECDSA",
+			Store:     "software",
+			ECC:       &ECCConfig{Curve: "P-256"},
+		},
+	}
+	return cfg
+}
+
+// newCertTestManager builds a CertificateManager whose sole account resolves
+// against directoryURL through an in-memory storage factory (no filesystem
+// or KMS dependency), mirroring device_manager_test.go's newDeviceTestManager.
+func newCertTestManager(t *testing.T, cfg *Config) CertificateManager {
+	t.Helper()
+
+	logger := testLogger()
+	am := NewAccountManager(cfg, logger).(*accountManager)
+	am.factories.Store("acct", newMemoryFactory(t))
+
+	// RequestCertificate signs its very first request (AuthorizeOrder)
+	// as an existing account, which RFC 8555 requires be addressed by
+	// KID rather than by JWK alone. Registering up front here mirrors
+	// what a real deployment does once at account-onboarding time
+	// (Account.Add), rather than leaving discovery of an unregistered
+	// account's KID to the ACME library's lazy lookup on first use.
+	acmeClient, err := am.Client(context.Background(), "acct")
+	require.NoError(t, err)
+	_, err = acmeClient.RegisterAccount()
+	require.NoError(t, err)
+
+	deployer := NewDeployer(logger)
+	return NewCertificateManager(cfg, am, deployer, logger)
+}
+
+// TestCertificateManager_Request_Success drives Request end to end against
+// an in-process fake ACME directory offering http-01, proving the manager,
+// CSR generation and client.RequestCertificate compose to produce a managed
+// certificate that Show and a later Revoke can act on.
+func TestCertificateManager_Request_Success(t *testing.T) {
+	fakeCert, _ := selfSignedCert(t, "example.com", 24*time.Hour)
+	server := testutil.NewFakeACMEDirectory(t, []string{"http-01"}, [][]byte{fakeCert.Raw})
+	cfg := certTestAccountAndSpec(server.DirectoryURL())
+
+	cm := newCertTestManager(t, cfg)
+
+	result, err := cm.Request(context.Background(), "web")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.NotNil(t, result.Certificate)
+	assert.NotEmpty(t, result.CertPEM)
+	assert.NotEmpty(t, result.KeyPEM)
+
+	info, err := cm.Show("web")
+	require.NoError(t, err)
+	assert.Equal(t, result.Certificate, info.Certificate)
+	assert.Nil(t, info.DeployedAt, "no Deploy config on the spec means Request must not deploy")
+}
+
+// TestCertificateManager_Renew_Success verifies Renew performs a fresh
+// Request and replaces the previously managed certificate.
+func TestCertificateManager_Renew_Success(t *testing.T) {
+	fakeCert, _ := selfSignedCert(t, "example.com", 24*time.Hour)
+	server := testutil.NewFakeACMEDirectory(t, []string{"http-01"}, [][]byte{fakeCert.Raw})
+	cfg := certTestAccountAndSpec(server.DirectoryURL())
+
+	cm := newCertTestManager(t, cfg)
+
+	first, err := cm.Request(context.Background(), "web")
+	require.NoError(t, err)
+
+	renewed, err := cm.Renew(context.Background(), "web")
+	require.NoError(t, err)
+	require.NotNil(t, renewed)
+	assert.Equal(t, first.Certificate.Subject.CommonName, renewed.Certificate.Subject.CommonName)
+}
+
+// TestCertificateManager_Revoke_Success verifies Revoke calls through to the
+// ACME server for a previously issued certificate and removes it from the
+// managed set, so a later Show reports it as no longer issued.
+func TestCertificateManager_Revoke_Success(t *testing.T) {
+	fakeCert, _ := selfSignedCert(t, "example.com", 24*time.Hour)
+	server := testutil.NewFakeACMEDirectory(t, []string{"http-01"}, [][]byte{fakeCert.Raw})
+	cfg := certTestAccountAndSpec(server.DirectoryURL())
+
+	cm := newCertTestManager(t, cfg)
+
+	_, err := cm.Request(context.Background(), "web")
+	require.NoError(t, err)
+
+	err = cm.Revoke(context.Background(), "web", 0)
+	require.NoError(t, err)
+
+	// Show reports the spec as unmanaged post-revoke, mirroring the
+	// pre-issuance case: it does not distinguish "never issued" from
+	// "issued, then revoked" the way Revoke/Deploy do against
+	// cm.config.Certificates.
+	_, err = cm.Show("web")
+	require.Error(t, err)
+	var notFound ErrCertSpecNotFound
+	require.ErrorAs(t, err, &notFound)
 }
 
 // TestBuildCSR_BasicSubject verifies that buildCSR creates a valid CSR with
