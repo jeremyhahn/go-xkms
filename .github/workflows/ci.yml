@@ -540,7 +540,7 @@ jobs:
       # so the compile-time proof it carries goes dark, not just unrun.
       - name: xkey lifecycle tests
         working-directory: xkey
-        run: go test -race -v -tags tpm_simulator ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+        run: go test -race -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
       # pkg/authenticator holds the FIDO2 ClientPIN command handling, including
       # the ChangePIN buffer-aliasing regression test. `go vet -tags ble ./...`
