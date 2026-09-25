@@ -661,7 +661,7 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 			if writeErr := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed"}); writeErr != nil {
 				s.log.Debug("failed to write OIDC callback error page", "error", writeErr)
 			}
-			errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, query.Get("error_description"))}
+			errChan <- &MessageError{Msg: oidc.SanitizeProviderText(errParam) + ": " + oidc.SanitizeProviderText(query.Get("error_description"))}
 			return
 		}
 
@@ -1127,7 +1127,7 @@ func (s *OIDCService) RefreshToken(providerName string) (*OIDCTokenInfo, error) 
 	if err != nil {
 		var tokenErr *oidc.TokenRequestError
 		if errors.As(err, &tokenErr) && tokenErr.Description != "" {
-			return nil, &DetailError{Err: ErrOIDCRefreshFailed, Detail: fmt.Sprintf(": %s", tokenErr.Description)}
+			return nil, &DetailError{Err: ErrOIDCRefreshFailed, Detail: ": " + oidc.SanitizeProviderText(tokenErr.Description)}
 		}
 		return nil, &SentinelCauseError{Sentinel: ErrOIDCRefreshFailed, Cause: err}
 	}

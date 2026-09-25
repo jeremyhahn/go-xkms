@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -920,4 +922,84 @@ func TestExecuteOIDCScript_PropagatesFailure(t *testing.T) {
 	var buf bytes.Buffer
 	err := executeOIDCScript(&buf, "exit 3", OIDCExecPayload{AccessToken: "x"})
 	assert.Error(t, err, "a failing hook must surface as an error, not be swallowed")
+}
+
+// hostileProviderText carries an OSC 52 clipboard write, a clear-screen
+// CSI, an 8-bit CSI and a NUL between two words; sanitised it reads
+// "deniedend".
+const hostileProviderText = "denied\x1b]52;c;ZXZpbA==\x07\x1b[2J\u009b31m\x00end"
+
+// TestHandleOIDCCallback_ProviderErrorIsTerminalInert proves the callback's
+// error and error_description reach the error the CLI prints sanitised, so
+// a hostile redirect cannot drive the user's terminal (#1015).
+func TestHandleOIDCCallback_ProviderErrorIsTerminalInert(t *testing.T) {
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	query := url.Values{"error": {hostileProviderText}, "error_description": {hostileProviderText}}
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?"+query.Encode(), nil)
+	handleOIDCCallback(httptest.NewRecorder(), req, codeChan, errChan, new(atomic.Value))
+
+	select {
+	case err := <-errChan:
+		assert.Equal(t, "deniedend: deniedend", err.Error())
+		wrapped := &SentinelCauseError{Sentinel: ErrOIDCCallbackFailed, Cause: err}
+		assert.NotContains(t, wrapped.Error(), "\x1b", "the error runOIDCLogin returns must carry no escape")
+	default:
+		t.Fatal("no error delivered")
+	}
+	assert.Empty(t, codeChan)
+}
+
+// TestRunOIDCToken_ClaimsAreTerminalInert proves ID-token claims the
+// provider chose are printed sanitised: a hostile subject, email or name
+// cannot drive the terminal or forge an extra output line (#1015).
+func TestRunOIDCToken_ClaimsAreTerminalInert(t *testing.T) {
+	cmd, buf, store := oidcTestCmd(t)
+	idToken := signedTestIDToken(t, OIDCIDTokenClaims{
+		Claims: jwt.Claims{Subject: hostileProviderText},
+		Email:  hostileProviderText,
+		Name:   "Alice\nExpires:       never",
+	})
+	require.NoError(t, storeToken(cmd, store, mustOIDCStoredToken(t, "", "https://example.okta.com", "",
+		"token", "", idToken, time.Now().Add(time.Hour), nil)))
+
+	require.NoError(t, runOIDCToken(cmd, nil))
+	out := buf.String()
+
+	assert.Contains(t, out, "Subject:       deniedend\n")
+	assert.Contains(t, out, "Email:         deniedend\n")
+	assert.Contains(t, out, "Name:          Alice Expires:       never\n")
+	assert.NotContains(t, out, "\nExpires:       never", "a claim must not forge its own output line")
+	assert.NotContains(t, out, "\x1b")
+	assert.NotContains(t, out, "ZXZpbA==")
+}
+
+// TestWriteOIDCIdentity proves each set claim is printed on its own line in
+// the caller's layout, sanitised, and an unset claim is left out.
+func TestWriteOIDCIdentity(t *testing.T) {
+	var buf bytes.Buffer
+	writeOIDCIdentity(&buf, &OIDCIDTokenClaims{Claims: jwt.Claims{Subject: hostileProviderText}, Name: "Alice"}, "  %-10s%s\n")
+	assert.Equal(t, "  Subject:  deniedend\n  Name:     Alice\n", buf.String())
+
+	buf.Reset()
+	writeOIDCIdentity(&buf, &OIDCIDTokenClaims{}, "%-15s%s\n")
+	assert.Empty(t, buf.String(), "no claims, no lines")
+}
+
+// TestWriteAWSLoginSummary_AccessKeyIDIsTerminalInert proves the access key
+// ID the AWS token endpoint returned is printed sanitised (#1015).
+func TestWriteAWSLoginSummary_AccessKeyIDIsTerminalInert(t *testing.T) {
+	var buf bytes.Buffer
+	expiration := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	writeAWSLoginSummary(&buf, "us-east-1", "default", hostileProviderText, expiration)
+	out := buf.String()
+
+	assert.Contains(t, out, "AWS login successful!")
+	assert.Contains(t, out, "  Region:         us-east-1\n")
+	assert.Contains(t, out, "  Profile:        default\n")
+	assert.Contains(t, out, "  Access Key ID:  deniedend\n")
+	assert.Contains(t, out, "  Expires:        2030-01-02T03:04:05Z\n")
+	assert.NotContains(t, out, "\x1b")
 }

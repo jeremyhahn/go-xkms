@@ -195,7 +195,7 @@ func handleLoginCallback(w http.ResponseWriter, r *http.Request, codeChan chan<-
 		// A page that cannot reach the browser (it hung up) changes nothing
 		// about the login's outcome, so the write error is not acted on.
 		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed"})
-		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + errParam + ": " + query.Get("error_description")}
+		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + oidc.SanitizeProviderText(errParam) + ": " + oidc.SanitizeProviderText(query.Get("error_description"))}
 		return
 	}
 

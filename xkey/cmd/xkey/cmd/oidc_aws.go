@@ -140,6 +140,20 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 	return runAWSLogin(cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "", callback)
 }
 
+// writeAWSLoginSummary prints the outcome of a successful AWS login. The
+// access key ID comes back from the AWS sign-in token endpoint, so it is
+// sanitised before it reaches the terminal.
+func writeAWSLoginSummary(out io.Writer, region, profile, accessKeyID string, expiration time.Time) {
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "AWS login successful!")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Region:         %s\n", region)
+	_, _ = fmt.Fprintf(out, "  Profile:        %s\n", profile)
+	_, _ = fmt.Fprintf(out, "  Access Key ID:  %s\n", oidc.SanitizeProviderText(accessKeyID))
+	_, _ = fmt.Fprintf(out, "  Expires:        %s\n", expiration.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "  Time remaining: %s\n", formatDuration(time.Until(expiration)))
+}
+
 // runAWSLogin is the core AWS login implementation that can be called from both
 // the aws subcommand and from provider-based login. The interactive OIDC
 // dance itself (DPoP key, PKCE, callback listener, code exchange) lives in
@@ -214,15 +228,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 	// Print success message
 	creds := tokenResp.GetCredentials()
 	expiration, _ := tokenResp.GetExpirationTime()
-
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "AWS login successful!")
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintf(out, "  Region:         %s\n", region)
-	_, _ = fmt.Fprintf(out, "  Profile:        %s\n", profile)
-	_, _ = fmt.Fprintf(out, "  Access Key ID:  %s\n", creds.AccessKeyID)
-	_, _ = fmt.Fprintf(out, "  Expires:        %s\n", expiration.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(out, "  Time remaining: %s\n", formatDuration(time.Until(expiration)))
+	writeAWSLoginSummary(out, region, profile, creds.AccessKeyID, expiration)
 
 	// Store session for refresh (if refresh token available)
 	if tokenResp.RefreshToken != "" && sessionStore != "" {
