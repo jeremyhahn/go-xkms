@@ -7,6 +7,468 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0-alpha] - 2026-09-24
+
+### Security
+
+- **The xkmsd ACME listener now enforces a per-client request-rate cap; it
+  previously accepted unlimited traffic.** `cmd/xkmsd/acme.go`'s
+  `buildACMERouter` mounted no rate-limit middleware, so an xkmsd ACME
+  endpoint admitted unbounded new-account, new-order and challenge requests
+  even though the standalone `TrustedCA` (`pkg/acme/client/trustedca.go`)
+  already wired one. `pkg/acme/server/rate_limiter.go` gains
+  `NewClientRateLimiterMiddleware`, the single construction path both
+  compositions now call: a `RateLimiter` keyed by JWS KID once an ACME
+  account exists, falling back to the client IP before one does
+  (`server.ClientID`), wired to the ACME audit logger so a throttled request
+  is recorded via `EventRateLimitExceeded`. An exceeded cap is refused per
+  RFC 8555 Section 6.6 — HTTP 429, a `Retry-After` header in integer
+  seconds, and an `application/problem+json` body with type
+  `urn:ietf:params:acme:error:rateLimited` — unchanged from the existing
+  limiter, which was already RFC-compliant.
+  Configuration is the new `ACMERateLimitConfig` (`pkg/config/acme.go`,
+  `acme.rate_limit`), following the same secure-by-default tri-state as
+  `acme.audit`: an omitted or `enabled: true` section throttles at
+  `max_requests: 20` per `interval: 1s` by default (matching the
+  standalone `TrustedCA`'s long-standing built-in default); an explicit
+  `enabled: false` is reported by `Config.ComplianceGaps` ("ACME rate
+  limiting disabled") and `cmd/xkmsd` refuses to start on it, the same
+  refusal pattern the audit trail uses — there is no silent way to run the
+  ACME listener unthrottled. A negative `max_requests` or `interval` is
+  refused by `ACMEConfig.Validate` rather than coerced to the default.
+  Per-tenant rate limiting (`pkg/acme/server/tenant_rate_limiter.go`) and
+  the RFC 8555 §6.6 per-category limits (new-account/new-order/
+  certificate/failed-validation, `rate_limiter.go`'s
+  `DefaultRateLimitConfig` and its constructors) remain unwired: xkmsd only
+  learns an ACME request's tenant as a side effect of handler-internal
+  business logic (the verified External Account Binding inside
+  `NewAccountHandler`, or the persisted account read back in
+  `order_finalize.go`), never from a cheap, authenticated, pre-dispatch
+  request attribute a router middleware could key on — the existing
+  `handlers.TenantMiddleware` extractor trusts a client-supplied header/
+  host/path with no authentication, so wiring it for admission control
+  would let a client opt out of its own quota by omitting or spoofing it.
+  This is tracked as follow-up work rather than forced into this change;
+  see `docs/acme-issuance/engineering.md` §Rate limiting.
+  Tests: `pkg/acme/server/client_rate_limiter_middleware_test.go` (within-
+  limit passes, an exceeded limit is refused with the RFC 8555 problem
+  document and audited, a zero-request cap fails closed) and
+  `cmd/xkmsd/acme_test.go`'s `TestBuildACMERouter_RateLimit`/
+  `TestBuildACMERouter_RateLimit_Disabled` (router-level enforcement and
+  the explicit opt-out path), plus `pkg/config/acme_rate_limit_test.go`
+  (tri-state defaults, negative-value validation, the compliance gap).
+  go-xkms#882.
+- **Every non-GUI production FIDO2 authenticator now writes to an audit
+  log; previously only the GUI did.** `Authenticator.SetAuditLogger` (#766)
+  landed with exactly one caller — the xKey GUI's `PostBarrierUnseal` path
+  (#803) — so the `xkey fido2` virtual USB device daemon and the headless
+  browser-extension daemon (`xkey extension serve`) created FIDO2 credentials
+  and seeded user PINs with no `OpFIDO2CredentialCreated`/`OpPINSeeded`
+  record and no write-failure refusal (#688), even though both are
+  full production entry points a user runs directly. `xkey/cmd/xkey/cmd/fido2.go`
+  (`newFIDO2Device`) now wires `audit.NewSlogLogger`, the same slog-backed
+  logger already used for `AutoFillService` in `extension_serve.go`, into
+  every authenticator it constructs; `extension_serve.go`
+  (`runExtensionServe`) now wires that same logger instance into the
+  headless daemon's authenticator instead of leaving it unaudited. Both
+  daemons now refuse to establish a PIN or create a credential when the
+  audit write fails, matching the GUI and the authenticator package's own
+  write-failure policy. The offline token/attestation operator verbs
+  (`fido2 init-token`, `fido2 change-so-pin`, `fido2 provision-attestation`)
+  do not create credentials or seed the CTAP2 user PIN, so they are
+  unaffected. go-xkms#804.
+- **`ResolveNodeSeal` no longer crashes the daemon on a `barrier.strategy:
+  tpm2` config with no `backends.tpm2` section.** `barrier.strategy`
+  selects the qrdb node-seal flip's hardware strategy independently of
+  `backends.tpm2` (the separate crypto-operation TPM2 backend, gated by its
+  own `Enabled` flag), so an operator can reasonably configure one without
+  the other. `ResolveNodeSeal` (`pkg/server/embedded_node.go`) dereferenced
+  `cfg.Backends.TPM2` unconditionally once `storage.path` resolved, so this
+  config nil-pointer-panicked the whole process (`New` -> `resolveNodeSeal`
+  -> `ResolveNodeSeal`) instead of failing one deployment closed. It now
+  checks for a nil `Backends.TPM2` after the existing `storage.path` guard
+  (preserving that check's precedence) and returns a typed `*NodeSealError`
+  naming the missing section, exactly like the existing "no usable,
+  provisioned TPM was found" case. Found and fixed while adding
+  `Server.New`-level coverage for `resolveNodeSeal`'s error-wrapping branch;
+  regression tests: `TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed`
+  (`pkg/server/node_seal_test.go`) and
+  `TestNew_NodeSealFailure_WrapsAsErrServiceInit`
+  (`pkg/server/new_error_wrapping_test.go`). Fixes part of go-xkms#705.
+
+- **The loopback desktop engine (`pkg/server/loopback`) no longer races
+  `Close` against its own `Start`.** `Launch` started `Server.Start` in a
+  background goroutine with the comment "Start blocks while serving", but
+  `Start` is non-blocking — it only registers each transport's serving
+  goroutine via `sync.WaitGroup.Add` and returns. A caller that calls
+  `Close` immediately after `Launch` returns (a real pattern: e.g. the
+  desktop shell exiting right after boot, not just a test) could win the
+  race against `Start`'s own goroutine, so `Shutdown`'s `wg.Wait()` could
+  observe the `WaitGroup` before `Start`'s `wg.Add` ran — undefined by
+  `sync.WaitGroup`'s contract — and, separately, the REST goroutine's own
+  fail-closed abort-on-cancelled-context path (`pkg/server/server.go`
+  `startREST`) never closed the already-open pre-bound loopback listener on
+  that path, leaking the socket for the life of the process. `Launch` now
+  calls `Start` synchronously before returning, and `startREST`'s abort
+  path closes the injected listener. Regression tests:
+  `TestInstance_Close_StopsTheListener` and `TestLaunch_BindsLoopbackOnly`
+  (`pkg/server/loopback/loopback_launch_test.go`), run with `-race`.
+  Files: `pkg/server/loopback/loopback.go`, `pkg/server/server.go`. Fixes
+  part of go-xkms#705.
+
+### Added
+
+- **`TrustedPlatformModule` gains `State`, `ClearForReprovision`, and a
+  software-verifiable EK credential challenge, so consumers (go-trusted-platform)
+  no longer need their own private copies.** `State() (*ProvisioningState, error)`
+  (`pkg/tpm2/provisioning_state.go`) is one classification: the TPMA_PERMANENT
+  `ownerAuthSet`/`endorsementAuthSet`/`lockoutAuthSet` bits, which of
+  EK/SSRK/IAK/IDevID/Platform SRK's configured persistent handles exist, and
+  whether the Platform SRK's `authPolicy` matches the current
+  `PlatformPolicyDigest`. `ClearForReprovision() (rebootRequired bool, err error)`
+  (`pkg/tpm2/provision.go`) tries `TPM2_Clear` via the LOCKOUT hierarchy, then
+  the PLATFORM hierarchy (for firmware that leaves it open, e.g. U-Boot and
+  Raspberry Pi UEFI), then UEFI PPI `ForceClear`; `rebootRequired` is true only
+  for the PPI path, and each refusal gets its own typed error
+  (`ErrClearLockoutRefused`, `ErrClearPlatformRefused`). `ForceClear`'s single
+  sysfs write now goes through an injectable seam (`ppiRequestWriter`) instead
+  of `os.WriteFile` directly, so it is never exercised against a real host in
+  a test. `NewCredentialChallenge(ekPub crypto.PublicKey, activationKeyName []byte)`
+  and `ActivationKeyName(publicArea []byte)` (`pkg/tpm2/credential_challenge.go`)
+  build a `TPM2_MakeCredential` challenge entirely in software, using go-tpm's
+  own `tpm2.CreateCredential`/`tpm2.ImportEncapsulationKey`/`tpm2.ObjectName`
+  rather than a hand-rolled KDFa/AES-CFB/HMAC construction, so a verifier (a CA,
+  or an installer proving device possession before any identity key exists)
+  needs no TPM of its own. `CreateActivationKey()` and
+  `AnswerCredentialChallenge(key, challenge)` (`pkg/tpm2/activation_key.go`)
+  are the device-side counterpart: a transient, unrestricted key in the null
+  hierarchy (no hierarchy auth) that generalises `ActivateCredential`'s
+  previously hardcoded IAK path — both now share one `activateCredential`
+  helper (`pkg/tpm2/attestation.go`). `pkg/ca`'s `VerifyTCG_CSR_IDevIDBytes`
+  is refactored onto `NewCredentialChallenge`/`ActivationKeyName` and no
+  longer requires `SetTPM` to have been called; enroll-01's wire behaviour
+  and existing tests are unchanged. All five are re-exported through `sdk/go`
+  (type aliases and direct function re-exports). Simulator tests cover `State`
+  on a fresh, provisioned and owned TPM; `ClearForReprovision` on all three
+  paths (the PPI path through its seam); that a challenge built against one EK
+  or one activation key's Name cannot be answered by a different EK or a
+  different key on the same TPM; and that the software-built challenge is
+  answered correctly by the real IAK-bound `ActivateCredential` path. Documented
+  in `docs/tpm2/` and `docs/certificate-authority/engineering.md`. go-xkms#798.
+
+### Changed
+
+- **`pkg/api/rest` and `pkg/xkms` no longer construct inline `errors.New`/`fmt.Errorf` errors inside function bodies; every site now returns a package-level sentinel or the package's existing typed-error wrapper** (#895, batch B). `pkg/api/rest`: `handlers_ssh.go`'s `handleSign`/`handleVerifyKnownHost` field-validation errors are now the sentinels `ErrSSHMissingDigest`/`ErrSSHMissingPublicKey`, still wrapped in `*SSHBadBodyError` so `classifySSHError` maps them to 400 exactly as before; `pkg/api/rest/secureio/password_field.go`'s `PasswordField.UnmarshalJSON` failure paths are now the sentinels `ErrPasswordFieldNotString`/`ErrPasswordFieldEmptyAfterDecode`, still wrapped in `*BadBodyError`. `pkg/xkms`: `servicer_ca_androidkey.go` (11 sites) and `servicer_ca_attestpolicy.go` (6 sites) now build their `%w: detail: %v`-shaped refusals with the package's existing `*ErrOperationWrap{Sentinel, Detail, Err}` type instead of `fmt.Errorf("%w: ...", sentinel, err)`; the wrapped sentinel and rendered message are unchanged, so every existing `errors.Is` assertion in `servicer_ca_androidkey_test.go` and the attestation-invariant tests continues to pass unmodified. No message text, HTTP status mapping, or `errors.Is`/`errors.As` chain changed; only the construction site moved from an inline call to a named error value. New tests: `pkg/api/rest/handlers_ssh_test.go` (`TestSSHMissingFieldSentinels` plus `errors.Is`-backed assertions added to the existing "missing digest"/"missing public key" HTTP round trips), `pkg/api/rest/secureio/password_field_test.go` and `password_field_gaps_test.go` (`errors.Is` assertions added to the existing non-string and decoded-length-zero cases).
+- **`pkg/tpm2/certify_verify.go` and `pkg/api/mcp/handlers_ssh.go` no longer
+  build errors inline with `fmt.Errorf`/`errors.New` inside function
+  bodies** (go-xkms#895 batch A). `certify_verify.go`'s `VerifyCertify`,
+  `VerifyCertifyRaw`, `signatureFromScheme`, `verifyCertifySignature` and
+  `rsaPublicFromArea` used 28 ad-hoc `fmt.Errorf("%w: ...", ErrCertifyX,
+  err)` call sites to attach context to the package's certify-failure
+  sentinels; each now builds the identical rendered message through the
+  package's existing `pkg/errs` typed wrappers (`errs.Detail` for a fixed
+  suffix, `errs.Joined` for a wrapped cause with an optional detail phrase),
+  the same style `attestation.go` and `eccpub.go`'s
+  `ecdsaPublicFromArea` already used in this package — `rsaPublicFromArea`
+  had no direct test for either of its two failure branches, so
+  `TestRSAPublicFromAreaWrapsAsCertifyMalformed` and
+  `TestRSAPublicFromAreaWrapsUniqueMismatchAsCertifyMalformed` were added
+  alongside the conversion, mirroring the existing
+  `TestECDSAPublicFromAreaWrapsAsCertifyMalformed`. `handlers_ssh.go`'s four
+  `mapSSHError(&SSHInvalidParamsError{Err: errors.New("...")})` required-field
+  checks (`ssh.keys.sign`, `ssh.knownHosts.verify` x2,
+  `ssh.authorizedKeys.verify`) now wrap package-level sentinels
+  (`ErrSSHDigestRequired`, `ErrSSHHostRequired`, `ErrSSHPublicKeyRequired`,
+  `ErrSSHFingerprintRequired`), matching the sentinel-per-required-field
+  convention `handlers_user.go`/`handlers_password.go` already use in this
+  package; their JSON-RPC `ErrCodeInvalidParams` (-32602) mapping through
+  `mapSSHError`/`KeyOpError` is unchanged, and the existing tests that
+  previously asserted only on `err.Error()` substrings now assert
+  `errors.Is` against the new sentinels and the mapped code directly.
+  `pkg/api/grpc` was audited with the same method and carries no inline
+  `errors.New`/`fmt.Errorf` construction to convert: every match there is
+  already a package-level sentinel declaration.
+
+### Removed
+
+- **Dead streaming surface removed from every transport layer, and ACME
+  gRPC construction now refuses with a typed error — BREAKING for anyone
+  importing the deleted symbols or relying on the default (gRPC) transport
+  with `sdk/go/acme`.** `RequestStream` and `Stream` are deleted from the
+  `pkg/api/transport.Transport` interface — itself deleted, since nothing in
+  the tree ever held a value of that generic, unary-`Request` abstraction;
+  every real caller goes through the service-specific `pkg/api/transport.
+  Client` interface instead — along with every `RequestStream` implementation
+  in `pkg/api/transport/{rest,mcp,quic,usb}` and their dedicated tests.
+  `RequestStream`/`Stream` are likewise deleted from the ACME SDK's
+  `sdk/go/acme/transport.Transport` (its `Request` method has real callers
+  and is kept), from every implementation under `sdk/go/acme/transport/
+  {rest,unix,quic,embedded,mcp,grpc}`, from the ACME SDK's own `Stream` type
+  alias, and from the `sdk/go/transport` re-export of the `pkg/api/transport`
+  pair. `grpcStream` — constructed only inside the now-deleted ACME gRPC
+  `RequestStream`, and itself never exercised outside that dead path — and
+  the `isACMEService` helper that existed solely to gate it are deleted with
+  their tests. `RequestStream` had zero callers anywhere in the tree
+  (including `sdk/go`, `xkey`, and `test/integration`) outside the tests
+  removed alongside it; go-xkms#698's provenance investigation confirms the
+  same was true at the go-trusted-ca origin, that no proto defines a
+  streaming RPC, and that the generic `pkg/api` `Request` had zero callers.
+
+  Separately: `sdk/go/acme.NewClient` (`trustedca` package) now refuses
+  `TransportGRPC` — the zero-value default — with a typed `Unimplemented`
+  error at construction. RFC 8555 defines ACME as HTTP+JWS; there is no gRPC
+  binding for the protocol, and the gRPC transport's own `Request` already
+  refused every ACME service at call time (`handleACMEUnsupported`). Refusing
+  at construction means a caller who leaves the transport unset, or a caller
+  who forgets `WithREST`/`WithQUIC`/`WithUnix`/`WithMCP`/`WithEmbedded`, gets
+  one clear error immediately instead of a client whose `Account`, `Order`,
+  `Directory`, `Nonce`, `Challenge`, `Authorization`, and `Certificate` calls
+  would each fail individually on their first `Request`. The gRPC transport
+  package itself is unchanged and still serves the Admin API; it can still be
+  driven directly with `admin.NewClient` for callers who want gRPC Admin
+  access outside this combined client — no real caller in this tree ever
+  requested gRPC for ACME or Admin through `trustedca.NewClient` (every one
+  passes `WithREST` or `WithEmbedded` explicitly). go-xkms#727.
+
+### Fixed
+
+- **`pkg/acme` no longer silently discards `Close` errors reached through a
+  deferred closure**: `#701` batch 3's grep only matched discards written at
+  the start of a line, missing the ~85 sites shaped like
+  `defer func() { _ = resp.Body.Close() }()` across the REST/QUIC/MCP API
+  adapters, the CT-log submitter, the audit query reader, the DNS-01/HTTP-01/
+  device-attest-01/enroll-01 challenge responders, the ACME client's chain,
+  ARI and OCSP fetches, and the rate limiter's client-ID extraction. HTTP
+  client response-body (and audit log file/gzip reader) closes, made after
+  the read that produced the function's result has already succeeded, now
+  log the close failure at debug through the package's logger instead of
+  discarding it; the REST, QUIC and MCP adapters share one
+  `api.CloseResponseBody` helper rather than repeating the same closure at
+  every call site. Server-side `r.Body.Close()` calls are left as
+  intentional, documented discards: net/http closes the server request body
+  itself once the handler returns, so closing it again is a defensive no-op
+  whose error is never meaningful. No behavior changes for the success path;
+  previously-silent close failures are now visible. (go-xkms#866)
+- **The ACME server's Replay-Nonce store is now the bounded, encrypted-counter
+  `pkg/acme/nonce` service instead of an unbounded in-memory map.**
+  `pkg/acme/server/handlers.RestService` (`service.go`) mints and redeems
+  nonces through `pkg/acme/nonce.MultiService`, deleting `pkg/acme/common`'s
+  `NonceStore`/`GenerateNonce` (and their tests) — the one remaining nonce
+  implementation is the one that was already complete but unwired. A nonce
+  flood no longer grows the store without limit: `Params.NonceMaxUsed`
+  (`acme.nonce.max_used`, default `nonce.DefaultMaxUsed` = 65536) caps the
+  redeemed-set per signing epoch, and `Params.NonceLifetime`
+  (`acme.nonce.lifetime`, default 10m, matching the previous TTL) rotates to a
+  fresh counter window on that schedule, retiring every nonce still
+  outstanding from the epoch before — the wall-clock-lifetime substitute for
+  a scheme with no per-nonce timestamp to expire (`RestService.mintNonce`,
+  `currentNonceEpoch`, `rotateNonceEpoch`). Each epoch gets a prefix derived
+  from the node identity, the shared key, and the epoch's own start time
+  (`nonceEpochPrefix`), which is why the prefix must be unique per epoch:
+  AES-GCM authenticates a nonce against the key alone, not against which
+  epoch minted it, so a stale-epoch nonce falling back to the current epoch's
+  identical prefix would decrypt cleanly and be checked against unrelated
+  counter state instead of being rejected outright. Added
+  `nonce.MultiService.SetLocal` (`pkg/acme/nonce/service.go`), the seam a
+  rotation needs to swap the locally-minting service without leaking the
+  retired epoch's registry entry. The node prefix
+  (`Params.NoncePrefix`) is derived from `cluster.node_id`
+  (`cmd/xkmsd/acme.go` `clusterNoncePrefix`) so nodes in a Raft cluster mint
+  distinguishable nonces; the encryption key (`Params.NonceKey`) is **not**
+  yet wired to any cluster-shared secret — no such secret was found already
+  wired into xkmsd reachable from ACME server construction (the cluster CA's
+  own key is asymmetric and not deterministically derivable across backends;
+  the tpm-kek cluster seed exists only for that one key strategy; the CA
+  object store is unwired for the primary CA) — so each node currently mints
+  from its own randomly generated key, correct for the common single-node
+  deployment and no worse than before for a load-balanced one: nonces still
+  don't validate across nodes without sticky routing, and RFC 8555 clients
+  already retry a `badNonce` with a fresh nonce. Tests: `pkg/acme/nonce`
+  already covered replay/too-high/too-low/malformed/maxUsed-eviction at the
+  package level; new `pkg/acme/server/handlers/nonce_wiring_test.go` and
+  `pkg/acme/nonce/service_test.go` (`TestMultiService_SetLocal`) cover the
+  wiring: single valid redemption, replay rejection, malformed rejection,
+  foreign-prefix rejection, bounded memory under a flood, epoch rotation
+  (including no double-rotation under concurrent access), and shared-key
+  cross-node validation. `test/integration/rfc8555/rfc8555_6_5_test.go` and
+  `rfc8555_7_2_test.go` were rewritten against `pkg/acme/nonce` in place of
+  the deleted package.
+- **Closure-wrapped `_ = x.Close()`/`Rollback()`/`Sync()` discards outside
+  `pkg/acme` no longer silently drop a close failure.** Read-side closes that
+  run after the caller's result is already decided (HTTP response bodies in
+  `pkg/auth/oidc.go`, `pkg/trust/fetcher`, `pkg/trust/clusterca`,
+  `pkg/escrow/xkms`, `pkg/webauthn/client`, `pkg/api/transport/unix`,
+  `pkg/tpm2`, `sdk/go/login.go`, `sdk/go/client/ssh`, and the
+  `sdk/go/acme/transport` family via a new shared `transport.CloseResponseBody`
+  helper; object-store blob readers in `pkg/ca`; discarded duplicate/loser
+  resources in `pkg/staticpw`, `pkg/escrow/kmip`, `pkg/xkms/piv_manager`;
+  file/connection cleanup in `pkg/ssh/console`, `pkg/webui`,
+  `pkg/pkcs11/module`, `pkg/crypto/spki`, `pkg/xkeysigner`,
+  `pkg/api/transport/usb`, `pkg/api/transport/grpc`, `pkg/seal/autodetect`)
+  now log the failure at `slog.Debug` through the package's existing logger
+  (or a small package-local helper where several sites in a file shared the
+  same shape, following #866's convention) instead of dropping it. Cleanup
+  after a primary error (`pkg/api/unix/grpc_server.go`,
+  `pkg/server/loopback`, `pkg/server/platform_store.go`,
+  `pkg/webauthn/client/hardware_adapter.go`,
+  `sdk/go/client/ssh/mcp.go`, `sdk/go/acme/transport/grpc`) now joins the
+  close error into the returned error with `errors.Join` instead of
+  discarding it. `cmd/xkmsctl` had roughly 130 identical
+  `defer func() { _ = cl.Close() }()`-shaped sites across every subcommand
+  file; they now share one `closeQuiet(io.Closer)` helper in `config.go`
+  that logs at debug. `cmd/xkmsd`'s two rollback-on-failed-startup closes
+  (the ACME audit logger, the init ceremony's FIDO2 handler) now log via the
+  caller's `*slog.Logger` at `Warn`. `pkg/ssh/known_hosts/export.go`'s
+  read-only known_hosts import close and `sdk/go/xkey_auth.go`'s
+  `xkeysigner.Signer.Close` (which never returns a non-nil error) are left
+  as documented discards; `sdk/go/acme/http01_responder.go`'s matching text
+  is a doc comment, not code. `sdk/go/acme/examples/{acme,admin}/main.go`
+  now log a close failure via the example's own `log.Printf` rather than
+  discard it (go-xkms#876).
+- **`ListKeys` silently dropped a key's type on every cloud/HSM backend
+  that stored it as a raw enum value instead of its name.** `azurekv`
+  (`CreateKey`, `CreateSecretKey`, `importRSAKey`, `importECDSAKey`) and
+  `gcpkms` (`GenerateRSA`, `GenerateECDSA`, `GenerateSymmetricKey`) wrote
+  `key_type` as either the raw `types.KeyType` value (`json.Marshal`s as a
+  JSON number) or `string(attrs.KeyType)` (a Go rune conversion, not the
+  human-readable name), while `ListKeys` on both backends reads it back
+  with `metadata["key_type"].(string)` followed by `types.ParseKeyType` —
+  a mismatch that silently failed the type assertion and left every listed
+  key's `KeyType` at its zero value (`UNKNOWN`). `vault`'s own `ListKeys`
+  reads `key_type` as a JSON number (`.(float64)`), which its `CreateKey`
+  already wrote correctly, but `ImportKey` and `GenerateSymmetricKey`
+  wrote it with the same `string(attrs.KeyType)` bug, so any imported or
+  symmetric Vault key was dropped the same way. All six write sites now
+  serialize `key_type` in the form their own package's `ListKeys` actually
+  reads (`attrs.KeyType.String()` for azurekv/gcpkms, `uint8(attrs.KeyType)`
+  for vault). Regression tests pin the round trip through `ListKeys` for
+  each affected backend (go-xkms#705).
+- **`CreateECDSA`'s legacy TPM2_Create+TPM2_Load fallback (taken only when a
+  TPM lacks TPM2_CreateLoaded) authorized TPM2_Load's ParentHandle with a
+  session built against the new child key instead of the parent SRK, so
+  every ECDSA key creation on such a TPM failed TPM_RC_AUTH_FAIL against any
+  SRK with a real (non-empty) auth value.** `pkg/tpm2/ecdsa.go` called
+  `tpm.CreateKeySession(keyAttrs)` -- which resolves a session against the
+  key's own (as yet nonexistent) auth -- where TPM2_Load needs a session
+  authorizing `keyAttrs.Parent`'s handle; the identical fallback in
+  `pkg/tpm2/rsa.go` already called the correct `tpm.CreateSession(keyAttrs)`,
+  which resolves through `keyAttrs.Parent`. Fixed by making the ECDSA path
+  match the RSA path. Regression test:
+  `TestCreateECDSA_LegacyCreateLoadFallback_Succeeds`
+  (`pkg/tpm2/create_key_legacy_fallback_simulator_test.go`), which forces the
+  fallback with a transport double that answers the first TPM2_CreateLoaded
+  with a synthetic TPM_RC 0xb0143 response and asserts the key is still
+  created and loaded. (go-xkms#873)
+- **`FactoryReset` now evicts an IAK at 0x81010002 and still preserves
+  manufacturer EKs.** 0x81010002 is the TCG ECC EK address, and it is also
+  this package's default IAK handle (`IAKConfig.Handle`). `factoryResetInternal`
+  used to preserve both TCG EK addresses unconditionally, so an IAK there
+  survived every reset. Both TCG EK addresses and the configured
+  `Config.EK.Handle` are still preserved. The one exception: a TCG EK address
+  that this package's own configuration places a key at (the IAK, IDevID or
+  Platform SRK) is now evicted (`ownedPersistentHandles`,
+  `pkg/tpm2/provision.go`). A foreign object at 0x81010002, such as a
+  manufacturer ECC EK beside a configured RSA EK, is still preserved. Tests:
+  `TestFactoryReset_IAKAtLegacyECCHandle_Evicted` and
+  `TestFactoryReset_ForeignObjectAtTCGECCEKHandle_Preserved`
+  (`pkg/tpm2/provision_test.go`). go-xkms#798.
+- **`gcpkms` `GetSignerByID`, `GetDecrypterByID` and `ListKeys` could never
+  find a key's metadata.** `GetKey`'s metadata-existence check, and every
+  metadata `storage.SaveKey`/`GetKey`/`DeleteKey` call in the package,
+  keyed the per-key entry on `attrs.ID()` — a value that folds in `KeyType`
+  and `KeyAlgorithm`, not just `CN`. `GetSignerByID`/`GetDecrypterByID`
+  build a `KeyAttributes` with only `CN`, `KeyType` and `StoreType` set
+  (never `KeyAlgorithm`) before calling `GetKey`, and `ListKeys`
+  reconstructs each key's `KeyAttributes` from only its `CN` before
+  reading the same metadata specifically to learn `KeyAlgorithm` — so
+  neither caller could ever compute the same `ID()` the metadata was
+  saved under, and both silently treated every real key as not found (or,
+  for `ListKeys`, as having no metadata at all). All seven call sites now
+  key on `attrs.CN` alone, matching the convention `pkg/backend/vault`
+  already uses for the same per-key metadata store. A regression test
+  exercises `GetSignerByID`/`GetDecrypterByID` and `ListKeys` against a
+  key created through the normal `GenerateRSA` path (go-xkms#705).
+- **`pkg/acme` no longer drops error returns it can act on**: audit-logging,
+  serial-revocation, DNS/challenge cleanup, TPM-open cleanup, and Unix-socket
+  cleanup failures are now joined into the caller's error or reported through
+  the package's `slog` logger instead of being silently discarded with `_`;
+  CT-log submission failures are collected and surfaced in the policy
+  violation returned when a certificate can't get enough SCTs; an unknown-type
+  JWK comparison in external-account-binding verification no longer treats a
+  `json.Marshal` failure as a false "keys match"; a tenant-aware admin
+  service whose storage factory fails to produce its tenant DAO now logs the
+  failure instead of silently degrading with no diagnostic; and HTTP
+  handlers across `pkg/acme` now log a failed response write instead of
+  ignoring it, since headers are already sent by that point and there is no
+  way to report the failure to the client. No behavior changes for the
+  success path; several previously-silent failure paths are now visible.
+  (go-xkms#701 batch 3)
+- **`pivcert/pkcs11`'s PIV slot model reported every EC or Ed25519 key as
+  `"Unknown"` instead of its real algorithm.** `decodeCKKeyType` decoded
+  the `CKA_KEY_TYPE` attribute as big-endian, but PKCS#11 returns `CK_ULONG`
+  attributes as the platform's raw little-endian bytes (see the identical,
+  correct `ckULong` helper in `pkg/backend/pkcs11`). `CKK_RSA` is `0`, so
+  the bug was invisible for RSA keys regardless of byte order; any non-zero
+  key type (`CKK_EC`, the Ed25519 vendor type) reassembled to the wrong
+  number and fell through `keyTypeString`'s type switch to `"Unknown"`,
+  which `pivctl`/the SDK's slot-occupancy view then showed for every EC or
+  Ed25519 PIV slot on a real token. Fixed to decode little-endian, matching
+  `pkg/backend/pkcs11`'s `ckULong`. A SoftHSM-backed regression test
+  (`TestPIVSlotModel_SlotOccupancy_ECKey`) asserts an EC P-256 PIV slot
+  reports `"ECDSA P-256"`, and `TestDecodeCKKeyType`'s fixtures now use
+  little-endian byte patterns instead of the big-endian ones that had
+  masked the bug (go-xkms#705).
+- **BREAKING: `admin.NewTenantAwareAdminService` now returns `(*TenantAwareAdminService, error)`
+  and refuses construction when the storage factory's tenant DAO fails to
+  initialize**: previously, when a `storage.TenantAwareFactory` claimed
+  tenant-aware support but its `TenantDAO()` call failed, construction logged
+  the failure and silently continued with a `nil` local tenant DAO — a
+  degraded mode nobody approved. It now returns `*admin.TenantDAOInitError`
+  (wrapping the cause via `Unwrap`) and constructs nothing. A `storageFactory`
+  that simply does not implement `storage.TenantAwareFactory` remains a
+  legitimate, unrefused configuration: it is xkmsd's only production shape
+  today (`cmd/xkmsd/acme.go` wires `objstore.NewFactoryFromKVStore`, the
+  plain non-tenant-aware factory), the local tenant DAO is never
+  authoritative for tenant existence — only an optional linkage row for
+  CA/EAB/status state qrdb has no concept of, with qrdb's `TenantServicer`
+  as the sole tenant authority — and every method already guards
+  `tenantDAO != nil`. `cmd/xkmsd/admin.go` and `pkg/acme/client/trustedca.go`
+  now propagate the error through their own typed errors instead of
+  discarding it. (go-xkms#867)
+- **`cmd/xkmsctl` no longer discards errors with `_ =`.** The ~870 ignored-error
+  sites the package started with (measured by
+  `grep -rnE "_ :?= |, _ :?= " cmd/xkmsctl --include='*.go' | grep -v _test.go`)
+  are down to 13, every one of which is `pem.Decode`'s non-error `rest
+  []byte` return, kept intentionally. Two new structural helpers remove the
+  sites rather than papering over them: `flagReader` (`flags.go`) replaces
+  `x, _ := cmd.Flags().GetX(name)` with `fr := newFlagReader(cmd)` /
+  `x := fr.X(name)` / a single `fr.Err()` check per command, reporting a
+  typed `*FlagReadError` (mistyped or misspelled flag) instead of silently
+  returning a zero value; a matching `markFlagRequired` helper replaces
+  `_ = cmd.MarkFlagRequired(name)`, recording a build-time `*InitError` in a
+  package-level `initErrors` slice that `Execute` checks before dispatch and
+  `TestInitErrors`-style coverage asserts is empty, rather than panicking in
+  command-tree construction. `outputWriter` (`writer.go`) replaces
+  `_, _ = fmt.Fprintf(w, ...)` with a small error-recording writer — modeled
+  on `xkey/tools/skillgen`'s — whose `printf`/`println`/`print` are no-ops
+  once a write has failed, checked once via `Err()` at the end of each
+  command instead of after every line; `Printer` (`output.go`) now wraps one
+  internally, and every `PrintX` method returns its recorded write error
+  instead of an unconditional `nil`. Deferred best-effort `Close`/cleanup
+  calls (`defer func() { _ = cl.Close() }()`, ~140 sites) now route through
+  new `closeQuietly`/`closeFuncQuietly` helpers that log the failure at
+  debug level instead of discarding it silently. A new `TestFlagBindings`
+  (`flagbindings_test.go`) statically walks every `flagReader`-mediated read
+  in the package and confirms the flag it names is registered, with a
+  matching type, somewhere in the live `rootCmd` tree — the same check
+  caught a stale test fixture (`bootstrap_run_test.go`'s hand-built command
+  copy was missing `--p256-key`, previously masked by the discarded error it
+  now replaces) during this change. No flag name, default, or output text
+  changed. Files: `cmd/xkmsctl/flags.go`, `cmd/xkmsctl/writer.go`,
+  `cmd/xkmsctl/output.go`, `cmd/xkmsctl/root.go`, and every other non-test
+  `cmd/xkmsctl/*.go` file; tests: `cmd/xkmsctl/flags_test.go`,
+  `cmd/xkmsctl/writer_test.go`, `cmd/xkmsctl/flagbindings_test.go` (go-xkms#702).
+
 ## [0.25.0-alpha] - 2026-09-24
 
 ### Security
