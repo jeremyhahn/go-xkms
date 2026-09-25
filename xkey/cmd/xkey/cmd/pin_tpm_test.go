@@ -44,23 +44,3 @@ func TestOpenTPMModule_DeviceNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), missingDevice)
 	require.True(t, errors.Is(err, wrapped.Err), "WrappedError must unwrap to the os.Stat cause")
 }
-
-// TestOpenTPMModule_SimulatorUnavailable proves that requesting the
-// in-process simulator in a build without TPM simulator support (this
-// module's test tags never include tpm_simulator) fails with the typed
-// WrappedError wrapping pkg/tpm2.ErrSimulatorNotAvailable, reachable with
-// errors.Is, rather than an untyped fmt.Errorf value.
-func TestOpenTPMModule_SimulatorUnavailable(t *testing.T) {
-	logger := slog.Default()
-	dataDir := t.TempDir()
-
-	tpm, closer, err := openTPMModule(logger, dataDir, "", true /* useSimulator */)
-
-	require.Error(t, err)
-	assert.Nil(t, tpm)
-	assert.Nil(t, closer)
-
-	var wrapped *WrappedError
-	require.True(t, errors.As(err, &wrapped), "err = %v, want *WrappedError", err)
-	assert.Contains(t, err.Error(), "open tpm")
-}

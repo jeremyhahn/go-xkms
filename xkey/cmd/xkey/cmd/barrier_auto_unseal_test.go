@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/tpm2test"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
@@ -55,12 +56,26 @@ func initSimulatorTPM2Barrier(t *testing.T, dataDir string) map[uint][]byte {
 
 	tpm, closer, err := openTPMModule(logger, dataDir, "", true)
 	require.NoError(t, err)
+	// A plain defer, not t.Cleanup: this must release the simulator's
+	// process-wide lock (simulator.Get) the instant this function returns,
+	// on every path including a require failure above -- t.Cleanup would
+	// only run after the enclosing test returns, by which point the test
+	// itself may already be blocked opening a second simulator instance
+	// (see the doc comment above).
+	defer func() { assert.NoError(t, closer.Close(), "releasing the TPM simulator") }()
 
 	// A fresh simulator has no SRK resident at its persistent handle yet
 	// (unlike real hardware, which is provisioned once via `xkey tpm
 	// provision`/`install` and keeps the SRK resident forever): Provision
 	// creates and evicts it so sealing has a usable parent key.
 	require.NoError(t, tpm.Provision(nil), "provisioning the TPM simulator's SRK must succeed")
+
+	// Provision is TCG-only (EK + Shared SRK); the barrier's tpm2 strategy
+	// seals through TPM2.Seal/Unseal, which parents exclusively off the
+	// Platform SRK, so it must be enrolled before barrierSvc.Initialize.
+	cfg := xkms.DefaultTPMConfig
+	require.NoError(t, tpm2test.EnrollPlatformSRK(tpm, &cfg),
+		"simulator must enroll the Platform SRK the barrier's tpm2 strategy uses")
 
 	barrierSvc := services.NewBarrierService(dataDir, logger)
 	barrierSvc.SetDataDir(dataDir)
@@ -72,8 +87,6 @@ func initSimulatorTPM2Barrier(t *testing.T, dataDir string) map[uint][]byte {
 	probe := services.NewBarrierAutoUnsealService(nil, services.WithBarrierAutoUnsealTPMAccessor(accessor))
 	pcrs, err := probe.CaptureCurrentPCRs(context.Background(), "sha256", []uint{0, 1, 2, 3, 4, 5, 6, 7})
 	require.NoError(t, err)
-
-	require.NoError(t, closer.Close())
 
 	return pcrs
 }
@@ -136,8 +149,15 @@ func TestTryBarrierPolicyAutoUnseal_Success(t *testing.T) {
 
 	tpm, closer, err := openTPMModule(logger, dataDir, "", true)
 	require.NoError(t, err)
-	defer func() { _ = closer.Close() }()
+	defer func() { assert.NoError(t, closer.Close(), "releasing the TPM simulator") }()
 	require.NoError(t, tpm.Provision(nil), "provisioning the TPM simulator's SRK must succeed")
+
+	// Provision is TCG-only (EK + Shared SRK); the barrier's tpm2 strategy
+	// seals through TPM2.Seal/Unseal, which parents exclusively off the
+	// Platform SRK, so it must be enrolled before barrierSvc.Initialize.
+	cfg := xkms.DefaultTPMConfig
+	require.NoError(t, tpm2test.EnrollPlatformSRK(tpm, &cfg),
+		"simulator must enroll the Platform SRK the barrier's tpm2 strategy uses")
 
 	barrierSvc := services.NewBarrierService(dataDir, logger)
 	barrierSvc.SetDataDir(dataDir)

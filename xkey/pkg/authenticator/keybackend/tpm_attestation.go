@@ -151,7 +151,12 @@ func (b *TPM2AttestingBackend) GetAttestationStatement(format string, authData, 
 		return nil, err
 	}
 
-	srkAttrs, err := b.tpm.SSRKAttributes()
+	// The credential key was created by BackendAdapter.GenerateCredentialKey
+	// through the SDK's TPM2 backend, which parents every key it creates off
+	// the Platform SRK, never the Shared SRK (pkg/backend/tpm2.resolveSRKAttributes).
+	// TPM2_Certify must load the credential key blob under the same parent it
+	// was wrapped with, or the TPM rejects the blob's integrity check.
+	srkAttrs, err := b.tpm.PlatformSRKAttributes()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrTPMCertifyFailed, Cause: err}
 	}
