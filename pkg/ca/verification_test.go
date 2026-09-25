@@ -186,12 +186,16 @@ func TestIsExpired(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "certificate expiring in 1 second",
+			// X.509 validity has one-second resolution and the fixture is
+			// built before IsExpired runs, so a one-second margin can
+			// genuinely lapse on a loaded runner. A minute keeps the case
+			// "close to expiry" without racing the clock.
+			name: "certificate expiring in 1 minute",
 			cert: generateTestCertificate(t, testCertOptions{
 				serial:     big.NewInt(3),
 				commonName: "Almost Expired Cert",
 				notBefore:  time.Now().Add(-24 * time.Hour),
-				notAfter:   time.Now().Add(time.Second),
+				notAfter:   time.Now().Add(time.Minute),
 				key:        key,
 			}),
 			expected: false,
