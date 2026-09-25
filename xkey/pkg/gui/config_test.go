@@ -48,6 +48,19 @@ func TestGUIConfig_Validate_InvalidTheme(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestGUIConfig_Validate_InvalidProtocol(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	cfg.ServerProtocol = "carrier-pigeon"
+	err := cfg.Validate()
+	assert.ErrorIs(t, err, ErrInvalidProtocol)
+}
+
+func TestGUIConfig_Validate_EmptyProtocolIsAllowed(t *testing.T) {
+	cfg := DefaultGUIConfig()
+	cfg.ServerProtocol = ""
+	assert.NoError(t, cfg.Validate(), "an empty protocol means unset, not invalid")
+}
+
 func TestGUIConfig_Validate_ZeroWidth(t *testing.T) {
 	cfg := DefaultGUIConfig()
 	cfg.WindowWidth = 0

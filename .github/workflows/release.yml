@@ -344,38 +344,90 @@ jobs:
       # complete set, so one leg's failure must not cancel the others: the
       # more legs that finish, the smaller the recovery run.
       fail-fast: false
+      # go-xkms#1026: caps how many of these four legs a self-hosted runner
+      # host builds at once. The legs were never contending on CPU alone --
+      # each `docker create` also hits that host's shared docker DAEMON, and
+      # the arm64/standard leg below hits it hardest (QEMU emulation, full
+      # apt install, static CGO link). 2 keeps at most one CGO-heavy leg and
+      # one lighter leg in flight together without serialising the whole
+      # matrix (which would double this job's wall time for no reason: three
+      # of the four legs below need no QEMU at all -- see `qemu:` on each).
+      max-parallel: 2
       matrix:
         include:
-          # Standard builds
+          # Standard builds. CGO_ENABLED=1 (tpm2, pkcs11, frost, plus the
+          # unconditional icu/usb cgo deps of the module graph -- see
+          # build.sh below), statically linked.
           - platform: linux/amd64
             arch: amd64
             variant: standard
             fips: false
+            # Native: the runner IS amd64, so this never touches QEMU.
+            qemu: false
           - platform: linux/arm64
             arch: arm64
             variant: standard
             fips: false
-          # FIPS 140-3 compliant builds (Linux only, uses Go's GOFIPS140 mode)
+            # The one leg QEMU emulation could not be removed from (see the
+            # "Set up QEMU" step below for why: miekg/pkcs11, go-icu-regex
+            # and gousb are cgo, and this build statically links against
+            # arm64 libtss2/libicu/libusb/pkcs11 headers, which is not
+            # something an amd64->arm64 cross toolchain can be verified to
+            # do reliably without a real arm64 linker to test against).
+            qemu: true
+          # FIPS 140-3 compliant builds (Linux only, Go's built-in
+          # GOFIPS140 mode). CGO_ENABLED=0 unconditionally (pure Go crypto,
+          # gms_pure_go instead of the cgo ICU regex engine, tpm2/pkcs11
+          # excluded) -- there is nothing here for a C toolchain to link,
+          # on EITHER architecture, so neither FIPS leg ever needs QEMU.
           - platform: linux/amd64
             arch: amd64
             variant: fips
             fips: true
+            qemu: false
           - platform: linux/arm64
             arch: arm64
             variant: fips
             fips: true
+            # Native `GOARCH=arm64 CGO_ENABLED=0 go build` inside the SAME
+            # amd64 golang:bookworm container the amd64 leg uses (no
+            # `--platform`, so no docker-daemon platform emulation, no
+            # binfmt registration, no QEMU at all) -- go-xkms#1026's actual
+            # fix, not just a mitigation: this leg failed on a docker-daemon
+            # timeout at v0.30.0-alpha (issue table) purely because it was
+            # running under QEMU for a build that needed no C toolchain in
+            # the first place.
+            qemu: false
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # go-xkms#1026: only the standard/arm64 leg needs this at all (see
+      # `qemu:` on the matrix above) -- the FIPS legs are CGO_ENABLED=0 on
+      # both architectures and the amd64/standard leg is already native, so
+      # gating this out for them removes three of this job's four QEMU
+      # touches, which is most of what was contending for the runner host's
+      # docker daemon and racing the binfmt image cache.
+      #
+      # `cache-image: false` (go-xkms#1026): the action's default caches the
+      # tonistiigi/binfmt image tarball into hostedtoolcache and reuses it
+      # across runs. v0.24.0-alpha hit that cache mid-write from a
+      # concurrent job on the same runner host: `ENOENT copyfile
+      # .../tonistiigi--binfmt/latest/linux-x64/image.tar ->
+      # /opt/hostedtoolcache/...`. Disabling the cache means this leg always
+      # pulls and installs the binfmt image fresh -- slightly more network
+      # traffic, no shared mutable state to race.
       - name: Set up QEMU
+        if: matrix.qemu == 'true'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: ${{ matrix.platform }}
+          cache-image: false
 
       - name: Set up Docker Buildx
+        if: matrix.qemu == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build binaries in native container
@@ -384,24 +436,6 @@ jobs:
           cat > build.sh << 'EOF'
           #!/bin/bash
           set -e
-
-          # Install build dependencies. libicu-dev/libusb-1.0-0-dev are cgo
-          # build deps of the module graph itself (dolthub/go-icu-regex,
-          # google/gousb via go-qrdb), not gated by any backend tag.
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential \
-            pkg-config \
-            libsofthsm2 \
-            libsofthsm2-dev \
-            softhsm2 \
-            libtss2-dev \
-            libicu-dev \
-            libusb-1.0-0-dev \
-            ca-certificates \
-            file \
-            libssl-dev \
-            git
 
           # Build information
           VERSION="${VERSION}"
@@ -424,10 +458,34 @@ jobs:
             BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
             echo "Building FIPS 140-3 compliant binary with GOFIPS140=v1.0.0"
             echo "Note: FIPS builds exclude TPM2/PKCS11 backends (require CGO)"
+            echo "Note: CGO_ENABLED=0 needs no C toolchain on either arch -- GOARCH=${GOARCH} cross-compiles natively, no QEMU (go-xkms#1026)"
           else
             # Standard build with all backends
             BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost"
             echo "Building standard binary with all backends"
+          fi
+
+          # Install build dependencies. Only the CGO_MODE=1 (standard) build
+          # needs a C toolchain or any of these headers at all: FIPS builds
+          # are CGO_ENABLED=0 pure Go and link nothing here (go-xkms#1026).
+          # libicu-dev/libusb-1.0-0-dev are cgo build deps of the module
+          # graph itself (dolthub/go-icu-regex, google/gousb via go-qrdb),
+          # not gated by any backend tag -- but they are only REACHED when
+          # cgo is on, since gms_pure_go (above) swaps out the icu-backed
+          # regex engine precisely so the FIPS build can leave cgo off.
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates file git
+          if [ "$CGO_MODE" = "1" ]; then
+            apt-get install -y --no-install-recommends \
+              build-essential \
+              pkg-config \
+              libsofthsm2 \
+              libsofthsm2-dev \
+              softhsm2 \
+              libtss2-dev \
+              libicu-dev \
+              libusb-1.0-0-dev \
+              libssl-dev
           fi
 
           # Static linking flags (adjust for FIPS builds which don't use CGO)
@@ -507,25 +565,83 @@ jobs:
           # bare `-e NAME` host-value passthrough, so each credential var is
           # explicitly expanded here (empty string when unset, e.g. on
           # GitHub Actions -- same no-op behavior as before).
-          CID=$(docker create \
-            --platform=${{ matrix.platform }} \
-            -w /src \
-            -e VERSION="${{ needs.create-release.outputs.version }}" \
-            -e COMMIT="${{ needs.create-release.outputs.commit }}" \
-            -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -e GOARCH="${{ matrix.arch }}" \
-            -e WITH_FIPS="${{ matrix.fips }}" \
-            -e GOPRIVATE="${GOPRIVATE:-}" \
-            -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
-            -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
-            -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
-            golang:${{ env.GO_VERSION }}-bookworm \
-            bash /src/build.sh)
-          docker cp . "$CID":/src
-          docker start -a "$CID"
-          mkdir -p dist
-          docker cp "$CID":/src/dist/. ./dist/
-          docker rm "$CID" >/dev/null
+          #
+          # `--platform` is passed ONLY for the one leg that actually needs
+          # it (`matrix.qemu == 'true'`, i.e. standard/arm64): every other
+          # leg builds inside the container's OWN (amd64) architecture and
+          # cross-compiles via GOARCH -- exactly like the FIPS/arm64 leg,
+          # which needs no C toolchain to do that at all (go-xkms#1026).
+          # Passing `--platform=linux/amd64` explicitly for the amd64 legs
+          # would be a no-op on an amd64 runner; omitting it entirely for
+          # every non-qemu leg is the same thing without asking the daemon
+          # to resolve a platform match it already has.
+          PLATFORM_ARGS=()
+          if [ "${{ matrix.qemu }}" = "true" ]; then
+            PLATFORM_ARGS=(--platform="${{ matrix.platform }}")
+          fi
+
+          # Bounded retry around the whole create/copy/run/copy sequence
+          # (go-xkms#1026): the failures on record here are runner
+          # infrastructure, not this script -- `docker: Error response from
+          # daemon: error while creating mount` and the docker socket
+          # answering `context deadline exceeded` mid-build (v0.24.0-alpha,
+          # v0.27.0-alpha, v0.30.0-alpha; see the issue). A plain shell loop,
+          # not a marketplace retry action: 3 attempts, linear backoff, and a
+          # failed attempt's container is torn down before the next one
+          # starts so a retry never inherits a half-built /src/dist.
+          attempt=0
+          max_attempts=3
+          while :; do
+            attempt=$((attempt + 1))
+            echo "::group::Build attempt ${attempt}/${max_attempts} (platform=${{ matrix.platform }}, qemu=${{ matrix.qemu }})"
+            rm -rf dist
+            CID=""
+            if CID=$(docker create \
+                 "${PLATFORM_ARGS[@]}" \
+                 -w /src \
+                 -e VERSION="${{ needs.create-release.outputs.version }}" \
+                 -e COMMIT="${{ needs.create-release.outputs.commit }}" \
+                 -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                 -e GOARCH="${{ matrix.arch }}" \
+                 -e WITH_FIPS="${{ matrix.fips }}" \
+                 -e GOPRIVATE="${GOPRIVATE:-}" \
+                 -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
+                 -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
+                 -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
+                 golang:${{ env.GO_VERSION }}-bookworm \
+                 bash /src/build.sh) \
+               && docker cp . "$CID":/src \
+               && docker start -a "$CID" \
+               && mkdir -p dist \
+               && docker cp "$CID":/src/dist/. ./dist/; then
+              docker rm "$CID" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+              break
+            else
+              # rc MUST be captured HERE, inside the else branch: an `if`
+              # whose condition is false and which takes no `then` action
+              # exits 0 by POSIX definition, so `rc=$?` placed after a bare
+              # `if/fi` silently reads 0 on every failure (the same defect
+              # retry.sh's own test suite caught -- see its comment).
+              rc=$?
+            fi
+            # `|| true`: this step runs under the default `bash -eo
+            # pipefail`, so a FAILING cleanup here (e.g. the daemon that just
+            # timed out on `create`/`start` also refuses `rm`) would trip
+            # errexit and abort the whole retry loop right here -- before the
+            # attempt-budget check below ever runs, turning "retry a flaky
+            # infra failure" into "die on the first one instead". Best-effort
+            # cleanup must never itself end the loop.
+            { [ -n "$CID" ] && docker rm -f "$CID" >/dev/null 2>&1; } || true
+            echo "::endgroup::"
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }}) failed after ${max_attempts} attempts (exit ${rc})"
+              exit "$rc"
+            fi
+            sleep_for=$((attempt * 15))
+            echo "Attempt ${attempt} failed (exit ${rc}); retrying in ${sleep_for}s"
+            sleep "$sleep_for"
+          done
 
           # Verify binaries were created
           echo "Build artifacts:"
@@ -601,8 +717,24 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # go-xkms#1026: QEMU/binfmt is needed ONLY by the multi-arch PUSH step
+      # at the bottom of this job (`platforms: linux/amd64,linux/arm64`),
+      # which is itself gated to `github.server_url == 'https://github.com'`
+      # -- on this org's Gitea instance it never runs at all, since
+      # secrets.GITHUB_TOKEN authenticates nothing on ghcr.io (see the login
+      # step below). Before this change QEMU/binfmt still registered on
+      # EVERY release run regardless, for a multi-arch build that could
+      # never execute here -- pure contention for the runner host's docker
+      # daemon and the binfmt image cache, and a plausible contributor to
+      # the v0.24.0-alpha "Docker server image" failure (issue table) since
+      # it ran concurrently with build-binaries' own QEMU legs. Buildx setup
+      # stays unconditional: the amd64-only scan build below needs it
+      # regardless of platform.
       - name: Set up QEMU
+        if: github.server_url == 'https://github.com'
         uses: docker/setup-qemu-action@v3
+        with:
+          cache-image: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -769,23 +901,36 @@ jobs:
       # and loaded into the local daemon so Trivy can read it; the multi-arch
       # push below shares the same buildx cache, so this costs a load rather
       # than a rebuild.
+      #
+      # A direct `docker buildx build` rather than docker/build-push-action
+      # (go-xkms#1026): this is the step the v0.24.0-alpha "Docker server
+      # image" failure (issue table) actually ran, since the push step below
+      # never executes on Gitea, and a `uses:` step cannot be wrapped in a
+      # plain shell retry loop. Same context/file/platform/tags/build-args/
+      # secret as before; `--cache-from`/`--cache-to` are added only on
+      # GitHub, matching the previous conditional exactly.
       - name: Build server image for scanning
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.release
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SERVER }}:release-scan
-          build-args: |
-            VERSION=${{ needs.create-release.outputs.version }}
-            COMMIT=${{ needs.create-release.outputs.commit }}
-            DATE=${{ github.event.repository.updated_at }}
-          secret-files: |
-            gomodauth=./gomodauth.env
-          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
-          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
+        run: |
+          set -euo pipefail
+          CACHE_ARGS=()
+          if [ "${{ github.server_url }}" = "https://github.com" ]; then
+            CACHE_ARGS=(--cache-from type=gha --cache-to type=gha,mode=max)
+          fi
+          scripts/retry.sh --attempts 3 --backoff 20 -- \
+            docker buildx build \
+              --file Dockerfile.release \
+              --platform linux/amd64 \
+              --tag "${REGISTRY}/${IMAGE_NAME_SERVER}:release-scan" \
+              --build-arg VERSION="${{ needs.create-release.outputs.version }}" \
+              --build-arg COMMIT="${{ needs.create-release.outputs.commit }}" \
+              --build-arg DATE="${{ github.event.repository.updated_at }}" \
+              --secret id=gomodauth,src=./gomodauth.env \
+              --load \
+              "${CACHE_ARGS[@]}" \
+              .
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME_SERVER: ${{ env.IMAGE_NAME_SERVER }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa): base-
@@ -839,8 +984,13 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      # See the server-image job's comment: QEMU here is needed only by the
+      # multi-arch push step below, which never runs on Gitea.
       - name: Set up QEMU
+        if: github.server_url == 'https://github.com'
         uses: docker/setup-qemu-action@v3
+        with:
+          cache-image: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -883,24 +1033,31 @@ jobs:
           fi
 
       # devops.md §8: no image reaches a registry unscanned. See the server job
-      # for why this builds amd64-only and loads rather than pushing.
+      # for why this builds amd64-only and loads rather than pushing, and why
+      # it is a direct `docker buildx build` wrapped in scripts/retry.sh
+      # rather than docker/build-push-action (go-xkms#1026).
       - name: Build CLI image for scanning
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.cli
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}:release-scan
-          build-args: |
-            VERSION=${{ needs.create-release.outputs.version }}
-            COMMIT=${{ needs.create-release.outputs.commit }}
-            DATE=${{ github.event.repository.updated_at }}
-          secret-files: |
-            gomodauth=./gomodauth.env
-          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
-          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
+        run: |
+          set -euo pipefail
+          CACHE_ARGS=()
+          if [ "${{ github.server_url }}" = "https://github.com" ]; then
+            CACHE_ARGS=(--cache-from type=gha --cache-to type=gha,mode=max)
+          fi
+          scripts/retry.sh --attempts 3 --backoff 20 -- \
+            docker buildx build \
+              --file Dockerfile.cli \
+              --platform linux/amd64 \
+              --tag "${REGISTRY}/${IMAGE_NAME_CLI}:release-scan" \
+              --build-arg VERSION="${{ needs.create-release.outputs.version }}" \
+              --build-arg COMMIT="${{ needs.create-release.outputs.commit }}" \
+              --build-arg DATE="${{ github.event.repository.updated_at }}" \
+              --secret id=gomodauth,src=./gomodauth.env \
+              --load \
+              "${CACHE_ARGS[@]}" \
+              .
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME_CLI: ${{ env.IMAGE_NAME_CLI }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa) and the
@@ -1066,3 +1223,57 @@ jobs:
           echo "# CLI tool" >> $GITHUB_STEP_SUMMARY
           echo "docker pull ghcr.io/jeremyhahn/xkms-cli:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # go-xkms#1026: the run's true terminal state, independent of whether every
+  # upstream job in THIS run went green. It runs whenever a release object
+  # was created at all -- even if build-binaries, build-docker,
+  # build-docker-cli or create-checksums failed outright -- and states plainly
+  # whether the release Gitea is actually serving is complete: exactly the
+  # build matrix's assets plus checksums.txt, nothing missing, nothing extra.
+  #
+  # This is deliberately independent of create-checksums' own "Verify the
+  # release carries every matrix asset" step: that step runs BEFORE
+  # checksums.txt exists (it decides whether creating one is safe), so it
+  # cannot also require it, and it does not check for a stray/misnamed asset.
+  # verify-complete (scripts/release-assets.sh) checks both, reusing the same
+  # `expected` statement of the matrix so there is exactly one place that
+  # lists it.
+  verify-release-assets:
+    name: Verify Release Assets
+    needs:
+      [
+        create-release,
+        build-binaries,
+        build-docker,
+        build-docker-cli,
+        create-checksums,
+        announce-release,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_API: ${{ github.server_url }}/api/v1
+      RELEASE_REPO: ${{ github.repository }}
+      RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Require the release object
+        run: |
+          if [ "${{ needs.create-release.result }}" != "success" ]; then
+            echo "::error::create-release did not succeed (${{ needs.create-release.result }}); there is no release to verify."
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      # Fails loudly and names every discrepancy: `missing: NAME` for
+      # anything the matrix expects that Gitea does not have, `unexpected:
+      # NAME` for anything present that the matrix does not expect. A green
+      # run here is the only statement in this workflow that the tag's
+      # release is actually complete, independent of which individual jobs
+      # in THIS run happened to succeed.
+      - name: Verify the published release is complete
+        run: scripts/release-assets.sh verify-complete "${{ needs.create-release.outputs.version }}"

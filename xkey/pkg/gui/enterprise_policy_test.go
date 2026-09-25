@@ -21,9 +21,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
 
 // relaxedPolicyYAML is an enterprise policy file that relaxes every secure
@@ -280,4 +283,58 @@ func TestApp_ApplyVerifiedEnterprisePolicy_PreconditionsUnmet_KeepsDefaults(t *t
 	// the refused section never reaches it.
 	assert.True(t, app.authenticatorInstance.Config().RequireUserPresence)
 	assert.True(t, app.authenticatorInstance.Config().EnableUserIntentCheck)
+}
+
+// TestApplyCapabilityPolicy_PropagatesToEveryGatedService exercises the
+// direct-installation branch (service != nil) for every capability-gated
+// service applyCapabilityPolicy touches. Each assertion observes the
+// installed policy through the service's own gated operation rather than
+// reflection, so a service silently omitted from applyCapabilityPolicy
+// shows up as an operation that unexpectedly still succeeds.
+func TestApplyCapabilityPolicy_PropagatesToEveryGatedService(t *testing.T) {
+	appSvc := services.NewAppService(nil)
+	pinSvc := services.NewPINService()
+	trustSvc := services.NewTrustService(nil)
+	auditSvc := services.NewAuditService(nil)
+	sealSvc := services.NewSealService(t.TempDir())
+	explorerSvc, err := services.NewAPIExplorerService(&services.ExplorerConfig{
+		TokenStore:   tokenstore.NewMemoryTokenStore(),
+		Registry:     serverregistry.NewMemoryServerRegistry(),
+		TrustStore:   xkmssdk.NewStorageMemory(),
+		HistoryStore: xkmssdk.NewStorageMemory(),
+	})
+	require.NoError(t, err)
+
+	locked := config.DefaultPolicy()
+	locked.UserCanConfigureTheme = false
+	locked.UserCanViewAuditLog = false
+	locked.APIExplorerEnabled = false
+
+	applyCapabilityPolicy(appSvc, pinSvc, trustSvc, auditSvc, sealSvc, explorerSvc, locked)
+
+	// appSvc: SetTheme is gated by UserCanConfigureTheme.
+	err = appSvc.SetTheme(ThemeDark)
+	var policyErr *services.PolicyDeniedError
+	require.ErrorAs(t, err, &policyErr, "AppService did not receive the installed policy")
+	assert.Equal(t, "user_can_configure_theme", policyErr.Field)
+
+	// auditSvc: GetEntries is gated by UserCanViewAuditLog.
+	_, err = auditSvc.GetEntries(nil)
+	require.ErrorAs(t, err, &policyErr, "AuditService did not receive the installed policy")
+	assert.Equal(t, "user_can_view_audit_log", policyErr.Field)
+
+	// explorerSvc: Execute is gated by APIExplorerEnabled.
+	_, err = explorerSvc.Execute(&services.ExplorerRequest{Method: "GET", URL: "https://kms.example.com"})
+	require.ErrorAs(t, err, &policyErr, "APIExplorerService did not receive the installed policy")
+	assert.Equal(t, "api_explorer_enabled", policyErr.Field)
+}
+
+// TestApplyCapabilityPolicy_NilServicesDoNotPanic covers the nil-service
+// guards: a caller may hold a nil service pointer in personal-mode wiring
+// (e.g. no audit backend configured), and applyCapabilityPolicy must skip
+// it rather than dereference a nil receiver.
+func TestApplyCapabilityPolicy_NilServicesDoNotPanic(t *testing.T) {
+	assert.NotPanics(t, func() {
+		applyCapabilityPolicy(nil, nil, nil, nil, nil, nil, config.DefaultPolicy())
+	})
 }
