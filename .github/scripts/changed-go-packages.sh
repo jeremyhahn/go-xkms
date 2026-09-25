@@ -71,6 +71,14 @@ if command -v go >/dev/null 2>&1; then
 		if [ -n "$reverse" ]; then
 			for p in $reverse; do
 				case "$p" in
+				# sdk/go, xkey and web/desktop are separate modules: the root
+				# module cannot build them ("[setup failed]"), and
+				# nested-module-build covers them.
+				github.com/jeremyhahn/go-xkms/sdk/go | github.com/jeremyhahn/go-xkms/sdk/go/* | \
+					github.com/jeremyhahn/go-xkms/xkey | github.com/jeremyhahn/go-xkms/xkey/* | \
+					github.com/jeremyhahn/go-xkms/web/desktop | github.com/jeremyhahn/go-xkms/web/desktop/*)
+					continue
+					;;
 				github.com/jeremyhahn/go-xkms) rel="." ;;
 				github.com/jeremyhahn/go-xkms/*) rel="${p#github.com/jeremyhahn/go-xkms/}" ;;
 				*) continue ;; # outside this module; go list was scoped to ./pkg/... ./cmd/... so this should not happen

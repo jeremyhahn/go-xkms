@@ -131,6 +131,10 @@ case "$1 $2" in
 	# on leaf, in the -f '{{.ImportPath}} {{join .Deps ","}}' shape.
 	echo "github.com/jeremyhahn/go-xkms/pkg/leaf "
 	echo "github.com/jeremyhahn/go-xkms/pkg/caller github.com/jeremyhahn/go-xkms/pkg/leaf"
+	# nested-module packages appear in -deps output too; they must never
+	# reach the root module's go test.
+	echo "github.com/jeremyhahn/go-xkms/sdk/go/client github.com/jeremyhahn/go-xkms/pkg/leaf"
+	echo "github.com/jeremyhahn/go-xkms/xkey/pkg/phone github.com/jeremyhahn/go-xkms/pkg/leaf"
 	exit 0
 	;;
 esac
@@ -154,6 +158,8 @@ check "exit 0" [ "$rc" -eq 0 ]
 result="$(outval)"
 check "includes the changed leaf package" sh -c "case ' $result ' in *' ./pkg/leaf '*) exit 0;; *) exit 1;; esac"
 check "includes the reverse-dependent caller package" sh -c "case ' $result ' in *' ./pkg/caller '*) exit 0;; *) exit 1;; esac"
+check "excludes sdk/go reverse dependents (separate module)" sh -c "case ' $result ' in *' ./sdk/go'*) exit 1;; *) exit 0;; esac"
+check "excludes xkey reverse dependents (separate module)" sh -c "case ' $result ' in *' ./xkey'*) exit 1;; *) exit 0;; esac"
 (cd "$repo" && git checkout -q main && git branch -q -D root-change)
 
 echo "== changed package with no Go files under the test tags is dropped =="
