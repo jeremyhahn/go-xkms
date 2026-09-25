@@ -658,8 +658,7 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 		query := r.URL.Query()
 
 		if errParam := query.Get("error"); errParam != "" {
-			w.Header().Set("Content-Type", "text/html")
-			if _, writeErr := w.Write([]byte("<html><body><h1>Authentication Failed</h1></body></html>")); writeErr != nil {
+			if writeErr := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed"}); writeErr != nil {
 				s.log.Debug("failed to write OIDC callback error page", "error", writeErr)
 			}
 			errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, query.Get("error_description"))}
@@ -668,8 +667,7 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 
 		code := query.Get("code")
 		if code == "" {
-			w.Header().Set("Content-Type", "text/html")
-			if _, writeErr := w.Write([]byte("<html><body><h1>Authentication Failed</h1><p>No code received</p></body></html>")); writeErr != nil {
+			if writeErr := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: "No code received"}); writeErr != nil {
 				s.log.Debug("failed to write OIDC callback no-code page", "error", writeErr)
 			}
 			errChan <- ErrOIDCCallbackNoCode
@@ -678,8 +676,7 @@ func (s *OIDCService) Login(providerName string) (*OIDCLoginResult, error) {
 
 		receivedState.Store(query.Get("state"))
 
-		w.Header().Set("Content-Type", "text/html")
-		if _, writeErr := w.Write([]byte("<html><body><h1>Authentication Successful</h1><p>You may close this window.</p></body></html>")); writeErr != nil {
+		if writeErr := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Successful", Message: "You may close this window."}); writeErr != nil {
 			s.log.Debug("failed to write OIDC callback success page", "error", writeErr)
 		}
 		codeChan <- code

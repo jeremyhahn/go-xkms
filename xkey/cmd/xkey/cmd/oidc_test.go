@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,6 +298,53 @@ func TestHandleOIDCCallback_Error(t *testing.T) {
 	case err := <-errChan:
 		if !strings.Contains(err.Error(), "access_denied") {
 			t.Errorf("error = %v, should contain 'access_denied'", err)
+		}
+	default:
+		t.Error("no error received on channel")
+	}
+}
+
+// TestHandleOIDCCallback_EscapesReflectedError proves the provider error
+// the CLI shows the browser is escaped text on a page served with the
+// loopback security headers, so a hostile redirect cannot inject markup or
+// script into the callback origin (#1013).
+func TestHandleOIDCCallback_EscapesReflectedError(t *testing.T) {
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	state := new(atomic.Value)
+	query := url.Values{
+		"error":             {"<script>alert(1)</script>"},
+		"error_description": {`"><img src=x onerror=alert(1)>`},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?"+query.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	handleOIDCCallback(w, req, codeChan, errChan, state)
+
+	body := w.Body.String()
+	if want := "<p>&lt;script&gt;alert(1)&lt;/script&gt;: &#34;&gt;&lt;img src=x onerror=alert(1)&gt;</p>"; !strings.Contains(body, want) {
+		t.Errorf("body = %q, want it to contain %q", body, want)
+	}
+	for _, raw := range []string{"<script>", "<img"} {
+		if strings.Contains(body, raw) {
+			t.Errorf("body = %q, must not contain raw %q", body, raw)
+		}
+	}
+	for name, want := range map[string]string{
+		"Content-Type":            "text/html; charset=utf-8",
+		"X-Content-Type-Options":  "nosniff",
+		"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+		"Referrer-Policy":         "no-referrer",
+	} {
+		if got := w.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	select {
+	case err := <-errChan:
+		if !strings.Contains(err.Error(), "<script>alert(1)</script>") {
+			t.Errorf("error = %v, should carry the provider error verbatim", err)
 		}
 	default:
 		t.Error("no error received on channel")

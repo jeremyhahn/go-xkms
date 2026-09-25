@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -236,4 +237,69 @@ func TestExactPathHandler_ServesOnlyTheExactPath(t *testing.T) {
 		}
 		assert.Equal(t, 1, served, "only the exact path may reach the handler for %q", path)
 	}
+}
+
+// injectedError and injectedDescription are the markup a hostile redirect
+// puts in the callback's error parameters (#1013).
+const (
+	injectedError       = "<script>alert(1)</script>"
+	injectedDescription = `"><img src=x onerror=alert(1)>`
+)
+
+// TestWriteCallbackPage_EscapesTextAndSetsSecurityHeaders proves request
+// input placed in a callback page is rendered as text, never markup, and
+// that the page is served with the headers that keep the loopback origin
+// inert (#1013).
+func TestWriteCallbackPage_EscapesTextAndSetsSecurityHeaders(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	err := WriteCallbackPage(recorder, CallbackPage{Title: injectedError, Message: injectedDescription})
+	require.NoError(t, err)
+
+	body := recorder.Body.String()
+	assert.Contains(t, body, "<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>")
+	assert.Contains(t, body, "<p>&#34;&gt;&lt;img src=x onerror=alert(1)&gt;</p>")
+	assert.NotContains(t, body, "<script>")
+	assert.NotContains(t, body, "<img")
+
+	header := recorder.Header()
+	assert.Equal(t, "text/html; charset=utf-8", header.Get("Content-Type"))
+	assert.Equal(t, "nosniff", header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "default-src 'none'; style-src 'unsafe-inline'", header.Get("Content-Security-Policy"))
+	assert.Equal(t, "no-referrer", header.Get("Referrer-Policy"))
+	assert.Equal(t, http.StatusOK, recorder.Code)
+}
+
+// TestWriteCallbackPage_OmitsAnEmptyMessage proves a title-only page has no
+// empty paragraph.
+func TestWriteCallbackPage_OmitsAnEmptyMessage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	require.NoError(t, WriteCallbackPage(recorder, CallbackPage{Title: "Authentication Failed"}))
+
+	assert.Contains(t, recorder.Body.String(), "<h1>Authentication Failed</h1>")
+	assert.False(t, strings.Contains(recorder.Body.String(), "<p>"), recorder.Body.String())
+}
+
+// failingResponseWriter is a ResponseWriter whose browser has hung up.
+type failingResponseWriter struct {
+	header http.Header
+}
+
+var errBrowserGone = errors.New("browser closed the connection")
+
+func (f *failingResponseWriter) Header() http.Header       { return f.header }
+func (f *failingResponseWriter) Write([]byte) (int, error) { return 0, errBrowserGone }
+func (f *failingResponseWriter) WriteHeader(int)           {}
+
+// TestWriteCallbackPage_ReportsAWriteFailure proves a page that cannot
+// reach the browser is reported as a typed CallbackPageError wrapping the
+// write failure.
+func TestWriteCallbackPage_ReportsAWriteFailure(t *testing.T) {
+	err := WriteCallbackPage(&failingResponseWriter{header: http.Header{}}, CallbackPage{Title: "Authentication Successful"})
+
+	var pageErr *CallbackPageError
+	require.ErrorAs(t, err, &pageErr)
+	assert.ErrorIs(t, err, errBrowserGone)
+	assert.Equal(t, "oidc: callback page: browser closed the connection", err.Error())
 }
