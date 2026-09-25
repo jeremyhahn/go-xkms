@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-25
 
 ## How the six transports are shaped
 
@@ -713,17 +713,30 @@ fixes to stay reproducible.
 
 ## Pagination
 
-`ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values; the
-REST side is `pkg/api/rest/pagination.go`, the client side
-`pkg/api/transport/pagination.go`.
+`ListKeys`, `ListBackends` and `ListCertificates` take `ListOption` values.
+Every REST list handler and every other HTTP-based transport (REST, QUIC)
+parses pagination through the single shared implementation,
+`transport.PageRequestFromQuery` (`pkg/api/transport/pagination.go`); there
+is no REST-local copy.
+
+Query parameters, all optional:
+
+| Parameter | Type | Default | Notes |
+|---|---|---|---|
+| `page` | integer | `0` (unpaginated) | 1-based page number. |
+| `page_size` | integer | `25` once paginated | Items per page. |
+| `sort_field` | string | — | Struct field name to sort by. |
+| `sort_order` | `asc` \| `desc` \| `0` \| `1` | `asc` | Both the string and integer forms are accepted. |
 
 - **Default is unpaginated.** With no `page` query parameter, or `page=0`,
   the full result set is returned. That keeps existing clients working
   (`transport.PageRequest.IsUnpaginated`). Pass `page >= 1` and `page_size`
   to opt in.
-- **Non-numeric values are rejected.** A `page` or `page_size` that is not an
-  integer is answered with **400** (`ErrInvalidRequest`, from
-  `parsePageRequest`). It is not treated as unpaginated.
+- **Invalid values are rejected, not silently defaulted.** A `page` or
+  `page_size` that is not an integer, or a `sort_order` that is none of
+  `asc`, `desc`, `0`, or `1`, is answered with **400**
+  (`*transport.InvalidPaginationParamError`). None of these fall back to an
+  unpaginated "return everything" request.
 
 ## Port conflicts — as-shipped reality
 

@@ -272,7 +272,9 @@ func createBarrier(dataDir string) (*xkms.Barrier, io.Closer, error) {
 	)
 	if err != nil {
 		if closer != nil {
-			err = errors.Join(err, closer.Close())
+			if cerr := closer.Close(); cerr != nil {
+				err = errors.Join(err, cerr)
+			}
 		}
 		return nil, nil, &BarrierError{
 			Operation: "create_barrier",

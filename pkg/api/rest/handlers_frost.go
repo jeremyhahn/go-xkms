@@ -430,12 +430,12 @@ func (h *HandlerContext) FrostListKeysHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	pageReq, err := parsePageRequest(r)
+	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := applyPagination(respKeys, pageReq)
+	paged, pageResp := transport.ApplyPagination(respKeys, pageReq)
 
 	resp := FrostListKeysResponse{
 		Keys:       paged,

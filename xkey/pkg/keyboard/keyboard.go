@@ -104,8 +104,11 @@ func New(logger *slog.Logger) (*Keyboard, error) {
 	}
 
 	if err := device.Create(cfg); err != nil {
-		closeErr := device.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrKeyboardCreateFailed, Cause: errors.Join(err, closeErr)}
+		cause := err
+		if closeErr := device.Close(); closeErr != nil {
+			cause = errors.Join(cause, closeErr)
+		}
+		return nil, &SentinelCauseError{Sentinel: ErrKeyboardCreateFailed, Cause: cause}
 	}
 
 	logger.Info("virtual keyboard created",

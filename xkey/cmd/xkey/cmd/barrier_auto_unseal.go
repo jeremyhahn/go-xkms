@@ -69,9 +69,7 @@ func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrie
 		return false, nil, &SentinelCauseError{Sentinel: ErrBarrierAutoUnsealPolicyStoreFailed, Cause: err}
 	}
 	defer func() {
-		if closeErr := store.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
+		err = finalizeAutoUnsealStoreClose(logger, unsealed, err, store.Close())
 	}()
 
 	if _, err := store.GetAutoUnsealPolicy(ctx); err != nil {
@@ -102,7 +100,29 @@ func tryBarrierPolicyAutoUnseal(ctx context.Context, logger *slog.Logger, barrie
 		// fallback (direct TPM unseal or a password) opens its own
 		// connection if it needs one, so nothing downstream depends on
 		// this transport staying open.
-		return false, nil, errors.Join(unsealErr, tpmCloser.Close())
+		joinedErr := unsealErr
+		if closeErr := tpmCloser.Close(); closeErr != nil {
+			joinedErr = errors.Join(joinedErr, closeErr)
+		}
+		return false, nil, joinedErr
 	}
 	return true, tpmCloser, nil
+}
+
+// finalizeAutoUnsealStoreClose folds the PCR policy store's Close error, if
+// any, into tryBarrierPolicyAutoUnseal's result. When the barrier was
+// already successfully auto-unsealed (unsealed == true), a Close failure
+// doesn't invalidate that result -- the caller already has what it asked
+// for -- so it is logged rather than turned into a failure of an
+// otherwise-successful call. Otherwise it is joined into err so it isn't
+// lost.
+func finalizeAutoUnsealStoreClose(logger *slog.Logger, unsealed bool, err, closeErr error) error {
+	if closeErr == nil {
+		return err
+	}
+	if unsealed {
+		logger.Warn("barrier: failed to close PCR policy store after successful auto-unseal", "error", closeErr)
+		return err
+	}
+	return errors.Join(err, closeErr)
 }

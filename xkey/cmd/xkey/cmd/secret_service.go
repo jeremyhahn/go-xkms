@@ -120,9 +120,13 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 	defer func() {
-		err = errors.Join(err, barrier.Close())
+		if cerr := barrier.Close(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
 		if closer != nil {
-			err = errors.Join(err, closer.Close())
+			if cerr := closer.Close(); cerr != nil {
+				err = errors.Join(err, cerr)
+			}
 		}
 	}()
 

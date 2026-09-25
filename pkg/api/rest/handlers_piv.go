@@ -52,12 +52,12 @@ func (h *HandlerContext) ListPIVSlotsHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	pageReq, err := parsePageRequest(r)
+	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := applyPagination(resp.Slots, pageReq)
+	paged, pageResp := transport.ApplyPagination(resp.Slots, pageReq)
 	resp.Slots = paged
 	resp.PageResponse = pageResp
 

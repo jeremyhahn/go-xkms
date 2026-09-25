@@ -1374,6 +1374,45 @@ func TestDoTokenRequest_ErrorPaths(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, tokens.Expiry.IsZero())
 	})
+
+	t.Run("bounds an oversized response body instead of reading it all", func(t *testing.T) {
+		// A well-formed token response never approaches
+		// maxTokenResponseBodySize; a provider (or an attacker) answering
+		// with far more than that must not be read into memory in full.
+		// The oversized padding breaks JSON parsing once truncated, which
+		// is the expected, safe outcome -- not an unbounded read.
+		oversized := `{"access_token":"` + strings.Repeat("a", maxTokenResponseBodySize+1024) + `"}`
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(oversized))
+		}))
+		defer server.Close()
+
+		provider := &Provider{
+			Issuer:                server.URL,
+			AuthorizationEndpoint: server.URL + "/authorize",
+			TokenEndpoint:         server.URL + "/token",
+			JwksURI:               server.URL + "/jwks",
+			httpClient:            &http.Client{Timeout: 5 * time.Second},
+		}
+
+		config := &ProviderConfig{
+			Issuer:      server.URL,
+			ClientID:    "client-123",
+			RedirectURL: "http://localhost:8080/callback",
+		}
+
+		client := NewClient(provider, config)
+		opts := &AuthCodeOptions{
+			State:        "test-state",
+			CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+		}
+
+		ctx := context.Background()
+		_, err := client.Exchange(ctx, "code", opts)
+		assert.ErrorIs(t, err, ErrInvalidResponse, "truncation should break the trailing JSON rather than allow an unbounded read")
+	})
 }
 
 func TestUserInfo_ErrorPaths(t *testing.T) {
@@ -1493,7 +1532,7 @@ func TestParseTokenErrorResponse(t *testing.T) {
 	t.Run("parses a well-formed OAuth2 error body", func(t *testing.T) {
 		body := []byte(`{"error":"invalid_grant","error_description":"the code has expired"}`)
 
-		err := parseTokenErrorResponse(body, http.StatusBadRequest)
+		err := parseTokenErrorResponse(body, http.StatusBadRequest, "application/json")
 
 		assert.ErrorIs(t, err, ErrTokenExchangeFailed)
 		assert.Equal(t, "invalid_grant", err.Code)
@@ -1501,15 +1540,41 @@ func TestParseTokenErrorResponse(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, err.StatusCode)
 	})
 
-	t.Run("falls back to the raw body when it is not OAuth2 JSON", func(t *testing.T) {
+	t.Run("falls back to a bounded preview of the raw body when it is not OAuth2 JSON", func(t *testing.T) {
 		body := []byte("<html><body>502 Bad Gateway</body></html>")
 
-		err := parseTokenErrorResponse(body, http.StatusBadGateway)
+		err := parseTokenErrorResponse(body, http.StatusBadGateway, "text/html")
 
 		assert.ErrorIs(t, err, ErrTokenExchangeFailed)
 		assert.Empty(t, err.Code)
-		assert.Equal(t, string(body), err.Description)
+		assert.Equal(t, "HTTP 502 (text/html): "+string(body), err.Description)
 		assert.Equal(t, http.StatusBadGateway, err.StatusCode)
 		assert.Contains(t, err.Error(), "502 Bad Gateway")
+	})
+
+	t.Run("truncates a non-OAuth2 body over the preview limit", func(t *testing.T) {
+		body := []byte(strings.Repeat("a", maxNonOAuth2BodyPreview+512))
+
+		err := parseTokenErrorResponse(body, http.StatusInternalServerError, "text/plain")
+
+		wantPreview := strings.Repeat("a", maxNonOAuth2BodyPreview)
+		assert.Equal(t, "HTTP 500 (text/plain): "+wantPreview+"...", err.Description)
+		assert.LessOrEqual(t, len(err.Description), maxNonOAuth2BodyPreview+len("HTTP 500 (text/plain): ")+len("..."))
+	})
+
+	t.Run("strips non-printable characters from a non-OAuth2 body", func(t *testing.T) {
+		body := []byte("bad\x00gateway\x01\x02")
+
+		err := parseTokenErrorResponse(body, http.StatusBadGateway, "text/plain")
+
+		assert.Equal(t, "HTTP 502 (text/plain): badgateway", err.Description)
+	})
+
+	t.Run("defaults content type to unknown when empty", func(t *testing.T) {
+		body := []byte("not json")
+
+		err := parseTokenErrorResponse(body, http.StatusBadGateway, "")
+
+		assert.Equal(t, "HTTP 502 (unknown): not json", err.Description)
 	})
 }

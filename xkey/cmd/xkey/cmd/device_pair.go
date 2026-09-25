@@ -106,7 +106,10 @@ type pairingTransport interface {
 // paths so a failed disconnect from an already-failed pairing attempt is
 // never silently dropped.
 func abortPairing(transport pairingTransport, baseErr error) error {
-	return errors.Join(baseErr, transport.Disconnect())
+	if cerr := transport.Disconnect(); cerr != nil {
+		return errors.Join(baseErr, cerr)
+	}
+	return baseErr
 }
 
 // pairingSeams are runDevicePair's injection points: how it opens its

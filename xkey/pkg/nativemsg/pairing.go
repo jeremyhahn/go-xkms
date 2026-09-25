@@ -481,8 +481,11 @@ func (v *PairingVerifier) saveLocked() error {
 	if err := os.Rename(tmpPath, v.statePath); err != nil {
 		// Clean up the temp file on rename failure; a failed removal is
 		// joined in rather than dropped so a leaked temp file is visible.
-		removeErr := os.Remove(tmpPath)
-		return &WrappedError{Msg: "nativemsg: failed to rename pairing temp file", Err: errors.Join(err, removeErr)}
+		cause := err
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			cause = errors.Join(cause, removeErr)
+		}
+		return &WrappedError{Msg: "nativemsg: failed to rename pairing temp file", Err: cause}
 	}
 	return nil
 }

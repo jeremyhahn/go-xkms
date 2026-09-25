@@ -238,7 +238,9 @@ func BindCallback(ctx context.Context, lc *net.ListenConfig, addrs []CallbackAdd
 			}
 			closeErr := err
 			for _, opened := range listeners {
-				closeErr = errors.Join(closeErr, opened.Close())
+				if cerr := opened.Close(); cerr != nil {
+					closeErr = errors.Join(closeErr, cerr)
+				}
 			}
 			return nil, closeErr
 		}

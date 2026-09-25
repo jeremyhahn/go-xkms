@@ -884,8 +884,12 @@ func runPIVStatus(cmd *cobra.Command, args []string) (err error) {
 		return nil // Don't fail, just report status
 	}
 	defer func() {
+		// This command's job is to report status, not to fail -- see the
+		// "Don't fail, just report status" returns above and below. A
+		// storage-close failure doesn't change what was already reported,
+		// so it's warned about rather than turned into a command failure.
 		if closeErr := storage.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			_, _ = fmt.Fprintf(out, "Warning: could not close PIV storage: %v\n", closeErr)
 		}
 	}()
 

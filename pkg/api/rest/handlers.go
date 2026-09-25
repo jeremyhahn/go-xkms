@@ -201,12 +201,12 @@ func (h *HandlerContext) ListBackendsHandler(w http.ResponseWriter, r *http.Requ
 		})
 	}
 
-	pageReq, err := parsePageRequest(r)
+	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := applyPagination(backends, pageReq)
+	paged, pageResp := transport.ApplyPagination(backends, pageReq)
 
 	resp := ListBackendsResponse{
 		Backends:   paged,
@@ -475,12 +475,12 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		keys = append(keys, keyInfo)
 	}
 
-	pageReq, err := parsePageRequest(r)
+	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := applyPagination(keys, pageReq)
+	paged, pageResp := transport.ApplyPagination(keys, pageReq)
 
 	resp := ListKeysResponse{
 		Keys:       paged,
@@ -1132,12 +1132,12 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	pageReq, err := parsePageRequest(r)
+	pageReq, err := transport.PageRequestFromQuery(r)
 	if err != nil {
 		writeError(w, err, http.StatusBadRequest)
 		return
 	}
-	paged, pageResp := applyPagination(certs, pageReq)
+	paged, pageResp := transport.ApplyPagination(certs, pageReq)
 
 	resp := ListCertsResponse{
 		Certificates: paged,

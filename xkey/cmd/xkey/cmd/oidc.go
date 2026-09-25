@@ -2221,9 +2221,13 @@ func stopProcess(out io.Writer, pidFile, providerName string) error {
 	if !running {
 		// Clean up the stale file; a failed removal doesn't change that
 		// there is no running process to stop, but it is joined in so it
-		// isn't lost.
-		rmErr := os.Remove(pidFile)
-		return errors.Join(&MessageError{Msg: fmt.Sprintf("no running process for '%s'", providerName)}, rmErr)
+		// isn't lost. The file already being gone is not a failure worth
+		// reporting.
+		notRunningErr := &MessageError{Msg: fmt.Sprintf("no running process for '%s'", providerName)}
+		if rmErr := os.Remove(pidFile); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return errors.Join(notRunningErr, rmErr)
+		}
+		return notRunningErr
 	}
 
 	process, err := os.FindProcess(pid)
