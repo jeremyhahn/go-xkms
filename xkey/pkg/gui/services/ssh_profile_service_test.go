@@ -14,11 +14,15 @@
 package services
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
+
+// ctxKeyTest is a unique context key type for SetContext round-trip tests.
+type ctxKeyTest struct{}
 
 func newProfileService(t *testing.T) *SSHProfileService {
 	t.Helper()
@@ -105,6 +109,69 @@ func TestSSHProfileService_StoreNotSet(t *testing.T) {
 	svc := NewSSHProfileService(nil)
 	if _, err := svc.ListProfiles(); err == nil {
 		t.Fatal("expected ErrSSHProfileStoreNotSet")
+	}
+}
+
+// TestSSHProfileService_StoreNotSet_AllMethods pins the nil-store guard on
+// every exported method, not just ListProfiles: each must fail closed with
+// ErrSSHProfileStoreNotSet rather than nil-dereferencing the store.
+func TestSSHProfileService_StoreNotSet_AllMethods(t *testing.T) {
+	svc := NewSSHProfileService(nil)
+
+	if _, err := svc.ListProfilesByFolder("work"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("ListProfilesByFolder err = %v", err)
+	}
+	if _, err := svc.ListFolders(); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("ListFolders err = %v", err)
+	}
+	if _, err := svc.GetProfile("x"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("GetProfile err = %v", err)
+	}
+	if _, err := svc.AddProfile(SSHProfileParams{Name: "x"}); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("AddProfile err = %v", err)
+	}
+	if err := svc.UpdateProfile(SSHProfileParams{Name: "x"}); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("UpdateProfile err = %v", err)
+	}
+	if err := svc.DeleteProfile("x"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("DeleteProfile err = %v", err)
+	}
+	if err := svc.MoveProfile("x", "folder"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("MoveProfile err = %v", err)
+	}
+	if err := svc.RenameFolder("a", "b"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("RenameFolder err = %v", err)
+	}
+	if err := svc.DeleteFolder("a"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("DeleteFolder err = %v", err)
+	}
+	if _, err := svc.SearchProfiles("x"); err != ErrSSHProfileStoreNotSet {
+		t.Fatalf("SearchProfiles err = %v", err)
+	}
+}
+
+func TestSSHProfileService_SetContext(t *testing.T) {
+	svc := NewSSHProfileService(nil)
+	ctx := context.WithValue(context.Background(), ctxKeyTest{}, "v")
+	svc.SetContext(ctx)
+	if svc.ctx != ctx {
+		t.Fatal("SetContext did not store the context")
+	}
+}
+
+func TestSSHProfileService_SetStoreAndStore(t *testing.T) {
+	svc := NewSSHProfileService(nil)
+	if svc.Store() != nil {
+		t.Fatal("expected nil store by default")
+	}
+
+	store, err := sshclient.NewProfileStore(storage.New())
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	svc.SetStore(store)
+	if svc.Store() != store {
+		t.Fatal("SetStore/Store did not round-trip the same store")
 	}
 }
 

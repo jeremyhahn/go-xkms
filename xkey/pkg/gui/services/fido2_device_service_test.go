@@ -174,6 +174,55 @@ func TestFIDO2DeviceService_SetAuditLogger_Nil(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SetElevator / FixUHIDPermissions
+// ---------------------------------------------------------------------------
+
+func TestFIDO2DeviceService_SetElevator(t *testing.T) {
+	svc := NewFIDO2DeviceService(slog.Default())
+	assert.Nil(t, svc.elevator)
+
+	elev := &mockElevator{available: true}
+	svc.SetElevator(elev)
+	assert.Equal(t, elev, svc.elevator)
+}
+
+func TestFIDO2DeviceService_FixUHIDPermissions_NoElevator(t *testing.T) {
+	svc := NewFIDO2DeviceService(slog.Default())
+	err := svc.FixUHIDPermissions()
+	require.ErrorIs(t, err, ErrElevationRequired)
+}
+
+func TestFIDO2DeviceService_FixUHIDPermissions_ElevatorUnavailable(t *testing.T) {
+	svc := NewFIDO2DeviceService(slog.Default())
+	svc.SetElevator(&mockElevator{available: false})
+
+	err := svc.FixUHIDPermissions()
+	require.ErrorIs(t, err, ErrElevationRequired)
+}
+
+func TestFIDO2DeviceService_FixUHIDPermissions_Success(t *testing.T) {
+	svc := NewFIDO2DeviceService(slog.Default())
+	elev := &mockElevator{available: true, output: []byte("udev rule installed")}
+	svc.SetElevator(elev)
+
+	err := svc.FixUHIDPermissions()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"uhid", "setup"}, elev.lastArgs)
+	assert.Equal(t, 1, elev.callCount)
+}
+
+func TestFIDO2DeviceService_FixUHIDPermissions_RunFails(t *testing.T) {
+	svc := NewFIDO2DeviceService(slog.Default())
+	runErr := errors.New("pkexec: authorization failed")
+	svc.SetElevator(&mockElevator{available: true, err: runErr})
+
+	err := svc.FixUHIDPermissions()
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrFIDO2UHIDSetupFailed)
+	assert.Contains(t, err.Error(), "authorization failed")
+}
+
+// ---------------------------------------------------------------------------
 // IsRunning
 // ---------------------------------------------------------------------------
 

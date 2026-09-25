@@ -917,3 +917,88 @@ func TestApplyTrustBundle_Enabled_BundleNotExist(t *testing.T) {
 	// Env should NOT be set since the bundle file doesn't exist.
 	assert.Nil(t, cmd.Env, "Env should be nil when bundle file does not exist")
 }
+
+// fakeTrustSyncer implements TrustSyncer for tests, recording invocations
+// and returning a configurable error.
+type fakeTrustSyncer struct {
+	calls int
+	err   error
+}
+
+func (f *fakeTrustSyncer) Rebuild() error {
+	f.calls++
+	return f.err
+}
+
+func TestBrowserService_SetTrustSyncer(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewBrowserService(filepath.Join(dir, "browser.json"), testLogger())
+	require.NoError(t, err)
+	assert.Nil(t, svc.trustSyncer)
+
+	syncer := &fakeTrustSyncer{}
+	svc.SetTrustSyncer(syncer)
+	assert.Same(t, syncer, svc.trustSyncer)
+}
+
+func TestBrowserService_OpenURL_SyncsTrustWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewBrowserService(filepath.Join(dir, "browser.json"), testLogger())
+	require.NoError(t, err)
+	svc.SetContext(context.Background())
+
+	require.NoError(t, svc.SetConfig(BrowserConfig{
+		DefaultBrowser:     BrowserSystem,
+		IncludeTrustBundle: true,
+	}))
+
+	syncer := &fakeTrustSyncer{}
+	svc.SetTrustSyncer(syncer)
+
+	var recorded [][]string
+	var mu sync.Mutex
+	svc.execCommand = fakeExecCommand(&recorded, &mu)
+
+	require.NoError(t, svc.OpenURL("https://example.com"))
+	assert.Equal(t, 1, syncer.calls)
+}
+
+func TestBrowserService_OpenURL_TrustSyncFailure_DoesNotFailOpen(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewBrowserService(filepath.Join(dir, "browser.json"), testLogger())
+	require.NoError(t, err)
+	svc.SetContext(context.Background())
+
+	require.NoError(t, svc.SetConfig(BrowserConfig{
+		DefaultBrowser:     BrowserSystem,
+		IncludeTrustBundle: true,
+	}))
+
+	syncer := &fakeTrustSyncer{err: assert.AnError}
+	svc.SetTrustSyncer(syncer)
+
+	var recorded [][]string
+	var mu sync.Mutex
+	svc.execCommand = fakeExecCommand(&recorded, &mu)
+
+	// Rebuild failure is logged, not propagated -- the browser still opens.
+	require.NoError(t, svc.OpenURL("https://example.com"))
+	assert.Equal(t, 1, syncer.calls)
+}
+
+func TestBrowserService_OpenURL_NoTrustSyncWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	svc, err := NewBrowserService(filepath.Join(dir, "browser.json"), testLogger())
+	require.NoError(t, err)
+	svc.SetContext(context.Background())
+
+	syncer := &fakeTrustSyncer{}
+	svc.SetTrustSyncer(syncer)
+
+	var recorded [][]string
+	var mu sync.Mutex
+	svc.execCommand = fakeExecCommand(&recorded, &mu)
+
+	require.NoError(t, svc.OpenURL("https://example.com"))
+	assert.Equal(t, 0, syncer.calls, "Rebuild should not run when IncludeTrustBundle is false")
+}
