@@ -704,7 +704,7 @@ func (b *Backend) Initialize(soPIN, userPIN string) error {
 	// Initialize token using low-level PKCS#11
 	if err := b.initializeToken(soPIN, userPIN); err != nil {
 		// If already initialized, that's okay
-		if err != ErrAlreadyInitialized {
+		if !errors.Is(err, ErrAlreadyInitialized) {
 			return &errs.Wrapped{Msg: "failed to initialize token", Err: err}
 		}
 	}
@@ -755,7 +755,7 @@ func (b *Backend) loginUser(pin string) error {
 		// ownsP11ctx stays true regardless.
 		ownsInit := true
 		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+			if !isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 				p.Destroy()
 				return &errs.Wrapped{Msg: "failed to initialize PKCS#11", Err: err}
 			}
@@ -844,7 +844,7 @@ func (b *Backend) initializeToken(soPIN, userPIN string) (err error) {
 
 	if err := p.Initialize(); err != nil {
 		// Check if already initialized
-		if err == pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+		if isCKR(err, pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 			p.Destroy()
 			return ErrAlreadyInitialized
 		}

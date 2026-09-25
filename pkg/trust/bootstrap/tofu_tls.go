@@ -112,6 +112,15 @@ func NewTOFUTLSConfig(ctx context.Context, pinStore truststrap.PinStore, endpoin
 	}
 	verifier := &tofuVerifier{ctx: ctx, store: pinStore, host: host, port: port, confirm: confirm}
 	return &tls.Config{
+		// MinVersion stays TLS 1.2, not the 1.3 go-xkms servers default to
+		// (pkg/server/server.go): unlike the other bootstrap modes, tofu is
+		// documented (docs/trust-bootstrap/architecture.md,
+		// docs/trust-bootstrap/user.md "About TOFU") to verify arbitrary
+		// third-party endpoints that present a self-signed certificate and
+		// serve no bundle -- BMCs and similar out-of-band management
+		// interfaces named explicitly there -- many of which cannot
+		// negotiate TLS 1.3. Raising the floor here would refuse exactly
+		// the devices this mode exists to pin (go-xkms#897).
 		MinVersion:             tls.VersionTLS12,
 		InsecureSkipVerify:     true, // #nosec G402 -- CA chain skipped; VerifyConnection is the sole verifier (TOFU SPKI pin). Allowlisted in Makefile check-insecure-tls.
 		SessionTicketsDisabled: true,

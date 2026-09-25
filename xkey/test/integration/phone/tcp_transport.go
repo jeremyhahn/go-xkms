@@ -15,6 +15,7 @@ package phone
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -132,7 +133,7 @@ func (t *TCPTransport) Read() ([]byte, error) {
 	}
 	lenBuf := make([]byte, 2)
 	if _, err := io.ReadFull(conn, lenBuf); err != nil {
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil, phone.ErrNotConnected
 		}
 		return nil, err

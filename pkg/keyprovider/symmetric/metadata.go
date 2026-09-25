@@ -16,6 +16,7 @@ package symmetric
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -152,7 +153,7 @@ func (b *Backend) SaveKeyMetadata(ctx context.Context, keyID string, attrs *type
 func (b *Backend) loadKeyMetadata(ctx context.Context, keyID string) (*keyMetadata, error) {
 	data, err := storage.GetKeyMetadata(ctx, b.storage, keyID)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return nil, &errs.Detail{Err: ErrKeyMetadataNotFound, Detail: keyID}
 		}
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read key metadata for %s", keyID), Err: err}
@@ -175,7 +176,7 @@ func (b *Backend) loadKeyMetadata(ctx context.Context, keyID string) (*keyMetada
 // ErrKeyMetadataNotFound rather than treated as the ordinary case.
 func (b *Backend) deleteKeyMetadata(ctx context.Context, keyID string) error {
 	if err := storage.DeleteKeyMetadata(ctx, b.storage, keyID); err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			return &errs.Detail{Err: ErrKeyMetadataNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
