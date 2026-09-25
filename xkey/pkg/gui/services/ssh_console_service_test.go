@@ -174,8 +174,16 @@ func TestSSHConsole_OpenProfileConsole_ManagedKey(t *testing.T) {
 
 func TestSSHConsole_OpenProfileConsole_LocalAliasDelegatesToConfigHost(t *testing.T) {
 	pub, priv := newTestEd25519Key(t)
-	home := writeConfigHostAndIdentity(t, "bastion", pub)
-	_ = home
+	writeConfigHostAndIdentity(t, "bastion", pub)
+
+	// The identity file is a placeholder, so the signer must come from an
+	// agent. Serve one in-process instead of inheriting the host's
+	// SSH_AUTH_SOCK, which CI does not have.
+	keyring := sshagent.NewKeyring()
+	if err := keyring.Add(sshagent.AddedKey{PrivateKey: priv}); err != nil {
+		t.Fatalf("keyring.Add: %v", err)
+	}
+	t.Setenv("SSH_AUTH_SOCK", serveTestAgent(t, keyring))
 
 	svc := setupConsole(t)
 	defer svc.Shutdown()
@@ -203,7 +211,6 @@ func TestSSHConsole_OpenProfileConsole_LocalAliasDelegatesToConfigHost(t *testin
 	if ep.Token == "" {
 		t.Fatal("expected a non-empty token")
 	}
-	_ = priv
 }
 
 func TestCurrentOSUser(t *testing.T) {
