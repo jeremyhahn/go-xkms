@@ -723,6 +723,14 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 }
 
 // Policy Operations
+//
+// The USB transport's counterparty is the xkey Android companion app (a
+// Noise-encrypted JSON-RPC peer, not xkmsd), and it exposes no TPM: the
+// entire Password/SealStore/Escrow/Policy administrative surface is
+// unimplemented over this transport for that structural reason, not as an
+// oversight. Wiring PCR policy management to a phone with no TPM to read
+// PCRs from would need a phone-side (xkey Android) change, which is outside
+// this repository per the cross-project boundary. See go-xkms#691.
 
 // PolicyCreate creates a new PCR policy.
 func (t *Transport) PolicyCreate(_ context.Context, _ *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {

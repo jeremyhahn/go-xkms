@@ -150,6 +150,14 @@ const (
 	KeystoreService_PasswordStoreLock_FullMethodName           = "/xkms.v1.KeystoreService/PasswordStoreLock"
 	KeystoreService_PasswordStoreStatus_FullMethodName         = "/xkms.v1.KeystoreService/PasswordStoreStatus"
 	KeystoreService_PasswordGenerate_FullMethodName            = "/xkms.v1.KeystoreService/PasswordGenerate"
+	KeystoreService_PasswordStoreSetAccessMode_FullMethodName  = "/xkms.v1.KeystoreService/PasswordStoreSetAccessMode"
+	KeystoreService_PolicyCreate_FullMethodName                = "/xkms.v1.KeystoreService/PolicyCreate"
+	KeystoreService_PolicyGet_FullMethodName                   = "/xkms.v1.KeystoreService/PolicyGet"
+	KeystoreService_PolicyList_FullMethodName                  = "/xkms.v1.KeystoreService/PolicyList"
+	KeystoreService_PolicyDelete_FullMethodName                = "/xkms.v1.KeystoreService/PolicyDelete"
+	KeystoreService_PolicyRefresh_FullMethodName               = "/xkms.v1.KeystoreService/PolicyRefresh"
+	KeystoreService_PolicyVerify_FullMethodName                = "/xkms.v1.KeystoreService/PolicyVerify"
+	KeystoreService_PolicyExport_FullMethodName                = "/xkms.v1.KeystoreService/PolicyExport"
 	KeystoreService_PKCS11StatePut_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StatePut"
 	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName      = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
 	KeystoreService_PKCS11StateCAS_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateCAS"
@@ -493,6 +501,27 @@ type KeystoreServiceClient interface {
 	PasswordStoreStatus(ctx context.Context, in *PasswordStoreStatusRequest, opts ...grpc.CallOption) (*PasswordStoreStatusResponse, error)
 	// PasswordGenerate generates a random password with specified constraints.
 	PasswordGenerate(ctx context.Context, in *PasswordGenerateRequest, opts ...grpc.CallOption) (*PasswordGenerateResponse, error)
+	// PasswordStoreSetAccessMode selects the access-control strategy for the
+	// password store addressed by the request context. Gated the same as its
+	// PasswordAdd/PasswordUpdate siblings: passwords:write.
+	PasswordStoreSetAccessMode(ctx context.Context, in *PasswordStoreSetAccessModeRequest, opts ...grpc.CallOption) (*PasswordStoreSetAccessModeResponse, error)
+	// PolicyCreate creates a new PCR policy, capturing the current PCR values
+	// for the specified bank and indices.
+	PolicyCreate(ctx context.Context, in *PolicyCreateRequest, opts ...grpc.CallOption) (*PolicyCreateResponse, error)
+	// PolicyGet retrieves a PCR policy by name.
+	PolicyGet(ctx context.Context, in *PolicyGetRequest, opts ...grpc.CallOption) (*PolicyGetResponse, error)
+	// PolicyList returns all registered PCR policies.
+	PolicyList(ctx context.Context, in *PolicyListRequest, opts ...grpc.CallOption) (*PolicyListResponse, error)
+	// PolicyDelete deletes a PCR policy by name.
+	PolicyDelete(ctx context.Context, in *PolicyDeleteRequest, opts ...grpc.CallOption) (*PolicyDeleteResponse, error)
+	// PolicyRefresh re-captures a PCR policy from the platform's current PCR
+	// values.
+	PolicyRefresh(ctx context.Context, in *PolicyRefreshRequest, opts ...grpc.CallOption) (*PolicyGetResponse, error)
+	// PolicyVerify verifies a PCR policy against the platform's current PCR
+	// values.
+	PolicyVerify(ctx context.Context, in *PolicyVerifyRequest, opts ...grpc.CallOption) (*PolicyVerifyResponse, error)
+	// PolicyExport serializes a named policy to a JSON document.
+	PolicyExport(ctx context.Context, in *PolicyExportRequest, opts ...grpc.CallOption) (*PolicyExportResponse, error)
 	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
@@ -1842,6 +1871,86 @@ func (c *keystoreServiceClient) PasswordGenerate(ctx context.Context, in *Passwo
 	return out, nil
 }
 
+func (c *keystoreServiceClient) PasswordStoreSetAccessMode(ctx context.Context, in *PasswordStoreSetAccessModeRequest, opts ...grpc.CallOption) (*PasswordStoreSetAccessModeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PasswordStoreSetAccessModeResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PasswordStoreSetAccessMode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyCreate(ctx context.Context, in *PolicyCreateRequest, opts ...grpc.CallOption) (*PolicyCreateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyCreateResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyCreate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyGet(ctx context.Context, in *PolicyGetRequest, opts ...grpc.CallOption) (*PolicyGetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyGetResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyGet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyList(ctx context.Context, in *PolicyListRequest, opts ...grpc.CallOption) (*PolicyListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyListResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyList_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyDelete(ctx context.Context, in *PolicyDeleteRequest, opts ...grpc.CallOption) (*PolicyDeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyDeleteResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyRefresh(ctx context.Context, in *PolicyRefreshRequest, opts ...grpc.CallOption) (*PolicyGetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyGetResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyRefresh_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyVerify(ctx context.Context, in *PolicyVerifyRequest, opts ...grpc.CallOption) (*PolicyVerifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyVerifyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyVerify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PolicyExport(ctx context.Context, in *PolicyExportRequest, opts ...grpc.CallOption) (*PolicyExportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyExportResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PolicyExport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PKCS11StatePutResponse)
@@ -2534,6 +2643,27 @@ type KeystoreServiceServer interface {
 	PasswordStoreStatus(context.Context, *PasswordStoreStatusRequest) (*PasswordStoreStatusResponse, error)
 	// PasswordGenerate generates a random password with specified constraints.
 	PasswordGenerate(context.Context, *PasswordGenerateRequest) (*PasswordGenerateResponse, error)
+	// PasswordStoreSetAccessMode selects the access-control strategy for the
+	// password store addressed by the request context. Gated the same as its
+	// PasswordAdd/PasswordUpdate siblings: passwords:write.
+	PasswordStoreSetAccessMode(context.Context, *PasswordStoreSetAccessModeRequest) (*PasswordStoreSetAccessModeResponse, error)
+	// PolicyCreate creates a new PCR policy, capturing the current PCR values
+	// for the specified bank and indices.
+	PolicyCreate(context.Context, *PolicyCreateRequest) (*PolicyCreateResponse, error)
+	// PolicyGet retrieves a PCR policy by name.
+	PolicyGet(context.Context, *PolicyGetRequest) (*PolicyGetResponse, error)
+	// PolicyList returns all registered PCR policies.
+	PolicyList(context.Context, *PolicyListRequest) (*PolicyListResponse, error)
+	// PolicyDelete deletes a PCR policy by name.
+	PolicyDelete(context.Context, *PolicyDeleteRequest) (*PolicyDeleteResponse, error)
+	// PolicyRefresh re-captures a PCR policy from the platform's current PCR
+	// values.
+	PolicyRefresh(context.Context, *PolicyRefreshRequest) (*PolicyGetResponse, error)
+	// PolicyVerify verifies a PCR policy against the platform's current PCR
+	// values.
+	PolicyVerify(context.Context, *PolicyVerifyRequest) (*PolicyVerifyResponse, error)
+	// PolicyExport serializes a named policy to a JSON document.
+	PolicyExport(context.Context, *PolicyExportRequest) (*PolicyExportResponse, error)
 	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
 	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
 	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
@@ -2993,6 +3123,30 @@ func (UnimplementedKeystoreServiceServer) PasswordStoreStatus(context.Context, *
 }
 func (UnimplementedKeystoreServiceServer) PasswordGenerate(context.Context, *PasswordGenerateRequest) (*PasswordGenerateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PasswordGenerate not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PasswordStoreSetAccessMode(context.Context, *PasswordStoreSetAccessModeRequest) (*PasswordStoreSetAccessModeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PasswordStoreSetAccessMode not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyCreate(context.Context, *PolicyCreateRequest) (*PolicyCreateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyCreate not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyGet(context.Context, *PolicyGetRequest) (*PolicyGetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyGet not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyList(context.Context, *PolicyListRequest) (*PolicyListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyList not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyDelete(context.Context, *PolicyDeleteRequest) (*PolicyDeleteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyDelete not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyRefresh(context.Context, *PolicyRefreshRequest) (*PolicyGetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyRefresh not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyVerify(context.Context, *PolicyVerifyRequest) (*PolicyVerifyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyVerify not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PolicyExport(context.Context, *PolicyExportRequest) (*PolicyExportResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PolicyExport not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PKCS11StatePut not implemented")
@@ -5418,6 +5572,150 @@ func _KeystoreService_PasswordGenerate_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_PasswordStoreSetAccessMode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PasswordStoreSetAccessModeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PasswordStoreSetAccessMode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PasswordStoreSetAccessMode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PasswordStoreSetAccessMode(ctx, req.(*PasswordStoreSetAccessModeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyCreate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyCreateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyCreate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyCreate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyCreate(ctx, req.(*PolicyCreateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyGetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyGet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyGet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyGet(ctx, req.(*PolicyGetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyList(ctx, req.(*PolicyListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyDelete(ctx, req.(*PolicyDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyRefresh_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyRefreshRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyRefresh(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyRefresh_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyRefresh(ctx, req.(*PolicyRefreshRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyVerify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyVerifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyVerify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyVerify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyVerify(ctx, req.(*PolicyVerifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PolicyExport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PolicyExportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PolicyExport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PolicyExport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PolicyExport(ctx, req.(*PolicyExportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PKCS11StatePutRequest)
 	if err := dec(in); err != nil {
@@ -6634,6 +6932,38 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PasswordGenerate",
 			Handler:    _KeystoreService_PasswordGenerate_Handler,
+		},
+		{
+			MethodName: "PasswordStoreSetAccessMode",
+			Handler:    _KeystoreService_PasswordStoreSetAccessMode_Handler,
+		},
+		{
+			MethodName: "PolicyCreate",
+			Handler:    _KeystoreService_PolicyCreate_Handler,
+		},
+		{
+			MethodName: "PolicyGet",
+			Handler:    _KeystoreService_PolicyGet_Handler,
+		},
+		{
+			MethodName: "PolicyList",
+			Handler:    _KeystoreService_PolicyList_Handler,
+		},
+		{
+			MethodName: "PolicyDelete",
+			Handler:    _KeystoreService_PolicyDelete_Handler,
+		},
+		{
+			MethodName: "PolicyRefresh",
+			Handler:    _KeystoreService_PolicyRefresh_Handler,
+		},
+		{
+			MethodName: "PolicyVerify",
+			Handler:    _KeystoreService_PolicyVerify_Handler,
+		},
+		{
+			MethodName: "PolicyExport",
+			Handler:    _KeystoreService_PolicyExport_Handler,
 		},
 		{
 			MethodName: "PKCS11StatePut",
