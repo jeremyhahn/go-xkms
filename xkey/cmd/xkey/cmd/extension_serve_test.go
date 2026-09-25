@@ -565,6 +565,60 @@ func TestHeadlessHandler_HandleUnlock_WrongPIN(t *testing.T) {
 	}
 }
 
+// TestHeadlessHandler_AutofillDelegation covers the autofill IPC handler
+// methods that delegate to AutoFillService. The service starts disabled
+// (services.NewAutoFillService's documented default), so every call takes
+// the same real, hardware-free error path: this both proves the delegation
+// reaches the service unmodified and that a disabled extension refuses
+// every autofill operation, not just some of them.
+func TestHeadlessHandler_AutofillDelegation(t *testing.T) {
+	svc := services.NewAutoFillService(nil, nil, nil, nil, nil)
+	h := &headlessHandler{autofillSvc: svc}
+
+	if _, err := h.HandleAutofillSearch("example.com"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillSearch error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillGet("cred-id", "challenge"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillGet error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillTOTP("example.com"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillTOTP error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillTOTPByID("cred-id"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillTOTPByID error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillSave("example.com", "user", "pw", "title"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillSave error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+	if _, err := h.HandleAutofillIgnoreDomain("example.com"); !errors.Is(err, services.ErrAutoFillDisabled) {
+		t.Errorf("HandleAutofillIgnoreDomain error = %v, want %v", err, services.ErrAutoFillDisabled)
+	}
+
+	// HandleAutofillFocus and HandleAutofillStatus/Policy have no enabled
+	// gate in headless mode / the service itself: they must succeed.
+	focusResult, err := h.HandleAutofillFocus()
+	if err != nil {
+		t.Fatalf("HandleAutofillFocus unexpected error: %v", err)
+	}
+	if focusResult == nil {
+		t.Fatal("HandleAutofillFocus returned a nil result")
+	}
+}
+
+// TestHeadlessHandler_PairingNotifyCodeAndCompleted exercises the two
+// pairing callbacks, which only format terminal/log output and must never
+// fail regardless of what they are given.
+func TestHeadlessHandler_PairingNotifyCodeAndCompleted(t *testing.T) {
+	h := &headlessHandler{}
+
+	if err := h.HandlePairingNotifyCode("123456", "identity-key", "https://example.com"); err != nil {
+		t.Fatalf("HandlePairingNotifyCode unexpected error: %v", err)
+	}
+	if err := h.HandlePairingCompleted("https://example.com"); err != nil {
+		t.Fatalf("HandlePairingCompleted unexpected error: %v", err)
+	}
+}
+
 func TestReadBarrierStrategy_Software(t *testing.T) {
 	dataDir := t.TempDir()
 	barrierDir := filepath.Join(dataDir, "barrier")

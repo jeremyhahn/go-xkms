@@ -124,6 +124,26 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "unresolved PIN reference",
+			config: &Config{
+				CN:         "test",
+				Library:    tempLib,
+				TokenLabel: "test-token",
+				PIN:        &types.SecretValue{Raw: "credential://unresolved"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unresolved SOPIN reference",
+			config: &Config{
+				CN:         "test",
+				Library:    tempLib,
+				TokenLabel: "test-token",
+				SOPIN:      &types.SecretValue{Raw: "credential://unresolved"},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

@@ -42,6 +42,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -343,6 +344,10 @@ func (ca *CA) readBlobData(key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = reader.Close() }()
+	defer func() {
+		if cerr := reader.Close(); cerr != nil {
+			slog.Debug("ca: failed to close object store blob reader", "key", key, "error", cerr)
+		}
+	}()
 	return io.ReadAll(reader)
 }

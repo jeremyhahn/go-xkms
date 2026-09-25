@@ -52,24 +52,22 @@ The Vite dev servers proxy API requests to the backend. Update `vite.config.ts` 
 ## Building for Production
 
 ```bash
-# CLI-only binaries (no native GUI, no CGO)
+# xkmsd + xkmsctl (no native GUI, no CGO)
 make build
-
-# GUI-enabled binaries (requires CGO + WebKit2GTK)
-make build-gui
 ```
+
+There is no `make build-gui` target — see [`building.md`](building.md)'s
+correction.
 
 ## Running
 
+> **Correction (go-xkms#942):** there is no `cactl` or `trusted-acme-server`
+> binary — see [`README.md`](README.md)'s correction.
+
 ```bash
-# Launch admin desktop GUI (no subcommand = GUI mode)
-./bin/cactl
-
-# Launch client desktop GUI
+# Launch client desktop GUI (no subcommand = GUI mode, -tags gui)
 ./bin/trusted-acme-client
-
-# Start ACME server with web admin UI at /ui/admin/
-./bin/trusted-acme-server
 ```
 
-The admin desktop GUI defaults to connecting via Unix socket at `/run/trusted-ca-grpc.sock`. Use `--transport` and `--address` flags to connect via other protocols.
+`xkmsd` hosts the (separately implemented) web admin UI at `/admin-ui`,
+not `/ui/admin/` — see [`README.md`](README.md).

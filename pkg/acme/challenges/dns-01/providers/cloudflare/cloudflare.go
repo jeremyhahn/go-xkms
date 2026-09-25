@@ -46,7 +46,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -330,7 +332,7 @@ func (p *Provider) Present(ctx context.Context, domain, fqdn, value string) erro
 		// Record already exists
 		return nil
 	}
-	if err != errRecordNotFound {
+	if !errors.Is(err, errRecordNotFound) {
 		return err
 	}
 
@@ -398,7 +400,7 @@ func (p *Provider) CleanUp(ctx context.Context, domain, fqdn, value string) erro
 
 	// Fallback to finding the record via API
 	record, err := p.findTXTRecord(ctx, fqdn, value)
-	if err == errRecordNotFound {
+	if errors.Is(err, errRecordNotFound) {
 		// Record doesn't exist, nothing to clean up
 		return nil
 	}
@@ -572,7 +574,11 @@ func (p *Provider) makeRequest(ctx context.Context, method, uri string, body io.
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Debug("cloudflare: failed to close response body", slog.String("error", closeErr.Error()))
+		}
+	}()
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodySize)).Decode(&apiResp); err != nil {

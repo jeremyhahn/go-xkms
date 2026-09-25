@@ -177,7 +177,7 @@ func (h *Handlers) GetCertificate(w http.ResponseWriter, r *http.Request) {
 
 	cert, err := h.service.GetCertificate(ctx, serial)
 	if err != nil {
-		if err == ErrCertificateNotFound {
+		if errors.Is(err, ErrCertificateNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Certificate not found")
 			return
 		}
@@ -202,7 +202,7 @@ func (h *Handlers) RevokeCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.RevokeCertificate(ctx, serial, req.Reason); err != nil {
-		if err == ErrCertificateNotFound {
+		if errors.Is(err, ErrCertificateNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Certificate not found")
 			return
 		}
@@ -274,7 +274,7 @@ func (h *Handlers) GetAccount(w http.ResponseWriter, r *http.Request) {
 
 	account, err := h.service.GetAccount(ctx, accountID)
 	if err != nil {
-		if err == ErrAccountNotFound {
+		if errors.Is(err, ErrAccountNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Account not found")
 			return
 		}
@@ -297,7 +297,7 @@ func (h *Handlers) DisableAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.DisableAccount(ctx, accountID); err != nil {
-		if err == ErrAccountNotFound {
+		if errors.Is(err, ErrAccountNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Account not found")
 			return
 		}
@@ -360,7 +360,7 @@ func (h *Handlers) GetOrder(w http.ResponseWriter, r *http.Request) {
 
 	order, err := h.service.GetOrder(ctx, orderID, accountID)
 	if err != nil {
-		if err == ErrOrderNotFound {
+		if errors.Is(err, ErrOrderNotFound) {
 			writeProblem(w, http.StatusNotFound, "urn:trusted-ca:error:not-found", "Order not found")
 			return
 		}
@@ -518,19 +518,26 @@ func (h *Handlers) GetAlgorithms(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// Headers and status are already written; there is no way to
+		// report this to the client, so it's only logged.
+		slog.Error("failed to write JSON response", slog.String("error", err.Error()))
+	}
 }
 
 // writeProblem writes an RFC 7807 Problem Details error response.
 func writeProblem(w http.ResponseWriter, statusCode int, problemType, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(ProblemDetail{
+	err := json.NewEncoder(w).Encode(ProblemDetail{
 		Type:   problemType,
 		Title:  http.StatusText(statusCode),
 		Detail: detail,
 		Status: statusCode,
 	})
+	if err != nil {
+		slog.Error("failed to write problem detail response", slog.String("error", err.Error()))
+	}
 }
 
 func parseInt(s string, defaultValue int) int {

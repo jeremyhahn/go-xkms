@@ -295,8 +295,10 @@ func ResetPIV() {
 
 	if pivManager != nil {
 		pivManager.mu.Lock()
-		for _, store := range pivManager.stores {
-			_ = store.Close()
+		for backendName, store := range pivManager.stores {
+			if err := store.Close(); err != nil {
+				slog.Debug("PIV store close failed", "backend", backendName, "error", err)
+			}
 		}
 		pivManager.stores = nil
 		pivManager.backendResolver = nil

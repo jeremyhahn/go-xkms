@@ -196,8 +196,8 @@ func (p *PKCS11CertStorage) SaveCert(id string, cert *x509.Certificate) error {
 
 		_, createErr := p.pool.Ctx().CreateObject(session, template)
 		if createErr != nil {
-			if createErr == pkcs11.Error(pkcs11.CKR_DEVICE_MEMORY) ||
-				createErr == pkcs11.Error(pkcs11.CKR_TOKEN_WRITE_PROTECTED) {
+			if isCKR(createErr, pkcs11.CKR_DEVICE_MEMORY) ||
+				isCKR(createErr, pkcs11.CKR_TOKEN_WRITE_PROTECTED) {
 				return ErrTokenFull
 			}
 			return NewOperationError("create certificate object", createErr)
@@ -414,8 +414,8 @@ func (p *PKCS11CertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 
 			_, err := p.pool.Ctx().CreateObject(session, template)
 			if err != nil {
-				if err == pkcs11.Error(pkcs11.CKR_DEVICE_MEMORY) ||
-					err == pkcs11.Error(pkcs11.CKR_TOKEN_WRITE_PROTECTED) {
+				if isCKR(err, pkcs11.CKR_DEVICE_MEMORY) ||
+					isCKR(err, pkcs11.CKR_TOKEN_WRITE_PROTECTED) {
 					return ErrTokenFull
 				}
 				return NewOperationError(fmt.Sprintf("create certificate chain object %d", i), err)
@@ -733,4 +733,13 @@ func (p *PKCS11CertStorage) findChainMemberHandles(session pkcs11.SessionHandle,
 // chainID returns the chain ID prefix for a given certificate ID.
 func (p *PKCS11CertStorage) chainID(id string) string {
 	return id + "-chain"
+}
+
+// isCKR reports whether err is, or wraps, a pkcs11.Error carrying the given
+// Cryptoki return code (CKR_*). Call sites use this instead of comparing err
+// to a pkcs11.Error value with == so a wrapped Cryptoki error still
+// classifies correctly.
+func isCKR(err error, code uint) bool {
+	var ckErr pkcs11.Error
+	return errors.As(err, &ckErr) && ckErr == pkcs11.Error(code)
 }

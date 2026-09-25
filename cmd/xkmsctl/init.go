@@ -248,7 +248,7 @@ func signNonce(nonce []byte, key crypto.PrivateKey) ([]byte, error) {
 // checkServerResponse reads the response body and checks for non-2xx status codes.
 // On success, it returns the response body bytes. On failure, it returns a typed error.
 func checkServerResponse(resp *http.Response) ([]byte, error) {
-	defer func() { _ = resp.Body.Close() }()
+	defer closeQuietly(resp.Body)
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -49,8 +49,6 @@ func TestShutdown_RESTShutdownError(t *testing.T) {
 		_ = restServer.Serve(listener)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-
 	// Close the listener to force shutdown error
 	listener.Close()
 
@@ -83,8 +81,6 @@ func TestShutdown_MCPShutdownError(t *testing.T) {
 	go func() {
 		_ = mcpServer.Serve(listener)
 	}()
-
-	time.Sleep(50 * time.Millisecond)
 
 	// Close listener early to possibly cause issues
 	listener.Close()
@@ -189,8 +185,6 @@ func TestShutdown_WithShutdownContextTimeout(t *testing.T) {
 		_ = restServer.Serve(listener)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-
 	server.running.Store(true)
 	server.restServer = restServer
 
@@ -237,8 +231,6 @@ func TestShutdown_WithErrsJoin(t *testing.T) {
 	go func() {
 		_ = mcpServer.Serve(mcpListener)
 	}()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer
@@ -304,8 +296,6 @@ func TestShutdown_WithMultipleServersActive(t *testing.T) {
 	require.NoError(t, err)
 	f.Close()
 
-	time.Sleep(50 * time.Millisecond)
-
 	// Set up server state
 	server.running.Store(true)
 	server.restServer = restServer
@@ -348,8 +338,6 @@ func TestShutdown_ReturnMultipleErrors(t *testing.T) {
 
 	mcpServer := &http.Server{Handler: http.NewServeMux()}
 	go func() { _ = mcpServer.Serve(mcpListener) }()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer

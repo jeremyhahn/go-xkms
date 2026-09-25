@@ -36,7 +36,7 @@ import (
 // live node. AddReplica/RemoveReplica are implemented only to satisfy the
 // ClusterMutator half of the xkms.ClusterClient interface — nothing in the
 // REST surface calls them (membership mutation is never exposed over REST;
-// see docs/cluster/api.md), so they are unconditional no-ops.
+// see docs/clustering/api.md), so they are unconditional no-ops.
 type fakeClusterClient struct {
 	members    []xkms.ClusterMember
 	membersErr error
@@ -192,7 +192,7 @@ func TestClusterMembersHandler_UnderlyingError(t *testing.T) {
 // (not built from auth.Resource*/auth.Action*) so the test fails if a
 // constant is retyped or repointed, matching frostRoutePermissions'
 // rationale: this table is the wire contract. Only the two read routes
-// exist: REST never mutates Raft membership (docs/cluster/api.md).
+// exist: REST never mutates Raft membership (docs/clustering/api.md).
 var clusterRoutePermissions = []struct {
 	name     string
 	method   string

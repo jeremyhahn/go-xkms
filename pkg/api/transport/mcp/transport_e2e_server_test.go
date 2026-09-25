@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // ---------------------------------------------------------------------------
@@ -216,25 +217,17 @@ func TestE2E_UnregisteredTenantIsPermissionDenied(t *testing.T) {
 
 // TestE2E_NotFoundIsClassifiedByCode is the not-found cell of the same
 // matrix, run against a real mcp-go server and this SDK's real rpcCall/
-// classifyToolError path rather than against production dispatch.
-//
-// It cannot be driven through InvokeMethod the way the other three cells
-// are: pkg/api/mcp/errors_keyops.go's keyOpSentinelCodes maps every
-// not-found sentinel (xkms.ErrKeyNotFound, xkms.ErrBackendNotFound) to
-// ErrCodeInternalError, and pkg/apimodule/module_mcp_errors.go's
-// keyOpCodeToWire has no entry that produces wire.CodeNotFound -- so no
-// xkms tool call reaches this client carrying that code today. That gap is
-// pre-existing server-side behavior (go-xkms#797 is the SDK client's
-// half of go-qrdb#438's contract, not a change to what the server
-// classifies) and is reported separately rather than papered over here.
-//
-// What this test proves instead is the SDK client's half of the contract in
-// isolation: a real mcp-go server tool that DOES answer wire.CodeNotFound --
-// exactly the shape codedToolResult produces -- is received by the real
-// Streamable-HTTP-shaped in-process transport and reconstituted by this
-// client as an *RPCError carrying ErrCodeInvalidParams, xkms's JSON-RPC
-// vocabulary's stand-in for "not found" (there is no dedicated JSON-RPC
-// NotFound code; see wireCodeToRPCCode's doc comment in status.go).
+// classifyToolError path rather than against production dispatch: a hand-
+// built tool result carrying wire.CodeNotFound -- exactly the shape
+// codedToolResult produces -- is received by the real Streamable-HTTP-shaped
+// in-process transport and reconstituted by this client as an *RPCError
+// carrying both WireCode (go-qrdb's raw classification) and Code
+// (sdkssh.JSONRPCCodeNotFound, wireCodeToRPCCode's row for wire.CodeNotFound;
+// go-xkms#814). TestE2E_MissingKeyIsClassifiedNotFound below proves the same
+// outcome end to end through production dispatch, closing the gap this
+// test's predecessor documented (before go-xkms#814, no xkms tool call
+// reached wire.CodeNotFound at all, so only the client's reconstruction in
+// isolation could be exercised).
 func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 	srv := mcpserver.NewMCPServer("xkms-mcp-e2e-notfound-test", "0.0.0", mcpserver.WithToolCapabilities(true))
 	const toolName = "xkms_getKey"
@@ -265,7 +258,28 @@ func TestE2E_NotFoundIsClassifiedByCode(t *testing.T) {
 
 	var rpcErr *RPCError
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, xkmsmcp.ErrCodeInvalidParams, rpcErr.Code)
-	require.Equal(t, wire.CodeNotFound, rpcErr.WireCode,
-		"WireCode must carry go-qrdb's raw classification even though xkms's coarser Code cannot")
+	require.Equal(t, sdkssh.JSONRPCCodeNotFound, rpcErr.Code)
+	require.Equal(t, wire.CodeNotFound, rpcErr.WireCode)
+}
+
+// TestE2E_MissingKeyIsClassifiedNotFound proves the "not found" mapping end
+// to end, through the real server: xkms.getKey for a key that does not
+// exist reaches XKMSService.GetKey's xkms.ErrKeyNotFound
+// (pkg/xkms/servicer_helpers.go's findKeyAttrs), which pkg/api/mcp's
+// handleGetKey now runs through mapKeyOpError (errors_keyops.go's
+// keyOpSentinelCodes) instead of the bare *errs.Wrapped it used to return,
+// so it renders as sdkssh.JSONRPCCodeNotFound (wire.CodeNotFound on the
+// wire, via pkg/apimodule's keyOpCodeToWire), and this SDK reconstitutes it
+// as an *RPCError carrying that same Code and WireCode -- go-xkms#814.
+func TestE2E_MissingKeyIsClassifiedNotFound(t *testing.T) {
+	backend := newE2EBackendWithBarrier(t)
+	tr := connectInProcessToModule(t, backend)
+
+	_, err := tr.GetKey(context.Background(), "software", "does-not-exist")
+	require.Error(t, err)
+
+	var rpcErr *RPCError
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, sdkssh.JSONRPCCodeNotFound, rpcErr.Code)
+	require.Equal(t, wire.CodeNotFound, rpcErr.WireCode)
 }

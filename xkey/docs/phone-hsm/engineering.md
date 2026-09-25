@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-23
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -48,7 +48,6 @@ func (t *Transport) Close() error
 func (t *Transport) Healthy(_ context.Context) bool
 func (t *Transport) Conn() interface{}
 func (t *Transport) Request(ctx context.Context, method string, req, resp interface{}) error
-func (t *Transport) RequestStream(...) (transport.Stream, error)   // ErrStreamNotSupported
 func (t *Transport) Config() *transport.Config
 
 var ErrNotSupported = errors.New("operation not supported by this protocol")
@@ -72,8 +71,8 @@ pairing keys are configured (`ErrNoiseNotConfigured`).
   nonce per message: concurrent senders would emit frames out of nonce order and
   the phone would reject them. **Do not remove that mutex to gain parallelism.**
 - **`Connect` fails closed with no pairing keys**, before any bus access.
-- **No streaming.** `RequestStream` returns `ErrStreamNotSupported`; USB AOA is
-  request/response.
+- **No streaming.** The transport implements only `Connect`/`Close`/`Healthy`/
+  `Request`; USB AOA is request/response.
 - **Every non-transport service method returns `ErrNotSupported`.** The USB
   channel implements `PasswordService`, `SealStoreService` and `PolicyService`
   method sets and supports none of them — the phone path carries the pairing
@@ -96,7 +95,7 @@ cross-repo work. It is recorded here rather than glossed.
 ## Error semantics
 
 `xkey/pkg/pairing/errors.go`; transport-side, `ErrNoiseNotConfigured`,
-`ErrNotConnected`, `ErrNotSupported`, `ErrStreamNotSupported`, `ErrRequestFailed`,
+`ErrNotConnected`, `ErrNotSupported`, `ErrRequestFailed`,
 wrapped in `errs.Detail` with `transport.ErrConnectionFailed`,
 `ErrInvalidRequest` or `ErrInvalidResponse`.
 

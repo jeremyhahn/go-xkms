@@ -1,6 +1,6 @@
 # Crypto Backends — Architecture
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## The problem
 
@@ -33,9 +33,18 @@ type Backend interface {
 	Type() types.StoreType
 	KeyProvider() types.KeyProvider
 	CertStorage() certstore.CertificateStorageAdapter
+	SignerStore() store.SignerStorer
 	Close() error
 }
 ```
+
+`SignerStore()` (go-xkms#724) returns the same kind of thing `CertStorage()`
+does: a persistence seam every backend gets for free from `compositeBackend`,
+not something each backend implementation writes. It backs
+`SignOptions.BlobCN` (`pkg/xkms/service.go` `Sign`) and
+`VerifyOpts.IntegrityCheck` (`Verify`) — see
+[`signing/architecture.md`](../signing/architecture.md) for why a signature
+record is persisted the same way a certificate is.
 
 The interface is uniform; the *differences* are declared as data, not discovered
 by trial. `types.Capabilities` (`pkg/types/types.go:1366`) is the declaration:

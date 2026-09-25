@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 ## Exported surface
 
@@ -24,6 +24,12 @@ keystore; its `Type()` maps its composed key provider's `types.BackendType`
 through `backendTypeToStoreType` (`pkg/xkms/keyid.go`), so it reports the
 same keyword `ID()` and the Key ID parser expect regardless of the name it
 was registered under.
+
+`SignerStore() store.SignerStorer` (`pkg/signing/store`, go-xkms#724) is
+built once in `New()` from the same `storage.Backend` as `CertStorage`, so
+every backend gets it for free from `compositeBackend`. `TenantScopedBackend`
+does not pass it through unchanged — it wraps it so signature records are
+tenant-scoped too — see [`signing/architecture.md`](../signing/architecture.md).
 
 ### `types.KeyAttributes.Backend` and `.StoreType` — `pkg/types/types.go`
 
@@ -315,6 +321,20 @@ assemble `BUILD_TAGS` and then `TAG_FLAGS := -tags "$(BUILD_TAGS)"`.
 Runtime backend configuration is the `backends:` section of the server config
 (`pkg/config/config.go`). Provider credentials come from the server process's
 environment, never from a file in this repo.
+
+**`pkg/backend/tpm2.Config.KeyDir` has no default** (`config.go:108-118`,
+issue #926): `Validate` returns `*errs.Detail` wrapping `ErrKeyDirRequired`
+when it is empty rather than resolving a directory relative to the process's
+working directory. `pkg/server`'s `resolveTPM2KeyDir`
+(`pkg/server/backend_tpm2.go:31`, `pkg/server/embedded_node.go:84`) derives it
+from `storage.path` and itself returns `*ErrConfigRequired` when that is unset
+-- both layers fail closed with a typed error rather than falling back to a
+cwd-relative path. `pkg/xkms.AutoInitialize` derives it from
+`AutoConfig.DataDir` (`pkg/xkms/auto.go:158-166`) the same way it does for
+every other file-backed backend; a caller that leaves `DataDir` empty and
+wants the tpm2 backend must set `key_dir` explicitly in `BackendConfigs`, or
+the backend factory returns an error and `AutoInitialize` skips it (logged,
+not fatal, matching every other backend that fails to initialize).
 
 ## Persistence
 

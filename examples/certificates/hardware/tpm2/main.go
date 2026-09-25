@@ -18,6 +18,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"log"
 	"math/big"
 	"os"
@@ -149,10 +150,10 @@ func main() {
 	certID := "tpm-device-cert"
 	err = certStorage.SaveCert(certID, cert)
 	if err != nil {
-		if err == hardware.ErrCertificateTooLarge {
+		if errors.Is(err, hardware.ErrCertificateTooLarge) {
 			log.Fatalf("Certificate too large for NV RAM: %v", err)
 		}
-		if err == hardware.ErrCapacityExceeded {
+		if errors.Is(err, hardware.ErrCapacityExceeded) {
 			log.Fatalf("NV RAM capacity exceeded: %v", err)
 		}
 		log.Fatalf("Failed to save certificate: %v", err)

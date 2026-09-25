@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-24
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -88,6 +88,23 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   carries an exportability field, so a caller cannot assert one. The MCP
   handler used to build the source attributes by hand, which left the flag
   false and refused every copy (#155).
+- **The kid-based Simplified API resolves a key's stored attributes, never
+  the attributes its kid string implies.** `xkms.ExportKey`, `RotateKey` and
+  `CopyKey` (`pkg/xkms/service.go`) take a kid (`backend:type:algo:keyname`)
+  and used to pass it straight through `getBackendForKID` →
+  `ParseKeyIDToAttributes`, whose result can only carry the fields the kid
+  format itself encodes — `Exportable` is not one of them, so it was always
+  `false` regardless of what the key was created with, and `ExportKey` by kid
+  refused every key (#925). All three now resolve the backend's own record
+  via `loadStoredKeyAttrs` (`pkg/xkms/service.go`), which wraps the
+  tenant-aware servicer's `findKeyAttrs` (`servicer_helpers.go`) and
+  reports a miss as `backend.ErrKeyNotFound`. `RotateKey` by kid needs this for the same contract the bullet
+  above states for `CopyKey`: regenerating with the reconstructed attrs
+  silently downgraded every rotated key to `Exportable: false`. Every other
+  kid-based function (`GetKey`, `Signer`, `Decrypter`, `Delete`, `Sign`,
+  `Verify`, `Encrypt`, `Decrypt`, `GetSymmetricKey`, the certificate-by-kid
+  group) was audited and left on the reconstructed attrs: none of those
+  operations gate on a field the kid cannot encode.
 - **`CopyKey` wraps for the DESTINATION's own key, never the source's.**
   `CopyKey` calls the destination's `GetImportParameters` first, then the
   source's `ExportKeyTo(ctx, attrs, dstParams)` — never plain `ExportKey`,
@@ -244,6 +261,38 @@ every wire: `pkg/api/rest/errors_keyops.go`, `pkg/api/grpc/errors_keyops.go`,
 `pkg/api/mcp/errors_keyops.go`, `pkg/xkms/errors_keyops.go`. Wrapping across
 the SDK boundary uses `pkg/errs` (`errs.Message`, `errs.Detail`), and the SDK
 side re-renders in `sdk/go/errors.go`.
+
+**Every MCP handler decodes params through one helper (go-xkms#774, #783).**
+`pkg/api/mcp/utils.go`'s `decodeParams` is the sole params-decode path: it
+always returns a `*KeyOpError{Code: ErrCodeInvalidParams}`
+(`pkg/api/mcp/errors_keyops.go`'s `KeyOpError`) on a `json.Unmarshal`
+failure, so `InvokeMethod`/`mcpToolHandler` classifies malformed JSON as
+Invalid params (`-32602`) rather than the internal fault an unclassified
+`*errs.Wrapped` renders as. Every `pkg/api/mcp/handlers*.go` handler that
+takes params calls it (`ssh.*`'s own `json.Unmarshal` + `mapSSHError`,
+`errors_ssh.go`, is the one deliberate exception: it already produces the
+same `*KeyOpError{ErrCodeInvalidParams}` outcome through a path that also
+carries SSH's own NotFound/Duplicate/Mismatch codes, so it is not routed
+through `decodeParams` too). `pkg/api/mcp/handlers_user.go`'s
+`unmarshalUserParams` used to be a second such helper that returned a bare
+`*errs.Wrapped` instead — every `user.*` malformed-params failure reached
+the caller as an internal fault regardless of the request. It is deleted;
+`user.*` handlers call `decodeParams` like every other handler.
+`TestEveryHandler_MalformedParamsAreInvalidParams`
+(`malformed_params_sweep_test.go`) drives every entry of `rpcMethodHandlers`
+with unparsable JSON and asserts `-32602`, so a future handler that starts
+decoding params without going through `decodeParams` fails that test by
+name instead of silently reaching the caller as `-32603`.
+
+**Not-found is a distinct MCP code (go-xkms#814).** `xkms.ErrKeyNotFound`,
+`xkms.ErrBackendNotFound` (`errors_keyops.go`'s `keyOpSentinelCodes`), and a
+`*qrdbsdk.UserNotFoundError` reached through `pkg/xkms.ErrUserOperation`
+(`handlers_user.go`'s `mapUserError`) all classify onto
+`sdkssh.JSONRPCCodeNotFound`, matching go-qrdb's own NotFound classification
+of the identical `UserNotFoundError` type across its gRPC, QUIC, and MCP-
+wire transports ("lower layers win"). See [api.md](api.md) §"Status and
+error mapping" for the full code tables and the client-side reverse
+mapping.
 
 Five MCP handlers (`getTLSCertificate`, `getImportParameters`,
 `importKeyMaterial`, `asymmetricEncrypt`, `asymmetricDecrypt`) refuse a

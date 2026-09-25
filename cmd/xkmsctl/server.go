@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -50,7 +49,7 @@ func serverStatus(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -77,14 +76,17 @@ func printServerStatus(printer *Printer, resp *client.HealthResponse) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Server Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Status:  %s\n", resp.Status)
+		printer.printf("Server Status:\n")
+		printer.printf("  Status:  %s\n", resp.Status)
 		if resp.Version != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Version: %s\n", resp.Version)
+			printer.printf("  Version: %s\n", resp.Version)
 		}
 		if resp.Message != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Message: %s\n", resp.Message)
+			printer.printf("  Message: %s\n", resp.Message)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

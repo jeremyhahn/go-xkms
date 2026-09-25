@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -53,11 +54,27 @@ var simulatorOpener func() (SimulatorInterface, error)
 
 type TrustedPlatformModule interface {
 	ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error)
+	// AnswerCredentialChallenge answers a credential challenge built by
+	// NewCredentialChallenge, using an activation key this TPM created with
+	// CreateActivationKey. It generalises ActivateCredential's hardcoded IAK
+	// path to any transient activation key.
+	AnswerCredentialChallenge(key *ActivationKey, challenge *CredentialChallenge) ([]byte, error)
 	AKProfile() (AKProfile, error)
 	AlgID() tpm2.TPMAlgID
 	CalculateName(algID tpm2.TPMAlgID, publicArea []byte)
 	Clear(lockoutAuth []byte) error
+	// ClearForReprovision returns the TPM to factory-fresh hierarchy state
+	// so a new provisioning pass can start clean, trying TPM2_Clear via the
+	// LOCKOUT hierarchy, then the PLATFORM hierarchy, then UEFI PPI
+	// ForceClear in turn. rebootRequired is true only when the PPI path was
+	// used.
+	ClearForReprovision() (rebootRequired bool, err error)
 	Close() error
+	// CreateActivationKey creates a transient, unrestricted signing key in
+	// the null hierarchy, used only to answer an EK credential challenge
+	// (see AnswerCredentialChallenge) before any persistent identity key
+	// exists.
+	CreateActivationKey() (*ActivationKey, error)
 	FactoryReset(ownerAuth []byte) error
 	// FactoryResetWithClear is FactoryReset preceded by a destructive
 	// TPM2_Clear via the LOCKOUT hierarchy with empty auth. Callers MUST
@@ -194,6 +211,11 @@ type TrustedPlatformModule interface {
 	SecretFromShares(shares []string) (string, error)
 	ShareSecret(secret []byte, shares int) ([]string, error)
 	SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error)
+	// State classifies the TPM's current provisioning progress: TPMA_PERMANENT
+	// hierarchy-auth bits, which configured persistent handles exist, and
+	// whether the Platform SRK's authPolicy matches the current platform
+	// policy digest.
+	State() (*ProvisioningState, error)
 	SSRKAttributes() (*types.KeyAttributes, error)
 	PlatformSRKAttributes() (*types.KeyAttributes, error)
 	// SSRK returns the Storage Root Key configuration.
@@ -271,11 +293,10 @@ type Params struct {
 	// pointed at an httptest server or one that fails the test if invoked;
 	// production callers leave it nil and get http.DefaultClient, bounded by
 	// the request context built from Config.EK.CertDownloadTimeout.
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
-	SignerStore store.SignerStorer
-	Tracker     types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
-	Transport   transport.TPM           // Optional: custom transport for testing
+	HTTPClient *http.Client
+	Logger     *slog.Logger
+	Tracker    types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
+	Transport  transport.TPM           // Optional: custom transport for testing
 }
 
 type TPM2 struct {
@@ -312,7 +333,6 @@ type TPM2 struct {
 	platformKeyStore PlatformKeyStorer
 	platformSRKAttrs *types.KeyAttributes
 	random           io.Reader
-	signerStore      store.SignerStorer
 	simulator        SimulatorInterface
 	ssrkAttrs        *types.KeyAttributes
 	tracker          types.AEADSafetyTracker
@@ -457,7 +477,6 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		backend:      params.Backend,
 		blobStore:    params.BlobStore,
 		certStore:    params.CertStore,
-		signerStore:  params.SignerStore,
 		debugSecrets: params.DebugSecrets,
 		config:       params.Config,
 		device:       device,
@@ -1188,7 +1207,7 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		}
 		ekCert, err := tpm.certStore.Get(ekAttrs)
 		if err != nil {
-			if err == store.ErrCertNotFound {
+			if errors.Is(err, store.ErrCertNotFound) {
 				return nil, ErrEndorsementCertNotFound
 			}
 			return nil, err
@@ -2320,7 +2339,11 @@ func (tpm *TPM2) fetchEKCertFromService(ekURL string) (*x509.Certificate, error)
 		tpm.logger.Error("failed to download EK certificate", slog.String("error", err.Error()))
 		return nil, &errs.Detail{Err: ErrEKCertServiceUnreachable, Detail: err.Error()}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			tpm.logger.Debug("failed to close EK certificate service response body", slog.String("error", cerr.Error()))
+		}
+	}()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEKCertServiceResponseBytes))
 	if err != nil {

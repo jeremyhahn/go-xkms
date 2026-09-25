@@ -90,6 +90,29 @@ func NewMultiService(local NonceService) *MultiService {
 	return m
 }
 
+// SetLocal replaces the local nonce service: the one Generate mints from and
+// the one Redeem/Valid fall back to for an unprefixed or unregistered-prefix
+// nonce. If the previous local service was registered under its own prefix,
+// that registration is replaced by service's rather than left stale, so a
+// caller that rotates its local service's signing epoch (a fresh counter
+// window under the same prefix, e.g. to bound a nonce's lifetime) does not
+// accumulate retired epochs in the registry.
+func (m *MultiService) SetLocal(service NonceService) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.local != nil {
+		if prefix := m.local.Prefix(); prefix != "" && m.services[prefix] == m.local {
+			delete(m.services, prefix)
+		}
+	}
+	m.local = service
+	if service != nil {
+		if prefix := service.Prefix(); prefix != "" {
+			m.services[prefix] = service
+		}
+	}
+}
+
 // Register adds a remote nonce service.
 func (m *MultiService) Register(service NonceService) {
 	prefix := service.Prefix()

@@ -156,7 +156,7 @@ func clusterSecretHTTPClient(caPEM []byte) *http.Client {
 	return &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+			TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13},
 		},
 	}
 }

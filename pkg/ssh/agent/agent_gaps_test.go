@@ -156,12 +156,14 @@ func TestAgent_ServeReturnsHandlerProtocolError(t *testing.T) {
 	srvErr := make(chan error, 1)
 	go func() { srvErr <- Serve(ctx, sock, New(newEd25519Signer(t))) }()
 
-	var conn net.Conn
+	var conn *net.UnixConn
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		c, err := net.Dial("unix", sock)
 		if err == nil {
-			conn = c
+			var ok bool
+			conn, ok = c.(*net.UnixConn)
+			require.True(t, ok, "unix socket connection expected")
 			break
 		}
 		if time.Now().After(deadline) {
@@ -172,21 +174,24 @@ func TestAgent_ServeReturnsHandlerProtocolError(t *testing.T) {
 	}
 
 	// A length-prefixed frame claiming 10 bytes, only 1 of which follows
-	// before close: the server's io.ReadFull of the body reports
-	// io.ErrUnexpectedEOF, a real error rather than an ordinary disconnect.
+	// before the write half closes: the server's io.ReadFull of the body
+	// reports io.ErrUnexpectedEOF, a real error rather than an ordinary
+	// disconnect.
 	_, err := conn.Write([]byte{0, 0, 0, 10, 0xff})
 	require.NoError(t, err)
-	require.NoError(t, conn.Close())
 
-	// A second, well-behaved round trip only completes once the accept
-	// loop has moved past accepting the connection above, giving its
-	// handler a head start on reading (and erroring on) the partial frame
-	// before shutdown begins.
-	confirm, err := net.Dial("unix", sock)
-	require.NoError(t, err)
-	_, err = sshagent.NewClient(confirm).List()
-	require.NoError(t, err)
-	require.NoError(t, confirm.Close())
+	// Half-close the write side instead of fully closing: it still delivers
+	// the EOF that turns the truncated body into io.ErrUnexpectedEOF, but
+	// leaves the read side open so this goroutine can observe the *server*
+	// closing its end. serveListener's handler records its error
+	// (t.recordErr) before its own deferred Close runs, so an EOF read here
+	// is proof the error has already been recorded -- deterministic, with no
+	// head-start connection, no sleep, and no tracker accessor required.
+	require.NoError(t, conn.CloseWrite())
+	n, rerr := conn.Read(make([]byte, 1))
+	assert.Equal(t, 0, n)
+	assert.ErrorIs(t, rerr, io.EOF, "server must close its end only after recording the handler error")
+	require.NoError(t, conn.Close())
 
 	cancel()
 	select {

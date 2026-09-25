@@ -89,19 +89,17 @@ var (
 	ErrCertificateEncodeFailed = errors.New("grpc: failed to encode certificate")
 )
 
-// caBundler holds the configured CA bundler for the service.
-// This is set via SetCABundler and used by GetCABundle.
-var caBundler CABundler
-
-// SetCABundler configures the CA bundler for the gRPC service.
-// This must be called before GetCABundle can be used.
-func SetCABundler(bundler CABundler) {
-	caBundler = bundler
+// SetCABundler configures the CA bundler for this Service. It is optional,
+// auxiliary wiring performed by the composition root after NewService,
+// mirroring SetSSHClient. Nil (the default) causes GetCABundle to fall back
+// to the CA servicer wired via SetCA.
+func (s *Service) SetCABundler(bundler CABundler) {
+	s.caBundler = bundler
 }
 
-// GetCABundler returns the configured CA bundler, or nil if not set.
-func GetCABundler() CABundler {
-	return caBundler
+// CABundler returns the configured CA bundler, or nil if not set.
+func (s *Service) CABundler() CABundler {
+	return s.caBundler
 }
 
 // GetCABundle retrieves the CA certificate bundle.
@@ -118,9 +116,9 @@ func (s *Service) GetCABundle(ctx context.Context, req *pb.GetCABundleRequest) (
 	// Resolve the CA bundle source: prefer the explicit bundler (SetCABundler),
 	// fall back to the CA servicer (SetCA) which exposes either the raw
 	// CABundle method or the transport-shaped GetCABundle method.
-	var bundler caBundleSource = caBundler
-	if caBundler == nil {
-		ca := getCAInstance()
+	var bundler caBundleSource = s.caBundler
+	if s.caBundler == nil {
+		ca := s.ca
 		if ca == nil {
 			return nil, status.Error(codes.FailedPrecondition, ErrCABundlerNotConfigured.Error())
 		}

@@ -180,7 +180,7 @@ func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.Tena
 		ctx, req.TenantID, req.Passphrase, req.Threshold, req.Shares,
 		seal.StrategyID(req.Strategy),
 	)
-	if err == seal.ErrAlreadyInitialized {
+	if errors.Is(err, seal.ErrAlreadyInitialized) {
 		return nil
 	}
 	return err

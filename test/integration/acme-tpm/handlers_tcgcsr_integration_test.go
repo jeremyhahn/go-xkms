@@ -645,9 +645,8 @@ func createTestOrderWithPermanentID(t *testing.T, service *handlers.RestService,
 func createJWSRequestForService(t *testing.T, service *handlers.RestService, key *TestKeyPair, url string, payload interface{}, useKID bool, accountID uint64) *http.Request {
 	t.Helper()
 
-	nonce, err := common.GenerateNonce(32)
+	nonce, err := service.GetNonceGenerator()()
 	require.NoError(t, err)
-	service.GetNonceStore().Add(nonce)
 
 	kid := ""
 	if useKID {

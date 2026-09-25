@@ -17,8 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 )
 
 // Shared sentinel errors for transport-failure test scenarios.
@@ -35,9 +33,6 @@ var (
 	// errMockNoRequestFunc is returned by mockTransport when no request
 	// function is configured.
 	errMockNoRequestFunc = errors.New("mock: no request function configured")
-
-	// errMockStreamingUnsupported is returned by mockTransport for streaming requests.
-	errMockStreamingUnsupported = errors.New("mock: streaming not supported")
 )
 
 // mockTransport implements transport.Transport for testing.
@@ -50,10 +45,6 @@ func (m *mockTransport) Request(ctx context.Context, service, method string, req
 		return m.requestFunc(ctx, service, method, req)
 	}
 	return nil, errMockNoRequestFunc
-}
-
-func (m *mockTransport) RequestStream(_ context.Context, _, _ string, _ interface{}) (transport.Stream, error) {
-	return nil, errMockStreamingUnsupported
 }
 
 func (m *mockTransport) Conn() interface{} { return nil }

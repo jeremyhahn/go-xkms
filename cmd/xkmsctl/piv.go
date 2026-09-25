@@ -51,7 +51,12 @@ var pivGetCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		format, _ := cmd.Flags().GetString("format")
+		fr := newFlagReader(cmd)
+		format := fr.String("format")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if format == "" {
 			format = "pem"
 		}
@@ -70,8 +75,13 @@ var pivStoreCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		certFile, _ := cmd.Flags().GetString("cert-file")
-		format, _ := cmd.Flags().GetString("format")
+		fr := newFlagReader(cmd)
+		certFile := fr.String("cert-file")
+		format := fr.String("format")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if format == "" {
 			format = "pem"
 		}
@@ -115,8 +125,13 @@ The algorithm can be specified with --algorithm (default: ecdsap256).`,
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		algorithm, _ := cmd.Flags().GetString("algorithm")
-		subject, _ := cmd.Flags().GetString("subject")
+		fr := newFlagReader(cmd)
+		algorithm := fr.String("algorithm")
+		subject := fr.String("subject")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		pivGenerateKey(cfg, printer, args[0], algorithm, subject)
 	},
@@ -132,8 +147,13 @@ var pivImportCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		certFile, _ := cmd.Flags().GetString("cert-file")
-		format, _ := cmd.Flags().GetString("format")
+		fr := newFlagReader(cmd)
+		certFile := fr.String("cert-file")
+		format := fr.String("format")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if format == "" {
 			format = "pem"
 		}
@@ -163,7 +183,12 @@ var pivExportCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		format, _ := cmd.Flags().GetString("format")
+		fr := newFlagReader(cmd)
+		format := fr.String("format")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if format == "" {
 			format = "pem"
 		}
@@ -182,7 +207,12 @@ var pivCSRCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		subject, _ := cmd.Flags().GetString("subject")
+		fr := newFlagReader(cmd)
+		subject := fr.String("subject")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		pivCSR(cfg, printer, args[0], subject)
 	},
@@ -195,7 +225,7 @@ func pivListSlots(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -225,7 +255,7 @@ func pivGetCertificate(cfg *Config, printer *Printer, slot, format string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -262,7 +292,7 @@ func pivStoreCertificate(cfg *Config, printer *Printer, slot string, certData []
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -299,7 +329,7 @@ func pivDeleteCertificate(cfg *Config, printer *Printer, slot string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -334,7 +364,7 @@ func pivGenerateKey(cfg *Config, printer *Printer, slot, algorithm, subject stri
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -372,7 +402,7 @@ func pivImportCertificate(cfg *Config, printer *Printer, slot string, certData [
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -409,7 +439,7 @@ func pivExportCertificate(cfg *Config, printer *Printer, slot, format string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -450,7 +480,7 @@ func pivCSR(cfg *Config, printer *Printer, slot, subject string) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {

@@ -718,6 +718,140 @@ func TestPasswordStoreAdapter_AddInvalidEntry(t *testing.T) {
 	assert.Error(t, err, "an entry with no name and no password must be rejected")
 }
 
+func TestTrustStoreAdapter_Contains(t *testing.T) {
+	dir := t.TempDir()
+	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	adapter := &trustStoreAdapter{store: store, path: dir}
+
+	added, err := adapter.AddPEM(newTestCertificatePEM(t, "contains-ca"))
+	require.NoError(t, err)
+	require.Equal(t, 1, added)
+
+	certs, err := adapter.Certificates()
+	require.NoError(t, err)
+	require.Len(t, certs, 1)
+	fp := certFingerprintHex(certs[0].Raw)
+
+	present, err := adapter.Contains(fp)
+	require.NoError(t, err)
+	assert.True(t, present)
+
+	absent, err := adapter.Contains(strings.Repeat("ab", 32))
+	require.NoError(t, err)
+	assert.False(t, absent, "an unknown fingerprint must not be reported as contained")
+}
+
+func TestOATHStoreAdapter_GetAndUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oath.json")
+	store, err := oath.NewFileStore(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	adapter := &oathStoreAdapter{store: store, path: path}
+
+	seed := &backup.OATHCredentialInfo{
+		ID:        "get-and-update",
+		Name:      "Original",
+		Type:      oath.TypeTOTP,
+		Algorithm: oath.AlgorithmSHA1,
+		Digits:    6,
+		Period:    30,
+	}
+	require.NoError(t, seed.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, adapter.Add(seed))
+
+	got, err := adapter.Get("get-and-update")
+	require.NoError(t, err)
+	assert.Equal(t, "Original", got.Name)
+
+	got.Name = "Renamed"
+	require.NoError(t, adapter.Update(got))
+
+	updated, err := adapter.Get("get-and-update")
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed", updated.Name)
+}
+
+func TestOATHStoreAdapter_GetMissingReturnsStoreError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oath.json")
+	store, err := oath.NewFileStore(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	adapter := &oathStoreAdapter{store: store, path: path}
+
+	_, err = adapter.Get("ghost")
+	assert.Error(t, err)
+}
+
+func TestOATHStoreAdapter_UpdateMissingReturnsStoreError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oath.json")
+	store, err := oath.NewFileStore(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	adapter := &oathStoreAdapter{store: store, path: path}
+
+	err = adapter.Update(&backup.OATHCredentialInfo{ID: "ghost", Name: "Ghost"})
+	assert.Error(t, err, "updating a credential that was never added must fail")
+}
+
+func TestPasswordStoreAdapter_GetAndUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "passwords")
+	store, err := openPasswordStore(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	adapter := &passwordStoreAdapter{store: store, path: path}
+
+	seed := &backup.PasswordInfo{Name: "Original", Title: "Entry"}
+	require.NoError(t, seed.SetPassword("s3cret"))
+	require.NoError(t, adapter.Add(seed))
+
+	entries, err := adapter.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	got, err := adapter.Get(entries[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Original", got.Name)
+
+	got.Title = "Renamed Entry"
+	require.NoError(t, got.SetPassword("s3cret"))
+	require.NoError(t, adapter.Update(got))
+
+	updated, err := adapter.Get(entries[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed Entry", updated.Title)
+}
+
+func TestPasswordStoreAdapter_GetMissingReturnsStoreError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "passwords")
+	store, err := openPasswordStore(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	adapter := &passwordStoreAdapter{store: store, path: path}
+
+	_, err = adapter.Get("ghost")
+	assert.Error(t, err)
+}
+
+func TestBackupSources_SyncOptionsMatchesOpenedStores(t *testing.T) {
+	home := isolatedBackupHome(t)
+	_ = home
+
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
+	require.NoError(t, err)
+	defer sources.Close()
+
+	assert.Len(t, sources.syncOptions(), 3,
+		"one sync option must be returned per opened store")
+}
+
 // --- Command round trip ---
 
 // TestBackupCreate_DefaultCapturesStaticPasswords is the go-xkms#936
