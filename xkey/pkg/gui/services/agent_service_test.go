@@ -299,9 +299,9 @@ func TestAgentService_StartServer_Success(t *testing.T) {
 	}
 	defer svc.StopServer()
 
-	// Allow the goroutine to start.
-	time.Sleep(50 * time.Millisecond)
-
+	// StartServer's underlying agent.Server.Start binds the listener and
+	// sets running synchronously before returning; only Serve's accept loop
+	// runs in a goroutine, so no readiness wait is needed here.
 	status := svc.GetServerStatus()
 	if !status.Running {
 		t.Error("server should be running after StartServer")
@@ -323,8 +323,6 @@ func TestAgentService_StartServer_AlreadyRunning(t *testing.T) {
 		t.Fatalf("first StartServer failed: %v", err)
 	}
 	defer svc.StopServer()
-
-	time.Sleep(50 * time.Millisecond)
 
 	err := svc.StartServer(":0")
 	if err == nil {
@@ -353,8 +351,6 @@ func TestAgentService_StopServer_Success(t *testing.T) {
 	if err := svc.StartServer(":0"); err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
-
-	time.Sleep(50 * time.Millisecond)
 
 	err := svc.StopServer()
 	if err != nil {
@@ -716,8 +712,6 @@ func TestAgentService_EventsEmitted_NoEmitter(t *testing.T) {
 	}
 	defer svc.StopServer()
 
-	time.Sleep(50 * time.Millisecond)
-
 	// Generate code without emitter -- should not panic.
 	info, err := svc.GenerateEnrollmentCode()
 	if err != nil {
@@ -735,7 +729,6 @@ func TestAgentService_StartStop_Lifecycle(t *testing.T) {
 	if err := svc.StartServer(":0"); err != nil {
 		t.Fatalf("first StartServer failed: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	if err := svc.StopServer(); err != nil {
 		t.Fatalf("first StopServer failed: %v", err)
@@ -745,7 +738,6 @@ func TestAgentService_StartStop_Lifecycle(t *testing.T) {
 	if err := svc.StartServer(":0"); err != nil {
 		t.Fatalf("second StartServer failed: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	if err := svc.StopServer(); err != nil {
 		t.Fatalf("second StopServer failed: %v", err)

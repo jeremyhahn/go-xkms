@@ -268,13 +268,9 @@ func TestRunOIDCLogin_GeneratedRedirectReachesTheListener(t *testing.T) {
 	go func() { done <- runOIDCLogin(cmd, nil) }()
 
 	wantRedirect := "redirect_uri=http%3A%2F%2F127.0.0.1%3A" + port + "%2Fcallback"
-	deadline := time.Now().Add(10 * time.Second)
-	for !strings.Contains(out.String(), wantRedirect) {
-		if time.Now().After(deadline) {
-			t.Fatalf("the authorization URL never carried %s; output:\n%s", wantRedirect, out.String())
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), wantRedirect)
+	}, 10*time.Second, 20*time.Millisecond, "the authorization URL never carried %s; output:\n%s", wantRedirect, out.String())
 
 	resp, err := http.Get("http://127.0.0.1:" + port + "/callback?error=access_denied&error_description=declined")
 	require.NoError(t, err, "the redirect host must be served by the listener")
@@ -406,13 +402,9 @@ func TestRunOIDCLogin_AnswersOnTheRedirectURLPath(t *testing.T) {
 	go func() { done <- runOIDCLogin(cmd, nil) }()
 
 	wantRedirect := "redirect_uri=http%3A%2F%2F127.0.0.1%3A" + port + "%2Foauth%2Fcb"
-	deadline := time.Now().Add(10 * time.Second)
-	for !strings.Contains(out.String(), wantRedirect) {
-		if time.Now().After(deadline) {
-			t.Fatalf("the authorization URL never carried %s; output:\n%s", wantRedirect, out.String())
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return strings.Contains(out.String(), wantRedirect)
+	}, 10*time.Second, 20*time.Millisecond, "the authorization URL never carried %s; output:\n%s", wantRedirect, out.String())
 
 	for _, other := range []string{"/oauth/cb/", "/oauth/cb/x", "/oauth/other", "/"} {
 		stray, err := http.Get("http://127.0.0.1:" + port + other + "?error=access_denied")
