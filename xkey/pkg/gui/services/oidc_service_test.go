@@ -663,9 +663,9 @@ func TestOIDCService_Login_AWSSuccess(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"access_token": {
-				"access_key_id": "AKIAGUITEST",
+				"access_key_id": "AKIAGUITEST000000001",
 				"secret_access_key": "secret",
-				"session_token": "session-token",
+				"session_token": "c2Vzc2lvbi10b2tlbg==",
 				"expiration": "` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"
 			},
 			"token_type": "DPoP",
@@ -721,7 +721,7 @@ func TestOIDCService_Login_AWSSuccess(t *testing.T) {
 
 	content, err := os.ReadFile(credentialsFile)
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "AKIAGUITEST")
+	assert.Contains(t, string(content), "AKIAGUITEST000000001")
 	assert.Contains(t, string(content), "[gui-test]")
 }
 

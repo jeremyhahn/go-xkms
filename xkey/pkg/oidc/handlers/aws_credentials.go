@@ -16,9 +16,12 @@ package handlers
 import (
 	"bufio"
 	"context"
-	"fmt"
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -28,7 +31,84 @@ const (
 
 	// DefaultAWSProfile is the default AWS profile name.
 	DefaultAWSProfile = "default"
+
+	// awsCredentialsFileMode is the permission set on the credentials file.
+	awsCredentialsFileMode os.FileMode = 0600
 )
+
+// awsKeyOrder is the order known keys are written in within a profile.
+var awsKeyOrder = []string{
+	"aws_access_key_id",
+	"aws_secret_access_key",
+	"aws_session_token",
+	"region",
+	"aws_credential_expiration",
+}
+
+// awsValueRule constrains one value written to the credentials file. Every
+// byte must satisfy allowed and the length must fall within [minLen, maxLen];
+// a zero maxLen means unbounded.
+type awsValueRule struct {
+	sentinel error
+	minLen   int
+	maxLen   int
+	allowed  func(c byte) bool
+}
+
+// The rules refuse, rather than sanitise, any value that could end its
+// line or open a section: none of them admits a newline, carriage return,
+// NUL or other control byte, and only the secret admits '[' or '='.
+var (
+	awsAccessKeyIDRule = awsValueRule{
+		sentinel: ErrAWSInvalidAccessKeyID,
+		minLen:   16,
+		maxLen:   128,
+		allowed:  func(c byte) bool { return isUpper(c) || isDigit(c) },
+	}
+	awsSecretAccessKeyRule = awsValueRule{
+		sentinel: ErrAWSInvalidSecretAccessKey,
+		minLen:   1,
+		allowed:  func(c byte) bool { return c > ' ' && c < 0x7f },
+	}
+	awsSessionTokenRule = awsValueRule{
+		sentinel: ErrAWSInvalidSessionToken,
+		minLen:   1,
+		allowed: func(c byte) bool {
+			return isUpper(c) || isLower(c) || isDigit(c) || c == '+' || c == '/' || c == '='
+		},
+	}
+	awsProfileRule = awsValueRule{
+		sentinel: ErrAWSInvalidProfile,
+		minLen:   1,
+		allowed: func(c byte) bool {
+			return isUpper(c) || isLower(c) || isDigit(c) || strings.IndexByte("._-@+:/", c) >= 0
+		},
+	}
+	awsRegionRule = awsValueRule{
+		sentinel: ErrAWSInvalidRegion,
+		minLen:   1,
+		allowed:  func(c byte) bool { return isLower(c) || isDigit(c) || c == '-' },
+	}
+)
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
+func isLower(c byte) bool { return c >= 'a' && c <= 'z' }
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// check returns nil when value satisfies the rule. The error names the
+// failing length or byte offset but never echoes the value, which may be
+// a secret.
+func (r awsValueRule) check(value string) error {
+	if len(value) < r.minLen || (r.maxLen > 0 && len(value) > r.maxLen) {
+		return &DetailError{Err: r.sentinel, Detail: ": length " + strconv.Itoa(len(value)) + " out of range"}
+	}
+	for i := range len(value) {
+		if !r.allowed(value[i]) {
+			return &DetailError{Err: r.sentinel, Detail: ": disallowed byte at offset " + strconv.Itoa(i)}
+		}
+	}
+	return nil
+}
 
 // AWSCredentialsHandler writes AWS credentials to the credentials file.
 type AWSCredentialsHandler struct {
@@ -54,7 +134,10 @@ func NewAWSCredentialsHandler(profile string) *AWSCredentialsHandler {
 	}
 }
 
-// Handle writes AWS credentials to the credentials file.
+// Handle writes AWS credentials to the credentials file. It replaces the
+// handler's profile section and preserves every other profile. Every value
+// written is validated first; an invalid value is refused with a typed error
+// and the file is left untouched.
 func (h *AWSCredentialsHandler) Handle(ctx context.Context, data *TokenData) error {
 	if err := ValidateTokenData(data); err != nil {
 		return err
@@ -80,6 +163,10 @@ func (h *AWSCredentialsHandler) Handle(ctx context.Context, data *TokenData) err
 		return ErrAWSCredentialsPathRequired
 	}
 
+	if err := h.validate(creds); err != nil {
+		return err
+	}
+
 	// Expand home directory
 	credPath = expandPath(credPath)
 
@@ -95,11 +182,8 @@ func (h *AWSCredentialsHandler) Handle(ctx context.Context, data *TokenData) err
 		return &SentinelCauseError{Sentinel: ErrAWSCredentialsRead, Cause: err}
 	}
 
-	// Build profile section
-	profileSection := h.buildProfileSection(creds)
-
 	// Update or add the profile
-	sections[profile] = profileSection
+	sections[profile] = h.buildProfileSection(creds)
 
 	// Write back the credentials file
 	if err := h.writeCredentialsFile(credPath, sections); err != nil {
@@ -114,6 +198,39 @@ func (h *AWSCredentialsHandler) Name() string {
 	return "aws-credentials"
 }
 
+// validate checks the profile name and every credential value that
+// buildProfileSection would write.
+func (h *AWSCredentialsHandler) validate(creds *AWSCredentials) error {
+	if err := awsProfileRule.check(h.Profile); err != nil {
+		return err
+	}
+	if err := awsAccessKeyIDRule.check(creds.AccessKeyID); err != nil {
+		return err
+	}
+	if err := awsSecretAccessKeyRule.check(creds.SecretAccessKey); err != nil {
+		return err
+	}
+	if creds.SessionToken != "" {
+		if err := awsSessionTokenRule.check(creds.SessionToken); err != nil {
+			return err
+		}
+	}
+	if region := h.region(creds); region != "" {
+		if err := awsRegionRule.check(region); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// region returns the configured region, falling back to the one in creds.
+func (h *AWSCredentialsHandler) region(creds *AWSCredentials) string {
+	if h.Region != "" {
+		return h.Region
+	}
+	return creds.Region
+}
+
 // buildProfileSection creates the profile section content.
 func (h *AWSCredentialsHandler) buildProfileSection(creds *AWSCredentials) map[string]string {
 	section := map[string]string{
@@ -125,28 +242,26 @@ func (h *AWSCredentialsHandler) buildProfileSection(creds *AWSCredentials) map[s
 		section["aws_session_token"] = creds.SessionToken
 	}
 
-	if h.Region != "" {
-		section["region"] = h.Region
-	} else if creds.Region != "" {
-		section["region"] = creds.Region
+	if region := h.region(creds); region != "" {
+		section["region"] = region
 	}
 
 	if h.IncludeExpiration && !creds.Expiration.IsZero() {
-		section["aws_credential_expiration"] = creds.Expiration.Format("2006-01-02T15:04:05Z")
+		section["aws_credential_expiration"] = creds.Expiration.UTC().Format("2006-01-02T15:04:05Z")
 	}
 
 	return section
 }
 
 // readCredentialsFile reads and parses the AWS credentials file.
-func (h *AWSCredentialsHandler) readCredentialsFile(path string) (map[string]map[string]string, error) {
-	sections := make(map[string]map[string]string)
+func (h *AWSCredentialsHandler) readCredentialsFile(path string) (sections map[string]map[string]string, err error) {
+	sections = make(map[string]map[string]string)
 
 	file, err := os.Open(path)
 	if err != nil {
 		return sections, err
 	}
-	defer func() { _ = file.Close() }()
+	defer func() { err = errors.Join(err, file.Close()) }()
 
 	scanner := bufio.NewScanner(file)
 	currentSection := ""
@@ -186,74 +301,80 @@ func (h *AWSCredentialsHandler) readCredentialsFile(path string) (map[string]map
 	return sections, nil
 }
 
-// writeCredentialsFile writes the credentials file.
+// formatCredentialsFile renders sections as INI text. Profiles are written
+// in name order; within a profile the known keys come first in awsKeyOrder,
+// then any other keys in name order.
+func formatCredentialsFile(sections map[string]map[string]string) []byte {
+	var b strings.Builder
+	for i, profile := range slices.Sorted(maps.Keys(sections)) {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("[" + profile + "]\n")
+
+		section := sections[profile]
+		for _, key := range awsKeyOrder {
+			if value, exists := section[key]; exists {
+				b.WriteString(key + " = " + value + "\n")
+			}
+		}
+		for _, key := range slices.Sorted(maps.Keys(section)) {
+			if !slices.Contains(awsKeyOrder, key) {
+				b.WriteString(key + " = " + section[key] + "\n")
+			}
+		}
+	}
+	return []byte(b.String())
+}
+
+// writeCredentialsFile replaces the credentials file atomically: the content
+// is written to a temporary file in the same directory with mode 0600,
+// fsynced, renamed over path, and the directory is fsynced so the rename is
+// durable. A failure before the rename leaves the existing file untouched.
 func (h *AWSCredentialsHandler) writeCredentialsFile(path string, sections map[string]map[string]string) error {
-	// Create temporary file in the same directory
 	dir := filepath.Dir(path)
 	tempFile, err := os.CreateTemp(dir, ".aws-credentials-*")
 	if err != nil {
 		return err
 	}
 	tempPath := tempFile.Name()
-	defer func() { _ = os.Remove(tempPath) }() // Clean up if we fail
 
-	writer := bufio.NewWriter(tempFile)
-
-	// Define key order for consistent output
-	keyOrder := []string{
-		"aws_access_key_id",
-		"aws_secret_access_key",
-		"aws_session_token",
-		"region",
-		"aws_credential_expiration",
+	if err := writeAndClose(tempFile, formatCredentialsFile(sections)); err != nil {
+		return errors.Join(err, os.Remove(tempPath))
 	}
 
-	first := true
-	for profile, section := range sections {
-		if !first {
-			_, _ = writer.WriteString("\n")
-		}
-		first = false
-
-		_, _ = fmt.Fprintf(writer, "[%s]\n", profile)
-
-		// Write keys in order
-		written := make(map[string]bool)
-		for _, key := range keyOrder {
-			if value, exists := section[key]; exists {
-				_, _ = fmt.Fprintf(writer, "%s = %s\n", key, value)
-				written[key] = true
-			}
-		}
-
-		// Write any remaining keys not in our predefined order
-		for key, value := range section {
-			if !written[key] {
-				_, _ = fmt.Fprintf(writer, "%s = %s\n", key, value)
-			}
-		}
-	}
-
-	if err := writer.Flush(); err != nil {
-		_ = tempFile.Close()
-		return err
-	}
-
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-
-	// Set permissions before rename
-	if err := os.Chmod(tempPath, 0600); err != nil {
-		return err
-	}
-
-	// Atomic rename
 	if err := os.Rename(tempPath, path); err != nil {
-		return err
+		return errors.Join(err, os.Remove(tempPath))
 	}
 
-	return nil
+	return syncDir(dir)
+}
+
+// writeAndClose restricts f to awsCredentialsFileMode, writes data, fsyncs
+// and closes f. f is closed on every path.
+func writeAndClose(f *os.File, data []byte) error {
+	if err := f.Chmod(awsCredentialsFileMode); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if _, err := f.Write(data); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if err := f.Sync(); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
+}
+
+// syncDir fsyncs the directory at path so a rename within it is durable.
+func syncDir(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		return errors.Join(err, d.Close())
+	}
+	return d.Close()
 }
 
 // expandPath expands ~ to the home directory.

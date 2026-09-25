@@ -80,7 +80,7 @@ func TestAWSCredentialsHandler_Handle(t *testing.T) {
 		}
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "AKIAEXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "secret",
 			},
 		}
@@ -98,7 +98,7 @@ func TestAWSCredentialsHandler_Handle(t *testing.T) {
 		}
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "AKIAEXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "secret",
 			},
 		}
@@ -185,9 +185,9 @@ aws_secret_access_key = OTHER_SECRET
 
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "NEW_KEY",
+				AccessKeyID:     "ASIANEWKEY0000000001",
 				SecretAccessKey: "NEW_SECRET",
-				SessionToken:    "NEW_TOKEN",
+				SessionToken:    "TmV3VG9rZW4=",
 			},
 		}
 
@@ -204,7 +204,7 @@ aws_secret_access_key = OTHER_SECRET
 		contentStr := string(content)
 
 		// Default profile should be updated
-		if !strings.Contains(contentStr, "aws_access_key_id = NEW_KEY") {
+		if !strings.Contains(contentStr, "aws_access_key_id = ASIANEWKEY0000000001") {
 			t.Error("Default profile should have new access key")
 		}
 
@@ -234,7 +234,7 @@ aws_secret_access_key = DEFAULT_SECRET
 
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "NEW_KEY",
+				AccessKeyID:     "ASIANEWKEY0000000001",
 				SecretAccessKey: "NEW_SECRET",
 			},
 		}
@@ -271,7 +271,7 @@ aws_secret_access_key = DEFAULT_SECRET
 		now := time.Now()
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "AKIAEXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "secret",
 				Expiration:      now,
 			},
@@ -302,7 +302,7 @@ aws_secret_access_key = DEFAULT_SECRET
 
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "AKIAEXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "secret",
 				Region:          "us-east-1", // This should be overridden
 			},
@@ -331,7 +331,7 @@ aws_secret_access_key = DEFAULT_SECRET
 
 		data := &TokenData{
 			AWSCredentials: &AWSCredentials{
-				AccessKeyID:     "AKIAEXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "secret",
 			},
 		}
