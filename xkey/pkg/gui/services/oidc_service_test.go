@@ -1783,9 +1783,16 @@ func TestOIDCService_refreshLoop_TickerFiresWithRefreshError(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for at least one tick to fire (the refresh will fail because the
-	// issuer is unreachable, but the status should be updated).
-	time.Sleep(2 * time.Second)
+	// Wait for at least one ticker.C fire instead of a fixed sleep: the
+	// AutoRefresh interval itself (1s, no clock seam) is the behavior under
+	// test, so polling the tick count is more deterministic than betting a
+	// fixed sleep is long enough under a loaded scheduler. The refresh will
+	// fail because the issuer is unreachable, but the status is still
+	// updated.
+	require.Eventually(t, func() bool {
+		status := proc.status.Load()
+		return status != nil && status.RefreshCount > 0
+	}, 10*time.Second, 20*time.Millisecond, "refreshLoop did not tick")
 	cancel()
 
 	select {
@@ -1969,8 +1976,8 @@ func TestOIDCService_Login_CallbackError(t *testing.T) {
 		resultChan <- loginResult{result: r, err: e}
 	}()
 
-	// Wait for callback server to start, then send an error callback.
-	time.Sleep(200 * time.Millisecond)
+	// Send an error callback; the retry loop below already handles the
+	// callback listener not being ready yet.
 	callbackURL := "http://localhost:18998/callback?error=access_denied&error_description=user+denied"
 	for i := 0; i < 50; i++ {
 		resp, err := http.Get(callbackURL)
@@ -2038,8 +2045,8 @@ func TestOIDCService_Login_CallbackNoCode(t *testing.T) {
 		resultChan <- loginResult{result: r, err: e}
 	}()
 
-	// Wait for callback server, then send callback with no code or error.
-	time.Sleep(200 * time.Millisecond)
+	// Send callback with no code or error; the retry loop below already
+	// handles the callback listener not being ready yet.
 	callbackURL := "http://localhost:18997/callback" // No query params at all.
 	for i := 0; i < 50; i++ {
 		resp, err := http.Get(callbackURL)

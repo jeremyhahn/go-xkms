@@ -172,7 +172,7 @@ xkmsctl piv export 9a --backend pkcs11 > /etc/xkms/tls/admin-piv.pem
 
 **3. Configure mTLS to trust the PIV CA** and connect using the PIV-backed certificate. The PKCS#11 module handles the private key operations on the hardware token.
 
-> **Deep dive**: [PIV Documentation](../piv/README.md) | [PIV CLI Reference](cli/piv.md) | [PKCS#11 Backend](../backends/pkcs11.md)
+> **Deep dive**: [PIV Documentation](../piv/user.md) | [PIV CLI Reference](cli/piv.md) | [PKCS#11 Backend](../backends/pkcs11.md)
 
 ---
 
@@ -286,6 +286,6 @@ xkmsctl barrier seal
 | Barrier encryption architecture | [Seal/Unseal Architecture](../seal/architecture.md) |
 | Bootstrap for new nodes | [Bootstrap Configuration](../configuration/bootstrap.md) |
 | CLI command reference | [CLI Overview](cli/README.md) |
-| PIV slot management | [PIV Documentation](../piv/README.md) |
+| PIV slot management | [PIV Documentation](../piv/user.md) |
 | xKey security key interface | [xKey Overview](../README.md) |
 | Docker deployment | [Docker Quick Start](../deployment/docker-quickstart.md) |

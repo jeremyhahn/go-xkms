@@ -45,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -95,6 +96,15 @@ type TrustedCA struct {
 	// Rate limiting
 	rateLimitRequests int
 	rateLimitInterval time.Duration
+
+	// Tenant rate limiting (#886): the per-tenant overall admission-control
+	// quota, shared across every account belonging to the same tenant.
+	// Meaningful only when multiTenant is true; zero (the default) leaves it
+	// disabled, matching rateLimitRequests/rateLimitInterval's own
+	// no-default, explicit-opt-in convention (WithRateLimit / WithTenantRateLimit).
+	tenantRateLimitRequests int
+	tenantRateLimitInterval time.Duration
+	tenantRateLimiter       *server.TenantRateLimiter
 
 	// Admin components
 	adminService admin.Service
@@ -364,6 +374,22 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		return caerrors.InternalServerError("failed to initialize CAA validator: %v", err)
 	}
 
+	// The shared circuit breaker manager backs this router's own storage
+	// breaker, the KMS breaker NewRestService wraps tca.kmsService with, and
+	// the challenge verifiers wrapped below -- so HealthHandler reports every
+	// breaker from a single registry, exactly as xkmsd's embedded ACME
+	// listener does (cmd/xkmsd/acme.go). Unlike xkmsd this is unconditional:
+	// there is no "resilience disabled" switch, matching
+	// config.ACMEResilienceConfig's own always-on defaults.
+	breakers := circuitbreaker.NewManager()
+
+	// server.WrapChallengeVerifiers is the one construction path shared with
+	// xkmsd's buildChallengeMap: it wraps the "http-01" and "dns-01" entries
+	// of the caller-supplied challenge map (see WithChallengeMap) with a
+	// breaker from breakers, and leaves every other challenge type
+	// unchanged.
+	challengeMap := server.WrapChallengeVerifiers(tca.challengeMap, tca.config.ACME.Resilience, breakers)
+
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
@@ -372,11 +398,17 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		CA:                      tca.ca,
 		CAAIdentities:           tca.config.ACME.CAIdentifiers,
 		CAAValidator:            caaValidator,
-		ChallengeMap:            tca.challengeMap,
+		ChallengeMap:            challengeMap,
 		KMSService:              tca.kmsService,
 		Logger:                  tca.logger,
 		StorageFactory:          tca.storageFactory,
 		TermsOfService:          tca.config.ACME.TermsOfService,
+		Breakers:                breakers,
+		StorageBreaker:          tca.config.ACME.Resilience.Storage.CircuitBreakerConfig("storage"),
+		KMSBreaker:              tca.config.ACME.Resilience.KMS.CircuitBreakerConfig("kms"),
+		DegradationCacheTTL:     tca.config.ACME.Resilience.Degradation.ResolveCacheTTL(),
+		DegradationStaleTTL:     tca.config.ACME.Resilience.Degradation.ResolveStaleTTL(),
+		DegradationMaxCacheSize: tca.config.ACME.Resilience.Degradation.ResolveMaxCacheSize(),
 	})
 	if err != nil {
 		return caerrors.InternalServerError("failed to initialize ACME service: %v", err)
@@ -399,6 +431,35 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	acmeRouter := router.PathPrefix("/acme").Subrouter()
 	acmeRouter.Use(rateLimitMiddleware)
 
+	// Tenant-aware admission control (#886): TenantAuthMiddleware resolves
+	// the tenant exclusively from a fully verified JWS "kid" — never from a
+	// client-asserted header, host, or path — and publishes it via
+	// server.WithTenantID for the per-tenant overall quota below to key on.
+	// Wired unconditionally (it is a no-op, resolving the shared "" tenant,
+	// for a non-multi-tenant deployment); the quota itself is only mounted
+	// in multi-tenant mode and only when WithTenantRateLimit configured a
+	// positive request cap.
+	acmeRouter.Use(restService.TenantAuthMiddleware)
+	if tca.multiTenant && tca.tenantRateLimitRequests > 0 {
+		tca.tenantRateLimiter = server.NewTenantRateLimiter(
+			&server.TenantRateLimiterConfig{
+				DefaultConfig: &server.RateLimitConfig{
+					OverallRequestRate: &server.RateLimit{
+						MaxRequests: tca.tenantRateLimitRequests,
+						Interval:    tca.tenantRateLimitInterval,
+					},
+				},
+			},
+			server.TenantRateLimiterFromRequestContext(),
+			func(*http.Request) string { return "" }, // shared bucket per tenant
+			"overall",
+		)
+		acmeRouter.Use(tca.tenantRateLimiter.Middleware())
+		tca.logger.Info("ACME tenant rate limiting enabled",
+			slog.Int("max_requests", tca.tenantRateLimitRequests),
+			slog.Duration("interval", tca.tenantRateLimitInterval))
+	}
+
 	// Register ACME endpoints
 	acmeRouter.HandleFunc("/directory", restService.DirectoryHandler).Methods("GET", "HEAD")
 	acmeRouter.HandleFunc("/new-nonce", restService.NewNonceHandler).Methods("HEAD", "GET")
@@ -415,9 +476,10 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	acmeRouter.HandleFunc("/orders/{id}", restService.OrdersListHandler).Methods("POST", "GET")
 	acmeRouter.HandleFunc("/ca-bundle", restService.CABundleHandler).Methods("GET")
 
-	// Health and metrics endpoints. HealthHandler reports circuit breaker and
-	// degradation status (empty/healthy here: this standalone TrustedCA path
-	// does not yet opt into Params.Breakers).
+	// Health and metrics endpoints. HealthHandler reports every breaker on
+	// the breakers Manager built above (Params.Breakers), and whether the
+	// directory/CA-bundle endpoints are currently degraded because the
+	// storage breaker is open.
 	router.HandleFunc("/health", restService.HealthHandler).Methods("GET")
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -556,6 +618,11 @@ func (tca *TrustedCA) Shutdown(ctx context.Context) error {
 		if err := tca.adminServer.Shutdown(ctx); err != nil {
 			errs = append(errs, caerrors.InternalServerError("admin server shutdown: %v", err))
 		}
+	}
+
+	if tca.tenantRateLimiter != nil {
+		tca.tenantRateLimiter.Stop()
+		tca.tenantRateLimiter = nil
 	}
 
 	// Close the trail last so events recorded by in-flight requests are

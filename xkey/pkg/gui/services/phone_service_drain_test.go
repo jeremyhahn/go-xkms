@@ -116,7 +116,10 @@ func TestCloseActiveConnection_DestroysTheKeyOnACleanDrain(t *testing.T) {
 	svc, key, release := newLeasedConnection(t)
 
 	go func() {
-		time.Sleep(10 * time.Millisecond)
+		// Wait for teardown to actually park in the drain instead of
+		// sleeping a fixed duration, so this proves teardown genuinely
+		// waits for the release rather than returning early by luck.
+		awaitDrain(t, svc)
 		release()
 	}()
 
@@ -160,9 +163,12 @@ func TestCloseActiveConnection_DoesNotDestroyANewGeneration(t *testing.T) {
 	}
 
 	// Publish the new generation while teardown is parked in the drain, then
-	// let the old lease go so the drain completes.
+	// let the old lease go so the drain completes. awaitDrain proves teardown
+	// has cleared the slot and is parked in Drain.Wait -- the exact window a
+	// Connect can publish into -- rather than betting a fixed sleep lands in
+	// it.
 	go func() {
-		time.Sleep(20 * time.Millisecond)
+		awaitDrain(t, svc)
 		svc.connMu.Lock()
 		svc.activeTransport = &phone.BLETransport{}
 		svc.activeSession = newSession

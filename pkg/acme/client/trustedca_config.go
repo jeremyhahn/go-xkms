@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
 // Supported key algorithms for certificate authority operations.
@@ -133,6 +134,19 @@ type TCAACMEConfig struct {
 	// and testing; it is a development switch and is off by default. See
 	// handlers.Params.AllowLoopbackIdentifier (#140).
 	AllowLoopbackIdentifier bool `yaml:"allow_loopback_identifier" json:"allow_loopback_identifier"`
+
+	// Resilience configures the circuit breakers guarding this router's
+	// outbound dependencies (the http-01/dns-01 challenge verifiers and the
+	// tenant KMS signer) and its own CA-bundle storage access, plus the
+	// degradation cache the directory and CA-bundle endpoints serve from
+	// while that storage access is unavailable. This is the same
+	// config.ACMEResilienceConfig xkmsd's embedded ACME listener
+	// (acme.resilience in pkg/config) uses, reused rather than parallel typed
+	// so a "storage" or "kms" breaker section means the same thing in either
+	// composition's configuration file. A zero value is valid: every breaker
+	// and the degradation cache fall back to their package defaults (see
+	// ACMECircuitBreakerConfig / ACMEDegradationConfig).
+	Resilience config.ACMEResilienceConfig `yaml:"resilience" json:"resilience"`
 }
 
 // TLSConfig holds TLS configuration for HTTPS.
@@ -295,7 +309,7 @@ func (a *TCAACMEConfig) Validate() error {
 	if err := a.TLS.Validate(); err != nil {
 		return err
 	}
-	return nil
+	return a.Resilience.Validate()
 }
 
 // Validate validates the TLS configuration.

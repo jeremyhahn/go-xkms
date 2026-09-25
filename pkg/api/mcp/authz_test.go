@@ -724,6 +724,41 @@ var goldenMethodPermissions = map[string]string{
 	"frost.listKeys":       "keys:list",
 	"frost.signRound":      "keys:sign",
 	"frost.verify":         "keys:verify",
+
+	// PIN management — pkg/api/grpc/service_barrier_pin.go (go-xkms#773).
+	"xkms.changeSOPIN":      "pin:write",
+	"xkms.changeUserPIN":    "pin:write",
+	"xkms.getLockoutStatus": "pin:read",
+	"xkms.resetLockout":     "pin:write",
+	"xkms.setSOPIN":         "pin:write",
+	"xkms.setUserPIN":       "pin:write",
+	"xkms.verifySOPIN":      "pin:read",
+	"xkms.verifyUserPIN":    "pin:read",
+
+	// Custodian groups — pkg/api/grpc/service_custodian_share_tenant.go
+	// (go-xkms#773).
+	"xkms.addCustodianMember":    "ceremony:enroll_custodian",
+	"xkms.createCustodianGroup":  "ceremony:enroll_custodian",
+	"xkms.deleteCustodianGroup":  "ceremony:revoke_custodian",
+	"xkms.distributeShares":      "ceremony:claim_share_begin",
+	"xkms.getCustodianGroup":     "ceremony:status",
+	"xkms.listCustodianGroups":   "ceremony:status",
+	"xkms.removeCustodianMember": "ceremony:revoke_custodian",
+
+	// Tenant administration — pkg/api/grpc/service_custodian_share_tenant.go
+	// (go-xkms#773).
+	"xkms.createTenant":             "tenants:create",
+	"xkms.deleteTenant":             "tenants:delete",
+	"xkms.getTenant":                "tenants:read",
+	"xkms.listTenants":              "tenants:list",
+	"xkms.tenantBarrierInit":        "tenant_barrier:init",
+	"xkms.tenantBarrierStatus":      "tenant_barrier:status",
+	"xkms.tenantBarrierUnseal":      "tenant_barrier:unseal",
+	"xkms.updateTenantEntitlements": "tenants:update",
+	"xkms.updateTenantQuotas":       "tenants:update",
+
+	// Non-ECDH key derivation — pkg/api/grpc/service.go (go-xkms#773).
+	"xkms.deriveKey": "keys:derive",
 }
 
 // TestMethodPermissions_MatchOtherTransports pins the resource:action string of
@@ -758,6 +793,7 @@ func TestMethodPermissions_NoInventedVocabulary(t *testing.T) {
 		auth.ResourceBarrier: {}, auth.ResourceCeremony: {},
 		auth.ResourceCredentials: {}, auth.ResourcePasswords: {},
 		auth.ResourceAudit: {}, auth.ResourceBootstrap: {},
+		auth.ResourcePIN: {}, auth.ResourceTenants: {}, auth.ResourceTenantBarrier: {},
 		auth.ResourceUsers: {},
 	}
 

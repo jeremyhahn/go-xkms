@@ -250,8 +250,10 @@ func TestSB_Clipboard_ScheduleClear_ReadFails(t *testing.T) {
 		log:  slog.Default().With("service", "clipboard"),
 		tool: clipToolNone,
 	}
+	// No assertion follows: this only exercises the goroutine's read-failure
+	// branch for coverage. The timer fires on its own schedule regardless of
+	// whether this test function has returned, so no wait is needed here.
 	svc.scheduleClear("test-text", 1*time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
 }
 
 // TestSB_Clipboard_ScheduleClear_CancelPrevious covers L136-138:
@@ -261,9 +263,11 @@ func TestSB_Clipboard_ScheduleClear_CancelPrevious(t *testing.T) {
 		log:  slog.Default().With("service", "clipboard"),
 		tool: clipToolNone,
 	}
+	// No assertion follows: this only exercises the cancel-previous branch
+	// for coverage. The second timer fires on its own schedule regardless of
+	// whether this test function has returned, so no wait is needed here.
 	svc.scheduleClear("first", 10*time.Second)
 	svc.scheduleClear("second", 1*time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
 }
 
 // TestSB_Clipboard_ReadClipboard_NoTool covers L204-205: no tool default case.

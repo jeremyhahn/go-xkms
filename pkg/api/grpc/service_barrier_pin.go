@@ -40,19 +40,6 @@ var (
 	ErrPINManagerNotConfigured = errors.New("grpc: PIN manager not configured")
 )
 
-// pinErrorToGRPC maps PIN domain errors to gRPC status codes.
-var pinErrorToGRPC = map[error]codes.Code{
-	qrdbsdk.ErrPINNotSet:         codes.FailedPrecondition,
-	qrdbsdk.ErrPINLocked:         codes.ResourceExhausted,
-	qrdbsdk.ErrPINInvalid:        codes.Unauthenticated,
-	qrdbsdk.ErrSOPINRequired:     codes.Unauthenticated,
-	qrdbsdk.ErrPINTooShort:       codes.InvalidArgument,
-	qrdbsdk.ErrPINAlreadySet:     codes.AlreadyExists,
-	qrdbsdk.ErrInvalidCurrentPIN: codes.Unauthenticated,
-	qrdbsdk.ErrPINStateCorrupted: codes.DataLoss,
-	qrdbsdk.ErrPINStrategyNotSet: codes.FailedPrecondition,
-}
-
 // Package-level barrier and PIN backend references, set via their
 // respective setter functions.
 var (
@@ -98,16 +85,17 @@ func mapBarrierError(err error, operation string) error {
 }
 
 // mapPINError converts a PIN domain error to the appropriate gRPC status
-// error. If the error is a known PIN error, it maps to the corresponding
-// gRPC code. Otherwise, it returns an Internal error.
+// error, classifying it through apierrors.PINSentinelClasses -- the table
+// go-xkms#773 made this package share with pkg/api/mcp's mirror of this
+// function, following the go-xkms#912 precedent set for PIV and barrier. If
+// the error is a known PIN error, it maps to the corresponding gRPC code.
+// Otherwise, it returns an Internal error.
 func mapPINError(err error, operation string) error {
 	if err == nil {
 		return nil
 	}
-	for pinErr, code := range pinErrorToGRPC {
-		if errors.Is(err, pinErr) {
-			return status.Errorf(code, "%s: %v", operation, err)
-		}
+	if class, ok := apierrors.ClassOf(apierrors.PINSentinelClasses, err); ok {
+		return status.Errorf(grpcCodeForClass(class), "%s: %v", operation, err)
 	}
 	return status.Errorf(codes.Internal, "%s: %v", operation, err)
 }
