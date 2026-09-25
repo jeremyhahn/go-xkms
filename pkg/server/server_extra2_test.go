@@ -422,8 +422,11 @@ func TestServer_Start_WithUnixSocket(t *testing.T) {
 	err = server.Start()
 	require.NoError(t, err)
 
-	// Give the goroutine a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startUnix's goroutine to set the Unix gRPC server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -448,7 +451,13 @@ func TestServer_Shutdown_WithMetricsCollector(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startMetrics's goroutine to set the metrics server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		server.mu.RLock()
+		defer server.mu.RUnlock()
+		return server.metricsServer != nil
+	}, 10*time.Second, 10*time.Millisecond, "metrics server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -1944,7 +1953,11 @@ func TestServer_Shutdown_QRDBNodeNil(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NoError(t, server.Start())
-	time.Sleep(20 * time.Millisecond)
+	// Wait for startUnix's goroutine to set the Unix gRPC server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 
 	// qrdbNode is nil for non-qrdb backends; Shutdown should succeed.
 	assert.Nil(t, server.qrdbNode)
@@ -3142,8 +3155,11 @@ func TestServer_Shutdown_WithNoiseServer(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	// Give the noise server a moment to start its accept loop.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for startNoiseBootstrap's goroutine to set the noise server field
+	// instead of sleeping a fixed duration.
+	require.Eventually(t, func() bool {
+		return server.NoiseBootstrapServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "noise bootstrap server was not set")
 
 	err = server.Shutdown()
 	assert.NoError(t, err)
@@ -3179,8 +3195,11 @@ func TestServer_StartUnix_EmptyProtocolDefaultsToGRPC(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the gRPC server a moment to start, then shut it down.
-	time.Sleep(30 * time.Millisecond)
+	// Wait for the gRPC server field to be set instead of sleeping a fixed
+	// duration.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 	require.NoError(t, server.Shutdown())
 
 	select {
@@ -3374,7 +3393,8 @@ func TestServer_Shutdown_BackendCloseError(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, server.Start())
-	time.Sleep(10 * time.Millisecond)
+	// Every protocol is disabled above, so Start launches no background
+	// goroutine here to wait on.
 
 	// Inject a backend that errors on Close.
 	server.backends["error-backend"] = &errXKMSBackend{closeErr: errors.New("backend close error")}
@@ -4925,8 +4945,11 @@ func TestStartREST_WithCA(t *testing.T) {
 		close(done)
 	}()
 
-	// Give the REST server a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the REST server field to be set instead of sleeping a fixed
+	// duration.
+	require.Eventually(t, func() bool {
+		return server.RESTServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "REST server was not set")
 	err = server.Shutdown()
 	assert.NoError(t, err)
 

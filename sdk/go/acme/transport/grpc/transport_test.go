@@ -2308,11 +2308,11 @@ func TestHealthCheckLoop_StopsOnClose(t *testing.T) {
 		t.Fatalf("NewTransport() error = %v", err)
 	}
 
-	// Close should stop the health check loop.
+	// Close should stop the health check loop: closing p.healthDone
+	// unblocks healthCheckLoop's select immediately, so there is nothing to
+	// wait for here (this test asserts nothing further; Close itself is the
+	// behavior under test).
 	tr.Close()
-
-	// Give time for goroutine to exit.
-	time.Sleep(20 * time.Millisecond)
 }
 
 // TestPool_IsConnectionHealthy_VariousStates tests isConnectionHealthy with various states.

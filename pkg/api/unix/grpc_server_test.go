@@ -26,6 +26,23 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 )
 
+// waitForGRPCServerReady polls until the socket file exists and Start has
+// assigned the gRPC server field, replacing a socket-existence poll followed
+// by a fixed "additional wait" sleep: the socket file appears (net.Listen)
+// before the gRPC server field is assigned (grpc.NewServer under s.mu), so
+// polling the socket alone does not prove the field is set yet.
+func waitForGRPCServerReady(t *testing.T, server *GRPCServer, socketPath string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err == nil && server.GRPCServer() != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("gRPC server on %s was not ready before the deadline", socketPath)
+}
+
 func TestNewGRPCServer_NilConfig(t *testing.T) {
 	_, err := NewGRPCServer(nil)
 	if err == nil {
@@ -145,22 +162,9 @@ func TestGRPCServer_StartStop(t *testing.T) {
 		errCh <- server.Start()
 	}()
 
-	// Wait for socket file to exist (indicating server started)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Check socket file exists
-	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
-		t.Error("Socket file was not created")
-	}
-
-	// Additional wait to ensure gRPC server is fully initialized
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the socket file to exist and the gRPC server field to be
+	// assigned (indicating the server started).
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Verify we can get the gRPC server instance
 	grpcSrv := server.GRPCServer()
@@ -226,17 +230,15 @@ func TestGRPCServer_StartExistingSocket(t *testing.T) {
 	}()
 
 	// Wait for socket to be recreated (new socket will have different inode)
+	// and for the gRPC server field to be assigned.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		newInfo, err := os.Stat(socketPath)
-		if err == nil && !os.SameFile(initialInfo, newInfo) {
+		if err == nil && !os.SameFile(initialInfo, newInfo) && server.GRPCServer() != nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	// Additional wait to ensure gRPC server is assigned
-	time.Sleep(100 * time.Millisecond)
 
 	// Stop server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -363,17 +365,7 @@ func TestGRPCServer_ClientConnection(t *testing.T) {
 		errCh <- server.Start()
 	}()
 
-	// Wait for socket file to exist
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Additional wait to ensure server is ready
-	time.Sleep(100 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Create a client connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -436,16 +428,7 @@ func TestGRPCServer_MultipleClients(t *testing.T) {
 		_ = server.Start()
 	}()
 
-	// Wait for socket
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	time.Sleep(100 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Create multiple clients
 	numClients := 5
@@ -517,16 +500,7 @@ func TestGRPCServer_GracefulStopTimeout(t *testing.T) {
 		_ = server.Start()
 	}()
 
-	// Wait for socket
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	time.Sleep(100 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Stop server with a very short timeout to trigger timeout path
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
@@ -632,16 +606,7 @@ func TestGRPCServer_MessageSizeLimits(t *testing.T) {
 		_ = server.Start()
 	}()
 
-	// Wait for socket
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	time.Sleep(100 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Stop server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -680,16 +645,7 @@ func TestGRPCServer_ConcurrentStreamLimit(t *testing.T) {
 		_ = server.Start()
 	}()
 
-	// Wait for socket
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	time.Sleep(100 * time.Millisecond)
+	waitForGRPCServerReady(t, server, socketPath)
 
 	// Stop server
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

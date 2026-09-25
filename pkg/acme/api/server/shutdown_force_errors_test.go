@@ -42,7 +42,6 @@ func TestShutdownWithExpiredContext(t *testing.T) {
 		_ = restServer.Serve(listener)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
 	server.restServer = restServer
 
 	// Create a context that is already expired
@@ -72,8 +71,6 @@ func TestShutdownWithMultipleServersExpiredContext(t *testing.T) {
 	require.NoError(t, err)
 	mcpServer := &http.Server{Handler: http.NewServeMux()}
 	go func() { _ = mcpServer.Serve(mcpListener) }()
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer
@@ -116,8 +113,6 @@ func TestShutdownAllServersWithCancelledContext(t *testing.T) {
 		Addr:    "127.0.0.1:0",
 		Handler: http.NewServeMux(),
 	}
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer
@@ -204,8 +199,6 @@ func TestShutdownPreservesErrorOrder(t *testing.T) {
 		Addr:    "127.0.0.1:0",
 		Handler: http.NewServeMux(),
 	}
-
-	time.Sleep(50 * time.Millisecond)
 
 	server.restServer = restServer
 	server.mcpServer = mcpServer
