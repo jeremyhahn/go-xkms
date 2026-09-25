@@ -20,6 +20,7 @@ tell.
 | [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | [`../../docs/browser/README.md`](../../docs/browser/README.md) — stale on the Firefox mechanism; see `architecture.md` |
 | [fido2](fido2/) | The `xkey fido2` daemon process, IPC-facing verbs (`touch`, `unlock`, `status`, `provision-attestation`), the GUI's FIDO2 device/service host, and a PIN/hmac-secret/SO-token protocol reference for `xkey/pkg/authenticator` | `fido2/README.md`, `fido2/overview.md`, `fido2/authenticator-*.md`, `fido2/daemon-*.md` (with `virtual-authenticator`) |
 | [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the Unix-socket IPC server, events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md`, `gui/ROADMAP.md` remain as superseded background) |
+| [ble](ble/) | The Bluetooth Low Energy transport for the phone-as-HSM pairing protocol: GATT wire shape, central and peripheral roles, BlueZ integration | `ble/README.md`, `ble/architecture.md`, `ble/protocol.md`, `ble/android-app.md`, `ble/testing.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
 | [autofill](autofill/) | Browser extension credential/TOTP autofill: native messaging, extension pairing, CTAP2 assertion verification, policy | `autofill/README.md`, `autofill/compliance.md`, `autofill/extension.md`, `autofill/policy.md` |
@@ -36,7 +37,9 @@ tell.
 | [setup-wizard](setup-wizard/) | First-run setup: quick and manual personal setup, enterprise SO provisioning and onboarding, and where the generated SO PIN may live | `gui/setup-wizard.md`, `seal/setup-wizard.md` |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
 | [ssh](ssh/) | xkey's SSH key/profile/host-key management, connect/console, local `ssh_config`/agent discovery, and the GUI SSH services | `ssh/README.md` |
+| [usb](usb/) | The virtual USB CCID smartcard device (UHID or ConfigFS/FunctionFS gadget) and portable USB disk images | `usb/ccid.md`, `usb/images.md` |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
+| [xkeysigner](xkeysigner/) | `crypto.Signer` over IPC to the xKey GUI's PIV slot, used by the go-xkms SDK's `WithXKeyAuth` mTLS option | `xkeysigner/README.md` |
 
 The core capabilities these build on live in the root module — the
 [password vault](../../docs/password-vault/), the
@@ -56,6 +59,10 @@ path is not; where they disagree, the feature folder wins.
 Still owed a folder: `ble/`, `device/`, `piv/`, `usb/`, `xkeysigner/`. Not
 features and staying as they are: `architecture/`, `configuration/`,
 `roadmap/`, `testing/`, `usage/`.
+Still owed a folder: `autofill/`, `device/`, `fido2/`, `gui/`, `oath/`,
+`password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`. Not features and staying
+as they are: `architecture/`, `configuration/`, `roadmap/`, `testing/`,
+`usage/`.
 
 ## Documentation Structure
 

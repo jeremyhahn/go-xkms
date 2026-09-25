@@ -1,191 +1,161 @@
-# BLE Phone Backend Architecture
+# BLE Transport — Architecture
 
-## System Components
+> **Status: NORMATIVE** · Feature: `ble` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
-### Desktop (xkey) - BLE Central
+## Scope
 
-The desktop acts as a BLE central (client) that connects to the phone:
+This folder documents xKey's **Bluetooth Low Energy transport** for the
+phone-as-HSM pairing protocol: the GATT wire shape, the two roles the
+desktop can take (BLE central and BLE peripheral), BlueZ integration, and
+the boundary with the Android app. It does not restate the pairing
+protocol itself — the Noise XX session, the JSON-RPC method set, and the
+other two transports (USB AOA, TCP relay) that carry the same protocol are
+`xkey/docs/phone-hsm/`. Read that folder first; this one is the BLE-specific
+layer underneath it.
 
-```
-xkey/pkg/phone/
-├── phone.go          # PhoneKeyBackend (implements FIDO2KeyBackend)
-├── ble_transport.go  # BLE GATT client (build tag: ble)
-├── ble_transport_stub.go  # Stub for non-BLE builds
-├── noise.go          # Noise protocol encryption
-├── protocol.go       # JSON-RPC message types
-├── fragmentation.go  # BLE packet fragmentation
-└── errors.go         # Error definitions
-```
+There is no `xkey/pkg/ble` package. BLE support lives in two places:
 
-### Android Phone - BLE Peripheral
+- `xkey/pkg/phone` — the BLE-specific code, gated behind the `ble` build
+  tag: `ble_transport.go` (central/client role), `ble_peripheral.go`
+  (peripheral/server role), `ble_notify.go` (GATT-notify fragment writer).
+  Each has a `!ble` stub (`ble_transport_stub.go`, `ble_peripheral_stub.go`)
+  that returns `ErrBLEUnavailable` for every method, so a binary built
+  without the tag still links and the CLI verbs that need it still exist
+  (`cli.md`).
+- `xkey/pkg/pairing` — the transport-agnostic machinery BLE shares with the
+  USB AOA and TCP relay transports: `Fragmenter`/`Reassembler`
+  (`fragmentation.go`), the `Transport` interface (`transport.go`), the
+  Noise XX session and `StaticKey`/`NoiseKeyBarrier` types (`noise.go`,
+  `noise_key_seal.go`). None of these files carry a build tag; they compile
+  into every xkey binary.
 
-The phone acts as a BLE peripheral (server) with a GATT service:
+## Two roles, one GATT service
 
-```
-xkey-android/app/src/main/kotlin/com/xkey/
-├── ble/
-│   ├── GattServer.kt       # BLE GATT server
-│   ├── Advertiser.kt       # BLE advertising
-│   ├── NoiseSession.kt     # Noise protocol
-│   └── FragmentReassembler.kt  # Packet reassembly
-├── crypto/
-│   ├── KeystoreManager.kt  # Android Keystore operations
-│   ├── BiometricHelper.kt  # Biometric authentication
-│   └── CborEncoder.kt      # COSE key encoding
-├── protocol/
-│   ├── Messages.kt         # JSON message types
-│   └── Handler.kt          # Request dispatcher
-└── ui/
-    └── MainActivity.kt     # Main UI
-```
+**Central** (`BLETransport`, `xkey/pkg/phone/ble_transport.go`): the
+desktop scans for and connects to a phone advertising the xKey service,
+using `tinygo.org/x/bluetooth` over BlueZ's D-Bus API. `xkey device pair`
+and `xkey device scan` use it (`cli.md`).
 
-## BLE GATT Service Structure
+**Peripheral** (`BLEPeripheral`, `xkey/pkg/phone/ble_peripheral.go`): the
+desktop advertises the xKey service itself and waits for a *phone* to
+connect — the reverse role, used when the phone needs to initiate (for
+example, to ask the laptop to re-attest itself). `xkey device listen` uses
+it (`cli.md`).
 
-```
-xkey Signing Service
-UUID: f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d0f1d0
-├── Control Point
-│   UUID: f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00001
-│   Properties: Write (encrypted)
-│   Purpose: Receive requests from desktop
-├── Response
-│   UUID: f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00002
-│   Properties: Notify (encrypted)
-│   Purpose: Send responses to desktop
-└── Status
-    UUID: f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00003
-    Properties: Read
-    Purpose: Device info and capabilities
-```
+Both roles expose the same GATT service and three characteristics, defined
+once in `ble_transport.go:32-56` and reused by the peripheral's
+`setupGATTService` (`ble_peripheral.go:432-469`):
 
-## Security Layers
+| Characteristic | UUID | Central's use | Peripheral's permission flags |
+|---|---|---|---|
+| `XKeyServiceUUID` | `f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d0f1d0` | service filter for scanning | — |
+| `ControlPointUUID` | `...f1d0f1d00001` | write requests | `CharacteristicWritePermission \| CharacteristicWriteWithoutResponsePermission` |
+| `ResponseUUID` | `...f1d0f1d00002` | subscribe for responses | `CharacteristicNotifyPermission \| CharacteristicReadPermission` |
+| `StatusUUID` | `...f1d0f1d00003` | subscribe for status | `CharacteristicNotifyPermission \| CharacteristicReadPermission` |
 
-The protocol uses two independent encryption layers:
+No characteristic is configured with an encrypted-permission flag in
+either role (`ble_peripheral.go:438-456`) — see "Security model" below.
 
-```
-┌─────────────────────────────────────┐
-│     Application Data (JSON-RPC)     │
-├─────────────────────────────────────┤
-│     Noise Encryption (Layer 2)      │
-│     ChaCha20-Poly1305 + PFS         │
-├─────────────────────────────────────┤
-│     BLE GATT Fragmentation          │
-│     7-byte header per packet        │
-├─────────────────────────────────────┤
-│     BLE Link Encryption (Layer 1)   │
-│     LE Secure Connections           │
-└─────────────────────────────────────┘
-```
+## Fragmentation
 
-### Layer 1: BLE Link Encryption
+Both roles use the same 7-byte wire header from `xkey/pkg/pairing/
+fragmentation.go:21-44`: `[1 byte flags][2 bytes sequence][2 bytes
+total][2 bytes length]`, flags `0x01` first / `0x02` last / `0x03` single /
+`0x00` middle. `MinMTU = 23` and the central's `DefaultMTU = 247`
+(`xkey/pkg/phone/phone.go:63-64`) come straight from BLE 4.0's floor and
+the ATT default negotiated MTU. The peripheral cannot read back the ATT
+MTU the central actually negotiated — `tinygo.org/x/bluetooth`'s
+`DeviceCharacteristic.GetMTU` exists only on the central side — so it
+reserves 7 bytes of headroom per notification rather than the strict
+3-byte `ATT_HANDLE_VALUE_NTF` header cost, documented in
+`xkey/pkg/phone/ble_notify.go:26-38`.
 
-Standard BLE security provided by the OS:
-- LE Secure Connections (BLE 4.2+)
-- ECDH key exchange during pairing
-- AES-128-CCM encryption
-- Bonding stores keys for reconnection
+## Security model — what the code actually establishes
 
-### Layer 2: Noise Protocol
+The **one** cryptographic layer this code establishes is the Noise XX
+session (`Noise_XX_25519_ChaChaPoly_SHA256`, `xkey/pkg/pairing/noise.go:28`)
+documented in `xkey/docs/phone-hsm/`. Two things worth stating plainly,
+because they correct a claim in the superseded `xkey/docs/ble/`
+documentation (see this repo's docs conventions on legacy-vs-code
+conflicts, and the disagreement list in this feature's handoff report):
 
-Application-layer encryption for defense in depth:
-- Pattern: `Noise_XX_25519_ChaChaPoly_SHA256`
-- Mutual authentication with static keys
-- Perfect forward secrecy with ephemeral keys
-- Protection against compromised BLE stack
+- **The central deliberately does not perform OS-level BLE
+  pairing/bonding.** `Connect` calls `trustBlueZDevice` before connecting
+  "to avoid pairing prompts", with the comment *"For BLE, the pairing
+  happens at the application level (Noise handshake)"*
+  (`ble_transport.go:364-366`), and classic-Bluetooth bonding state is
+  explicitly called "irrelevant for BLE" (`ble_transport.go:393`) — the
+  code trusts the device and connects without ever calling BlueZ's pairing
+  API.
+- **No characteristic carries an encrypted-permission flag.** The
+  peripheral's `CharacteristicConfig.Flags` (table above) use only the
+  plain Write/WriteWithoutResponse/Notify/Read permissions
+  `tinygo.org/x/bluetooth` exposes; there is no
+  `CharacteristicEncryptRequiredPermission` (or equivalent) in use.
 
-## Noise XX Handshake
+So there is exactly one layer of confidentiality and authentication over
+the air: Noise XX. Whatever protection BlueZ's own link layer happens to
+apply is opportunistic, not something this code configures, checks, or
+depends on. Document threats against that model, not against a two-layer
+one.
 
-The XX pattern provides mutual authentication with identity hiding:
+## BlueZ integration quirks
 
-```
-Initiator (Desktop)              Responder (Phone)
-       |                                |
-       |-------- e ------------------>  |  msg1: ephemeral key
-       |                                |
-       |<------- e, ee, s, es -------   |  msg2: ephemeral, DH, static, DH
-       |                                |
-       |-------- s, se -------------->  |  msg3: static, DH
-       |                                |
-       |      [session established]     |
-       |                                |
-```
+`ble_transport.go` carries real operational complexity for BlueZ's D-Bus
+object lifecycle, worth keeping in mind when reading or changing it:
 
-After handshake:
-- Both parties have authenticated each other's static keys
-- Session keys derived for bidirectional encryption
-- Ephemeral keys provide forward secrecy
+- **Android RPA rotation**: Android rotates its BLE resolvable private
+  address periodically. `ConnectWithBondedAddress` accepts both the
+  current scanned address and the last-bonded address so it can clean up
+  the stale D-Bus object for the old address (`ble_transport.go:355-362`).
+- **Stale D-Bus objects**: `isBlueZCacheError` recognizes BlueZ's
+  `org.freedesktop.DBus.Properties` "doesn't exist" error and triggers a
+  full `bluetoothctl remove` + rescan rather than a retry
+  (`ble_transport.go:382-410`), returning the sentinel `ErrDBusStaleObject`
+  to the caller so it knows to rescan.
+- **`connEpoch`**: every new connection increments an atomic counter;
+  notification callbacks captured at registration time compare against the
+  live epoch and silently drop fragments from a stale, un-deregistered
+  D-Bus signal handler (`ble_transport.go:118-124, 556-561`) — TinyGo/BlueZ
+  is documented as failing to unregister these on disconnect.
+- All of this shells out to `bluetoothctl` directly
+  (`trustBlueZDevice`, `removeBlueZDevice`, `disconnectBlueZDevice`,
+  `isDevicePaired`, `ble_transport.go:961-1034`), which is BlueZ-specific.
+  **Cross-platform (macOS/Windows) BLE central support is not verifiable
+  from this code**: every recovery path assumes `bluetoothctl` is on
+  `PATH`, which is Linux/BlueZ-only. Treat a superseded claim of macOS or
+  Windows support as unconfirmed rather than repeating it here.
 
-## Data Flow
+## The Android app is out of scope for this repository
 
-### Key Generation
+The phone side is **xkey-android**, a separate Kotlin repository with no Go
+import in either direction (`xkey/docs/phone-hsm/architecture.md`
+"Component boundaries" and "The cross-repo wire contract" already state
+this for the whole pairing protocol; it applies equally to BLE). This
+folder does not — and, since the code isn't in this repository, cannot —
+document xkey-android's Gradle build, signing, or Kotlin GATT-server
+implementation. What is verifiable and documented here is the wire shape
+(GATT UUIDs, fragment header, JSON-RPC methods) that any phone-side
+implementation must match; a change to any of it is a coordinated,
+wire-compatible change on both sides.
 
-```
-1. Desktop: WebAuthn site requests credential creation
-2. Desktop → Phone: GenerateKey(credentialID, algorithm)
-3. Phone: Show biometric prompt
-4. User: Authenticates with fingerprint
-5. Phone: Generate key in Keystore with biometric binding
-6. Phone → Desktop: PublicKey (COSE encoded)
-7. Desktop: Return credential to browser
-```
+## Where BLE sits in the build
 
-### Signing (Authentication)
+`Makefile` includes `ble` in `BUILD_TAGS` (used by `make build`, which
+produces the one combined GUI+CLI binary, run as CLI with `--no-gui`) and
+in `DEV_TAGS`, but deliberately excludes it from
+`TEST_TAGS`: `bluetooth.DefaultAdapter.Enable()` under the real `ble` tag
+blocks for roughly 25 seconds on a machine with no BLE hardware, so `make
+test` builds against the `!ble` stub instead and gets fast, hardware-free
+runs (`xkey/Makefile:23-27, 88-95`). Real-hardware and virtual-HCI coverage
+runs separately under `make integration-test-ble`, in a privileged
+container (`xkey/Makefile:609-618`, `xkey/test/integration/ble`).
 
-```
-1. Desktop: WebAuthn site requests assertion
-2. Desktop → Phone: Sign(credentialID, clientDataHash)
-3. Phone: Show biometric prompt with site info
-4. User: Authenticates with fingerprint
-5. Phone: Sign with Keystore key (unlocked by biometric)
-6. Phone → Desktop: Signature (DER encoded)
-7. Desktop: Return assertion to browser
-```
+## Naming collision to avoid
 
-## Android Keystore Integration
-
-Keys are generated with hardware security:
-
-```kotlin
-val keyGenSpec = KeyGenParameterSpec.Builder(
-    credentialId,
-    PURPOSE_SIGN
-)
-    .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-    .setDigests(DIGEST_SHA256, DIGEST_SHA384, DIGEST_SHA512)
-    .setUserAuthenticationRequired(true)
-    .setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG)
-    .setIsStrongBoxBacked(true)  // Use hardware security module
-    .build()
-```
-
-Security properties:
-- Keys never leave secure hardware
-- Every use requires biometric authentication
-- StrongBox provides tamper resistance
-- Keys bound to device, cannot be extracted
-
-## Build Tags
-
-The Go implementation uses build tags for optional BLE support:
-
-```go
-//go:build ble
-
-// ble_transport.go - Real BLE implementation
-```
-
-```go
-//go:build !ble
-
-// ble_transport_stub.go - Returns ErrBLEUnavailable
-```
-
-Build with BLE:
-```bash
-go build -tags ble ./cmd/xkey/
-```
-
-Build without BLE:
-```bash
-go build ./cmd/xkey/
-```
+`xkey usb` (`xkey/docs/usb/`) and the phone-hsm USB **AOA** transport
+(`xkey/pkg/phone/usb_transport.go`, gated by a *different* build tag,
+`usb`) are unrelated features that happen to share the word "USB": one is
+a virtual CCID reader and portable disk image, the other is a wired
+alternative to this BLE transport for the same pairing protocol. Neither
+is part of this folder.
