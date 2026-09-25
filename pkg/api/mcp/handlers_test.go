@@ -504,7 +504,7 @@ func TestHandler_GetKey(t *testing.T) {
 
 		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -1498,7 +1498,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		_, err := server.handleGetTLSCertificate(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2098,7 +2098,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 
 		_, err := server.handleExportKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2461,7 +2461,7 @@ func TestHandler_DeleteKey_NonExistent(t *testing.T) {
 
 		_, err := server.handleDeleteKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2625,7 +2625,7 @@ func TestHandler_Sign_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleSign(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2653,7 +2653,7 @@ func TestHandler_Verify_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleVerify(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2707,7 +2707,7 @@ func TestHandler_Encrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleEncrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2733,7 +2733,7 @@ func TestHandler_Decrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2759,7 +2759,7 @@ func TestHandler_AsymmetricEncrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2785,7 +2785,7 @@ func TestHandler_AsymmetricDecrypt_NonExistentKey(t *testing.T) {
 
 		_, err := server.handleAsymmetricDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -2810,7 +2810,7 @@ func TestHandler_GetKey_NonExistentBackend(t *testing.T) {
 
 		_, err := server.handleGetKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 }
 
@@ -3664,7 +3664,7 @@ func TestHandler_Decrypt_InvalidBackend(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 }
 
@@ -4767,7 +4767,7 @@ func TestHandler_Decrypt_WithEmptyCiphertext(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -5342,7 +5342,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 
 		_, err := server.handleDeleteKey(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -5400,7 +5400,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 
 		_, err := server.handleVerify(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -5729,7 +5729,7 @@ func TestHandler_Decrypt_KeyNotFoundAnywhere(t *testing.T) {
 
 		_, err := server.handleDecrypt(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 

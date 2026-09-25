@@ -326,6 +326,39 @@ func TestRunWipe_RequiresRootForValidStandard(t *testing.T) {
 	assert.ErrorIs(t, err, luks.ErrPermissionDenied)
 }
 
+// --- wipeContainerWithStandard (operates on a plain file; no root needed) ---
+
+func TestWipeContainerWithStandard_OverwritesContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		standard luks.WipeStandard
+	}{
+		{"nist_single_pass", luks.StandardNIST},
+		{"dod3_three_pass", luks.StandardDoD3Pass},
+		{"dod7_seven_pass", luks.StandardDoD7Pass},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "container.luks")
+			original := bytes.Repeat([]byte("A"), 4096)
+			require.NoError(t, os.WriteFile(path, original, 0600))
+
+			require.NoError(t, wipeContainerWithStandard(path, tt.standard))
+
+			wiped, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, len(original), len(wiped), "wipe must not change the file size")
+			assert.NotEqual(t, original, wiped, "wipe must overwrite the original content")
+		})
+	}
+}
+
+func TestWipeContainerWithStandard_MissingFileIsError(t *testing.T) {
+	err := wipeContainerWithStandard(filepath.Join(t.TempDir(), "missing.luks"), luks.StandardNIST)
+	assert.Error(t, err)
+}
+
 // --- checkLUKSVolume gate ---
 
 // TestCheckLUKSVolume_LockedNotRoot_ReturnsErrLUKSVolumeLocked verifies that

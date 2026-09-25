@@ -16,6 +16,7 @@ package admin
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -148,10 +149,10 @@ func RequireTenant(getTenantID func(r *http.Request) string) func(http.Handler) 
 				return
 			}
 
-			switch err := RequireTenantScope(r.Context(), tenantID); err {
-			case nil:
+			switch err := RequireTenantScope(r.Context(), tenantID); {
+			case err == nil:
 				next.ServeHTTP(w, r)
-			case auth.ErrUnauthenticated:
+			case errors.Is(err, auth.ErrUnauthenticated):
 				writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
 			default:
 				writeProblem(w, http.StatusForbidden, problemForbidden, "Cannot access tenant")

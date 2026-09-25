@@ -17,6 +17,7 @@ import (
 	wire "github.com/jeremyhahn/go-qrdb/pkg/api/mcp/wire"
 
 	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // wireCodeToRPCCode maps go-qrdb's MCP wire.Code -- the classification the
@@ -27,16 +28,30 @@ import (
 //
 // It is the reverse of keyOpCodeToWire, not the reverse of nothing: xkms's
 // own JSON-RPC vocabulary (pkg/api/mcp/types.go's eight ErrCode* constants)
-// has no dedicated NotFound, AlreadyExists, or FailedPrecondition member, so
-// wire.CodeNotFound, wire.CodeAlreadyExists, and wire.CodeFailedPrecondition
-// all join wire.CodeInvalidArgument in ErrCodeInvalidParams here -- the same
-// bucket the deleted keyword matcher put a "not found" message in, so the
+// has no dedicated AlreadyExists or FailedPrecondition member, so
+// wire.CodeAlreadyExists and wire.CodeFailedPrecondition still join
+// wire.CodeInvalidArgument in ErrCodeInvalidParams here -- the same bucket
+// the deleted keyword matcher put a "not found" message in, so the
 // classification this package's own RPCError.Code carries does not move
 // even though the mechanism producing it did (go-qrdb#438, go-xkms#797).
-// This is deliberately coarser than what the SSH-specific path gets: the
-// SSH SDK client (sdk/go/client/ssh/mcp.go) does not go through this table
-// at all -- it classifies from RPCError.WireCode directly, so it keeps
-// NotFound/AlreadyExists/FailedPrecondition distinguishable even though
+//
+// wire.CodeNotFound is the one row that moved off that bucket
+// (go-xkms#814): it now carries sdkssh.JSONRPCCodeNotFound, the reserved-
+// range code this package's SSH sub-system already defined for the
+// identical outcome (sdk/go/client/ssh/mcp_status.go's JSONRPCCodeNotFound;
+// pkg/api/mcp/errors_keyops.go's keyOpSentinelCodes and
+// pkg/api/mcp/handlers_user.go's mapUserError both stamp the matching
+// wire.CodeNotFound server-side for xkms.ErrKeyNotFound, xkms.ErrBackendNot
+// Found, and a *qrdbsdk.UserNotFoundError), so a caller that branches on
+// RPCError.Code -- not only RPCError.WireCode -- can already tell "not
+// found" apart from "invalid params" without waiting on a broader eight-
+// code vocabulary expansion.
+//
+// This is deliberately coarser than what the SSH-specific path gets for
+// AlreadyExists and FailedPrecondition still: the SSH SDK client
+// (sdk/go/client/ssh/mcp.go) does not go through this table at all -- it
+// classifies from RPCError.WireCode directly, so it keeps
+// AlreadyExists/FailedPrecondition distinguishable even though
 // RPCError.Code, populated from this table, does not (go-xkms#792).
 //
 // A map rather than a switch, so a wire code added without a row here is a
@@ -45,7 +60,7 @@ import (
 var wireCodeToRPCCode = map[wire.Code]int{
 	wire.CodeUnauthenticated:    xkmsmcp.ErrCodeUnauthorized,
 	wire.CodePermissionDenied:   xkmsmcp.ErrCodeForbidden,
-	wire.CodeNotFound:           xkmsmcp.ErrCodeInvalidParams,
+	wire.CodeNotFound:           sdkssh.JSONRPCCodeNotFound,
 	wire.CodeAlreadyExists:      xkmsmcp.ErrCodeInvalidParams,
 	wire.CodeFailedPrecondition: xkmsmcp.ErrCodeInvalidParams,
 	wire.CodeUnavailable:        xkmsmcp.ErrCodeServiceUnavailable,

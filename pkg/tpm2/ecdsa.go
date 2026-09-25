@@ -3,6 +3,7 @@ package tpm2
 import (
 	"crypto/ecdsa"
 	"crypto/x509"
+	"errors"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
@@ -114,7 +115,7 @@ func (tpm *TPM2) CreateECDSA(
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		if err == ErrCommandNotSupported {
+		if errors.Is(err, ErrCommandNotSupported) {
 			// Perform create and load using logacy command sequence
 			createRsp, err := tpm2.Create{
 				ParentHandle: tpm2.AuthHandle{

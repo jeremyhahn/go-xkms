@@ -291,8 +291,15 @@ func TestAuthorizeMethod_EveryPrivilegedMethod(t *testing.T) {
 				// an authorization failure once the grant is held.
 				assert.NotEqual(t, ErrCodeForbidden, resp.Error.Code,
 					"holder of %s must not be denied: %s", grant, resp.Error.Message)
-				assert.NotEqual(t, ErrCodeUnauthorized, resp.Error.Code,
-					"holder of %s must not be challenged: %s", grant, resp.Error.Message)
+				// authedCtx carries an identity, so the gate never reports
+				// ErrCodeUnauthorized here. The one handler-level
+				// ErrCodeUnauthorized is the share-claim steps' missing mTLS
+				// peer certificate (ErrClientCertRequired), which is not an
+				// authorization failure.
+				if resp.Error.Code == ErrCodeUnauthorized {
+					assert.Equal(t, ErrClientCertRequired.Error(), resp.Error.Message,
+						"holder of %s must not be challenged: %s", grant, resp.Error.Message)
+				}
 			}
 		})
 	}

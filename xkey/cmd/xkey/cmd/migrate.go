@@ -409,7 +409,7 @@ func readMigratePassphrasesFromStdin() (string, string, error) {
 
 	// Read old passphrase
 	oldPassphrase, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", "", &MigrateError{Operation: "read_passphrase", Err: err}
 	}
 	oldPassphrase = strings.TrimSuffix(oldPassphrase, "\n")

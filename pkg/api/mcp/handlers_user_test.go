@@ -25,6 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // ============================================================================
@@ -499,4 +501,59 @@ func lifecycleOf(enabled bool) string {
 		return string(qrdbsdk.LifecycleActive)
 	}
 	return string(qrdbsdk.LifecycleDisabled)
+}
+
+// --- mapUserError ---
+
+// TestMapUserError_NotFoundAndInvalidParams pins go-xkms#814: a
+// *qrdbsdk.UserNotFoundError (bare, or reached through pkg/xkms's
+// *ErrUserOperation wrapper the way GetUser/DeleteUser/ListUserCredentials
+// actually return it) classifies onto sdkssh.JSONRPCCodeNotFound, matching
+// go-qrdb's own gRPC/QUIC/MCP-wire classification of the identical type
+// ("lower layers win"); ErrUsernameRequired and xkms.ErrEmailRequired --
+// the caller's own mistake -- classify onto ErrCodeInvalidParams, the same
+// code decodeParams uses for a decode failure.
+func TestMapUserError_NotFoundAndInvalidParams(t *testing.T) {
+	notFound := &qrdbsdk.UserNotFoundError{Lookup: "u:ghost"}
+
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{"bare UserNotFoundError", notFound, sdkssh.JSONRPCCodeNotFound},
+		{"UserNotFoundError wrapped by ErrUserOperation", &xkms.ErrUserOperation{Operation: "get user", Err: notFound}, sdkssh.JSONRPCCodeNotFound},
+		{"ErrUsernameRequired", ErrUsernameRequired, ErrCodeInvalidParams},
+		{"xkms.ErrEmailRequired", xkms.ErrEmailRequired, ErrCodeInvalidParams},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mapUserError(tt.err)
+			var keyErr *KeyOpError
+			require.ErrorAs(t, err, &keyErr)
+			assert.Equal(t, tt.wantCode, keyErr.Code)
+			// The original error must still be reachable through errors.Is,
+			// so a caller like TestHandleGetUser's "requires a username"
+			// subtest can keep asserting ErrorIs(err, ErrUsernameRequired).
+			assert.ErrorIs(t, err, tt.err)
+		})
+	}
+}
+
+// TestMapUserError_UnclassifiedErrorIsInternal proves mapUserError's floor:
+// an error matching none of its known cases still becomes a classified
+// *KeyOpError instead of reaching the caller bare, and reports
+// ErrCodeInternalError.
+func TestMapUserError_UnclassifiedErrorIsInternal(t *testing.T) {
+	err := mapUserError(errors.New("qrdb unavailable"))
+
+	var keyErr *KeyOpError
+	require.ErrorAs(t, err, &keyErr)
+	assert.Equal(t, ErrCodeInternalError, keyErr.Code)
+}
+
+// TestMapUserError_Nil proves mapUserError passes a nil error through
+// unchanged.
+func TestMapUserError_Nil(t *testing.T) {
+	assert.NoError(t, mapUserError(nil))
 }

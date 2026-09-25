@@ -20,6 +20,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"log"
 	"math/big"
 	"time"
@@ -96,7 +97,7 @@ func main() {
 	// Step 4: Check capacity
 	log.Println("\n[Step 4] Checking HSM capacity...")
 	total, available, err := hwStorage.GetCapacity()
-	if err != nil && err != hardware.ErrNotSupported {
+	if err != nil && !errors.Is(err, hardware.ErrNotSupported) {
 		log.Printf("Warning: Failed to get capacity: %v", err)
 	} else if err == nil {
 		log.Printf("✓ HSM Capacity: %d total, %d available, %d used",
