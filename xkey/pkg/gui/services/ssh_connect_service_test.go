@@ -18,6 +18,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -202,6 +203,85 @@ func TestSSHConnect_LocalPassthrough_MissingTarget(t *testing.T) {
 	// an empty target must fail with ErrSSHConnectMissingTarget specifically.
 	if err := svc.ConnectOneTime(SSHConnectParams{KeySource: "local"}); !errors.Is(err, ErrSSHConnectMissingTarget) {
 		t.Fatalf("expected ErrSSHConnectMissingTarget, got %v", err)
+	}
+}
+
+func TestSSHConnect_Bg_FallsBackToBackground(t *testing.T) {
+	svc := NewSSHConnectService()
+	if svc.bg() == nil {
+		t.Fatal("expected a non-nil background context")
+	}
+}
+
+func TestSSHConnect_SetProfileServiceAndSetLogger(t *testing.T) {
+	svc := NewSSHConnectService()
+	if svc.profiles != nil {
+		t.Fatal("expected nil profiles by default")
+	}
+	if svc.logger != nil {
+		t.Fatal("expected nil logger by default")
+	}
+
+	profiles := NewSSHProfileService(nil)
+	svc.SetProfileService(profiles)
+	if svc.profiles != profiles {
+		t.Fatal("SetProfileService did not store the profile service")
+	}
+
+	logger := slog.Default()
+	svc.SetLogger(logger)
+	if svc.logger != logger {
+		t.Fatal("SetLogger did not store the logger")
+	}
+}
+
+func TestSSHConnect_ConnectProfile_NoProfileService(t *testing.T) {
+	svc := NewSSHConnectService()
+	if err := svc.ConnectProfile("any"); !errors.Is(err, ErrSSHConnectNotConfigured) {
+		t.Fatalf("expected ErrSSHConnectNotConfigured, got %v", err)
+	}
+}
+
+func TestSSHConnect_ConnectProfile_NotFound(t *testing.T) {
+	svc, _ := setupConnect(t)
+	defer svc.StopAll()
+
+	store, err := sshclient.NewProfileStore(storage.New())
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	svc.SetProfileService(NewSSHProfileService(store))
+
+	if err := svc.ConnectProfile("does-not-exist"); !errors.Is(err, ErrSSHConnectProfileNotFound) {
+		t.Fatalf("expected ErrSSHConnectProfileNotFound, got %v", err)
+	}
+}
+
+func TestSSHConnect_ConnectProfile_Success(t *testing.T) {
+	svc, cap := setupConnect(t)
+	defer svc.StopAll()
+
+	backend := storage.New()
+	store, err := sshclient.NewProfileStore(backend)
+	if err != nil {
+		t.Fatalf("NewProfileStore: %v", err)
+	}
+	profileSvc := NewSSHProfileService(store)
+	svc.SetProfileService(profileSvc)
+
+	entry, err := profileSvc.AddProfile(SSHProfileParams{
+		Name: "bastion", Host: "bastion.example.com", User: "ops",
+		KeySource: "local",
+	})
+	if err != nil {
+		t.Fatalf("AddProfile: %v", err)
+	}
+
+	if err := svc.ConnectProfile(entry.ID); err != nil {
+		t.Fatalf("ConnectProfile: %v", err)
+	}
+	if !cap.argsContain("ops@bastion.example.com") {
+		t.Fatalf("expected target in argv, got %v", cap.args)
 	}
 }
 

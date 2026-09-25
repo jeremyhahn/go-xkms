@@ -108,6 +108,21 @@ func TestAdminService_SetRemoteBackendsFunc(t *testing.T) {
 	assert.NotNil(t, svc.remoteBackendsFn)
 }
 
+func TestAdminService_SetPIVRegisterFunc(t *testing.T) {
+	svc := NewAdminService()
+	assert.Nil(t, svc.pivRegisterFn)
+
+	var gotID, gotCategory string
+	svc.SetPIVRegisterFunc(func(backendID, category string) {
+		gotID, gotCategory = backendID, category
+	})
+	require.NotNil(t, svc.pivRegisterFn)
+
+	svc.pivRegisterFn("backend-1", "pkcs11")
+	assert.Equal(t, "backend-1", gotID)
+	assert.Equal(t, "pkcs11", gotCategory)
+}
+
 func TestAdminService_GetServerStatus(t *testing.T) {
 	t.Run("not connected no callbacks", func(t *testing.T) {
 		svc := NewAdminService()

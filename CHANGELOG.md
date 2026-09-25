@@ -7,6 +7,324 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0-alpha] - 2026-09-25
+
+### Security
+
+- **ACME tenant and RFC 8555 §6.6 per-category rate limits are now
+  enforced, keyed exclusively from an authenticated JWS `kid`; they were
+  previously dead code with no caller.** `pkg/acme/server/tenant_rate_limiter.go`'s
+  `TenantRateLimiter` and `rate_limiter.go`'s `NewAccountRateLimiter`/
+  `NewOrderRateLimiter`/`CertificateRateLimiter`/`FailedValidationRateLimiter`
+  existed and were unit-tested but had no caller outside their own tests
+  (go-xkms#882/#885); the one HTTP-level tenant extractor,
+  `handlers.TenantMiddleware`, was unwired and trusted a client-supplied
+  `X-Tenant-ID` header (or host/path) with no authentication, so wiring it
+  for admission control would have let a client opt out of its own quota,
+  or consume another tenant's, by omitting or spoofing the header.
+  New `handlers.RestService.TenantAuthMiddleware`
+  (`pkg/acme/server/handlers/tenant_auth.go`) resolves the tenant exclusively
+  from a fully verified JWS `kid`: for a POST request naming an account, it
+  performs the exact verification `parseKID` performs — nonce check, JWS
+  `"url"` match, signature verification against the account's stored public
+  key — via `parseKID` itself, exactly once, caching the result (success or
+  failure) on the request context so the handler's own later `parseKID` call
+  returns it unchanged instead of re-verifying against an already-consumed,
+  single-use replay-nonce. A request with no `kid` (new-account, new-nonce,
+  directory, ca-bundle, or any GET) or a `kid` that fails verification never
+  publishes a tenant, and is bounded only by the per-client limiter (#885),
+  never by a client-asserted tenant.
+  `cmd/xkmsd/acme.go`'s `buildACMERouter` (and `pkg/acme/client/trustedca.go`'s
+  standalone `TrustedCA`, which also supports multi-tenancy) now mount
+  `TenantAuthMiddleware` before dispatch, followed by a per-tenant overall
+  `TenantRateLimiter` keyed with a constant client-key function
+  (`tenantSharedClientKey`) so the quota is one bucket shared across every
+  account of a tenant, not one bucket per account. The four RFC 8555 §6.6
+  categories are wired at their endpoints: new-account (client-IP keyed,
+  the tenant is never known before an account exists) on `POST /new-account`;
+  new-order and certificate (account-within-tenant keyed) on `POST /new-order`
+  and `POST /order/{id}/finalize`; failed-validation cannot be blanket route
+  middleware — it must count only actual failures — so it is injected as
+  `handlers.Params.FailedValidationRateLimiter` and `ChallengeHandler` calls
+  its `Allow` method directly once a challenge has failed, using the new
+  `TenantRateLimiter.RetryAfterSeconds` accessor to build the RFC 8555
+  `rateLimited` response (HTTP 429, `Retry-After`) once the account's budget
+  is exhausted.
+  Configuration extends `ACMERateLimitConfig` (`pkg/config/acme.go`,
+  `acme.rate_limit`) with five `ACMECategoryRateLimitConfig` sub-sections —
+  `tenant`, `new_account`, `new_order`, `certificate`, `failed_validation` —
+  each following the same secure-by-default tri-state as the per-client cap:
+  an omitted or `enabled: true` section throttles at its own documented
+  default (tenant 20/1s, new_account 10/1h, new_order 300/3h, certificate
+  50/3h, failed_validation 5/1h); an explicit `enabled: false` on any of
+  them is reported by `Config.ComplianceGaps` (a tenant gap, and a combined
+  gap naming every disabled category) and `cmd/xkmsd` refuses to start on
+  it. A negative `max_requests` or `interval` on any sub-section is refused
+  by `Validate` rather than coerced to the default.
+  Tests: `pkg/acme/server/handlers/tenant_auth_test.go` (verified-tenant
+  resolution, `X-Tenant-ID` spoofing refused whether or not a `kid` is
+  present, invalid-signature requests resolve no tenant and the cached error
+  matches what a single verification would produce, GET and JWK-embedded
+  requests skip resolution entirely); `pkg/acme/server/handlers/challenge_rate_limit_test.go`
+  (the failed-validation category triggers after its budget and the
+  disabled path never blocks); `pkg/acme/server/tenant_rate_limiter_test.go`
+  (`RetryAfterSeconds`, and the shared-bucket-across-accounts /
+  isolated-across-tenants properties); `pkg/config/acme_rate_limit_test.go`
+  (tri-state defaults, negative-value validation, the tenant and
+  per-category compliance gaps); `cmd/xkmsd/acme_rate_limit_test.go`
+  (`buildACMERouterLimiters` enabled/disabled paths, nil-safety, the
+  shared-quota router integration test). go-xkms#886.
+
+### Added
+
+- **`pkg/acme/server/metrics`'s ~30 Prometheus functions are now wired to
+  real ACME events instead of only referenced from tests, and the registry
+  is visible on `/metrics`.** `metrics.Middleware` is mounted on the ACME
+  router through a single shared helper, `metrics.Mount` (initializes the
+  registry and attaches the middleware), used by both
+  `cmd/xkmsd/acme.go`'s `buildACMERouter` and the standalone TrustedCA
+  (`pkg/acme/client/trustedca.go`). Handlers now record: order creation and
+  its three terminal transitions (`NewOrderHandler` increments
+  `acme_active_orders`/`acme_pending_challenges`;
+  `ChallengeHandler`/`OrderFinalizeHandler`'s `sendFinalizeResponse`/
+  `failOrder` decrement `acme_active_orders` on each terminal path);
+  challenge validation by type and result (`acme_challenges_completed_total`);
+  finalize/issuance success and failure with latency
+  (`acme_certificates_issued_total`, `acme_certificate_issuance_duration_seconds`,
+  `acme_errors_total{type="issuance_failed"}`); revocation
+  (`acme_certificates_revoked_total`); and account creation/deactivation
+  (new `acme_accounts_created_total` counter, `acme_tenant_active_accounts`
+  gauge). Tenant-bound accounts also record the existing per-tenant
+  counters/gauges via `metrics.NewMetricsCollector`. xkmsd's `/metrics`
+  (`pkg/server/server.go`) now gathers the ACME registry alongside the
+  default one through a new `Server.RegisterMetricsGatherer` +
+  `serverGatherer`, rather than a second endpoint; this also fixes a
+  duplicate-metric scrape failure that combining the two registries'
+  Go/process collectors would otherwise cause — `metrics.Init` no longer
+  registers them, and a new `metrics.RegisterRuntimeCollectors` adds them
+  only for the standalone TrustedCA, which serves this registry alone.
+  Deleted as dead code (no matching operation): the `trustedca`-namespaced
+  cluster/Raft metrics and `ClusterMetricsCollector` (superseded by
+  `pkg/acme/qrdb`'s real qrdb-backed `RaftMetricsCollector`), the
+  tenant-rate-limit and SLO/service-health metrics (the ACME rate limiter
+  tracks its own internal, non-Prometheus counters — see the engineering
+  doc's Known gap), `acme_certificates_expiring_soon` (no background scan
+  populates it), and the `Set*` gauge setters superseded by the `Inc*`/`Dec*`
+  pairs actually wired. Deploy assets ported from go-trusted-ca and updated
+  to the metric names/labels that actually exist:
+  `deploy/prometheus/rules/acme.yml` (validated with `promtool check
+  rules`) and `deploy/grafana/` (dashboard + provisioning), documented in
+  `deploy/README.md`'s new Monitoring section; the Raft dashboard was not
+  ported since none of the `dragondb_raft_*` metrics it queried exist in
+  this codebase. Docs:
+  `docs/acme-issuance/engineering.md#observability`,
+  `docs/acme/ROADMAP.md`. Verified by
+  `pkg/acme/server/metrics/{metrics,production,middleware}_test.go`,
+  `pkg/acme/server/handlers/metrics_test.go` (per-handler counter deltas,
+  success and failure, via `prometheus/testutil`),
+  `pkg/server/metrics_gatherer_test.go`, and
+  `cmd/xkmsd/metrics_test.go` (end-to-end: a request through
+  `buildACMERouter` shows up in a real `pkg/server.Server`'s `/metrics`).
+  go-xkms#734.
+- **The MCP surface now serves PIN management, custodian groups, tenant
+  administration, and non-ECDH key derivation.** 25 JSON-RPC methods that REST
+  and gRPC already served had no MCP handler and were unreachable
+  ("method not found"), not merely unauthorized:
+  `xkms.setSOPIN`/`setUserPIN`/`changeSOPIN`/`changeUserPIN`/`verifySOPIN`/
+  `verifyUserPIN`/`getLockoutStatus`/`resetLockout`;
+  `xkms.createCustodianGroup`/`getCustodianGroup`/`listCustodianGroups`/
+  `deleteCustodianGroup`/`addCustodianMember`/`removeCustodianMember`/
+  `distributeShares`;
+  `xkms.createTenant`/`getTenant`/`listTenants`/`deleteTenant`/
+  `tenantBarrierInit`/`tenantBarrierUnseal`/`tenantBarrierStatus`/
+  `updateTenantEntitlements`/`updateTenantQuotas`; and `xkms.deriveKey`. Every
+  handler delegates to the same `XKMSService` methods REST and gRPC already
+  call and carries an RBAC permission mirroring gRPC's `s.authorize` calls
+  (`pin:read`/`pin:write`, `ceremony:*`, `tenants:*`/`tenant_barrier:*`,
+  `keys:derive`) — REST serves the PIN, custodian, and tenant routes under
+  session-only auth with no RBAC permission of their own, so gRPC's
+  already-enforced grants are this table's source. `GetTenant`, `DeleteTenant`,
+  and the three `TenantBarrier*` methods reproduce REST's cross-tenant
+  anti-enumeration behavior: a tenant-scoped caller naming another tenant
+  receives the identical refusal a nonexistent tenant ID would. The MCP
+  client transport (`pkg/api/transport/mcp`) already called every one of
+  these method names; only the server-side handlers, dispatch registration,
+  and authorization mapping were missing (#773).
+
+### Fixed
+
+- **`xkey/pkg/agent.Client`'s gRPC connection field is now an atomic
+  pointer, closing a data race between `Disconnect` and the background
+  reconnection monitor.** `Disconnect` cleared the plain `*grpc.ClientConn`
+  field with no synchronization while `monitorConnection`'s goroutine read
+  it concurrently (`GetState`, `WaitForStateChange`) on every poll iteration;
+  under `-race` this was masked in existing tests only because they slept a
+  fixed duration after `Connect` before calling `Disconnect`, giving the
+  monitor a head start it needed no guarantee of. `conn` is now
+  `atomic.Pointer[grpc.ClientConn]` (`Connect`, `Disconnect`, `IsConnected`,
+  `Connection`, and `monitorConnection` in `pkg/agent/client.go` all updated
+  to `Load`/`Store`/`Swap`), so `Disconnect` is safe to call at any point
+  relative to the monitor goroutine's loop. Found and fixed while replacing
+  the sleep-then-assert readiness waits across `xkey`'s test suite (#968):
+  removing the artificial delay in `pkg/agent/monitor_test.go` and
+  `pkg/agent/coverage_test.go` surfaced the race the sleep had been
+  papering over.
+- **`ListKeys` on pkcs11, tpm2, awskms, gcpkms, azurekv and vault now populates `Exportable` and `Sensitive` truthfully, so `xkms.ExportKey`, `RotateKey` and `CopyKey` by CN or kid see the real policy instead of the `types.KeyAttributes` zero value.** #925 fixed the service layer to resolve a key's *persisted* attributes via `findKeyAttrs`/`loadStoredKeyAttrs`, both of which read `Backend.ListKeys` — but only the software backend's key providers (`pkg/keyprovider/pkcs8`, `pkg/keyprovider/symmetric`) ever set `Exportable`/`Sensitive` there; every other backend's `ListKeys` silently left both at `false`, so an exportable key on those backends was refused, and a sensitive one was never flagged as such. Each backend now reads (or truthfully derives) its own attributes: **pkcs11** reads `CKA_EXTRACTABLE`/`CKA_SENSITIVE` straight off the token object in `ListKeys` (no parallel copy) — a generated key pair is always sealed (`CKA_EXTRACTABLE=CK_FALSE`, hardware wins) while an imported key carries whatever `buildImportKeyTemplate` wrote for the caller's `Exportable` policy; **tpm2, awskms, gcpkms and azurekv** report `Exportable: false`/`Sensitive: true` unconditionally for every key, because none of these backends' `ExportKey`/`ExportKeyMaterial` can ever release key material for any key they manage, regardless of policy — reporting anything else would be a promise none of them can keep; **vault** now persists `exportable`/`sensitive` in the same per-key metadata record `GenerateKey`, `GenerateSymmetricKey` and `ImportKey` already write (extending the pattern #839/#850 established for AWS KMS's `key_id`) and restores them in `ListKeys` — an asymmetric key is always `Exportable: false` (H8: its public half is already available through the ordinary read-key endpoint), a symmetric key genuinely round-trips the caller's policy and `ExportKeyMaterial` (Vault Transit's own `transit/export` endpoint) honours it. Two adjacent defects blocking the vault fix were also closed: `ListKeys` never restored `SymmetricAlgorithm` or `StoreType` at all (so a symmetric key's `IsSymmetric()` always read false and `Validate()` always failed once looked up again), and `GenerateSymmetricKey`/`ImportKey` stored `KeyType` as `string(attrs.KeyType)` — a Unicode code-point conversion of a `uint8`, not a decimal string — which never round-tripped through JSON. Files: `pkg/backend/pkcs11/pkcs11.go`, `pkg/backend/tpm2/backend.go`, `pkg/backend/awskms/awskms.go`, `pkg/backend/gcpkms/gcpkms.go`, `pkg/backend/azurekv/azurekv.go`, `pkg/backend/vault/{vault.go,vault_symmetric.go,vault_importexport.go}` (new tests in each package's `listkeys_exportable_test.go`/`listkeys_exportable_sim_test.go`; `pkg/backend/vault/transit_double_vault_test.go` gained `LIST /v1/transit/keys` support). `docs/crypto-backends/engineering.md` documents each backend's source of truth. go-xkms#932.
+- **The PIN, custodian-group, tenant-administration and `xkms.deriveKey` MCP handlers now classify their errors and decode params through the shared helper, closing the gap #779 left when it landed ahead of train 6's conventions (#774/#912/#921/#930).** All 25 handlers (`handlers_pin.go`, `handlers_custodian.go`, `handlers_tenant_admin.go`, and `handlers.go`'s `handleDeriveKey`) used a bare local `json.Unmarshal` instead of `decodeParams`, and several returned unwrapped `error` values (`handlers_custodian.go`'s `groupID`, `handlers_tenant_admin.go`'s field checks, `handleDeriveKey`'s algorithm check) that `pkg/apimodule/module_mcp.go`'s `mcpToolHandler` could not classify beyond `wire.CodeInternal`. PIN and tenant-domain failures were worse than merely unclassified: `mapKeyOpError`'s `xkms.*` sentinel table does not recognize the go-qrdb PIN sentinels (`qrdbsdk.ErrPINNotSet`/`ErrPINLocked`/...) or the `pkg/seal` tenant sentinels (`seal.ErrTenantNotFound`/...), so a wrong PIN, a locked-out PIN, or `xkms.getTenant`'s own cross-tenant anti-enumeration refusal (`refuseCrossTenantAdmin`) all silently floored to `ErrCodeInternalError` regardless of cause. PIN and custodian-group classification are now shared with gRPC through two new tables, `apierrors.PINSentinelClasses` and `apierrors.CustodianSentinelClasses` (`pkg/api/apierrors/tables.go`), following the #912 precedent set for PIV and barrier; `pkg/api/grpc/service_barrier_pin.go`'s `mapPINError` and `pkg/api/grpc/service_custodian_share_tenant.go`'s `mapCustodianError` were both refactored onto their shared tables, replacing the local `pinErrorToGRPC` and `custodianErrorToGRPC` maps. `apierrors.Class` gained a new member, `ClassResourceExhausted`, for `qrdbsdk.ErrPINLocked` (gRPC's `codes.ResourceExhausted`), which renders through the same `ErrCodeInternalError` floor JSON-RPC's other coarser classes already use, since JSON-RPC has no dedicated member for it. Tenant-administration classification (`pkg/api/mcp/errors_custodian_tenant.go`'s `mapTenantError`) stays local rather than shared: gRPC's tenant classification type-asserts `*qrdbsdk.EntitlementError` and calls `qrdbsdk.IsQuotaExceeded` ahead of its sentinel table, the same shape `apierrors.go`'s scoping comment already excludes for password and CA. The malformed-params sweep (`malformed_params_sweep_test.go`) and the guard test (`guard_keyoperror_test.go`) picked up all 25 handlers automatically through the shared method-registry iteration; three no-params methods (`xkms.getLockoutStatus`, `xkms.listCustodianGroups`, `xkms.listTenants`) were added to the sweep's `paramsOptionalMethods` table since they never call `decodeParams`. Files: `pkg/api/apierrors/{apierrors,tables}.go`; `pkg/api/grpc/{errors_keyops,service_barrier_pin,service_custodian_share_tenant}.go`; `pkg/api/mcp/{handlers,handlers_pin,handlers_custodian,handlers_tenant_admin,errors_shared,errors_custodian_tenant,malformed_params_sweep_test,apierrors_parity_test}.go`; `pkg/api/grpc/apierrors_parity_test.go`. Verified by the existing per-handler tests (`handlers_pin_test.go`, `handlers_custodian_test.go`, `handlers_tenant_admin_test.go`, `handlers_derive_key_test.go`), the cross-transport parity tests' new `"pin"` and `"custodian"` sub-tests in both packages, and the two registry-driven sweeps above, under both the default and `frost` tag sets. go-xkms#773.
+- **Docs no longer document environment variables that go-xkms and xkey never
+  read.** `xkey/docs/piv/README.md`'s `PIV_*` table and
+  `xkey/docs/password/{cli,engineering}.md`'s `XKEY_FIDO2_*` table both
+  advertised env vars that only ever reach `viper.BindPFlag` on the global,
+  un-`AutomaticEnv`'d Viper singleton (`xkey/cmd/xkey/cmd/piv.go:463-470`,
+  `fido2.go:436-440`) — nothing consulted the environment, flags only; both
+  docs now say so and point at go-xkms#871, which owns wiring them up or
+  removing the dead bindings. `docs/pkcs11/module/usage.md`'s "Debug
+  Logging" section (`XKMS_DEBUG`, `XKMS_LOG_FILE`) is removed outright: the
+  PKCS#11 module has no debug/log-file configuration of any kind.
+  `docs/pkcs11/module/security.md`'s PIN example exported `XKMS_PIN` and
+  then never referenced it in the `pkcs11-tool` command that followed; it
+  now uses `--pin` directly and points at the module's real
+  `XKMS_PKCS11_USER_PIN` (`pkg/pkcs11/module/config.go:56`) for the
+  auto-init case. `docs/architecture/quick-reference.md` and
+  `server-architecture.md` named `XKMS_SERVER_LOG_LEVEL`, `XKMS_REST_ADDRESS`
+  and `XKMS_GRPC_ADDRESS`, none of which exist on `ServerConfig`
+  (`pkg/config/config.go:329-341`) or `LoggingConfig` (`:382`); replaced
+  with the real `XKMS_LOGGING_LEVEL`, `XKMS_SERVER_REST_PORT` and
+  `XKMS_SERVER_GRPC_PORT`. `docs/xkmsd-configuration/architecture.md` is
+  corrected to stop claiming a "registered alias table for pre-viper
+  names" that its own next section says was removed outright. Also added
+  `path/file.go:Symbol` citations and precedence statements to doc entries
+  for env vars confirmed real but previously uncited:
+  `XKMS_PKCS11_PIV_BACKENDS` (`docs/pkcs11/module/piv.md`),
+  `XKMS_CLUSTER_*` (`docs/clustering/user.md`, `docs/cluster/user.md`),
+  `XKMS_STORAGE_PATH` (`docs/storage/README.md`), and the CTAP2 PIN
+  resolvers (`XKEY_PIN`, `XKMS_FIDO2_PIN`) in
+  `xkey/docs/{headless-webauthn,fido2,agent-automation}/cli.md` and
+  `docs/webauthn/cli.md`, which also corrected a `--pin` value-flag row
+  that go-xkms#272 removed from `xkey auth register`/`login` (xkmsctl's
+  `--pin` still exists and is unaffected). Docs-only; no Go code changed.
+  Refs go-xkms#937, go-xkms#871, go-xkms#272.
+- **The standalone `TrustedCA` ACME router now wires circuit breakers and
+  reports them on `GET /health`, matching xkmsd's embedded ACME listener.**
+  `pkg/acme/client/trustedca.go`'s `TrustedCA` previously never set
+  `handlers.Params.Breakers`, `StorageBreaker`, or `KMSBreaker`, and never
+  wrapped its challenge verifiers with a breaker, so `/health` always
+  reported healthy with no breakers listed regardless of the state of its
+  dependencies. `TrustedCA.Serve` now builds a `circuitbreaker.Manager`
+  unconditionally (matching `cmd/xkmsd/acme.go`'s always-on wiring) and
+  wraps its `http-01`/`dns-01` challenge verifiers, its own CA-bundle
+  storage access, and (when configured) the tenant KMS signer, through the
+  same breaker `Manager`. The wrapping itself is now a single shared helper,
+  `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers`, called by both
+  `cmd/xkmsd/acme.go`'s `buildChallengeMap` and `TrustedCA.Serve`, so a
+  breaker named `http01` or `dns01` means the same thing in either
+  composition's `/health` output. `TCAACMEConfig` gained a `Resilience`
+  field (`acme.resilience`) that reuses `pkg/config`'s
+  `ACMEResilienceConfig` directly rather than a parallel type, so the same
+  `storage`/`kms`/`http01`/`dns01` breaker sections, defaults, and
+  `ErrACMEResilienceNegativeValue` validation apply to both ACME server
+  compositions' configuration. An open `storage` breaker now degrades
+  `GET /acme/directory` and `GET /acme/ca-bundle` on the standalone router
+  exactly as it already did on xkmsd. (go-xkms#820)
+- **The standalone `TrustedCA`'s `TrustedCAConfig.MultiTenant` config section
+  is deleted; `WithMultiTenant()` is now the only multi-tenant switch** (go-xkms#946).
+  `MultiTenantConfig` (`Enabled`, `DefaultTenantID`,
+  `TenantIsolation.{EnforceIsolation,AllowCrossTenantSuperAdmin}`) was
+  defaulted by `DefaultTrustedCAConfig` and checked by `TrustedCAConfig.Validate`,
+  but nothing in `pkg/acme/client` or `pkg/acme/admin` ever read it: the real
+  switch was, and remains, the unexported `TrustedCA.multiTenant` bool set only
+  by the `WithMultiTenant()` option, so an operator setting
+  `multi_tenant.enabled: true` in a config file previously got a silent
+  single-tenant server with no error. Investigation (go-trusted-ca heritage,
+  and comparison with xkmsd's embedded ACME server, which has no
+  `pkg/config.ACMEConfig` multi-tenant key and always constructs
+  `admin.NewTenantAwareAdminService` directly in `cmd/xkmsd/admin.go`) found
+  no runtime consumer for `DefaultTenantID` or `TenantIsolation` anywhere in
+  the tree, so the config section was deleted rather than wired to a second,
+  redundant switch. **BREAKING**: `TrustedCAConfig.MultiTenant`,
+  `client.MultiTenantConfig`, and `client.TenantIsolationConfig` no longer
+  exist; the `multi_tenant:` YAML/JSON key is gone. A caller that set
+  `cfg.MultiTenant.Enabled = true` and expected multi-tenant mode must call
+  `client.WithMultiTenant()` (with `client.WithQRDB(...)`) instead — `New`
+  already fails closed with `ErrMissingQRDB` if `WithMultiTenant()` is used
+  without a QRDB service. Files: `pkg/acme/client/trustedca_config.go`,
+  `pkg/acme/client/options.go`, `pkg/acme/client/trustedca_test.go`,
+  `pkg/acme/client/config_validation_test.go`,
+  `docs/acme-issuance/engineering.md`.
+- **`pkg/acme/client.New` now validates a standalone `TrustedCA` config before
+  it constructs, so an invalid config can no longer start serving (BREAKING:
+  a config that constructed today because nothing ever called
+  `TrustedCAConfig.Validate` — for example, missing `acme.https_addr` or
+  `acme.ca_identifiers` — now fails `New` with a typed
+  `*errors.TrustedCAError`; #938).** `TrustedCAConfig.Validate` existed but
+  neither `New` nor `Serve` called it (found during #929, which wired only
+  the audit-log-path half of `Validate` into place). `New`
+  (`trustedca.go`) now calls `tca.config.Validate()` once, after applying
+  every `Option` and after the existing CA/storage-factory/QRDB component
+  checks, and fails closed with `Validate`'s typed error
+  (`errors.MalformedError`, `caerrors.Malformed` — check with
+  `errors.Is`/`errors.As`); `WithConfig(nil)` fails the same way instead of
+  later panicking on a nil receiver. `Validate` also resolves
+  `Audit.LogPath` against `DataDir` (go-xkms#929); that now happens exactly
+  once, inside `New`, and `Serve` reads the already-resolved path rather than
+  calling `resolveAuditLogPath` a second time.
+  Reviewing every `Validate` rule while wiring it in surfaced one that was
+  wrong: `TCAACMEConfig.Validate` required `acme.external_url`
+  unconditionally, but `TrustedCA.Serve` has always derived an origin from
+  the listen address (`AdvertisedURL`) when neither `WithExternalURL` nor
+  `acme.external_url` is set (#140) — a supported, tested construction path
+  (`TestTrustedCA_Serve_DerivesExternalURLFromListenAddress`) that requiring
+  the field would have permanently broken. `acme.external_url` is now
+  optional; when set, `Validate` still requires it to parse as an absolute
+  HTTPS URL with a host. `acme.ca_identifiers` stays required (RFC 8555
+  §8.1: CAA must be checked before issuance, and an empty list gives the
+  check nothing to compare against) — `TrustedCA.Serve`'s warn-and-continue
+  branch for an empty `ca_identifiers` was dead code once `Validate` enforces
+  this at construction, and is removed along with the stale comment
+  describing it as non-fatal.
+  Every in-repo caller of `New`/`DefaultTrustedCAConfig` that relied on an
+  incomplete config constructing is fixed to supply a complete one
+  (`pkg/acme/client/*_test.go`); two coverage tests that deliberately probe
+  `Serve`'s own built-in address-default fallback with an empty
+  `acme.https_addr`/`admin.https_addr` now construct the `TrustedCA` directly
+  (bypassing `New`/`Validate`, the same white-box pattern
+  `TestTrustedCA_Initialize_NilLoggerPath` already used) since that
+  configuration is no longer constructible through the public API.
+- **`xkey backup create`'s default password-store path never matched the real static password store, so a default backup silently captured zero passwords** (#936). `backup.go` hard-coded its own `backupPasswordStoreDir = "passwords"`, while `xkey password` and `xkey fido2` resolve the store at `<data dir>/staticpw` (`passwordStoreFeature`, go-xkms#929). The default now resolves through the same `trustDataSubdir`, `oathStoreFilename`, and `passwordStoreFeature` constants the owning commands use, so backup and its data sources can never drift apart again. `backup create` and `backup to-device` also now report, under `Not included:`, any source whose default location has never been written to, instead of silently auto-creating an empty store and printing a zero count with no explanation; an explicit `--trust-store`/`--oath-store`/`--password-store` path that does not exist is a hard `backup: source does not exist` error. `backup restore` and `from-device` are unaffected: a destination that does not exist yet is still created normally.
+- **`xkey fido2`, `xkey piv`, `xkey password`, and `xkey oath` no longer
+  default their on-disk storage paths relative to the process's working
+  directory (BREAKING for anyone relying on the old `./data/...` defaults;
+  #929, follow-up to #926).** `defaultFIDO2StoragePath`, `defaultPIVStoragePath`,
+  `defaultPasswordStorePath`, and `defaultOATHStorePath` were `"./data"`,
+  `"./data/piv"`, `"./data/staticpw"`, and `"./data/oath.json"` respectively —
+  wherever a command happened to run from, not the resolved xkey home. Each
+  now resolves through xkey's single existing data-directory chain
+  (`resolveDataDir`/`featureDataDir`, `datadir.go`: the command's own flag →
+  `XKEY_DATA_DIR` → the config `data_dir` key → `~/.xkey/data`, honoring
+  `XKEY_HOME` and portable/USB mode) instead of inventing a second one:
+  `resolveFIDO2StoragePath` (`fido2.go`, also used by the RP-policy store and
+  the always-file-backed authenticator profile store), `resolvePIVStoragePath`
+  (`piv.go`), `passwordStorePath` (`password.go`, shared by `xkey fido2
+  --password-store`), and `openOATHStore`'s existing barrier-or-file fallback
+  (`oath.go`), which previously built its plain-file path from the unresolved
+  flag default instead of the same `dataDir` it already used for the barrier
+  decision. The `xkey fido2` daemon's password-store integration, previously
+  silently enabled by default at the cwd-relative path, now resolves lazily to
+  the same `~/.xkey/data/staticpw` `xkey password` uses. All four `--*-path`/
+  `--store`/`--password-store` flags now default to empty and resolve at run
+  time; `xkey <verb> --help` and the generated skill CLI reference
+  (`skills/xkey-agent/reference/cli.md`) document the resolved default.
+  Resolution failure (e.g. no resolvable `$HOME` and no override) is a typed
+  error, never a silent fallback. Also: `pkg/acme/client.TrustedCAConfig`
+  gains a `DataDir` field; `Audit.LogPath`, previously the hardcoded
+  `DefaultAuditLogPath = "trusted-ca-audit.log"`, now resolves to
+  `DataDir/DefaultAuditLogFileName` when unset (mirroring
+  `pkg/config.ACMEAuditConfig.ResolveLogPath`, the pattern xkmsd's embedded
+  ACME audit trail already uses), and `TrustedCAConfig.Validate` — now called
+  from `TrustedCA.Serve` before opening the audit trail — rejects an enabled
+  trail with neither `DataDir` nor `Audit.LogPath` set with a typed
+  `*errors.TrustedCAError` instead of falling back to a cwd-relative log file.
+
 ## [0.27.0-alpha] - 2026-09-24
 
 ### Security

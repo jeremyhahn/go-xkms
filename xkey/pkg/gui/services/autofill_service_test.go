@@ -210,6 +210,21 @@ func TestAutoFillService_SetPolicy_Invalid(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestAutoFillService_SetPolicy_DeniedByEnterprisePolicy(t *testing.T) {
+	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	require.NoError(t, err)
+	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
+	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: false})
+
+	policy := xkms.DefaultAutoFillPolicy()
+	err = svc.SetPolicy(policy)
+
+	require.Error(t, err)
+	var denied *PolicyDeniedError
+	require.ErrorAs(t, err, &denied)
+	assert.Equal(t, "user_can_configure_extension", denied.Field)
+}
+
 func TestAutoFillService_GetAutoFillPolicy(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 	result := svc.GetAutoFillPolicy()

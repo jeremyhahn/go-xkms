@@ -251,6 +251,34 @@ func TestConvertModule_AllFields(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
+func TestPKCS11Service_ConnectHook(t *testing.T) {
+
+	t.Run("SetConnectHook_NilHook", func(t *testing.T) {
+		svc := NewPKCS11Service()
+		svc.SetConnectHook(nil)
+		assert.Nil(t, svc.connectHook)
+	})
+
+	t.Run("SetConnectHook_StoresHook", func(t *testing.T) {
+		svc := NewPKCS11Service()
+		var gotModule, gotLib, gotUser, gotSO, gotLabel string
+		var gotSlot uint
+		svc.SetConnectHook(func(moduleID, libraryPath string, slotID uint, userPIN, soPin, tokenLabel string) {
+			gotModule, gotLib, gotSlot = moduleID, libraryPath, slotID
+			gotUser, gotSO, gotLabel = userPIN, soPin, tokenLabel
+		})
+		require.NotNil(t, svc.connectHook)
+
+		svc.connectHook("soft-hsm", "/usr/lib/softhsm2.so", 2, "1234", "5678", "token-1")
+		assert.Equal(t, "soft-hsm", gotModule)
+		assert.Equal(t, "/usr/lib/softhsm2.so", gotLib)
+		assert.Equal(t, uint(2), gotSlot)
+		assert.Equal(t, "1234", gotUser)
+		assert.Equal(t, "5678", gotSO)
+		assert.Equal(t, "token-1", gotLabel)
+	})
+}
+
 func TestPKCS11Service_DisconnectHook(t *testing.T) {
 
 	t.Run("SetDisconnectHook_NilHook", func(t *testing.T) {
