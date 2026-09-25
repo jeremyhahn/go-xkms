@@ -257,6 +257,18 @@ func TestFrostGenerateKeyHandler_DealerMode(t *testing.T) {
 	assert.Equal(t, "alice", resp.Packages[0].ParticipantName)
 }
 
+// TestFrostListKeysHandler_InvalidPageParam proves a non-numeric page
+// parameter is rejected with 400 rather than silently defaulting to an
+// unpaginated list.
+func TestFrostListKeysHandler_InvalidPageParam(t *testing.T) {
+	setupFrostService(t)
+	ctx := newTestHandlerContext()
+
+	w := httptest.NewRecorder()
+	ctx.FrostListKeysHandler(w, httptest.NewRequest(http.MethodGet, "/frost/keys?page=notanumber", nil))
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // TestFrostFullLifecycle wires a complete dealer-generate → import → list → get
 // → nonces → sign → aggregate → verify flow through the HTTP handlers.
 func TestFrostFullLifecycle(t *testing.T) {

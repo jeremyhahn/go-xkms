@@ -215,7 +215,7 @@ func init() {
 }
 
 // runCertRequest executes the cert request command.
-func runCertRequest(cmd *cobra.Command, args []string) error {
+func runCertRequest(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
@@ -285,7 +285,11 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrCertClientCreationFailed, err)
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := client.Connect(ctx); err != nil {
 		return errors.Join(ErrCertConnectFailed, err)
@@ -316,7 +320,11 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrCertStorageFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := storage.Store(slot, signedCert); err != nil {
 		return errors.Join(ErrCertStorageFailed, err)
@@ -336,7 +344,7 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 }
 
 // runCertShow executes the cert show command.
-func runCertShow(cmd *cobra.Command, args []string) error {
+func runCertShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
@@ -351,7 +359,11 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	cert, err := storage.Retrieve(slot)
 	if err != nil {
@@ -402,7 +414,7 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 }
 
 // runCertExport executes the cert export command.
-func runCertExport(cmd *cobra.Command, args []string) error {
+func runCertExport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
@@ -422,7 +434,11 @@ func runCertExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	cert, err := storage.Retrieve(slot)
 	if err != nil {

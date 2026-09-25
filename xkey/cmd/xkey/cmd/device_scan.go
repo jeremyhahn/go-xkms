@@ -59,7 +59,7 @@ func init() {
 }
 
 // runDeviceScan executes the phone scan command.
-func runDeviceScan(cmd *cobra.Command, args []string) error {
+func runDeviceScan(cmd *cobra.Command, args []string) (err error) {
 	logger := slog.Default()
 	scanTimeout, _ := cmd.Flags().GetDuration("timeout")
 
@@ -74,7 +74,11 @@ func runDeviceScan(cmd *cobra.Command, args []string) error {
 		}
 		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() {
+		if closeErr := transport.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	fmt.Printf("Scanning for xKey devices (%s timeout)...\n", scanTimeout)
 	fmt.Println()

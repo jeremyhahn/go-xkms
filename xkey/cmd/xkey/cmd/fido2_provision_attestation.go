@@ -195,7 +195,7 @@ func init() {
 // device generates a key, because generating one discards whatever certificate
 // was installed before. A CA that cannot be reached therefore leaves the device
 // exactly as it was found.
-func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
+func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) (err error) {
 	out := cmd.OutOrStdout()
 
 	rotate, err := cmd.Flags().GetBool("rotate")
@@ -241,7 +241,11 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAttestProvisionDeviceOpenFailed, Cause: err}
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// This flow issues only SO-gated authenticatorConfig vendor commands, none
 	// of which consult the presence handler, so nothing here prompts for a
@@ -252,7 +256,11 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAttestProvisionDeviceOpenFailed, Cause: err}
 	}
-	defer func() { _ = auth.Close() }()
+	defer func() {
+		if closeErr := auth.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	replacing, err := checkReprovisioningAllowed(storage, rotate)
 	if err != nil {
@@ -273,7 +281,11 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAttestProvisionCAUnreachable, Cause: err}
 	}
-	defer func() { _ = ca.Close() }()
+	defer func() {
+		if closeErr := ca.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	csrDER, err := requestAttestationCSR(auth)
 	if err != nil {

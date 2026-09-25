@@ -1,6 +1,6 @@
 # Crypto Backends — API
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-25
 
 The six transports and how they are shaped are described once, in
 [`../key-management/api.md`](../key-management/api.md) §"How the six transports
@@ -32,8 +32,12 @@ Sealing, Import, Export, KeyAgreement, ECIES, Attestation, QuantumSigning,
 KeyEncapsulation, SecurityLevel
 ```
 
-`ListBackends` takes `ListOption` values and pages
-(`pkg/api/transport/pagination.go`).
+`ListBackends` takes `ListOption` values and pages through the same shared
+`transport.PageRequestFromQuery` implementation every REST list endpoint
+uses; see [`../key-management/api.md`](../key-management/api.md) §"Pagination"
+for the `page` / `page_size` / `sort_field` / `sort_order` query parameters
+and the **400** an invalid one gets. `GET /api/v1/backends` is unpaginated
+(returns every registered backend) unless `page` is supplied.
 
 ## Status and error mapping
 

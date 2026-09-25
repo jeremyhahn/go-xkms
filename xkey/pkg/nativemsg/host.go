@@ -524,12 +524,16 @@ func (h *Host) handleEncryptedMessage(msg *NativeMessage) error {
 
 // forwardToIPC opens a connection to the IPC socket, sends the message, reads
 // the response, and closes the connection.
-func (h *Host) forwardToIPC(msg *ipc.Message) (*ipc.Response, error) {
+func (h *Host) forwardToIPC(msg *ipc.Message) (response *ipc.Response, err error) {
 	conn, err := net.DialTimeout("unix", h.ipcSocketPath, ipcDialTimeout)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: err}
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := conn.SetDeadline(time.Now().Add(ipcReadWriteTimeout)); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrIPCConnection, Cause: err}

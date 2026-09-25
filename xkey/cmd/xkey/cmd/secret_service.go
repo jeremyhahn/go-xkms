@@ -100,7 +100,7 @@ func init() {
 	secretServiceCmd.Flags().String("barrier-password-file", "", "path to a file containing the barrier password")
 }
 
-func runSecretService(cmd *cobra.Command, args []string) error {
+func runSecretService(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
@@ -120,9 +120,13 @@ func runSecretService(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer func() {
-		_ = barrier.Close()
+		if cerr := barrier.Close(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
 		if closer != nil {
-			_ = closer.Close()
+			if cerr := closer.Close(); cerr != nil {
+				err = errors.Join(err, cerr)
+			}
 		}
 	}()
 

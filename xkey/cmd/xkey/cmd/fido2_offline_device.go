@@ -52,13 +52,17 @@ var (
 // daemon is absent. Any other failure leaves the question unanswered, and
 // writing device state past an unanswered question is how a device ends up with
 // state the daemon then overwrites, so it is an error.
-func fido2DaemonRunning(socketPath string) (bool, error) {
+func fido2DaemonRunning(socketPath string) (_ bool, err error) {
 	if socketPath == "" {
 		socketPath = ipc.DefaultSocketPath()
 	}
 
 	client := ipc.NewClient(socketPath)
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if _, err := client.Status(); err != nil {
 		if errors.Is(err, ipc.ErrDaemonNotRunning) {

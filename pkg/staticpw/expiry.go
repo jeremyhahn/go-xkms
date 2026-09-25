@@ -14,6 +14,7 @@
 package staticpw
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -56,7 +57,12 @@ func (c *ExpiryChecker) Start() {
 			case <-c.done:
 				return
 			case <-ticker.C:
-				_, _ = c.CheckExpired()
+				// A background tick has no caller to return the error to;
+				// log it so a failing store is visible instead of silently
+				// leaving expired entries undeleted.
+				if _, err := c.CheckExpired(); err != nil {
+					slog.Warn("staticpw: expiry check failed", "error", err)
+				}
 			}
 		}
 	}()

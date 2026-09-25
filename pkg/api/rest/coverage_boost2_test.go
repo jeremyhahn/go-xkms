@@ -413,6 +413,17 @@ func TestListCertsHandler_Success(t *testing.T) {
 	assert.GreaterOrEqual(t, len(resp.Certificates), 1)
 }
 
+func TestListCertsHandler_InvalidPageParam(t *testing.T) {
+	setupTestService(t, "test-backend")
+
+	ctx := newTestHandlerContext()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/certs?backend=test-backend&page=notanumber", nil)
+	w := httptest.NewRecorder()
+	ctx.ListCertsHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestListCertsHandler_ListError(t *testing.T) {
 	ks := setupTestService(t, "test-backend")
 	ks.ListCertsFunc = func() ([]string, error) {

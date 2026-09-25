@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -82,14 +83,18 @@ Examples:
 	RunE: runTPMInfo,
 }
 
-func runTPMInfo(cmd *cobra.Command, args []string) error {
+func runTPMInfo(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Try to open TPM - don't require it to be initialized
 	tpm, err := openTPMForProvisioning()
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Get fixed properties
 	props, err := tpm.FixedProperties()

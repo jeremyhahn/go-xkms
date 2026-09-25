@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-25
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -142,8 +142,14 @@ the slot in the message, because "store failed" without it is not actionable.
 
 ## Pagination
 
-`ListPIVSlots` returns the full slot set — bounded by the PIV standard at 25
-slots, so it is deliberately unpaged.
+`ListPIVSlots` (`GET /api/v1/piv/slots`) pages through the same shared
+`transport.PageRequestFromQuery` implementation every REST list endpoint
+uses; see [`../key-management/api.md`](../key-management/api.md)
+§"Pagination" for the `page` / `page_size` / `sort_field` / `sort_order`
+query parameters and the **400** an invalid one gets. With no `page`
+parameter the full slot set is returned — bounded by the PIV standard at 25
+slots, so unpaginated is the common case in practice, but a caller may still
+opt in.
 
 ## Versioning and deprecation
 

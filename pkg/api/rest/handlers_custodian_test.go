@@ -490,6 +490,18 @@ func TestListGroupsHandler_Empty(t *testing.T) {
 	}
 }
 
+func TestListGroupsHandler_InvalidPageParam(t *testing.T) {
+	_, router := setupCustodianTestHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/custodian/groups?page=notanumber", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rr.Code, rr.Body.String())
+	}
+}
+
 func TestListGroupsHandler_WithGroups(t *testing.T) {
 	_, router := setupCustodianTestHandlers(t)
 

@@ -135,8 +135,16 @@ func openDeviceSession(
 			return
 		}
 		closed = true
-		_ = transport.Disconnect()
-		_ = transport.Close()
+		// cleanup's signature is func() -- there is no error return to the
+		// caller, who must be able to call it unconditionally on every
+		// teardown path -- so a failure here is logged rather than dropped
+		// silently.
+		if err := transport.Disconnect(); err != nil {
+			logger.Warn("device session: failed to disconnect transport during cleanup", "error", err)
+		}
+		if err := transport.Close(); err != nil {
+			logger.Warn("device session: failed to close transport during cleanup", "error", err)
+		}
 		// The session reads the key's protected pages, so release them only
 		// after the transport is down and no handshake can still be running.
 		localKey.Destroy()

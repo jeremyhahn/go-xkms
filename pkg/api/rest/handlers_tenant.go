@@ -216,8 +216,12 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 	}
 	sort.Slice(tenants, func(i, j int) bool { return tenants[i].ID < tenants[j].ID })
 
-	pageReq := parsePageRequest(r)
-	paged, pageResp := applyPagination(tenants, pageReq)
+	pageReq, err := transport.PageRequestFromQuery(r)
+	if err != nil {
+		writeError(w, err, http.StatusBadRequest)
+		return
+	}
+	paged, pageResp := transport.ApplyPagination(tenants, pageReq)
 
 	resp := listTenantsResponse{
 		Tenants:    paged,

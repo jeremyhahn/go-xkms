@@ -162,7 +162,11 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if logCloser != nil {
-		defer func() { _ = logCloser.Close() }()
+		defer func() {
+			if closeErr := logCloser.Close(); closeErr != nil {
+				logger.Warn("failed to close log file", slog.String("error", closeErr.Error()))
+			}
+		}()
 	}
 
 	logger.Info("starting headless autofill IPC server",
@@ -310,10 +314,18 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 
 	// Ensure TPM and cloud KMS backend resources are released on exit.
 	if tpmCloser != nil {
-		defer func() { _ = tpmCloser.Close() }()
+		defer func() {
+			if closeErr := tpmCloser.Close(); closeErr != nil {
+				logger.Warn("failed to close TPM connection", slog.String("error", closeErr.Error()))
+			}
+		}()
 	}
 	if cloudKMSCloser != nil {
-		defer func() { _ = cloudKMSCloser.Close() }()
+		defer func() {
+			if closeErr := cloudKMSCloser.Close(); closeErr != nil {
+				logger.Warn("failed to close cloud KMS backend", slog.String("error", closeErr.Error()))
+			}
+		}()
 	}
 
 	// 6. Initialize PIN manager.
@@ -364,7 +376,11 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		return &SentinelCauseError{Sentinel: ErrServePINManagerInitFailed, Cause: err}
 	}
 	if pinTPMCloser != nil {
-		defer func() { _ = pinTPMCloser.Close() }()
+		defer func() {
+			if closeErr := pinTPMCloser.Close(); closeErr != nil {
+				logger.Warn("failed to close PIN manager TPM connection", slog.String("error", closeErr.Error()))
+			}
+		}()
 	}
 	pinBackendSvc := qrdbsdk.NewPINService(pinBackend, logger)
 	pinSvc.SetPINService(pinBackendSvc)

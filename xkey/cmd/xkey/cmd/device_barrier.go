@@ -181,7 +181,11 @@ func resolveDeviceBarrier(password string, requireInitialized bool) (pairing.Noi
 		return nil, nil, &DetailError{Err: ErrDeviceBarrierUnsealFailed, Detail: ": barrier unavailable after unseal"}
 	}
 
-	return barrier, func() { _ = barrierSvc.Seal() }, nil
+	return barrier, func() {
+		if sealErr := barrierSvc.Seal(); sealErr != nil {
+			slog.Default().Warn("failed to reseal barrier after use", "error", sealErr)
+		}
+	}, nil
 }
 
 // sealOrWarnLocalNoiseKey mirrors PhoneService.sealOrWarnLocalNoiseKey for

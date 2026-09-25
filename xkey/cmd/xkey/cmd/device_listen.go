@@ -520,8 +520,7 @@ func connectListenBridge(
 		TPMOpenErr:      enrollerErr,
 	})
 	if err != nil {
-		_ = client.Close()
-		return nil, nil, errors.Join(ErrXKMSdBridgeCreationFailed, err)
+		return nil, nil, errors.Join(ErrXKMSdBridgeCreationFailed, err, client.Close())
 	}
 
 	return client, bridge, nil

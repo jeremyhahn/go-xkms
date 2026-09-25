@@ -180,10 +180,17 @@ func oidcProtectedFieldString(buf *secure.Buffer) string {
 		return ""
 	}
 	var out string
-	_ = buf.WithBytes(func(b []byte) error {
+	// WithBytes only fails when buf is nil or already destroyed -- ruled
+	// out by the check above for the nil case -- so a non-nil failure here
+	// means a caller used buf after Destroy, a lifecycle bug worth
+	// surfacing even though this function has no error to return it
+	// through.
+	if err := buf.WithBytes(func(b []byte) error {
 		out = string(b)
 		return nil
-	})
+	}); err != nil {
+		slog.Warn("oidc: read from a destroyed protected buffer", "error", err)
+	}
 	return out
 }
 

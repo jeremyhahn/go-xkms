@@ -168,7 +168,7 @@ func init() {
 }
 
 // runPIVDeviceList lists PIV slot contents on a paired phone.
-func runPIVDeviceList(cmd *cobra.Command, args []string) error {
+func runPIVDeviceList(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	logger := slog.Default()
@@ -202,7 +202,11 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -266,7 +270,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVDevicePushCert pushes a certificate to a PIV slot on a phone.
-func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
+func runPIVDevicePushCert(cmd *cobra.Command, args []string) (err error) {
 	slotStr := args[0]
 	certFile := args[1]
 	deviceName, _ := cmd.Flags().GetString("device")
@@ -321,7 +325,11 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDevicePushCertFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -363,7 +371,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVDevicePullCert pulls a certificate from a PIV slot on a phone.
-func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
+func runPIVDevicePullCert(cmd *cobra.Command, args []string) (err error) {
 	slotStr := args[0]
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
@@ -407,7 +415,11 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -469,7 +481,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 }
 
 // runPIVDeviceGenerateKey generates a key in a PIV slot on a phone.
-func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
+func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) (err error) {
 	slotStr := args[0]
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
@@ -513,7 +525,11 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceGenerateKeyFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

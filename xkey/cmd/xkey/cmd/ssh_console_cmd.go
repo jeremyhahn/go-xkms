@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -163,14 +164,22 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 
 // runConsoleSession bridges a live console session to the current terminal:
 // raw mode, SIGWINCH forwarding, and the stdin/stdout pumps. It owns Close.
-func runConsoleSession(cons sshsdk.ConsoleSession, fd int) error {
-	defer func() { _ = cons.Close() }()
+func runConsoleSession(cons sshsdk.ConsoleSession, fd int) (err error) {
+	defer func() {
+		if closeErr := cons.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Put the local terminal in raw mode so keystrokes pass through.
 	if term.IsTerminal(fd) {
 		oldState, merr := term.MakeRaw(fd)
 		if merr == nil {
-			defer func() { _ = term.Restore(fd, oldState) }()
+			defer func() {
+				if restoreErr := term.Restore(fd, oldState); restoreErr != nil {
+					slog.Warn("ssh console: failed to restore terminal state", "error", restoreErr)
+				}
+			}()
 		}
 	}
 
@@ -181,7 +190,9 @@ func runConsoleSession(cons sshsdk.ConsoleSession, fd int) error {
 	go func() {
 		for range winch {
 			if w, h, gerr := term.GetSize(fd); gerr == nil {
-				_ = cons.Resize(h, w)
+				if resizeErr := cons.Resize(h, w); resizeErr != nil {
+					slog.Debug("ssh console: failed to resize remote pty", "error", resizeErr)
+				}
 			}
 		}
 	}()
@@ -192,7 +203,9 @@ func runConsoleSession(cons sshsdk.ConsoleSession, fd int) error {
 	// exit — Close only tears the session down, it no longer signals EOF.
 	go func() {
 		_, _ = io.Copy(cons, os.Stdin)
-		_ = cons.CloseWrite()
+		if closeErr := cons.CloseWrite(); closeErr != nil {
+			slog.Debug("ssh console: failed to half-close console write side", "error", closeErr)
+		}
 	}()
 	_, copyErr := io.Copy(os.Stdout, cons)
 	if copyErr != nil && !errors.Is(copyErr, io.EOF) {

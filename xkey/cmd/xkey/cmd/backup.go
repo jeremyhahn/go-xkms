@@ -793,19 +793,28 @@ func (s *backupSources) summary() string {
 	return summary
 }
 
-// Close releases every opened store.
+// Close releases every opened store. Its signature is func() -- every call
+// site is a defer or an unconditional teardown call with no error path of
+// its own to report through -- so a failure to close a store is logged
+// rather than dropped silently.
 func (s *backupSources) Close() {
 	if s == nil {
 		return
 	}
 	if s.trust != nil {
-		_ = s.trust.Close()
+		if err := s.trust.Close(); err != nil {
+			slog.Default().Warn("backup: failed to close trust store", "error", err)
+		}
 	}
 	if s.oath != nil {
-		_ = s.oath.Close()
+		if err := s.oath.Close(); err != nil {
+			slog.Default().Warn("backup: failed to close oath store", "error", err)
+		}
 	}
 	if s.passwords != nil {
-		_ = s.passwords.Close()
+		if err := s.passwords.Close(); err != nil {
+			slog.Default().Warn("backup: failed to close password store", "error", err)
+		}
 	}
 }
 

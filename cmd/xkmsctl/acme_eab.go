@@ -150,7 +150,7 @@ func acmeEABCreate(cfg *Config) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	resp, err := client.EAB().Create(ctx, acmeEABTenant, &acmeadmin.CreateEABRequest{
 		Purpose:           acmeEABPurpose,
@@ -185,7 +185,7 @@ func acmeEABGet(cfg *Config, kid string) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	eab, err := client.EAB().Get(ctx, acmeEABTenant, kid)
 	if err != nil {
@@ -215,7 +215,7 @@ func acmeEABDelete(cfg *Config, kid string) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	if err := client.EAB().Delete(ctx, acmeEABTenant, kid); err != nil {
 		handleError(classifyACMEAdminError("delete EAB "+kid+" for tenant "+acmeEABTenant, ErrDeleteACMEEABFailed, err))
@@ -242,7 +242,7 @@ func acmeEABList(cfg *Config) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	resp, err := client.EAB().List(ctx, acmeEABTenant, &acmeadmin.ListEABRequest{
 		Page:    acmeEABListPage,

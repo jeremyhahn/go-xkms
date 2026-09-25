@@ -17,6 +17,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"log"
 	"net/http"
 )
 
@@ -120,7 +121,9 @@ func (h *HandlerContext) GetCABundleHandler(w http.ResponseWriter, r *http.Reque
 	// Write the PEM-encoded bundle. bundlePEM is server-generated certificate
 	// material (base64 text) served with Content-Type: <ContentTypePEMCertChain>,
 	// never text/html, so it cannot be sniffed/rendered as markup (CWE-79).
-	_, _ = w.Write(bundlePEM) // #nosec G705 -- non-HTML content-type; PEM cert bundle, not attacker-controlled markup
+	if _, err := w.Write(bundlePEM); err != nil { // #nosec G705 -- non-HTML content-type; PEM cert bundle, not attacker-controlled markup
+		log.Printf("Failed to write CA bundle response: %v", err)
+	}
 }
 
 // filterCABundlePEM parses a PEM bundle, filters certificates, and re-encodes.

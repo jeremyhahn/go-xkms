@@ -15,6 +15,7 @@ package circuitbreaker
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -88,5 +89,7 @@ func writeCircuitOpenError(w http.ResponseWriter, cb *CircuitBreaker) {
 
 	body := `{"error":"service_unavailable","message":"Service temporarily unavailable. Circuit breaker is open.","retry_after":` +
 		strconv.Itoa(retryAfterSeconds) + `}`
-	_, _ = w.Write([]byte(body))
+	if _, err := w.Write([]byte(body)); err != nil {
+		slog.Debug("circuitbreaker: failed to write open-circuit response", "error", err)
+	}
 }

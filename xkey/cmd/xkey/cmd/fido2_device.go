@@ -109,8 +109,8 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	defer cancel()
 
 	if err := backend.Connect(ctx); err != nil {
-		_ = backend.Close()
-		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, &WrappedError{Msg: "phone connection failed", Err: err})
+		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed,
+			&WrappedError{Msg: "phone connection failed", Err: err}, backend.Close())
 	}
 
 	// Check if the address changed (Android RPA rotation)
@@ -143,8 +143,7 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	// Optionally wire xkmsd bridge for bidirectional key sharing.
 	bridged, err := connectXKMSdBridge(backend, logger)
 	if err != nil {
-		_ = backend.Close()
-		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
+		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err, backend.Close())
 	}
 	if bridged != nil {
 		return bridged, nil

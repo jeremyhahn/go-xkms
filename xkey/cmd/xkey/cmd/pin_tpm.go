@@ -76,8 +76,7 @@ func openTPMModule(logger *slog.Logger, dataDir, device string, useSimulator boo
 		if errors.Is(err, xkms.ErrTPMNotInitialized) && tpm != nil {
 			return tpm, tpm, nil
 		}
-		_ = factory.Close()
-		return nil, nil, &WrappedError{Msg: "open tpm", Err: err}
+		return nil, nil, &WrappedError{Msg: "open tpm", Err: errors.Join(err, factory.Close())}
 	}
 
 	return tpm, tpm, nil

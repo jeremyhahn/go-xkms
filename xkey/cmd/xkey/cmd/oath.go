@@ -259,7 +259,7 @@ func openOATHStore(cmd *cobra.Command, storePath string) (oath.Store, error) {
 }
 
 // runOATHAdd executes the oath add command.
-func runOATHAdd(cmd *cobra.Command, args []string) error {
+func runOATHAdd(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	issuer, _ := cmd.Flags().GetString("issuer")
@@ -275,7 +275,11 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	var cred *oath.Credential
 
@@ -326,7 +330,7 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 }
 
 // runOATHList executes the oath list command.
-func runOATHList(cmd *cobra.Command, args []string) error {
+func runOATHList(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	showSecrets, _ := cmd.Flags().GetBool("secrets")
@@ -341,7 +345,11 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	creds, err := store.List()
 	if err != nil {
@@ -381,7 +389,7 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 }
 
 // runOATHGenerate executes the oath generate command.
-func runOATHGenerate(cmd *cobra.Command, args []string) error {
+func runOATHGenerate(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	all, _ := cmd.Flags().GetBool("all")
@@ -390,7 +398,11 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if all {
 		// Generate for all credentials
@@ -430,9 +442,15 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 				_, _ = fmt.Fprintf(out, "  %-*s  %s  (expires in %ds)\n", maxLen, cred.Name, code, remaining)
 			} else {
 				_, _ = fmt.Fprintf(out, "  %-*s  %s\n", maxLen, cred.Name, code)
-				// Update counter for HOTP
+				// Update counter for HOTP. A failed persist leaves the
+				// counter desynced from what was just shown, so the
+				// server-side counter can drift ahead of the client's on
+				// the next generation; that is worth surfacing even
+				// though the code itself was already displayed.
 				gen.IncrementCounter()
-				_ = store.Update(cred)
+				if updateErr := store.Update(cred); updateErr != nil {
+					fmt.Fprintf(os.Stderr, "  %-*s  WARNING: failed to persist HOTP counter: %v\n", maxLen, cred.Name, updateErr)
+				}
 			}
 		}
 
@@ -468,9 +486,12 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(out, "%s  (expires in %ds)\n", code, remaining)
 		} else {
 			_, _ = fmt.Fprintf(out, "%s\n", code)
-			// Update counter for HOTP
+			// Update counter for HOTP. See the "all" branch above for why a
+			// failed persist is reported rather than dropped.
 			gen.IncrementCounter()
-			_ = store.Update(cred)
+			if updateErr := store.Update(cred); updateErr != nil {
+				fmt.Fprintf(os.Stderr, "  %s: WARNING: failed to persist HOTP counter: %v\n", name, updateErr)
+			}
 		}
 	}
 
@@ -478,7 +499,7 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 }
 
 // runOATHRemove executes the oath remove command.
-func runOATHRemove(cmd *cobra.Command, args []string) error {
+func runOATHRemove(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	force, _ := cmd.Flags().GetBool("force")
@@ -491,7 +512,11 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -528,7 +553,7 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 }
 
 // runOATHScan executes the oath scan command.
-func runOATHScan(cmd *cobra.Command, args []string) error {
+func runOATHScan(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	nameOverride, _ := cmd.Flags().GetString("name")
@@ -648,7 +673,11 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := store.Add(cred); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHAddFailed, Cause: err}

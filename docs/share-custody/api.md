@@ -1,6 +1,6 @@
 # Share Custody — API
 
-> **Status: NORMATIVE** · Feature: `share-custody` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `share-custody` · Repo: `go-xkms` · Last verified: 2026-09-25
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -105,8 +105,14 @@ has already counted.
 
 ## Pagination
 
-`ListCustodianGroups` and `ListShares` are bounded by the deployment's group and
-share counts and are returned whole.
+`ListCustodianGroups` (`GET /api/v1/custodian/groups/`) and `ListShares`
+(`GET /api/v1/shares/`) both page through the same shared
+`transport.PageRequestFromQuery` implementation every REST list endpoint
+uses; see [`../key-management/api.md`](../key-management/api.md)
+§"Pagination" for the `page` / `page_size` / `sort_field` / `sort_order`
+query parameters and the **400** an invalid one gets. With no `page`
+parameter every group or share is returned whole, which is the common case
+given deployments' typically small group and share counts.
 
 ## Versioning and deprecation
 

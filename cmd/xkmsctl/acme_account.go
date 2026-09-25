@@ -114,7 +114,7 @@ func acmeAccountList(cfg *Config) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	resp, err := client.Account().List(ctx, &acmeadmin.ListAccountsRequest{
 		Page:    acmeAccountListPage,
@@ -145,7 +145,7 @@ func acmeAccountGet(cfg *Config, rawID string) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	account, err := client.Account().Get(ctx, accountID)
 	if err != nil {
@@ -172,7 +172,7 @@ func acmeAccountDisable(cfg *Config, rawID string) {
 		handleError(err)
 		return
 	}
-	defer func() { _ = cleanup() }()
+	defer closeAdminClientQuiet(cleanup)
 
 	if err := client.Account().Disable(ctx, accountID); err != nil {
 		handleError(classifyACMEAdminError(fmt.Sprintf("disable account %d", accountID), ErrDisableACMEAccountFailed, err))
