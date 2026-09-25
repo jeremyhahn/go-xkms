@@ -103,6 +103,36 @@ func (s *oidcCLITokenStore) Clear() (existed bool, err error)
   callback URL, which carries the authorization code, is never sent on as a
   Referer. A page that cannot be written (the browser hung up) is a
   `*oidc.CallbackPageError`; it does not change the login's outcome.
+- **Provider-controlled text reaches a terminal or a log only through
+  `oidc.SanitizeProviderText`** (`xkey/pkg/oidc/callback.go`). A hostile or
+  compromised provider can put escape sequences in any string it returns,
+  and a terminal would act on them: clear the screen, spoof a prompt, or
+  write the clipboard with OSC 52. The sanitiser removes every
+  ESC-introduced sequence whole (CSI, OSC, DCS, SOS, PM, APC and the short
+  forms) along with its 8-bit C1 form, whether that form is encoded as UTF-8
+  or sent as a lone byte. It turns tab, CR, LF, VT, FF, NEL, U+2028 and
+  U+2029 into a space, so a provider cannot forge a log line. It drops every
+  other C0 and C1 control, DEL and every Unicode bidi control, and replaces
+  invalid UTF-8 with U+FFFD. The result is at most
+  `oidc.MaxProviderTextLen` (512) bytes, cut on a rune boundary and ending
+  with `oidc.ProviderTextTruncated` (`...[truncated]`) when text was cut.
+  The sanitiser is applied at these points:
+  - the callback's `error` and `error_description` in the CLI's
+    `handleOIDCCallback`, the GUI's `OIDCService.Login` handler and
+    `xkey/pkg/oidc/aws`'s `handleLoginCallback`, before either reaches an
+    error;
+  - `oidc.TokenRequestError.Error()`, which renders the token endpoint's
+    `error` and `error_description` sanitised. The `Code` and `Description`
+    fields keep the provider's raw text, so a caller that prints a field
+    directly must sanitise it, as the GUI's `OIDCService.RefreshToken` does;
+  - `xkey/pkg/oidc/aws`'s token request error (`error_description`, or
+    `error` when there is no description);
+  - the ID-token `sub`, `email` and `name` claims that `xkey oidc login`
+    and `xkey oidc token` print (`writeOIDCIdentity`), and the access key
+    ID that `xkey oidc aws login` prints (`writeAWSLoginSummary`).
+
+  Values handed to an `--exec` script or written to a credentials file are
+  data, not display, so they are not sanitised.
 
 ## Errors
 
@@ -147,6 +177,8 @@ the files below.
 | `oidc_test.go` (`TestHandleOIDCCallback_EscapesReflectedError`) | A `<script>` / `"><img onerror>` error redirect reaches the page escaped, with the four security headers set |
 | `xkey/pkg/oidc/callback_test.go` (`TestWriteCallbackPage_*`) | `WriteCallbackPage` escaping, headers, the title-only page, and the typed write failure |
 | `xkey/pkg/oidc/aws/login_test.go`, `pkg/gui/services/oidc_callback_test.go` (`*Inert*`) | The same injection against the AWS handler and against the GUI's real callback listener |
+| `xkey/pkg/oidc/callback_test.go` (`TestSanitizeProviderText*`, `FuzzSanitizeProviderText`) | OSC 52, OSC 8, CSI, DCS/APC/PM/SOS, nF and Fs escapes, 8-bit C1 sequences (raw and UTF-8), NUL and other C0, line breaks, bidi overrides, invalid UTF-8, length bounding on a rune boundary; the fuzz target checks for any input that the output is inert, bounded and idempotent |
+| `*TerminalInert*`, `TestTokenRequestError_RendersProviderTextInert`, `TestClient_Exchange_TokenEndpointErrorIsInert` | An OSC 52 + `ESC[2J` + 8-bit CSI + NUL payload sent through every call path listed under Invariants (CLI, GUI and AWS callback errors, the GUI log line, the OIDC and AWS token-endpoint errors, the GUI refresh error, printed claims and the AWS access key ID) comes out as plain text |
 | `oidc_barrier_test.go` | The barrier decision itself: no-barrier warning + plain-file fallback, barrier-encrypted round-trip across two independent `openOIDCTokenStore` calls (proving a fresh process can unseal and read), wrong-password and no-password typed refusals, `--token-store` bypassing barrier auto-detection, and `TestRunAutoRefresh_ReusesTheSameOpenBarrier_NotReopenedPerTick` — which invalidates the barrier password on the test's `cobra.Command` immediately after the store is opened, then proves three successful refresh ticks still complete, so any hypothetical re-resolution inside the loop would have failed |
 
 Run just this package's tests:

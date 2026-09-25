@@ -204,7 +204,7 @@ func handleLoginCallback(w http.ResponseWriter, r *http.Request, codeChan chan<-
 		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed"}); err != nil {
 			slog.Debug("oidc/aws: failed to write callback response", "error", err)
 		}
-		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + errParam + ": " + query.Get("error_description")}
+		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + oidc.SanitizeProviderText(errParam) + ": " + oidc.SanitizeProviderText(query.Get("error_description"))}
 		return
 	}
 

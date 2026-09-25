@@ -693,15 +693,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(out, "Login successful!")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "  Provider: %s\n", issuer)
-	if claims.Subject != "" {
-		_, _ = fmt.Fprintf(out, "  Subject:  %s\n", claims.Subject)
-	}
-	if claims.Email != "" {
-		_, _ = fmt.Fprintf(out, "  Email:    %s\n", claims.Email)
-	}
-	if claims.Name != "" {
-		_, _ = fmt.Fprintf(out, "  Name:     %s\n", claims.Name)
-	}
+	writeOIDCIdentity(out, claims, "  %-10s%s\n")
 	_, _ = fmt.Fprintf(out, "  Expires:  %s\n", storedToken.ExpiresAt.Format(time.RFC3339))
 
 	// Execute custom script if specified
@@ -763,6 +755,22 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// writeOIDCIdentity prints the ID token's subject, email and name, each
+// that is set, one line per claim in layout (a format taking the label and
+// the value). The provider signs the claims but chooses their content, so
+// each value is sanitised before it reaches the terminal.
+func writeOIDCIdentity(out io.Writer, claims *OIDCIDTokenClaims, layout string) {
+	for _, claim := range []struct{ label, value string }{
+		{"Subject:", claims.Subject},
+		{"Email:", claims.Email},
+		{"Name:", claims.Name},
+	} {
+		if claim.value != "" {
+			_, _ = fmt.Fprintf(out, layout, claim.label, oidc.SanitizeProviderText(claim.value))
+		}
+	}
+}
+
 // runOIDCToken displays current token information.
 func runOIDCToken(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
@@ -790,15 +798,7 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(out, "======================")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "Provider:      %s\n", token.Issuer)
-	if claims.Subject != "" {
-		_, _ = fmt.Fprintf(out, "Subject:       %s\n", claims.Subject)
-	}
-	if claims.Email != "" {
-		_, _ = fmt.Fprintf(out, "Email:         %s\n", claims.Email)
-	}
-	if claims.Name != "" {
-		_, _ = fmt.Fprintf(out, "Name:          %s\n", claims.Name)
-	}
+	writeOIDCIdentity(out, claims, "%-15s%s\n")
 
 	// Format expiration
 	now := time.Now()
@@ -1400,14 +1400,17 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 	query := r.URL.Query()
 
 	if errParam := query.Get("error"); errParam != "" {
-		errDesc := query.Get("error_description")
+		// The provider, or anyone who can steer the browser to the loopback
+		// URL, controls both parameters, so they reach the terminal only
+		// sanitised.
+		msg := oidc.SanitizeProviderText(errParam) + ": " + oidc.SanitizeProviderText(query.Get("error_description"))
 		// A page that cannot reach the browser (it hung up) changes nothing
 		// about the login's outcome, so the write error is only logged.
-		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: errParam + ": " + errDesc}); err != nil {
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: msg}); err != nil {
 			slog.Debug("oidc: failed to write callback response", "error", err)
 		}
 
-		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
+		errChan <- &MessageError{Msg: msg}
 		return
 	}
 

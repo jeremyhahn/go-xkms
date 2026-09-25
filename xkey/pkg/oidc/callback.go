@@ -24,6 +24,9 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // RedirectURLError reports a redirect URL the callback listener cannot
@@ -343,4 +346,155 @@ func WriteCallbackPage(w http.ResponseWriter, page CallbackPage) error {
 		return &CallbackPageError{Cause: err}
 	}
 	return nil
+}
+
+// MaxProviderTextLen bounds, in bytes, the text SanitizeProviderText
+// returns, truncation marker included.
+const MaxProviderTextLen = 512
+
+// ProviderTextTruncated is appended to provider text that
+// SanitizeProviderText cut short to fit MaxProviderTextLen.
+const ProviderTextTruncated = "...[truncated]"
+
+// C1 controls that introduce a sequence rather than standing alone.
+const (
+	c1DCS = 0x90 // device control string
+	c1SOS = 0x98 // start of string
+	c1CSI = 0x9b // control sequence introducer
+	c1ST  = 0x9c // string terminator
+	c1OSC = 0x9d // operating system command
+	c1PM  = 0x9e // privacy message
+	c1APC = 0x9f // application program command
+)
+
+// SanitizeProviderText makes text an identity provider controls safe to
+// print to a terminal or write to a log: the callback's error and
+// error_description parameters, token-endpoint error codes and
+// descriptions, and ID-token claims. A hostile or compromised provider can
+// otherwise send escape sequences that rewrite the screen, spoof a prompt,
+// or set the clipboard (OSC 52).
+//
+// Every ESC-introduced sequence (CSI, OSC, DCS, SOS, PM, APC and the short
+// forms) and its 8-bit C1 equivalent is removed whole, parameters and
+// payload included. Tab, line feed, vertical tab, form feed, carriage
+// return, NEL and the Unicode line and paragraph separators become a
+// space, so a provider cannot forge a new log line; every other C0 or C1
+// control, DEL, and every Unicode bidirectional formatting character is
+// dropped. A byte that is not valid UTF-8 becomes U+FFFD, except a lone
+// byte in 0x80-0x9F, which a terminal in an 8-bit locale reads as a C1
+// control and is treated as one. The result is at most MaxProviderTextLen
+// bytes; longer text is cut on a rune boundary and ends with
+// ProviderTextTruncated.
+func SanitizeProviderText(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) && b.Len() <= MaxProviderTextLen {
+		r, size := decodeProviderRune(s, i)
+		i += size
+		switch {
+		case r == 0x1b:
+			i = skipEscape(s, i)
+		case r == c1CSI:
+			i = skipControlSequence(s, i)
+		case r == c1DCS || r == c1SOS || r == c1OSC || r == c1PM || r == c1APC:
+			i = skipControlString(s, i)
+		case isLineBreakOrTab(r):
+			b.WriteByte(' ')
+		case unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r):
+			// Dropped: a lone control or a bidi override.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if len(out) <= MaxProviderTextLen {
+		return out
+	}
+	cut := MaxProviderTextLen - len(ProviderTextTruncated)
+	for cut > 0 && !utf8.RuneStart(out[cut]) {
+		cut--
+	}
+	return out[:cut] + ProviderTextTruncated
+}
+
+// decodeProviderRune decodes the rune at s[i]. A lone byte in 0x80-0x9F
+// decodes to the C1 control of the same value, so the 8-bit form of a
+// control sequence is recognised as one; any other invalid byte decodes to
+// U+FFFD.
+func decodeProviderRune(s string, i int) (rune, int) {
+	r, size := utf8.DecodeRuneInString(s[i:])
+	if r == utf8.RuneError && size == 1 && s[i] >= 0x80 && s[i] <= 0x9f {
+		return rune(s[i]), 1
+	}
+	return r, size
+}
+
+// isLineBreakOrTab reports whether r moves the cursor to another column or
+// line: SanitizeProviderText turns it into a space.
+func isLineBreakOrTab(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', 0x85, 0x2028, 0x2029:
+		return true
+	}
+	return false
+}
+
+// skipEscape returns the index just past the escape sequence whose ESC
+// ended at s[i]: a CSI, a control string, an nF sequence (intermediates and
+// a final byte), or a single Fp, Fe or Fs byte. An ESC followed by anything
+// else is dropped alone.
+func skipEscape(s string, i int) int {
+	if i >= len(s) {
+		return i
+	}
+	switch c := s[i]; {
+	case c == '[':
+		return skipControlSequence(s, i+1)
+	case c == ']' || c == 'P' || c == 'X' || c == '^' || c == '_':
+		return skipControlString(s, i+1)
+	case c >= 0x20 && c <= 0x2f:
+		for i < len(s) && s[i] >= 0x20 && s[i] <= 0x2f {
+			i++
+		}
+		if i < len(s) && s[i] >= 0x30 && s[i] <= 0x7e {
+			i++
+		}
+		return i
+	case c >= 0x30 && c <= 0x7e:
+		return i + 1
+	}
+	return i
+}
+
+// skipControlSequence returns the index just past the CSI sequence whose
+// introducer ended at s[i]: its parameter and intermediate bytes and its
+// final byte. A byte outside the sequence grammar ends it early and is
+// sanitised on its own.
+func skipControlSequence(s string, i int) int {
+	for i < len(s) && s[i] >= 0x20 && s[i] <= 0x3f {
+		i++
+	}
+	if i < len(s) && s[i] >= 0x40 && s[i] <= 0x7e {
+		i++
+	}
+	return i
+}
+
+// skipControlString returns the index just past the OSC, DCS, SOS, PM or
+// APC string whose introducer ended at s[i]. The string runs to BEL or ST;
+// an ESC ends it without being consumed, so ESC \ (the 7-bit ST) and any
+// sequence the ESC starts are removed by the caller. An unterminated string
+// runs to the end of s.
+func skipControlString(s string, i int) int {
+	for i < len(s) {
+		r, size := decodeProviderRune(s, i)
+		switch r {
+		case 0x07, c1ST:
+			return i + size
+		case 0x1b:
+			return i
+		}
+		i += size
+	}
+	return i
 }

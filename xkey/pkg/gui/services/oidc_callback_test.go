@@ -16,9 +16,11 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -287,4 +289,98 @@ func TestOIDCService_Login_FailsClosedWhenTheCallbackConfigIsUnavailable(t *test
 
 	svc.SetCallback("127.0.0.1", 9090)
 	assert.NoError(t, svc.callbackReady(), "SetCallback clears the refusal")
+}
+
+// hostileProviderText carries an OSC 52 clipboard write, a clear-screen
+// CSI, an 8-bit CSI and a NUL between two words; sanitised it reads
+// "deniedend".
+const hostileProviderText = "denied\x1b]52;c;ZXZpbA==\x07\x1b[2J\u009b31m\x00end"
+
+// TestOIDCService_Login_CallbackErrorIsTerminalInert proves the callback's
+// error and error_description reach the login result, and the log line the
+// service writes, sanitised (#1015).
+func TestOIDCService_Login_CallbackErrorIsTerminalInert(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := strconv.Itoa(probe.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, probe.Close())
+	redirect := "http://127.0.0.1:" + port + "/callback"
+
+	var logs bytes.Buffer
+	svc := NewOIDCService(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	var authURL atomic.Value
+	svc.browserOpen = func(u string) error { authURL.Store(u); return nil }
+	svc.SetCallback("127.0.0.1", 8085)
+	require.NoError(t, svc.AddProvider(&OIDCProviderEntry{
+		Name: "p", Issuer: discoveryIssuer(t).URL, ClientID: "cid", Scopes: []string{"openid"}, RedirectURL: redirect,
+	}))
+
+	type loginOutcome struct {
+		result *OIDCLoginResult
+		err    error
+	}
+	done := make(chan loginOutcome, 1)
+	go func() {
+		result, loginErr := svc.Login("p")
+		done <- loginOutcome{result: result, err: loginErr}
+	}()
+	require.Eventually(t, func() bool {
+		return authURL.Load() != nil
+	}, 10*time.Second, 20*time.Millisecond, "the browser was never opened")
+
+	query := url.Values{"error": {hostileProviderText}, "error_description": {hostileProviderText}}
+	resp, err := http.Get(redirect + "?" + query.Encode())
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	select {
+	case outcome := <-done:
+		require.NoError(t, outcome.err)
+		require.False(t, outcome.result.Success)
+		assert.Equal(t, "deniedend: deniedend", outcome.result.Error)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the callback did not end the login")
+	}
+	assert.Contains(t, logs.String(), "deniedend: deniedend")
+	assert.NotContains(t, logs.String(), "ZXZpbA==")
+}
+
+// TestOIDCService_RefreshToken_TokenEndpointErrorIsTerminalInert proves a
+// hostile token endpoint's error_description reaches the refresh error
+// sanitised (#1015).
+func TestOIDCService_RefreshToken_TokenEndpointErrorIsTerminalInert(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 server.URL,
+				"authorization_endpoint": server.URL + "/authorize",
+				"token_endpoint":         server.URL + "/token",
+				"jwks_uri":               server.URL + "/jwks",
+			}))
+		case "/token":
+			w.WriteHeader(http.StatusBadRequest)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]string{
+				"error":             "invalid_grant",
+				"error_description": hostileProviderText,
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	svc := NewOIDCService(nil)
+	store := oidc.NewMemoryTokenStore()
+	svc.SetTokenStore(store)
+	require.NoError(t, svc.AddProvider(&OIDCProviderEntry{Name: "p", Issuer: server.URL, ClientID: "cid"}))
+	require.NoError(t, store.Save(server.URL, &oidc.TokenResponse{AccessToken: "at", RefreshToken: "rt"}))
+
+	_, err := svc.RefreshToken("p")
+	require.ErrorIs(t, err, ErrOIDCRefreshFailed)
+	assert.True(t, strings.HasSuffix(err.Error(), ": deniedend"), err.Error())
+	assert.NotContains(t, err.Error(), "\x1b")
+	assert.NotContains(t, err.Error(), "ZXZpbA==")
 }

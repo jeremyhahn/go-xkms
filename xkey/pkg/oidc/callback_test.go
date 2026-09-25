@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -302,4 +304,102 @@ func TestWriteCallbackPage_ReportsAWriteFailure(t *testing.T) {
 	require.ErrorAs(t, err, &pageErr)
 	assert.ErrorIs(t, err, errBrowserGone)
 	assert.Equal(t, "oidc: callback page: browser closed the connection", err.Error())
+}
+
+// assertTerminalInert fails unless s is valid UTF-8 free of every control
+// character and bidi override, so printing it cannot start an escape
+// sequence, move the cursor, or break a log line.
+func assertTerminalInert(t *testing.T, s string) {
+	t.Helper()
+	assert.True(t, utf8.ValidString(s), "%q is not valid UTF-8", s)
+	for _, r := range s {
+		assert.False(t, unicode.IsControl(r), "%q contains control %U", s, r)
+		assert.False(t, unicode.Is(unicode.Bidi_Control, r), "%q contains bidi control %U", s, r)
+	}
+}
+
+// TestSanitizeProviderText proves provider text loses every escape
+// sequence whole (introducer, parameters and payload), every lone control
+// and every bidi override, while ordinary text, including non-ASCII, is
+// kept (#1015).
+func TestSanitizeProviderText(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in, want string
+	}{
+		"plain text is unchanged":           {"access_denied: user declined", "access_denied: user declined"},
+		"non-ASCII text is unchanged":       {"José – 日本語 ✓", "José – 日本語 ✓"},
+		"empty stays empty":                 {"", ""},
+		"OSC 52 clipboard write, BEL":       {"a\x1b]52;c;ZXZpbA==\x07b", "ab"},
+		"OSC title, 7-bit ST":               {"a\x1b]0;pwned\x1b\\b", "ab"},
+		"OSC 8 hyperlink":                   {"\x1b]8;;https://evil.example\x1b\\click\x1b]8;;\x1b\\", "click"},
+		"OSC unterminated runs to the end":  {"a\x1b]52;c;ZXZpbA==", "a"},
+		"CSI clear screen":                  {"a\x1b[2Jb", "ab"},
+		"CSI SGR colour":                    {"\x1b[1;31mred\x1b[0m", "red"},
+		"CSI private mode":                  {"\x1b[?1049hx", "x"},
+		"CSI cut short by a control":        {"\x1b[31\x07m", "m"},
+		"DCS string":                        {"\x1bPq#0;2;0;0;0\x1b\\ok", "ok"},
+		"APC, PM and SOS strings":           {"\x1b_apc\x07\x1b^pm\x07\x1bXsos\x07ok", "ok"},
+		"charset designation (nF)":          {"\x1b(0lqk", "lqk"},
+		"single-byte escape (Fs)":           {"\x1bcreset", "reset"},
+		"lone ESC at the end":               {"abc\x1b", "abc"},
+		"8-bit CSI as a raw byte":           {"a\x9b2Jb", "ab"},
+		"8-bit CSI as UTF-8":                {"a\u009b31mb", "ab"},
+		"8-bit OSC with 8-bit ST":           {"a\u009d52;c;ZXZpbA==\u009cb", "ab"},
+		"8-bit OSC as raw bytes":            {"a\x9d52;c;ZXZpbA==\x9cb", "ab"},
+		"8-bit DCS with BEL":                {"a\u0090data\x07b", "ab"},
+		"other C1 controls are dropped":     {"a\u0084\u008db", "ab"},
+		"NUL and other C0 are dropped":      {"a\x00b\x07c\x08d\x7fe\x1af", "abcdef"},
+		"line breaks and tab become spaces": {"one\ntwo\r\nthree\tfour\u2028five\u0085six", "one two  three four five six"},
+		"bidi overrides are dropped":        {"abc\u202edcba\u2066x\u2069", "abcdcbax"},
+		"invalid UTF-8 is replaced":         {"a\xffb\xc0c", "a\ufffdb\ufffdc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := SanitizeProviderText(tc.in)
+			assert.Equal(t, tc.want, got)
+			assertTerminalInert(t, got)
+		})
+	}
+}
+
+// TestSanitizeProviderText_BoundsLength proves the result never exceeds
+// MaxProviderTextLen bytes, ends with the truncation marker exactly when
+// text was cut, is cut on a rune boundary, and that stripped sequences do
+// not count towards the bound.
+func TestSanitizeProviderText_BoundsLength(t *testing.T) {
+	atLimit := strings.Repeat("a", MaxProviderTextLen)
+	assert.Equal(t, atLimit, SanitizeProviderText(atLimit), "text at the limit is not truncated")
+	assert.Equal(t, atLimit, SanitizeProviderText(atLimit+"\x1b[2J\x00"), "trailing controls alone do not truncate")
+
+	over := SanitizeProviderText(atLimit + "b")
+	assert.Len(t, over, MaxProviderTextLen)
+	assert.Equal(t, strings.Repeat("a", MaxProviderTextLen-len(ProviderTextTruncated))+ProviderTextTruncated, over)
+
+	multiByte := SanitizeProviderText(strings.Repeat("é", MaxProviderTextLen))
+	assert.LessOrEqual(t, len(multiByte), MaxProviderTextLen)
+	assert.True(t, strings.HasSuffix(multiByte, ProviderTextTruncated))
+	assert.True(t, utf8.ValidString(multiByte), "a multi-byte rune must not be split")
+
+	huge := SanitizeProviderText(strings.Repeat("x", 1<<20))
+	assert.Len(t, huge, MaxProviderTextLen)
+	assert.True(t, strings.HasSuffix(huge, ProviderTextTruncated))
+
+	assert.Equal(t, "ok", SanitizeProviderText(strings.Repeat("\x1b]52;c;ZXZpbA==\x07", 1000)+"ok"),
+		"stripped sequences do not count towards the bound")
+}
+
+// FuzzSanitizeProviderText proves the sanitiser's guarantees for any input:
+// the result is terminal-inert, never longer than MaxProviderTextLen, and
+// sanitising it again changes nothing.
+func FuzzSanitizeProviderText(f *testing.F) {
+	for _, seed := range []string{
+		"\x1b]52;c;ZXZpbA==\x07", "\x1b[2J", "\x9b31m", "\u009d0;t\u009c", "a\x00b", "\x1bP\x1b\\", "é\xff",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		got := SanitizeProviderText(in)
+		assert.LessOrEqual(t, len(got), MaxProviderTextLen)
+		assertTerminalInert(t, got)
+		assert.Equal(t, got, SanitizeProviderText(got), "sanitising is idempotent")
+	})
 }
