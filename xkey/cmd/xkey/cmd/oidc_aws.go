@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -140,6 +141,20 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 	return runAWSLogin(cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "", callback)
 }
 
+// writeAWSLoginSummary prints the outcome of a successful AWS login. The
+// access key ID comes back from the AWS sign-in token endpoint, so it is
+// sanitised before it reaches the terminal.
+func writeAWSLoginSummary(out io.Writer, region, profile, accessKeyID string, expiration time.Time) {
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "AWS login successful!")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Region:         %s\n", region)
+	_, _ = fmt.Fprintf(out, "  Profile:        %s\n", profile)
+	_, _ = fmt.Fprintf(out, "  Access Key ID:  %s\n", oidc.SanitizeProviderText(accessKeyID))
+	_, _ = fmt.Fprintf(out, "  Expires:        %s\n", expiration.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "  Time remaining: %s\n", formatDuration(time.Until(expiration)))
+}
+
 // runAWSLogin is the core AWS login implementation that can be called from both
 // the aws subcommand and from provider-based login. The interactive OIDC
 // dance itself (DPoP key, PKCE, callback listener, code exchange) lives in
@@ -214,15 +229,7 @@ func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser b
 	// Print success message
 	creds := tokenResp.GetCredentials()
 	expiration, _ := tokenResp.GetExpirationTime()
-
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "AWS login successful!")
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintf(out, "  Region:         %s\n", region)
-	_, _ = fmt.Fprintf(out, "  Profile:        %s\n", profile)
-	_, _ = fmt.Fprintf(out, "  Access Key ID:  %s\n", creds.AccessKeyID)
-	_, _ = fmt.Fprintf(out, "  Expires:        %s\n", expiration.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(out, "  Time remaining: %s\n", formatDuration(time.Until(expiration)))
+	writeAWSLoginSummary(out, region, profile, creds.AccessKeyID, expiration)
 
 	// Store session for refresh (if refresh token available)
 	if tokenResp.RefreshToken != "" && sessionStore != "" {
@@ -470,8 +477,7 @@ func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, 
 	// Build command to run ourselves with --background-worker flag (skips login)
 	executable, err := os.Executable()
 	if err != nil {
-		_ = logFileHandle.Close()
-		return &WrappedError{Msg: "failed to get executable path", Err: err}
+		return &WrappedError{Msg: "failed to get executable path", Err: errors.Join(err, logFileHandle.Close())}
 	}
 
 	args := []string{
@@ -498,22 +504,28 @@ func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, 
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		_ = logFileHandle.Close()
-		return &WrappedError{Msg: "failed to start background process", Err: err}
+		return &WrappedError{Msg: "failed to start background process", Err: errors.Join(err, logFileHandle.Close())}
 	}
 
 	// Write PID file
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
-		_ = cmd.Process.Kill()
-		_ = logFileHandle.Close()
-		return &WrappedError{Msg: "failed to write PID file", Err: err}
+		killErr := cmd.Process.Kill()
+		return &WrappedError{Msg: "failed to write PID file", Err: errors.Join(err, killErr, logFileHandle.Close())}
 	}
 
-	// Don't wait for the process - let it run in background
+	// Don't wait for the process - let it run in background. There is no
+	// caller left to report a cleanup failure to at this point, so each is
+	// logged instead of dropped.
 	go func() {
-		_ = cmd.Wait()
-		_ = logFileHandle.Close()
-		_ = os.Remove(pidFile)
+		if waitErr := cmd.Wait(); waitErr != nil {
+			slog.Debug("oidc aws: background worker exited with an error", "error", waitErr)
+		}
+		if closeErr := logFileHandle.Close(); closeErr != nil {
+			slog.Warn("oidc aws: failed to close background worker log file", "error", closeErr)
+		}
+		if rmErr := os.Remove(pidFile); rmErr != nil {
+			slog.Warn("oidc aws: failed to remove PID file", "error", rmErr)
+		}
 	}()
 
 	stopName := providerName
@@ -534,7 +546,7 @@ func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, 
 // runAWSBackgroundWorker runs the actual AWS auto-refresh loop (called by background process).
 // This function loads the stored session and goes directly to the refresh loop,
 // skipping the interactive login flow.
-func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
+func runAWSBackgroundWorker(cmd *cobra.Command, args []string) (err error) {
 	region, _ := cmd.Flags().GetString("region")
 	profile, _ := cmd.Flags().GetString("profile")
 	credentialsFile, _ := cmd.Flags().GetString("credentials-file")
@@ -579,11 +591,15 @@ func runAWSBackgroundWorker(cmd *cobra.Command, args []string) error {
 	// Open log file for writing
 	var logWriter io.Writer = os.Stdout
 	if logFile != "" {
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if err != nil {
-			return &WrappedError{Msg: "failed to open log file", Err: err}
+		f, openErr := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if openErr != nil {
+			return &WrappedError{Msg: "failed to open log file", Err: openErr}
 		}
-		defer func() { _ = f.Close() }()
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		logWriter = f
 	}
 

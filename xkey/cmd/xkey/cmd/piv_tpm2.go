@@ -16,6 +16,7 @@
 package cmd
 
 import (
+	"errors"
 	"log/slog"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -41,8 +42,7 @@ func createTPM2PIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertific
 
 	storage, err := xkms.NewPIVTPM2Backend(&xkms.PIVTPM2Config{TPM: tpm})
 	if err != nil {
-		_ = tpm.Close()
-		return nil, &WrappedError{Msg: "failed to initialize TPM2 PIV certificate storage", Err: err}
+		return nil, &WrappedError{Msg: "failed to initialize TPM2 PIV certificate storage", Err: errors.Join(err, tpm.Close())}
 	}
 
 	return storage, nil

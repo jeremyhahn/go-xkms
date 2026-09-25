@@ -1732,6 +1732,20 @@ func TestPbTenantInfoToTransport_WithData(t *testing.T) {
 	assert.Equal(t, "t-1", pbTenantInfoToTransport(ti).ID)
 }
 
+func TestParseTimestamp_Empty(t *testing.T) {
+	assert.True(t, parseTimestamp("field", "").IsZero())
+}
+
+func TestParseTimestamp_Malformed(t *testing.T) {
+	assert.True(t, parseTimestamp("field", "not-a-timestamp").IsZero())
+}
+
+func TestParseTimestamp_Valid(t *testing.T) {
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	got := parseTimestamp("field", want.Format(time.RFC3339))
+	assert.True(t, want.Equal(got))
+}
+
 func TestConvertJSONToBytes_Empty(t *testing.T) {
 	assert.Nil(t, ConvertJSONToBytes(nil))
 }

@@ -195,8 +195,10 @@ type Base64 = string;
 type RFC3339 = string;
 /**
  * Pagination query parameters accepted by list endpoints
- * (pkg/api/rest/pagination.go parsePageRequest): page, page_size,
- * sort_field, sort_order ('desc'/'1' = descending).
+ * (pkg/api/transport/pagination.go PageRequestFromQuery): page, page_size,
+ * sort_field, sort_order ('desc'/'1' = descending). page and page_size must
+ * be integers on the wire -- a non-numeric value is rejected with 400
+ * rather than silently defaulting to an unpaginated request.
  */
 interface PageQuery {
     page?: number;

@@ -17,6 +17,7 @@
 package keyboard
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -103,8 +104,11 @@ func New(logger *slog.Logger) (*Keyboard, error) {
 	}
 
 	if err := device.Create(cfg); err != nil {
-		_ = device.Close()
-		return nil, &SentinelCauseError{Sentinel: ErrKeyboardCreateFailed, Cause: err}
+		cause := err
+		if closeErr := device.Close(); closeErr != nil {
+			cause = errors.Join(cause, closeErr)
+		}
+		return nil, &SentinelCauseError{Sentinel: ErrKeyboardCreateFailed, Cause: cause}
 	}
 
 	logger.Info("virtual keyboard created",

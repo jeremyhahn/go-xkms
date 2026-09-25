@@ -16,6 +16,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -195,7 +196,7 @@ func validatePCRBank(bank string) error {
 	return nil
 }
 
-func runTPMInstall(cmd *cobra.Command, args []string) error {
+func runTPMInstall(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Validate PCR flags if provided
 	if err := validatePCRBank(installPCRBank); err != nil {
@@ -212,7 +213,11 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	result := &ProvisionResult{}
 
@@ -279,7 +284,7 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 	return outputProvisionResult(out, result)
 }
 
-func runTPMProvision(cmd *cobra.Command, args []string) error {
+func runTPMProvision(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	// Require explicit confirmation
 	if !provisionConfirm {
@@ -333,7 +338,11 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTPMDeviceNotFound, Cause: err}
 	}
-	defer func() { _ = tpm.Close() }()
+	defer func() {
+		if closeErr := tpm.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Performing FULL TPM provisioning (destructive)...")

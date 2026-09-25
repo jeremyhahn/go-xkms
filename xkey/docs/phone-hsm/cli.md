@@ -1,6 +1,6 @@
 # Phone as HSM — CLI
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-21
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Binary: `xkey`, group `device` (`xkey/cmd/xkey/cmd/device*.go`).
 
@@ -80,7 +80,7 @@ barrier existed keeps connecting as long as that stays true — but running
 against one now refuses with a re-pair message (`pairing:` `... re-pair this
 device`) instead of connecting. Re-pair the device (`xkey device pair`) to
 write a fresh sealed record. Every other device-backed verb below
-(`oath-sync`, `share`, `import`, `sync-*`, `enroll-phone`, `fido2 --backend
+(`oath sync`, `share`, `import`, `sync-*`, `enroll-phone`, `fido2 --backend
 phone`) follows the same rule through `unsealDeviceLocalKey`.
 
 ## Using the phone as the key backend
@@ -94,39 +94,72 @@ cross the channel; only operations and results do.
 
 ## Attestation and enrollment
 
-| Verb | Purpose |
+`device enroll` (agent-certificate enrollment, unrelated to phone pairing)
+is [device/cli.md](../device/cli.md#device-enroll--device-connect--agent-enrollment)'s;
+the verbs below are the phone-specific ones this folder owns.
+
+| Verb | Flags |
 |---|---|
-| `device attest <key-id>` | Prove a key was generated in the phone's hardware |
-| `device attest-device` | Device-level attestation (opens a barrier if one exists — #42, see above) |
-| `device device-info [device-name]` | Report device details |
-| `device enroll` | Enrol the device |
-| `device enroll-phone` | Enrol the phone specifically |
+| `device attest <key-id>` | `--device` (specific paired device), `--no-verify` (skip certificate chain verification), `--timeout` (default `1m0s`, includes biometric wait) |
+| `device attest-device` | `--device` (defaults to the default device), `--force` (ignore the grace period and re-attest anyway), `--set-grace-period` (duration, e.g. `5m`, `30m`; default `0s`), `--barrier-password` / `--barrier-password-file` (opens a barrier if one exists — #42, see above) |
+| `device device-info [device-name]` | — |
+| `device enroll-phone` | `--device` (defaults to the default device), `--ca` (`local` or `xkms`, default `local`), `--subject` (subject DN to request), `--validity` (credential lifetime and re-attestation cadence; duration, default `0s` meaning 90 days), `--min-security-level` (`software`, `trusted_environment`, or `strongbox`; default `trusted_environment`), `--require-verified-boot` (default `true`), `--allow-package` (Android package name, repeatable), `--allow-signer` (hex SHA-256 signing digest, repeatable), `--allow-unpinned` (permit an allow-listed package with no signing digest; development only, default `false`) |
 
 ```
 xkey device attest my-key
+xkey device attest-device --device "Pixel-8"
 xkey device device-info "Pixel-8"
+xkey device enroll-phone --device "Pixel-8" --ca xkms --validity 2160h
 ```
 
 ## PIV on the phone
 
-| Verb | Purpose |
+These live under `xkey piv`, not `xkey device` — see [piv/cli.md](../piv/cli.md)
+for the rest of that group.
+
+| Verb | Flags |
 |---|---|
-| `device phone-list` | List phone-held PIV material |
-| `device phone-generate <slot>` | Generate a key in a phone PIV slot |
-| `device phone-push-cert <slot> <cert-file>` | Store a certificate in a slot |
-| `device phone-pull-cert <slot>` | Retrieve a slot's certificate |
-| `device piv-sync` | Synchronise PIV state |
+| `piv phone-list` | `--device`, `--timeout` (default `1m0s`) |
+| `piv phone-generate <slot>` | `--algorithm`/`-a` (`ECDSA-P256`, `ECDSA-P384`, `RSA-2048`; default `ECDSA-P256`), `--device`, `--timeout` (default `1m0s`) |
+| `piv phone-push-cert <slot> <cert-file>` | `--device`, `--timeout` (default `1m0s`) |
+| `piv phone-pull-cert <slot>` | `--device`, `--output` (default stdout), `--timeout` (default `1m0s`) |
+
+```
+xkey piv phone-list --device "Pixel-8"
+xkey piv phone-generate 9a --algorithm ECDSA-P384
+xkey piv phone-pull-cert 9a --output cert.pem
+```
 
 ## OATH, sharing and sync
 
-| Verb | Purpose |
+`oath sync`/`push`/`pull` live under `xkey oath`, not `xkey device`; the
+other verbs here are `xkey device` verbs. All are phone-backed, so they are
+documented once, here.
+
+| Verb | Flags |
 |---|---|
-| `device oath-sync` | Synchronise OATH credentials |
-| `device share <backend> <key-id>` | Share a key with the phone |
-| `device import <key-id>` | Import a key from the phone |
-| `device share-policy list\|set\|remove` | Manage sharing policy |
-| `device sync` / `sync-status` / `sync-push` / `sync-pull` | State synchronisation |
-| `device push <name-or-id>` / `pull` | Move individual items |
+| `oath sync` | `--device`, `--store` (default `~/.xkey/data/oath.json`), `--barrier-password` / `--barrier-password-file`, `--timeout` (default `1m0s`) |
+| `oath push <name-or-id>` | Same flags as `oath sync` |
+| `oath pull` | Same flags as `oath sync` |
+| `device share <backend> <key-id>` | `--device`, `--label` (label for the shared key on the phone), `--timeout` (default `1m0s`) |
+| `device import <key-id>` | `--backend` (target backend, default `software`), `--device`, `--timeout` (default `1m0s`) |
+| `device share-policy list` | — |
+| `device share-policy remove <backend> <key-id>` | — |
+| `device share-policy set <backend> <key-id>` | `--allow` (default `false`), `--devices` (comma-separated fingerprints), `--share-public` (default `true`), `--share-private` (software keys only, default `false`), `--share-symmetric` (default `false`) |
+| `device sync` | `--all` (default `true`), `--oath`, `--passwords`, `--trust-store` (select specific stores instead of all), `--dry-run`, `--device`, `--barrier-password` / `--barrier-password-file`, `--timeout` (default `1m0s`) |
+| `device sync-pull` | Same flags as `device sync`, pull direction only |
+| `device sync-push` | Same flags as `device sync`, push direction only |
+| `device sync-status` | `--device`, `--barrier-password` / `--barrier-password-file`, `--timeout` (default `1m0s`) |
+
+```
+xkey oath sync --device "Pixel-8"
+xkey oath push "GitHub" --device "Pixel-8"
+xkey device share software my-key --device "Pixel-8" --label "backup key"
+xkey device import my-key --device "Pixel-8"
+xkey device share-policy set software my-key --allow --devices <fingerprint>
+xkey device sync --device "Pixel-8" --passwords --oath
+xkey device sync-status --device "Pixel-8"
+```
 
 ## Connectivity
 

@@ -303,8 +303,14 @@ func (b *Bridge) Start(ctx context.Context) error {
 
 	authID, err := b.client.AddVirtualAuthenticator(ctx, opts)
 	if err != nil {
-		// Best-effort disable on failure.
-		_ = b.client.Disable(ctx)
+		// Best-effort disable on failure: the caller only learns about the
+		// AddVirtualAuthenticator failure (returned below), but a failed
+		// disable would otherwise leave WebAuthn enabled with no
+		// authenticator, silently, so it is at least logged.
+		if disableErr := b.client.Disable(ctx); disableErr != nil {
+			b.logger.Warn("CDP bridge: failed to disable WebAuthn after AddVirtualAuthenticator failure",
+				slog.String("error", disableErr.Error()))
+		}
 		return err
 	}
 

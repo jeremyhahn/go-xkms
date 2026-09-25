@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -313,12 +314,16 @@ func (t *IPCTransport) GeneratePIVCSR(_ context.Context, _ *transport.GeneratePI
 
 // sendMessage opens a Unix socket connection, sends the JSON message, reads
 // the JSON response, and returns it. Each call is a fresh connection.
-func (t *IPCTransport) sendMessage(msg *ipc.Message) (*ipc.Response, error) {
+func (t *IPCTransport) sendMessage(msg *ipc.Message) (response *ipc.Response, err error) {
 	conn, err := net.DialTimeout("unix", t.socketPath, t.timeout)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrIPCConnectionFailed, Cause: err}
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := conn.SetDeadline(time.Now().Add(t.timeout)); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrIPCConnectionFailed, Cause: err}

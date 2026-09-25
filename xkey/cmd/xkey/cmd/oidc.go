@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -614,7 +615,13 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		_ = server.Shutdown(shutdownCtx)
+		// The login outcome below is already decided by the time this
+		// runs, so a shutdown failure changes nothing about it -- but it
+		// is logged, since it means the callback listener outlived its
+		// 5-second grace period instead of releasing its port.
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Debug("oidc: callback server shutdown failed", "error", err)
+		}
 	}()
 
 	// Open browser or print URL
@@ -686,15 +693,7 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(out, "Login successful!")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "  Provider: %s\n", issuer)
-	if claims.Subject != "" {
-		_, _ = fmt.Fprintf(out, "  Subject:  %s\n", claims.Subject)
-	}
-	if claims.Email != "" {
-		_, _ = fmt.Fprintf(out, "  Email:    %s\n", claims.Email)
-	}
-	if claims.Name != "" {
-		_, _ = fmt.Fprintf(out, "  Name:     %s\n", claims.Name)
-	}
+	writeOIDCIdentity(out, claims, "  %-10s%s\n")
 	_, _ = fmt.Fprintf(out, "  Expires:  %s\n", storedToken.ExpiresAt.Format(time.RFC3339))
 
 	// Execute custom script if specified
@@ -756,6 +755,22 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// writeOIDCIdentity prints the ID token's subject, email and name, each
+// that is set, one line per claim in layout (a format taking the label and
+// the value). The provider signs the claims but chooses their content, so
+// each value is sanitised before it reaches the terminal.
+func writeOIDCIdentity(out io.Writer, claims *OIDCIDTokenClaims, layout string) {
+	for _, claim := range []struct{ label, value string }{
+		{"Subject:", claims.Subject},
+		{"Email:", claims.Email},
+		{"Name:", claims.Name},
+	} {
+		if claim.value != "" {
+			_, _ = fmt.Fprintf(out, layout, claim.label, oidc.SanitizeProviderText(claim.value))
+		}
+	}
+}
+
 // runOIDCToken displays current token information.
 func runOIDCToken(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
@@ -783,15 +798,7 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(out, "======================")
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintf(out, "Provider:      %s\n", token.Issuer)
-	if claims.Subject != "" {
-		_, _ = fmt.Fprintf(out, "Subject:       %s\n", claims.Subject)
-	}
-	if claims.Email != "" {
-		_, _ = fmt.Fprintf(out, "Email:         %s\n", claims.Email)
-	}
-	if claims.Name != "" {
-		_, _ = fmt.Fprintf(out, "Name:          %s\n", claims.Name)
-	}
+	writeOIDCIdentity(out, claims, "%-15s%s\n")
 
 	// Format expiration
 	now := time.Now()
@@ -1393,25 +1400,34 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request, codeChan chan<- 
 	query := r.URL.Query()
 
 	if errParam := query.Get("error"); errParam != "" {
-		errDesc := query.Get("error_description")
+		// The provider, or anyone who can steer the browser to the loopback
+		// URL, controls both parameters, so they reach the terminal only
+		// sanitised.
+		msg := oidc.SanitizeProviderText(errParam) + ": " + oidc.SanitizeProviderText(query.Get("error_description"))
 		// A page that cannot reach the browser (it hung up) changes nothing
-		// about the login's outcome, so the write error is not acted on.
-		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: errParam + ": " + errDesc})
+		// about the login's outcome, so the write error is only logged.
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: msg}); err != nil {
+			slog.Debug("oidc: failed to write callback response", "error", err)
+		}
 
-		errChan <- &MessageError{Msg: fmt.Sprintf("%s: %s", errParam, errDesc)}
+		errChan <- &MessageError{Msg: msg}
 		return
 	}
 
 	code := query.Get("code")
 	if code == "" {
-		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: "No authorization code received"})
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Failed", Message: "No authorization code received"}); err != nil {
+			slog.Debug("oidc: failed to write callback response", "error", err)
+		}
 		errChan <- ErrOIDCNoAuthCode
 		return
 	}
 
 	state.Store(query.Get("state"))
 
-	_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Successful", Message: "You may close this window."})
+	if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "Authentication Successful", Message: "You may close this window."}); err != nil {
+		slog.Debug("oidc: failed to write callback response", "error", err)
+	}
 
 	codeChan <- code
 }
@@ -1903,8 +1919,7 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 	// Build command to run ourselves with special --background-worker flag
 	executable, err := os.Executable()
 	if err != nil {
-		_ = logFileHandle.Close()
-		return &WrappedError{Msg: "failed to get executable path", Err: err}
+		return &WrappedError{Msg: "failed to get executable path", Err: errors.Join(err, logFileHandle.Close())}
 	}
 
 	args := []string{
@@ -1933,22 +1948,28 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		_ = logFileHandle.Close()
-		return &WrappedError{Msg: "failed to start background process", Err: err}
+		return &WrappedError{Msg: "failed to start background process", Err: errors.Join(err, logFileHandle.Close())}
 	}
 
 	// Write PID file
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600); err != nil {
-		_ = cmd.Process.Kill()
-		_ = logFileHandle.Close()
-		return &WrappedError{Msg: "failed to write PID file", Err: err}
+		killErr := cmd.Process.Kill()
+		return &WrappedError{Msg: "failed to write PID file", Err: errors.Join(err, killErr, logFileHandle.Close())}
 	}
 
-	// Don't wait for the process - let it run in background
+	// Don't wait for the process - let it run in background. There is no
+	// caller left to report a cleanup failure to at this point, so each is
+	// logged instead of dropped.
 	go func() {
-		_ = cmd.Wait()
-		_ = logFileHandle.Close()
-		_ = os.Remove(pidFile) // Clean up PID file when process exits
+		if waitErr := cmd.Wait(); waitErr != nil {
+			slog.Debug("oidc login: background worker exited with an error", "error", waitErr)
+		}
+		if closeErr := logFileHandle.Close(); closeErr != nil {
+			slog.Warn("oidc login: failed to close background worker log file", "error", closeErr)
+		}
+		if rmErr := os.Remove(pidFile); rmErr != nil { // Clean up PID file when process exits
+			slog.Warn("oidc login: failed to remove PID file", "error", rmErr)
+		}
 	}()
 
 	_, _ = fmt.Fprintf(out, "Background refresh started for '%s'\n", providerName)
@@ -1961,7 +1982,7 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 }
 
 // runBackgroundWorker runs the actual auto-refresh loop (called by background process).
-func runBackgroundWorker(cmd *cobra.Command, args []string) error {
+func runBackgroundWorker(cmd *cobra.Command, args []string) (err error) {
 	tokenEndpoint, _ := cmd.Flags().GetString("token-endpoint")
 	clientID, _ := cmd.Flags().GetString("client-id")
 	tokenStore, _ := cmd.Flags().GetString("token-store")
@@ -1975,11 +1996,15 @@ func runBackgroundWorker(cmd *cobra.Command, args []string) error {
 	// Open log file for writing
 	var logWriter io.Writer = os.Stdout
 	if logFile != "" {
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if err != nil {
-			return &WrappedError{Msg: "failed to open log file", Err: err}
+		f, openErr := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if openErr != nil {
+			return &WrappedError{Msg: "failed to open log file", Err: openErr}
 		}
-		defer func() { _ = f.Close() }()
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		logWriter = f
 	}
 
@@ -2051,8 +2076,13 @@ func runOIDCStatus(cmd *cobra.Command, args []string) error {
 
 		pid, isRunning := isProcessRunning(pidFile)
 		if !isRunning {
-			// Clean up stale PID file
-			_ = os.Remove(pidFile)
+			// Clean up stale PID file. A failure here is not fatal to
+			// listing (the next invocation will retry), but it is logged
+			// since a persistently unremovable PID file would otherwise
+			// keep reappearing here silently.
+			if rmErr := os.Remove(pidFile); rmErr != nil {
+				slog.Debug("oidc: failed to remove stale PID file", "path", pidFile, "error", rmErr)
+			}
 			continue
 		}
 
@@ -2187,8 +2217,15 @@ func runOIDCStop(cmd *cobra.Command, args []string) error {
 func stopProcess(out io.Writer, pidFile, providerName string) error {
 	pid, running := isProcessRunning(pidFile)
 	if !running {
-		_ = os.Remove(pidFile) // Clean up stale file
-		return &MessageError{Msg: fmt.Sprintf("no running process for '%s'", providerName)}
+		// Clean up the stale file; a failed removal doesn't change that
+		// there is no running process to stop, but it is joined in so it
+		// isn't lost. The file already being gone is not a failure worth
+		// reporting.
+		notRunningErr := &MessageError{Msg: fmt.Sprintf("no running process for '%s'", providerName)}
+		if rmErr := os.Remove(pidFile); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return errors.Join(notRunningErr, rmErr)
+		}
+		return notRunningErr
 	}
 
 	process, err := os.FindProcess(pid)
@@ -2203,8 +2240,12 @@ func stopProcess(out io.Writer, pidFile, providerName string) error {
 	// Wait a moment for graceful shutdown
 	time.Sleep(100 * time.Millisecond)
 
-	// Remove PID file
-	_ = os.Remove(pidFile)
+	// The process is already stopped at this point, so a failure removing
+	// its PID file is reported to the user rather than the command, which
+	// has already succeeded at what it was asked to do.
+	if rmErr := os.Remove(pidFile); rmErr != nil {
+		_, _ = fmt.Fprintf(out, "Warning: failed to remove PID file %s: %v\n", pidFile, rmErr)
+	}
 
 	_, _ = fmt.Fprintf(out, "Stopped background refresh for '%s' (PID %d)\n", providerName, pid)
 	return nil

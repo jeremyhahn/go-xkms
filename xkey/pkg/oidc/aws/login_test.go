@@ -409,3 +409,61 @@ func TestRefreshCredentials_Failed(t *testing.T) {
 	_, _, err = RefreshCredentials(context.Background(), client, "old-refresh-token")
 	assert.ErrorIs(t, err, ErrRefreshFailed)
 }
+
+// hostileProviderText carries an OSC 52 clipboard write, a clear-screen
+// CSI, an 8-bit CSI and a NUL between two words; sanitised it reads
+// "deniedend".
+const hostileProviderText = "denied\x1b]52;c;ZXZpbA==\x07\x1b[2J\u009b31m\x00end"
+
+// TestHandleLoginCallback_ProviderErrorIsTerminalInert proves the callback's
+// error and error_description reach the returned error sanitised, so a
+// hostile redirect cannot drive the terminal the error is printed to
+// (#1015).
+func TestHandleLoginCallback_ProviderErrorIsTerminalInert(t *testing.T) {
+	codeChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	var state atomic.Value
+	query := url.Values{"error": {hostileProviderText}, "error_description": {hostileProviderText}}
+
+	req := httptest.NewRequest(http.MethodGet, "/oauth/callback?"+query.Encode(), nil)
+	handleLoginCallback(httptest.NewRecorder(), req, codeChan, errChan, &state)
+
+	select {
+	case err := <-errChan:
+		assert.ErrorIs(t, err, ErrAuthorizationFailed)
+		assert.Equal(t, "aws: authorization failed: deniedend: deniedend", err.Error())
+	default:
+		t.Fatal("no error delivered")
+	}
+}
+
+// TestClient_DoTokenRequest_ErrorDescriptionIsTerminalInert proves a hostile
+// token endpoint's error_description, and its error code when the
+// description is absent, reach the returned error sanitised (#1015).
+func TestClient_DoTokenRequest_ErrorDescriptionIsTerminalInert(t *testing.T) {
+	for name, body := range map[string]map[string]string{
+		"description": {"error": "invalid_grant", "error_description": hostileProviderText},
+		"code only":   {"error": hostileProviderText},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				assert.NoError(t, json.NewEncoder(w).Encode(body))
+			}))
+			defer server.Close()
+
+			dpopKey, err := oidc.GenerateDPoPKey()
+			require.NoError(t, err)
+			client, err := NewClient(&ClientConfig{Region: "us-east-1", TokenEndpointOverride: server.URL}, dpopKey)
+			require.NoError(t, err)
+
+			_, err = client.Exchange(context.Background(), "auth-code", &AuthCodeOptions{
+				State:        "test-state",
+				CodeVerifier: "test-verifier-that-is-long-enough",
+			})
+			require.ErrorIs(t, err, ErrTokenRequestFailed)
+			assert.Equal(t, "aws: token request failed: deniedend", err.Error())
+		})
+	}
+}

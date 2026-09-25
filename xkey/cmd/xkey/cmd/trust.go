@@ -378,13 +378,17 @@ func openTrustStore() (*truststore.FileStore, error) {
 }
 
 // runTrustList executes the trust list command.
-func runTrustList(cmd *cobra.Command, args []string) error {
+func runTrustList(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	store, err := openTrustStore()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	certs, err := store.Certificates()
 	if err != nil {
@@ -431,7 +435,7 @@ func runTrustList(cmd *cobra.Command, args []string) error {
 }
 
 // runTrustAdd executes the trust add command.
-func runTrustAdd(cmd *cobra.Command, args []string) error {
+func runTrustAdd(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	pemFile := args[0]
 
@@ -444,7 +448,11 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	purposeStr, _ := cmd.Flags().GetString("purpose")
 	sourceStr, _ := cmd.Flags().GetString("source")
@@ -488,7 +496,7 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 }
 
 // runTrustRemove executes the trust remove command.
-func runTrustRemove(cmd *cobra.Command, args []string) error {
+func runTrustRemove(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
@@ -496,7 +504,11 @@ func runTrustRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := store.RemoveCertificate(fingerprint); err != nil {
 		if errors.Is(err, truststore.ErrCertificateNotFound) {
@@ -510,7 +522,7 @@ func runTrustRemove(cmd *cobra.Command, args []string) error {
 }
 
 // runTrustShow executes the trust show command.
-func runTrustShow(cmd *cobra.Command, args []string) error {
+func runTrustShow(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
@@ -518,7 +530,11 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	certs, err := store.Certificates()
 	if err != nil {
@@ -601,7 +617,7 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 
 // runTrustClassify executes the trust classify command to reclassify a
 // certificate's purpose in the trust store.
-func runTrustClassify(cmd *cobra.Command, args []string) error {
+func runTrustClassify(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 	purposeStr, _ := cmd.Flags().GetString("purpose")
@@ -618,7 +634,11 @@ func runTrustClassify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if err := store.SetPurpose(fingerprint, purpose); err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustClassifyFailed, Cause: err}
@@ -629,7 +649,7 @@ func runTrustClassify(cmd *cobra.Command, args []string) error {
 }
 
 // runTrustInstall installs a certificate from the trust store to the OS trust store.
-func runTrustInstall(cmd *cobra.Command, args []string) error {
+func runTrustInstall(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
@@ -637,7 +657,11 @@ func runTrustInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Find the certificate in the trust store.
 	certs, err := store.Certificates()
@@ -679,7 +703,7 @@ func runTrustInstall(cmd *cobra.Command, args []string) error {
 }
 
 // runTrustUninstall removes a certificate from the OS trust store.
-func runTrustUninstall(cmd *cobra.Command, args []string) error {
+func runTrustUninstall(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
@@ -687,7 +711,11 @@ func runTrustUninstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Verify the certificate exists in the trust store.
 	exists, err := store.Contains(fingerprint)
@@ -720,7 +748,7 @@ func runTrustUninstall(cmd *cobra.Command, args []string) error {
 }
 
 // runTrustBootstrap executes the trust bootstrap command.
-func runTrustBootstrap(cmd *cobra.Command, args []string) error {
+func runTrustBootstrap(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	timeout, err := cmd.Flags().GetDuration("timeout")
 	if err != nil {
@@ -751,7 +779,11 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Report skips for the same reason `trust add` does: re-running a
 	// bootstrap against an already-trusted CA is the common case, and

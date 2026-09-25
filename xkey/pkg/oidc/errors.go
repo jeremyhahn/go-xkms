@@ -27,22 +27,28 @@ type TokenRequestError struct {
 	Err error
 
 	// Code is the OAuth2 error code from the provider (e.g., "invalid_grant").
+	// It is provider-controlled and raw: print it only through
+	// SanitizeProviderText, as Error does.
 	Code string
 
 	// Description is the human-readable error description from the provider.
+	// It is provider-controlled and raw: print it only through
+	// SanitizeProviderText, as Error does.
 	Description string
 
 	// StatusCode is the HTTP status code from the token endpoint.
 	StatusCode int
 }
 
-// Error returns a formatted error string including provider details when available.
+// Error returns a formatted error string including provider details when
+// available. The provider's code and description are sanitised, so the
+// string is safe to print to a terminal or log.
 func (e *TokenRequestError) Error() string {
 	if e.Description != "" {
-		return fmt.Sprintf("%s: %s (%s)", e.Err.Error(), e.Description, e.Code)
+		return fmt.Sprintf("%s: %s (%s)", e.Err.Error(), SanitizeProviderText(e.Description), SanitizeProviderText(e.Code))
 	}
 	if e.Code != "" {
-		return fmt.Sprintf("%s: %s", e.Err.Error(), e.Code)
+		return fmt.Sprintf("%s: %s", e.Err.Error(), SanitizeProviderText(e.Code))
 	}
 	return e.Err.Error()
 }

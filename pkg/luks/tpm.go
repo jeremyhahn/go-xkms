@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -322,7 +323,7 @@ func (h *TPMSealer) UnsealPassphrase(ctx context.Context, tokenJSON []byte) ([]b
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrTPMUnsealFailed, Detail: fmt.Sprintf("policy session: %v", err)}
 	}
-	defer func() { _ = policyCloser() }()
+	defer h.closePolicySession(policyCloser)
 
 	if _, err := (libtpm2.PolicyPCR{
 		PolicySession: policySession.Handle(),
@@ -414,12 +415,16 @@ func readObjectName(tpm transport.TPM, handle libtpm2.TPMHandle) (libtpm2.TPM2BN
 // policy digest for the given selection. Uses a trial session so the TPM
 // computes the digest deterministically without requiring a live
 // authentication.
-func computePCRPolicyDigest(tpm transport.TPM, pcrSel libtpm2.TPMLPCRSelection) ([]byte, error) {
+func computePCRPolicyDigest(tpm transport.TPM, pcrSel libtpm2.TPMLPCRSelection) (digest []byte, err error) {
 	trialSession, cleanup, err := libtpm2.PolicySession(tpm, libtpm2.TPMAlgSHA256, 16, libtpm2.Trial())
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = cleanup() }()
+	defer func() {
+		if closeErr := cleanup(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if _, err := (libtpm2.PolicyPCR{
 		PolicySession: trialSession.Handle(),
@@ -526,6 +531,17 @@ func (h *TPMSealer) closeTPM(c io.Closer) {
 	}
 	if err := c.Close(); err != nil {
 		h.logger.Debug("luks: tpm transport close failed",
+			slog.String("error", err.Error()))
+	}
+}
+
+// closePolicySession runs cleanup (the closer libtpm2.PolicySession
+// returns) and logs a failure at debug level, on the same terms as
+// closeTPM: the session has already served its purpose by the time the
+// deferred call runs.
+func (h *TPMSealer) closePolicySession(cleanup func() error) {
+	if err := cleanup(); err != nil {
+		h.logger.Debug("luks: tpm policy session cleanup failed",
 			slog.String("error", err.Error()))
 	}
 }

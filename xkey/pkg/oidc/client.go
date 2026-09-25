@@ -20,6 +20,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -37,6 +39,21 @@ const (
 
 	// MaxDPoPNonceRetries is the maximum number of DPoP nonce retry attempts.
 	MaxDPoPNonceRetries = 3
+
+	// maxTokenResponseBodySize bounds how much of a token endpoint's
+	// response body is read into memory. A provider is not expected to
+	// answer a token request with anything close to this size; the limit
+	// exists to cap memory use against a misbehaving or malicious
+	// endpoint rather than to accommodate legitimate responses.
+	maxTokenResponseBodySize = 1 << 20 // 1 MiB
+
+	// maxNonOAuth2BodyPreview bounds how much of a non-OAuth2 error body
+	// is echoed back to the caller in TokenRequestError.Description: a
+	// provider that fails a token request sometimes answers with an HTML
+	// error page or another large, opaque body instead of the RFC 6749
+	// JSON error shape, and surfacing that in full is neither safe nor
+	// useful.
+	maxNonOAuth2BodyPreview = 256
 )
 
 // AuthCodeOptions contains options for the authorization code flow.
@@ -218,13 +235,13 @@ func (c *Client) doPlainTokenRequest(ctx context.Context, data url.Values) (*Tok
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseBodySize))
 	if err != nil {
 		return nil, ErrTokenExchangeFailed
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseTokenErrorResponse(body, resp.StatusCode)
+		return nil, parseTokenErrorResponse(body, resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 
 	return parseTokenSuccessResponse(body)
@@ -276,7 +293,7 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 			return nil, ErrTokenExchangeFailed
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseBodySize))
 		_ = resp.Body.Close()
 		if err != nil {
 			return nil, ErrTokenExchangeFailed
@@ -302,7 +319,7 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, parseTokenErrorResponse(body, resp.StatusCode)
+			return nil, parseTokenErrorResponse(body, resp.StatusCode, resp.Header.Get("Content-Type"))
 		}
 
 		return parseTokenSuccessResponse(body)
@@ -311,19 +328,70 @@ func (c *Client) doDPoPTokenRequest(ctx context.Context, data url.Values) (*Toke
 	return nil, ErrDPoPNonceRequired
 }
 
-// parseTokenErrorResponse parses an OAuth2 error response body.
-func parseTokenErrorResponse(body []byte, statusCode int) *TokenRequestError {
+// parseTokenErrorResponse parses an OAuth2 error response body. The request
+// has already failed (a non-200 status drove the caller here); a body that
+// isn't the expected OAuth2 JSON shape still leaves the caller with a
+// TokenRequestError carrying the status code, but with a bounded, printable
+// preview of the raw body -- so the failure is not reduced to a bare status
+// code -- instead of the unmarshal's zero-valued Code and Description.
+func parseTokenErrorResponse(body []byte, statusCode int, contentType string) *TokenRequestError {
 	var errResp struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
-	_ = json.Unmarshal(body, &errResp)
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		slog.Debug("oidc: token error response is not valid OAuth2 JSON", "status_code", statusCode, "content_type", contentType, "error", err)
+		return &TokenRequestError{
+			Err:         ErrTokenExchangeFailed,
+			Description: formatNonOAuth2Body(body, statusCode, contentType),
+			StatusCode:  statusCode,
+		}
+	}
 	return &TokenRequestError{
 		Err:         ErrTokenExchangeFailed,
 		Code:        errResp.Error,
 		Description: errResp.ErrorDescription,
 		StatusCode:  statusCode,
 	}
+}
+
+// formatNonOAuth2Body builds a bounded, printable description for a token
+// error response body that didn't parse as OAuth2 JSON. It is prefixed with
+// the status code and content type so the description is still useful
+// context on its own once the body has been truncated to
+// maxNonOAuth2BodyPreview bytes and stripped of non-printable characters.
+func formatNonOAuth2Body(body []byte, statusCode int, contentType string) string {
+	if contentType == "" {
+		contentType = "unknown"
+	}
+
+	preview := body
+	truncated := false
+	if len(preview) > maxNonOAuth2BodyPreview {
+		preview = preview[:maxNonOAuth2BodyPreview]
+		truncated = true
+	}
+
+	cleaned := stripNonPrintable(preview)
+	if truncated {
+		cleaned += "..."
+	}
+
+	return fmt.Sprintf("HTTP %d (%s): %s", statusCode, contentType, cleaned)
+}
+
+// stripNonPrintable drops every rune of body that unicode.IsPrint rejects,
+// so an opaque, HTML, or binary error body cannot inject control characters
+// or other unprintable content into logs or CLI output.
+func stripNonPrintable(body []byte) string {
+	var sb strings.Builder
+	sb.Grow(len(body))
+	for _, r := range string(body) {
+		if unicode.IsPrint(r) {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
 }
 
 // parseTokenSuccessResponse parses a successful token endpoint response.

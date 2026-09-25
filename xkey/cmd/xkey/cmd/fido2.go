@@ -505,7 +505,9 @@ func runFIDO2(cmd *cobra.Command, args []string) error {
 			logger.Error("device error",
 				slog.Any("error", err),
 			)
-			_ = device.Close()
+			if closeErr := device.Close(); closeErr != nil {
+				logger.Error("error during device cleanup", slog.Any("error", closeErr))
+			}
 			return err
 		}
 	}
@@ -701,15 +703,13 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	// Create user presence handler (may return a SocketHandler for daemon mode)
 	upHandler, socketHandler, notifier, err := createFIDO2UserPresenceHandler(cfg, logger)
 	if err != nil {
-		_ = storage.Close()
-		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
+		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err, storage.Close())
 	}
 
 	// Create key backend
 	keyBackend, err := createFIDO2KeyBackend(cfg, logger)
 	if err != nil {
-		_ = storage.Close()
-		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
+		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err, storage.Close())
 	}
 
 	// Create authenticator configuration
@@ -751,9 +751,7 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	// Create the authenticator
 	auth, err := authenticator.NewAuthenticator(authConfig)
 	if err != nil {
-		_ = keyBackend.Close()
-		_ = storage.Close()
-		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
+		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err, keyBackend.Close(), storage.Close())
 	}
 
 	// Wire audit logging before any PIN or credential operation can reach
@@ -776,17 +774,16 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	if cfg.EnablePIN && cfg.PIN != nil {
 		pinBuf, openErr := cfg.PIN.Open()
 		if openErr != nil {
-			_ = auth.Close()
-			return nil, errors.Join(ErrFIDO2PINSetFailed, openErr)
+			return nil, errors.Join(ErrFIDO2PINSetFailed, openErr, auth.Close())
 		}
 		err := auth.SetInitialPIN(pinBuf.Bytes())
 		pinBuf.Destroy()
 		if err != nil {
-			_ = auth.Close()
+			closeErr := auth.Close()
 			if errors.Is(err, authenticator.ErrPINAlreadySet) {
-				return nil, errors.Join(ErrFIDO2PINAlreadySet, err)
+				return nil, errors.Join(ErrFIDO2PINAlreadySet, err, closeErr)
 			}
-			return nil, errors.Join(ErrFIDO2PINSetFailed, err)
+			return nil, errors.Join(ErrFIDO2PINSetFailed, err, closeErr)
 		}
 		logger.Info("initial PIN configured")
 	}
@@ -852,9 +849,9 @@ func (d *fido2Device) Run(ctx context.Context) error {
 	}
 
 	if err := uhidDev.Create(createCfg); err != nil {
-		_ = uhidDev.Close()
+		closeErr := uhidDev.Close()
 		d.uhidDevice = nil
-		return errors.Join(ErrFIDO2UHIDCreateFailed, err)
+		return errors.Join(ErrFIDO2UHIDCreateFailed, err, closeErr)
 	}
 
 	d.logger.Info("virtual FIDO2 device created",
@@ -986,7 +983,9 @@ func (d *fido2Device) initSupplementarySubsystems(ctx context.Context) {
 			if err := bridge.Start(ctx); err != nil {
 				d.logger.Warn("CDP bridge start failed",
 					slog.String("error", err.Error()))
-				_ = cdpClient.Close()
+				if closeErr := cdpClient.Close(); closeErr != nil {
+					d.logger.Warn("CDP client close failed", slog.String("error", closeErr.Error()))
+				}
 			} else {
 				d.cdpBridge = bridge
 				// Sync existing (including previously CDP-captured) credentials
@@ -1491,8 +1490,7 @@ func createFIDO2Storage(cfg *FIDO2Config, logger *slog.Logger) (authenticator.St
 
 		storage, err := authenticator.NewBackendStorage(backend, fido2FileKeyPrefix)
 		if err != nil {
-			_ = backend.Close()
-			return nil, err
+			return nil, errors.Join(err, backend.Close())
 		}
 
 		// go-qrdb's barrier is the only at-rest encryption in this stack;
@@ -1802,8 +1800,7 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 
 	memStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
-		_ = tpm.Close()
-		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err)
+		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
 	}
 	keyBackend := xkms.NewFileBackend(logger, memStorage)
 
@@ -1813,8 +1810,7 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 		Logger:     logger,
 	})
 	if err != nil {
-		_ = tpm.Close()
-		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err)
+		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
 	}
 
 	logger.Info("using TPM2 key backend", slog.String("device", cfg.TPMDevice))

@@ -1,6 +1,6 @@
 # Device Pairing and Enrollment — CLI
 
-> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `device` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Binary: `xkey`. Parent command: `xkey device` (also reachable as `xkey
 phone`, its cobra alias — `cmd/xkey/cmd/device.go:Aliases`).
@@ -92,9 +92,11 @@ refusing the newly issued agent certificate
 ## Build-tag note
 
 `--help` output for `pair`, `scan`, `listen`, `attest`, `attest-device`,
-`device-info`, `oath-sync`, `piv-sync`, `share*` and `sync*` looks the same
-whether or not the binary was built with `-tags ble` — the flags are
-registered either way. Running one of them without the tag returns
-`ErrDeviceBLEUnavailable` ("device: bluetooth unavailable"); the `--help`
-text itself says so. See
+`device-info`, `share*`, `sync*`, `xkey oath sync`/`push`/`pull`, and `xkey
+piv phone-list`/`phone-push-cert`/`phone-pull-cert`/`phone-generate` looks
+the same whether or not the binary was built with `-tags ble` — the flags
+are registered either way (the latter two groups live under `oath`/`piv`,
+not `device`, but share this same build-tag gate). Running one of them
+without the tag returns `ErrDeviceBLEUnavailable` ("device: bluetooth
+unavailable"); the `--help` text itself says so. See
 [architecture.md](architecture.md#build-tag-boundary).

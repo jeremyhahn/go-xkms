@@ -127,7 +127,7 @@ func init() {
 }
 
 // runOATHSync synchronizes OATH credentials between this device and a phone.
-func runOATHSync(cmd *cobra.Command, args []string) error {
+func runOATHSync(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	storePath, _ := cmd.Flags().GetString("store")
@@ -160,7 +160,11 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing OATH credentials with device \"%s\"...\n\n", device.Name)
 
@@ -169,7 +173,11 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -258,7 +266,7 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 }
 
 // runOATHPush pushes an OATH credential to a paired phone.
-func runOATHPush(cmd *cobra.Command, args []string) error {
+func runOATHPush(cmd *cobra.Command, args []string) (err error) {
 	nameOrID := args[0]
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
@@ -292,7 +300,11 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	cred, err := store.Get(nameOrID)
 	if err != nil {
@@ -306,7 +318,11 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPushFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -346,7 +362,7 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 }
 
 // runOATHPull pulls OATH credentials from a paired phone.
-func runOATHPull(cmd *cobra.Command, args []string) error {
+func runOATHPull(cmd *cobra.Command, args []string) (err error) {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	storePath, _ := cmd.Flags().GetString("store")
@@ -379,7 +395,11 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pulling OATH credentials from device \"%s\"...\n\n", device.Name)
 
@@ -388,7 +408,11 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPullFailed, Cause: err}
 	}
-	defer func() { _ = phoneBackend.Close() }()
+	defer func() {
+		if closeErr := phoneBackend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

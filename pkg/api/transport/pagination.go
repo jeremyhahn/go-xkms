@@ -207,9 +207,13 @@ func (e *InvalidPaginationParamError) Error() string {
 func (e *InvalidPaginationParamError) Unwrap() error { return e.Err }
 
 // PageRequestFromQuery extracts pagination parameters from HTTP query
-// strings. This is used by QUIC and other HTTP-based transports that
-// receive pagination via URL query parameters. A parameter that is present
-// but not a valid integer is reported as an *InvalidPaginationParamError
+// strings. This is the one implementation every HTTP-based transport --
+// REST, QUIC, and any other package that receives pagination via URL query
+// parameters -- calls; none of them keeps its own copy. page and page_size
+// must be integers; sort_order accepts either an integer (SortOrderAsc/
+// SortOrderDesc) or the "asc"/"desc" strings the REST API and its
+// TypeScript SDK use on the wire. A parameter that is present but matches
+// none of its accepted forms is reported as an *InvalidPaginationParamError
 // rather than silently defaulting to zero.
 func PageRequestFromQuery(r *http.Request) (PageRequest, error) {
 	var pr PageRequest
@@ -232,7 +236,7 @@ func PageRequestFromQuery(r *http.Request) (PageRequest, error) {
 		pr.SortField = v
 	}
 	if v := r.URL.Query().Get("sort_order"); v != "" {
-		n, err := strconv.Atoi(v)
+		n, err := parseSortOrder(v)
 		if err != nil {
 			return PageRequest{}, &InvalidPaginationParamError{Param: "sort_order", Value: v, Err: err}
 		}
@@ -240,6 +244,20 @@ func PageRequestFromQuery(r *http.Request) (PageRequest, error) {
 	}
 
 	return pr, nil
+}
+
+// parseSortOrder accepts both the integer form of sort_order
+// (SortOrderAsc/SortOrderDesc) and the "asc"/"desc" string form the REST
+// API and its TypeScript SDK send on the wire.
+func parseSortOrder(v string) (int, error) {
+	switch v {
+	case "desc":
+		return SortOrderDesc, nil
+	case "asc":
+		return SortOrderAsc, nil
+	default:
+		return strconv.Atoi(v)
+	}
 }
 
 // AppendPaginationQuery appends pagination parameters to a URL path as query

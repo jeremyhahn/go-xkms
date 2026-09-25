@@ -52,7 +52,7 @@ barrier always wraps *some* base backend — a plain filesystem directory, or
 a LUKS-mounted one when LUKS storage is chosen — so "is the barrier
 initialized" is the one question `barrier_store.go`'s
 `resolveSecretStoreBackend`/`openBarrierBackend` ask on behalf of every
-barrier-aware CLI command (`oath`, `backup`, `device oath-sync`, `fido2
+barrier-aware CLI command (`oath`, `backup`, `oath sync`, `fido2
 --storage barrier`, the OIDC token store).
 
 ## Barrier Auto-Unseal: the decision order
@@ -61,7 +61,7 @@ A **tpm2-strategy** barrier can unseal without any password at all, because
 the TPM's own PCR policy session authorizes the unseal. Both the GUI
 (`pkg/gui/app.go`, at Wails startup) and every headless CLI entry point
 (`xkey extension serve`, `xkey fido2` with `--storage barrier`, `xkey oath`/
-`xkey backup`/`xkey device oath-sync` against a tpm2-strategy barrier, and
+`xkey backup`/`xkey oath sync` against a tpm2-strategy barrier, and
 the explicit `xkey barrier unseal --auto`) drive the same decision, in the
 same order:
 

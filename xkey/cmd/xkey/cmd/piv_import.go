@@ -86,7 +86,7 @@ func init() {
 }
 
 // runPivImport executes the piv import command.
-func runPivImport(cmd *cobra.Command, args []string) error {
+func runPivImport(cmd *cobra.Command, args []string) (err error) {
 	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
@@ -120,7 +120,11 @@ func runPivImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return errors.Join(ErrPIVStorageCreationFailed, err)
 	}
-	defer func() { _ = storage.Close() }()
+	defer func() {
+		if closeErr := storage.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	// Verify certificate matches slot's public key if requested
 	if verify {

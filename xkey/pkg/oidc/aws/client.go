@@ -316,7 +316,7 @@ func (c *Client) doTokenRequest(ctx context.Context, data url.Values) (*TokenRes
 			if errMsg == "" {
 				errMsg = tokenResp.Error
 			}
-			return nil, &DetailError{Err: ErrTokenRequestFailed, Detail: fmt.Sprintf(": %s", errMsg)}
+			return nil, &DetailError{Err: ErrTokenRequestFailed, Detail: ": " + oidc.SanitizeProviderText(errMsg)}
 		}
 
 		return tokenResp, nil

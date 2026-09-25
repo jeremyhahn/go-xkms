@@ -1,6 +1,6 @@
 # USB — CLI
 
-> **Status: NORMATIVE** · Feature: `usb` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `usb` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 All USB commands live under `xkey usb` and are exempt from the LUKS unlock
 gate (`xkey/docs/luks/cli.md` "The unlock gate") — they must be reachable
@@ -96,8 +96,13 @@ device process is currently running.
 
 ### `xkey usb device stop` — stop the running device
 
-There is no `stop` subcommand that reaches into another process; stop the
-running `xkey usb device start` from outside:
+```bash
+xkey usb device stop
+```
+
+`stop` does not reach into the other, already-running process (there is no
+IPC channel between them) — it only prints the same instructions below.
+Stop the running `xkey usb device start` directly:
 
 ```bash
 kill -TERM $(pgrep -f "xkey usb device start")

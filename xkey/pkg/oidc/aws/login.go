@@ -15,6 +15,7 @@ package aws
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -155,7 +156,13 @@ func Login(ctx context.Context, opts LoginOptions, onAuthURL func(authURL string
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		_ = server.Shutdown(shutdownCtx)
+		// The login outcome above is already decided by the time this
+		// runs, so a shutdown failure changes nothing about it -- but it
+		// is logged, since it means the callback listener outlived its
+		// 5-second grace period instead of releasing its port.
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Debug("oidc/aws: callback server shutdown failed", "error", err)
+		}
 	}()
 
 	if onAuthURL != nil {
@@ -193,22 +200,28 @@ func handleLoginCallback(w http.ResponseWriter, r *http.Request, codeChan chan<-
 
 	if errParam := query.Get("error"); errParam != "" {
 		// A page that cannot reach the browser (it hung up) changes nothing
-		// about the login's outcome, so the write error is not acted on.
-		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed"})
-		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + errParam + ": " + query.Get("error_description")}
+		// about the login's outcome, so the write error is only logged.
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed"}); err != nil {
+			slog.Debug("oidc/aws: failed to write callback response", "error", err)
+		}
+		errChan <- &DetailError{Err: ErrAuthorizationFailed, Detail: ": " + oidc.SanitizeProviderText(errParam) + ": " + oidc.SanitizeProviderText(query.Get("error_description"))}
 		return
 	}
 
 	code := query.Get("code")
 	if code == "" {
-		_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed", Message: "No authorization code received"})
+		if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Failed", Message: "No authorization code received"}); err != nil {
+			slog.Debug("oidc/aws: failed to write callback response", "error", err)
+		}
 		errChan <- ErrNoAuthorizationCode
 		return
 	}
 
 	state.Store(query.Get("state"))
 
-	_ = oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Successful", Message: "You may close this window."})
+	if err := oidc.WriteCallbackPage(w, oidc.CallbackPage{Title: "AWS Authentication Successful", Message: "You may close this window."}); err != nil {
+		slog.Debug("oidc/aws: failed to write callback response", "error", err)
+	}
 
 	codeChan <- code
 }

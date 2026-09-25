@@ -1,6 +1,6 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-23
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-25
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -165,8 +165,14 @@ exist.
 
 ## Pagination
 
-`ListTenants` is bounded by the deployment's tenant count and returned whole.
-Tenant-scoped list operations elsewhere page normally.
+`ListTenants` (`GET /api/v1/tenants/`) pages through the same shared
+`transport.PageRequestFromQuery` implementation every REST list endpoint
+uses; see [`../key-management/api.md`](../key-management/api.md)
+§"Pagination" for the `page` / `page_size` / `sort_field` / `sort_order`
+query parameters and the **400** an invalid one gets. With no `page`
+parameter every tenant is returned whole, which is the common case given
+deployments' typically small tenant counts. Tenant-scoped list operations
+elsewhere page normally too.
 
 ## Versioning and deprecation
 

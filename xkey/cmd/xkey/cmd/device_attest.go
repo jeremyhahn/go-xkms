@@ -135,7 +135,7 @@ func init() {
 }
 
 // runDeviceAttest executes the phone attestation command.
-func runDeviceAttest(cmd *cobra.Command, args []string) error {
+func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 	keyID := args[0]
 	deviceName, _ := cmd.Flags().GetString("device")
 	noVerify, _ := cmd.Flags().GetBool("no-verify")
@@ -182,7 +182,11 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to create phone backend", Err: err}
 	}
-	defer func() { _ = backend.Close() }()
+	defer func() {
+		if closeErr := backend.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -254,7 +258,11 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 		if xkeyErr != nil {
 			return &WrappedError{Msg: "failed to open trust store", Err: xkeyErr}
 		}
-		defer func() { _ = xkeyStore.Close() }()
+		defer func() {
+			if closeErr := xkeyStore.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 
 		verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, xkeyTruststore.LoadEmbeddedRoots)
 		if verifierErr != nil {

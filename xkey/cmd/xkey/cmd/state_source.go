@@ -190,7 +190,11 @@ func askDaemon[T any](
 	}
 
 	client := ipc.NewClient(socketPath)
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	result, askErr := ask(client)
 	if askErr == nil {

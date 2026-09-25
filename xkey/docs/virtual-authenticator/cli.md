@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Binary: `xkey`. Groups: `fido2` (the daemon, token lifecycle, and per-RP
 policy) and `uhid` (device setup). Sources: `xkey/cmd/xkey/cmd/fido2.go`,
@@ -203,7 +203,7 @@ what recovers a forgotten user PIN — so nothing can show it to you again.
 
 | Verb | Purpose |
 |---|---|
-| `uhid setup` | Configure `/dev/uhid` permissions (requires root) |
+| `uhid setup` (hidden; no flags) | Configure `/dev/uhid` permissions (requires root; invoked via privilege escalation, e.g. the GUI's polkit/pkexec helper, not normally run directly) |
 
 ```
 xkey uhid setup
@@ -211,14 +211,14 @@ xkey uhid setup
 
 ## `xkey fido2 policy` / `xkey fido2 profile` — per-relying-party policy
 
-| Verb | Purpose |
-|---|---|
-| `fido2 policy list` | List relying-party policies |
-| `fido2 policy set` | Set a policy |
-| `fido2 policy get` | Show a policy |
-| `fido2 policy delete` | Remove a policy |
-| `fido2 profile set` | Set the device profile |
-| `fido2 profile show` | Show the device profile |
+| Verb | Flags | Purpose |
+|---|---|---|
+| `fido2 policy list` | — | List relying-party policies |
+| `fido2 policy set` | `--rpid` (required), `--attestation` (`''`, `none`, `indirect`, `direct`, `enterprise`), `--blocked` (bool, default `false`), `--enterprise` (bool, default `false`), `--up` (`true`, `false`, `''`), `--uv` (`''`, `required`, `preferred`, `discouraged`) | Create or update a policy |
+| `fido2 policy get` | `--rpid` (required) | Show a policy |
+| `fido2 policy delete` | `--rpid` (required) | Remove a policy |
+| `fido2 profile set` | `--enterprise-attestation` (bool, default `false`), `--transports` (comma-separated: `usb`, `nfc`, `ble`, `internal`, `hybrid`) | Set the device profile |
+| `fido2 profile show` (alias `get`) | — | Show the persisted device profile |
 
 `policy set` applies only the flags given on the command line. A flag left
 unset keeps the stored value; an explicit zero (`--blocked=false`, `--uv ""`)
@@ -228,6 +228,10 @@ do not mention `--blocked`.
 ```
 xkey uhid setup
 xkey fido2 policy list
+xkey fido2 policy set --rpid example.com --uv required --enterprise
+xkey fido2 policy get --rpid example.com
+xkey fido2 policy delete --rpid example.com
+xkey fido2 profile set --transports usb,internal
 xkey fido2 profile show
 ```
 

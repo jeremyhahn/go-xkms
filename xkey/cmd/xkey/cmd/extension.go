@@ -282,7 +282,7 @@ func runExtensionStatus(cmd *cobra.Command, args []string) error {
 // runExtensionHost starts the native messaging host. The browser invokes this
 // command via the manifest. Stdout is the native messaging pipe, so all
 // logging is directed to stderr AND a log file for diagnostic visibility.
-func runExtensionHost(cmd *cobra.Command, args []string) error {
+func runExtensionHost(cmd *cobra.Command, args []string) (err error) {
 	socketPath, _ := cmd.Flags().GetString("socket")
 	if socketPath == "" {
 		socketPath = ipc.DefaultSocketPath()
@@ -302,7 +302,11 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 			logPath := filepath.Join(logDir, "native-host.log")
 			f, fErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 			if fErr == nil {
-				defer func() { _ = f.Close() }()
+				defer func() {
+					if closeErr := f.Close(); closeErr != nil {
+						err = errors.Join(err, closeErr)
+					}
+				}()
 				writers = append(writers, f)
 			}
 		}

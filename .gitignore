@@ -111,13 +111,6 @@ gomodauth.env
 # unignorable and were never committed at all.
 !test/integration/**/Dockerfile.test
 
-# Runtime artifact written by the setup wizard into the config dir
-# (~/.config/xkey/). It was committed by accident: while tracked, a test
-# running with an unset configDir wrote to the package copy, and
-# config.IsEnterpriseMode("") stat-ed it and reported enterprise mode ON for
-# every test in that directory (#65).
-xkey_policy.hmac
-
 # xkey ssh store written into the repo root by a manual run with the data
 # directory set to "ssh" (#453). Runtime state, never source.
 /ssh/

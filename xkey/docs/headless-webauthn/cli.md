@@ -1,6 +1,6 @@
 # Headless WebAuthn — CLI
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 Binary: `xkey`, group `auth` (`xkey/cmd/xkey/cmd/auth.go`). Needs a running
 `xkey fido2` daemon to hold the credential — see
@@ -17,7 +17,6 @@ Binary: `xkey`, group `auth` (`xkey/cmd/xkey/cmd/auth.go`). Needs a running
 | `--email` | string | — | **yes** |
 | `--display-name` | string | the login key | no |
 | `--pin-stdin` | bool | `false` | when the authenticator has a CTAP2 PIN set |
-| `--pin` | string | `""` | alternative to `--pin-stdin`; visible in `ps` |
 
 ```
 xkey auth register \
@@ -117,7 +116,6 @@ zero is locked out.
 | `--slot` | string | `9a` | PIV slot, with `--piv` |
 | `--backend` | string | `software` | PIV backend: `software` or `pkcs11`, with `--piv` |
 | `--pin-stdin` | bool | `false` | when the authenticator has a CTAP2 PIN set |
-| `--pin` | string | `""` | alternative to `--pin-stdin`; visible in `ps` |
 
 ```
 xkey auth login --server https://kms.example.com:8443 --email agent-build@example.com
@@ -140,8 +138,8 @@ a certificate.
 |---|---|
 | `auth status` | `--server` (filter to one server) |
 | `auth token` | `--server` (**required**) |
-| `auth refresh` | — |
-| `auth logout` | — |
+| `auth refresh` | `--server` (**required**) — rotates the stored access/refresh token pair |
+| `auth logout` | `--server` (**required**) — revokes the stored session and removes it locally |
 
 ```
 xkey auth status -o json

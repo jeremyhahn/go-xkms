@@ -107,7 +107,7 @@ func TestHandleAWSOutput(t *testing.T) {
 
 		data := &handlers.TokenData{
 			AWSCredentials: &handlers.AWSCredentials{
-				AccessKeyID:     "AKIAEXAMPLE",
+				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "secret123",
 				SessionToken:    "token123",
 				Expiration:      time.Now().Add(time.Hour),
@@ -127,7 +127,7 @@ func TestHandleAWSOutput(t *testing.T) {
 
 		// Read and verify content
 		content, _ := os.ReadFile(credFile)
-		if !bytes.Contains(content, []byte("AKIAEXAMPLE")) {
+		if !bytes.Contains(content, []byte("AKIAIOSFODNN7EXAMPLE")) {
 			t.Error("Credentials file should contain access key")
 		}
 		if !bytes.Contains(content, []byte("[test-profile]")) {

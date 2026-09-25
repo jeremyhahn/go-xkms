@@ -194,17 +194,22 @@ func (e *NativeVirtualDeviceEnumerator) DeviceCount() int {
 	return len(e.devices)
 }
 
-// Close unregisters all devices and releases resources.
+// Close unregisters all devices and releases resources. A device that fails
+// to close does not stop the rest from being unregistered; every failure is
+// joined into the returned error rather than dropped.
 func (e *NativeVirtualDeviceEnumerator) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	var closeErr error
 	for path, device := range e.devices {
-		_ = device.Close()
+		if err := device.Close(); err != nil {
+			closeErr = errors.Join(closeErr, err)
+		}
 		delete(e.devices, path)
 	}
 
-	return nil
+	return closeErr
 }
 
 // Ensure NativeVirtualDeviceEnumerator implements xkms.FIDO2HIDDeviceEnumerator.

@@ -155,7 +155,7 @@ func runTrustImportPlatform(cmd *cobra.Command, args []string) error {
 // executeTrustFetch is the shared implementation. It validates flags,
 // performs the HTTP fetch, persists results to the trust store, and
 // optionally promotes root certificates to the OS trust store.
-func executeTrustFetch(cmd *cobra.Command, target string) error {
+func executeTrustFetch(cmd *cobra.Command, target string) (err error) {
 	pinFlag, _ := cmd.Flags().GetString("spki-pin")
 	purposeStr, _ := cmd.Flags().GetString("purpose")
 	sourceStr, _ := cmd.Flags().GetString("source")
@@ -197,7 +197,11 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		if closeErr := store.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	source := sourceStr
 	if source == "" {

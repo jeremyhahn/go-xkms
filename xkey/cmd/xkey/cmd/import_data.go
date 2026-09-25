@@ -83,7 +83,7 @@ func init() {
 	luks2Cmd.AddCommand(importDataCmd)
 }
 
-func runImportData(cmd *cobra.Command, args []string) error {
+func runImportData(cmd *cobra.Command, args []string) (err error) {
 	if os.Geteuid() != 0 {
 		return luks.ErrPermissionDenied
 	}
