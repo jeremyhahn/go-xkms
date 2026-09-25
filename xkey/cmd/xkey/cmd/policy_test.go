@@ -18,12 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 )
@@ -1179,3 +1183,150 @@ func TestInvalidPCRBanks(t *testing.T) {
 
 // Ensure qrdbsdk.PageQuery is used to avoid unused import.
 var _ = qrdbsdk.PageQuery{}
+
+// ---------------------------------------------------------------------------
+// openPolicyStore (production policyStoreFactory)
+// ---------------------------------------------------------------------------
+
+func TestOpenPolicyStore_EmptyPathUsesFeatureDataDir(t *testing.T) {
+	isolateDataDirSources(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := openPolicyStore("")
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+	_, err = store.Create(ctx, "under-feature-dir", "SHA256", map[uint][]byte{0: {0x01}})
+	require.NoError(t, err)
+
+	assert.DirExists(t, filepath.Join(home, ".xkey", "data", "pcr_policies"),
+		"the store must live at the shared PCR-policy path the GUI and auto-unseal read")
+}
+
+func TestOpenPolicyStore_ExplicitPathOverridesFeatureDataDir(t *testing.T) {
+	isolateDataDirSources(t)
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+
+	store, err := openPolicyStore(dir)
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+	_, err = store.Create(ctx, "explicit-path", "SHA256", map[uint][]byte{0: {0x01}})
+	require.NoError(t, err)
+}
+
+func TestOpenPolicyStore_UnresolvableHomeIsError(t *testing.T) {
+	// A regular file sitting where the xKey home directory must be created
+	// makes the failure ENOTDIR, which even a root-run CI cannot bypass by
+	// ignoring permission bits.
+	isolateDataDirSources(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".xkey"), []byte("not a directory"), 0600))
+
+	_, err := openPolicyStore("")
+	assert.Error(t, err)
+}
+
+// ---------------------------------------------------------------------------
+// Store-open failure propagation
+// ---------------------------------------------------------------------------
+
+// TestPolicyCreate_NoTPMFailsWithCreateError exercises runPolicyCreate past
+// flag validation, into readCurrentPCRValues. --tpm-device points at a path
+// that is not a device node at all, so the failure is a plain ENOENT open
+// error and no real TPM is ever touched.
+func TestPolicyCreate_NoTPMFailsWithCreateError(t *testing.T) {
+	resetPolicyFlags()
+	newTestPolicyStore(t)
+
+	buf := new(bytes.Buffer)
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	fakeDevice := filepath.Join(t.TempDir(), "no-such-tpm")
+	RootCmd.SetArgs([]string{"policy", "create", "boot-policy", "--pcrs", "0,7", "--tpm-device", fakeDevice})
+
+	err := RootCmd.Execute()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPolicyCreateFailed)
+	assert.Empty(t, buf.String(), "a failed create must not print a partial policy summary")
+}
+
+func TestPolicyRefresh_StoreOpenFailurePropagates(t *testing.T) {
+	resetPolicyFlags()
+
+	sentinel := errors.New("boom: store unavailable")
+	previous := policyStoreFactory
+	policyStoreFactory = func(string) (pcrpolicy.PolicyStore, error) { return nil, sentinel }
+	t.Cleanup(func() { policyStoreFactory = previous })
+
+	buf := new(bytes.Buffer)
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	RootCmd.SetArgs([]string{"policy", "refresh", "boot-policy"})
+
+	err := RootCmd.Execute()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPolicyRefreshFailed)
+}
+
+func TestPolicyVerify_StoreOpenFailurePropagates(t *testing.T) {
+	resetPolicyFlags()
+
+	sentinel := errors.New("boom: store unavailable")
+	previous := policyStoreFactory
+	policyStoreFactory = func(string) (pcrpolicy.PolicyStore, error) { return nil, sentinel }
+	t.Cleanup(func() { policyStoreFactory = previous })
+
+	buf := new(bytes.Buffer)
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	RootCmd.SetArgs([]string{"policy", "verify", "boot-policy"})
+
+	err := RootCmd.Execute()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
+}
+
+// ---------------------------------------------------------------------------
+// Refresh/verify: policy found but no TPM is present to read current PCRs.
+// This exercises the code past store.Get() up to readCurrentPCRValues,
+// which xkey never fakes for software-only CI: a real TPM open failure is
+// the genuine, hardware-free error path exercised here.
+// ---------------------------------------------------------------------------
+
+func TestPolicyRefresh_FoundButNoTPMFailsWithRefreshError(t *testing.T) {
+	resetPolicyFlags()
+	store := newTestPolicyStore(t)
+	seedPolicy(t, store, "boot-policy")
+
+	buf := new(bytes.Buffer)
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	fakeDevice := filepath.Join(t.TempDir(), "no-such-tpm")
+	RootCmd.SetArgs([]string{"policy", "refresh", "boot-policy", "--tpm-device", fakeDevice})
+
+	err := RootCmd.Execute()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPolicyRefreshFailed)
+}
+
+func TestPolicyVerify_FoundButNoTPMFailsWithVerifyError(t *testing.T) {
+	resetPolicyFlags()
+	store := newTestPolicyStore(t)
+	seedPolicy(t, store, "boot-policy")
+
+	buf := new(bytes.Buffer)
+	RootCmd.SetOut(buf)
+	RootCmd.SetErr(buf)
+	fakeDevice := filepath.Join(t.TempDir(), "no-such-tpm")
+	RootCmd.SetArgs([]string{"policy", "verify", "boot-policy", "--tpm-device", fakeDevice})
+
+	err := RootCmd.Execute()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPolicyVerifyFailed)
+}
