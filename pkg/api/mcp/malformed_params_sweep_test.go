@@ -52,6 +52,7 @@ var paramsOptionalMethods = map[string]string{
 	"bootstrap.showKeys":         "no parameters",
 	"sealStore.list":             "no parameters",
 	"sealStore.status":           "no parameters",
+	"policy.list":                "no parameters",
 	"barrier.seal":               "no parameters",
 	"barrier.status":             "no parameters",
 	"barrier.deleteRecoveryKeys": "no parameters",

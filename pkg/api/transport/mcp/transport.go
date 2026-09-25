@@ -1626,7 +1626,7 @@ func (t *Transport) SealStoreStatus(ctx context.Context) (*transport.SealStoreSt
 
 // PolicyCreate creates a new PCR policy.
 func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreateRequest) (*transport.PolicyCreateResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PolicyCreateResponse
@@ -1638,7 +1638,7 @@ func (t *Transport) PolicyCreate(ctx context.Context, req *transport.PolicyCreat
 
 // PolicyGet retrieves a policy by name.
 func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetRequest) (*transport.PolicyGetResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PolicyGetResponse
@@ -1650,7 +1650,7 @@ func (t *Transport) PolicyGet(ctx context.Context, req *transport.PolicyGetReque
 
 // PolicyList lists all policies.
 func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PolicyListResponse
@@ -1662,7 +1662,7 @@ func (t *Transport) PolicyList(ctx context.Context) (*transport.PolicyListRespon
 
 // PolicyDelete deletes a policy.
 func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDeleteRequest) error {
-	if !t.connected {
+	if !t.IsConnected() {
 		return ErrNotConnected
 	}
 	return t.rpcCall(ctx, "policy.delete", req, nil)
@@ -1670,7 +1670,7 @@ func (t *Transport) PolicyDelete(ctx context.Context, req *transport.PolicyDelet
 
 // PolicyRefresh refreshes a policy with current PCR values.
 func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefreshRequest) (*transport.PolicyGetResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PolicyGetResponse
@@ -1682,7 +1682,7 @@ func (t *Transport) PolicyRefresh(ctx context.Context, req *transport.PolicyRefr
 
 // PolicyVerify verifies a policy against current PCR values.
 func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerifyRequest) (*transport.PolicyVerifyResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PolicyVerifyResponse
@@ -1694,7 +1694,7 @@ func (t *Transport) PolicyVerify(ctx context.Context, req *transport.PolicyVerif
 
 // PolicyExport exports a policy.
 func (t *Transport) PolicyExport(ctx context.Context, req *transport.PolicyExportRequest) (*transport.PolicyExportResponse, error) {
-	if !t.connected {
+	if !t.IsConnected() {
 		return nil, ErrNotConnected
 	}
 	var result transport.PolicyExportResponse

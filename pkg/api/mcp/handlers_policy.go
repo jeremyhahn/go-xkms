@@ -15,10 +15,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -34,46 +32,58 @@ var ErrPolicyNotConfigured = xkms.ErrNotConfigured
 // handlePolicyCreate handles the policy.create method.
 func (s *Server) handlePolicyCreate(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy create")
 	}
 	var params transport.PolicyCreateRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
-	return s.xkmsService.PolicyCreate(ctx, &params)
+	resp, err := s.xkmsService.PolicyCreate(ctx, &params)
+	if err != nil {
+		return nil, mapPolicyError(err, "policy create")
+	}
+	return resp, nil
 }
 
 // handlePolicyGet handles the policy.get method.
 func (s *Server) handlePolicyGet(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy get")
 	}
 	var params transport.PolicyGetRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
-	return s.xkmsService.PolicyGet(ctx, &params)
+	resp, err := s.xkmsService.PolicyGet(ctx, &params)
+	if err != nil {
+		return nil, mapPolicyError(err, "policy get")
+	}
+	return resp, nil
 }
 
 // handlePolicyList handles the policy.list method.
 func (s *Server) handlePolicyList(ctx context.Context, _ *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy list")
 	}
-	return s.xkmsService.PolicyList(ctx)
+	resp, err := s.xkmsService.PolicyList(ctx)
+	if err != nil {
+		return nil, mapPolicyError(err, "policy list")
+	}
+	return resp, nil
 }
 
 // handlePolicyDelete handles the policy.delete method.
 func (s *Server) handlePolicyDelete(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy delete")
 	}
 	var params transport.PolicyDeleteRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
 	if err := s.xkmsService.PolicyDelete(ctx, &params); err != nil {
-		return nil, err
+		return nil, mapPolicyError(err, "policy delete")
 	}
 	return map[string]string{"name": params.Name}, nil
 }
@@ -81,35 +91,47 @@ func (s *Server) handlePolicyDelete(ctx context.Context, req *JSONRPCRequest) (i
 // handlePolicyRefresh handles the policy.refresh method.
 func (s *Server) handlePolicyRefresh(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy refresh")
 	}
 	var params transport.PolicyRefreshRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
-	return s.xkmsService.PolicyRefresh(ctx, &params)
+	resp, err := s.xkmsService.PolicyRefresh(ctx, &params)
+	if err != nil {
+		return nil, mapPolicyError(err, "policy refresh")
+	}
+	return resp, nil
 }
 
 // handlePolicyVerify handles the policy.verify method.
 func (s *Server) handlePolicyVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy verify")
 	}
 	var params transport.PolicyVerifyRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
-	return s.xkmsService.PolicyVerify(ctx, &params)
+	resp, err := s.xkmsService.PolicyVerify(ctx, &params)
+	if err != nil {
+		return nil, mapPolicyError(err, "policy verify")
+	}
+	return resp, nil
 }
 
 // handlePolicyExport handles the policy.export method.
 func (s *Server) handlePolicyExport(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, ErrPolicyNotConfigured
+		return nil, mapPolicyError(ErrPolicyNotConfigured, "policy export")
 	}
 	var params transport.PolicyExportRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	if err := decodeParams(req, &params); err != nil {
+		return nil, err
 	}
-	return s.xkmsService.PolicyExport(ctx, &params)
+	resp, err := s.xkmsService.PolicyExport(ctx, &params)
+	if err != nil {
+		return nil, mapPolicyError(err, "policy export")
+	}
+	return resp, nil
 }

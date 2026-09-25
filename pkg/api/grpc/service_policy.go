@@ -15,16 +15,14 @@ package grpc
 
 import (
 	"context"
-	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The Policy* handlers are the gRPC (and, over the same generated client,
@@ -224,37 +222,17 @@ func pcrsFromProto(pcrs []int32) []int {
 	return out
 }
 
-// mapPolicyError translates a PCR policy error into the gRPC status code a
-// caller can act on, so a capability refusal or validation error never
-// surfaces as an opaque Internal error.
+// mapPolicyError converts a PCR policy domain error into a gRPC status
+// error, classifying it through apierrors.PolicySentinelClasses -- the
+// table go-xkms#691 made this package share with pkg/api/mcp's mirror of
+// this function, following the go-xkms#912 precedent set for PIV and
+// barrier. Anything not in that table is an internal fault.
 func mapPolicyError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, xkms.ErrNotConfigured):
-		return status.Error(codes.Unavailable, "policy manager not configured")
-	case errors.Is(err, xkms.ErrNilRequest):
-		return status.Error(codes.InvalidArgument, "request is required")
-	case errors.Is(err, policy.ErrPolicyNotFound):
-		return status.Error(codes.NotFound, "policy not found")
-	case errors.Is(err, policy.ErrPolicyExists):
-		return status.Error(codes.AlreadyExists, "policy with this name already exists")
-	case errors.Is(err, policy.ErrInvalidName):
-		return status.Error(codes.InvalidArgument, "policy name must not be empty")
-	case errors.Is(err, policy.ErrInvalidBank):
-		return status.Error(codes.InvalidArgument, "PCR bank must not be empty")
-	case errors.Is(err, policy.ErrUnsupportedBank):
-		return status.Error(codes.InvalidArgument, "unsupported PCR bank algorithm")
-	case errors.Is(err, policy.ErrNoPCRsSelected):
-		return status.Error(codes.InvalidArgument, "at least one PCR index is required")
-	case errors.Is(err, policy.ErrPCRIndexOutOfRange):
-		return status.Error(codes.InvalidArgument, "PCR index out of range (must be 0-23)")
-	case errors.Is(err, policy.ErrDuplicatePCRIndex):
-		return status.Error(codes.InvalidArgument, "duplicate PCR index")
-	case errors.Is(err, policy.ErrExportFailed):
-		return status.Error(codes.Internal, "failed to export policy")
-	default:
-		return status.Error(codes.Internal, err.Error())
+	if class, ok := apierrors.ClassOf(apierrors.PolicySentinelClasses, err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
 	}
+	return status.Error(codes.Internal, err.Error())
 }
