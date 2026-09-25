@@ -1231,3 +1231,71 @@ func TestSecondStopDoesNotDestroyARetainedKey(t *testing.T) {
 		t.Fatal("the retained key's protected pages were wiped by the second Stop")
 	}
 }
+
+// TestTCPPairingServer_OwnsSuppliedKey covers the OwnsStaticKey branch of
+// NewTCPPairingServer: when the caller transfers a key it generated (rather
+// than leaving LocalStaticKey nil for the server to generate one), the
+// server must claim ownership, consume the key out of the config so a reused
+// config cannot hand the same protected pages to a second owner, and destroy
+// it on Stop exactly like a key it generated itself.
+func TestTCPPairingServer_OwnsSuppliedKey(t *testing.T) {
+	key, err := pairing.GenerateStaticKey()
+	if err != nil {
+		t.Fatalf("GenerateStaticKey: %v", err)
+	}
+
+	cfg := &TCPPairingConfig{
+		ListenAddr:     "127.0.0.1:0",
+		LocalStaticKey: key,
+		OwnsStaticKey:  true,
+		RequestHandler: &mockRequestHandler{},
+	}
+	srv, err := NewTCPPairingServer(cfg)
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	if !srv.ownsStaticKey {
+		t.Fatal("server did not claim ownership of the transferred key")
+	}
+	if cfg.LocalStaticKey != nil {
+		t.Fatal("config still holds the key after ownership transferred; a " +
+			"reused config would hand it to a second owner")
+	}
+	if srv.localStaticKey != key {
+		t.Fatal("server did not retain the exact key instance the caller supplied")
+	}
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if len(key.Private) != 0 {
+		t.Fatalf("Stop left the owned key resident: private half is %d bytes, want 0",
+			len(key.Private))
+	}
+}
+
+// TestTCPPairingServer_TrackConnInitializesNilMap covers trackConn's lazy
+// initialization of the connection set. registerConn always goes through
+// NewTCPPairingServer, which pre-populates conns, so this exercises the
+// defensive path directly: a server value that never went through the
+// constructor must still register connections correctly rather than panic
+// on a nil map write.
+func TestTCPPairingServer_TrackConnInitializesNilMap(t *testing.T) {
+	s := &TCPPairingServer{}
+	if s.conns != nil {
+		t.Fatal("test setup: expected a nil conns map")
+	}
+
+	conn, remote := net.Pipe()
+	defer conn.Close()
+	defer remote.Close()
+
+	s.trackConn(conn)
+
+	if _, ok := s.conns[conn]; !ok {
+		t.Fatal("trackConn did not register the connection in the lazily-initialized map")
+	}
+}
