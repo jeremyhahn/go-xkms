@@ -302,6 +302,36 @@ func newFullMockServer(t *testing.T) *httptest.Server {
 		case path == "/api/v1/tenants" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]interface{}{"tenants": []interface{}{}})
 
+		// --- Policy --- (pkg/api/rest/policy_handlers.go's own wire shape:
+		// pcr_indices, pcr_values as raw bytes -- see pkg/api/rest/wire.)
+		case path == "/api/v1/policies/" && r.Method == http.MethodPost:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "boot", "bank": "sha256", "pcr_indices": []int{0, 7},
+				"pcr_values": map[string]string{"0": base64.StdEncoding.EncodeToString([]byte{0xAA}), "7": base64.StdEncoding.EncodeToString([]byte{0xBB})},
+				"created_at": "2026-01-01T00:00:00Z",
+			})
+		case path == "/api/v1/policies/" && r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"policies": []map[string]interface{}{{"name": "boot", "bank": "sha256", "pcr_indices": []int{0, 7}}},
+				"total":    1,
+			})
+		case strings.HasSuffix(path, "/verify"):
+			json.NewEncoder(w).Encode(map[string]interface{}{"name": "boot", "valid": true})
+		case strings.HasSuffix(path, "/export"):
+			json.NewEncoder(w).Encode(map[string]string{"name": "boot", "policy_json": `{"name":"boot"}`})
+		case strings.HasSuffix(path, "/refresh"):
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "boot", "bank": "sha256", "pcr_indices": []int{0, 7}, "updated_at": "2026-01-01T00:00:00Z",
+			})
+		case strings.HasPrefix(path, "/api/v1/policies/") && r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "boot", "bank": "sha256", "pcr_indices": []int{0, 7},
+				"pcr_values": map[string]string{"0": base64.StdEncoding.EncodeToString([]byte{0xAA})},
+				"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+			})
+		case strings.HasPrefix(path, "/api/v1/policies/") && r.Method == http.MethodDelete:
+			json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})
+
 		default:
 			// Catch-all: return valid JSON for any unhandled path
 			json.NewEncoder(w).Encode(map[string]string{"result": "ok"})
@@ -1335,6 +1365,47 @@ func TestSealStore_RoundTrip(t *testing.T) {
 	require.NoError(t, tr.SealStoreDelete(ctx, &transport.SealStoreDeleteRequest{Name: "db-password"}))
 }
 
+// TestPolicy_RoundTrip exercises the REST client's wire translation (see
+// pkg/api/rest/wire's PCR Policy types) end to end: pcr_indices/pcr_values
+// on the wire become PCRs/Values (hex) on transport.Policy*.
+func TestPolicy_RoundTrip(t *testing.T) {
+	srv := newFullMockServer(t)
+	defer srv.Close()
+	tr := connectFullMock(t, srv)
+	defer tr.Close()
+
+	ctx := context.Background()
+
+	createResp, err := tr.PolicyCreate(ctx, &transport.PolicyCreateRequest{Name: "boot", Bank: "sha256", PCRs: []int{0, 7}})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", createResp.Name)
+	assert.ElementsMatch(t, []int{0, 7}, createResp.PCRs)
+	assert.Equal(t, "aa", createResp.Values[0])
+
+	getResp, err := tr.PolicyGet(ctx, &transport.PolicyGetRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", getResp.Name)
+	assert.Equal(t, "aa", getResp.Values[0])
+
+	listResp, err := tr.PolicyList(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, listResp.Total)
+
+	verifyResp, err := tr.PolicyVerify(ctx, &transport.PolicyVerifyRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.True(t, verifyResp.Valid)
+
+	exportResp, err := tr.PolicyExport(ctx, &transport.PolicyExportRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, `{"name":"boot"}`, exportResp.Data)
+
+	refreshResp, err := tr.PolicyRefresh(ctx, &transport.PolicyRefreshRequest{Name: "boot"})
+	require.NoError(t, err)
+	assert.Equal(t, "boot", refreshResp.Name)
+
+	require.NoError(t, tr.PolicyDelete(ctx, &transport.PolicyDeleteRequest{Name: "boot"}))
+}
+
 func TestSealStorePut_NotConnected(t *testing.T) {
 	err := (&Transport{}).SealStorePut(context.Background(), &transport.SealStorePutRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -1365,41 +1436,41 @@ func TestSealStoreStatus_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-// --- Policy (not supported, returns ErrNotSupported) ---
+// --- Policy ---
 
-func TestPolicyCreate_NotSupported(t *testing.T) {
+func TestPolicyCreate_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyGet_NotSupported(t *testing.T) {
+func TestPolicyGet_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyGet(context.Background(), &transport.PolicyGetRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyList_NotSupported(t *testing.T) {
+func TestPolicyList_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyList(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyDelete_NotSupported(t *testing.T) {
+func TestPolicyDelete_NotConnected(t *testing.T) {
 	err := (&Transport{}).PolicyDelete(context.Background(), &transport.PolicyDeleteRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyRefresh_NotSupported(t *testing.T) {
+func TestPolicyRefresh_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyVerify_NotSupported(t *testing.T) {
+func TestPolicyVerify_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestPolicyExport_NotSupported(t *testing.T) {
+func TestPolicyExport_NotConnected(t *testing.T) {
 	_, err := (&Transport{}).PolicyExport(context.Background(), &transport.PolicyExportRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 // --- Init Ceremony ---

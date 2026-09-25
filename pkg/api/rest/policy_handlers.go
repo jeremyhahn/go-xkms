@@ -45,11 +45,12 @@ type PolicyCreateRequest struct {
 
 // PolicyCreateResponse is the response after creating a PCR policy.
 type PolicyCreateResponse struct {
-	Name       string `json:"name"`
-	Bank       string `json:"bank"`
-	PCRIndices []int  `json:"pcr_indices"`
-	CreatedAt  string `json:"created_at"`
-	Message    string `json:"message"`
+	Name       string         `json:"name"`
+	Bank       string         `json:"bank"`
+	PCRIndices []int          `json:"pcr_indices"`
+	PCRValues  map[int][]byte `json:"pcr_values"`
+	CreatedAt  string         `json:"created_at"`
+	Message    string         `json:"message"`
 }
 
 // PolicyInfo is a summary of a PCR policy returned in list responses.
@@ -143,6 +144,7 @@ func (h *PolicyHandlers) CreatePolicyHandler(w http.ResponseWriter, r *http.Requ
 		Name:       def.Name,
 		Bank:       def.Bank,
 		PCRIndices: def.PCRIndices,
+		PCRValues:  def.PCRValues,
 		CreatedAt:  def.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		Message:    "Policy created successfully",
 	}

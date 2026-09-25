@@ -376,6 +376,58 @@ func (s *Service) PasswordGenerate(ctx context.Context, req *pb.PasswordGenerate
 	}, nil
 }
 
+// PasswordStoreSetAccessMode selects the access-control strategy for the
+// password store addressed by the request context. Gated the same as its
+// PasswordAdd/PasswordUpdate siblings (passwords:write): the unified gRPC
+// server denies any RPC without a (qrdb.v1.permission) option by default, so
+// -- like the rest of this family -- it cannot rely on a permission-free
+// tier the way pkg/api/rest/routes.go's session helper does for the REST
+// equivalent (POST /api/v1/passwords/access-mode).
+func (s *Service) PasswordStoreSetAccessMode(ctx context.Context, req *pb.PasswordStoreSetAccessModeRequest) (*pb.PasswordStoreSetAccessModeResponse, error) {
+	if req == nil || req.Mode == "" {
+		return nil, status.Error(codes.InvalidArgument, "mode is required")
+	}
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionWrite, ""); err != nil {
+		return nil, err
+	}
+
+	svc := s.xkmsService
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+
+	if err := svc.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{
+		Mode: req.Mode,
+	}); err != nil {
+		return nil, mapAccessModeError(err)
+	}
+
+	return &pb.PasswordStoreSetAccessModeResponse{
+		Mode:    req.Mode,
+		Message: "Password store access mode set",
+	}, nil
+}
+
+// mapAccessModeError maps the errors PasswordStoreSetAccessMode returns. An
+// unsupported (but well-formed) mode is a capability boundary of the wired
+// store, not a malformed request, so it maps to FailedPrecondition rather
+// than InvalidArgument -- mirroring the REST handler's 501.
+func mapAccessModeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, xkms.ErrInvalidAccessMode):
+		return status.Error(codes.FailedPrecondition, "invalid access mode (allowed: pin_per_operation, session_based)")
+	case errors.Is(err, xkms.ErrNotConfigured):
+		return status.Error(codes.Unavailable, "password store not configured")
+	case errors.Is(err, xkms.ErrNilRequest):
+		return status.Error(codes.InvalidArgument, "request is required")
+	default:
+		return mapPasswordError(err)
+	}
+}
+
 // mapPasswordError converts staticpw and xkms errors to appropriate gRPC status codes.
 // mapPasswordUnlockError maps the errors returned by
 // XKMSService.PasswordStoreUnlock. It defers to mapPasswordError for every

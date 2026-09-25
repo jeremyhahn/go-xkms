@@ -1,6 +1,6 @@
 # Platform Trust — Architecture
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-25
 
 ## The problem
 
@@ -36,9 +36,16 @@ client of that library, which is the architecture rule between the modules.
 `--purpose` is a **required** flag on that verb. A certificate without a purpose
 is not a universal trust anchor; it is an unclassified one.
 
-`xkey trust import-platform <host:port>` is the shorthand for the whole flow
-against a go-trusted-platform instance: fetch the bundle over SPKI-pinned TLS
-and install it, with **no TOFU**.
+`xkey trust import-platform <host:port>` and `xkey trust fetch <url>` are the
+shorthand for the whole flow against a platform instance: fetch the bundle
+over SPKI-pinned TLS and (optionally) install it, with **no TOFU**. They do
+**not** go through the bootstrap dispatch library above — they call a
+separate, lower-level go-xkms package, `pkg/trust/fetcher`
+(re-exported as `xkms.TrustFetcher*`), a single-method HTTPS client that only
+ever verifies by SPKI pin. `pkg/trust/bootstrap` and `pkg/trust/fetcher` are
+two independent packages: the former dispatches across DANE/Noise/SPKI/Direct
+looking for the first method that verifies; the latter has exactly one
+verification method and no fallback.
 
 Rejected alternatives:
 
@@ -56,18 +63,22 @@ Rejected alternatives:
 | Piece | Where |
 |---|---|
 | Bootstrap dispatch | `go-xkms/pkg/trust/bootstrap` |
+| SPKI-pinned direct fetch | `go-xkms/pkg/trust/fetcher` |
 | Local truststore | `xkey/pkg/truststore` |
 | OS/NSS trust integration | `xkey/pkg/nssdb` |
-| CLI | `xkey/cmd/xkey/cmd/trust.go` |
-| Platform CA import | `xkey trust import-platform`, over SPKI-pinned TLS |
+| CLI | `xkey/cmd/xkey/cmd/trust.go`, `xkey/cmd/xkey/cmd/trust_fetch.go` |
+| Platform CA import | `xkey trust fetch`/`import-platform`, over SPKI-pinned TLS |
 | Attestation anchors | `go-xkms/pkg/attestation/truststore` |
 
 Capability row: **"Trust bootstrap + platform CA import (SPKI-pinned, no TOFU)"**
 — `xkey trust bootstrap|fetch|import-platform`.
 
-The platform relationship is **wire-only**: `xkey trust import-platform` fetches
-`GET /api/v1/ca/bundle` over SPKI-pinned TLS. There is no Go import between xkey
-and go-trusted-platform in either direction.
+The platform relationship is **wire-only**: `xkey trust fetch`/
+`import-platform` fetch `GET /v1/ca/bootstrap` (the fetcher's
+`DefaultBundlePath` — go-xkms's own *unauthenticated* first-contact route,
+served by whichever go-xkms-based server the operator points at, not
+specifically go-trusted-platform) over SPKI-pinned TLS. There is no Go import
+between xkey and any server it bootstraps trust from, in either direction.
 
 ## Data flow
 
@@ -83,9 +94,14 @@ xkey trust classify <fingerprint> --purpose tpm-manufacturer
 xkey trust install <fingerprint>
    → xkey/pkg/nssdb + OS trust store: the system and browsers now trust it
 
-xkey trust import-platform kms.example.com:8443
-   → SPKI-pinned TLS → GET /api/v1/ca/bundle → store + classify
+xkey trust fetch https://kms.example.com:8443/v1/ca/bootstrap --spki-pin <hex>
+xkey trust import-platform kms.example.com:8443 --spki-pin <hex>
+   → go-xkms/pkg/trust/fetcher.Fetch (SPKI pin only, no dispatch, no fallback)
+   → SPKI-pinned TLS → GET /v1/ca/bootstrap → store (+ optional OS install with --install-system)
 ```
+
+`import-platform` builds the URL from `<host:port>`; `fetch` takes any URL, so
+it also reaches a non-canonical bundle endpoint an operator has configured.
 
 ## Trust boundaries
 

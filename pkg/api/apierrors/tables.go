@@ -18,6 +18,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -142,4 +143,27 @@ var BarrierSentinelClasses = []SentinelClass{
 	// Recovery and root token errors.
 	{seal.ErrRecoveryKeysNotFound, ClassNotFound},
 	{seal.ErrRootTokenVerificationFailed, ClassUnauthenticated},
+}
+
+// PolicySentinelClasses classifies the TPM 2.0 PCR-bank sealed-secret
+// authorization policy domain errors pkg/seal/policy's Manager operations
+// (CreatePolicy, GetPolicy, RefreshPolicy, VerifyPolicy, DeletePolicy,
+// ListPolicies, ExportPolicy) return, plus the xkms.ErrNotConfigured /
+// xkms.ErrNilRequest sentinels pkg/xkms's Policy* servicer methods return
+// when no policy manager is composed or the request is nil. Both
+// pkg/api/grpc/service_policy.go's mapPolicyError and pkg/api/mcp's mirror
+// of it read this table (go-xkms#691, following the go-xkms#912 precedent
+// set for PIV and barrier).
+var PolicySentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+	{policy.ErrPolicyNotFound, ClassNotFound},
+	{policy.ErrPolicyExists, ClassAlreadyExists},
+	{policy.ErrInvalidName, ClassInvalidArgument},
+	{policy.ErrInvalidBank, ClassInvalidArgument},
+	{policy.ErrUnsupportedBank, ClassInvalidArgument},
+	{policy.ErrNoPCRsSelected, ClassInvalidArgument},
+	{policy.ErrPCRIndexOutOfRange, ClassInvalidArgument},
+	{policy.ErrDuplicatePCRIndex, ClassInvalidArgument},
+	{policy.ErrExportFailed, ClassInternal},
 }

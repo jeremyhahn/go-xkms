@@ -15,10 +15,13 @@ package cmd
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 // resetTouchFlags resets all touch command flags to their default values.
@@ -176,4 +179,29 @@ func TestPasswordTypeCmdErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRunTouch_DaemonNotRunning exercises the real IPC client against a
+// socket path with no daemon listening: the Unix-domain connect is refused
+// immediately, translating to ErrTouchDaemonNotRunning without touching any
+// real system daemon.
+func TestRunTouch_DaemonNotRunning(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("password", "", "")
+	cmd.Flags().String("socket", "", "")
+	require.NoError(t, cmd.Flags().Set("socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+
+	err := runTouch(cmd, nil)
+	require.ErrorIs(t, err, ErrTouchDaemonNotRunning)
+}
+
+func TestRunTouch_DaemonNotRunning_NamedPassword(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("password", "", "")
+	cmd.Flags().String("socket", "", "")
+	require.NoError(t, cmd.Flags().Set("socket", filepath.Join(t.TempDir(), "no-daemon.sock")))
+	require.NoError(t, cmd.Flags().Set("password", "DatabaseProd"))
+
+	err := runTouch(cmd, nil)
+	require.ErrorIs(t, err, ErrTouchDaemonNotRunning)
 }

@@ -146,29 +146,15 @@ func runImportData(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &ImportDataError{Operation: "create_temp_mount", Err: err}
 	}
-	defer func() { _ = os.RemoveAll(tmpMount) }()
+	// Only remove the temporary mount point once it's confirmed unmounted.
+	// A directory that is still mounted (e.g. because Lock failed) holds
+	// the volume's contents; removing it would destroy them.
+	defer removeTempMount(cmd.OutOrStdout(), vol, tmpMount)
 
 	// Unlock the volume at the temp mount point
 	vol.MountPoint = tmpMount
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Unlocking volume at temporary mount point...\n")
-	if err := vol.Unlock(passphrase); err != nil {
-		return &ImportDataError{Operation: "unlock", Err: err}
-	}
-
-	// Copy data from source to the mounted volume
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Importing data from %s...\n", sourceDir)
-	if err := vol.CopyDataToVolume(sourceDir); err != nil {
-		lockErr := vol.Lock()
-		if lockErr != nil {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: could not lock volume: %v\n", lockErr)
-		}
-		return &ImportDataError{Operation: "copy_data", Err: err}
-	}
-
-	// Lock the temporary mount
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Locking volume...")
-	if err := vol.Lock(); err != nil {
-		return &ImportDataError{Operation: "lock", Err: err}
+	if err := importDataToVolume(cmd.OutOrStdout(), vol, sourceDir, tmpMount, passphrase); err != nil {
+		return err
 	}
 
 	// Clean up original plaintext data if requested. This must happen
@@ -196,6 +182,66 @@ func runImportData(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// importDataVolume is the subset of *luks.Volume behavior runImportData
+// needs to unlock, copy into and lock the volume, and to check whether its
+// mount point is still mounted. The interface exists so tests can
+// fault-inject unlock, copy and lock failures without a real LUKS
+// container or loop device.
+type importDataVolume interface {
+	Unlock(passphrase string) error
+	Lock() error
+	CopyDataToVolume(sourceDir string) error
+	IsMounted() bool
+}
+
+// Compile-time check that *luks.Volume satisfies importDataVolume.
+var _ importDataVolume = (*luks.Volume)(nil)
+
+// importDataToVolume unlocks vol, copies sourceDir into it and locks it
+// again. On a copy or lock failure it reports that the temporary mount
+// point at tmpMount may still be mounted and holds the copied data, so the
+// caller's deferred cleanup must not blindly remove it.
+func importDataToVolume(out io.Writer, vol importDataVolume, sourceDir, tmpMount, passphrase string) error {
+	_, _ = fmt.Fprintf(out, "Unlocking volume at temporary mount point...\n")
+	if err := vol.Unlock(passphrase); err != nil {
+		return &ImportDataError{Operation: "unlock", Err: err}
+	}
+
+	// Copy data from source to the mounted volume
+	_, _ = fmt.Fprintf(out, "Importing data from %s...\n", sourceDir)
+	if err := vol.CopyDataToVolume(sourceDir); err != nil {
+		if lockErr := vol.Lock(); lockErr != nil {
+			_, _ = fmt.Fprintf(out, "Warning: could not lock volume: %v\n", lockErr)
+			_, _ = fmt.Fprintf(out, "Warning: %s is still mounted and holds the copied data; inspect it before removing.\n", tmpMount)
+		}
+		return &ImportDataError{Operation: "copy_data", Err: err}
+	}
+
+	// Lock the temporary mount
+	_, _ = fmt.Fprintln(out, "Locking volume...")
+	if err := vol.Lock(); err != nil {
+		_, _ = fmt.Fprintf(out, "Warning: %s is still mounted and holds the copied data; inspect it before removing.\n", tmpMount)
+		return &ImportDataError{Operation: "lock", Err: err}
+	}
+
+	return nil
+}
+
+// removeTempMount removes the temporary mount-point directory used during
+// import, but only after confirming the volume is no longer mounted there.
+// A directory that is still mounted (because Unlock succeeded but Lock
+// never ran or failed) holds the volume's contents; it is left in place
+// and reported instead of being deleted.
+func removeTempMount(out io.Writer, vol importDataVolume, tmpMount string) {
+	if vol.IsMounted() {
+		_, _ = fmt.Fprintf(out, "Warning: %s is still mounted; leaving it in place. Run 'xkey luks2 lock' against it, then remove it manually once its contents are no longer at risk.\n", tmpMount)
+		return
+	}
+	if err := os.RemoveAll(tmpMount); err != nil {
+		_, _ = fmt.Fprintf(out, "Warning: failed to remove temporary mount point %s: %v\n", tmpMount, err)
+	}
 }
 
 // cleanupSourceDir removes plaintext data from the source directory after
