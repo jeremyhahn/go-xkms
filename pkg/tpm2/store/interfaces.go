@@ -36,9 +36,6 @@ type SignerOpts struct {
 
 	// PSSOptions specifies RSA-PSS options (optional)
 	PSSOptions interface{}
-
-	// BlobCN is the common name for blob storage (optional)
-	BlobCN *string
 }
 
 // HashFunc implements crypto.SignerOpts
@@ -131,12 +128,4 @@ type KeyBackend interface {
 	Get(attrs *types.KeyAttributes, fsext types.FSExtension) ([]byte, error)
 	Save(attrs *types.KeyAttributes, data []byte, fsext types.FSExtension, overwrite bool) error
 	Delete(attrs *types.KeyAttributes) error
-}
-
-// SignerStorer provides crypto.Signer storage operations
-type SignerStorer interface {
-	Get(attrs *types.KeyAttributes) (interface{}, error)
-	Save(attrs *types.KeyAttributes, signer interface{}) error
-	Delete(attrs *types.KeyAttributes) error
-	SaveSignature(opts *SignerOpts, signature, digest []byte) error
 }

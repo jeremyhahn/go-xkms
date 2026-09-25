@@ -43,6 +43,7 @@ the folder in the same commit that changes the behavior.
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
+| [signing](signing/) | The embedded SDK's `Sign`/`Verify` — persisted per-blob checksums (`SignOptions.BlobCN`, `VerifyOpts.IntegrityCheck`) shared by every backend |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [storage-engines](storage-engines/) | The `storage.Backend` interface and the `storage.backend` config choice: file, PebbleDB, memory, and the embedded/remote qrdb backend |
 | [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |
@@ -128,6 +129,7 @@ by five and reports unconverted folders as converted.
 | [audit-log](audit-log/) | — |
 | [cluster](cluster/) | `cluster/README.md` — **absorbed and deleted**; `cluster/ca-key-custody.md` retained as a companion deep-dive, linked from [`cluster/architecture.md`](cluster/architecture.md) |
 | [luks](luks/) | — |
+| [signing](signing/) | `verification/` — **absorbed and deleted** (its `ChecksumProvider` was never wired to a live verifier; superseded by `types.ChecksumProvider`) |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
 | [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |

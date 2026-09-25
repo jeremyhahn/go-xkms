@@ -23,6 +23,10 @@ import (
 // was not properly initialized (e.g., nil backend or codec failure).
 var ErrSignerStoreNotInitialized = errors.New("signer store: not initialized")
 
+// ErrInvalidSignerOpts is returned when SaveSignature, GetSignature, or
+// Checksum is called with nil opts or nil opts.KeyAttributes.
+var ErrInvalidSignerOpts = errors.New("signer store: invalid signer options")
+
 // ErrSignerNotFound is returned when a signer is not found in storage.
 type ErrSignerNotFound struct {
 	CN string
@@ -140,6 +144,46 @@ func (e *ErrSignatureSave) Error() string {
 }
 
 func (e *ErrSignatureSave) Unwrap() error { return e.Cause }
+
+// ErrSignatureNotFound is returned when no persisted digest/signature record
+// exists for the requested key attributes and blob CN.
+type ErrSignatureNotFound struct {
+	Key string
+}
+
+func (e *ErrSignatureNotFound) Error() string {
+	return fmt.Sprintf("signature not found for %s", e.Key)
+}
+
+// ErrSignatureGet is returned when the storage get operation fails while
+// reading a persisted signature.
+type ErrSignatureGet struct {
+	Key   string
+	Cause error
+}
+
+func (e *ErrSignatureGet) Error() string {
+	return fmt.Sprintf("failed to get signature %s: %v", e.Key, e.Cause)
+}
+
+func (e *ErrSignatureGet) Unwrap() error { return e.Cause }
+
+// ErrSignatureParse is returned when a persisted signature record cannot be
+// decoded back into its digest and signature components.
+type ErrSignatureParse struct {
+	Key   string
+	Cause error
+}
+
+func (e *ErrSignatureParse) Error() string {
+	return fmt.Sprintf("failed to parse signature record %s: %v", e.Key, e.Cause)
+}
+
+func (e *ErrSignatureParse) Unwrap() error { return e.Cause }
+
+// ErrMalformedSignatureData is returned when a persisted signature record is
+// missing its digest or signature field.
+var ErrMalformedSignatureData = errors.New("signature store: malformed signature record")
 
 // ErrUnsupportedAlgorithm is returned when an unsupported key algorithm is specified.
 type ErrUnsupportedAlgorithm struct {

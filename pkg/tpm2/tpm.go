@@ -292,11 +292,10 @@ type Params struct {
 	// pointed at an httptest server or one that fails the test if invoked;
 	// production callers leave it nil and get http.DefaultClient, bounded by
 	// the request context built from Config.EK.CertDownloadTimeout.
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
-	SignerStore store.SignerStorer
-	Tracker     types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
-	Transport   transport.TPM           // Optional: custom transport for testing
+	HTTPClient *http.Client
+	Logger     *slog.Logger
+	Tracker    types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
+	Transport  transport.TPM           // Optional: custom transport for testing
 }
 
 type TPM2 struct {
@@ -333,7 +332,6 @@ type TPM2 struct {
 	platformKeyStore PlatformKeyStorer
 	platformSRKAttrs *types.KeyAttributes
 	random           io.Reader
-	signerStore      store.SignerStorer
 	simulator        SimulatorInterface
 	ssrkAttrs        *types.KeyAttributes
 	tracker          types.AEADSafetyTracker
@@ -478,7 +476,6 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		backend:      params.Backend,
 		blobStore:    params.BlobStore,
 		certStore:    params.CertStore,
-		signerStore:  params.SignerStore,
 		debugSecrets: params.DebugSecrets,
 		config:       params.Config,
 		device:       device,

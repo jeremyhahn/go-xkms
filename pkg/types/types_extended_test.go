@@ -22,6 +22,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -323,6 +324,185 @@ func TestSimpleVerifier_Verify_UnsupportedKeyType(t *testing.T) {
 	err := v.Verify(unsupportedKey{}, []byte("digest"), []byte("sig"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported public key type")
+}
+
+// ========================================================================
+// Test SimpleVerifier IntegrityCheck
+// ========================================================================
+
+// stubChecksumProvider is a minimal ChecksumProvider for IntegrityCheck
+// tests: it returns a fixed checksum, or a fixed error when getErr is set.
+type stubChecksumProvider struct {
+	checksum []byte
+	getErr   error
+}
+
+func (s *stubChecksumProvider) Checksum(opts *VerifyOpts) ([]byte, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return s.checksum, nil
+}
+
+// TestSimpleVerifier_Verify_IntegrityCheck_UntamperedPasses verifies that a
+// valid signature over a digest matching the persisted checksum passes both
+// the cryptographic check and the integrity check.
+func TestSimpleVerifier_Verify_IntegrityCheck_UntamperedPasses(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	h := crypto.SHA256.New()
+	h.Write([]byte("blob contents"))
+	digest := h.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	require.NoError(t, err)
+
+	opts := &VerifyOpts{
+		Hash:             crypto.SHA256,
+		BlobCN:           "my-blob",
+		IntegrityCheck:   true,
+		ChecksumProvider: &stubChecksumProvider{checksum: digest},
+	}
+	v := NewVerifier(opts)
+	err = v.Verify(&key.PublicKey, digest, signature)
+	assert.NoError(t, err)
+}
+
+// TestSimpleVerifier_Verify_IntegrityCheck_TamperedBlobFails verifies that a
+// digest which cryptographically verifies (signed by the same key) but does
+// not match the checksum recorded at sign time is rejected: the signature
+// alone is not enough when IntegrityCheck is set.
+func TestSimpleVerifier_Verify_IntegrityCheck_TamperedBlobFails(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	originalDigest := crypto.SHA256.New()
+	originalDigest.Write([]byte("original blob"))
+	recordedChecksum := originalDigest.Sum(nil)
+
+	tamperedDigest := crypto.SHA256.New()
+	tamperedDigest.Write([]byte("tampered blob"))
+	digest := tamperedDigest.Sum(nil)
+
+	// The attacker resigns the tampered digest with the same key, so the
+	// cryptographic signature check alone would pass.
+	signature, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	require.NoError(t, err)
+
+	opts := &VerifyOpts{
+		Hash:             crypto.SHA256,
+		BlobCN:           "my-blob",
+		IntegrityCheck:   true,
+		ChecksumProvider: &stubChecksumProvider{checksum: recordedChecksum},
+	}
+	v := NewVerifier(opts)
+	err = v.Verify(&key.PublicKey, digest, signature)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrIntegrityCheckFailed)
+}
+
+// TestSimpleVerifier_Verify_IntegrityCheckUnset_UnchangedBehavior verifies
+// that leaving IntegrityCheck unset performs only the cryptographic check,
+// exactly as before this field existed -- even when the digest does not
+// match what a ChecksumProvider would report.
+func TestSimpleVerifier_Verify_IntegrityCheckUnset_UnchangedBehavior(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	h := crypto.SHA256.New()
+	h.Write([]byte("blob contents"))
+	digest := h.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	require.NoError(t, err)
+
+	opts := &VerifyOpts{
+		Hash: crypto.SHA256,
+		// BlobCN and ChecksumProvider deliberately left unset: IntegrityCheck
+		// is false, so verifyIntegrity must never run.
+	}
+	v := NewVerifier(opts)
+	err = v.Verify(&key.PublicKey, digest, signature)
+	assert.NoError(t, err)
+}
+
+// TestSimpleVerifier_Verify_IntegrityCheck_StoreReadFailureIsTypedError
+// verifies that a ChecksumProvider failure (e.g. a store read error) surfaces
+// as the provider's own typed error rather than a silent pass.
+func TestSimpleVerifier_Verify_IntegrityCheck_StoreReadFailureIsTypedError(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	h := crypto.SHA256.New()
+	h.Write([]byte("blob contents"))
+	digest := h.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	require.NoError(t, err)
+
+	storeErr := errors.New("store: read failure")
+
+	opts := &VerifyOpts{
+		Hash:             crypto.SHA256,
+		BlobCN:           "my-blob",
+		IntegrityCheck:   true,
+		ChecksumProvider: &stubChecksumProvider{getErr: storeErr},
+	}
+	v := NewVerifier(opts)
+	err = v.Verify(&key.PublicKey, digest, signature)
+	require.Error(t, err)
+	assert.Same(t, storeErr, err)
+}
+
+// TestSimpleVerifier_Verify_IntegrityCheck_MissingBlobCN verifies that
+// IntegrityCheck without a BlobCN is refused with a typed error rather than
+// silently skipping the check.
+func TestSimpleVerifier_Verify_IntegrityCheck_MissingBlobCN(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	h := crypto.SHA256.New()
+	h.Write([]byte("blob contents"))
+	digest := h.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	require.NoError(t, err)
+
+	opts := &VerifyOpts{
+		Hash:             crypto.SHA256,
+		IntegrityCheck:   true,
+		ChecksumProvider: &stubChecksumProvider{checksum: digest},
+	}
+	v := NewVerifier(opts)
+	err = v.Verify(&key.PublicKey, digest, signature)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBlobCNRequired)
+}
+
+// TestSimpleVerifier_Verify_IntegrityCheck_MissingChecksumProvider verifies
+// that IntegrityCheck without a ChecksumProvider is refused with a typed
+// error rather than silently skipping the check.
+func TestSimpleVerifier_Verify_IntegrityCheck_MissingChecksumProvider(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	h := crypto.SHA256.New()
+	h.Write([]byte("blob contents"))
+	digest := h.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	require.NoError(t, err)
+
+	opts := &VerifyOpts{
+		Hash:           crypto.SHA256,
+		BlobCN:         "my-blob",
+		IntegrityCheck: true,
+	}
+	v := NewVerifier(opts)
+	err = v.Verify(&key.PublicKey, digest, signature)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrChecksumProviderRequired)
 }
 
 // ========================================================================

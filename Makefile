@@ -1165,12 +1165,6 @@ test-signing:
 	@echo "$(CYAN)→ Testing signing package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/signing/...
 
-.PHONY: test-verification
-## test-verification: Run verification package unit tests
-test-verification:
-	@echo "$(CYAN)→ Testing verification package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/verification/...
-
 .PHONY: test-attestation
 ## test-attestation: Run attestation package unit tests (invariants, android, dice)
 test-attestation:
