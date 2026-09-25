@@ -15,16 +15,14 @@ package grpc
 
 import (
 	"context"
-	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/apierrors"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // The SealStore* handlers are the gRPC (and, over the same generated client,
@@ -140,24 +138,17 @@ func (s *Service) SealStoreStatus(ctx context.Context, _ *pb.SealStoreStatusRequ
 }
 
 // mapSealStoreError translates a platform-sealed store error into the gRPC
-// status code a caller can act on, so a capability refusal never surfaces as
-// an opaque Internal error.
+// status code a caller can act on, classifying it through
+// apierrors.SealStoreSentinelClasses -- the table go-xkms#921 made this
+// package share with pkg/api/mcp's mirror of this function -- so a
+// capability refusal never surfaces as an opaque Internal error. Anything
+// not in that table is an internal fault.
 func mapSealStoreError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, xkms.ErrNotConfigured):
-		return status.Error(codes.Unavailable, "platform store not configured")
-	case errors.Is(err, xkms.ErrNilRequest):
-		return status.Error(codes.InvalidArgument, "request is required")
-	case errors.Is(err, seal.ErrSecretNotFound):
-		return status.Error(codes.NotFound, "secret not found")
-	case errors.Is(err, seal.ErrInvalidSecretName):
-		return status.Error(codes.InvalidArgument, "invalid secret name")
-	case errors.Is(err, seal.ErrResealFailed):
-		return status.Error(codes.Internal, "failed to reseal secret")
-	default:
-		return status.Error(codes.Internal, err.Error())
+	if class, ok := apierrors.ClassOf(apierrors.SealStoreSentinelClasses, err); ok {
+		return status.Error(grpcCodeForClass(class), err.Error())
 	}
+	return status.Error(codes.Internal, err.Error())
 }

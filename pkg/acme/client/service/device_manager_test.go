@@ -122,6 +122,36 @@ func TestDeviceManager_Enroll_Success(t *testing.T) {
 	require.Equal(t, result.IDevIDCertificate.SerialNumber, info.Enrollment.IDevIDCertificate.SerialNumber)
 }
 
+// TestDeviceManager_Enroll_InvalidEKCertificatePEM drives Enroll through
+// openDeviceTPM far enough to open and provision the TPM simulator, then
+// fail ensureEKCertificate on a malformed configured EKCertificatePEM. This
+// exercises openDeviceTPM's cleanup path (closing the now-open TPM module
+// before returning), verifying the original ErrInvalidEKCertificatePEM is
+// still the error DeviceManager.Enroll's caller observes — the cleanup
+// itself succeeding must not replace or hide it.
+func TestDeviceManager_Enroll_InvalidEKCertificatePEM(t *testing.T) {
+	server := testutil.NewFakeACMEDirectory(t,
+		[]string{"http-01", "enroll-01", "device-attest-01"}, nil)
+
+	spec := &DeviceSpec{
+		Account:    "acct",
+		CommonName: "device-under-test",
+		Identifier: "device-under-test",
+		Challenge:  DeviceChallengeConfig{Port: "19802", Timeout: 30 * time.Second},
+		TPM: &DeviceTPMConfig{
+			EKCertificatePEM: "not a valid PEM block",
+		},
+	}
+	dm := newDeviceTestManager(t, server.DirectoryURL(), spec)
+
+	_, err := dm.Enroll(context.Background(), "dev1")
+	require.Error(t, err)
+
+	var pemErr ErrInvalidEKCertificatePEM
+	require.Truef(t, errors.As(err, &pemErr), "expected ErrInvalidEKCertificatePEM in chain, got %v", err)
+	require.Equal(t, "dev1", pemErr.Name)
+}
+
 // TestDeviceManager_Enroll_UnknownSpec verifies Enroll returns
 // ErrDeviceSpecNotFound for a device name absent from the configuration.
 func TestDeviceManager_Enroll_UnknownSpec(t *testing.T) {

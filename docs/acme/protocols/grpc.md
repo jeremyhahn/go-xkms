@@ -2,6 +2,14 @@
 
 High-performance gRPC API for Admin operations.
 
+> **Correction (go-xkms#942):** there is no `trusted-acme-server` binary,
+> no `cactl` binary, and no `TRUSTEDCA_` environment prefix. The real CLI
+> is `xkmsctl acme` (`docs/acme-issuance/cli.md`); the ACME admin surface
+> is mounted on `xkmsd`'s own unified listener
+> (`cmd/xkmsd/admin.go:finalizeAdminModule`). The server-side address this
+> page's gRPC examples assume is otherwise unverified against the current
+> wiring.
+
 ## Overview
 
 The gRPC API provides binary-encoded, strongly-typed access to all Admin operations. It's optimized for service-to-service communication with features like bidirectional streaming and automatic code generation.
@@ -19,15 +27,12 @@ The gRPC API provides binary-encoded, strongly-typed access to all Admin operati
 
 ### Server
 
-```bash
-# Admin addresses are configured via environment variables
-TRUSTEDCA_ADMIN_GRPC_ADDR=:9444 trusted-acme-server --admin-enabled
-```
+Unverified — see the correction above.
 
-### Client (cactl)
+### Client (`xkmsctl acme`)
 
 ```bash
-cactl --transport grpc --address localhost:9443 status
+xkmsctl acme --acme-server grpc://localhost:9443 status
 ```
 
 ## Protocol Buffers
@@ -314,4 +319,4 @@ See [Unix Socket Protocol](unix-socket.md) for details.
 - [REST Protocol](rest.md)
 - [QUIC Protocol](quic.md)
 - [Unix Socket Protocol](unix-socket.md)
-- [cactl CLI](../cli/cactl.md)
+- [`xkmsctl acme` CLI](../../acme-issuance/cli.md)

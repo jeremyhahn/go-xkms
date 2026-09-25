@@ -23,8 +23,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
-const authzNonceSize = 16
-
 func (s *RestService) AuthorizationHandler(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("=== AuthorizationHandler CALLED ===",
@@ -94,12 +92,11 @@ func (s *RestService) authorizationGetHandler(
 	}
 
 	// Generate nonce for Replay-Nonce header per RFC 8555 Section 6.5
-	nonce, err := common.GenerateNonce(authzNonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Replay-Nonce", nonce)
@@ -169,12 +166,11 @@ func (s *RestService) authorizationPostHandler(
 		"num_challenges", len(clientAuthz.Challenges))
 
 	// Generate nonce for Replay-Nonce header per RFC 8555 Section 6.5
-	nonce, err := common.GenerateNonce(authzNonceSize)
+	nonce, err := s.generateNonce()
 	if err != nil {
 		writeError(w, common.ServerInternal("Unable to generate nonce"))
 		return
 	}
-	s.nonceStore.Add(nonce)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Replay-Nonce", nonce)

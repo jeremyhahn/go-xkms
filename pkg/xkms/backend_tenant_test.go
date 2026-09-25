@@ -21,6 +21,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -74,6 +76,9 @@ type recordingBackend struct {
 	certExistsErr      error
 	getTLSCertErr      error
 	closeErr           error
+
+	// signerStoreMock backs SignerStore(); nil unless a test sets it.
+	signerStoreMock store.SignerStorer
 }
 
 var _ Backend = (*recordingBackend)(nil)
@@ -218,6 +223,8 @@ func (r *recordingBackend) KeyProvider() types.KeyProvider { return nil }
 
 func (r *recordingBackend) CertStorage() certstore.CertificateStorageAdapter { return nil }
 
+func (r *recordingBackend) SignerStore() store.SignerStorer { return r.signerStoreMock }
+
 func (r *recordingBackend) Close() error { return r.closeErr }
 
 // ============================================================
@@ -265,6 +272,105 @@ func TestNewTenantScopedBackend_ValidWrapper(t *testing.T) {
 // embedded in the source file still holds when exercised via a local variable.
 func TestTenantScopedBackend_InterfaceCompliance(t *testing.T) {
 	var _ Backend = (*TenantScopedBackend)(nil)
+}
+
+// TestTenantScopedBackend_SignerStore_Delegates verifies SignerStore reaches
+// the base backend's configured store, tenant-scoped rather than passed
+// through unchanged: a key saved through the tenant-scoped view is readable
+// back through it, but not under its original (unscoped) CN on the base
+// store directly.
+func TestTenantScopedBackend_SignerStore_Delegates(t *testing.T) {
+	baseStore := store.NewSignerStore(nil, storage.New())
+	base := &recordingBackend{signerStoreMock: baseStore}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	attrs := &types.KeyAttributes{CN: "delegated-key", KeyAlgorithm: x509.ECDSA}
+	require.NoError(t, tsb.SignerStore().Save(attrs, key))
+
+	// Readable back through the tenant-scoped view.
+	got, err := tsb.SignerStore().Get(attrs)
+	require.NoError(t, err)
+	assert.True(t, key.PublicKey.Equal(got.(*ecdsa.PrivateKey).Public()))
+
+	// Not present under its original CN directly on the base store: the
+	// tenant-scoped view reached the base store with a different (prefixed)
+	// CN, not the same one it was given.
+	_, err = baseStore.Get(attrs)
+	assert.Error(t, err)
+}
+
+// TestTenantScopedBackend_SignerStore_NilBase verifies SignerStore returns
+// nil, not a panic, when the base backend has none configured.
+func TestTenantScopedBackend_SignerStore_NilBase(t *testing.T) {
+	base := &recordingBackend{}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	assert.Nil(t, tsb.SignerStore())
+}
+
+// TestTenantScopedBackend_SignerStore_IsolatesTenantsOnSameBlobCN verifies
+// go-xkms#724's tenant-isolation requirement directly: two tenants signing
+// under the same key CN and the same BlobCN, against one shared underlying
+// SignerStore (as they would sharing one compositeBackend), each read back
+// only their own record. Without scoping, the second SaveSignature would
+// silently overwrite the first tenant's record -- a cross-tenant integrity
+// denial of service, not merely a mix-up, since it destroys the other
+// tenant's ability to integrity-check its own blob.
+func TestTenantScopedBackend_SignerStore_IsolatesTenantsOnSameBlobCN(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	sharedStore := store.NewSignerStore(nil, storage.New())
+	base := &recordingBackend{signerStoreMock: sharedStore}
+
+	tenantA := NewTenantScopedBackend(base, "tenant-a")
+	tenantB := NewTenantScopedBackend(base, "tenant-b")
+
+	attrs := &types.KeyAttributes{CN: "shared-key-name"}
+	const blobCN = "shared-blob-cn"
+
+	digestA := sha256.Sum256([]byte("tenant a's blob"))
+	digestB := sha256.Sum256([]byte("tenant b's blob"))
+
+	sigA, err := ecdsa.SignASN1(rand.Reader, key, digestA[:])
+	require.NoError(t, err)
+	sigB, err := ecdsa.SignASN1(rand.Reader, key, digestB[:])
+	require.NoError(t, err)
+
+	require.NoError(t, tenantA.SignerStore().SaveSignature(
+		&store.SignerOpts{KeyAttributes: attrs, BlobCN: blobCN}, sigA, digestA[:]))
+	require.NoError(t, tenantB.SignerStore().SaveSignature(
+		&store.SignerOpts{KeyAttributes: attrs, BlobCN: blobCN}, sigB, digestB[:]))
+
+	// Tenant A verifying its own blob under the shared BlobCN passes.
+	verifierA := types.NewVerifier(&types.VerifyOpts{
+		Hash:             crypto.SHA256,
+		KeyAttributes:    attrs,
+		BlobCN:           blobCN,
+		IntegrityCheck:   true,
+		ChecksumProvider: tenantA.SignerStore(),
+	})
+	assert.NoError(t, verifierA.Verify(&key.PublicKey, digestA[:], sigA))
+
+	// Tenant B verifying tenant A's (validly signed) blob under the same
+	// BlobCN fails the integrity check: tenant B's SignerStore sees only
+	// tenant B's own record for this CN and BlobCN, never tenant A's.
+	verifierB := types.NewVerifier(&types.VerifyOpts{
+		Hash:             crypto.SHA256,
+		KeyAttributes:    attrs,
+		BlobCN:           blobCN,
+		IntegrityCheck:   true,
+		ChecksumProvider: tenantB.SignerStore(),
+	})
+	err = verifierB.Verify(&key.PublicKey, digestA[:], sigA)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, types.ErrIntegrityCheckFailed)
+
+	// Tenant B verifying its own blob under the shared BlobCN still passes.
+	assert.NoError(t, verifierB.Verify(&key.PublicKey, digestB[:], sigB))
 }
 
 // ============================================================

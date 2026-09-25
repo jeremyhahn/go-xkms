@@ -50,6 +50,17 @@ const MaxPasswordFieldBytes = 8192
 // (errors.Is reaches it through the *BadBodyError wrapper).
 var ErrPasswordTooLarge = errors.New("secureio: password exceeds maximum permitted length")
 
+// ErrPasswordFieldNotString is wrapped by *BadBodyError when a
+// password_b64 JSON token is present but is not a quoted JSON string
+// (e.g. a number, bool, or array).
+var ErrPasswordFieldNotString = errors.New("password_b64 must be a JSON string")
+
+// ErrPasswordFieldEmptyAfterDecode is wrapped by *BadBodyError when a
+// password_b64 JSON string is short enough that base64's DecodedLen
+// reports zero decodable bytes (1-3 base64 characters with no
+// trailing padding).
+var ErrPasswordFieldEmptyAfterDecode = errors.New("password_b64 empty after decode")
+
 // BadBodyError is returned by PasswordField.UnmarshalJSON when the
 // JSON token is missing, not a string, or not valid base64.
 type BadBodyError struct {
@@ -146,7 +157,7 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
-		return &BadBodyError{Err: errors.New("password_b64 must be a JSON string")}
+		return &BadBodyError{Err: ErrPasswordFieldNotString}
 	}
 	encoded := data[1 : len(data)-1]
 	if len(encoded) == 0 {
@@ -154,7 +165,7 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 	}
 	maxLen := base64.StdEncoding.DecodedLen(len(encoded))
 	if maxLen <= 0 {
-		return &BadBodyError{Err: errors.New("password_b64 empty after decode")}
+		return &BadBodyError{Err: ErrPasswordFieldEmptyAfterDecode}
 	}
 	// Reject an oversized field BEFORE allocating any protected memory.
 	// DecodedLen counts the bytes that trailing '=' padding will drop,

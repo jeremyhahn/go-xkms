@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -111,6 +112,9 @@ func newImportOnlyKeyStore() *importOnlyKeyStore {
 
 func (m *importOnlyKeyStore) KeyProvider() types.KeyProvider { return m.provider }
 func (m *importOnlyKeyStore) CertStorage() certstore.CertificateStorageAdapter {
+	return nil
+}
+func (m *importOnlyKeyStore) SignerStore() store.SignerStorer {
 	return nil
 }
 

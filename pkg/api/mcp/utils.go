@@ -66,7 +66,7 @@ func callerTenantID(ctx context.Context) string {
 func decodeSignature(signature interface{}) ([]byte, error) {
 	switch sig := signature.(type) {
 	case nil:
-		return nil, &errs.Message{Msg: "signature is required"}
+		return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "signature is required"}}
 	case []byte:
 		return sig, nil
 	case string:
@@ -79,7 +79,7 @@ func decodeSignature(signature interface{}) ([]byte, error) {
 		for i, v := range sig {
 			b, ok := v.(float64)
 			if !ok {
-				return nil, &errs.Message{Msg: "signature array must contain only byte values"}
+				return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "signature array must contain only byte values"}}
 			}
 			out[i] = byte(b)
 		}
@@ -87,11 +87,11 @@ func decodeSignature(signature interface{}) ([]byte, error) {
 	default:
 		sigJSON, err := json.Marshal(signature)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "unsupported signature encoding", Err: err}
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "unsupported signature encoding", Err: err}}
 		}
 		var out []byte
 		if err := json.Unmarshal(sigJSON, &out); err != nil {
-			return nil, &errs.Wrapped{Msg: "unsupported signature encoding", Err: err}
+			return nil, &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Wrapped{Msg: "unsupported signature encoding", Err: err}}
 		}
 		return out, nil
 	}

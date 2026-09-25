@@ -43,7 +43,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -531,11 +530,11 @@ func runBarrierRecoveryRootTokenCmd(cmd *cobra.Command, _ []string) error {
 	case OutputFormatJSON:
 		return printer.PrintJSON(resp)
 	default:
-		_, _ = fmt.Fprintf(printer.writer, "Root Token:\n  Token:      %s\n", resp.Token)
+		printer.printf("Root Token:\n  Token:      %s\n", resp.Token)
 		if resp.CreatedAt != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Created At: %s\n", resp.CreatedAt)
+			printer.printf("  Created At: %s\n", resp.CreatedAt)
 		}
-		return nil
+		return printer.Err()
 	}
 }
 
@@ -598,12 +597,12 @@ func printBarrierEnableEncryption(printer *Printer, resp *transport.BarrierEnabl
 			"scope":  resp.Scope,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Encryption Migration Started\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Status: %s\n", resp.Status)
-		_, _ = fmt.Fprintf(printer.writer, "  Scope:  %s\n", resp.Scope)
-		_, _ = fmt.Fprintf(printer.writer, "\nThe migration runs asynchronously. Poll 'barrier status' until the\n")
-		_, _ = fmt.Fprintf(printer.writer, "reported strategy changes from 'none' to the keyed target.\n")
-		return nil
+		printer.printf("Encryption Migration Started\n")
+		printer.printf("  Status: %s\n", resp.Status)
+		printer.printf("  Scope:  %s\n", resp.Scope)
+		printer.printf("\nThe migration runs asynchronously. Poll 'barrier status' until the\n")
+		printer.printf("reported strategy changes from 'none' to the keyed target.\n")
+		return printer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
@@ -623,11 +622,11 @@ func createBarrierClient(cfg *Config) (client.Client, func(), error) {
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	cleanup := func() { _ = cl.Close() }
+	cleanup := func() { closeQuietly(cl) }
 	return cl, cleanup, nil
 }
 
@@ -886,7 +885,7 @@ func readSharesFile(path string, stdin io.Reader) ([]string, error) {
 		if err != nil {
 			return nil, &BarrierSharesFileError{Path: path, Err: err}
 		}
-		defer func() { _ = f.Close() }()
+		defer closeQuietly(f)
 		src = f
 	}
 
@@ -961,7 +960,9 @@ func runBarrierSealCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if !ok {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Seal cancelled")
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Seal cancelled"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -1143,14 +1144,14 @@ func printBarrierStatus(printer *Printer, resp *transport.BarrierStatusResponse)
 		if resp.Sealed {
 			state = "sealed"
 		}
-		_, _ = fmt.Fprintf(printer.writer, "Barrier Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  State:           %s\n", state)
-		_, _ = fmt.Fprintf(printer.writer, "  Strategy:        %s\n", resp.Strategy)
-		_, _ = fmt.Fprintf(printer.writer, "  Hardware Backed: %t\n", resp.HardwareBacked)
+		printer.printf("Barrier Status:\n")
+		printer.printf("  State:           %s\n", state)
+		printer.printf("  Strategy:        %s\n", resp.Strategy)
+		printer.printf("  Hardware Backed: %t\n", resp.HardwareBacked)
 		if resp.InitializedAt != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Initialized At:  %s\n", resp.InitializedAt)
+			printer.printf("  Initialized At:  %s\n", resp.InitializedAt)
 		}
-		return nil
+		return printer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
@@ -1168,13 +1169,13 @@ func printBarrierShamirResult(printer *Printer, resp *transport.BarrierInitializ
 			"share_count":  resp.ShareCount,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Shamir Secret Sharing Initialized\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold:    %d of %d shares required\n",
+		printer.printf("Shamir Secret Sharing Initialized\n")
+		printer.printf("  Threshold:    %d of %d shares required\n",
 			resp.Threshold, resp.TotalShares)
-		_, _ = fmt.Fprintf(printer.writer, "  Shares Generated: %d\n", resp.ShareCount)
-		_, _ = fmt.Fprintf(printer.writer, "\nShares are sealed to enrolled Security Officers and are never\n")
-		_, _ = fmt.Fprintf(printer.writer, "displayed. Each officer must claim their share individually.\n")
-		return nil
+		printer.printf("  Shares Generated: %d\n", resp.ShareCount)
+		printer.printf("\nShares are sealed to enrolled Security Officers and are never\n")
+		printer.printf("displayed. Each officer must claim their share individually.\n")
+		return printer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
@@ -1192,12 +1193,12 @@ func printBarrierRekeyResult(printer *Printer, resp *transport.BarrierRekeyRespo
 			"share_count":  resp.ShareCount,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Barrier Rekey Complete\n")
-		_, _ = fmt.Fprintf(printer.writer, "  New Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
-		_, _ = fmt.Fprintf(printer.writer, "  Shares Generated: %d\n", resp.ShareCount)
-		_, _ = fmt.Fprintf(printer.writer, "\nNew shares are sealed to enrolled Security Officers and are never\n")
-		_, _ = fmt.Fprintf(printer.writer, "displayed. Each officer must claim their new share individually.\n")
-		return nil
+		printer.printf("Barrier Rekey Complete\n")
+		printer.printf("  New Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
+		printer.printf("  Shares Generated: %d\n", resp.ShareCount)
+		printer.printf("\nNew shares are sealed to enrolled Security Officers and are never\n")
+		printer.printf("displayed. Each officer must claim their new share individually.\n")
+		return printer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
@@ -1215,13 +1216,13 @@ func printBarrierRecoveryKeys(printer *Printer, resp *transport.BarrierRecoveryK
 			"share_count":  resp.ShareCount,
 		})
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "Recovery Keys Generated\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d of %d keys required\n",
+		printer.printf("Recovery Keys Generated\n")
+		printer.printf("  Threshold: %d of %d keys required\n",
 			resp.Threshold, resp.TotalShares)
-		_, _ = fmt.Fprintf(printer.writer, "  Shares Generated: %d\n", resp.ShareCount)
-		_, _ = fmt.Fprintf(printer.writer, "\nRecovery shares are sealed to enrolled recovery officers and are\n")
-		_, _ = fmt.Fprintf(printer.writer, "never displayed. Each officer must claim their share individually.\n")
-		return nil
+		printer.printf("  Shares Generated: %d\n", resp.ShareCount)
+		printer.printf("\nRecovery shares are sealed to enrolled recovery officers and are\n")
+		printer.printf("never displayed. Each officer must claim their share individually.\n")
+		return printer.Err()
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(printer.format)}
 	}
@@ -1324,8 +1325,4 @@ func init() {
 	barrierCmd.AddCommand(barrierRekeyCmd)
 	barrierCmd.AddCommand(barrierRecoveryCmd)
 	barrierCmd.AddCommand(barrierEnableEncryptionCmd)
-
-	// Quiet the unused import linter on errors.Is wrappers we expose
-	// through Unwrap() but do not call directly within this file.
-	_ = errors.Is
 }

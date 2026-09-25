@@ -21,6 +21,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -48,7 +49,12 @@ printed: stdout is read by terminal scrollback, shell history, pipes and CI
 logs, none of which can be wiped. The public key is displayed for distribution
 to clients.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		outputFile, _ := cmd.Flags().GetString("output")
+		fr := newFlagReader(cmd)
+		outputFile := fr.String("output")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		generateNoiseKey(outputFile)
 	},
 }
@@ -59,8 +65,13 @@ var noiseShowKeyCmd = &cobra.Command{
 	Short: "Show public key from a Noise static key",
 	Long:  `Derive and display the public key from a Noise static private key file or hex string.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		keyFile, _ := cmd.Flags().GetString("key-file")
-		keyHex, _ := cmd.Flags().GetString("key-hex")
+		fr := newFlagReader(cmd)
+		keyFile := fr.String("key-file")
+		keyHex := fr.String("key-hex")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		showNoiseKey(keyFile, keyHex)
 	},
 }
@@ -75,7 +86,12 @@ from a server's TLS certificate. This pin is used for SPKI-pinned TLS bootstrap.
 The pin is computed from a PEM certificate file (--cert-file). To obtain the
 server's certificate, use: openssl s_client -connect host:port </dev/null | openssl x509 > cert.pem`,
 	Run: func(cmd *cobra.Command, args []string) {
-		certFile, _ := cmd.Flags().GetString("cert-file")
+		fr := newFlagReader(cmd)
+		certFile := fr.String("cert-file")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		showSPKIPin(certFile)
 	},
 }
@@ -224,7 +240,9 @@ func removeIfSame(created os.FileInfo, path string) {
 		return
 	}
 
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		slog.Default().Debug("xkmsctl: cleanup remove failed", "path", path, "error", err)
+	}
 }
 
 func showNoiseKey(keyFile, keyHex string) {

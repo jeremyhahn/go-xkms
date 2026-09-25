@@ -2921,7 +2921,11 @@ func (t *Transport) doRawRequest(ctx context.Context, method, path string, body 
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "request failed", Err: err}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			slog.Debug("unix transport: failed to close HTTP response body", "error", cerr)
+		}
+	}()
 
 	respData, err := io.ReadAll(resp.Body)
 	if err != nil {

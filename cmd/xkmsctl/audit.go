@@ -73,7 +73,12 @@ Examples:
 			return
 		}
 
-		all, _ := cmd.Flags().GetBool("all")
+		fr := newFlagReader(cmd)
+		all := fr.Bool("all")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		if all {
 			auditQueryAll(cfg, printer, filter)
 			return
@@ -85,15 +90,19 @@ Examples:
 // auditFilterFromFlags builds an AuditFilter from the query command's flags,
 // parsing --from/--to as RFC3339 timestamps.
 func auditFilterFromFlags(cmd *cobra.Command) (*client.AuditFilter, error) {
-	actor, _ := cmd.Flags().GetString("actor")
-	resource, _ := cmd.Flags().GetString("resource")
-	action, _ := cmd.Flags().GetString("action")
-	outcome, _ := cmd.Flags().GetString("outcome")
-	tenantID, _ := cmd.Flags().GetString("tenant")
-	limit, _ := cmd.Flags().GetInt("limit")
-	cursor, _ := cmd.Flags().GetString("cursor")
-	fromStr, _ := cmd.Flags().GetString("from")
-	toStr, _ := cmd.Flags().GetString("to")
+	fr := newFlagReader(cmd)
+	actor := fr.String("actor")
+	resource := fr.String("resource")
+	action := fr.String("action")
+	outcome := fr.String("outcome")
+	tenantID := fr.String("tenant")
+	limit := fr.Int("limit")
+	cursor := fr.String("cursor")
+	fromStr := fr.String("from")
+	toStr := fr.String("to")
+	if err := fr.Err(); err != nil {
+		return nil, err
+	}
 
 	filter := &client.AuditFilter{
 		Actor:    actor,
@@ -131,10 +140,10 @@ func createAuditClient(cfg *Config) (client.Client, func(), error) {
 		return nil, nil, &WrappedError{Sentinel: ErrCreateClientFailed, Err: err}
 	}
 	if err := cl.Connect(context.Background()); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
-	return cl, func() { _ = cl.Close() }, nil
+	return cl, func() { closeQuietly(cl) }, nil
 }
 
 // auditQuery fetches a single page of audit events and prints it.
@@ -218,37 +227,40 @@ func printAuditPage(printer *Printer, page *client.AuditPage) {
 		}
 	case OutputFormatTable:
 		if len(page.Events) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No audit events found")
+			printer.println("No audit events found")
 			return
 		}
-		_, _ = fmt.Fprintf(printer.writer, "%-25s %-15s %-25s %-15s %-10s\n",
+		printer.printf("%-25s %-15s %-25s %-15s %-10s\n",
 			"TIMESTAMP", "ACTOR", "RESOURCE", "ACTION", "OUTCOME")
-		_, _ = fmt.Fprintln(printer.writer, repeatString("-", 94))
+		printer.println(repeatString("-", 94))
 		for _, e := range page.Events {
-			_, _ = fmt.Fprintf(printer.writer, "%-25s %-15s %-25s %-15s %-10s\n",
+			printer.printf("%-25s %-15s %-25s %-15s %-10s\n",
 				e.Timestamp.Format(time.RFC3339),
 				truncateString(e.Actor, 15),
 				truncateString(e.Resource, 25),
 				truncateString(e.Action, 15),
 				truncateString(e.Outcome, 10))
 		}
-		_, _ = fmt.Fprintf(printer.writer, "\nTotal: %d event(s)\n", len(page.Events))
+		printer.printf("\nTotal: %d event(s)\n", len(page.Events))
 		if page.Next != "" {
-			_, _ = fmt.Fprintf(printer.writer, "Next cursor: %s\n", page.Next)
+			printer.printf("Next cursor: %s\n", page.Next)
 		}
 	case OutputFormatText:
 		if len(page.Events) == 0 {
-			_, _ = fmt.Fprintln(printer.writer, "No audit events found")
+			printer.println("No audit events found")
 			return
 		}
-		_, _ = fmt.Fprintln(printer.writer, "Audit Events:")
+		printer.println("Audit Events:")
 		for _, e := range page.Events {
-			_, _ = fmt.Fprintf(printer.writer, "  - %s actor=%s resource=%s action=%s outcome=%s\n",
+			printer.printf("  - %s actor=%s resource=%s action=%s outcome=%s\n",
 				e.Timestamp.Format(time.RFC3339), e.Actor, e.Resource, e.Action, e.Outcome)
 		}
 		if page.Next != "" {
-			_, _ = fmt.Fprintf(printer.writer, "Next cursor: %s\n", page.Next)
+			printer.printf("Next cursor: %s\n", page.Next)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

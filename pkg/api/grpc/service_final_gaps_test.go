@@ -2203,13 +2203,8 @@ func TestServerStartStop(t *testing.T) {
 		errChan <- server.Start()
 	}()
 
-	// Give the server a moment to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Check that the server is listening
-	if server.Port() == 0 {
-		t.Error("Expected server port to be set")
-	}
+	// Wait for the listener to bind instead of sleeping a fixed duration.
+	waitForListener(t, server, 5*time.Second)
 
 	// Stop the server
 	if err := server.Stop(); err != nil {
@@ -2263,8 +2258,8 @@ func TestServerStartWithTLS(t *testing.T) {
 		errChan <- server.Start()
 	}()
 
-	// Give the server a moment to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the listener to bind instead of sleeping a fixed duration.
+	waitForListener(t, server, 5*time.Second)
 
 	// Stop the server
 	if err := server.Stop(); err != nil {

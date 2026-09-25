@@ -47,53 +47,36 @@ var (
 
 // IsNotFoundError returns true if the error is a "not found" type error.
 func IsNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	switch err {
-	case ErrCertificateNotFound, ErrAccountNotFound, ErrOrderNotFound,
-		ErrTenantNotFound, ErrTenantRootCANotFound, ErrTenantIntCANotFound,
-		ErrEABNotFound:
-		return true
-	}
-	return false
+	return errors.Is(err, ErrCertificateNotFound) ||
+		errors.Is(err, ErrAccountNotFound) ||
+		errors.Is(err, ErrOrderNotFound) ||
+		errors.Is(err, ErrTenantNotFound) ||
+		errors.Is(err, ErrTenantRootCANotFound) ||
+		errors.Is(err, ErrTenantIntCANotFound) ||
+		errors.Is(err, ErrEABNotFound)
 }
 
 // IsValidationError returns true if the error is a validation error.
 func IsValidationError(err error) bool {
-	if err == nil {
-		return false
-	}
-	switch err {
-	case ErrInvalidRequest, ErrInvalidTenantID, ErrInvalidEABPurpose,
-		ErrInvalidKeyAlgorithm:
-		return true
-	}
-	return false
+	return errors.Is(err, ErrInvalidRequest) ||
+		errors.Is(err, ErrInvalidTenantID) ||
+		errors.Is(err, ErrInvalidEABPurpose) ||
+		errors.Is(err, ErrInvalidKeyAlgorithm)
 }
 
 // IsAlreadyExistsError returns true if the error indicates a resource already exists.
 func IsAlreadyExistsError(err error) bool {
-	if err == nil {
-		return false
-	}
-	switch err {
-	case ErrTenantAlreadyExists, ErrTenantRootCAExists, ErrTenantIntCAExists:
-		return true
-	}
-	return false
+	return errors.Is(err, ErrTenantAlreadyExists) ||
+		errors.Is(err, ErrTenantRootCAExists) ||
+		errors.Is(err, ErrTenantIntCAExists)
 }
 
 // IsUnauthorizedError returns true if the error is an authorization error.
 func IsUnauthorizedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	switch err {
-	case ErrUnauthorized, ErrForbidden, ErrInvalidAPIKey, ErrInsufficientPrivileges:
-		return true
-	}
-	return false
+	return errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrForbidden) ||
+		errors.Is(err, ErrInvalidAPIKey) ||
+		errors.Is(err, ErrInsufficientPrivileges)
 }
 
 // Config defines the admin API configuration.

@@ -157,7 +157,6 @@ func (s *SwtpmConnection) InitializeTPM() error {
 		DebugSecrets: true,
 		FQDN:         s.deviceID,
 		Logger:       nil,
-		SignerStore:  nil,
 		Transport:    s.transport,
 	}
 
@@ -235,7 +234,6 @@ func (s *SwtpmConnection) InitializeTPMWithECDSA() error {
 		DebugSecrets: true,
 		FQDN:         s.deviceID,
 		Logger:       nil,
-		SignerStore:  nil,
 		Transport:    s.transport,
 	}
 

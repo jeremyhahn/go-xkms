@@ -12,72 +12,16 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package transport provides a unified transport abstraction layer for the
-// xkms SDK. It defines interfaces that all protocol implementations
-// (gRPC, REST, QUIC, MCP, Unix, Embedded) must implement to enable
-// consistent communication patterns across different transport mechanisms.
+// xkms SDK. The Client interface in client.go composes the service-specific
+// contracts that every protocol implementation (gRPC, REST, QUIC, MCP, Unix,
+// Embedded) must implement to enable consistent communication patterns
+// across different transport mechanisms.
 package transport
 
 import (
-	"context"
 	"crypto/tls"
 	"time"
 )
-
-// Transport defines the interface for all transport implementations.
-// Each protocol (gRPC, REST, QUIC, MCP, Unix, Embedded) implements this
-// interface to provide consistent connection management and request handling.
-type Transport interface {
-	// Connect establishes the connection to the server.
-	// The context can be used to set connection timeouts.
-	Connect(ctx context.Context) error
-
-	// Close closes the connection and releases any associated resources.
-	// It is safe to call Close multiple times.
-	Close() error
-
-	// Healthy checks if the connection is healthy and ready for requests.
-	// Returns true if the transport can successfully communicate with the server.
-	Healthy(ctx context.Context) bool
-
-	// Conn returns the underlying connection object.
-	// The actual type depends on the transport implementation:
-	// - gRPC: *grpc.ClientConn
-	// - REST: *http.Client
-	// - QUIC: *http.Client (http3)
-	// - MCP: net.Conn
-	// - Unix: *grpc.ClientConn
-	// - Embedded: nil (no network connection)
-	Conn() interface{}
-
-	// Request performs a unary request/response operation.
-	// The method parameter identifies the operation (e.g., "Health", "GenerateKey").
-	// The req and resp parameters are protocol-specific request/response types.
-	Request(ctx context.Context, method string, req, resp interface{}) error
-
-	// RequestStream opens a bidirectional stream for streaming operations.
-	// Returns ErrStreamNotSupported if the transport doesn't support streaming.
-	RequestStream(ctx context.Context, method string, req interface{}) (Stream, error)
-}
-
-// Stream represents a bidirectional communication stream for protocols
-// that support streaming (e.g., gRPC, QUIC).
-type Stream interface {
-	// Send sends a message on the stream.
-	// Returns an error if the stream is closed or the send fails.
-	Send(msg interface{}) error
-
-	// Recv receives a message from the stream.
-	// Returns io.EOF when the stream is closed by the server.
-	// Returns an error if the receive fails.
-	Recv(msg interface{}) error
-
-	// Close closes the stream and releases resources.
-	// After Close returns, Send and Recv will return errors.
-	Close() error
-
-	// Context returns the context associated with this stream.
-	Context() context.Context
-}
 
 // Config contains common transport configuration options.
 // Individual transport implementations may support additional

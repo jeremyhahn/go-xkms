@@ -50,7 +50,7 @@ var (
 // layer sits between the qrdb SDK and the wire.
 //
 // There are deliberately no request/response DTOs for membership mutation:
-// REST never mutates Raft membership (docs/cluster/api.md, docs/web/parity.md
+// REST never mutates Raft membership (docs/clustering/api.md, docs/web/parity.md
 // "Cluster mutations") — that goes through go-qrdb's own control plane via
 // `xkmsctl cluster add`/`remove` only.
 

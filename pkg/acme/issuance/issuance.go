@@ -19,7 +19,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"sync"
 	"time"
@@ -120,7 +122,7 @@ func validateConfig(config *Config) error {
 }
 
 // Issue performs two-phase certificate issuance.
-func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
+func (i *issuer) Issue(ctx context.Context, req *Request) (result *Result, err error) {
 	if !i.config.Enabled {
 		return nil, ErrIssuanceDisabled
 	}
@@ -166,13 +168,16 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 	// Cleanup serial on failure
 	defer func() {
 		if err != nil && i.config.SerialStorage != nil {
-			_ = i.config.SerialStorage.RevokeReservation(ctx, serial)
+			if revokeErr := i.config.SerialStorage.RevokeReservation(ctx, serial); revokeErr != nil {
+				err = errors.Join(err, NewIssuanceError(PhaseSerialPersistence,
+					"failed to revoke serial reservation after issuance failure", revokeErr))
+			}
 		}
 	}()
 
 	// Log issuance intent (best effort - don't fail on audit log errors)
 	if i.config.AuditLogger != nil {
-		_ = i.config.AuditLogger.LogIssuanceIntent(ctx, req, serial)
+		i.logBestEffort("audit: log issuance intent", i.config.AuditLogger.LogIssuanceIntent(ctx, req, serial))
 	}
 
 	// Resolve the signing identity once. Every stage below — the lint
@@ -234,12 +239,12 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 
 	// Log precert creation
 	if i.config.AuditLogger != nil {
-		_ = i.config.AuditLogger.LogPrecertCreated(ctx, precert)
+		i.logBestEffort("audit: log precert created", i.config.AuditLogger.LogPrecertCreated(ctx, precert))
 	}
 
 	// Store precert for audit
 	if i.config.CertStorage != nil {
-		_ = i.config.CertStorage.StorePrecert(ctx, precert)
+		i.logBestEffort("audit: store precert", i.config.CertStorage.StorePrecert(ctx, precert))
 	}
 
 	// Step 10: Submit to CT logs (unless skipped)
@@ -259,7 +264,7 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 
 		// Log CT submission
 		if i.config.AuditLogger != nil {
-			_ = i.config.AuditLogger.LogCTSubmission(ctx, scts, nil)
+			i.logBestEffort("audit: log CT submission", i.config.AuditLogger.LogCTSubmission(ctx, scts, nil))
 		}
 	}
 
@@ -303,10 +308,10 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 
 	// Confirm serial usage (best effort - certificate is already issued)
 	if i.config.SerialStorage != nil {
-		_ = i.config.SerialStorage.ConfirmSerial(ctx, serial)
+		i.logBestEffort("audit: confirm serial", i.config.SerialStorage.ConfirmSerial(ctx, serial))
 	}
 
-	result := &Result{
+	result = &Result{
 		Precert:      precert,
 		FinalCert:    finalCert,
 		Serial:       serial,
@@ -317,7 +322,7 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 
 	// Log issuance complete
 	if i.config.AuditLogger != nil {
-		_ = i.config.AuditLogger.LogIssuanceComplete(ctx, result)
+		i.logBestEffort("audit: log issuance complete", i.config.AuditLogger.LogIssuanceComplete(ctx, result))
 	}
 
 	return result, nil
@@ -593,8 +598,22 @@ func (i *issuer) replacePoisonWithSCTs(template *x509.Certificate, scts []ct.Sig
 // logFailure logs an issuance failure.
 func (i *issuer) logFailure(ctx context.Context, req *Request, phase IssuancePhase, err error) {
 	if i.config.AuditLogger != nil {
-		_ = i.config.AuditLogger.LogIssuanceFailure(ctx, req, phase, err)
+		i.logBestEffort("audit: log issuance failure", i.config.AuditLogger.LogIssuanceFailure(ctx, req, phase, err))
 	}
+}
+
+// logBestEffort reports the error returned by a best-effort side-channel
+// operation (audit logging, precert archival, serial confirmation) instead
+// of dropping it. These operations must never block or fail certificate
+// issuance — the certificate has already been produced, or issuance has
+// already failed for an unrelated reason — but a silently dropped failure
+// here would hide a compliance-relevant gap (a missing audit record, an
+// unconfirmed or unrevoked serial) from the operator.
+func (i *issuer) logBestEffort(op string, err error) {
+	if err == nil {
+		return
+	}
+	slog.Error(NewIssuanceError(PhaseAudit, op+" failed", errors.Join(ErrAuditFailed, err)).Error())
 }
 
 // generateIssuanceID generates a unique issuance ID.

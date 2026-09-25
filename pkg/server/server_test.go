@@ -2380,11 +2380,12 @@ func TestServer_StartUnix_GRPCProtocol(t *testing.T) {
 	err = server.Start()
 	assert.NoError(t, err)
 
-	// Give the server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Unix gRPC server should be set
-	assert.NotNil(t, server.UnixGRPCServer())
+	// Wait for startUnix's goroutine to assign the Unix gRPC server instance
+	// instead of sleeping a fixed duration: under a loaded scheduler the
+	// goroutine may not have run yet within a short sleep.
+	require.Eventually(t, func() bool {
+		return server.UnixGRPCServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "Unix gRPC server was not set")
 
 	// Shutdown
 	err = server.Shutdown()

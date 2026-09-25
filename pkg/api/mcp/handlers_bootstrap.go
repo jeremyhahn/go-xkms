@@ -15,16 +15,39 @@ package mcp
 
 import (
 	"context"
+	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// mapBootstrapError translates a trust-bootstrap listener error into the
+// JSON-RPC code a caller can act on, mirroring
+// pkg/api/grpc/service_bootstrap.go's mapBootstrapError:
+// xkms.ErrBootstrapListenerNotEnabled is Service unavailable (gRPC's
+// codes.Unavailable), matching this transport's own floor for an unwired
+// subsystem elsewhere (errors_cert.go's mapCAError, handlers_share.go's
+// mapShareError); anything else is an internal fault (gRPC's
+// codes.Internal).
+func mapBootstrapError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, xkms.ErrBootstrapListenerNotEnabled) {
+		return &KeyOpError{Code: ErrCodeServiceUnavailable, Err: err}
+	}
+	return &KeyOpError{Code: ErrCodeInternalError, Err: err}
+}
 
 // handleBootstrapShowKeys handles the bootstrap.showKeys method. It reports
 // the running trust-bootstrap listener's public static keys (go-xkms#632).
 // Only public material is ever returned.
 func (s *Server) handleBootstrapShowKeys(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	if s.xkmsService == nil {
-		return nil, xkms.ErrBootstrapListenerNotEnabled
+		return nil, mapBootstrapError(xkms.ErrBootstrapListenerNotEnabled)
 	}
-	return s.xkmsService.BootstrapListenerKeys(ctx)
+	resp, err := s.xkmsService.BootstrapListenerKeys(ctx)
+	if err != nil {
+		return nil, mapBootstrapError(err)
+	}
+	return resp, nil
 }

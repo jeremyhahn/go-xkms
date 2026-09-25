@@ -24,11 +24,125 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
+
+// findRoute returns the captured registration for method+pattern, or fails
+// the test: every assertion below needs the route to actually be mounted.
+func findRoute(t *testing.T, recs *[]captured, method, pattern string) http.HandlerFunc {
+	t.Helper()
+	for _, rec := range *recs {
+		if rec.method == method && rec.pattern == pattern {
+			return rec.handler
+		}
+	}
+	t.Fatalf("route %s %s was not registered", method, pattern)
+	return nil
+}
+
+// TestModule_WithPIVLogin_EnablesCertificateLoginRoute proves the
+// WithPIVLogin option actually reaches the self-built server: with no
+// option, the PIV login route refuses every request as "not enabled"; once
+// configured, the SAME route reaches its next gate (missing client
+// certificate) — proving the option changed the built server's behavior,
+// not just a field on the Module.
+func TestModule_WithPIVLogin_EnablesCertificateLoginRoute(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	newRequest := func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/piv", nil)
+	}
+
+	t.Run("disabled by default", func(t *testing.T) {
+		m, err := NewModule(func() *xkms.XKMSService { return svc })
+		require.NoError(t, err)
+
+		reg, recs := newCaptureRegistrar()
+		m.RegisterHTTP(reg)
+		handler := findRoute(t, recs, http.MethodPost, "/api/v1/auth/login/piv")
+
+		w := httptest.NewRecorder()
+		handler(w, newRequest())
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["message"], "not enabled",
+			"with no WithPIVLogin, the route must refuse before ever looking for a client certificate")
+	})
+
+	t.Run("enabled via WithPIVLogin", func(t *testing.T) {
+		m, err := NewModule(func() *xkms.XKMSService { return svc },
+			WithPIVLogin(&rest.PIVLoginOptions{Enabled: true}))
+		require.NoError(t, err)
+
+		reg, recs := newCaptureRegistrar()
+		m.RegisterHTTP(reg)
+		handler := findRoute(t, recs, http.MethodPost, "/api/v1/auth/login/piv")
+
+		w := httptest.NewRecorder()
+		handler(w, newRequest())
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Contains(t, resp["message"], "client certificate required",
+			"once enabled, the route must reach the certificate-presence gate instead of refusing outright")
+	})
+}
+
+// TestModule_WithSessionOptions_TightensLoginRateLimit proves
+// WithSessionOptions.LoginRatePerMin reaches the self-built server's login
+// rate limiter: with the default (10/min) two rapid requests from the same
+// client both pass the limiter (and fail later, for lack of a client
+// certificate); with LoginRatePerMin=1, the second is rejected with 429
+// before it ever reaches the PIV handler's own checks.
+func TestModule_WithSessionOptions_TightensLoginRateLimit(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	m, err := NewModule(func() *xkms.XKMSService { return svc },
+		WithPIVLogin(&rest.PIVLoginOptions{Enabled: true}),
+		WithSessionOptions(&rest.SessionOptions{LoginRatePerMin: 1}))
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+	handler := findRoute(t, recs, http.MethodPost, "/api/v1/auth/login/piv")
+
+	newRequest := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/piv", nil)
+		req.RemoteAddr = "203.0.113.7:5555"
+		return req
+	}
+
+	first := httptest.NewRecorder()
+	handler(first, newRequest())
+	require.Equal(t, http.StatusUnauthorized, first.Code,
+		"the first request in the window must reach the PIV handler's own gate")
+
+	second := httptest.NewRecorder()
+	handler(second, newRequest())
+	assert.Equal(t, http.StatusTooManyRequests, second.Code,
+		"a LoginRatePerMin of 1 must reject the second request in the same window, body: %s", second.Body.String())
+}
 
 // TestModule_SelfBuiltSurfaceServesRealWebAuthnCeremony is the root-cause
 // regression test: a host that composes the module with ONLY a service

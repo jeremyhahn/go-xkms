@@ -17,6 +17,7 @@ package integration
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -171,13 +172,13 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 
 	// Create TPM2 instance (allow ErrNotInitialized for fresh TPM)
 	tpmInstance, err := tpm2ks.NewTPM2(params)
-	if err != nil && err != tpm2ks.ErrNotInitialized {
+	if err != nil && !errors.Is(err, tpm2ks.ErrNotInitialized) {
 		capture.Close()
 		require.NoError(t, err, "Failed to create TPM2 instance")
 	}
 
 	// Provision if needed
-	if err == tpm2ks.ErrNotInitialized {
+	if errors.Is(err, tpm2ks.ErrNotInitialized) {
 		t.Log("TPM not initialized, provisioning...")
 		if provErr := tpmInstance.Provision(nil); provErr != nil {
 			capture.Close()

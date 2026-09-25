@@ -550,15 +550,26 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		}
 
 		submitter := NewMockLogSubmitter()
-		submitter.SetError("https://log1.example.com", errors.New("failed"))
-		submitter.SetError("https://log2.example.com", errors.New("failed"))
+		log1Err := errors.New("log1 failed")
+		log2Err := errors.New("log2 failed")
+		submitter.SetError("https://log1.example.com", log1Err)
+		submitter.SetError("https://log2.example.com", log2Err)
 
 		policy, err := NewCTPolicy(config, submitter)
 		require.NoError(t, err)
 
 		expiry := time.Now().AddDate(1, 0, 0)
 		_, err = policy.GetSCTs(context.Background(), []byte("test"), nil, expiry)
-		assert.Error(t, err)
+		require.Error(t, err)
+
+		// The policy violation ("not enough SCTs") is reported...
+		var policyErr *PolicyViolationError
+		assert.ErrorAs(t, err, &policyErr)
+		// ...and so is why: both per-log submission failures are joined in
+		// rather than silently dropped, so an operator can see which logs
+		// rejected the precert and why.
+		assert.ErrorIs(t, err, log1Err)
+		assert.ErrorIs(t, err, log2Err)
 	})
 
 	t.Run("RFC6962 log fails but tiled logs succeed", func(t *testing.T) {

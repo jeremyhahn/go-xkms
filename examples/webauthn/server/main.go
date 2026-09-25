@@ -34,6 +34,7 @@ import (
 	"embed"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -262,7 +263,7 @@ func main() {
 	} else {
 		serveErr = server.ListenAndServe()
 	}
-	if serveErr != http.ErrServerClosed {
+	if !errors.Is(serveErr, http.ErrServerClosed) {
 		log.Fatalf("Server error: %v", serveErr)
 	}
 

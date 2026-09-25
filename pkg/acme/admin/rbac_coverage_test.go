@@ -652,7 +652,7 @@ func TestParsePagination_ZeroValues(t *testing.T) {
 func TestTenantService_CreateTenantRole_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.CreateTenantRole(context.Background(), "", &db.CreateRoleRequest{Name: "editor"})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -660,7 +660,7 @@ func TestTenantService_CreateTenantRole_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_CreateTenantRole_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.CreateTenantRole(context.Background(), "tenant-1", &db.CreateRoleRequest{Name: "editor"})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -669,7 +669,7 @@ func TestTenantService_CreateTenantRole_NilQRDB(t *testing.T) {
 func TestTenantService_CreateTenantRole_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	role, err := service.CreateTenantRole(context.Background(), "tenant-1", &db.CreateRoleRequest{
 		Name:     "editor",
@@ -682,7 +682,7 @@ func TestTenantService_CreateTenantRole_Success(t *testing.T) {
 func TestTenantService_GetTenantRole_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.GetTenantRole(context.Background(), "", "role-1")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -690,7 +690,7 @@ func TestTenantService_GetTenantRole_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_GetTenantRole_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.GetTenantRole(context.Background(), "tenant-1", "role-1")
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -699,7 +699,7 @@ func TestTenantService_GetTenantRole_NilQRDB(t *testing.T) {
 func TestTenantService_UpdateTenantRole_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.UpdateTenantRole(context.Background(), "", &db.UpdateRoleRequest{ID: "role-1"})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -707,7 +707,7 @@ func TestTenantService_UpdateTenantRole_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_UpdateTenantRole_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.UpdateTenantRole(context.Background(), "tenant-1", &db.UpdateRoleRequest{ID: "role-1"})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -716,7 +716,7 @@ func TestTenantService_UpdateTenantRole_NilQRDB(t *testing.T) {
 func TestTenantService_DeleteTenantRole_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	err := service.DeleteTenantRole(context.Background(), "", "role-1")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -724,7 +724,7 @@ func TestTenantService_DeleteTenantRole_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_DeleteTenantRole_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	err := service.DeleteTenantRole(context.Background(), "tenant-1", "role-1")
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -733,7 +733,7 @@ func TestTenantService_DeleteTenantRole_NilQRDB(t *testing.T) {
 func TestTenantService_ListTenantRoles_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.ListTenantRoles(context.Background(), "", &db.ListRolesRequest{})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -741,7 +741,7 @@ func TestTenantService_ListTenantRoles_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_ListTenantRoles_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.ListTenantRoles(context.Background(), "tenant-1", &db.ListRolesRequest{})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -754,7 +754,7 @@ func TestTenantService_ListTenantRoles_NilQRDB(t *testing.T) {
 func TestTenantService_CreateTenantUser_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.CreateTenantUser(context.Background(), "", &db.CreateUserRequest{Username: "user1"})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -762,7 +762,7 @@ func TestTenantService_CreateTenantUser_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_CreateTenantUser_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.CreateTenantUser(context.Background(), "tenant-1", &db.CreateUserRequest{Username: "user1"})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -771,7 +771,7 @@ func TestTenantService_CreateTenantUser_NilQRDB(t *testing.T) {
 func TestTenantService_CreateTenantUser_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	user, err := service.CreateTenantUser(context.Background(), "tenant-1", &db.CreateUserRequest{
 		Username: "testuser",
@@ -784,7 +784,7 @@ func TestTenantService_CreateTenantUser_Success(t *testing.T) {
 func TestTenantService_GetTenantUser_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.GetTenantUser(context.Background(), "", "user-1")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -792,7 +792,7 @@ func TestTenantService_GetTenantUser_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_GetTenantUser_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.GetTenantUser(context.Background(), "tenant-1", "user-1")
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -801,7 +801,7 @@ func TestTenantService_GetTenantUser_NilQRDB(t *testing.T) {
 func TestTenantService_UpdateTenantUser_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.UpdateTenantUser(context.Background(), "", &db.UpdateUserRequest{ID: uint64(1)})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -809,7 +809,7 @@ func TestTenantService_UpdateTenantUser_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_UpdateTenantUser_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.UpdateTenantUser(context.Background(), "tenant-1", &db.UpdateUserRequest{ID: uint64(1)})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -818,7 +818,7 @@ func TestTenantService_UpdateTenantUser_NilQRDB(t *testing.T) {
 func TestTenantService_DeleteTenantUser_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	err := service.DeleteTenantUser(context.Background(), "", "user-1")
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -826,7 +826,7 @@ func TestTenantService_DeleteTenantUser_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_DeleteTenantUser_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	err := service.DeleteTenantUser(context.Background(), "tenant-1", "user-1")
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -835,7 +835,7 @@ func TestTenantService_DeleteTenantUser_NilQRDB(t *testing.T) {
 func TestTenantService_ListTenantUsers_EmptyTenantID(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, err := service.ListTenantUsers(context.Background(), "", &db.ListUsersRequest{})
 	assert.ErrorIs(t, err, ErrInvalidTenantID)
@@ -843,7 +843,7 @@ func TestTenantService_ListTenantUsers_EmptyTenantID(t *testing.T) {
 
 func TestTenantService_ListTenantUsers_NilQRDB(t *testing.T) {
 	logger := slog.Default()
-	service := NewTenantAwareAdminService(nil, nil, nil, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, nil, logger, "1.0.0")
 
 	_, err := service.ListTenantUsers(context.Background(), "tenant-1", &db.ListUsersRequest{})
 	assert.ErrorIs(t, err, ErrRBACNotAvailable)
@@ -1170,7 +1170,7 @@ func TestAdminService_ListAccounts_DefaultAndMaxPagination(t *testing.T) {
 func TestCoverageBoost_StoreKeyAndCert_RSAKey(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -1183,7 +1183,7 @@ func TestCoverageBoost_StoreKeyAndCert_RSAKey(t *testing.T) {
 func TestCoverageBoost_StoreKeyAndCert_Ed25519Key(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	_, privKey, err := generateEd25519Key()
 	require.NoError(t, err)
@@ -1197,7 +1197,10 @@ func TestCoverageBoost_StoreKeyAndCert_Ed25519Key(t *testing.T) {
 func generateEd25519Key() (x509.PublicKeyAlgorithm, interface{}, error) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service, err := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	if err != nil {
+		return x509.Ed25519, nil, err
+	}
 	priv, _, err := service.generateKeyPair(x509.Ed25519)
 	return x509.Ed25519, priv, err
 }
@@ -1256,7 +1259,7 @@ func TestCoverageBoost_GetTenantSigningCA_WithGlobalCA(t *testing.T) {
 
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(testCA, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, testCA, nil, qrdbSvc, logger, "1.0.0")
 
 	// No tenant-specific CA exists, should fall back to global CA
 	signer, cert, err := service.GetTenantSigningCA(context.Background(), "nonexistent-tenant")
@@ -1320,7 +1323,7 @@ func TestListTenantUsers_WithCustomPagination(t *testing.T) {
 func TestTenantService_ListTenantRoles_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	resp, err := service.ListTenantRoles(context.Background(), "tenant-1", &db.ListRolesRequest{
 		TenantID: "tenant-1",
@@ -1334,7 +1337,7 @@ func TestTenantService_ListTenantRoles_Success(t *testing.T) {
 func TestTenantService_ListTenantUsers_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	resp, err := service.ListTenantUsers(context.Background(), "tenant-1", &db.ListUsersRequest{
 		TenantID: "tenant-1",
@@ -1348,7 +1351,7 @@ func TestTenantService_ListTenantUsers_Success(t *testing.T) {
 func TestTenantService_GetTenantRole_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	// Create a role first, then get it
 	role, err := service.CreateTenantRole(context.Background(), "tenant-1", &db.CreateRoleRequest{
@@ -1366,7 +1369,7 @@ func TestTenantService_GetTenantRole_Success(t *testing.T) {
 func TestTenantService_UpdateTenantRole_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	role, err := service.CreateTenantRole(context.Background(), "tenant-1", &db.CreateRoleRequest{
 		Name:     "old-name",
@@ -1385,7 +1388,7 @@ func TestTenantService_UpdateTenantRole_Success(t *testing.T) {
 func TestTenantService_DeleteTenantRole_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	role, err := service.CreateTenantRole(context.Background(), "tenant-1", &db.CreateRoleRequest{
 		Name:     "to-delete",
@@ -1400,7 +1403,7 @@ func TestTenantService_DeleteTenantRole_Success(t *testing.T) {
 func TestTenantService_GetTenantUser_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	user, err := service.CreateTenantUser(context.Background(), "tenant-1", &db.CreateUserRequest{
 		Username: "getme",
@@ -1416,7 +1419,7 @@ func TestTenantService_GetTenantUser_Success(t *testing.T) {
 func TestTenantService_UpdateTenantUser_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	user, err := service.CreateTenantUser(context.Background(), "tenant-1", &db.CreateUserRequest{
 		Username: "old-user",
@@ -1435,7 +1438,7 @@ func TestTenantService_UpdateTenantUser_Success(t *testing.T) {
 func TestTenantService_DeleteTenantUser_Success(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	user, err := service.CreateTenantUser(context.Background(), "tenant-1", &db.CreateUserRequest{
 		Username: "deleteme",
@@ -1454,7 +1457,7 @@ func TestTenantService_DeleteTenantUser_Success(t *testing.T) {
 func TestCoverageBoost_StoreKeyAndCert_ECDSAKey(t *testing.T) {
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(nil, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, nil, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	require.NoError(t, err)
@@ -1474,7 +1477,7 @@ func TestCoverageBoost_StoreKeyAndCert_WithRealCA_RSA(t *testing.T) {
 
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(testCA, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, testCA, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -1490,7 +1493,7 @@ func TestCoverageBoost_StoreKeyAndCert_WithRealCA_ECDSA(t *testing.T) {
 
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(testCA, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, testCA, nil, qrdbSvc, logger, "1.0.0")
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -1506,7 +1509,7 @@ func TestCoverageBoost_StoreKeyAndCert_WithRealCA_Ed25519(t *testing.T) {
 
 	logger := slog.Default()
 	qrdbSvc := qrdb.NewTestService()
-	service := NewTenantAwareAdminService(testCA, nil, qrdbSvc, logger, "1.0.0")
+	service := mustTenantAwareAdminService(t, testCA, nil, qrdbSvc, logger, "1.0.0")
 
 	_, privKey, err := generateEd25519Key()
 	require.NoError(t, err)

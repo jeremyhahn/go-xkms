@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"log/slog"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -107,7 +108,9 @@ func (t *Transport) notLeaderInterceptor(
 		return err
 	}
 	defer func() {
-		_ = leaderConn.Close()
+		if cerr := leaderConn.Close(); cerr != nil {
+			slog.Debug("grpc transport: failed to close the redialed leader connection", "error", cerr)
+		}
 	}()
 
 	return invoker(ctx, method, req, reply, leaderConn, opts...)

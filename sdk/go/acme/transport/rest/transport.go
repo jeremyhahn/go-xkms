@@ -515,7 +515,7 @@ func (t *Transport) doRequest(ctx context.Context, route RouteInfo, url string, 
 		t.healthy.Store(false)
 		return nil, t.wrapHTTPError(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer transport.CloseResponseBody(resp)
 
 	t.healthy.Store(true)
 
@@ -691,12 +691,6 @@ func (t *Transport) GetNonce() string {
 		return v.(string)
 	}
 	return ""
-}
-
-// RequestStream initiates a streaming request (not supported for REST).
-func (t *Transport) RequestStream(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-	return nil, errors.NewUnimplemented("rest.Transport.RequestStream",
-		"streaming not supported for REST transport")
 }
 
 // Conn returns the underlying HTTP client.

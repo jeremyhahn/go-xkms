@@ -32,6 +32,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/signing/store"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -230,6 +232,10 @@ func (m *mockKeyStore) KeyProvider() types.KeyProvider {
 }
 
 func (m *mockKeyStore) CertStorage() certstore.CertificateStorageAdapter {
+	return nil
+}
+
+func (m *mockKeyStore) SignerStore() store.SignerStorer {
 	return nil
 }
 
@@ -1615,6 +1621,11 @@ type mockExtendedKeyStore struct {
 	certChains     map[string][]*x509.Certificate
 	tlsCerts       map[string]tls.Certificate
 	rotateKeyError error
+
+	// signerStore is a real, in-memory SignerStorer so Sign/Verify tests can
+	// exercise BlobCN persistence and IntegrityCheck end to end, the same way
+	// a real compositeBackend wires it (pkg/xkms/keystore.go New).
+	signerStore store.SignerStorer
 }
 
 func newMockExtendedKeyStore(name string, backendType types.BackendType) *mockExtendedKeyStore {
@@ -1624,6 +1635,7 @@ func newMockExtendedKeyStore(name string, backendType types.BackendType) *mockEx
 		certs:       make(map[string]*x509.Certificate),
 		certChains:  make(map[string][]*x509.Certificate),
 		tlsCerts:    make(map[string]tls.Certificate),
+		signerStore: store.NewSignerStore(nil, storage.New()),
 	}
 }
 
@@ -1751,6 +1763,10 @@ func (m *mockExtendedKeyStore) Type() types.StoreType {
 
 func (m *mockExtendedKeyStore) CertStorage() certstore.CertificateStorageAdapter {
 	return nil
+}
+
+func (m *mockExtendedKeyStore) SignerStore() store.SignerStorer {
+	return m.signerStore
 }
 
 func (m *mockExtendedKeyStore) Close() error {
@@ -2030,6 +2046,168 @@ func TestVerify_KeyNotFound(t *testing.T) {
 	err := Verify(context.Background(), "nonexistent-key", []byte("data"), []byte("sig"), nil)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+}
+
+// ========================================================================
+// Test Sign/Verify BlobCN persistence and IntegrityCheck (go-xkms#724)
+// ========================================================================
+
+// TestSign_WithBlobCN_PersistsSignature verifies that SignOptions.BlobCN
+// causes Sign to persist the digest and signature through the backend's
+// SignerStore, readable back by the same key attributes and blob CN.
+func TestSign_WithBlobCN_PersistsSignature(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "blob-cn-sign-key"}
+	_, err := software.GenerateRSA(context.Background(), attrs)
+	require.NoError(t, err)
+
+	data := []byte("blob contents")
+	signature, err := Sign(context.Background(), "software:::blob-cn-sign-key", data, &SignOptions{
+		Hash:   crypto.SHA256,
+		BlobCN: "config-v1",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, signature)
+
+	hasher := sha256.New()
+	hasher.Write(data)
+	wantDigest := hasher.Sum(nil)
+
+	gotDigest, gotSignature, err := software.SignerStore().GetSignature(&store.SignerOpts{
+		KeyAttributes: attrs,
+		BlobCN:        "config-v1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, wantDigest, gotDigest)
+	assert.Equal(t, signature, gotSignature)
+}
+
+// TestSign_WithoutBlobCN_DoesNotPersist verifies that Sign leaves the
+// SignerStore untouched when SignOptions.BlobCN is unset, matching the
+// behavior before BlobCN existed.
+func TestSign_WithoutBlobCN_DoesNotPersist(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "no-blob-cn-sign-key"}
+	_, err := software.GenerateRSA(context.Background(), attrs)
+	require.NoError(t, err)
+
+	_, err = Sign(context.Background(), "software:::no-blob-cn-sign-key", []byte("blob contents"), nil)
+	require.NoError(t, err)
+
+	_, _, err = software.SignerStore().GetSignature(&store.SignerOpts{KeyAttributes: attrs})
+	require.Error(t, err)
+	var notFound *store.ErrSignatureNotFound
+	assert.ErrorAs(t, err, &notFound)
+}
+
+// TestVerify_IntegrityCheck_UntamperedBlobPasses verifies that verifying the
+// exact blob that was signed under BlobCN passes with IntegrityCheck set.
+func TestVerify_IntegrityCheck_UntamperedBlobPasses(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "integrity-key"}
+	_, err := software.GenerateECDSA(context.Background(), attrs)
+	require.NoError(t, err)
+
+	data := []byte("the real blob")
+	signature, err := Sign(context.Background(), "software:::integrity-key", data, &SignOptions{
+		Hash:   crypto.SHA256,
+		BlobCN: "release-notes",
+	})
+	require.NoError(t, err)
+
+	err = Verify(context.Background(), "software:::integrity-key", data, signature, &types.VerifyOpts{
+		Hash:           crypto.SHA256,
+		BlobCN:         "release-notes",
+		IntegrityCheck: true,
+	})
+	assert.NoError(t, err)
+}
+
+// TestVerify_IntegrityCheck_TamperedBlobFails verifies that a substitute blob
+// -- validly signed by the same key, but not the one recorded for this
+// BlobCN -- fails Verify when IntegrityCheck is set, even though its
+// signature alone would verify.
+func TestVerify_IntegrityCheck_TamperedBlobFails(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "integrity-tamper-key"}
+	_, err := software.GenerateECDSA(context.Background(), attrs)
+	require.NoError(t, err)
+
+	original := []byte("the real blob")
+	_, err = Sign(context.Background(), "software:::integrity-tamper-key", original, &SignOptions{
+		Hash:   crypto.SHA256,
+		BlobCN: "release-notes",
+	})
+	require.NoError(t, err)
+
+	// A validly signed substitute for the same key, produced separately (so
+	// it does not overwrite the "release-notes" record above).
+	tampered := []byte("a tampered blob")
+	tamperedSig, err := Sign(context.Background(), "software:::integrity-tamper-key", tampered, &SignOptions{
+		Hash: crypto.SHA256,
+	})
+	require.NoError(t, err)
+
+	err = Verify(context.Background(), "software:::integrity-tamper-key", tampered, tamperedSig, &types.VerifyOpts{
+		Hash:           crypto.SHA256,
+		BlobCN:         "release-notes",
+		IntegrityCheck: true,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, types.ErrIntegrityCheckFailed)
+}
+
+// TestVerify_IntegrityCheckUnset_UnchangedBehavior verifies that leaving
+// IntegrityCheck unset performs only the cryptographic check, unaffected by
+// blob substitution -- the pre-#724 behavior.
+func TestVerify_IntegrityCheckUnset_UnchangedBehavior(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "no-integrity-key"}
+	_, err := software.GenerateECDSA(context.Background(), attrs)
+	require.NoError(t, err)
+
+	original := []byte("the real blob")
+	_, err = Sign(context.Background(), "software:::no-integrity-key", original, &SignOptions{
+		Hash:   crypto.SHA256,
+		BlobCN: "release-notes",
+	})
+	require.NoError(t, err)
+
+	tampered := []byte("a tampered blob")
+	tamperedSig, err := Sign(context.Background(), "software:::no-integrity-key", tampered, &SignOptions{Hash: crypto.SHA256})
+	require.NoError(t, err)
+
+	err = Verify(context.Background(), "software:::no-integrity-key", tampered, tamperedSig, &types.VerifyOpts{Hash: crypto.SHA256})
+	assert.NoError(t, err)
+}
+
+// TestVerify_IntegrityCheck_StoreReadFailureIsTypedError verifies that a
+// SignerStore lookup failure (here, no record for the requested BlobCN)
+// surfaces as the store's typed error rather than a silent pass.
+func TestVerify_IntegrityCheck_StoreReadFailureIsTypedError(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "integrity-store-error-key"}
+	_, err := software.GenerateECDSA(context.Background(), attrs)
+	require.NoError(t, err)
+
+	data := []byte("blob contents")
+	signature, err := Sign(context.Background(), "software:::integrity-store-error-key", data, &SignOptions{Hash: crypto.SHA256})
+	require.NoError(t, err)
+
+	err = Verify(context.Background(), "software:::integrity-store-error-key", data, signature, &types.VerifyOpts{
+		Hash:           crypto.SHA256,
+		BlobCN:         "never-persisted",
+		IntegrityCheck: true,
+	})
+	require.Error(t, err)
+	var notFound *store.ErrSignatureNotFound
+	assert.ErrorAs(t, err, &notFound)
 }
 
 // ========================================================================

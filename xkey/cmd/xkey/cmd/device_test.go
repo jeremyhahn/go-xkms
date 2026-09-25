@@ -299,6 +299,98 @@ func TestPhoneUnpairCmd_DeviceNotFound(t *testing.T) {
 	assert.ErrorContains(t, err, "device not found")
 }
 
+func TestPhoneStatusCmd_WithDevices(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, ".xkey"), 0700))
+
+	cfg := &DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Office Phone", Address: "AA:BB:CC:DD:EE:FF", PairedAt: time.Now()},
+			{Name: "Home Phone", Address: "11:22:33:44:55:66", PairedAt: time.Now()},
+		},
+		DefaultDevice: "Office Phone",
+	}
+	require.NoError(t, saveDevicesConfig(cfg))
+
+	var buf bytes.Buffer
+	deviceStatusCmd.SetOut(&buf)
+	t.Cleanup(func() { deviceStatusCmd.SetOut(nil) })
+
+	require.NoError(t, runDeviceStatus(deviceStatusCmd, nil))
+	out := buf.String()
+	assert.Contains(t, out, "Office Phone (default)")
+	assert.Contains(t, out, "Home Phone")
+	assert.Contains(t, out, "Paired (connection check requires BLE)")
+}
+
+func TestPhoneStatusCmd_FiltersByDeviceFlag(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, ".xkey"), 0700))
+	cfg := &DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Office Phone", Address: "AA:BB:CC:DD:EE:FF"},
+			{Name: "Home Phone", Address: "11:22:33:44:55:66"},
+		},
+	}
+	require.NoError(t, saveDevicesConfig(cfg))
+
+	require.NoError(t, deviceStatusCmd.Flags().Set("device", "Home Phone"))
+	t.Cleanup(func() { _ = deviceStatusCmd.Flags().Set("device", "") })
+
+	var buf bytes.Buffer
+	deviceStatusCmd.SetOut(&buf)
+	t.Cleanup(func() { deviceStatusCmd.SetOut(nil) })
+
+	require.NoError(t, runDeviceStatus(deviceStatusCmd, nil))
+	out := buf.String()
+	assert.Contains(t, out, "Home Phone")
+	assert.NotContains(t, out, "Office Phone")
+}
+
+func TestPhoneUnpairCmd_ForceRemovesDevice(t *testing.T) {
+	tempDir := t.TempDir()
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", tempDir)
+	defer os.Setenv("HOME", originalHome)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(tempDir, ".xkey"), 0700))
+	cfg := &DevicesConfig{
+		Devices: []PairedDevice{
+			{Name: "Office Phone", Address: "AA:BB:CC:DD:EE:FF"},
+		},
+		DefaultDevice: "Office Phone",
+	}
+	require.NoError(t, saveDevicesConfig(cfg))
+
+	require.NoError(t, deviceUnpairCmd.Flags().Set("force", "true"))
+	t.Cleanup(func() { _ = deviceUnpairCmd.Flags().Set("force", "false") })
+
+	var buf bytes.Buffer
+	deviceUnpairCmd.SetOut(&buf)
+	t.Cleanup(func() { deviceUnpairCmd.SetOut(nil) })
+
+	require.NoError(t, runDeviceUnpair(deviceUnpairCmd, []string{"Office Phone"}))
+	assert.Contains(t, buf.String(), "unpaired successfully")
+
+	updated, err := loadDevicesConfig()
+	require.NoError(t, err)
+	assert.Empty(t, updated.Devices, "the forced unpair must remove the device")
+	assert.Empty(t, updated.DefaultDevice, "removing the only device must clear the default")
+}
+
+func TestCheckDeviceStatus_ReportsPairedWithoutBLE(t *testing.T) {
+	status := checkDeviceStatus(PairedDevice{Name: "Office Phone"}, nil)
+	assert.Equal(t, "Paired (connection check requires BLE)", status)
+}
+
 func TestPhoneErrors(t *testing.T) {
 	// Test that all errors have proper messages
 	errors := []error{

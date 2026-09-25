@@ -379,7 +379,7 @@ func (r *resolver) tlsTOFU(ctx context.Context, scope *ScopeConfig, endpoint str
 // tlsEmbedded returns a *tls.Config that verifies against the OS trust
 // store (nil RootCAs selects the system pool).
 func (r *resolver) tlsEmbedded(_ context.Context, _ *ScopeConfig, _ string) (*tls.Config, error) {
-	return &tls.Config{MinVersion: tls.VersionTLS12}, nil
+	return &tls.Config{MinVersion: tls.VersionTLS13}, nil
 }
 
 // tlsFromPEM adapts a PEM strategy into a TLS strategy by loading the
@@ -394,7 +394,7 @@ func (r *resolver) tlsFromPEM(fn pemStrategyFunc) tlsStrategyFunc {
 		if err != nil {
 			return nil, err
 		}
-		return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, nil
+		return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13}, nil
 	}
 }
 

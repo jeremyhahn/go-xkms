@@ -23,12 +23,6 @@ import (
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-// Transport defines the interface for all transport implementations.
-type Transport = pkgtransport.Transport
-
-// Stream represents a bidirectional communication stream.
-type Stream = pkgtransport.Stream
-
 // Config contains common transport configuration options.
 type Config = pkgtransport.Config
 

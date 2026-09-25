@@ -58,6 +58,14 @@ func (s *Server) initTPM2Backend() error {
 	// keeps one PlatformKeyStore / policy state. Whichever field opened it owns
 	// closing it (nodeSealClose at node shutdown, or platformStoreTPMClose at
 	// server shutdown) -- not this backend (externalTPM).
+	//
+	// KeyBackend reuses shared.KeyBackend() -- the SAME store.KeyBackend the
+	// earlier open built (tpm2backend.NewBackend) over this identical keyDir,
+	// resolveTPM2KeyDir in both paths -- rather than opening a second file
+	// store over the same directory. Key blobs created under the shared TPM
+	// are parented to the same Platform SRK the barrier uses, so the barrier
+	// and this backend read and write one on-disk key store and share one
+	// parent key. The TCG Shared SRK is never used.
 	shared, ok := s.nodeSealTPM.(*tpm2backend.Backend)
 	sharedFrom := "the seal autodetect's single TPM open"
 	if !ok {
@@ -65,13 +73,9 @@ func (s *Server) initTPM2Backend() error {
 		sharedFrom = "the platform store's tpm2 credential strategy TPM open"
 	}
 	if ok {
-		keyBackend, err := tpm2backend.NewFileKeyBackend(s.logger, keyDir)
-		if err != nil {
-			return &ErrBackendCreate{Backend: "TPM2", Err: err}
-		}
 		tpmBackend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
 			TPM:        shared.TPM(),
-			KeyBackend: keyBackend,
+			KeyBackend: shared.KeyBackend(),
 			KeyDir:     keyDir,
 			Logger:     s.logger,
 		})

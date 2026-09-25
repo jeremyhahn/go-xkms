@@ -21,8 +21,7 @@ the folder in the same commit that changes the behavior.
 | [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
 | [avr-device-backend](avr-device-backend/) | An AVR device with a secure-element identity as an xkms key provider and DICE attester, over the arduino-generic wire protocol |
 | [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
-| [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, and the `xkmsctl cluster`/`rebalance` control plane |
-| [cluster](cluster/) | Raft clustering — status/membership (CLI over qrdb's control plane, REST for the web console), leader redirect, cluster CA key custody |
+| [clustering](clustering/) | Embedding a go-qrdb clustered node behind the `raft` build tag: Raft config mapping, inter-node mTLS provisioning, not-leader redirects, the `xkmsctl cluster`/`rebalance` control plane, the read-only REST cluster status/membership surface for the web console, and cluster CA key custody |
 | [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
 | [dice-device-identity](dice-device-identity/) | DICE-based device identity with a hardware root of trust: the TCG DICE certificate extensions, their verification, and the `dice-idevid` issuance profile |
 | [escrow](escrow/) | External key escrow (KMIP + xkms federation): the agent factory, daemon config, and service layer — reachable today only through the embedded Go SDK, pending an RBAC vocabulary decision for the network transports |
@@ -30,6 +29,7 @@ the folder in the same commit that changes the behavior.
 | [frost-threshold-signing](frost-threshold-signing/) | RFC 9591 FROST threshold signing (`-tags frost`) — trusted-dealer keygen, the explicit round API, and why the CLI's local path and the REST/gRPC/MCP network surface are independent |
 | [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
 | [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
+| [luks](luks/) | The root module's `pkg/luks`: FIPS-aware LUKS volume lifecycle (`Manager`/`Executor`) and TPM 2.0 passphrase sealing (`TPMSealer`); `xkey`'s own LUKS2 implementation is documented separately in `xkey/docs/luks/` |
 | [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
 | [observability](observability/) | Prometheus instrumentation — operation counters/histograms, backend health, keys/certs totals, connection tracking |
 | [password-vault](password-vault/) | Stored password credentials and their access modes |
@@ -43,6 +43,7 @@ the folder in the same commit that changes the behavior.
 | [release-engineering](release-engineering/) | Cutting an -alpha release in two steps — `make release-alpha` prepares a pull request, `make release-tag` tags it once merged — the lockstep tag namespaces, the reciprocal `go.mod` pin edges, the exported-API growth gate |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
+| [signing](signing/) | The embedded SDK's `Sign`/`Verify` — persisted per-blob checksums (`SignOptions.BlobCN`, `VerifyOpts.IntegrityCheck`) shared by every backend |
 | [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [storage-engines](storage-engines/) | The `storage.Backend` interface and the `storage.backend` config choice: file, PebbleDB, memory, and the embedded/remote qrdb backend |
 | [ssh-keys](ssh-keys/) | SSH keys (software or backend-backed), host-key pins, and authorized_keys entries — key lifecycle, `pkg/ssh/keys`/`known_hosts`/`authorized`, and the REST/gRPC/MCP/CLI surface over them |
@@ -106,10 +107,9 @@ by five and reports unconverted folders as converted.
 | [pkcs11-provider-module](pkcs11-provider-module/) | `pkcs11/module/`, `references/pkcs11-v3.0-to-v3.2-changes.md`, `pkcs11/manager.md` |
 | [pkcs11-backend](pkcs11-backend/) | `pkcs11/backend/` (architecture.md, configuration.md, operations.md, runbook.md, security.md, README.md) — also corrects that folder's config.Pin/SOPIN description (now `*types.SecretValue`, credential-resolved) and its AttestKey "placeholder" claim (now fully implemented) |
 | [certificate-authority](certificate-authority/) | `ca/`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
-| [acme-issuance](acme-issuance/) | `acme/` (excluding `acme/ROADMAP.md`) |
 | [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md`, `cli/trust-platform.md` |
 | [certificate-authority](certificate-authority/) | `ca/api-reference.md`, `ca/architecture.md`, `ca/certificate-types.md`, `ca/configuration.md`, `ca/multi-keystore.md`, `ca/protocol-parity.md`, `ca/README.md`, `ca-multi-keystore-design.md`, `architecture/hardware-certificate-storage.md` |
-| [acme-issuance](acme-issuance/) | `acme/architecture.md`, `acme/client.md`, `acme/configuration.md`, `acme/challenges.md`, `acme/challenge-resolver.md`, `acme/cli/cactl.md` (retired) |
+| [acme-issuance](acme-issuance/) | **absorbed and deleted** (go-xkms#942): `acme/configuration.md`, `acme/quickstart.md`, `acme/implementation-plan.md`, `acme/cli/cactl.md`, `acme/cli/trusted-acme-server.md`, `acme/cli/trusted-acme-client.md`, `acme/cli/README.md`, `acme/deployment/README.md`, `acme/deployment/bare-metal.md`, `acme/deployment/docker.md`, `acme/deployment/monitoring.md`, `acme/deployment/troubleshooting.md` — all pre-merge go-trusted-ca documentation for a `trusted-acme-server`/`cactl` binary pair and `TRUSTEDCA_*`/`CACTL_*` env prefixes that never existed in this repository. `acme/admin/configuration.md`, `acme/deployment/operations.md` (the retained operator checklists), `acme/gui/*` and `acme/protocols/*` were corrected in place instead of deleted — see the note below. A previous pass of this row claimed `acme/architecture.md`, `acme/client.md`, `acme/challenges.md`, `acme/challenge-resolver.md` were also absorbed and deleted; they are still present in the tree and that claim does not hold — see the note below. |
 | [trust-bootstrap](trust-bootstrap/) | `trust/`, `bootstrap/`, `configuration/bootstrap.md` |
 | [webauthn](webauthn/) | `webauthn/README.md`, `webauthn/client.md` — **absorbed and deleted** |
 | [fido2-ctap2](fido2-ctap2/) | `fido2/README.md` |
@@ -127,9 +127,11 @@ by five and reports unconverted folders as converted.
 | [symmetric-aead](symmetric-aead/) | `architecture/symmetric-encryption.md`, `configuration/aead-auto-selection.md`, `configuration/symmetric-encryption.md` |
 | [audit-log](audit-log/) | — |
 | [cluster](cluster/) | `cluster/README.md` — **absorbed and deleted**; `cluster/ca-key-custody.md` retained as a companion deep-dive, linked from [`cluster/architecture.md`](cluster/architecture.md) |
+| [luks](luks/) | — |
+| [signing](signing/) | `verification/` — **absorbed and deleted** (its `ChecksumProvider` was never wired to a live verifier; superseded by `types.ChecksumProvider`) |
 | [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 | [xkmsd-configuration](xkmsd-configuration/) | `architecture/server-architecture.md` §"Configuration Management" (its `XKMS_REST_ADDRESS`-style names never existed) |
-| [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — the legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions describe a proxy plane that was since deleted; the feature folder documents the current `xkmsctl cluster`/`rebalance` → qrdb control-plane design instead |
+| [clustering](clustering/) | `cluster/` (`cluster/README.md`, `cluster/ca-key-custody.md`) — **absorbed and deleted**. The legacy `README.md`'s `/api/v1/cluster/*` REST routes and `admin:add_member`/`admin:remove_member` permissions described a proxy plane that was since deleted; `ca-key-custody.md` is retained as a companion deep-dive, now [`clustering/ca-key-custody.md`](clustering/ca-key-custody.md), linked from [`clustering/architecture.md`](clustering/architecture.md). A separate `docs/cluster/` five-file folder landed briefly (go-xkms#847, the read-only REST cluster status/membership surface for the web console) and duplicated this one; it was merged into `clustering/` in the same pass rather than kept as two folders for one feature. |
 | [rbac](rbac/) | `architecture/rbac.md` |
 | [storage-engines](storage-engines/) | `storage/` — the legacy `README.md`'s `objstore` backend example (`storage.backend: objstore` with S3/GCS/Azure options) is not reachable through `xkmsd`'s own `storage.backend`; the feature folder documents where that engine is actually used |
 | [web-console](web-console/) | `web/` |
@@ -142,27 +144,48 @@ Several of these need a note rather than a row:
   documents what does — `pkg/pinselect` and `pkg/pintpm2` — and says so
   explicitly. Whether that design is a roadmap item or a stale document is an
   open question.
-- **`acme/cli/cactl.md`** documents a binary that was never in this repository
-  and whose project has been retired. See
+- **`acme/cli/cactl.md`** documented a binary that was never in this
+  repository and whose project has been retired; it, and the rest of
+  `acme/cli/`, were deleted by go-xkms#942 — see
   [`acme-issuance/cli.md`](acme-issuance/cli.md).
 - **`acme/` is mostly still legacy, not superseded.** The table above lists
-  only the specific root files `acme-issuance/` actually absorbed. The bulk
-  of the tree — `acme/gui/` (15 files: the dual-mode admin+client SPA,
-  `pkg/acme/gui/{admin,client,guard,webui}`), `acme/admin/` (5 files: the
-  Admin REST plane, `pkg/acme/admin` — handlers, RBAC, tenant and barrier
-  ceremony endpoints), `acme/protocols/` (5 files: the six-transport
-  wiring), `acme/dns-01/` (6 files: per-provider DNS-01 configuration),
-  `acme/qrdb/` (3 files), `acme/sdk/README.md`, `acme/api-reference.md`,
-  `acme/audit/`, `acme/auth/`, `acme/docker.md`, `acme/quickstart.md`,
-  `acme/implementation-plan.md`, `acme/multi-tenancy.md` (superseded by
-  [`multi-tenancy/`](multi-tenancy/), see the table above), and
-  `acme/deployment/` (already covered by the "Operator checklists" note
-  below) remain unconverted. `acme/boulder-comparison-enhancements.md` is
-  deliberately retained as a reference, not absorbed
+  only the specific root files `acme-issuance/` actually absorbed and
+  deleted. The bulk of the tree — `acme/gui/` (dual-mode admin+client SPA,
+  `pkg/acme/gui/{admin,client,guard,webui}`; go-xkms#942 corrected its
+  `cactl`/`trusted-acme-server`/`TRUSTEDCA_*` references in place and
+  flagged that `pkg/acme/gui/admin` and `pkg/acme/api/server` — which
+  would mount its web build at `/ui/admin/` — have no confirmed `cmd/`
+  caller; the admin web UI actually wired into `xkmsd` is a separate
+  implementation, `pkg/acme/web/packages/admin` at `/admin-ui`,
+  `cmd/xkmsd/admin.go:73`; reconciling the two is unresolved), `acme/admin/`
+  (5 files: the Admin REST plane, `pkg/acme/admin` — handlers, RBAC, tenant
+  and barrier ceremony endpoints; `configuration.md` is a retained operator
+  checklist, corrected in place by go-xkms#942, the rest unconverted),
+  `acme/protocols/` (5 files: the six-transport wiring; go-xkms#942
+  corrected their `cactl`/`trusted-acme-server`/`TRUSTEDCA_*` references in
+  place, and flagged that `unix-socket.md`'s premise conflicts with
+  `acme-issuance/cli.md`'s own statement that the ACME admin plane has no
+  Unix adapter), `acme/dns-01/` (6 files: per-provider DNS-01
+  configuration), `acme/qrdb/` (3 files), `acme/sdk/README.md`,
+  `acme/api-reference.md`, `acme/audit/`, `acme/auth/`, `acme/docker.md`,
+  `acme/multi-tenancy.md` (superseded by [`multi-tenancy/`](multi-tenancy/),
+  see the table above), and `acme/deployment/` (`security.md` and
+  `operations.md` are the retained operator checklists — `operations.md`'s
+  `trusted-acme-server` binary reference was corrected in place by
+  go-xkms#942; the rest of `acme/deployment/` was fictional pre-merge
+  go-trusted-ca documentation and was deleted by go-xkms#942) remain
+  unconverted. `acme/boulder-comparison-enhancements.md` is deliberately
+  retained as a reference, not absorbed
   ([`acme-issuance/architecture.md`](acme-issuance/architecture.md) cites
   it directly). A previous pass over this README claimed `acme-issuance/`
   superseded all of `acme/` except `ROADMAP.md`; that claim did not hold up
-  against the code and has been narrowed here.
+  against the code and has been narrowed here — and a later pass claimed
+  `acme/architecture.md`, `acme/client.md`, `acme/challenges.md` and
+  `acme/challenge-resolver.md` were absorbed and deleted, which is also not
+  true: all four are still present. Whether their content is actually
+  covered by `acme-issuance/` is unverified and out of go-xkms#942's scope
+  (it addressed only nonexistent-binary/env-prefix references, not a full
+  content audit).
 - **`ca/dane.md`, `ca/bootstrap.md` and `ca/bootstrap-integration.md` are not
   superseded** by `certificate-authority/` or by `trust-bootstrap/`. Their
   DANE/TLSA field-semantics tables, DNSSEC walkthrough and per-project
@@ -221,13 +244,10 @@ Ordered "under active development first, then most often read":
 | SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage. **Agent-only sessions are already converted** — [`ssh-agent-sessions/`](ssh-agent-sessions/) is NORMATIVE for that capability; the rest of `ssh/` is still legacy |
 | PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
 | Web console | [`web/`](web/) | 5 files |
-| Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |
-| Symmetric encryption / AEAD | [`architecture/symmetric-encryption.md`](architecture/symmetric-encryption.md), `configuration/aead-*.md` | |
 | Clustering | [`cluster/`](cluster/) | includes CA key custody |
-| Web console | [`web/`](web/) | 5 files |
 | RBAC | [`architecture/rbac.md`](architecture/rbac.md) | the vocabulary is go-qrdb's; this is the local view |
-| LUKS | — | `pkg/luks`; documented on the xkey side only |
 | Browser trust injection | [`browser/`](browser/) | Secure browser launch with CA certificate injection |
+| LUKS | — | `pkg/luks`; documented on the xkey side only |
 
 [`frost-threshold-signing/`](frost-threshold-signing/) and
 [`ssh-keys/`](ssh-keys/) are now NORMATIVE folders, but neither fully

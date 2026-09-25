@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -59,8 +58,13 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		currentPIN, _ := cmd.Flags().GetString("current-pin")
-		newPIN, _ := cmd.Flags().GetString("new-pin")
+		fr := newFlagReader(cmd)
+		currentPIN := fr.String("current-pin")
+		newPIN := fr.String("new-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		pin, err := resolvePIN(newPIN, "New SO PIN")
 		if err != nil {
@@ -87,8 +91,13 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		currentPIN, _ := cmd.Flags().GetString("current-pin")
-		newPIN, _ := cmd.Flags().GetString("new-pin")
+		fr := newFlagReader(cmd)
+		currentPIN := fr.String("current-pin")
+		newPIN := fr.String("new-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		current, err := resolvePIN(currentPIN, "Current SO PIN")
 		if err != nil {
@@ -120,7 +129,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		flagPIN, _ := cmd.Flags().GetString("pin")
+		fr := newFlagReader(cmd)
+		flagPIN := fr.String("pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		pin, err := resolvePIN(flagPIN, "SO PIN")
 		if err != nil {
 			handleError(err)
@@ -143,8 +157,13 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		soPIN, _ := cmd.Flags().GetString("so-pin")
-		newPIN, _ := cmd.Flags().GetString("new-pin")
+		fr := newFlagReader(cmd)
+		soPIN := fr.String("so-pin")
+		newPIN := fr.String("new-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		so, err := resolvePIN(soPIN, "SO PIN")
 		if err != nil {
@@ -176,8 +195,13 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		currentPIN, _ := cmd.Flags().GetString("current-pin")
-		newPIN, _ := cmd.Flags().GetString("new-pin")
+		fr := newFlagReader(cmd)
+		currentPIN := fr.String("current-pin")
+		newPIN := fr.String("new-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 
 		current, err := resolvePIN(currentPIN, "Current user PIN")
 		if err != nil {
@@ -209,7 +233,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		flagPIN, _ := cmd.Flags().GetString("pin")
+		fr := newFlagReader(cmd)
+		flagPIN := fr.String("pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		pin, err := resolvePIN(flagPIN, "User PIN")
 		if err != nil {
 			handleError(err)
@@ -248,7 +277,12 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		soPIN, _ := cmd.Flags().GetString("so-pin")
+		fr := newFlagReader(cmd)
+		soPIN := fr.String("so-pin")
+		if err := fr.Err(); err != nil {
+			handleError(err)
+			return
+		}
 		so, err := resolvePIN(soPIN, "SO PIN")
 		if err != nil {
 			handleError(err)
@@ -268,11 +302,11 @@ func createPINClient(cfg *Config) (client.Client, func(), error) {
 	}
 
 	if err := cl.Connect(context.Background()); err != nil {
-		_ = cl.Close()
+		closeQuietly(cl)
 		return nil, nil, &WrappedError{Sentinel: ErrConnectFailed, Err: err}
 	}
 
-	return cl, func() { _ = cl.Close() }, nil
+	return cl, func() { closeQuietly(cl) }, nil
 }
 
 // pinSOSet sets the SO PIN via the SDK client.
@@ -424,16 +458,19 @@ func pinLockout(cfg *Config, printer *Printer) {
 			handleError(err)
 		}
 	case OutputFormatTable, OutputFormatText:
-		_, _ = fmt.Fprintf(printer.writer, "PIN Lockout Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Failed Attempts: %d\n", resp.FailedAttempts)
-		_, _ = fmt.Fprintf(printer.writer, "  Max Attempts:    %d\n", resp.MaxAttempts)
-		_, _ = fmt.Fprintf(printer.writer, "  Locked:          %t\n", resp.IsLocked)
+		printer.printf("PIN Lockout Status:\n")
+		printer.printf("  Failed Attempts: %d\n", resp.FailedAttempts)
+		printer.printf("  Max Attempts:    %d\n", resp.MaxAttempts)
+		printer.printf("  Locked:          %t\n", resp.IsLocked)
 		if resp.LockoutUntil != "" {
-			_, _ = fmt.Fprintf(printer.writer, "  Locked Until:    %s\n", resp.LockoutUntil)
+			printer.printf("  Locked Until:    %s\n", resp.LockoutUntil)
 		}
 		if resp.RecoverySeconds > 0 {
-			_, _ = fmt.Fprintf(printer.writer, "  Recovery In:     %ds\n", resp.RecoverySeconds)
+			printer.printf("  Recovery In:     %ds\n", resp.RecoverySeconds)
 		}
+	}
+	if err := printer.Err(); err != nil {
+		handleError(err)
 	}
 }
 

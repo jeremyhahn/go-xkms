@@ -79,7 +79,7 @@ func issueEKCertificate(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -169,7 +169,7 @@ func issueAKCertificate(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -259,7 +259,7 @@ func signTCGCSR(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -385,7 +385,7 @@ func enrollDevice(cfg *Config, printer *Printer) {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
 		return
 	}
-	defer func() { _ = cl.Close() }()
+	defer closeQuietly(cl)
 
 	ctx := context.Background()
 	if err := cl.Connect(ctx); err != nil {
@@ -480,33 +480,33 @@ func writeEnrollmentOutput(dir string, resp *client.EnrollDeviceResponse) error 
 func init() {
 	// ca tcg issue-ek flags
 	caTCGIssueEKCmd.Flags().StringVar(&tcgCommonName, "cn", "", "common name for the EK certificate (required)")
-	_ = caTCGIssueEKCmd.MarkFlagRequired("cn")
+	markFlagRequired(caTCGIssueEKCmd, "cn")
 	caTCGIssueEKCmd.Flags().StringVar(&tcgEKPubFile, "ek-pub", "", "path to DER-encoded EK public key file (required)")
-	_ = caTCGIssueEKCmd.MarkFlagRequired("ek-pub")
+	markFlagRequired(caTCGIssueEKCmd, "ek-pub")
 	caTCGIssueEKCmd.Flags().StringVar(&tcgOrg, "org", "", "organization name")
 	caTCGIssueEKCmd.Flags().StringVar(&tcgOutputFile, "output", "", "output file for certificate (PEM)")
 
 	// ca tcg issue-ak flags
 	caTCGIssueAKCmd.Flags().StringVar(&tcgCommonName, "cn", "", "common name for the AK certificate (required)")
-	_ = caTCGIssueAKCmd.MarkFlagRequired("cn")
+	markFlagRequired(caTCGIssueAKCmd, "cn")
 	caTCGIssueAKCmd.Flags().StringVar(&tcgPubFile, "pub", "", "path to DER-encoded public key file (required)")
-	_ = caTCGIssueAKCmd.MarkFlagRequired("pub")
+	markFlagRequired(caTCGIssueAKCmd, "pub")
 	caTCGIssueAKCmd.Flags().StringVar(&tcgOrg, "org", "", "organization name")
 	caTCGIssueAKCmd.Flags().StringVar(&tcgOutputFile, "output", "", "output file for certificate (PEM)")
 
 	// ca tcg sign-csr flags
 	caTCGSignCSRCmd.Flags().StringVar(&tcgCommonName, "cn", "", "common name for the device identity (required)")
-	_ = caTCGSignCSRCmd.MarkFlagRequired("cn")
+	markFlagRequired(caTCGSignCSRCmd, "cn")
 	caTCGSignCSRCmd.Flags().StringVar(&tcgCSRFile, "csr", "", "path to packed TCG_CSR_IDEVID binary file (required)")
-	_ = caTCGSignCSRCmd.MarkFlagRequired("csr")
+	markFlagRequired(caTCGSignCSRCmd, "csr")
 	caTCGSignCSRCmd.Flags().StringVar(&tcgOrg, "org", "", "organization name")
 	caTCGSignCSRCmd.Flags().StringVar(&tcgOutputFile, "output", "", "output directory for certificate files (DER)")
 
 	// ca tcg enroll flags
 	caTCGEnrollCmd.Flags().StringVar(&tcgCommonName, "cn", "", "common name for the device (required)")
-	_ = caTCGEnrollCmd.MarkFlagRequired("cn")
+	markFlagRequired(caTCGEnrollCmd, "cn")
 	caTCGEnrollCmd.Flags().StringVar(&tcgPackedCSR, "packed-csr", "", "path to packed TCG_CSR_IDEVID binary file (required)")
-	_ = caTCGEnrollCmd.MarkFlagRequired("packed-csr")
+	markFlagRequired(caTCGEnrollCmd, "packed-csr")
 	caTCGEnrollCmd.Flags().StringVar(&tcgOrg, "org", "", "organization name")
 	caTCGEnrollCmd.Flags().StringVar(&tcgOutputFile, "output", "", "output directory for enrollment files")
 

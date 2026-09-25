@@ -357,7 +357,7 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 	metadata := map[string]interface{}{
 		"cn":          attrs.CN,
 		"algorithm":   attrs.KeyAlgorithm.String(),
-		"key_type":    string(attrs.KeyType),
+		"key_type":    attrs.KeyType.String(), // see the CreateKey comment in azurekv.go
 		"imported":    true,
 		"import_time": time.Now().Unix(),
 	}
@@ -437,7 +437,7 @@ func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes
 	metadata := map[string]interface{}{
 		"cn":          attrs.CN,
 		"algorithm":   attrs.KeyAlgorithm.String(),
-		"key_type":    string(attrs.KeyType),
+		"key_type":    attrs.KeyType.String(), // see the CreateKey comment in azurekv.go
 		"imported":    true,
 		"import_time": time.Now().Unix(),
 	}

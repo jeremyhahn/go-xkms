@@ -14,6 +14,7 @@
 package staticpw
 
 import (
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -123,7 +124,9 @@ func (m *TenantPasswordStoreManager) StoreForTenant(tenantID string) (Store, err
 	actual, loaded := m.tenants.LoadOrStore(tenantID, state)
 	if loaded {
 		// Another goroutine already created it. Close our duplicate.
-		_ = shared.Close()
+		if cerr := shared.Close(); cerr != nil {
+			slog.Debug("staticpw: failed to close a duplicate shared tenant store", "tenant_id", tenantID, "error", cerr)
+		}
 		existing := actual.(*tenantPasswordState)
 		if existing.locked.Load() {
 			return nil, ErrStoreLocked
@@ -187,7 +190,9 @@ func (m *TenantPasswordStoreManager) UnlockTenant(tenantID string) error {
 
 		actual, loaded := m.tenants.LoadOrStore(tenantID, state)
 		if loaded {
-			_ = shared.Close()
+			if cerr := shared.Close(); cerr != nil {
+				slog.Debug("staticpw: failed to close a duplicate shared tenant store", "tenant_id", tenantID, "error", cerr)
+			}
 			existing := actual.(*tenantPasswordState)
 			if !existing.locked.CompareAndSwap(true, false) {
 				return ErrStoreNotLocked
@@ -315,7 +320,9 @@ func (m *TenantPasswordStoreManager) getOrCreatePersonalStore(state *tenantPassw
 	// Use LoadOrStore to handle concurrent creation.
 	actual, loaded := state.personal.LoadOrStore(userID, store)
 	if loaded {
-		_ = store.Close()
+		if cerr := store.Close(); cerr != nil {
+			slog.Debug("staticpw: failed to close a duplicate personal store", "tenant_id", state.tenantID, "user_id", userID, "error", cerr)
+		}
 		return actual.(*BackendStore), nil
 	}
 
