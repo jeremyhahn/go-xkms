@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0-alpha] - 2026-09-25
+
+### Security
+
+- **xkey now refuses AWS credentials that could inject keys or profiles into `~/.aws/credentials`, and replaces the file atomically with mode `0600`.** `xkey/pkg/oidc/handlers/aws_credentials.go` wrote the token endpoint's `AccessKeyID`, `SecretAccessKey` and `SessionToken` (and the region and profile name) as `key = value` lines without checking them, so a hostile or tampered response carrying a newline could add a `credential_process = <cmd>` key, which the AWS CLI and SDKs execute, or a whole `[profile]` section. `AWSCredentialsHandler.Handle` now validates every value before it touches the disk and refuses, never sanitises: the access key ID must be 16 to 128 bytes of `A-Z 0-9`; the secret printable ASCII with no whitespace or controls; the session token the base64 alphabet `A-Z a-z 0-9 + / =`; the profile name `A-Z a-z 0-9 . _ - @ + : /`; the region `a-z 0-9 -`. Refusals return new typed sentinels (`ErrAWSInvalidAccessKeyID`, `ErrAWSInvalidSecretAccessKey`, `ErrAWSInvalidSessionToken`, `ErrAWSInvalidProfile`, `ErrAWSInvalidRegion`) wrapped in `DetailError` with the length or byte offset, never the value, and leave the existing file byte-for-byte unchanged. The write now `fsync`s the temporary file and the directory around the rename, sets `0600` on the temporary file before writing, removes it on any failure, and propagates every write error that was previously discarded. Other profiles are kept as before; output is now deterministic (profiles and extra keys in name order), and `aws_credential_expiration` is formatted in UTC instead of local time with a literal `Z`. No other INI or env-file writer in `xkey/pkg` or `xkey/cmd` formats untrusted values: the SoftHSM2 config template takes only a path under `$HOME`, and the exec handler passes environment entries through `execve`, not a file. Docs: `xkey/docs/oidc/engineering.md`, `xkey/docs/oidc/cli.md`. Verified by `xkey/pkg/oidc/handlers/aws_credentials_validate_test.go` (`\n`, `\r`, `[`, `=` and NUL in each field and the profile and region are refused with the file unchanged and no temporary file left; real-shaped STS credentials round-trip with other profiles preserved and mode `0600`; rule bounds; rename-failure cleanup), with `HOME` and `AWS_SHARED_CREDENTIALS_FILE` redirected into `t.TempDir()`. go-xkms#1020.
+- **xkey no longer passes identity-provider text to the terminal or logs
+  as raw control sequences.**
+  A hostile or compromised identity provider could put ANSI/OSC escape
+  sequences in the callback's `error` and `error_description`, in a
+  token-endpoint error, or in an ID-token claim. xkey printed and logged
+  that text unchanged, so the provider could clear the screen, spoof a
+  prompt or write the clipboard through OSC 52. All such text now passes
+  through one function, `oidc.SanitizeProviderText`, before it reaches a
+  terminal or a log. The function removes every ESC-introduced and 8-bit C1
+  sequence whole and drops the remaining C0/C1 controls and bidi overrides.
+  It turns line breaks into spaces, so a provider cannot forge a log line,
+  and it cuts the text to 512 bytes, marking the cut with `...[truncated]`.
+  It is applied to the CLI, GUI and `xkey oidc aws` callback errors, to
+  `oidc.TokenRequestError.Error()`, to the AWS token-request error, to the
+  GUI's refresh error, and to the claims and AWS access key ID that
+  `xkey oidc login`, `xkey oidc token` and `xkey oidc aws login` print.
+  Tests send an OSC 52 + `ESC[2J` + 8-bit CSI + NUL payload through every
+  one of these paths and assert that it comes out as plain text. A fuzz
+  target checks that the output is inert, bounded and idempotent.
+  (go-xkms#1015)
+
+### Fixed
+
+- **The last ignored errors in library and CLI code are handled, and the
+  bugs they were hiding are fixed.**
+  - The REST `page`/`page_size` query parameters now return 400 when they
+    are not numeric. All eight paged REST list endpoints (crypto backends,
+    keys, certificates, custodian groups, shares, tenants, FROST keys, PIV
+    slots) now parse pagination through the one shared
+    `transport.PageRequestFromQuery` implementation
+    (`pkg/api/transport/pagination.go`) instead of a REST-local
+    `parsePageRequest` duplicate that built its errors with `fmt.Errorf`;
+    the shared function's `*InvalidPaginationParamError` is a typed error.
+    `sort_order` now also accepts the `asc`/`desc` string form the REST API
+    and its TypeScript SDK send on the wire, in addition to the existing
+    integer form, so the two implementations agree on what is valid. The
+    query parameters and the 400 are documented in the `api.md` of every
+    affected feature folder (crypto-backends, key-management,
+    certificate-authority, share-custody, frost-threshold-signing,
+    piv-smartcard, multi-tenancy); three of those folders
+    (piv-smartcard, multi-tenancy, share-custody) previously said their
+    lists were unpaged or "returned whole", which stopped being true once
+    pagination landed on those handlers. The TypeScript SDK's `PageQuery`
+    doc comment now says `page`/`page_size` must be integers.
+  - `ExecHandler` (`xkey oidc ... --output exec --pass-json`) no longer
+    reports a command that exited 0 as failed. A child that exits without
+    reading all of a large (>64 KiB) JSON payload on stdin makes the
+    write's goroutine observe `EPIPE`, or the following `Close` observe
+    `os.ErrClosed`; both are now filtered out as benign instead of being
+    joined into the result.
+  - `xkey oidc stop` no longer reports a PID file that was never created as
+    a removal failure; only a removal failure other than `os.ErrNotExist`
+    is surfaced.
+  - `xkey barrier`'s PCR-policy auto-unseal no longer turns a successful
+    auto-unseal into a failure when closing the PCR policy store
+    afterward fails; that failure is logged instead, matching the
+    documented `(true, closer, nil)` success contract.
+  - The OIDC client bounds every token-endpoint response read to 1 MiB
+    (`io.LimitReader`) instead of an unbounded `io.ReadAll`, and a
+    non-OAuth2 error body is truncated to 256 bytes, stripped of
+    non-printable characters, and prefixed with the status code and
+    content type before it reaches `TokenRequestError.Description`.
+  - `xkey piv status` no longer turns a failure closing PIV storage into a
+    command failure; that command's job is to report status ("don't fail,
+    just report status" is already its convention for every other error in
+    it), so the close failure is now warned on the output writer instead,
+    matching `xkey migrate`'s existing warning convention.
+  - Malformed share, custodian and tenant timestamps on the gRPC and unix
+    transports are logged instead of silently becoming zero.
+  - `xkey oath generate` warns when it cannot persist an advanced HOTP
+    counter, so the counter can no longer drift silently.
+  - The `e2eprobe` interop probe no longer treats an undecodable response as
+    an empty success.
+
+  Across the root module and xkey, cleanup errors are joined into the
+  returned error, or logged where the function has no error channel. The
+  join happens only when Close actually fails, so bare sentinel returns keep
+  their identity -- including at the sites a follow-up review found still
+  joining unconditionally (`barrier_init.go`, `barrier_seal.go`,
+  `barrier_unseal.go`, `secret_service.go`, `device_pair.go`, `barrier.go`,
+  `barrier_auto_unseal.go`, `xkey/pkg/oidc/callback.go`,
+  `xkey/pkg/keyboard/keyboard.go`, `xkey/pkg/nativemsg/pairing.go`), which
+  are now guarded the same way. What remains is CLI output writes,
+  flag-binding calls, read-side body closes, and discards of non-error
+  values. (go-xkms#701)
+- **TPM ECC encryption keys can do ECDH, and TPM auth errors are classified
+  correctly.** `CreateECDSA` never set `Sign` or `Decrypt`, so every ECC key
+  it created was sign-only and `ECDHZGen` could never succeed through the
+  public API. `KeyTypeEncryption`/`KeyTypeEncapsulation` now produce a
+  Decrypt, non-Sign template (scheme `TPM_ALG_NULL`), mirroring `CreateRSA`.
+  `isTPMAuthError`'s typed path masked the response code with `0x0FF`, which
+  never matched format-1 `BAD_AUTH`/`AUTH_FAIL` codes, so the function worked
+  only through string matching. It and `isTPMBadAuth` now classify with
+  `errors.Is(err, tpm2.TPMRC...)` (go-tpm's `TPMRC.Is`). (go-xkms#1003,
+  #1004)
+
 ## [0.30.0-alpha] - 2026-09-25
 
 ### Security
