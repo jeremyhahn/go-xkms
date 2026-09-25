@@ -160,3 +160,17 @@ func WithRateLimit(maxRequests int, interval time.Duration) Option {
 		return nil
 	}
 }
+
+// WithTenantRateLimit sets the per-tenant overall admission-control quota
+// (#886), shared across every account belonging to the same tenant, applied
+// on top of (never instead of) WithRateLimit's per-client limiter. It is
+// only meaningful in multi-tenant mode (WithMultiTenant); Serve mounts it
+// only when maxRequests > 0, so leaving it unset keeps today's behavior (no
+// per-tenant quota) instead of silently picking a default.
+func WithTenantRateLimit(maxRequests int, interval time.Duration) Option {
+	return func(tca *TrustedCA) error {
+		tca.tenantRateLimitRequests = maxRequests
+		tca.tenantRateLimitInterval = interval
+		return nil
+	}
+}

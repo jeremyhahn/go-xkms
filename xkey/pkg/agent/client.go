@@ -34,8 +34,12 @@ import (
 // certificate issued during enrollment, and maintains that connection
 // with automatic reconnect. Thread-safe.
 type Client struct {
-	config      *ClientConfig
-	conn        *grpc.ClientConn
+	config *ClientConfig
+	// conn is read by monitorConnection's background goroutine concurrently
+	// with Connect/Disconnect on the caller's goroutine, so it is an atomic
+	// pointer rather than a plain field: Disconnect clearing it under a
+	// mutex-free write raced monitorConnection's unsynchronized reads (#968).
+	conn        atomic.Pointer[grpc.ClientConn]
 	logger      *slog.Logger
 	running     atomic.Bool
 	done        chan struct{}
@@ -74,7 +78,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		return &AgentError{Operation: "connect", Err: err}
 	}
 
-	c.conn = conn
+	c.conn.Store(conn)
 	c.running.Store(true)
 	c.done = make(chan struct{})
 
@@ -98,9 +102,8 @@ func (c *Client) Disconnect() error {
 	c.logger.Info("disconnecting from master")
 
 	var closeErr error
-	if c.conn != nil {
-		closeErr = c.conn.Close()
-		c.conn = nil
+	if conn := c.conn.Swap(nil); conn != nil {
+		closeErr = conn.Close()
 	}
 
 	close(c.done)
@@ -119,17 +122,18 @@ func (c *Client) IsConnected() bool {
 	if !c.running.Load() {
 		return false
 	}
-	if c.conn == nil {
+	conn := c.conn.Load()
+	if conn == nil {
 		return false
 	}
-	state := c.conn.GetState()
+	state := conn.GetState()
 	return state == connectivity.Ready || state == connectivity.Idle
 }
 
 // Connection returns the underlying gRPC connection. Returns nil if
 // not connected.
 func (c *Client) Connection() *grpc.ClientConn {
-	return c.conn
+	return c.conn.Load()
 }
 
 // monitorConnection watches the gRPC connection state and attempts
@@ -151,11 +155,12 @@ func (c *Client) monitorConnection(ctx context.Context) {
 			return
 		}
 
-		if c.conn == nil {
+		conn := c.conn.Load()
+		if conn == nil {
 			return
 		}
 
-		state := c.conn.GetState()
+		state := conn.GetState()
 		if state == connectivity.TransientFailure || state == connectivity.Shutdown {
 			c.reconnectMu.Lock()
 			c.logger.Warn("connection lost, attempting reconnect",
@@ -163,10 +168,10 @@ func (c *Client) monitorConnection(ctx context.Context) {
 
 			// Wait for state change with timeout.
 			waitCtx, cancel := context.WithTimeout(ctx, backoff)
-			c.conn.WaitForStateChange(waitCtx, state)
+			conn.WaitForStateChange(waitCtx, state)
 			cancel()
 
-			newState := c.conn.GetState()
+			newState := conn.GetState()
 			if newState == connectivity.Ready || newState == connectivity.Idle {
 				c.logger.Info("reconnected to master")
 				backoff = 1 * time.Second
@@ -182,7 +187,7 @@ func (c *Client) monitorConnection(ctx context.Context) {
 			// Connection is healthy; reset backoff and wait for state change.
 			backoff = 1 * time.Second
 			waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			c.conn.WaitForStateChange(waitCtx, state)
+			conn.WaitForStateChange(waitCtx, state)
 			cancel()
 		}
 	}

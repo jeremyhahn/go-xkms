@@ -454,14 +454,24 @@ func (trl *TenantRateLimiter) Middleware() func(next http.Handler) http.Handler 
 	}
 }
 
+// RetryAfterSeconds returns the Retry-After value, in seconds, a caller
+// should report for tenantID's currently configured rate limit. It exists so
+// a call site that cannot use Middleware — because it must enforce the limit
+// conditionally rather than on every request, as
+// pkg/acme/server/handlers.ChallengeHandler does for the failed-validation
+// category — can still build an RFC 8555 compliant response without
+// duplicating TenantRateLimiter's rate-limit resolution.
+func (trl *TenantRateLimiter) RetryAfterSeconds(tenantID string) int {
+	rateLimit := trl.getRateLimit(tenantID)
+	if rateLimit == nil {
+		return 60 // Default to 60 seconds if no rate limit config
+	}
+	return int(rateLimit.Interval.Seconds())
+}
+
 // writeRateLimitError writes an RFC 8555 compliant rate limit error response.
 func (trl *TenantRateLimiter) writeRateLimitError(w http.ResponseWriter, tenantID string) {
-	rateLimit := trl.getRateLimit(tenantID)
-	retryAfterSeconds := 60 // Default to 60 seconds if no rate limit config
-
-	if rateLimit != nil {
-		retryAfterSeconds = int(rateLimit.Interval.Seconds())
-	}
+	retryAfterSeconds := trl.RetryAfterSeconds(tenantID)
 
 	w.Header().Set("Retry-After", formatRetryAfter(retryAfterSeconds))
 	w.Header().Set("Content-Type", "application/problem+json")

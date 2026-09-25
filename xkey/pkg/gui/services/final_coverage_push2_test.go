@@ -83,8 +83,8 @@ func TestFinalCoveragePush4_AgentService_ApproveEnrollment_Success(t *testing.T)
 	err = svc.ApproveEnrollment(requestID)
 	require.NoError(t, err)
 
-	// Check that an event was emitted.
-	time.Sleep(50 * time.Millisecond)
+	// emit is called synchronously before ApproveEnrollment returns, so no
+	// readiness wait is needed here.
 	assert.True(t, collector.hasEventType("agent:enrollment_approved"))
 }
 
@@ -113,8 +113,8 @@ func TestFinalCoveragePush4_AgentService_RejectEnrollment_Success(t *testing.T) 
 	err = svc.RejectEnrollment(requestID, "test rejection reason")
 	require.NoError(t, err)
 
-	// Check that an event was emitted.
-	time.Sleep(50 * time.Millisecond)
+	// emit is called synchronously before RejectEnrollment returns, so no
+	// readiness wait is needed here.
 	assert.True(t, collector.hasEventType("agent:enrollment_rejected"))
 }
 
@@ -861,15 +861,14 @@ func TestFinalCoveragePush4_AgentService_StartStop_EventsEmitted(t *testing.T) {
 	err := svc.StartServer(":0")
 	require.NoError(t, err)
 
-	time.Sleep(100 * time.Millisecond)
-
+	// StartServer's underlying agent.Server.Start binds the listener,
+	// emits its event and sets running synchronously before returning,
+	// so no readiness wait is needed here.
 	status := svc.GetServerStatus()
 	assert.True(t, status.Running)
 
 	err = svc.StopServer()
 	require.NoError(t, err)
-
-	time.Sleep(100 * time.Millisecond)
 
 	assert.True(t, collector.hasEventType("agent:server_started"))
 	assert.True(t, collector.hasEventType("agent:server_stopped"))
@@ -919,8 +918,6 @@ func TestFinalCoveragePush4_AgentService_GetServerStatus_Running(t *testing.T) {
 	err := svc.StartServer(":0")
 	require.NoError(t, err)
 	defer svc.StopServer()
-
-	time.Sleep(100 * time.Millisecond)
 
 	status := svc.GetServerStatus()
 	assert.True(t, status.Running)

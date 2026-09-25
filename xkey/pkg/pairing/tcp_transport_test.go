@@ -764,7 +764,9 @@ func TestTCPTransport_SendWriteToClosedConn(t *testing.T) {
 	require.NoError(t, err)
 	addr := listener.Addr().String()
 
+	serverClosed := make(chan struct{})
 	go func() {
+		defer close(serverClosed)
 		conn, err := listener.Accept()
 		if err != nil {
 			return
@@ -783,8 +785,13 @@ func TestTCPTransport_SendWriteToClosedConn(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, transport.Connect(ctx))
 
-	// Give the server time to close the connection.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the server side to actually close the connection instead of
+	// sleeping a fixed duration.
+	select {
+	case <-serverClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never closed the accepted connection")
+	}
 
 	// Writing to a closed peer connection may either succeed (buffered) or fail.
 	// Send multiple large writes to trigger the write error path.
@@ -892,7 +899,9 @@ func TestTCPTransport_SendAfterPeerDisconnect(t *testing.T) {
 	require.NoError(t, err)
 	addr := listener.Addr().String()
 
+	serverClosed := make(chan struct{})
 	go func() {
+		defer close(serverClosed)
 		conn, err := listener.Accept()
 		if err != nil {
 			return
@@ -926,8 +935,13 @@ func TestTCPTransport_SendAfterPeerDisconnect(t *testing.T) {
 	err = transport.Send(ctx, []byte("first"))
 	assert.NoError(t, err)
 
-	// Give the server time to close the connection.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the server side to actually close the connection instead of
+	// sleeping a fixed duration.
+	select {
+	case <-serverClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never closed the accepted connection")
+	}
 
 	// Receive should fail because the peer is gone.
 	_, err = transport.Receive(ctx)

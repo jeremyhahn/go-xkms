@@ -53,8 +53,6 @@ func TestFunctionFSTransport_Initialize_Success(t *testing.T) {
 	}
 
 	cancel()
-	// Give the monitor goroutine time to exit.
-	time.Sleep(50 * time.Millisecond)
 
 	err = tr.Close()
 	if err != nil {
@@ -226,7 +224,6 @@ func TestFunctionFSTransport_ReadWrite_WithFiles(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 	tr.Close()
 }
 
@@ -264,7 +261,6 @@ func TestFunctionFSTransport_Read_EOF(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 	tr.Close()
 }
 
@@ -302,7 +298,6 @@ func TestFunctionFSTransport_Read_ContextCancelled(t *testing.T) {
 	}
 
 	initCancel()
-	time.Sleep(50 * time.Millisecond)
 	tr.Close()
 }
 
@@ -339,7 +334,6 @@ func TestFunctionFSTransport_Read_ClosedDuringLoop(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 }
 
 func TestFunctionFSTransport_Write_Error(t *testing.T) {
@@ -385,7 +379,6 @@ func TestFunctionFSTransport_Write_Error(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 }
 
 func TestFunctionFSTransport_Close_WithOpenEndpoints(t *testing.T) {
@@ -411,7 +404,6 @@ func TestFunctionFSTransport_Close_WithOpenEndpoints(t *testing.T) {
 	}
 
 	cancel()
-	time.Sleep(50 * time.Millisecond)
 
 	// Close should succeed and nil out all endpoints.
 	err = tr.Close()
@@ -457,10 +449,13 @@ func TestFunctionFSTransport_MonitorEvents_ContextCancel(t *testing.T) {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	// Cancel context to stop the monitor goroutine.
+	// Cancel context to stop the monitor goroutine. The monitor only
+	// re-checks ctx.Done() between reads, on the ffsPollInterval read
+	// deadline (no clock seam here, and nothing the monitor exposes signals
+	// its exit), so this waits a safe multiple of that production interval
+	// rather than an arbitrary duration.
 	cancel()
-	// Give the monitor goroutine time to detect cancellation and exit.
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(2*ffsPollInterval + 200*time.Millisecond)
 
 	// Verify transport is still operational (monitor exiting does not close transport).
 	if tr.closed.Load() {
@@ -493,8 +488,11 @@ func TestFunctionFSTransport_MonitorEvents_Closed(t *testing.T) {
 	}
 
 	// Close the transport; the monitor should detect closed state and exit.
+	// See the comment in TestFunctionFSTransport_MonitorEvents_ContextCancel
+	// for why this waits a multiple of ffsPollInterval rather than an
+	// arbitrary duration.
 	tr.Close()
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(2*ffsPollInterval + 200*time.Millisecond)
 
 	cancel()
 }
@@ -521,10 +519,12 @@ func TestFunctionFSTransport_MonitorEvents_EOF(t *testing.T) {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 
-	// Close ep0 directly so the monitor gets EOF.
+	// Close ep0 directly so the monitor gets EOF. See the comment in
+	// TestFunctionFSTransport_MonitorEvents_ContextCancel for why this waits
+	// a multiple of ffsPollInterval rather than an arbitrary duration.
 	tr.ep0.Close()
 	tr.ep0 = nil
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(2*ffsPollInterval + 200*time.Millisecond)
 
 	cancel()
 }

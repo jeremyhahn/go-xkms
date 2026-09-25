@@ -148,3 +148,42 @@ func TestMCPToolHandler_LazyAndDispatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, res.IsError)
 }
+
+// TestMCPToolHandler_GapMethods_RoundTrip proves the go-xkms#773 PIN,
+// custodian, tenant, and non-ECDH deriveKey methods reach InvokeMethod
+// through the real mcp-go tool-call boundary (ToolName translation, tool
+// registration, and params_json plumbing), one representative per group.
+// None of the backing sub-systems (PIN backend, custodian client, tenant
+// service) are composed on this fixture, so every call answers the
+// not-configured tool error rather than success; what this proves is that
+// dispatch reaches the handler at all, which is exactly the gap #773 found
+// (the method was previously "method not found" -- unreachable, not merely
+// unconfigured).
+func TestMCPToolHandler_GapMethods_RoundTrip(t *testing.T) {
+	backend := newMCPBackend(t)
+	m, err := NewModule(func() *xkms.XKMSService { return nil },
+		WithMCPServer(func() *xkmsmcp.Server { return backend }))
+	require.NoError(t, err)
+
+	for _, method := range []string{
+		"xkms.getLockoutStatus",
+		"xkms.listCustodianGroups",
+		"xkms.listTenants",
+		"xkms.deriveKey",
+	} {
+		t.Run(method, func(t *testing.T) {
+			spec := xkmsmcp.MethodSpec{Method: method, Tool: xkmsmcp.ToolName(method)}
+			handler := m.mcpToolHandler(spec)
+
+			res, err := handler(context.Background(), toolCallRequest(""))
+
+			require.NoError(t, err, "the tool call itself must not fail transport-level")
+			require.True(t, res.IsError, "no sub-system is composed on this fixture")
+			require.NotEmpty(t, res.Content)
+			text, ok := mcpgo.AsTextContent(res.Content[0])
+			require.True(t, ok)
+			assert.NotContains(t, text.Text, "method not found",
+				"the method must be dispatchable, not merely reported as unknown")
+		})
+	}
+}

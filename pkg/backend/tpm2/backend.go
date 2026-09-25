@@ -501,6 +501,35 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			attrs := &types.KeyAttributes{
 				CN:        cn,
 				StoreType: types.StoreTPM2,
+
+				// Exportable is unconditionally false and Sensitive is
+				// unconditionally true for every key this backend enumerates,
+				// truthfully reporting what this backend's API surface can
+				// ever do rather than echoing whatever policy a caller once
+				// asked for at creation (go-xkms#932).
+				//
+				// GenerateKey builds every key from KeyTemplateSpec.Template
+				// (pkg/tpm2/template.go), which sets FixedTPM=true and
+				// FixedParent=true unconditionally -- TCG TPM 2.0 Library
+				// Part 2 12.2.3.5's flags for "may never leave this TPM" and
+				// "may never leave this parent" -- so a generated key is
+				// hardware-non-duplicable regardless of what attrs.Exportable
+				// the caller requested. ImportKey's sealed-keyedhash objects
+				// (buildSealedDuplicate) are built without those flags and so
+				// are duplicable at the TPM level, but ExportKey
+				// (importexport.go) refuses every key unconditionally with
+				// ErrExportNotSupported once the Exportable policy check
+				// passes -- there is no code path through this backend's API
+				// that ever returns key material for any key, generated or
+				// imported. Exportable=true would therefore be a promise this
+				// backend cannot keep for any key it manages.
+				//
+				// Sensitive=true mirrors the same fact from the other
+				// direction: ExportKeyMaterial (importexport.go) refuses
+				// every key unconditionally too, so plaintext is never
+				// released through this backend's API for any key.
+				Exportable: false,
+				Sensitive:  true,
 			}
 			// Recover the key algorithm from the persisted public blob so that
 			// downstream consumers (e.g. DeleteKey, which branches on
