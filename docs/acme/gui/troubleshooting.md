@@ -66,12 +66,5 @@ The theme is stored in `localStorage` under `trustedca-theme`. Clear localStorag
 
 ### Connection timeout in admin desktop app
 
-The default transport is Unix socket at `/run/trusted-ca-grpc.sock`. Verify the CA server is running and the socket file exists:
-```bash
-ls -la /run/trusted-ca-grpc.sock
-```
-
-To connect via a different protocol, use the Connection Settings view or CLI flags:
-```bash
-./bin/cactl --transport rest --address localhost:8443
-```
+There is no admin desktop app binary in this repository (no `cactl`) — see
+[`README.md`](README.md)'s correction.

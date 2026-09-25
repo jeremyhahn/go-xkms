@@ -617,5 +617,5 @@ all (empty `TenantID`), reaches every tenant (`auth.IsCrossTenant`).
 ## Configuration
 
 See configuration examples:
-- Single Node - standalone mode for development; see [configuration.md](configuration.md) and the shipped `configs/xkmsd-local.yaml`
+- Single Node - standalone mode for development; see [`../acme-issuance/engineering.md`](../acme-issuance/engineering.md) §Configuration (`acme/configuration.md` was deleted by go-xkms#942) and the shipped `configs/xkmsd-local.yaml`
 - Cluster - Raft cluster for production HA; see [qrdb/configuration.md](qrdb/configuration.md). No standalone `config.yaml` / `config-cluster.yaml` sample ships in this repository.
