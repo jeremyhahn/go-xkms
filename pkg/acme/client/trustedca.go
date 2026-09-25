@@ -96,6 +96,15 @@ type TrustedCA struct {
 	rateLimitRequests int
 	rateLimitInterval time.Duration
 
+	// Tenant rate limiting (#886): the per-tenant overall admission-control
+	// quota, shared across every account belonging to the same tenant.
+	// Meaningful only when multiTenant is true; zero (the default) leaves it
+	// disabled, matching rateLimitRequests/rateLimitInterval's own
+	// no-default, explicit-opt-in convention (WithRateLimit / WithTenantRateLimit).
+	tenantRateLimitRequests int
+	tenantRateLimitInterval time.Duration
+	tenantRateLimiter       *server.TenantRateLimiter
+
 	// Admin components
 	adminService admin.Service
 
@@ -392,6 +401,35 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	acmeRouter := router.PathPrefix("/acme").Subrouter()
 	acmeRouter.Use(rateLimitMiddleware)
 
+	// Tenant-aware admission control (#886): TenantAuthMiddleware resolves
+	// the tenant exclusively from a fully verified JWS "kid" — never from a
+	// client-asserted header, host, or path — and publishes it via
+	// server.WithTenantID for the per-tenant overall quota below to key on.
+	// Wired unconditionally (it is a no-op, resolving the shared "" tenant,
+	// for a non-multi-tenant deployment); the quota itself is only mounted
+	// in multi-tenant mode and only when WithTenantRateLimit configured a
+	// positive request cap.
+	acmeRouter.Use(restService.TenantAuthMiddleware)
+	if tca.multiTenant && tca.tenantRateLimitRequests > 0 {
+		tca.tenantRateLimiter = server.NewTenantRateLimiter(
+			&server.TenantRateLimiterConfig{
+				DefaultConfig: &server.RateLimitConfig{
+					OverallRequestRate: &server.RateLimit{
+						MaxRequests: tca.tenantRateLimitRequests,
+						Interval:    tca.tenantRateLimitInterval,
+					},
+				},
+			},
+			server.TenantRateLimiterFromRequestContext(),
+			func(*http.Request) string { return "" }, // shared bucket per tenant
+			"overall",
+		)
+		acmeRouter.Use(tca.tenantRateLimiter.Middleware())
+		tca.logger.Info("ACME tenant rate limiting enabled",
+			slog.Int("max_requests", tca.tenantRateLimitRequests),
+			slog.Duration("interval", tca.tenantRateLimitInterval))
+	}
+
 	// Register ACME endpoints
 	acmeRouter.HandleFunc("/directory", restService.DirectoryHandler).Methods("GET", "HEAD")
 	acmeRouter.HandleFunc("/new-nonce", restService.NewNonceHandler).Methods("HEAD", "GET")
@@ -549,6 +587,11 @@ func (tca *TrustedCA) Shutdown(ctx context.Context) error {
 		if err := tca.adminServer.Shutdown(ctx); err != nil {
 			errs = append(errs, caerrors.InternalServerError("admin server shutdown: %v", err))
 		}
+	}
+
+	if tca.tenantRateLimiter != nil {
+		tca.tenantRateLimiter.Stop()
+		tca.tenantRateLimiter = nil
 	}
 
 	// Close the trail last so events recorded by in-flight requests are

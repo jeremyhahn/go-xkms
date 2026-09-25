@@ -146,9 +146,13 @@ through ACME against an existing node's directory.
   `pkg/acme/server/rate_limiter.go`'s `NewClientRateLimiterMiddleware` is
   mounted on the whole ACME surface by both ACME server compositions
   (xkmsd's `cmd/xkmsd/acme.go`, the standalone `TrustedCA`), keying each
-  client by JWS KID or IP; the tenant rate limiter
-  (`tenant_rate_limiter.go`) exists but is not wired into either
-  composition — see [`engineering.md`](engineering.md) §Rate limiting.
+  client by JWS KID or IP. The per-tenant overall quota and the RFC 8555
+  Section 6.6 per-category limits (`tenant_rate_limiter.go`,
+  `rate_limiter.go`) are wired into both compositions, keyed exclusively on
+  a tenant `handlers.RestService.TenantAuthMiddleware` resolves from a fully
+  verified JWS `kid` — never from a client-asserted header, host, or path —
+  see [`engineering.md`](engineering.md) §Rate limiting and §Tenant
+  admission control (go-xkms#886).
 - **Circuit breakers guard individual outbound dependencies, not order
   creation, and run only on xkmsd today.** `pkg/acme/server/circuitbreaker`
   wraps five dependencies, each with its own breaker, wired by
