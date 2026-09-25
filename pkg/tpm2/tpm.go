@@ -1165,17 +1165,14 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 	return nil
 }
 
-// isTPMBadAuth reports whether err is a TPM_RC_BAD_AUTH failure. We only
-// match on the string because the go-tpm error wrapping doesn't expose a
-// stable typed code at this call site. Accepting the literal prefix is
-// safe — TPM_RC_BAD_AUTH is the canonical form emitted by go-tpm.
+// isTPMBadAuth reports whether err is a TPM_RC_BAD_AUTH failure -- the
+// narrower, non-DA form; it must not widen to TPM_RC_AUTH_FAIL, which is
+// isTPMAuthError's job (auth.go). Both share the isTPMResponseCode
+// primitive, so both classify a real TPM's format-1 response the same,
+// correct way, and differ only in which canonical code they compare against.
 func isTPMBadAuth(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "TPM_RC_BAD_AUTH") ||
-		strings.Contains(msg, "authorization failure without DA implications")
+	return isTPMResponseCode(err, tpm2.TPMRCBadAuth,
+		"TPM_RC_BAD_AUTH", "authorization failure without DA implications")
 }
 
 // Retrieve the Endorsement Key Certificate. If the EK cert-handle is 0, the EK certificate
