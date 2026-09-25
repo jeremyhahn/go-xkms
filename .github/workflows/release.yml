@@ -1231,10 +1231,18 @@ jobs:
             const release = await github.rest.repos.getReleaseByTag({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag: context.ref.replace('refs/tags/', '')
+              // RELEASE_TAG, not context.ref: on a workflow_dispatch repair
+              // context.ref is the branch the workflow runs from (main).
+              tag: '${{ env.RELEASE_TAG }}'
             });
 
             const currentBody = release.data.body || '';
+            // A repair run re-announces an existing release; append the
+            // Docker section once, never a second copy.
+            if (currentBody.includes('## Docker Images')) {
+              core.info('Release notes already carry the Docker Images section.');
+              return;
+            }
             const dockerInfo = `\n\n## Docker Images\n\nMulti-protocol server supporting REST, gRPC, QUIC, and MCP:\n\n- \`ghcr.io/jeremyhahn/xkms-server:${{ needs.create-release.outputs.version }}\`\n\nCLI tool:\n\n- \`ghcr.io/jeremyhahn/xkms-cli:${{ needs.create-release.outputs.version }}\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
 
             await github.rest.repos.updateRelease({
