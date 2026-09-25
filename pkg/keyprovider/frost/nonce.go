@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"path"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -121,8 +122,12 @@ func (t *NonceTracker) DeleteKeyNonces(keyID string) error {
 		return &errs.Wrapped{Msg: "failed to list nonces", Err: err}
 	}
 
+	var deleteErr error
 	for _, key := range keys {
-		_ = t.storage.Delete(context.Background(), key)
+		deleteErr = errors.Join(deleteErr, t.storage.Delete(context.Background(), key))
+	}
+	if deleteErr != nil {
+		return &errs.Wrapped{Msg: "failed to delete one or more nonces", Err: deleteErr}
 	}
 
 	return nil

@@ -160,7 +160,9 @@ func (s *SecretDeliveryService) Handler() http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&secretDeliveryResponse{Secrets: secrets})
+		if encErr := json.NewEncoder(w).Encode(&secretDeliveryResponse{Secrets: secrets}); encErr != nil {
+			s.logger.Error("cluster secret delivery response encoding failed", "node", nodeURI, "error", encErr.Error())
+		}
 	}
 }
 
