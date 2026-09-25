@@ -56,6 +56,9 @@ var paramsOptionalMethods = map[string]string{
 	"barrier.status":             "no parameters",
 	"barrier.deleteRecoveryKeys": "no parameters",
 	"barrier.hasRecoveryKeys":    "no parameters",
+	"xkms.getLockoutStatus":      "no parameters",
+	"xkms.listCustodianGroups":   "no parameters",
+	"xkms.listTenants":           "no parameters",
 }
 
 // methodContext supplies a per-method context override for the handful of

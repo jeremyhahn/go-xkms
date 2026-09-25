@@ -92,6 +92,15 @@ const (
 	// ClassDeadlineExceeded reports a time-bounded state (a quorum ceremony)
 	// that expired before it completed.
 	ClassDeadlineExceeded
+
+	// ClassResourceExhausted reports a caller-visible rate or attempt limit
+	// (a PIN backend locked out after too many failed attempts, a tenant
+	// quota exhausted) as distinct from a generic ClassFailedPrecondition:
+	// gRPC has a dedicated codes.ResourceExhausted for exactly this
+	// condition. JSON-RPC has no equivalent member, so a transport without
+	// one renders it through the same ErrCodeInternalError floor
+	// ClassFailedPrecondition already falls back to.
+	ClassResourceExhausted
 )
 
 // SentinelClass pairs one sentinel error with the Class it classifies to.
