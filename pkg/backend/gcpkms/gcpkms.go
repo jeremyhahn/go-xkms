@@ -1152,6 +1152,17 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			}
 		}
 
+		// Exportable is unconditionally false and Sensitive is unconditionally
+		// true for every key this backend enumerates (go-xkms#932).
+		// Capabilities().Export is false unconditionally, and
+		// ExportKey/ExportKeyMaterial (gcpkms_importexport.go) both refuse
+		// every key with backend.ErrExportNotSupported regardless of policy:
+		// GCP KMS exposes no API to release private key material for any
+		// protection level or import method, so Exportable=true would be a
+		// promise this backend cannot keep for any key it manages.
+		attrs.Exportable = false
+		attrs.Sensitive = true
+
 		allKeys = append(allKeys, attrs)
 	}
 

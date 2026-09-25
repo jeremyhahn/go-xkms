@@ -155,6 +155,12 @@ func TestNewServer_SocketPathTooLong_ReturnsError(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrSocketCreateFailed))
 }
 
+// TestServer_AcceptsAndDispatchesTouch, and every other test below that
+// dials or closes right after "go srv.Serve(ctx)", needs no readiness wait:
+// NewServer binds the listener (net.Listen) synchronously before returning,
+// so a dial immediately after queues in the kernel accept backlog even
+// before Serve's accept loop has started running, and Close/cancel work
+// correctly regardless of whether that goroutine has been scheduled yet.
 func TestServer_AcceptsAndDispatchesTouch(t *testing.T) {
 	sockPath := testSocketPath(t)
 	handler := &mockHandler{
@@ -168,9 +174,6 @@ func TestServer_AcceptsAndDispatchesTouch(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-
-	// Allow the server to start accepting.
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -202,7 +205,6 @@ func TestServer_AcceptsAndDispatchesTypePassword(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -235,7 +237,6 @@ func TestServer_AcceptsAndDispatchesStatus(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -268,7 +269,6 @@ func TestServer_ConcurrentClients(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	const numClients = 10
 	var wg sync.WaitGroup
@@ -328,7 +328,6 @@ func TestServer_CloseStopsAcceptLoop(t *testing.T) {
 	go func() {
 		done <- srv.Serve(ctx)
 	}()
-	time.Sleep(50 * time.Millisecond)
 
 	require.NoError(t, srv.Close())
 
@@ -353,7 +352,6 @@ func TestServer_FailingHandler_ReturnsErrorResponse(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -385,7 +383,6 @@ func TestServer_FailingHandler_TypePassword(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -417,7 +414,6 @@ func TestServer_FailingHandler_Status(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -449,7 +445,6 @@ func TestServer_InvalidJSON_ReturnsProtocolError(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -482,7 +477,6 @@ func TestServer_EmptyMessageType_ReturnsError(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -523,7 +517,6 @@ func TestServer_RemovesStaleSocketOnStartup(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -581,7 +574,6 @@ func TestServer_InvalidMessageType_ReturnsError(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -615,7 +607,6 @@ func TestServer_ContextCancellation_StopsServe(t *testing.T) {
 	go func() {
 		done <- srv.Serve(ctx)
 	}()
-	time.Sleep(50 * time.Millisecond)
 
 	cancel()
 
@@ -660,15 +651,11 @@ func TestServer_ClientDisconnectsImmediately(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	// Connect and close immediately without sending anything.
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
 	conn.Close()
-
-	// Give the server time to process the disconnected client.
-	time.Sleep(50 * time.Millisecond)
 
 	// Server should still be operational after handling the disconnected client.
 	conn2, err := net.Dial("unix", sockPath)
@@ -749,7 +736,6 @@ func TestServer_TypePasswordMissingName_ReturnsError(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -838,7 +824,6 @@ func TestServer_AcceptContinuesAfterError(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	// First connection: send invalid JSON to trigger an error response.
 	conn1, err := net.Dial("unix", sockPath)
@@ -882,7 +867,6 @@ func TestServer_MultipleClientErrors_ContinuesServing(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	// Multiple error-inducing connections.
 	for range 5 {
@@ -891,9 +875,6 @@ func TestServer_MultipleClientErrors_ContinuesServing(t *testing.T) {
 		// Close immediately without sending anything.
 		conn.Close()
 	}
-
-	// Give the server time to process the disconnections.
-	time.Sleep(100 * time.Millisecond)
 
 	// Server should still be functional.
 	conn, err := net.Dial("unix", sockPath)
@@ -927,7 +908,6 @@ func TestServer_ReadTimeout_ClientSendsNothing(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	// Connect but don't send anything - this will eventually timeout.
 	conn, err := net.Dial("unix", sockPath)

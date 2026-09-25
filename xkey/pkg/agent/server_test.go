@@ -84,9 +84,8 @@ func TestServer_StartStop(t *testing.T) {
 		t.Error("server should have an address after Start")
 	}
 
-	// Allow the goroutine to start.
-	time.Sleep(50 * time.Millisecond)
-
+	// No wait needed: Start already binds the listener and reports the
+	// address synchronously (confirmed above), so Stop needs nothing more.
 	if err := server.Stop(); err != nil {
 		t.Fatalf("stop failed: %v", err)
 	}

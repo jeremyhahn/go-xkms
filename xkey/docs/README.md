@@ -17,18 +17,20 @@ tell.
 |---------|----------------|------------------------|
 | [agent](agent/) | Network agent enrollment, connection-time revocation checking, and removal | `agent/` |
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
+| [device](device/) | The `xkey device` CLI namespace: client-side agent enrollment (`enroll`/`connect`) and QR-code pairing | `device/README.md`, `device/pairing.md`, `device/qr-pairing.md`, `device/tcp-relay.md` |
 | [browser-trust-injection](browser-trust-injection/) | Injecting xkey trust-store CA certificates into Chrome- and Firefox-family browsers via a pure-Go NSS `cert9.db` writer, isolated/shared profile modes, and Chrome extension import | [`../../docs/browser/README.md`](../../docs/browser/README.md) — stale on the Firefox mechanism; see `architecture.md` |
 | [fido2](fido2/) | The `xkey fido2` daemon process, IPC-facing verbs (`touch`, `unlock`, `status`, `provision-attestation`), the GUI's FIDO2 device/service host, and a PIN/hmac-secret/SO-token protocol reference for `xkey/pkg/authenticator` | `fido2/README.md`, `fido2/overview.md`, `fido2/authenticator-*.md`, `fido2/daemon-*.md` (with `virtual-authenticator`) |
 | [gui](gui/) | The Wails v2 desktop GUI: the `App` composition root, the ~44-service Wails-bound backend surface, the Unix-socket IPC server, events, and the Svelte frontend | `gui/architecture.md` (`gui/README.md`, `gui/features.md`, `gui/design-system.md`, `gui/setup-wizard.md`, `gui/api-explorer.md`, `gui/browser-settings.md`, `gui/ROADMAP.md` remain as superseded background) |
 | [ble](ble/) | The Bluetooth Low Energy transport for the phone-as-HSM pairing protocol: GATT wire shape, central and peripheral roles, BlueZ integration | `ble/README.md`, `ble/architecture.md`, `ble/protocol.md`, `ble/android-app.md`, `ble/testing.md` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
-| [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
 | [autofill](autofill/) | Browser extension credential/TOTP autofill: native messaging, extension pairing, CTAP2 assertion verification, policy | `autofill/README.md`, `autofill/compliance.md`, `autofill/extension.md`, `autofill/policy.md` |
 | [oath](oath/) | TOTP/HOTP credential management, QR scanning, barrier-backed storage | `oath/README.md` |
 | [oidc](oidc/) | OpenID Connect relying-party login and the CLI's barrier-backed session token store | `oidc/` |
 | [password](password/) | Static password storage, folders, browser-autofill metadata, xkmsd-backed session access modes | `password/README.md` |
 | [phone](phone/) | The `xkey/pkg/phone` FIDO2 key backend (`--backend phone`), its BLE/USB/TCP transports, device-fingerprint continuity, the bidirectional xkmsd bridge, and the GUI's `PhoneService` | `phone/README.md`, `phone/protocol.md`, `phone/attestation.md`, `phone/bidirectional.md`, `phone/transport.md`, `phone/android/`, `phone/backend/` |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
+| [piv](piv/) | The `xkey piv` CLI/GUI surface over the SDK's PIV certificate manager | `piv/README.md` |
+| [luks](luks/) | LUKS2 encrypted storage: container lifecycle and the fail-closed lock gate shared by the CLI and GUI | `luks/README.md` |
 | [pkcs11-manager](pkcs11-manager/) | The PKCS#11 module/token manager wrapper and its automatic per-slot backend-registry synchronization | — |
 | [pkcs11](pkcs11/) | xkey's PKCS#11 side: GUI module/slot/token management, the embedded and IPC `PKCS11Transport` implementations, and the `--backend pkcs11` surface across other commands | `pkcs11/ipc.md` |
 | [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
@@ -56,13 +58,8 @@ regardless of what the rest of this tree looks like. While conversion is in
 progress a feature folder is NORMATIVE for its feature and a superseded legacy
 path is not; where they disagree, the feature folder wins.
 
-Still owed a folder: `ble/`, `device/`, `piv/`, `usb/`, `xkeysigner/`. Not
-features and staying as they are: `architecture/`, `configuration/`,
-`roadmap/`, `testing/`, `usage/`.
-Still owed a folder: `autofill/`, `device/`, `fido2/`, `gui/`, `oath/`,
-`password/`, `phone/`, `piv/`, `pkcs11/`, `ssh/`. Not features and staying
-as they are: `architecture/`, `configuration/`, `roadmap/`, `testing/`,
-`usage/`.
+Every feature folder is converted. Not features and staying as they are:
+`architecture/`, `configuration/`, `roadmap/`, `testing/`, `usage/`.
 
 ## Documentation Structure
 
@@ -85,7 +82,6 @@ as they are: `architecture/`, `configuration/`, `roadmap/`, `testing/`,
 | [roadmap/](roadmap/) | Feature roadmaps for media, PIV, and web |
 | [seal/](seal/) | The Barrier, TPM PCR-policy auto-unseal, named PCR policies, and the legacy sealed-blob store |
 | [secret-service/](secret-service/) | The `org.freedesktop.secrets` D-Bus Secret Service daemon |
-| [ssh/](ssh/) | SSH agent with standalone and server modes |
 | [ssh/](ssh/) | xkey's SSH key/profile/host-key/console management (five-file feature folder) |
 | [testing/](testing/) | Testing guides and end-to-end test documentation |
 | [usage/](usage/) | CLI usage guides, tutorials, and command reference |
@@ -269,10 +265,18 @@ reference — is [virtual-authenticator](virtual-authenticator/).
 - [User Guide](password/user.md) -- store, retrieve, type, and manage sessions
 
 ### [PIV](piv/)
-- [Overview](piv/README.md) -- Smart card certificate management
+- [Architecture](piv/architecture.md) -- the CLI/GUI layer over the SDK's PIV certificate manager
+- [Engineering](piv/engineering.md) -- exported surface, invariants, configuration, tests
+- [CLI](piv/cli.md) -- every `xkey piv` verb and flag
+- [API](piv/api.md) -- CLI/GUI capability mapping
+- [User Guide](piv/user.md) -- task-oriented usage
 
 ### [LUKS](luks/)
-- [Overview](luks/README.md) -- LUKS2 encrypted storage management
+- [Architecture](luks/architecture.md) -- the volume lifecycle layer over go-luks2
+- [Engineering](luks/engineering.md) -- exported surface, invariants, tests
+- [CLI](luks/cli.md) -- every `xkey luks2` verb and flag
+- [API](luks/api.md) -- CLI-only; no GUI/SDK surface
+- [User Guide](luks/user.md) -- task-oriented usage
 
 ### [USB](usb/)
 - [CCID](usb/ccid.md) -- USB CCID smart card interface
@@ -286,10 +290,11 @@ reference — is [virtual-authenticator](virtual-authenticator/).
 - [User Guide](pkcs11/user.md) -- task-oriented usage
 
 ### [Device](device/)
-- [Overview](device/README.md) -- Device management and pairing
-- [Pairing](device/pairing.md) -- Device pairing flows
-- [QR Pairing](device/qr-pairing.md) -- QR code pairing protocol
-- [TCP Relay](device/tcp-relay.md) -- TCP relay for remote devices
+- [Architecture](device/architecture.md) -- the `xkey device` namespace, the phone-hsm/agent boundary, QR pairing
+- [Engineering](device/engineering.md) -- exported surface, invariants, configuration, tests
+- [CLI](device/cli.md) -- `device` verbs this folder owns (agent enrollment, QR relay); phone-pairing verbs point to [phone-hsm](phone-hsm/)
+- [API](device/api.md) -- CLI-only; no GUI/SDK surface
+- [User Guide](device/user.md) -- task-oriented usage
 
 ### [Agent](agent/)
 - [Architecture](agent/architecture.md) -- connection-time revocation and enrollment checks

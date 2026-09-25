@@ -43,6 +43,7 @@ var classToGRPCCode = map[apierrors.Class]codes.Code{
 	apierrors.ClassUnauthenticated:    codes.Unauthenticated,
 	apierrors.ClassDataLoss:           codes.DataLoss,
 	apierrors.ClassDeadlineExceeded:   codes.DeadlineExceeded,
+	apierrors.ClassResourceExhausted:  codes.ResourceExhausted,
 }
 
 // grpcCodeForClass renders an apierrors.Class as its gRPC status code,

@@ -313,6 +313,13 @@ func (s *stubRestService) RevokeCertHandler(w http.ResponseWriter, _ *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// TenantAuthMiddleware is a pass-through: these router-wiring tests exercise
+// route dispatch, not tenant resolution (see tenant_auth_test.go in
+// pkg/acme/server/handlers for that).
+func (s *stubRestService) TenantAuthMiddleware(next http.Handler) http.Handler {
+	return next
+}
+
 // Compile-time assertion that stubRestService satisfies handlers.RestServicer.
 var _ handlers.RestServicer = (*stubRestService)(nil)
 
@@ -322,7 +329,7 @@ var _ handlers.RestServicer = (*stubRestService)(nil)
 // exercises the route wiring without requiring a full CA/storage bootstrap.
 func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 	svc := &stubRestService{}
-	router := buildACMERouter(svc, "/acme", nil)
+	router := buildACMERouter(svc, "/acme", nil, nil)
 
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
@@ -356,7 +363,7 @@ func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 // to HealthHandler, the resilience status endpoint added for #735.
 func TestBuildACMERouter_HealthEndpoint(t *testing.T) {
 	svc := &stubRestService{}
-	router := buildACMERouter(svc, "/acme", nil)
+	router := buildACMERouter(svc, "/acme", nil, nil)
 
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
@@ -381,7 +388,7 @@ func TestBuildACMERouter_HealthEndpoint(t *testing.T) {
 // succeed while GET /acme/new-order should be rejected (POST-only).
 func TestBuildACMERouter_RouteMethods(t *testing.T) {
 	svc := &stubRestService{}
-	router := buildACMERouter(svc, "/acme", nil)
+	router := buildACMERouter(svc, "/acme", nil, nil)
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
 
@@ -434,7 +441,7 @@ func TestBuildACMERouter_RouteMethods(t *testing.T) {
 func TestBuildACMERouter_RateLimit(t *testing.T) {
 	svc := &stubRestService{}
 	rateLimitMiddleware := acmeserver.NewClientRateLimiterMiddleware(1, time.Minute, nil)
-	router := buildACMERouter(svc, "/acme", rateLimitMiddleware)
+	router := buildACMERouter(svc, "/acme", rateLimitMiddleware, nil)
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
 
@@ -486,7 +493,7 @@ func TestBuildACMERouter_RateLimit(t *testing.T) {
 // startACMEServer, which logs the disabled case loudly.
 func TestBuildACMERouter_RateLimit_Disabled(t *testing.T) {
 	svc := &stubRestService{}
-	router := buildACMERouter(svc, "/acme", nil)
+	router := buildACMERouter(svc, "/acme", nil, nil)
 	ts := httptest.NewServer(router)
 	t.Cleanup(ts.Close)
 

@@ -67,7 +67,7 @@ route exists on both paths with the same permission by construction.
 | Wrap by ID | `POST /api/v1/keys/wrap-by-id` | `WrapKeyByID` | same as REST | `xkms.wrapKeyByID` | `WrapKeyByID` | route-level session |
 | Unwrap by ID | `POST /api/v1/keys/unwrap-by-id` | `UnwrapKeyByID` | same as REST | `xkms.unwrapKeyByID` | `UnwrapKeyByID` | route-level session |
 | Derive (ECDH) | `POST /api/v1/keys/derive-ecdh` | `DeriveKeyECDH` | same as REST | `xkms.deriveKeyECDH` | `DeriveKeyECDH` | route-level session |
-| Derive (KDF) | **MISSING — docs/13** | `DeriveKey` | **MISSING — docs/13** | **MISSING — docs/13** | `DeriveKey` | — |
+| Derive (KDF) | **MISSING — docs/13** | `DeriveKey` | **MISSING — docs/13** | `xkms.deriveKey` | `DeriveKey` | `keys:derive` |
 | Derive ECDH (secure) | **MISSING — docs/13** | `DeriveKeyECDHSecure` | **MISSING — docs/13** | **MISSING — docs/13** | — | — |
 | Attest key | `POST /api/v1/attest` | `AttestKey` | same as REST | `xkms.attestKey` | `AttestKey` | `keys:get` |
 | Health | `GET /health`, `/health/live`, `/health/ready`, `/health/startup` | `Health` | same as REST | `xkms.health` | `Health` | public |

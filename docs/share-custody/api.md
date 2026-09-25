@@ -20,13 +20,19 @@ Owner hold every one of them by default.
 
 | Capability | REST | gRPC / Unix (`KeystoreService.`) | QUIC | MCP | Embedded (`CustodianGroupService.`) | Permission |
 |---|---|---|---|---|---|---|
-| Create group | `POST /api/v1/custodian/groups/` | `CreateCustodianGroup` | same as REST | **MISSING — docs/13** | `CreateCustodianGroup` | `ceremony:enroll_custodian` |
-| List groups | `GET /api/v1/custodian/groups/` | `ListCustodianGroups` | same as REST | **MISSING — docs/13** | `ListCustodianGroups` | `ceremony:status` |
-| Get group | `GET /api/v1/custodian/groups/{id}` | `GetCustodianGroup` | same as REST | **MISSING — docs/13** | `GetCustodianGroup` | `ceremony:status` |
-| Delete group | `DELETE /api/v1/custodian/groups/{id}` | `DeleteCustodianGroup` | same as REST | **MISSING — docs/13** | `DeleteCustodianGroup` | `ceremony:revoke_custodian` |
-| Add member | `POST /api/v1/custodian/groups/{id}/members` | `AddCustodianMember` | same as REST | **MISSING — docs/13** | `AddCustodianMember` | `ceremony:enroll_custodian` |
-| Remove member | `DELETE /api/v1/custodian/groups/{id}/members/{userID}` | `RemoveCustodianMember` | same as REST | **MISSING — docs/13** | `RemoveCustodianMember` | `ceremony:revoke_custodian` |
-| Distribute shares | `POST /api/v1/custodian/groups/{id}/distribute` | `DistributeShares` | same as REST | **MISSING — docs/13** | `DistributeShares` | `ceremony:claim_share_begin` |
+| Create group | `POST /api/v1/custodian/groups/` | `CreateCustodianGroup` | same as REST | `xkms.createCustodianGroup` | `CreateCustodianGroup` | `ceremony:enroll_custodian` |
+| List groups | `GET /api/v1/custodian/groups/` | `ListCustodianGroups` | same as REST | `xkms.listCustodianGroups` | `ListCustodianGroups` | `ceremony:status` |
+| Get group | `GET /api/v1/custodian/groups/{id}` | `GetCustodianGroup` | same as REST | `xkms.getCustodianGroup` | `GetCustodianGroup` | `ceremony:status` |
+| Delete group | `DELETE /api/v1/custodian/groups/{id}` | `DeleteCustodianGroup` | same as REST | `xkms.deleteCustodianGroup` | `DeleteCustodianGroup` | `ceremony:revoke_custodian` |
+| Add member | `POST /api/v1/custodian/groups/{id}/members` | `AddCustodianMember` | same as REST | `xkms.addCustodianMember` | `AddCustodianMember` | `ceremony:enroll_custodian` |
+| Remove member | `DELETE /api/v1/custodian/groups/{id}/members/{userID}` | `RemoveCustodianMember` | same as REST | `xkms.removeCustodianMember` | `RemoveCustodianMember` | `ceremony:revoke_custodian` |
+| Distribute shares | `POST /api/v1/custodian/groups/{id}/distribute` | `DistributeShares` | same as REST | `xkms.distributeShares` | `DistributeShares` | `ceremony:claim_share_begin` |
+
+MCP gates group creation and membership changes with the `ceremony:enroll_custodian`
+/ `ceremony:revoke_custodian` RBAC permissions (mirroring gRPC's
+`s.authorize(ctx, auth.ResourceCeremony, ...)` calls); group reads carry
+`ceremony:status` and distribution carries `ceremony:claim_share_begin` — the
+same permissions the init ceremony's own custodian roster uses (go-xkms#773).
 
 ## Shares
 
@@ -38,11 +44,10 @@ Owner hold every one of them by default.
 | Delete a share | `DELETE /api/v1/shares/{serverURL}/{groupID}/{shareIndex}` | `DeleteShare` | same as REST | `xkms.deleteShare` | `DeleteShare` | `barrier:unseal-share` |
 | Collection status | `GET /api/v1/shares/status/{groupID}` | `GetShareCollectionStatus` | same as REST | `xkms.getShareCollectionStatus` | `GetShareCollectionStatus` | `ceremony:status` |
 
-Note the asymmetry: the **share** half is on MCP, the **custodian** half is not.
-That is a coherent line — reading and submitting a share you hold is a custodian
-activity, while creating groups and distributing splits is administration — but
-it is recorded as seven gaps rather than presented as a design statement,
-because nothing in the code says it was one.
+Both halves are now on MCP (go-xkms#773); the custodian group methods delegate
+to `pkg/api/mcp/handlers_custodian.go`, which calls the same `XKMSService`
+pass-through methods (`CreateCustodianGroup`, `GetCustodianGroup`, ...) that
+back the REST `CustodianHandlers` and the gRPC service.
 
 ## The three-part share identity is in the path
 
