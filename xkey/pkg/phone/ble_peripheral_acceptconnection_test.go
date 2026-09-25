@@ -18,6 +18,7 @@ package phone
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -210,10 +211,20 @@ func TestBLEPeripheral_AcceptConnection_RefusesASecondCallerWhileOneIsActive(t *
 	}()
 	<-firstStarted
 
-	// Give the first call a chance to reach its blocking receive before the
-	// second is issued, so the two are genuinely concurrent rather than
-	// racing to start.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the first call to actually hold acceptMu instead of sleeping
+	// a fixed duration: closing firstStarted only proves the goroutine was
+	// scheduled, not that it won the lock ahead of the second call below.
+	// TryLock is the real signal -- it fails exactly when someone else holds
+	// the mutex, and succeeding means nobody does yet, so it must be
+	// released immediately rather than mistaken for the first call's hold.
+	deadline := time.Now().Add(5 * time.Second)
+	for p.acceptMu.TryLock() {
+		p.acceptMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("the first AcceptConnection never acquired acceptMu")
+		}
+		runtime.Gosched()
+	}
 
 	// The second call's context is already meant to have expired by the time
 	// it ever gets to check it: it must sit blocked on acceptMu the whole

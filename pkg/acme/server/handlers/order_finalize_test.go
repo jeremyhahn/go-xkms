@@ -1492,7 +1492,7 @@ func TestSendFinalizeResponse_Success(t *testing.T) {
 	certPEM := []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----")
 
 	w := httptest.NewRecorder()
-	service.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, certPEM, w)
+	service.sendFinalizeResponse(ctx, orderDAO, order, account, time.Now(), serialNumber, certPEM, w)
 
 	require.Equal(t, http.StatusOK, w.Code)
 
@@ -2060,7 +2060,7 @@ func TestSendFinalizeResponse_CertDAOCreationFailure(t *testing.T) {
 	certPEM := []byte("test-cert-pem")
 
 	w := httptest.NewRecorder()
-	service.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, certPEM, w)
+	service.sendFinalizeResponse(ctx, orderDAO, order, account, time.Now(), serialNumber, certPEM, w)
 
 	assertErrorType(t, w, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
@@ -2089,7 +2089,7 @@ func TestSendFinalizeResponse_CertSaveFailure(t *testing.T) {
 	certPEM := []byte("test-cert-pem")
 
 	w := httptest.NewRecorder()
-	service.sendFinalizeResponse(ctx, orderDAO, order, serialNumber, certPEM, w)
+	service.sendFinalizeResponse(ctx, orderDAO, order, account, time.Now(), serialNumber, certPEM, w)
 
 	assertErrorType(t, w, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
@@ -2138,7 +2138,7 @@ func TestSendFinalizeResponse_OrderSaveFailure(t *testing.T) {
 	certPEM := []byte("test-cert-pem")
 
 	w := httptest.NewRecorder()
-	service.sendFinalizeResponse(ctx, mockOrderDAO, order, serialNumber, certPEM, w)
+	service.sendFinalizeResponse(ctx, mockOrderDAO, order, account, time.Now(), serialNumber, certPEM, w)
 
 	assertErrorType(t, w, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }

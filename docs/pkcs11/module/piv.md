@@ -18,7 +18,11 @@ piv_backends = software,tpm2
 
 ### `XKMS_PKCS11_PIV_BACKENDS` Environment Variable
 
-A comma-separated list of backend names. Environment variables take precedence over the configuration file.
+A comma-separated list of backend names. Read by `applyEnvOverrides`
+(`pkg/pkcs11/module/config.go:724`, also `LoadFromEnv` at `:495`);
+`Load`/`LoadWithPath` (`config.go:628-648`) load the configuration file
+first and then call `applyEnvOverrides`, so the environment variable takes
+precedence over the configuration file.
 
 ```bash
 export XKMS_PKCS11_PIV_BACKENDS=software,tpm2,yubikey

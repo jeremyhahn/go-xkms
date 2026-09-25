@@ -189,7 +189,7 @@ xkey device list
 `xkey device pair` takes `--device`, `--timeout` and `--force`. QR *generation*
 is `xkey device relay --qr`; there is no CLI command that scans a pairing QR —
 the phone does that. See
-[../../device/qr-pairing.md](../../device/qr-pairing.md).
+[../../device/cli.md#device-relay-and-qr-pairing](../../device/cli.md#device-relay-and-qr-pairing).
 
 ### SSH
 
@@ -236,4 +236,4 @@ the phone does that. See
 - [Browser Extension](extension.md)
 - [FIDO2 Daemon Overview](../../fido2/architecture.md)
 - [FIDO2 Daemon Configuration](../../virtual-authenticator/cli.md)
-- [QR Pairing](../../device/qr-pairing.md)
+- [QR Pairing](../../device/cli.md#device-relay-and-qr-pairing)

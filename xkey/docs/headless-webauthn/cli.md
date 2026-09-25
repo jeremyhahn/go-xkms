@@ -1,6 +1,6 @@
 # Headless WebAuthn — CLI
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 Binary: `xkey`, group `auth` (`xkey/cmd/xkey/cmd/auth.go`). Needs a running
 `xkey fido2` daemon to hold the credential — see
@@ -62,17 +62,21 @@ browser here to prompt for one. **The quick-setup wizard configures a PIN, so
 this applies to a default install.** An authenticator with no PIN configured
 needs none, and both verbs work unchanged without these flags.
 
-`--pin` is the **authenticator's** PIN. It is unrelated to `--spki-pin`, which
-is the server's public-key pin — the two are easy to confuse on `auth register`,
-where both appear.
+There is no `--pin` value flag on `xkey auth register`/`xkey auth login`
+(go-xkms#272 removed it, `xkey/cmd/xkey/cmd/pin_input.go:170-174,181`): a
+value on the command line is visible to every other process on the host via
+`ps`. Unrelated to the authenticator's PIN is `--spki-pin`, the server's
+public-key pin — the two are easy to confuse on `auth register`, where both
+appear.
 
-The PIN is resolved in the same precedence order `xkey unlock` uses:
+The PIN is resolved by `resolvePINInput`
+(`xkey/cmd/xkey/cmd/pin_input.go:159-161,181`), the same resolver and the
+same precedence order `xkey unlock` uses:
 
 | Source | Precedence | Notes |
 |---|---|---|
 | `--pin-stdin` | 1 | **preferred** — keeps the PIN out of `ps` and shell history |
 | `XKEY_PIN` | 2 | environment variable |
-| `--pin` | 3 | visible in the process list; local development only |
 
 ```
 printf '%s' "$PIN" | xkey auth register --pin-stdin \

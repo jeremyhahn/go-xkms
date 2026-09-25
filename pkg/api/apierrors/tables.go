@@ -14,6 +14,8 @@
 package apierrors
 
 import (
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -58,6 +60,52 @@ var PIVSentinelClasses = []SentinelClass{
 	{xkms.ErrPIVInvalidSlot, ClassInvalidArgument},
 	{xkms.ErrPIVInvalidFormat, ClassInvalidArgument},
 	{xkms.ErrPIVKeyNotFound, ClassNotFound},
+}
+
+// PINSentinelClasses classifies the go-qrdb PIN backend domain errors
+// (qrdbsdk.ErrPINNotSet, ErrPINLocked, ...) pkg/xkms's PIN operations
+// (SetSOPIN, SetUserPIN, ChangeSOPIN, ChangeUserPIN, VerifySOPIN,
+// VerifyUserPIN, GetLockoutStatus, ResetLockout) return, plus the
+// xkms.ErrNotConfigured every one of those operations returns when no
+// qrdbsdk.PINBackend is composed. Both pkg/api/grpc/service_barrier_pin.go's
+// mapPINError and pkg/api/mcp's mirror of it read this table (go-xkms#773,
+// following the go-xkms#912 precedent set for PIV and barrier).
+var PINSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{qrdbsdk.ErrPINNotSet, ClassFailedPrecondition},
+	{qrdbsdk.ErrPINLocked, ClassResourceExhausted},
+	{qrdbsdk.ErrPINInvalid, ClassUnauthenticated},
+	{qrdbsdk.ErrSOPINRequired, ClassUnauthenticated},
+	{qrdbsdk.ErrPINTooShort, ClassInvalidArgument},
+	{qrdbsdk.ErrPINAlreadySet, ClassAlreadyExists},
+	{qrdbsdk.ErrInvalidCurrentPIN, ClassUnauthenticated},
+	{qrdbsdk.ErrPINStateCorrupted, ClassDataLoss},
+	{qrdbsdk.ErrPINStrategyNotSet, ClassFailedPrecondition},
+}
+
+// CustodianSentinelClasses classifies the go-qrdb custodian-group domain
+// errors (qrdbsdk.ErrCeremonyGroupNotFound, ErrCeremonyGroupAlreadyExists,
+// ...) surfaced by the embedded node's CustodianGroupClient, via
+// pkg/xkms/servicer_custodian.go's CreateCustodianGroup et al., plus the
+// xkms.ErrNotConfigured / xkms.ErrNilRequest sentinels those same operations
+// return when no client is composed or the request is nil. Both
+// pkg/api/grpc/service_custodian_share_tenant.go's mapCustodianError and
+// pkg/api/mcp's mirror of it read this table (go-xkms#773, following the
+// go-xkms#912 precedent set for PIV and barrier).
+var CustodianSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{xkms.ErrNilRequest, ClassInvalidArgument},
+	{qrdbsdk.ErrCeremonyGroupNotFound, ClassNotFound},
+	{qrdbsdk.ErrCeremonyMemberNotFound, ClassNotFound},
+	{qrdbsdk.ErrCeremonyUserNotFound, ClassNotFound},
+	{qrdbsdk.ErrCeremonyGroupAlreadyExists, ClassAlreadyExists},
+	{qrdbsdk.ErrCeremonyMemberAlreadyExists, ClassAlreadyExists},
+	{qrdbsdk.ErrCeremonyGroupFull, ClassFailedPrecondition},
+	{qrdbsdk.ErrCeremonyInsufficientMembers, ClassFailedPrecondition},
+	{qrdbsdk.ErrCeremonyEmptyGroupID, ClassInvalidArgument},
+	{qrdbsdk.ErrCeremonyEmptyGroupName, ClassInvalidArgument},
+	{qrdbsdk.ErrCeremonyInvalidThreshold, ClassInvalidArgument},
+	{qrdbsdk.ErrCeremonyInvalidTotal, ClassInvalidArgument},
 }
 
 // BarrierSentinelClasses classifies the pkg/seal barrier and Shamir

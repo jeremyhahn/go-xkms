@@ -1079,10 +1079,11 @@ func TestCTAPHIDHandler_KeepalivesDuringMakeCredential(t *testing.T) {
 
 	// Send MakeCredential (multi-packet CBOR command)
 	payload := buildMakeCredentialCBOR(t)
+	// sendMultiPacketCBOR's last call blocks synchronously through
+	// processCBORCommandLocked -- including the delayed user-presence
+	// approval and the keepalive goroutine it starts and waits on -- so by
+	// the time it returns every response is already recorded.
 	sendMultiPacketCBOR(handler, cid, payload)
-
-	// Wait for the delayed response plus margin
-	time.Sleep(800 * time.Millisecond)
 
 	responses := collector.getResponses()
 
@@ -1148,11 +1149,11 @@ func TestCTAPHIDHandler_NoKeepalivesForGetInfo(t *testing.T) {
 
 	cid := initializeChannel(t, handler, collector)
 
-	// Send GetInfo (instant response, no user presence needed)
+	// Send GetInfo (instant response, no user presence needed). HandleMessage
+	// blocks synchronously through processCBORCommandLocked, and the
+	// keepalive goroutine only starts for CmdMakeCredential/CmdGetAssertion,
+	// so by the time it returns there is nothing left to wait for.
 	handler.HandleMessage(createCBORPacket(cid, []byte{CmdGetInfo}))
-
-	// Small sleep to let any hypothetical keepalives arrive
-	time.Sleep(250 * time.Millisecond)
 
 	responses := collector.getResponses()
 
@@ -1185,12 +1186,10 @@ func TestCTAPHIDHandler_KeepalivePacketFormat(t *testing.T) {
 
 	cid := initializeChannel(t, handler, collector)
 
-	// Send MakeCredential to trigger keepalives
+	// Send MakeCredential to trigger keepalives. sendMultiPacketCBOR's last
+	// call blocks synchronously until every response is recorded.
 	payload := buildMakeCredentialCBOR(t)
 	sendMultiPacketCBOR(handler, cid, payload)
-
-	// Wait for response
-	time.Sleep(500 * time.Millisecond)
 
 	responses := collector.getResponses()
 
@@ -1284,9 +1283,10 @@ func TestCTAPHIDHandler_KeepaliveProcessingWhenPINRequired(t *testing.T) {
 	// Build MakeCredential CBOR WITHOUT pinUvAuthParam — Chrome's first
 	// attempt before it knows PIN is needed.
 	payload := buildMakeCredentialCBOR(t)
+	// sendMultiPacketCBOR's last call blocks synchronously until every
+	// response is recorded, so no wait is needed here.
 	sendMultiPacketCBOR(handler, cid, payload)
 
-	time.Sleep(800 * time.Millisecond)
 	responses := collector.getResponses()
 
 	gotProcessing := false
@@ -1539,10 +1539,10 @@ func TestProcessCBORCommandLocked_MakeCredentialInvalidCBOR(t *testing.T) {
 
 	// Send MakeCredential with invalid CBOR data
 	invalidCBOR := []byte{CmdMakeCredential, 0xFF, 0xFF, 0xFF} // Invalid CBOR
+	// HandleMessage blocks synchronously through processCBORCommandLocked,
+	// including waiting for the keepalive goroutine to stop, so no wait is
+	// needed here.
 	handler.HandleMessage(createCBORPacket(cid, invalidCBOR))
-
-	// Wait for keepalives to finish
-	time.Sleep(200 * time.Millisecond)
 
 	responses := collector.getResponses()
 	if len(responses) < 1 {
@@ -1580,10 +1580,10 @@ func TestProcessCBORCommandLocked_GetAssertionInvalidCBOR(t *testing.T) {
 
 	// Send GetAssertion with invalid CBOR data
 	invalidCBOR := []byte{CmdGetAssertion, 0xFF, 0xFF, 0xFF} // Invalid CBOR
+	// HandleMessage blocks synchronously through processCBORCommandLocked,
+	// including waiting for the keepalive goroutine to stop, so no wait is
+	// needed here.
 	handler.HandleMessage(createCBORPacket(cid, invalidCBOR))
-
-	// Wait for keepalives to finish
-	time.Sleep(200 * time.Millisecond)
 
 	responses := collector.getResponses()
 	if len(responses) < 1 {
@@ -1825,8 +1825,9 @@ func TestProcessCBORCommandLocked_KeepaliveForGetAssertion(t *testing.T) {
 	mcData, err := cbor.Marshal(mcRequest)
 	require.NoError(t, err)
 	mcPayload := append([]byte{CmdMakeCredential}, mcData...)
+	// sendMultiPacketCBOR's last call blocks synchronously until every
+	// response is recorded, so no wait is needed before clearing.
 	sendMultiPacketCBOR(handler, cid, mcPayload)
-	time.Sleep(500 * time.Millisecond)
 	collector.clear()
 
 	// Build GetAssertion request
@@ -1844,10 +1845,9 @@ func TestProcessCBORCommandLocked_KeepaliveForGetAssertion(t *testing.T) {
 	require.NoError(t, err)
 
 	gaPayload := append([]byte{CmdGetAssertion}, data...)
+	// sendMultiPacketCBOR's last call blocks synchronously until every
+	// response is recorded, so no wait is needed here.
 	sendMultiPacketCBOR(handler, cid, gaPayload)
-
-	// Wait for response
-	time.Sleep(500 * time.Millisecond)
 
 	responses := collector.getResponses()
 
@@ -2128,10 +2128,10 @@ func TestProcessCBORCommandLocked_ConcurrentRequests(t *testing.T) {
 			handler.HandleMessage(createCBORPacket(c, []byte{CmdGetInfo}))
 		}(cid)
 	}
+	// Each HandleMessage call blocks synchronously until its response is
+	// recorded, so wg.Wait() already guarantees every response is in.
 	wg.Wait()
 
-	// All requests should succeed
-	time.Sleep(100 * time.Millisecond)
 	responses = collector.getResponses()
 
 	successCount := 0
@@ -2184,10 +2184,10 @@ func TestProcessCBORCommandLocked_MakeCredentialMissingParams(t *testing.T) {
 			}
 
 			payload := append([]byte{CmdMakeCredential}, data...)
+			// HandleMessage blocks synchronously through
+			// processCBORCommandLocked, including waiting for the keepalive
+			// goroutine to stop, so no wait is needed here.
 			handler.HandleMessage(createCBORPacket(cid, payload))
-
-			// Wait for keepalives to finish
-			time.Sleep(200 * time.Millisecond)
 
 			responses := collector.getResponses()
 
@@ -2250,10 +2250,10 @@ func TestProcessCBORCommandLocked_GetAssertionMissingParams(t *testing.T) {
 			}
 
 			payload := append([]byte{CmdGetAssertion}, data...)
+			// HandleMessage blocks synchronously through
+			// processCBORCommandLocked, including waiting for the keepalive
+			// goroutine to stop, so no wait is needed here.
 			handler.HandleMessage(createCBORPacket(cid, payload))
-
-			// Wait for keepalives to finish
-			time.Sleep(200 * time.Millisecond)
 
 			responses := collector.getResponses()
 
@@ -2392,10 +2392,9 @@ func TestCTAPHIDCancel_AbortsUserPresence(t *testing.T) {
 		t.Fatal("timed out waiting for CBOR command to complete after CANCEL")
 	}
 
-	// Give a brief moment for the response handler to collect the response.
-	time.Sleep(50 * time.Millisecond)
-
-	// Collect all responses and find the CBOR response.
+	// No wait needed: sendResponseLocked calls the response handler
+	// synchronously before processCBORCommandLocked (and thus sendMultiPacketCBOR
+	// and cborDone) returns.
 	responses := collector.getResponses()
 
 	var cborResp []byte
@@ -2452,12 +2451,20 @@ func TestNoCredentialsDeferral_SendsProcessingKeepalives(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for some keepalives to accumulate.
-	time.Sleep(500 * time.Millisecond)
+	// Wait for at least one keepalive to accumulate instead of sleeping a
+	// fixed duration: the deferral blocks until CANCEL, so this is the real
+	// signal that the deferral is underway.
+	require.Eventually(t, func() bool {
+		for _, resp := range collector.getResponses() {
+			if resp[4] == CTAPHIDKeepalive {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "expected at least one keepalive response")
 
 	// Verify keepalives are Processing, NOT UpNeeded.
 	responses := collector.getResponses()
-	require.NotEmpty(t, responses, "expected at least one keepalive response")
 
 	var gotProcessingKeepalive bool
 	var gotUpNeededKeepalive bool
@@ -2535,8 +2542,18 @@ func TestNoCredentialsDeferral_CancelShortCircuits(t *testing.T) {
 		close(done)
 	}()
 
-	// Send CANCEL after 200ms (well before the 1s deferral timeout).
-	time.Sleep(200 * time.Millisecond)
+	// Send CANCEL once the deferral is confirmed underway (its first
+	// keepalive observed) instead of sleeping a fixed duration -- still well
+	// before the 1s deferral timeout, and deterministic regardless of
+	// scheduler load.
+	require.Eventually(t, func() bool {
+		for _, resp := range collector.getResponses() {
+			if resp[4] == CTAPHIDKeepalive {
+				return true
+			}
+		}
+		return false
+	}, 800*time.Millisecond, 10*time.Millisecond, "deferral never started")
 	cancelPacket := make([]byte, HIDPacketSize)
 	binary.BigEndian.PutUint32(cancelPacket[0:4], cid)
 	cancelPacket[4] = CTAPHIDCancel
@@ -2609,10 +2626,10 @@ func TestNoCredentialsDeferral_WithCredentials_SkipsDeferral(t *testing.T) {
 
 	payload := append([]byte{CmdGetAssertion}, data...)
 	start := time.Now()
+	// sendMultiPacketCBOR's last call blocks synchronously until every
+	// response is recorded, so elapsed already measures real processing
+	// time with no separate wait needed.
 	sendMultiPacketCBOR(handler, cid, payload)
-
-	// Wait for the response (should be fast, no deferral).
-	time.Sleep(500 * time.Millisecond)
 	elapsed := time.Since(start)
 
 	responses := collector.getResponses()
@@ -2721,9 +2738,10 @@ func TestCTAPHIDHandler_KeepaliveProcessingWhenPINRequired_GetAssertion(t *testi
 	}
 
 	gaPayload := append([]byte{CmdGetAssertion}, gaData...)
+	// sendMultiPacketCBOR's last call blocks synchronously until every
+	// response is recorded, so no wait is needed here.
 	sendMultiPacketCBOR(handler, cid, gaPayload)
 
-	time.Sleep(800 * time.Millisecond)
 	responses := collector.getResponses()
 
 	gotProcessing := false

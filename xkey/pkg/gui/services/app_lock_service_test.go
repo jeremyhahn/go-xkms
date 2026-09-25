@@ -787,8 +787,9 @@ func TestAppLockService_AutoLock_FiresAndLocks(t *testing.T) {
 	})
 	svc.autoLockMu.Unlock()
 
-	time.Sleep(200 * time.Millisecond)
-	assert.True(t, svc.IsLocked())
+	// The 50ms AfterFunc fire is the behavior under test; poll rather than
+	// bet a fixed sleep is long enough under a loaded scheduler.
+	require.Eventually(t, svc.IsLocked, 5*time.Second, 10*time.Millisecond, "auto-lock timer did not fire")
 }
 
 func TestAppLockService_AutoLock_EmitsEvent(t *testing.T) {
@@ -810,7 +811,13 @@ func TestAppLockService_AutoLock_EmitsEvent(t *testing.T) {
 	})
 	svc.autoLockMu.Unlock()
 
-	time.Sleep(200 * time.Millisecond)
+	// The 50ms AfterFunc fire is the behavior under test; poll for the
+	// emitted event itself (Lock sets locked before emitting, so polling
+	// IsLocked alone would race the emit) rather than bet a fixed sleep is
+	// long enough under a loaded scheduler.
+	require.Eventually(t, func() bool {
+		return emittedEvent.Load() != nil
+	}, 5*time.Second, 10*time.Millisecond, "auto-lock timer did not emit")
 
 	assert.True(t, svc.IsLocked())
 	ev, ok := emittedEvent.Load().(string)
@@ -831,14 +838,22 @@ func TestAppLockService_AutoLock_NoEmitWhenAlreadyLocked(t *testing.T) {
 	require.NoError(t, err)
 	initialCount := emitCount.Load()
 
-	// Set up a timer that tries to auto-lock again.
+	// Set up a timer that tries to auto-lock again, and signal on a channel
+	// instead of sleeping a fixed duration so the assertion below only runs
+	// once the attempt has actually completed.
+	done := make(chan struct{})
 	svc.autoLockMu.Lock()
 	svc.autoLockTimer = time.AfterFunc(50*time.Millisecond, func() {
 		_ = svc.Lock() // Should return ErrAppLockAlreadyLocked, no emit.
+		close(done)
 	})
 	svc.autoLockMu.Unlock()
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("auto-lock timer did not fire")
+	}
 
 	// Lock returned ErrAppLockAlreadyLocked, so no additional emit should fire.
 	assert.Equal(t, initialCount, emitCount.Load())

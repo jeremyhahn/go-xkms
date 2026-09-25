@@ -138,7 +138,13 @@ storage:
   path: /var/lib/xkms/data
 ```
 
-Environment variables override config file settings:
+Environment variables override config file settings. `XKMS_STORAGE_PATH` is
+an instance of the generic `XKMS_<SECTION>_<KEY>` binding
+(`pkg/config/load.go:175-182`) over `storage.path`
+(`pkg/config/config.go:651-655`); `cmd/xkmsctl`'s admin/user commands also
+read it directly (`os.Getenv("XKMS_STORAGE_PATH")`,
+`cmd/xkmsctl/admin.go:777`) as the default for their own `--storage-path`
+flag, independent of `xkmsd`'s config load:
 
 ```bash
 export XKMS_STORAGE_PATH=/mnt/fast-storage

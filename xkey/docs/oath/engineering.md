@@ -1,6 +1,6 @@
 # OATH TOTP/HOTP — Engineering
 
-> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `oath` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 See [architecture.md](architecture.md) for the component map before reading
 this document.
@@ -157,7 +157,7 @@ func ScanScreenForOTP() (string, error)
 
 | Setting | Resolution | Notes |
 |---|---|---|
-| Store location | `--store` flag (`./data/oath.json` default) → barrier-or-file decision via `resolveSecretStoreBackend` when `--store` is left at default | See architecture.md's "At-rest encryption" |
+| Store location | `--store` flag (unset default resolves to `~/.xkey/data/oath.json` via `resolveDataDir`, `datadir.go`, go-xkms#929) → barrier-or-file decision via `resolveSecretStoreBackend` when `--store` is left at default | See architecture.md's "At-rest encryption" |
 | Barrier password | `--barrier-password` → `--barrier-password-file` → `XKEY_BARRIER_PASSWORD` → interactive prompt | Only consulted when the default store resolves to the barrier |
 
 ## Tests

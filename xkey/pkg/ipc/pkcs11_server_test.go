@@ -19,7 +19,6 @@ import (
 	"errors"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +54,9 @@ func (h *mockPKCS11Handler) HandlePKCS11BarrierStatus() (*BarrierStatusResult, e
 	return h.barrierResult, h.barrierErr
 }
 
+// TestServer_PKCS11_Sign_Success, and every other test below that dials
+// right after "go srv.Serve(ctx)", needs no readiness wait: see the note on
+// TestServer_AcceptsAndDispatchesTouch in server_test.go.
 func TestServer_PKCS11_Sign_Success(t *testing.T) {
 	sockPath := testSocketPath(t)
 	handler := &mockPKCS11Handler{
@@ -73,7 +75,6 @@ func TestServer_PKCS11_Sign_Success(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -121,7 +122,6 @@ func TestServer_PKCS11_Sign_HandlerError(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -169,7 +169,6 @@ func TestServer_PKCS11_BarrierStatus_Success(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -212,7 +211,6 @@ func TestServer_PKCS11_BarrierStatus_Error(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -257,7 +255,6 @@ func TestServer_PKCS11_ListPIVSlots_Success(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -300,7 +297,6 @@ func TestServer_PKCS11_ListPIVSlots_Error(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -346,7 +342,6 @@ func TestServer_PKCS11_GetPIVCertificate_Success(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -395,7 +390,6 @@ func TestServer_PKCS11_GetPIVCertificate_Error(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)
@@ -436,7 +430,6 @@ func TestServer_PKCS11_HandlerDoesNotImplementPKCS11Handler(t *testing.T) {
 	defer cancel()
 
 	go srv.Serve(ctx)
-	time.Sleep(50 * time.Millisecond)
 
 	conn, err := net.Dial("unix", sockPath)
 	require.NoError(t, err)

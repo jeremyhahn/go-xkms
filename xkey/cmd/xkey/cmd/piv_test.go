@@ -26,11 +26,13 @@ import (
 	"errors"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/viper"
 )
 
@@ -1060,8 +1062,12 @@ func TestCertFormatConstants(t *testing.T) {
 
 // TestPIVDefaultConstants tests default configuration constants.
 func TestPIVDefaultConstants(t *testing.T) {
-	if defaultPIVStoragePath == "" {
-		t.Error("defaultPIVStoragePath should not be empty")
+	// pivStorageFeature is the featureDataDir segment (datadir.go), not a
+	// path by itself: the actual default is resolved at run time by
+	// resolvePIVStoragePath (go-xkms#929), covered separately by
+	// TestResolvePIVStoragePath.
+	if pivStorageFeature == "" {
+		t.Error("pivStorageFeature should not be empty")
 	}
 	if defaultPIVBackend == "" {
 		t.Error("defaultPIVBackend should not be empty")
@@ -3218,5 +3224,70 @@ func TestPivGenerateCmd_AllNewFlags(t *testing.T) {
 				t.Errorf("flag %q type = %q, want %q", tc.name, f.Value.Type(), tc.flagType)
 			}
 		})
+	}
+}
+
+// --- resolvePIVStoragePath (go-xkms#929) ---
+
+// TestResolvePIVStoragePath_ExplicitPathWins verifies that a caller-set
+// StoragePath is returned unchanged, without consulting the shared xkey
+// data-directory chain at all.
+func TestResolvePIVStoragePath_ExplicitPathWins(t *testing.T) {
+	cfg := &PIVConfig{StoragePath: "/explicit/piv/path"}
+
+	got, err := resolvePIVStoragePath(cfg)
+	if err != nil {
+		t.Fatalf("resolvePIVStoragePath: %v", err)
+	}
+	if got != "/explicit/piv/path" {
+		t.Errorf("got %q, want %q", got, "/explicit/piv/path")
+	}
+}
+
+// TestResolvePIVStoragePath_DefaultsUnderXKEYHome verifies that an unset
+// StoragePath resolves to an absolute path under the resolved xkey data
+// directory (<XKEY_HOME>/data/piv), never a path relative to the process's
+// working directory, and that the resolved value is written back onto cfg
+// for later readers such as "piv status" (go-xkms#929).
+func TestResolvePIVStoragePath_DefaultsUnderXKEYHome(t *testing.T) {
+	isolateDataDirSources(t)
+	root := t.TempDir()
+	xhome.SetRoot(root)
+
+	cfg := &PIVConfig{}
+	got, err := resolvePIVStoragePath(cfg)
+	if err != nil {
+		t.Fatalf("resolvePIVStoragePath: %v", err)
+	}
+
+	want := filepath.Join(root, "data", "piv")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if !filepath.IsAbs(got) {
+		t.Errorf("got %q, want an absolute path", got)
+	}
+	if cfg.StoragePath != want {
+		t.Errorf("cfg.StoragePath = %q, want it updated to %q", cfg.StoragePath, want)
+	}
+}
+
+// TestResolvePIVStoragePath_ErrorWhenHomeUnresolvable verifies that
+// resolution fails with a typed error, instead of falling back to a
+// cwd-relative path, when the xkey home cannot be resolved or created
+// (go-xkms#929).
+func TestResolvePIVStoragePath_ErrorWhenHomeUnresolvable(t *testing.T) {
+	isolateDataDirSources(t)
+
+	// A regular file, not a directory: XKEY_HOME can neither be used nor
+	// created as a directory.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv(xhome.EnvHome, blocker)
+
+	if _, err := resolvePIVStoragePath(&PIVConfig{}); err == nil {
+		t.Error("resolvePIVStoragePath should fail when the xkey home cannot be resolved")
 	}
 }

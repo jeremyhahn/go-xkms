@@ -1,6 +1,6 @@
 # Static Passwords — CLI
 
-> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `password` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 Every flag below is read from `cmd/xkey/cmd/password.go`/`touch.go`'s
 `init()` and matches `xkey password <verb> --help`/`xkey touch --help`
@@ -20,7 +20,7 @@ the store's location and its session state have different authorities.
 | `--title` | | Display title for the credential |
 | `--username` | | Username or login |
 | `--url` | | Website URL, used by the browser extension for domain matching |
-| `--store` | `./data/staticpw` | Path to the password store |
+| `--store` | `~/.xkey/data/staticpw` (resolved via `featureDataDir`, `datadir.go`, go-xkms#929) | Path to the password store |
 
 ```bash
 xkey password add --name "DatabaseProd" --password "s3cretP@ss!"
@@ -34,7 +34,7 @@ xkey password add --name "WiFi" --generate --length 64 --charset alphanumeric --
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/staticpw` | Path to the password store |
+| `--store` | `~/.xkey/data/staticpw` | Path to the password store |
 | `--show-passwords` | `false` | Reveal values; requires `--source disk` |
 | `--socket` | auto-detect | IPC socket of a running daemon |
 | `--source` | `auto` | `auto`, `daemon`, or `disk` |
@@ -51,7 +51,7 @@ Outputs only the password value to stdout (no trailing newline), for piping.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/staticpw` | Path to the password store |
+| `--store` | `~/.xkey/data/staticpw` | Path to the password store |
 
 ```bash
 xkey password get "DatabaseProd"
@@ -64,7 +64,7 @@ DB_PASS=$(xkey password get "DatabaseProd")
 | Flag | Default | Description |
 |---|---|---|
 | `--force` | `false` | Skip the confirmation prompt |
-| `--store` | `./data/staticpw` | Path to the password store |
+| `--store` | `~/.xkey/data/staticpw` | Path to the password store |
 
 ```bash
 xkey password remove "DatabaseProd"
@@ -115,7 +115,7 @@ and auto-unseal state. Neither `--source auto/daemon/disk` requires an
 
 | Flag | Default | Description |
 |---|---|---|
-| `--store` | `./data/staticpw` | Path to the password store |
+| `--store` | `~/.xkey/data/staticpw` | Path to the password store |
 | `--socket` | auto-detect | IPC socket of a running daemon |
 | `--source` | `auto` | `auto`, `daemon`, `disk`, or `xkmsd` |
 
@@ -156,12 +156,19 @@ xkey touch --socket /tmp/xkey.sock
 ## `xkey fido2` password/touch flags
 
 `xkey fido2` accepts these flags for password-typing and touch support
-while the daemon runs:
+while the daemon runs. Each is bound to a Viper key (`fido2.*`) with
+`viper.BindPFlag` (`xkey/cmd/xkey/cmd/fido2.go:436-440`), but that call is on
+the global Viper singleton, which the `xkey` command tree never points at a
+config file (`ReadInConfig`) and never enables for the environment
+(`AutomaticEnv`/`SetEnvPrefix`). No `XKEY_FIDO2_*` environment variable
+reaches these settings today, whatever the command's own `--help` text
+says — only the flag does. Env-var and config-file support for `fido2.*` is
+tracked in #871; until it lands, set these via flags:
 
-| Flag | Env var | Default | Description |
-|---|---|---|---|
-| `--password-store` | `XKEY_FIDO2_PASSWORD_STORE` | `./data/staticpw` | Path to the static password store |
-| `--socket` | `XKEY_FIDO2_SOCKET` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket path |
-| `--default-password` | `XKEY_FIDO2_DEFAULT_PASSWORD` | (none) | Password name typed on a bare `xkey touch` |
-| `--notify-command` | `XKEY_FIDO2_NOTIFY_COMMAND` | (none) | Custom notification command; template vars `%o` `%r` `%n` `%u` |
-| `--notify` | `XKEY_FIDO2_NOTIFY` | `dialog` | `dialog`, `passive`, `log`, or `none` |
+| Flag | Default | Description |
+|---|---|---|
+| `--password-store` | `~/.xkey/data/staticpw` | Path to the static password store |
+| `--socket` | `$XDG_RUNTIME_DIR/xkey/xkey.sock` | IPC socket path |
+| `--default-password` | (none) | Password name typed on a bare `xkey touch` |
+| `--notify-command` | (none) | Custom notification command; template vars `%o` `%r` `%n` `%u` |
+| `--notify` | `dialog` | `dialog`, `passive`, `log`, or `none` |

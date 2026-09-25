@@ -15,10 +15,12 @@ package client
 
 import (
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
 // Supported key algorithms for certificate authority operations.
@@ -45,6 +47,16 @@ var validSignatureAlgorithms = map[string]struct{}{
 
 // Config holds the configuration for a TrustedCA instance.
 type TrustedCAConfig struct {
+	// DataDir is the base directory this TrustedCA instance persists to.
+	// Audit.LogPath, when not set explicitly, resolves to
+	// DataDir/DefaultAuditLogFileName (see Validate) -- the same
+	// DataDir-relative pattern xkmsd's embedded ACME server uses for its
+	// own audit trail (pkg/config.ACMEAuditConfig.ResolveLogPath) -- so a
+	// standalone TrustedCA never falls back to a cwd-relative default
+	// (go-xkms#929). Required whenever Audit.Enabled is true and
+	// Audit.LogPath is not set.
+	DataDir string `yaml:"data_dir" json:"data_dir"`
+
 	// ACME server configuration
 	ACME TCAACMEConfig `yaml:"acme" json:"acme"`
 
@@ -54,18 +66,33 @@ type TrustedCAConfig struct {
 	// Admin API configuration
 	Admin AdminConfig `yaml:"admin" json:"admin"`
 
-	// Multi-tenancy configuration
-	MultiTenant MultiTenantConfig `yaml:"multi_tenant" json:"multi_tenant"`
+	// Multi-tenancy is not a config field: it is a construction-time wiring
+	// decision, matching how every other structural component of TrustedCA
+	// (CA, storage factory, QRDB service, auth client) is wired -- through an
+	// Option, not through this config struct. WithMultiTenant() is the only
+	// switch; WithQRDB() supplies the multi-tenant store it requires. This
+	// also matches xkmsd's embedded ACME server: cmd/xkmsd/admin.go always
+	// calls admin.NewTenantAwareAdminService directly and has no
+	// pkg/config.ACMEConfig multi-tenant key -- the switch there is which
+	// constructor gets called, not a boolean in config. A former
+	// MultiTenantConfig section here (Enabled, DefaultTenantID,
+	// TenantIsolation) was validated and defaulted but never read by
+	// anything; it was deleted rather than wired, since nothing in the
+	// codebase gave DefaultTenantID or TenantIsolation runtime meaning
+	// (go-xkms#946).
 
 	// Audit configures the audit trail recording every issuance, revocation,
 	// account, and enrollment decision. DefaultTrustedCAConfig enables it; the
-	// admin API's GET /admin/audit reads back exactly this trail.
+	// admin API's GET /admin/audit reads back exactly this trail. LogPath is
+	// left empty by DefaultTrustedCAConfig and resolved against DataDir by
+	// Validate.
 	Audit audit.Config `yaml:"audit" json:"audit"`
 }
 
-// DefaultAuditLogPath is the audit trail written by a TrustedCA that did not
-// have a log path configured.
-const DefaultAuditLogPath = "trusted-ca-audit.log"
+// DefaultAuditLogFileName is the audit trail file name created inside
+// DataDir by a TrustedCA that did not have Audit.LogPath configured
+// explicitly.
+const DefaultAuditLogFileName = "trusted-ca-audit.log"
 
 // ACMEConfig holds ACME server configuration.
 type TCAACMEConfig struct {
@@ -107,6 +134,19 @@ type TCAACMEConfig struct {
 	// and testing; it is a development switch and is off by default. See
 	// handlers.Params.AllowLoopbackIdentifier (#140).
 	AllowLoopbackIdentifier bool `yaml:"allow_loopback_identifier" json:"allow_loopback_identifier"`
+
+	// Resilience configures the circuit breakers guarding this router's
+	// outbound dependencies (the http-01/dns-01 challenge verifiers and the
+	// tenant KMS signer) and its own CA-bundle storage access, plus the
+	// degradation cache the directory and CA-bundle endpoints serve from
+	// while that storage access is unavailable. This is the same
+	// config.ACMEResilienceConfig xkmsd's embedded ACME listener
+	// (acme.resilience in pkg/config) uses, reused rather than parallel typed
+	// so a "storage" or "kms" breaker section means the same thing in either
+	// composition's configuration file. A zero value is valid: every breaker
+	// and the degradation cache fall back to their package defaults (see
+	// ACMECircuitBreakerConfig / ACMEDegradationConfig).
+	Resilience config.ACMEResilienceConfig `yaml:"resilience" json:"resilience"`
 }
 
 // TLSConfig holds TLS configuration for HTTPS.
@@ -145,27 +185,6 @@ type AdminConfig struct {
 	TLS TCATLSConfig `yaml:"tls" json:"tls"`
 }
 
-// MultiTenantConfig holds multi-tenancy configuration.
-type MultiTenantConfig struct {
-	// Enabled indicates whether multi-tenancy is enabled.
-	Enabled bool `yaml:"enabled" json:"enabled"`
-
-	// DefaultTenantID is the default tenant ID for single-tenant mode.
-	DefaultTenantID string `yaml:"default_tenant_id" json:"default_tenant_id"`
-
-	// TenantIsolation configures tenant isolation settings.
-	TenantIsolation TenantIsolationConfig `yaml:"tenant_isolation" json:"tenant_isolation"`
-}
-
-// TenantIsolationConfig holds tenant isolation settings.
-type TenantIsolationConfig struct {
-	// EnforceIsolation enables strict tenant isolation.
-	EnforceIsolation bool `yaml:"enforce_isolation" json:"enforce_isolation"`
-
-	// AllowCrossTenantSuperAdmin allows super-admins to access other tenants.
-	AllowCrossTenantSuperAdmin bool `yaml:"allow_cross_tenant_super_admin" json:"allow_cross_tenant_super_admin"`
-}
-
 // DefaultConfig returns a default configuration with TLS 1.3 enforced.
 // All keys are managed by go-xkms - no filesystem key paths required.
 func DefaultTrustedCAConfig() *TrustedCAConfig {
@@ -193,19 +212,13 @@ func DefaultTrustedCAConfig() *TrustedCAConfig {
 				MaxVersion: "1.3",
 			},
 		},
-		MultiTenant: MultiTenantConfig{
-			Enabled:         false,
-			DefaultTenantID: "default",
-			TenantIsolation: TenantIsolationConfig{
-				EnforceIsolation:           true,
-				AllowCrossTenantSuperAdmin: true,
-			},
-		},
 		// The audit trail is a compliance control, so it is on by default and
-		// has to be switched off deliberately.
+		// has to be switched off deliberately. LogPath is left empty here:
+		// Validate resolves it against DataDir (or rejects the config if
+		// DataDir is also unset), so the caller sees a typed error instead
+		// of a cwd-relative log file (go-xkms#929).
 		Audit: audit.Config{
 			Enabled:              true,
-			LogPath:              DefaultAuditLogPath,
 			MaxSizeMB:            100,
 			MaxAgeDays:           365,
 			MaxBackups:           10,
@@ -217,12 +230,20 @@ func DefaultTrustedCAConfig() *TrustedCAConfig {
 }
 
 // Validate validates the entire TrustedCA configuration by delegating
-// to each sub-config's Validate method.
+// to each sub-config's Validate method. A nil receiver is rejected rather
+// than dereferenced: WithConfig(nil) is a caller error New must fail
+// closed on, not a panic (go-xkms#938).
 func (c *TrustedCAConfig) Validate() error {
+	if c == nil {
+		return errors.MalformedError("config is required")
+	}
 	if err := c.ACME.Validate(); err != nil {
 		return err
 	}
 	if err := c.CA.Validate(); err != nil {
+		return err
+	}
+	if err := c.resolveAuditLogPath(); err != nil {
 		return err
 	}
 	if err := c.Audit.Validate(); err != nil {
@@ -231,14 +252,38 @@ func (c *TrustedCAConfig) Validate() error {
 	if err := c.Admin.Validate(); err != nil {
 		return err
 	}
-	if err := c.MultiTenant.Validate(); err != nil {
-		return err
+	return nil
+}
+
+// resolveAuditLogPath derives Audit.LogPath from DataDir when the operator
+// enabled the audit trail but did not set Audit.LogPath explicitly,
+// mirroring pkg/config.ACMEAuditConfig.ResolveLogPath -- the same
+// DataDir-relative pattern xkmsd's embedded ACME server uses for its own
+// audit trail. A disabled trail needs no path at all. DataDir is required
+// to derive the default: there is no cwd-relative fallback (go-xkms#929).
+func (c *TrustedCAConfig) resolveAuditLogPath() error {
+	if !c.Audit.Enabled || c.Audit.LogPath != "" {
+		return nil
 	}
+	if c.DataDir == "" {
+		return errors.MalformedError(
+			"data_dir is required to resolve audit.logPath when audit.enabled is true and audit.logPath is not set")
+	}
+	c.Audit.LogPath = filepath.Join(c.DataDir, DefaultAuditLogFileName)
 	return nil
 }
 
 // Validate validates the ACME server configuration.
-// HTTPSAddr and ExternalURL are required. ExternalURL must be a valid HTTPS URL.
+// HTTPSAddr is required.
+//
+// ExternalURL is optional: TrustedCA.Serve derives an origin from the
+// listen address (AdvertisedURL) when neither the WithExternalURL option nor
+// this field is set, so a bind-address-only deployment is a config Validate
+// must accept (go-xkms#140). When ExternalURL is set, it must be a valid
+// HTTPS URL with a host: Validate cannot see whether WithExternalURL will
+// supply a value at construction time, so it only enforces the format of
+// what the operator actually wrote here.
+//
 // CAIdentifiers is required: RFC 8555 Section 8.1 requires this CA to check
 // CAA (RFC 8659) records before issuing, and without at least one identity
 // the CA has nothing to compare a domain's issue/issuewild record against.
@@ -246,18 +291,17 @@ func (a *TCAACMEConfig) Validate() error {
 	if a.HTTPSAddr == "" {
 		return errors.MalformedError("acme.https_addr is required")
 	}
-	if a.ExternalURL == "" {
-		return errors.MalformedError("acme.external_url is required")
-	}
-	parsed, err := url.Parse(a.ExternalURL)
-	if err != nil {
-		return errors.MalformedError("acme.external_url is not a valid URL: %s", a.ExternalURL)
-	}
-	if !strings.EqualFold(parsed.Scheme, "https") {
-		return errors.MalformedError("acme.external_url must use https scheme, got %q", parsed.Scheme)
-	}
-	if parsed.Host == "" {
-		return errors.MalformedError("acme.external_url must include a host")
+	if a.ExternalURL != "" {
+		parsed, err := url.Parse(a.ExternalURL)
+		if err != nil {
+			return errors.MalformedError("acme.external_url is not a valid URL: %s", a.ExternalURL)
+		}
+		if !strings.EqualFold(parsed.Scheme, "https") {
+			return errors.MalformedError("acme.external_url must use https scheme, got %q", parsed.Scheme)
+		}
+		if parsed.Host == "" {
+			return errors.MalformedError("acme.external_url must include a host")
+		}
 	}
 	if len(a.CAIdentifiers) == 0 {
 		return errors.MalformedError("acme.ca_identifiers is required")
@@ -265,7 +309,7 @@ func (a *TCAACMEConfig) Validate() error {
 	if err := a.TLS.Validate(); err != nil {
 		return err
 	}
-	return nil
+	return a.Resilience.Validate()
 }
 
 // Validate validates the TLS configuration.
@@ -313,18 +357,6 @@ func (a *AdminConfig) Validate() error {
 	}
 	if err := a.TLS.Validate(); err != nil {
 		return err
-	}
-	return nil
-}
-
-// Validate validates the multi-tenancy configuration.
-// When Enabled is true, DefaultTenantID is required.
-func (m *MultiTenantConfig) Validate() error {
-	if !m.Enabled {
-		return nil
-	}
-	if m.DefaultTenantID == "" {
-		return errors.MalformedError("multi_tenant.default_tenant_id is required when multi-tenancy is enabled")
 	}
 	return nil
 }

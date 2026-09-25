@@ -96,7 +96,7 @@ func seedBackupStores(t *testing.T, home string) {
 	dataDir := backupTestDataDir(home)
 
 	trustStore, err := truststore.NewFileStore(&truststore.FileStoreConfig{
-		BaseDir: filepath.Join(dataDir, backupTrustStoreDir),
+		BaseDir: filepath.Join(dataDir, trustDataSubdir),
 	})
 	require.NoError(t, err)
 	added, err := trustStore.AddPEM(newTestCertificatePEM(t, "backup-unit-test-ca"))
@@ -104,7 +104,7 @@ func seedBackupStores(t *testing.T, home string) {
 	require.Equal(t, 1, added)
 	require.NoError(t, trustStore.Close())
 
-	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, backupOATHStoreFile))
+	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, oathStoreFilename))
 	require.NoError(t, err)
 	require.NoError(t, oathStore.Add(withOATHSecret(&oath.Credential{
 		ID:          "oath-unit-test",
@@ -119,7 +119,10 @@ func seedBackupStores(t *testing.T, home string) {
 	}, "JBSWY3DPEHPK3PXP")))
 	require.NoError(t, oathStore.Close())
 
-	passwordStore, err := openPasswordStore(filepath.Join(dataDir, backupPasswordStoreDir))
+	// The static password store lives at passwordStoreFeature ("staticpw"),
+	// not a private "passwords" copy of the name (go-xkms#936): seeding
+	// anywhere else would let a wrong default silently pass this fixture.
+	passwordStore, err := openPasswordStore(filepath.Join(dataDir, passwordStoreFeature))
 	require.NoError(t, err)
 	require.NoError(t, passwordStore.Add(&xkms.StaticPassword{
 		Name:     "UnitTestEntry",
@@ -319,6 +322,82 @@ func TestRequireBackupFile(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBackupFileNotFound)
 }
 
+// --- Missing-source helpers (go-xkms#936) ---
+
+func TestPathExists_PresentAndAbsent(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "present")
+	require.NoError(t, os.Mkdir(present, 0700))
+
+	exists, err := pathExists(present)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	exists, err = pathExists(filepath.Join(dir, "absent"))
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestPathExists_RealStatFailure(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+
+	// A path beneath a regular file can never be stat'd as a directory: this
+	// is a genuine I/O error, not "does not exist".
+	_, err := pathExists(filepath.Join(blocker, "child"))
+	require.Error(t, err)
+	assert.False(t, os.IsNotExist(err))
+}
+
+func TestRequireExplicitSource_NonStrictAlwaysPasses(t *testing.T) {
+	err := requireExplicitSource(false, backup.ItemTrustStore, filepath.Join(t.TempDir(), "absent"))
+	assert.NoError(t, err, "a write run never demands the destination already exist")
+}
+
+func TestRequireExplicitSource_StrictMissingErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent")
+	err := requireExplicitSource(true, backup.ItemTrustStore, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackupSourceMissing)
+	assert.Contains(t, err.Error(), backup.ItemTrustStore)
+	assert.Contains(t, err.Error(), path)
+}
+
+func TestRequireExplicitSource_StrictPresentPasses(t *testing.T) {
+	dir := t.TempDir()
+	assert.NoError(t, requireExplicitSource(true, backup.ItemTrustStore, dir))
+}
+
+func TestDefaultSourceMissing_NonStrictAlwaysFalse(t *testing.T) {
+	missing, err := defaultSourceMissing(false, backup.ItemPasswords, filepath.Join(t.TempDir(), "absent"))
+	require.NoError(t, err)
+	assert.False(t, missing)
+}
+
+func TestDefaultSourceMissing_StrictReportsAbsent(t *testing.T) {
+	missing, err := defaultSourceMissing(true, backup.ItemPasswords, filepath.Join(t.TempDir(), "absent"))
+	require.NoError(t, err)
+	assert.True(t, missing)
+}
+
+func TestDefaultSourceMissing_StrictPresentReportsFalse(t *testing.T) {
+	dir := t.TempDir()
+	missing, err := defaultSourceMissing(true, backup.ItemPasswords, dir)
+	require.NoError(t, err)
+	assert.False(t, missing)
+}
+
+func TestDefaultSourceMissing_StrictStatFailurePropagates(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+
+	_, err := defaultSourceMissing(true, backup.ItemPasswords, filepath.Join(blocker, "child"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackupStoreUnavailable)
+}
+
 // --- Store resolution ---
 
 func TestBackupStorePathsFromFlags(t *testing.T) {
@@ -334,22 +413,92 @@ func TestBackupStorePathsFromFlags(t *testing.T) {
 	assert.Equal(t, "/tmp/p", paths.passwords)
 }
 
-func TestResolveBackupSources_Defaults(t *testing.T) {
+// TestResolveBackupSources_Defaults_NothingWrittenYet is the go-xkms#936
+// regression guard for a fresh xkey home: in strict (read) mode, a default
+// store location that has never been written to must be reported as a
+// missing source and left unopened, not auto-created and silently backed up
+// as empty.
+func TestResolveBackupSources_Defaults_NothingWrittenYet(t *testing.T) {
 	home := isolatedBackupHome(t)
 	dataDir := backupTestDataDir(home)
 
-	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, true)
 	require.NoError(t, err)
 	defer sources.Close()
 
-	assert.Equal(t, filepath.Join(dataDir, backupTrustStoreDir), sources.trust.path)
-	assert.Equal(t, filepath.Join(dataDir, backupOATHStoreFile), sources.oath.path)
-	assert.Equal(t, filepath.Join(dataDir, backupPasswordStoreDir), sources.passwords.path)
+	assert.Nil(t, sources.trust)
+	assert.Nil(t, sources.oath)
+	assert.Nil(t, sources.passwords)
+	assert.Empty(t, sources.readerOptions())
+
+	require.Len(t, sources.skipped, 4)
+	items := make([]string, len(sources.skipped))
+	for i, skip := range sources.skipped {
+		items[i] = skip.Item
+	}
+	assert.Contains(t, items, backup.ItemCAData)
+	assert.Contains(t, items, backup.ItemTrustStore)
+	assert.Contains(t, items, backup.ItemOATH)
+	assert.Contains(t, items, backup.ItemPasswords)
+
+	summary := sources.summary()
+	assert.Contains(t, summary, filepath.Join(dataDir, trustDataSubdir))
+	assert.Contains(t, summary, filepath.Join(dataDir, oathStoreFilename))
+	assert.Contains(t, summary, filepath.Join(dataDir, passwordStoreFeature))
+}
+
+// TestResolveBackupSources_Defaults_PopulatedStores is the counterpart to
+// the regression guard above: once the default stores actually hold data
+// (seedBackupStores writes to the real defaults, including passwordStoreFeature
+// "staticpw"), strict mode opens all three and reports nothing missing.
+func TestResolveBackupSources_Defaults_PopulatedStores(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+	seedBackupStores(t, home)
+
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, true)
+	require.NoError(t, err)
+	defer sources.Close()
+
+	require.NotNil(t, sources.trust)
+	require.NotNil(t, sources.oath)
+	require.NotNil(t, sources.passwords)
+	assert.Equal(t, filepath.Join(dataDir, trustDataSubdir), sources.trust.path)
+	assert.Equal(t, filepath.Join(dataDir, oathStoreFilename), sources.oath.path)
+	assert.Equal(t, filepath.Join(dataDir, passwordStoreFeature), sources.passwords.path)
 	assert.Len(t, sources.readerOptions(), 3)
 
 	require.Len(t, sources.skipped, 1)
 	assert.Equal(t, backup.ItemCAData, sources.skipped[0].Item)
 	assert.Contains(t, sources.summary(), backup.ItemCAData)
+
+	passwords, err := sources.passwords.List()
+	require.NoError(t, err)
+	require.Len(t, passwords, 1)
+	assert.Equal(t, "UnitTestEntry", passwords[0].Name)
+}
+
+// TestResolveBackupSources_Defaults_NonStrictAutoCreates covers the write
+// (restore) side: a default location that has never been written to must
+// still be opened -- and thereby created -- so restored data has somewhere
+// to land, exactly like before go-xkms#936.
+func TestResolveBackupSources_Defaults_NonStrictAutoCreates(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, false)
+	require.NoError(t, err)
+	defer sources.Close()
+
+	require.NotNil(t, sources.trust)
+	require.NotNil(t, sources.oath)
+	require.NotNil(t, sources.passwords)
+	assert.Equal(t, filepath.Join(dataDir, trustDataSubdir), sources.trust.path)
+	assert.Equal(t, filepath.Join(dataDir, oathStoreFilename), sources.oath.path)
+	assert.Equal(t, filepath.Join(dataDir, passwordStoreFeature), sources.passwords.path)
+
+	require.Len(t, sources.skipped, 1, "non-strict mode never reports a default as missing")
+	assert.Equal(t, backup.ItemCAData, sources.skipped[0].Item)
 }
 
 func TestResolveBackupSources_ExplicitPaths(t *testing.T) {
@@ -362,13 +511,35 @@ func TestResolveBackupSources_ExplicitPaths(t *testing.T) {
 		passwords: filepath.Join(dir, "custom-passwords"),
 	}
 
-	sources, err := resolveBackupSources(backupCreateCmd, paths)
+	// strict=false: this exercises path-override wiring, not the missing-
+	// source behavior covered by the explicit-path tests below, so the
+	// stores are created on first open exactly as a restore would.
+	sources, err := resolveBackupSources(backupCreateCmd, paths, false)
 	require.NoError(t, err)
 	defer sources.Close()
 
 	assert.Equal(t, paths.trust, sources.trust.path)
 	assert.Equal(t, paths.oath, sources.oath.path)
 	assert.Equal(t, paths.passwords, sources.passwords.path)
+}
+
+// TestResolveBackupSources_ExplicitPathMissing_StrictErrors is the
+// go-xkms#936 explicit-path counterpart to the default-source regression
+// guard: an operator-named source that does not exist must fail loudly in
+// strict (read) mode, never silently auto-create an empty store.
+func TestResolveBackupSources_ExplicitPathMissing_StrictErrors(t *testing.T) {
+	isolatedBackupHome(t)
+	dir := t.TempDir()
+
+	_, err := resolveBackupSources(backupCreateCmd, backupStorePaths{
+		trust: filepath.Join(dir, "never-created"),
+	}, true)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackupSourceMissing)
+	assert.Contains(t, err.Error(), backup.ItemTrustStore)
+
+	_, statErr := os.Stat(filepath.Join(dir, "never-created"))
+	assert.True(t, os.IsNotExist(statErr), "a strict read must never create the path it could not find")
 }
 
 func TestResolveBackupSources_BarrierEncryptedRefused(t *testing.T) {
@@ -379,7 +550,7 @@ func TestResolveBackupSources_BarrierEncryptedRefused(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(rootKey), 0700))
 	require.NoError(t, os.WriteFile(rootKey, []byte("sealed"), 0600))
 
-	_, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
+	_, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, true)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackupBarrierEncrypted)
 }
@@ -397,7 +568,7 @@ func TestResolveBackupSources_ExplicitPathsBypassBarrierCheck(t *testing.T) {
 		trust:     filepath.Join(dir, "trust"),
 		oath:      filepath.Join(dir, "oath.json"),
 		passwords: filepath.Join(dir, "passwords"),
-	})
+	}, false)
 	require.NoError(t, err)
 	sources.Close()
 }
@@ -407,7 +578,8 @@ func TestResolveBackupSources_UnopenableStore(t *testing.T) {
 	dir := t.TempDir()
 
 	// A regular file where the trust store directory belongs makes the
-	// store impossible to open.
+	// store impossible to open (and impossible to stat as a directory), so
+	// this is a real I/O failure rather than a missing source.
 	blocker := filepath.Join(dir, "blocker")
 	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 
@@ -415,7 +587,7 @@ func TestResolveBackupSources_UnopenableStore(t *testing.T) {
 		trust:     filepath.Join(blocker, "trust"),
 		oath:      filepath.Join(dir, "oath.json"),
 		passwords: filepath.Join(dir, "passwords"),
-	})
+	}, true)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBackupStoreUnavailable)
 	assert.Contains(t, err.Error(), backup.ItemTrustStore)
@@ -672,7 +844,7 @@ func TestBackupSources_SyncOptionsMatchesOpenedStores(t *testing.T) {
 	home := isolatedBackupHome(t)
 	_ = home
 
-	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{})
+	sources, err := resolveBackupSources(backupCreateCmd, backupStorePaths{}, false)
 	require.NoError(t, err)
 	defer sources.Close()
 
@@ -681,6 +853,113 @@ func TestBackupSources_SyncOptionsMatchesOpenedStores(t *testing.T) {
 }
 
 // --- Command round trip ---
+
+// TestBackupCreate_DefaultCapturesStaticPasswords is the go-xkms#936
+// end-to-end regression guard: "xkey backup create" with no --password-store
+// override must read the real static password store location
+// (passwordStoreFeature, "staticpw") and carry its entries, not the
+// previously hard-coded "passwords" directory that nothing ever wrote to.
+func TestBackupCreate_DefaultCapturesStaticPasswords(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+
+	passwordStore, err := openPasswordStore(filepath.Join(dataDir, passwordStoreFeature))
+	require.NoError(t, err)
+	require.NoError(t, passwordStore.Add(&xkms.StaticPassword{
+		Name:     "DefaultCaptureEntry",
+		Username: "operator",
+		Password: "captured-by-default",
+	}))
+	require.NoError(t, passwordStore.Close())
+
+	output := filepath.Join(home, "default-capture.xkb")
+	setBackupFlags(t, backupCreateCmd, map[string]string{"output": output, "password": "pw"})
+	var createOut bytes.Buffer
+	backupCreateCmd.SetOut(&createOut)
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+	assert.Contains(t, createOut.String(), "Passwords:    1")
+
+	setBackupFlags(t, backupContentsCmd, map[string]string{"password": "pw", "key": ""})
+	var contentsOut bytes.Buffer
+	backupContentsCmd.SetOut(&contentsOut)
+	require.NoError(t, runBackupContents(backupContentsCmd, []string{output}))
+	assert.Contains(t, contentsOut.String(), "Passwords:    1")
+}
+
+// TestBackupCreate_MissingDefaultSourceReported is the go-xkms#936 guard for
+// the other half of the fix: a default source that has never been written to
+// must be named in the "Not included:" report, not silently absorbed into a
+// "Passwords: 0" line with no explanation.
+func TestBackupCreate_MissingDefaultSourceReported(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+
+	// Seed only the trust store, so create has data to work with but the
+	// static password store's default location is never touched.
+	trustStore, err := truststore.NewFileStore(&truststore.FileStoreConfig{
+		BaseDir: filepath.Join(dataDir, trustDataSubdir),
+	})
+	require.NoError(t, err)
+	_, err = trustStore.AddPEM(newTestCertificatePEM(t, "missing-source-ca"))
+	require.NoError(t, err)
+	require.NoError(t, trustStore.Close())
+
+	output := filepath.Join(home, "missing-source.xkb")
+	setBackupFlags(t, backupCreateCmd, map[string]string{"output": output, "password": "pw"})
+	var createOut bytes.Buffer
+	backupCreateCmd.SetOut(&createOut)
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+
+	out := createOut.String()
+	assert.Contains(t, out, "Not included:")
+	assert.Contains(t, out, backup.ItemPasswords)
+	assert.Contains(t, out, backup.ItemOATH)
+}
+
+// TestBackupCreate_ExplicitPasswordStoreWins is the go-xkms#936 guard for
+// --password-store: an explicit override must be read from instead of the
+// resolved default, even when the default location holds different data.
+func TestBackupCreate_ExplicitPasswordStoreWins(t *testing.T) {
+	home := isolatedBackupHome(t)
+	dataDir := backupTestDataDir(home)
+
+	defaultStore, err := openPasswordStore(filepath.Join(dataDir, passwordStoreFeature))
+	require.NoError(t, err)
+	require.NoError(t, defaultStore.Add(&xkms.StaticPassword{Name: "DefaultEntry", Password: "default-value"}))
+	require.NoError(t, defaultStore.Close())
+
+	explicitDir := filepath.Join(t.TempDir(), "explicit-passwords")
+	explicitStore, err := openPasswordStore(explicitDir)
+	require.NoError(t, err)
+	require.NoError(t, explicitStore.Add(&xkms.StaticPassword{Name: "ExplicitEntry", Password: "explicit-value"}))
+	require.NoError(t, explicitStore.Close())
+
+	output := filepath.Join(home, "explicit-wins.xkb")
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":         output,
+		"password":       "pw",
+		"password-store": explicitDir,
+	})
+	var createOut bytes.Buffer
+	backupCreateCmd.SetOut(&createOut)
+	require.NoError(t, runBackupCreate(backupCreateCmd, nil))
+
+	setBackupFlags(t, backupContentsCmd, map[string]string{"password": "pw", "key": ""})
+	var contentsOut bytes.Buffer
+	backupContentsCmd.SetOut(&contentsOut)
+	require.NoError(t, runBackupContents(backupContentsCmd, []string{output}))
+	assert.Contains(t, contentsOut.String(), "Passwords:    1")
+
+	svc, err := backup.NewService(&backup.Config{DeviceName: "test"})
+	require.NoError(t, err)
+	encrypted, err := readEncryptedBackup(output)
+	require.NoError(t, err)
+	archive, err := svc.DecryptBackup(encrypted, deriveKey("pw"))
+	require.NoError(t, err)
+	require.Len(t, archive.Passwords, 1)
+	assert.Equal(t, "ExplicitEntry", archive.Passwords[0].Name,
+		"the explicit --password-store entry must be backed up, not the default store's")
+}
 
 func TestBackupLifecycle_CreateContentsRestore(t *testing.T) {
 	home := isolatedBackupHome(t)
@@ -722,7 +1001,7 @@ func TestBackupLifecycle_CreateContentsRestore(t *testing.T) {
 	assert.Contains(t, restoreOut.String(), "Restore completed successfully.")
 
 	// The seeded data must now exist in the second home.
-	restoredPasswords, err := openPasswordStore(filepath.Join(backupTestDataDir(restoreHome), backupPasswordStoreDir))
+	restoredPasswords, err := openPasswordStore(filepath.Join(backupTestDataDir(restoreHome), passwordStoreFeature))
 	require.NoError(t, err)
 	defer func() { _ = restoredPasswords.Close() }()
 	entries, err := restoredPasswords.List()
@@ -731,7 +1010,7 @@ func TestBackupLifecycle_CreateContentsRestore(t *testing.T) {
 	assert.Equal(t, "UnitTestEntry", entries[0].Name)
 	assert.Equal(t, "s3cret-value", entries[0].Password)
 
-	restoredOATH, err := oath.NewFileStore(filepath.Join(backupTestDataDir(restoreHome), backupOATHStoreFile))
+	restoredOATH, err := oath.NewFileStore(filepath.Join(backupTestDataDir(restoreHome), oathStoreFilename))
 	require.NoError(t, err)
 	defer func() { _ = restoredOATH.Close() }()
 	creds, err := restoredOATH.List()
@@ -740,7 +1019,7 @@ func TestBackupLifecycle_CreateContentsRestore(t *testing.T) {
 	assert.Equal(t, "UnitTestOATH", creds[0].Name)
 
 	restoredTrust, err := truststore.NewFileStore(&truststore.FileStoreConfig{
-		BaseDir: filepath.Join(backupTestDataDir(restoreHome), backupTrustStoreDir),
+		BaseDir: filepath.Join(backupTestDataDir(restoreHome), trustDataSubdir),
 	})
 	require.NoError(t, err)
 	defer func() { _ = restoredTrust.Close() }()

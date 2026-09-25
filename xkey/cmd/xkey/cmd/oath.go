@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -27,8 +28,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Default OATH storage path.
-const defaultOATHStorePath = "./data/oath.json"
+// oathStoreFilename is the credential-store file name inside the resolved
+// xkey data directory (resolveDataDir, datadir.go) when --store is not set:
+// <xkey data dir>/oath.json, rather than a cwd-relative default
+// (go-xkms#929).
+const oathStoreFilename = "oath.json"
 
 // OATH command errors.
 var (
@@ -247,7 +251,7 @@ func openOATHStore(cmd *cobra.Command, storePath string) (oath.Store, error) {
 		return store, nil
 	}
 
-	store, err := oath.NewFileStore(storePath)
+	store, err := oath.NewFileStore(filepath.Join(dataDir, oathStoreFilename))
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
 	}
@@ -674,27 +678,27 @@ func init() {
 	oathAddCmd.Flags().String("algorithm", "SHA1", "Hash algorithm: SHA1, SHA256, SHA512")
 	oathAddCmd.Flags().Int("digits", 6, "Number of digits (6, 7, or 8)")
 	oathAddCmd.Flags().Int("period", 30, "Time period in seconds (TOTP only)")
-	oathAddCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathAddCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	addBarrierPasswordFlags(oathAddCmd)
 
 	// oath list flags
-	oathListCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathListCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	oathListCmd.Flags().Bool("secrets", false, "Show secret keys")
 	oathListCmd.Flags().Bool("uri", false, "Show otpauth:// URIs")
 	addBarrierPasswordFlags(oathListCmd)
 
 	// oath generate flags
-	oathGenerateCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathGenerateCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	oathGenerateCmd.Flags().Bool("all", false, "Generate codes for all credentials")
 	addBarrierPasswordFlags(oathGenerateCmd)
 
 	// oath remove flags
-	oathRemoveCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathRemoveCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	oathRemoveCmd.Flags().Bool("force", false, "Don't prompt for confirmation")
 	addBarrierPasswordFlags(oathRemoveCmd)
 
 	// oath scan flags
-	oathScanCmd.Flags().String("store", defaultOATHStorePath, "Path to credential store")
+	oathScanCmd.Flags().String("store", "", "Path to credential store (default: ~/.xkey/data/oath.json)")
 	oathScanCmd.Flags().String("name", "", "Override the credential name")
 	oathScanCmd.Flags().Int("display", -1, "Display index to scan (-1 for all displays)")
 	oathScanCmd.Flags().Bool("list-displays", false, "List available displays and exit")

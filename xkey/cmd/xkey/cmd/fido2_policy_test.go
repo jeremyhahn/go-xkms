@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
@@ -673,7 +674,11 @@ func TestFIDO2ProfileSet_PersistsTransports(t *testing.T) {
 	}
 
 	// The document really landed on disk under the configured storage path.
-	if _, statErr := os.Stat(fido2ProfileStorePath(buildFIDO2Config())); statErr != nil {
+	profilePath, pathErr := fido2ProfileStorePath(buildFIDO2Config())
+	if pathErr != nil {
+		t.Fatalf("fido2ProfileStorePath: %v", pathErr)
+	}
+	if _, statErr := os.Stat(profilePath); statErr != nil {
 		t.Errorf("profile store directory missing under %s: %v", cfgDir, statErr)
 	}
 
@@ -895,13 +900,55 @@ func TestOpenFIDO2ProfileStore_UnusableStoragePath(t *testing.T) {
 	}
 }
 
-// TestFIDO2ProfileStorePath_DefaultsWhenUnset verifies the store falls back
-// to the default FIDO2 storage path.
+// TestFIDO2ProfileStorePath_DefaultsWhenUnset verifies the store resolves
+// through the shared xkey data-directory chain (resolveFIDO2StoragePath,
+// datadir.go) when cfg.StoragePath is unset, landing under the resolved
+// xkey home rather than a cwd-relative default (go-xkms#929).
 func TestFIDO2ProfileStorePath_DefaultsWhenUnset(t *testing.T) {
-	path := fido2ProfileStorePath(&FIDO2Config{})
-	want := filepath.Join(defaultFIDO2StoragePath, fido2ProfileStoreSubdir)
+	root := t.TempDir()
+	xhome.SetRoot(root)
+	t.Cleanup(xhome.ResetRoot)
+
+	previousViper := viper.GetString("data_dir")
+	viper.Set("data_dir", "")
+	t.Cleanup(func() { viper.Set("data_dir", previousViper) })
+
+	path, err := fido2ProfileStorePath(&FIDO2Config{})
+	if err != nil {
+		t.Fatalf("fido2ProfileStorePath: %v", err)
+	}
+	want := filepath.Join(root, "data", "fido2", fido2ProfileStoreSubdir)
 	if path != want {
 		t.Errorf("path = %q, want %q", path, want)
+	}
+	if !filepath.IsAbs(path) {
+		t.Errorf("path = %q, want an absolute path", path)
+	}
+}
+
+// TestFIDO2ProfileStorePath_ErrorWhenHomeUnresolvable verifies the error
+// path: when the shared data-directory chain cannot resolve an xkey home
+// (go-xkms#929), fido2ProfileStorePath fails closed with a typed error
+// instead of falling back to a cwd-relative path.
+func TestFIDO2ProfileStorePath_ErrorWhenHomeUnresolvable(t *testing.T) {
+	xhome.ResetRoot()
+	t.Cleanup(xhome.ResetRoot)
+
+	previousViper := viper.GetString("data_dir")
+	viper.Set("data_dir", "")
+	t.Cleanup(func() { viper.Set("data_dir", previousViper) })
+
+	// A regular file, not a directory: XKEY_HOME can neither be used nor
+	// created as a directory, so resolution must fail rather than silently
+	// falling through to a cwd-relative default.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv("XKEY_HOME", blocker)
+
+	if _, err := fido2ProfileStorePath(&FIDO2Config{}); err == nil {
+		t.Error("fido2ProfileStorePath should fail when the xkey home cannot be resolved")
 	}
 }
 

@@ -45,6 +45,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/circuitbreaker"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -96,6 +97,15 @@ type TrustedCA struct {
 	rateLimitRequests int
 	rateLimitInterval time.Duration
 
+	// Tenant rate limiting (#886): the per-tenant overall admission-control
+	// quota, shared across every account belonging to the same tenant.
+	// Meaningful only when multiTenant is true; zero (the default) leaves it
+	// disabled, matching rateLimitRequests/rateLimitInterval's own
+	// no-default, explicit-opt-in convention (WithRateLimit / WithTenantRateLimit).
+	tenantRateLimitRequests int
+	tenantRateLimitInterval time.Duration
+	tenantRateLimiter       *server.TenantRateLimiter
+
 	// Admin components
 	adminService admin.Service
 
@@ -137,6 +147,15 @@ func New(opts ...Option) (*TrustedCA, error) {
 
 	// Validate required components
 	if err := tca.validate(); err != nil {
+		return nil, err
+	}
+
+	// Validate the TrustedCA configuration and fail closed with its typed
+	// errors. This also resolves Audit.LogPath against DataDir when the
+	// audit trail is enabled and no explicit path was given, exactly once:
+	// Serve reads the already-resolved path rather than repeating this call
+	// (go-xkms#938, go-xkms#929).
+	if err := tca.config.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -314,6 +333,10 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	tlsConfig.MinVersion = tls.VersionTLS13
 	tlsConfig.MaxVersion = tls.VersionTLS13
 
+	// Audit.LogPath was already resolved against config.DataDir by
+	// TrustedCAConfig.Validate() in New() (go-xkms#938, go-xkms#929): Serve
+	// never repeats or diverges from that resolution.
+
 	// Open the audit trail before the CA can sign anything. A disabled trail
 	// yields the no-op logger; an enabled trail whose file cannot be created
 	// fails the start-up rather than running a CA that records nothing.
@@ -339,15 +362,9 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// Build the CAA (RFC 8659) validator that order finalize consults before
 	// signing. RFC 8555 Section 8.1 requires this check. This is the same
 	// server.NewCAAValidator constructor cmd/xkmsd's ACME composition uses —
-	// the one construction path for a CAA validator. An operator who has not
-	// named any identity cannot be issued for a domain that publishes a
-	// restrictive CAA record: CAAValidator.Validate fails closed for that
-	// domain (pkg/acme/server/caa.go), so this only warns rather than
-	// refusing to start, matching TCAACMEConfig.CAIdentifiers' non-fatal
-	// treatment elsewhere in this config.
-	if len(tca.config.ACME.CAIdentifiers) == 0 {
-		tca.logger.Warn("acme.ca_identifiers is not configured: any domain publishing a CAA record will fail closed at finalize")
-	}
+	// the one construction path for a CAA validator. TCAACMEConfig.Validate
+	// (run by New, go-xkms#938) requires at least one CA identifier, so
+	// CAIdentifiers is never empty here: there is no warn-and-continue path.
 	caaValidator, err := server.NewCAAValidator(&server.CAAValidatorParams{
 		CAAIdentities: tca.config.ACME.CAIdentifiers,
 		Logger:        tca.logger,
@@ -357,6 +374,22 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		return caerrors.InternalServerError("failed to initialize CAA validator: %v", err)
 	}
 
+	// The shared circuit breaker manager backs this router's own storage
+	// breaker, the KMS breaker NewRestService wraps tca.kmsService with, and
+	// the challenge verifiers wrapped below -- so HealthHandler reports every
+	// breaker from a single registry, exactly as xkmsd's embedded ACME
+	// listener does (cmd/xkmsd/acme.go). Unlike xkmsd this is unconditional:
+	// there is no "resilience disabled" switch, matching
+	// config.ACMEResilienceConfig's own always-on defaults.
+	breakers := circuitbreaker.NewManager()
+
+	// server.WrapChallengeVerifiers is the one construction path shared with
+	// xkmsd's buildChallengeMap: it wraps the "http-01" and "dns-01" entries
+	// of the caller-supplied challenge map (see WithChallengeMap) with a
+	// breaker from breakers, and leaves every other challenge type
+	// unchanged.
+	challengeMap := server.WrapChallengeVerifiers(tca.challengeMap, tca.config.ACME.Resilience, breakers)
+
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
 		AllowLoopbackIdentifier: tca.config.ACME.AllowLoopbackIdentifier,
@@ -365,11 +398,17 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 		CA:                      tca.ca,
 		CAAIdentities:           tca.config.ACME.CAIdentifiers,
 		CAAValidator:            caaValidator,
-		ChallengeMap:            tca.challengeMap,
+		ChallengeMap:            challengeMap,
 		KMSService:              tca.kmsService,
 		Logger:                  tca.logger,
 		StorageFactory:          tca.storageFactory,
 		TermsOfService:          tca.config.ACME.TermsOfService,
+		Breakers:                breakers,
+		StorageBreaker:          tca.config.ACME.Resilience.Storage.CircuitBreakerConfig("storage"),
+		KMSBreaker:              tca.config.ACME.Resilience.KMS.CircuitBreakerConfig("kms"),
+		DegradationCacheTTL:     tca.config.ACME.Resilience.Degradation.ResolveCacheTTL(),
+		DegradationStaleTTL:     tca.config.ACME.Resilience.Degradation.ResolveStaleTTL(),
+		DegradationMaxCacheSize: tca.config.ACME.Resilience.Degradation.ResolveMaxCacheSize(),
 	})
 	if err != nil {
 		return caerrors.InternalServerError("failed to initialize ACME service: %v", err)
@@ -377,9 +416,6 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	tca.mu.Lock()
 	tca.restService = restService
 	tca.mu.Unlock()
-
-	// Initialize Prometheus metrics
-	metrics.Init()
 
 	// Set up rate limiter. server.NewClientRateLimiterMiddleware is the single
 	// construction path shared with xkmsd's embedded ACME listener
@@ -390,7 +426,46 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	// Set up ACME router
 	router := mux.NewRouter()
 	acmeRouter := router.PathPrefix("/acme").Subrouter()
+
+	// metrics.Mount initializes the ACME Prometheus registry (base and
+	// production metric sets) and attaches the request-instrumentation
+	// middleware. It is mounted before the rate limiter so every request -
+	// including one the rate limiter refuses - is counted. The standalone
+	// TrustedCA serves metrics.Registry as its only metrics source (below,
+	// "/metrics"), so unlike the embedded xkmsd ACME server it also needs
+	// the Go/process runtime collectors registered here.
+	metrics.Mount(acmeRouter)
+	metrics.RegisterRuntimeCollectors()
 	acmeRouter.Use(rateLimitMiddleware)
+
+	// Tenant-aware admission control (#886): TenantAuthMiddleware resolves
+	// the tenant exclusively from a fully verified JWS "kid" — never from a
+	// client-asserted header, host, or path — and publishes it via
+	// server.WithTenantID for the per-tenant overall quota below to key on.
+	// Wired unconditionally (it is a no-op, resolving the shared "" tenant,
+	// for a non-multi-tenant deployment); the quota itself is only mounted
+	// in multi-tenant mode and only when WithTenantRateLimit configured a
+	// positive request cap.
+	acmeRouter.Use(restService.TenantAuthMiddleware)
+	if tca.multiTenant && tca.tenantRateLimitRequests > 0 {
+		tca.tenantRateLimiter = server.NewTenantRateLimiter(
+			&server.TenantRateLimiterConfig{
+				DefaultConfig: &server.RateLimitConfig{
+					OverallRequestRate: &server.RateLimit{
+						MaxRequests: tca.tenantRateLimitRequests,
+						Interval:    tca.tenantRateLimitInterval,
+					},
+				},
+			},
+			server.TenantRateLimiterFromRequestContext(),
+			func(*http.Request) string { return "" }, // shared bucket per tenant
+			"overall",
+		)
+		acmeRouter.Use(tca.tenantRateLimiter.Middleware())
+		tca.logger.Info("ACME tenant rate limiting enabled",
+			slog.Int("max_requests", tca.tenantRateLimitRequests),
+			slog.Duration("interval", tca.tenantRateLimitInterval))
+	}
 
 	// Register ACME endpoints
 	acmeRouter.HandleFunc("/directory", restService.DirectoryHandler).Methods("GET", "HEAD")
@@ -408,9 +483,10 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	acmeRouter.HandleFunc("/orders/{id}", restService.OrdersListHandler).Methods("POST", "GET")
 	acmeRouter.HandleFunc("/ca-bundle", restService.CABundleHandler).Methods("GET")
 
-	// Health and metrics endpoints. HealthHandler reports circuit breaker and
-	// degradation status (empty/healthy here: this standalone TrustedCA path
-	// does not yet opt into Params.Breakers).
+	// Health and metrics endpoints. HealthHandler reports every breaker on
+	// the breakers Manager built above (Params.Breakers), and whether the
+	// directory/CA-bundle endpoints are currently degraded because the
+	// storage breaker is open.
 	router.HandleFunc("/health", restService.HealthHandler).Methods("GET")
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -549,6 +625,11 @@ func (tca *TrustedCA) Shutdown(ctx context.Context) error {
 		if err := tca.adminServer.Shutdown(ctx); err != nil {
 			errs = append(errs, caerrors.InternalServerError("admin server shutdown: %v", err))
 		}
+	}
+
+	if tca.tenantRateLimiter != nil {
+		tca.tenantRateLimiter.Stop()
+		tca.tenantRateLimiter = nil
 	}
 
 	// Close the trail last so events recorded by in-flight requests are

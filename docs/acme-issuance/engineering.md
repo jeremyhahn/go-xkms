@@ -11,7 +11,8 @@
 - `pkg/acme/server/handlers` — one file per protocol object: `directory.go`,
   `account.go`, `authorization.go`, `challenge.go`, `certificate.go`,
   `ca_bundle.go`, `endorse_eab.go`, `audit.go`, `compliance_attestation.go`,
-  `service.go`.
+  `service.go`, `tenant_auth.go` (authenticated tenant resolution for
+  admission control, go-xkms#886).
 - `pkg/acme/entities` — the protocol objects themselves.
 - `pkg/acme/nonce` — encrypted-counter nonce issue and redemption
   (`Service`), plus prefix-routed multi-node dispatch (`MultiService`).
@@ -36,10 +37,14 @@
 - `pkg/acme/server/circuitbreaker` — the one circuit breaker implementation
   (`CircuitBreaker`, `Manager`, the `Middleware` HTTP wrapper, and the
   `WrapChallengeVerifier`/`WrapLogSubmitter`/`WrapKMSService` decorators;
-  go-xkms#735 folded the previously-duplicate `pkg/acme/server/circuit_breaker.go`
-  into it and deleted that file) and `pkg/acme/server/degradation` (the
+  go-xkms#975 deleted the unreferenced duplicate `pkg/acme/server/circuit_breaker.go`
+  that #735 had left behind) and `pkg/acme/server/degradation` (the
   cache-backed graceful-degradation primitives) — the protective layer,
-  wired into xkmsd. See "Circuit breakers and degradation" below.
+  wired into both xkmsd and the standalone `TrustedCA` (go-xkms#820). Both
+  compositions build their breaker `Manager` and wrap their challenge
+  verifiers through `pkg/acme/server/resilience.go`'s
+  `WrapChallengeVerifiers`, the one shared construction path — see "Circuit
+  breakers and degradation" below.
 - `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
   `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
 - `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
@@ -149,36 +154,64 @@ once, to the externally visible base.
   xkmsd's embedded listener (`cmd/xkmsd/acme.go`'s `buildACMERouter`) — and
   keys each client by JWS KID once an account exists, falling back to the
   client IP before one does (`server.ClientID`). Exceeding the cap refuses
-  the request with `rateLimited`; it does not queue it. **Per-tenant and
-  per-endpoint-category (new-account/new-order/certificate/
-  failed-validation) limits are not wired to anything** —
-  `pkg/acme/server/tenant_rate_limiter.go`'s `TenantRateLimiter` and
-  `rate_limiter.go`'s `NewAccountRateLimiter`/`NewOrderRateLimiter`/
-  `CertificateRateLimiter`/`FailedValidationRateLimiter` constructors and
-  `DefaultRateLimitConfig` exist and are unit-tested but have no caller
-  outside their own package's tests (go-xkms#882). xkmsd resolves an ACME
-  account's tenant only as a side effect of business logic already deep
-  inside a handler — `NewAccountHandler` sets `entities.Account.TenantID`
-  from the verified External Account Binding
-  (`pkg/acme/server/handlers/new_account.go`), and `order_finalize.go` reads
-  it back to select a signing CA — never from a cheap, pre-dispatch,
-  authenticated request attribute a middleware could key on. The
+  the request with `rateLimited`; it does not queue it.
+- **Tenant admission control is keyed exclusively from an authenticated JWS
+  "kid", never from a client-asserted header, host, or path (go-xkms#886).**
+  `handlers.RestService.TenantAuthMiddleware`
+  (`pkg/acme/server/handlers/tenant_auth.go`) is mounted before dispatch, on
+  every route, ahead of every tenant-keyed limiter. For a POST request whose
+  JWS protected header names an account (`kid`), it performs the exact
+  verification `parseKID` performs — nonce check, JWS `"url"` match,
+  signature verification against the account's stored public key — via
+  `parseKID` itself, exactly once, and caches the result (success or
+  failure) on the request context: `parseKID`'s own later call from inside
+  the handler returns the cached result instead of re-verifying, because the
+  replay-nonce is single-use (`common.NonceStore.Exists` deletes it on first
+  check) and a second live verification would spuriously fail with
+  `badNonce`. On success the verified account's `TenantID` is published via
+  `server.WithTenantID` for `server.TenantRateLimiterFromRequestContext` to
+  read. A request with no `kid` (new-account's JWK-embedded JWS, new-nonce,
+  directory, ca-bundle, or any GET) or one whose `kid` fails verification
+  never publishes a tenant: those requests are bounded only by the
+  per-client limiter above, never by a client-asserted tenant. The older
   `handlers.TenantMiddleware` header/subdomain/path extractor
-  (`pkg/acme/server/handlers/middleware.go`) is also unwired anywhere in the
-  tree; even if wired, it trusts a client-supplied `X-Tenant-ID` header (or
-  host/path) with no authentication, so using it to key admission control
-  would let a client opt out of its own tenant quota by omitting or
-  spoofing the header — the opposite of what rate limiting is for. A
-  per-tenant cap that means something requires resolving tenant from an
-  authenticated source (e.g. an account lookup keyed by JWS KID) before
-  dispatch, which is new work, not a rewiring of the existing
-  `TenantRateLimiter`; it is filed as a follow-up rather than forced into
-  this cap.
+  (`pkg/acme/server/handlers/middleware.go`) remains unwired anywhere in the
+  ACME router for exactly this reason — it trusts a client-supplied
+  `X-Tenant-ID` header (or host/path) with no authentication, so using it to
+  key admission control would let a client opt out of its own tenant quota,
+  or consume another tenant's, by omitting or spoofing the header.
+- **The per-tenant overall quota is one bucket shared across every account
+  of a tenant, keyed only on the resolved tenant.** `buildACMERouterLimiters`
+  (`cmd/xkmsd/acme.go`) mounts a `server.TenantRateLimiter` (operation type
+  `"overall"`) via `r.Use`, after `TenantAuthMiddleware`, with
+  `tenantSharedClientKey` — a client-key function that always returns `""`
+  — as its per-tenant sub-bucket key. `pkg/acme/client/trustedca.go`'s
+  standalone `TrustedCA` mirrors this when `WithMultiTenant()` and
+  `WithTenantRateLimit(maxRequests, interval)` are both configured. A
+  request whose account has no tenant is bucketed under the empty tenant ID,
+  which behaves as one shared bucket for every non-tenant account.
+- **The RFC 8555 Section 6.6 per-category limits are wired at their
+  endpoints (go-xkms#886).** new-account is keyed by client IP via the plain
+  `acmeserver.NewAccountRateLimiter` (the tenant is never known before an
+  account exists) mounted directly on `POST /new-account`. new-order and
+  certificate (enforced at `finalize`) are keyed by account within its
+  tenant via `server.NewTenantOrderRateLimiter`/
+  `NewTenantCertificateRateLimiter`, mounted on their routes after
+  `TenantAuthMiddleware`. failed-validation cannot be blanket route
+  middleware — it must count only actual validation failures, not every
+  request — so `handlers.Params.FailedValidationRateLimiter`
+  (`*server.TenantRateLimiter`) is injected into `RestService` and
+  `ChallengeHandler` (`pkg/acme/server/handlers/challenge.go`) calls its
+  `Allow` method directly once a challenge has failed: the persisted
+  challenge/order state always reflects the attempt, and only the response
+  to that specific request changes (RFC 8555 `rateLimited`, 429,
+  `Retry-After` via the new `TenantRateLimiter.RetryAfterSeconds` accessor)
+  once the account's budget for that tenant is exhausted.
 - **A breaker guards the one dependency it wraps, not order creation, and
   degradation never means "issue without validating".** `pkg/acme/server/circuitbreaker`
-  is wired into xkmsd (`cmd/xkmsd/acme.go`); the standalone `TrustedCA` does
-  not yet opt in. See "Circuit breakers and degradation" below for exactly
-  what is and is not covered.
+  is wired into both xkmsd (`cmd/xkmsd/acme.go`) and the standalone
+  `TrustedCA` (`pkg/acme/client/trustedca.go`, go-xkms#820). See "Circuit
+  breakers and degradation" below for exactly what is and is not covered.
 - **An advertised URL is configured or derived, never glued to a bind
   address.** `TrustedCA.Serve` advertises `acme.external_url` (or
   `WithExternalURL`) as given; with neither set it derives the URL from the
@@ -255,11 +288,21 @@ dependencies each get their own breaker from a shared `circuitbreaker.Manager`:
 
 | Breaker name | Guards | Wired by |
 |---|---|---|
-| `http01` | the `http-01` challenge verifier | `cmd/xkmsd/acme.go:buildChallengeMap`, via `circuitbreaker.WrapChallengeVerifier` |
-| `dns01` | the `dns-01` challenge verifier | same, `circuitbreaker.WrapChallengeVerifier` |
+| `http01` | the `http-01` challenge verifier | `cmd/xkmsd/acme.go:buildChallengeMap` and `TrustedCA.Serve` (`pkg/acme/client/trustedca.go`, go-xkms#820), both via `pkg/acme/server/resilience.go`'s `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifier` |
+| `dns01` | the `dns-01` challenge verifier | same, `WrapChallengeVerifiers` -> `circuitbreaker.WrapChallengeVerifier` |
 | `ct` | CT log submission (`ct.LogSubmitter`) | `circuitbreaker.WrapLogSubmitter` — no production call site yet; see architecture.md |
 | `kms` | `Params.KMSService` (the tenant KMS signer) | `handlers.NewRestService`, automatically, when both `Params.Breakers` and `Params.KMSService` are set |
 | `storage` | CA/keystore-backed certificate storage (`CA.CABundleFiltered`, `GET /acme/ca-bundle`'s dependency) | `handlers.NewRestService`, from `Params.StorageBreaker` |
+
+`WrapChallengeVerifiers` (`pkg/acme/server/resilience.go`) is the one place
+that decides which challenge-map entries get wrapped and under which breaker
+names: it copies the map, wraps the `http-01` and `dns-01` entries (when
+present) with a breaker from the `Manager` it is given, and returns every
+other entry — the TPM attestation verifiers `sdk/go/acme.ACMEAttestationVerifiers`
+builds, for instance — unchanged. `cmd/xkmsd/acme.go`'s `buildChallengeMap`
+calls it after selecting verifiers from `acme.challenges`; `TrustedCA.Serve`
+calls it on whatever map a caller supplied through `WithChallengeMap`. A nil
+`Manager` (resilience not wired) or nil map returns the input unchanged.
 
 `storage` here is **not** the go-qrdb-backed ACME protocol state
 (`pkg/acme/storage` → `go-qrdb/sdk/go`, accounts/orders/authorizations/
@@ -318,9 +361,16 @@ It returns 503 when any breaker is not closed, 200 otherwise. A
 breakers listed rather than omitting the endpoint. `cmd/xkmsd/acme.go` opts
 in (`Params.Breakers`, `StorageBreaker`, `KMSBreaker`, all sourced from
 `acme.resilience` — see "Configuration"); the standalone `TrustedCA` path
-(`pkg/acme/client/trustedca.go`) mounts `HealthHandler` at `/health` too but
-does not yet set `Params.Breakers`, so it always reports healthy with no
-breakers — a known gap, not a design choice.
+(`pkg/acme/client/trustedca.go`) now opts in the same way (go-xkms#820),
+sourcing the same four fields from `TCAACMEConfig.Resilience` — reusing
+`config.ACMEResilienceConfig` directly rather than a parallel type, so a
+`storage`/`kms`/`http01`/`dns01` breaker section means the same thing in
+either composition's configuration file. `TrustedCA.Serve` builds its
+breaker `Manager` unconditionally, same as `cmd/xkmsd/acme.go` — there is no
+"resilience disabled" switch, matching `ACMEResilienceConfig`'s own
+always-on defaults — so `GET /health` always lists at least the `storage`
+breaker, plus `http01`/`dns01` when the caller-supplied challenge map
+(`WithChallengeMap`) has those entries.
 
 ## Error semantics
 
@@ -448,9 +498,77 @@ off by default, threaded into `handlers.Params.AllowLoopbackIdentifier` in
 than through xkmsd) sets this field itself; there is no `XKMS_`-prefixed
 environment name for it (#140).
 
+**Multi-tenancy is a construction-time `Option`, not a `TrustedCAConfig`
+field (`options.go` `WithMultiTenant`, `trustedca.go` `tca.multiTenant`,
+go-xkms#946).** `WithMultiTenant()` is the only switch: it sets the
+unexported `TrustedCA.multiTenant` bool that `validate` and `initialize`
+read to require a QRDB service (`ErrMissingQRDB` otherwise) and to construct
+`admin.NewTenantAwareAdminService` instead of `admin.NewAdminService`. A
+`TrustedCAConfig.MultiTenant` section (`Enabled`, `DefaultTenantID`,
+`TenantIsolation.{EnforceIsolation,AllowCrossTenantSuperAdmin}`) existed
+alongside it — defaulted by `DefaultTrustedCAConfig` and checked by
+`Validate` — but nothing in `pkg/acme/client` or `pkg/acme/admin` ever read
+those fields: an operator setting `multi_tenant.enabled: true` in a config
+file got a single-tenant server with no error, because `WithMultiTenant()`
+was the only thing `New` actually consulted. It traces to the go-trusted-ca
+heritage of this package and was never wired to xkms's own
+`admin.TenantAwareAdminService`, which takes no tenant-default or
+isolation-level parameter. The fix picks the option as the one interface
+(go-xkms#946) rather than wiring the config section, to match how xkmsd's
+embedded ACME server decides multi-tenancy: `cmd/xkmsd/admin.go`
+`finalizeAdminModule` always calls `admin.NewTenantAwareAdminService`
+directly, and `pkg/config.ACMEConfig` (`pkg/config/acme.go`) has no
+multi-tenant key at all — the switch there is structural (which constructor
+runs), not a boolean read from config. `DefaultTenantID` and
+`TenantIsolation` had no runtime meaning anywhere in the tree (confirmed by
+searching every package for the field names before deleting them), so
+neither was wired; the whole `MultiTenantConfig`/`TenantIsolationConfig`
+section, its `Validate` method, and the `multi_tenant:` YAML key were
+deleted rather than kept as a second, inert switch.
+
+**`TrustedCAConfig.Validate` runs once, at construction, and fails closed
+(`trustedca.go` `New`, `trustedca_config.go` `TrustedCAConfig.Validate`,
+go-xkms#938).** `client.New` calls `tca.config.Validate()` after applying
+every `Option` and before `initialize()`; an invalid standalone `TrustedCA`
+config no longer constructs (previously `Validate` existed but neither `New`
+nor `Serve` called it, so a config missing `acme.ca_identifiers` or a
+malformed `acme.external_url` would construct and run — go-xkms#938). A nil
+config (`WithConfig(nil)`) fails the same way rather than panicking on a nil
+receiver. `Serve` never calls `Validate` again: it reads the fields `New`
+already validated and resolved. Every rule returns a typed
+`*errors.TrustedCAError` (`errors.MalformedError`, `caerrors.Malformed`),
+checkable with `errors.Is`/`errors.As`.
+
 The standalone `TrustedCA` also carries its own advertised URL,
-`acme.external_url`; `Validate` requires it, and a caller that skips
-validation gets the derived default described under Invariants.
+`acme.external_url`. Unlike `acme.https_addr` and `acme.ca_identifiers`,
+`Validate` does **not** require it: `TrustedCA.Serve` derives an origin from
+the listen address (`AdvertisedURL`, see Invariants) when neither
+`WithExternalURL` nor `acme.external_url` is set, and `Validate` has no
+visibility into whether a caller will supply the option — requiring the
+config field unconditionally would refuse that supported,
+`New`-constructible derivation path (proven by
+`TestTrustedCA_Serve_DerivesExternalURLFromListenAddress`,
+go-xkms#140/go-xkms#938). When `acme.external_url` **is** set, `Validate`
+still requires it to parse as an absolute URL with an `https` scheme and a
+host.
+
+**Audit log path (`TrustedCAConfig.DataDir`, `trustedca_config.go`,
+go-xkms#929, go-xkms#938).** `DefaultTrustedCAConfig` enables the audit trail
+but leaves `Audit.LogPath` empty; `TrustedCAConfig.Validate` — now called
+once by `client.New`, not by `Serve` — derives it from `DataDir` as
+`DataDir/trusted-ca-audit.log` (`DefaultAuditLogFileName`) when the operator
+did not set `Audit.LogPath` explicitly — the same `DataDir`-relative pattern
+`ACMEAuditConfig.AuditConfig` uses for xkmsd's embedded ACME audit trail
+above, so neither surface ever falls back to a path relative to the
+process's working directory. An enabled trail with neither `Audit.LogPath`
+nor `DataDir` set fails `Validate` (and therefore `New`) with a typed
+`*errors.TrustedCAError` (`errors.MalformedError`) rather than silently
+writing beside wherever the process happens to run; a disabled trail
+(`Audit.Enabled = false`) needs neither field. `Serve` opens the audit
+logger from the already-resolved `Audit.LogPath` — it does not call
+`resolveAuditLogPath` itself, so the path `New` validated is the path the
+trail is written to, never a second, divergent resolution
+(`TestNew_ResolvesAuditLogPathOnce`).
 
 **CAA configuration (`ACMEConfig`, `pkg/config/acme.go`).**
 `acme.caa_identities` is the list of issuer domain names this CA is known by
@@ -466,13 +584,15 @@ composition (`cmd/xkmsd/acme.go`) builds the validator with
 constructing the REST service — this is the one construction path for a CAA
 validator. The standalone `TrustedCA` (`pkg/acme/client/trustedca.go`) builds
 one from the same constructor and its own `TCAACMEConfig.CAIdentifiers` /
-`CAADNSServer`; unlike xkmsd it only warns (does not refuse to start) when
-`ca_identifiers` is empty, because `CAAValidator.Validate` itself already
-fails closed for any domain that actually publishes a CAA record — an
-embedder that never expects one to is not blocked from starting. SDK
-consumers composing their own `ACMERestServiceParams` construct the same
-validator through `acmesdk.NewACMECAAValidator` (`sdk/go/acme`) rather than
-implementing `ACMECAAValidatorInterface` themselves.
+`CAADNSServer`; `TCAACMEConfig.Validate` requires at least one CA identifier
+(RFC 8555 §8.1: CAA must be checked before issuance, and an empty
+`ca_identifiers` gives the check nothing to compare a domain's
+`issue`/`issuewild` record against), enforced once by `client.New`
+(go-xkms#938) — there is no warn-and-continue path here, matching xkmsd's
+own `ErrACMEMissingCAAIdentities` requirement. SDK consumers composing their
+own `ACMERestServiceParams` construct the same validator through
+`acmesdk.NewACMECAAValidator` (`sdk/go/acme`) rather than implementing
+`ACMECAAValidatorInterface` themselves.
 The standalone client's browser UI is told the origin the API is reachable at
 by `serve.api_base_url` (`--api-base-url`, `ACME_CLIENT_SERVE_API_BASE_URL`),
 derived from `serve.addr` when empty. The UI appends `/api/v1` and the
@@ -508,6 +628,56 @@ A negative `max_requests` or `interval` is refused by `Validate`
 (`ErrACMERateLimitNegativeMaxRequests`/`ErrACMERateLimitNegativeInterval`)
 rather than silently coerced to the default.
 
+**Tenant and per-category rate-limit configuration (go-xkms#886).**
+`acme.rate_limit` extends with five `ACMECategoryRateLimitConfig`
+sub-sections — `tenant`, `new_account`, `new_order`, `certificate`,
+`failed_validation` — each following the identical tri-state,
+secure-by-default pattern as the per-client cap above: `enabled` is a
+`*bool` (omitted means on), and an explicit `enabled: false` on any of them
+is reported by `Config.ComplianceGaps` (a tenant gap and, separately, one
+gap naming every disabled category), which `cmd/xkmsd` refuses to start on.
+Each sub-section's `max_requests`/`interval` default independently when
+zero/unset:
+
+| Section | `MaxRequests` default | `Interval` default |
+|---|---|---|
+| `tenant` | `DefaultACMETenantRateLimitMaxRequests` (20) | `DefaultACMETenantRateLimitInterval` (1s) |
+| `new_account` | `DefaultACMENewAccountRateLimitMaxRequests` (10) | `DefaultACMENewAccountRateLimitInterval` (1h) |
+| `new_order` | `DefaultACMENewOrderRateLimitMaxRequests` (300) | `DefaultACMENewOrderRateLimitInterval` (3h) |
+| `certificate` | `DefaultACMECertificateRateLimitMaxRequests` (50) | `DefaultACMECertificateRateLimitInterval` (3h) |
+| `failed_validation` | `DefaultACMEFailedValidationRateLimitMaxRequests` (5) | `DefaultACMEFailedValidationRateLimitInterval` (1h) |
+
+```yaml
+acme:
+  rate_limit:
+    enabled: true       # per-client cap (above)
+    max_requests: 20
+    interval: 1s
+    tenant:
+      enabled: true      # per-tenant overall quota, shared across the tenant's accounts
+      max_requests: 20
+      interval: 1s
+    new_account:
+      enabled: true
+      max_requests: 10
+      interval: 1h
+    new_order:
+      enabled: true
+      max_requests: 300
+      interval: 3h
+    certificate:
+      enabled: true
+      max_requests: 50
+      interval: 3h
+    failed_validation:
+      enabled: true
+      max_requests: 5
+      interval: 1h
+```
+
+Every sub-section's negative `max_requests`/`interval` is refused by
+`Validate` with the same sentinels as the top-level cap.
+
 Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
 which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
 [`../key-management/api.md`](../key-management/api.md) §Port conflicts.
@@ -535,6 +705,24 @@ mapped into `handlers.Params` (`Breakers`, `StorageBreaker`, `KMSBreaker`,
 `http01`/`dns01` sections are consumed directly by `buildChallengeMap`, and
 `ct_submitter` has no consumer yet (see "What this feature deliberately does
 not do" in architecture.md).
+
+The standalone `TrustedCA` (`pkg/acme/client/trustedca_config.go`,
+go-xkms#820) reuses `config.ACMEResilienceConfig` directly as
+`TCAACMEConfig.Resilience` (`acme.resilience` in `TrustedCAConfig`'s own
+YAML) rather than defining a parallel type: `TrustedCAConfig` already sits
+downstream of `pkg/config` in the build graph (it imports `pkg/config` for
+`audit.Config` and other shared sections), so there is no layering reason to
+diverge, and every `max_failures`/`reset_timeout_seconds`/etc. field, its
+zero-value defaults, and `ErrACMEResilienceNegativeValue` validation behave
+identically in both compositions' configuration files.
+`TCAACMEConfig.Validate` delegates to `Resilience.Validate` the same way
+`ACMEConfig.Validate` does. `TrustedCA.Serve` is the `TrustedCA` equivalent
+of `cmd/xkmsd/acme.go`'s mapping into `handlers.Params`: it builds a
+`circuitbreaker.Manager` unconditionally, wraps its challenge map (see
+"Circuit breakers and degradation") through the shared
+`server.WrapChallengeVerifiers`, and sets `Breakers`, `StorageBreaker`,
+`KMSBreaker`, `DegradationCacheTTL`, `DegradationStaleTTL`, and
+`DegradationMaxCacheSize` from the same `Resilience` fields.
 
 ## Persistence
 
@@ -616,41 +804,92 @@ storage. Changing the storage layout requires a data migration step.
 
 ## Observability
 
-`pkg/acme/server/metrics` defines a Prometheus registry with issuance,
-challenge and rate-limit counters (`RecordRequest`, `RecordCertificateIssued`,
-...), plus the circuit breaker and degradation-cache counters
-`pkg/acme/server/circuitbreaker` and `pkg/acme/server/degradation` record
-against (`RecordCircuitBreakerFailure`/`Success`/`Trip`,
-`RecordCacheHit`/`Miss`, `SetCacheSize`, `SetDegradationActive` —
-`pkg/acme/server/metrics/production.go`). No handler in
-`pkg/acme/server/handlers` calls the issuance/challenge/rate-limit `Record*`
-functions, so those counters stay at zero in every deployment; the circuit
-breaker and degradation counters, by contrast, are live on xkmsd's request
-path whenever `Params.Breakers` is set. Neither set reaches a scrape
-endpoint today: `InitProduction` — the function that registers the circuit
-breaker/degradation collectors on `metrics.Registry` — is called nowhere in
-the tree outside its own file, and xkmsd never calls `metrics.Init()` or
-mounts `/metrics` for ACME at all (`cmd/xkmsd/acme.go`). The standalone
-`TrustedCA` calls `metrics.Init()` and mounts
-`promhttp.HandlerFor(metrics.Registry, ...)` at `/metrics`
-(`pkg/acme/client/trustedca.go:378,414`), but since neither the issuance
-counters nor `InitProduction`'s collectors are registered or incremented on
-that path (it does not opt into `Params.Breakers` either), the endpoint
-reports only the Go runtime collectors. `GET /acme/health`
-(`RestService.HealthHandler`) is the synchronous, poll-driven view of the
-circuit breaker/degradation state instead: every breaker's name, state and
-counters, and whether `storage` being open is currently degrading the
-directory/CA-bundle responses (see "Circuit breakers and degradation").
-`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records
-for account, order and issuance events, and those are live on both paths —
-audit, not metrics, is where issuance activity is actually observable today.
-Correlation IDs propagate from the transport middleware. Instrumenting the
-metrics package into the request path is tracked in go-xkms#734.
+The circuit breakers (`pkg/acme/server/circuitbreaker`) and the degradation
+cache (`pkg/acme/server/degradation`) record failure/success/trip and
+hit/miss/size counters. `GET /acme/health` (`RestService.HealthHandler`) is the
+synchronous view of that state: every breaker's name, state and counters, and
+whether an open `storage` breaker is degrading the directory/CA-bundle
+responses (see "Circuit breakers and degradation"). `pkg/acme/audit` and
+`pkg/acme/server/handlers/audit.go` write audit records for account, order and
+issuance events.
 
-**Known gap:** Prometheus exporters (beyond the unwired registry above),
-per-tenant rate-limit *enforcement* (`TenantRateLimiter` is unwired — see
-Rate limiting under Invariants) and dashboards, OCSP stapling, CRL
-distribution-point automation, CT log submission automation and
-cross-signing automation are roadmap items, not implemented. They are
+`pkg/acme/server/metrics` is the Prometheus registry for the ACME protocol
+handlers (`pkg/acme/server/metrics/metrics.go`), production/tenant metrics
+(`production.go`) and the request-instrumentation middleware
+(`middleware.go`). It is wired into the handlers that actually produce the
+events it counts, not left to accumulate unread (#734):
+
+- **Order creation and status transitions** — `NewOrderHandler` increments
+  `acme_active_orders` and, per created challenge,
+  `acme_pending_challenges` on a successful save
+  (`pkg/acme/server/handlers/new_order.go:183`). The order's three terminal
+  transitions each decrement `acme_active_orders`: an authorization failing
+  during challenge validation (`pkg/acme/server/handlers/challenge.go:442`),
+  a successful finalize (`pkg/acme/server/handlers/order_finalize.go:925`),
+  and a finalize failure (`order_finalize.go:1236`). Per-tenant active-order
+  and active-account counts (`acme_tenant_active_orders`,
+  `acme_tenant_active_accounts`) mirror the same Inc/Dec pattern for a
+  tenant-bound account.
+- **Challenge validation** — `ChallengeHandler` decrements
+  `acme_pending_challenges` and records `acme_challenges_completed_total`
+  labelled by challenge type and result (`valid`/`invalid`) once validation
+  resolves (`pkg/acme/server/handlers/challenge.go`, via
+  `metrics.NewMetricsCollector(...).RecordChallenge`).
+- **Finalize and issuance** — `OrderFinalizeHandler`'s single success sink
+  (`sendFinalizeResponse`) records `acme_certificates_issued_total` and
+  `acme_certificate_issuance_duration_seconds`
+  (`order_finalize.go:929`); its single failure sink (`failOrder`) records
+  `acme_errors_total{type="issuance_failed"}` and the same duration
+  histogram, so latency is observed on both outcomes
+  (`order_finalize.go:1240`).
+- **Revocation** — `RevokeCertHandler` records
+  `acme_certificates_revoked_total` (and the tenant-scoped counter) once the
+  CA has revoked the certificate and the record is persisted
+  (`pkg/acme/server/handlers/revoke_cert.go:259`).
+- **Account creation** — `NewAccountHandler` records
+  `acme_accounts_created_total` and increments
+  `acme_tenant_active_accounts` for a tenant-bound account
+  (`pkg/acme/server/handlers/new_account.go:240`); `AccountHandler`
+  decrements the tenant gauge on deactivation
+  (`pkg/acme/server/handlers/account.go`).
+- **Requests** — `metrics.Middleware` (`middleware.go`) records
+  `acme_requests_total`, `acme_request_duration_seconds` and
+  `acme_errors_total{type="client_error"|"server_error"}` for every request,
+  classified by the response status code.
+
+`metrics.Mount` (`middleware.go:31`) is the single call both ACME server
+compositions use to initialize the registry and attach `Middleware`:
+`cmd/xkmsd/acme.go:576` (embedded xkmsd) and
+`pkg/acme/client/trustedca.go` (standalone TrustedCA). xkmsd additionally
+calls `srv.RegisterMetricsGatherer(acmemetrics.Registry)`
+(`cmd/xkmsd/acme.go:330`), so the ACME registry - which is deliberately
+private, not `prometheus.DefaultRegisterer` - becomes part of the same
+`/metrics` response `pkg/server/server.go`'s `startMetrics` already serves,
+gathered fresh on every scrape via `serverGatherer`
+(`pkg/server/server.go:3131`) rather than a second endpoint. The standalone
+TrustedCA serves `metrics.Registry` directly as its only metrics source and
+additionally calls `metrics.RegisterRuntimeCollectors()`
+(`metrics.go:158`) for the Go/process collectors that xkmsd's default
+registry already provides for the embedded case - registering them in both
+places would make `prometheus.Gatherers.Gather` reject the scrape as a
+duplicate metric.
+
+Grafana dashboards and Prometheus alerting/recording rules for these metrics
+are in `deploy/grafana/` and `deploy/prometheus/rules/`; see
+`deploy/README.md`'s Monitoring section for what each panel and rule
+references.
+
+`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records
+for account, order and issuance events, independent of the metrics above.
+Correlation IDs propagate from the transport middleware.
+
+**Known gap:** the ACME server's per-tenant rate limiter
+(`pkg/acme/server/tenant_rate_limiter.go`) is wired through
+`cmd/xkmsd/acme.go` `buildACMERouterLimiters` (go-xkms#886), but its
+hit/remaining counters live in
+an internal struct, not through `pkg/acme/server/metrics`, so they will not
+automatically join the Prometheus registry or the dashboards above. OCSP
+stapling, CRL distribution-point automation, CT log submission automation
+and cross-signing automation remain roadmap items, not implemented. They are
 tracked in `docs/acme/ROADMAP.md` and deliberately not documented here as if
 they existed.

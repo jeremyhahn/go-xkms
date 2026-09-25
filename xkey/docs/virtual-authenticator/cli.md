@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-27
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-24
 
 Binary: `xkey`. Groups: `fido2` (the daemon, token lifecycle, and per-RP
 policy) and `uhid` (device setup). Sources: `xkey/cmd/xkey/cmd/fido2.go`,
@@ -21,7 +21,7 @@ xkey fido2 --storage file --storage-path ~/.local/share/xkey --pin --require-tou
 | Flag | Default | Notes |
 |---|---|---|
 | `--storage` | `memory` | `memory`, `file`, `barrier` |
-| `--storage-path` | `./data` | for `file` |
+| `--storage-path` | `~/.xkey/data/fido2` | for `file`; resolved through the shared xkey data-directory chain (`XKEY_HOME`/`XKEY_DATA_DIR`), never the working directory (go-xkms#929) |
 | `--barrier-password` | `""` | for `barrier` |
 | `--barrier-password-file` | `""` | first line of a file |
 
@@ -98,7 +98,7 @@ browser hangs until the timeout.
 
 | Flag | Default |
 |---|---|
-| `--password-store` | `./data/staticpw` |
+| `--password-store` | `~/.xkey/data/staticpw` — the same store `xkey password` uses |
 | `--default-password` | `""` — password name typed on a bare touch |
 
 ### Browser testing without the bus

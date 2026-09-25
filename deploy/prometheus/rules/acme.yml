@@ -1,0 +1,274 @@
+# Prometheus alerting and recording rules for go-xkms's ACME server
+# (pkg/acme/server/metrics). Applies to both compositions that serve this
+# registry: the embedded xkmsd ACME server (whose /metrics gathers this
+# registry alongside the default one, see pkg/server/server.go's
+# serverGatherer) and the standalone TrustedCA. Every metric name below is
+# verified against pkg/acme/server/metrics's actual Prometheus registrations
+# - see docs/acme-issuance/engineering.md#observability for the exact
+# call site each one is recorded from.
+#
+# `job` below is a placeholder label value; set it to whatever job_name your
+# scrape_configs entry for go-xkms actually uses.
+
+groups:
+  - name: acme.availability
+    interval: 30s
+    rules:
+      - alert: ACMEServerDown
+        expr: up{job="acme"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ACME server is down"
+          description: "{{ $labels.instance }} has not been scraped for more than 1 minute."
+
+      - alert: ACMEDegraded
+        expr: acme_degradation_active == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ACME server in degraded mode"
+          description: "{{ $labels.instance }} has been serving cached fallback responses (pkg/acme/server/degradation) for more than 5 minutes."
+
+  - name: acme.errors
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(acme_requests_total{status=~"5.."}[5m])) by (instance)
+          /
+          sum(rate(acme_requests_total[5m])) by (instance)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High ACME HTTP error rate"
+          description: "5xx rate on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}."
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum(rate(acme_requests_total{status=~"5.."}[5m])) by (instance)
+          /
+          sum(rate(acme_requests_total[5m])) by (instance)
+          > 0.10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical ACME HTTP error rate"
+          description: "5xx rate on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}."
+
+  - name: acme.certificates
+    interval: 30s
+    rules:
+      # order_finalize.go's failOrder records acme_errors_total{type="issuance_failed"}
+      # for every finalize failure, whatever the underlying cause (CAA, tenant
+      # CA resolution, CSR signing, verification, hooks).
+      - alert: CertificateIssuanceFailures
+        expr: |
+          rate(acme_errors_total{type="issuance_failed"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Certificate issuance failures detected"
+          description: "Issuance failure rate on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}/s."
+
+      - alert: HighRevocationRate
+        expr: |
+          rate(acme_certificates_revoked_total[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High certificate revocation rate"
+          description: "Revocation rate on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}/h."
+
+  - name: acme.challenges
+    interval: 30s
+    rules:
+      # challenge.Status is RFC 8555's "valid"/"invalid" (common.StatusValid /
+      # common.StatusInvalid), not "success"/"failed".
+      - alert: ChallengeValidationFailures
+        expr: |
+          sum(rate(acme_challenges_completed_total{status="invalid"}[5m])) by (instance, type)
+          /
+          sum(rate(acme_challenges_completed_total[5m])) by (instance, type)
+          > 0.20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High challenge validation failure rate"
+          description: "{{ $labels.type }} failure rate on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}."
+
+  - name: acme.resilience
+    interval: 15s
+    rules:
+      # CircuitBreakerState: 0=closed, 1=half-open, 2=open (pkg/acme/server/metrics/production.go).
+      - alert: CircuitBreakerOpen
+        expr: acme_circuit_breaker_state == 2
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ACME circuit breaker is open"
+          description: "Circuit breaker {{ $labels.name }} on {{ $labels.instance }} is OPEN."
+
+      - alert: CircuitBreakerHalfOpen
+        expr: acme_circuit_breaker_state == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ACME circuit breaker is half-open"
+          description: "Circuit breaker {{ $labels.name }} on {{ $labels.instance }} has been HALF-OPEN for more than 5 minutes."
+
+  - name: acme.latency
+    interval: 30s
+    rules:
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(acme_request_duration_seconds_bucket[5m])) by (le, instance))
+          > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High ACME request latency"
+          description: "P95 latency on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}s."
+
+      - alert: CriticalRequestLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(acme_request_duration_seconds_bucket[5m])) by (le, instance))
+          > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical ACME request latency"
+          description: "P99 latency on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}s."
+
+      # acme_certificate_issuance_duration_seconds is observed on both
+      # success (sendFinalizeResponse) and failure (failOrder), so this
+      # covers issuance latency regardless of outcome.
+      - alert: HighCertificateIssuanceLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(acme_certificate_issuance_duration_seconds_bucket[5m])) by (le, instance))
+          > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High certificate issuance latency"
+          description: "P95 finalize latency on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}s."
+
+  - name: acme.slo
+    interval: 1m
+    rules:
+      - alert: SLOAvailabilityBreach
+        expr: |
+          (
+            sum(rate(acme_requests_total{status=~"2.."}[1h]))
+            /
+            sum(rate(acme_requests_total[1h]))
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ACME SLO availability breach"
+          description: "Availability is {{ printf \"%.4f\" $value }} (target: 99.9%)."
+
+      - alert: ErrorBudgetExhausted
+        expr: |
+          (
+            1 - (
+              sum(rate(acme_requests_total{status=~"2.."}[30d]))
+              /
+              sum(rate(acme_requests_total[30d]))
+            )
+          ) / 0.001 > 0.75
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "ACME error budget 75% consumed"
+          description: "Monthly error budget is {{ printf \"%.1f\" $value }}% consumed."
+
+  - name: acme.resources
+    interval: 30s
+    rules:
+      # These process_*/go_* series only exist when this registry's
+      # Go/process collectors are registered - metrics.RegisterRuntimeCollectors
+      # (standalone TrustedCA) - or, in the embedded xkmsd case, from xkmsd's
+      # own default-registry collectors gathered into the same /metrics.
+      - alert: HighMemoryUsage
+        expr: |
+          process_resident_memory_bytes{job="acme"} / 1024 / 1024 / 1024 > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High ACME server memory usage"
+          description: "{{ $labels.instance }} memory usage is {{ printf \"%.2f\" $value }}GB."
+
+      - alert: HighCPUUsage
+        expr: |
+          rate(process_cpu_seconds_total{job="acme"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High ACME server CPU usage"
+          description: "{{ $labels.instance }} CPU usage is {{ printf \"%.2f\" $value }}."
+
+      - alert: GoroutineLeak
+        expr: |
+          go_goroutines{job="acme"} > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Potential goroutine leak"
+          description: "{{ $labels.instance }} has {{ $value }} goroutines."
+
+  # Pre-computed metrics referenced by deploy/grafana/dashboard.json and
+  # useful for other dashboards.
+  - name: acme.recording
+    interval: 30s
+    rules:
+      - record: acme:http_success_rate:5m
+        expr: |
+          sum(rate(acme_requests_total{status=~"2.."}[5m])) by (instance)
+          /
+          sum(rate(acme_requests_total[5m])) by (instance)
+
+      - record: acme:http_request_rate:5m
+        expr: |
+          sum(rate(acme_requests_total[5m])) by (instance)
+
+      - record: acme:http_latency_p50:5m
+        expr: |
+          histogram_quantile(0.50, sum(rate(acme_request_duration_seconds_bucket[5m])) by (le, instance))
+
+      - record: acme:http_latency_p95:5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(acme_request_duration_seconds_bucket[5m])) by (le, instance))
+
+      - record: acme:http_latency_p99:5m
+        expr: |
+          histogram_quantile(0.99, sum(rate(acme_request_duration_seconds_bucket[5m])) by (le, instance))
+
+      - record: acme:certificate_issue_rate:5m
+        expr: |
+          sum(rate(acme_certificates_issued_total[5m])) by (instance)
+
+      - record: acme:challenge_success_rate:5m
+        expr: |
+          sum(rate(acme_challenges_completed_total{status="valid"}[5m])) by (instance, type)
+          /
+          sum(rate(acme_challenges_completed_total[5m])) by (instance, type)

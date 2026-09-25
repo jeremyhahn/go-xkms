@@ -69,14 +69,10 @@ func startLoopbackIdentifierTrustedCA(t *testing.T, allowLoopback bool) (tca *Tr
 	externalURL = fmt.Sprintf("https://127.0.0.1:%d", acmePort)
 	factory = newTestStorageFactory(t)
 
-	cfg := &TrustedCAConfig{
-		ACME: TCAACMEConfig{
-			HTTPSAddr:               fmt.Sprintf("127.0.0.1:%d", acmePort),
-			ExternalURL:             externalURL,
-			AllowLoopbackIdentifier: allowLoopback,
-		},
-		Admin: AdminConfig{Enabled: false},
-	}
+	cfg := validConfig()
+	cfg.ACME.HTTPSAddr = fmt.Sprintf("127.0.0.1:%d", acmePort)
+	cfg.ACME.ExternalURL = externalURL
+	cfg.ACME.AllowLoopbackIdentifier = allowLoopback
 
 	challengeMap := map[string]acmecommon.ChallengeVerifierFunc{
 		"enroll-01": func(_ *net.Resolver, _ acmecommon.CertificateAuthority, _, _, _, _ string) error {

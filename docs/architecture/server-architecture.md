@@ -673,9 +673,10 @@ backends:
 All configuration can be overridden via environment:
 
 ```bash
-XKMS_SERVER_LOG_LEVEL=debug
-XKMS_REST_ADDRESS=:8080
-XKMS_GRPC_ADDRESS=:9090
+XKMS_LOGGING_LEVEL=debug
+XKMS_SERVER_HOST=0.0.0.0
+XKMS_SERVER_REST_PORT=8080
+XKMS_SERVER_GRPC_PORT=9090
 XKMS_AUTH_ENABLED=true
 XKMS_DEFAULT_BACKEND=software
 XKMS_BACKENDS_SOFTWARE_ENABLED=true
@@ -683,6 +684,14 @@ XKMS_BACKENDS_SOFTWARE_PATH=/var/lib/xkms/keys
 XKMS_BACKENDS_TPM2_ENABLED=true
 XKMS_BACKENDS_TPM2_DEVICE_PATH=/dev/tpmrm0
 ```
+
+`ServerConfig` has no combined host:port "address" field, only `rest_port`
+and `grpc_port` (ints) plus a shared `host` — there is no
+`XKMS_REST_ADDRESS`/`XKMS_GRPC_ADDRESS`, and the log level lives under
+`logging.level`, not `server.log_level` (`pkg/config/config.go:329-341,382`).
+See [`../xkmsd-configuration/architecture.md`](../xkmsd-configuration/architecture.md)
+for the binding mechanism and [`../xkmsd-configuration/user.md`](../xkmsd-configuration/user.md)
+for the verified key/variable table.
 
 The variable name is `XKMS_<SECTION>_<KEY>` with nested keys joined by `_`;
 there is no indexed form, because backends are fixed sections, not a list.
